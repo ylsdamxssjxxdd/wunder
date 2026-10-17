@@ -114,7 +114,7 @@ pub use channels::{
     ChannelLogEntry, NativeChannelAccountEdit, NativeChannelBindingEdit, WeixinQrLoginStart,
     WeixinQrLoginStatus,
 };
-pub use cloud::CloudStatusView;
+pub use cloud::{validate_cloud_password, CloudStatusView};
 pub use cron::{CronRecord, CronRunRecord, NativeCronJobEdit};
 pub use profile::NativeProfile;
 pub use prompts::{PromptPackInfo, PromptSegmentContent};
@@ -525,9 +525,20 @@ impl NativeDesktop {
                     .find(|goal| goal.session_id == record.session_id);
                 let mut session = self.session_with_stats(record, &workspaces);
                 if let Some(goal) = goal {
+                    let activation = self
+                        .state()
+                        .kernel
+                        .orchestrator
+                        .goal_handle()
+                        .activation(&goal.session_id)
+                        .as_str()
+                        .to_string();
                     session.goal = NativeGoal {
                         objective: goal.objective.clone(),
                         phase: goal.phase.clone(),
+                        rounds_started: goal.rounds_started,
+                        max_goal_rounds: goal.max_goal_rounds,
+                        activation,
                     };
                 }
                 session

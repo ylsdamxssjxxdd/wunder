@@ -134,13 +134,21 @@ pub(super) fn install(app: &MainWindow, state: Rc<RefCell<State>>) {
                     NativeThreadUpdate::Context(usage) => apply_context_usage(&app, usage),
                     NativeThreadUpdate::Goal(goal) => {
                         app.set_goal_active(goal.active());
+                        app.set_goal_visible(goal.visible());
                         app.set_goal_objective(goal.objective.clone().into());
+                        app.set_goal_phase(goal.phase.clone().into());
+                        app.set_goal_activation(goal.activation.clone().into());
+                        app.set_goal_rounds(format!("{}/{}", goal.rounds_started, goal.max_goal_rounds).into());
                         app.set_goal_paused(goal.paused());
                         let rows = app.get_conversations();
                         if let Some(index) = rows.iter().position(|row| row.id == session) {
                             if let Some(mut row) = rows.row_data(index) {
                                 row.goal_active = goal.active();
+                                row.goal_visible = goal.visible();
                                 row.goal_objective = goal.objective.clone().into();
+                                row.goal_phase = goal.phase.clone().into();
+                                row.goal_activation = goal.activation.clone().into();
+                                row.goal_rounds = format!("{}/{}", goal.rounds_started, goal.max_goal_rounds).into();
                                 row.goal_paused = goal.paused();
                                 rows.set_row_data(index, row);
                                 crate::navigation_ui::project(&app);

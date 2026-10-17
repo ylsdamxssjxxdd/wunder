@@ -45,10 +45,11 @@ fn persist(app: &MainWindow, api: &Arc<NativeDesktop>) {
                     app.set_status("运行时设置已保存".into());
                 }
                 Err(error) => {
-                    app.set_dialog_title("保存失败".into());
-                    app.set_dialog_text("配置保存失败，请检查目录权限后重试".into());
                     eprintln!("native settings failed: {error:#}");
-                    app.set_dialog_open(true);
+                    crate::native_pages::show_error(
+                        &app,
+                        "配置保存失败，请检查目录权限后重试".to_string(),
+                    );
                 }
             }
         });
@@ -77,39 +78,31 @@ fn install_supplement_import(app: &MainWindow, api: Arc<NativeDesktop>) {
                 app.set_importing_supplement(false);
                 match result {
                     Ok(report) => {
-                        let summary = report.summary_line();
                         crate::native_pages::apply_settings(&app, report.settings);
-                        app.set_supplement_status(summary.into());                        app.set_dialog_title("补充包导入完成".into());
-                        app.set_dialog_text(
-                            format!(
-                                "已解压到 {}\nPython：{}\nGit：{}\nrg：{}\n\n对新启动的工具立即生效。",
-                                report.target_dir,
-                                non_empty_or(&report.python_path),
-                                non_empty_or(&report.git_path),
-                                non_empty_or(&report.rg_path),
-                            )
-                            .into(),
-                        );
-                        app.set_dialog_open(true);
+                        // Imported binaries are immediately visible in the
+                        // editable fields; the status line remains concise.
+                        if !report.python_path.trim().is_empty() {
+                            app.set_runtime_python(report.python_path.clone().into());
+                        }
+                        if !report.git_path.trim().is_empty() {
+                            app.set_runtime_git(report.git_path.clone().into());
+                        }
+                        if !report.rg_path.trim().is_empty() {
+                            app.set_runtime_rg(report.rg_path.clone().into());
+                        }
+                        // The editable fields are the source of truth after an
+                        // import; do not repeat the paths in a status line.
+                        app.set_supplement_status("".into());
+                        app.set_status("补充包导入完成，运行时路径已更新".into());
                     }
                     Err(error) => {
                         app.set_supplement_status(format!("导入失败：{error}").into());
-                        app.set_dialog_title("补充包导入失败".into());
-                        app.set_dialog_text(format!("{error:#}").into());
-                        app.set_dialog_open(true);
+                        app.set_status(format!("补充包导入失败：{error}").into());
                     }
                 }
             });
         });
     });
-}
-
-fn non_empty_or(value: &str) -> String {
-    if value.trim().is_empty() {
-        "未检测到".into()
-    } else {
-        value.to_string()
-    }
 }
 
 /// Runtime tool path pickers: each handler opens the native single-file

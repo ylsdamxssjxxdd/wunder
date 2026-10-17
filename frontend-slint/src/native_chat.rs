@@ -493,10 +493,10 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
                     Ok(prompt) => app.set_prompt_preview(prompt.into()),
                     Err(error) => {
                         app.set_prompt_preview("".into());
-                        app.set_status(format!("系统提示词预览失败：{error}").into());
-                        app.set_dialog_title("操作失败".into());
-                        app.set_dialog_text(format!("系统提示词预览失败：{error}").into());
-                        app.set_dialog_open(true);
+                        crate::native_pages::show_error(
+                            &app,
+                            format!("系统提示词预览失败：{error}"),
+                        );
                     }
                 }
             });
@@ -593,6 +593,10 @@ pub(crate) fn publish_timeline(app: &MainWindow, live: &crate::timeline::Timelin
         app.set_turn_marks(live.marks_model());
     }
     live.sync_turn_marks();
+    // One monotonic view revision covers live frames and durable history
+    // refreshes alike. TimelineView uses it to schedule a bounded follow-tail
+    // correction instead of polling content-y forever.
+    app.set_stream_updates(app.get_stream_updates().wrapping_add(1));
     crate::activity_ui::notify_timeline_rows(live.row_count());
 }
 
@@ -824,6 +828,7 @@ fn refresh_chat(app: &MainWindow, state: Rc<RefCell<State>>, silent: bool) {
                             // consumed by the projection.
                             let goal = item.goal;
                             let goal_active = goal.active();
+                            let goal_visible = goal.visible();
                             let goal_paused = goal.paused();
                             Conversation {
                                 id: item.id.into(),
@@ -838,7 +843,11 @@ fn refresh_chat(app: &MainWindow, state: Rc<RefCell<State>>, silent: bool) {
                                 runtime_status: item.runtime_status.into(),
                                 locked: item.locked,
                                 goal_active,
+                                goal_visible,
                                 goal_objective: goal.objective.into(),
+                                goal_phase: goal.phase.into(),
+                                goal_activation: goal.activation.into(),
+                                goal_rounds: format!("{}/{}", goal.rounds_started, goal.max_goal_rounds).into(),
                                 goal_seconds: 0,
                                 goal_paused,
                                 origin: item.origin.unwrap_or_default().into(),
@@ -850,11 +859,15 @@ fn refresh_chat(app: &MainWindow, state: Rc<RefCell<State>>, silent: bool) {
                         .iter()
                         .find(|row| row.id == app.get_active_session_id());
                     app.set_goal_active(active.is_some_and(|row| row.goal_active));
+                    app.set_goal_visible(active.is_some_and(|row| row.goal_visible));
                     app.set_goal_objective(
                         active
                             .map(|row| row.goal_objective.clone())
                             .unwrap_or_default(),
                     );
+                    app.set_goal_phase(active.map(|row| row.goal_phase.clone()).unwrap_or_default());
+                    app.set_goal_activation(active.map(|row| row.goal_activation.clone()).unwrap_or_default());
+                    app.set_goal_rounds(active.map(|row| row.goal_rounds.clone()).unwrap_or_default());
                     set_goal_clock(&app, active.map(|row| row.goal_seconds).unwrap_or(0));
                     app.set_goal_paused(active.is_some_and(|row| row.goal_paused));
                     update_active_thread_filter(&app, rows.iter().cloned());
@@ -917,7 +930,11 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
             let _ = desktop.close_session(&previous_session);
         }
         app.set_goal_active(row.goal_active);
+        app.set_goal_visible(row.goal_visible);
         app.set_goal_objective(row.goal_objective.clone());
+        app.set_goal_phase(row.goal_phase.clone());
+        app.set_goal_activation(row.goal_activation.clone());
+        app.set_goal_rounds(row.goal_rounds.clone());
         set_goal_clock(&app, row.goal_seconds);
         app.set_goal_paused(row.goal_paused);
         // The dock mirrors the live turn only: switching to a thread without
@@ -1977,7 +1994,10 @@ fn bind_goal(app: &MainWindow, state: Rc<RefCell<State>>) {
         if session.is_empty() || app.get_command_pending() {
             return;
         }
-        let command = if app.get_goal_paused() {
+        let command = if app.get_goal_paused()
+            || app.get_goal_phase() == "blocked"
+            || app.get_goal_activation() == "disarmed"
+        {
             NativeChatCommand::GoalResume
         } else {
             NativeChatCommand::GoalPause
@@ -2223,7 +2243,6 @@ fn start_timer(app: &MainWindow, state: Rc<RefCell<State>>) {
                 publish_timeline(&app, &live);
                 app.set_stream_bytes(live.body_text().len().min(i32::MAX as usize) as i32);
                 drop(live);
-                app.set_stream_updates(app.get_stream_updates().wrapping_add(1));
                 app.set_status(active.state.as_str().into());
                 set_session_status(&app, &active.session, &active.state);
                 // Status dock: capsule state plus plan progress and file

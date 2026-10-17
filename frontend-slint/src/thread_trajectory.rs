@@ -1763,9 +1763,9 @@ impl Texts {
             }
             KIND_MESSAGE => {
                 if zh {
-                    "消息"
+                    "助手"
                 } else {
-                    "Message"
+                    "Assistant"
                 }
             }
             KIND_TOOL => {
@@ -2283,6 +2283,30 @@ fn visible_span(start: f64, end: f64, window_lo: f64, window_total: f64) -> Opti
     Some((left as f32, (right - left).max(0.002) as f32))
 }
 
+/// Return the records which belong to the selected, stable trajectory step.
+///
+/// Timeline coordinates are deliberately not part of this decision. Adjacent
+/// requests often overlap in wall-clock time (and legacy rows may have a zero
+/// duration), so interval intersection makes unrelated entries look selected.
+/// The record's turn plus normalized group identity is the durable link shared
+/// by an assistant entry, its thinking/body, and the tools issued for that
+/// model step.
+fn focused_record_indexes(model: &SnapshotModel, selected: i32) -> Option<HashSet<usize>> {
+    let selected = usize::try_from(selected).ok()?;
+    let selected_record = model.records.get(selected)?;
+    let selected_key = State::identity_key(selected_record.turn, &selected_record.group);
+    Some(
+        model
+            .records
+            .iter()
+            .enumerate()
+            .filter_map(|(index, record)| {
+                (State::identity_key(record.turn, &record.group) == selected_key).then_some(index)
+            })
+            .collect(),
+    )
+}
+
 fn project_timeline(app: &MainWindow, state: &State, model: &SnapshotModel, texts: &Texts) {
     let view_start = state.view_start.clamp(0.0, 1.0);
     let view_width = state.view_width.clamp(0.02, 1.0);
@@ -2293,21 +2317,7 @@ fn project_timeline(app: &MainWindow, state: &State, model: &SnapshotModel, text
     let window_lo = total_lo + view_start * total;
     let window_total = view_width * total;
     let clamp_pos = |value: f64| ((value - window_lo) / window_total).clamp(0.0, 1.0) as f32;
-    let selected_range = model
-        .spans
-        .iter()
-        .find(|span| span.record == state.selected as usize)
-        .filter(|_| state.selected >= 0)
-        .map(|span| {
-            if timed {
-                (span.start, span.end.max(span.start + 0.001))
-            } else {
-                (
-                    span.sequence_start.unwrap_or(state.selected as f64),
-                    span.sequence_end.unwrap_or(state.selected as f64 + 1.0),
-                )
-            }
-        });
+    let focused_records = focused_record_indexes(model, state.selected);
 
     let mut spans: Vec<TrajSpan> = Vec::new();
     let visible_detail_ranges: Vec<(f64, f64, Option<f64>, Option<f64>)> = model
@@ -2346,8 +2356,12 @@ fn project_timeline(app: &MainWindow, state: &State, model: &SnapshotModel, text
         } else {
             (base.record as f64, base.record as f64 + 1.0)
         };
-        let outside = selected_range
-            .is_some_and(|(focus_start, focus_end)| end < focus_start || start > focus_end);
+        // Aggregate overview tiles have no stable source record. Treat them as
+        // outside while a concrete record is focused; never infer membership
+        // from an overlapping time interval.
+        let outside = focused_records
+            .as_ref()
+            .is_some_and(|focused| base.record == usize::MAX || !focused.contains(&base.record));
         if aggregate && !model.overview_exact {
             let overlaps = visible_detail_ranges.iter().any(
                 |(detail_start, detail_end, sequence_start, sequence_end)| {
@@ -3949,6 +3963,57 @@ mod tests {
         let rows = build_rows(&state, &model, &texts);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].kind, KIND_CONTEXT);
+    }
+
+    #[test]
+    fn focus_uses_turn_and_model_step_instead_of_overlapping_time() {
+        // Two model steps deliberately overlap in wall-clock time. Timeline
+        // selection must retain only the selected step and its tool, rather
+        // than every interval that intersects the assistant's duration.
+        let model = parse_view_page(&json!({ "trajectory": [
+            {"item_id":"fixture-user","turn_id":"fixture-turn","root_turn_id":"fixture-turn",
+             "user_round":1,"created_seq":1,"kind":"user_message","summary":"input",
+             "started_at":100.0,"completed_at":100.0},
+            {"item_id":"fixture-a1","turn_id":"fixture-turn","root_turn_id":"fixture-turn",
+             "user_round":1,"created_seq":2,"kind":"assistant_message","model_round":1,"summary":"first",
+             "started_at":101.0,"completed_at":120.0},
+            {"item_id":"fixture-t1","turn_id":"fixture-turn","root_turn_id":"fixture-turn",
+             "user_round":1,"created_seq":3,"kind":"tool_call","model_round":1,"tool_name":"inspect",
+             "started_at":105.0,"completed_at":110.0},
+            {"item_id":"fixture-a2","turn_id":"fixture-turn","root_turn_id":"fixture-turn",
+             "user_round":1,"created_seq":4,"kind":"assistant_message","model_round":2,"summary":"second",
+             "started_at":108.0,"completed_at":125.0},
+            {"item_id":"fixture-t2","turn_id":"fixture-turn","root_turn_id":"fixture-turn",
+             "user_round":1,"created_seq":5,"kind":"tool_call","model_round":2,"tool_name":"write",
+             "started_at":110.0,"completed_at":121.0}
+        ]}));
+        let selected = model
+            .records
+            .iter()
+            .position(|record| model.cells[record.cell].record_id == "fixture-a1")
+            .expect("first assistant record");
+        let focused = focused_record_indexes(&model, selected as i32).expect("focus set");
+        let record_id = |index: usize| model.cells[model.records[index].cell].record_id.as_str();
+        assert!(focused
+            .iter()
+            .any(|&index| record_id(index) == "fixture-a1"));
+        assert!(focused
+            .iter()
+            .any(|&index| record_id(index) == "fixture-t1"));
+        assert!(!focused
+            .iter()
+            .any(|&index| record_id(index) == "fixture-a2"));
+        assert!(!focused
+            .iter()
+            .any(|&index| record_id(index) == "fixture-t2"));
+        let texts = Texts::new(true);
+        assert_eq!(texts.kind(KIND_SYSTEM), "系统");
+        assert_eq!(texts.kind(KIND_USER), "用户");
+        assert_eq!(texts.kind(KIND_CONTEXT), "上下文");
+        assert_eq!(texts.kind(KIND_COMPACTED), "已压缩");
+        assert_eq!(texts.kind(KIND_MESSAGE), "助手");
+        assert_eq!(texts.kind(KIND_TOOL), "工具");
+        assert_eq!(texts.kind(KIND_SUBTOOL), "子智能体");
     }
 
     #[test]

@@ -10,6 +10,14 @@ const MAX_INPUT_BYTES: usize = 16_384;
 /// sending messages behave like the native path without a runtime.
 pub fn install(app: &MainWindow) {
     crate::demo_entities::install(app);
+    // Keep the preview representative of a live target without making the
+    // production window fabricate a target before the backend has one.
+    app.set_goal_visible(true);
+    app.set_goal_active(true);
+    app.set_goal_objective("整理示例文件".into());
+    app.set_goal_phase("active".into());
+    app.set_goal_activation("armed".into());
+    app.set_goal_rounds("0/100".into());
     let models: Rc<Vec<Rc<VecModel<TimelineRow>>>> = Rc::new(
         (0..9)
             .map(|index| {

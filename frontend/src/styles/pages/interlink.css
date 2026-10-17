@@ -55,6 +55,14 @@
 
 /* ------------------------------------------------------------- 我的设备卡片 */
 
+.messenger-settings-devices {
+  --el-color-primary: var(--mz-primary);
+  --el-color-primary-light-3: var(--mz-primary-soft);
+  --el-color-primary-light-9: var(--mz-primary-tint);
+  --el-switch-on-color: var(--mz-primary);
+  --el-switch-off-color: var(--mz-border-strong);
+}
+
 .interlink-devices-aggregate {
   margin-right: 8px;
   color: var(--mz-text-secondary, #5b6472);
@@ -76,11 +84,25 @@
   border: 1px solid var(--mz-border);
   border-radius: var(--mz-radius-card, 10px);
   background: var(--mz-surface, #fff);
+  box-shadow: 0 1px 2px rgb(31 35 41 / 3%);
+  transition: border-color 120ms ease, background-color 120ms ease, box-shadow 120ms ease;
+}
+
+.interlink-device-card:hover {
+  border-color: var(--mz-primary-soft);
+  background: var(--mz-primary-tint);
+  box-shadow: 0 6px 16px rgb(31 35 41 / 8%);
 }
 
 .interlink-device-card.is-offline {
   background: var(--mz-bg, #f7f8fb);
   color: var(--mz-text-muted, #8b93a1);
+}
+
+.interlink-device-card.is-offline:hover {
+  border-color: var(--mz-border-strong);
+  background: var(--mz-bg, #f7f8fb);
+  box-shadow: none;
 }
 
 .interlink-device-card-head {
@@ -158,6 +180,32 @@
 
 .messenger-settings-action.is-danger {
   color: var(--mz-danger, #c0392b);
+}
+
+.messenger-settings-devices .messenger-settings-action {
+  height: 30px;
+  border-color: var(--mz-border);
+  border-radius: var(--mz-radius-btn);
+  background: var(--mz-surface);
+  color: var(--mz-text-secondary);
+  font-size: var(--mz-font-sm);
+}
+
+.messenger-settings-devices .messenger-settings-action:hover:not(:disabled) {
+  border-color: var(--mz-primary-soft);
+  color: var(--mz-primary);
+  background: var(--mz-primary-tint);
+}
+
+.messenger-settings-devices .messenger-settings-action.is-danger {
+  border-color: color-mix(in srgb, var(--mz-danger) 35%, var(--mz-border));
+  color: var(--mz-danger);
+  background: var(--mz-danger-bg);
+}
+
+.messenger-settings-devices .messenger-settings-action.is-danger:hover:not(:disabled) {
+  border-color: var(--mz-danger);
+  background: var(--mz-danger-bg);
 }
 
 .interlink-devices-more {

@@ -9,6 +9,19 @@ use super::NativeDesktop;
 use anyhow::{anyhow, bail, Result};
 use wunder_server::cloud::{shared, CloudStatus};
 
+/// Cloud account passwords use the same portable contract in every desktop
+/// entry point. Rejecting non-ASCII and control characters avoids IME input
+/// being silently transformed by different transports.
+pub fn validate_cloud_password(password: &str) -> Result<()> {
+    if password.is_empty() {
+        bail!("请填写密码");
+    }
+    if !password.chars().all(|ch| ch.is_ascii() && !ch.is_control()) {
+        bail!("密码只能使用 ASCII 字符，请勿输入中文或控制字符");
+    }
+    Ok(())
+}
+
 /// Secret-free, UI-ready projection of the engine `CloudStatus`. Numbers stay
 /// raw so the frontend owns formatting and the low-balance threshold. The
 /// connection machine state passes through verbatim; timestamps arrive as
@@ -135,9 +148,10 @@ impl NativeDesktop {
         if !(lowered.starts_with("http://") || lowered.starts_with("https://")) {
             bail!("服务地址必须以 http:// 或 https:// 开头");
         }
-        if username.trim().is_empty() || password.is_empty() {
+        if username.trim().is_empty() {
             bail!("请填写用户名和密码");
         }
+        validate_cloud_password(password)?;
         let state = self.state().clone();
         let status = self
             .runtime
@@ -192,7 +206,15 @@ impl NativeDesktop {
 
 #[cfg(test)]
 mod tests {
-    use super::CloudStatusView;
+    use super::{validate_cloud_password, CloudStatusView};
+
+    #[test]
+    fn cloud_password_rejects_ime_and_control_input() {
+        assert!(validate_cloud_password("safe-pass_123").is_ok());
+        assert!(validate_cloud_password("含中文").is_err());
+        assert!(validate_cloud_password("line\nfeed").is_err());
+        assert!(validate_cloud_password("").is_err());
+    }
 
     /// The badge warns at or below 10% of the daily grant, evaluated without
     /// integer division so a 1-digit balance never slips through.

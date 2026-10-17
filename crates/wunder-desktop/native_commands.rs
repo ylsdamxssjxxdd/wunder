@@ -48,6 +48,12 @@ pub struct NativeGoal {
     pub objective: String,
     /// active | paused | blocked | complete
     pub phase: String,
+    /// Number of goal continuation rounds already admitted.
+    pub rounds_started: i64,
+    /// Maximum continuation rounds allowed by the goal.
+    pub max_goal_rounds: i64,
+    /// armed | disarmed; process-local activation from the goal service.
+    pub activation: String,
 }
 impl NativeGoal {
     pub fn active(&self) -> bool {
@@ -55,6 +61,10 @@ impl NativeGoal {
     }
     pub fn paused(&self) -> bool {
         self.phase == "paused"
+    }
+
+    pub fn visible(&self) -> bool {
+        !self.objective.trim().is_empty() && !self.phase.is_empty() && self.phase != "complete"
     }
 }
 impl NativeDesktop {

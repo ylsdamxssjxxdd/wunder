@@ -520,6 +520,11 @@ fn bind_cloud(app: &MainWindow, api: Arc<NativeDesktop>) {
             app.set_cloud_error("请填写服务地址、用户名和密码".into());
             return;
         }
+        if let Err(error) = wunder_desktop::validate_cloud_password(&password) {
+            app.set_cloud_error(error.to_string().into());
+            app.set_status("密码只能使用 ASCII 字符，请勿输入中文或控制字符".into());
+            return;
+        }
         app.set_cloud_busy(true);
         app.set_cloud_error("".into());
         let weak = weak.clone();
@@ -543,6 +548,15 @@ fn bind_cloud(app: &MainWindow, api: Arc<NativeDesktop>) {
                 }
             });
         });
+    });
+    let weak = app.as_weak();
+    app.on_cloud_password_edited(move |value| {
+        let Some(app) = weak.upgrade() else { return };
+        let filtered: String = value.chars().filter(|ch| ch.is_ascii() && !ch.is_control()).collect();
+        if value.as_str() != filtered {
+            app.set_cloud_pass_draft(filtered.into());
+            app.set_cloud_error("密码只能使用 ASCII 字符".into());
+        }
     });
     let weak = app.as_weak();
     let logout_api = api.clone();
@@ -1295,16 +1309,11 @@ fn normalize_palette(theme: &str) -> &'static str {
 /// mark keeps an invalid configured path visible instead of silently falling
 /// back to the system interpreter.
 fn tool_status_text(status: &RuntimeToolStatus) -> String {
-    let detail = if status.effective.is_empty() {
-        String::new()
-    } else {
-        format!(" · {}", status.effective)
-    };
     match status.source.as_str() {
-        "custom" => format!("✓ 自定义路径已生效{detail}"),
-        "embedded" => format!("✓ 已使用内置补充包{detail}"),
+        "custom" => "✓ 自定义路径已生效".to_string(),
+        "embedded" => "✓ 内置运行时已就绪".to_string(),
         "invalid" => "⚠ 配置路径无效，已回退系统环境".to_string(),
-        "system" => "使用系统 PATH".to_string(),
+        "system" => "✓ 使用系统 PATH".to_string(),
         _ => "⚠ 未找到可用的 Python 运行时，需要配置或安装补充包".to_string(),
     }
 }
@@ -1357,9 +1366,6 @@ pub(crate) fn run_background(task: impl FnOnce() + Send + 'static) {
 
 pub(crate) fn show_error(app: &MainWindow, error: String) {
     app.set_status(format!("错误：{error}").into());
-    app.set_dialog_title("操作失败".into());
-    app.set_dialog_text(error.into());
-    app.set_dialog_open(true);
 }
 
 #[cfg(test)]

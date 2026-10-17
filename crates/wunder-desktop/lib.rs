@@ -19,5 +19,6 @@ pub use native::{
     NativeWorkflowEntry, NativeWorkflowLine, NativeWorkflowSection, NativeWorkspace,
     PromptPackInfo, PromptSegmentContent, RuntimeToolStatus, ToolRecord, WorkspaceDeleteSummary,
     WorkspaceEdit, WorkspacePathReport, DEFAULT_AGENT_ID, WORKSPACE_COLORS, WORKSPACE_ICONS,
+    validate_cloud_password,
 };
 pub use runtime::DesktopRuntime;

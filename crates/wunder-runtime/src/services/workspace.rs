@@ -67,6 +67,10 @@ const FLATTEN_MIGRATION_CACHE_MAX: usize = 4096;
 /// 作用域 id 以 `__aw__` 标记结尾，与桌面工作区 `__w__`、容器 `__c__`、
 /// 历史 agent `__a__`/`__agent__` 后缀互不冲突。
 const AGENT_WORKSPACE_SCOPE_MARKER: &str = "__aw__";
+/// Ephemeral, server-managed workspace for one externally submitted run. This
+/// is distinct from desktop workspaces (`__w__`) and is rooted below an
+/// existing sandbox scope, so any server process can resolve it safely.
+const EXTERNAL_RUN_WORKSPACE_SCOPE_MARKER: &str = "__external_run__";
 pub const AGENT_WORKSPACE_DIR: &str = "workspace";
 /// 云端形态拆分后保留在用户目录根的内容；其余工作文件并入智能体云端目录。
 const USER_ROOT_KEEPERS: &[&str] = &[
@@ -475,6 +479,9 @@ impl WorkspaceManager {
 
     pub fn workspace_root(&self, user_id: &str) -> PathBuf {
         let safe_id = self.safe_user_id(user_id);
+        if let Some((base_scope, run_id)) = extract_external_run_workspace(&safe_id) {
+            return self.workspace_root(base_scope).join("runs").join(run_id);
+        }
         if let Some(workspace_key) = extract_workspace_key_from_scoped_user(&safe_id) {
             if let Some(path) = self.workspace_roots.read().get(&workspace_key).cloned() {
                 return path;
@@ -588,6 +595,22 @@ impl WorkspaceManager {
         format!("{safe_user}__c__{container_id}")
     }
 
+    /// Scope an isolated external run below a container workspace. Callers
+    /// pass the already-derived container scope, never a raw user identifier.
+    pub fn scoped_external_run_workspace(&self, base_scope: &str, run_id: &str) -> String {
+        let base = self.safe_user_id(base_scope);
+        let run = self.safe_scope_component(run_id);
+        if run.is_empty() {
+            base
+        } else {
+            format!("{base}{EXTERNAL_RUN_WORKSPACE_SCOPE_MARKER}{run}")
+        }
+    }
+
+    pub fn is_external_run_workspace_scope(&self, workspace_id: &str) -> bool {
+        extract_external_run_workspace(workspace_id.trim()).is_some()
+    }
+
     pub fn scoped_user_id_variants(&self, user_id: &str, agent_id: Option<&str>) -> Vec<String> {
         let safe_user = self.safe_user_id(user_id);
         if self.single_root || self.flatten_agent_scope_enabled() {
@@ -694,13 +717,17 @@ impl WorkspaceManager {
     /// 相对路径与文件树的基准目录：云端形态是智能体云端目录（用户目录下的
     /// `workspace`），其余形态就是该作用域的根目录。
     pub(crate) fn user_root(&self, user_id: &str) -> PathBuf {
+        let safe_id = self.safe_user_id(user_id);
+        if extract_external_run_workspace(&safe_id).is_some() {
+            return self.workspace_root(&safe_id);
+        }
         if !self.single_root && self.flatten_agent_scope_enabled() {
             return self
                 .root
-                .join(self.plain_cloud_user_id(user_id))
+                .join(self.plain_cloud_user_id(&safe_id))
                 .join(AGENT_WORKSPACE_DIR);
         }
-        self.workspace_root(user_id)
+        self.workspace_root(&safe_id)
     }
 
     /// `/workspaces/<user>` 这段公共前缀对应的物理目录。云端形态是**用户目录**
@@ -939,12 +966,10 @@ impl WorkspaceManager {
             let last = self
                 .orphan_sweep_last_ts
                 .load(std::sync::atomic::Ordering::SeqCst) as f64;
-            let retry_not_before = self
-                .orphan_sweep_retry_not_before
-                .load(std::sync::atomic::Ordering::SeqCst)
-                as f64;
-            (last <= 0.0 || now - last >= self.orphan_sweep_interval_s)
-                && now >= retry_not_before
+            let retry_not_before =
+                self.orphan_sweep_retry_not_before
+                    .load(std::sync::atomic::Ordering::SeqCst) as f64;
+            (last <= 0.0 || now - last >= self.orphan_sweep_interval_s) && now >= retry_not_before
         };
         // Usage summary reconcile keeps per-user counters exact without any
         // write-path cost; partitions roll forward so new months always have
@@ -1185,6 +1210,10 @@ impl WorkspaceManager {
     pub fn ensure_user_root(&self, user_id: &str) -> Result<PathBuf> {
         let user_root = self.user_root(user_id);
         let safe_id = self.safe_user_id(user_id);
+        if extract_external_run_workspace(&safe_id).is_some() {
+            fs::create_dir_all(&user_root)?;
+            return Ok(user_root);
+        }
         // A desktop workspace points at a real host folder; silently recreating
         // it after the user moved or unplugged it would hide the problem.
         if extract_workspace_key_from_scoped_user(&safe_id).is_some() {
@@ -3625,6 +3654,14 @@ fn extract_workspace_key_from_scoped_user(user_id: &str) -> Option<String> {
     let (_, key) = user_id.rsplit_once(WORKSPACE_SCOPE_SEPARATOR)?;
     let key = key.trim();
     (!key.is_empty()).then(|| key.to_string())
+}
+
+fn extract_external_run_workspace(user_id: &str) -> Option<(&str, &str)> {
+    let (base_scope, run_id) = user_id.rsplit_once(EXTERNAL_RUN_WORKSPACE_SCOPE_MARKER)?;
+    if base_scope.is_empty() || run_id.is_empty() {
+        return None;
+    }
+    Some((base_scope, run_id))
 }
 
 fn extract_container_id_from_scoped_user(user_id: &str) -> i32 {

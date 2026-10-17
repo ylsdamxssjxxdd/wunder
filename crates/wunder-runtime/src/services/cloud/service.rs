@@ -876,9 +876,13 @@ impl CloudService {
             preferences_sync_enabled: true,
             interlink: super::session::InterlinkSessionConfig::default(),
         };
-        // Signing in enables outbound cloud use. Inbound local access requires
-        // the user's separate, persisted consent in settings / CLI.
-        session.interlink.enabled = false;
+        // A local form signs in to participate in the connected workspace by
+        // default. The published shadow is metadata only (workspace names,
+        // relative directory entries and thread summaries); file bodies remain
+        // on demand behind command policy and approval. Users or organisation
+        // policy can still disable this from settings.
+        session.interlink.enabled = true;
+        session.interlink.full_shadow = true;
         session.account = Some(CloudAccountSnapshot {
             max_concurrent_calls,
             ..self.fetch_account(&session).await?
@@ -992,8 +996,11 @@ impl CloudService {
             .to_string();
         session.interlink.node_secret = None;
         session.interlink.secret_version = 0;
-        session.interlink.enabled = false;
-        session.interlink.full_shadow = false;
+        // A newly adopted local form must present the same connected workspace
+        // contract as a password login. It gets its own device credential, and
+        // inherits no file-content publishing capability.
+        session.interlink.enabled = true;
+        session.interlink.full_shadow = true;
         session.logged_in_at = super::reporter::now_unix_seconds();
         session.save(&self.session_base_dir())?;
         self.install_session(session);

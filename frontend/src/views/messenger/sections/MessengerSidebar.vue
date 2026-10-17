@@ -71,7 +71,7 @@
           />
         </template>
 
-        <button
+        <div
           v-else
           class="messenger-sidebar-workspace-row"
           :class="{
@@ -79,10 +79,13 @@
             'is-dragging': dragKey === entry.key,
             'is-drop-target': dropTargetKey === entry.key
           }"
-          type="button"
+          role="button"
+          tabindex="0"
           draggable="true"
           :aria-label="t('interlink.workspace.rowAria', { name: workspaceRowLabel(entry) })"
           @click="selectWorkspaceRow(entry)"
+          @keydown.enter.prevent="selectWorkspaceRow(entry)"
+          @keydown.space.prevent="selectWorkspaceRow(entry)"
           @dragstart="handleRowDragStart(entry, $event)"
           @dragend="handleRowDragEnd"
           @dragover.prevent="handleRowDragOver(entry)"
@@ -97,7 +100,18 @@
           <span class="messenger-sidebar-workspace-name" :title="workspaceRowLabel(entry)">
             {{ workspaceRowLabel(entry) }}
           </span>
-        </button>
+          <button
+            class="messenger-sidebar-workspace-menu"
+            type="button"
+            :disabled="newRemoteThreadKey === entry.key || Boolean(resolveDisabledReason(entry.node, 'thread.create'))"
+            :title="t('chat.newSession')"
+            :aria-label="t('chat.newSession')"
+            @click.stop="createRemoteThread(entry)"
+          >
+            <i v-if="newRemoteThreadKey === entry.key" class="fa-solid fa-spinner fa-spin" aria-hidden="true"></i>
+            <i v-else class="fa-solid fa-plus" aria-hidden="true"></i>
+          </button>
+        </div>
         <InterlinkThreadTree
           v-if="isSelectedLocalEntry(entry)"
           :items="selectedRemoteThreads"
@@ -113,12 +127,14 @@
       </template>
     </div>
 
+    <!-- The live command stream is opened only by a selected workspace thread
+         row; there is no standalone control entry. The dialog remains the
+         message/approval transport while the tree owns navigation. -->
     <RemoteThreadsPanel
       v-if="interlinkRemoteSelected && remoteInterlinkNode"
       :target="interlinkTarget"
       :workspace-id="selectedRemoteWorkspaceId"
       :node="remoteInterlinkNode"
-      :trigger="false"
       :open-thread-id="remoteThreadToOpen"
     />
 
@@ -181,6 +197,7 @@ import {
 } from '@/api/interlink';
 import type { InterlinkShadow, InterlinkShadowThread } from '@/api/interlink';
 import {
+  DISABLED_REASON_KEY,
   interlinkWorkspaceRows,
   resolveDisabledReason,
   type InterlinkWorkspaceRow
@@ -373,6 +390,7 @@ const remoteShadow = ref<InterlinkShadow | null>(null);
 const remoteThreadsLoading = ref(false);
 const remoteThreadsError = ref('');
 const remoteThreadToOpen = ref('');
+const newRemoteThreadKey = ref('');
 let remoteShadowSerial = 0;
 let remoteThreadsAbort: AbortController | null = null;
 
@@ -503,6 +521,61 @@ const openRemoteThread = async (threadId: string): Promise<void> => {
   if (serial === remoteShadowSerial) remoteThreadToOpen.value = threadId;
 };
 
+/** Create a remote thread from the same workspace row affordance used by the
+ * cloud/local trees.  Creation is independent from the first message so the
+ * new thread is immediately visible and remains retryable after reconnect. */
+const createRemoteThread = async (entry: InterlinkWorkspaceRow): Promise<void> => {
+  if (newRemoteThreadKey.value) return;
+  const blocked = resolveDisabledReason(entry.node, 'thread.create');
+  if (blocked) {
+    remoteThreadsError.value = t(DISABLED_REASON_KEY[blocked]);
+    return;
+  }
+  const target = interlinkDeviceTarget(entry.deviceId);
+  const workspaceId = entry.workspaceId;
+  const controller = new AbortController();
+  newRemoteThreadKey.value = entry.key;
+  try {
+    // The row button stops the click from toggling the tree, so explicitly
+    // make this workspace the current target before opening its thread view.
+    // Waiting for the route write prevents the directory watcher from
+    // accepting a command result for the previous workspace.
+    await writeInterlinkTarget(target, workspaceId);
+    await nextTick();
+    const outcome = await runInterlinkCommand({
+      to: target,
+      kind: 'thread.create',
+      args: { ...(workspaceId ? { workspace_id: workspaceId } : {}) },
+      signal: controller.signal
+    });
+    if (outcome.status !== 'succeeded') {
+      throw new Error(outcome.errorSummary || outcome.errorCode || outcome.status);
+    }
+    const record = outcome.result && typeof outcome.result === 'object'
+      ? outcome.result as Record<string, unknown>
+      : {};
+    const thread = normalizeRemoteThread({
+      local_thread_id: record.local_thread_id,
+      title: record.title || t('chat.newSession'),
+      status: record.status || 'active',
+      workspace_id: record.workspace_id || workspaceId
+    });
+    if (thread) {
+      const current = remoteLiveThreads.value || remoteShadow.value?.threads || [];
+      remoteLiveThreads.value = [thread, ...current.filter((item) => item.local_thread_id !== thread.local_thread_id)].slice(0, 200);
+      remoteThreadsTotal.value = Math.max(remoteThreadsTotal.value, remoteLiveThreads.value.length);
+      remoteThreadsError.value = '';
+      await openRemoteThread(thread.local_thread_id);
+    } else {
+      await loadSelectedRemoteShadow();
+    }
+  } catch (error) {
+    remoteThreadsError.value = String(error instanceof Error ? error.message : error || '');
+  } finally {
+    if (newRemoteThreadKey.value === entry.key) newRemoteThreadKey.value = '';
+  }
+};
+
 watch(
   () => `${interlinkTarget.value}\n${interlinkWorkspaceId.value}\n${resolveDisabledReason(remoteInterlinkNode.value, 'threads.list') || 'ready'}`,
   () => {
@@ -533,7 +606,7 @@ watch(
 );
 
 const selectWorkspaceRow = (row: InterlinkWorkspaceRow): void => {
-  writeInterlinkTarget(interlinkDeviceTarget(row.deviceId), row.workspaceId);
+  void writeInterlinkTarget(interlinkDeviceTarget(row.deviceId), row.workspaceId);
 };
 
 const handleWorkspaceRowClick = async (): Promise<void> => {

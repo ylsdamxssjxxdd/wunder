@@ -68,6 +68,14 @@ impl MetaStore for PostgresStorage {
     fn set_meta(&self, key: &str, value: &str) -> Result<()> {
         self.set_meta_impl(key, value)
     }
+    fn compare_and_swap_meta(
+        &self,
+        key: &str,
+        expected: Option<&str>,
+        value: Option<&str>,
+    ) -> Result<bool> {
+        self.compare_and_swap_meta_impl(key, expected, value)
+    }
     fn list_meta_prefix(&self, prefix: &str) -> Result<Vec<(String, String)>> {
         self.list_meta_prefix_impl(prefix)
     }

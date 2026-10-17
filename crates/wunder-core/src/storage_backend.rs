@@ -67,6 +67,15 @@ pub trait StorageLifecycle {
 pub trait MetaStore {
     fn get_meta(&self, key: &str) -> Result<Option<String>>;
     fn set_meta(&self, key: &str, value: &str) -> Result<()>;
+    /// Atomically replace a metadata value only when its current value matches
+    /// `expected`. `None` represents a missing key. The replacement is removed
+    /// when `value` is `None`.
+    fn compare_and_swap_meta(
+        &self,
+        key: &str,
+        expected: Option<&str>,
+        value: Option<&str>,
+    ) -> Result<bool>;
     fn list_meta_prefix(&self, prefix: &str) -> Result<Vec<(String, String)>>;
     fn delete_meta_prefix(&self, prefix: &str) -> Result<usize>;
 }

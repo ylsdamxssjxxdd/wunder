@@ -9,7 +9,8 @@ use crate::services::agent_abilities::{
 };
 use crate::services::default_agent_protocol::{
     default_agent_config_from_record, default_agent_meta_key, is_builtin_default_agent_name,
-    normalize_default_agent_preset_questions, DefaultAgentConfig, DEFAULT_AGENT_NAME,
+    normalize_default_agent_preset_questions, DefaultAgentConfig, DEFAULT_AGENT_EXTRA_PROMPT,
+    DEFAULT_AGENT_GREETING, DEFAULT_AGENT_NAME,
 };
 use crate::services::llm::is_llm_model;
 use crate::services::tools::resolve_tool_name;
@@ -40,9 +41,6 @@ const DEFAULT_AGENT_ACCESS_LEVEL: &str = "A";
 const DEFAULT_AGENT_APPROVAL_MODE: &str = "full_auto";
 const DEFAULT_AGENT_ID_ALIAS: &str = "__default__";
 const DEFAULT_AGENT_STATUS: &str = "active";
-const DEFAULT_AGENT_DESCRIPTION: &str =
-    "我是wunder，很高兴帮助你，试着把整理资料，分析数据，写文章等工作交给我吧~";
-const DEFAULT_AGENT_SYSTEM_PROMPT: &str = "你是一个乐于助人的智能体";
 const DEFAULT_RUNTIME_WINDOW_DAYS: i64 = 14;
 const MAX_RUNTIME_WINDOW_DAYS: i64 = 90;
 const MAX_RUNTIME_RECORD_LIMIT: i64 = 5000;
@@ -1961,10 +1959,10 @@ fn normalize_default_agent_config(config: &mut DefaultAgentConfig) {
         config.name = DEFAULT_AGENT_NAME.to_string();
     }
     if config.description.trim().is_empty() {
-        config.description = DEFAULT_AGENT_DESCRIPTION.to_string();
+        config.description = DEFAULT_AGENT_GREETING.to_string();
     }
     if config.system_prompt.trim().is_empty() {
-        config.system_prompt = DEFAULT_AGENT_SYSTEM_PROMPT.to_string();
+        config.system_prompt = DEFAULT_AGENT_EXTRA_PROMPT.to_string();
     }
     if config.status.trim().is_empty() {
         config.status = DEFAULT_AGENT_STATUS.to_string();

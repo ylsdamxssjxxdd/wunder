@@ -188,6 +188,9 @@ impl Orchestrator {
             .map(str::trim)
             .filter(|v| !v.is_empty())
         {
+            if self.workspace.is_external_run_workspace_scope(workspace_id) {
+                return workspace_id.to_string();
+            }
             return self
                 .workspace
                 .scoped_user_id_for_workspace(user_id, workspace_id);

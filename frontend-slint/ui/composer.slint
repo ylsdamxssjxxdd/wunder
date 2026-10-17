@@ -208,7 +208,7 @@ component ModelPicker inherits Rectangle {
                     border-radius: Theme.radius-sm;
                     background: row-touch.has-hover ? Theme.hover : transparent;
                     accessible-role: list-item;
-                    accessible-label: model.model;
+                    accessible-label: model.key;
                     // Cloud entries (`cloud/<id>`) stay listed while signed
                     // out or expired, but grey out and stay unselectable
                     // until the session returns.
@@ -227,7 +227,7 @@ component ModelPicker inherits Rectangle {
                     }
                     Text {
                         x: 48px; y: 4px; width: parent.width - 122px; height: 17px;
-                        text: model.model != "" ? model.model : model.key;
+                        text: model.key;
                         color: cloud-muted ? Theme.muted : (model.key == root.current-key ? Theme.accent : Theme.text);
                         font-size: Theme.font-md; font-weight: 600;
                         vertical-alignment: center; overflow: elide;
@@ -321,13 +321,15 @@ component GoalTool inherits Rectangle {
     in property <image> icon;
     in property <string> tip;
     callback clicked;
-    width: 24px; height: 24px;
-    border-radius: 6px;
-    background: hit.has-hover ? #FFFFFFB0 : transparent;
+    width: 26px; height: 26px;
+    border-radius: 8px;
+    border-width: 1px;
+    border-color: hit.has-hover ? #E8B2C8 : #EFC6D7;
+    background: hit.has-hover ? #FFE6EF : #FFFFFF;
     Image {
-        x: 5px; y: 5px; width: 14px; height: 14px;
+        x: 6px; y: 6px; width: 14px; height: 14px;
         source: root.icon;
-        colorize: hit.has-hover ? Theme.danger : Theme.muted;
+        colorize: hit.has-hover ? #9D2B5C : #7D858F;
         image-fit: contain;
     }
     hit := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
@@ -690,19 +692,25 @@ export component InquiryPanel inherits Rectangle {
 export component GoalBanner inherits Rectangle {
     in property <string> objective;
     in property <string> elapsed;
+    in property <string> phase;
+    in property <string> activation;
+    in property <string> rounds;
     in property <bool> paused: false;
     in-out property <bool> editing: false;
     in-out property <string> edit-draft;
     callback save(string);
     callback pause-toggle();
     callback clear();
-    height: 34px;
-    background: Theme.danger-bg;
+    height: 42px;
+    border-radius: 12px;
+    border-width: 1px;
+    border-color: #EFC6D7;
+    background: #FDF1F6;
     if root.editing : Rectangle {
         width: 100%; height: 100%;
         init => { goal-input.focus(); }
         HorizontalLayout {
-            padding-left: 16px; padding-right: 10px; spacing: 8px;
+            padding-left: 12px; padding-right: 10px; spacing: 8px;
             Rectangle {
                 width: 14px; height: parent.height;
                 // Layout rows top-align fixed-height children, so the glyph
@@ -751,24 +759,28 @@ export component GoalBanner inherits Rectangle {
                 }
             }
             Text {
-                text: I18n.cp_goal_label; color: Theme.danger;
+                text: I18n.cp_goal_label; color: #9D2B5C;
                 font-size: Theme.font-md; font-weight: 700; vertical-alignment: center;
             }
             Text {
-                text: "·"; color: Theme.danger; opacity: 0.55;
+                text: "·"; color: #9D2B5C; opacity: 0.55;
                 font-size: Theme.font-md; vertical-alignment: center;
             }
-            if root.paused : Text {
-                text: I18n.cp_goal_paused_tag; color: Theme.warning;
+            if root.phase == "blocked" : Text {
+                text: I18n.cp_goal_blocked_tag; color: Theme.danger;
                 font-size: Theme.font-sm; font-weight: 700; vertical-alignment: center;
             }
-            if !root.paused : Text {
-                text: root.elapsed; color: Theme.danger; opacity: 0.8;
+            if root.phase == "paused" || root.activation == "disarmed" : Text {
+                text: I18n.cp_goal_paused_tag; color: Theme.warning;
+                font-size: Theme.font-sm; vertical-alignment: center;
+            }
+            if root.phase != "blocked" && root.phase != "paused" && root.activation != "disarmed" : Text {
+                text: root.rounds; color: #B8557F; opacity: 0.9;
                 font-size: Theme.font-sm; vertical-alignment: center;
             }
             Text {
                 horizontal-stretch: 1; min-width: 0px;
-                text: root.objective; color: Theme.text-secondary;
+                text: root.objective; color: #7A2949;
                 font-size: Theme.font-md; overflow: elide; vertical-alignment: center;
             }
             GoalTool {
@@ -777,10 +789,10 @@ export component GoalBanner inherits Rectangle {
                 clicked => { root.editing = true; root.edit-draft = root.objective; }
             }
             GoalTool {
-                icon: root.paused
+                icon: root.paused || root.phase == "blocked" || root.activation == "disarmed"
                     ? @image-url("../assets/icons/rotate-right.svg")
                     : @image-url("../assets/icons/status-pause.svg");
-                tip: root.paused ? I18n.cp_goal_resume : I18n.cp_goal_pause;
+                tip: root.paused || root.phase == "blocked" || root.activation == "disarmed" ? I18n.cp_goal_resume : I18n.cp_goal_pause;
                 clicked => { root.pause-toggle(); }
             }
             GoalTool {

@@ -167,11 +167,11 @@ wunder 是一个**智能体调度平台**：蛹（desktop）是本地 AI 工作�
 
 ### 4.1.A 外部一次性工作流 API
 
-- 用途：供外部系统后端把单个 Wunder 智能体嵌入到自有前端小部件。调用方指定目标用户、目标智能体、消息和上传文件；Wunder 会打断该智能体当前工作，新建主会话，在目标用户的 `container_id=10` 工作目录执行一次性任务，并返回中间事件、最终回复和可下载文件。
-- 鉴权：外部系统后端使用 `X-API-Key: <security.external_auth_key>` 或 `Authorization: Bearer <security.external_auth_key>`；管理员 token 也可访问。用户 Bearer Token 只能访问自身 run，不能跨用户指定目标。`external_auth_key` 未配置时按现有配置逻辑回退到 `security.api_key`。外部密钥路径下指定未注册普通用户时会自动开通账号，并同步该用户的预设智能体。
-- 工作区语义：MVP 固定 `workspace_container_id=10`，创建 run 前会清空该用户 10 号目录；上传文件落到 `input/`，服务端会创建 `output/`，最终下载清单包含 `output/` 下文件，以及最终回答中引用到的 `input/...` 或 `output/...` 文件。该覆盖是请求级的，不修改智能体的持久 `sandbox_container_id`。
-- 并发与打断：同一 `user_id + container_id=10` 同时只允许一个外部工作流。默认已有外部工作流时返回 `409 EXTERNAL_WORKFLOW_BUSY`；传 `preempt_active_workflow=true` 会先取消旧外部工作流。一次性工作流始终要求 `preempt=true`，会取消目标智能体当前任务线程工作并强制创建新的主会话。
-- 请求格式：创建接口使用 `multipart/form-data`，必须包含 `request` JSON 字段，可重复上传 `files` 或 `files[]` 文件字段。单次请求上限当前为 200MB。
+- 用途：供外部系统把一个智能体作为一次性任务调用。调用方指定用户、智能体、消息和可选文件；服务创建独立任务线程，返回过程事件、最终回复和下载清单。
+- 鉴权：外部系统使用 `X-API-Key: <security.external_auth_key>` 或管理员 Bearer Token，可通过 `user_id` 或 `user_name` 选择用户；未注册的普通用户会按现有外部接入规则开通。普通用户 Bearer Token 固定为 token 所属用户，只能传相同的 `user_id`，也不能用 `user_name` 选择用户。
+- 工作区：`workspace_container_id` 固定为 `10`。每个 run 在该容器下拥有独立目录，上传文件位于 `input/`，交付物写入 `output/`。新 run、旧 run 和普通聊天线程不会共享文件目录。
+- 调度：同一用户的一次性工作流创建过程串行。新请求会取消该用户先前仍在运行的一次性工作流；普通聊天线程保持独立，不会被一次性工作流取消。取消先进入 `cancelling`，实际终态由执行器收敛。创建高峰时短暂返回 `409 EXTERNAL_WORKFLOW_BUSY`，调用方可重试。
+- 请求格式：创建接口使用 `multipart/form-data`，必须包含 `request` JSON 字段，可重复上传 `files` 或 `files[]` 文件字段。单次请求上限为 200MB。请求中不支持 `preempt` 或 `preempt_active_workflow`。
 
 #### `POST /wunder/external/workflows:stream`
 
@@ -183,8 +183,6 @@ wunder 是一个**智能体调度平台**：蛹（desktop）是本地 AI 工作�
   "user_name": "<target_user_name>",
   "agent_name": "<target_agent_name>",
   "message": "<task message>",
-  "preempt": true,
-  "preempt_active_workflow": false,
   "workspace_container_id": 10,
   "clear_workspace": true,
   "timeout_s": 6000,
@@ -193,7 +191,7 @@ wunder 是一个**智能体调度平台**：蛹（desktop）是本地 AI 工作�
 }
 ```
 
-- `user_id/user_name` 二选一；`agent_id/agent_name` 二选一。`timeout_s` 范围为 1 到 6000 秒，默认 6000 秒。
+- 外部密钥或管理员调用时 `user_id/user_name` 二选一；普通用户 Bearer Token 可以省略 `user_id`，或传 token 所属的 `user_id`。`agent_id/agent_name` 二选一。`timeout_s` 范围为 1 到 6000 秒，默认 6000 秒。
 - SSE 事件：
   - `workflow.start`：返回 `run_id/session_id/user_id/agent_id/status/workspace_container_id/events_url/cancel_url`。
   - `workflow.event`：转发内部编排事件，`data.type` 为内部事件类型，如 `tool_call/tool_result/tool_output_delta/approval_request/final/error/turn_terminal` 等。
@@ -217,13 +215,13 @@ wunder 是一个**智能体调度平台**：蛹（desktop）是本地 AI 工作�
 
 #### `POST /wunder/external/workflows/{run_id}/cancel`
 
-- 作用：取消当前外部工作流对应会话、排队任务和会话目标。
+- 作用：取消当前外部工作流对应线程、排队任务、子线程、命令会话和会话目标。
 - 返回：`run_id/session_id/status/cancel_requested`。运行中 run 会先进入 `cancelling`，后续流式终态会收敛为 `cancelled`。
 
 #### `GET /wunder/external/workflows/{run_id}/files/{file_id}`
 
 - 作用：下载本次 run 结果清单中的文件。
-- 约束：只能下载该 run 的 `files[]` 清单内文件，不能任意读取 10 号目录。
+- 约束：只能下载该 run 的 `files[]` 清单内文件，不能任意读取工作区。
 
 ## 4.x 子智能体控制补充（2026-03-26）
 

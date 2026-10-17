@@ -231,10 +231,7 @@ pub fn install_save_handler(app: &MainWindow, api: Arc<NativeDesktop>) {
         let edit = match build_agent_save_edit(&draft, &known, &default_model_key(&app)) {
             Ok(edit) => edit,
             Err(error) => {
-                app.set_status(format!("错误：{error}").into());
-                app.set_dialog_title("无法保存智能体".into());
-                app.set_dialog_text(error.into());
-                app.set_dialog_open(true);
+                crate::native_pages::show_error(&app, error);
                 return;
             }
         };

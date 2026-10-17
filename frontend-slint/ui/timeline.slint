@@ -94,6 +94,8 @@ component StatusDot inherits Rectangle {
         width: 12px; height: 12px;
         source: @image-url("../assets/icons/rotate-right.svg");
         colorize: Theme.muted; image-fit: contain;
+        // The software renderer keeps SVG transforms crisp at this size; the
+        // shared 120ms clock gives every running row one coherent phase.
         transform-rotation: (TimelineSpin.angle + root.phase * 30.0) * 1deg;
     }
 }
@@ -141,10 +143,10 @@ component TimelineGutter inherits Rectangle {
         height: root.caret ? parent.height / 2 - 7px : parent.height;
         background: Theme.timeline-line;
     }
-    Rectangle {
+    StatusDot {
         visible: root.node;
-        x: (TimelineMetrics.gutter - 6px) / 2; y: 9px; width: 6px; height: 6px; border-radius: 3px;
-        background: root.status == 2 ? Theme.danger : root.status == 1 ? Theme.thought : Theme.thought.transparentize(0.35);
+        x: (TimelineMetrics.gutter - self.width) / 2; y: 7px;
+        status: root.status;
     }
     if root.caret : FoldCaret {
         x: (TimelineMetrics.gutter - 12px) / 2;
@@ -187,7 +189,13 @@ component FooterMetric inherits Rectangle {
     accessible-label: StatsIcons.label(root.metric.key) + " " + root.metric.value;
     metric-row := HorizontalLayout {
         spacing: 5px; alignment: start;
-        Image { y: 5px; width: 12px; height: 12px; source: StatsIcons.image(root.metric.key); colorize: Theme.muted; image-fit: contain; }
+        Image {
+            y: 5px; width: 12px; height: 12px;
+            source: StatsIcons.image(root.metric.key); colorize: Theme.muted; image-fit: contain;
+            // The footer owns the live request/tool phase as well. Share the
+            // process clock so the glyph reads exactly like a running entry.
+            transform-rotation: root.metric.key == "status-running" ? TimelineSpin.angle * 1deg : 0deg;
+        }
         Text {
             height: 22px; text: root.metric.key == "hashtag" ? I18n.tl_user_round(root.metric.value) : root.metric.value;
             color: root.metric.key == "status-error" ? Theme.danger : Theme.muted; font-size: Theme.font-xs; vertical-alignment: center;
@@ -317,10 +325,9 @@ component FoldEntry inherits Rectangle {
                 width: parent.width - Theme.timeline-padding * 2; height: parent.height;
                 spacing: 8px;
                 TimelineGutter {
-                    line: root.in-group; node: root.in-group;
+                    line: root.in-group; node: true;
                     status: root.data.status-kind;
                 }
-                StatusDot { y: 7px; status: root.data.status-kind; phase: root.data.payload; }
                 Image {
                     y: 6.5px; width: 13px; height: 13px;
                     source: ToolIcons.image(root.data.tool-icon);
@@ -716,6 +723,9 @@ export component TimelineView inherits Rectangle {
     // keep turning. Without this the spin timer ticks for the whole session and
     // re-evaluates every status dot on screen.
     in property <bool> spinning: false;
+    // Incremented by the native reducer after one coalesced stream frame.
+    // This is a change signal for scroll following, not display data.
+    in property <int> stream-revision: 0;
     // Live scroll offset of the timeline viewport, published for the native
     // smoke checks (they assert the position holds while the user reads back).
     out property <length> scroll-y: rows-scroll.content-y;
@@ -731,6 +741,9 @@ export component TimelineView inherits Rectangle {
     // stretching every line across the whole pane. The turn ruler keeps the
     // viewport edge, exactly like the web messenger's chat lane.
     private property <length> column-width: min(rows-scroll.visible-width, Theme.timeline-column-width);
+    private property <length> transcript-height: rows-scroll.content-height;
+    private property <int> follow-passes: 2;
+    private property <bool> follow-pending: true;
     // Push the viewport to the newest content on request; the projection calls
     // this when it follows the stream, and the "back to latest" action does too.
     public function scroll-to-end() {
@@ -752,15 +765,37 @@ export component TimelineView inherits Rectangle {
         interval: 120ms; running: root.spinning;
         triggered => { TimelineSpin.angle = Math.mod(TimelineSpin.angle + 30.0, 360.0); }
     }
-    // A streamed line is laid out after the frame that triggered it, so the
-    // jump is repeated on a short tick while the output is being followed.
+    // A streamed line is laid out after the frame that triggered it. Follow on
+    // two subsequent frames only after content changed. A permanently running
+    // 33ms timer fought touchpad/wheel scrolling and repainted idle history.
     follow-timer := Timer {
-        interval: 33ms; running: root.follow-output;
-        triggered => { root.scroll-to-end(); }
+        interval: 16ms; running: root.follow-output && root.follow-pending;
+        triggered => {
+            root.scroll-to-end();
+            if root.follow-passes > 0 {
+                root.follow-passes -= 1;
+            } else {
+                root.follow-pending = false;
+            }
+        }
     }
     changed follow-output => {
         if root.follow-output {
+            root.follow-passes = 2;
+            root.follow-pending = true;
             root.scroll-to-end();
+        }
+    }
+    changed stream-revision => {
+        if root.follow-output {
+            root.follow-passes = 2;
+            root.follow-pending = true;
+        }
+    }
+    changed transcript-height => {
+        if root.follow-output {
+            root.follow-passes = 2;
+            root.follow-pending = true;
         }
     }
     rows-scroll := ScrollView {

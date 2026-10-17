@@ -47,7 +47,10 @@ test('remote threads keep workspace identity, render live text and preserve fail
       }
       return { status: 200, statusText: 'OK', headers: {}, config, data: { data } };
     };
-    const app = createApp({ setup: () => () => h(Panel, { target: 'device:fixture_device', workspaceId: 'fixture_workspace', node: null }) });
+    const app = createApp({ setup: () => () => h(Panel, {
+      target: 'device:fixture_device', workspaceId: 'fixture_workspace', node: null,
+      openThreadId: 'fixture_thread'
+    }) });
     installElementPlus(app);
     app.mount(host);
     (window as any).__remoteFixture = { commands, sockets, dispose() {
@@ -55,7 +58,6 @@ test('remote threads keep workspace identity, render live text and preserve fail
     } };
   });
   try {
-    await page.getByRole('button', { name: /打开线程控制|Open thread controls/ }).click();
     const dialog = page.getByRole('dialog');
     await expect(dialog.locator('option', { hasText: 'Fixture thread' })).toHaveCount(1);
     await dialog.locator('select').selectOption('fixture_thread');

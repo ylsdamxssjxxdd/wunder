@@ -281,13 +281,6 @@ fn rebuild_rows(app: &MainWindow) {
     // The cloud workspace is a fixed sentinel row pinned above the local
     // workspaces while the account is signed in.
     let cloud = app.get_cloud_logged_in().then(|| cloud_row(app));
-    if cards_model.row_count() == 0 {
-        let rows: Vec<SidebarRow> = cloud.into_iter().collect();
-        app.set_sidebar_rows(ModelRc::new(VecModel::from(rows)));
-        app.set_sidebar_archivable_count(0);
-        app.set_sidebar_selected_count(0);
-        return;
-    }
     let selected = if crate::workspace_files::is_cloud_target() {
         None
     } else {
@@ -308,8 +301,37 @@ fn rebuild_rows(app: &MainWindow) {
     });
     let selection_mode = app.get_sidebar_selection_mode();
     let mut rows: Vec<SidebarRow> = Vec::with_capacity(cards_model.row_count() * 4 + 1);
-    if let Some(cloud) = cloud {
+    if let Some(mut cloud) = cloud {
+        let cloud_threads = app.get_cloud_thread_rows();
+        cloud.thread_count = cloud_threads.row_count() as i32;
         rows.push(cloud);
+        if crate::workspace_files::is_cloud_target() {
+            for (index, thread) in cloud_threads
+                .iter()
+                .take(MAX_TREE_ROWS.saturating_sub(rows.len()))
+                .enumerate()
+            {
+                rows.push(SidebarRow {
+                    kind: 3,
+                    workspace_id: "".into(),
+                    name: "".into(),
+                    icon: "".into(),
+                    color: "".into(),
+                    thread_count: 0,
+                    expanded: false,
+                    selected: false,
+                    thread_id: thread.id.clone(),
+                    title: thread.title.clone(),
+                    status: thread.status.clone(),
+                    active: app.get_cloud_chat_active()
+                        && app.get_cloud_thread_index() == index as i32 + 1,
+                    payload: index as i32,
+                    origin: "cloud".into(),
+                    archivable: false,
+                    checked: false,
+                });
+            }
+        }
     }
     // Persisted manual order; un-ordered ids keep their facade position.
     let mut cards: Vec<(usize, WorkspaceCard)> = cards_model.iter().enumerate().collect();
@@ -510,6 +532,7 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
             // Pinned cloud row: point the file panel back at the cloud
             // workspace and drop the local selection.
             app.set_selected_workspace(-1);
+            app.set_cloud_chat_active(false);
             THREAD_SELECTION.with(|slot| slot.borrow_mut().clear());
             app.set_sidebar_selection_mode(false);
             crate::workspace_files::set_target(
@@ -518,6 +541,7 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
                 crate::workspace_files::Target::Cloud,
             );
             crate::navigation_ui::project_sidebar(&app, None);
+            app.invoke_cloud_open_threads();
         } else if row.kind == 0 {
             let workspace = row.payload;
             let id = row.workspace_id.to_string();
@@ -530,6 +554,7 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
             });
             THREAD_SELECTION.with(|slot| slot.borrow_mut().clear());
             app.set_sidebar_selection_mode(false);
+            app.set_cloud_chat_active(false);
             app.set_selected_workspace(workspace);
             // Mirror this workspace's folder in the working-directory panel.
             if let Some(card) = app.get_workspaces().row_data(workspace as usize) {
@@ -543,6 +568,14 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
                 }
             }
             crate::navigation_ui::project_sidebar(&app, None);
+        } else if row.kind == 3 {
+            app.set_cloud_thread_index(row.payload + 1);
+            app.set_cloud_chat_active(true);
+            // The selected marker is projected from the thread index, so
+            // rebuild immediately instead of waiting for the next catalog
+            // refresh. This keeps the tree and the content panel convergent.
+            crate::navigation_ui::project_sidebar(&app, None);
+            app.invoke_cloud_select_thread(row.payload + 1);
         } else {
             app.invoke_select_conversation(row.payload);
         }

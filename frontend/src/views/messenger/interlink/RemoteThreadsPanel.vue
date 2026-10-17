@@ -1,7 +1,4 @@
 <template>
-  <button v-if="trigger" class="remote-thread-controls" type="button" @click="open">
-    {{ text('打开线程控制', 'Open thread controls') }}
-  </button>
   <el-dialog v-model="visible" :title="text('设备线程', 'Device threads')" width="760px" destroy-on-close @closed="stop">
     <div class="remote-thread-toolbar">
       <button type="button" :disabled="busy" @click="reload">{{ text('刷新', 'Refresh') }}</button>
@@ -37,9 +34,8 @@ const props = withDefaults(defineProps<{
   target: string;
   workspaceId: string;
   node: InterlinkNode | null;
-  trigger?: boolean;
   openThreadId?: string;
-}>(), { trigger: true, openThreadId: '' });
+}>(), { openThreadId: '' });
 const { language: locale } = useI18n();
 const text = (zh: string, en: string) => locale.value.startsWith('zh') ? zh : en;
 const visible = ref(false), busy = ref(false), selected = ref(''), message = ref(''), history = ref(''), status = ref('');
@@ -150,7 +146,6 @@ async function answer() {
   if (choice.action === 'close') return;
   await drive('thread.answer', { approval_id: approvalId.trim(), decision: choice.action === 'cancel' ? 'deny' : 'approve_once' });
 }
-function open() { visible.value = true; void reload(); }
 watch([target, () => props.workspaceId], () => { stop(); visible.value = false; selected.value = ''; history.value = ''; });
 watch(() => props.openThreadId, (threadId) => {
   if (!threadId) return;
@@ -160,13 +155,12 @@ watch(() => props.openThreadId, (threadId) => {
   visible.value = true;
   selected.value = threadId;
   void reload();
-});
+}, { immediate: true });
 onBeforeUnmount(stop);
 </script>
 
 <style scoped>
-.remote-thread-controls,.remote-thread-toolbar { display:flex; gap:8px; align-items:center; padding:6px; }
-.remote-thread-controls span { font-size:11px; opacity:.65; }
+.remote-thread-toolbar { display:flex; gap:8px; align-items:center; padding:6px; }
 .remote-thread-history { max-height:340px; overflow:auto; white-space:pre-wrap; background:#f5f7fa; padding:12px; }
 .remote-thread-events { max-height:180px; overflow:auto; white-space:pre-wrap; }
 textarea { width:100%; box-sizing:border-box; }

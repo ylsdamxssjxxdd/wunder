@@ -99,6 +99,35 @@ fn control(host: &State, event: Control) {
     }
 }
 
+/// Focus once synchronously and again after the native window has entered the
+/// event loop. The second hand-off is essential on Windows: mapping a newly
+/// shown top-level window may otherwise replace focus after Slint's first call.
+fn focus_after_show(window: &Rc<TerminalWindow>) {
+    // Slint focus only selects the child that receives key events. A terminal
+    // opened as a separate top-level window also needs native activation;
+    // otherwise Windows may leave the main window as the keyboard owner even
+    // though `input-sink.has-focus` is true inside Slint.
+    {
+        use slint::winit_030::WinitWindowAccessor;
+        window
+            .window()
+            .with_winit_window(|native| native.focus_window());
+    }
+    window.invoke_focus_input();
+    let weak = window.as_weak();
+    slint::Timer::single_shot(Duration::from_millis(16), move || {
+        if let Some(window) = weak.upgrade() {
+            if window.window().is_visible() {
+                use slint::winit_030::WinitWindowAccessor;
+                window
+                    .window()
+                    .with_winit_window(|native| native.focus_window());
+                window.invoke_focus_input();
+            }
+        }
+    });
+}
+
 fn paint(host: &mut State) {
     let Some(w) = host.terminal_window.as_ref() else {
         return;
@@ -203,7 +232,7 @@ pub(super) fn bind_terminal(app: &MainWindow, state: Rc<RefCell<State>>) {
         paint(&mut host);
         if let Some(w) = host.terminal_window.as_ref() {
             let _ = w.show();
-            w.invoke_focus_input();
+            focus_after_show(w);
         }
         geometry(&host);
     });
@@ -211,9 +240,16 @@ pub(super) fn bind_terminal(app: &MainWindow, state: Rc<RefCell<State>>) {
     window.on_frame_ready(move || {
         let Some(host) = host.upgrade() else { return };
         let mut host = host.borrow_mut();
-        for workspace in host.terminals.values_mut() {
+        // Other workspaces can keep a shell alive while this window presents
+        // the selected one. Their first output must not steal OS focus from
+        // whichever app the user is currently using.
+        let active_id = host.terminal_workspace.clone();
+        let mut received_active_projection = false;
+        for (id, workspace) in host.terminals.iter_mut() {
             if let Some(p) = workspace.session.as_ref().and_then(|s| s.io.take()) {
                 let ended = p.ended;
+                received_active_projection |=
+                    active_id.as_deref() == Some(id.as_str()) && workspace.projection.is_none();
                 workspace.projection = Some(p);
                 if ended {
                     workspace.session = None;
@@ -226,6 +262,11 @@ pub(super) fn bind_terminal(app: &MainWindow, state: Rc<RefCell<State>>) {
             .is_some_and(|w| w.window().is_visible())
         {
             paint(&mut host);
+            if received_active_projection {
+                if let Some(window) = host.terminal_window.as_ref() {
+                    focus_after_show(window);
+                }
+            }
         }
     });
     let host = Rc::downgrade(&state);

@@ -5,6 +5,12 @@ use anyhow::Result;
 pub(super) trait PostgresMetaStorage {
     fn get_meta_impl(&self, key: &str) -> Result<Option<String>>;
     fn set_meta_impl(&self, key: &str, value: &str) -> Result<()>;
+    fn compare_and_swap_meta_impl(
+        &self,
+        key: &str,
+        expected: Option<&str>,
+        value: Option<&str>,
+    ) -> Result<bool>;
     fn list_meta_prefix_impl(&self, prefix: &str) -> Result<Vec<(String, String)>>;
     fn delete_meta_prefix_impl(&self, prefix: &str) -> Result<usize>;
 }
@@ -27,6 +33,46 @@ impl PostgresMetaStorage for PostgresStorage {
             &[&key, &value, &now],
         )?;
         Ok(())
+    }
+
+    fn compare_and_swap_meta_impl(
+        &self,
+        key: &str,
+        expected: Option<&str>,
+        value: Option<&str>,
+    ) -> Result<bool> {
+        self.ensure_initialized()?;
+        let cleaned = key.trim();
+        if cleaned.is_empty() {
+            return Ok(false);
+        }
+        let now = Self::now_ts();
+        let mut conn = self.conn()?;
+        let mut tx = conn.transaction()?;
+        let current = tx
+            .query_opt(
+                "SELECT value FROM meta WHERE key = $1 FOR UPDATE",
+                &[&cleaned],
+            )?
+            .map(|row| row.get::<_, String>(0));
+        if current.as_deref() != expected {
+            tx.commit()?;
+            return Ok(false);
+        }
+        match value {
+            Some(value) => {
+                tx.execute(
+                    "INSERT INTO meta (key, value, updated_time) VALUES ($1, $2, $3) \
+                     ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value, updated_time = EXCLUDED.updated_time",
+                    &[&cleaned, &value, &now],
+                )?;
+            }
+            None => {
+                tx.execute("DELETE FROM meta WHERE key = $1", &[&cleaned])?;
+            }
+        }
+        tx.commit()?;
+        Ok(true)
     }
 
     fn list_meta_prefix_impl(&self, prefix: &str) -> Result<Vec<(String, String)>> {

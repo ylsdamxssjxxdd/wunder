@@ -650,6 +650,8 @@ watch(
   display: flex;
   flex-direction: column;
   gap: 16px;
+  min-height: 0;
+  color: var(--mz-text);
 }
 
 .agent-memory-toolbar,
@@ -680,8 +682,8 @@ watch(
 
 .agent-memory-subtitle,
 .agent-memory-card-time {
-  color: var(--app-text-muted, #64748b);
-  font-size: 12px;
+  color: var(--mz-text-muted);
+  font-size: var(--mz-font-sm);
 }
 
 .agent-memory-filters {
@@ -706,9 +708,9 @@ watch(
   display: flex;
   flex-direction: column;
   gap: 8px;
-  border: 1px solid var(--app-border-color, rgba(148, 163, 184, 0.24));
-  background: var(--app-panel-bg, rgba(15, 23, 42, 0.04));
-  border-radius: 16px;
+  border: 1px solid var(--mz-border);
+  background: var(--mz-surface);
+  border-radius: var(--mz-radius-card);
   transition: border-color 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease;
 }
 
@@ -718,12 +720,13 @@ watch(
 
 .agent-memory-card:hover {
   transform: translateY(-1px);
-  border-color: var(--app-primary-color, #3b82f6);
-  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.08);
+  border-color: var(--mz-primary-soft);
+  background: var(--mz-primary-tint);
+  box-shadow: 0 8px 18px rgb(31 35 41 / 8%);
 }
 
 .agent-memory-card:focus-visible {
-  outline: 2px solid var(--app-primary-color, #3b82f6);
+  outline: 2px solid var(--mz-primary);
   outline-offset: 2px;
 }
 
@@ -748,7 +751,7 @@ watch(
 
 .agent-memory-card-summary {
   font-size: 12px;
-  color: var(--app-text-color, #0f172a);
+  color: var(--mz-text-secondary);
   line-height: 1.55;
   display: -webkit-box;
   -webkit-line-clamp: 3;
@@ -757,7 +760,7 @@ watch(
 }
 
 .agent-memory-card-meta-item {
-  color: var(--app-text-muted, #64748b);
+  color: var(--mz-text-muted);
   font-size: 11px;
 }
 
@@ -781,10 +784,10 @@ watch(
 .agent-memory-select,
 .agent-memory-textarea {
   width: 100%;
-  border-radius: 12px;
-  border: 1px solid var(--app-border-color, rgba(148, 163, 184, 0.24));
-  background: var(--app-surface-bg, rgba(255, 255, 255, 0.9));
-  color: inherit;
+  border-radius: var(--mz-radius-btn);
+  border: 1px solid var(--mz-border);
+  background: var(--mz-surface);
+  color: var(--mz-text);
   padding: 10px 12px;
   transition: border-color 0.16s ease, box-shadow 0.16s ease, background-color 0.16s ease;
 }
@@ -793,8 +796,8 @@ watch(
 .agent-memory-select:focus,
 .agent-memory-textarea:focus {
   outline: none;
-  border-color: var(--app-primary-color, #3b82f6);
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.14);
+  border-color: var(--mz-primary-soft);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--mz-primary) 14%, transparent);
 }
 
 .agent-memory-textarea {
@@ -802,10 +805,10 @@ watch(
 }
 
 .agent-memory-btn {
-  border: 1px solid var(--app-border-color, rgba(148, 163, 184, 0.24));
-  background: transparent;
-  color: inherit;
-  border-radius: 12px;
+  border: 1px solid var(--mz-border);
+  background: var(--mz-surface);
+  color: var(--mz-text-secondary);
+  border-radius: var(--mz-radius-btn);
   padding: 8px 12px;
   cursor: pointer;
   transition: border-color 0.16s ease, background-color 0.16s ease, color 0.16s ease, box-shadow 0.16s ease,
@@ -813,8 +816,9 @@ watch(
 }
 
 .agent-memory-btn:hover:not(:disabled) {
-  border-color: var(--app-primary-color, #3b82f6);
-  background: rgba(59, 130, 246, 0.08);
+  border-color: var(--mz-primary-soft);
+  color: var(--mz-primary);
+  background: var(--mz-primary-tint);
 }
 
 .agent-memory-btn:active:not(:disabled) {
@@ -828,18 +832,21 @@ watch(
 }
 
 .agent-memory-btn--primary {
-  background: var(--app-primary-color, #3b82f6);
+  background: var(--mz-primary);
   color: #fff;
-  border-color: var(--app-primary-color, #3b82f6);
+  border-color: var(--mz-primary);
 }
 
 .agent-memory-btn--primary:hover:not(:disabled) {
-  background: var(--app-primary-color, #3b82f6);
-  box-shadow: 0 10px 22px rgba(59, 130, 246, 0.22);
+  background: var(--mz-primary-hover);
+  border-color: var(--mz-primary-hover);
+  box-shadow: 0 6px 14px color-mix(in srgb, var(--mz-primary) 25%, transparent);
 }
 
 .agent-memory-btn--danger {
-  color: #b91c1c;
+  border-color: color-mix(in srgb, var(--mz-danger) 35%, var(--mz-border));
+  color: var(--mz-danger);
+  background: var(--mz-danger-bg);
 }
 
 .agent-memory-chip {
@@ -848,15 +855,18 @@ watch(
   border-radius: 999px;
   padding: 2px 8px;
   font-size: 12px;
-  background: rgba(148, 163, 184, 0.12);
+  border: 1px solid var(--mz-border);
+  background: var(--mz-bg);
+  color: var(--mz-text-secondary);
 }
 
 .agent-memory-empty,
 .agent-memory-error {
   padding: 12px;
-  border-radius: 12px;
-  background: rgba(148, 163, 184, 0.08);
-  color: var(--app-text-muted, #64748b);
+  border: 1px dashed var(--mz-border-strong);
+  border-radius: var(--mz-radius-card);
+  background: var(--mz-bg);
+  color: var(--mz-text-muted);
 }
 
 .agent-memory-empty--compact {
@@ -864,8 +874,9 @@ watch(
 }
 
 .agent-memory-error {
-  background: rgba(239, 68, 68, 0.12);
-  color: #b91c1c;
+  border-color: color-mix(in srgb, var(--mz-danger) 45%, var(--mz-border));
+  background: var(--mz-danger-bg);
+  color: var(--mz-danger);
 }
 
 .agent-memory-error--dialog {
@@ -874,9 +885,10 @@ watch(
 
 .agent-memory-editor-hint {
   padding: 10px 12px;
-  border-radius: 12px;
-  background: rgba(59, 130, 246, 0.08);
-  color: var(--app-text-muted, #475569);
+  border: 1px solid var(--mz-border);
+  border-radius: var(--mz-radius-btn);
+  background: var(--mz-primary-tint);
+  color: var(--mz-text-secondary);
   font-size: 12px;
   line-height: 1.6;
 }
@@ -893,7 +905,7 @@ watch(
 .agent-memory-dialog-footer {
   width: 100%;
   padding-top: 14px;
-  border-top: 1px solid var(--app-border-color, rgba(148, 163, 184, 0.18));
+  border-top: 1px solid var(--mz-border);
   align-items: flex-end;
 }
 
@@ -902,6 +914,22 @@ watch(
 }
 
 :deep(.agent-memory-dialog.el-dialog) {
+  /* 对话框被传送到 body，显式承接蜂巢主题变量，避免退回组件的原生蓝灰默认色。 */
+  --mz-primary: var(--ui-accent, #c96443);
+  --mz-primary-hover: var(--ui-accent-hover, #b55637);
+  --mz-primary-soft: var(--ui-accent-secondary, #dfac9a);
+  --mz-primary-tint: var(--ui-accent-soft, #f6e9e3);
+  --mz-bg: #fbfaf8;
+  --mz-surface: #ffffff;
+  --mz-border: #e8e6e3;
+  --mz-border-strong: #d8d5d0;
+  --mz-text: #1f2329;
+  --mz-text-secondary: #3d3d3d;
+  --mz-text-muted: #8a8f99;
+  --mz-danger: #d04a43;
+  --mz-danger-bg: #fdecec;
+  --mz-radius-btn: 10px;
+  --mz-radius-card: 12px;
   width: min(720px, calc(100vw - 24px));
   max-width: calc(100vw - 24px);
   max-height: calc(100vh - 32px);

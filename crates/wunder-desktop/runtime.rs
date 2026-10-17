@@ -1301,6 +1301,9 @@ fn apply_desktop_defaults(
     // The model list is not restored from `desktop.settings.json`: this config
     // file is shared with 舵机, which writes new entries into it, so the file
     // itself is the source of truth for `llm`.
+    // A fresh desktop must expose the virtual replay model immediately, just
+    // like the web model catalogue. Existing user models are preserved.
+    ensure_default_virtual_replay_model(config);
 
     // Keep the shared local engine switches identical to 舵机. They are
     // persisted once and are not client-specific startup flags.
@@ -1384,6 +1387,60 @@ fn apply_desktop_defaults(
     config.security.deny_globs.clear();
     config.security.exec_policy_mode = None;
     config.security.approval_mode = Some("full_auto".to_string());
+}
+
+fn ensure_default_virtual_replay_model(config: &mut Config) {
+    const KEY: &str = "虚拟模型";
+    if config.llm.models.contains_key(KEY) {
+        let model = config.llm.models.get_mut(KEY).expect("checked above");
+        let provider = model.provider.as_deref().unwrap_or_default().trim();
+        if provider.is_empty() || provider.eq_ignore_ascii_case("virtual_replay") {
+            enrich_virtual_replay_model(model);
+            if config.llm.default.trim().is_empty() {
+                config.llm.default = KEY.to_string();
+            }
+        }
+        return;
+    }
+    // Migrate the temporary English key used by an earlier desktop build so
+    // upgrades do not leave two identical virtual models in the picker.
+    if let Some(legacy) = config.llm.models.remove("virtual-replay") {
+        config.llm.models.insert(KEY.to_string(), legacy);
+        enrich_virtual_replay_model(config.llm.models.get_mut(KEY).expect("inserted above"));
+        if config.llm.default == "virtual-replay" {
+            config.llm.default = KEY.to_string();
+        } else if config.llm.default.trim().is_empty() {
+            config.llm.default = KEY.to_string();
+        }
+        return;
+    }
+    let mut model = wunder_server::config::LlmModelConfig {
+        provider: Some("virtual_replay".to_string()),
+        model_type: Some("llm".to_string()),
+        enable: Some(true),
+        ..Default::default()
+    };
+    enrich_virtual_replay_model(&mut model);
+    config.llm.models.insert(KEY.to_string(), model);
+    if config.llm.default.trim().is_empty() {
+        config.llm.default = KEY.to_string();
+    }
+}
+
+fn enrich_virtual_replay_model(model: &mut wunder_server::config::LlmModelConfig) {
+    use wunder_server::stable_core::virtual_model::{VirtualModelOptions, VirtualModelSpeed};
+    model.provider = Some("virtual_replay".to_string());
+    model.model_type.get_or_insert_with(|| "llm".to_string());
+    model.enable = Some(true);
+    model.simulation_speed.get_or_insert(VirtualModelSpeed::Fast);
+    model.simulation.get_or_insert_with(VirtualModelOptions::default);
+    model.timeout_s.get_or_insert(120);
+    model.max_rounds.get_or_insert(1000);
+    model.max_context.get_or_insert(131_072);
+    model.max_output.get_or_insert(4096);
+    model.support_vision.get_or_insert(true);
+    model.stream.get_or_insert(false);
+    model.stream_include_usage.get_or_insert(true);
 }
 
 fn resolve_desktop_preset_worker_cards_root(
@@ -1857,6 +1914,9 @@ mod tests {
         assert!(config.channels.outbox.worker_enabled);
         assert!(!config.gateway.enabled);
         assert!(config.cron.enabled);
+        let virtual_model = config.llm.models.get("虚拟模型").expect("virtual model");
+        assert_eq!(virtual_model.provider.as_deref(), Some("virtual_replay"));
+        assert_eq!(virtual_model.max_context, Some(131_072));
     }
 
     #[test]

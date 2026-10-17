@@ -229,6 +229,9 @@ async fn goal_snapshot(
         .map(|view| super::NativeGoal {
             objective: view.record.objective,
             phase: view.record.phase,
+            rounds_started: view.record.rounds_started,
+            max_goal_rounds: view.record.max_goal_rounds,
+            activation: view.activation.as_str().to_string(),
         })
         .unwrap_or_default())
 }

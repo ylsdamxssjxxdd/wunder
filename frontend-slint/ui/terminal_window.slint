@@ -10,6 +10,10 @@ export component TerminalWindow inherits Window {
     width: 980px;
     height: 640px;
     background: #16181d;
+    // A separate window can be mapped after its component `init` callback.
+    // Forwarding focus here keeps the terminal keyboard-ready after show,
+    // reactivation and clicks that leave no editable widget selected.
+    forward-focus: terminal-focus;
     init => { input-sink.focus(); }
     in property <string> workspace-name;
     in property <string> workspace-root;
@@ -67,9 +71,9 @@ export component TerminalWindow inherits Window {
     terminal-focus := FocusScope {
         width: parent.width;
         height: parent.height;
+        forward-focus: input-sink;
         capture-key-pressed(event) => {
             if clipboard.has-focus { return reject; }
-            if !input-sink.has-focus { return reject; }
             if !root.input-ready { return accept; }
             if event.text == Key.Control || event.text == Key.ControlR || event.text == Key.Shift || event.text == Key.ShiftR || event.text == Key.Alt || event.text == Key.AltGr || event.text == Key.Meta { return reject; }
             if event.modifiers.shift && event.text == Key.PageUp { root.scrolled(root.rows - 1); return accept; }
@@ -132,6 +136,14 @@ export component TerminalWindow inherits Window {
             if event.modifiers.control && (event.text == "x" || event.text == "X") { root.key-input("\u{18}"); return accept; }
             if event.modifiers.control && (event.text == "y" || event.text == "Y") { root.key-input("\u{19}"); return accept; }
             if event.modifiers.alt && event.text != "" { root.key-input("\u{1b}" + event.text); return accept; }
+            // When another terminal child temporarily owns focus (for example
+            // after a titlebar action), ordinary printable keys still belong to
+            // the shell. With the IME sink focused, reject so Slint can deliver
+            // composition and committed text to it normally.
+            if !input-sink.has-focus && event.text != "" && !event.modifiers.control && !event.modifiers.alt {
+                root.key-input(event.text);
+                return accept;
+            }
             // Standard TextInput receives committed text/IME; it is only an
             // invisible input-method sink, never a local command line.
             if event.modifiers.control { return accept; }
@@ -153,8 +165,8 @@ export component TerminalWindow inherits Window {
                 }
                 Rectangle { horizontal-stretch: 1; }
                 Text { text: root.status != "" ? root.status : I18n.cp_terminal_idle; color: root.error ? #f48f8f : #7fd6a0; font-size: 11px; vertical-alignment: center; }
-                Action { width: 28px; height: 28px; icon: @image-url("../assets/icons/trash.svg"); icon-size: 14px; label: I18n.cp_terminal_clear; clicked => { root.clear(); input-sink.focus(); } }
-                Action { width: 28px; height: 28px; icon: @image-url("../assets/icons/stop.svg"); icon-size: 14px; label: I18n.cp_terminal_interrupt; clicked => { root.interrupt(); input-sink.focus(); } }
+                clear-action := Action { width: 28px; height: 28px; icon: @image-url("../assets/icons/trash.svg"); icon-size: 14px; label: I18n.cp_terminal_clear; clicked => { root.clear(); input-sink.focus(); } }
+                interrupt-action := Action { width: 28px; height: 28px; icon: @image-url("../assets/icons/stop.svg"); icon-size: 14px; label: I18n.cp_terminal_interrupt; clicked => { root.interrupt(); input-sink.focus(); } }
                 Action { width: 28px; height: 28px; icon: @image-url("../assets/icons/xmark.svg"); label: I18n.cp_terminal_exit; clicked => { root.exit-requested(); } }
             }
         }

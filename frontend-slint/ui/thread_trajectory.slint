@@ -469,7 +469,7 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                         height: row.row-height;
                         background: row.kind <= 6 && row.index == root.selected-index ? TrajTokens.active : row-touch.has-hover ? TrajTokens.hover : transparent;
                         HorizontalLayout {
-                            // event column (84px): request marker or kind badge
+                            // event column (84px): request marker and turn control
                             Rectangle {
                     width: 84px;
                                 if row.request > 0 : Rectangle {
@@ -511,29 +511,14 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                                         }
                                     }
                                 }
-                                if row.request == 0 && row.kind <= 6 && !(row.turn-start && row.foldable) : Rectangle {
-                                    x: 12px;
-                                    y: (parent.height - 16px) / 2;
-                                    width: pill-text.preferred-width + 14px;
-                                    height: 16px;
-                                    border-radius: 3px;
-                                    background: TrajTokens.kind-soft(row.kind);
-                                    pill-text := Text {
-                                        x: 7px; height: parent.height;
-                                        text: TrajTokens.kind-label(row.kind);
-                                        color: TrajTokens.kind-color(row.kind);
-                                        font-size: 10px; font-weight: 600;
-                                        vertical-alignment: center;
-                                    }
-                                }
                             }
                             Rectangle { width: 1px; background: TrajTokens.border-1; }
                             // content column
                             Rectangle {
                                 horizontal-stretch: 1;
                                 HorizontalLayout {
-                                    padding-left: 10px; padding-right: 12px;
-                                    spacing: 6px;
+                                    padding-left: 4px; padding-right: 12px;
+                                    spacing: 8px;
                                     alignment: start;
                                     if row.kind == 7 || row.kind == 8 : Text {
                                         height: parent.height;
@@ -547,7 +532,28 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                                     if row.kind != 7 && row.kind != 8 : HorizontalLayout {
                                         height: parent.height;
                                         alignment: start;
-                                        spacing: 6px;
+                                        spacing: 8px;
+                                        // Keep the category in a fixed 52px slot,
+                                        // matching the web ledger's grid column.
+                                        Rectangle {
+                                            width: 52px;
+                                            height: parent.height;
+                                            if row.kind <= 6 : Rectangle {
+                                                x: max(0px, parent.width - self.width);
+                                                y: (parent.height - 19px) / 2;
+                                                width: kind-label.preferred-width + 10px;
+                                                height: 19px;
+                                                border-radius: 3px;
+                                                background: TrajTokens.kind-soft(row.kind);
+                                                kind-label := Text {
+                                                    x: 5px; height: parent.height;
+                                                    text: TrajTokens.kind-label(row.kind);
+                                                    color: TrajTokens.kind-color(row.kind);
+                                                    font-size: 10px; font-weight: 600;
+                                                    vertical-alignment: center;
+                                                }
+                                            }
+                                        }
                                         Text {
                                             text: row.text;
                                             color: TrajTokens.text;

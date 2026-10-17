@@ -6,6 +6,8 @@ pub const DEFAULT_AGENT_META_PREFIX: &str = "default_agent:";
 pub const DEFAULT_AGENT_ID_ALIAS: &str = "__default__";
 pub const DEFAULT_AGENT_LEGACY_ENGLISH_NAME: &str = "Default Agent";
 pub const DEFAULT_AGENT_NAME: &str = "默认智能体";
+pub const DEFAULT_AGENT_GREETING: &str = "我是wunder，很高兴帮助你，试着把整理资料，分析数据，写文章等工作交给我吧~";
+pub const DEFAULT_AGENT_EXTRA_PROMPT: &str = "你是一个乐于助人的智能体";
 
 pub const DEFAULT_AGENT_PRESET_QUESTION_DRAW_GIF: &str = "制作一个骑自行车的鹈鹕gif";
 pub const DEFAULT_AGENT_PRESET_QUESTION_TRAVEL_GUIDE: &str = "用公文写作技能写一篇广州旅游攻略";
@@ -44,6 +46,15 @@ pub fn normalize_default_agent_preset_questions(questions: &mut Vec<String>) {
         .all(|question| INHERITED_AGENT_PRESET_QUESTIONS.contains(&question.as_str()));
     if inherited_only {
         *questions = default_agent_preset_questions();
+    }
+}
+
+pub fn normalize_default_agent_welcome(config: &mut DefaultAgentConfig) {
+    if config.description.trim().is_empty() {
+        config.description = DEFAULT_AGENT_GREETING.to_string();
+    }
+    if config.system_prompt.trim().is_empty() {
+        config.system_prompt = DEFAULT_AGENT_EXTRA_PROMPT.to_string();
     }
 }
 
@@ -164,8 +175,9 @@ pub fn record_from_default_agent_config(
 mod tests {
     use super::{
         default_agent_config_from_record, default_agent_meta_key, default_agent_preset_questions,
-        normalize_default_agent_preset_questions, record_from_default_agent_config,
-        DefaultAgentConfig,
+        normalize_default_agent_preset_questions, normalize_default_agent_welcome,
+        record_from_default_agent_config, DefaultAgentConfig, DEFAULT_AGENT_EXTRA_PROMPT,
+        DEFAULT_AGENT_GREETING,
     };
     #[test]
     fn builds_trimmed_default_agent_meta_key() {
@@ -193,6 +205,20 @@ mod tests {
         let mut stored = vec!["自定义问题".to_string()];
         normalize_default_agent_preset_questions(&mut stored);
         assert_eq!(stored, vec!["自定义问题".to_string()]);
+    }
+
+    #[test]
+    fn empty_welcome_fields_receive_shared_defaults_without_overwriting_custom_text() {
+        let mut config = DefaultAgentConfig::default();
+        normalize_default_agent_welcome(&mut config);
+        assert_eq!(config.description, DEFAULT_AGENT_GREETING);
+        assert_eq!(config.system_prompt, DEFAULT_AGENT_EXTRA_PROMPT);
+
+        config.description = "自定义问候".to_string();
+        config.system_prompt = "自定义提示".to_string();
+        normalize_default_agent_welcome(&mut config);
+        assert_eq!(config.description, "自定义问候");
+        assert_eq!(config.system_prompt, "自定义提示");
     }
 
     #[test]

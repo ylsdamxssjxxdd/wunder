@@ -28,6 +28,9 @@ const CATEGORY_IDS = [
   'archived'
 ] as const;
 
+/** 这些管理面板内部自行滚动，外层设置卡片应填满可用内容区，即使列表为空。 */
+const FILL_CATEGORY_IDS = new Set(['cron', 'memory', 'channels', 'devices', 'archived']);
+
 /**
  * 语言固定为 zh-CN，保证分类文案和断言稳定。
  */
@@ -128,6 +131,15 @@ test('设置页：11 分类可进入并可返回', async ({ page, request }) => 
     const box = await panel.boundingBox();
     expect(box, `category ${id} bounding box`).not.toBeNull();
     expect(box!.height, `category ${id} should have real height`).toBeGreaterThan(20);
+
+    if (FILL_CATEGORY_IDS.has(id)) {
+      const cardBox = await panel.locator(':scope > .messenger-settings-card').boundingBox();
+      expect(cardBox, `${id} settings card bounding box`).not.toBeNull();
+      expect(
+        Math.abs((cardBox!.y + cardBox!.height) - (box!.y + box!.height)),
+        `${id} settings card should extend to the category bottom`
+      ).toBeLessThanOrEqual(1);
+    }
 
     expect(pageErrors, `page errors after switching to ${id}: ${pageErrors.join(' | ')}`).toEqual([]);
   }

@@ -78,10 +78,7 @@ fn selected(app: &MainWindow) -> Option<(ToolResourceKind, String)> {
     Some((kind(app.get_tools_tab())?, row.name.to_string()))
 }
 fn error(app: &MainWindow, error: impl std::fmt::Display) {
-    app.set_status("工具操作失败".into());
-    app.set_dialog_title("工具操作失败".into());
-    app.set_dialog_text(error.to_string().into());
-    app.set_dialog_open(true);
+    crate::native_pages::show_error(app, format!("工具操作失败：{error}"));
 }
 fn apply(app: &MainWindow, catalog: Vec<ToolRecord>, manager: NativeToolManager) {
     app.set_tools_builtin(model(

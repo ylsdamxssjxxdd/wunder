@@ -1,4 +1,4 @@
-import { Button, ComboBox, LineEdit, ListView, TextEdit } from "std-widgets.slint";
+import { Button, LineEdit, ListView, TextEdit } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { I18n } from "i18n.slint";
 
@@ -31,21 +31,17 @@ export component CloudThreadsPanel inherits Rectangle {
         property <int> request: root.copy-request;
         changed request => { self.text = root.copy-text; self.select-all(); self.copy(); }
     }
-    background: Theme.overlay;
-    TouchArea { }
     Rectangle {
-        width: min(parent.width - 48px, 900px); height: min(parent.height - 48px, 700px);
-        x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
-        background: Theme.surface; border-radius: 8px; border-width: 1px; border-color: Theme.border;
+        width: parent.width; height: parent.height;
+        background: Theme.chat;
         VerticalLayout {
             padding: 18px; spacing: 10px;
+            Text { text: I18n.zh ? "云端工作区" : "Cloud workspace"; font-size: 18px; color: Theme.text; }
             HorizontalLayout {
-                Text { text: I18n.zh ? "云端智能体与线程" : "Cloud agent and threads"; font-size: 18px; color: Theme.text; horizontal-stretch: 1; }
-                Button { text: I18n.common_close; clicked => { root.close(); } }
-            }
-            HorizontalLayout {
-                ComboBox { horizontal-stretch: 1; model: root.agents; current-index <=> root.agent-index; enabled: !root.busy; }
-                ComboBox { horizontal-stretch: 2; model: root.threads; current-index <=> root.thread-index; enabled: !root.busy; selected(_) => { root.select-thread(self.current-index); } }
+                Text {
+                    text: I18n.zh ? "从左侧工作区树选择线程；新建线程也在工作区行完成" : "Select or create a thread from the workspace tree";
+                    color: Theme.muted; font-size: 12px; horizontal-stretch: 1;
+                }
                 Button { text: I18n.zh ? "刷新" : "Refresh"; enabled: !root.busy; clicked => { root.refresh(); } }
             }
             HorizontalLayout {

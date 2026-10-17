@@ -1,5 +1,5 @@
 //! Cloud view work runs off the UI thread; only bounded row deltas reach Slint.
-use crate::{CloudTurn, MainWindow};
+use crate::{CloudThreadCard, CloudTurn, MainWindow};
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use std::{
     cell::RefCell,
@@ -21,6 +21,10 @@ use wunder_server::{
 
 thread_local! {
     static CATALOG: RefCell<(Vec<NativeCloudAgent>,Vec<NativeCloudThread>)> = RefCell::new((Vec::new(),Vec::new()));
+    // A create request completes before the catalog refresh returns. Keep the
+    // id here so the refresh can select the exact new row instead of falling
+    // back to the "new thread" sentinel or the previous selection.
+    static PENDING_SELECTION: RefCell<Option<String>> = const { RefCell::new(None) };
     static ROWS: Rc<VecModel<CloudTurn>> = Rc::new(VecModel::default());
     // Keep only the bounded page that is on screen. It carries lazy body refs
     // for on-demand, lossless clipboard reads without retaining prior pages.
@@ -287,6 +291,28 @@ fn refresh(app: &MainWindow, api: Arc<NativeDesktop>) {
             app.set_cloud_thread_busy(false);
             match result {
                 Ok((agents, threads)) => {
+                    // Cloud list reads can lag the create command by one
+                    // request. Preserve the pending row from the local
+                    // catalog until the authoritative list observes it; the
+                    // next refresh then replaces its title/status naturally.
+                    let pending_id = PENDING_SELECTION.with(|pending| pending.borrow().clone());
+                    let mut threads = threads;
+                    if let Some(id) = pending_id.as_deref() {
+                        if !threads.iter().any(|row| row.id == id) {
+                            if let Some(row) = CATALOG.with(|catalog| {
+                                catalog.borrow().1.iter().find(|row| row.id == id).cloned()
+                            }) {
+                                threads.insert(0, row);
+                            }
+                        }
+                    }
+                    app.set_cloud_thread_rows(ModelRc::from(Rc::new(VecModel::from(
+                        threads.iter().map(|row| CloudThreadCard {
+                            id: row.id.clone().into(),
+                            title: row.title.clone().into(),
+                            status: row.status.clone().into(),
+                        }).collect::<Vec<_>>(),
+                    ))));
                     app.set_cloud_agent_names(ModelRc::from(Rc::new(VecModel::from(
                         agents
                             .iter()
@@ -301,13 +327,26 @@ fn refresh(app: &MainWindow, api: Arc<NativeDesktop>) {
                     );
                     app.set_cloud_thread_names(ModelRc::from(Rc::new(VecModel::from(names))));
                     CATALOG.with(|catalog| *catalog.borrow_mut() = (agents, threads));
-                    app.set_cloud_thread_index(0);
+                    let selected = PENDING_SELECTION.with(|pending| pending.borrow_mut().take())
+                        .and_then(|id| CATALOG.with(|catalog| {
+                            catalog.borrow().1.iter().position(|row| row.id == id)
+                        }))
+                        .map(|index| index as i32 + 1)
+                        .unwrap_or(0);
+                    app.set_cloud_thread_index(selected);
                     app.set_cloud_agent_index(0);
                     app.set_cloud_thread_has_older(false);
                     app.set_cloud_thread_history_mode(false);
                     NEXT_BEFORE.with(|cursor| *cursor.borrow_mut() = None);
                     apply_rows(&app, Vec::new(), true);
                     app.set_cloud_thread_status("最近 50 个线程 / Up to 50 recent threads".into());
+                    // A refresh is also the authoritative catalog projection.
+                    // Rebuild after the selection is applied so the sidebar's
+                    // active marker and row tree never lag one event behind.
+                    crate::navigation_ui::project_sidebar(&app, None);
+                    if selected > 0 {
+                        load(&app, api.clone());
+                    }
                 }
                 Err(error) => app.set_cloud_thread_status(error.to_string().into()),
             }
@@ -319,15 +358,44 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
     let backend = api.clone();
     app.on_cloud_open_threads(move || {
         if let Some(app) = weak.upgrade() {
-            app.set_cloud_threads_open(true);
+            app.set_cloud_chat_active(true);
             refresh(&app, backend.clone());
         }
+    });
+    let weak = app.as_weak();
+    let backend = api.clone();
+    app.on_cloud_new_thread(move || {
+        let Some(app) = weak.upgrade() else { return };
+        if app.get_cloud_thread_busy() || !app.get_cloud_logged_in() { return; }
+        let agent = CATALOG.with(|catalog| catalog.borrow().0.first().map(|row| row.id.clone()).unwrap_or_default());
+        app.set_cloud_thread_busy(true);
+        let weak = app.as_weak();
+        let api = backend.clone();
+        std::thread::spawn(move || {
+            let result = api.cloud_thread_create(&agent, "");
+            let _ = weak.upgrade_in_event_loop(move |app| {
+                app.set_cloud_thread_busy(false);
+                match result {
+                    Ok(thread) => {
+                        CATALOG.with(|catalog| catalog.borrow_mut().1.insert(0, thread));
+                        PENDING_SELECTION.with(|pending| {
+                            *pending.borrow_mut() = CATALOG.with(|catalog| {
+                                catalog.borrow().1.first().map(|row| row.id.clone())
+                            });
+                        });
+                        app.set_cloud_chat_active(true);
+                        refresh(&app, api);
+                    }
+                    Err(error) => app.set_cloud_thread_status(error.to_string().into()),
+                }
+            });
+        });
     });
     let weak = app.as_weak();
     app.on_cloud_close_threads(move || {
         invalidate();
         if let Some(app) = weak.upgrade() {
-            app.set_cloud_threads_open(false);
+            app.set_cloud_chat_active(false);
             app.set_cloud_thread_busy(false);
         }
     });

@@ -1,6 +1,7 @@
 use crate::services::agent_abilities::resolve_selected_declared_names;
 use crate::services::default_agent_protocol::{
     default_agent_config_from_record, default_agent_meta_key, is_builtin_default_agent_name,
+    normalize_default_agent_preset_questions, normalize_default_agent_welcome,
     record_from_default_agent_config, DefaultAgentConfig, DEFAULT_AGENT_NAME,
 };
 use crate::services::default_tool_profile::{default_tool_names, initialize_default_builtin_tools};
@@ -82,6 +83,7 @@ fn normalize_default_agent_config(
     } else {
         config.name = config.name.trim().to_string();
     }
+    normalize_default_agent_welcome(config);
     let normalized = canonicalize_default_agent_config(config, skill_name_keys);
     config.description = normalized.description;
     config.system_prompt = normalized.system_prompt;
@@ -90,6 +92,7 @@ fn normalize_default_agent_config(
     config.declared_tool_names = normalized.declared_tool_names;
     config.declared_skill_names = normalized.declared_skill_names;
     config.preset_questions = normalized.preset_questions;
+    normalize_default_agent_preset_questions(&mut config.preset_questions);
     config.approval_mode = normalized.approval_mode;
     config.status = normalized.status;
     config.icon = normalized.icon;

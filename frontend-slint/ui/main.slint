@@ -4,7 +4,7 @@ import { ExpertToolGroup } from "expert_widgets.slint";
 export { ExpertToolGroup }
 import { RuntimeStatus } from "runtime_status.slint";
 import { I18n } from "i18n.slint";
-import { Theme, DesktopPage, Conversation, WorkspaceCard, SidebarRow, TextBlock, WorkflowLine, WorkflowSection, ToolWorkflowEntry, TimelineRow, TimelineCounts, TurnStatMetric, PatchCard, PatchLine, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, TrajRow, TrajSpan, TrajTick, TrajBoundary, TrajTiming, TrajSection, TrajTab, TrajSearchHit, CronCard, CronRunCard, PromptPackCard, ChannelCatalogCard, ChannelAccountCard, ChannelBindingCard, ChannelLogCard, AvatarOption, AvatarColorChip, CompanionCard, PlanStep, InquiryQuestion, QueueTurn, DraftRecall, InterlinkApproval, WorkspaceFileRow } from "theme.slint";
+import { Theme, DesktopPage, Conversation, WorkspaceCard, SidebarRow, CloudThreadCard, TextBlock, WorkflowLine, WorkflowSection, ToolWorkflowEntry, TimelineRow, TimelineCounts, TurnStatMetric, PatchCard, PatchLine, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, TrajRow, TrajSpan, TrajTick, TrajBoundary, TrajTiming, TrajSection, TrajTab, TrajSearchHit, CronCard, CronRunCard, PromptPackCard, ChannelCatalogCard, ChannelAccountCard, ChannelBindingCard, ChannelLogCard, AvatarOption, AvatarColorChip, CompanionCard, PlanStep, InquiryQuestion, QueueTurn, DraftRecall, InterlinkApproval, WorkspaceFileRow } from "theme.slint";
 import { Action, EdgeToggle, RailButton, Avatar, FormField, MiddleHeader, MiddleFooter, ConfirmDialog, InfoDialog, ToastHost, ToastState } from "components.slint";
 import { ProcessEntry } from "theme.slint";
 import { Composer, GoalBanner, InquiryPanel, StatusDock } from "composer.slint";
@@ -37,7 +37,7 @@ import { ModelPresets } from "model_presets.slint";
 export { ModelPresets }
 // `TimelineView` is deliberately absent: nothing in Rust names it, and an
 // exported component that does not inherit Window only earns a build warning.
-export { Theme, DesktopPage, Conversation, WorkspaceCard, SidebarRow, TextBlock, WorkflowLine, WorkflowSection, ToolWorkflowEntry, ProcessEntry, TimelineRow, TimelineCounts, TurnStatMetric, PatchCard, PatchLine, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, TrajRow, TrajSpan, TrajTick, TrajBoundary, TrajTiming, TrajSection, TrajTab, CronCard, CronRunCard, PromptPackCard, ChannelCatalogCard, ChannelBindingCard, ChannelLogCard, AvatarOption, AvatarColorChip, CompanionCard, PlanStep, InterlinkApproval, WorkspaceFileRow }
+export { Theme, DesktopPage, Conversation, WorkspaceCard, SidebarRow, CloudThreadCard, TextBlock, WorkflowLine, WorkflowSection, ToolWorkflowEntry, ProcessEntry, TimelineRow, TimelineCounts, TurnStatMetric, PatchCard, PatchLine, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, TrajRow, TrajSpan, TrajTick, TrajBoundary, TrajTiming, TrajSection, TrajTab, CronCard, CronRunCard, PromptPackCard, ChannelCatalogCard, ChannelBindingCard, ChannelLogCard, AvatarOption, AvatarColorChip, CompanionCard, PlanStep, InterlinkApproval, WorkspaceFileRow }
 export { AppTray } from "tray.slint";
 export { TrayNotice } from "tray-notice.slint";
 export { HelpWindow } from "help_window.slint";
@@ -167,17 +167,21 @@ export component MainWindow inherits Window {
     // surface error-shaped statuses as toasts so a failed runtime or storage
     // read can never look like a dead UI again.
     changed status => {
-        if root.status.starts-with(I18n.cp_error_prefix) || root.status.starts-with(I18n.cp_fail_prefix) {
-            ToastState.message = root.status;
-            ToastState.kind = 2;
-            ToastState.revision += 1;
-        }
+        ToastState.message = root.status;
+        ToastState.kind = root.status.starts-with(I18n.cp_error_prefix) || root.status.starts-with(I18n.cp_fail_prefix) || root.status.starts-with("错误") || root.status.starts-with("⚠") ? 2 : 0;
+        ToastState.revision += 1;
     }
     in-out property <bool> goal-active: false;
+    // A goal remains visible while paused or blocked; this is separate from
+    // `goal-active`, which controls the running composer state.
+    in-out property <bool> goal-visible: false;
+    in-out property <string> goal-phase;
+    in-out property <string> goal-activation;
+    in-out property <string> goal-rounds;
     // Goal banner state; the projection and the observer goal tick write the
     // objective, the accumulated seconds and the paused flag. The preview
     // values only exist so slint-viewer renders the banner without a backend.
-    in-out property <string> goal-objective: I18n.tlp_organize;
+    in-out property <string> goal-objective;
     in-out property <int> goal-seconds: 0;
     in-out property <string> goal-elapsed: I18n.cpv_goal_elapsed_demo;
     in-out property <bool> goal-paused: false;
@@ -532,7 +536,10 @@ export component MainWindow inherits Window {
     in-out property <string> cloud-server-draft;
     in-out property <string> cloud-user-draft;
     in-out property <string> cloud-pass-draft;
-    in-out property <bool> cloud-threads-open: false;
+    // Cloud conversations use the same sidebar hierarchy as local workspaces,
+    // while their bodies stay on the cloud façade instead of local SQLite.
+    in-out property <bool> cloud-chat-active: false;
+    in-out property <[CloudThreadCard]> cloud-thread-rows;
     in-out property <[string]> cloud-thread-names;
     in-out property <[string]> cloud-agent-names;
     in-out property <[CloudTurn]> cloud-turns;
@@ -547,6 +554,7 @@ export component MainWindow inherits Window {
     in-out property <string> cloud-thread-copy-text;
     in-out property <int> cloud-thread-copy-request;
     callback cloud-open-threads();
+    callback cloud-new-thread();
     callback cloud-close-threads();
     callback cloud-reload-threads();
     callback cloud-select-thread(int);
@@ -557,6 +565,7 @@ export component MainWindow inherits Window {
     callback cloud-latest-thread();
     callback cloud-copy-message(string, bool);
     callback cloud-login();
+    callback cloud-password-edited(string);
     callback cloud-logout();
     callback cloud-refresh-account();
     callback cloud-toggle-sync(bool);
@@ -883,6 +892,7 @@ export component MainWindow inherits Window {
                 cloud-quota-reconnecting: root.cloud-connection == "reconnecting";
                 busy: root.creating-session || root.session-loading || root.chat-loading;
                 select-row(index) => { root.select-row(index); }
+                new-cloud-thread => { root.cloud-new-thread(); }
                 workspace-menu(workspace, action) => { root.workspace-menu(workspace, action); }
                 new-workspace => { root.new-workspace(); }
                 move-row(index, travel) => { root.move-row(index, travel); }
@@ -973,6 +983,7 @@ export component MainWindow inherits Window {
                             turn-marks: root.turn-marks;
                             follow-output <=> root.follow-output;
                             spinning: root.busy;
+                            stream-revision: root.stream-updates;
                             toggle(index) => { root.timeline-toggle(index); }
                             process-page(index, direction) => { root.timeline-process-page(index, direction); }
                             copy-text(text) => { root.copy-raw(text); }
@@ -1014,9 +1025,12 @@ export component MainWindow inherits Window {
                                 plan-steps: root.activity-plan-steps;
                                 plan-dismiss => { root.activity-plan-dismiss(); }
                             }
-                            if root.goal-objective != "" : GoalBanner {
+                            if root.goal-visible && root.goal-objective != "" : GoalBanner {
                                 objective: root.goal-objective;
                                 elapsed: root.goal-elapsed;
+                                phase: root.goal-phase;
+                                activation: root.goal-activation;
+                                rounds: root.goal-rounds;
                                 paused: root.goal-paused;
                                 editing <=> root.goal-editing;
                                 edit-draft <=> root.goal-edit-draft;
@@ -1044,7 +1058,7 @@ export component MainWindow inherits Window {
                             models: root.models;
                             model-catalogue-count: root.model-catalogue-count;
                             cloud-ready: root.cloud-logged-in && !root.cloud-expired;
-                            model-name: root.selected-model-name != "" ? root.selected-model-name : root.selected-agent-model;
+                            model-name: root.selected-model-key != "" ? root.selected-model-key : root.selected-agent-model;
                             model-key: root.selected-model-key;
                             model-saving: root.saving;
                             select-model(index, key) => { root.select-thread-model(key); }
@@ -1170,7 +1184,6 @@ export component MainWindow inherits Window {
         cloud-server-draft <=> root.cloud-server-draft;
         cloud-user-draft <=> root.cloud-user-draft;
         cloud-pass-draft <=> root.cloud-pass-draft;
-        cloud-open-threads => { root.cloud-open-threads(); }
         cloud-login => { root.cloud-login(); }
         cloud-logout => { root.cloud-logout(); }
         cloud-refresh-account => { root.cloud-refresh-account(); }
@@ -1480,8 +1493,12 @@ export component MainWindow inherits Window {
         }
         canceled => { root.thread-archive-open = false; }
     }
-    if root.cloud-threads-open : CloudThreadsPanel {
+    if root.cloud-chat-active : CloudThreadsPanel {
         z: 230;
+        x: root.sidebar-width + 6px;
+        y: 0px;
+        width: root.width - self.x;
+        height: root.height;
         threads: root.cloud-thread-names; agents: root.cloud-agent-names;
         turns: root.cloud-turns; busy: root.cloud-thread-busy; status: root.cloud-thread-status;
         has-older: root.cloud-thread-has-older; history-mode: root.cloud-thread-history-mode;
@@ -1576,7 +1593,7 @@ export component MainWindow inherits Window {
 
     WorkspaceDialog { z: 270; }
 
-    ToastHost { z: 300; }
+    ToastHost { z: 300; width: root.width; height: 52px; x: 0px; }
 
-    Timer { interval: 6000ms; running: root.command-feedback != ""; triggered => { root.command-feedback = ""; } }
+    Timer { interval: 4200ms; running: ToastState.message != ""; triggered => { ToastState.message = ""; } }
 }

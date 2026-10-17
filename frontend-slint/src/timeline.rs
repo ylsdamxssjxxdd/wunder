@@ -58,6 +58,9 @@ pub fn stat_metrics(metrics: &[crate::turn_stats::Metric]) -> Vec<crate::TurnSta
     metrics
         .iter()
         .map(|metric| crate::TurnStatMetric {
+            // `status-running` is also the animation key in Slint. Keep the
+            // icon rather than the generic metric category so the footer can
+            // rotate the same glyph used by running process entries.
             key: metric.icon.into(),
             value: metric.value.as_str().into(),
         })
@@ -482,6 +485,25 @@ impl Timeline {
         if row.process_idx == process && row.process_open == next_open {
             return;
         }
+        // Remove a row's old child projection when it leaves the live process.
+        // Otherwise the process keeps a stale copy until durable history wins.
+        if row.process_idx != NO_PROCESS && row.process_idx != process {
+            if let Some(bar) = self.model.iter().find(|bar| {
+                bar.kind == KIND_PROCESS && bar.process_idx == row.process_idx
+            }) {
+                if !bar.process_paged {
+                    if let Some(children) = bar
+                        .process_entries
+                        .as_any()
+                        .downcast_ref::<VecModel<crate::ProcessEntry>>()
+                    {
+                        if let Some(child) = children.iter().position(|child| child.id == row.id) {
+                            children.remove(child);
+                        }
+                    }
+                }
+            }
+        }
         row.process_idx = process;
         row.process_open = next_open;
         self.sync_process_entry(&row);
@@ -567,15 +589,35 @@ impl Timeline {
             let Some(row) = self.model.row_data(index) else {
                 continue;
             };
-            if row.kind == KIND_GROUP || is_process_step(row.kind, index, self.last_body) {
+            // A body that was already emitted before a tool call is marked as
+            // a process item immediately by `include_active_body_in_process`.
+            // Its position is preserved even though it is still `last_body`
+            // until the next model round opens a new tail.
+            let admitted_live_body = row.kind == KIND_BODY
+                && row.process_idx == process
+                && !(self.settled && index == self.last_body);
+            if row.kind == KIND_GROUP
+                || is_process_step(row.kind, index, self.last_body)
+                || admitted_live_body
+            {
                 region.push(index);
-                steps += i32::from(row.kind != KIND_GROUP);
+                // The currently streaming print is already visible as the
+                // answer tail when the process is open; it is a child for
+                // ordering but does not add a second step until a newer body
+                // replaces it.
+                steps += i32::from(
+                    row.kind != KIND_GROUP
+                        && !(admitted_live_body && index == self.last_body),
+                );
             }
         }
         let enabled = steps > 0;
         let open = self.process_is_open();
         for index in region {
             self.patch_process_state(index, process, open);
+        }
+        if self.settled && self.last_body != usize::MAX {
+            self.patch_process_state(self.last_body, NO_PROCESS, false);
         }
         let bar = self.process_bar;
         let label = crate::timeline_text::process_label(steps);
@@ -790,6 +832,36 @@ impl Timeline {
         Ok(())
     }
 
+    /// A tool call makes preceding model text an intermediate print, even
+    /// before the next model round has started. The old reducer only moved it
+    /// after that next round, so the body jumped from above the process into it
+    /// late and then jumped again at settlement.
+    fn include_active_body_in_process(&mut self, force: bool) {
+        if self.process == NO_PROCESS || self.last_body == usize::MAX {
+            return;
+        }
+        if !force
+            && !(self.process_bar + 1..self.model.row_count()).any(|index| {
+                self.model
+                    .row_data(index)
+                    .is_some_and(|row| matches!(row.kind, KIND_REASON | KIND_TOOL | KIND_GROUP))
+            })
+        {
+            return;
+        }
+        self.flush_body();
+        let index = self.last_body;
+        if !self
+            .model
+            .row_data(index)
+            .is_some_and(|row| row.kind == KIND_BODY && !row.text.is_empty())
+        {
+            return;
+        }
+        self.patch_process_state(index, self.process, self.process_is_open());
+        self.refresh_process_bar();
+    }
+
     /// Freeze the active thinking entry when the model starts acting.
     pub fn close_thinking(&mut self, failed: bool) {
         let Some(thinking) = self.thinking.take() else {
@@ -907,6 +979,7 @@ impl Timeline {
             return;
         }
         if pending {
+            self.include_active_body_in_process(true);
             self.close_thinking(false);
         }
         if pending {
@@ -1004,6 +1077,9 @@ impl Timeline {
 
     /// Close the trailing segment before the turn settles.
     pub fn close_segments(&mut self) {
+        // A round boundary proves the preceding print was intermediate. Move
+        // it before freezing so its position never jumps after the next tool.
+        self.include_active_body_in_process(false);
         self.close_thinking(false);
         self.close_body();
         self.close_batch();
@@ -1104,16 +1180,17 @@ impl Timeline {
     /// Publish the bounded live view of the streaming block. Only the active
     /// tail block is touched; frozen blocks are never re-flushed.
     fn flush_body(&mut self) {
-        let Some(body) = self.body.as_mut() else {
-            return;
+        let (index, text) = {
+            let Some(body) = self.body.as_mut() else {
+                return;
+            };
+            if !body.pending {
+                return;
+            }
+            body.blocks.flush();
+            body.pending = false;
+            (body.index, body.text.clone())
         };
-        if !body.pending {
-            return;
-        }
-        body.blocks.flush();
-        body.pending = false;
-        let index = body.index;
-        let text = body.text.clone();
         self.patch(index, |row| {
             if row.text != text.as_str() {
                 row.text = text.as_str().into();
@@ -1638,6 +1715,38 @@ mod tests {
         );
         timeline.finish(true);
         assert_eq!(children.row_data(1).unwrap().status_kind, STATUS_FAILED);
+    }
+
+    #[test]
+    fn live_print_moves_into_process_before_the_following_tool() {
+        let mut timeline = Timeline::new();
+        timeline.begin_turn("fixture-live-print", "Fixture input");
+        timeline.start_body(1);
+        timeline.append_body("Intermediate model print").unwrap();
+        timeline.flush();
+
+        timeline.upsert_tool(&NativeWorkflowEntry::from_payload(
+            "fixture-call",
+            "read_file",
+            "Fixture result".into(),
+            "running",
+            &serde_json::json!({"args":{"path":"sample.txt"}}),
+        ));
+
+        let bar = timeline.model.row_data(timeline.process_bar).unwrap();
+        assert!(bar.visible);
+        assert_eq!(bar.process_entries.row_count(), 2);
+        assert_eq!(bar.process_entries.row_data(0).unwrap().kind, KIND_BODY);
+        assert_eq!(bar.process_entries.row_data(0).unwrap().text, "Intermediate model print");
+        assert_eq!(bar.process_entries.row_data(1).unwrap().kind, KIND_TOOL);
+        let body = timeline.model.row_data(timeline.last_body).unwrap();
+        assert_eq!(body.process_idx, bar.process_idx);
+
+        timeline.finish(false);
+        let bar = timeline.model.row_data(timeline.process_bar).unwrap();
+        assert_eq!(bar.process_entries.row_count(), 1);
+        assert_eq!(bar.process_entries.row_data(0).unwrap().kind, KIND_TOOL);
+        assert_eq!(timeline.model.row_data(timeline.last_body).unwrap().process_idx, NO_PROCESS);
     }
 
     #[test]

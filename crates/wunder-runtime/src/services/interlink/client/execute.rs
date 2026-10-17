@@ -660,7 +660,8 @@ pub async fn execute(
         CMD_WORKSPACE_READ => stream::read_command(spec, ctx, writer, &cancel).await,
         CMD_THREADS_LIST => threads_list(spec, ctx).await,
         CMD_THREADS_GET => threads_get(spec, ctx).await,
-        CMD_THREAD_CREATE | CMD_THREAD_MESSAGE => drive_thread(spec, ctx).await,
+        CMD_THREAD_CREATE => create_thread(spec, ctx, collector, shadow_wake).await,
+        CMD_THREAD_MESSAGE => drive_thread(spec, ctx, collector, shadow_wake).await,
         CMD_THREAD_CANCEL => thread_cancel(spec, ctx).await,
         CMD_THREAD_ANSWER => thread_answer(spec, ctx).await,
         CMD_WORKSPACE_WRITE => workspace_write(spec, ctx, collector, &cancel).await,
@@ -1004,15 +1005,45 @@ async fn threads_get(spec: &CommandSpec, ctx: &ExecContext) -> CommandReport {
     }
 }
 
-/// `thread.create` / `thread.message`: translate into the *existing* engine
-/// action (submit a turn to the thread runtime) and answer as soon as the turn
-/// is admitted. Ongoing output reaches the cloud through the forwarded thread
-/// event stream, never through this command (docs §7.4).
-async fn drive_thread(spec: &CommandSpec, ctx: &ExecContext) -> CommandReport {
+/// Create an empty durable thread.  Creation and submitting a model turn are
+/// deliberately separate operations: a workspace UI can show a newly created
+/// thread immediately, and a reconnect can retry either operation without
+/// accidentally submitting the first message twice.
+async fn create_thread(
+    spec: &CommandSpec,
+    ctx: &ExecContext,
+    collector: &shadow::ShadowCollector,
+    shadow_wake: &Arc<Notify>,
+) -> CommandReport {
+    if arg_str(&spec.args, "local_thread_id").is_some() {
+        return CommandReport::failed(
+            "THREAD_ID_NOT_ALLOWED",
+            "thread.create creates a new thread and does not accept local_thread_id",
+        );
+    }
+    let agent = arg_str(&spec.args, "agent").unwrap_or_default();
+    let title = arg_str(&spec.args, "title");
+    let report = create_remote_thread(ctx, &spec.args, &agent, title, None).await;
+    if report.status == wunder_core::interlink::COMMAND_STATUS_SUCCEEDED {
+        collector.mark_dirty(Sections::THREADS.union(Sections::SUMMARY));
+        shadow_wake.notify_waiters();
+    }
+    report
+}
+
+/// Submit a message to an existing thread.  Supplying no thread id retains the
+/// original one-call convenience path for integrations, but the UI uses
+/// `thread.create` before the first message so creation is visible and stable.
+async fn drive_thread(
+    spec: &CommandSpec,
+    ctx: &ExecContext,
+    collector: &shadow::ShadowCollector,
+    shadow_wake: &Arc<Notify>,
+) -> CommandReport {
     let Some(message) = arg_str(&spec.args, "message") else {
         return CommandReport::failed("MESSAGE_REQUIRED", "message is required");
     };
-    admit_turn(
+    let report = admit_turn(
         spec,
         ctx,
         arg_str(&spec.args, "local_thread_id"),
@@ -1021,7 +1052,77 @@ async fn drive_thread(spec: &CommandSpec, ctx: &ExecContext) -> CommandReport {
         message,
         None,
     )
-    .await
+    .await;
+    if report.status == wunder_core::interlink::COMMAND_STATUS_SUCCEEDED {
+        collector.mark_dirty(Sections::THREADS.union(Sections::SUMMARY));
+        shadow_wake.notify_waiters();
+    }
+    report
+}
+
+/// Persist a thread record without entering the model/orchestrator path.
+async fn create_remote_thread(
+    ctx: &ExecContext,
+    args: &Value,
+    agent: &str,
+    title: Option<String>,
+    spawn_label: Option<String>,
+) -> CommandReport {
+    match ctx.state.user_store.get_user_by_id(&ctx.local_user_id) {
+        Ok(Some(_)) => {}
+        Ok(None) => return CommandReport::failed("USER_UNAVAILABLE", "local user is not registered"),
+        Err(err) => return CommandReport::failed("USER_UNAVAILABLE", sanitize(&err.to_string())),
+    }
+    let state = ctx.state.clone();
+    let session_id = match state
+        .kernel
+        .thread_runtime
+        .create_task_session_id(&ctx.local_user_id, agent)
+    {
+        Ok(id) => id,
+        Err(err) => return CommandReport::failed("THREAD_CREATE_FAILED", sanitize(&err.to_string())),
+    };
+    let now = now_ts();
+    let record = crate::storage::ChatSessionRecord {
+        session_id: session_id.clone(),
+        user_id: ctx.local_user_id.clone(),
+        title: title
+            .map(|title| title.chars().take(96).collect::<String>())
+            .filter(|title| !title.trim().is_empty())
+            .unwrap_or_else(|| "新线程".to_string()),
+        status: "active".to_string(),
+        created_at: now,
+        updated_at: now,
+        last_message_at: now,
+        agent_id: (!agent.trim().is_empty()).then(|| agent.trim().to_string()),
+        // Keep an explicit empty id as the default local workspace. `arg_str`
+        // intentionally treats it as absent, matching threads.list.
+        workspace_id: args
+            .get("workspace_id")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+            .map(str::to_string)
+            .or_else(|| ctx.workspace_id.clone()),
+        tool_overrides: Vec::new(),
+        parent_session_id: None,
+        parent_message_id: None,
+        spawn_label,
+        spawned_by: Some(ctx.source_tag.clone()),
+    };
+    if let Err(err) = state.user_store.upsert_chat_session(&record) {
+        return CommandReport::failed("THREAD_CREATE_FAILED", sanitize(&err.to_string()));
+    }
+    let workspace_id = record.workspace_id.clone().unwrap_or_default();
+    let title = record.title.clone();
+    let status = record.status.clone();
+    CommandReport::succeeded(json!({
+        "local_thread_id": session_id,
+        "workspace_id": workspace_id,
+        "title": title,
+        "status": status,
+        "created": true,
+    }))
 }
 
 /// Admit one turn through the engine's own admission path: a remote turn enters
@@ -1062,44 +1163,14 @@ async fn admit_turn(
     }
     let session_id = match thread.clone() {
         Some(id) => id,
-        None => match state
-            .kernel
-            .thread_runtime
-            .create_task_session_id(&ctx.local_user_id, &agent)
-        {
-            Ok(id) => id,
-            Err(err) => {
-                return CommandReport::failed("THREAD_CREATE_FAILED", sanitize(&err.to_string()))
+        None => {
+            let report = create_remote_thread(ctx, &spec.args, &agent, title.clone(), spawn_label.clone()).await;
+            if report.status != wunder_core::interlink::COMMAND_STATUS_SUCCEEDED {
+                return report;
             }
-        },
-    };
-
-    // A brand-new remote thread records its origin the way existing code does:
-    // on the session row (`spawned_by`) plus the node's workspace binding.
-    if thread.is_none() {
-        let now = now_ts();
-        let record = crate::storage::ChatSessionRecord {
-            session_id: session_id.clone(),
-            user_id: ctx.local_user_id.clone(),
-            title: title
-                .map(|title| title.chars().take(96).collect::<String>())
-                .unwrap_or_else(|| "远程会话".to_string()),
-            status: "active".to_string(),
-            created_at: now,
-            updated_at: now,
-            last_message_at: now,
-            agent_id: (!agent.is_empty()).then_some(agent.clone()),
-            workspace_id: arg_str(&spec.args, "workspace_id").or_else(|| ctx.workspace_id.clone()),
-            tool_overrides: Vec::new(),
-            parent_session_id: None,
-            parent_message_id: None,
-            spawn_label,
-            spawned_by: Some(ctx.source_tag.clone()),
-        };
-        if let Err(err) = state.user_store.upsert_chat_session(&record) {
-            return CommandReport::failed("THREAD_CREATE_FAILED", sanitize(&err.to_string()));
+            report.result["local_thread_id"].as_str().unwrap_or_default().to_string()
         }
-    }
+    };
 
     let client_message_id = Some(
         format!("remote:{}", spec.command_id)

@@ -453,16 +453,7 @@
           <input id="files" type="file" multiple />
         </label>
 
-        <div class="checks">
-          <label class="check">
-            <input id="preemptActiveWorkflow" type="checkbox" />
-            覆盖旧外部 run
-          </label>
-          <label class="check">
-            <input id="clearWorkspace" type="checkbox" checked disabled />
-            清空 10 号目录
-          </label>
-        </div>
+        <p class="subtle">新请求会取消同一用户正在运行的一次性任务；每个 run 使用独立目录。</p>
 
         <div class="actions">
           <button id="startStream" class="primary">流式执行</button>
@@ -581,8 +572,6 @@
       agentId: $("agentId"),
       message: $("message"),
       files: $("files"),
-      preemptActiveWorkflow: $("preemptActiveWorkflow"),
-      clearWorkspace: $("clearWorkspace"),
     };
 
     function init() {
@@ -627,8 +616,6 @@
     function buildRequestPayload() {
       const request = {
         message: fields.message.value.trim(),
-        preempt: true,
-        preempt_active_workflow: fields.preemptActiveWorkflow.checked,
         workspace_container_id: 10,
         clear_workspace: true,
         timeout_s: Number(fields.timeoutS.value || 6000),

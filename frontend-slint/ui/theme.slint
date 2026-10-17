@@ -2,7 +2,7 @@
 // every page keeps importing Theme (and the data structs) from theme.slint.
 import { Theme } from "design_tokens.slint";
 export { Theme }
-export struct Conversation { id: string, agent-id: string, workspace-id: string, workspace-name: string, workspace-color: string, title: string, preview: string, time: string, consumed-tokens: string, tool-calls: string, quota-used: string, runtime-status: string, locked: bool, goal-active: bool, goal-objective: string, goal-seconds: int, goal-paused: bool, origin: string }
+export struct Conversation { id: string, agent-id: string, workspace-id: string, workspace-name: string, workspace-color: string, title: string, preview: string, time: string, consumed-tokens: string, tool-calls: string, quota-used: string, runtime-status: string, locked: bool, goal-active: bool, goal-visible: bool, goal-objective: string, goal-phase: string, goal-activation: string, goal-rounds: string, goal-seconds: int, goal-paused: bool, origin: string }
 // One bound user folder in the sidebar tree. `expanded`/`selected` are pure
 // view state owned by the workspace projection, not persisted.
 export struct WorkspaceCard { workspace-id: string, name: string, icon: string, color: string, root-path: string, thread-count: int, expanded: bool, selected: bool }
@@ -14,6 +14,11 @@ export struct WorkspaceCard { workspace-id: string, name: string, icon: string, 
 // mirrors the web gate (not running/pending and not locked); `checked` is the
 // multi-select state, only meaningful while the tree is in selection mode.
 export struct SidebarRow { kind: int, workspace-id: string, name: string, icon: string, color: string, thread-count: int, expanded: bool, selected: bool, thread-id: string, title: string, status: string, active: bool, payload: int, origin: string, archivable: bool, checked: bool }
+// Bounded remote projection used by the cloud workspace branch of the same
+// sidebar tree. It remains separate from local `Conversation` storage: cloud
+// threads are addressed through the cloud façade and are never copied into the
+// local SQLite catalogue.
+export struct CloudThreadCard { id: string, title: string, status: string }
 // Thread trajectory (dsh ui-trajectory alignment). Rows are pre-projected and
 // pre-bounded in Rust; Slint only lays out what it was handed.
 export struct TrajRow {

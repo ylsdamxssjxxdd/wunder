@@ -48,6 +48,26 @@ impl NativeDesktop {
             })
             .collect())
     }
+    /// Create an empty cloud thread before the first message.  Keeping this as
+    /// an explicit operation makes the workspace tree immediately consistent
+    /// with local workspaces and avoids turning a retry into a duplicate turn.
+    pub fn cloud_thread_create(&self, agent: &str, title: &str) -> Result<NativeCloudThread> {
+        let mut args = json!({});
+        if !agent.trim().is_empty() {
+            args["agent"] = json!(agent.trim());
+        }
+        if !title.trim().is_empty() {
+            args["title"] = json!(title.trim());
+        }
+        let result = self.cloud_thread_command("thread.create", args)?;
+        let id = string(&result, "local_thread_id");
+        anyhow::ensure!(!id.is_empty(), "cloud command returned no thread id");
+        Ok(NativeCloudThread {
+            id,
+            title: string(&result, "title"),
+            status: "active".to_string(),
+        })
+    }
     pub fn cloud_thread_view(&self, thread: &str) -> Result<ThreadViewPage> {
         let data = self
             .runtime

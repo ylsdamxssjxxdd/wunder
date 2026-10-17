@@ -10,7 +10,7 @@ use crate::services::stream_events::StreamEventService;
 use crate::services::user_agent_presets::ensure_user_agent_bootstrap;
 use crate::state::AppState;
 use crate::storage::{
-    SessionRunRecord, UpdateAgentTaskStatusParams, UserAccountRecord, UserAgentRecord,
+    SessionLockStatus, SessionRunRecord, UserAccountRecord, UserAgentRecord,
     MAX_SANDBOX_CONTAINER_ID,
 };
 use crate::user_access::{build_user_tool_context, compute_allowed_tool_names, is_agent_allowed};
@@ -47,6 +47,8 @@ const MAX_UPLOAD_BYTES: usize = 200 * 1024 * 1024;
 const DEFAULT_EVENT_LIMIT: i64 = 200;
 const MAX_EVENT_LIMIT: i64 = 1000;
 const ACTIVE_RUN_META_PREFIX: &str = "external_workflow_active:";
+const ADMISSION_LOCK_TTL_S: f64 = 90.0;
+const ADMISSION_LOCK_AGENT_ID: &str = "__external_workflow_admission__";
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
@@ -215,7 +217,7 @@ async fn cancel_workflow(
     AxumPath(run_id): AxumPath<String>,
 ) -> Result<Json<Value>, Response> {
     let mut record = load_authorized_run(&state, &headers, &run_id).await?;
-    let cancel_requested = cancel_session_and_tasks(state.as_ref(), &record.user_id, &record);
+    let cancel_requested = cancel_session_and_tasks(state.as_ref(), &record.user_id, &record).await;
     let now = now_ts();
     record.status = if is_terminal_status(&record.status) {
         record.status.clone()
@@ -227,9 +229,6 @@ async fn cancel_workflow(
         .user_store
         .upsert_session_run(&record)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    if record.status == "cancelling" {
-        release_active_workflow(state.as_ref(), &record.user_id, &record.run_id);
-    }
     Ok(Json(json!({
         "data": {
             "run_id": record.run_id,
@@ -254,7 +253,7 @@ async fn download_workflow_file(
             "workflow file not found".to_string(),
         ));
     };
-    let workspace_id = workflow_workspace_id(state.as_ref(), &record.user_id);
+    let workspace_id = workflow_workspace_id_from_record(state.as_ref(), &record);
     let target = state
         .workspace
         .resolve_path(&workspace_id, &file_ref.path)
@@ -364,23 +363,67 @@ async fn prepare_workflow_inner(
     validate_workflow_request(request, files)?;
     let user = resolve_target_user(state.as_ref(), headers, request).await?;
     let agent = resolve_target_agent(state.as_ref(), &user, request).await?;
-    // Always cancel any active external workflow for this user before starting a new one.
-    // This simplifies the API: new requests automatically preempt old ones.
-    cancel_active_external_workflow(state.as_ref(), &user.user_id)?;
-
     let run_id = format!("run_{}", Uuid::new_v4().simple());
+    let admission_id = external_workflow_admission_id(&user.user_id);
+    let lock_status =
+        acquire_workflow_admission(&state, &admission_id, &user.user_id, &agent.agent_id).await?;
+    if !matches!(lock_status, SessionLockStatus::Acquired) {
+        return Err(error_with_code(
+            StatusCode::CONFLICT,
+            "EXTERNAL_WORKFLOW_BUSY",
+            "another external workflow is being prepared for this user".to_string(),
+        ));
+    }
+    let active_run_id = match load_active_workflow(state.as_ref(), &user.user_id) {
+        Ok(value) => value,
+        Err(response) => {
+            release_workflow_admission(&state, &admission_id).await;
+            return Err(response);
+        }
+    };
+    if active_run_id.is_some() {
+        if let Err(err) = cancel_active_external_workflow(state.as_ref(), &user.user_id).await {
+            release_workflow_admission(&state, &admission_id).await;
+            return Err(err);
+        }
+    }
     let session_id = state
         .kernel
         .thread_runtime
         .create_task_session_id(&user.user_id, &agent.agent_id)
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    let workspace_id = workflow_workspace_id(state.as_ref(), &user.user_id);
-    let removed = state
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()));
+    let session_id = match session_id {
+        Ok(value) => value,
+        Err(response) => {
+            release_workflow_admission(&state, &admission_id).await;
+            return Err(response);
+        }
+    };
+    // Each run gets its own directory below the container-10 root. This prevents a
+    // predecessor that is still unwinding from deleting or overwriting a successor's files.
+    let base_scope = workflow_workspace_id(state.as_ref(), &user.user_id);
+    if let Err(err) = state.workspace.ensure_user_root(&base_scope) {
+        release_workflow_admission(&state, &admission_id).await;
+        return Err(error_response(StatusCode::BAD_REQUEST, err.to_string()));
+    }
+    let workspace_id = state
         .workspace
-        .clear_container_workspace(&user.user_id, EXTERNAL_WORKFLOW_CONTAINER_ID)
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    let input_files = store_input_files(state.as_ref(), &workspace_id, files).await?;
-    ensure_output_dir(state.as_ref(), &workspace_id).await?;
+        .scoped_external_run_workspace(&base_scope, &run_id);
+    if let Err(err) = state.workspace.ensure_user_root(&workspace_id) {
+        release_workflow_admission(&state, &admission_id).await;
+        return Err(error_response(StatusCode::BAD_REQUEST, err.to_string()));
+    }
+    let input_files = match store_input_files(state.as_ref(), &workspace_id, files).await {
+        Ok(value) => value,
+        Err(response) => {
+            release_workflow_admission(&state, &admission_id).await;
+            return Err(response);
+        }
+    };
+    if let Err(response) = ensure_output_dir(state.as_ref(), &workspace_id).await {
+        release_workflow_admission(&state, &admission_id).await;
+        return Err(response);
+    }
     let started_at = now_ts();
     let dispatch_id = request
         .client_run_id
@@ -411,7 +454,7 @@ async fn prepare_workflow_inner(
             "workspace_container_id": EXTERNAL_WORKFLOW_CONTAINER_ID,
             "workspace_id": workspace_id,
             "input_files": input_files,
-            "workspace_removed_entries": removed,
+            "workspace_removed_entries": 0,
             "request": {
                 "user_name": request.user_name,
                 "agent_name": request.agent_name,
@@ -421,11 +464,20 @@ async fn prepare_workflow_inner(
             }
         })),
     };
-    state
-        .user_store
-        .upsert_session_run(&record)
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    set_active_workflow(state.as_ref(), &user.user_id, &run_id)?;
+    if let Err(err) = state.user_store.upsert_session_run(&record) {
+        release_workflow_admission(&state, &admission_id).await;
+        return Err(error_response(StatusCode::BAD_REQUEST, err.to_string()));
+    }
+    if let Err(err) = set_active_workflow(
+        state.as_ref(),
+        &user.user_id,
+        active_run_id.as_deref(),
+        &run_id,
+    ) {
+        release_workflow_admission(&state, &admission_id).await;
+        return Err(err);
+    }
+    release_workflow_admission(&state, &admission_id).await;
     Ok(PreparedWorkflow {
         run_id,
         session_id,
@@ -471,9 +523,15 @@ fn run_workflow_stream(
                 .await;
             }
             Err(_) => {
-                state
-                    .monitor
-                    .cancel_with_source(&prepared.session_id, "external_workflow_timeout");
+                let _ = state
+                    .kernel
+                    .thread_runtime
+                    .cancel_session_activity(
+                        &prepared.user.user_id,
+                        &prepared.session_id,
+                        "external_workflow_timeout",
+                    )
+                    .await;
                 finish_workflow_with_error(
                     state.as_ref(),
                     &prepared,
@@ -515,7 +573,6 @@ async fn run_workflow_to_completion(
                 None,
             )
             .await;
-            release_active_workflow(state.as_ref(), &prepared.user.user_id, &prepared.run_id);
             let _ = send_workflow_event(
                 &tx,
                 "workflow.error",
@@ -607,7 +664,6 @@ async fn run_workflow_to_completion(
         final_usage.as_ref(),
     )
     .await;
-    release_active_workflow(state.as_ref(), &prepared.user.user_id, &prepared.run_id);
     let event_name = if status == "completed" {
         "workflow.final"
     } else {
@@ -664,7 +720,7 @@ async fn build_wunder_request(
         session_id: Some(prepared.session_id.clone()),
         agent_id: Some(prepared.agent.agent_id.clone()),
         workspace_container_id: Some(EXTERNAL_WORKFLOW_CONTAINER_ID),
-        workspace_id: None,
+        workspace_id: Some(prepared.workspace_id.clone()),
         model_name: prepared.agent.model_name.clone(),
         language: Some(i18n::get_language()),
         config_overrides: Some(json!({
@@ -767,7 +823,20 @@ async fn resolve_target_user(
             return Ok(user);
         }
     }
-    let resolved = resolve_user(state, headers, user_key).await?;
+    // A bearer token identifies one user. `user_name` is a lookup key only for
+    // external-key/admin callers, never a substitute for that user id.
+    if request
+        .user_name
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty())
+    {
+        return Err(error_with_code(
+            StatusCode::FORBIDDEN,
+            "TARGET_USER_MISMATCH",
+            "a bearer token cannot select a user by user_name".to_string(),
+        ));
+    }
+    let resolved = resolve_user(state, headers, request.user_id.as_deref()).await?;
     Ok(resolved.user)
 }
 
@@ -918,44 +987,20 @@ fn ensure_agent_allowed(
     }
 }
 
-fn cancel_session_and_tasks(state: &AppState, user_id: &str, record: &SessionRunRecord) -> bool {
-    let mut cancelled = state
-        .monitor
-        .cancel_with_source(&record.session_id, "external_workflow_cancel");
-    let thread_id = format!("thread_{}", record.session_id.trim());
-    let now = now_ts();
-    if let Ok(tasks) = state
-        .user_store
-        .list_agent_tasks_by_thread(&thread_id, None, 128)
-    {
-        for task in tasks {
-            if matches!(task.status.as_str(), "pending" | "running" | "retry") {
-                if state
-                    .user_store
-                    .update_agent_task_status(UpdateAgentTaskStatusParams {
-                        task_id: &task.task_id,
-                        status: "cancelled",
-                        retry_count: 0,
-                        retry_at: now,
-                        started_at: task.started_at,
-                        finished_at: Some(now),
-                        last_error: Some("cancelled"),
-                        updated_at: now,
-                    })
-                    .is_ok()
-                {
-                    cancelled = true;
-                }
-            }
-        }
-    }
-    let _ = state
-        .storage
-        .delete_session_goal(user_id, &record.session_id);
-    cancelled
+async fn cancel_session_and_tasks(
+    state: &AppState,
+    user_id: &str,
+    record: &SessionRunRecord,
+) -> bool {
+    state
+        .kernel
+        .thread_runtime
+        .cancel_session_activity(user_id, &record.session_id, "external_workflow_cancel")
+        .await
+        .is_ok()
 }
 
-fn cancel_active_external_workflow(state: &AppState, user_id: &str) -> Result<(), Response> {
+async fn cancel_active_external_workflow(state: &AppState, user_id: &str) -> Result<(), Response> {
     if let Some(run_id) = load_active_workflow(state, user_id)? {
         if let Some(mut run) = state
             .user_store
@@ -963,15 +1008,18 @@ fn cancel_active_external_workflow(state: &AppState, user_id: &str) -> Result<()
             .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
             .filter(|run| run.run_kind.as_deref() == Some(RUN_KIND))
         {
-            let _ = cancel_session_and_tasks(state, user_id, &run);
-            run.status = "cancelled".to_string();
-            run.finished_time = now_ts();
-            run.elapsed_s = (run.finished_time - run.started_time).max(0.0);
+            let _ = state
+                .kernel
+                .thread_runtime
+                .cancel_session_activity(user_id, &run.session_id, "external_workflow_preempt")
+                .await;
+            // The executor owns final settlement. Marking it `cancelled` here
+            // made status/SSE lie while the stream was still unwinding.
+            run.status = "cancelling".to_string();
             run.error = Some("cancelled by a newer external workflow".to_string());
-            run.updated_time = run.finished_time;
+            run.updated_time = now_ts();
             let _ = state.user_store.upsert_session_run(&run);
         }
-        release_active_workflow(state, user_id, &run_id);
     }
     Ok(())
 }
@@ -1083,6 +1131,9 @@ async fn update_run_terminal_if_current(
         metadata: Some(metadata),
     };
     let _ = state.user_store.upsert_session_run(&record);
+    if is_terminal_status(status) {
+        release_active_workflow(state, &prepared.user.user_id, &prepared.run_id);
+    }
 }
 
 async fn finish_workflow_with_error(
@@ -1103,7 +1154,6 @@ async fn finish_workflow_with_error(
         None,
     )
     .await;
-    release_active_workflow(state, &prepared.user.user_id, &prepared.run_id);
     let _ = send_workflow_event(
         tx,
         "workflow.error",
@@ -1149,21 +1199,33 @@ async fn collect_workflow_files(
     for relative in
         referenced_workflow_paths(final_answer.unwrap_or_default(), &prepared.workspace_id)
     {
-        if files.iter().any(|item| item.path == relative) {
-            continue;
-        }
-        let target = match state
-            .workspace
-            .resolve_path(&prepared.workspace_id, &relative)
-        {
-            Ok(path) => path,
-            Err(_) => continue,
+        let candidates = if relative.contains('/') {
+            vec![relative]
+        } else {
+            vec![
+                format!("output/{relative}"),
+                format!("input/{relative}"),
+                relative,
+            ]
         };
-        if !target.is_file() {
-            continue;
-        }
-        if let Some(file_ref) = build_file_ref(&prepared.run_id, &relative, &target) {
-            files.push(file_ref);
+        for candidate in candidates {
+            if files.iter().any(|item| item.path == candidate) {
+                break;
+            }
+            let target = match state
+                .workspace
+                .resolve_path(&prepared.workspace_id, &candidate)
+            {
+                Ok(path) => path,
+                Err(_) => continue,
+            };
+            if !target.is_file() {
+                continue;
+            }
+            if let Some(file_ref) = build_file_ref(&prepared.run_id, &candidate, &target) {
+                files.push(file_ref);
+            }
+            break;
         }
     }
     files.sort_by(|a, b| a.path.cmp(&b.path));
@@ -1248,6 +1310,42 @@ fn active_workflow_meta_key(user_id: &str) -> String {
     format!("{ACTIVE_RUN_META_PREFIX}{user_id}:{EXTERNAL_WORKFLOW_CONTAINER_ID}")
 }
 
+fn external_workflow_admission_id(user_id: &str) -> String {
+    format!("external_workflow_admission:{user_id}:{EXTERNAL_WORKFLOW_CONTAINER_ID}")
+}
+
+async fn acquire_workflow_admission(
+    state: &AppState,
+    admission_id: &str,
+    user_id: &str,
+    agent_id: &str,
+) -> Result<SessionLockStatus, Response> {
+    let storage = state.storage.clone();
+    let admission_id = admission_id.to_string();
+    let user_id = user_id.to_string();
+    let agent_id = format!("{ADMISSION_LOCK_AGENT_ID}:{agent_id}");
+    blocking::run_db("api.external_workflows.acquire_admission", move || {
+        storage.try_acquire_session_lock(
+            &admission_id,
+            &user_id,
+            &agent_id,
+            ADMISSION_LOCK_TTL_S,
+            i64::MAX,
+        )
+    })
+    .await
+    .map_err(|err| error_response(StatusCode::SERVICE_UNAVAILABLE, err.to_string()))
+}
+
+async fn release_workflow_admission(state: &AppState, admission_id: &str) {
+    let storage = state.storage.clone();
+    let admission_id = admission_id.to_string();
+    let _ = blocking::run_db("api.external_workflows.release_admission", move || {
+        storage.release_session_lock(&admission_id)
+    })
+    .await;
+}
+
 fn load_active_workflow(state: &AppState, user_id: &str) -> Result<Option<String>, Response> {
     let key = active_workflow_meta_key(user_id);
     let Some(run_id) = state
@@ -1264,35 +1362,57 @@ fn load_active_workflow(state: &AppState, user_id: &str) -> Result<Option<String
         .get_session_run(&run_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
     else {
-        release_active_workflow(state, user_id, &run_id);
+        let _ = state
+            .storage
+            .compare_and_swap_meta(&key, Some(&run_id), None);
         return Ok(None);
     };
-    if is_terminal_status(&run.status) {
-        release_active_workflow(state, user_id, &run_id);
+    if run.run_kind.as_deref() != Some(RUN_KIND) || is_terminal_status(&run.status) {
+        let _ = state
+            .storage
+            .compare_and_swap_meta(&key, Some(&run_id), None);
         return Ok(None);
     }
     Ok(Some(run_id))
 }
 
-fn set_active_workflow(state: &AppState, user_id: &str, run_id: &str) -> Result<(), Response> {
-    state
-        .user_store
-        .set_meta(&active_workflow_meta_key(user_id), run_id)
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))
+fn set_active_workflow(
+    state: &AppState,
+    user_id: &str,
+    expected_run_id: Option<&str>,
+    run_id: &str,
+) -> Result<(), Response> {
+    let key = active_workflow_meta_key(user_id);
+    let replaced = state
+        .storage
+        .compare_and_swap_meta(&key, expected_run_id, Some(run_id))
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    if replaced {
+        return Ok(());
+    }
+    // The predecessor may have reached its terminal state and released the
+    // pointer while its replacement was being prepared. The admission lock
+    // excludes another creator, so installing into an empty slot is safe.
+    if expected_run_id.is_some()
+        && state
+            .storage
+            .compare_and_swap_meta(&key, None, Some(run_id))
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+    {
+        return Ok(());
+    }
+    Err(error_with_code(
+        StatusCode::CONFLICT,
+        "EXTERNAL_WORKFLOW_BUSY",
+        "another external workflow became active".to_string(),
+    ))
 }
 
 fn release_active_workflow(state: &AppState, user_id: &str, run_id: &str) {
     let key = active_workflow_meta_key(user_id);
-    if state
-        .user_store
-        .get_meta(&key)
-        .ok()
-        .flatten()
-        .map(|value| value.trim() == run_id)
-        .unwrap_or(false)
-    {
-        let _ = state.storage.delete_meta_prefix(&key);
-    }
+    let _ = state
+        .storage
+        .compare_and_swap_meta(&key, Some(run_id), None);
 }
 
 fn files_from_record(record: &SessionRunRecord) -> Vec<WorkflowFileRef> {
@@ -1641,6 +1761,18 @@ fn workflow_workspace_id(state: &AppState, user_id: &str) -> String {
     state
         .workspace
         .scoped_user_id_by_container(user_id, EXTERNAL_WORKFLOW_CONTAINER_ID)
+}
+
+fn workflow_workspace_id_from_record(state: &AppState, record: &SessionRunRecord) -> String {
+    record
+        .metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get("workspace_id"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .unwrap_or_else(|| workflow_workspace_id(state, &record.user_id))
 }
 
 fn is_default_agent_alias(value: &str) -> bool {

@@ -6,6 +6,12 @@ use rusqlite::{params, OptionalExtension};
 pub(super) trait SqliteMetaStorage {
     fn get_meta_impl(&self, key: &str) -> Result<Option<String>>;
     fn set_meta_impl(&self, key: &str, value: &str) -> Result<()>;
+    fn compare_and_swap_meta_impl(
+        &self,
+        key: &str,
+        expected: Option<&str>,
+        value: Option<&str>,
+    ) -> Result<bool>;
     fn list_meta_prefix_impl(&self, prefix: &str) -> Result<Vec<(String, String)>>;
     fn delete_meta_prefix_impl(&self, prefix: &str) -> Result<usize>;
 }
@@ -34,6 +40,49 @@ impl SqliteMetaStorage for SqliteStorage {
             params![key, value, now],
         )?;
         Ok(())
+    }
+
+    fn compare_and_swap_meta_impl(
+        &self,
+        key: &str,
+        expected: Option<&str>,
+        value: Option<&str>,
+    ) -> Result<bool> {
+        self.ensure_initialized()?;
+        let cleaned = key.trim();
+        if cleaned.is_empty() {
+            return Ok(false);
+        }
+        let expected = expected.map(str::to_string);
+        let value = value.map(str::to_string);
+        let now = Self::now_ts();
+        let mut conn = self.open()?;
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let current: Option<String> = tx
+            .query_row(
+                "SELECT value FROM meta WHERE key = ?",
+                params![cleaned],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if current.as_deref() != expected.as_deref() {
+            tx.commit()?;
+            return Ok(false);
+        }
+        match value {
+            Some(value) => {
+                tx.execute(
+                    "INSERT INTO meta (key, value, updated_time) VALUES (?, ?, ?) \
+                     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_time = excluded.updated_time",
+                    params![cleaned, value, now],
+                )?;
+            }
+            None => {
+                tx.execute("DELETE FROM meta WHERE key = ?", params![cleaned])?;
+            }
+        }
+        tx.commit()?;
+        Ok(true)
     }
 
     fn list_meta_prefix_impl(&self, prefix: &str) -> Result<Vec<(String, String)>> {
