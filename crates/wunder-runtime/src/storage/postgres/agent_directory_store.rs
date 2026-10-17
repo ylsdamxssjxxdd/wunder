@@ -353,7 +353,26 @@ impl PostgresAgentDirectoryStorage for PostgresStorage {
         let limit_param = limit;
         let offset_param = offset.max(0);
 
+        // Old installations can contain several historical rows per user.
+        // The latest binding is the user's one current agent instance.
+        let binding_cte = format!("WITH current_bindings AS ( \
+               SELECT ua.*, ROW_NUMBER() OVER (PARTITION BY ua.user_id ORDER BY ua.updated_at DESC, ua.agent_id DESC) AS row_num \
+               FROM user_agents ua WHERE ua.agent_id <> '__default__' AND {BINDING_USABLE} \
+             )");
+        let binding_cte = if cleaned_preset == "__default__" {
+            format!("{binding_cte}, resolved_bindings AS ( \
+                SELECT {AGENT_COLUMNS}, row_num FROM current_bindings WHERE row_num = 1 \
+                UNION ALL SELECT '__default__', u.user_id, '', '', '', NULL, \
+                  '[]', '[]', '[]', '[]', 'A', 'full_auto', 0, 'active', NULL, 1, \
+                  u.created_at, u.updated_at, '[]', '{{\"preset_id\":\"__default__\"}}', 0, 0, 0, '[]', 1 \
+                FROM user_accounts u WHERE NOT EXISTS ( \
+                  SELECT 1 FROM current_bindings cb WHERE cb.user_id = u.user_id AND cb.row_num = 1) \
+              )")
+        } else {
+            format!("{binding_cte}, resolved_bindings AS (SELECT * FROM current_bindings)")
+        };
         let mut conditions = vec![
+            "ua.row_num = 1".to_string(),
             BINDING_USABLE.to_string(),
             format!("{BINDING_PRESET_ID} = $1"),
         ];
@@ -374,12 +393,12 @@ impl PostgresAgentDirectoryStorage for PostgresStorage {
         let where_sql = conditions.join(" AND ");
         let mut conn = self.conn()?;
         let count_sql = format!(
-            "SELECT COUNT(*) FROM user_agents ua JOIN user_accounts u ON u.user_id = ua.user_id WHERE {where_sql}"
+            "{binding_cte} SELECT COUNT(*) FROM resolved_bindings ua JOIN user_accounts u ON u.user_id = ua.user_id WHERE {where_sql}"
         );
         let total: i64 = conn.query_one(&count_sql, &params)?.get(0);
 
         let mut sql = format!(
-            "SELECT {}, u.username FROM user_agents ua JOIN user_accounts u ON u.user_id = ua.user_id WHERE {where_sql} ORDER BY u.username ASC",
+            "{binding_cte} SELECT {}, u.username FROM resolved_bindings ua JOIN user_accounts u ON u.user_id = ua.user_id WHERE {where_sql} ORDER BY u.username ASC",
             aliased_agent_columns()
         );
         if limit_param > 0 {
@@ -419,9 +438,14 @@ impl PostgresAgentDirectoryStorage for PostgresStorage {
         }
         let mut conn = self.conn()?;
         let sql = format!(
-            "SELECT {BINDING_PRESET_ID_PLAIN} AS preset_id, COUNT(DISTINCT user_id) FROM user_agents \
-             WHERE preset_binding IS NOT NULL AND left(btrim(preset_binding), 1) = '{{' \
-             AND {BINDING_PRESET_ID_PLAIN} = ANY($1) GROUP BY {BINDING_PRESET_ID_PLAIN}"
+            "WITH current_bindings AS ( \
+               SELECT user_id, {BINDING_PRESET_ID_PLAIN} AS preset_id, \
+                 ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY updated_at DESC, agent_id DESC) AS row_num \
+               FROM user_agents \
+               WHERE agent_id <> '__default__' AND preset_binding IS NOT NULL AND left(btrim(preset_binding), 1) = '{{' \
+             ) \
+             SELECT preset_id, COUNT(*) FROM current_bindings \
+             WHERE row_num = 1 AND preset_id = ANY($1) GROUP BY preset_id"
         );
         let rows = conn.query(&sql, &[&cleaned])?;
         let mut output = Vec::with_capacity(rows.len());

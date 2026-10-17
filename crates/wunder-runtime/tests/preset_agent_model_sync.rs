@@ -127,6 +127,18 @@ where
         .to_string();
     config.skills.enabled.clear();
     configure(&mut config, temp_dir.path());
+    // Skill fixtures must not depend on the process working directory.
+    let global_skills = temp_dir.path().join("global-skills");
+    for name in &config.skills.enabled {
+        let skill_dir = global_skills.join(name);
+        std::fs::create_dir_all(&skill_dir).expect("create fixture skill");
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            format!("---\nname: {name}\ndescription: fixture skill\n---\n# fixture\n"),
+        )
+        .expect("write fixture skill");
+    }
+    config.skills.paths = vec![global_skills.to_string_lossy().to_string()];
 
     let config_store = ConfigStore::new(temp_dir.path().join("wunder.yaml"));
     let config_for_store = config.clone();
@@ -542,6 +554,24 @@ fn find_worker_card_document_by_agent_id(search_root: &Path, agent_id: &str) -> 
     visit(search_root, agent_id)
 }
 
+async fn bind_preset_users(app: &Router, preset_id: &str, user_ids: &[&str]) -> Value {
+    let normalized_preset_id = normalize_test_preset_id(preset_id);
+    let (status, body) = send_json(
+        app,
+        None,
+        Method::POST,
+        "/wunder/admin/preset_agents/bindings",
+        Some(json!({
+            "preset_id": normalized_preset_id,
+            "user_ids": user_ids,
+            "action": "bind",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    body
+}
+
 async fn sync_preset(
     app: &Router,
     preset_id: &str,
@@ -581,6 +611,11 @@ async fn admin_preset_list_includes_default_agent_item() {
             .as_str()
             .is_some_and(|name| !name.trim().is_empty()),
         "default preset item should expose a visible name"
+    );
+    assert_eq!(
+        default_item["bound_users"],
+        json!(1),
+        "the default preset must report users not bound to a named preset"
     );
 }
 
@@ -905,9 +940,9 @@ async fn admin_default_agent_sync_force_updates_tools_and_skills() {
     let safe_overridden = safe_summary["data"]["skipped_customized"]
         .as_u64()
         .expect("overridden_agents should be number");
-    assert!(
-        safe_created >= 1,
-        "expected at least 1 created agent in safe sync, got {safe_created}"
+    assert_eq!(
+        safe_created, 0,
+        "reading the default agent already initializes its configuration; sync updates it in place"
     );
     assert!(
         safe_overridden >= 1,
@@ -1227,6 +1262,48 @@ async fn preset_agent_bootstrap_uses_preset_model_name() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn preset_sync_only_updates_users_explicitly_bound_to_that_preset() {
+    let context = build_test_context_with_config("preset_sync_bound_user", |config| {
+        config.user_agents.presets = vec![build_preset_config("preset_sync_scope", None)];
+    })
+    .await;
+    let unbound_user = context
+        .state
+        .user_store
+        .create_user(
+            "preset_sync_unbound_user",
+            Some("preset_sync_unbound_user@example.test".to_string()),
+            "password-123",
+            Some("A"),
+            None,
+            vec!["user".to_string()],
+            "active",
+            false,
+        )
+        .expect("create unbound user");
+
+    let preset_id = find_preset_item(&list_admin_presets(&context.app).await, "preset_sync_scope")
+        ["preset_id"]
+        .as_str()
+        .expect("preset id")
+        .to_string();
+    let binding = bind_preset_users(&context.app, &preset_id, &["preset_sync_bound_user"]).await;
+    assert_eq!(binding["data"]["affected_users"], json!(1));
+
+    let summary = sync_preset(&context.app, &preset_id, "force", None).await;
+    assert_eq!(summary["data"]["created_agents"], json!(0));
+    let unbound_agents = context
+        .state
+        .user_store
+        .list_user_agents(&unbound_user.user_id)
+        .expect("list unbound user agents");
+    assert!(
+        unbound_agents.is_empty(),
+        "sync must not assign a preset to a user that the administrator has not bound"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn preset_model_sync_safe_and_force_respects_user_override() {
     let context = build_test_context_with_config("preset_sync_user_a", |config| {
         config.llm.default = "model-default".to_string();
@@ -1281,14 +1358,16 @@ async fn preset_model_sync_safe_and_force_respects_user_override() {
         .expect("preset id")
         .to_string();
 
+    let binding = bind_preset_users(
+        &context.app,
+        &preset_id,
+        &["preset_sync_user_a", user_b.user_id.as_str()],
+    )
+    .await;
+    assert_eq!(binding["data"]["created_agents"], json!(2));
+
     let sync_v1 = sync_preset(&context.app, &preset_id, "safe", None).await;
-    let created_v1 = sync_v1["data"]["created_agents"]
-        .as_u64()
-        .expect("created_agents should be number");
-    assert!(
-        created_v1 >= 2,
-        "expected at least 2 created agents, got {created_v1}"
-    );
+    assert_eq!(sync_v1["data"]["created_agents"], json!(0));
 
     let user_a_v1 = list_user_agents(&context.app, &context.token).await;
     let user_b_v1 = list_user_agents(&context.app, &token_b).await;
@@ -1447,14 +1526,16 @@ async fn preset_tool_sync_safe_and_force_respects_user_override() {
         json!([tool_a.clone()])
     );
 
+    let binding = bind_preset_users(
+        &context.app,
+        &preset_id,
+        &[user_a_id, user_b.user_id.as_str()],
+    )
+    .await;
+    assert_eq!(binding["data"]["created_agents"], json!(2));
+
     let sync_v1 = sync_preset(&context.app, &preset_id, "safe", None).await;
-    let created_v1 = sync_v1["data"]["created_agents"]
-        .as_u64()
-        .expect("created_agents should be number");
-    assert!(
-        created_v1 >= 2,
-        "expected at least 2 created agents for tool sync baseline, got {created_v1}"
-    );
+    assert_eq!(sync_v1["data"]["created_agents"], json!(0));
 
     let user_a_v1 = list_user_agents(&context.app, &context.token).await;
     let user_b_v1 = list_user_agents(&context.app, &token_b).await;
@@ -1615,14 +1696,16 @@ async fn preset_force_sync_repairs_declared_skills_for_users() {
         vec![skill_name.clone()]
     );
 
+    let binding = bind_preset_users(
+        &context.app,
+        &preset_id,
+        &[user_a_id, user_b.user_id.as_str()],
+    )
+    .await;
+    assert_eq!(binding["data"]["created_agents"], json!(2));
+
     let force_summary = sync_preset(&context.app, &preset_id, "force", None).await;
-    let created_agents = force_summary["data"]["created_agents"]
-        .as_u64()
-        .expect("created_agents should be number");
-    assert!(
-        created_agents >= 2,
-        "expected at least 2 created agents in force skill sync, got {created_agents}"
-    );
+    assert_eq!(force_summary["data"]["created_agents"], json!(0));
 
     let user_a_agents = list_user_agents(&context.app, &context.token).await;
     let user_b_agents = list_user_agents(&context.app, &token_b).await;
@@ -1643,6 +1726,222 @@ async fn preset_force_sync_repairs_declared_skills_for_users() {
             "{label} should keep preset declared skills after force sync"
         );
     }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn default_force_sync_converges_legacy_unbound_agents() {
+    let user_id = "default_legacy_instances";
+    let context = build_test_context_with_config(user_id, |config| {
+        config.user_agents.presets = vec![build_preset_config("legacy_source", None)];
+    })
+    .await;
+    list_user_agents(&context.app, &context.token).await;
+    let mut records = context
+        .state
+        .user_store
+        .list_user_agents(user_id)
+        .expect("legacy instance");
+    let mut current = records.pop().expect("current instance");
+    current.preset_binding = None;
+    context
+        .state
+        .user_store
+        .upsert_user_agent(&current)
+        .expect("clear binding");
+    let mut older = current.clone();
+    older.agent_id = "legacy_older_instance".to_string();
+    older.updated_at -= 100.0;
+    context
+        .state
+        .user_store
+        .upsert_user_agent(&older)
+        .expect("older instance");
+
+    let result = sync_preset(&context.app, "__default__", "force", None).await;
+    assert!(
+        result["data"]["updated_agents"]
+            .as_u64()
+            .unwrap_or_default()
+            >= 1
+    );
+    let records = context
+        .state
+        .user_store
+        .list_user_agents(user_id)
+        .expect("synced instances");
+    assert_eq!(records.len(), 2, "historical instances remain stored");
+    let kept = records
+        .iter()
+        .find(|record| record.agent_id == current.agent_id)
+        .expect("retained instance");
+    assert_eq!(
+        kept.preset_binding
+            .as_ref()
+            .expect("default binding")
+            .preset_id,
+        "__default__"
+    );
+    let archived = records
+        .iter()
+        .find(|record| record.agent_id == older.agent_id)
+        .expect("historical instance");
+    assert_eq!(archived.status, "archived");
+    assert!(archived.preset_binding.is_none());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn preset_force_sync_keeps_user_owned_tool_selections() {
+    let user_id = "preset_user_owned_tools";
+    let context = build_test_context_with_config(user_id, |config| {
+        config.tools.builtin.enabled = vec!["读取文件".to_string(), "写入文件".to_string()];
+        config.user_agents.presets = vec![build_preset_config("preset_user_owned_tools", None)];
+    })
+    .await;
+
+    bind_preset_users(&context.app, "preset_user_owned_tools", &[user_id]).await;
+    let user_skill = "user_owned_skill";
+    let skill_dir = context
+        .state
+        .user_tool_store
+        .get_skill_root(user_id)
+        .join(user_skill);
+    std::fs::create_dir_all(&skill_dir).expect("create user skill directory");
+    std::fs::write(
+        skill_dir.join("SKILL.md"),
+        format!("---\nname: {user_skill}\ndescription: test skill\n---\n# test\n"),
+    )
+    .expect("write user skill");
+    context
+        .state
+        .user_tool_store
+        .update_skills(user_id, vec![user_skill.to_string()], Vec::new())
+        .expect("enable user skill");
+    context
+        .state
+        .user_tool_manager
+        .clear_skill_cache(Some(user_id));
+
+    let disabled_skill = "user_disabled_skill";
+    let disabled_dir = context
+        .state
+        .user_tool_store
+        .get_skill_root(user_id)
+        .join(disabled_skill);
+    std::fs::create_dir_all(&disabled_dir).expect("create disabled skill directory");
+    std::fs::write(
+        disabled_dir.join("SKILL.md"),
+        format!("---\nname: {disabled_skill}\ndescription: test skill\n---\n# test\n"),
+    )
+    .expect("write disabled skill");
+    context
+        .state
+        .user_tool_manager
+        .clear_skill_cache(Some(user_id));
+    use wunder_server::user_tools::{UserKnowledgeBase, UserMcpServer};
+    context.state.user_tool_store.update_mcp_servers(user_id, vec![UserMcpServer {
+        name: "private_service".to_string(),
+        endpoint: "https://example.test/mcp".to_string(),
+        enabled: true,
+        tool_specs: vec![json!({"name": "selected_tool", "description": "test", "inputSchema": {"type": "object"}}),
+            json!({"name": "unselected_tool", "description": "test", "inputSchema": {"type": "object"}})],
+        ..Default::default()
+    }]).expect("configure user mcp");
+    context
+        .state
+        .user_tool_store
+        .update_knowledge_bases(
+            user_id,
+            vec![
+                UserKnowledgeBase {
+                    name: "private_knowledge".to_string(),
+                    enabled: true,
+                    ..Default::default()
+                },
+                UserKnowledgeBase {
+                    name: "unselected_knowledge".to_string(),
+                    enabled: true,
+                    ..Default::default()
+                },
+            ],
+        )
+        .expect("configure user knowledge");
+    let user_mcp = format!("{user_id}@private_service@selected_tool");
+    let disabled_mcp = format!("{user_id}@private_service@unselected_tool");
+    let user_knowledge = format!("{user_id}@private_knowledge");
+    let disabled_knowledge = format!("{user_id}@unselected_knowledge");
+    let agent_id = find_agent_id_by_name(
+        &list_user_agents(&context.app, &context.token).await,
+        PRESET_NAME,
+    );
+    let (status, body) = send_json(
+        &context.app,
+        Some(&context.token),
+        Method::PUT,
+        &format!("/wunder/agents/{agent_id}"),
+        Some(json!({ "tool_names": [user_skill, user_mcp, user_knowledge] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(
+        read_tool_names(&body["data"]).contains(&user_skill.to_string()),
+        "{body}"
+    );
+
+    let preset_id = find_preset_item(
+        &list_admin_presets(&context.app).await,
+        "preset_user_owned_tools",
+    )["preset_id"]
+        .as_str()
+        .expect("preset id")
+        .to_string();
+    let sync = sync_preset(&context.app, &preset_id, "force", None).await;
+    assert!(
+        sync["data"]["affected_users"].as_u64().unwrap_or_default() >= 1,
+        "force sync should update the user already bound to this preset"
+    );
+
+    let agents = list_user_agents(&context.app, &context.token).await;
+    let synced = find_agent_by_name(&agents, PRESET_NAME);
+    assert!(read_tool_names(synced).contains(&user_mcp));
+    assert!(read_tool_names(synced).contains(&user_knowledge));
+    assert!(!read_tool_names(synced).contains(&disabled_mcp));
+    assert!(!read_tool_names(synced).contains(&disabled_knowledge));
+    assert!(
+        read_tool_names(synced)
+            .iter()
+            .any(|name| name == user_skill),
+        "force sync must preserve the enabled user skill"
+    );
+    assert!(
+        read_declared_skill_names(synced)
+            .iter()
+            .any(|name| name == user_skill),
+        "the user skill must remain declared after force sync"
+    );
+    assert!(
+        !read_tool_names(synced).contains(&disabled_skill.to_string()),
+        "force sync must not enable an unselected user skill"
+    );
+    let result = bind_preset_users(&context.app, "__default__", &[user_id]).await;
+    assert_eq!(result["data"]["rebound_agents"], json!(1));
+    let rebound = list_user_agents(&context.app, &context.token).await;
+    assert_eq!(rebound.len(), 1);
+    assert_eq!(rebound[0]["id"], json!(agent_id));
+    assert!(read_tool_names(&rebound[0]).contains(&user_skill.to_string()));
+    assert!(!read_tool_names(&rebound[0]).contains(&disabled_skill.to_string()));
+    let summary = sync_preset(&context.app, "__default__", "force", None).await;
+    assert_eq!(summary["data"]["created_agents"], json!(0));
+    let reloaded = list_user_agents(&context.app, &context.token).await;
+    assert_eq!(
+        reloaded[0]["preset_binding"]["preset_id"],
+        json!("__default__")
+    );
+    assert!(read_tool_names(&reloaded[0]).contains(&user_skill.to_string()));
+    assert!(read_tool_names(&reloaded[0]).contains(&user_mcp));
+    assert!(read_tool_names(&reloaded[0]).contains(&user_knowledge));
+    assert!(!read_tool_names(&reloaded[0]).contains(&disabled_mcp));
+    assert!(!read_tool_names(&reloaded[0]).contains(&disabled_knowledge));
+    assert!(!read_tool_names(&reloaded[0]).contains(&disabled_skill.to_string()));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1687,14 +1986,11 @@ async fn preset_force_sync_updates_inner_visible_worker_card_skills() {
         "admin preset save should preserve declared skills when tool_names includes the same skill"
     );
 
+    let binding = bind_preset_users(&context.app, &preset_id, &[user_id]).await;
+    assert_eq!(binding["data"]["created_agents"], json!(1));
+
     let sync_result = sync_preset(&context.app, &preset_id, "force", None).await;
-    let created_agents = sync_result["data"]["created_agents"]
-        .as_u64()
-        .expect("created_agents should be number");
-    assert!(
-        created_agents >= 1,
-        "expected at least 1 created preset agent after force sync, got {created_agents}"
-    );
+    assert_eq!(sync_result["data"]["created_agents"], json!(0));
 
     let user_agents = list_user_agents(&context.app, &context.token).await;
     let agent_id = find_agent_id_by_name(&user_agents, PRESET_NAME);
@@ -1748,14 +2044,15 @@ async fn preset_force_sync_updates_preview_skill_flag_for_users() {
         .expect("create second user token")
         .token;
 
+    let binding = bind_preset_users(
+        &context.app,
+        "preset_preview_skill_sync",
+        &["preset_preview_skill_user_a", user_b.user_id.as_str()],
+    )
+    .await;
+    assert_eq!(binding["data"]["created_agents"], json!(2));
     let initial_sync = sync_preset(&context.app, "preset_preview_skill_sync", "force", None).await;
-    let created_agents = initial_sync["data"]["created_agents"]
-        .as_u64()
-        .expect("created_agents should be number");
-    assert!(
-        created_agents >= 2,
-        "expected at least 2 created agents in initial preview skill sync, got {created_agents}"
-    );
+    assert_eq!(initial_sync["data"]["created_agents"], json!(0));
 
     let initial_user_a_agents = list_user_agents(&context.app, &context.token).await;
     let initial_user_b_agents = list_user_agents(&context.app, &token_b).await;
@@ -1862,6 +2159,8 @@ async fn preset_force_sync_can_disable_skill_creator_without_reinjection() {
         }
     }
     update_admin_presets(&context.app, admin_items).await;
+    let binding = bind_preset_users(&context.app, &preset_id, &[user_id]).await;
+    assert_eq!(binding["data"]["created_agents"], json!(1));
     sync_preset(&context.app, &preset_id, "force", None).await;
 
     let agents_with_skill = list_user_agents(&context.app, &context.token).await;
@@ -2108,14 +2407,11 @@ async fn admin_preset_sync_ignores_conflicting_template_agent_state() {
         "ordinary preset config should remain authoritative even if preset_template has a conflicting same-name agent"
     );
 
+    let binding = bind_preset_users(&context.app, &preset_id, &[user_id]).await;
+    assert_eq!(binding["data"]["created_agents"], json!(1));
+
     let sync_result = sync_preset(&context.app, &preset_id, "force", None).await;
-    let created_agents = sync_result["data"]["created_agents"]
-        .as_u64()
-        .expect("created_agents should be number");
-    assert!(
-        created_agents >= 1,
-        "expected at least 1 created agent after force sync, got {created_agents}"
-    );
+    assert_eq!(sync_result["data"]["created_agents"], json!(0));
 
     let user_agents = list_user_agents(&context.app, &context.token).await;
     let synced_agent = find_agent_by_name(&user_agents, PRESET_NAME);
@@ -2162,14 +2458,10 @@ async fn preset_bound_agent_tool_update_without_declared_arrays_drops_stale_depe
         json!([tool_a.clone()])
     );
 
+    let binding = bind_preset_users(&context.app, &preset_id, &[user_id]).await;
+    assert_eq!(binding["data"]["created_agents"], json!(1));
     let sync_result = sync_preset(&context.app, &preset_id, "force", None).await;
-    let created_agents = sync_result["data"]["created_agents"]
-        .as_u64()
-        .expect("created_agents should be number");
-    assert!(
-        created_agents >= 1,
-        "expected at least 1 created agent after force sync, got {created_agents}"
-    );
+    assert_eq!(sync_result["data"]["created_agents"], json!(0));
 
     let user_agents = list_user_agents(&context.app, &context.token).await;
     let agent_id = find_agent_id_by_name(&user_agents, PRESET_NAME);

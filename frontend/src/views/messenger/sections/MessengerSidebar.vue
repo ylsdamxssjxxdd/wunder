@@ -11,7 +11,7 @@
       <!-- §6.3 工作区即行：云端工作区与本地工作区是同一份可拖拽条目列表（真正的同级，
            云端行也能拖）。线程树是云端工作区的子级，紧跟云端行渲染——云端行被拖到哪，
            它的线程就跟到哪（蛹同构的工作区/线程树）。
-           本地行没有检测到工作区投影的设备不出条目（见 interlinkWorkspaceRows）；
+           最小投影设备保留明确的默认本地工作区；具名目录各占一个条目；
            点击行把文件区切到对应目录（URL `?node=&ws=`），行顺序是蜂巢账号级偏好
            （云端存储），不回写本地设备。 -->
       <template v-for="entry in orderedWorkspaceEntries" :key="entry.key">
@@ -36,8 +36,8 @@
             @drop.prevent="handleRowDrop(entry)"
           >
             <i
-              class="messenger-sidebar-workspace-icon"
-              :class="cloudRowSelected ? 'fa-solid fa-cloud' : 'fa-regular fa-cloud'"
+              class="messenger-sidebar-workspace-icon fa-solid fa-cloud"
+              :class="{ 'is-muted': !cloudRowSelected }"
               aria-hidden="true"
             ></i>
             <span class="messenger-sidebar-workspace-name" :title="workspaceName">{{ workspaceName }}</span>
@@ -81,7 +81,7 @@
           }"
           type="button"
           draggable="true"
-          :aria-label="t('interlink.workspace.rowAria', { name: entry.label })"
+          :aria-label="t('interlink.workspace.rowAria', { name: workspaceRowLabel(entry) })"
           @click="selectWorkspaceRow(entry)"
           @dragstart="handleRowDragStart(entry, $event)"
           @dragend="handleRowDragEnd"
@@ -94,12 +94,33 @@
             :class="isRowSelected(entry) ? 'fa-solid fa-folder' : 'fa-regular fa-folder'"
             aria-hidden="true"
           ></i>
-          <span class="messenger-sidebar-workspace-name" :title="entry.label">
-            {{ entry.label }}
+          <span class="messenger-sidebar-workspace-name" :title="workspaceRowLabel(entry)">
+            {{ workspaceRowLabel(entry) }}
           </span>
         </button>
+        <InterlinkThreadTree
+          v-if="isSelectedLocalEntry(entry)"
+          :items="selectedRemoteThreads"
+          :loading="remoteThreadsLoading"
+          :error="remoteThreadsError"
+          :has-more="remoteThreadsHasMore"
+          :truncated="remoteThreadsTruncated"
+          :active-id="remoteThreadToOpen"
+          @open="openRemoteThread"
+          @refresh="loadSelectedRemoteShadow"
+          @load-more="loadSelectedRemoteShadow(true)"
+        />
       </template>
     </div>
+
+    <RemoteThreadsPanel
+      v-if="interlinkRemoteSelected && remoteInterlinkNode"
+      :target="interlinkTarget"
+      :workspace-id="selectedRemoteWorkspaceId"
+      :node="remoteInterlinkNode"
+      :trigger="false"
+      :open-thread-id="remoteThreadToOpen"
+    />
 
     <div
       ref="splitterEl"
@@ -145,20 +166,26 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import MessengerThreadTree from './MessengerThreadTree.vue';
+import InterlinkThreadTree from '@/views/messenger/interlink/InterlinkThreadTree.vue';
+import RemoteThreadsPanel from '@/views/messenger/interlink/RemoteThreadsPanel.vue';
 import WorkspaceFilesPanel from '@/views/messenger/workspace/WorkspaceFilesPanel.vue';
 import { useInterlinkNodes } from '@/views/messenger/interlink/useInterlinkNodes';
 import { useInterlinkNodeTarget } from '@/views/messenger/interlink/interlinkNodeTarget';
 import {
+  fetchInterlinkShadow,
   fetchInterlinkWorkspaceOrder,
   interlinkDeviceTarget,
   saveInterlinkWorkspaceOrder
 } from '@/api/interlink';
+import type { InterlinkShadow, InterlinkShadowThread } from '@/api/interlink';
 import {
   interlinkWorkspaceRows,
+  resolveDisabledReason,
   type InterlinkWorkspaceRow
 } from '@/views/messenger/interlink/interlinkNodeModel';
+import { runInterlinkCommand } from '@/views/messenger/interlink/interlinkCommandRunner';
 import {
   applyWorkspaceOrder,
   moveWorkspaceRow
@@ -219,6 +246,7 @@ const workspaceMetaLabel = computed(() => {
 const interlink = useInterlinkNodes({});
 const {
   target: interlinkTarget,
+  deviceId: interlinkDeviceId,
   workspaceId: interlinkWorkspaceId,
   isRemote: interlinkRemoteSelected,
   writeTarget: writeInterlinkTarget,
@@ -227,6 +255,12 @@ const {
 
 /** 节点 → 工作区行的映射是纯函数；上限在模型里统一收敛，不一次铺开。 */
 const workspaceRows = computed(() => interlinkWorkspaceRows(interlink.nodes.value || []));
+
+/** Empty workspace id is a valid default local root, not a missing row. */
+const workspaceRowLabel = (row: InterlinkWorkspaceRow): string =>
+  row.workspaceId || !row.label.endsWith('-local')
+    ? row.label
+    : `${row.label.slice(0, -'-local'.length)}-${t('interlink.workspace.localDefault')}`;
 
 // ---------------------------------------------- 工作区条目排序（云端偏好，§6.3）
 
@@ -314,17 +348,169 @@ const isRowSelected = (row: InterlinkWorkspaceRow): boolean => {
   if (interlinkTarget.value !== interlinkDeviceTarget(row.deviceId)) return false;
   const ws = interlinkWorkspaceId.value;
   if (!ws) {
-    // 缺省 ws＝该设备的默认目录：高亮该设备的第一行，避免「远程目标却无选中行」。
-    const first = workspaceRows.value.find(
+    // 缺省 ws＝该设备的默认目录。优先匹配真实的空 id 行；兼容旧投影
+    // 没有默认项时才回退到首行，避免多个本地工作区时高亮错位。
+    const rows = workspaceRows.value.filter(
       (item) => interlinkDeviceTarget(item.deviceId) === interlinkTarget.value
     );
-    return first?.key === row.key;
+    const defaultRow = rows.find((item) => !item.workspaceId) || rows[0];
+    return defaultRow?.key === row.key;
   }
   return ws === row.workspaceId;
 };
 
 /** 云端工作区行的选中态：没有远程本地目标时云端行即选中，同时控制图标实心化与线程树展开。 */
 const cloudRowSelected = computed(() => !interlinkRemoteSelected.value);
+
+/** The selected local workspace owns its own thread directory, mirroring the
+ * cloud workspace/tree shape.  The directory comes from the bounded shadow;
+ * full conversation data remains on-demand in the existing control dialog. */
+const remoteInterlinkNode = computed(() => {
+  const deviceId = interlinkDeviceId.value;
+  return deviceId ? interlink.nodes.value.find((item) => item.node_id === deviceId) || null : null;
+});
+const remoteShadow = ref<InterlinkShadow | null>(null);
+const remoteThreadsLoading = ref(false);
+const remoteThreadsError = ref('');
+const remoteThreadToOpen = ref('');
+let remoteShadowSerial = 0;
+let remoteThreadsAbort: AbortController | null = null;
+
+const selectedLocalRow = computed(() => {
+  if (!interlinkRemoteSelected.value) return null;
+  const target = interlinkTarget.value;
+  const workspace = interlinkWorkspaceId.value;
+  if (!workspace) {
+    const rows = workspaceRows.value.filter((row) => interlinkDeviceTarget(row.deviceId) === target);
+    return rows.find((row) => !row.workspaceId) || rows[0] || null;
+  }
+  return workspaceRows.value.find((row) =>
+    interlinkDeviceTarget(row.deviceId) === target && row.workspaceId === workspace
+  ) || null;
+});
+
+const selectedRemoteWorkspaceId = computed(() => selectedLocalRow.value?.workspaceId || '');
+const remoteLiveThreads = ref<InterlinkShadowThread[] | null>(null);
+const remoteThreadsTotal = ref(0);
+const remoteThreadsHasMore = computed(() =>
+  remoteLiveThreads.value !== null &&
+  remoteLiveThreads.value.length < Math.min(200, remoteThreadsTotal.value) &&
+  !resolveDisabledReason(remoteInterlinkNode.value, 'threads.list')
+);
+const remoteThreadsTruncated = computed(() =>
+  remoteThreadsTotal.value > 200 && (remoteLiveThreads.value?.length || 0) >= 200
+);
+const selectedRemoteThreads = computed(() => {
+  const workspaceId = selectedRemoteWorkspaceId.value;
+  const source = remoteLiveThreads.value || remoteShadow.value?.threads || [];
+  return source
+    .filter((thread) => String(thread.workspace_id || '') === workspaceId)
+    .slice(0, 200);
+});
+
+const isSelectedLocalEntry = (entry: WorkspaceSidebarEntry): boolean =>
+  entry.kind === 'local' && selectedLocalRow.value?.key === entry.key;
+
+const normalizeRemoteThread = (value: unknown): InterlinkShadowThread | null => {
+  const row = value && typeof value === 'object' ? value as Record<string, unknown> : null;
+  const id = String(row?.local_thread_id || '').trim();
+  if (!id) return null;
+  return {
+    local_thread_id: id,
+    title: String(row?.title || ''),
+    status: String(row?.status || ''),
+    agent: String(row?.agent || ''),
+    workspace_id: String(row?.workspace_id || ''),
+    updated_at: String(row?.updated_at || ''),
+    message_count: Number(row?.message_count) || 0,
+    duration_ms: Number(row?.duration_ms) || 0
+  };
+};
+
+const loadSelectedRemoteShadow = async (append = false): Promise<void> => {
+  if (append && (remoteThreadsLoading.value || !remoteThreadsHasMore.value)) return;
+  const serial = ++remoteShadowSerial;
+  remoteThreadsAbort?.abort();
+  remoteThreadsAbort = null;
+  if (!append) {
+    remoteShadow.value = null;
+    remoteLiveThreads.value = null;
+    remoteThreadsTotal.value = 0;
+  }
+  remoteThreadsError.value = '';
+  remoteThreadsLoading.value = false;
+  const deviceId = interlinkDeviceId.value;
+  if (!interlinkRemoteSelected.value || !deviceId) return;
+  const target = interlinkTarget.value;
+  const workspaceId = interlinkWorkspaceId.value;
+  const controller = new AbortController();
+  remoteThreadsAbort = controller;
+  remoteThreadsLoading.value = true;
+  if (!append) {
+    try {
+      const next = await fetchInterlinkShadow(deviceId, { signal: controller.signal });
+      if (serial !== remoteShadowSerial) return;
+      remoteShadow.value = next;
+    } catch (error) {
+      if (serial !== remoteShadowSerial) return;
+      remoteShadow.value = null;
+      remoteThreadsError.value = String(error instanceof Error ? error.message : error || '');
+    }
+  }
+
+  // A full shadow gives an offline directory. When the device is reachable,
+  // refresh the selected workspace through the L0 directory command as well:
+  // default policy may expose query.basic while intentionally keeping the
+  // shadow minimal, and the live list avoids waiting for the next projection.
+  const node = remoteInterlinkNode.value;
+  if (serial === remoteShadowSerial && !resolveDisabledReason(node, 'threads.list')) {
+    const outcome = await runInterlinkCommand({
+      to: target,
+      kind: 'threads.list',
+      signal: controller.signal,
+      args: {
+        limit: 100,
+        offset: append ? remoteLiveThreads.value?.length || 0 : 0,
+        workspace_id: workspaceId
+      }
+    });
+    if (serial === remoteShadowSerial) {
+      if (outcome.status === 'succeeded') {
+        remoteThreadsError.value = '';
+        const page = (Array.isArray(outcome.result?.threads) ? outcome.result.threads : [])
+          .map(normalizeRemoteThread)
+          .filter((thread): thread is InterlinkShadowThread => thread !== null);
+        const merged = [...(append ? remoteLiveThreads.value || [] : []), ...page];
+        remoteLiveThreads.value = [...new Map(merged.map(thread => [thread.local_thread_id, thread])).values()].slice(0, 200);
+        remoteThreadsTotal.value = page.length
+          ? Number(outcome.result?.total) || remoteLiveThreads.value.length
+          : remoteLiveThreads.value.length;
+      } else if (!selectedRemoteThreads.value.length) {
+        remoteThreadsError.value = outcome.errorSummary || outcome.errorCode || outcome.status;
+      }
+    }
+  }
+  if (serial === remoteShadowSerial) {
+    remoteThreadsLoading.value = false;
+    remoteThreadsAbort = null;
+  }
+};
+
+const openRemoteThread = async (threadId: string): Promise<void> => {
+  const serial = remoteShadowSerial;
+  remoteThreadToOpen.value = '';
+  await nextTick();
+  if (serial === remoteShadowSerial) remoteThreadToOpen.value = threadId;
+};
+
+watch(
+  () => `${interlinkTarget.value}\n${interlinkWorkspaceId.value}\n${resolveDisabledReason(remoteInterlinkNode.value, 'threads.list') || 'ready'}`,
+  () => {
+    remoteThreadToOpen.value = '';
+    void loadSelectedRemoteShadow();
+  },
+  { immediate: true }
+);
 
 // 目标自愈（§6.3）：URL 里残留的本地目标若对应不到任何工作区行（设备从未同步
 // 投影、工作区已删除、设备被吊销等），一律回落云端——文件区绝不停留在一个
@@ -350,21 +536,23 @@ const selectWorkspaceRow = (row: InterlinkWorkspaceRow): void => {
   writeInterlinkTarget(interlinkDeviceTarget(row.deviceId), row.workspaceId);
 };
 
-const handleWorkspaceRowClick = (): void => {
-  // 回到云端工作区上下文：文件区跟随 `?node=` 切回云端目录。
-  backToCloudWorkspace();
+const handleWorkspaceRowClick = async (): Promise<void> => {
+  // The draft action also replaces the route from its current query. Wait for
+  // the target change so it cannot reintroduce a stale local node/workspace.
+  await backToCloudWorkspace();
+  if (interlinkRemoteSelected.value) return;
   emit('select-workspace');
 };
 
 /** 线程是云端工作区的内容：打开线程（含新建）即把目录目标切回云端，
  * 文件区跟着回到云端工作目录——不会停在某个本地工作区的只读投影上。 */
-const handleThreadOpen = (id: string): void => {
-  backToCloudWorkspace();
+const handleThreadOpen = async (id: string): Promise<void> => {
+  await backToCloudWorkspace();
   emit('open-thread', id);
 };
 
-const handleNewTask = (): void => {
-  backToCloudWorkspace();
+const handleNewTask = async (): Promise<void> => {
+  await backToCloudWorkspace();
   emit('new-task');
 };
 
@@ -454,6 +642,9 @@ const nudgeResize = (delta: number) => {
 };
 
 onBeforeUnmount(() => {
+  remoteShadowSerial += 1;
+  remoteThreadsAbort?.abort();
+  remoteThreadsAbort = null;
   window.removeEventListener('pointermove', handleResizeMove);
   window.removeEventListener('pointerup', stopResize);
   if (orderSaveTimer) window.clearTimeout(orderSaveTimer);

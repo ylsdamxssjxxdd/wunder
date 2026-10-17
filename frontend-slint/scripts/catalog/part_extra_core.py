@@ -3,6 +3,15 @@
 # preview) that were introduced without catalog coverage.
 
 ENTRIES = [
+    # cloud_threads.slint
+    ("cloud_threads_title", "云端智能体与线程", "Cloud agent and threads"),
+    ("cloud_threads_earlier", "更早消息", "Earlier messages"),
+    ("cloud_threads_latest", "回到最新", "Back to latest"),
+    ("cloud_threads_copy_user", "复制提问原文", "Copy user text"),
+    ("cloud_threads_copy_reply", "复制回复原文", "Copy reply text"),
+    ("cloud_threads_stop", "停止线程", "Stop thread"),
+    ("cloud_threads_approval", "工具审批 ID", "Tool approval ID"),
+    ("cloud_threads_allow_once", "允许一次", "Allow once"),
     # composer.slint
     ("composer_goal_hint", "/goal  设置目标", "/goal  set a goal"),
     ("composer_new_hint", "/new  新建线程", "/new  new thread"),

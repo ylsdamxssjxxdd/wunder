@@ -45,7 +45,7 @@ import {
 import { initUserManagementPanel, loadUserStats } from "./modules/users.js?v=20260215-01";
 import { initInterlinkFleet } from "./modules/interlink-fleet.js?v=20261016-01";
 import { initUserAccountsPanel, loadUserAccounts } from "./modules/user-accounts.js?v=20261016-01";
-import { initPresetAgentsPanel, loadPresetAgents } from "./modules/preset-agents.js?v=20261012-01";
+import { initPresetAgentsPanel, loadPresetAgents } from "./modules/preset-agents.js?v=20261017-01";
 import { initCompanionsPanel, loadCompanions } from "./modules/companions.js?v=20260506-01";
 import { initOrgUnitsPanel, loadOrgUnits } from "./modules/org-units.js?v=20260215-01";
 
@@ -73,7 +73,7 @@ import {
   initMultimodalDebugPanel,
   loadMultimodalDebugPanel,
 } from "./modules/multimodal-debug.js?v=20261011-01";
-import { applyAuthHeaders, getAuthScope, initAdminAuth } from "./modules/admin-auth.js?v=20261017-01";
+import { applyAuthHeaders, getAuthScope, initAdminAuth } from "./modules/admin-auth.js?v=20261017-04";
 
 import { getCurrentLanguage, setLanguage, t } from "./modules/i18n.js?v=20261015-06";
 

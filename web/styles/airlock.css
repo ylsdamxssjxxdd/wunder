@@ -1,6 +1,5 @@
-/* 管理端认证气闸：闭锁舱门迎接访客，认证通过后双门滑开露出内部页面。
-   结构见 index.html #adminLoginModal；状态类由 modules/admin-auth.js 驱动：
-   .airlock--opening 双门滑开、控制台淡出；.airlock--open 结束后整体隐藏。 */
+/* 管理端认证覆盖层：六边形隔离墙与完整卡巴拉生命树图案锁。
+   结构见 index.html #adminLoginModal；树仅静态显隐，过场由六边形承担。 */
 
 .airlock {
   position: fixed;
@@ -8,7 +7,7 @@
   display: none;
   overflow: hidden;
   z-index: 2000;
-  /* 容器必须保持透明：闭锁时由双门完全遮盖，开门后直接露出底层管理页面。 */
+  /* 闭锁时由六边形遮盖，退场时直接露出底层管理页面。 */
   background: transparent;
 }
 
@@ -23,6 +22,11 @@
   background: #100306;
 }
 
+.airlock-hex-field.is-fading,
+.airlock-hex-field.is-refilling {
+  background: transparent;
+}
+
 .airlock-hex-cell {
   position: absolute;
   display: grid;
@@ -33,28 +37,45 @@
   font-size: clamp(10px, 1.05vw, 17px);
   letter-spacing: 0.02em;
   line-height: 1;
-  clip-path: polygon(13% 0, 87% 0, 100% 50%, 87% 100%, 13% 100%, 0 50%);
+  /* 平顶正六边形：六条边等长，轮廓本身留出黑色间隔。 */
+  clip-path: polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%);
   background: #090204;
   opacity: 1;
   transform: scale(1);
   transform-origin: center;
-  will-change: opacity, transform;
 }
 
 .airlock-hex-cell::before {
   content: "";
   position: absolute;
   inset: 4px;
-  z-index: -1;
+  z-index: 0;
   clip-path: inherit;
   background:
     repeating-linear-gradient(0deg, rgba(255, 116, 125, 0.08) 0 1px, transparent 1px 4px),
     linear-gradient(165deg, #ff2939 0%, #ed1b2c 54%, #c90b1b 100%);
 }
 
-.airlock-hex-cell span {
-  position: relative;
+.airlock-hex-cell::after {
+  /* 内衬线：黑色六边形描边嵌在红色门板中，形成参考图中的双层面板。 */
+  content: "";
+  position: absolute;
+  inset: 10px;
   z-index: 1;
+  clip-path: inherit;
+  background: #170306;
+}
+
+.airlock-hex-cell span {
+  position: absolute;
+  inset: 12px;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  clip-path: inherit;
+  background:
+    repeating-linear-gradient(0deg, rgba(255, 116, 125, 0.075) 0 1px, transparent 1px 4px),
+    linear-gradient(165deg, #fb2535 0%, #e91629 56%, #cf0d1d 100%);
   text-shadow: 0 1px 0 rgba(255, 126, 132, 0.2);
   white-space: nowrap;
 }
@@ -65,6 +86,7 @@
   width: 0;
   height: 0;
   transform: translateX(-50%);
+  z-index: 3;
   border-left: 7px solid transparent;
   border-right: 7px solid transparent;
 }
@@ -79,6 +101,11 @@
   border-top: 12px solid rgba(20, 2, 5, 0.95);
 }
 
+.airlock-hex-field.is-fading .airlock-hex-cell,
+.airlock-hex-field.is-refilling .airlock-hex-cell {
+  will-change: opacity, transform;
+}
+
 .airlock-hex-field.is-fading .airlock-hex-cell {
   animation: airlock-hex-fade-out 720ms cubic-bezier(0.2, 0.7, 0.2, 1) forwards;
   animation-delay: var(--hex-delay, 0ms);
@@ -86,7 +113,7 @@
 
 .airlock-hex-field.is-refilling .airlock-hex-cell {
   animation: airlock-hex-fade-in 760ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
-  animation-delay: var(--hex-delay, 0ms);
+  animation-delay: var(--hex-return-delay, 0ms);
 }
 
 @keyframes airlock-hex-fade-out {
@@ -107,85 +134,26 @@
   display: none;
 }
 
-/* ---------- 舱门 ---------- */
-
-.airlock-door {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 50%;
-  overflow: hidden;
-  transition: transform 1250ms cubic-bezier(0.72, 0, 0.28, 1) 120ms;
-  will-change: transform;
-  z-index: 2;
-}
-
-.airlock-door--left {
-  left: 0;
-  /* 左门多压 1px，消除双门间的亚像素缝隙。 */
-  width: calc(50% + 1px);
-}
-
-.airlock-door--right {
-  right: 0;
-}
-
-.airlock-hull {
+/* ---------- 卡巴拉生命树图案锁 ---------- */
+.airlock-tree-stage {
   position: absolute;
   inset: 0;
-  /* 纯色一整块：两门完全同色、无边框阴影，闭门时看不到门缝。 */
-  background: transparent;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
 }
 
-/* 六边形墙承担舱门底色，保留生命树作为解锁图案。 */
-.airlock-deck,
-.airlock-strip,
-.airlock-rivets {
+.airlock--exiting .airlock-tree-stage {
   display: none;
 }
 
-/* 外侧甲板边框：随门滑动，像舰体开出的门洞。 */
-.airlock-deck {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 16px;
-  background: linear-gradient(90deg, #04070d, #1b2638);
-}
-
-.airlock-door--left .airlock-deck {
-  left: 0;
-  border-right: 1px solid rgba(148, 163, 184, 0.22);
-}
-
-.airlock-door--right .airlock-deck {
-  right: 0;
-  border-left: 1px solid rgba(148, 163, 184, 0.22);
-}
-
-/* 门面雕刻：卡巴拉生命之树（SEELE 徽记），沿门缝剖成两半，
-   双门闭合时中柱质点在门缝处拼回整圆。质点可点击点亮。 */
 .airlock-tree {
-  position: absolute;
-  top: 46%;
-  transform: translateY(-50%);
-  height: min(70vh, 560px);
+  width: min(44vw, 520px);
+  height: min(78vh, 680px);
   aspect-ratio: 400 / 640;
   pointer-events: none;
-  z-index: 2;
-}
-
-.airlock-door--left .airlock-tree {
-  right: 0;
-  /* 把图案中线（剖切面）推到门缝上：可见右缘 = 门缝。 */
-  transform: translateY(-50%) translateX(50%);
-  clip-path: inset(0 50% 0 0);
-}
-
-.airlock-door--right .airlock-tree {
-  left: 0;
-  transform: translateY(-50%) translateX(-50%);
-  clip-path: inset(0 0 0 50%);
+  cursor: default;
 }
 
 .airlock-node {
@@ -218,190 +186,13 @@
   filter: drop-shadow(0 0 10px rgba(220, 38, 38, 0.7));
 }
 
-/* ---- 认证命中：树被深深刻入门体 ---- */
-
-/* 亮刃层：平时隐藏，命中后沿枝干描切一圈再淡去。 */
 .airlock-tree-cut {
-  stroke-dasharray: 1;
-  stroke-dashoffset: 1;
   opacity: 0;
-}
-
-.airlock-tree-groove {
-  transition: stroke-width 400ms ease;
-}
-
-.airlock.airlock--carving .airlock-tree-cut {
-  animation: airlock-carve-draw 1000ms ease-in-out forwards;
-}
-
-@keyframes airlock-carve-draw {
-  0% {
-    stroke-dashoffset: 1;
-    opacity: 0.9;
-  }
-  70% {
-    stroke-dashoffset: 0;
-    opacity: 0.95;
-  }
-  100% {
-    stroke-dashoffset: 0;
-    opacity: 0.4;
-  }
-}
-
-/* 刻入定型：凹槽加深，亮刃余晖散去。 */
-.airlock.airlock--carved .airlock-tree-cut {
-  animation: airlock-carve-fade 500ms ease forwards;
-}
-
-@keyframes airlock-carve-fade {
-  from {
-    stroke-dashoffset: 0;
-    opacity: 0.4;
-  }
-  to {
-    stroke-dashoffset: 0;
-    opacity: 0;
-  }
-}
-
-.airlock.airlock--carved .airlock-tree-groove {
-  stroke-width: 5.5;
-}
-
-.airlock.airlock--carving .airlock-node.lit .airlock-node-ring {
-  animation: airlock-node-pulse 480ms ease-in-out 2;
-}
-
-@keyframes airlock-node-pulse {
-  50% {
-    filter: drop-shadow(0 0 18px rgba(255, 161, 22, 1));
-  }
-}
-
-.airlock-strip {
-  position: absolute;
-  left: 0;
-  right: 0;
-  height: 12px;
-  background: repeating-linear-gradient(-45deg, #ffa116 0 16px, #120d04 16px 32px);
-  opacity: 0.85;
-  box-shadow: inset 0 1px 0 rgba(0, 0, 0, 0.6), inset 0 -1px 0 rgba(255, 255, 255, 0.06);
-}
-
-.airlock-strip--top {
-  top: 20px;
-}
-
-.airlock-strip--bottom {
-  bottom: 20px;
-}
-
-/* 侧边竖向警示条：沿左右门的外侧甲板旁布置。 */
-.airlock-strip--side {
-  width: 12px;
-  height: auto;
-  top: 20px;
-  bottom: 20px;
-}
-
-.airlock-door--left .airlock-strip--side {
-  left: 26px;
-  right: auto;
-}
-
-.airlock-door--right .airlock-strip--side {
-  right: 26px;
-  left: auto;
-}
-
-.airlock-rivets {
-  position: absolute;
-  left: 32px;
-  right: 32px;
-  height: 16px;
-  background-image: radial-gradient(
-    circle at 42% 38%,
-    #46587a 1.9px,
-    #16202f 3px,
-    rgba(0, 0, 0, 0.65) 3.9px,
-    transparent 4.5px
-  );
-  background-size: 36px 16px;
-  background-position: center;
-  opacity: 0.7;
-}
-
-.airlock-rivets--top {
-  top: 48px;
-}
-
-.airlock-rivets--bottom {
-  bottom: 48px;
-}
-
-
-/* ---------- 状态读出 ---------- */
-
-
-/* 解锁口令错误提示。 */
-
-
-
-/* ---------- 开启时序 ---------- */
-
-.airlock.airlock--opening .airlock-door--left {
-  transform: translateX(calc(-100% - 48px));
-}
-
-.airlock.airlock--opening .airlock-door--right {
-  transform: translateX(calc(100% + 48px));
-}
-
-
-/* ---------- 退出关舱时序 ---------- */
-
-/* airlock--open-doors：舱门停在完全打开位（配合 airlock--instant 瞬移到位）。 */
-.airlock.airlock--open-doors .airlock-door--left {
-  transform: translateX(calc(-100% - 48px));
-}
-
-.airlock.airlock--open-doors .airlock-door--right {
-  transform: translateX(calc(100% + 48px));
-}
-
-/* airlock--closing：双门合拢过程中隐藏控制台与状态条，合拢后再淡入。 */
-
-.airlock.airlock--instant .airlock-door {
-  transition: none !important;
-  animation: none !important;
 }
 
 /* ---------- 适配 ---------- */
 
-@media (max-width: 760px) {
-  .airlock-rivets,
-  .airlock-strip--side {
-    display: none;
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .airlock-door {
-    transition: none !important;
-    animation: none !important;
-  }
-
-  .airlock-tree-cut {
-    animation: none !important;
-    opacity: 0 !important;
-  }
-
-  .airlock-tree-groove {
-    transition: none !important;
-  }
-
   .airlock-hex-field.is-fading .airlock-hex-cell,
   .airlock-hex-field.is-refilling .airlock-hex-cell {
     animation-duration: 1ms !important;

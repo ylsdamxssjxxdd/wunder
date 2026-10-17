@@ -878,7 +878,12 @@ async fn threads_list(spec: &CommandSpec, ctx: &ExecContext) -> CommandReport {
             user_id: ctx.local_user_id.clone(),
             offset,
             limit: limit as i64,
-            workspace_id: arg_str(&spec.args, "workspace_id").or_else(|| ctx.workspace_id.clone()),
+            workspace_id: spec
+                .args
+                .get("workspace_id")
+                .and_then(Value::as_str)
+                .map(|value| value.trim().to_string())
+                .or_else(|| ctx.workspace_id.clone()),
             ..Default::default()
         })
         .await

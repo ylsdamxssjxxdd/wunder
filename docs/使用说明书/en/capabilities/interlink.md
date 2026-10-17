@@ -1,7 +1,7 @@
 ---
 title: Interlink
 summary: Device management, workspace access, and thread control after a local workbench signs in to the cloud.
-updated_at: 2026-10-16
+updated_at: 2026-10-17
 ---
 
 Pupa remains a local AI workbench that works offline. After it signs in to the Hull, it can use cloud agents and threads without opening a local port. If the user explicitly enables local sharing, Beehive can access the device's authorized workspaces and threads through the Hull. Helm exposes the same operations for manual and scripted use.
@@ -51,7 +51,7 @@ The unified state model:
 
 | Entry point | What it does |
 |------|------|
-| Sidebar | Presented as "device as workspace": a device appears as a sidebar workspace row, and the directory falls into place as threads are clicked |
+| Sidebar | Local workspaces sit beside the cloud workspace: the default root is “device name-Local workspace”, named roots are “device name-workspace name”, and selecting one expands that workspace’s local threads beneath it |
 | The "cloud / device" dropdown switcher | Removed |
 
 ### Helm

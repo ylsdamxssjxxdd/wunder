@@ -920,7 +920,12 @@ pub trait UserAccountStore {
 pub trait UserRefreshTokenStore {
     /// Consume one refresh token and replace its family's access/refresh pair
     /// in one transaction. False means the token was consumed or revoked.
-    fn rotate_user_refresh_token(&self, presented: &str, access: &UserTokenRecord, refresh: &UserRefreshTokenRecord) -> Result<bool>;
+    fn rotate_user_refresh_token(
+        &self,
+        presented: &str,
+        access: &UserTokenRecord,
+        refresh: &UserRefreshTokenRecord,
+    ) -> Result<bool>;
     fn bind_user_session_device(&self, record: &UserSessionDeviceRecord) -> Result<()>;
     fn get_user_session_device(&self, family_id: &str) -> Result<Option<UserSessionDeviceRecord>>;
     fn create_user_refresh_token(&self, record: &UserRefreshTokenRecord) -> Result<()>;
@@ -1012,7 +1017,8 @@ pub trait ChatSessionStore {
         updated_at: f64,
         last_message_at: f64,
     ) -> Result<()>;
-    /// Threads of one workspace, newest activity first.
+    /// Threads of one workspace, newest activity first. An empty workspace id
+    /// selects the default root, including legacy NULL bindings.
     fn list_chat_sessions_by_workspace(
         &self,
         user_id: &str,
@@ -1535,7 +1541,11 @@ pub trait CloudStore {
     fn upsert_cloud_device(&self, record: &CloudDeviceRecord) -> Result<()>;
     /// Atomically register an unrevoked device and bind one immutable token
     /// family. Returns false for identity conflicts; neither row is changed.
-    fn register_cloud_device_session(&self, record: &CloudDeviceRecord, family_id: &str) -> Result<bool>;
+    fn register_cloud_device_session(
+        &self,
+        record: &CloudDeviceRecord,
+        family_id: &str,
+    ) -> Result<bool>;
     fn get_cloud_device(&self, device_id: &str) -> Result<Option<CloudDeviceRecord>>;
     /// Heartbeat: advance `last_seen_at` without touching any other field.
     fn touch_cloud_device(&self, device_id: &str, last_seen_at: f64) -> Result<()>;
@@ -1611,6 +1621,15 @@ pub trait InterlinkStore {
 
     // --- workspace shadows ---
     fn upsert_interlink_shadow(&self, record: &InterlinkShadowRecord) -> Result<()>;
+    /// Write one shadow only while its device remains owned by `user_id` and
+    /// has not been revoked. The check and mutation share one database
+    /// statement, so a delayed tunnel frame cannot recreate a projection after
+    /// the revocation path purged it. Returns `false` when the device is stale,
+    /// revoked or belongs to another account.
+    fn upsert_interlink_shadow_if_device_active(
+        &self,
+        record: &InterlinkShadowRecord,
+    ) -> Result<bool>;
     fn get_interlink_shadow(&self, device_id: &str) -> Result<Option<InterlinkShadowRecord>>;
     fn get_interlink_shadow_revision(&self, device_id: &str) -> Result<i64>;
     /// One batched read for the node listing: per device, the shadow revision

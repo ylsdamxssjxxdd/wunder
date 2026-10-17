@@ -325,7 +325,6 @@ export const elements = {
   presetAgentDetailTitle: document.getElementById("presetAgentDetailTitle"),
   presetAgentDetailMeta: document.getElementById("presetAgentDetailMeta"),
   presetAgentSaveBtn: document.getElementById("presetAgentSaveBtn"),
-  presetAgentSyncSafeBtn: document.getElementById("presetAgentSyncSafeBtn"),
   presetAgentSyncForceBtn: document.getElementById("presetAgentSyncForceBtn"),
   presetAgentSyncSummary: document.getElementById("presetAgentSyncSummary"),
   presetAgentDeleteBtn: document.getElementById("presetAgentDeleteBtn"),

@@ -1,8 +1,7 @@
 <template>
-  <div class="remote-thread-controls">
-    <button type="button" @click="open">{{ text('设备线程', 'Device threads') }}</button>
-    <span v-if="node?.meta?.sharing === 'minimal'">{{ text('摘要共享', 'Summary sharing') }}</span>
-  </div>
+  <button v-if="trigger" class="remote-thread-controls" type="button" @click="open">
+    {{ text('打开线程控制', 'Open thread controls') }}
+  </button>
   <el-dialog v-model="visible" :title="text('设备线程', 'Device threads')" width="760px" destroy-on-close @closed="stop">
     <div class="remote-thread-toolbar">
       <button type="button" :disabled="busy" @click="reload">{{ text('刷新', 'Refresh') }}</button>
@@ -34,7 +33,13 @@ import { mzDialog, mzPrompt } from '@/utils/mzDialog';
 import { runInterlinkCommand } from './interlinkCommandRunner';
 import { remoteThreadModel, remoteHistoryText } from './remoteThreadModel';
 
-const props = defineProps<{ target: string; workspaceId: string; node: InterlinkNode | null }>();
+const props = withDefaults(defineProps<{
+  target: string;
+  workspaceId: string;
+  node: InterlinkNode | null;
+  trigger?: boolean;
+  openThreadId?: string;
+}>(), { trigger: true, openThreadId: '' });
 const { language: locale } = useI18n();
 const text = (zh: string, en: string) => locale.value.startsWith('zh') ? zh : en;
 const visible = ref(false), busy = ref(false), selected = ref(''), message = ref(''), history = ref(''), status = ref('');
@@ -50,18 +55,22 @@ function closeWatch() { if (reconnect) clearTimeout(reconnect); reconnect = null
 function stop() { generation++; abort?.abort(); abort = null; closeWatch(); busy.value = false; }
 async function command(kind: string, args: Record<string, unknown>) {
   abort = new AbortController();
+  const current = generation;
   return runInterlinkCommand({ to: props.target, kind, args: { ...args, ...(props.workspaceId ? { workspace_id: props.workspaceId } : {}) }, signal: abort.signal,
-    onState: ({ record }) => { status.value = record?.approval_state === 'pending' ? text('等待本地设备批准，可取消操作', 'Waiting for approval on the local device') : String(record?.status || ''); }
+    onState: ({ record }) => { if (current === generation) status.value = record?.approval_state === 'pending' ? text('等待本地设备批准，可取消操作', 'Waiting for approval on the local device') : String(record?.status || ''); }
   });
 }
 async function reload() {
   if (busy.value) return;
   busy.value = true; const current = generation;
   try {
-    const result = await command('threads.list', { limit: 50, offset: 0 });
+    const result = await command('threads.list', { limit: 50, offset: 0, workspace_id: props.workspaceId });
     if (current !== generation) return;
     if (result.status !== 'succeeded') throw new Error(result.errorSummary || result.errorCode);
     threads.value = (Array.isArray(result.result?.threads) ? result.result.threads : []).slice(0, 50) as typeof threads.value;
+    if (selected.value && !threads.value.some(thread => thread.local_thread_id === selected.value)) {
+      threads.value = [{ local_thread_id: selected.value, title: selected.value }, ...threads.value.slice(0, 49)];
+    }
     status.value = text('最近 50 个线程', 'Up to 50 recent threads');
   } catch (error) { if (current === generation) status.value = String(error); }
   finally { if (current === generation) { busy.value = false; if (selected.value) await loadThread(); } }
@@ -143,6 +152,15 @@ async function answer() {
 }
 function open() { visible.value = true; void reload(); }
 watch([target, () => props.workspaceId], () => { stop(); visible.value = false; selected.value = ''; history.value = ''; });
+watch(() => props.openThreadId, (threadId) => {
+  if (!threadId) return;
+  stop();
+  history.value = '';
+  status.value = '';
+  visible.value = true;
+  selected.value = threadId;
+  void reload();
+});
 onBeforeUnmount(stop);
 </script>
 

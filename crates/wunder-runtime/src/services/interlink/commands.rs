@@ -227,6 +227,12 @@ impl CommandHub {
         let mut state = self.lock();
         state.frames.remove(command_id);
         state.frame_order.retain(|entry| entry != command_id);
+        // Terminal/expired commands must release the bounded offline queue too,
+        // even when that device never reconnects to drain it.
+        for queue in state.queued.values_mut() {
+            queue.retain(|item| item.command_id != command_id);
+        }
+        state.queued.retain(|_, queue| !queue.is_empty());
     }
 
     fn track_result(&self, command_id: &str, result: Value) {
@@ -396,15 +402,11 @@ impl CommandHub {
         ])
     }
 
-    /// Forget everything one node left behind (tunnel closed).
+    /// Release the vanished tunnel's capacity. Parked commands belong to the
+    /// device, not its old channel, and must survive until reconnect/expiry.
     fn forget_node(&self, device_id: &str) {
         let mut state = self.lock();
         state.inflight.remove(device_id);
-        let target = format!("device:{device_id}");
-        for queue in state.queued.values_mut() {
-            queue.retain(|item| item.target != target);
-        }
-        state.queued.retain(|_, queue| !queue.is_empty());
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, HubState> {
@@ -946,7 +948,7 @@ pub async fn on_ack(
             }
             let item = Queued {
                 command_id: command_id.to_string(),
-                target,
+                target: format!("device:{target}"),
                 frame,
             };
             if hub().enqueue(
@@ -1571,6 +1573,7 @@ async fn update_status(
     error_summary: Option<&str>,
 ) -> anyhow::Result<()> {
     let lookup = command_id.to_string();
+    let terminal = is_terminal_command_status(status);
     let status = status.to_string();
     let error_code = error_code.map(str::to_string);
     let error_summary = error_summary.map(str::to_string);
@@ -1584,7 +1587,11 @@ async fn update_status(
             error_summary.as_deref(),
         )
     })
-    .await
+    .await?;
+    if terminal {
+        hub().drop_frame(command_id);
+    }
+    Ok(())
 }
 
 async fn mark_status(
@@ -1907,6 +1914,42 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn busy_retry_keeps_target_identity_and_cancel_releases_the_queue() {
+        let root = tempfile::tempdir().unwrap();
+        let storage: Arc<dyn StorageBackend> = Arc::new(crate::storage::SqliteStorage::new(
+            root.path()
+                .join("fixture.db")
+                .to_string_lossy()
+                .into_owned(),
+        ));
+        let mut row = record(CMD_WORKSPACE_READ, "device:fixture_busy");
+        row.command_id = "fixture_busy_command".to_string();
+        storage.insert_interlink_command(&row).unwrap();
+        hub().track_frame(&row.command_id, "fixture_frame");
+        hub().reserve("fixture_busy", &row.command_id);
+        let outcome = on_ack(
+            storage.clone(),
+            &row.command_id,
+            &json!({"accepted": false, "error_code": ERR_NODE_BUSY}),
+            &Limits::default(),
+            110.0,
+        )
+        .await
+        .unwrap();
+        assert_eq!(outcome, AckOutcome::Retried);
+        assert_eq!(hub().queued_depth_for_target("device:fixture_busy"), 1);
+        assert_eq!(hub().inflight_count("fixture_busy"), 0);
+        assert_eq!(
+            cancel(storage.clone(), &row.command_id, &row.actor_user_id, 120.0)
+                .await
+                .unwrap(),
+            CancelOutcome::Canceled
+        );
+        assert_eq!(hub().queued_depth_for_target("device:fixture_busy"), 0);
+        assert!(hub().frame(&row.command_id).is_none());
+    }
+
+    #[tokio::test]
     async fn late_progress_and_completion_preserve_first_terminal_result() {
         let root = tempfile::tempdir().unwrap();
         let storage: Arc<dyn StorageBackend> = Arc::new(crate::storage::SqliteStorage::new(
@@ -2012,7 +2055,7 @@ mod tests {
     }
 
     #[test]
-    fn forgetting_a_node_drops_its_slots_and_parked_frames() {
+    fn closing_a_tunnel_releases_slots_and_preserves_device_backlogs() {
         let hub = CommandHub::default();
         hub.reserve("dev-1", "cmd_1");
         hub.enqueue(
@@ -2035,8 +2078,32 @@ mod tests {
         );
         hub.forget_node("dev-1");
         assert_eq!(hub.inflight_count("dev-1"), 0);
-        assert_eq!(hub.queued_depth_for_target("device:dev-1"), 0);
+        assert_eq!(hub.queued_depth_for_target("device:dev-1"), 1);
         assert_eq!(hub.queued_depth_for_target("device:dev-2"), 1);
+        assert_eq!(
+            hub.dequeue_for("u_1", "device:dev-1").unwrap().command_id,
+            "cmd_2"
+        );
+    }
+
+    #[test]
+    fn dropping_a_terminal_frame_releases_its_offline_queue_slot() {
+        let hub = CommandHub::default();
+        hub.track_frame("fixture_command", "fixture_frame");
+        assert!(hub.enqueue(
+            "fixture_user",
+            Queued {
+                command_id: "fixture_command".to_string(),
+                target: "device:fixture_device".to_string(),
+                frame: "fixture_frame".to_string(),
+            },
+            1
+        ));
+        hub.forget_node("fixture_device");
+        assert_eq!(hub.queued_depth(None), 1);
+        hub.drop_frame("fixture_command");
+        assert_eq!(hub.queued_depth(None), 0);
+        assert!(hub.frame("fixture_command").is_none());
     }
 
     #[test]
@@ -2152,6 +2219,15 @@ mod tests {
         storage
             .insert_interlink_command(&row("cmd_queued", COMMAND_STATUS_QUEUED, APPROVAL_NONE))
             .unwrap();
+        assert!(hub().enqueue(
+            "u1",
+            Queued {
+                command_id: "cmd_queued".to_string(),
+                target: target.clone(),
+                frame: "fixture".to_string(),
+            },
+            4
+        ));
         storage
             .insert_interlink_command(&row("cmd_pending", COMMAND_STATUS_ISSUED, APPROVAL_PENDING))
             .unwrap();
@@ -2195,6 +2271,11 @@ mod tests {
         // The node's in-flight slots are released with it, so its next tunnel does
         // not inherit the dead session's capacity.
         assert_eq!(hub().inflight_count(device), 0);
+        assert_eq!(hub().queued_depth_for_target(&target), 1);
+        assert_eq!(
+            hub().dequeue_for("u1", &target).unwrap().command_id,
+            "cmd_queued"
+        );
 
         // Each settle is an auditable finish row, not a silent update.
         let (trail, _) = storage

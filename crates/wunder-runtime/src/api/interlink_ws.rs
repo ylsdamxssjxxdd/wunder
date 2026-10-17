@@ -1247,10 +1247,15 @@ async fn apply_shadow_frame(
             shadow::enforce_limits(&mut record, limits);
             let storage = state.storage.clone();
             let revision = record.revision;
-            let _ = blocking::run_db("api.interlink_ws.shadow_upsert", move || {
-                storage.upsert_interlink_shadow(&record)
+            match blocking::run_db("api.interlink_ws.shadow_upsert", move || {
+                storage.upsert_interlink_shadow_if_device_active(&record)
             })
-            .await;
+            .await
+            {
+                Ok(true) => {}
+                Ok(false) => return Some("stale_device"),
+                Err(_) => return Some("storage_error"),
+            }
             write_audit(
                 state,
                 audit::record(

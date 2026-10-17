@@ -1,6 +1,17 @@
 // AI生成
 export default {
   'interlink.operation.waitApproval': 'Waiting for approval on the local device; you can cancel here',
+  'interlink.reason.disabled': 'Cloud interlink is disabled for this device',
+  'interlink.reason.offline': 'The device is offline, so this action is unavailable',
+  'interlink.reason.capability': 'The device has not granted this action',
+  'interlink.reason.noNode': 'The device node was not found',
+  'interlink.workspace.rowAria': 'Switch to workspace {name}',
+  'interlink.workspace.localDefault': 'Local workspace',
+  'interlink.workspace.treeTruncated': 'The projected directory reached its limit and may be incomplete',
+  'interlink.workspace.emptyShadow': 'This workspace has no projection yet; waiting for the local device to sync',
+  'interlink.workspace.truncatedHint': 'The file exceeds one retrieval limit; only {size} was retrieved',
+  'interlink.workspace.editorUnsupported': 'This format requires an online editor; remote projection supports read-only preview',
+  'interlink.workspace.downloadUnavailable': 'Content is not ready for download yet',
   'chat.subagentPool.title': 'Subagents',
   'chat.subagentPool.empty': 'No subagents yet',
   'chat.subagentPool.interrupted': 'Interrupted · reusable',

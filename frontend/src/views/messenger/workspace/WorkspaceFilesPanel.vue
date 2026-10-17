@@ -23,7 +23,6 @@
       </div>
     </div>
 
-    <RemoteThreadsPanel v-if="remoteInterlinkActive" :target="interlinkTarget" :workspace-id="interlinkWorkspaceId" :node="remoteInterlinkNode" />
     <div v-if="remoteOperationState" class="workspace-files-remote-note" role="status">
       {{ remoteOperationState }}
       <button type="button" @click="cancelRemoteOperation">{{ t('common.cancel') }}</button>
@@ -176,7 +175,6 @@ import WorkspaceFileTree from './WorkspaceFileTree.vue';
 import { useInterlinkNodeTarget } from '@/views/messenger/interlink/interlinkNodeTarget';
 import { useInterlinkNodes } from '@/views/messenger/interlink/useInterlinkNodes';
 import { useInterlinkShadow } from '@/views/messenger/interlink/useInterlinkShadow';
-import RemoteThreadsPanel from '@/views/messenger/interlink/RemoteThreadsPanel.vue';
 import { listRemoteDirectory, readRemoteFile, runInterlinkCommand } from '@/views/messenger/interlink/interlinkCommandRunner';
 import {
   DISABLED_REASON_KEY,
@@ -369,7 +367,12 @@ const cancelRemoteOperation = () => {
   directoryAbort.controller.abort();
   directoryAbort = createAbortHost();
   remoteOperationState.value = '';
+  busy.value = false;
+  preview.saving = false;
 };
+
+const isCurrentWorkspace = (request: ReturnType<typeof createAbortHost>): boolean =>
+  request === directoryAbort && !request.signal.aborted;
 
 function createAbortHost(): { controller: AbortController; signal: AbortSignal } {
   const controller = new AbortController();
@@ -386,18 +389,19 @@ const tree = useWorkspaceFileTree({
         ? fetchWorkspaceContentDirectory(path, { ...pageOptions, refreshTree: true })
         : fetchWorkspaceDirectory(path, pageOptions);
     }
+    const signal = directoryAbort.signal;
     const outcome = await listRemoteDirectory({
       to: interlinkTarget.value,
       workspaceId: interlinkWorkspaceId.value || undefined,
       path,
       offset: pageOptions.offset,
       limit: pageOptions.limit,
-      signal: directoryAbort.signal
+      signal
     });
     if (outcome.failure) {
       const thrown = new Error(outcome.failure) as Error & { code?: string };
       // 切换目标导致的主动取消不渲染成错误。
-      if (directoryAbort.signal.aborted) thrown.code = 'ERR_CANCELED';
+      if (signal.aborted) thrown.code = 'ERR_CANCELED';
       throw thrown;
     }
     return {
@@ -446,10 +450,12 @@ const remoteShadowWorkspace = computed<InterlinkShadowWorkspace | null>(() => {
   if (!list.length) return null;
   const wanted = interlinkWorkspaceId.value;
   if (wanted) {
-    const found = list.find((item) => item.workspace_id === wanted);
-    if (found) return found;
+    // A missing selected named workspace must not display a different local
+    // directory as its fallback. The live listing may arrive later, but until
+    // then the panel stays empty instead of making an unsafe visual switch.
+    return list.find((item) => item.workspace_id === wanted) || null;
   }
-  return list[0];
+  return list.find((item) => !item.workspace_id) || null;
 });
 
 const remoteTruncated = computed(() => remoteShadowWorkspace.value?.truncated === true);
@@ -486,13 +492,27 @@ const seedTreeFromShadow = (): void => {
 /** 进入一个远程工作区：先铺影子快照，在线时再把根目录换成实时列表。 */
 const enterRemoteWorkspace = async (): Promise<void> => {
   if (!remoteInterlinkActive.value) return;
+  const target = interlinkTarget.value;
+  const deviceId = remoteInterlinkDeviceId.value;
+  const workspaceId = interlinkWorkspaceId.value;
   exitSelectionMode();
   remoteOperationState.value = '';
   directoryAbort.controller.abort();
   directoryAbort = createAbortHost();
+  const request = directoryAbort;
   closePreview();
-  await shadowApi.load(remoteInterlinkDeviceId.value || '');
-  if (!remoteInterlinkActive.value) return;
+  await shadowApi.load(deviceId || '');
+  // The target can change while the bounded shadow request is in flight. A
+  // late completion must not seed its directory into the newly selected local
+  // workspace.
+  if (
+    !remoteInterlinkActive.value ||
+    request !== directoryAbort ||
+    request.signal.aborted ||
+    target !== interlinkTarget.value ||
+    deviceId !== remoteInterlinkDeviceId.value ||
+    workspaceId !== interlinkWorkspaceId.value
+  ) return;
   seedTreeFromShadow();
   if (!listBlockedReason.value) void tree.loadDirectory('', { force: true });
 };
@@ -798,6 +818,7 @@ const createTargetPath = (row: WorkspaceVisibleRow | null): string =>
 
 const handleCreateEntry = async (kind: 'dir' | 'file', row: WorkspaceVisibleRow | null) => {
   if (busy.value) return;
+  const request = directoryAbort;
   const directory = createTargetPath(row);
   if (kind === 'file') {
     // 文件类型交给专用对话框选择（文本 / Markdown / Word / 表格 / 演示文稿 / 流程图）。
@@ -814,25 +835,28 @@ const handleCreateEntry = async (kind: 'dir' | 'file', row: WorkspaceVisibleRow 
         isValidWorkspaceEntryName(input) ? true : t('messenger.filesArea.invalidName')
     });
     const name = String(value || '').trim();
-    if (!name) return;
+    if (!name || !isCurrentWorkspace(request)) return;
     busy.value = true;
     if (remoteInterlinkActive.value) await remoteMutation('workspace.mkdir', { path: joinWorkspacePath(directory, name) });
     else await createWorkspaceDirectory(directory, name);
+    if (!isCurrentWorkspace(request)) return;
     await refreshDirectory(directory);
     await revealPath(joinWorkspacePath(directory, name));
     scheduleStatsRefresh();
     ElMessage.success(t('messenger.filesArea.newDirSuccess'));
   } catch (error) {
-    if (error instanceof Error || (error as { response?: unknown })?.response) {
+    if (isCurrentWorkspace(request) && (error instanceof Error || (error as { response?: unknown })?.response)) {
       ElMessage.error(resolveWorkspaceErrorMessage(error, t('common.requestFailed')));
     }
   } finally {
-    busy.value = false;
+    if (isCurrentWorkspace(request)) busy.value = false;
   }
 };
 
 /** 「新建文件」对话框确认：按所选类型写入带模板内容的新文件。 */
 const handleNewFileConfirm = async (payload: { name: string; content: string; typeId: string }) => {
+  if (!newFileDialog.visible) return;
+  const request = directoryAbort;
   const name = String(payload.name || '').trim();
   newFileDialog.visible = false;
   if (!name || !isValidWorkspaceEntryName(name)) {
@@ -844,14 +868,15 @@ const handleNewFileConfirm = async (payload: { name: string; content: string; ty
   try {
     if (remoteInterlinkActive.value) await remoteMutation('workspace.write', { path: joinWorkspacePath(directory, name), content: payload.content || '' });
     else await createWorkspaceFile(directory, name, payload.content || '');
+    if (!isCurrentWorkspace(request)) return;
     await refreshDirectory(directory);
     await revealPath(joinWorkspacePath(directory, name));
     scheduleStatsRefresh();
     ElMessage.success(t('messenger.filesArea.newFileSuccess'));
   } catch (error) {
-    ElMessage.error(resolveWorkspaceErrorMessage(error, t('common.requestFailed')));
+    if (isCurrentWorkspace(request)) ElMessage.error(resolveWorkspaceErrorMessage(error, t('common.requestFailed')));
   } finally {
-    busy.value = false;
+    if (isCurrentWorkspace(request)) busy.value = false;
   }
 };
 
@@ -865,7 +890,8 @@ const handleRowCommand = async (command: string, row: WorkspaceVisibleRow | null
     }
     if (!row) return;
     if (command === 'toggle') await toggleDirectoryPath(row.path);
-    else if (command === 'preview' || command === 'download') await openPreview(row.path, row.name, row.size);
+    else if (command === 'preview') await openPreview(row.path, row.name, row.size);
+    else if (command === 'download') await downloadRemoteFile(row.path, row.name);
     else if (command === 'rename' && remoteWritable.value) await renameEntry(row);
     else if (command === 'delete' && remoteWritable.value) await deleteEntry(row);
     return;
@@ -944,6 +970,7 @@ const runAction = async (action: () => Promise<void>, fallback: string) => {
 };
 
 const renameEntry = async (row: WorkspaceVisibleRow) => {
+  const request = directoryAbort;
   try {
     const value = await mzPrompt({
       title: t('common.edit'),
@@ -953,20 +980,21 @@ const renameEntry = async (row: WorkspaceVisibleRow) => {
         isValidWorkspaceEntryName(input) ? true : t('messenger.filesArea.invalidName')
     });
     const nextName = String(value || '').trim();
-    if (!nextName || nextName === row.name) return;
+    if (!nextName || nextName === row.name || !isCurrentWorkspace(request)) return;
     busy.value = true;
     const parent = workspaceParentPath(row.path);
     if (remoteInterlinkActive.value) await remoteMutation('workspace.move', { path: row.path, destination: joinWorkspacePath(parent, nextName) });
     else await moveWorkspacePath(row.path, joinWorkspacePath(parent, nextName));
+    if (!isCurrentWorkspace(request)) return;
     removePaths([row.path]);
     await refreshDirectory(parent);
     ElMessage.success(t('messenger.filesArea.renameSuccess'));
   } catch (error) {
-    if ((error as { response?: unknown })?.response || error instanceof Error) {
+    if (isCurrentWorkspace(request) && ((error as { response?: unknown })?.response || error instanceof Error)) {
       ElMessage.error(resolveWorkspaceErrorMessage(error, t('common.requestFailed')));
     }
   } finally {
-    busy.value = false;
+    if (isCurrentWorkspace(request)) busy.value = false;
   }
 };
 
@@ -984,19 +1012,21 @@ const confirmDelete = async (count: number, name?: string): Promise<boolean> => 
 };
 
 const deleteEntry = async (row: WorkspaceVisibleRow) => {
-  if (!(await confirmDelete(1, row.name))) return;
+  const request = directoryAbort;
+  if (!(await confirmDelete(1, row.name)) || !isCurrentWorkspace(request)) return;
   busy.value = true;
   try {
     if (remoteInterlinkActive.value) await remoteMutation('workspace.delete', { path: row.path });
     else await deleteWorkspacePath(row.path);
+    if (!isCurrentWorkspace(request)) return;
     removePaths([row.path]);
     await refreshDirectory(workspaceParentPath(row.path));
     scheduleStatsRefresh();
     ElMessage.success(t('messenger.filesArea.deleteSuccess'));
   } catch (error) {
-    ElMessage.error(resolveWorkspaceErrorMessage(error, t('common.requestFailed')));
+    if (isCurrentWorkspace(request)) ElMessage.error(resolveWorkspaceErrorMessage(error, t('common.requestFailed')));
   } finally {
-    busy.value = false;
+    if (isCurrentWorkspace(request)) busy.value = false;
   }
 };
 
@@ -1282,6 +1312,44 @@ const openRemoteFilePreview = async (path: string, name: string, size: number) =
   preview.previewKind = declaredKind as PreviewKind;
 };
 
+/** Read a remote file once and save the exact bytes. A truncated command result
+ * is never presented as a complete download. */
+const downloadRemoteFile = async (path: string, name: string) => {
+  const blocked = readBlockedReason.value;
+  if (blocked) {
+    ElMessage.warning(blocked);
+    return;
+  }
+  busy.value = true;
+  const request = directoryAbort;
+  try {
+    const outcome = await readRemoteFile({
+      to: interlinkTarget.value,
+      workspaceId: interlinkWorkspaceId.value || undefined,
+      path,
+      signal: request.signal
+    });
+    if (request !== directoryAbort || request.signal.aborted) return;
+    if (!outcome.payload) throw new Error(outcome.failure || outcome.errorCode || 'READ_FAILED');
+    if (outcome.payload.truncated) {
+      ElMessage.warning(t('interlink.workspace.truncatedHint', { size: formatWorkspaceBytes(outcome.payload.size) }));
+      return;
+    }
+    const blob = outcome.payload.bytes
+      ? new Blob([outcome.payload.bytes])
+      : new Blob([outcome.payload.text], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    saveObjectUrlAsFile(url, name || 'download');
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } catch (error) {
+    if (request === directoryAbort && !request.signal.aborted) {
+      ElMessage.error(resolveWorkspaceErrorMessage(error, t('messenger.filesArea.downloadFailed')));
+    }
+  } finally {
+    if (request === directoryAbort) busy.value = false;
+  }
+};
+
 const closePreview = () => {
   if (preview.saving) return;
   previewAbort?.abort();
@@ -1314,17 +1382,19 @@ const handlePreviewDownload = async () => {
 
 const handlePreviewSave = async (content: string) => {
   if (!preview.path || preview.saving) return;
+  const request = directoryAbort;
   preview.saving = true;
   try {
     if (remoteInterlinkActive.value) await remoteMutation('workspace.write', { path: preview.path, content });
     else await writeWorkspaceFileContent(preview.path, content);
+    if (!isCurrentWorkspace(request)) return;
     preview.content = content;
     await refreshDirectory(workspaceParentPath(preview.path));
     ElMessage.success(t('messenger.filesArea.saved'));
   } catch (error) {
-    ElMessage.error(resolveWorkspaceErrorMessage(error, t('messenger.filesArea.saveFailed')));
+    if (isCurrentWorkspace(request)) ElMessage.error(resolveWorkspaceErrorMessage(error, t('messenger.filesArea.saveFailed')));
   } finally {
-    preview.saving = false;
+    if (isCurrentWorkspace(request)) preview.saving = false;
   }
 };
 
@@ -1418,15 +1488,34 @@ watch(
       : '',
   () => {
     directoryRefresh.reset();
-    void enterRemoteWorkspace();
+    directoryAbort.controller.abort();
+    directoryAbort = createAbortHost();
+    shadowApi.reset();
+    tree.reset();
+    busy.value = false;
+    uploadTarget.value = '';
+    remoteOperationState.value = '';
+    preview.saving = false;
+    closePreview();
+    officeDialog.visible = false;
+    drawioDialog.visible = false;
+    newFileDialog.visible = false;
+    if (remoteInterlinkActive.value) {
+      void enterRemoteWorkspace();
+    } else {
+      void loadDirectory('');
+      void loadStats();
+    }
   }
 );
 
-// 从远程工作区切回云端：目录没加载过就补一次，加载过用既有缓存。
-watch(remoteInterlinkActive, (remote) => {
-  if (remote) return;
-  if (!tree.directories.get('')?.loaded) void loadDirectory('');
-  void loadStats();
+// A deep link may load before the device catalog, or the device may reconnect.
+// Refresh only when listing becomes available; status polling must not rebuild
+// a tree that is already usable.
+watch(listBlockedReason, (reason, previous) => {
+  if (remoteInterlinkActive.value && previous && !reason && !shadowApi.loading.value) {
+    void tree.loadDirectory('', { force: true });
+  }
 });
 
 onBeforeUnmount(() => {

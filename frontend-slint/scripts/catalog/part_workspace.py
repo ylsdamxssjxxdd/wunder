@@ -34,6 +34,7 @@ ENTRIES.extend([
     ("wf_stats_dirs", "{} 个文件夹", "{} folders", ["count"]),
     ("wf_stats_truncated", "统计为大目录下界", "Lower bound of a large directory"),
     ("wf_empty", "当前目录没有文件", "No files in this directory"),
+    ("wf_empty_hint", "拖入文件，或新建目录和文件", "Drop files here, or create a folder or file"),
     ("wf_offline", "连接云端后，这里显示你的云端工作目录", "Sign in to the cloud to browse your workspace"),
     ("wf_connect", "去连接", "Connect"),
     ("wf_loading", "加载中…", "Loading…"),

@@ -2,6 +2,10 @@
 # slint-viewer preview fixtures (commands / thread log / markdown / workflow).
 
 ENTRIES = [
+    # workspace_alignment_demo.slint
+    ("wav_workspace", "示例工作区", "Sample workspace"),
+    ("wav_other_thread", "另一个线程", "Another thread"),
+    ("wav_other_workspace", "第二工作区", "Second workspace"),
     # commands_preview.slint
     ("cpv_goal_sample", "/goal 示例目标", "/goal sample goal"),
     ("cpv_context_compact", "上下文压缩", "Context compaction"),

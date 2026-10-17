@@ -144,15 +144,20 @@ async fn admin_preset_agent_items(state: &AppState) -> Result<Vec<Value>, Respon
         .iter()
         .map(|item| item.preset.preset_id.clone())
         .collect::<Vec<_>>();
-    // One grouped query for every preset instead of a per-preset count.
+    // One grouped query for configured presets; count implicit defaults using
+    // the same resolution as the binding list so historical bindings agree.
     let bound_users = state
         .user_store
         .count_preset_bound_users(&preset_ids)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
         .into_iter()
         .collect::<HashMap<_, _>>();
+    let (_, default_bound_users) = state
+        .user_store
+        .list_preset_bound_agents(DEFAULT_AGENT_ID_ALIAS, None, None, 0, 1)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let mut items = Vec::with_capacity(configured.len() + 1);
-    items.push(admin_default_preset_agent_payload(state).await?);
+    items.push(admin_default_preset_agent_payload(state, default_bound_users).await?);
     items.extend(configured.iter().filter_map(|item| {
         preset_agent_payload(
             &item.preset,
@@ -218,7 +223,10 @@ async fn admin_preset_agent_worker_card(
     })))
 }
 
-async fn admin_default_preset_agent_payload(state: &AppState) -> Result<Value, Response> {
+async fn admin_default_preset_agent_payload(
+    state: &AppState,
+    bound_users: i64,
+) -> Result<Value, Response> {
     // Expose the template user's default agent as a special preset item for admin UI editing.
     let record = load_effective_default_agent_record(state, PRESET_TEMPLATE_USER_ID)
         .await
@@ -244,8 +252,8 @@ async fn admin_default_preset_agent_payload(state: &AppState) -> Result<Value, R
         "approval_mode": normalize_agent_approval_mode(Some(&record.approval_mode)),
         "status": normalize_agent_status(Some(&record.status)),
         "is_default_agent": true,
-        // The default agent is the user's own agent when no preset governs it.
-        "bound_users": 0,
+        // Includes explicit default bindings and users without a binding.
+        "bound_users": bound_users,
         "customizable": customizable_payload(&PresetCustomizable::ALL),
         "updated_at": record.updated_at,
     }))
@@ -399,7 +407,7 @@ async fn admin_preset_bindings_mutate(
         .user_store
         .list_org_units()
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    let _actor = resolve_admin_actor(&state, &headers, true, &units)?;
+    let actor = resolve_admin_actor(&state, &headers, true, &units)?;
     let preset_id = payload.preset_id.trim();
     if preset_id.is_empty() {
         return Err(error_response(
@@ -407,17 +415,29 @@ async fn admin_preset_bindings_mutate(
             "preset_id is required".to_string(),
         ));
     }
-    let user_ids = payload
+    let mut user_ids = payload
         .user_ids
         .iter()
         .map(|user_id| user_id.trim().to_string())
         .filter(|user_id| !user_id.is_empty())
         .collect::<Vec<_>>();
+    user_ids.sort();
+    user_ids.dedup();
     if user_ids.is_empty() {
         return Err(error_response(
             StatusCode::BAD_REQUEST,
             "user_ids is required".to_string(),
         ));
+    }
+    // Validate the whole batch before writing any binding.
+    for user_id in &user_ids {
+        if let Some(user) = state
+            .user_store
+            .get_user_by_id(user_id)
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+        {
+            ensure_unit_scope(&actor, user.unit_id.as_deref())?;
+        }
     }
     let action = payload.action.trim();
     let unbind = match action {

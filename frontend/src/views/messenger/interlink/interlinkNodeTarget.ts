@@ -59,7 +59,7 @@ export const useInterlinkNodeTarget = () => {
   const deviceId = computed(() => interlinkDeviceIdOf(target.value));
   const workspaceId = computed(() => normalizeWorkspaceId(route.query[INTERLINK_WORKSPACE_QUERY_KEY]));
 
-  const writeTarget = (next: InterlinkNodeTarget, nextWorkspaceId = ''): void => {
+  const writeTarget = async (next: InterlinkNodeTarget, nextWorkspaceId = ''): Promise<void> => {
     const normalized = normalizeNodeTarget(next);
     const workspace = normalized === CLOUD_NODE_TARGET ? '' : normalizeWorkspaceId(nextWorkspaceId);
     const currentTarget = normalizeNodeTarget(route.query[INTERLINK_NODE_QUERY_KEY]);
@@ -77,7 +77,7 @@ export const useInterlinkNodeTarget = () => {
     } else {
       delete query[INTERLINK_WORKSPACE_QUERY_KEY];
     }
-    void router
+    await router
       .replace({ path: route.path, query, hash: route.hash })
       .catch(() => undefined);
   };

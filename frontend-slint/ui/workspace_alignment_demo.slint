@@ -17,9 +17,14 @@ export component WorkspaceAlignmentDemo inherits Window {
     out property <int> opened-count;
     out property <int> clicked-count;
     out property <int> layout-saves;
+    // Test-only projection of the thread-row callbacks. Keeping it in the
+    // viewer fixture makes the real hover and native context-menu actions
+    // observable without adding any production-only state to Sidebar.
+    out property <string> last-thread-action: "";
     accessible-role: groupbox;
     accessible-description: "command=" + root.last-command + ";workspace=" + root.last-workspace
-        + ";opens=" + root.opened-count + ";clicks=" + root.clicked-count + ";split=" + root.split + ";saves=" + root.layout-saves;
+        + ";thread=" + root.last-thread-action + ";opens=" + root.opened-count
+        + ";clicks=" + root.clicked-count + ";split=" + root.split + ";saves=" + root.layout-saves;
     Sidebar {
         rows: [
             {kind: 0, workspace-id: "fixture-a", name: "示例工作区", icon: "folder", color: "blue", selected: true, expanded: true, thread-count: 2, payload: 0},
@@ -55,5 +60,9 @@ export component WorkspaceAlignmentDemo inherits Window {
         file-menu(index, action) => { root.last-command = action; if action == 0 { root.opened-count += 1; } }
         file-key(action) => { root.last-command = 100 + action; }
         workspace-menu(index, action) => { root.last-workspace = index; root.last-command = action; }
+        rename-request(index, title) => { root.last-thread-action = "rename:" + index + ":" + title; }
+        open-trajectory(index) => { root.last-thread-action = "trajectory:" + index; }
+        archive-thread(index) => { root.last-thread-action = "archive:" + index; }
+        begin-selection => { root.last-thread-action = "multi-select"; }
     }
 }

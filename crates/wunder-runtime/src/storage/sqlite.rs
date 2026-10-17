@@ -399,7 +399,7 @@ impl SqliteStorage {
     }
 
     fn read_user_agent_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<UserAgentRecord> {
-        let tool_names = Self::parse_string_list(row.get(7)?);
+        let tool_names = Self::parse_string_list(row.get(6)?);
         Ok(UserAgentRecord {
             agent_id: row.get(0)?,
             user_id: row.get(1)?,

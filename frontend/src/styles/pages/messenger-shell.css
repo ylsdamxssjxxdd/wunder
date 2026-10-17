@@ -178,6 +178,11 @@
   color: var(--mz-primary);
 }
 
+.messenger-sidebar-workspace-icon.is-muted {
+  color: var(--mz-text-muted);
+  opacity: 0.72;
+}
+
 /* 工作区行拖拽排序（云端偏好，§6.3）：拖起半透明，悬停目标行给上沿指示。 */
 .messenger-sidebar-workspace-row.is-dragging {
   opacity: 0.45;

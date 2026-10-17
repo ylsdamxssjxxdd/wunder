@@ -357,7 +357,26 @@ impl SqliteAgentDirectoryStorage for SqliteStorage {
         if cleaned_preset.is_empty() {
             return Ok((Vec::new(), 0));
         }
+        // Old installations can contain several historical rows per user.
+        // The latest binding is the user's one current agent instance.
+        let binding_cte = format!("WITH current_bindings AS ( \
+               SELECT ua.*, ROW_NUMBER() OVER (PARTITION BY ua.user_id ORDER BY ua.updated_at DESC, ua.agent_id DESC) AS row_num \
+               FROM user_agents ua WHERE ua.agent_id <> '__default__' AND {BINDING_USABLE} \
+             )");
+        let binding_cte = if cleaned_preset == "__default__" {
+            format!("{binding_cte}, resolved_bindings AS ( \
+                SELECT {AGENT_COLUMNS}, row_num FROM current_bindings WHERE row_num = 1 \
+                UNION ALL SELECT '__default__', u.user_id, '', '', '', NULL, \
+                  '[]', '[]', '[]', '[]', 'A', 'full_auto', 0, 'active', NULL, 1, \
+                  u.created_at, u.updated_at, '[]', '{{\"preset_id\":\"__default__\"}}', 0, 0, 0, '[]', 1 \
+                FROM user_accounts u WHERE NOT EXISTS ( \
+                  SELECT 1 FROM current_bindings cb WHERE cb.user_id = u.user_id AND cb.row_num = 1) \
+              )")
+        } else {
+            format!("{binding_cte}, resolved_bindings AS (SELECT * FROM current_bindings)")
+        };
         let mut conditions = vec![
+            "ua.row_num = 1".to_string(),
             BINDING_USABLE.to_string(),
             format!("{BINDING_PRESET_ID} = ?"),
         ];
@@ -377,7 +396,7 @@ impl SqliteAgentDirectoryStorage for SqliteStorage {
         let where_sql = conditions.join(" AND ");
         let conn = self.open()?;
         let count_sql = format!(
-            "SELECT COUNT(*) FROM user_agents ua JOIN user_accounts u ON u.user_id = ua.user_id WHERE {where_sql}"
+            "{binding_cte} SELECT COUNT(*) FROM resolved_bindings ua JOIN user_accounts u ON u.user_id = ua.user_id WHERE {where_sql}"
         );
         let total: i64 =
             conn.query_row(&count_sql, params_from_iter(params_list.iter()), |row| {
@@ -385,7 +404,7 @@ impl SqliteAgentDirectoryStorage for SqliteStorage {
             })?;
 
         let mut sql = format!(
-            "SELECT {}, u.username FROM user_agents ua JOIN user_accounts u ON u.user_id = ua.user_id WHERE {where_sql} ORDER BY u.username ASC",
+            "{binding_cte} SELECT {}, u.username FROM resolved_bindings ua JOIN user_accounts u ON u.user_id = ua.user_id WHERE {where_sql} ORDER BY u.username ASC",
             aliased_agent_columns()
         );
         let mut page_params = params_list;
@@ -422,9 +441,14 @@ impl SqliteAgentDirectoryStorage for SqliteStorage {
             return Ok(Vec::new());
         }
         let sql = format!(
-            "SELECT {BINDING_PRESET_ID_PLAIN} AS preset_id, COUNT(DISTINCT user_id) FROM user_agents \
-             WHERE preset_binding IS NOT NULL AND json_valid(preset_binding) \
-             AND {BINDING_PRESET_ID_PLAIN} IN ({}) GROUP BY {BINDING_PRESET_ID_PLAIN}",
+            "WITH current_bindings AS ( \
+               SELECT user_id, {BINDING_PRESET_ID_PLAIN} AS preset_id, \
+                 ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY updated_at DESC, agent_id DESC) AS row_num \
+               FROM user_agents \
+               WHERE agent_id <> '__default__' AND preset_binding IS NOT NULL AND json_valid(preset_binding) \
+             ) \
+             SELECT preset_id, COUNT(*) FROM current_bindings \
+             WHERE row_num = 1 AND preset_id IN ({}) GROUP BY preset_id",
             placeholders(cleaned.len())
         );
         let conn = self.open()?;
@@ -512,6 +536,23 @@ mod tests {
             silent: false,
             prefer_mother: false,
         }
+    }
+
+    #[test]
+    fn agent_tool_names_roundtrip_does_not_drop_skill_selections() {
+        let (storage, _dir) = build_storage();
+        let mut record = agent("agent-tool-selection", "user-tool-selection", 1.0);
+        record.tool_names = vec!["selected-tool".to_string(), "selected-skill".to_string()];
+        record.declared_tool_names = vec!["selected-tool".to_string()];
+        record.declared_skill_names = vec!["selected-skill".to_string()];
+        storage.upsert_user_agent(&record).expect("save selection");
+        let stored = storage
+            .get_user_agent(&record.user_id, &record.agent_id)
+            .expect("read selection")
+            .expect("agent exists");
+        assert_eq!(stored.tool_names, record.tool_names);
+        assert_eq!(stored.declared_tool_names, record.declared_tool_names);
+        assert_eq!(stored.declared_skill_names, record.declared_skill_names);
     }
 
     #[test]

@@ -5,7 +5,8 @@ use crate::services::default_agent_protocol::{
 };
 use crate::services::default_tool_profile::{default_tool_names, initialize_default_builtin_tools};
 use crate::services::user_agent_presets::{
-    build_requested_tool_names_for_sync, PresetSyncMode, PresetSyncSummary,
+    build_requested_tool_names_for_sync, merge_user_owned_tool_selections, PresetSyncMode,
+    PresetSyncSummary,
 };
 use crate::services::worker_card_settings::{
     canonicalize_default_agent_config, collect_context_skill_names,
@@ -270,6 +271,7 @@ async fn build_target_snapshot(
     state: &AppState,
     user: &UserAccountRecord,
     template: &DefaultAgentConfig,
+    current: &UserAgentRecord,
 ) -> UserAgentPresetSnapshot {
     let context = build_user_tool_context(state, &user.user_id).await;
     let allowed_tool_names = compute_allowed_tool_names(user, &context);
@@ -302,6 +304,8 @@ async fn build_target_snapshot(
         &template.status,
     );
     snapshot.model_name = None;
+    let current = snapshot_from_default_record(current, &skill_name_keys);
+    merge_user_owned_tool_selections(&mut snapshot, &context, &user.user_id, &current);
     snapshot
 }
 
@@ -486,7 +490,8 @@ pub async fn ensure_user_default_agent_from_template(
     let template_skill_name_keys =
         collect_user_skill_name_keys(state, PRESET_TEMPLATE_USER_ID).await;
     let template_config = config_from_record(&template_record, &template_skill_name_keys);
-    let target = build_target_snapshot(state, user, &template_config).await;
+    let current = load_effective_default_agent_record(state, user_id).await?;
+    let target = build_target_snapshot(state, user, &template_config, &current).await;
     let record = record_from_target_snapshot(user, &template_config, &target, now_ts());
 
     persist_default_agent_state(state, user_id, &record, true).await?;
@@ -516,83 +521,121 @@ pub async fn sync_default_agent_across_users(
     let template_skill_name_keys =
         collect_user_skill_name_keys(state, PRESET_TEMPLATE_USER_ID).await;
     let template_config = config_from_record(&template_record, &template_skill_name_keys);
-    let (users, _) = state.user_store.list_users(None, unit_scope, 0, 0)?;
-    let mut summary = PresetSyncSummary::default();
+    let default_preset = crate::services::user_agent_presets::default_preset_agent(state).await?;
+    let mut summary = crate::services::user_agent_presets::sync_preset_across_users(
+        state,
+        &default_preset,
+        mode,
+        unit_scope,
+        dry_run,
+    )
+    .await?;
 
-    for user in users {
-        let current_record = load_effective_default_agent_record(state, &user.user_id).await?;
-        let current_skill_name_keys = collect_user_skill_name_keys(state, &user.user_id).await;
-        let current = snapshot_from_default_record(&current_record, &current_skill_name_keys);
-        let target = build_target_snapshot(state, &user, &template_config).await;
-        let binding = load_sync_binding(state, &user.user_id)?;
-        let binding_matches = binding
-            .as_ref()
-            .map(|item| item.preset_id == DEFAULT_AGENT_ID_ALIAS)
-            .unwrap_or(false);
-        let has_explicit = has_explicit_default_agent_state(state, &user.user_id)?;
-        let baseline = binding
-            .as_ref()
-            .map(|item| item.last_applied.clone())
-            .unwrap_or_else(|| {
-                if has_explicit {
-                    target.clone()
-                } else {
-                    current.clone()
+    let mut offset = 0;
+    loop {
+        let (users, total) = state.user_store.list_users(None, unit_scope, offset, 200)?;
+        if users.is_empty() {
+            break;
+        }
+        offset += users.len() as i64;
+        let ids = users
+            .iter()
+            .map(|user| user.user_id.clone())
+            .collect::<Vec<_>>();
+        let bound_users = state
+            .user_store
+            .list_user_agents_for_users(&ids)?
+            .into_iter()
+            .filter(|record| {
+                !crate::services::user_agent_presets::is_default_agent_record(record)
+                    && (record.preset_binding.is_some()
+                        || !crate::services::user_agent_presets::agent_is_archived(record))
+            })
+            .map(|record| record.user_id)
+            .collect::<HashSet<_>>();
+        for user in users {
+            if bound_users.contains(&user.user_id) {
+                continue;
+            }
+            let current_record = load_effective_default_agent_record(state, &user.user_id).await?;
+            let current_skill_name_keys = collect_user_skill_name_keys(state, &user.user_id).await;
+            let current = snapshot_from_default_record(&current_record, &current_skill_name_keys);
+            let target =
+                build_target_snapshot(state, &user, &template_config, &current_record).await;
+            let binding = load_sync_binding(state, &user.user_id)?;
+            let binding_matches = binding
+                .as_ref()
+                .map(|item| item.preset_id == DEFAULT_AGENT_ID_ALIAS)
+                .unwrap_or(false);
+            let has_explicit = has_explicit_default_agent_state(state, &user.user_id)?;
+            let baseline = binding
+                .as_ref()
+                .map(|item| item.last_applied.clone())
+                .unwrap_or_else(|| {
+                    if has_explicit {
+                        target.clone()
+                    } else {
+                        current.clone()
+                    }
+                });
+            let decision = plan_snapshot_sync(&current, &baseline, &target);
+
+            if !decision.visible_diff && binding_matches && has_explicit {
+                continue;
+            }
+
+            let would_write = has_explicit && (decision.visible_diff || !binding_matches);
+            let mut touched = false;
+            if would_write {
+                summary.updated_agents += 1;
+                touched = true;
+            }
+            if !has_explicit {
+                summary.created_agents += 1;
+                touched = true;
+            }
+            if matches!(mode, PresetSyncMode::Safe) && decision.override_count > 0 {
+                summary.skipped_customized += 1;
+                touched = true;
+            }
+            if touched {
+                summary.affected_users += 1;
+            }
+
+            if dry_run {
+                continue;
+            }
+
+            let mut next_record = current_record.clone();
+            let applied = apply_sync_mode(&mut next_record, &baseline, &target, mode);
+            let write_config = !has_explicit || applied || !binding_matches;
+            if write_config {
+                persist_default_agent_state(state, &user.user_id, &next_record, !has_explicit)
+                    .await?;
+            }
+            save_sync_binding(
+                state,
+                &user.user_id,
+                &UserAgentPresetBinding {
+                    preset_id: DEFAULT_AGENT_ID_ALIAS.to_string(),
+                    preset_revision: 1,
+                    last_applied: target,
+                },
+            )?;
+            if write_config {
+                if let Err(err) = state.inner_visible.sync_user_state(&user.user_id).await {
+                    tracing::warn!(
+                        "failed to sync inner-visible default-agent state for {}: {err}",
+                        user.user_id
+                    );
                 }
-            });
-        let decision = plan_snapshot_sync(&current, &baseline, &target);
-
-        if !decision.visible_diff && binding_matches && has_explicit {
-            continue;
-        }
-
-        let would_write = has_explicit && (decision.visible_diff || !binding_matches);
-        let mut touched = false;
-        if would_write {
-            summary.updated_agents += 1;
-            touched = true;
-        }
-        if !has_explicit {
-            summary.created_agents += 1;
-            touched = true;
-        }
-        if matches!(mode, PresetSyncMode::Safe) && decision.override_count > 0 {
-            summary.skipped_customized += 1;
-            touched = true;
-        }
-        if touched {
-            summary.affected_users += 1;
-        }
-
-        if dry_run {
-            continue;
-        }
-
-        let mut next_record = current_record.clone();
-        let applied = apply_sync_mode(&mut next_record, &baseline, &target, mode);
-        let write_config = !has_explicit || applied || !binding_matches;
-        if write_config {
-            persist_default_agent_state(state, &user.user_id, &next_record, !has_explicit).await?;
-        }
-        save_sync_binding(
-            state,
-            &user.user_id,
-            &UserAgentPresetBinding {
-                preset_id: DEFAULT_AGENT_ID_ALIAS.to_string(),
-                preset_revision: 1,
-                last_applied: target,
-            },
-        )?;
-        if write_config {
-            if let Err(err) = state.inner_visible.sync_user_state(&user.user_id).await {
-                tracing::warn!(
-                    "failed to sync inner-visible default-agent state for {}: {err}",
-                    user.user_id
-                );
             }
         }
-    }
 
+        if offset >= total {
+            break;
+        }
+    }
     Ok(summary)
 }
 

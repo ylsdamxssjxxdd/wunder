@@ -1,10 +1,10 @@
 // AI生成
-﻿import { elements } from "./elements.js?v=20261016-01";
+﻿import { elements } from "./elements.js?v=20261017-01";
 import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
 import { appendLog } from "./log.js?v=20261011-01";
 import { notify } from "./notify.js";
-import { t } from "./i18n.js?v=20261016-01";
+import { t } from "./i18n.js?v=20261017-01";
 import { formatTimestamp } from "./utils.js?v=20251229-02";
 import { ensureLlmConfigLoaded } from "./llm.js?v=20260923-04";
 import { listGlobalCompanions } from "./companions.js?v=20260506-01";
@@ -394,7 +394,6 @@ const REQUIRED_KEYS = [
   "presetAgentDetailTitle",
   "presetAgentDetailMeta",
   "presetAgentSaveBtn",
-  "presetAgentSyncSafeBtn",
   "presetAgentSyncForceBtn",
   "presetAgentDeleteBtn",
   "presetAgentVisibilityBtn",
@@ -1172,6 +1171,10 @@ const buildToolGroupsFromItems = (items) => {
   );
   const seenByGroup = new Map();
   (Array.isArray(items) ? items : []).forEach((item) => {
+    const source = String(item?.source || "").trim().toLowerCase();
+    if (["user_mcp", "user_skill", "user_knowledge", "shared"].includes(source)) {
+      return;
+    }
     const groupKey = classifyAbilityGroupKey(item);
     const option = buildAbilityOption(item, item?.kind);
     if (!option || !groups.has(groupKey)) {
@@ -1195,22 +1198,12 @@ const buildToolGroups = (payload) => {
   if (itemGroups.length) {
     return itemGroups;
   }
-  const userOptions = [
-    ...buildToolOptions(payload?.user_mcp_tools, "tool"),
-    ...buildToolOptions(payload?.user_skills, "skill"),
-    ...buildToolOptions(payload?.user_knowledge_tools, "tool"),
-  ];
-  if (!userOptions.length) {
-    userOptions.push(...buildToolOptions(payload?.user_tools, "tool"));
-  }
   return [
     { label: t("userAccounts.toolGroup.builtin"), options: buildToolOptions(payload?.builtin_tools, "tool") },
     { label: t("userAccounts.toolGroup.mcp"), options: buildToolOptions(payload?.mcp_tools, "tool") },
     { label: t("userAccounts.toolGroup.a2a"), options: buildToolOptions(payload?.a2a_tools, "tool") },
     { label: t("userAccounts.toolGroup.skills"), options: buildToolOptions(payload?.skills, "skill") },
     { label: t("userAccounts.toolGroup.knowledge"), options: buildToolOptions(payload?.knowledge_tools, "tool") },
-    { label: t("userAccounts.toolGroup.user"), options: userOptions },
-    { label: t("userAccounts.toolGroup.shared"), options: buildToolOptions(payload?.shared_tools, "tool") },
   ].filter((group) => group.options.length > 0);
 };
 
@@ -2018,7 +2011,6 @@ const renderSyncSummary = () => {
   const preset = selectedPreset();
   const dirty = state.presetAgents.draftDirty === true;
   const canSync = Boolean(preset?.preset_id) && !dirty && state.presetAgents.saving !== true;
-  elements.presetAgentSyncSafeBtn.disabled = !canSync || state.presetAgents.syncLoading;
   elements.presetAgentSyncForceBtn.disabled = !canSync || state.presetAgents.syncLoading;
 
   // 同步摘要卡片已移除，仅维护按钮状态与契约徽章
@@ -2058,8 +2050,6 @@ const renderSyncSummary = () => {
   summary.textContent = t("presetAgents.sync.summary", {
     affected: preview.affected_users || 0,
     updated: preview.updated_agents || 0,
-    skipped: preview.skipped_customized || 0,
-    created: preview.created_agents || 0,
   });
   renderContractBadges();
 };
@@ -3599,7 +3589,7 @@ const deleteChannelAccount = async (channel, accountId) => {
   }
 };
 
-// 同步预览：mode=safe + dry_run=true，只统计影响面，不落库
+// 覆盖预览：mode=force + dry_run=true，只统计影响面，不落库。
 const loadSyncPreview = async ({ silent = false, force = false } = {}) => {
   const preset = selectedPreset();
   if (!preset?.preset_id) {
@@ -3616,7 +3606,7 @@ const loadSyncPreview = async ({ silent = false, force = false } = {}) => {
 
   const result = await syncPresetAgents({
     presetId: normalizePresetId(preset.preset_id),
-    mode: "safe",
+    mode: "force",
     dryRun: true,
     force,
   });
@@ -3638,8 +3628,8 @@ const loadSyncPreview = async ({ silent = false, force = false } = {}) => {
   return result.result;
 };
 
-// 同步执行：先预览（dry_run=true）→ 影响面预览 + 二次确认 → dry_run=false 落库
-const runPresetSync = async (mode = "safe") => {
+// 覆盖系统全局配置：先预览（dry_run=true）→ 二次确认 → dry_run=false 落库。
+const runPresetSync = async () => {
   const saved = await ensurePresetDraftSaved("presetAgents.error.saveBeforeSync");
   if (!saved) {
     return;
@@ -3648,7 +3638,7 @@ const runPresetSync = async (mode = "safe") => {
   if (!preset?.preset_id) {
     return;
   }
-  const normalizedMode = mode === "force" ? "force" : "safe";
+  const normalizedMode = "force";
   const presetId = normalizePresetId(preset.preset_id);
   const preview = await syncPresetAgents({ presetId, mode: normalizedMode, dryRun: true });
   if (!preview.ok) {
@@ -3662,24 +3652,19 @@ const runPresetSync = async (mode = "safe") => {
     return;
   }
   const stats = preview.result || {};
-  const isForce = normalizedMode === "force";
   openImpactModal({
-    title: isForce ? t("presetAgents.sync.previewTitle.force") : t("presetAgents.sync.previewTitle.safe"),
+    title: t("presetAgents.sync.previewTitle.force"),
     summary: t("presetAgents.sync.previewSummary", {
       affected: stats.affected_users || 0,
       updated: stats.updated_agents || 0,
-      skipped: stats.skipped_customized || 0,
-      created: stats.created_agents || 0,
     }),
     details: [
       t("presetAgents.sync.previewOk", { count: stats.updated_agents || 0 }),
-      t("presetAgents.sync.previewSkipped", { count: stats.skipped_customized || 0 }),
-      t("presetAgents.sync.previewCreated", { count: stats.created_agents || 0 }),
     ],
-    ackLabel: isForce ? t("presetAgents.sync.ack") : "",
-    hint: isForce ? t("presetAgents.sync.forceHint") : t("presetAgents.sync.safeHint"),
-    confirmLabel: isForce ? t("presetAgents.action.syncForce") : t("presetAgents.action.syncSafe"),
-    danger: isForce,
+    ackLabel: "",
+    hint: t("presetAgents.sync.forceHint"),
+    confirmLabel: t("presetAgents.action.syncForce"),
+    danger: true,
     onConfirm: async () => {
       state.presetAgents.syncLoading = true;
       renderSyncSummary();
@@ -3701,11 +3686,9 @@ const runPresetSync = async (mode = "safe") => {
       }
       const done = executed.result || {};
       const text = t("presetAgents.sync.result", {
-        mode: isForce ? t("presetAgents.action.syncForce") : t("presetAgents.action.syncSafe"),
+        mode: t("presetAgents.action.syncForce"),
         affected: done.affected_users || 0,
         updated: done.updated_agents || 0,
-        skipped: done.skipped_customized || 0,
-        created: done.created_agents || 0,
       });
       notify(text, "success");
       appendSyncLog(text);
@@ -4004,13 +3987,9 @@ const bindActions = () => {
       markPresetDraftDirty();
     });
   }
-  if (elements.presetAgentSyncSafeBtn.dataset.bound !== "1") {
-    elements.presetAgentSyncSafeBtn.dataset.bound = "1";
-    elements.presetAgentSyncSafeBtn.addEventListener("click", async () => runPresetSync("safe"));
-  }
   if (elements.presetAgentSyncForceBtn.dataset.bound !== "1") {
     elements.presetAgentSyncForceBtn.dataset.bound = "1";
-    elements.presetAgentSyncForceBtn.addEventListener("click", async () => runPresetSync("force"));
+    elements.presetAgentSyncForceBtn.addEventListener("click", runPresetSync);
   }
   if (elements.presetAgentDeleteBtn.dataset.bound !== "1") {
     elements.presetAgentDeleteBtn.dataset.bound = "1";

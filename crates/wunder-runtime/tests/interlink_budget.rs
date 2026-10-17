@@ -21,7 +21,7 @@ use wunder_server::{
     state::{AppState, AppStateInitOptions},
     storage::{
         InterlinkAuditRecord, InterlinkCommandRecord, ListInterlinkAuditQuery,
-        ListInterlinkCommandsQuery,
+        ListInterlinkCommandsQuery, WorkspaceRecord,
     },
 };
 
@@ -386,6 +386,102 @@ async fn shadow_projection_is_capped_at_500_entries_inside_the_local_budget() {
         !serialized.contains(&root.to_string_lossy().to_string()),
         "projection must not leak the absolute workspace root"
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn shadow_projection_keeps_default_and_named_workspaces_as_independent_roots() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let state = app_state(&dir, "workspace-roots.db");
+    let user = "workspace_root_user";
+    let default_scope =
+        wunder_server::interlink::client::shadow::workspace_scope(&state, user, None);
+    let default_root = state
+        .workspace
+        .ensure_user_root(&default_scope)
+        .expect("default root");
+    std::fs::write(default_root.join("default.txt"), b"default root").expect("seed default root");
+
+    let named_root = dir.path().join("named-root");
+    std::fs::create_dir_all(&named_root).expect("create named root");
+    std::fs::write(named_root.join("named.txt"), b"named root").expect("seed named root");
+    state
+        .storage
+        .upsert_workspace(&WorkspaceRecord {
+            workspace_id: "workspace-one".to_string(),
+            user_id: user.to_string(),
+            name: "Project one".to_string(),
+            root_path: named_root.to_string_lossy().into_owned(),
+            icon: String::new(),
+            color: String::new(),
+            sort_index: 0,
+            created_at: 1.0,
+            updated_at: 1.0,
+        })
+        .expect("store named workspace");
+
+    let sources = ShadowSources::resolved(
+        NodeIdentity::from_session("desktop", "budget"),
+        user.to_string(),
+        None,
+        TreeLimits::default(),
+        &[CAP_SHADOW_FULL.to_string()],
+    );
+    let (workspace, truncated) = gather_workspace(&state, &sources, &TreeLimits::default()).await;
+
+    assert!(!truncated);
+    let roots = workspace["workspaces"]
+        .as_array()
+        .unwrap_or_else(|| panic!("projection carries workspace roots: {workspace}"));
+    assert_eq!(roots.len(), 2);
+    assert_eq!(roots[0]["workspace_id"], "");
+    assert_eq!(roots[1]["workspace_id"], "workspace-one");
+    assert_eq!(roots[1]["name"], "Project one");
+    assert_eq!(roots[0]["tree"][0]["path"], "default.txt");
+    assert_eq!(roots[1]["tree"][0]["path"], "named.txt");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn shadow_projection_reserves_one_of_twenty_roots_for_the_default_workspace() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let state = app_state(&dir, "workspace-root-cap.db");
+    let user = "workspace_root_cap_user";
+    for index in 0..20 {
+        let root = dir.path().join(format!("named-root-{index}"));
+        std::fs::create_dir_all(&root).expect("create named root");
+        state
+            .storage
+            .upsert_workspace(&WorkspaceRecord {
+                workspace_id: format!("workspace-{index:02}"),
+                user_id: user.to_string(),
+                name: format!("Project {index:02}"),
+                root_path: root.to_string_lossy().into_owned(),
+                icon: String::new(),
+                color: String::new(),
+                sort_index: index,
+                created_at: 1.0,
+                updated_at: 1.0,
+            })
+            .expect("store named workspace");
+    }
+
+    let sources = ShadowSources::resolved(
+        NodeIdentity::from_session("desktop", "budget"),
+        user.to_string(),
+        None,
+        TreeLimits::default(),
+        &[CAP_SHADOW_FULL.to_string()],
+    );
+    let (workspace, truncated) = gather_workspace(&state, &sources, &TreeLimits::default()).await;
+    let roots = workspace["workspaces"].as_array().expect("workspace roots");
+
+    assert_eq!(roots.len(), 20, "the root contract stays bounded at twenty");
+    assert_eq!(
+        roots[0]["workspace_id"], "",
+        "default root is never displaced"
+    );
+    assert_eq!(roots[19]["workspace_id"], "workspace-18");
+    assert_eq!(workspace["roots"], 20);
+    assert!(truncated, "the omitted named root must be reported");
 }
 
 // Idle cost of an open tunnel (docs §13.6: CPU < 1%, RSS delta < 30 MB) needs a

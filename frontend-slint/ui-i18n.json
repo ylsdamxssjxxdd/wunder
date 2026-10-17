@@ -486,6 +486,11 @@
   "en": "Archive"
  },
  {
+  "key": "sb_thread_trajectory",
+  "zh": "轨迹视图",
+  "en": "Trajectory view"
+ },
+ {
   "key": "tl_state_queued",
   "zh": "排队中",
   "en": "Queued"
@@ -1778,6 +1783,46 @@
   "en": "Search"
  },
  {
+  "key": "cloud_threads_title",
+  "zh": "云端智能体与线程",
+  "en": "Cloud agent and threads"
+ },
+ {
+  "key": "cloud_threads_earlier",
+  "zh": "更早消息",
+  "en": "Earlier messages"
+ },
+ {
+  "key": "cloud_threads_latest",
+  "zh": "回到最新",
+  "en": "Back to latest"
+ },
+ {
+  "key": "cloud_threads_copy_user",
+  "zh": "复制提问原文",
+  "en": "Copy user text"
+ },
+ {
+  "key": "cloud_threads_copy_reply",
+  "zh": "复制回复原文",
+  "en": "Copy reply text"
+ },
+ {
+  "key": "cloud_threads_stop",
+  "zh": "停止线程",
+  "en": "Stop thread"
+ },
+ {
+  "key": "cloud_threads_approval",
+  "zh": "工具审批 ID",
+  "en": "Tool approval ID"
+ },
+ {
+  "key": "cloud_threads_allow_once",
+  "zh": "允许一次",
+  "en": "Allow once"
+ },
+ {
   "key": "composer_goal_hint",
   "zh": "/goal  设置目标",
   "en": "/goal  set a goal"
@@ -2516,6 +2561,21 @@
   "key": "ae_extra_prompt",
   "zh": "额外提示词",
   "en": "Extra prompt"
+ },
+ {
+  "key": "wav_workspace",
+  "zh": "示例工作区",
+  "en": "Sample workspace"
+ },
+ {
+  "key": "wav_other_thread",
+  "zh": "另一个线程",
+  "en": "Another thread"
+ },
+ {
+  "key": "wav_other_workspace",
+  "zh": "第二工作区",
+  "en": "Second workspace"
  },
  {
   "key": "cpv_goal_sample",
@@ -4314,6 +4374,26 @@
   "key": "shot_kind_fullscreen",
   "zh": "全屏截图",
   "en": "Fullscreen screenshot"
+ },
+ {
+  "key": "il_allow_remote_local",
+  "zh": "允许远程访问本地",
+  "en": "Allow remote local access"
+ },
+ {
+  "key": "il_local_access_hint",
+  "zh": "启用设备互通；写入和线程操作仍需本地审批",
+  "en": "Enable device interlink; writes and thread actions still require local approval"
+ },
+ {
+  "key": "il_share_catalog",
+  "zh": "共享工作区与线程目录",
+  "en": "Share workspace and thread catalog"
+ },
+ {
+  "key": "il_share_catalog_hint",
+  "zh": "需同时获得舰桥授权；关闭时只共享设备摘要",
+  "en": "Also requires server grants; otherwise only the device summary is shared"
  },
  {
   "key": "st_title",
@@ -6896,6 +6976,11 @@
   "key": "wf_empty",
   "zh": "当前目录没有文件",
   "en": "No files in this directory"
+ },
+ {
+  "key": "wf_empty_hint",
+  "zh": "拖入文件，或新建目录和文件",
+  "en": "Drop files here, or create a folder or file"
  },
  {
   "key": "wf_offline",

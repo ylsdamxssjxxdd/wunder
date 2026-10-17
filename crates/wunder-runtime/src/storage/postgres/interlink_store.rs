@@ -35,6 +35,10 @@ pub(super) trait PostgresInterlinkStorage {
         limit: i64,
     ) -> Result<(Vec<InterlinkChannelRecord>, i64)>;
     fn upsert_interlink_shadow_impl(&self, record: &InterlinkShadowRecord) -> Result<()>;
+    fn upsert_interlink_shadow_if_device_active_impl(
+        &self,
+        record: &InterlinkShadowRecord,
+    ) -> Result<bool>;
     fn get_interlink_shadow_impl(&self, device_id: &str) -> Result<Option<InterlinkShadowRecord>>;
     fn get_interlink_shadow_revision_impl(&self, device_id: &str) -> Result<i64>;
     fn list_interlink_shadow_overviews_impl(
@@ -366,6 +370,48 @@ impl PostgresInterlinkStorage for PostgresStorage {
             ],
         )?;
         Ok(())
+    }
+
+    fn upsert_interlink_shadow_if_device_active_impl(
+        &self,
+        record: &InterlinkShadowRecord,
+    ) -> Result<bool> {
+        self.ensure_initialized()?;
+        let device_id = record.device_id.trim();
+        let user_id = record.user_id.trim();
+        if device_id.is_empty() || user_id.is_empty() {
+            return Ok(false);
+        }
+        let mut conn = self.conn()?;
+        let changed = conn.execute(
+            // Lock the device row until the statement commits. A plain EXISTS
+            // check uses an MVCC snapshot and could still finish its insert
+            // after a concurrent revocation already purged the projection.
+            "WITH active_device AS ( \
+               SELECT device_id FROM cloud_devices \
+               WHERE device_id = $10 AND user_id = $11 AND revoked = FALSE FOR SHARE \
+             ) \
+             INSERT INTO interlink_node_shadows(device_id, user_id, revision, summary, threads, tasks, workspace, workspaces, synced_at) \
+             SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9 FROM active_device \
+             ON CONFLICT(device_id) DO UPDATE SET \
+               user_id = EXCLUDED.user_id, revision = EXCLUDED.revision, \
+               summary = EXCLUDED.summary, threads = EXCLUDED.threads, tasks = EXCLUDED.tasks, \
+               workspace = EXCLUDED.workspace, workspaces = EXCLUDED.workspaces, synced_at = EXCLUDED.synced_at",
+            &[
+                &device_id,
+                &user_id,
+                &record.revision,
+                &record.summary,
+                &record.threads,
+                &record.tasks,
+                &record.workspace,
+                &record.workspaces,
+                &record.synced_at,
+                &device_id,
+                &user_id,
+            ],
+        )?;
+        Ok(changed == 1)
     }
 
     fn get_interlink_shadow_impl(&self, device_id: &str) -> Result<Option<InterlinkShadowRecord>> {

@@ -67,8 +67,8 @@ pub struct ThreadListQuery {
     pub limit: i64,
     pub search: Option<String>,
     pub parent_session_id: Option<String>,
-    /// Restrict the page to one workspace. `None` lists every workspace, which
-    /// is what the "all workspaces" escape hatch of the resume flow asks for.
+    /// Restrict the page to one workspace. An explicit empty id selects the
+    /// default root (NULL or empty stored id); `None` lists every workspace.
     pub workspace_id: Option<String>,
 }
 
@@ -156,7 +156,6 @@ impl ThreadCatalogService {
             .workspace_id
             .as_deref()
             .map(str::trim)
-            .filter(|value| !value.is_empty())
             .map(str::to_string);
         let store = self.state.user_store.clone();
         let (window, total) = if let Some(needle) = search.as_deref() {
@@ -175,7 +174,7 @@ impl ThreadCatalogService {
                 })
                 .filter(|record| {
                     workspace.as_deref().is_none_or(|workspace_id| {
-                        record.workspace_id.as_deref() == Some(workspace_id)
+                        record.workspace_id.as_deref().unwrap_or("") == workspace_id
                     })
                 })
                 .collect();
@@ -1252,6 +1251,60 @@ mod tests {
             .items
             .iter()
             .any(|item| item.workspace_id.as_deref() == Some("ws_beta")));
+    }
+
+    #[tokio::test]
+    async fn default_workspace_filter_pages_before_named_threads() {
+        let (state, _temp) = build_state("default_workspace_filter").await;
+        for index in 0..105 {
+            let mut record = sample_record("active");
+            record.session_id = format!("fixture_{index:03}");
+            record.user_id = "fixture_owner".to_string();
+            record.title = "Fixture task".to_string();
+            record.workspace_id = match index {
+                0 => None,
+                1 => Some(String::new()),
+                _ => Some("fixture_named".to_string()),
+            };
+            record.updated_at = index as f64;
+            record.last_message_at = index as f64;
+            state
+                .user_store
+                .upsert_chat_session(&record)
+                .expect("seed thread");
+        }
+        let catalog = ThreadCatalogService::new(state);
+        for (offset, expected) in [(0, "fixture_001"), (1, "fixture_000")] {
+            let page = catalog
+                .list(ThreadListQuery {
+                    user_id: "fixture_owner".to_string(),
+                    workspace_id: Some(String::new()),
+                    offset,
+                    limit: 1,
+                    ..Default::default()
+                })
+                .await
+                .expect("list default page");
+            assert_eq!(page.total, 2);
+            assert_eq!(page.items.len(), 1);
+            assert_eq!(page.items[0].session_id, expected);
+        }
+        let searched = catalog
+            .list(ThreadListQuery {
+                user_id: "fixture_owner".to_string(),
+                workspace_id: Some(String::new()),
+                search: Some("fixture".to_string()),
+                limit: 10,
+                ..Default::default()
+            })
+            .await
+            .expect("search default workspace");
+        assert_eq!(searched.total, 2);
+        assert!(searched.items.iter().all(|item| item
+            .workspace_id
+            .as_deref()
+            .unwrap_or("")
+            .is_empty()));
     }
 
     #[tokio::test]

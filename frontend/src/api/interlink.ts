@@ -99,7 +99,9 @@ export const interlinkNodeWorkspaces = (node: InterlinkNode | null | undefined):
         name: String(record.name ?? '').trim()
       };
     })
-    .filter((item) => item.workspace_id !== '' || item.name !== '')
+    // An explicit empty id is the device's default workspace. It must survive
+    // normalization: commands without `workspace_id` deliberately resolve to
+    // that fenced local root.
     .slice(0, 20);
 };
 
@@ -121,6 +123,7 @@ export type InterlinkShadowThread = {
   title: string;
   status: string;
   agent: string;
+  workspace_id: string;
   updated_at: string;
   message_count: number;
   duration_ms: number;
@@ -336,6 +339,7 @@ const normalizeShadow = (raw: Record<string, unknown>): InterlinkShadow => {
       title: asText(item.title),
       status: asText(item.status),
       agent: asText(item.agent),
+      workspace_id: asText(item.workspace_id),
       updated_at: asText(item.updated_at),
       message_count: asNumber(item.message_count),
       duration_ms: asNumber(item.duration_ms)

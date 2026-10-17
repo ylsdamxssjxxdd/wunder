@@ -559,6 +559,9 @@ fn exercise_interlink_channels_and_shadows(storage: Arc<dyn StorageBackend>) {
     let user = "interlink_user";
     let other = "interlink_other";
     storage
+        .upsert_cloud_device(&interlink_device("device-gamma", user, "node-gamma", 250.0))
+        .unwrap();
+    storage
         .upsert_interlink_channel(&interlink_channel("channel-a", "device-gamma", user, 300.0))
         .unwrap();
     storage
@@ -669,6 +672,32 @@ fn exercise_interlink_channels_and_shadows(storage: Arc<dyn StorageBackend>) {
             .unwrap(),
         3
     );
+
+    // Projection writes from the tunnel use the guarded variant: it admits
+    // the owning live device, rejects a mismatched account, then remains
+    // closed after a revocation even if an older frame reaches storage late.
+    assert!(storage
+        .upsert_interlink_shadow_if_device_active(&shadow)
+        .unwrap());
+    let mut foreign = shadow.clone();
+    foreign.user_id = other.to_string();
+    assert!(!storage
+        .upsert_interlink_shadow_if_device_active(&foreign)
+        .unwrap());
+    storage
+        .set_cloud_device_revoked("device-gamma", true)
+        .unwrap();
+    storage.delete_interlink_shadow("device-gamma").unwrap();
+    assert!(!storage
+        .upsert_interlink_shadow_if_device_active(&shadow)
+        .unwrap());
+    assert!(storage
+        .get_interlink_shadow("device-gamma")
+        .unwrap()
+        .is_none());
+    storage
+        .set_cloud_device_revoked("device-gamma", false)
+        .unwrap();
 
     let mut newer = shadow.clone();
     newer.revision = 4;

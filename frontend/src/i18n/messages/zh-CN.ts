@@ -2767,6 +2767,7 @@ export default {
   'interlink.reason.noNode': '未找到该设备节点',
 
   'interlink.workspace.rowAria': '切换到工作区 {name}',
+  'interlink.workspace.localDefault': '本地工作区',
   'interlink.workspace.treeTruncated': '投影条目已达上限，目录可能不完整',
   'interlink.workspace.emptyShadow': '该工作区暂无投影，等待本地设备同步',
   'interlink.workspace.truncatedHint': '文件超出单次拉取上限，仅取回 {size}',

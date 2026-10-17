@@ -102,6 +102,12 @@ export const runInterlinkCommand = async (options: {
   } catch (error) {
     return failedOutcome(null, null, resolveApiError(error, '').message || '');
   }
+  // POST may finish after a workspace switch. Preserve its command id long
+  // enough to cancel the accepted operation instead of abandoning it remotely.
+  if (options.signal?.aborted) {
+    await cancelInterlinkCommandRun(submit.command_id);
+    return { ...failedOutcome(submit, null, ''), status: 'canceled' };
+  }
 
   // 会话类命令默认要人在回路审批（§7.1），审批超时是 120s，前端等待窗口跟着放宽。
   const timeoutMs =
@@ -115,6 +121,7 @@ export const runInterlinkCommand = async (options: {
   try {
     while (Date.now() < deadline) {
       const record = await fetchInterlinkCommand(submit.command_id, { signal: options.signal });
+      if (options.signal?.aborted) throw new DOMException('aborted', 'AbortError');
       lastRecord = record;
       options.onState?.({ submit, record });
       if (isTerminalCommandStatus(record.status)) {
@@ -132,7 +139,7 @@ export const runInterlinkCommand = async (options: {
       await sleep(REMOTE_COMMAND_POLL_INTERVAL_MS, options.signal);
     }
   } catch (error) {
-    if ((error as { name?: string })?.name === 'AbortError') {
+    if (options.signal?.aborted || (error as { name?: string })?.name === 'AbortError') {
       await cancelInterlinkCommandRun(submit.command_id);
       return { ...failedOutcome(submit, lastRecord, '', false), status: 'canceled' };
     }

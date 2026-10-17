@@ -2019,6 +2019,12 @@ impl InterlinkStore for SqliteStorage {
     fn upsert_interlink_shadow(&self, record: &InterlinkShadowRecord) -> Result<()> {
         self.upsert_interlink_shadow_impl(record)
     }
+    fn upsert_interlink_shadow_if_device_active(
+        &self,
+        record: &InterlinkShadowRecord,
+    ) -> Result<bool> {
+        self.upsert_interlink_shadow_if_device_active_impl(record)
+    }
     fn get_interlink_shadow(&self, device_id: &str) -> Result<Option<InterlinkShadowRecord>> {
         self.get_interlink_shadow_impl(device_id)
     }

@@ -103,7 +103,10 @@ component StatusDot inherits Rectangle {
         : root.state == "error" ? @markdown("错误") : root.state == "running" ? @markdown("运行中") : @markdown("空闲"); }
 }
 
-component ThreadRow inherits Rectangle {
+// The row owns the standard context menu. Child TouchAreas explicitly forward
+// right presses because they otherwise consume the event before it reaches
+// their ContextMenuArea ancestor.
+component ThreadRow inherits ContextMenuArea {
     in property <SidebarRow> data;
     in property <bool> hover;
     in property <bool> selecting;
@@ -113,7 +116,21 @@ component ThreadRow inherits Rectangle {
     callback begin-selection();
     callback toggle-selection();
     height: 28px;
-    background: data.active ? Theme.selected : transparent;
+    enabled: !root.selecting;
+    Menu {
+        MenuItem { title: I18n.common_rename; activated => { root.begin-rename(); } }
+        MenuItem { title: I18n.sb_thread_trajectory; activated => { root.open-trajectory(); } }
+        MenuItem { title: I18n.sb_thread_archive; enabled: data.archivable; activated => { root.archive(); } }
+        MenuSeparator {}
+        MenuItem { title: I18n.sb_thread_multi_select; activated => { root.begin-selection(); } }
+    }
+
+    Rectangle {
+        width: parent.width;
+        height: parent.height;
+        background: data.active ? Theme.selected : transparent;
+    }
+
     // Tree connector line linking the thread to its workspace row.
     Rectangle { x: 20px; y: 0px; width: 1px; height: parent.height; background: Theme.border; }
     HorizontalLayout {
@@ -175,108 +192,73 @@ component ThreadRow inherits Rectangle {
         clicked => { if data.archivable { root.toggle-selection(); } }
     }
     // The hover actions ride over the row's right edge instead of joining its
-    // layout — two buttons since the web alignment: the ellipsis menu and the
-    // direct archive (greyed while the gate rejects the row). The band is
-    // opaque so no glyph lands on the title text.
+    // layout. Keep the band at a fixed width so the title never jumps when
+    // the pointer enters or leaves a row. This mirrors the web order:
+    // rename, trajectory view, archive.
     if root.hover && !root.selecting : Rectangle {
-        x: parent.width - 50px;
+        x: parent.width - 76px;
         y: 0px;
-        width: 50px;
+        width: 76px;
         height: parent.height;
         background: data.active ? Theme.selected : Theme.accent-soft;
         Rectangle {
-            x: 0px; y: (parent.height - 20px) / 2; width: 20px; height: 20px; border-radius: 4px;
-            background: menu-touch.has-hover ? Theme.selected : transparent;
-            Image { x: 3px; y: 3px; width: 14px; height: 14px; source: @image-url("../assets/icons/ellipsis.svg"); colorize: Theme.muted; }
-            Tooltip { text: @markdown("\{I18n.common_more}"); }
-            menu-touch := TouchArea {
+            x: 2px; y: (parent.height - 20px) / 2; width: 20px; height: 20px; border-radius: 4px;
+            background: rename-touch.has-hover ? Theme.selected : transparent;
+            Image { x: 3px; y: 3px; width: 14px; height: 14px; source: @image-url("../assets/icons/fa-pen-to-square.svg"); colorize: Theme.muted; }
+            Tooltip { text: @markdown("\{I18n.common_rename}"); }
+            rename-touch := TouchArea {
                 mouse-cursor: pointer;
-                accessible-role: button; accessible-label: I18n.common_more;
-                clicked => { row-menu.show(); }
+                accessible-role: button; accessible-label: I18n.common_rename;
+                pointer-event(event) => {
+                    if event.kind == PointerEventKind.down && event.button == PointerEventButton.right {
+                        root.show({ x: self.absolute-position.x - root.absolute-position.x + self.mouse-x,
+                            y: self.absolute-position.y - root.absolute-position.y + self.mouse-y });
+                    }
+                }
+                clicked => { root.begin-rename(); }
             }
         }
         Rectangle {
-            x: 26px; y: (parent.height - 20px) / 2; width: 20px; height: 20px; border-radius: 4px;
+            x: 28px; y: (parent.height - 20px) / 2; width: 20px; height: 20px; border-radius: 4px;
+            background: trajectory-touch.has-hover ? Theme.selected : transparent;
+            Image {
+                x: 3px; y: 3px; width: 14px; height: 14px;
+                source: @image-url("../assets/icons/timeline.svg");
+                colorize: Theme.muted;
+            }
+            Tooltip { text: @markdown("\{I18n.sb_thread_trajectory}"); }
+            trajectory-touch := TouchArea {
+                mouse-cursor: pointer;
+                accessible-role: button; accessible-label: I18n.sb_thread_trajectory;
+                pointer-event(event) => {
+                    if event.kind == PointerEventKind.down && event.button == PointerEventButton.right {
+                        root.show({ x: self.absolute-position.x - root.absolute-position.x + self.mouse-x,
+                            y: self.absolute-position.y - root.absolute-position.y + self.mouse-y });
+                    }
+                }
+                clicked => { root.open-trajectory(); }
+            }
+        }
+        Rectangle {
+            x: 54px; y: (parent.height - 20px) / 2; width: 20px; height: 20px; border-radius: 4px;
             background: archive-touch.has-hover && data.archivable ? Theme.selected : transparent;
             Image {
                 x: 3px; y: 3px; width: 14px; height: 14px;
                 source: @image-url("../assets/icons/box-archive.svg");
                 colorize: data.archivable ? Theme.muted : Theme.border-strong;
             }
-            Tooltip { text: @markdown("\{I18n.ap_archive_thread}"); }
+            Tooltip { text: @markdown("\{I18n.sb_thread_archive}"); }
             archive-touch := TouchArea {
                 mouse-cursor: data.archivable ? pointer : default;
                 enabled: data.archivable;
-                accessible-role: button; accessible-label: I18n.ap_archive_thread;
+                accessible-role: button; accessible-label: I18n.sb_thread_archive;
+                pointer-event(event) => {
+                    if event.kind == PointerEventKind.down && event.button == PointerEventButton.right {
+                        root.show({ x: self.absolute-position.x - root.absolute-position.x + self.mouse-x,
+                            y: self.absolute-position.y - root.absolute-position.y + self.mouse-y });
+                    }
+                }
                 clicked => { root.archive(); }
-            }
-        }
-    }
-    // The ellipsis menu mirrors the web dropdown: rename, trajectory and the
-    // multi-select entry. Clicking outside dismisses it; an item closes the
-    // popup before dispatching so the dialog never opens over it.
-    row-menu := PopupWindow {
-        x: parent.width - 136px;
-        y: parent.height + 2px;
-        width: 132px;
-        height: 90px;
-        Rectangle {
-            width: parent.width; height: parent.height;
-            border-radius: Theme.radius-sm;
-            border-width: 1px;
-            border-color: Theme.border;
-            background: Theme.surface;
-            VerticalLayout {
-                padding: 4px;
-                spacing: 2px;
-                Rectangle {
-                    height: 26px; border-radius: 4px;
-                    background: pm-rename.has-hover ? Theme.hover : transparent;
-                    HorizontalLayout {
-                        padding-left: 8px; spacing: 8px;
-                        Rectangle {
-                            width: 14px;
-                            Image { y: (parent.height - 14px) / 2; width: 14px; height: 14px; source: @image-url("../assets/icons/pen.svg"); colorize: Theme.muted; }
-                        }
-                        Text { height: parent.height; text: I18n.common_rename; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                    }
-                    pm-rename := TouchArea {
-                        mouse-cursor: pointer;
-                        clicked => { row-menu.close(); root.begin-rename(); }
-                    }
-                }
-                Rectangle {
-                    height: 26px; border-radius: 4px;
-                    background: pm-traj.has-hover ? Theme.hover : transparent;
-                    HorizontalLayout {
-                        padding-left: 8px; spacing: 8px;
-                        Rectangle {
-                            width: 14px;
-                            Image { y: (parent.height - 14px) / 2; width: 14px; height: 14px; source: @image-url("../assets/icons/timeline.svg"); colorize: Theme.muted; }
-                        }
-                        Text { height: parent.height; text: I18n.traj_title; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                    }
-                    pm-traj := TouchArea {
-                        mouse-cursor: pointer;
-                        clicked => { row-menu.close(); root.open-trajectory(); }
-                    }
-                }
-                Rectangle {
-                    height: 26px; border-radius: 4px;
-                    background: pm-select.has-hover ? Theme.hover : transparent;
-                    HorizontalLayout {
-                        padding-left: 8px; spacing: 8px;
-                        Rectangle {
-                            width: 14px;
-                            Image { y: (parent.height - 14px) / 2; width: 14px; height: 14px; source: @image-url("../assets/icons/list-check.svg"); colorize: Theme.muted; }
-                        }
-                        Text { height: parent.height; text: I18n.sb_thread_multi_select; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                    }
-                    pm-select := TouchArea {
-                        mouse-cursor: pointer;
-                        clicked => { row-menu.close(); root.begin-selection(); }
-                    }
-                }
             }
         }
     }
@@ -312,7 +294,7 @@ export component Sidebar inherits Rectangle {
     callback move-row(int, int);
     callback archive-thread(int);
     // Multi-select (web alignment): the tree enters selection mode from a
-    // row's ellipsis menu, clicks toggle rows, the bar at the tree's foot
+    // context menu, clicks toggle rows, the bar at the tree's foot
     // selects all / closes / archives. The native side owns the checked set,
     // these just report intent.
     in property <bool> selection-mode;
@@ -382,161 +364,173 @@ export component Sidebar inherits Rectangle {
         // same kind via `move-row`, which reports pointer travel in pixels;
         // the row pitch comes from SidebarMetrics so the native resolver and
         // this layout cannot disagree.
-        tree := ListView {
+        tree-frame := Rectangle {
             min-height: 0px; preferred-height: 0px;
             vertical-stretch: clamp(root.split-ratio, 0.3, 0.8);
-            horizontal-scrollbar-policy: always-off;
-            for row[ri] in root.rows : Rectangle {
-                height: row.kind == 1 ? SidebarMetrics.thread-height : SidebarMetrics.group-height;
-                width: parent.width;
-                if row.kind == 0 : ws-drag := DragRow {
-                    height: parent.height;
+            tree := ListView {
+                horizontal-scrollbar-policy: always-off;
+                for row[ri] in root.rows : Rectangle {
+                    height: row.kind == 1 ? SidebarMetrics.thread-height : SidebarMetrics.group-height;
                     width: parent.width;
-                    enabled: !root.busy;
-                    selected: row.selected;
-                    selected-color: Theme.selected;
-                    label: row.name;
-                    row-index: ri;
-                    row-kind: row.kind;
-                    workspace-id: row.workspace-id;
-                    activate => { root.select-row(ri); }
-                    move-by(travel) => { root.move-row(ri, travel); }
-                    // Selection indicator on the workspace row.
-                    Rectangle { x: 0px; y: 5px; width: 2px; height: 24px; border-radius: 1px; background: row.selected ? Theme.accent : transparent; }
-                    HorizontalLayout {
-                        padding-left: 12px; padding-right: 32px; spacing: 8px;
-                        Rectangle {
-                            y: (parent.height - 22px) / 2;
-                            width: 22px; height: 22px; border-radius: 6px;
-                            // No separate chevron: the glyph itself is the fold
-                            // switch. Expanded = solid workspace colour, the
-                            // threads below are open; collapsed = hollow
-                            // (muted) glyph.
-                            background: row.expanded ? WorkspaceVisual.color(row.color).transparentize(0.87) : Theme.hover;
-                            Image {
-                                x: 2px; y: 2px; width: 18px; height: 18px;
-                                source: WorkspaceVisual.icon(row.icon);
-                                colorize: row.expanded ? WorkspaceVisual.color(row.color) : Theme.muted;
-                            }
-                        }
-                        Text {
-                            height: parent.height; text: row.name;
-                            color: Theme.text; font-size: Theme.font-lg;
-                            vertical-alignment: center; overflow: elide;
-                            horizontal-stretch: 1;
-                        }
-                        Text {
-                            // Thread count yields to the hover actions.
-                            visible: !ws-drag.hover && row.thread-count > 0;
-                            height: parent.height; text: "\{row.thread-count}";
-                            color: Theme.muted; font-size: Theme.font-xs; vertical-alignment: center;
-                        }
-                    }
-                    // Direct actions replace the old ellipsis menu: plus spawns
-                    // a thread in this workspace, pen opens the edit dialog
-                    // (icon, color, folder, reveal), trash deletes the
-                    // workspace after its own confirm step. Like the thread
-                    // row's band they ride over the row instead of joining its
-                    // layout, so revealing them moves nothing and they sit on
-                    // the name's own centre line.
-                    Rectangle {
-                        x: parent.width - 74px;
-                        y: 0px;
-                        width: 74px;
-                        height: parent.height;
-                        background: ws-drag.hover ? (row.selected ? Theme.selected : Theme.accent-soft) : transparent;
-                        Rectangle {
-                            x: 52px; y: (parent.height - 22px) / 2; width: 22px; height: 22px; border-radius: 5px;
-                            background: ws-thread-touch.has-hover ? Theme.selected : transparent;
-                            Image { x: 4px; y: 4px; width: 14px; height: 14px; source: @image-url("../assets/icons/plus.svg"); colorize: Theme.muted; }
-                            Tooltip { text: @markdown("\{I18n.ws_menu_new_thread}"); }
-                            ws-thread-touch := TouchArea {
-                                mouse-cursor: pointer;
-                                accessible-role: button; accessible-label: I18n.ws_menu_new_thread;
-                                clicked => { root.workspace-menu(row.payload, 0); }
-                            }
-                        }
-                        if ws-drag.hover : Rectangle {
-                            x: 26px; y: (parent.height - 22px) / 2; width: 22px; height: 22px; border-radius: 5px;
-                            background: ws-edit-touch.has-hover ? Theme.selected : transparent;
-                            Image { x: 4px; y: 4px; width: 14px; height: 14px; source: @image-url("../assets/icons/pen.svg"); colorize: Theme.muted; }
-                            Tooltip { text: @markdown("\{I18n.ws_menu_edit}"); }
-                            ws-edit-touch := TouchArea {
-                                mouse-cursor: pointer;
-                                accessible-role: button; accessible-label: I18n.ws_menu_edit;
-                                clicked => { root.workspace-menu(row.payload, 1); }
-                            }
-                        }
-                        if ws-drag.hover : Rectangle {
-                            x: 0px; y: (parent.height - 22px) / 2; width: 22px; height: 22px; border-radius: 5px;
-                            background: ws-delete-touch.has-hover ? Theme.selected : transparent;
-                            Image { x: 4px; y: 4px; width: 14px; height: 14px; source: @image-url("../assets/icons/trash.svg"); colorize: ws-delete-touch.has-hover ? Theme.danger : Theme.muted; }
-                            Tooltip { text: @markdown("\{I18n.ws_menu_delete}"); }
-                            ws-delete-touch := TouchArea {
-                                mouse-cursor: pointer;
-                                accessible-role: button; accessible-label: I18n.ws_menu_delete;
-                                clicked => { root.workspace-menu(row.payload, 3); }
-                            }
-                        }
-                    }
-                }
-                if row.kind == 1 : DragRow {
-                    height: parent.height;
-                    width: parent.width;
-                    // Selection mode freezes reordering, as on the web.
-                    enabled: !root.busy && !root.selection-mode;
-                    selected: row.active;
-                    selected-color: Theme.selected;
-                    label: row.title;
-                    row-index: ri;
-                    row-kind: row.kind;
-                    workspace-id: row.workspace-id;
-                    activate => { root.select-row(ri); }
-                    move-by(travel) => { root.move-row(ri, travel); }
-                    ThreadRow {
+                    if row.kind == 0 : ws-drag := DragRow {
                         height: parent.height;
                         width: parent.width;
-                        data: row;
-                        hover: parent.hover;
-                        selecting: root.selection-mode;
-                        archive => { root.archive-thread(row.payload); }
-                        // Renaming needs a draft the user can still abandon, so
-                        // the pen asks the shell for the prompt dialog instead
-                        // of editing in place.
-                        begin-rename => { root.rename-request(row.payload, row.title); }
-                        open-trajectory => { root.open-trajectory(row.payload); }
-                        begin-selection => { root.begin-selection(); }
-                        toggle-selection => { root.toggle-selection(row.payload); }
+                        enabled: !root.busy;
+                        selected: row.selected;
+                        selected-color: Theme.selected;
+                        label: row.name;
+                        row-index: ri;
+                        row-kind: row.kind;
+                        workspace-id: row.workspace-id;
+                        activate => { root.select-row(ri); }
+                        move-by(travel) => { root.move-row(ri, travel); }
+                        // Selection indicator on the workspace row.
+                        Rectangle { x: 0px; y: 5px; width: 2px; height: 24px; border-radius: 1px; background: row.selected ? Theme.accent : transparent; }
+                        HorizontalLayout {
+                            padding-left: 12px; padding-right: 32px; spacing: 8px;
+                            Rectangle {
+                                y: (parent.height - 22px) / 2;
+                                width: 22px; height: 22px; border-radius: 6px;
+                                // No separate chevron: the glyph itself is the fold
+                                // switch. Expanded = solid workspace colour, the
+                                // threads below are open; collapsed = hollow
+                                // (muted) glyph.
+                                background: row.expanded ? WorkspaceVisual.color(row.color).transparentize(0.87) : Theme.hover;
+                                Image {
+                                    x: 2px; y: 2px; width: 18px; height: 18px;
+                                    source: WorkspaceVisual.icon(row.icon);
+                                    colorize: row.expanded ? WorkspaceVisual.color(row.color) : Theme.muted;
+                                }
+                            }
+                            Text {
+                                height: parent.height; text: row.name;
+                                color: Theme.text; font-size: Theme.font-lg;
+                                vertical-alignment: center; overflow: elide;
+                                horizontal-stretch: 1;
+                            }
+                            Text {
+                                // Thread count yields to the hover actions.
+                                visible: !ws-drag.hover && row.thread-count > 0;
+                                height: parent.height; text: "\{row.thread-count}";
+                                color: Theme.muted; font-size: Theme.font-xs; vertical-alignment: center;
+                            }
+                        }
+                        // Direct actions replace the old ellipsis menu: plus spawns
+                        // a thread in this workspace, pen opens the edit dialog
+                        // (icon, color, folder, reveal), trash deletes the
+                        // workspace after its own confirm step. Like the thread
+                        // row's band they ride over the row instead of joining its
+                        // layout, so revealing them moves nothing and they sit on
+                        // the name's own centre line.
+                        Rectangle {
+                            x: parent.width - 74px;
+                            y: 0px;
+                            width: 74px;
+                            height: parent.height;
+                            background: ws-drag.hover ? (row.selected ? Theme.selected : Theme.accent-soft) : transparent;
+                            Rectangle {
+                                x: 52px; y: (parent.height - 22px) / 2; width: 22px; height: 22px; border-radius: 5px;
+                                background: ws-thread-touch.has-hover ? Theme.selected : transparent;
+                                Image { x: 4px; y: 4px; width: 14px; height: 14px; source: @image-url("../assets/icons/plus.svg"); colorize: Theme.muted; }
+                                Tooltip { text: @markdown("\{I18n.ws_menu_new_thread}"); }
+                                ws-thread-touch := TouchArea {
+                                    mouse-cursor: pointer;
+                                    accessible-role: button; accessible-label: I18n.ws_menu_new_thread;
+                                    clicked => { root.workspace-menu(row.payload, 0); }
+                                }
+                            }
+                            if ws-drag.hover : Rectangle {
+                                x: 26px; y: (parent.height - 22px) / 2; width: 22px; height: 22px; border-radius: 5px;
+                                background: ws-edit-touch.has-hover ? Theme.selected : transparent;
+                                Image { x: 4px; y: 4px; width: 14px; height: 14px; source: @image-url("../assets/icons/pen.svg"); colorize: Theme.muted; }
+                                Tooltip { text: @markdown("\{I18n.ws_menu_edit}"); }
+                                ws-edit-touch := TouchArea {
+                                    mouse-cursor: pointer;
+                                    accessible-role: button; accessible-label: I18n.ws_menu_edit;
+                                    clicked => { root.workspace-menu(row.payload, 1); }
+                                }
+                            }
+                            if ws-drag.hover : Rectangle {
+                                x: 0px; y: (parent.height - 22px) / 2; width: 22px; height: 22px; border-radius: 5px;
+                                background: ws-delete-touch.has-hover ? Theme.selected : transparent;
+                                Image { x: 4px; y: 4px; width: 14px; height: 14px; source: @image-url("../assets/icons/trash.svg"); colorize: ws-delete-touch.has-hover ? Theme.danger : Theme.muted; }
+                                Tooltip { text: @markdown("\{I18n.ws_menu_delete}"); }
+                                ws-delete-touch := TouchArea {
+                                    mouse-cursor: pointer;
+                                    accessible-role: button; accessible-label: I18n.ws_menu_delete;
+                                    clicked => { root.workspace-menu(row.payload, 3); }
+                                }
+                            }
+                        }
+                    }
+                    if row.kind == 1 : DragRow {
+                        height: parent.height;
+                        width: parent.width;
+                        // Selection mode freezes reordering, as on the web.
+                        enabled: !root.busy && !root.selection-mode;
+                        selected: row.active;
+                        selected-color: Theme.selected;
+                        label: row.title;
+                        row-index: ri;
+                        row-kind: row.kind;
+                        workspace-id: row.workspace-id;
+                        activate => { root.select-row(ri); }
+                        move-by(travel) => { root.move-row(ri, travel); }
+                        ThreadRow {
+                            height: parent.height;
+                            width: parent.width;
+                            data: row;
+                            hover: parent.hover;
+                            selecting: root.selection-mode;
+                            archive => { root.archive-thread(row.payload); }
+                            // Renaming needs a draft the user can still abandon, so
+                            // the pen asks the shell for the prompt dialog instead
+                            // of editing in place.
+                            begin-rename => { root.rename-request(row.payload, row.title); }
+                            open-trajectory => { root.open-trajectory(row.payload); }
+                            begin-selection => { root.begin-selection(); }
+                            toggle-selection => { root.toggle-selection(row.payload); }
+                        }
+                    }
+                    // Pinned "cloud workspace" sentinel: points the working-
+                    // directory panel back at the cloud account workspace. It
+                    // never drags or renames, so it is a plain clickable row.
+                    if row.kind == 2 : Rectangle {
+                        height: parent.height;
+                        width: parent.width;
+                        background: row.selected ? Theme.selected : transparent;
+                        Rectangle { x: 0px; y: 5px; width: 2px; height: 24px; border-radius: 1px; background: row.selected ? Theme.accent : transparent; }
+                        HorizontalLayout {
+                            padding-left: 12px; padding-right: 10px; spacing: 8px;
+                            Rectangle {
+                                y: (parent.height - 22px) / 2;
+                                width: 22px; height: 22px; border-radius: 6px;
+                                background: Theme.accent.transparentize(0.87);
+                                Image { x: 2px; y: 2px; width: 18px; height: 18px; source: WorkspaceVisual.icon("cloud"); colorize: Theme.accent; }
+                            }
+                            Text {
+                                height: parent.height; text: row.name;
+                                color: Theme.text; font-size: Theme.font-lg;
+                                vertical-alignment: center; overflow: elide;
+                                horizontal-stretch: 1;
+                            }
+                        }
+                        cloud-touch := TouchArea {
+                            mouse-cursor: pointer;
+                            accessible-role: button; accessible-label: row.name;
+                            clicked => { root.select-row(ri); }
+                        }
                     }
                 }
-                // Pinned "cloud workspace" sentinel: points the working-
-                // directory panel back at the cloud account workspace. It
-                // never drags or renames, so it is a plain clickable row.
-                if row.kind == 2 : Rectangle {
-                    height: parent.height;
-                    width: parent.width;
-                    background: row.selected ? Theme.selected : transparent;
-                    Rectangle { x: 0px; y: 5px; width: 2px; height: 24px; border-radius: 1px; background: row.selected ? Theme.accent : transparent; }
-                    HorizontalLayout {
-                        padding-left: 12px; padding-right: 10px; spacing: 8px;
-                        Rectangle {
-                            y: (parent.height - 22px) / 2;
-                            width: 22px; height: 22px; border-radius: 6px;
-                            background: Theme.accent.transparentize(0.87);
-                            Image { x: 2px; y: 2px; width: 18px; height: 18px; source: WorkspaceVisual.icon("cloud"); colorize: Theme.accent; }
-                        }
-                        Text {
-                            height: parent.height; text: row.name;
-                            color: Theme.text; font-size: Theme.font-lg;
-                            vertical-alignment: center; overflow: elide;
-                            horizontal-stretch: 1;
-                        }
-                    }
-                    cloud-touch := TouchArea {
-                        mouse-cursor: pointer;
-                        accessible-role: button; accessible-label: row.name;
-                        clicked => { root.select-row(ri); }
-                    }
+            }
+            // Flickable handles input on its unused viewport too. Cover only the
+            // gap after the virtual rows, preserving row drag and context menus.
+            ContextMenuArea {
+                enabled: !root.selection-mode;
+                y: min(parent.height, max(0px, tree.content-height + tree.content-y));
+                height: parent.height - self.y;
+                Menu {
+                    MenuItem { title: I18n.sb_thread_multi_select; enabled: root.rows.length > 0; activated => { root.begin-selection(); } }
                 }
             }
         }

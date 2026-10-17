@@ -47,7 +47,9 @@ const normalizeMatchKey = (value) => normalizeText(value).replace(/[\s_.\-:/\\@]
 const TOOL_NAME_ICON_OVERRIDES = {
   "编辑": "fa-file-pen",
   "str_replace_editor": "fa-file-pen",
-  "glob": "fa-folder-tree"
+  "文件名匹配": "fa-folder-tree",
+  "glob": "fa-folder-tree",
+  "glob_files": "fa-folder-tree"
 };
 
 const resolveToolNameIconOverride = (input) => {

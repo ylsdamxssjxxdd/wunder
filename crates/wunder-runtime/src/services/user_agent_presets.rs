@@ -1,8 +1,10 @@
 use crate::config::{PresetCustomizable, UserAgentPresetConfig};
+use crate::schemas::{AbilityDescriptor, AbilityGroupKey, AbilityKind, AbilitySourceKey};
 use crate::services::agent_abilities::resolve_selected_declared_names;
 use crate::services::default_tool_profile::default_tool_names;
 use crate::services::inner_visible::WorkerCardRecordUpdate;
 use crate::services::preset_worker_cards;
+use crate::services::user_tools::UserToolKind;
 use crate::services::worker_card_settings::{
     self, canonicalize_preset_config, collect_configured_skill_names, collect_context_skill_names,
     normalize_agent_approval_mode as shared_normalize_agent_approval_mode,
@@ -68,7 +70,8 @@ pub enum PresetSyncMode {
 pub struct PresetSyncSummary {
     /// Users whose instance was created, updated, or kept customized.
     pub affected_users: usize,
-    /// Instances newly created for users without a bound instance.
+    /// Legacy default configurations initialized for implicit default users.
+    /// Named preset updates never create or assign instances.
     pub created_agents: usize,
     /// Instances whose preset-owned fields were written.
     pub updated_agents: usize,
@@ -295,13 +298,153 @@ fn build_target_snapshot_from_context(
     )
 }
 
+/// Preset sync governs the system-wide agent template. A user's own MCP
+/// servers, skills, and knowledge bases are configured outside that template,
+/// so their enabled selections must survive both rebinding and force sync.
+pub(crate) fn merge_user_owned_tool_selections(
+    snapshot: &mut UserAgentPresetSnapshot,
+    context: &crate::user_access::UserToolContext,
+    user_id: &str,
+    current: &UserAgentPresetSnapshot,
+) {
+    let owner_id = user_id.trim();
+    if owner_id.is_empty() {
+        return;
+    }
+    snapshot.ability_items = crate::services::agent_abilities::resolve_record_ability_items(
+        &snapshot.ability_items,
+        &snapshot.tool_names,
+        &snapshot.declared_tool_names,
+        &snapshot.declared_skill_names,
+        &collect_context_skill_names(context),
+    );
+    // The catalog describes availability, not selection. Only the current
+    // instance owns the user's enabled/disabled choices.
+    let owned_kind = |name: &str| {
+        context
+            .bindings
+            .alias_map
+            .get(name)
+            .filter(|alias| alias.owner_id == owner_id)
+            .map(|alias| alias.kind.clone())
+            .or_else(|| {
+                current.ability_items.iter().find_map(|item| {
+                    if item.runtime_name != name || item.owner_id.as_deref() != Some(owner_id) {
+                        return None;
+                    }
+                    match item.source {
+                        AbilitySourceKey::UserMcp => Some(UserToolKind::Mcp),
+                        AbilitySourceKey::UserSkill => Some(UserToolKind::Skill),
+                        AbilitySourceKey::UserKnowledge => Some(UserToolKind::Knowledge),
+                        _ => None,
+                    }
+                })
+            })
+    };
+    snapshot
+        .tool_names
+        .retain(|name| owned_kind(name).is_none());
+    snapshot
+        .declared_tool_names
+        .retain(|name| owned_kind(name).is_none());
+    snapshot
+        .declared_skill_names
+        .retain(|name| owned_kind(name).is_none());
+    snapshot
+        .ability_items
+        .retain(|item| owned_kind(&item.runtime_name).is_none());
+
+    let selected = normalize_tool_list(
+        current
+            .tool_names
+            .iter()
+            .chain(&current.declared_tool_names)
+            .chain(&current.declared_skill_names)
+            .cloned()
+            .collect(),
+    );
+    for name in selected {
+        let Some(kind) = owned_kind(&name) else {
+            continue;
+        };
+        snapshot.tool_names.push(name.clone());
+        if matches!(kind, UserToolKind::Skill) {
+            snapshot.declared_skill_names.push(name.clone());
+        } else {
+            snapshot.declared_tool_names.push(name.clone());
+        }
+        let descriptor = current
+            .ability_items
+            .iter()
+            .find(|item| item.runtime_name == name && item.owner_id.as_deref() == Some(owner_id))
+            .cloned()
+            .unwrap_or_else(|| user_owned_ability_descriptor(&name, kind, owner_id));
+        snapshot.ability_items.push(descriptor);
+    }
+}
+
+fn user_owned_ability_descriptor(
+    runtime_name: &str,
+    kind: UserToolKind,
+    owner_id: &str,
+) -> AbilityDescriptor {
+    let (group, source, ability_kind, source_key) = match kind {
+        UserToolKind::Mcp => (
+            AbilityGroupKey::Mcp,
+            AbilitySourceKey::UserMcp,
+            AbilityKind::Tool,
+            "user_mcp",
+        ),
+        UserToolKind::Skill => (
+            AbilityGroupKey::Skills,
+            AbilitySourceKey::UserSkill,
+            AbilityKind::Skill,
+            "user_skill",
+        ),
+        UserToolKind::Knowledge => (
+            AbilityGroupKey::Knowledge,
+            AbilitySourceKey::UserKnowledge,
+            AbilityKind::Tool,
+            "user_knowledge",
+        ),
+    };
+    AbilityDescriptor {
+        id: format!("{source_key}:{owner_id}:{runtime_name}"),
+        name: runtime_name.to_string(),
+        runtime_name: runtime_name.to_string(),
+        display_name: runtime_name.to_string(),
+        description: String::new(),
+        input_schema: Value::Null,
+        group,
+        source,
+        kind: ability_kind,
+        owner_id: Some(owner_id.to_string()),
+        available: true,
+        selected: true,
+    }
+}
+
 pub async fn build_target_snapshot(
     state: &AppState,
     user: &UserAccountRecord,
     preset: &PresetAgent,
-) -> UserAgentPresetSnapshot {
+) -> Result<UserAgentPresetSnapshot> {
     let context = build_user_tool_context(state, &user.user_id).await;
-    build_target_snapshot_from_context(user, preset, &context)
+    let agents = state.user_store.list_user_agents(&user.user_id)?;
+    let current = match user_instance_record(&agents) {
+        Some(record) => snapshot_from_record(record, &collect_context_skill_names(&context)),
+        None => {
+            let record = crate::services::default_agent_sync::load_effective_default_agent_record(
+                state,
+                &user.user_id,
+            )
+            .await?;
+            snapshot_from_record(&record, &collect_context_skill_names(&context))
+        }
+    };
+    let mut target = build_target_snapshot_from_context(user, preset, &context);
+    merge_user_owned_tool_selections(&mut target, &context, &user.user_id, &current);
+    Ok(target)
 }
 
 pub fn build_binding(
@@ -347,7 +490,11 @@ pub fn bound_agent_record(agents: &[UserAgentRecord]) -> Option<&UserAgentRecord
         .iter()
         .filter(|record| !is_default_agent_record(record))
         .filter(|record| record.preset_binding.is_some())
-        .max_by(|left, right| left.updated_at.total_cmp(&right.updated_at))
+        .max_by(|left, right| {
+            left.updated_at
+                .total_cmp(&right.updated_at)
+                .then_with(|| left.agent_id.cmp(&right.agent_id))
+        })
 }
 
 fn newest_active_agent(agents: &[UserAgentRecord]) -> Option<&UserAgentRecord> {
@@ -407,10 +554,7 @@ pub async fn resolve_user_agent_instance(
             .as_ref()
             .map(|binding| binding.preset_id.clone());
         let preset = match preset_id.as_deref() {
-            Some(preset_id) => configured_preset_agents(state)
-                .await
-                .into_iter()
-                .find(|item| item.preset_id == preset_id),
+            Some(preset_id) => find_preset_by_id(state, preset_id).await.ok(),
             None => None,
         };
         return Ok(match preset {
@@ -562,20 +706,27 @@ pub async fn ensure_user_agent(state: &AppState, user: &UserAccountRecord) -> Re
         return Ok(false);
     }
     let presets = configured_preset_agents(state).await;
-    if presets.is_empty() {
+    let existing = state.user_store.list_user_agents(user_id)?;
+    if presets.is_empty() && user_instance_record(&existing).is_none() {
         return Ok(false);
     }
-    let existing = state.user_store.list_user_agents(user_id)?;
     let bound = bound_agent_record(&existing);
     let bound_preset_id = bound
         .and_then(|record| record.preset_binding.as_ref())
         .map(|binding| binding.preset_id.clone());
-    let Some(preset) = bound_preset_id
-        .as_deref()
-        .and_then(|preset_id| presets.iter().find(|item| item.preset_id == preset_id))
-        .or_else(|| presets.first())
-        .cloned()
-    else {
+    let explicit_default =
+        if bound_preset_id.as_deref() == Some("__default__") || presets.is_empty() {
+            Some(default_preset_agent(state).await?)
+        } else {
+            None
+        };
+    let Some(preset) = explicit_default.or_else(|| {
+        bound_preset_id
+            .as_deref()
+            .and_then(|preset_id| presets.iter().find(|item| item.preset_id == preset_id))
+            .or_else(|| presets.first())
+            .cloned()
+    }) else {
         return Ok(false);
     };
 
@@ -618,7 +769,7 @@ pub async fn ensure_user_agent(state: &AppState, user: &UserAccountRecord) -> Re
             updated.agent_id
         }
         None => {
-            let record = create_preset_agent_record(state, user, &preset, now).await;
+            let record = create_preset_agent_record(state, user, &preset, now).await?;
             state.user_store.upsert_user_agent(&record)?;
             changed = true;
             record.agent_id
@@ -693,13 +844,13 @@ pub async fn apply_preset_binding(
             continue;
         };
         let existing = state.user_store.list_user_agents(user_id)?;
-        let bound = bound_agent_record(&existing).cloned();
+        let bound = user_instance_record(&existing).cloned();
         if let Some(required) = require_current_preset_id {
             let matches = bound
                 .as_ref()
                 .and_then(|record| record.preset_binding.as_ref())
                 .map(|binding| binding.preset_id == required)
-                .unwrap_or(false);
+                .unwrap_or(required == "__default__");
             if !matches {
                 continue;
             }
@@ -721,7 +872,7 @@ pub async fn apply_preset_binding(
                     .map(|binding| binding.preset_revision != preset.revision)
                     .unwrap_or(true);
                 if binding_stale {
-                    let snapshot = build_target_snapshot(state, &user, preset).await;
+                    let snapshot = build_target_snapshot(state, &user, preset).await?;
                     updated.preset_binding = Some(build_binding(preset, &snapshot));
                     record_changed = true;
                 }
@@ -738,7 +889,7 @@ pub async fn apply_preset_binding(
             Some(record) => {
                 // Rebind: the new preset now defines the instance.
                 let mut updated = record.clone();
-                let target = build_target_snapshot(state, &user, preset).await;
+                let target = build_target_snapshot(state, &user, preset).await?;
                 let baseline = record
                     .preset_binding
                     .as_ref()
@@ -753,7 +904,7 @@ pub async fn apply_preset_binding(
                 updated.agent_id
             }
             None => {
-                let record = create_preset_agent_record(state, &user, preset, now).await;
+                let record = create_preset_agent_record(state, &user, preset, now).await?;
                 state.user_store.upsert_user_agent(&record)?;
                 outcome.created_agents += 1;
                 record.agent_id
@@ -891,9 +1042,9 @@ pub async fn create_preset_agent_record(
     user: &UserAccountRecord,
     preset: &PresetAgent,
     now: f64,
-) -> UserAgentRecord {
-    let target = build_target_snapshot(state, user, preset).await;
-    UserAgentRecord {
+) -> Result<UserAgentRecord> {
+    let target = build_target_snapshot(state, user, preset).await?;
+    Ok(UserAgentRecord {
         agent_id: format!("agent_{}", Uuid::new_v4().simple()),
         user_id: user.user_id.clone(),
         name: target.name.clone(),
@@ -918,7 +1069,7 @@ pub async fn create_preset_agent_record(
         preset_binding: Some(build_binding(preset, &target)),
         silent: false,
         prefer_mother: false,
-    }
+    })
 }
 
 /// Syncs one preset onto every user whose single instance is bound to it.
@@ -934,34 +1085,118 @@ pub async fn sync_preset_across_users(
     unit_scope: Option<&[String]>,
     dry_run: bool,
 ) -> Result<PresetSyncSummary> {
-    let (users, _) = state.user_store.list_users(None, unit_scope, 0, 0)?;
-    let user_ids = users
-        .iter()
-        .map(|user| user.user_id.clone())
-        .collect::<Vec<_>>();
-    let mut agents_by_user: HashMap<String, Vec<UserAgentRecord>> = HashMap::new();
-    for chunk in user_ids.chunks(AGENT_BATCH_SIZE) {
-        for record in state.user_store.list_user_agents_for_users(chunk)? {
-            agents_by_user
-                .entry(record.user_id.clone())
-                .or_default()
-                .push(record);
-        }
-    }
-
     let mut summary = PresetSyncSummary::default();
-    for user in users {
-        let agents = agents_by_user.remove(&user.user_id).unwrap_or_default();
-        let context = build_user_tool_context(state, &user.user_id).await;
-        let skill_name_keys = collect_context_skill_names(&context);
-        let target = build_target_snapshot_from_context(&user, preset, &context);
-        let Some(record) = bound_agent_record(&agents).cloned() else {
-            // No instance at all: this user gains one.
-            summary.affected_users += 1;
-            summary.created_agents += 1;
-            if !dry_run {
-                let created = create_preset_agent_record(state, &user, preset, now_ts()).await;
-                state.user_store.upsert_user_agent(&created)?;
+    let mut offset = 0;
+    loop {
+        let (users, total) =
+            state
+                .user_store
+                .list_users(None, unit_scope, offset, AGENT_BATCH_SIZE as i64)?;
+        if users.is_empty() {
+            break;
+        }
+        offset += users.len() as i64;
+        let user_ids = users
+            .iter()
+            .map(|user| user.user_id.clone())
+            .collect::<Vec<_>>();
+        let mut agents_by_user: HashMap<String, Vec<UserAgentRecord>> = HashMap::new();
+        for chunk in user_ids.chunks(AGENT_BATCH_SIZE) {
+            for record in state.user_store.list_user_agents_for_users(chunk)? {
+                agents_by_user
+                    .entry(record.user_id.clone())
+                    .or_default()
+                    .push(record);
+            }
+        }
+
+        for user in users {
+            let agents = agents_by_user.remove(&user.user_id).unwrap_or_default();
+            let Some(record) = bound_agent_record(&agents)
+                .or_else(|| {
+                    (preset.preset_id == "__default__")
+                        .then(|| newest_active_agent(&agents))
+                        .flatten()
+                })
+                .cloned()
+            else {
+                // Assigning a preset is an explicit admin action. A preset update
+                // only reaches users already governed by this preset.
+                continue;
+            };
+            let binding = record.preset_binding.as_ref().cloned();
+            let binding_matches = binding
+                .as_ref()
+                .map(|item| item.preset_id == preset.preset_id)
+                .unwrap_or(preset.preset_id == "__default__");
+            if !binding_matches {
+                // Bound to another preset: not governed by this sync.
+                continue;
+            }
+
+            let context = build_user_tool_context(state, &user.user_id).await;
+            let skill_name_keys = collect_context_skill_names(&context);
+            let mut target = build_target_snapshot_from_context(&user, preset, &context);
+            let current = snapshot_from_record(&record, &skill_name_keys);
+            merge_user_owned_tool_selections(&mut target, &context, &user.user_id, &current);
+            let baseline = binding
+                .as_ref()
+                .map(|item| item.last_applied.clone())
+                .unwrap_or_else(|| target.clone());
+            let decision = plan_snapshot_sync(&current, &baseline, &target);
+            let revision_matches = binding
+                .as_ref()
+                .map(|item| item.preset_revision == preset.revision)
+                .unwrap_or(false);
+            let legacy_instances = agents
+                .iter()
+                .filter(|other| {
+                    other.agent_id != record.agent_id
+                        && !is_default_agent_record(other)
+                        && (!agent_is_archived(other) || other.preset_binding.is_some())
+                })
+                .collect::<Vec<_>>();
+            if !decision.visible_diff && revision_matches && legacy_instances.is_empty() {
+                continue;
+            }
+
+            let mut touched = false;
+            // A field only gets written when it is safe (`safe`) or forced.
+            let would_write = matches!(mode, PresetSyncMode::Force) && decision.visible_diff
+                || matches!(mode, PresetSyncMode::Safe) && decision.safe_updates > 0;
+            if would_write {
+                summary.updated_agents += 1;
+                touched = true;
+            }
+            if matches!(mode, PresetSyncMode::Safe) && decision.override_count > 0 {
+                summary.skipped_customized += 1;
+                touched = true;
+            }
+            if touched || !legacy_instances.is_empty() {
+                summary.affected_users += 1;
+            }
+            if dry_run {
+                continue;
+            }
+
+            let mut updated = record.clone();
+            let applied = apply_sync_mode(&mut updated, &baseline, &target, mode);
+            updated.preset_binding = Some(build_binding(preset, &target));
+            if applied || !revision_matches {
+                updated.updated_at = now_ts();
+                state.user_store.upsert_user_agent(&updated)?;
+            }
+            let mut archived_ids = Vec::new();
+            for other in legacy_instances {
+                let mut archived = other.clone();
+                archived.status = AGENT_STATUS_ARCHIVED.to_string();
+                archived.preset_binding = None;
+                archived.updated_at = now_ts();
+                state.user_store.upsert_user_agent(&archived)?;
+                archived_ids.push(archived.agent_id);
+            }
+            log_convergence(&user.user_id, &record.agent_id, &archived_ids);
+            if applied || !revision_matches || !archived_ids.is_empty() {
                 if let Err(err) = state.inner_visible.sync_user_state(&user.user_id).await {
                     tracing::warn!(
                         "failed to sync inner-visible preset state for {}: {err}",
@@ -969,72 +1204,52 @@ pub async fn sync_preset_across_users(
                     );
                 }
             }
-            continue;
-        };
-        let binding = record.preset_binding.as_ref().cloned();
-        let binding_matches = binding
-            .as_ref()
-            .map(|item| item.preset_id == preset.preset_id)
-            .unwrap_or(false);
-        if !binding_matches {
-            // Bound to another preset: not governed by this sync.
-            continue;
         }
-
-        let current = snapshot_from_record(&record, &skill_name_keys);
-        let baseline = binding
-            .as_ref()
-            .map(|item| item.last_applied.clone())
-            .unwrap_or_else(|| target.clone());
-        let decision = plan_snapshot_sync(&current, &baseline, &target);
-        let revision_matches = binding
-            .as_ref()
-            .map(|item| item.preset_revision == preset.revision)
-            .unwrap_or(false);
-        if !decision.visible_diff && revision_matches {
-            continue;
-        }
-
-        let mut touched = false;
-        // A field only gets written when it is safe (`safe`) or forced.
-        let would_write = matches!(mode, PresetSyncMode::Force) && decision.visible_diff
-            || matches!(mode, PresetSyncMode::Safe) && decision.safe_updates > 0;
-        if would_write {
-            summary.updated_agents += 1;
-            touched = true;
-        }
-        if matches!(mode, PresetSyncMode::Safe) && decision.override_count > 0 {
-            summary.skipped_customized += 1;
-            touched = true;
-        }
-        if touched {
-            summary.affected_users += 1;
-        }
-        if dry_run {
-            continue;
-        }
-
-        let mut updated = record.clone();
-        let applied = apply_sync_mode(&mut updated, &baseline, &target, mode);
-        updated.preset_binding = Some(build_binding(preset, &target));
-        if applied || !revision_matches {
-            updated.updated_at = now_ts();
-            state.user_store.upsert_user_agent(&updated)?;
-            if let Err(err) = state.inner_visible.sync_user_state(&user.user_id).await {
-                tracing::warn!(
-                    "failed to sync inner-visible preset state for {}: {err}",
-                    user.user_id
-                );
-            }
+        if offset >= total {
+            break;
         }
     }
     Ok(summary)
+}
+
+pub async fn default_preset_agent(state: &AppState) -> Result<PresetAgent> {
+    let record = crate::services::default_agent_sync::load_effective_default_agent_record(
+        state,
+        crate::services::default_agent_sync::PRESET_TEMPLATE_USER_ID,
+    )
+    .await?;
+    let (icon_name, icon_color) =
+        worker_card_settings::normalize_preset_icon_parts(record.icon.as_deref());
+    Ok(PresetAgent {
+        preset_id: "__default__".to_string(),
+        revision: 1,
+        name: record.name,
+        description: record.description,
+        system_prompt: record.system_prompt,
+        preview_skill: record.preview_skill,
+        model_name: record.model_name,
+        icon: record.icon.unwrap_or_default(),
+        icon_name,
+        icon_color,
+        sandbox_container_id: record.sandbox_container_id,
+        tool_names: record.tool_names,
+        declared_tool_names: record.declared_tool_names,
+        declared_skill_names: record.declared_skill_names,
+        visible_unit_ids: record.visible_unit_ids,
+        preset_questions: record.preset_questions,
+        approval_mode: record.approval_mode,
+        status: record.status,
+        customizable: PresetCustomizable::ALL,
+    })
 }
 
 pub async fn find_preset_by_id(state: &AppState, preset_id: &str) -> Result<PresetAgent> {
     let cleaned = preset_id.trim();
     if cleaned.is_empty() {
         return Err(anyhow!("preset_id is required"));
+    }
+    if cleaned.eq_ignore_ascii_case("__default__") {
+        return default_preset_agent(state).await;
     }
     configured_preset_agents(state)
         .await

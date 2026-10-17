@@ -483,6 +483,13 @@ fn resolve_workspace_root(
     }
 
     let path = PathBuf::from(raw);
+    // Older packaged desktop builds persisted the server seed as a relative
+    // `./config/data/workspaces` path. Treat that value as stale state instead
+    // of resolving it against the executable directory. Explicit absolute
+    // paths and other user-selected relative paths remain supported.
+    if is_legacy_desktop_workspace_seed(raw) {
+        return Ok(wunder_home.join("workspace"));
+    }
     if path.is_absolute() {
         Ok(path)
     } else if raw.eq_ignore_ascii_case("WUNDER_WORK")
@@ -493,6 +500,26 @@ fn resolve_workspace_root(
     } else {
         Ok(wunder_home.join(path))
     }
+}
+
+fn is_legacy_desktop_workspace_seed(raw: &str) -> bool {
+    let normalized = raw.trim().replace('\\', "/").to_ascii_lowercase();
+    // Desktop settings are JSON rather than YAML, so a historical setting
+    // can contain the template literally instead of the expanded fallback.
+    // That value means the same server seed when no override was supplied.
+    if normalized == "${wunder_workspace_root:-./config/data/workspaces}" {
+        return true;
+    }
+    let normalized = normalized.strip_prefix("./").unwrap_or(&normalized);
+    matches!(
+        normalized,
+        "config/data/workspaces"
+            | "config/data/workspaces/"
+            | "config/data/workspaces/local_user"
+            | "config/data/workspaces/local_user/"
+            | "config/data/workspaces/local_user/workspace"
+            | "config/data/workspaces/local_user/workspace/"
+    )
 }
 
 fn resolve_wunder_home_dir() -> PathBuf {
@@ -1256,9 +1283,14 @@ fn apply_desktop_defaults(
         .join("data/wunder.db")
         .to_string_lossy()
         .to_string();
-    if config.workspace.root.trim().is_empty() {
-        config.workspace.root = workspace_root.to_string_lossy().to_string();
-    }
+    // `config/wunder-example.yaml` still carries the server-oriented relative
+    // seed (`./config/data/workspaces`). If it survives into a desktop home,
+    // the relative path is resolved against the executable/launch directory
+    // and recreates the old `config/data/workspaces/local_user/workspace`
+    // tree. The desktop resolver has already selected the authoritative root
+    // (normally `<user>/.wunder/workspace`, or an explicit override), so keep
+    // the shared YAML synchronized with that value on every startup.
+    config.workspace.root = workspace_root.to_string_lossy().to_string();
     config.workspace.container_roots = defaults.container_roots.clone();
     config.lsp.enabled = false;
 
@@ -1821,6 +1853,7 @@ mod tests {
         );
 
         assert!(config.channels.enabled);
+        assert_eq!(PathBuf::from(&config.workspace.root), workspace_root);
         assert!(config.channels.outbox.worker_enabled);
         assert!(!config.gateway.enabled);
         assert!(config.cron.enabled);
@@ -1928,6 +1961,64 @@ mod tests {
         assert!(!settings_path.exists());
 
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn desktop_workspace_root_uses_home_workspace_for_default_and_legacy_seed() {
+        let home = std::env::temp_dir()
+            .join("desktop-workspace-fixture")
+            .join("home/.wunder");
+
+        assert_eq!(
+            resolve_workspace_root(None, "", &home).expect("resolve default workspace"),
+            home.join("workspace")
+        );
+        assert_eq!(
+            resolve_workspace_root(None, "./config/data/workspaces", &home)
+                .expect("migrate legacy workspace seed"),
+            home.join("workspace")
+        );
+        assert_eq!(
+            resolve_workspace_root(
+                None,
+                "${WUNDER_WORKSPACE_ROOT:-./config/data/workspaces}",
+                &home,
+            )
+            .expect("migrate unexpanded legacy workspace seed"),
+            home.join("workspace")
+        );
+        assert_eq!(
+            resolve_workspace_root(None, "config\\data\\workspaces\\local_user", &home)
+                .expect("migrate legacy scoped workspace seed"),
+            home.join("workspace")
+        );
+    }
+
+    #[test]
+    fn desktop_workspace_root_preserves_explicit_user_selection() {
+        let fixture = std::env::temp_dir().join("desktop-workspace-fixture");
+        let home = fixture.join("home/.wunder");
+        let custom = fixture.join("custom-workspace");
+
+        assert_eq!(
+            resolve_workspace_root(None, custom.to_string_lossy().as_ref(), &home)
+                .expect("keep absolute setting"),
+            custom
+        );
+        assert_eq!(
+            resolve_workspace_root(None, "custom-workspace", &home).expect("keep relative setting"),
+            home.join("custom-workspace")
+        );
+        assert_eq!(
+            resolve_workspace_root(None, "config/data/workspaces/custom", &home)
+                .expect("keep relative setting beneath legacy root"),
+            home.join("config/data/workspaces/custom")
+        );
+        assert_eq!(
+            resolve_workspace_root(Some(&custom), "./config/data/workspaces", &home)
+                .expect("prefer explicit command-line workspace"),
+            custom
+        );
     }
 
     #[test]

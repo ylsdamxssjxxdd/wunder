@@ -427,7 +427,7 @@ impl SqliteChatSessionStorage for SqliteStorage {
         self.ensure_initialized()?;
         let cleaned_user = user_id.trim();
         let cleaned_workspace = workspace_id.trim();
-        if cleaned_user.is_empty() || cleaned_workspace.is_empty() {
+        if cleaned_user.is_empty() {
             return Ok((Vec::new(), 0));
         }
         let conn = self.open()?;
@@ -446,12 +446,19 @@ impl SqliteChatSessionStorage for SqliteStorage {
                     Some("active".to_string()),
                 )
             };
+        let workspace_clause = if cleaned_workspace.is_empty() {
+            "(workspace_id IS NULL OR workspace_id = '')"
+        } else {
+            "workspace_id = ?"
+        };
         let count_sql = format!(
-            "SELECT COUNT(*) FROM chat_sessions WHERE user_id = ? AND workspace_id = ?{status_clause}"
+            "SELECT COUNT(*) FROM chat_sessions WHERE user_id = ? AND {workspace_clause}{status_clause}"
         );
         let mut count_params: Vec<SqlValue> = Vec::with_capacity(3);
         count_params.push(SqlValue::from(cleaned_user.to_string()));
-        count_params.push(SqlValue::from(cleaned_workspace.to_string()));
+        if !cleaned_workspace.is_empty() {
+            count_params.push(SqlValue::from(cleaned_workspace.to_string()));
+        }
         if let Some(status) = &status_param {
             count_params.push(SqlValue::from(status.clone()));
         }
@@ -460,7 +467,7 @@ impl SqliteChatSessionStorage for SqliteStorage {
                 row.get(0)
             })?;
         let mut sql = format!(
-            "{} WHERE user_id = ? AND workspace_id = ?{status_clause} ORDER BY last_message_at DESC, session_id DESC",
+            "{} WHERE user_id = ? AND {workspace_clause}{status_clause} ORDER BY last_message_at DESC, session_id DESC",
             chat_session_select_sql()
         );
         let mut params_list = count_params.clone();

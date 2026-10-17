@@ -460,6 +460,108 @@ async fn single_instance_convergence_archives_legacy_instances() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn binding_counts_and_lists_use_only_the_current_binding_and_include_default_users() {
+    let context = build_context(|config, _| {
+        config.user_agents.presets = vec![
+            build_preset(PRESET_A, PRESET_A_NAME, None, PresetCustomizable::default()),
+            build_preset(PRESET_B, PRESET_B_NAME, None, PresetCustomizable::default()),
+        ];
+    })
+    .await;
+    create_user_token(&context, "binding_history_user");
+    create_user_token(&context, "binding_default_user");
+    create_user_token(&context, "binding_missing_user");
+    let missing_user_id = user_id_of(&context, "binding_missing_user");
+    store_agent(
+        &context,
+        &missing_user_id,
+        "agent_missing_preset",
+        "Independent agent",
+        100.0,
+        Some("removed_preset"),
+    );
+    let user_id = user_id_of(&context, "binding_history_user");
+    store_agent(
+        &context,
+        &user_id,
+        "agent_history_old",
+        "Old agent",
+        100.0,
+        Some(PRESET_A),
+    );
+    store_agent(
+        &context,
+        &user_id,
+        "agent_history_current",
+        "Current agent",
+        200.0,
+        Some(PRESET_B),
+    );
+
+    let counts = context
+        .state
+        .user_store
+        .count_preset_bound_users(&[PRESET_A.to_string()])
+        .expect("count subset");
+    assert!(
+        counts.is_empty(),
+        "filtering must happen after selecting the current binding"
+    );
+    let items = list_admin_presets(&context).await;
+    assert_eq!(preset_item(&items, PRESET_A)["bound_users"], json!(0));
+    assert_eq!(preset_item(&items, PRESET_B)["bound_users"], json!(1));
+    for (preset, total) in [(PRESET_A, 0), (PRESET_B, 1)] {
+        let (status, body) = send_json(
+            &context.app,
+            Some(&context.admin_token),
+            Method::GET,
+            &format!("/wunder/admin/preset_agents/{preset}/bindings"),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["data"]["total"], json!(total));
+    }
+    let (status, defaults) = send_json(
+        &context.app,
+        Some(&context.admin_token),
+        Method::GET,
+        "/wunder/admin/preset_agents/__default__/bindings?page=1&page_size=100",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{defaults}");
+    assert_eq!(
+        defaults["data"]["total"],
+        preset_item(&items, "__default__")["bound_users"]
+    );
+    assert!(defaults["data"]["items"]
+        .as_array()
+        .expect("default bindings")
+        .iter()
+        .any(|item| item["user_id"] == json!("binding_default_user")));
+
+    let (status, rebound) =
+        bind_users(&context, "__default__", &[user_id.clone()], "bind", None).await;
+    assert_eq!(status, StatusCode::OK, "{rebound}");
+    assert_eq!(rebound["data"]["rebound_agents"], json!(1));
+    let items = list_admin_presets(&context).await;
+    assert_eq!(preset_item(&items, PRESET_B)["bound_users"], json!(0));
+    let records = context
+        .state
+        .user_store
+        .list_user_agents(&user_id)
+        .expect("agents");
+    assert_eq!(
+        records
+            .iter()
+            .filter(|record| record.preset_binding.is_some())
+            .count(),
+        1
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn bindings_endpoint_counts_create_rebind_and_unbind() {
     let context = build_context(|config, _| {
         config.user_agents.presets = vec![

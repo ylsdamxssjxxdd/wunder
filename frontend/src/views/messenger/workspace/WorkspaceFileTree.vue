@@ -300,16 +300,6 @@ const createItems = (): MenuItem[] => [
 
 const menuItems = computed<MenuItem[]>(() => {
   const row = menu.value.row;
-  if (props.remote && !props.readOnly) {
-    const items: MenuItem[] = [{ command: 'refresh', label: t('common.refresh'), icon: 'fa-rotate-right' }];
-    if (!row || row.kind === 'dir') items.push(...createItems());
-    if (row && row.kind !== 'more') {
-      items.push(row.kind === 'dir' ? { command: 'toggle', label: t('messenger.filesArea.menu.open'), icon: 'fa-folder-open' } : { command: 'preview', label: t('messenger.filesArea.menu.preview'), icon: 'fa-eye' });
-      items.push({ command: 'rename', label: t('messenger.filesArea.menu.rename'), icon: 'fa-i-cursor' });
-      items.push({ command: 'delete', label: t('common.delete'), icon: 'fa-trash-can', danger: true });
-    }
-    return items;
-  }
   // 只读投影：行上只给「打开目录 / 预览」，写类动作在远程节点上不存在；
   // 空白区给「刷新」，右键不再无声无息。
   if (props.readOnly) {
@@ -319,31 +309,34 @@ const menuItems = computed<MenuItem[]>(() => {
       { command: 'refresh', label: t('common.refresh'), icon: 'fa-rotate-right' },
       ...(row.kind === 'dir'
         ? [{ command: 'toggle', label: t('messenger.filesArea.menu.open'), icon: 'fa-folder-open' }]
-        : [{ command: 'preview', label: t('messenger.filesArea.menu.preview'), icon: 'fa-eye' }])
+        : [{ command: 'preview', label: t('messenger.filesArea.menu.preview'), icon: 'fa-eye' }, { command: 'download', label: t('common.download'), icon: 'fa-download' }])
     ];
   }
   // 空白区没有宿主行，菜单落在当前目录上，并承接已下线头部 ⋯ 的三个动作。
   if (!row) {
-    return [
+    const items: MenuItem[] = [
       { command: 'refresh', label: t('common.refresh'), icon: 'fa-rotate-right' },
-      ...createItems(),
+      ...createItems()
+    ];
+    if (!props.remote) items.push(
       { command: 'archive-root', label: t('messenger.filesArea.archiveCurrent'), icon: 'fa-file-zipper' },
       { command: 'clear', label: t('messenger.filesArea.clear'), icon: 'fa-broom', danger: true }
-    ];
+    );
+    return items;
   }
   const items: MenuItem[] = [
     { command: 'refresh', label: t('common.refresh'), icon: 'fa-rotate-right' }
   ];
   if (row.kind === 'dir') {
     items.push({ command: 'toggle', label: t('messenger.filesArea.menu.open'), icon: 'fa-folder-open' });
-    items.push({ command: 'archive', label: t('messenger.filesArea.menu.archive'), icon: 'fa-file-zipper' });
+    if (!props.remote) items.push({ command: 'archive', label: t('messenger.filesArea.menu.archive'), icon: 'fa-file-zipper' });
     items.push(...createItems());
   } else {
     items.push({ command: 'preview', label: t('messenger.filesArea.menu.preview'), icon: 'fa-eye' });
     items.push({ command: 'download', label: t('common.download'), icon: 'fa-download' });
   }
   items.push({ command: 'rename', label: t('messenger.filesArea.menu.rename'), icon: 'fa-i-cursor' });
-  items.push({ command: 'quote', label: t('messenger.filesArea.menu.quote'), icon: 'fa-comment-dots' });
+  if (!props.remote) items.push({ command: 'quote', label: t('messenger.filesArea.menu.quote'), icon: 'fa-comment-dots' });
   items.push({ command: 'delete', label: t('common.delete'), icon: 'fa-trash-can', danger: true });
   return items;
 });

@@ -30,7 +30,7 @@ The AI role that executes tasks. An agent has its own model, tools, and prompt c
 
 ## Preset Agent
 
-An agent template maintained by the admin. There can be several presets, but each user binds exactly one of them, which generates that user's single agent instance. A preset update can be pushed to bound users as "sync uncustomized fields / force overwrite".
+An agent template maintained by the admin. There can be several presets, but each user binds exactly one of them, which generates that user's single agent instance. Applying a preset updates its system-managed configuration only for bound users and preserves user-created MCP, skills, and knowledge-base selection states.
 
 ## Thread
 

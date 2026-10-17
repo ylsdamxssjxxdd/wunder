@@ -21,7 +21,7 @@
       rel="stylesheet"
       href="./third/fontawesome-free-6.7.2-web/css/solid.min.css"
     />
-    <link rel="stylesheet" href="./app.css?v=20261017-01" />
+    <link rel="stylesheet" href="./app.css?v=20261017-04" />
     <link rel="stylesheet" href="./styles/throughput.css?v=20261012-01" />
     <link rel="stylesheet" href="styles/interlink-fleet.css?v=20261016-01" />
 </head>
@@ -56,6 +56,10 @@
                 <i class="fa-solid fa-user-gear"></i>
                 <span data-i18n="panel.userAccounts">用户管理</span>
               </button>
+              <button id="navUsers" class="nav-btn">
+                <i class="fa-solid fa-code-branch"></i>
+                <span data-i18n="panel.users">线程管理</span>
+              </button>
             </div>
           </div>
           <div class="nav-group" data-group="agent">
@@ -68,10 +72,6 @@
               <button id="navLlm" class="nav-btn">
                 <i class="fa-solid fa-sliders"></i>
                 <span data-i18n="panel.llm">模型配置</span>
-              </button>
-              <button id="navUsers" class="nav-btn">
-                <i class="fa-solid fa-code-branch"></i>
-                <span data-i18n="panel.users">线程管理</span>
               </button>
               <button id="navPresetAgents" class="nav-btn">
                 <i class="fa-solid fa-layer-group"></i>
@@ -509,13 +509,9 @@
                     <i class="fa-solid fa-floppy-disk"></i>
                     <span data-i18n="common.save">保存</span>
                   </button>
-                  <button id="presetAgentSyncSafeBtn" class="secondary btn-with-icon" type="button">
-                    <i class="fa-solid fa-rotate"></i>
-                    <span data-i18n="presetAgents.action.syncSafe">同步未自定义项</span>
-                  </button>
                   <button id="presetAgentSyncForceBtn" class="danger btn-with-icon" type="button">
                     <i class="fa-solid fa-bolt"></i>
-                    <span data-i18n="presetAgents.action.syncForce">强制覆盖同步</span>
+                    <span data-i18n="presetAgents.action.syncForce">覆盖系统全局配置</span>
                   </button>
                   <button id="presetAgentDeleteBtn" class="danger btn-with-icon" type="button">
                     <i class="fa-solid fa-trash"></i>
@@ -4688,14 +4684,7 @@
     </svg>
     <div id="adminLoginModal" class="airlock active" aria-hidden="false">
       <div class="airlock-hex-field" aria-hidden="true"></div>
-      <div class="airlock-door airlock-door--left" aria-hidden="true">
-        <div class="airlock-hull">
-          <div class="airlock-deck"></div>
-          <div class="airlock-strip airlock-strip--side airlock-strip--side-left"></div>
-          <div class="airlock-strip airlock-strip--top"></div>
-          <div class="airlock-strip airlock-strip--bottom"></div>
-          <div class="airlock-rivets airlock-rivets--top"></div>
-          <div class="airlock-rivets airlock-rivets--bottom"></div>
+      <div class="airlock-tree-stage" aria-label="卡巴拉生命树图案锁">
           <svg class="airlock-tree" viewBox="0 0 400 640" focusable="false">
             <use href="#airlockTreeLines" transform="translate(0,2.5)" stroke="rgba(148,163,184,0.13)" stroke-width="3.5"/>
             <use class="airlock-tree-groove" href="#airlockTreeLines" stroke="rgba(2,6,12,0.66)" stroke-width="3.5"/>
@@ -4713,38 +4702,10 @@
               <g class="airlock-node" data-node="10"><circle class="airlock-node-hit" cx="200" cy="596" r="34"/><circle class="airlock-node-ring" cx="200" cy="596" r="21"/></g>
             </g>
           </svg>
-        </div>
-      </div>
-      <div class="airlock-door airlock-door--right" aria-hidden="true">
-        <div class="airlock-hull">
-          <div class="airlock-deck"></div>
-          <div class="airlock-strip airlock-strip--side airlock-strip--side-right"></div>
-          <div class="airlock-strip airlock-strip--top"></div>
-          <div class="airlock-strip airlock-strip--bottom"></div>
-          <div class="airlock-rivets airlock-rivets--top"></div>
-          <div class="airlock-rivets airlock-rivets--bottom"></div>
-          <svg class="airlock-tree" viewBox="0 0 400 640" focusable="false">
-            <use href="#airlockTreeLines" transform="translate(0,2.5)" stroke="rgba(148,163,184,0.13)" stroke-width="3.5"/>
-            <use class="airlock-tree-groove" href="#airlockTreeLines" stroke="rgba(2,6,12,0.66)" stroke-width="3.5"/>
-            <use class="airlock-tree-cut" href="#airlockTreeLines" stroke="rgba(255,177,64,0.95)" stroke-width="4.5"/>
-            <g class="airlock-nodes">
-              <g class="airlock-node" data-node="1"><circle class="airlock-node-hit" cx="200" cy="42" r="34"/><circle class="airlock-node-ring" cx="200" cy="42" r="21"/></g>
-              <g class="airlock-node" data-node="2"><circle class="airlock-node-hit" cx="330" cy="138" r="34"/><circle class="airlock-node-ring" cx="330" cy="138" r="21"/></g>
-              <g class="airlock-node" data-node="3"><circle class="airlock-node-hit" cx="70" cy="138" r="34"/><circle class="airlock-node-ring" cx="70" cy="138" r="21"/></g>
-              <g class="airlock-node" data-node="4"><circle class="airlock-node-hit" cx="330" cy="276" r="34"/><circle class="airlock-node-ring" cx="330" cy="276" r="21"/></g>
-              <g class="airlock-node" data-node="5"><circle class="airlock-node-hit" cx="70" cy="276" r="34"/><circle class="airlock-node-ring" cx="70" cy="276" r="21"/></g>
-              <g class="airlock-node" data-node="6"><circle class="airlock-node-hit" cx="200" cy="352" r="34"/><circle class="airlock-node-ring" cx="200" cy="352" r="21"/></g>
-              <g class="airlock-node" data-node="7"><circle class="airlock-node-hit" cx="330" cy="432" r="34"/><circle class="airlock-node-ring" cx="330" cy="432" r="21"/></g>
-              <g class="airlock-node" data-node="8"><circle class="airlock-node-hit" cx="70" cy="432" r="34"/><circle class="airlock-node-ring" cx="70" cy="432" r="21"/></g>
-              <g class="airlock-node" data-node="9"><circle class="airlock-node-hit" cx="200" cy="506" r="34"/><circle class="airlock-node-ring" cx="200" cy="506" r="21"/></g>
-              <g class="airlock-node" data-node="10"><circle class="airlock-node-hit" cx="200" cy="596" r="34"/><circle class="airlock-node-ring" cx="200" cy="596" r="21"/></g>
-            </g>
-          </svg>
-        </div>
       </div>
     </div>
     <script src="./third/echarts/echarts.min.js?v=20260118-07"></script>
     <script src="./third/marked.min.js?v=20260118-07"></script>
-    <script type="module" src="./app.js?v=20261017-01"></script>
+    <script type="module" src="./app.js?v=20261017-05"></script>
   </body>
 </html>

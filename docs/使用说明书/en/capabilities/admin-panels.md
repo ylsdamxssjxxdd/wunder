@@ -117,7 +117,7 @@ There can be several preset agent templates, and each user is bound one-to-one t
 - Create, edit, and delete presets
 - Configure a preset's tools, model, prompts, and the fields the user may customize
 - View bound users and adjust bindings in bulk (bind, rebind, unbind); unbinding requires naming a new preset
-- Sync to bound users' instances — sync only the fields a user has not customized, or force-overwrite everything, with a dry run that previews how many users are affected
+- Apply preset-managed system configuration to bound users' instances, with a dry run that previews the affected users; user-created MCP, skills, and knowledge-base selection states are preserved
 
 ### Tool management
 

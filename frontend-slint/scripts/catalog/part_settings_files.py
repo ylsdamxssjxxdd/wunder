@@ -3,6 +3,11 @@
 # and files page.
 
 ENTRIES = [
+    # Shared local access labels already rendered by settings_page.slint.
+    ("il_allow_remote_local", "允许远程访问本地", "Allow remote local access"),
+    ("il_local_access_hint", "启用设备互通；写入和线程操作仍需本地审批", "Enable device interlink; writes and thread actions still require local approval"),
+    ("il_share_catalog", "共享工作区与线程目录", "Share workspace and thread catalog"),
+    ("il_share_catalog_hint", "需同时获得舰桥授权；关闭时只共享设备摘要", "Also requires server grants; otherwise only the device summary is shared"),
     # ---- settings shell ----
     ("st_title", "系统设置", "System settings"),
     ("st_subtitle", "本地运行时、工作目录和模型配置", "Local runtime, working directory and models"),

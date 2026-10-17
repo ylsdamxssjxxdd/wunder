@@ -1,6 +1,5 @@
 import { elements } from "./elements.js?v=20261016-01";
 import { getWunderBase } from "./api.js";
-import { t } from "./i18n.js?v=20261016-01";
 
 const AUTH_STORAGE_KEY = "wunder_admin_auth";
 
@@ -143,17 +142,16 @@ const validateToken = async (token) => {
 
 let loginPromise = null;
 let loginResolve = null;
+let overlayTransition = 0;
 
-// Keep in sync with the door slide duration in styles/airlock.css.
-const AIRLOCK_OPEN_TOTAL_MS = 1600;
-const AIRLOCK_CLOSE_TOTAL_MS = 1450;
-const AIRLOCK_REDUCED_MOTION_MS = 150;
-const AIRLOCK_CARVE_DRAW_MS = 1050;
-const AIRLOCK_CARVE_SETTLE_MS = 520;
+// Safety net only. Normal completion is driven by the final hex animationend
+// event, so a frame is not held after the visible wall has gone.
+const AIRLOCK_HEX_ANIMATION_FALLBACK_MS = 1600;
 
 // 图案锁口令：左侧第2个(Geburah) → 右侧第2个(Chesed) → 中间第1个(Kether) → 中间第4个(Malkuth)。
 const TREE_UNLOCK_SEQUENCE = [5, 4, 1, 10];
 const TREE_WRONG_FLASH_MS = 450;
+let hexResizeTimer = null;
 
 // Build the repeating emergency-panel wall from bounded DOM nodes. A fixed
 // viewport-sized pool keeps the effect cheap while still covering resize.
@@ -162,28 +160,40 @@ const buildHexField = () => {
   if (!field) {
     return;
   }
-  const width = Math.max(window.innerWidth || 1280, 320);
-  const height = Math.max(window.innerHeight || 720, 420);
-  const cellWidth = Math.max(126, Math.min(218, width * 0.14));
-  const cellHeight = cellWidth * 0.78;
-  const colStep = cellWidth * 0.86;
-  const rowStep = cellHeight * 0.82;
-  const columns = Math.ceil(width / colStep) + 2;
-  const rows = Math.ceil(height / rowStep) + 2;
+  const width = window.innerWidth || 1280;
+  const height = window.innerHeight || 720;
+  // Flat-top regular hexagon: width / height = 2 / sqrt(3). The centers
+  // follow the actual honeycomb neighbor distances, so panels touch at their
+  // edges without the stretched, rectangular gaps of the old grid.
+  const cellWidth = Math.max(136, Math.min(220, width * 0.15));
+  const cellHeight = cellWidth * 0.8660254038;
+  const colStep = cellWidth * 0.75;
+  const rowStep = cellHeight;
+  const columns = Math.ceil(width / colStep);
+  const rows = Math.ceil(height / rowStep);
   const fragment = document.createDocumentFragment();
   for (let row = -1; row < rows; row += 1) {
     for (let col = -1; col < columns; col += 1) {
+      const x = col * colStep;
+      // Flat-top honeycomb: neighboring columns are offset by half a cell.
+      const y = row * rowStep + (col % 2 === 0 ? 0 : rowStep * 0.5);
+      // Offscreen panels must not extend the visible transition's lifetime.
+      if (x >= width || x + cellWidth <= 0 || y >= height || y + cellHeight <= 0) {
+        continue;
+      }
       const cell = document.createElement("div");
       cell.className = "airlock-hex-cell";
-      const stagger = row % 2 === 0 ? 0 : colStep * 0.43;
-      const x = col * colStep + stagger;
-      const y = row * rowStep;
-      const wave = ((row * 17 + col * 11) % 9 + 9) % 9;
+      const distance = Math.hypot(
+        x + cellWidth / 2 - width / 2,
+        y + cellHeight / 2 - height / 2,
+      );
+      const wave = Math.min(10, Math.round((distance / (Math.hypot(width, height) / 2)) * 10));
       cell.style.width = `${cellWidth}px`;
       cell.style.height = `${cellHeight}px`;
       cell.style.left = `${x}px`;
       cell.style.top = `${y}px`;
-      cell.style.setProperty("--hex-delay", `${Math.max(0, wave) * 38}ms`);
+      cell.style.setProperty("--hex-delay", `${wave * 52}ms`);
+      cell.style.setProperty("--hex-return-delay", `${(10 - wave) * 52}ms`);
       cell.innerHTML = '<i aria-hidden="true"></i><span>EMERGENCY</span><i aria-hidden="true"></i>';
       fragment.appendChild(cell);
     }
@@ -205,7 +215,46 @@ const setHexFieldState = (state) => {
   }
 };
 
-const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const waitForHexFieldAnimation = (state) => {
+  const field = document.querySelector(".airlock-hex-field");
+  if (!field || prefersReducedMotion()) {
+    return Promise.resolve();
+  }
+  const expectedName = state === "fading" ? "airlock-hex-fade-out" : "airlock-hex-fade-in";
+  const pending = new Set(field.querySelectorAll(".airlock-hex-cell"));
+  if (!pending.size) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = () => {
+      if (done) {
+        return;
+      }
+      done = true;
+      clearTimeout(fallbackTimer);
+      field.removeEventListener("animationend", onAnimationEnd, true);
+      field.removeEventListener("animationcancel", onAnimationEnd, true);
+      resolve();
+    };
+    const onAnimationEnd = (event) => {
+      const cell = event.target;
+      if (
+        event.animationName !== expectedName ||
+        !cell?.classList?.contains("airlock-hex-cell") ||
+        !pending.delete(cell)
+      ) {
+        return;
+      }
+      if (!pending.size) {
+        finish();
+      }
+    };
+    const fallbackTimer = setTimeout(finish, AIRLOCK_HEX_ANIMATION_FALLBACK_MS);
+    field.addEventListener("animationend", onAnimationEnd, true);
+    field.addEventListener("animationcancel", onAnimationEnd, true);
+  });
+};
 
 const prefersReducedMotion = () =>
   typeof window !== "undefined" &&
@@ -218,12 +267,12 @@ const setLoginVisible = (visible) => {
     return;
   }
   if (visible) {
-    modal.classList.remove("airlock--opening", "airlock--open", "airlock--carved");
+    modal.classList.remove("airlock--open", "airlock--exiting");
     modal.classList.add("active");
     modal.setAttribute("aria-hidden", "false");
     return;
   }
-  modal.classList.remove("active", "airlock--opening");
+  modal.classList.remove("active");
   modal.setAttribute("aria-hidden", "true");
 };
 
@@ -243,84 +292,63 @@ const waitForLogin = () => {
   return loginPromise;
 };
 
-// Play the hatch opening on top of the overlay, then hide it once the doors
-// have fully slid apart so the admin shell underneath becomes interactive.
-const playAirlockOpenSequence = async (grantBeatMs) => {
+// Only the hex wall participates in the transition. The static lock is
+// already hidden when authentication succeeds.
+const playOverlayExitSequence = async (transition) => {
   const modal = elements.adminLoginModal;
   if (!modal) {
     return;
   }
-  const reducedMotion = prefersReducedMotion();
-  if (grantBeatMs > 0 && !reducedMotion) {
-    await wait(grantBeatMs);
+  // Subscribe before starting, including when animations complete in one frame.
+  const animation = waitForHexFieldAnimation("fading");
+  setHexFieldState("fading");
+  await animation;
+  if (transition !== overlayTransition) {
+    return;
   }
-  modal.classList.add("airlock--opening");
-  await wait(reducedMotion ? AIRLOCK_REDUCED_MOTION_MS : AIRLOCK_OPEN_TOTAL_MS);
-  modal.classList.remove("airlock--opening");
   modal.classList.add("airlock--open");
   modal.setAttribute("aria-hidden", "true");
 };
 
-// 口令命中：亮刃沿树描切一圈、凹槽加深定型，随后开门。
-const playCarveSequence = async () => {
-  const modal = elements.adminLoginModal;
-  if (!modal) {
-    return;
-  }
-  const reducedMotion = prefersReducedMotion();
-  if (reducedMotion) {
-    modal.classList.add("airlock--carved");
-    await wait(120);
-    return;
-  }
-  modal.classList.add("airlock--carving");
-  await wait(AIRLOCK_CARVE_DRAW_MS);
-  modal.classList.remove("airlock--carving");
-  modal.classList.add("airlock--carved");
-  await wait(AIRLOCK_CARVE_SETTLE_MS);
-};
-
-// Unblock the app boot immediately; the door animation runs on its own and
-// hides the overlay when finished.
-const completeLogin = ({ grantBeatMs = 0 } = {}) => {
+// Unblock the app boot immediately; the overlay disposes itself after the
+// hex wall has disappeared.
+const completeLogin = () => {
+  clearTimeout(hexResizeTimer);
+  // Hide the tree synchronously, before the first hex fades or app boot resumes.
+  elements.adminLoginModal?.classList.add("airlock--exiting");
+  void playOverlayExitSequence(++overlayTransition);
   if (loginResolve) {
     loginResolve();
   }
   loginPromise = null;
   loginResolve = null;
-  setHexFieldState("fading");
-  void playAirlockOpenSequence(grantBeatMs);
 };
 
-// Sign out: seal the doors over the console, then reload behind them so
-// panels and auth scope rebuild from a clean state.
+// Sign out: restore the hex wall and return to the in-page lock state. A full
+// document reload causes a black flash after the animation and is unnecessary
+// because all auth reads come from the cleared stored session.
 export const logoutAdmin = async () => {
   clearStoredAuth();
+  clearTimeout(hexResizeTimer);
+  const transition = ++overlayTransition;
   const modal = elements.adminLoginModal;
   if (!modal) {
-    location.reload();
     return;
   }
-  const reducedMotion = prefersReducedMotion();
-  modal.classList.remove("airlock--open", "airlock--opening", "airlock--carved");
-  modal.classList.add("active", "airlock--closing", "airlock--open-doors", "airlock--instant");
-  modal.setAttribute("aria-hidden", "false");
+  // Restore a clean, static tree before showing it. Rebuild the bounded wall
+  // here in case the viewport changed while the overlay was hidden.
+  treeUnlocking = false;
+  resetTreeLights();
+  buildHexField();
+  setLoginVisible(true);
+  const animation = waitForHexFieldAnimation("refilling");
   setHexFieldState("refilling");
-  // Jump the doors to the open position without a transition, then re-arm
-  // transitions and let them slide shut.
-  void modal.offsetWidth;
-  modal.classList.remove("airlock--instant");
-  void modal.offsetWidth;
-  if (reducedMotion) {
-    modal.classList.remove("airlock--open-doors", "airlock--closing");
-    await wait(120);
-  } else {
-    modal.classList.remove("airlock--open-doors");
-    await wait(AIRLOCK_CLOSE_TOTAL_MS);
-    modal.classList.remove("airlock--closing");
-    await wait(420);
+  await animation;
+  if (transition !== overlayTransition) {
+    return;
   }
-  location.reload();
+  setHexFieldState("locked");
+  startLoginWait();
 };
 
 // ---- 卡巴拉图案锁 ----
@@ -330,6 +358,8 @@ let treeUnlocking = false;
 let treeResetTimer = null;
 
 const resetTreeLights = () => {
+  clearTimeout(treeResetTimer);
+  treeResetTimer = null;
   document.querySelectorAll(".airlock-node.lit, .airlock-node.wrong").forEach((node) => {
     node.classList.remove("lit", "wrong");
   });
@@ -381,16 +411,14 @@ const performLogin = async (username, password) => {
       return;
     }
     writeStoredAuth({ token, user, scope });
-    // 先播树深刻入门的动画，再沿树中线开门。
-    await playCarveSequence();
-    completeLogin({ grantBeatMs: 0 });
+    completeLogin();
   } catch (error) {
     failLogin();
   }
 };
 
 const handleTreeNodeClick = (event) => {
-  // 登录流程已结束（等待开门/已进入）或正在认证时忽略点击。
+  // 登录流程已结束或正在认证时忽略点击。
   if (!loginPromise || treeUnlocking) {
     return;
   }
@@ -400,15 +428,15 @@ const handleTreeNodeClick = (event) => {
   }
   const expected = TREE_UNLOCK_SEQUENCE[treeProgress];
   if (nodeId !== expected) {
-    // 中柱质点两半同步闪红，避免看起来只剩一半。
+    // 点错后短暂提示，再统一重置。
     document.querySelectorAll(`.airlock-node[data-node="${nodeId}"]`).forEach((node) => {
       node.classList.add("wrong");
     });
-    // 稍作停留让用户看到红光，再统一重置。
-    setTimeout(resetTreeLights, TREE_WRONG_FLASH_MS);
+    clearTimeout(treeResetTimer);
+    treeResetTimer = setTimeout(resetTreeLights, TREE_WRONG_FLASH_MS);
     return;
   }
-  // 中柱质点在两扇门上各有一半，点亮时全部同步，视觉上是一个整圆。
+  // 点亮当前质点，保持完整生命树静态显示。
   document.querySelectorAll(`.airlock-node[data-node="${nodeId}"]`).forEach((node) => {
     node.classList.add("lit");
   });
@@ -425,9 +453,12 @@ export const initAdminAuth = async () => {
   }
   buildHexField();
   window.addEventListener("resize", () => {
-    if (!document.querySelector(".airlock-hex-field.is-fading")) {
-      buildHexField();
+    const field = document.querySelector(".airlock-hex-field");
+    if (!field || field.matches(".is-fading, .is-refilling")) {
+      return;
     }
+    clearTimeout(hexResizeTimer);
+    hexResizeTimer = setTimeout(buildHexField, 120);
   }, { passive: true });
   document.querySelectorAll(".airlock-node").forEach((node) => {
     node.addEventListener("click", handleTreeNodeClick);
@@ -437,15 +468,14 @@ export const initAdminAuth = async () => {
       void logoutAdmin();
     });
   }
-  // Doors are closed from first paint: greet the user before touching storage.
+  // The lock is visible from first paint, before validating stored auth.
   setLoginVisible(true);
   const stored = readStoredAuth();
   const token = typeof stored.token === "string" ? stored.token.trim() : "";
   if (token) {
     const valid = await validateToken(token);
     if (valid) {
-      // Refresh with a live session still plays the hatch opening once.
-      completeLogin({ grantBeatMs: 350 });
+      completeLogin();
       return;
     }
     clearStoredAuth();

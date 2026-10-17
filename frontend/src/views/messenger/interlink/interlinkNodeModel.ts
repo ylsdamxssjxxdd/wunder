@@ -82,8 +82,9 @@ export const isDeviceNode = (node: InterlinkNode | null | undefined): boolean =>
 
 /**
  * §6.3 侧栏工作区行：按「本地工作区」而不是设备区分。每台设备的每个命名工作区
- * 一行（`设备名-工作区名`）。设备没同步过工作区投影（离线或从未连接）就不出
- * 条目——侧栏只呈现真实检测到的本地目录。渲染行数硬上限沿用节点目录的上限。
+ * 一行（`设备名-工作区名`）。未同步工作区投影的设备仍保留一个明确的默认
+ * 本地工作区行，使其在首次连接、最小投影或离线时保持可寻址。渲染行数硬上限
+ * 沿用节点目录的上限。
  */
 export type InterlinkWorkspaceRow = {
   key: string;
@@ -96,7 +97,9 @@ export type InterlinkWorkspaceRow = {
 export const workspaceRowLabel = (node: InterlinkNode, workspaceName: string): string => {
   const device = String(node.label || node.node_id || '').trim();
   const name = workspaceName.trim();
-  return name && device ? `${device}-${name}` : device || name;
+  // Keep the default local root distinguishable from the device itself. The
+  // sidebar can replace the stable fallback label with a localized one later.
+  return name && device ? `${device}-${name}` : device ? `${device}-local` : name;
 };
 
 export const interlinkWorkspaceRows = (nodes: InterlinkNode[]): InterlinkWorkspaceRow[] => {
@@ -104,9 +107,21 @@ export const interlinkWorkspaceRows = (nodes: InterlinkNode[]): InterlinkWorkspa
   nodes.filter(isDeviceNode).slice(0, INTERLINK_NODE_MAX_RENDERED).forEach((node) => {
     const deviceId = String(node.node_id || '').trim();
     if (!deviceId) return;
-    const workspaces = interlinkNodeWorkspaces(node).filter((item) => item.workspace_id);
+    const workspaces = interlinkNodeWorkspaces(node);
+    // An empty list means the device is on a minimal projection. Its default
+    // local root is still a real, command-addressable workspace (`workspace_id`
+    // is omitted), so retain one explicitly labelled default-workspace row.
+    // This is never a device/model fallback: named projected workspaces replace
+    // it as independent rows once they are available.
     if (!workspaces.length) {
-      rows.push({ key: `device:${deviceId}@`, deviceId, workspaceId: '', label: workspaceRowLabel(node, ''), node });
+      rows.push({
+        key: `device:${deviceId}@`,
+        deviceId,
+        workspaceId: '',
+        label: workspaceRowLabel(node, ''),
+        node
+      });
+      return;
     }
     workspaces.slice(0, INTERLINK_NODE_MAX_RENDERED).forEach((item) => {
       rows.push({

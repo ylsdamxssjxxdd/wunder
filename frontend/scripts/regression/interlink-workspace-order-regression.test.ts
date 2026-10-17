@@ -2,11 +2,23 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import type { InterlinkNode } from '../../src/api/interlink';
-import {
-  applyWorkspaceOrder,
-  moveWorkspaceRow
-} from '../../src/views/messenger/interlink/interlinkWorkspaceOrder';
+import { applyWorkspaceOrder, moveWorkspaceRow } from '../../src/views/messenger/interlink/interlinkWorkspaceOrder';
 import type { InterlinkWorkspaceRow } from '../../src/views/messenger/interlink/interlinkNodeModel';
+
+// The workspace row model reaches the shared API module, whose locale helper
+// reads browser preferences at module initialization. Keep this Node-only
+// regression harness explicit about that minimal browser surface.
+Object.defineProperty(globalThis, 'localStorage', {
+  configurable: true,
+  value: { getItem: () => null, setItem: () => undefined }
+});
+Object.defineProperty(globalThis, 'navigator', {
+  configurable: true,
+  value: { languages: ['en-US'], language: 'en-US' }
+});
+
+const loadWorkspaceRows = async () =>
+  (await import('../../src/views/messenger/interlink/interlinkNodeModel')).interlinkWorkspaceRows;
 
 const asNode = (nodeId: string): InterlinkNode =>
   ({
@@ -50,6 +62,7 @@ test('applyWorkspaceOrder reorders, appends new rows and drops stale keys', () =
   assert.deepEqual(applyWorkspaceOrder([], ['device:a']), []);
 });
 
+
 test('moveWorkspaceRow lands the dragged row on the target slot', () => {
   const keys = ['cloud', 'device:a', 'device:b', 'device:c'];
   // 向下拖：落到目标行原槽位，目标行及其后整体后移。
@@ -69,4 +82,34 @@ test('moveWorkspaceRow lands the dragged row on the target slot', () => {
   assert.equal(moveWorkspaceRow(keys, 'device:a', 'device:a'), null, 'same row is a no-op');
   assert.equal(moveWorkspaceRow(keys, 'device:ghost', 'device:a'), null, 'unknown drag key');
   assert.equal(moveWorkspaceRow(keys, 'device:a', 'device:ghost'), null, 'unknown target key');
+});
+
+test('local workspace rows retain the default root and never fall back to a device row', async () => {
+  const interlinkWorkspaceRows = await loadWorkspaceRows();
+  const node = asNode('device-a');
+  node.label = 'Local device';
+  node.meta = {
+    workspaces: [
+      { workspace_id: '', name: '' },
+      { workspace_id: 'workspace-one', name: 'Project one' },
+      { workspace_id: 'workspace-two', name: 'Project two' }
+    ]
+  };
+
+  const rows = interlinkWorkspaceRows([node]);
+  assert.deepEqual(
+    rows.map((item) => [item.key, item.workspaceId, item.label]),
+    [
+      ['device:device-a@', '', 'Local device-local'],
+      ['device:device-a@workspace-one', 'workspace-one', 'Local device-Project one'],
+      ['device:device-a@workspace-two', 'workspace-two', 'Local device-Project two']
+    ]
+  );
+
+  const noProjection = asNode('device-b');
+  noProjection.label = 'Second device';
+  assert.deepEqual(
+    interlinkWorkspaceRows([noProjection]).map((item) => [item.key, item.workspaceId, item.label]),
+    [['device:device-b@', '', 'Second device-local']]
+  );
 });

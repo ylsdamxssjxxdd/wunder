@@ -418,17 +418,19 @@ impl PostgresChatSessionStorage for PostgresStorage {
         self.ensure_initialized()?;
         let cleaned_user = user_id.trim();
         let cleaned_workspace = workspace_id.trim();
-        if cleaned_user.is_empty() || cleaned_workspace.is_empty() {
+        if cleaned_user.is_empty() {
             return Ok((Vec::new(), 0));
         }
         let mut conn = self.conn()?;
         let mut params: Vec<Box<dyn ToSql + Sync>> = Vec::new();
         params.push(Box::new(cleaned_user.to_string()));
-        params.push(Box::new(cleaned_workspace.to_string()));
-        let mut conditions = vec![
-            format!("user_id = ${}", params.len() - 1),
-            format!("workspace_id = ${}", params.len()),
-        ];
+        let mut conditions = vec!["user_id = $1".to_string()];
+        if cleaned_workspace.is_empty() {
+            conditions.push("(workspace_id IS NULL OR workspace_id = '')".to_string());
+        } else {
+            params.push(Box::new(cleaned_workspace.to_string()));
+            conditions.push(format!("workspace_id = ${}", params.len()));
+        }
         let normalized_status = status
             .map(str::trim)
             .map(str::to_lowercase)

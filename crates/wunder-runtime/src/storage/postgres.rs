@@ -406,7 +406,7 @@ impl PostgresStorage {
     }
 
     fn read_user_agent_row(row: &tokio_postgres::Row) -> UserAgentRecord {
-        let tool_names = Self::parse_string_list(row.get(7));
+        let tool_names = Self::parse_string_list(row.get(6));
         UserAgentRecord {
             agent_id: row.get(0),
             user_id: row.get(1),

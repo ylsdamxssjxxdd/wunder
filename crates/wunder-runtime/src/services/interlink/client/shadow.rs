@@ -45,12 +45,10 @@ pub const TITLE_MAX_CHARS: usize = 96;
 /// The interlink backup folder lives inside the workspace but is never
 /// projected.
 pub const BACKUP_DIR_NAME: &str = ".interlink_backup";
-/// Named workspaces in one projection. A node that binds more folders than
-/// this keeps the first `WORKSPACE_MAX` by sort order (docs §6.1 budget).
+/// Workspace roots in one projection, including the default local root. A
+/// node with more bindings keeps the default root and then the first named
+/// roots by stable sort order (docs §6.1 budget).
 pub const WORKSPACE_MAX: usize = 20;
-/// Smallest per-workspace tree budget: with many workspaces every entry still
-/// shows a meaningful root listing instead of being squeezed to nothing.
-const WORKSPACE_MIN_ENTRIES: usize = 64;
 /// Workspace names are display labels; the projection keeps them short.
 const WORKSPACE_NAME_MAX_CHARS: usize = 60;
 
@@ -298,6 +296,7 @@ pub struct ThreadRowSource {
     pub title: String,
     pub status: String,
     pub agent: Option<String>,
+    pub workspace_id: Option<String>,
     pub updated_at: f64,
     pub message_count: i64,
     pub duration_ms: i64,
@@ -313,12 +312,37 @@ pub fn thread_rows(rows: Vec<ThreadRowSource>, max: usize) -> (Vec<Value>, bool)
             "title": row.title.chars().take(TITLE_MAX_CHARS).collect::<String>(),
             "status": row.status,
             "agent": row.agent,
+            "workspace_id": row.workspace_id,
             "updated_at": row.updated_at,
             "message_count": row.message_count.max(0),
             "duration_ms": row.duration_ms.max(0),
         }));
     }
     (items, truncated)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{thread_rows, ThreadRowSource};
+
+    #[test]
+    fn thread_directory_keeps_the_workspace_identity() {
+        let (rows, truncated) = thread_rows(
+            vec![ThreadRowSource {
+                local_thread_id: "thread_a".to_string(),
+                title: "Thread A".to_string(),
+                status: "ready".to_string(),
+                agent: None,
+                workspace_id: Some("workspace_a".to_string()),
+                updated_at: 1.0,
+                message_count: 0,
+                duration_ms: 0,
+            }],
+            10,
+        );
+        assert!(!truncated);
+        assert_eq!(rows[0]["workspace_id"], "workspace_a");
+    }
 }
 
 /// Shape the scheduled-task directory; the id set is de-duplicated so a
@@ -511,13 +535,20 @@ pub async fn gather_threads(
     limits: &TreeLimits,
 ) -> (Vec<Value>, bool) {
     let want = limits.threads_max.max(1);
-    let rows = collect_thread_rows(state, &sources.local_user_id, want).await;
+    let rows = collect_thread_rows(
+        state,
+        &sources.local_user_id,
+        sources.workspace_id.as_deref(),
+        want,
+    )
+    .await;
     thread_rows(rows, want)
 }
 
 async fn collect_thread_rows(
     state: &Arc<AppState>,
     user_id: &str,
+    workspace_id: Option<&str>,
     want: usize,
 ) -> Vec<ThreadRowSource> {
     let mut rows: Vec<ThreadRowSource> = Vec::with_capacity(want.min(THREADS_MAX));
@@ -532,7 +563,7 @@ async fn collect_thread_rows(
             limit: CATALOG_PAGE_SIZE.min(want as i64),
             search: None,
             parent_session_id: None,
-            workspace_id: None,
+            workspace_id: workspace_id.map(str::to_string),
         };
         let Ok(page_result) = catalog.list(query).await else {
             break;
@@ -547,6 +578,7 @@ async fn collect_thread_rows(
                 title: item.title.clone(),
                 status: item.status.as_str().to_string(),
                 agent: item.agent_id.clone(),
+                workspace_id: item.workspace_id.clone(),
                 updated_at: item.updated_at,
                 message_count: 0,
                 duration_ms: 0,
@@ -667,7 +699,8 @@ async fn workspace_records(
     state: &Arc<AppState>,
     local_user_id: &str,
     only: Option<&str>,
-) -> Vec<wunder_core::storage_records::WorkspaceRecord> {
+    max: usize,
+) -> (Vec<wunder_core::storage_records::WorkspaceRecord>, bool) {
     let owner = local_user_id.to_string();
     let filter = only
         .map(str::trim)
@@ -687,14 +720,15 @@ async fn workspace_records(
                 .map(|wanted| record.workspace_id == wanted)
                 .unwrap_or(true)
         })
-        .take(WORKSPACE_MAX)
         .collect();
     records.sort_by(|left, right| {
         left.sort_index
             .cmp(&right.sort_index)
             .then_with(|| left.workspace_id.cmp(&right.workspace_id))
     });
-    records
+    let truncated = records.len() > max;
+    records.truncate(max);
+    (records, truncated)
 }
 
 /// One projection entry: bounded tree + usage of a single scope, workspace-relative paths only.
@@ -728,8 +762,10 @@ async fn gather_workspace_entry(
     (entry, walk.truncated)
 }
 
-/// Build the workspace section: one bounded entry per bound folder, plus the
-/// default scope when the node has none. The whole section stays inside the
+/// Build the workspace section: the default local root is always represented
+/// when the node is not pinned to one named workspace, followed by each bound
+/// folder. This keeps the default scope addressable while preserving one
+/// independent row per named workspace. The whole section stays inside the
 /// §6.1 entry budget; per-workspace shares shrink as the count grows.
 pub async fn gather_workspace(
     state: &Arc<AppState>,
@@ -737,8 +773,23 @@ pub async fn gather_workspace(
     limits: &TreeLimits,
 ) -> (Value, bool) {
     let user = sources.local_user_id.trim();
-    let mut truncated = false;
-    let records = workspace_records(state, user, sources.workspace_id.as_deref()).await;
+    let include_default = sources.workspace_id.is_none();
+    // The default root is a first-class sidebar item. Reserve one of the
+    // shared projection slots for it so the node list and the full shadow can
+    // never disagree by returning 21 roots for a 20-root contract.
+    let named_limit = if include_default {
+        WORKSPACE_MAX.saturating_sub(1)
+    } else {
+        WORKSPACE_MAX
+    };
+    let (records, records_truncated) =
+        workspace_records(state, user, sources.workspace_id.as_deref(), named_limit).await;
+    let mut truncated = records_truncated;
+    if records.is_empty() && sources.workspace_id.is_some() {
+        // A missing named binding must never silently fall back to the default
+        // root: that would expose or mutate the wrong workspace.
+        return (json!({ "workspaces": [], "roots": 0 }), false);
+    }
     if records.is_empty() {
         // CLI, or a desktop without bound folders: a single default-scope entry.
         let scope = workspace_scope(state, user, sources.workspace_id.as_deref());
@@ -750,11 +801,33 @@ pub async fn gather_workspace(
         entry["name"] = json!("");
         return (json!({ "workspaces": [entry], "roots": 1 }), truncated);
     }
-    let count = records.len();
-    let per_workspace =
-        (limits.max_entries / count).clamp(WORKSPACE_MIN_ENTRIES, limits.max_entries);
+    let count = records.len() + if include_default { 1 } else { 0 };
+    // Divide first so every projected workspace keeps a share and the sum
+    // cannot exceed the global walk budget. A fixed floor would let a handful
+    // of full trees consume all entries before later workspaces appeared.
+    let per_workspace = (limits.max_entries / count).max(1);
     let mut entries = Vec::with_capacity(count);
     let mut used = 0usize;
+
+    if include_default {
+        let scope = workspace_scope(state, user, None);
+        let root = state.workspace.workspace_root(&scope);
+        let remaining = limits.max_entries - used;
+        let (mut entry, entry_truncated) = gather_workspace_entry(
+            state,
+            &scope,
+            &root,
+            per_workspace.min(remaining),
+            limits.depth,
+        )
+        .await;
+        truncated |= entry_truncated;
+        used += entry["tree"].as_array().map(Vec::len).unwrap_or(0);
+        entry["workspace_id"] = json!("");
+        entry["name"] = json!("");
+        entries.push(entry);
+    }
+
     for record in &records {
         if used >= limits.max_entries {
             truncated = true;

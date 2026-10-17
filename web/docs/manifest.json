@@ -1,6 +1,6 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-10-16T22:23:54.819521+00:00",
+  "generated_at": "2026-10-17T02:43:52.386830+00:00",
   "site": {
     "name": "使用说明书",
     "description": "wunder is an agent orchestration platform: Pupa (desktop) is the local AI workbench, Beehive (web) is the cloud AI workbench, Helm (cli) is the manual local entry point, and the Hull (server) is the user and agent management platform. / wunder 是一个智能体调度平台：蛹（desktop）是本地 AI 工作台，蜂巢（web）是云端 AI 工作台，舵机（cli）是手工本地操作入口，舰体（server）是用户与智能体管理平台。",
@@ -4002,7 +4002,7 @@
       "language": "zh-CN",
       "title": "三端互通",
       "summary": "本地工作台登录云端后的设备管理、工作区访问与线程控制。",
-      "updated_at": "2026-10-16",
+      "updated_at": "2026-10-17",
       "read_when": [],
       "source_docs": [],
       "tab": "能力",
@@ -8283,7 +8283,7 @@
       "language": "en",
       "title": "Interlink",
       "summary": "Device management, workspace access, and thread control after a local workbench signs in to the cloud.",
-      "updated_at": "2026-10-16",
+      "updated_at": "2026-10-17",
       "read_when": [],
       "source_docs": [],
       "tab": "Capabilities",

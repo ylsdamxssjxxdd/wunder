@@ -38,6 +38,10 @@ pub(super) trait SqliteInterlinkStorage {
         limit: i64,
     ) -> Result<(Vec<InterlinkChannelRecord>, i64)>;
     fn upsert_interlink_shadow_impl(&self, record: &InterlinkShadowRecord) -> Result<()>;
+    fn upsert_interlink_shadow_if_device_active_impl(
+        &self,
+        record: &InterlinkShadowRecord,
+    ) -> Result<bool>;
     fn get_interlink_shadow_impl(&self, device_id: &str) -> Result<Option<InterlinkShadowRecord>>;
     fn get_interlink_shadow_revision_impl(&self, device_id: &str) -> Result<i64>;
     fn list_interlink_shadow_overviews_impl(
@@ -282,6 +286,41 @@ impl SqliteInterlinkStorage for SqliteStorage {
             ],
         )?;
         Ok(())
+    }
+
+    fn upsert_interlink_shadow_if_device_active_impl(
+        &self,
+        record: &InterlinkShadowRecord,
+    ) -> Result<bool> {
+        self.ensure_initialized()?;
+        let device_id = record.device_id.trim();
+        let user_id = record.user_id.trim();
+        if device_id.is_empty() || user_id.is_empty() {
+            return Ok(false);
+        }
+        let changed = self.open()?.execute(
+            "INSERT INTO interlink_node_shadows(device_id, user_id, revision, summary, threads, tasks, workspace, workspaces, synced_at) \
+             SELECT ?,?,?,?,?,?,?,?,? \
+             WHERE EXISTS (SELECT 1 FROM cloud_devices WHERE device_id = ? AND user_id = ? AND revoked = 0) \
+             ON CONFLICT(device_id) DO UPDATE SET \
+               user_id=excluded.user_id, revision=excluded.revision, \
+               summary=excluded.summary, threads=excluded.threads, tasks=excluded.tasks, \
+               workspace=excluded.workspace, workspaces=excluded.workspaces, synced_at=excluded.synced_at",
+            params![
+                device_id,
+                user_id,
+                record.revision,
+                record.summary,
+                record.threads,
+                record.tasks,
+                record.workspace,
+                record.workspaces,
+                record.synced_at,
+                device_id,
+                user_id,
+            ],
+        )?;
+        Ok(changed == 1)
     }
 
     fn get_interlink_shadow_impl(&self, device_id: &str) -> Result<Option<InterlinkShadowRecord>> {

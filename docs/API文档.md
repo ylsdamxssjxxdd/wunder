@@ -564,11 +564,12 @@ wunder 是一个**智能体调度平台**：蛹（desktop）是本地 AI 工作�
 - 方法：`POST`
 - 入参（JSON）：
   - `preset_id`：预设 ID；当传入 `__default__` 时，表示同步模板用户默认智能体配置。
-  - `mode`：`safe` / `force`
+  - `mode`：舰桥固定传 `force`，表示覆盖预设管理的系统全局配置；`safe` 仅为旧客户端兼容保留，舰桥不再提供入口。
   - `dry_run`：是否仅预演
 - 说明：
+  - 命名预设只同步当前已绑定到该预设的用户；为用户分配或切换预设须调用 `/wunder/admin/preset_agents/bindings`。
   - `preset_id="__default__"` 仅同步默认智能体的设置字段（名称、描述、提示词、工具、问题、审批模式、状态、工作目录与图标）。
-  - 默认智能体同步同样支持 `safe` / `force`：`safe` 只覆盖仍跟随模板的字段，`force` 强制覆盖模板管理字段。
+  - 覆盖不改写已初始化线程的冻结系统提示词；用户自建 MCP、技能和知识库启用项不在覆盖范围内。
 
 ### 4.1.2.1 `/wunder/user_tools/mcp`
 
@@ -3581,10 +3582,11 @@ Slint 程序默认链接 `wunder-desktop` library；不拉起 bridge，不通过
 { "data": { "preset_id": "preset_xxx", "affected_users": 12,
             "created_agents": 3, "rebound_agents": 9 } }
 
-// 4) 同步预设到绑定用户的唯一实例
-// POST /wunder/admin/preset_agents/sync  { preset_id, mode: "safe|force", dry_run: true|false }
-{ "data": { "preset_id": "preset_xxx", "mode": "safe", "dry_run": false, "affected_users": 12,
-            "updated_agents": 7, "skipped_customized": 5, "created_agents": 0 } }
+// 4) 覆盖预设管理的系统全局配置（仅作用于当前绑定用户）
+// POST /wunder/admin/preset_agents/sync  { preset_id, mode: "force", dry_run: true|false }
+// safe 仅为旧客户端兼容保留，舰桥不再提供入口。
+{ "data": { "preset_id": "preset_xxx", "mode": "force", "dry_run": false, "affected_users": 12,
+            "updated_agents": 7, "skipped_customized": 0, "created_agents": 0 } }
 
 // 5) 用户开户 / 列表新增字段
 // GET /wunder/admin/user_accounts（权威账户列表，{data:{total,items}}）

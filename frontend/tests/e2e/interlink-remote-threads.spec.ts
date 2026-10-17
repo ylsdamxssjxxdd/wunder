@@ -55,7 +55,7 @@ test('remote threads keep workspace identity, render live text and preserve fail
     } };
   });
   try {
-    await page.getByRole('button', { name: /设备线程|Device threads/ }).click();
+    await page.getByRole('button', { name: /打开线程控制|Open thread controls/ }).click();
     const dialog = page.getByRole('dialog');
     await expect(dialog.locator('option', { hasText: 'Fixture thread' })).toHaveCount(1);
     await dialog.locator('select').selectOption('fixture_thread');
