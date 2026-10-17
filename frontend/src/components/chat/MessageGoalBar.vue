@@ -51,7 +51,8 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue';
-import { ElMessage, ElMessageBox } from 'element-plus';
+import { ElMessage } from 'element-plus';
+import { mzConfirm, mzPrompt } from '@/utils/mzDialog';
 
 import { useI18n } from '@/i18n';
 import { clearSessionGoal } from '@/api/chat';
@@ -108,22 +109,13 @@ const handleEdit = async (): Promise<void> => {
   if (busy.value) return;
   const sessionId = resolvedGoalSessionId.value;
   if (!sessionId) return;
-  let nextObjective = '';
-  try {
-    const result = await ElMessageBox.prompt(
-      t('chat.goalBar.editHint'),
-      t('chat.goalBar.edit'),
-      {
-        confirmButtonText: t('common.confirm'),
-        cancelButtonText: t('common.cancel'),
-        inputValue: objectiveLabel.value,
-        inputValidator: (value: string) => Boolean(String(value || '').trim()) || t('chat.goal.objectiveRequired')
-      }
-    );
-    nextObjective = String(result.value || '').trim();
-  } catch (error) {
-    return;
-  }
+  const value = await mzPrompt({
+    title: t('chat.goalBar.edit'),
+    message: t('chat.goalBar.editHint'),
+    inputValue: objectiveLabel.value,
+    validator: (input: string) => Boolean(String(input || '').trim()) || t('chat.goal.objectiveRequired')
+  });
+  const nextObjective = String(value || '').trim();
   if (!nextObjective || nextObjective === objectiveLabel.value) return;
   busy.value = true;
   try {
@@ -140,15 +132,12 @@ const handleRemove = async (): Promise<void> => {
   if (busy.value) return;
   const sessionId = resolvedGoalSessionId.value;
   if (!sessionId) return;
-  try {
-    await ElMessageBox.confirm(t('chat.goalBar.removeConfirm'), t('chat.goalBar.remove'), {
-      confirmButtonText: t('common.confirm'),
-      cancelButtonText: t('common.cancel'),
-      type: 'warning'
-    });
-  } catch (error) {
-    return;
-  }
+  const confirmed = await mzConfirm({
+    title: t('chat.goalBar.remove'),
+    message: t('chat.goalBar.removeConfirm'),
+    tone: 'warning'
+  });
+  if (!confirmed) return;
   busy.value = true;
   try {
     // 删除走 DELETE 端点，随后同步本地 goal 状态。

@@ -1,0 +1,251 @@
+/* 蜂巢主题弹窗（mzConfirm / mzPrompt）：替代 Element Plus 原生 ElMessageBox 观感。
+   弹层 teleport 到 body，取不到 .messenger-view 的 --mz-*，所以配色直接钉在自身，
+   色值取自 :root 的暖色赤陶系 --ui-accent 色板（styles/base.css §11.1）。 */
+
+.mz-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 4200;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: clamp(28px, 12vh, 110px) 16px 24px;
+  background: rgba(24, 28, 34, 0.32);
+  backdrop-filter: blur(2px);
+  animation: mz-dialog-overlay-in 140ms ease-out;
+}
+
+.mz-dialog {
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  width: 420px;
+  max-width: 100%;
+  max-height: 100%;
+  border: 1px solid rgba(31, 35, 41, 0.08);
+  border-radius: 14px;
+  background: #ffffff;
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.22), 0 2px 8px rgba(15, 23, 42, 0.06);
+  color: #2b2f36;
+  font-size: 13px;
+  animation: mz-dialog-card-in 170ms cubic-bezier(0.2, 0.8, 0.3, 1);
+}
+
+.mz-dialog-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 16px 16px 0 18px;
+}
+
+.mz-dialog-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--ui-accent-soft, #f6e9e3);
+  color: var(--ui-accent, #c96443);
+  font-size: 11px;
+  line-height: 1;
+}
+
+.mz-dialog.is-danger .mz-dialog-badge {
+  background: #fdecec;
+  color: #d04a43;
+}
+
+.mz-dialog.is-warning .mz-dialog-badge {
+  background: #fbf3e2;
+  color: #c98a2b;
+}
+
+.mz-dialog-title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: #23262b;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mz-dialog-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  color: #9aa0a8;
+  background: transparent;
+  font-size: 13px;
+  cursor: pointer;
+  transition: color 120ms ease, background-color 120ms ease;
+}
+
+.mz-dialog-close:hover {
+  color: #5b6068;
+  background: #f3f1ee;
+}
+
+.mz-dialog-body {
+  padding: 10px 18px 2px;
+  overflow-y: auto;
+}
+
+.mz-dialog-message {
+  margin: 0;
+  color: #6b7078;
+  font-size: 13px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.mz-dialog-field {
+  margin-top: 12px;
+}
+
+.mz-dialog-label {
+  display: block;
+  margin-bottom: 6px;
+  color: #8a8f99;
+  font-size: 12px;
+}
+
+.mz-dialog-input {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  height: 36px;
+  padding: 0 11px;
+  border: 1px solid #e2dfd9;
+  border-radius: 10px;
+  background: #fbfaf8;
+  color: #2b2f36;
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+  transition: border-color 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
+}
+
+.mz-dialog-input.is-multiline {
+  height: auto;
+  min-height: 88px;
+  padding: 9px 11px;
+  line-height: 1.6;
+  resize: vertical;
+}
+
+.mz-dialog-input::placeholder {
+  color: #b3b7bd;
+}
+
+.mz-dialog-input:hover {
+  border-color: #d5d1c9;
+}
+
+.mz-dialog-input:focus {
+  border-color: var(--ui-accent, #c96443);
+  background: #ffffff;
+  box-shadow: 0 0 0 3px rgba(var(--ui-accent-rgb, 201, 100, 67), 0.14);
+}
+
+.mz-dialog-error {
+  margin: 6px 0 0;
+  color: #d04a43;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.mz-dialog-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 14px 18px 16px;
+}
+
+.mz-dialog-btn {
+  height: 32px;
+  padding: 0 15px;
+  border: 1px solid #e2dfd9;
+  border-radius: 9px;
+  background: #ffffff;
+  color: #5b6068;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.mz-dialog-btn:hover {
+  border-color: #d5d1c9;
+  background: #f6f4f1;
+  color: #2b2f36;
+}
+
+.mz-dialog-btn.is-primary {
+  border-color: var(--ui-accent, #c96443);
+  background: var(--ui-accent, #c96443);
+  color: #ffffff;
+}
+
+.mz-dialog-btn.is-primary:hover {
+  border-color: var(--ui-accent-hover, #b55637);
+  background: var(--ui-accent-hover, #b55637);
+  color: #ffffff;
+}
+
+.mz-dialog-btn.is-primary.is-danger {
+  border-color: #d04a43;
+  background: #d04a43;
+}
+
+.mz-dialog-btn.is-primary.is-danger:hover {
+  border-color: #bb3f38;
+  background: #bb3f38;
+}
+
+.mz-dialog-btn:focus-visible {
+  outline: 2px solid rgba(var(--ui-accent-rgb, 201, 100, 67), 0.45);
+  outline-offset: 1px;
+}
+
+@keyframes mz-dialog-overlay-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes mz-dialog-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.985);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mz-dialog-overlay,
+  .mz-dialog {
+    animation: none;
+  }
+}

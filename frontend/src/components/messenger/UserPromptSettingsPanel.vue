@@ -107,7 +107,8 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
-import { ElMessage, ElMessageBox } from 'element-plus';
+import { ElMessage } from 'element-plus';
+import { mzConfirm, mzPrompt } from '@/utils/mzDialog';
 
 import {
   createUserPromptTemplatePack,
@@ -348,25 +349,15 @@ const resolveSegmentLabel = (key: string) => {
 
 const hasUnsavedChanges = () => editorContent.value !== loadedContent.value;
 
-const isActionCanceled = (error: unknown) => {
-  const message = String((error as { message?: string })?.message || '').toLowerCase();
-  return message.includes('cancel') || message.includes('close');
-};
-
 const confirmDiscardChanges = async () => {
   if (!hasUnsavedChanges()) {
     return true;
   }
-  try {
-    await ElMessageBox.confirm(t('messenger.prompt.confirmDiscard'), t('common.notice'), {
-      type: 'warning',
-      confirmButtonText: t('common.confirm'),
-      cancelButtonText: t('common.cancel')
-    });
-    return true;
-  } catch {
-    return false;
-  }
+  return mzConfirm({
+    title: t('common.notice'),
+    message: t('messenger.prompt.confirmDiscard'),
+    tone: 'warning'
+  });
 };
 
 const loadStatus = async () => {
@@ -582,21 +573,14 @@ const createPack = async () => {
   if (!(await confirmDiscardChanges())) {
     return;
   }
-  let packId = '';
-  try {
-    const { value } = await ElMessageBox.prompt(t('messenger.prompt.newPackPrompt'), t('common.create'), {
-      inputPattern: /^[A-Za-z0-9_-]{1,64}$/,
-      inputErrorMessage: t('messenger.prompt.newPackPrompt'),
-      confirmButtonText: t('common.confirm'),
-      cancelButtonText: t('common.cancel')
-    });
-    packId = String(value || '').trim();
-  } catch (error) {
-    if (!isActionCanceled(error)) {
-      ElMessage.error(resolveErrorMessage(error, t('messenger.prompt.packCreateFailed')));
-    }
-    return;
-  }
+  const value = await mzPrompt({
+    title: t('common.create'),
+    message: t('messenger.prompt.newPackPrompt'),
+    placeholder: t('messenger.prompt.newPackPrompt'),
+    validator: (input: string) => /^[A-Za-z0-9_-]{1,64}$/.test(String(input || '')) ? true : t('messenger.prompt.newPackPrompt')
+  });
+  const packId = String(value || '').trim();
+  if (!packId) return;
   if (!packId || BUILTIN_PACK_IDS.has(packId.toLowerCase())) {
     return;
   }
@@ -621,19 +605,12 @@ const deletePack = async () => {
   if (!selectedPack.value || selectedPackReadonly.value) {
     return;
   }
-  try {
-    await ElMessageBox.confirm(
-      t('messenger.prompt.confirmDeletePack', { pack: selectedPack.value }),
-      t('common.notice'),
-      {
-        type: 'warning',
-        confirmButtonText: t('common.confirm'),
-        cancelButtonText: t('common.cancel')
-      }
-    );
-  } catch {
-    return;
-  }
+  const confirmed = await mzConfirm({
+    title: t('common.notice'),
+    message: t('messenger.prompt.confirmDeletePack', { pack: selectedPack.value }),
+    tone: 'danger'
+  });
+  if (!confirmed) return;
   deletingPack.value = true;
   const deletedPack = selectedPack.value;
   try {

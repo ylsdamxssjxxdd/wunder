@@ -10,6 +10,8 @@
 @import "./chat/workflow.css";
 @import "./chat/input.css";
 @import "./dialogs/user-tools.css";
+/* 蜂巢主题弹窗（mzConfirm / mzPrompt），替代 Element Plus 原生 ElMessageBox 观感。 */
+@import "./dialogs/mz-dialog.css";
 @import "./messenger.css";
 /* Two-column messenger shell (site header + sidebar + chat pane). Loaded after
    messenger.css so its .messenger-view flex shell wins over the legacy grid. */

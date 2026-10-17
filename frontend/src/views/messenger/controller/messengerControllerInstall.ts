@@ -4,7 +4,7 @@
 // order and publish state, computed values and handlers onto the shared context.
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { ElLoading, ElMessage, ElMessageBox } from 'element-plus';
+import { ElLoading, ElMessage } from 'element-plus';
 import type { MessengerControllerContext } from './messengerControllerContext';
 import { listAgentUserRounds, listRunningAgents } from '@/api/agents';
 import { updateProfile } from '@/api/auth';
@@ -50,6 +50,7 @@ import { hasRunningAssistantMessage, hasStreamingAssistantMessage, isThreadRunti
 import { copyText } from '@/utils/clipboard';
 import { confirmWithFallback } from '@/utils/confirm';
 import { hydrateExternalMarkdownImages, renderMarkdown } from '@/utils/markdown';
+import { mzPrompt } from '@/utils/mzDialog';
 import { prepareMessageMarkdownContent } from '@/utils/messageMarkdown';
 import { buildWorkspacePublicPath, normalizeWorkspaceOwnerId, resolveMarkdownWorkspacePath } from '@/utils/messageWorkspacePath';
 import { renderSystemPromptHighlight } from '@/utils/promptHighlight';
@@ -6914,25 +6915,22 @@ function installMessengerControllerTimelineFileActions(ctx: MessengerControllerC
       const session = ctx.resolveSessionRecordById(targetId);
       const targetAgentId = ctx.resolveSessionAgentId(session);
       const currentTitle = String(session?.title || ctx.t('chat.newSession')).trim() || ctx.t('chat.newSession');
+      const value = await mzPrompt({
+          title: ctx.t('chat.history.rename'),
+          message: ctx.t('chat.history.renamePrompt'),
+          inputValue: currentTitle,
+          placeholder: ctx.t('chat.history.renamePlaceholder'),
+          validator: (input: string) => String(input || '').trim() ? true : ctx.t('chat.history.renameRequired')
+      });
+      const nextTitle = String(value || '').trim();
+      if (!nextTitle || nextTitle === currentTitle) {
+          return;
+      }
       try {
-          const { value } = await ElMessageBox.prompt(ctx.t('chat.history.renamePrompt'), ctx.t('chat.history.rename'), {
-              confirmButtonText: ctx.t('common.confirm'),
-              cancelButtonText: ctx.t('common.cancel'),
-              inputValue: currentTitle,
-              inputPlaceholder: ctx.t('chat.history.renamePlaceholder'),
-              inputValidator: (inputValue: string) => String(inputValue || '').trim() ? true : ctx.t('chat.history.renameRequired')
-          });
-          const nextTitle = String(value || '').trim();
-          if (!nextTitle || nextTitle === currentTitle) {
-              return;
-          }
           await ctx.chatStore.renameSession(targetId, nextTitle);
           ElMessage.success(ctx.t('chat.history.renameSuccess'));
       }
       catch (error) {
-          if (error === 'cancel' || error === 'close') {
-              return;
-          }
           showApiError(error, ctx.t('chat.history.renameFailed'));
       }
   };

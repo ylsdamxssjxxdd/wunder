@@ -37,8 +37,8 @@ test('goal command shows the goal bar, streams a reply, and follows goal lifecyc
     expect(await page.evaluate(() => (window as any).__goalTaskNotices)).toEqual([]);
     service.holdNext = true;
     await bar.locator('button[title="Edit goal"]').click();
-    await page.locator('.el-message-box__input input').fill('Revise the example task');
-    await page.locator('.el-message-box__btns .el-button--primary').click();
+    await page.locator('.mz-dialog-input').fill('Revise the example task');
+    await page.locator('.mz-dialog-foot .is-primary').click();
     await expect(bar).toContainText('Revise the example task');
     const original = page.locator('.messenger-turn[data-root-turn-id="fixture-turn-1"]');
     const revised = page.locator('.messenger-turn[data-root-turn-id="fixture-turn-2"]');

@@ -68,9 +68,10 @@ const rowMenu = (page: Page): Locator => page.locator('.workspace-files-menu');
 const rowMenuItem = (page: Page, label: string): Locator =>
   rowMenu(page).locator('.workspace-files-menu-item').filter({ hasText: exactText(label) });
 
-const messageBox = (page: Page): Locator => page.locator('.el-message-box');
+/** 蜂巢主题弹窗（mzConfirm / mzPrompt，替代 ElMessageBox）。 */
+const messageBox = (page: Page): Locator => page.locator('.mz-dialog');
 const messageBoxButton = (page: Page, label: string): Locator =>
-  page.locator('.el-message-box__btns button').filter({ hasText: exactText(label) });
+  page.locator('.mz-dialog-foot button').filter({ hasText: exactText(label) });
 
 const previewDialog = (page: Page): Locator =>
   page.locator('.workspace-dialog.workspace-dialog--file-preview');
@@ -208,25 +209,25 @@ const serverEntryNames = async (
   return (payload.entries || []).map((entry) => String(entry.name || ''));
 };
 
-/** ElMessageBox.prompt：填入值后点确认，并等弹窗真正关闭（校验不过时它会保持打开）。 */
+/** 主题弹窗 prompt：填入值后点确认，并等弹窗真正关闭（校验不过时它会保持打开）。 */
 const answerPrompt = async (page: Page, confirmLabel: string, value: string): Promise<void> => {
   const box = messageBox(page);
-  await expect(box, '应弹出 ElMessageBox').toBeVisible({ timeout: 10_000 });
-  const input = box.locator('.el-message-box__input input');
-  await expect(input, 'prompt 型 ElMessageBox 应有输入框（.el-message-box__input input）').toBeVisible();
+  await expect(box, '应弹出主题确认弹窗').toBeVisible({ timeout: 10_000 });
+  const input = box.locator('.mz-dialog-input');
+  await expect(input, 'prompt 型主题弹窗应有输入框（.mz-dialog-input）').toBeVisible();
   await input.fill(value);
   const confirm = messageBoxButton(page, confirmLabel);
-  await expect(confirm, `ElMessageBox 应有「${confirmLabel}」按钮`).toBeVisible();
+  await expect(confirm, `主题弹窗应有「${confirmLabel}」按钮`).toBeVisible();
   await confirm.click();
-  await expect(box, `点「${confirmLabel}」后弹窗应关闭（未关闭通常说明 inputValidator 拦下了）`).toBeHidden({
+  await expect(box, `点「${confirmLabel}」后弹窗应关闭（未关闭通常说明 validator 拦下了）`).toBeHidden({
     timeout: 10_000
   });
 };
 
-/** ElMessageBox.confirm：只点确认。 */
+/** 主题弹窗 confirm：只点确认。 */
 const answerConfirm = async (page: Page, confirmLabel: string): Promise<void> => {
   const box = messageBox(page);
-  await expect(box, '应弹出二次确认 ElMessageBox').toBeVisible({ timeout: 10_000 });
+  await expect(box, '应弹出二次确认主题弹窗').toBeVisible({ timeout: 10_000 });
   const confirm = messageBoxButton(page, confirmLabel);
   await expect(confirm, `二次确认应有「${confirmLabel}」按钮`).toBeVisible();
   await confirm.click();

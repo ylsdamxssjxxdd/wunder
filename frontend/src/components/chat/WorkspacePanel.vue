@@ -583,7 +583,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch } from 'vue';
 import type { AxiosProgressEvent } from 'axios';
 import type { WorkspaceThemeIconResolver } from './workspaceIcons';
-import { ElMessage, ElMessageBox } from 'element-plus';
+import { ElMessage } from 'element-plus';
 
 import {
   batchWunderWorkspaceAction,
@@ -625,6 +625,7 @@ import { getRuntimeConfig } from '@/config/runtime';
 import { emitWorkspaceRefresh, onWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { useI18n } from '@/i18n';
 import { showApiError } from '@/utils/apiError';
+import { mzConfirm, mzPrompt } from '@/utils/mzDialog';
 import { renderMarkdown } from '@/utils/markdown';
 import {
   buildWorkspaceTreeCacheKey,
@@ -1454,11 +1455,11 @@ const handleCompactTreeCommand = async (command: string, row: WorkspaceVisibleRo
 const renameCompactTreeEntry = async (entry: any) => {
   if (!entry || !ensureWritableFileSystem()) return;
   try {
-    const { value } = await ElMessageBox.prompt(t('messenger.filesArea.renamePrompt'), t('common.edit'), {
-      confirmButtonText: t('common.confirm'),
-      cancelButtonText: t('common.cancel'),
+    const value = await mzPrompt({
+      title: t('common.edit'),
+      message: t('messenger.filesArea.renamePrompt'),
       inputValue: String(entry.name || ''),
-      inputValidator: (input: string) =>
+      validator: (input: string) =>
         isValidWorkspaceName(input) ? true : t('workspace.name.invalid')
     });
     const name = String(value || '').trim();
@@ -1471,7 +1472,6 @@ const renameCompactTreeEntry = async (entry: any) => {
     await refreshWorkspacePathWithFallback(parent);
     ElMessage.success(t('workspace.rename.success'));
   } catch (error) {
-    if (error === 'cancel' || error === 'close') return;
     showApiError(error, t('workspace.rename.failed'));
   }
 };
@@ -2442,18 +2442,8 @@ const commitWorkspaceTreeVersion = (nextVersion: number | null = pendingWorkspac
   }
 };
 
-const confirmAction = async (message, title = t('common.notice')) => {
-  try {
-    await ElMessageBox.confirm(message, title, {
-      confirmButtonText: t('common.confirm'),
-      cancelButtonText: t('common.cancel'),
-      type: 'warning'
-    });
-    return true;
-  } catch (error) {
-    return false;
-  }
-};
+const confirmAction = async (message, title = t('common.notice')) =>
+  mzConfirm({ title, message, tone: 'warning' });
 
 const promptInput = async (message: string, options: PromptInputOptions = {}) => {
   const {
@@ -2461,17 +2451,12 @@ const promptInput = async (message: string, options: PromptInputOptions = {}) =>
     placeholder = '',
     defaultValue = ''
   } = options;
-  try {
-    const { value } = await ElMessageBox.prompt(message, title, {
-      confirmButtonText: t('common.confirm'),
-      cancelButtonText: t('common.cancel'),
-      inputValue: defaultValue,
-      inputPlaceholder: placeholder
-    });
-    return value;
-  } catch (error) {
-    return null;
-  }
+  return mzPrompt({
+    title,
+    message,
+    inputValue: defaultValue,
+    placeholder
+  });
 };
 
 const loadWorkspace = async ({

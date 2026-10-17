@@ -1,31 +1,29 @@
-import { ElMessageBox, type ElMessageBoxOptions } from 'element-plus';
+import { mzConfirm, type MzDialogOptions } from '@/utils/mzDialog';
 
-
-const isCancelLikeError = (error: unknown): boolean => {
-  const action =
-    typeof error === 'string'
-      ? error
-      : typeof (error as { action?: unknown })?.action === 'string'
-        ? String((error as { action?: unknown }).action)
-        : '';
-  return action === 'cancel' || action === 'close';
+/**
+ * 统一的确认弹窗：走蜂巢主题弹窗（mzConfirm），取消一律返回 false。
+ *
+ * 历史调用传的是 ElMessageBox 风格的第三参（type / confirmButtonText /
+ * cancelButtonText），这里做一层翻译，避免调用方因换组件丢掉按钮文案与语义：
+ * `type: 'warning' | 'error'` → 主题弹窗的 warning / danger 色调。
+ */
+type LegacyMessageBoxOptions = MzDialogOptions & {
+  type?: 'warning' | 'info' | 'success' | 'error' | 'question';
+  confirmButtonText?: string;
+  cancelButtonText?: string;
 };
 
 export const confirmWithFallback = async (
   message: string,
   title: string,
-  options: ElMessageBoxOptions = {}
-): Promise<boolean> => {
-  try {
-    await ElMessageBox.confirm(message, title, options);
-    return true;
-  } catch (error) {
-    if (isCancelLikeError(error)) {
-      return false;
-    }
-    if (false && typeof window !== 'undefined' && typeof window.confirm === 'function') {
-      return window.confirm(`${title}\n\n${message}`);
-    }
-    return false;
-  }
-};
+  options: LegacyMessageBoxOptions = {}
+): Promise<boolean> =>
+  mzConfirm({
+    title,
+    message,
+    tone:
+      options.tone ??
+      (options.type === 'error' ? 'danger' : options.type === 'warning' ? 'warning' : 'default'),
+    confirmText: options.confirmText || options.confirmButtonText || '',
+    cancelText: options.cancelText || options.cancelButtonText || ''
+  });

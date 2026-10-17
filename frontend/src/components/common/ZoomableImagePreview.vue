@@ -282,9 +282,7 @@ function handlePointerMove(event: PointerEvent) {
 }
 
 function handleWheel(event: WheelEvent) {
-  if (!event.ctrlKey && !event.metaKey) {
-    return;
-  }
+  // 滚轮直接缩放（无需按 Ctrl），并以光标所在点为锚点；平移交给拖拽。
   event.preventDefault();
   const direction = event.deltaY < 0 ? WHEEL_ZOOM_STEP : -WHEEL_ZOOM_STEP;
   zoomAroundPoint(scale.value + direction, event.clientX, event.clientY);

@@ -141,11 +141,12 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
-import { ElMessage, ElMessageBox } from 'element-plus';
+import { ElMessage } from 'element-plus';
 
 import { useI18n } from '@/i18n';
 import { useAdminStore } from '@/stores/admin';
 import { showApiError } from '@/utils/apiError';
+import { mzConfirm } from '@/utils/mzDialog';
 
 const adminStore = useAdminStore();
 const { t } = useI18n();
@@ -232,20 +233,13 @@ const handleResetPassword = async (row) => {
     ElMessage.warning(t('admin.users.resetPassword.required'));
     return;
   }
-  try {
-    // 重置前二次确认，避免误操作
-    await ElMessageBox.confirm(
-      t('admin.users.resetPassword.confirm', { name: row.username }),
-      t('common.notice'),
-      {
-        type: 'warning',
-        confirmButtonText: t('common.confirm'),
-        cancelButtonText: t('common.cancel')
-      }
-    );
-  } catch (error) {
-    return;
-  }
+  // 重置前二次确认，避免误操作
+  const confirmed = await mzConfirm({
+    title: t('common.notice'),
+    message: t('admin.users.resetPassword.confirm', { name: row.username }),
+    tone: 'warning'
+  });
+  if (!confirmed) return;
   resetLoading[row.id] = true;
   try {
     await adminStore.resetUserPassword(row.id, { password: nextPassword });

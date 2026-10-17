@@ -155,7 +155,7 @@
 
 <script setup lang="ts">
 import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
-import { ElMessage, ElMessageBox } from 'element-plus';
+import { ElMessage } from 'element-plus';
 
 import { useI18n } from '@/i18n';
 import type { InterlinkShadowWorkspace } from '@/api/interlink';
@@ -167,6 +167,7 @@ import {
   resolveWorkspaceResourcePreviewKind
 } from '@/utils/workspaceResourcePreview';
 import { saveObjectUrlAsFile } from '@/utils/workspaceResourceCards';
+import { mzConfirm, mzPrompt } from '@/utils/mzDialog';
 import WorkspaceNewFileDialog, {
   type WorkspaceNewFileTemplate
 } from '@/components/chat/WorkspaceNewFileDialog.vue';
@@ -805,17 +806,13 @@ const handleCreateEntry = async (kind: 'dir' | 'file', row: WorkspaceVisibleRow 
     return;
   }
   try {
-    const { value } = await ElMessageBox.prompt(
-      t('messenger.filesArea.newDirPrompt'),
-      t('messenger.filesArea.newDir'),
-      {
-        confirmButtonText: t('common.confirm'),
-        cancelButtonText: t('common.cancel'),
-        inputPlaceholder: t('messenger.filesArea.namePlaceholder'),
-        inputValidator: (input: string) =>
-          isValidWorkspaceEntryName(input) ? true : t('messenger.filesArea.invalidName')
-      }
-    );
+    const value = await mzPrompt({
+      title: t('messenger.filesArea.newDir'),
+      message: t('messenger.filesArea.newDirPrompt'),
+      placeholder: t('messenger.filesArea.namePlaceholder'),
+      validator: (input: string) =>
+        isValidWorkspaceEntryName(input) ? true : t('messenger.filesArea.invalidName')
+    });
     const name = String(value || '').trim();
     if (!name) return;
     busy.value = true;
@@ -826,7 +823,6 @@ const handleCreateEntry = async (kind: 'dir' | 'file', row: WorkspaceVisibleRow 
     scheduleStatsRefresh();
     ElMessage.success(t('messenger.filesArea.newDirSuccess'));
   } catch (error) {
-    if (error === 'cancel' || error === 'close') return;
     if (error instanceof Error || (error as { response?: unknown })?.response) {
       ElMessage.error(resolveWorkspaceErrorMessage(error, t('common.requestFailed')));
     }
@@ -949,11 +945,11 @@ const runAction = async (action: () => Promise<void>, fallback: string) => {
 
 const renameEntry = async (row: WorkspaceVisibleRow) => {
   try {
-    const { value } = await ElMessageBox.prompt(t('messenger.filesArea.renamePrompt'), t('common.edit'), {
-      confirmButtonText: t('common.confirm'),
-      cancelButtonText: t('common.cancel'),
+    const value = await mzPrompt({
+      title: t('common.edit'),
+      message: t('messenger.filesArea.renamePrompt'),
       inputValue: row.name,
-      inputValidator: (input: string) =>
+      validator: (input: string) =>
         isValidWorkspaceEntryName(input) ? true : t('messenger.filesArea.invalidName')
     });
     const nextName = String(value || '').trim();
@@ -966,7 +962,6 @@ const renameEntry = async (row: WorkspaceVisibleRow) => {
     await refreshDirectory(parent);
     ElMessage.success(t('messenger.filesArea.renameSuccess'));
   } catch (error) {
-    if (error === 'cancel' || error === 'close') return;
     if ((error as { response?: unknown })?.response || error instanceof Error) {
       ElMessage.error(resolveWorkspaceErrorMessage(error, t('common.requestFailed')));
     }
@@ -975,24 +970,21 @@ const renameEntry = async (row: WorkspaceVisibleRow) => {
   }
 };
 
-const confirmDelete = async (count: number, name?: string) => {
+const confirmDelete = async (count: number, name?: string): Promise<boolean> => {
   const message = name
     ? t('messenger.filesArea.deleteConfirm', { name })
     : t('messenger.filesArea.batchDeleteConfirm', { count });
-  await ElMessageBox.confirm(message, t('common.delete'), {
-    confirmButtonText: t('common.delete'),
-    cancelButtonText: t('common.cancel'),
-    type: 'warning',
-    confirmButtonClass: 'el-button--danger'
+  return mzConfirm({
+    title: t('common.delete'),
+    message,
+    confirmText: t('common.delete'),
+    cancelText: t('common.cancel'),
+    tone: 'danger'
   });
 };
 
 const deleteEntry = async (row: WorkspaceVisibleRow) => {
-  try {
-    await confirmDelete(1, row.name);
-  } catch (error) {
-    return;
-  }
+  if (!(await confirmDelete(1, row.name))) return;
   busy.value = true;
   try {
     if (remoteInterlinkActive.value) await remoteMutation('workspace.delete', { path: row.path });
@@ -1011,11 +1003,7 @@ const deleteEntry = async (row: WorkspaceVisibleRow) => {
 const handleBatchDelete = async () => {
   const paths = selectedList.value.slice();
   if (!paths.length) return;
-  try {
-    await confirmDelete(paths.length);
-  } catch (error) {
-    return;
-  }
+  if (!(await confirmDelete(paths.length))) return;
   busy.value = true;
   try {
     const outcome = await deleteWorkspacePaths(paths);
@@ -1360,19 +1348,16 @@ const handleEditorSaved = async (payload?: { path?: string }) => {
 // ------------------------------------------------------------ clear workspace
 
 const handleClearWorkspace = async () => {
-  try {
-    await ElMessageBox.confirm(
-      t('messenger.filesArea.clearWarning'),
-      t('messenger.filesArea.clear'),
-      {
-        confirmButtonText: t('common.confirm'),
-        cancelButtonText: t('common.cancel'),
-        type: 'warning'
-      }
-    );
-  } catch (error) {
-    return;
-  }
+  // 高危险动作：要求输入确认语「清空」才放行（e2e §6.2-11 依赖这条交互）。
+  const phrase = t('messenger.filesArea.clearPhrase');
+  const value = await mzPrompt({
+    title: t('messenger.filesArea.clear'),
+    message: `${t('messenger.filesArea.clearWarning')} ${t('messenger.filesArea.clearPrompt', { phrase })}`,
+    placeholder: phrase,
+    validator: (input: string) =>
+      String(input || '').trim() === phrase ? true : t('messenger.filesArea.clearMismatch')
+  });
+  if (String(value || '').trim() !== phrase) return;
   busy.value = true;
   try {
     await clearWorkspaceRoot();

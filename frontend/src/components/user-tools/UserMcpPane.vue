@@ -293,7 +293,8 @@
 </template>
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
-import { ElMessage, ElMessageBox } from 'element-plus';
+import { ElMessage } from 'element-plus';
+import { mzConfirm } from '@/utils/mzDialog';
 
 import { fetchUserMcpServers, fetchUserMcpTools, saveUserMcpServers } from '@/api/userTools';
 import { useI18n } from '@/i18n';
@@ -770,19 +771,13 @@ const removeServer = async () => {
   const removed = servers.value[selectedIndex.value];
   const removedName =
     removed?.display_name || removed?.name || t('userTools.mcp.server.defaultName');
-  try {
-    await ElMessageBox.confirm(
-      t('userTools.mcp.deleteConfirm', { name: removedName }),
-      t('common.notice'),
-      {
-        confirmButtonText: t('common.delete'),
-        cancelButtonText: t('common.cancel'),
-        type: 'warning'
-      }
-    );
-  } catch (error) {
-    return;
-  }
+  const confirmed = await mzConfirm({
+    title: t('common.notice'),
+    message: t('userTools.mcp.deleteConfirm', { name: removedName }),
+    confirmText: t('common.delete'),
+    tone: 'danger'
+  });
+  if (!confirmed) return;
   servers.value.splice(selectedIndex.value, 1);
   toolsByIndex.value.splice(selectedIndex.value, 1);
   if (!servers.value.length) {

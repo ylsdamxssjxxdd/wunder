@@ -26,11 +26,11 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
-import { ElMessageBox } from 'element-plus';
 import { useI18n } from '@/i18n';
 import type { InterlinkNode } from '@/api/interlink';
 import { resolveAccessToken } from '@/api/requestAuth';
 import { resolveApiBase } from '@/config/runtime';
+import { mzDialog, mzPrompt } from '@/utils/mzDialog';
 import { runInterlinkCommand } from './interlinkCommandRunner';
 import { remoteThreadModel, remoteHistoryText } from './remoteThreadModel';
 
@@ -124,15 +124,22 @@ async function drive(kind: string, extra: Record<string, unknown> = {}) {
   finally { if (current === generation) { busy.value = false; if (succeeded && selected.value) await loadThread(); } }
 }
 async function answer() {
-  try {
-    const { value } = await ElMessageBox.prompt(text('输入待处理的工具审批 ID', 'Enter the pending tool approval ID'), text('工具审批', 'Tool approval'));
-    if (!value.trim()) return;
-    let decision = 'approve_once';
-    try {
-      await ElMessageBox.confirm(text('允许此工具执行一次？也可以明确拒绝。', 'Allow this tool once, or explicitly reject it.'), text('确认', 'Confirm'), { confirmButtonText: text('允许一次', 'Allow once'), cancelButtonText: text('拒绝', 'Reject'), distinguishCancelAndClose: true });
-    } catch (action) { if (action !== 'cancel') return; decision = 'deny'; }
-    await drive('thread.answer', { approval_id: value.trim(), decision });
-  } catch { /* Dialog canceled. */ }
+  const approvalId = String(
+    (await mzPrompt({
+      title: text('工具审批', 'Tool approval'),
+      message: text('输入待处理的工具审批 ID', 'Enter the pending tool approval ID')
+    })) || ''
+  );
+  if (!approvalId.trim()) return;
+  // 拒绝（cancel）走 deny；关闭弹窗（close）等于放弃作答。
+  const choice = await mzDialog({
+    title: text('确认', 'Confirm'),
+    message: text('允许此工具执行一次？也可以明确拒绝。', 'Allow this tool once, or explicitly reject it.'),
+    confirmText: text('允许一次', 'Allow once'),
+    cancelText: text('拒绝', 'Reject')
+  });
+  if (choice.action === 'close') return;
+  await drive('thread.answer', { approval_id: approvalId.trim(), decision: choice.action === 'cancel' ? 'deny' : 'approve_once' });
 }
 function open() { visible.value = true; void reload(); }
 watch([target, () => props.workspaceId], () => { stop(); visible.value = false; selected.value = ''; history.value = ''; });

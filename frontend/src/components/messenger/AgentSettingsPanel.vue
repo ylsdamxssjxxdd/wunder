@@ -390,7 +390,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import type { PropType } from 'vue';
-import { ElLoading, ElMessage, ElMessageBox } from 'element-plus';
+import { ElLoading, ElMessage } from 'element-plus';
 
 import { listAgentModels } from '@/api/agents';
 import AgentDependencyNotice from '@/components/agent/AgentDependencyNotice.vue';
@@ -415,6 +415,7 @@ import {
   resolveAgentDependencyStatus
 } from '@/utils/agentDependencyStatus';
 import { normalizeAgentPresetQuestions } from '@/utils/agentPresetQuestions';
+import { mzConfirm } from '@/utils/mzDialog';
 import {
   canonicalizeAgentToolName,
   normalizeAgentToolNamesForSettings,
@@ -1080,13 +1081,12 @@ const handlePrivateCompanionFileChange = async (event: Event) => {
 
 const removePrivateCompanion = async (item: CompanionPackageRecord) => {
   const name = String(item.displayName || item.id || '').trim();
-  try {
-    await ElMessageBox.confirm(t('companions.deleteConfirm', { name }), t('common.delete'), {
-      type: 'warning'
-    });
-  } catch {
-    return;
-  }
+  const confirmed = await mzConfirm({
+    title: t('common.delete'),
+    message: t('companions.deleteConfirm', { name }),
+    tone: 'danger'
+  });
+  if (!confirmed) return;
   try {
     await companionStore.removeCompanion(item.id);
     if (isAvatarDialogCompanionSelected(item)) {

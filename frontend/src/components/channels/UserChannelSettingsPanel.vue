@@ -357,7 +357,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
-import { ElMessage, ElMessageBox } from 'element-plus';
+import { ElMessage } from 'element-plus';
 
 import {
   deleteChannelAccount,
@@ -372,6 +372,7 @@ import {
 } from '@/api/channels';
 import { useI18n } from '@/i18n';
 import { showApiError } from '@/utils/apiError';
+import { mzConfirm } from '@/utils/mzDialog';
 
 const props = defineProps({
   mode: {
@@ -2601,15 +2602,12 @@ const removeAccount = async () => {
     return;
   }
 
-  try {
-    await ElMessageBox.confirm(t('channels.config.removeConfirm'), t('common.notice'), {
-      confirmButtonText: t('common.confirm'),
-      cancelButtonText: t('common.cancel'),
-      type: 'warning'
-    });
-  } catch (error) {
-    return;
-  }
+  const confirmed = await mzConfirm({
+    title: t('common.notice'),
+    message: t('channels.config.removeConfirm'),
+    tone: 'warning'
+  });
+  if (!confirmed) return;
 
   saving.value = true;
   try {

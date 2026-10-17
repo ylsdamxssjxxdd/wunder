@@ -222,11 +222,12 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { ElMessage, ElMessageBox } from 'element-plus';
+import { ElMessage } from 'element-plus';
 import { createAgentMemory, deleteAgentMemory, listAgentMemories, replicateAgentMemories, updateAgentMemory } from '@/api/memory';
 import { useI18n } from '@/i18n';
 import { useAgentStore } from '@/stores/agents';
 import { resolveApiError } from '@/utils/apiError';
+import { mzConfirm } from '@/utils/mzDialog';
 
 type MemoryItem = Record<string, any>;
 
@@ -449,10 +450,6 @@ function getMemoryPreview(item: MemoryItem | null | undefined): string {
   return content.length > 140 ? `${content.slice(0, 140)}...` : content;
 }
 
-function isActionCanceled(error: unknown): boolean {
-  return error === 'cancel' || error === 'close' || error === 'dismiss';
-}
-
 function resolveRequestError(error: any, fallbackKey: string): string {
   return resolveApiError(error, t(fallbackKey)).message;
 }
@@ -512,12 +509,13 @@ async function saveCurrent(): Promise<void> {
 
 async function removeMemory(memoryId: string, title?: unknown): Promise<void> {
   if (mutating.value || saving.value || !memoryId) return;
+  const confirmed = await mzConfirm({
+    title: t('common.notice'),
+    message: t('messenger.memory.deleteConfirm', { name: String(title || t('messenger.memory.untitled')) }),
+    tone: 'warning'
+  });
+  if (!confirmed) return;
   try {
-    await ElMessageBox.confirm(
-      t('messenger.memory.deleteConfirm', { name: String(title || t('messenger.memory.untitled')) }),
-      t('common.notice'),
-      { type: 'warning' }
-    );
     mutating.value = true;
     await deleteAgentMemory(requestAgentId.value, memoryId);
     if (editingId.value === memoryId) {
@@ -526,7 +524,6 @@ async function removeMemory(memoryId: string, title?: unknown): Promise<void> {
     await loadData();
     ElMessage.success(t('messenger.memory.deleteSuccess'));
   } catch (error: any) {
-    if (isActionCanceled(error)) return;
     const message = resolveRequestError(error, 'common.deleteFailed');
     dialogErrorMessage.value = message;
     errorMessage.value = message;
@@ -572,12 +569,13 @@ async function submitReplicate(): Promise<void> {
   const targetName =
     replicateTargets.value.find((item) => item.id === replicateTargetId.value)?.name || replicateTargetId.value;
 
+  const confirmed = await mzConfirm({
+    title: t('common.notice'),
+    message: t('messenger.memory.replicateConfirm', { name: targetName }),
+    tone: 'warning'
+  });
+  if (!confirmed) return;
   try {
-    await ElMessageBox.confirm(
-      t('messenger.memory.replicateConfirm', { name: targetName }),
-      t('common.notice'),
-      { type: 'warning' }
-    );
     replicateSaving.value = true;
     replicateErrorMessage.value = '';
     errorMessage.value = '';
@@ -588,7 +586,6 @@ async function submitReplicate(): Promise<void> {
     replicateDialogVisible.value = false;
     ElMessage.success(t('messenger.memory.replicateSuccess', { name: targetName }));
   } catch (error: any) {
-    if (isActionCanceled(error)) return;
     const message = resolveRequestError(error, 'common.saveFailed');
     replicateErrorMessage.value = message;
     errorMessage.value = message;

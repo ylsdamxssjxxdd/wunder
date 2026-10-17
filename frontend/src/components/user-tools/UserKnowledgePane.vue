@@ -648,7 +648,8 @@
 
 <script setup lang="ts">
 import { computed, nextTick, reactive, ref, watch } from 'vue';
-import { ElMessage, ElMessageBox } from 'element-plus';
+import { ElMessage } from 'element-plus';
+import { mzConfirm, mzPrompt } from '@/utils/mzDialog';
 
 import {
   fetchUserKnowledgeConfig,
@@ -1578,16 +1579,14 @@ const editBase = () => {
 const deleteBase = async () => {
   const base = activeBase.value;
   if (!base) return;
-  try {
-    const name = base.name || t('knowledge.name.unnamed');
-    await ElMessageBox.confirm(t('knowledge.base.deleteConfirm', { name }), t('common.notice'), {
-      confirmButtonText: t('common.delete'),
-      cancelButtonText: t('common.cancel'),
-      type: 'warning'
-    });
-  } catch (error) {
-    return;
-  }
+  const name = base.name || t('knowledge.name.unnamed');
+  const confirmed = await mzConfirm({
+    title: t('common.notice'),
+    message: t('knowledge.base.deleteConfirm', { name }),
+    confirmText: t('common.delete'),
+    tone: 'danger'
+  });
+  if (!confirmed) return;
   const snapshot = captureKnowledgeSnapshot();
   bases.value.splice(selectedIndex.value, 1);
   if (!bases.value.length) {
@@ -1704,19 +1703,13 @@ const deleteDoc = async (doc) => {
     ElMessage.warning(t('knowledge.doc.selectRequired'));
     return;
   }
-  try {
-    await ElMessageBox.confirm(
-      t('knowledge.doc.deleteConfirm', { name: resolveDocName(doc) }),
-      t('common.notice'),
-      {
-        confirmButtonText: t('common.delete'),
-        cancelButtonText: t('common.cancel'),
-        type: 'warning'
-      }
-    );
-  } catch (error) {
-    return;
-  }
+  const confirmed = await mzConfirm({
+    title: t('common.notice'),
+    message: t('knowledge.doc.deleteConfirm', { name: resolveDocName(doc) }),
+    confirmText: t('common.delete'),
+    tone: 'danger'
+  });
+  if (!confirmed) return;
   try {
     await deleteUserKnowledgeDoc(base.name, doc.doc_id);
     if (activeDocId.value === doc.doc_id) {
@@ -1967,19 +1960,13 @@ const deleteSelectedChunks = async () => {
     ElMessage.warning(t('knowledge.chunk.selectRequired'));
     return;
   }
-  try {
-    await ElMessageBox.confirm(
-      t('knowledge.chunk.deleteBatchConfirm', { count: selected.length }),
-      t('common.notice'),
-      {
-        confirmButtonText: t('common.delete'),
-        cancelButtonText: t('common.cancel'),
-        type: 'warning'
-      }
-    );
-  } catch (error) {
-    return;
-  }
+  const confirmed = await mzConfirm({
+    title: t('common.notice'),
+    message: t('knowledge.chunk.deleteBatchConfirm', { count: selected.length }),
+    confirmText: t('common.delete'),
+    tone: 'danger'
+  });
+  if (!confirmed) return;
   let succeeded = 0;
   let failed = 0;
   for (const index of selected) {
@@ -2143,19 +2130,13 @@ const deleteFile = async (filePath) => {
     ElMessage.warning(t('knowledge.file.saveRequired'));
     return;
   }
-  try {
-    await ElMessageBox.confirm(
-      t('knowledge.file.deleteConfirm', { name: filePath }),
-      t('common.notice'),
-      {
-        confirmButtonText: t('common.delete'),
-        cancelButtonText: t('common.cancel'),
-        type: 'warning'
-      }
-    );
-  } catch (error) {
-    return;
-  }
+  const confirmed = await mzConfirm({
+    title: t('common.notice'),
+    message: t('knowledge.file.deleteConfirm', { name: filePath }),
+    confirmText: t('common.delete'),
+    tone: 'danger'
+  });
+  if (!confirmed) return;
   try {
     await deleteUserKnowledgeFile(base.name, filePath);
     if (activeFile.value === filePath) {
@@ -2182,21 +2163,13 @@ const createFile = async () => {
     ElMessage.warning(t('knowledge.vector.readonly'));
     return;
   }
-  let filename = '';
-  try {
-    const { value } = await ElMessageBox.prompt(
-      t('knowledge.file.newPrompt'),
-      t('knowledge.file.newTitle'),
-      {
-        confirmButtonText: t('common.create'),
-        cancelButtonText: t('common.cancel'),
-        inputValue: 'example.md'
-      }
-    );
-    filename = value || '';
-  } catch (error) {
-    return;
-  }
+  const value = await mzPrompt({
+    title: t('knowledge.file.newTitle'),
+    message: t('knowledge.file.newPrompt'),
+    confirmText: t('common.create'),
+    inputValue: 'example.md'
+  });
+  const filename = value || '';
   const trimmed = filename.trim();
   if (!trimmed) {
     ElMessage.warning(t('userTools.knowledge.file.nameRequired'));

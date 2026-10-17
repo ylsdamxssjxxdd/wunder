@@ -155,6 +155,56 @@ const AIRLOCK_CARVE_SETTLE_MS = 520;
 const TREE_UNLOCK_SEQUENCE = [5, 4, 1, 10];
 const TREE_WRONG_FLASH_MS = 450;
 
+// Build the repeating emergency-panel wall from bounded DOM nodes. A fixed
+// viewport-sized pool keeps the effect cheap while still covering resize.
+const buildHexField = () => {
+  const field = document.querySelector(".airlock-hex-field");
+  if (!field) {
+    return;
+  }
+  const width = Math.max(window.innerWidth || 1280, 320);
+  const height = Math.max(window.innerHeight || 720, 420);
+  const cellWidth = Math.max(126, Math.min(218, width * 0.14));
+  const cellHeight = cellWidth * 0.78;
+  const colStep = cellWidth * 0.86;
+  const rowStep = cellHeight * 0.82;
+  const columns = Math.ceil(width / colStep) + 2;
+  const rows = Math.ceil(height / rowStep) + 2;
+  const fragment = document.createDocumentFragment();
+  for (let row = -1; row < rows; row += 1) {
+    for (let col = -1; col < columns; col += 1) {
+      const cell = document.createElement("div");
+      cell.className = "airlock-hex-cell";
+      const stagger = row % 2 === 0 ? 0 : colStep * 0.43;
+      const x = col * colStep + stagger;
+      const y = row * rowStep;
+      const wave = ((row * 17 + col * 11) % 9 + 9) % 9;
+      cell.style.width = `${cellWidth}px`;
+      cell.style.height = `${cellHeight}px`;
+      cell.style.left = `${x}px`;
+      cell.style.top = `${y}px`;
+      cell.style.setProperty("--hex-delay", `${Math.max(0, wave) * 38}ms`);
+      cell.innerHTML = '<i aria-hidden="true"></i><span>EMERGENCY</span><i aria-hidden="true"></i>';
+      fragment.appendChild(cell);
+    }
+  }
+  field.replaceChildren(fragment);
+  field.classList.remove("is-fading", "is-refilling");
+};
+
+const setHexFieldState = (state) => {
+  const field = document.querySelector(".airlock-hex-field");
+  if (!field) {
+    return;
+  }
+  field.classList.remove("is-fading", "is-refilling");
+  if (state === "fading" || state === "refilling") {
+    // Restart the animation even when a session is restored repeatedly.
+    void field.offsetWidth;
+    field.classList.add(state === "fading" ? "is-fading" : "is-refilling");
+  }
+};
+
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const prefersReducedMotion = () =>
@@ -238,6 +288,7 @@ const completeLogin = ({ grantBeatMs = 0 } = {}) => {
   }
   loginPromise = null;
   loginResolve = null;
+  setHexFieldState("fading");
   void playAirlockOpenSequence(grantBeatMs);
 };
 
@@ -254,6 +305,7 @@ export const logoutAdmin = async () => {
   modal.classList.remove("airlock--open", "airlock--opening", "airlock--carved");
   modal.classList.add("active", "airlock--closing", "airlock--open-doors", "airlock--instant");
   modal.setAttribute("aria-hidden", "false");
+  setHexFieldState("refilling");
   // Jump the doors to the open position without a transition, then re-arm
   // transitions and let them slide shut.
   void modal.offsetWidth;
@@ -371,6 +423,12 @@ export const initAdminAuth = async () => {
   if (!elements.adminLoginModal) {
     return;
   }
+  buildHexField();
+  window.addEventListener("resize", () => {
+    if (!document.querySelector(".airlock-hex-field.is-fading")) {
+      buildHexField();
+    }
+  }, { passive: true });
   document.querySelectorAll(".airlock-node").forEach((node) => {
     node.addEventListener("click", handleTreeNodeClick);
   });

@@ -4,6 +4,8 @@
       <MaintenanceBanner />
       <router-view />
     </div>
+    <!-- 主题弹窗宿主：mzConfirm / mzPrompt 的渲染点，全站只挂一处。 -->
+    <MzDialogHost />
   </div>
 </template>
 
@@ -11,6 +13,7 @@
 import { onBeforeUnmount, onMounted } from 'vue';
 
 import MaintenanceBanner from '@/components/system/MaintenanceBanner.vue';
+import MzDialogHost from '@/components/common/MzDialogHost.vue';
 
 // Keep viewport height stable on legacy browsers that do not support dvh reliably.
 function applyViewportHeightVar() {

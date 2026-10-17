@@ -105,7 +105,8 @@
 
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue';
-import { ElLoading, ElMessage, ElMessageBox } from 'element-plus';
+import { ElLoading, ElMessage } from 'element-plus';
+import { mzConfirm } from '@/utils/mzDialog';
 import type { AxiosProgressEvent } from 'axios';
 
 import WorkspacePanel from '@/components/chat/WorkspacePanel.vue';
@@ -477,19 +478,13 @@ const deleteSkill = async (skill: any) => {
     ElMessage.warning(t('userTools.skills.deleteBuiltinDenied'));
     return;
   }
-  try {
-    await ElMessageBox.confirm(
-      t('userTools.skills.deleteConfirm', { name: skill.name }),
-      t('common.notice'),
-      {
-        confirmButtonText: t('common.delete'),
-        cancelButtonText: t('common.cancel'),
-        type: 'warning'
-      }
-    );
-  } catch {
-    return;
-  }
+  const confirmed = await mzConfirm({
+    title: t('common.notice'),
+    message: t('userTools.skills.deleteConfirm', { name: skill.name }),
+    confirmText: t('common.delete'),
+    tone: 'danger'
+  });
+  if (!confirmed) return;
   deleteLoading.value = true;
   const deleting = ElLoading.service({
     lock: false,

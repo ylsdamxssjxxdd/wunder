@@ -73,7 +73,7 @@ import {
   initMultimodalDebugPanel,
   loadMultimodalDebugPanel,
 } from "./modules/multimodal-debug.js?v=20261011-01";
-import { applyAuthHeaders, getAuthScope, initAdminAuth } from "./modules/admin-auth.js?v=20260926-05";
+import { applyAuthHeaders, getAuthScope, initAdminAuth } from "./modules/admin-auth.js?v=20261017-01";
 
 import { getCurrentLanguage, setLanguage, t } from "./modules/i18n.js?v=20261015-06";
 

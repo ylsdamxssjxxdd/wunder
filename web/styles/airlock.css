@@ -12,6 +12,93 @@
   background: transparent;
 }
 
+/* EVA 风格的六边形隔离墙。每个单元都是独立节点，认证成功时按错落
+   延迟退场，避免把整面背景作为一张图片淡出。 */
+.airlock-hex-field {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  overflow: hidden;
+  pointer-events: none;
+  background: #100306;
+}
+
+.airlock-hex-cell {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  isolation: isolate;
+  color: rgba(24, 3, 6, 0.92);
+  font-family: Impact, Haettenschweiler, "Arial Narrow Bold", sans-serif;
+  font-size: clamp(10px, 1.05vw, 17px);
+  letter-spacing: 0.02em;
+  line-height: 1;
+  clip-path: polygon(13% 0, 87% 0, 100% 50%, 87% 100%, 13% 100%, 0 50%);
+  background: #090204;
+  opacity: 1;
+  transform: scale(1);
+  transform-origin: center;
+  will-change: opacity, transform;
+}
+
+.airlock-hex-cell::before {
+  content: "";
+  position: absolute;
+  inset: 4px;
+  z-index: -1;
+  clip-path: inherit;
+  background:
+    repeating-linear-gradient(0deg, rgba(255, 116, 125, 0.08) 0 1px, transparent 1px 4px),
+    linear-gradient(165deg, #ff2939 0%, #ed1b2c 54%, #c90b1b 100%);
+}
+
+.airlock-hex-cell span {
+  position: relative;
+  z-index: 1;
+  text-shadow: 0 1px 0 rgba(255, 126, 132, 0.2);
+  white-space: nowrap;
+}
+
+.airlock-hex-cell i {
+  position: absolute;
+  left: 50%;
+  width: 0;
+  height: 0;
+  transform: translateX(-50%);
+  border-left: 7px solid transparent;
+  border-right: 7px solid transparent;
+}
+
+.airlock-hex-cell i:first-of-type {
+  top: 12%;
+  border-bottom: 12px solid rgba(20, 2, 5, 0.95);
+}
+
+.airlock-hex-cell i:last-of-type {
+  bottom: 12%;
+  border-top: 12px solid rgba(20, 2, 5, 0.95);
+}
+
+.airlock-hex-field.is-fading .airlock-hex-cell {
+  animation: airlock-hex-fade-out 720ms cubic-bezier(0.2, 0.7, 0.2, 1) forwards;
+  animation-delay: var(--hex-delay, 0ms);
+}
+
+.airlock-hex-field.is-refilling .airlock-hex-cell {
+  animation: airlock-hex-fade-in 760ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  animation-delay: var(--hex-delay, 0ms);
+}
+
+@keyframes airlock-hex-fade-out {
+  from { opacity: 1; transform: scale(1); }
+  to { opacity: 0; transform: scale(0.72); }
+}
+
+@keyframes airlock-hex-fade-in {
+  from { opacity: 0; transform: scale(0.72); }
+  to { opacity: 1; transform: scale(1); }
+}
+
 .airlock.active {
   display: block;
 }
@@ -30,6 +117,7 @@
   overflow: hidden;
   transition: transform 1250ms cubic-bezier(0.72, 0, 0.28, 1) 120ms;
   will-change: transform;
+  z-index: 2;
 }
 
 .airlock-door--left {
@@ -46,7 +134,14 @@
   position: absolute;
   inset: 0;
   /* 纯色一整块：两门完全同色、无边框阴影，闭门时看不到门缝。 */
-  background: #1e293b;
+  background: transparent;
+}
+
+/* 六边形墙承担舱门底色，保留生命树作为解锁图案。 */
+.airlock-deck,
+.airlock-strip,
+.airlock-rivets {
+  display: none;
 }
 
 /* 外侧甲板边框：随门滑动，像舰体开出的门洞。 */
@@ -77,6 +172,7 @@
   height: min(70vh, 560px);
   aspect-ratio: 400 / 640;
   pointer-events: none;
+  z-index: 2;
 }
 
 .airlock-door--left .airlock-tree {
@@ -304,5 +400,11 @@
 
   .airlock-tree-groove {
     transition: none !important;
+  }
+
+  .airlock-hex-field.is-fading .airlock-hex-cell,
+  .airlock-hex-field.is-refilling .airlock-hex-cell {
+    animation-duration: 1ms !important;
+    animation-delay: 0ms !important;
   }
 }

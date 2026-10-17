@@ -34,7 +34,7 @@ for (const action of ['answer', 'free reply', 'stop'] as const) {
       if (action === 'stop') {
         await expect(send).toHaveAttribute('data-mode', 'stop');
         await send.click();
-        const confirm = page.locator('.el-message-box__btns .el-button--primary');
+        const confirm = page.locator('.mz-dialog-foot .is-primary');
         if (await confirm.isVisible()) await confirm.click();
         await expect(send).toHaveAttribute('data-mode', 'send');
         await expect.poll(() => service.turns[0].status).toBe('cancelled');

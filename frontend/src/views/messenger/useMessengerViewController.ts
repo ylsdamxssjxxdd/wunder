@@ -1,6 +1,6 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, onUpdated, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { ElLoading, ElMessage, ElMessageBox } from 'element-plus';
+import { ElLoading, ElMessage } from 'element-plus';
 import { createAgent as createAgentApi, listAgentUserRounds, listRunningAgents } from '@/api/agents';
 import { fetchOrgUnits, updateProfile } from '@/api/auth';
 import { listChannelBindings } from '@/api/channels';
@@ -226,7 +226,6 @@ export function useMessengerViewController(): Record<string, any> {
     downloadWunderWorkspaceFile,
     ElLoading,
     ElMessage,
-    ElMessageBox,
     emitUserToolsUpdated,
     emitWorkspaceRefresh,
     extractPromptToolingPreview,
