@@ -559,6 +559,11 @@ impl PostgresLogStatsStorage for PostgresStorage {
         let mut tx = conn.transaction()?;
         tx.execute("SET LOCAL lock_timeout = '2s'", &[])?;
         tx.execute("SET LOCAL statement_timeout = '20s'", &[])?;
+        // Keep this administrative delete in the same coordination domain as
+        // incremental/full usage reconciliation. Without the shared lock it
+        // can update user_usage_summary concurrently with the reconciler and
+        // turn a short maintenance collision into a row/index lock timeout.
+        log_maintenance::lock_usage(&mut tx, false)?;
         let now = Self::now_ts();
         let tool_wm = read_meta_f64(&mut tx, USAGE_TOOL_WATERMARK_KEY)?.unwrap_or(0.0) as i64;
         let counted: i64 = tx

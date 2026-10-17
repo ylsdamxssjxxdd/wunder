@@ -84,6 +84,45 @@ pub struct NativeTerminal {
     service: Arc<DesktopTerminalService>,
 }
 
+/// Wake the event-driven reader for input, resize or shutdown without polling.
+#[derive(Clone)]
+pub struct NativeTerminalSignal(Arc<tokio::sync::Notify>);
+impl NativeTerminalSignal {
+    pub fn wake(&self) {
+        self.0.notify_one();
+    }
+}
+pub struct NativeTerminalWatch {
+    runtime: Arc<Runtime>,
+    subscription: wunder_server::DesktopTerminalSubscription,
+    signal: NativeTerminalSignal,
+}
+impl NativeTerminalWatch {
+    pub fn signal(&self) -> NativeTerminalSignal {
+        self.signal.clone()
+    }
+    /// None means a local control event or the requested frame deadline.
+    /// No deadline waits without consuming CPU when the terminal is quiet.
+    pub fn next(
+        &mut self,
+        deadline: Option<std::time::Duration>,
+    ) -> Result<Option<NativeTerminalFrame>> {
+        let signal = self.signal.0.clone();
+        let next = self.runtime.block_on(async {
+            tokio::select! {
+                biased;
+                _ = signal.notified() => Ok(None),
+                frame = self.subscription.next() => frame.map(Some),
+                _ = async { match deadline { Some(delay) => tokio::time::sleep(delay).await, None => std::future::pending().await } } => Ok(None),
+            }
+        }).map_err(|message| anyhow!(message))?;
+        Ok(next.map(|frame| {
+            let id = frame.terminal_id.clone();
+            NativeTerminalFrame::from_frame(&id, frame)
+        }))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -389,6 +428,22 @@ mod tests {
 }
 
 impl NativeTerminal {
+    pub fn watch(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        terminal_id: &str,
+    ) -> Result<NativeTerminalWatch> {
+        let subscription = self
+            .service
+            .subscribe(user_id, session_id, terminal_id, 0)
+            .map_err(|message| anyhow!(message))?;
+        Ok(NativeTerminalWatch {
+            runtime: self.runtime.clone(),
+            subscription,
+            signal: NativeTerminalSignal(Arc::new(tokio::sync::Notify::new())),
+        })
+    }
     /// `storage` backs the durable transcript: shell output is spilled in
     /// bounded chunks so a restart can restore what the panel showed before.
     /// `winpty` is the console library to run shells under, when the host has

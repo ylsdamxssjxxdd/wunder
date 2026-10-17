@@ -40,7 +40,7 @@ pub use services::thread_catalog::{
 pub use services::thread_change_feeder::{watch_thread_changes, ThreadChangeFrame};
 pub use services::tools::command_sessions::{
     find_winpty_library, DesktopTerminalBackend, DesktopTerminalFrame, DesktopTerminalService,
-    DesktopTerminalSnapshot, DesktopTerminalStartSpec, DesktopTerminalStatus,
+    DesktopTerminalSnapshot, DesktopTerminalStartSpec, DesktopTerminalStatus, DesktopTerminalSubscription,
 };
 pub use services::user_world::UserWorldRealtimeEvent;
 pub use services::work_state_reset::{

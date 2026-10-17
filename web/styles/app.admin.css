@@ -4714,12 +4714,24 @@
   gap: 12px;
 }
 
+.preset-agents-detail-pane .detail-header > :first-child {
+  min-width: 0;
+}
+
 .detail-actions {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
   flex-wrap: wrap;
+}
+
+.preset-agents-detail-pane .detail-actions {
+  justify-content: flex-end;
+  gap: 6px;
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+  white-space: nowrap;
 }
 
 .detail-title {

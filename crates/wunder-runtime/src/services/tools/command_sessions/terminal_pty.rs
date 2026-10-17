@@ -380,7 +380,9 @@ fn error_text(code: u32) -> &'static str {
 
 /// A `CreateProcessW` environment block: `KEY=VALUE` pairs, NUL separated, with
 /// a trailing NUL for the end of the block.
-fn env_block(entries: &[(String, String)]) -> Vec<u16> {
+pub(super) fn env_block(entries: &[(String, String)]) -> Vec<u16> {
+    let mut entries = entries.iter().collect::<Vec<_>>();
+    entries.sort_unstable_by_key(|(key, _)| key.to_ascii_uppercase());
     let mut block = String::new();
     for (key, value) in entries {
         block.push_str(key);

@@ -6,17 +6,14 @@ export component TerminalDemo inherits TerminalWindow {
     workspace-root: "workspace";
     status: "Running";
     input-ready: true;
-    raw-input: true;
     caret-visible: true;
     caret-row: 2;
     spans: [
         {text: "> echo ready", fg: #e8eef5, row: 0, col: 0, cells: 12},
         {text: "ready", fg: #7fd6a0, row: 1, col: 0, cells: 5},
     ];
-    out property <string> last-command;
     out property <string> last-key;
     accessible-role: groupbox;
-    accessible-description: "command=" + root.last-command + ";key=" + root.last-key;
-    command-submitted(command) => { root.last-command = command; return true; }
+    accessible-description: "key=" + root.last-key;
     key-input(key) => { root.last-key = key; }
 }

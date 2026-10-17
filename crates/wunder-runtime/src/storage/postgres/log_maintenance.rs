@@ -2,10 +2,30 @@
 use super::{PgConn, PgTx};
 use crate::storage::{USAGE_CHAT_WATERMARK_KEY, USAGE_TOOL_WATERMARK_KEY};
 use anyhow::{ensure, Result};
+use std::error::Error;
+use std::fmt;
 use std::time::{Duration, Instant};
 use tokio_postgres::types::ToSql;
 
 pub(super) const ROW_BATCH: i64 = 1024;
+
+/// A cooperative maintenance pass could not acquire the usage-watermark
+/// advisory lock. Callers that can safely defer work use this to avoid
+/// treating normal coordination with reconciliation as a database failure.
+#[derive(Debug)]
+pub(super) struct UsageMaintenanceBusy;
+
+impl fmt::Display for UsageMaintenanceBusy {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("usage maintenance busy; retry on the next pass")
+    }
+}
+
+impl Error for UsageMaintenanceBusy {}
+
+pub(super) fn is_usage_maintenance_busy(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| cause.is::<UsageMaintenanceBusy>())
+}
 
 /// Ceiling on committed batches, independent of the wall clock.  Time is the
 /// real bound; this only stops a loop that never observes it.
@@ -98,7 +118,9 @@ pub(super) fn lock_usage(tx: &mut PgTx<'_>, reconcile: bool) -> Result<()> {
             &[],
         )?
         .get(0);
-    ensure!(acquired, "usage maintenance busy; retry on the next pass");
+    if !acquired {
+        return Err(UsageMaintenanceBusy.into());
+    }
     Ok(())
 }
 

@@ -43,6 +43,7 @@ impl SqliteRetentionStorage for SqliteStorage {
                 deleted,
                 completed: true,
                 swept_until: cutoff_epoch_s,
+                deferred: false,
             });
         }
         // Orphan sweep: log rows whose session vanished from the durable
@@ -160,6 +161,7 @@ impl SqliteRetentionStorage for SqliteStorage {
             deleted,
             completed: true,
             swept_until: cutoff_epoch_s,
+            deferred: false,
         })
     }
 }

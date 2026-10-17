@@ -59,6 +59,7 @@ impl PostgresRetentionStorage for PostgresStorage {
                 deleted,
                 completed: true,
                 swept_until: cutoff_epoch_s,
+                deferred: false,
             });
         }
         // Every source and projection uses the same committed row batches as
@@ -76,6 +77,7 @@ impl PostgresRetentionStorage for PostgresStorage {
                     deleted,
                     completed: true,
                     swept_until: cutoff_epoch_s,
+                    deferred: false,
                 });
             }
             // Spending the budget mid-interval is the normal way a large
@@ -87,6 +89,7 @@ impl PostgresRetentionStorage for PostgresStorage {
                     deleted,
                     completed: false,
                     swept_until,
+                    deferred: slice.deferred,
                 });
             }
         }
@@ -98,6 +101,9 @@ struct SliceOutcome {
     completed: bool,
     /// The swept range now covers the cutoff.
     reached_cutoff: bool,
+    /// The usage advisory lock was busy; defer the next pass without logging
+    /// a storage error.
+    deferred: bool,
 }
 
 impl PostgresStorage {
@@ -111,9 +117,18 @@ impl PostgresStorage {
     ) -> Result<SliceOutcome> {
         let mut conn = self.conn()?;
         let mut tx = log_maintenance::begin(&mut conn)?;
-        let watermark = match read_meta_f64(&mut tx, ORPHAN_SWEEP_WM_KEY)? {
-            Some(value) => value,
-            None => earliest_orphan_source_time(&mut tx, cutoff_epoch_s)?,
+        let watermark = match read_meta_f64(&mut tx, ORPHAN_SWEEP_WM_KEY) {
+            Ok(Some(value)) => value,
+            Ok(None) => earliest_orphan_source_time(&mut tx, cutoff_epoch_s)?,
+            Err(error) if log_maintenance::is_usage_maintenance_busy(&error) => {
+                *swept_until = 0.0;
+                return Ok(SliceOutcome {
+                    completed: false,
+                    reached_cutoff: false,
+                    deferred: true,
+                });
+            }
+            Err(error) => return Err(error),
         };
         tx.commit()?;
         *swept_until = watermark;
@@ -121,6 +136,7 @@ impl PostgresStorage {
             return Ok(SliceOutcome {
                 completed: true,
                 reached_cutoff: true,
+                deferred: false,
             });
         }
         let slice_hi = (watermark + ORPHAN_SLICE_SECONDS).min(cutoff_epoch_s);
@@ -135,13 +151,23 @@ impl PostgresStorage {
             (UsageRows::Chat, "thread_items"),
             (UsageRows::Tool, "tool_logs"),
         ] {
-            let outcome = log_maintenance::delete_usage_rows(
+            let outcome = match log_maintenance::delete_usage_rows(
                 &mut conn,
                 source,
                 &predicate,
                 params,
                 &mut budget,
-            )?;
+            ) {
+                Ok(outcome) => outcome,
+                Err(error) if log_maintenance::is_usage_maintenance_busy(&error) => {
+                    return Ok(SliceOutcome {
+                        completed: false,
+                        reached_cutoff: false,
+                        deferred: true,
+                    });
+                }
+                Err(error) => return Err(error),
+            };
             drained &= outcome.drained;
             if outcome.removed > 0 {
                 *deleted.entry(table.to_string()).or_insert(0) += outcome.removed;
@@ -166,6 +192,7 @@ impl PostgresStorage {
             return Ok(SliceOutcome {
                 completed: false,
                 reached_cutoff: false,
+                deferred: false,
             });
         }
         // Concurrent sweepers can finish out of order, so never regress.
@@ -181,6 +208,7 @@ impl PostgresStorage {
         Ok(SliceOutcome {
             completed: true,
             reached_cutoff: slice_hi >= cutoff_epoch_s,
+            deferred: false,
         })
     }
 

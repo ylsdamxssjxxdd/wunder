@@ -48,6 +48,10 @@ pub const DEFAULT_DELETED_SESSION_LOG_GRACE_HOURS: i64 = 24;
 // Bound each janitor pass. A failed or contended session keeps its durable
 // marker and resumes on a later pass.
 const DELETED_SESSION_LOG_CLEANUP_BATCH: i64 = 4;
+/// A usage reconciliation pass owns an exclusive advisory lock. When orphan
+/// cleanup yields to it, wait before trying again instead of colliding every
+/// minute with the same long-running maintenance transaction.
+const ORPHAN_SWEEP_BUSY_RETRY_S: f64 = 300.0;
 /// Usage summary cache: short TTL, invalidated whenever the tree is marked dirty.
 const USAGE_STATS_TTL_S: f64 = 15.0;
 const USAGE_STATS_MAX_USERS: usize = 128;
@@ -322,6 +326,7 @@ pub struct WorkspaceManager {
     retention_interval_s: f64,
     retention_state: Arc<Mutex<RetentionState>>,
     orphan_sweep_last_ts: Arc<AtomicI64>,
+    orphan_sweep_retry_not_before: Arc<AtomicI64>,
     orphan_sweep_interval_s: f64,
     temp_cleanup_interval_s: f64,
     temp_cleanup_idle_ttl_s: f64,
@@ -379,6 +384,7 @@ impl WorkspaceManager {
             retention_interval_s: 60.0,
             retention_state: Arc::new(Mutex::new(RetentionState::default())),
             orphan_sweep_last_ts: Arc::new(AtomicI64::new(0)),
+            orphan_sweep_retry_not_before: Arc::new(AtomicI64::new(0)),
             orphan_sweep_interval_s: 6.0 * 3600.0,
             temp_cleanup_interval_s: TEMP_FILES_CLEANUP_INTERVAL_S,
             temp_cleanup_idle_ttl_s,
@@ -933,7 +939,12 @@ impl WorkspaceManager {
             let last = self
                 .orphan_sweep_last_ts
                 .load(std::sync::atomic::Ordering::SeqCst) as f64;
-            last <= 0.0 || now - last >= self.orphan_sweep_interval_s
+            let retry_not_before = self
+                .orphan_sweep_retry_not_before
+                .load(std::sync::atomic::Ordering::SeqCst)
+                as f64;
+            (last <= 0.0 || now - last >= self.orphan_sweep_interval_s)
+                && now >= retry_not_before
         };
         // Usage summary reconcile keeps per-user counters exact without any
         // write-path cost; partitions roll forward so new months always have
@@ -983,6 +994,7 @@ impl WorkspaceManager {
         let run_slow_query_report = slow_query_due;
         let state = self.retention_state.clone();
         let orphan_flag = self.orphan_sweep_last_ts.clone();
+        let orphan_retry_not_before = self.orphan_sweep_retry_not_before.clone();
         let usage_flag = self.usage_reconcile_last_ts.clone();
         let partitions_flag = self.partitions_ensure_last_ts.clone();
         let slow_query_flag = self.slow_query_last_ts.clone();
@@ -1009,6 +1021,7 @@ impl WorkspaceManager {
                             run_orphan_sweep_once(
                                 storage.as_ref(),
                                 &orphan_flag,
+                                &orphan_retry_not_before,
                                 orphan_cutoff,
                                 now,
                             );
@@ -1063,7 +1076,13 @@ impl WorkspaceManager {
             }
             cleanup_expired_deleted_session_logs(storage.as_ref(), grace_hours, now);
             if run_orphan_sweep {
-                run_orphan_sweep_once(storage.as_ref(), &orphan_flag, orphan_cutoff, now);
+                run_orphan_sweep_once(
+                    storage.as_ref(),
+                    &orphan_flag,
+                    &orphan_retry_not_before,
+                    orphan_cutoff,
+                    now,
+                );
             }
             if run_usage_reconcile {
                 match storage.reconcile_user_usage(false) {
@@ -3268,7 +3287,13 @@ const ORPHAN_SWEEP_PROGRESS_LOG_INTERVAL_S: i64 = 1800;
 /// Sweep thread/tool log rows whose session no longer exists in the durable
 /// catalog. Only runs when due; the storage layer ignores rows younger than
 /// the cutoff so in-flight sessions are never touched.
-fn run_orphan_sweep_once(storage: &dyn StorageBackend, flag: &AtomicI64, cutoff: f64, now: f64) {
+fn run_orphan_sweep_once(
+    storage: &dyn StorageBackend,
+    flag: &AtomicI64,
+    retry_not_before: &AtomicI64,
+    cutoff: f64,
+    now: f64,
+) {
     match storage.cleanup_orphan_session_logs(cutoff) {
         Ok(result) => {
             let total = result.removed();
@@ -3278,7 +3303,20 @@ fn run_orphan_sweep_once(storage: &dyn StorageBackend, flag: &AtomicI64, cutoff:
                 }
                 // Full sweep: wait the whole interval before running again.
                 flag.store(now as i64, std::sync::atomic::Ordering::SeqCst);
+                retry_not_before.store(0, std::sync::atomic::Ordering::SeqCst);
                 ORPHAN_SWEEP_PROGRESS_LOG_TS.store(0, std::sync::atomic::Ordering::SeqCst);
+                return;
+            }
+            if result.deferred {
+                let retry_at = (now + ORPHAN_SWEEP_BUSY_RETRY_S) as i64;
+                retry_not_before.store(retry_at, std::sync::atomic::Ordering::SeqCst);
+                debug!(
+                    total,
+                    cutoff,
+                    swept_until = result.swept_until,
+                    retry_at,
+                    "orphan session log sweep deferred while usage maintenance is busy"
+                );
                 return;
             }
             // The pass spent its time budget inside one interval. Deleted rows

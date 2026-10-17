@@ -38,7 +38,7 @@ pub use context::NativeContextUsage;
 #[path = "native_terminal.rs"]
 mod terminal;
 pub use terminal::{
-    NativeTerminal, NativeTerminalFrame, NativeTerminalSnapshot, NativeTerminalSpec,
+    NativeTerminal, NativeTerminalFrame, NativeTerminalSnapshot, NativeTerminalSpec, NativeTerminalSignal, NativeTerminalWatch,
 };
 
 #[path = "native_chat_turns.rs"]
@@ -909,6 +909,10 @@ impl NativeDesktop {
     /// Start (or reuse) a terminal session bound to the desktop user.
     pub fn terminal_start(&self, spec: &NativeTerminalSpec) -> Result<DesktopTerminalSnapshot> {
         self.terminal.start(self.user_id(), spec)
+    }
+
+    pub fn terminal_watch(&self, session_id: &str, terminal_id: &str) -> Result<NativeTerminalWatch> {
+        self.terminal.watch(self.user_id(), session_id, terminal_id)
     }
 
     /// Fetch the incremental output frame since `last_seq` for `terminal_id`.

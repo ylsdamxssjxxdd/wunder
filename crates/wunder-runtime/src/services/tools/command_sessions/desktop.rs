@@ -9,7 +9,7 @@
 //! decoded incrementally so multi-byte characters split across chunk
 //! boundaries survive intact (UTF-8 natively, GBK fallback on Windows).
 #[cfg(all(windows, feature = "terminal-pty"))]
-use super::terminal_pty;
+use super::{terminal_conpty, terminal_pty};
 use crate::storage::StorageBackend;
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
@@ -124,14 +124,39 @@ pub enum DesktopTerminalBackend {
 /// The console object, where one exists. Elsewhere this is a placeholder that
 /// can never be filled, so the record layout stays the same on every platform.
 #[cfg(all(windows, feature = "terminal-pty"))]
-type Console = terminal_pty::PtyInner;
+enum Console {
+    Native(Arc<terminal_conpty::NativeConsole>),
+    Legacy(Arc<terminal_pty::PtyInner>),
+}
+#[cfg(all(windows, feature = "terminal-pty"))]
+impl Console {
+    fn set_size(&self, cols: u16, rows: u16) -> Result<(), String> {
+        match self {
+            Self::Native(c) => c.set_size(cols, rows),
+            Self::Legacy(c) => c.set_size(cols, rows),
+        }
+    }
+    fn wait(&self) -> Option<i32> {
+        match self {
+            Self::Native(c) => c.wait(),
+            Self::Legacy(c) => c.wait(),
+        }
+    }
+    fn shutdown(&self) {
+        match self {
+            Self::Native(c) => c.shutdown(),
+            Self::Legacy(c) => c.shutdown(),
+        }
+    }
+}
 #[cfg(not(all(windows, feature = "terminal-pty")))]
 type Console = ();
 
 /// Where keystrokes go.
+#[derive(Clone)]
 enum InputSink {
     /// The shell's stdin pipe: nothing is echoed and no signal can be delivered.
-    Child(ChildStdin),
+    Child(Arc<tokio::sync::Mutex<ChildStdin>>),
     /// The console's input pipe: the shell echoes, and a Ctrl-C byte means
     /// Ctrl-C. Writes block on a small pipe buffer, so they run off the task.
     Console(Arc<File>),
@@ -379,49 +404,99 @@ impl OutputBuffer {
     }
 }
 
-/// Durable transcript spill state for one shell run. Chunks are written in
-/// stream order under the record lock, so `next_chunk` is exactly the ordering
-/// key the restore path reads back after a restart. Storage is best-effort: a
-/// failed write disables further spills instead of disturbing the live stream.
+/// Best-effort durable transcript writer. SQLite never runs under the live
+/// record lock. Both the pending chunk and the writer backlog are bounded.
 struct TranscriptSink {
-    storage: Option<Arc<dyn StorageBackend>>,
-    user_id: String,
-    session_id: String,
+    writer: Option<std::sync::mpsc::SyncSender<TranscriptWrite>>,
+    failed: Arc<std::sync::atomic::AtomicBool>,
     pending: String,
-    next_chunk: i64,
     last_flush: Instant,
+}
+
+enum TranscriptWrite {
+    Chunk {
+        terminal_id: String,
+        seq: u64,
+        text: String,
+    },
+    Flush(std::sync::mpsc::SyncSender<()>),
 }
 
 impl TranscriptSink {
     fn open(storage: Option<Arc<dyn StorageBackend>>, user_id: &str, session_id: &str) -> Self {
-        let base = Self {
-            storage: None,
-            user_id: user_id.to_string(),
-            session_id: session_id.to_string(),
+        let failed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let mut sink = Self {
+            writer: None,
+            failed: failed.clone(),
             pending: String::new(),
-            next_chunk: 0,
             last_flush: Instant::now(),
         };
         let Some(storage) = storage else {
-            return base;
+            return sink;
         };
-        let next_chunk = storage
-            .terminal_transcript_next_chunk(user_id, session_id)
-            .unwrap_or(0);
-        // Pruning once per run keeps the scope bounded without adding a write
-        // to every spill.
-        let _ = storage.prune_terminal_transcript(user_id, session_id, TRANSCRIPT_KEEP_CHUNKS);
-        Self {
-            storage: Some(storage),
-            next_chunk,
-            ..base
+        let user_id = user_id.to_owned();
+        let session_id = session_id.to_owned();
+        // At most 64 output chunks can wait for storage; live output and input
+        // continue even when a local disk is stalled or unavailable.
+        let (tx, rx) = std::sync::mpsc::sync_channel(64);
+        let worker = std::thread::Builder::new()
+            .name("terminal-transcript".into())
+            .stack_size(256 * 1024)
+            .spawn(move || {
+                let mut next_chunk = storage
+                    .terminal_transcript_next_chunk(&user_id, &session_id)
+                    .unwrap_or(0);
+                let _ = storage.prune_terminal_transcript(
+                    &user_id,
+                    &session_id,
+                    TRANSCRIPT_KEEP_CHUNKS,
+                );
+                for event in rx {
+                    match event {
+                        TranscriptWrite::Chunk {
+                            terminal_id,
+                            seq,
+                            text,
+                        } => {
+                            if failed.load(Ordering::Acquire) {
+                                continue;
+                            }
+                            if let Err(error) = storage.upsert_terminal_transcript_block(
+                                &user_id,
+                                &session_id,
+                                &terminal_id,
+                                next_chunk,
+                                seq.min(i64::MAX as u64) as i64,
+                                &text,
+                            ) {
+                                tracing::warn!("terminal transcript write failed: {error}");
+                                failed.store(true, Ordering::Release);
+                            }
+                            next_chunk += 1;
+                            if next_chunk % 128 == 0 {
+                                let _ = storage.prune_terminal_transcript(
+                                    &user_id,
+                                    &session_id,
+                                    TRANSCRIPT_KEEP_CHUNKS,
+                                );
+                            }
+                        }
+                        TranscriptWrite::Flush(done) => {
+                            let _ = done.send(());
+                        }
+                    }
+                }
+            });
+        if worker.is_ok() {
+            sink.writer = Some(tx);
         }
+        sink
     }
 
-    /// Queue decoded output for the next spill. The durable copy keeps every
-    /// byte, including what the in-memory ring had to drop.
     fn queue(&mut self, text: &str) {
-        self.pending.push_str(text);
+        if self.writer.is_some() && !self.failed.load(Ordering::Acquire) {
+            self.pending.push_str(text);
+        }
     }
 
     fn spill(&mut self, terminal_id: &str, seq: u64, force: bool) {
@@ -434,24 +509,24 @@ impl TranscriptSink {
         {
             return;
         }
-        let Some(storage) = self.storage.clone() else {
-            return;
-        };
-        // Take first so a chunk that landed is never re-sent.
         let text = std::mem::take(&mut self.pending);
-        let chunk_index = self.next_chunk;
-        self.next_chunk += 1;
         self.last_flush = Instant::now();
-        if let Err(error) = storage.upsert_terminal_transcript_block(
-            &self.user_id,
-            &self.session_id,
-            terminal_id,
-            chunk_index,
-            seq.min(i64::MAX as u64) as i64,
-            &text,
-        ) {
-            tracing::warn!("terminal transcript spill failed: {error}");
-            self.storage = None;
+        if let Some(writer) = &self.writer {
+            if writer
+                .try_send(TranscriptWrite::Chunk {
+                    terminal_id: terminal_id.into(),
+                    seq,
+                    text,
+                })
+                .is_err()
+            {
+                // Persistence is optional. Bound memory instead of blocking
+                // the interactive console behind a stalled storage device.
+                tracing::warn!(
+                    "terminal transcript storage backlog exceeded; recording stopped for this run"
+                );
+                self.writer = None;
+            }
         }
     }
 }
@@ -469,6 +544,7 @@ struct TerminalRecord {
     size: (u16, u16),
     cancel: CancellationToken,
     transcript: TranscriptSink,
+    changes: tokio::sync::watch::Sender<u64>,
 }
 
 impl TerminalRecord {
@@ -479,6 +555,12 @@ impl TerminalRecord {
         self.transcript.queue(text);
         self.transcript
             .spill(&self.snapshot.terminal_id, seq, force);
+        self.changed();
+    }
+
+    fn changed(&self) {
+        self.changes
+            .send_modify(|revision| *revision = revision.wrapping_add(1));
     }
 
     fn spill_transcript(&mut self) {
@@ -504,6 +586,40 @@ impl TerminalRecord {
             exit_code: self.snapshot.exit_code,
             error: self.snapshot.error.clone(),
         }
+    }
+}
+
+/// One bounded change signal per subscriber; output remains in the existing
+/// sequence-addressed ring. Register before reading to avoid lost wakeups.
+pub struct DesktopTerminalSubscription {
+    record: Arc<Mutex<TerminalRecord>>,
+    changes: tokio::sync::watch::Receiver<u64>,
+    last_seq: u64,
+    initial: bool,
+}
+impl DesktopTerminalSubscription {
+    pub async fn next(&mut self) -> Result<DesktopTerminalFrame, String> {
+        if !self.initial {
+            self.changes
+                .changed()
+                .await
+                .map_err(|_| "terminal subscription closed")?;
+        }
+        self.initial = false;
+        self.changes.borrow_and_update();
+        let guard = self.record.lock();
+        let (text, truncated) = guard.output.collect_after(self.last_seq);
+        self.last_seq = guard.output.seq;
+        Ok(DesktopTerminalFrame {
+            terminal_id: guard.snapshot.terminal_id.clone(),
+            seq: self.last_seq,
+            truncated,
+            text,
+            status: guard.snapshot.status,
+            backend: guard.snapshot.backend,
+            exit_code: guard.snapshot.exit_code,
+            error: guard.snapshot.error.clone(),
+        })
     }
 }
 
@@ -639,6 +755,7 @@ impl DesktopTerminalService {
             size: (DEFAULT_COLS, DEFAULT_ROWS),
             cancel: CancellationToken::new(),
             transcript,
+            changes: tokio::sync::watch::channel(0).0,
         }));
         self.terminals
             .insert(terminal_id.clone(), Arc::clone(&record));
@@ -678,6 +795,23 @@ impl DesktopTerminalService {
         self.frame_after(user_id, session_id, terminal_id, last_seq)
     }
 
+    pub fn subscribe(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        terminal_id: &str,
+        last_seq: u64,
+    ) -> Result<DesktopTerminalSubscription, String> {
+        let record = self.scoped_record(user_id, session_id, terminal_id)?;
+        let changes = record.lock().changes.subscribe();
+        Ok(DesktopTerminalSubscription {
+            record,
+            changes,
+            last_seq,
+            initial: true,
+        })
+    }
+
     pub async fn write_stdin(
         &self,
         user_id: &str,
@@ -690,44 +824,38 @@ impl DesktopTerminalService {
         if status != DesktopTerminalStatus::Running && status != DesktopTerminalStatus::Starting {
             return Err("terminal has exited".to_string());
         }
-        let terminal_io = {
-            let record_guard = record.lock();
-            let mut input_guard = record_guard.input.lock();
-            match input_guard.as_mut() {
-                Some(InputSink::Child(stdin)) => {
-                    stdin
-                        .write_all(input)
-                        .await
-                        .map_err(|error| format!("failed to write terminal stdin: {error}"))?;
-                    None
-                }
-                Some(InputSink::Console(file)) => Some((
-                    BlockingTerminalIo::Console(Arc::clone(file)),
-                    input.to_vec(),
-                )),
-                #[cfg(unix)]
-                Some(InputSink::Pty(pty)) => {
-                    Some((BlockingTerminalIo::Pty(Arc::clone(pty)), input.to_vec()))
-                }
-                None => return Err("terminal stdin is unavailable".to_string()),
-            }
+        // Release the record before any I/O: a full input pipe must never
+        // prevent output readers or subscribers from acquiring the record.
+        let sink = {
+            let guard = record.lock();
+            let sink = guard.input.lock().clone();
+            sink.ok_or("terminal stdin is unavailable")?
         };
-        // A console write blocks once its pipe buffer fills, so it goes off the
-        // task rather than stalling whatever else shares it.
-        if let Some((target, bytes)) = terminal_io {
-            tokio::task::spawn_blocking(move || {
-                let result = match target {
-                    BlockingTerminalIo::Console(file) => {
-                        std::io::Write::write_all(&mut &*file, &bytes)
-                    }
-                    #[cfg(unix)]
-                    BlockingTerminalIo::Pty(pty) => pty.input.lock().write_all(&bytes),
-                };
-                result.map_err(|error| format!("failed to write terminal input: {error}"))
-            })
-            .await
-            .map_err(|error| format!("terminal input task failed: {error}"))??;
-        }
+        let target = match sink {
+            InputSink::Child(stdin) => {
+                stdin
+                    .lock()
+                    .await
+                    .write_all(input)
+                    .await
+                    .map_err(|error| format!("failed to write terminal stdin: {error}"))?;
+                return Ok(());
+            }
+            InputSink::Console(file) => BlockingTerminalIo::Console(file),
+            #[cfg(unix)]
+            InputSink::Pty(pty) => BlockingTerminalIo::Pty(pty),
+        };
+        let bytes = input.to_vec();
+        tokio::task::spawn_blocking(move || {
+            let result = match target {
+                BlockingTerminalIo::Console(file) => std::io::Write::write_all(&mut &*file, &bytes),
+                #[cfg(unix)]
+                BlockingTerminalIo::Pty(pty) => pty.input.lock().write_all(&bytes),
+            };
+            result.map_err(|error| format!("failed to write terminal input: {error}"))
+        })
+        .await
+        .map_err(|error| format!("terminal input task failed: {error}"))??;
         Ok(())
     }
 
@@ -860,12 +988,22 @@ impl DesktopTerminalService {
 
     pub fn close(&self, user_id: &str, session_id: &str, terminal_id: &str) -> Result<(), String> {
         let record = self.scoped_record(user_id, session_id, terminal_id)?;
-        {
+        let writer = {
             let mut guard = record.lock();
             // The record is dropped right after this, so the buffered tail has
             // to reach storage before the cancel.
             guard.spill_transcript();
             guard.cancel.cancel();
+            guard.snapshot.status = DesktopTerminalStatus::Exited;
+            guard.changed();
+            guard.transcript.writer.clone()
+        };
+        // Closing is a durability boundary. Wait outside all record locks.
+        if let Some(writer) = writer {
+            let (done, wait) = std::sync::mpsc::sync_channel(1);
+            if writer.send(TranscriptWrite::Flush(done)).is_ok() {
+                let _ = wait.recv();
+            }
         }
         self.terminals.remove(terminal_id);
         self.changed.notify_waiters();
@@ -959,10 +1097,10 @@ impl DesktopTerminalService {
         active: Arc<AtomicUsize>,
         changed: Arc<Notify>,
         _terminal_id: String,
-        session: terminal_pty::PtySession,
+        session: ConsoleSession,
         record: Arc<Mutex<TerminalRecord>>,
     ) {
-        let terminal_pty::PtySession {
+        let ConsoleSession {
             console,
             input,
             output,
@@ -975,8 +1113,12 @@ impl DesktopTerminalService {
             guard.snapshot.backend = DesktopTerminalBackend::Console;
             *guard.input.lock() = Some(InputSink::Console(Arc::clone(&input)));
             guard.console = Some(Arc::clone(&console));
+            guard.changed();
         }
 
+        // A resize can arrive while CreateProcess is still starting.
+        let size = record.lock().size;
+        let _ = console.set_size(size.0, size.1);
         let reader_record = Arc::clone(&record);
         let reader_changed = Arc::clone(&changed);
         let reader_cancel = cancel.clone();
@@ -998,6 +1140,7 @@ impl DesktopTerminalService {
                 None
             }
         };
+        console.shutdown();
         let _ = reader.await;
         {
             let mut guard = record.lock();
@@ -1006,11 +1149,42 @@ impl DesktopTerminalService {
             guard.snapshot.exit_code = exit;
             guard.console = None;
             guard.spill_transcript();
+            guard.changed();
         }
         active.fetch_sub(1, Ordering::AcqRel);
         changed.notify_waiters();
     }
 
+    /// Unix always runs the shell on a local PTY, so it gets its own body: the
+    /// console/pipes fallback below is only reachable on Windows and would be
+    /// dead code (and leave the console arguments unused) on Unix.
+    #[cfg(unix)]
+    async fn spawn_and_pump(
+        active: Arc<AtomicUsize>,
+        changed: Arc<Notify>,
+        _terminal_id: String,
+        spec: DesktopTerminalStartSpec,
+        _winpty: Option<PathBuf>,
+        record: Arc<Mutex<TerminalRecord>>,
+    ) {
+        let size = record.lock().size;
+        match open_unix_pty(&spec, size) {
+            Ok(session) => Self::pump_unix_pty(active, changed, session, record).await,
+            Err(error) => {
+                let mut guard = record.lock();
+                guard.snapshot.status = DesktopTerminalStatus::FailedToStart;
+                guard.snapshot.ended_at = Some(Utc::now());
+                guard.snapshot.error = Some(format!("failed to open local PTY: {error}"));
+                guard.changed();
+                active.fetch_sub(1, Ordering::AcqRel);
+                changed.notify_waiters();
+            }
+        }
+    }
+
+    /// Windows prefers a console when the `terminal-pty` backend is available
+    /// and falls back to pipes otherwise.
+    #[cfg(not(unix))]
     async fn spawn_and_pump(
         active: Arc<AtomicUsize>,
         changed: Arc<Notify>,
@@ -1019,29 +1193,10 @@ impl DesktopTerminalService {
         winpty: Option<PathBuf>,
         record: Arc<Mutex<TerminalRecord>>,
     ) {
-        #[cfg(unix)]
+        #[cfg(all(windows, feature = "terminal-pty"))]
         {
             let size = record.lock().size;
-            match open_unix_pty(&spec, size) {
-                Ok(session) => {
-                    Self::pump_unix_pty(active, changed, session, record).await;
-                    return;
-                }
-                Err(error) => {
-                    let mut guard = record.lock();
-                    guard.snapshot.status = DesktopTerminalStatus::FailedToStart;
-                    guard.snapshot.ended_at = Some(Utc::now());
-                    guard.snapshot.error = Some(format!("failed to open local PTY: {error}"));
-                    active.fetch_sub(1, Ordering::AcqRel);
-                    changed.notify_waiters();
-                    return;
-                }
-            }
-        }
-        #[cfg(all(windows, feature = "terminal-pty"))]
-        if let Some(dll) = winpty.as_deref() {
-            let size = record.lock().size;
-            match open_console(dll, &spec, size) {
+            match open_console(winpty.as_deref(), &spec, size) {
                 Ok(session) => {
                     Self::pump_console(active, changed, terminal_id, session, record).await;
                     return;
@@ -1066,6 +1221,7 @@ impl DesktopTerminalService {
                 guard.snapshot.status = DesktopTerminalStatus::FailedToStart;
                 guard.snapshot.ended_at = Some(Utc::now());
                 guard.snapshot.error = Some(error.clone());
+                guard.changed();
                 active.fetch_sub(1, Ordering::AcqRel);
                 changed.notify_waiters();
                 return;
@@ -1076,7 +1232,9 @@ impl DesktopTerminalService {
             let mut guard = record.lock();
             guard.snapshot.status = DesktopTerminalStatus::Running;
             let stdin = child.as_mut().and_then(|child| child.stdin.take());
-            *guard.input.lock() = stdin.map(|stdin| InputSink::Child(stdin));
+            *guard.input.lock() =
+                stdin.map(|stdin| InputSink::Child(Arc::new(tokio::sync::Mutex::new(stdin))));
+            guard.changed();
         }
 
         let stdout = child.as_mut().and_then(|child| child.stdout.take());
@@ -1152,6 +1310,7 @@ impl DesktopTerminalService {
             guard.snapshot.exit_code = exit_code;
             guard.snapshot.error = error;
             guard.spill_transcript();
+            guard.changed();
         }
         active.fetch_sub(1, Ordering::AcqRel);
         changed.notify_waiters();
@@ -1167,7 +1326,7 @@ impl DesktopTerminalService {
         let UnixPtySession {
             handle,
             reader,
-            mut child,
+            child,
         } = session;
         let cancel = record.lock().cancel.clone();
         {
@@ -1176,6 +1335,7 @@ impl DesktopTerminalService {
             guard.snapshot.backend = DesktopTerminalBackend::Pty;
             *guard.input.lock() = Some(InputSink::Pty(Arc::clone(&handle)));
             guard.unix_pty = Some(Arc::clone(&handle));
+            guard.changed();
         }
 
         let reader_record = Arc::clone(&record);
@@ -1209,6 +1369,7 @@ impl DesktopTerminalService {
             guard.snapshot.exit_code = exit;
             guard.unix_pty = None;
             guard.spill_transcript();
+            guard.changed();
         }
         active.fetch_sub(1, Ordering::AcqRel);
         changed.notify_waiters();
@@ -1232,7 +1393,7 @@ fn open_unix_pty(
     spec: &DesktopTerminalStartSpec,
     size: (u16, u16),
 ) -> Result<UnixPtySession, String> {
-    use portable_pty::{native_pty_system, CommandBuilder, PtySize, SlavePty};
+    use portable_pty::{native_pty_system, CommandBuilder, PtySize};
     let pair = native_pty_system()
         .openpty(PtySize {
             rows: size.1.max(1),
@@ -1245,6 +1406,8 @@ fn open_unix_pty(
     let program = launch.bash_bin.unwrap_or_else(|| PathBuf::from("bash"));
     let mut command = CommandBuilder::new(program);
     command.arg("--norc");
+    command.env("TERM", "xterm-256color");
+    command.env("COLORTERM", "truecolor");
     command.cwd(&spec.cwd);
     let child = pair
         .slave
@@ -1407,21 +1570,44 @@ fn pipe_shell_command(spec: &DesktopTerminalStartSpec) -> tokio::process::Comman
 
 /// Start a shell on a real console instead of three pipes.
 #[cfg(all(windows, feature = "terminal-pty"))]
+struct ConsoleSession {
+    console: Arc<Console>,
+    input: File,
+    output: File,
+}
+
+#[cfg(all(windows, feature = "terminal-pty"))]
 fn open_console(
-    dll: &Path,
+    dll: Option<&Path>,
     spec: &DesktopTerminalStartSpec,
     size: (u16, u16),
-) -> Result<terminal_pty::PtySession, String> {
+) -> Result<ConsoleSession, String> {
     let launch = resolve_terminal_shell(spec.shell.as_deref().unwrap_or_default());
     let cmdline = terminal_command_line(&launch);
     let env = terminal_environment(&launch.path_dirs);
-    terminal_pty::spawn(&terminal_pty::PtyRequest {
-        dll,
+    if let Ok(session) =
+        terminal_conpty::spawn(&cmdline, Path::new(&spec.cwd), &env, size.0, size.1)
+    {
+        return Ok(ConsoleSession {
+            console: Arc::new(Console::Native(session.console)),
+            input: session.input,
+            output: session.output,
+        });
+    }
+    let session = terminal_pty::spawn(&terminal_pty::PtyRequest {
+        dll: dll.ok_or(
+            "interactive terminal requires the Git terminal supplement on this Windows version",
+        )?,
         cmdline: &cmdline,
         cwd: Some(Path::new(&spec.cwd)),
         env: Some(&env),
         cols: size.0.max(1),
         rows: size.1.max(1),
+    })?;
+    Ok(ConsoleSession {
+        console: Arc::new(Console::Legacy(session.console)),
+        input: session.input,
+        output: session.output,
     })
 }
 
@@ -1455,6 +1641,11 @@ fn terminal_command_line(launch: &crate::core::command_utils::ShellLaunch) -> St
 #[cfg(all(windows, feature = "terminal-pty"))]
 fn terminal_environment(dirs: &[PathBuf]) -> Vec<(String, String)> {
     let mut env = std::env::vars().collect::<Vec<_>>();
+    env.retain(|(key, _)| {
+        !key.eq_ignore_ascii_case("TERM") && !key.eq_ignore_ascii_case("COLORTERM")
+    });
+    env.push(("TERM".into(), "xterm-256color".into()));
+    env.push(("COLORTERM".into(), "truecolor".into()));
     if let Some(prefix) = path_prefix(dirs) {
         match env
             .iter_mut()
@@ -1487,17 +1678,16 @@ fn path_prefix(dirs: &[PathBuf]) -> Option<String> {
 
 /// Copy the console's output into the record until the shell closes it. A console
 /// has one stream, so there is no stderr to interleave, and the decoding is the
-/// same incremental one the pipes use (winpty emits the console code page, which
-/// is GBK on a Chinese Windows 7).
+/// console transports emit UTF-8, independently of the Windows code page.
 #[cfg(all(windows, feature = "terminal-pty"))]
 fn pump_console_output(
     mut output: File,
     record: Arc<Mutex<TerminalRecord>>,
     changed: Arc<Notify>,
-    cancel: CancellationToken,
+    _cancel: CancellationToken,
 ) {
     use std::io::Read;
-    let mut decoder = IncrementalDecoder::new(true);
+    let mut decoder = IncrementalDecoder::new(false);
     let mut buf = vec![0u8; PIPE_CHUNK_BYTES];
     loop {
         match output.read(&mut buf) {
@@ -1509,9 +1699,6 @@ fn pump_console_output(
                     changed.notify_waiters();
                 }
             }
-        }
-        if cancel.is_cancelled() {
-            break;
         }
     }
     record.lock().spill_transcript();
@@ -1564,6 +1751,86 @@ mod tests {
         let rest = &"你".as_bytes()[1..];
         let text = decoder.push(rest);
         assert_eq!(text, "你");
+    }
+
+    #[test]
+    fn unpersisted_transcript_does_not_accumulate_output() {
+        let mut sink = TranscriptSink::open(None, "sample", "sample");
+        for _ in 0..128 {
+            sink.queue(&"x".repeat(8192));
+        }
+        assert!(sink.pending.is_empty());
+    }
+
+    #[tokio::test]
+    async fn subscription_coalesces_wakeups_without_losing_output_or_exit() {
+        let service = DesktopTerminalService::new();
+        let now = Utc::now();
+        let record = Arc::new(Mutex::new(TerminalRecord {
+            snapshot: DesktopTerminalSnapshot {
+                terminal_id: "sample_terminal".into(),
+                user_id: "sample".into(),
+                session_id: "sample".into(),
+                workspace_id: "sample".into(),
+                command: String::new(),
+                cwd: String::new(),
+                shell: String::new(),
+                status: DesktopTerminalStatus::Running,
+                backend: DesktopTerminalBackend::Console,
+                seq: 0,
+                dropped_bytes: 0,
+                truncated: false,
+                started_at: now,
+                ended_at: None,
+                exit_code: None,
+                error: None,
+            },
+            output: OutputBuffer::new(TERMINAL_OUTPUT_BUDGET_BYTES),
+            input: Mutex::new(None),
+            console: None,
+            #[cfg(unix)]
+            unix_pty: None,
+            size: (80, 24),
+            cancel: CancellationToken::new(),
+            transcript: TranscriptSink::open(None, "sample", "sample"),
+            changes: tokio::sync::watch::channel(0).0,
+        }));
+        service
+            .terminals
+            .insert("sample_terminal".into(), record.clone());
+        let mut subscription = service
+            .subscribe("sample", "sample", "sample_terminal", 0)
+            .unwrap();
+        assert!(subscription.next().await.unwrap().text.is_empty());
+        assert!(
+            tokio::time::timeout(Duration::from_millis(10), subscription.next())
+                .await
+                .is_err()
+        );
+        {
+            let mut guard = record.lock();
+            for _ in 0..1000 {
+                guard.push_output("示例", false);
+            }
+        }
+        let frame = tokio::time::timeout(Duration::from_millis(100), subscription.next())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(frame.text, "示例".repeat(1000));
+        assert!(!frame.truncated);
+        // A quiet lifecycle transition must wake the reader without polling.
+        {
+            let mut guard = record.lock();
+            guard.snapshot.status = DesktopTerminalStatus::Exited;
+            guard.changed();
+        }
+        let frame = tokio::time::timeout(Duration::from_millis(100), subscription.next())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(frame.status, DesktopTerminalStatus::Exited);
+        assert!(frame.text.is_empty());
     }
 
     #[test]

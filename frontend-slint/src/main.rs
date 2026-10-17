@@ -39,6 +39,7 @@ mod shutdown;
 mod smoke;
 mod subagent_detail;
 mod terminal_grid;
+mod terminal_session;
 mod thread_trajectory;
 mod timeline;
 mod timeline_text;

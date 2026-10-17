@@ -845,6 +845,10 @@ pub struct OrphanSweepResult {
     /// here, so a value that stops moving means rows in that interval cannot
     /// be removed.
     pub swept_until: f64,
+    /// True when the pass yielded because usage reconciliation held the
+    /// coordination lock. This is an expected maintenance deferral, not a
+    /// storage failure; the caller should retry after a backoff.
+    pub deferred: bool,
 }
 
 impl OrphanSweepResult {

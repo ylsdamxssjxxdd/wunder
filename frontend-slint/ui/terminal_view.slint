@@ -2,8 +2,8 @@ import { Theme } from "theme.slint";
 import { Action } from "components.slint";
 import { I18n } from "i18n.slint";
 
-// Terminal-style output panel. The composer below stays the input line, so this
-// element only renders the shell transcript.
+// Terminal screen projection; its parent routes direct keyboard/IME input
+// to the shell.
 //
 // The Rust side runs a real screen model and hands over the positioned colour
 // runs for one viewport, so the panel is a plain absolute grid: one item per

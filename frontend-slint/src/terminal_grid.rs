@@ -464,6 +464,7 @@ impl TerminalGrid {
 
     /// The application may request bracketed paste so pasted newlines are
     /// treated as data rather than commands by readline-style shells.
+    #[cfg(test)]
     pub fn bracketed_paste(&self, text: &str) -> Vec<u8> {
         if self.parser.screen().bracketed_paste() {
             let mut bytes = Vec::with_capacity(text.len() + 12);
@@ -475,6 +476,8 @@ impl TerminalGrid {
             text.as_bytes().to_vec()
         }
     }
+
+    pub fn bracketed_paste_enabled(&self) -> bool { self.parser.screen().bracketed_paste() }
 }
 
 fn push_decimal(target: &mut Vec<u8>, value: u32) {

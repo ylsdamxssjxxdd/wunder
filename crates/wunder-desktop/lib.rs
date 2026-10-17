@@ -15,7 +15,7 @@ pub use native::{
     NativeChannelAccountEdit, NativeChannelBindingEdit, NativeChatAttachment, NativeChatEvent,
     NativeChatInput, NativeContextUsage, NativeCronJobEdit, NativeDesktop, NativeMessage,
     NativeNavigationOrder, NativePatchFile, NativePatchLine, NativeProfile, NativeQueueTurn,
-    NativeSession, NativeStream, NativeSubagentCard, NativeTerminalFrame, NativeTerminalSpec,
+    NativeSession, NativeStream, NativeSubagentCard, NativeTerminalFrame, NativeTerminalSpec, NativeTerminalSignal, NativeTerminalWatch,
     NativeWorkflowEntry, NativeWorkflowLine, NativeWorkflowSection, NativeWorkspace,
     PromptPackInfo, PromptSegmentContent, RuntimeToolStatus, ToolRecord, WorkspaceDeleteSummary,
     WorkspaceEdit, WorkspacePathReport, DEFAULT_AGENT_ID, WORKSPACE_COLORS, WORKSPACE_ICONS,

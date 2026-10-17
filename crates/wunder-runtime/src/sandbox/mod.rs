@@ -277,6 +277,23 @@ pub fn sandbox_enabled(config: &Config) -> bool {
     !crate::services::prompting::is_local_runtime_mode(&config.server.mode)
 }
 
+/// Built-ins that are executed through the sandbox's file runtime. Keep this
+/// capability list in one place so the HTTP server and response path mapping
+/// cannot disagree about a catalogued file tool.
+pub(crate) fn is_sandbox_file_tool_name(tool: &str) -> bool {
+    matches!(
+        tool,
+        "列出文件"
+            | "搜索内容"
+            | "文件名匹配"
+            | "读取文件"
+            | "写入文件"
+            | "文本编辑"
+            | "编辑"
+            | "glob"
+    )
+}
+
 pub fn sandbox_container_root() -> &'static str {
     DEFAULT_SANDBOX_CONTAINER_ROOT
 }
@@ -783,17 +800,7 @@ fn rewrite_sandbox_paths(
         replace_paths_in_value(&mut data, container_root, public_root);
         return data;
     }
-    if !matches!(
-        tool,
-        "ptc"
-            | "执行命令"
-            | "列出文件"
-            | "搜索内容"
-            | "读取文件"
-            | "写入文件"
-            | "文本编辑"
-            | "编辑"
-    ) {
+    if tool != "ptc" && tool != "执行命令" && !is_sandbox_file_tool_name(tool) {
         return data;
     }
     replace_paths_in_value(&mut data, container_root, public_root);
@@ -829,6 +836,38 @@ mod tests {
     use crate::workspace::WorkspaceManager;
     use std::sync::Arc;
     use uuid::Uuid;
+
+    #[test]
+    fn sandbox_file_capability_includes_glob_and_legacy_alias() {
+        assert!(is_sandbox_file_tool_name("文件名匹配"));
+        assert!(is_sandbox_file_tool_name("glob"));
+        assert!(is_sandbox_file_tool_name("搜索内容"));
+        assert!(!is_sandbox_file_tool_name("网页抓取"));
+    }
+
+    #[test]
+    fn glob_result_paths_are_rewritten_like_other_file_tools() {
+        let mut data = json!({
+            "data": {
+                "resolved_path": "/workspaces/user/workspace",
+                "paths": ["/workspaces/user/workspace/a.png"]
+            }
+        });
+        let rewritten = rewrite_sandbox_paths(
+            "/public/user",
+            "/workspaces/user",
+            "文件名匹配",
+            data.take(),
+        );
+        assert_eq!(
+            rewritten["data"]["resolved_path"],
+            "/public/user/workspace"
+        );
+        assert_eq!(
+            rewritten["data"]["paths"][0],
+            "/public/user/workspace/a.png"
+        );
+    }
 
     #[test]
     fn test_normalize_endpoint() {
