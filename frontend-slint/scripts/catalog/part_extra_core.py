@@ -22,6 +22,8 @@ ENTRIES = [
     ("cp_terminal_idle", "空闲", "Idle"),
     ("cp_terminal_clear", "清屏", "Clear"),
     ("cp_terminal_interrupt", "中断", "Interrupt"),
+    ("cp_terminal_paste", "粘贴命令", "Paste command"),
+    ("cp_terminal_empty", "在下方输入命令，按 Enter 运行", "Type a command below and press Enter"),
     # thread_log.slint
     ("tl_next_events", "下一页事件", "Next events"),
     ("tl_event_detail", "事件详情", "Event detail"),

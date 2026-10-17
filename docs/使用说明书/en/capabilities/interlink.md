@@ -88,6 +88,12 @@ Risk tiers:
 
 ## Constraints
 
+### Disconnection and recovery
+
+The Pupa reconnects with backoff. While the Hull process remains running, its bounded queue retains commands that have not been sent and delivers them after reconnection. Commands already sent, executing, or awaiting approval on the device fail explicitly when their connection ends, avoiding duplicate operations.
+
+After a Hull restart, unfinished commands are settled in bounded batches with `SERVER_RESTARTED`. Command bodies are not persisted, so arguments are never reconstructed from digests and writes are not replayed automatically. Queries can be submitted again; check the actual outcome of a write before resubmitting it through the normal approval flow. Remote thread views obtain a new snapshot after reconnecting.
+
 ### Boundaries
 
 - Local and cloud threads are not merged. Interlink is remote operation, not data synchronization.

@@ -291,7 +291,9 @@ impl TunnelWriter {
     ) -> Result<(), ()> {
         let frame = self.frame(kind, corr, payload);
         let text = serde_json::to_string(&frame).map_err(|_| ())?;
-        if text.len() > 480 * 1024 { return Err(()); }
+        if text.len() > 480 * 1024 {
+            return Err(());
+        }
         tokio::select! {
             _ = self.cancel.cancelled() => Err(()),
             result = self.control.send(OutboundFrame::Text(text)) => result.map_err(|_| ()),
@@ -303,7 +305,9 @@ impl TunnelWriter {
         let frame = self.frame(kind, corr, payload);
         match serde_json::to_string(&frame) {
             Ok(text) => {
-                if text.len() > 480 * 1024 || self.control.try_send(OutboundFrame::Text(text)).is_err() {
+                if text.len() > 480 * 1024
+                    || self.control.try_send(OutboundFrame::Text(text)).is_err()
+                {
                     DROPPED_FRAMES.fetch_add(1, Ordering::Relaxed);
                     return false;
                 }
@@ -1460,7 +1464,7 @@ async fn handle_inbound(
                     let payload = json!({
                         "accepted": false,
                         "approval_state": APPROVAL_NONE,
-                        "error": ERR_NODE_BUSY,
+                        "error_code": ERR_NODE_BUSY,
                         "retry_after_ms": 2_000,
                     });
                     writer.try_send_frame(
@@ -1665,9 +1669,16 @@ async fn thread_snapshot(inner: &Arc<ClientInner>, user_id: &str, thread_id: &st
     let owner = user_id.to_string();
     let thread = thread_id.to_string();
     let snapshot = crate::core::blocking::run_db("interlink.client.snapshot", move || {
-        storage.thread_snapshot_window(&owner, &thread, &crate::storage::ThreadSnapshotWindow {
-            max_turns: 12, max_items: 100, max_blocks: 64, before_turn_index: None,
-        })
+        storage.thread_snapshot_window(
+            &owner,
+            &thread,
+            &crate::storage::ThreadSnapshotWindow {
+                max_turns: 12,
+                max_items: 100,
+                max_blocks: 64,
+                before_turn_index: None,
+            },
+        )
     })
     .await
     .ok()
@@ -1683,8 +1694,12 @@ fn bound_remote_snapshot(mut snapshot: Value) -> Value {
             if serde_json::to_vec(&snapshot).is_ok_and(|bytes| bytes.len() <= 384 * 1024) {
                 return snapshot;
             }
-            let Some(rows) = snapshot.get_mut(field).and_then(Value::as_array_mut) else { break };
-            if rows.is_empty() { break; }
+            let Some(rows) = snapshot.get_mut(field).and_then(Value::as_array_mut) else {
+                break;
+            };
+            if rows.is_empty() {
+                break;
+            }
             rows.remove(0);
             snapshot["truncated"] = json!(true);
         }
@@ -1778,7 +1793,10 @@ async fn write_pump<S>(
             WsMessage::Text(text) => WsMessage::Text(with_channel(&writer, text).into()),
             other => other,
         };
-        if !matches!(tokio::time::timeout(Duration::from_secs(5), sink.send(message)).await, Ok(Ok(()))) {
+        if !matches!(
+            tokio::time::timeout(Duration::from_secs(5), sink.send(message)).await,
+            Ok(Ok(()))
+        ) {
             writer.cancel.cancel();
             return;
         }
@@ -1970,10 +1988,17 @@ async fn run_command(inner: Arc<ClientInner>, writer: Arc<TunnelWriter>, spec: C
         .in_flight
         .try_add(&spec.command_id, execute::INFLIGHT_MAX)
     {
-        inner
-            .ledger
-            .finish(&spec.command_id, Value::Null, now_ts())
-            .await;
+        if !inner.ledger.defer_unstarted(&spec.command_id).await {
+            let canceled = CommandReport::canceled("command canceled before admission").payload();
+            inner
+                .ledger
+                .finish(&spec.command_id, canceled.clone(), now_ts())
+                .await;
+            let _ = writer
+                .send_frame(FRAME_COMMAND_RESULT, Some(&spec.command_id), canceled)
+                .await;
+            return;
+        }
         writer
             .send_frame(
                 FRAME_COMMAND_ACK,
@@ -1981,7 +2006,7 @@ async fn run_command(inner: Arc<ClientInner>, writer: Arc<TunnelWriter>, spec: C
                 json!({
                     "accepted": false,
                     "approval_state": APPROVAL_NONE,
-                    "error": ERR_NODE_BUSY,
+                    "error_code": ERR_NODE_BUSY,
                     "retry_after_ms": 2_000,
                 }),
             )
@@ -2160,19 +2185,26 @@ mod tests {
 
     #[test]
     fn remote_snapshot_keeps_cursor_and_bounds_large_payloads() {
-        let bounded = bound_remote_snapshot(json!({"cursor":17,"items":[{"content":"x".repeat(512*1024)}],"blocks":[],"turns":[]}));
+        let bounded = bound_remote_snapshot(
+            json!({"cursor":17,"items":[{"content":"x".repeat(512*1024)}],"blocks":[],"turns":[]}),
+        );
         assert_eq!(bounded["cursor"], 17);
         assert_eq!(bounded["truncated"], true);
-        assert!(serde_json::to_vec(&bounded).unwrap().len() <= 384*1024);
+        assert!(serde_json::to_vec(&bounded).unwrap().len() <= 384 * 1024);
     }
 
     #[tokio::test]
     async fn saturated_thread_lane_requires_reconnect() {
         let (writer, _control, _data) = TunnelWriter::new();
-        for _ in 0..CONTROL_QUEUE_CAPACITY { assert!(writer.try_send_frame(FRAME_EVENT, None, json!({}))); }
+        for _ in 0..CONTROL_QUEUE_CAPACITY {
+            assert!(writer.try_send_frame(FRAME_EVENT, None, json!({})));
+        }
         assert!(!writer.try_send_frame(FRAME_EVENT, None, json!({})));
         writer.cancel.cancel();
-        assert!(writer.send_frame(FRAME_EVENT, None, json!({})).await.is_err());
+        assert!(writer
+            .send_frame(FRAME_EVENT, None, json!({}))
+            .await
+            .is_err());
     }
 
     fn platform(legacy_windows: bool, thread_runtime_active: bool) -> NodePlatform {

@@ -994,6 +994,10 @@ fn plan_snapshot_sync(
     decision
 }
 
+fn snapshots_equal(left: &UserAgentPresetSnapshot, right: &UserAgentPresetSnapshot) -> bool {
+    serde_json::to_value(left).ok() == serde_json::to_value(right).ok()
+}
+
 fn apply_sync_mode(
     record: &mut UserAgentRecord,
     baseline: &UserAgentPresetSnapshot,
@@ -1112,14 +1116,7 @@ pub async fn sync_preset_across_users(
 
         for user in users {
             let agents = agents_by_user.remove(&user.user_id).unwrap_or_default();
-            let Some(record) = bound_agent_record(&agents)
-                .or_else(|| {
-                    (preset.preset_id == "__default__")
-                        .then(|| newest_active_agent(&agents))
-                        .flatten()
-                })
-                .cloned()
-            else {
+            let Some(record) = bound_agent_record(&agents).cloned() else {
                 // Assigning a preset is an explicit admin action. A preset update
                 // only reaches users already governed by this preset.
                 continue;
@@ -1134,16 +1131,6 @@ pub async fn sync_preset_across_users(
                 continue;
             }
 
-            let context = build_user_tool_context(state, &user.user_id).await;
-            let skill_name_keys = collect_context_skill_names(&context);
-            let mut target = build_target_snapshot_from_context(&user, preset, &context);
-            let current = snapshot_from_record(&record, &skill_name_keys);
-            merge_user_owned_tool_selections(&mut target, &context, &user.user_id, &current);
-            let baseline = binding
-                .as_ref()
-                .map(|item| item.last_applied.clone())
-                .unwrap_or_else(|| target.clone());
-            let decision = plan_snapshot_sync(&current, &baseline, &target);
             let revision_matches = binding
                 .as_ref()
                 .map(|item| item.preset_revision == preset.revision)
@@ -1156,6 +1143,35 @@ pub async fn sync_preset_across_users(
                         && (!agent_is_archived(other) || other.preset_binding.is_some())
                 })
                 .collect::<Vec<_>>();
+            // Compare the persisted fields before loading the user's tool
+            // catalog. A repeated preview of an unchanged named preset now
+            // avoids filesystem and skill-registry work entirely.
+            if preset.preset_id != "__default__"
+                && revision_matches
+                && legacy_instances.is_empty()
+                && binding
+                    .as_ref()
+                    .map(|item| {
+                        snapshots_equal(
+                            &snapshot_from_record(&record, &HashSet::new()),
+                            &item.last_applied,
+                        )
+                    })
+                    .unwrap_or(false)
+            {
+                continue;
+            }
+
+            let context = build_user_tool_context(state, &user.user_id).await;
+            let skill_name_keys = collect_context_skill_names(&context);
+            let mut target = build_target_snapshot_from_context(&user, preset, &context);
+            let current = snapshot_from_record(&record, &skill_name_keys);
+            merge_user_owned_tool_selections(&mut target, &context, &user.user_id, &current);
+            let baseline = binding
+                .as_ref()
+                .map(|item| item.last_applied.clone())
+                .unwrap_or_else(|| target.clone());
+            let decision = plan_snapshot_sync(&current, &baseline, &target);
             if !decision.visible_diff && revision_matches && legacy_instances.is_empty() {
                 continue;
             }
@@ -1197,7 +1213,11 @@ pub async fn sync_preset_across_users(
             }
             log_convergence(&user.user_id, &record.agent_id, &archived_ids);
             if applied || !revision_matches || !archived_ids.is_empty() {
-                if let Err(err) = state.inner_visible.sync_user_state(&user.user_id).await {
+                if let Err(err) = state
+                    .inner_visible
+                    .materialize_user_state(&user.user_id)
+                    .await
+                {
                     tracing::warn!(
                         "failed to sync inner-visible preset state for {}: {err}",
                         user.user_id

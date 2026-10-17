@@ -110,16 +110,29 @@ mod tests {
 
     #[test]
     fn start_send_poll_cancel_roundtrip() {
+        // Explicit cmd exercises the no-PTY Windows fallback reported by the
+        // native UI; transcript recovery below also covers the default shell.
+        command_roundtrip(if cfg!(windows) { "cmd" } else { "" });
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn powershell_edited_command_roundtrip() {
+        command_roundtrip("powershell");
+    }
+
+    fn command_roundtrip(shell: &str) {
         let user_id = "terminal_test_user";
         let session_id = "terminal_test_session";
-        let terminal = NativeTerminal::new(runtime(), temp_storage("roundtrip"), None);
+        let terminal =
+            NativeTerminal::new(runtime(), temp_storage(&format!("roundtrip_{shell}")), None);
         let spec = NativeTerminalSpec {
             terminal_id: String::new(),
             session_id: session_id.to_string(),
             workspace_id: String::new(),
             command: String::new(),
             cwd: std::env::temp_dir().to_string_lossy().to_string(),
-            shell: String::new(),
+            shell: shell.to_string(),
         };
         let snapshot = terminal
             .start(user_id, &spec)
@@ -143,14 +156,9 @@ mod tests {
         }
         assert!(started, "terminal should reach running status");
 
-        let prompt = if cfg!(windows) {
-            "echo wunder_ok\r\n"
-        } else {
-            "echo wunder_ok\n"
-        };
         terminal
-            .send(user_id, session_id, &terminal_id, prompt.as_bytes())
-            .expect("send should succeed");
+            .send_command(user_id, session_id, &terminal_id, "echo sample_ready")
+            .expect("edited command should succeed");
 
         // Give the reader loop time to decode the echoed line.
         let mut got_output = false;
@@ -158,7 +166,10 @@ mod tests {
             let frame = terminal
                 .poll(user_id, session_id, &terminal_id, 0)
                 .expect("poll should not fail");
-            if frame.text.contains("wunder_ok") {
+            // Require the shell's output as well as an echoed command line.
+            // Merely finding the marker could pass on the synthetic echo even
+            // when the shell never received a usable line ending.
+            if frame.text.matches("sample_ready").count() >= 2 {
                 got_output = true;
                 break;
             }
@@ -458,6 +469,22 @@ impl NativeTerminal {
             .block_on(
                 self.service
                     .write_stdin(user_id, session_id, terminal_id, input),
+            )
+            .map_err(|message| anyhow!(message))
+    }
+
+    /// Submit an edited line using the backend's shell-aware line framing.
+    pub fn send_command(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        terminal_id: &str,
+        command: &str,
+    ) -> Result<()> {
+        self.runtime
+            .block_on(
+                self.service
+                    .write_command(user_id, session_id, terminal_id, command),
             )
             .map_err(|message| anyhow!(message))
     }

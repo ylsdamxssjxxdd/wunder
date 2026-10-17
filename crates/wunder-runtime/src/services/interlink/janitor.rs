@@ -26,6 +26,13 @@ const SHADOW_CLEANUP_ROWS: i64 = 2_000;
 
 static RUNNING: AtomicBool = AtomicBool::new(false);
 
+/// Initialize before accepting traffic; the same cutoff is used by later
+/// bounded recovery pages so newly admitted commands are never swept as old.
+pub fn recovery_cutoff() -> f64 {
+    static CUTOFF: std::sync::OnceLock<f64> = std::sync::OnceLock::new();
+    *CUTOFF.get_or_init(now_unix_seconds)
+}
+
 /// Start the maintenance loop once per process; a disabled interlink section
 /// leaves the loop stopped (docs §3.3). The alert pump shares this lifecycle
 /// because it is fed by the same trail and drained on the same cadence.
@@ -34,6 +41,7 @@ pub fn spawn(state: Arc<AppState>) {
         return;
     }
     super::alerts::spawn(state.clone());
+    let restart_cutoff = recovery_cutoff();
     let handle = tokio::runtime::Handle::current();
     handle.spawn(async move {
         let mut last_retention = 0.0f64;
@@ -55,20 +63,28 @@ pub fn spawn(state: Arc<AppState>) {
             drop(config);
 
             let now = now_unix_seconds();
+            if let Err(error) =
+                commands::recover_after_restart(state.storage.clone(), restart_cutoff, now).await
+            {
+                tracing::warn!(%error, "interlink restart recovery page failed; will retry");
+            }
             // 1) Live channels that stopped beating are dropped locally...
-            let stale: Vec<String> = registry()
+            let stale: Vec<_> = registry()
                 .snapshot()
                 .iter()
                 .filter(|live| now - live.last_seen_at > presence_ttl * 2.0)
-                .map(|live| live.device_id.clone())
+                .cloned()
                 .collect();
-            let _dropped = registry().gc(now, presence_ttl * 2.0);
             // 2) ...their unfinished commands fail structurally and their
             //    remote watchers lose the stream (docs §13.2 7, §10.3).
-            for device_id in stale {
-                let _ =
-                    commands::fail_device_commands(state.storage.clone(), &device_id, now).await;
-                super::remote::hub().close_node(&device_id);
+            for live in stale {
+                crate::api::interlink_ws::retire_stale_channel(
+                    &state,
+                    &live,
+                    now,
+                    presence_ttl * 2.0,
+                )
+                .await;
             }
             // 3) Command timeouts and approval expiry (docs §4.3, §7.3 4).
             let _ = commands::sweep(state.storage.clone(), &limits, now).await;

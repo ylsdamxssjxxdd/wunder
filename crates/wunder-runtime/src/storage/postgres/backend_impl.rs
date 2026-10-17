@@ -2067,6 +2067,13 @@ impl InterlinkStore for PostgresStorage {
     fn cleanup_interlink_commands(&self, retention_days: u32) -> Result<u64> {
         self.cleanup_interlink_commands_impl(retention_days)
     }
+    fn list_interlink_unfinished_before(
+        &self,
+        before: f64,
+        limit: i64,
+    ) -> Result<Vec<InterlinkCommandRecord>> {
+        self.list_interlink_unfinished_before_impl(before, limit)
+    }
 
     fn insert_interlink_approval(&self, record: &InterlinkApprovalRecord) -> Result<()> {
         self.insert_interlink_approval_impl(record)

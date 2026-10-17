@@ -10,7 +10,7 @@ export component TerminalWindow inherits Window {
     width: 980px;
     height: 640px;
     background: #16181d;
-    init => { terminal-focus.focus(); }
+    init => { command-input.focus(); }
     in property <string> workspace-name;
     in property <string> workspace-root;
     in property <[TermSpan]> spans;
@@ -23,6 +23,8 @@ export component TerminalWindow inherits Window {
     in property <bool> caret-visible: false;
     in property <bool> mouse-reporting: false;
     in property <bool> application-cursor: false;
+    in property <bool> raw-input: false;
+    in property <bool> input-ready: false;
     in property <int> caret-row: 0;
     in property <int> caret-col: 0;
     in-out property <int> measured-cols: 0;
@@ -35,13 +37,19 @@ export component TerminalWindow inherits Window {
     callback scroll-to(int);
     callback geometry-changed();
     callback key-input(string);
+    callback command-submitted(string) -> bool;
     callback pasted(string);
     callback paste-requested();
     callback mouse-event(int, int, int, int);
     callback exit-requested();
+    public function focus-input() { command-input.focus(); }
     changed measured-cols => { root.geometry-changed(); }
     changed measured-rows => { root.geometry-changed(); }
     changed paste-request => {
+        if command-input.has-focus {
+            command-input.paste();
+            return;
+        }
         clipboard.text = "";
         clipboard.focus();
         clipboard.paste();
@@ -64,6 +72,11 @@ export component TerminalWindow inherits Window {
         width: parent.width;
         height: parent.height;
         capture-key-pressed(event) => {
+            // The command field owns editing, clipboard shortcuts and IME.
+            // Only the screen sends raw terminal keys to a console/PTY.
+            if command-input.has-focus || clipboard.has-focus { return reject; }
+            if !terminal-focus.has-focus { return reject; }
+            if !root.raw-input || !root.input-ready { return reject; }
             if event.text == Key.Return { root.key-input("\u{d}"); return accept; }
             if event.text == Key.Backspace { root.key-input("\u{7f}"); return accept; }
             if event.text == Key.Tab { root.key-input("\u{9}"); return accept; }
@@ -148,9 +161,17 @@ export component TerminalWindow inherits Window {
             mouse-event(action, button, col, row) => { root.mouse-event(action, button, col, row); }
             scrolled(delta) => { root.scrolled(delta); }
             scroll-to(row) => { root.scroll-to(row); }
-            activated => { terminal-focus.focus(); }
+            activated => {
+                if root.raw-input { terminal-focus.focus(); }
+                else { command-input.focus(); }
+            }
             measured-cols <=> root.measured-cols;
             measured-rows <=> root.measured-rows;
+            if root.spans.length == 0 : Text {
+                x: 12px; y: 10px; width: parent.width - 24px;
+                text: I18n.cp_terminal_empty;
+                color: #8fa2b6; font-size: 12px;
+            }
         }
         Rectangle {
             height: 48px;
@@ -158,9 +179,35 @@ export component TerminalWindow inherits Window {
             HorizontalLayout {
                 padding-left: 10px; padding-right: 10px; padding-top: 8px; padding-bottom: 8px; spacing: 8px;
                 Text { text: ">"; width: 16px; color: #7fd6a0; font-family: "Consolas"; font-size: 15px; vertical-alignment: center; }
-                Text { text: I18n.cp_terminal_placeholder; color: #8fa2b6; font-family: "Consolas"; font-size: 12px; vertical-alignment: center; }
-                Rectangle { horizontal-stretch: 1; }
-                Action { width: 28px; height: 28px; icon: @image-url("../assets/icons/paperclip.svg"); icon-size: 14px; label: I18n.cp_terminal_placeholder; clicked => { root.paste-requested(); } }
+                Rectangle {
+                    horizontal-stretch: 1;
+                    command-input := TextInput {
+                        width: parent.width; height: parent.height;
+                        color: #e8eef5;
+                        font-family: "Consolas"; font-size: 13px;
+                        single-line: true; vertical-alignment: center;
+                        selection-background-color: #365778;
+                        selection-foreground-color: #ffffff;
+                        accessible-label: I18n.cp_terminal_placeholder;
+                        accepted => {
+                            if root.input-ready && root.command-submitted(self.text) {
+                                self.text = "";
+                            }
+                        }
+                    }
+                    if command-input.text == "" : Text {
+                        width: parent.width; height: parent.height;
+                        text: I18n.cp_terminal_placeholder;
+                        color: #8fa2b6; font-family: "Consolas"; font-size: 12px;
+                        vertical-alignment: center; horizontal-alignment: left;
+                    }
+                }
+                Action {
+                    width: 28px; height: 28px;
+                    icon: @image-url("../assets/icons/paperclip.svg"); icon-size: 14px;
+                    label: I18n.cp_terminal_paste;
+                    clicked => { command-input.focus(); command-input.paste(); }
+                }
             }
         }
         }

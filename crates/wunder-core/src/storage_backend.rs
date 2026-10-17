@@ -1662,6 +1662,13 @@ pub trait InterlinkStore {
         query: ListInterlinkCommandsQuery<'_>,
     ) -> Result<(Vec<InterlinkCommandRecord>, i64)>;
     fn cleanup_interlink_commands(&self, retention_days: u32) -> Result<u64>;
+    /// Indexed, bounded recovery page. Terminal history is never scanned and
+    /// commands admitted after this process started are excluded.
+    fn list_interlink_unfinished_before(
+        &self,
+        before: f64,
+        limit: i64,
+    ) -> Result<Vec<InterlinkCommandRecord>>;
 
     // --- approvals ---
     fn insert_interlink_approval(&self, record: &InterlinkApprovalRecord) -> Result<()>;

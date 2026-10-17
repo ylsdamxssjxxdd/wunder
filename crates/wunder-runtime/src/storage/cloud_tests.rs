@@ -1078,6 +1078,27 @@ fn exercise_interlink_commands(storage: Arc<dyn StorageBackend>) {
         .unwrap();
     assert_eq!((rows.len(), total), (0, 3));
 
+    // Recovery pages exclude terminal history, honor the cutoff and hard cap,
+    // and use a stable oldest-first ordering shared by both backends.
+    let recovery = storage
+        .list_interlink_unfinished_before(now_ts() + 1.0, 200)
+        .unwrap();
+    assert_eq!(recovery.len(), 3);
+    assert_eq!(recovery[0].command_id, "cmd-3");
+    assert_eq!(recovery[1].command_id, "cmd-4");
+    assert_eq!(recovery[2].command_id, "cmd-2");
+    assert_eq!(
+        storage
+            .list_interlink_unfinished_before(now_ts() + 1.0, 1)
+            .unwrap()
+            .len(),
+        1
+    );
+    assert!(storage
+        .list_interlink_unfinished_before(0.0, 200)
+        .unwrap()
+        .is_empty());
+
     // Retention: zero disables cleanup, otherwise only aged rows leave.
     assert_eq!(storage.cleanup_interlink_commands(0).unwrap(), 0);
     assert_eq!(storage.cleanup_interlink_commands(7).unwrap(), 2);

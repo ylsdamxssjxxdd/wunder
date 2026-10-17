@@ -1711,6 +1711,9 @@ impl SqliteSchemaStorage for SqliteStorage {
               ON interlink_commands (actor_user_id, created_at);
             CREATE INDEX IF NOT EXISTS idx_interlink_commands_to_node
               ON interlink_commands (to_node, created_at);
+            CREATE INDEX IF NOT EXISTS idx_interlink_commands_unfinished
+              ON interlink_commands (created_at, command_id)
+              WHERE finished_at IS NULL AND status IN ('issued', 'queued', 'acked', 'running');
             CREATE TABLE IF NOT EXISTS interlink_approvals (
               approval_id TEXT PRIMARY KEY,
               command_id TEXT NOT NULL,

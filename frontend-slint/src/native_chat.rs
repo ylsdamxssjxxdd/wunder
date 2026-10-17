@@ -384,7 +384,13 @@ struct TerminalSession {
     workspace_id: String,
     workspace_root: String,
     last_seq: u64,
-    input: std::sync::mpsc::SyncSender<Vec<u8>>,
+    input: std::sync::mpsc::SyncSender<TerminalInput>,
+    input_errors: std::sync::mpsc::Receiver<String>,
+}
+
+enum TerminalInput {
+    Bytes(Vec<u8>),
+    Command(String),
 }
 
 struct WorkspaceTerminal {
@@ -394,6 +400,8 @@ struct WorkspaceTerminal {
     grid: terminal_grid::TerminalGrid,
     status: String,
     error: bool,
+    input_ready: bool,
+    raw_input: bool,
     loss_marked: bool,
     restored: bool,
 }
@@ -1289,11 +1297,18 @@ fn ensure_terminal(state: &mut State, app: &MainWindow) -> Result<String, String
         .map_err(|error| error.to_string())?;
     let terminal_id = snapshot.terminal_id.clone();
     let (input, receiver) = std::sync::mpsc::sync_channel(128);
+    let (input_errors_tx, input_errors) = std::sync::mpsc::sync_channel(1);
     let desktop = state.desktop.clone();
     let worker_session = session_id.clone();
     let worker_terminal = terminal_id.clone();
     std::thread::spawn(move || {
-        terminal_input_worker(desktop, worker_session, worker_terminal, receiver)
+        terminal_input_worker(
+            desktop,
+            worker_session,
+            worker_terminal,
+            receiver,
+            input_errors_tx,
+        )
     });
     let session = TerminalSession {
         terminal_id: terminal_id.clone(),
@@ -1302,6 +1317,7 @@ fn ensure_terminal(state: &mut State, app: &MainWindow) -> Result<String, String
         workspace_root: cwd.clone(),
         last_seq: 0,
         input,
+        input_errors,
     };
     let workspace = state
         .terminals
@@ -1313,6 +1329,8 @@ fn ensure_terminal(state: &mut State, app: &MainWindow) -> Result<String, String
             grid: terminal_grid::TerminalGrid::new(24, 80),
             status: String::new(),
             error: false,
+            input_ready: false,
+            raw_input: false,
             loss_marked: false,
             restored: false,
         });
@@ -1321,6 +1339,7 @@ fn ensure_terminal(state: &mut State, app: &MainWindow) -> Result<String, String
     workspace.session = Some(session);
     workspace.status = "启动中…".into();
     workspace.error = false;
+    workspace.input_ready = false;
     if !workspace.restored {
         workspace.restored = true;
         let raw = state
@@ -1343,13 +1362,18 @@ fn terminal_input_worker(
     desktop: Arc<NativeDesktop>,
     session_id: String,
     terminal_id: String,
-    receiver: std::sync::mpsc::Receiver<Vec<u8>>,
+    receiver: std::sync::mpsc::Receiver<TerminalInput>,
+    errors: std::sync::mpsc::SyncSender<String>,
 ) {
-    while let Ok(bytes) = receiver.recv() {
-        if desktop
-            .terminal_send(&session_id, &terminal_id, &bytes)
-            .is_err()
-        {
+    while let Ok(input) = receiver.recv() {
+        let result = match input {
+            TerminalInput::Bytes(bytes) => desktop.terminal_send(&session_id, &terminal_id, &bytes),
+            TerminalInput::Command(command) => {
+                desktop.terminal_send_command(&session_id, &terminal_id, &command)
+            }
+        };
+        if let Err(error) = result {
+            let _ = errors.try_send(format!("终端输入失败：{error}"));
             break;
         }
     }
@@ -1423,11 +1447,26 @@ fn paint_terminal(host: &mut State) {
     window.set_application_cursor(workspace.grid.application_cursor());
     window.set_status(workspace.status.as_str().into());
     window.set_error(workspace.error);
+    window.set_input_ready(workspace.input_ready);
+    window.set_raw_input(workspace.raw_input);
     window.set_workspace_name(workspace.workspace_name.as_str().into());
-    window.set_workspace_root(workspace.workspace_root.as_str().into());
+    // Windows canonical paths keep the extended prefix internally, but it is
+    // noise in a user-facing location label.
+    let display_root = workspace
+        .workspace_root
+        .strip_prefix(r"\\?\UNC\")
+        .map(|path| format!(r"\\{path}"))
+        .unwrap_or_else(|| {
+            workspace
+                .workspace_root
+                .strip_prefix(r"\\?\")
+                .unwrap_or(&workspace.workspace_root)
+                .to_string()
+        });
+    window.set_workspace_root(display_root.into());
     match workspace.grid.caret() {
         Some((row, col)) => {
-            window.set_caret_visible(true);
+            window.set_caret_visible(workspace.raw_input && workspace.input_ready);
             window.set_caret_row(row);
             window.set_caret_col(col);
         }
@@ -1470,6 +1509,7 @@ fn bind_terminal(app: &MainWindow, state: Rc<RefCell<State>>) {
                 if let Some(window) = host.terminal_window.clone() {
                     paint_terminal(&mut host);
                     let _ = window.show();
+                    window.invoke_focus_input();
                 }
             }
             Err(error) => app.set_status(format!("无法启动终端：{error}").into()),
@@ -1498,6 +1538,14 @@ fn bind_terminal(app: &MainWindow, state: Rc<RefCell<State>>) {
             return;
         };
         enqueue_terminal_input(&app, &state, text.as_bytes());
+    });
+    let callback_state = Rc::downgrade(&state);
+    let weak = app.as_weak();
+    window.on_command_submitted(move |command| {
+        let (Some(app), Some(state)) = (weak.upgrade(), callback_state.upgrade()) else {
+            return false;
+        };
+        enqueue_terminal_command(&app, &state, command.to_string())
     });
     let callback_state = Rc::downgrade(&state);
     let weak = app.as_weak();
@@ -1631,6 +1679,44 @@ fn bind_terminal(app: &MainWindow, state: Rc<RefCell<State>>) {
     bind_terminal_poll(state);
 }
 
+fn enqueue_terminal_command(app: &MainWindow, state: &Rc<RefCell<State>>, command: String) -> bool {
+    let mut host = state.borrow_mut();
+    let result = (|| {
+        if command.len() > 64 * 1024 {
+            return Err("终端命令过大，请分段输入".to_string());
+        }
+        let workspace = host
+            .terminal_workspace
+            .clone()
+            .and_then(|id| host.terminals.get_mut(&id))
+            .ok_or_else(|| "终端尚未启动".to_string())?;
+        if !workspace.input_ready {
+            return Err("终端尚未就绪，请重新打开终端".into());
+        }
+        let session = workspace
+            .session
+            .as_ref()
+            .ok_or_else(|| "终端已退出，请重新打开终端".to_string())?;
+        session
+            .input
+            .try_send(TerminalInput::Command(command))
+            .map_err(|_| "终端输入通道不可用，请稍候或重新打开终端".to_string())
+    })();
+    if let Err(error) = result {
+        app.set_status(error.as_str().into());
+        if let Some(id) = host.terminal_workspace.clone() {
+            if let Some(workspace) = host.terminals.get_mut(&id) {
+                workspace.status = error;
+                workspace.error = true;
+            }
+        }
+        paint_terminal(&mut host);
+        false
+    } else {
+        true
+    }
+}
+
 fn enqueue_terminal_input(app: &MainWindow, state: &Rc<RefCell<State>>, input: &[u8]) {
     if input.is_empty() {
         return;
@@ -1651,7 +1737,11 @@ fn enqueue_terminal_input(app: &MainWindow, state: &Rc<RefCell<State>>, input: &
     else {
         return;
     };
-    if session.input.try_send(input.to_vec()).is_err() {
+    if session
+        .input
+        .try_send(TerminalInput::Bytes(input.to_vec()))
+        .is_err()
+    {
         app.set_status("终端输入队列已满，请稍候".into());
     }
 }
@@ -1679,7 +1769,7 @@ fn enqueue_terminal_paste(app: &MainWindow, state: &Rc<RefCell<State>>, text: &s
         let bytes = workspace.grid.bracketed_paste(text);
         (session.input.clone(), bytes)
     };
-    if sender.0.try_send(sender.1).is_err() {
+    if sender.0.try_send(TerminalInput::Bytes(sender.1)).is_err() {
         app.set_status("终端输入队列已满，请稍候".into());
     }
 }
@@ -1722,7 +1812,7 @@ fn enqueue_terminal_mouse(
     let Some((sender, bytes)) = sender else {
         return;
     };
-    if sender.try_send(bytes).is_err() {
+    if sender.try_send(TerminalInput::Bytes(bytes)).is_err() {
         app.set_status("终端输入队列已满，请稍候".into());
     }
 }
@@ -1775,12 +1865,25 @@ fn bind_terminal_poll(state: Rc<RefCell<State>>) {
             let session_id = session.session_id.clone();
             let terminal_id = session.terminal_id.clone();
             let last_seq = session.last_seq;
+            if let Ok(error) = session.input_errors.try_recv() {
+                let _ = state.desktop.terminal_close(&session_id, &terminal_id);
+                if let Some(workspace) = state.terminals.get_mut(&workspace_id) {
+                    workspace.status = error;
+                    workspace.error = true;
+                    workspace.input_ready = false;
+                    workspace.session = None;
+                }
+                paint_terminal(&mut state);
+                return;
+            }
+            let mut repaint = false;
             match state
                 .desktop
                 .terminal_poll(&session_id, &terminal_id, last_seq)
             {
                 Ok(frame) => {
                     if !frame.text.is_empty() {
+                        repaint = true;
                         let loss_marked = state
                             .terminals
                             .get(&workspace_id)
@@ -1797,11 +1900,14 @@ fn bind_terminal_poll(state: Rc<RefCell<State>>) {
                         if let Some(workspace) = state.terminals.get_mut(&workspace_id) {
                             workspace.grid.feed(frame.text.as_bytes());
                         }
-                        paint_terminal(&mut state);
                     }
                     let status = describe_terminal_status(&frame);
                     if let Some(workspace) = state.terminals.get_mut(&workspace_id) {
+                        repaint |= workspace.status != status
+                            || workspace.input_ready != (frame.status == "running");
                         workspace.status = status;
+                        workspace.input_ready = frame.status == "running";
+                        workspace.raw_input = frame.backend == "console" || frame.backend == "pty";
                         workspace.error = frame.status == "failed"
                             || (frame.status == "exited"
                                 && frame.exit_code.map(|code| code != 0).unwrap_or(false));
@@ -1821,13 +1927,22 @@ fn bind_terminal_poll(state: Rc<RefCell<State>>) {
                         }
                     }
                 }
-                Err(_) => {
+                Err(error) => {
+                    repaint = true;
                     // The session vanished underneath us (closed or pruned);
                     // drop the local handle so a fresh shell can be started.
                     if let Some(workspace) = state.terminals.get_mut(&workspace_id) {
                         workspace.session = None;
+                        workspace.input_ready = false;
+                        workspace.status = format!("终端读取失败：{error}");
+                        workspace.error = true;
                     }
                 }
+            }
+            // Lifecycle-only frames must repaint too: quiet shells and failed
+            // launches can change status without producing a single byte.
+            if repaint {
+                paint_terminal(&mut state);
             }
         },
     );

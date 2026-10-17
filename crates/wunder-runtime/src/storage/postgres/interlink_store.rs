@@ -71,6 +71,11 @@ pub(super) trait PostgresInterlinkStorage {
         query: ListInterlinkCommandsQuery<'_>,
     ) -> Result<(Vec<InterlinkCommandRecord>, i64)>;
     fn cleanup_interlink_commands_impl(&self, retention_days: u32) -> Result<u64>;
+    fn list_interlink_unfinished_before_impl(
+        &self,
+        before: f64,
+        limit: i64,
+    ) -> Result<Vec<InterlinkCommandRecord>>;
     fn insert_interlink_approval_impl(&self, record: &InterlinkApprovalRecord) -> Result<()>;
     fn decide_interlink_approval_impl(
         &self,
@@ -683,6 +688,24 @@ impl PostgresInterlinkStorage for PostgresStorage {
             rows = fetched.iter().map(map_command_row).collect();
         }
         Ok((rows, total))
+    }
+
+    fn list_interlink_unfinished_before_impl(
+        &self,
+        before: f64,
+        limit: i64,
+    ) -> Result<Vec<InterlinkCommandRecord>> {
+        self.ensure_initialized()?;
+        let mut conn = self.conn()?;
+        let rows = conn.query(
+            &format!(
+                "SELECT {COMMAND_COLUMNS} FROM interlink_commands WHERE finished_at IS NULL \
+             AND status IN ('issued', 'queued', 'acked', 'running') AND created_at < $1 \
+             ORDER BY created_at, command_id LIMIT $2"
+            ),
+            &[&before, &limit.clamp(1, 200)],
+        )?;
+        Ok(rows.iter().map(map_command_row).collect())
     }
 
     fn cleanup_interlink_commands_impl(&self, retention_days: u32) -> Result<u64> {

@@ -189,8 +189,12 @@ async fn handle_remote(
     user_id: String,
 ) {
     let (mut sender, mut receiver) = socket.split();
+    let generation = crate::services::interlink::device_gate(&device_id)
+        .read()
+        .await;
 
     if registry().by_device(&device_id).is_none() {
+        drop(generation);
         let _ = send_json(
             &mut sender,
             &json!({"type": REMOTE_FRAME_ERROR, "code": "NODE_OFFLINE", "thread_id": thread_id}),
@@ -209,6 +213,7 @@ async fn handle_remote(
     let (thread_sub, mut thread_rx) = match remote::hub().subscribe(&device_id, &thread_id) {
         Ok(pair) => pair,
         Err(error) => {
+            drop(generation);
             let _ = send_json(
                 &mut sender,
                 &json!({"type": REMOTE_FRAME_ERROR, "code": error.code()}),
@@ -232,6 +237,7 @@ async fn handle_remote(
         }
     }
 
+    drop(generation);
     let mut ticker = tokio::time::interval(std::time::Duration::from_secs(PING_INTERVAL_S));
     ticker.tick().await;
     loop {
@@ -285,6 +291,11 @@ async fn handle_remote(
         }
     }
 
+    // Serialize the last detach with replacement and fresh subscriptions, so
+    // an old browser cleanup cannot stop a newly attached upstream stream.
+    let generation = crate::services::interlink::device_gate(&device_id)
+        .write()
+        .await;
     let last = remote::hub().unsubscribe(&device_id, &thread_id, thread_sub.id);
     if last {
         // Nobody watches it any more: stop the upstream stream.
@@ -297,6 +308,7 @@ async fn handle_remote(
             );
         }
     }
+    drop(generation);
     let _ = send_json(
         &mut sender,
         &json!({"type": REMOTE_FRAME_CLOSE, "reason": "unsubscribed"}),

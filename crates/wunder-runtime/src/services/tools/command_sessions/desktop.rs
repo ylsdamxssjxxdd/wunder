@@ -731,6 +731,41 @@ impl DesktopTerminalService {
         Ok(())
     }
 
+    /// Submit an edited command line. Pipes have no terminal line discipline:
+    /// they need a complete line and an explicit echo, whereas a console/PTY
+    /// receives Return and performs its own echo. Keep this distinction here
+    /// so native clients do not guess shell-specific stdin framing.
+    pub async fn write_command(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        terminal_id: &str,
+        command: &str,
+    ) -> Result<(), String> {
+        if command.len() > 64 * 1024 {
+            return Err("terminal command exceeds input limit".into());
+        }
+        let record = self.scoped_record(user_id, session_id, terminal_id)?;
+        let snapshot = record.lock().snapshot();
+        if snapshot.status != DesktopTerminalStatus::Running {
+            return Err("terminal is not ready for input".into());
+        }
+        #[cfg(windows)]
+        let cmd_shell = resolve_terminal_shell(&snapshot.shell).kind
+            == crate::core::command_utils::ShellKind::Cmd;
+        #[cfg(not(windows))]
+        let cmd_shell = false;
+        let input = command_line_input(command, snapshot.backend, cmd_shell);
+        if snapshot.backend == DesktopTerminalBackend::Pipes {
+            // The echo belongs to the durable stream, not a frontend overlay.
+            // Queue it before the write so output from a fast command follows it.
+            let echo = format!("> {}\r\n", command.replace('\r', ""));
+            record.lock().push_output(&echo, false);
+        }
+        self.write_stdin(user_id, session_id, terminal_id, &input)
+            .await
+    }
+
     /// Interrupt the shell. On a console this is a real Ctrl-C, which the shell
     /// turns into the signal its foreground program expects; on pipes there is no
     /// way to say that, so the process is terminated instead.
@@ -1180,6 +1215,18 @@ impl DesktopTerminalService {
     }
 }
 
+fn command_line_input(command: &str, backend: DesktopTerminalBackend, cmd_shell: bool) -> Vec<u8> {
+    let normalized = command.replace("\r\n", "\n").replace('\r', "\n");
+    let newline = match backend {
+        DesktopTerminalBackend::Pipes if cmd_shell => "\r\n",
+        DesktopTerminalBackend::Pipes => "\n",
+        DesktopTerminalBackend::Console | DesktopTerminalBackend::Pty => "\r",
+    };
+    let mut input = normalized.replace('\n', newline);
+    input.push_str(newline);
+    input.into_bytes()
+}
+
 #[cfg(unix)]
 fn open_unix_pty(
     spec: &DesktopTerminalStartSpec,
@@ -1517,6 +1564,32 @@ mod tests {
         let rest = &"你".as_bytes()[1..];
         let text = decoder.push(rest);
         assert_eq!(text, "你");
+    }
+
+    #[test]
+    fn edited_commands_match_terminal_line_discipline() {
+        use DesktopTerminalBackend::{Console, Pipes, Pty};
+        assert_eq!(
+            command_line_input("echo sample", Pipes, true),
+            b"echo sample\r\n"
+        );
+        assert_eq!(
+            command_line_input("echo sample", Pipes, false),
+            b"echo sample\n"
+        );
+        assert_eq!(
+            command_line_input("echo sample", Console, true),
+            b"echo sample\r"
+        );
+        assert_eq!(
+            command_line_input("echo sample", Pty, false),
+            b"echo sample\r"
+        );
+        assert_eq!(
+            command_line_input("echo one\r\necho two", Pipes, false),
+            b"echo one\necho two\n"
+        );
+        assert_eq!(command_line_input("", Console, false), b"\r");
     }
 
     #[cfg(windows)]

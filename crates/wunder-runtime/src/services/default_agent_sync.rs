@@ -548,8 +548,7 @@ pub async fn sync_default_agent_across_users(
             .into_iter()
             .filter(|record| {
                 !crate::services::user_agent_presets::is_default_agent_record(record)
-                    && (record.preset_binding.is_some()
-                        || !crate::services::user_agent_presets::agent_is_archived(record))
+                    && record.preset_binding.is_some()
             })
             .map(|record| record.user_id)
             .collect::<HashSet<_>>();
@@ -623,7 +622,11 @@ pub async fn sync_default_agent_across_users(
                 },
             )?;
             if write_config {
-                if let Err(err) = state.inner_visible.sync_user_state(&user.user_id).await {
+                if let Err(err) = state
+                    .inner_visible
+                    .materialize_user_state(&user.user_id)
+                    .await
+                {
                     tracing::warn!(
                         "failed to sync inner-visible default-agent state for {}: {err}",
                         user.user_id

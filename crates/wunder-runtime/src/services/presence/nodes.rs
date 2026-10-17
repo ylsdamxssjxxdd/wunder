@@ -438,11 +438,10 @@ pub fn derive_device_status(now: f64, last_seen_at: f64, ttl: f64) -> &'static s
 /// - `None`: no tunnel signal at all (interlink disabled, or the device never
 ///   opened a tunnel) -> freshness decides.
 ///
-/// Callers in `api/interlink.rs` are expected to pass
-/// `if registry().by_device(&device_id).is_some() { Some(true) } else { row_tunnel_connected }`
-/// where `row_tunnel_connected` is the persisted `cloud_devices.interlink
-/// .tunnel_connected` (`Option<bool>`). This function stays pure so the
-/// presence rules are testable without the tunnel.
+/// Callers pass the current registry membership once a device has ever opened
+/// a tunnel; a persisted `true` cannot prove liveness after a process restart.
+/// Devices that never opened a tunnel retain the heartbeat fallback. This
+/// function stays pure so the presence rules are testable without a tunnel.
 pub fn derive_device_status_with_tunnel(
     now: f64,
     last_seen_at: f64,

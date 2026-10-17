@@ -1868,6 +1868,16 @@
   "en": "Interrupt"
  },
  {
+  "key": "cp_terminal_paste",
+  "zh": "粘贴命令",
+  "en": "Paste command"
+ },
+ {
+  "key": "cp_terminal_empty",
+  "zh": "在下方输入命令，按 Enter 运行",
+  "en": "Type a command below and press Enter"
+ },
+ {
   "key": "tl_next_events",
   "zh": "下一页事件",
   "en": "Next events"

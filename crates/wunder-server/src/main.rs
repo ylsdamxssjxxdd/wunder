@@ -88,6 +88,13 @@ async fn run_server(runtime_threads: runtime_tuning::ServerRuntimeThreads) -> an
         .spawn_maintenance(state.config_store.clone());
     // 互通面维护：陈旧隧道、命令超时、审批过期与台账/审计保留（docs §4.4、§9.4）。
     if config.interlink.enabled {
+        let cutoff = wunder_server::interlink::janitor::recovery_cutoff();
+        wunder_server::interlink::commands::recover_after_restart(
+            state.storage.clone(),
+            cutoff,
+            cutoff,
+        )
+        .await?;
         wunder_server::interlink::janitor::spawn(state.clone());
     }
 

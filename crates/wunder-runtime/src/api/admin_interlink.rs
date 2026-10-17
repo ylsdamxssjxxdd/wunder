@@ -38,7 +38,9 @@ use crate::api::errors::error_response;
 use crate::api::interlink_ws;
 use crate::auth as guard_auth;
 use crate::core::blocking;
-use crate::services::interlink::{audit, commands, digest, janitor, registry, secret, LiveChannel};
+use crate::services::interlink::{
+    audit, commands, current_tunnel_signal, digest, janitor, registry, secret, LiveChannel,
+};
 use crate::services::presence::derive_device_status_with_tunnel;
 use crate::state::AppState;
 use crate::storage::{
@@ -541,11 +543,7 @@ async fn get_fleet(
     for device in devices.iter() {
         let patch = device.interlink.clone().unwrap_or_default();
         let live_channel = live_by_device.get(device.device_id.as_str()).copied();
-        let tunnel_live = if live_channel.is_some() {
-            Some(true)
-        } else {
-            patch.tunnel_connected
-        };
+        let tunnel_live = current_tunnel_signal(patch.last_tunnel_at, live_channel.is_some());
         // Same rules as the user-facing node list (§5.1): the tunnel signal
         // first, heartbeat freshness as the fallback; a revoked node is never
         // reported online (§13.5.18).

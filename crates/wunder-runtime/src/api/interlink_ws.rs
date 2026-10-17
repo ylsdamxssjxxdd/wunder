@@ -67,6 +67,8 @@ pub const INSTANCE_ID: &str = "local";
 const FORWARDED_HEADERS: [&str; 2] = ["x-forwarded-for", "x-real-ip"];
 /// Beats older than this many seconds mark the node `away` (docs §5.1).
 const AWAY_IDLE_S: f64 = 600.0;
+/// A stalled peer must not hold the device gate or delay tunnel retirement.
+const SOCKET_WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// User-facing interlink tunnel routes.
 pub fn router() -> Router<Arc<AppState>> {
@@ -499,9 +501,13 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>, ticket: TicketEntry)
         resumed: false,
     };
 
-    // New chain supersedes the old one for the same device.
+    // Retire the previous generation before publishing its replacement. Command
+    // admission/draining cannot race this transition across database awaits.
     let (outbound_tx, mut outbound_rx) = LiveChannelRegistry::outbound_channel();
-    let _superseded = registry().register(live.clone(), outbound_tx);
+    if activate_channel(&state, &live, outbound_tx).await.is_err() {
+        let _ = send_close(&mut sender, "storage_error", None).await;
+        return;
+    }
 
     // Register the tunnel with the unified presence service so the admin user
     // list (docs §5.1) marks the owning desktop/cli surface online while the
@@ -510,15 +516,6 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>, ticket: TicketEntry)
     // node, so without this the `online_desktop`/`online_cli` columns stay
     // false even though the device is connected.
     let presence_kind = client_kind_from_device(&live.client);
-    state
-        .control
-        .presence
-        .connect_client(&live.user_id, &live.connection_id, presence_kind, now);
-
-    // Persist the channel snapshot and flip the device tunnel flag; the node
-    // list reads `tunnel_connected` for its `connected` field (docs §5.1).
-    upsert_channel(&state, &live).await;
-    set_tunnel_connected(&state, &live.device_id, true, now).await;
     write_audit(
         &state,
         audit::record(
@@ -615,8 +612,8 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>, ticket: TicketEntry)
                     break;
                 };
                 let sent = match frame {
-                    OutboundFrame::Text(text) => sender.send(Message::Text(text.into())).await,
-                    OutboundFrame::Binary(bytes) => sender.send(Message::Binary(bytes.into())).await,
+                    OutboundFrame::Text(text) => send_message(&mut sender, Message::Text(text.into())).await,
+                    OutboundFrame::Binary(bytes) => send_message(&mut sender, Message::Binary(bytes.into())).await,
                 };
                 if sent.is_err() {
                     break;
@@ -650,7 +647,7 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>, ticket: TicketEntry)
                     Some(Ok(Message::Ping(payload))) => {
                         last_received = tokio::time::Instant::now();
                         // Transport-level keepalive: mirror it with a pong.
-                        if sender.send(Message::Pong(payload)).await.is_err() {
+                        if send_message(&mut sender, Message::Pong(payload)).await.is_err() {
                             break;
                         }
                     }
@@ -674,6 +671,15 @@ async fn handle_inbound(
     shadow_limits: &shadow::ShadowLimits,
     frame: InterlinkFrame,
 ) -> bool {
+    let _generation = crate::services::interlink::device_gate(&live.device_id)
+        .read()
+        .await;
+    if !registry()
+        .by_device(&live.device_id)
+        .is_some_and(|current| current.channel_id == live.channel_id)
+    {
+        return false;
+    }
     let channel_id = live.channel_id.as_str();
     let corr = frame.corr.as_deref().unwrap_or_default();
     match frame.kind.as_str() {
@@ -793,6 +799,14 @@ async fn handle_inbound(
                 &frame.payload,
                 limits,
                 now_unix_seconds(),
+            )
+            .await;
+            drop(_generation);
+            let _ = commands::drain(
+                state.storage.clone(),
+                &live.user_id,
+                &live.device_id,
+                limits,
             )
             .await;
             true
@@ -955,6 +969,15 @@ async fn store_inline(
 
 /// Handle one inbound binary data frame (docs §4.2 header layout).
 async fn handle_data_frame(state: &Arc<AppState>, live: &LiveChannel, bytes: &[u8]) -> bool {
+    let _generation = crate::services::interlink::device_gate(&live.device_id)
+        .read()
+        .await;
+    if !registry()
+        .by_device(&live.device_id)
+        .is_some_and(|current| current.channel_id == live.channel_id)
+    {
+        return false;
+    }
     let Some((header, payload)) = blob::parse_header(bytes) else {
         return true;
     };
@@ -993,6 +1016,9 @@ async fn handle_data_frame(state: &Arc<AppState>, live: &LiveChannel, bytes: &[u
 /// Close a device's tunnel from the server side (kill switch, revocation or an
 /// admin policy change). Returns whether a tunnel was actually closed.
 pub async fn close_tunnel(device_id: &str, reason: &str) -> bool {
+    let _generation = crate::services::interlink::device_gate(device_id)
+        .write()
+        .await;
     let Some(live) = registry().by_device(device_id) else {
         return false;
     };
@@ -1045,9 +1071,16 @@ async fn send_frame(
 ) -> Result<(), ()> {
     let frame = build_frame(kind, channel_id, corr, payload);
     let text = serde_json::to_string(&frame).map_err(|_| ())?;
-    sender
-        .send(Message::Text(text.into()))
+    send_message(sender, Message::Text(text.into())).await
+}
+
+async fn send_message(
+    sender: &mut SplitSink<WebSocket, Message>,
+    message: Message,
+) -> Result<(), ()> {
+    tokio::time::timeout(SOCKET_WRITE_TIMEOUT, sender.send(message))
         .await
+        .map_err(|_| ())?
         .map_err(|_| ())
 }
 
@@ -1065,7 +1098,7 @@ async fn send_close(
         json!({ "reason": reason }),
     )
     .await;
-    sender.send(Message::Close(None)).await.map_err(|_| ())
+    send_message(sender, Message::Close(None)).await
 }
 
 /// Read the mandatory first frame and decode it as `hello`.
@@ -1332,8 +1365,6 @@ async fn broadcast_node_joined(live: &LiveChannel) {
 /// clear the device tunnel flag (only when this handler still owned the slot,
 /// so a superseding channel is never torn down).
 async fn teardown(state: &AppState, live: &LiveChannel, reason: &str) {
-    let owned = registry().unregister(&live.device_id, &live.channel_id);
-
     // Drop the presence registration so the admin user list stops showing the
     // desktop/cli surface online once the tunnel is gone (docs §5.1). A
     // superseding channel carries a different connection id, so tearing the old
@@ -1369,11 +1400,15 @@ async fn teardown(state: &AppState, live: &LiveChannel, reason: &str) {
     )
     .await;
 
+    let _generation = crate::services::interlink::device_gate(&live.device_id)
+        .write()
+        .await;
+    let owned = registry().unregister(&live.device_id, &live.channel_id);
     if owned || registry().by_device(&live.device_id).is_none() {
         set_tunnel_connected(state, &live.device_id, false, 0.0).await;
         // In-flight commands against a node that vanished answer immediately
         // (docs §13.2 7) and remote watchers are released.
-        let _ = commands::fail_device_commands(
+        let _ = commands::fail_device_commands_locked(
             state.storage.clone(),
             &live.device_id,
             now_unix_seconds(),
@@ -1381,6 +1416,68 @@ async fn teardown(state: &AppState, live: &LiveChannel, reason: &str) {
         .await;
         remote::hub().close_node(&live.device_id);
     }
+}
+
+async fn activate_channel(
+    state: &AppState,
+    live: &LiveChannel,
+    outbound: tokio::sync::mpsc::Sender<OutboundFrame>,
+) -> anyhow::Result<()> {
+    let _generation = crate::services::interlink::device_gate(&live.device_id)
+        .write()
+        .await;
+    let storage = state.storage.clone();
+    let device_id = live.device_id.clone();
+    let user_id = live.user_id.clone();
+    let active = blocking::run_db("api.interlink_ws.activate_device", move || {
+        Ok::<_, anyhow::Error>(storage.get_cloud_device(&device_id)?.is_some_and(|device| {
+            !device.revoked && device.user_id == user_id && interlink_allowed(&device.interlink)
+        }))
+    })
+    .await?;
+    anyhow::ensure!(active, "device is no longer authorized");
+    commands::fail_device_commands_locked(
+        state.storage.clone(),
+        &live.device_id,
+        now_unix_seconds(),
+    )
+    .await?;
+    remote::hub().close_node(&live.device_id);
+    registry().register(live.clone(), outbound);
+    state.control.presence.connect_client(
+        &live.user_id,
+        &live.connection_id,
+        client_kind_from_device(&live.client),
+        live.connected_at,
+    );
+    upsert_channel(state, live).await;
+    set_tunnel_connected(state, &live.device_id, true, live.connected_at).await;
+    Ok(())
+}
+
+/// Recheck the exact channel and its current heartbeat after taking the gate.
+/// A stale maintenance snapshot must never retire a replacement or a channel
+/// whose heartbeat arrived while maintenance waited.
+pub(crate) async fn retire_stale_channel(
+    state: &AppState,
+    stale: &LiveChannel,
+    now: f64,
+    ttl: f64,
+) {
+    let _generation = crate::services::interlink::device_gate(&stale.device_id)
+        .write()
+        .await;
+    let Some(current) = registry().by_device(&stale.device_id) else {
+        return;
+    };
+    if current.channel_id != stale.channel_id || now - current.last_seen_at <= ttl {
+        return;
+    }
+    registry().unregister(&current.device_id, &current.channel_id);
+    set_tunnel_connected(state, &current.device_id, false, 0.0).await;
+    let _ =
+        commands::fail_device_commands_locked(state.storage.clone(), &current.device_id, now).await;
+    remote::hub().close_node(&current.device_id);
 }
 
 async fn write_audit(state: &AppState, record: crate::storage::InterlinkAuditRecord) {
@@ -1445,6 +1542,157 @@ fn now_unix_seconds() -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn old_teardown_and_stale_sweep_cannot_retire_a_replacement() {
+        use crate::storage::CloudDeviceRecord;
+        let root = tempfile::tempdir().unwrap();
+        let mut config = crate::config::Config::default();
+        config.storage.backend = "sqlite".into();
+        config.storage.db_path = root.path().join("state.db").to_string_lossy().into_owned();
+        config.workspace.root = root.path().join("workspace").to_string_lossy().into_owned();
+        let state = AppState::new_with_options(
+            crate::config_store::ConfigStore::from_config(
+                root.path().join("config.yaml"),
+                config.clone(),
+            ),
+            config,
+            crate::state::AppStateInitOptions::cli_default(),
+        )
+        .unwrap();
+        let device = "fixture_generation_device";
+        let now = now_unix_seconds();
+        state
+            .storage
+            .upsert_cloud_device(&CloudDeviceRecord {
+                device_id: device.into(),
+                user_id: "fixture_user".into(),
+                client: "desktop".into(),
+                name: "Fixture".into(),
+                os: None,
+                arch: None,
+                app_version: None,
+                last_seen_at: now,
+                created_at: now,
+                revoked: false,
+                interlink: None,
+            })
+            .unwrap();
+        let old = LiveChannel {
+            device_id: device.into(),
+            user_id: "fixture_user".into(),
+            client: "desktop".into(),
+            channel_id: "fixture_old_channel".into(),
+            connection_id: "fixture_old_connection".into(),
+            protocol_version: 1,
+            capabilities: vec![CAP_QUERY_BASIC.into()],
+            connected_at: now - 100.0,
+            last_seen_at: now - 100.0,
+            rtt_ms: None,
+            presence_status: None,
+            active_threads: 0,
+            resumed: false,
+        };
+        let (sender, _old_receiver) = LiveChannelRegistry::outbound_channel();
+        activate_channel(&state, &old, sender).await.unwrap();
+        // Keep teardown at its first storage await until replacement can be
+        // prepared, without enqueueing a lifecycle writer that would itself
+        // prevent the replacement from acquiring the gate.
+        let connection = rusqlite::Connection::open(root.path().join("state.db")).unwrap();
+        connection.execute_batch("BEGIN EXCLUSIVE").unwrap();
+        let old_cleanup = teardown(&state, &old, "superseded");
+        tokio::pin!(old_cleanup);
+        assert!(futures::poll!(&mut old_cleanup).is_pending());
+        connection.execute_batch("COMMIT").unwrap();
+        let new = LiveChannel {
+            channel_id: "fixture_new_channel".into(),
+            connection_id: "fixture_new_connection".into(),
+            connected_at: now,
+            last_seen_at: now,
+            ..old.clone()
+        };
+        let (sender, mut receiver) = LiveChannelRegistry::outbound_channel();
+        activate_channel(&state, &new, sender).await.unwrap();
+        let (_watcher, mut watcher) = remote::hub().subscribe(device, "fixture_thread").unwrap();
+        let args = json!({});
+        let outcome = commands::issue(
+            state.storage.clone(),
+            commands::Spec {
+                command_id: Some("fixture_generation_command"),
+                direction: "c2l",
+                actor_user_id: "fixture_user",
+                from_node: "web",
+                to_node: &format!("device:{device}"),
+                kind: "node.summary",
+                args: &args,
+                timeout_s: None,
+            },
+            &commands::Limits::default(),
+            commands::NodeContext {
+                device_id: Some(device.into()),
+                capabilities: vec![CAP_QUERY_BASIC.into()],
+                ..Default::default()
+            },
+            now,
+        )
+        .await
+        .unwrap();
+        assert_eq!(outcome.dispatch, commands::Dispatch::Sent);
+
+        // Deliberately run the retired handler after the new generation has a
+        // real reservation and a watcher. Device-wide cleanup would break both.
+        old_cleanup.await;
+        retire_stale_channel(&state, &old, now + 1.0, 10.0).await;
+        assert_eq!(
+            registry().by_device(device).unwrap().channel_id,
+            new.channel_id
+        );
+        assert_eq!(commands::hub().inflight_count(device), 1);
+        assert_eq!(
+            state
+                .storage
+                .get_interlink_command("fixture_generation_command")
+                .unwrap()
+                .unwrap()
+                .status,
+            "issued"
+        );
+        assert_eq!(
+            state
+                .storage
+                .get_cloud_device(device)
+                .unwrap()
+                .unwrap()
+                .interlink
+                .unwrap()
+                .tunnel_connected,
+            Some(true)
+        );
+        assert!(receiver.try_recv().is_ok());
+        remote::hub().publish(device, "fixture_thread", "fixture_event");
+        assert_eq!(watcher.try_recv().unwrap(), "fixture_event");
+
+        let stale_snapshot = LiveChannel {
+            last_seen_at: now - 100.0,
+            ..new.clone()
+        };
+        retire_stale_channel(&state, &stale_snapshot, now + 1.0, 10.0).await;
+        assert!(
+            registry().by_device(device).is_some(),
+            "fresh heartbeat wins over stale snapshot"
+        );
+        teardown(&state, &new, "closed").await;
+        assert_eq!(commands::hub().inflight_count(device), 0);
+        assert_eq!(
+            state
+                .storage
+                .get_interlink_command("fixture_generation_command")
+                .unwrap()
+                .unwrap()
+                .status,
+            "failed"
+        );
+    }
 
     fn ticket(entry: &str, expires_at: f64) -> TicketEntry {
         TicketEntry {

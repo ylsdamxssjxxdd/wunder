@@ -74,6 +74,11 @@ pub(super) trait SqliteInterlinkStorage {
         query: ListInterlinkCommandsQuery<'_>,
     ) -> Result<(Vec<InterlinkCommandRecord>, i64)>;
     fn cleanup_interlink_commands_impl(&self, retention_days: u32) -> Result<u64>;
+    fn list_interlink_unfinished_before_impl(
+        &self,
+        before: f64,
+        limit: i64,
+    ) -> Result<Vec<InterlinkCommandRecord>>;
     fn insert_interlink_approval_impl(&self, record: &InterlinkApprovalRecord) -> Result<()>;
     fn decide_interlink_approval_impl(
         &self,
@@ -605,6 +610,27 @@ impl SqliteInterlinkStorage for SqliteStorage {
                 .collect::<std::result::Result<Vec<_>, _>>()?;
         }
         Ok((rows, total))
+    }
+
+    fn list_interlink_unfinished_before_impl(
+        &self,
+        before: f64,
+        limit: i64,
+    ) -> Result<Vec<InterlinkCommandRecord>> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let mut stmt = conn.prepare(
+            "SELECT command_id, direction, actor_user_id, from_node, to_node, kind, args_digest, approval_state, status, created_at, acked_at, finished_at, error_code, error_summary \
+             FROM interlink_commands WHERE finished_at IS NULL \
+             AND status IN ('issued', 'queued', 'acked', 'running') AND created_at < ? \
+             ORDER BY created_at, command_id LIMIT ?")?;
+        let rows = stmt
+            .query_map(
+                params![before, limit.clamp(1, 200)],
+                Self::read_interlink_command,
+            )?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
     }
 
     fn cleanup_interlink_commands_impl(&self, retention_days: u32) -> Result<u64> {

@@ -928,6 +928,18 @@ impl NativeDesktop {
             .send(self.user_id(), session_id, terminal_id, input)
     }
 
+    /// Submit a complete command line; the terminal service owns line endings
+    /// and echo for the selected shell/backend.
+    pub fn terminal_send_command(
+        &self,
+        session_id: &str,
+        terminal_id: &str,
+        command: &str,
+    ) -> Result<()> {
+        self.terminal
+            .send_command(self.user_id(), session_id, terminal_id, command)
+    }
+
     /// Interrupt the running command: Ctrl-C on a console, otherwise the shell
     /// process is killed because piped stdin carries no signal path.
     pub fn terminal_cancel(&self, session_id: &str, terminal_id: &str) -> Result<()> {

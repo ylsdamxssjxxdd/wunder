@@ -22,10 +22,9 @@ use wunder_core::interlink::{
     COMMAND_STATUS_FAILED, COMMAND_STATUS_ISSUED, COMMAND_STATUS_QUEUED, COMMAND_STATUS_RUNNING,
     COMMAND_STATUS_SUCCEEDED, COMMAND_STATUS_TIMEOUT, DIRECTION_C2L, ERR_APPROVAL_EXPIRED,
     ERR_APPROVAL_REJECTED, ERR_CAP_DENIED, ERR_NODE_BUSY, ERR_NODE_OFFLINE, ERR_QUEUE_FULL,
-    ERR_TIMEOUT, FRAME_COMMAND, REMOTE_FRAME_COMMAND,
+    ERR_SERVER_RESTARTED, ERR_TIMEOUT, FRAME_COMMAND, REMOTE_FRAME_COMMAND,
 };
 
-use super::client::now_ts;
 use super::{audit, blob, digest, registry, remote, DispatchError, OutboundFrame};
 use crate::core::blocking;
 use crate::storage::{
@@ -229,6 +228,14 @@ impl CommandHub {
         state.frame_order.retain(|entry| entry != command_id);
         // Terminal/expired commands must release the bounded offline queue too,
         // even when that device never reconnects to drain it.
+        Self::remove_queued_locked(&mut state, command_id);
+    }
+
+    fn remove_queued(&self, command_id: &str) {
+        Self::remove_queued_locked(&mut self.lock(), command_id);
+    }
+
+    fn remove_queued_locked(state: &mut HubState, command_id: &str) {
         for queue in state.queued.values_mut() {
             queue.retain(|item| item.command_id != command_id);
         }
@@ -283,12 +290,22 @@ impl CommandHub {
             .map(|entry| entry.value.clone())
     }
 
+    #[cfg(test)]
     fn reserve(&self, device_id: &str, command_id: &str) {
         self.lock()
             .inflight
             .entry(device_id.to_string())
             .or_default()
             .insert(command_id.to_string());
+    }
+
+    fn try_reserve(&self, device_id: &str, command_id: &str, limit: usize) -> bool {
+        let mut state = self.lock();
+        let slots = state.inflight.entry(device_id.to_string()).or_default();
+        if slots.len() >= limit.max(1) {
+            return false;
+        }
+        slots.insert(command_id.to_string())
     }
 
     fn release(&self, device_id: &str, command_id: &str) {
@@ -307,6 +324,14 @@ impl CommandHub {
             .get(device_id)
             .map(HashSet::len)
             .unwrap_or(0)
+    }
+
+    fn inflight_commands(&self, device_id: &str) -> Vec<String> {
+        self.lock()
+            .inflight
+            .get(device_id)
+            .map(|commands| commands.iter().cloned().collect())
+            .unwrap_or_default()
     }
 
     fn has_capacity(&self, device_id: &str, limit: usize) -> bool {
@@ -330,40 +355,16 @@ impl CommandHub {
         true
     }
 
-    /// Pop the next parked command that belongs to `target`.
-    fn dequeue_for(&self, user_id: &str, target: &str) -> Option<Queued> {
-        let mut state = self.lock();
-        let queue = state.queued.get_mut(user_id)?;
-        let index = queue
-            .iter()
-            .position(|item| item.target == target)
-            .unwrap_or(0);
-        if queue
-            .iter()
-            .nth(index)
-            .map(|item| item.target != target)
-            .unwrap_or(true)
-        {
-            return None;
-        }
-        let item = queue.remove(index);
-        if queue.is_empty() {
-            state.queued.remove(user_id);
-        }
-        item
-    }
-
-    fn requeue_front(&self, user_id: &str, item: Queued) -> bool {
-        let mut state = self.lock();
-        if state.queued.values().map(VecDeque::len).sum::<usize>() >= MAX_QUEUED_COMMANDS {
-            return false;
-        }
-        state
+    /// Keep the head and its capacity accounted for until delivery succeeds.
+    /// Database/socket errors must not lose it or let another node steal the
+    /// queue slot while a drainer awaits storage.
+    fn next_for(&self, user_id: &str, target: &str) -> Option<Queued> {
+        self.lock()
             .queued
-            .entry(user_id.to_string())
-            .or_default()
-            .push_front(item);
-        true
+            .get(user_id)?
+            .iter()
+            .find(|item| item.target == target)
+            .cloned()
     }
 
     pub fn queued_depth(&self, user_id: Option<&str>) -> usize {
@@ -427,6 +428,11 @@ pub async fn issue(
     node: NodeContext,
     now: f64,
 ) -> Result<Outcome, IssueError> {
+    let target_device_id = device_of(spec.to_node);
+    let _generation = match target_device_id.as_deref() {
+        Some(device) => Some(super::device_gate(device).read().await),
+        None => None,
+    };
     let kind = spec.kind;
     if spec.command_id.is_some_and(|id| id.len() > 128)
         || serde_json::to_vec(spec.args).map_or(true, |args| args.len() > MAX_COMMAND_ARGS_BYTES)
@@ -443,6 +449,7 @@ pub async fn issue(
         .map(str::to_string)
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| format!("cmd_{}", Uuid::new_v4().simple()));
+    let _command = command_lock(&command_id).lock().await;
 
     // Approval precedence (docs §7.3 2): admin force > hard rule > server
     // default list > kind default.
@@ -616,45 +623,55 @@ pub async fn issue(
         .unwrap_or_default();
     let frame_text = command_frame_text(&record, approval.as_ref(), spec.args, limits, risk);
     let target = format!("device:{device_id}");
+    hub().track_frame(&record.command_id, &frame_text);
 
     let dispatch = match registry().by_device(&device_id) {
-        Some(live) => match registry().dispatch(
-            &device_id,
-            &live.channel_id,
-            OutboundFrame::Text(frame_text.clone()),
-        ) {
-            Ok(()) => {
-                hub().reserve(&device_id, &record.command_id);
-                hub().track_frame(&record.command_id, &frame_text);
-                Dispatch::Sent
-            }
-            Err(DispatchError::QueueFull) => {
-                park(
-                    storage.clone(),
-                    &record,
-                    spec.actor_user_id,
-                    &target,
-                    &frame_text,
-                    limits,
-                    now,
-                    ERR_NODE_BUSY,
+        Some(live) => {
+            match if hub().queued_depth_for_target(&target) > 0
+                || !hub().try_reserve(&device_id, &record.command_id, limits.inflight_per_node)
+            {
+                Err(DispatchError::QueueFull)
+            } else {
+                registry().dispatch(
+                    &device_id,
+                    &live.channel_id,
+                    OutboundFrame::Text(frame_text.clone()),
                 )
-                .await
+            } {
+                Ok(()) => {
+                    hub().track_frame(&record.command_id, &frame_text);
+                    Dispatch::Sent
+                }
+                Err(DispatchError::QueueFull) => {
+                    hub().release(&device_id, &record.command_id);
+                    park(
+                        storage.clone(),
+                        &record,
+                        spec.actor_user_id,
+                        &target,
+                        &frame_text,
+                        limits,
+                        now,
+                        ERR_NODE_BUSY,
+                    )
+                    .await?
+                }
+                Err(DispatchError::Superseded | DispatchError::NoChannel) => {
+                    hub().release(&device_id, &record.command_id);
+                    park(
+                        storage.clone(),
+                        &record,
+                        spec.actor_user_id,
+                        &target,
+                        &frame_text,
+                        limits,
+                        now,
+                        ERR_NODE_OFFLINE,
+                    )
+                    .await?
+                }
             }
-            Err(DispatchError::Superseded | DispatchError::NoChannel) => {
-                park(
-                    storage.clone(),
-                    &record,
-                    spec.actor_user_id,
-                    &target,
-                    &frame_text,
-                    limits,
-                    now,
-                    ERR_NODE_OFFLINE,
-                )
-                .await
-            }
-        },
+        }
         None => {
             park(
                 storage.clone(),
@@ -666,7 +683,7 @@ pub async fn issue(
                 now,
                 ERR_NODE_OFFLINE,
             )
-            .await
+            .await?
         }
     };
 
@@ -700,7 +717,7 @@ async fn park(
     limits: &Limits,
     now: f64,
     reason: &'static str,
-) -> Dispatch {
+) -> anyhow::Result<Dispatch> {
     let node_live = device_of(target)
         .map(|id| registry().by_device(&id).is_some())
         .unwrap_or(false);
@@ -711,7 +728,7 @@ async fn park(
         } else {
             ERR_NODE_OFFLINE
         };
-        let _ = mark_status(
+        mark_status(
             storage,
             &record.command_id,
             COMMAND_STATUS_FAILED,
@@ -720,8 +737,9 @@ async fn park(
             Some(code),
             Some(code),
         )
-        .await;
-        return Dispatch::Rejected(code);
+        .await?;
+        hub().drop_frame(&record.command_id);
+        return Ok(Dispatch::Rejected(code));
     }
     let item = Queued {
         command_id: record.command_id.clone(),
@@ -730,7 +748,7 @@ async fn park(
     };
     if hub().enqueue(user_id, item, limits.offline_queue_per_user) {
         hub().track_frame(&record.command_id, frame_text);
-        let _ = mark_status(
+        mark_status(
             storage.clone(),
             &record.command_id,
             COMMAND_STATUS_QUEUED,
@@ -739,7 +757,7 @@ async fn park(
             Some(reason),
             None,
         )
-        .await;
+        .await?;
         // A parked command whose channel is live is transient backpressure, not
         // an offline node: the backlog only drains on an event edge (a channel
         // opening, a command finishing), so without this retry the command would
@@ -749,9 +767,9 @@ async fn park(
                 retry_parked_queue(storage, user_id.to_string(), device_id, limits.clone());
             }
         }
-        return Dispatch::Queued;
+        return Ok(Dispatch::Queued);
     }
-    let _ = mark_status(
+    mark_status(
         storage,
         &record.command_id,
         COMMAND_STATUS_FAILED,
@@ -760,12 +778,13 @@ async fn park(
         Some(ERR_QUEUE_FULL),
         Some(reason),
     )
-    .await;
-    Dispatch::Rejected(ERR_QUEUE_FULL)
+    .await?;
+    hub().drop_frame(&record.command_id);
+    Ok(Dispatch::Rejected(ERR_QUEUE_FULL))
 }
 
 /// One bounded retry of the backlog shortly after parking. A single attempt: if
-/// the outbound queue is still full the drain re-queues at the front and stops,
+/// the outbound queue is still full the drain retains the head and stops,
 /// and the janitor backstop (`drain_backlogs`) covers the longer waits.
 fn retry_parked_queue(
     storage: Arc<dyn StorageBackend>,
@@ -884,6 +903,7 @@ pub async fn on_ack(
     limits: &Limits,
     now: f64,
 ) -> anyhow::Result<AckOutcome> {
+    let _guard = command_lock(command_id).lock().await;
     let Some(record) = load(storage.clone(), command_id).await? else {
         return Ok(AckOutcome::Unknown);
     };
@@ -925,7 +945,7 @@ pub async fn on_ack(
                 set_approval(storage.clone(), command_id, &approval_state).await?;
                 decide_ticket(storage.clone(), &record, &approval_state, "device", now).await?;
             }
-            finalize(
+            finalize_unlocked(
                 storage.clone(),
                 command_id,
                 COMMAND_STATUS_FAILED,
@@ -943,6 +963,9 @@ pub async fn on_ack(
         let eta_ms = payload.get("eta_s").and_then(Value::as_f64);
         let _ = eta_ms;
         if let (Some(frame), Some(target)) = (hub().frame(command_id), device_of(&record.to_node)) {
+            if record.status == COMMAND_STATUS_QUEUED {
+                return Ok(AckOutcome::Retried);
+            }
             if let Some(device_id) = &device_id {
                 hub().release(device_id, command_id);
             }
@@ -966,10 +989,16 @@ pub async fn on_ack(
                     None,
                 )
                 .await?;
+                retry_parked_queue(
+                    storage.clone(),
+                    record.actor_user_id.clone(),
+                    target,
+                    limits.clone(),
+                );
                 return Ok(AckOutcome::Retried);
             }
         }
-        finalize(
+        finalize_unlocked(
             storage.clone(),
             command_id,
             COMMAND_STATUS_FAILED,
@@ -988,7 +1017,11 @@ pub async fn on_ack(
     update_status(
         storage.clone(),
         command_id,
-        COMMAND_STATUS_ACKED,
+        if record.status == COMMAND_STATUS_RUNNING {
+            COMMAND_STATUS_RUNNING
+        } else {
+            COMMAND_STATUS_ACKED
+        },
         Some(now),
         None,
         None,
@@ -1053,7 +1086,7 @@ pub async fn on_result(
     storage: Arc<dyn StorageBackend>,
     command_id: &str,
     payload: &Value,
-    limits: &Limits,
+    _limits: &Limits,
     now: f64,
 ) -> anyhow::Result<bool> {
     let _guard = command_lock(command_id).lock().await;
@@ -1122,7 +1155,6 @@ pub async fn on_result(
     if let Some(device_id) = &device_id {
         hub().release(device_id, command_id);
         remote::hub().publish_control(device_id, &lifecycle_json(&record.kind, status, command_id));
-        let _ = drain(storage.clone(), &record.actor_user_id, device_id, limits).await;
     }
     if status != COMMAND_STATUS_SUCCEEDED {
         blob::store().drop_command(command_id);
@@ -1185,15 +1217,18 @@ pub async fn drain(
     device_id: &str,
     limits: &Limits,
 ) -> anyhow::Result<usize> {
+    // One bounded drainer owns FIFO delivery; replacement and admission wait.
+    let _generation = super::device_gate(device_id).write().await;
     let Some(live) = registry().by_device(device_id) else {
         return Ok(0);
     };
     let target = format!("device:{device_id}");
     let mut delivered = 0usize;
     while hub().has_capacity(device_id, limits.inflight_per_node) {
-        let Some(item) = hub().dequeue_for(user_id, &target) else {
+        let Some(item) = hub().next_for(user_id, &target) else {
             break;
         };
+        let _command = command_lock(&item.command_id).lock().await;
         if load(storage.clone(), &item.command_id)
             .await?
             .is_none_or(|record| is_terminal_command_status(&record.status))
@@ -1201,56 +1236,47 @@ pub async fn drain(
             hub().drop_frame(&item.command_id);
             continue;
         }
+        if !hub().try_reserve(device_id, &item.command_id, limits.inflight_per_node) {
+            break;
+        }
+        // Persist before publishing: an immediate acknowledgement must not be
+        // overwritten by a slower `queued -> issued` database update.
+        if let Err(error) = update_status(
+            storage.clone(),
+            &item.command_id,
+            COMMAND_STATUS_ISSUED,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        {
+            hub().release(device_id, &item.command_id);
+            return Err(error);
+        }
         match registry().dispatch(
             device_id,
             &live.channel_id,
             OutboundFrame::Text(item.frame.clone()),
         ) {
             Ok(()) => {
-                hub().reserve(device_id, &item.command_id);
                 hub().track_frame(&item.command_id, &item.frame);
-                if let Err(err) = update_status(
-                    storage.clone(),
-                    &item.command_id,
-                    COMMAND_STATUS_ISSUED,
-                    None,
-                    None,
-                    None,
-                    None,
-                )
-                .await
-                {
-                    // The frame is already on the wire; leaving the row `queued`
-                    // with nothing behind it in the queue would strand it for
-                    // good. Put it back and free the slot before failing.
-                    hub().release(device_id, &item.command_id);
-                    if !hub().requeue_front(user_id, item.clone()) {
-                        finalize(
-                            storage.clone(),
-                            &item.command_id,
-                            COMMAND_STATUS_FAILED,
-                            Some(now_ts()),
-                            Some(ERR_QUEUE_FULL),
-                            None,
-                        )
-                        .await?;
-                    }
-                    return Err(err);
-                }
+                hub().remove_queued(&item.command_id);
                 delivered += 1;
             }
             Err(_) => {
-                if !hub().requeue_front(user_id, item.clone()) {
-                    finalize(
-                        storage.clone(),
-                        &item.command_id,
-                        COMMAND_STATUS_FAILED,
-                        Some(now_ts()),
-                        Some(ERR_QUEUE_FULL),
-                        None,
-                    )
-                    .await?;
-                }
+                hub().release(device_id, &item.command_id);
+                update_status(
+                    storage.clone(),
+                    &item.command_id,
+                    COMMAND_STATUS_QUEUED,
+                    None,
+                    None,
+                    Some(ERR_NODE_BUSY),
+                    None,
+                )
+                .await?;
                 break;
             }
         }
@@ -1369,78 +1395,123 @@ pub async fn sweep(
     Ok(swept)
 }
 
-/// Fail the commands a node was handed when it went away (docs §13.2 7). Rows
-/// still parked for reconnect and rows awaiting an approval decision are not
-/// in flight and stay as they are.
+/// Fail commands handed to the retired generation, including pending device
+/// prompts. Parked commands survive for reconnect. Acquires the device write
+/// gate so a replacement cannot reserve slots during settlement.
 pub async fn fail_device_commands(
     storage: Arc<dyn StorageBackend>,
     device_id: &str,
     now: f64,
 ) -> anyhow::Result<usize> {
-    // The ledger names a node as `device:<id>` (docs §3.1) while the registry and
-    // the in-flight tracker key it by the bare id. Querying the durable column
-    // with the bare id matched no row at all, so a node that vanished left its
-    // delivered commands hanging until the timeout sweep instead of answering
-    // NODE_OFFLINE (docs §13.2 7).
-    let lookup = format!("device:{device_id}");
-    let rows = {
-        let storage = storage.clone();
-        blocking::run_db("interlink.command.device_list", move || {
-            storage.list_interlink_commands(ListInterlinkCommandsQuery {
-                user_id: None,
-                device_id: Some(&lookup),
-                kind: None,
-                status: None,
-                direction: None,
-                offset: 0,
-                limit: SWEEP_PAGE,
-            })
-        })
-        .await
-        .map(|(rows, _total)| rows)?
-    };
+    let _generation = super::device_gate(device_id).write().await;
+    fail_device_commands_locked(storage, device_id, now).await
+}
+
+pub(crate) async fn fail_device_commands_locked(
+    storage: Arc<dyn StorageBackend>,
+    device_id: &str,
+    now: f64,
+) -> anyhow::Result<usize> {
+    // Only the retired generation's actual reservations are relevant. A recent
+    // history page can hide an older active command behind completed rows.
+    // Lifecycle callers exclude admission/draining with the device write gate.
+    let commands = hub().inflight_commands(device_id);
     let mut failed = 0usize;
-    for record in rows {
-        let _guard = command_lock(&record.command_id).lock().await;
-        let Some(record) = load(storage.clone(), &record.command_id).await? else {
+    for command_id in commands {
+        let _guard = command_lock(&command_id).lock().await;
+        let Some(record) = load(storage.clone(), &command_id).await? else {
+            hub().release(device_id, &command_id);
             continue;
         };
         if is_terminal_command_status(&record.status) {
+            hub().release(device_id, &command_id);
             continue;
         }
         // Only a command the node actually got is "in flight". The parked backlog
         // exists to survive this exact moment (docs §4.3: it drains on reconnect),
-        // and an undecided approval has never been dispatched.
-        if record.status == COMMAND_STATUS_QUEUED || record.approval_state == APPROVAL_PENDING {
+        // while a prompt already sent down this tunnel cannot be recovered.
+        if record.status == COMMAND_STATUS_QUEUED {
             continue;
         }
-        hub().release(device_id, &record.command_id);
-        hub().drop_frame(&record.command_id);
-        update_status(
+        if record.approval_state == APPROVAL_PENDING {
+            decide_ticket(
+                storage.clone(),
+                &record,
+                APPROVAL_EXPIRED,
+                "system:disconnect",
+                now,
+            )
+            .await?;
+            set_approval(storage.clone(), &command_id, APPROVAL_EXPIRED).await?;
+        }
+        finalize_unlocked(
             storage.clone(),
-            &record.command_id,
+            &command_id,
             COMMAND_STATUS_FAILED,
-            None,
             Some(now),
             Some(ERR_NODE_OFFLINE),
             Some(ERR_NODE_OFFLINE),
         )
         .await?;
-        write_audit(
-            storage.clone(),
-            AUDIT_COMMAND_FINISH,
-            &record,
-            approval_id_of(&record),
-            vec![
-                ("status", Value::String(COMMAND_STATUS_FAILED.to_string())),
-                ("code", Value::String(ERR_NODE_OFFLINE.to_string())),
-            ],
-        )
-        .await;
+        hub().release(device_id, &command_id);
+        blob::store().drop_command(&command_id);
         failed += 1;
     }
     hub().forget_node(device_id);
     Ok(failed)
+}
+
+/// One recovery page per maintenance pass. The durable ledger deliberately
+/// contains no arguments, so a process restart settles orphaned commands with
+/// an explicit reason instead of reconstructing and replaying their effects.
+pub async fn recover_after_restart(
+    storage: Arc<dyn StorageBackend>,
+    before: f64,
+    now: f64,
+) -> anyhow::Result<usize> {
+    let rows = {
+        let storage = storage.clone();
+        blocking::run_db("interlink.command.restart_page", move || {
+            storage.list_interlink_unfinished_before(before, SWEEP_PAGE)
+        })
+        .await?
+    };
+    let mut recovered = 0;
+    for row in rows {
+        let _guard = command_lock(&row.command_id).lock().await;
+        let Some(record) = load(storage.clone(), &row.command_id).await? else {
+            continue;
+        };
+        if is_terminal_command_status(&record.status) || record.created_at >= before {
+            continue;
+        }
+        if record.approval_state == APPROVAL_PENDING {
+            decide_ticket(
+                storage.clone(),
+                &record,
+                APPROVAL_EXPIRED,
+                "system:restart",
+                now,
+            )
+            .await?;
+            set_approval(storage.clone(), &record.command_id, APPROVAL_EXPIRED).await?;
+        }
+        finalize_unlocked(
+            storage.clone(),
+            &record.command_id,
+            COMMAND_STATUS_FAILED,
+            Some(now),
+            Some(ERR_SERVER_RESTARTED),
+            Some("server restarted; execution outcome may be unknown; operation was not replayed"),
+        )
+        .await?;
+        if let Some(device) = target_device(&record) {
+            hub().release(&device, &record.command_id);
+        }
+        blob::store().drop_command(&record.command_id);
+        recovered += 1;
+    }
+    Ok(recovered)
 }
 
 /// Persist a terminal state and audit it.
@@ -1794,6 +1865,151 @@ mod tests {
     }
 
     #[test]
+    fn concurrent_reservations_never_exceed_the_node_limit() {
+        let hub = Arc::new(CommandHub::default());
+        let workers: Vec<_> = (0..64)
+            .map(|index| {
+                let hub = hub.clone();
+                std::thread::spawn(move || {
+                    hub.try_reserve("fixture_device", &format!("fixture_{index}"), 8)
+                })
+            })
+            .collect();
+        let admitted = workers
+            .into_iter()
+            .map(|worker| usize::from(worker.join().unwrap()))
+            .sum::<usize>();
+        assert_eq!(admitted, 8);
+        assert_eq!(hub.inflight_count("fixture_device"), 8);
+    }
+
+    #[tokio::test]
+    async fn restart_recovery_is_paged_and_preserves_new_commands_and_terminal_history() {
+        use wunder_core::interlink::APPROVAL_APPROVED;
+        let root = tempfile::tempdir().unwrap();
+        let path = root
+            .path()
+            .join("restart.db")
+            .to_string_lossy()
+            .into_owned();
+        {
+            let storage: Arc<dyn StorageBackend> =
+                Arc::new(crate::storage::SqliteStorage::new(path.clone()));
+            for index in 0..205 {
+                let mut row = record(CMD_WORKSPACE_READ, "device:fixture_restart");
+                row.command_id = format!("fixture_restart_{index:03}");
+                row.status = if index % 2 == 0 {
+                    COMMAND_STATUS_QUEUED
+                } else {
+                    COMMAND_STATUS_RUNNING
+                }
+                .into();
+                storage.insert_interlink_command(&row).unwrap();
+            }
+            let mut pending = record(CMD_THREAD_MESSAGE, "cloud");
+            pending.command_id = "fixture_restart_pending".into();
+            pending.approval_state = APPROVAL_PENDING.into();
+            pending.args_digest = Some(json!({"approval": "fixture_restart_ticket"}).to_string());
+            storage.insert_interlink_command(&pending).unwrap();
+            storage
+                .insert_interlink_approval(&InterlinkApprovalRecord {
+                    approval_id: "fixture_restart_ticket".into(),
+                    command_id: pending.command_id,
+                    device_id: "cloud".into(),
+                    user_id: "u_1".into(),
+                    prompt: "Fixture approval".into(),
+                    risk_level: "medium".into(),
+                    state: APPROVAL_PENDING.into(),
+                    decided_by: None,
+                    decided_at: None,
+                    expires_at: 400.0,
+                })
+                .unwrap();
+            let mut recent = record(CMD_WORKSPACE_READ, "cloud");
+            recent.command_id = "fixture_restart_new".into();
+            recent.created_at = 300.0;
+            storage.insert_interlink_command(&recent).unwrap();
+            recent.command_id = "fixture_restart_finished".into();
+            recent.created_at = 10.0;
+            recent.status = COMMAND_STATUS_SUCCEEDED.into();
+            recent.finished_at = Some(20.0);
+            recent.approval_state = APPROVAL_APPROVED.into();
+            storage.insert_interlink_command(&recent).unwrap();
+        }
+        // Reopen only the durable database: none of the old bodies or queues
+        // exist in this service generation, and recovery must not invent them.
+        let storage: Arc<dyn StorageBackend> = Arc::new(crate::storage::SqliteStorage::new(path));
+        assert_eq!(
+            storage
+                .list_interlink_unfinished_before(200.0, 1000)
+                .unwrap()
+                .len(),
+            200
+        );
+        assert_eq!(
+            recover_after_restart(storage.clone(), 200.0, 300.0)
+                .await
+                .unwrap(),
+            200
+        );
+        assert_eq!(
+            recover_after_restart(storage.clone(), 200.0, 300.0)
+                .await
+                .unwrap(),
+            6
+        );
+        assert_eq!(
+            recover_after_restart(storage.clone(), 200.0, 300.0)
+                .await
+                .unwrap(),
+            0
+        );
+        for id in [
+            "fixture_restart_000",
+            "fixture_restart_204",
+            "fixture_restart_pending",
+        ] {
+            let row = storage.get_interlink_command(id).unwrap().unwrap();
+            assert_eq!(row.status, COMMAND_STATUS_FAILED);
+            assert_eq!(row.error_code.as_deref(), Some(ERR_SERVER_RESTARTED));
+            assert_eq!(row.finished_at, Some(300.0));
+            assert!(hub().frame(id).is_none());
+        }
+        assert_eq!(
+            storage
+                .get_interlink_approval("fixture_restart_ticket")
+                .unwrap()
+                .unwrap()
+                .state,
+            APPROVAL_EXPIRED
+        );
+        assert_eq!(
+            storage
+                .get_interlink_command("fixture_restart_pending")
+                .unwrap()
+                .unwrap()
+                .approval_state,
+            APPROVAL_EXPIRED
+        );
+        assert_eq!(
+            storage
+                .get_interlink_command("fixture_restart_new")
+                .unwrap()
+                .unwrap()
+                .status,
+            COMMAND_STATUS_ISSUED
+        );
+        assert_eq!(
+            storage
+                .get_interlink_command("fixture_restart_finished")
+                .unwrap()
+                .unwrap()
+                .status,
+            COMMAND_STATUS_SUCCEEDED
+        );
+    }
+
+    #[test]
     fn frames_carry_approval_and_timeout_without_the_body() {
         let mut record = record(CMD_THREAD_MESSAGE, "device:dev-1");
         record.approval_state = APPROVAL_PENDING.to_string();
@@ -1940,6 +2156,19 @@ mod tests {
         assert_eq!(hub().queued_depth_for_target("device:fixture_busy"), 1);
         assert_eq!(hub().inflight_count("fixture_busy"), 0);
         assert_eq!(
+            on_ack(
+                storage.clone(),
+                &row.command_id,
+                &json!({"accepted": false, "error_code": ERR_NODE_BUSY}),
+                &Limits::default(),
+                111.0,
+            )
+            .await
+            .unwrap(),
+            AckOutcome::Retried
+        );
+        assert_eq!(hub().queued_depth_for_target("device:fixture_busy"), 1);
+        assert_eq!(
             cancel(storage.clone(), &row.command_id, &row.actor_user_id, 120.0)
                 .await
                 .unwrap(),
@@ -1947,6 +2176,119 @@ mod tests {
         );
         assert_eq!(hub().queued_depth_for_target("device:fixture_busy"), 0);
         assert!(hub().frame(&row.command_id).is_none());
+    }
+
+    #[tokio::test]
+    async fn drain_preserves_queue_on_storage_errors_and_outbound_backpressure() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("queue.db");
+        let storage: Arc<dyn StorageBackend> = Arc::new(crate::storage::SqliteStorage::new(
+            path.to_string_lossy().into_owned(),
+        ));
+        let device = "fixture_drain_failure";
+        let target = format!("device:{device}");
+        let mut row = record(CMD_WORKSPACE_READ, &target);
+        row.command_id = "fixture_drain_command".into();
+        row.status = COMMAND_STATUS_QUEUED.into();
+        storage.insert_interlink_command(&row).unwrap();
+        assert!(hub().enqueue(
+            &row.actor_user_id,
+            Queued {
+                command_id: row.command_id.clone(),
+                target,
+                frame: "fixture_frame".into(),
+            },
+            1,
+        ));
+        let (sender, mut receiver) = tokio::sync::mpsc::channel(1);
+        sender
+            .try_send(OutboundFrame::Text("occupied".into()))
+            .unwrap();
+        registry().register(
+            super::super::LiveChannel {
+                device_id: device.into(),
+                user_id: row.actor_user_id.clone(),
+                client: "desktop".into(),
+                channel_id: "fixture_drain_channel".into(),
+                connection_id: "fixture_drain_connection".into(),
+                protocol_version: 1,
+                capabilities: vec![],
+                connected_at: 100.0,
+                last_seen_at: 100.0,
+                rtt_ms: None,
+                presence_status: None,
+                active_threads: 0,
+                resumed: false,
+            },
+            sender,
+        );
+        let connection = rusqlite::Connection::open(&path).unwrap();
+        let limits = Limits::default();
+
+        // A failed load cannot consume the queue head.
+        connection
+            .execute_batch("ALTER TABLE interlink_commands RENAME TO fixture_commands")
+            .unwrap();
+        assert!(drain(storage.clone(), &row.actor_user_id, device, &limits)
+            .await
+            .is_err());
+        assert_eq!(hub().queued_depth_for_target(&row.to_node), 1);
+        assert_eq!(hub().inflight_count(device), 0);
+        connection
+            .execute_batch("ALTER TABLE fixture_commands RENAME TO interlink_commands")
+            .unwrap();
+
+        // Nor can a failed queued -> issued update consume it or its slot.
+        connection.execute_batch("CREATE TRIGGER fixture_issue_failure BEFORE UPDATE ON interlink_commands WHEN NEW.status = 'issued' BEGIN SELECT RAISE(FAIL, 'fixture storage failure'); END;").unwrap();
+        assert!(drain(storage.clone(), &row.actor_user_id, device, &limits)
+            .await
+            .is_err());
+        assert_eq!(hub().queued_depth_for_target(&row.to_node), 1);
+        assert_eq!(hub().inflight_count(device), 0);
+        connection
+            .execute_batch("DROP TRIGGER fixture_issue_failure")
+            .unwrap();
+
+        // A full socket plus a failed rollback also leaves the body available.
+        connection.execute_batch("CREATE TRIGGER fixture_queue_failure BEFORE UPDATE ON interlink_commands WHEN NEW.status = 'queued' BEGIN SELECT RAISE(FAIL, 'fixture storage failure'); END;").unwrap();
+        assert!(drain(storage.clone(), &row.actor_user_id, device, &limits)
+            .await
+            .is_err());
+        assert_eq!(hub().queued_depth_for_target(&row.to_node), 1);
+        assert_eq!(hub().inflight_count(device), 0);
+        connection
+            .execute_batch("DROP TRIGGER fixture_queue_failure")
+            .unwrap();
+        assert_eq!(
+            drain(storage.clone(), &row.actor_user_id, device, &limits)
+                .await
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            storage
+                .get_interlink_command(&row.command_id)
+                .unwrap()
+                .unwrap()
+                .status,
+            COMMAND_STATUS_QUEUED
+        );
+        receiver.try_recv().unwrap();
+
+        assert_eq!(
+            drain(storage.clone(), &row.actor_user_id, device, &limits)
+                .await
+                .unwrap(),
+            1
+        );
+        assert_eq!(hub().queued_depth_for_target(&row.to_node), 0);
+        assert_eq!(hub().inflight_count(device), 1);
+        assert!(
+            matches!(receiver.try_recv().unwrap(), OutboundFrame::Text(text) if text == "fixture_frame")
+        );
+        assert!(receiver.try_recv().is_err());
+        fail_device_commands(storage, device, 110.0).await.unwrap();
+        registry().unregister(device, "fixture_drain_channel");
     }
 
     #[tokio::test]
@@ -2032,25 +2374,29 @@ mod tests {
         assert_eq!(hub.queued_depth_for_target("device:d1"), 1);
 
         // Only the target's head is served; the other stays parked.
-        let taken = hub.dequeue_for("u_1", "device:d2").expect("item");
+        let taken = hub.next_for("u_1", "device:d2").expect("item");
         assert_eq!(taken.command_id, "cmd_2");
-        assert!(hub.dequeue_for("u_1", "device:unknown").is_none());
+        assert_eq!(hub.queued_depth(Some("u_1")), 2);
+        assert!(!hub.enqueue("u_1", item("cmd_3", "device:d2"), 2));
+        hub.remove_queued(&taken.command_id);
+        assert!(hub.next_for("u_1", "device:unknown").is_none());
         assert_eq!(
-            hub.dequeue_for("u_1", "device:d1")
-                .expect("item")
-                .command_id,
+            hub.next_for("u_1", "device:d1").expect("item").command_id,
             "cmd_1"
         );
+        hub.remove_queued("cmd_1");
         assert_eq!(hub.queued_depth(Some("u_1")), 0);
 
         hub.enqueue("u_1", item("cmd_a", "device:d1"), 4);
         hub.enqueue("u_1", item("cmd_b", "device:d1"), 4);
-        hub.requeue_front("u_1", item("cmd_c", "device:d1"));
         assert_eq!(
-            hub.dequeue_for("u_1", "device:d1")
-                .expect("head")
-                .command_id,
-            "cmd_c"
+            hub.next_for("u_1", "device:d1").expect("head").command_id,
+            "cmd_a"
+        );
+        hub.remove_queued("cmd_a");
+        assert_eq!(
+            hub.next_for("u_1", "device:d1").unwrap().command_id,
+            "cmd_b"
         );
     }
 
@@ -2081,7 +2427,7 @@ mod tests {
         assert_eq!(hub.queued_depth_for_target("device:dev-1"), 1);
         assert_eq!(hub.queued_depth_for_target("device:dev-2"), 1);
         assert_eq!(
-            hub.dequeue_for("u_1", "device:dev-1").unwrap().command_id,
+            hub.next_for("u_1", "device:dev-1").unwrap().command_id,
             "cmd_2"
         );
     }
@@ -2184,8 +2530,7 @@ mod tests {
     }
 
     /// Docs §13.2 7: the commands a vanished node was actually handed answer
-    /// `NODE_OFFLINE` at once, while the parked backlog (which exists precisely
-    /// to survive a disconnect) and an undecided approval stay untouched.
+    /// `NODE_OFFLINE` at once, while commands still parked for delivery survive.
     #[test]
     fn a_vanished_node_fails_only_the_commands_it_was_handed() {
         use crate::storage::{ListInterlinkAuditQuery, SqliteStorage};
@@ -2216,6 +2561,17 @@ mod tests {
                 .unwrap();
             hub().reserve(device, id);
         }
+        // Completed history must not hide an older reservation from cleanup.
+        for index in 0..205 {
+            let mut completed = row(
+                &format!("fixture_history_{index}"),
+                COMMAND_STATUS_SUCCEEDED,
+                APPROVAL_NONE,
+            );
+            completed.created_at = 150.0;
+            completed.finished_at = Some(151.0);
+            storage.insert_interlink_command(&completed).unwrap();
+        }
         storage
             .insert_interlink_command(&row("cmd_queued", COMMAND_STATUS_QUEUED, APPROVAL_NONE))
             .unwrap();
@@ -2231,6 +2587,7 @@ mod tests {
         storage
             .insert_interlink_command(&row("cmd_pending", COMMAND_STATUS_ISSUED, APPROVAL_PENDING))
             .unwrap();
+        hub().reserve(device, "cmd_pending");
         storage
             .insert_interlink_command(&row(
                 "cmd_done",
@@ -2246,7 +2603,18 @@ mod tests {
         let failed = runtime
             .block_on(fail_device_commands(Arc::clone(&storage), device, 200.0))
             .expect("settle");
-        assert_eq!(failed, 3, "only the delivered commands were in flight");
+        assert_eq!(
+            failed, 4,
+            "all handed-off commands, including a pending prompt, settle"
+        );
+        assert_eq!(
+            storage
+                .get_interlink_command("cmd_pending")
+                .unwrap()
+                .unwrap()
+                .approval_state,
+            APPROVAL_EXPIRED
+        );
 
         for (id, _) in delivered {
             let settled = storage.get_interlink_command(id).unwrap().unwrap();
@@ -2260,7 +2628,6 @@ mod tests {
         }
         for (id, status, approval) in [
             ("cmd_queued", COMMAND_STATUS_QUEUED, APPROVAL_NONE),
-            ("cmd_pending", COMMAND_STATUS_ISSUED, APPROVAL_PENDING),
             ("cmd_done", COMMAND_STATUS_SUCCEEDED, APPROVAL_APPROVED),
         ] {
             let kept = storage.get_interlink_command(id).unwrap().unwrap();
@@ -2273,9 +2640,10 @@ mod tests {
         assert_eq!(hub().inflight_count(device), 0);
         assert_eq!(hub().queued_depth_for_target(&target), 1);
         assert_eq!(
-            hub().dequeue_for("u1", &target).unwrap().command_id,
+            hub().next_for("u1", &target).unwrap().command_id,
             "cmd_queued"
         );
+        hub().drop_frame("cmd_queued");
 
         // Each settle is an auditable finish row, not a silent update.
         let (trail, _) = storage

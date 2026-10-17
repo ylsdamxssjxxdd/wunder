@@ -248,12 +248,30 @@ pub fn command_policy(kind: &str) -> (&'static str, &'static str, bool) {
 /// Effective operations exposed to clients. Server and client capability
 /// checks must not interpret group names as operation namespaces.
 pub fn allowed_commands(capabilities: &[String]) -> Vec<&'static str> {
-    [CMD_NODE_SUMMARY, CMD_SHADOW_REFRESH, CMD_WORKSPACE_LIST, CMD_WORKSPACE_READ,
-     CMD_WORKSPACE_SEARCH, CMD_WORKSPACE_STAT, CMD_THREADS_LIST, CMD_THREADS_GET,
-     CMD_THREAD_CREATE, CMD_THREAD_MESSAGE, CMD_THREAD_CANCEL, CMD_THREAD_ANSWER,
-     CMD_WORKSPACE_WRITE, CMD_WORKSPACE_MKDIR, CMD_WORKSPACE_MOVE, CMD_WORKSPACE_COPY,
-     CMD_WORKSPACE_DELETE, CMD_TOOL_EXEC, CMD_AGENT_SPAWN].into_iter()
-        .filter(|kind| capabilities.iter().any(|cap| cap == command_policy(kind).1)).collect()
+    [
+        CMD_NODE_SUMMARY,
+        CMD_SHADOW_REFRESH,
+        CMD_WORKSPACE_LIST,
+        CMD_WORKSPACE_READ,
+        CMD_WORKSPACE_SEARCH,
+        CMD_WORKSPACE_STAT,
+        CMD_THREADS_LIST,
+        CMD_THREADS_GET,
+        CMD_THREAD_CREATE,
+        CMD_THREAD_MESSAGE,
+        CMD_THREAD_CANCEL,
+        CMD_THREAD_ANSWER,
+        CMD_WORKSPACE_WRITE,
+        CMD_WORKSPACE_MKDIR,
+        CMD_WORKSPACE_MOVE,
+        CMD_WORKSPACE_COPY,
+        CMD_WORKSPACE_DELETE,
+        CMD_TOOL_EXEC,
+        CMD_AGENT_SPAWN,
+    ]
+    .into_iter()
+    .filter(|kind| capabilities.iter().any(|cap| cap == command_policy(kind).1))
+    .collect()
 }
 
 /// Kinds that must never bypass approval regardless of local settings.
@@ -327,6 +345,7 @@ pub const DATA_FLAG_ERROR: u32 = 0x2;
 // ---------------------------------------------------------------------------
 
 pub const ERR_NODE_OFFLINE: &str = "NODE_OFFLINE";
+pub const ERR_SERVER_RESTARTED: &str = "SERVER_RESTARTED";
 pub const ERR_NODE_BUSY: &str = "NODE_BUSY";
 pub const ERR_QUEUE_FULL: &str = "QUEUE_FULL";
 pub const ERR_CAP_DENIED: &str = "CAP_DENIED";
@@ -468,4 +487,6 @@ mod tests {
     }
 }
 
-fn default_heartbeat_s() -> u64 { 25 }
+fn default_heartbeat_s() -> u64 {
+    25
+}

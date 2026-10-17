@@ -90,7 +90,7 @@ pub struct UserSessionScopeRecord {
     pub last_login_at: f64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct UserAgentPresetSnapshot {
     pub name: String,
     pub description: String,

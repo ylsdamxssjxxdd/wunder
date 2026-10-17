@@ -31,7 +31,7 @@ use crate::api::interlink_ws;
 use crate::api::user_context::resolve_user;
 use crate::core::blocking;
 use crate::services::interlink::{
-    alerts, approvals, audit, blob, commands, digest, registry, secret,
+    alerts, approvals, audit, blob, commands, current_tunnel_signal, digest, registry, secret,
 };
 use crate::services::presence::{aggregate_status, derive_device_status_with_tunnel, online_count};
 use crate::state::AppState;
@@ -314,23 +314,19 @@ fn device_node(
     workspaces: Option<&str>,
     live: Option<&crate::services::interlink::LiveChannel>,
 ) -> InterlinkNodeView {
-    let (capabilities, connected, persisted_tunnel) = match &device.interlink {
+    let (capabilities, persisted_tunnel) = match &device.interlink {
         Some(patch) => (
             patch
                 .capabilities
                 .as_deref()
                 .map(parse_capabilities)
                 .unwrap_or_else(default_device_capabilities),
-            patch.tunnel_connected.unwrap_or(false),
-            // A device that never opened a tunnel has no tunnel signal at all,
-            // so the heartbeat fallback decides (§4.4).
-            if patch.last_tunnel_at.unwrap_or(0.0) > 0.0 {
-                Some(patch.tunnel_connected.unwrap_or(false))
-            } else {
-                None
-            },
+            current_tunnel_signal(patch.last_tunnel_at, live.is_some()),
         ),
-        None => (default_device_capabilities(), false, None),
+        None => (
+            default_device_capabilities(),
+            current_tunnel_signal(None, live.is_some()),
+        ),
     };
     let policy = digest::DevicePolicy::parse(
         device
@@ -374,7 +370,7 @@ fn device_node(
             .unwrap_or(device.last_seen_at),
         capabilities: capabilities.clone(),
         shadow_revision,
-        connected: live.is_some() || connected,
+        connected: live.is_some(),
         meta: json!({
             "allowed_commands": allowed,
             "sharing": if capabilities.iter().any(|cap| cap == "shadow:full") { "full" } else { "minimal" },
@@ -1672,6 +1668,33 @@ fn now_unix_seconds() -> f64 {
 mod tests {
     use super::*;
     use wunder_core::interlink::{NODE_STATUS_OFFLINE, NODE_TYPE_WEB};
+
+    #[test]
+    fn persisted_tunnel_flag_cannot_claim_a_live_connection_after_restart() {
+        let device = CloudDeviceRecord {
+            device_id: "fixture_device".into(),
+            user_id: "fixture_user".into(),
+            client: "desktop".into(),
+            name: "Fixture".into(),
+            os: None,
+            arch: None,
+            app_version: None,
+            created_at: 1.0,
+            last_seen_at: 100.0,
+            revoked: false,
+            interlink: Some(Box::new(CloudDeviceInterlinkPatch {
+                tunnel_connected: Some(true),
+                last_tunnel_at: Some(100.0),
+                ..Default::default()
+            })),
+        };
+        let node = device_node(&device, 101.0, 90.0, 0, None, None);
+        assert!(!node.connected);
+        assert_eq!(
+            node.status,
+            wunder_core::interlink::NODE_STATUS_RECONNECTING
+        );
+    }
 
     #[test]
     fn range_parser_accepts_open_and_closed_forms() {

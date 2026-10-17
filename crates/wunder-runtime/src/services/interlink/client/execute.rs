@@ -311,6 +311,21 @@ impl CommandLedger {
             .map(|running| running.cancel.clone())
     }
 
+    /// A busy refusal happened before execution. Leave the id retryable while
+    /// retaining a cancellation that overtook the capacity check.
+    pub async fn defer_unstarted(&self, command_id: &str) -> bool {
+        let mut state = self.state.lock().await;
+        if state
+            .running
+            .get(command_id)
+            .is_some_and(|entry| !entry.cancel.is_cancelled())
+        {
+            state.running.remove(command_id);
+            return true;
+        }
+        false
+    }
+
     /// Publish the terminal result and remember it for the rest of the window.
     pub async fn finish(&self, command_id: &str, result: Value, now: f64) {
         let mut state = self.state.lock().await;
@@ -2079,6 +2094,22 @@ impl InFlightTable {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn busy_refusal_allows_retry_but_preserves_overtaking_cancellation() {
+        let ledger = CommandLedger::default();
+        assert!(ledger.claim("fixture_busy", CMD_WORKSPACE_READ, 10.0).await);
+        assert!(ledger.defer_unstarted("fixture_busy").await);
+        assert_eq!(ledger.classify("fixture_busy", 11.0).await, Begin::Fresh);
+        assert!(ledger.claim("fixture_busy", CMD_WORKSPACE_READ, 11.0).await);
+        ledger.cancel_or_remember("fixture_busy", 12.0).await;
+        assert!(!ledger.defer_unstarted("fixture_busy").await);
+        assert!(ledger
+            .cancel_token_for("fixture_busy")
+            .await
+            .unwrap()
+            .is_cancelled());
+    }
     use serde_json::json;
     use wunder_core::interlink::{
         is_queueable_when_offline, CAP_AGENT_SPAWN, CAP_QUERY_BASIC, CAP_TOOL_EXEC,

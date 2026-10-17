@@ -16,8 +16,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
 use tokio::net::{TcpListener, TcpStream};
-use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 use wunder_server::{
     build_router,
@@ -277,7 +277,11 @@ async fn build_local_node(server: &Server) -> LocalNode {
             session_base_dir: dir.path().to_path_buf(),
         },
     );
-    LocalNode { state, client, _dir: dir }
+    LocalNode {
+        state,
+        client,
+        _dir: dir,
+    }
 }
 
 fn configure_mock_model(config: &mut Config, mock_base: String) {
@@ -367,7 +371,10 @@ impl RemoteView {
             thread_id
         );
         let mut request = url.into_client_request().expect("remote request");
-        request.headers_mut().insert("authorization", format!("Bearer {}", server.token).parse().unwrap());
+        request.headers_mut().insert(
+            "authorization",
+            format!("Bearer {}", server.token).parse().unwrap(),
+        );
         let (socket, _response) = tokio_tungstenite::connect_async(request)
             .await
             .expect("remote_ws handshake");
@@ -716,6 +723,35 @@ async fn loopback_run() {
         "tunnel reports the loopback device"
     );
 
+    // Rapid reconnects deliberately overlap the retired handler's teardown.
+    // Every new generation must remain online and accept a real command.
+    for _ in 0..5 {
+        let previous = node.client.status().channel_id;
+        respawn_tunnel(&node).await;
+        wait_connected_within(&node.client, Duration::from_secs(30)).await;
+        let current = node.client.status().channel_id;
+        assert_ne!(current, previous);
+        let request = issue(
+            &server,
+            &format!("device:{DEVICE_ID}"),
+            "node.summary",
+            json!({}),
+            None,
+        )
+        .await;
+        let result = wait_terminal(
+            &server,
+            request["command_id"].as_str().unwrap(),
+            Duration::from_secs(10),
+        )
+        .await;
+        assert_eq!(
+            result["status"], "succeeded",
+            "new generation lost its command: {result}"
+        );
+        assert_eq!(node.client.status().channel_id, current);
+    }
+
     // -- unified presence: the live tunnel flips the device online ---------
     let (status, nodes) = get_json(
         &format!("{}/wunder/interlink/nodes", server.base_url),
@@ -800,32 +836,89 @@ async fn loopback_run() {
     );
     // A local client controls its own cloud threads without a second device
     // approval. Prove admission, actual model completion, view and cancellation.
-    let (agent_status, agents) = get_json(&format!("{}/wunder/agents", server.base_url), &server.token).await;
+    let (agent_status, agents) =
+        get_json(&format!("{}/wunder/agents", server.base_url), &server.token).await;
     assert_eq!(agent_status, 200, "{agents}");
-    let agent = agents.pointer("/data/items/0/id").and_then(Value::as_str).unwrap_or("");
-    let submitted = issue(&server, "cloud", "thread.message", json!({"message":"fixture cloud turn","agent":agent}), None).await;
+    let agent = agents
+        .pointer("/data/items/0/id")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let submitted = issue(
+        &server,
+        "cloud",
+        "thread.message",
+        json!({"message":"fixture cloud turn","agent":agent}),
+        None,
+    )
+    .await;
     assert_eq!(submitted["approval_state"], "none", "{submitted}");
-    let record = wait_terminal(&server, submitted["command_id"].as_str().unwrap(), Duration::from_secs(20)).await;
+    let record = wait_terminal(
+        &server,
+        submitted["command_id"].as_str().unwrap(),
+        Duration::from_secs(20),
+    )
+    .await;
     assert_eq!(record["status"], "succeeded", "{record}");
-    let thread = record["result"]["local_thread_id"].as_str().expect("cloud thread id");
+    let thread = record["result"]["local_thread_id"]
+        .as_str()
+        .expect("cloud thread id");
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
-        let (status, view) = get_json(&format!("{}/wunder/chat/sessions/{thread}/view/bootstrap?kind=chat", server.base_url), &server.token).await;
+        let (status, view) = get_json(
+            &format!(
+                "{}/wunder/chat/sessions/{thread}/view/bootstrap?kind=chat",
+                server.base_url
+            ),
+            &server.token,
+        )
+        .await;
         assert_eq!(status, 200, "{view}");
-        if view["data"]["page"]["chat"].as_array().is_some_and(|rows| rows.iter().any(|row| row["assistant"]["content"] == "ok")) { break; }
-        assert!(Instant::now() < deadline, "cloud model reply missing: {view}");
+        if view["data"]["page"]["chat"]
+            .as_array()
+            .is_some_and(|rows| rows.iter().any(|row| row["assistant"]["content"] == "ok"))
+        {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "cloud model reply missing: {view}"
+        );
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
-    let slow = issue(&server, "cloud", "thread.message", json!({"local_thread_id":thread,"message":"loopback-slow"}), None).await;
-    let slow_record = wait_terminal(&server, slow["command_id"].as_str().unwrap(), Duration::from_secs(20)).await;
+    let slow = issue(
+        &server,
+        "cloud",
+        "thread.message",
+        json!({"local_thread_id":thread,"message":"loopback-slow"}),
+        None,
+    )
+    .await;
+    let slow_record = wait_terminal(
+        &server,
+        slow["command_id"].as_str().unwrap(),
+        Duration::from_secs(20),
+    )
+    .await;
     assert_eq!(slow_record["status"], "succeeded", "{slow_record}");
     let deadline = Instant::now() + Duration::from_secs(15);
     while !SLOW_ROUND.load(std::sync::atomic::Ordering::SeqCst) {
         assert!(Instant::now() < deadline, "cloud slow turn never started");
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    let stopped = issue(&server, "cloud", "thread.cancel", json!({"local_thread_id":thread}), None).await;
-    let stopped = wait_terminal(&server, stopped["command_id"].as_str().unwrap(), Duration::from_secs(15)).await;
+    let stopped = issue(
+        &server,
+        "cloud",
+        "thread.cancel",
+        json!({"local_thread_id":thread}),
+        None,
+    )
+    .await;
+    let stopped = wait_terminal(
+        &server,
+        stopped["command_id"].as_str().unwrap(),
+        Duration::from_secs(15),
+    )
+    .await;
     assert_eq!(stopped["status"], "succeeded", "{stopped}");
     SLOW_ROUND.store(false, std::sync::atomic::Ordering::SeqCst);
     // Exercise the production executor fence through authenticated HTTP,

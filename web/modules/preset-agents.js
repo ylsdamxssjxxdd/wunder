@@ -2109,7 +2109,7 @@ const renderPresetList = () => {
     row.appendChild(title);
     row.appendChild(description);
     row.appendChild(meta);
-    row.addEventListener("click", async () => {
+      row.addEventListener("click", async () => {
       const draftState = await resolvePresetDraftForReload({
         selectedName: preset.name,
         selectedPresetId: preset.preset_id,
@@ -2120,9 +2120,11 @@ const renderPresetList = () => {
       setSelectedPreset(preset);
       state.presetAgents.syncPreview = null;
       renderAll();
-      await refreshContext({ ensureAgent: true, silent: true });
-      await loadSyncPreview({ silent: true });
-      await loadBindings({ silent: true });
+      await Promise.all([
+        refreshContext({ ensureAgent: true, silent: true }),
+        loadSyncPreview({ silent: true }),
+        loadBindings({ silent: true }),
+      ]);
     });
     fragment.appendChild(row);
   });
@@ -2744,8 +2746,10 @@ const reloadAfterBindingChange = async () => {
     state.presetAgents.presets = stabilizePresetListOrder(listed.items, state.presetAgents.presets);
     renderPresetList();
   }
-  await loadBindings({ silent: true, force: true });
-  await loadSyncPreview({ silent: true, force: true });
+  await Promise.all([
+    loadBindings({ silent: true, force: true }),
+    loadSyncPreview({ silent: true, force: true }),
+  ]);
 };
 
 const openBindSelectedUsers = (userIds) => {
@@ -3640,7 +3644,14 @@ const runPresetSync = async () => {
   }
   const normalizedMode = "force";
   const presetId = normalizePresetId(preset.preset_id);
-  const preview = await syncPresetAgents({ presetId, mode: normalizedMode, dryRun: true });
+  // The page keeps a dry-run result for the selected revision. Reusing it
+  // avoids running the full fleet scan a second time when the administrator
+  // clicks the action immediately after the preview has loaded.
+  const cachedPreview = state.presetAgents.syncPreview;
+  const preview =
+    cachedPreview?.preset_id === presetId && cachedPreview?.dry_run === true
+      ? { ok: true, result: cachedPreview }
+      : await syncPresetAgents({ presetId, mode: normalizedMode, dryRun: true });
   if (!preview.ok) {
     if (preview.unavailable) {
       notify(t("presetAgents.contract.notReady"), "warn");
@@ -3719,10 +3730,6 @@ export const loadPresetAgents = async ({
   }
   state.presetAgents.loading = true;
   try {
-    await Promise.all([
-      loadModelCatalog({ silent: true }),
-      loadGlobalCompanionsForPresetAgents({ silent: true }),
-    ]);
     const listed = await listPresetAgentsContract({ force });
     if (!listed.ok) {
       throw new Error(listed.message || t("common.unknownError"));
@@ -3741,10 +3748,19 @@ export const loadPresetAgents = async ({
       state.presetAgents.activeTab = "preset";
     }
 
-    await refreshContext({ ensureAgent: true, silent: true });
-    await loadSyncPreview({ silent: true, force });
-    await loadBindings({ silent: true, force });
     renderAll();
+    // Render the preset list as soon as its own request completes. Tool
+    // catalogs, bindings, and the fleet preview are secondary data and must
+    // not keep the page blank while a large installation is scanned.
+    state.presetAgents.loading = false;
+    renderAll();
+    void Promise.allSettled([
+      loadModelCatalog({ silent: true }),
+      loadGlobalCompanionsForPresetAgents({ silent: true }),
+      refreshContext({ ensureAgent: true, silent: true }),
+      loadSyncPreview({ silent: true, force }),
+      loadBindings({ silent: true, force }),
+    ]).then(() => renderAll());
     if (!silent) {
       notify(t("presetAgents.toast.refreshSuccess"), "success");
     }

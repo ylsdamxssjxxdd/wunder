@@ -102,6 +102,12 @@ async fn interlink_ledger_and_audit_carry_the_indexes_the_budget_relies_on() {
             .any(|name| name == "idx_interlink_audit_created"),
         "audit needs (created_at): {indexes:?}"
     );
+    assert!(
+        indexes
+            .iter()
+            .any(|name| name == "idx_interlink_commands_unfinished"),
+        "restart recovery needs its unfinished-only index: {indexes:?}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

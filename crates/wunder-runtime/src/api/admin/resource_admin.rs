@@ -17,9 +17,9 @@ use crate::services::user_agent_presets::{
     normalize_preset_questions, normalize_tool_list, resolve_preset_id, PresetSyncMode,
 };
 use crate::services::worker_card_settings::{
-    canonicalize_preset_config, collect_configured_skill_names, customizable_payload,
-    normalize_preset_icon_color, normalize_preset_icon_name, normalize_preset_icon_parts,
-    normalize_preset_icon_payload,
+    canonicalize_preset_config, collect_configured_skill_names, collect_registry_skill_names,
+    customizable_payload, normalize_preset_icon_color, normalize_preset_icon_name,
+    normalize_preset_icon_parts, normalize_preset_icon_payload,
 };
 use crate::state::AppState;
 use axum::extract::{DefaultBodyLimit, Multipart, Path as AxumPath, Query, State};
@@ -134,7 +134,18 @@ async fn admin_preset_agents_update(
 
 async fn admin_preset_agent_items(state: &AppState) -> Result<Vec<Value>, Response> {
     let config = state.config_store.get().await;
-    let skill_name_keys = collect_configured_skill_names(&config);
+    // The runtime skill registry is already loaded at startup. Reusing it
+    // avoids rescanning every configured skill directory on each page entry.
+    // Fall back to the configured scan only during early startup.
+    let skill_name_keys = {
+        let registry = state.skills.read().await.clone();
+        let names = collect_registry_skill_names(&registry);
+        if names.is_empty() {
+            collect_configured_skill_names(&config)
+        } else {
+            names
+        }
+    };
     let configured = preset_worker_cards::load_effective_preset_configs_with_updated_at(
         &config,
         &skill_name_keys,

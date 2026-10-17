@@ -1,6 +1,6 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-10-17T02:43:52.386830+00:00",
+  "generated_at": "2026-10-17T04:46:40.358206+00:00",
   "site": {
     "name": "使用说明书",
     "description": "wunder is an agent orchestration platform: Pupa (desktop) is the local AI workbench, Beehive (web) is the cloud AI workbench, Helm (cli) is the manual local entry point, and the Hull (server) is the user and agent management platform. / wunder 是一个智能体调度平台：蛹（desktop）是本地 AI 工作台，蜂巢（web）是云端 AI 工作台，舵机（cli）是手工本地操作入口，舰体（server）是用户与智能体管理平台。",
@@ -4064,6 +4064,11 @@
         },
         {
           "id": "section-11",
+          "level": 3,
+          "text": "断线与恢复"
+        },
+        {
+          "id": "section-12",
           "level": 3,
           "text": "边界"
         }
@@ -8340,6 +8345,11 @@
         },
         {
           "id": "section-10",
+          "level": 3,
+          "text": "Disconnection and recovery"
+        },
+        {
+          "id": "section-11",
           "level": 3,
           "text": "Boundaries"
         }

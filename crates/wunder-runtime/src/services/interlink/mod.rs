@@ -5,14 +5,12 @@
 //! The `interlink_channels` table is only a durable snapshot; this registry is
 //! the live source of truth for the running instance (docs §3.1, §4.1).
 //!
-//! Presence wiring (kept minimal for I4): a tunnel up/down also flips the
-//! persisted `cloud_devices.tunnel_connected` flag through
-//! `update_cloud_device_interlink`, which is exactly what
-//! `GET /wunder/interlink/nodes` reads to report the node `connected` field.
-//! We deliberately avoid a second in-memory presence path so the node list
-//! cannot drift from the persisted device row.
+//! Tunnel up/down also updates the durable device snapshot for diagnostics.
+//! User and admin views derive current connectivity from this registry;
+//! persisted flags cannot prove that a tunnel survived a process restart.
 
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 use std::sync::{OnceLock, RwLock};
 
 use serde::Serialize;
@@ -58,6 +56,29 @@ pub enum OutboundFrame {
 /// Hard bound of the per-channel outbound queue (docs §10.1: every queue is
 /// bounded; a full queue means the node is busy, never an unbounded backlog).
 pub const OUTBOUND_QUEUE_CAPACITY: usize = 256;
+
+/// Lifecycle changes exclude dispatch and inbound processing until their
+/// bounded database work completes. Stripes keep the lock directory bounded.
+/// Never acquire a write guard while holding a read guard for the same device.
+pub(crate) fn device_gate(device_id: &str) -> &'static tokio::sync::RwLock<()> {
+    static GATES: OnceLock<[tokio::sync::RwLock<()>; 256]> = OnceLock::new();
+    let mut hash = std::collections::hash_map::DefaultHasher::new();
+    device_id.hash(&mut hash);
+    &GATES.get_or_init(|| std::array::from_fn(|_| tokio::sync::RwLock::new(())))
+        [hash.finish() as usize % 256]
+}
+
+/// Only registry membership proves a usable tunnel in the single-instance
+/// model. Devices that never established one keep their heartbeat fallback.
+pub(crate) fn current_tunnel_signal(last_tunnel_at: Option<f64>, live: bool) -> Option<bool> {
+    if live {
+        Some(true)
+    } else if last_tunnel_at.is_some_and(|at| at > 0.0) {
+        Some(false)
+    } else {
+        None
+    }
+}
 
 /// One live tunnel channel held by a device.
 #[derive(Debug, Clone, Serialize)]
@@ -355,6 +376,15 @@ mod tests {
 
     fn queue() -> (mpsc::Sender<OutboundFrame>, mpsc::Receiver<OutboundFrame>) {
         LiveChannelRegistry::outbound_channel()
+    }
+
+    #[test]
+    fn tunnel_signal_requires_current_registry_membership() {
+        assert_eq!(current_tunnel_signal(Some(100.0), false), Some(false));
+        assert_eq!(current_tunnel_signal(Some(100.0), true), Some(true));
+        assert_eq!(current_tunnel_signal(None, true), Some(true));
+        assert_eq!(current_tunnel_signal(None, false), None);
+        assert_eq!(current_tunnel_signal(Some(0.0), false), None);
     }
 
     #[test]
