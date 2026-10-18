@@ -185,7 +185,6 @@ export const elements = {
   docsSiteFrameWrap: document.getElementById("docsSiteFrameWrap"),
   docsSiteFrame: document.getElementById("docsSiteFrame"),
   settingsDefaultUserId: document.getElementById("settingsDefaultUserId"),
-  settingsDefaultPanel: document.getElementById("settingsDefaultPanel"),
   settingsMonitorInterval: document.getElementById("settingsMonitorInterval"),
   settingsMaxActiveSessions: document.getElementById("settingsMaxActiveSessions"),
   settingsStreamChunkSize: document.getElementById("settingsStreamChunkSize"),

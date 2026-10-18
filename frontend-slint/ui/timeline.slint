@@ -12,6 +12,50 @@ import { ToolIcons } from "tool_icons.slint";
 import { ProcessStatusIcon } from "status_icon.slint";
 import { ToolProcess } from "tool_process.slint";
 import { ScrollView } from "std-widgets.slint";
+import { ActivityCard, ActivityWeek, ActivityMonth } from "activity_card.slint";
+
+// Presentation only: greetings never enter the transcript or its row indices.
+export component ChatGreeting inherits Rectangle {
+    in property <string> text: I18n.chat_greeting;
+    in property <bool> loading: false;
+    callback preview();
+    height: greeting-row.preferred-height + 12px;
+    greeting-row := HorizontalLayout {
+        x: Theme.timeline-padding; y: 6px;
+        width: parent.width - 2 * Theme.timeline-padding;
+        spacing: 8px;
+        Text {
+            text: root.text == "" ? I18n.chat_greeting : root.text;
+            color: Theme.text; font-size: Theme.font-lg;
+            wrap: word-wrap; horizontal-stretch: 1;
+        }
+        Rectangle {
+            width: 22px; height: 22px; border-radius: 6px;
+            background: preview-touch.has-hover ? Theme.hover : transparent;
+            accessible-role: button; accessible-label: I18n.chat_prompt_preview;
+            accessible-enabled: !root.loading;
+            accessible-action-default => { if !root.loading { root.preview(); } }
+            forward-focus: preview-focus;
+            Image {
+                x: 5px; y: 5px; width: 12px; height: 12px;
+                source: @image-url("../assets/icons/eye.svg");
+                colorize: preview-touch.has-hover ? Theme.text-secondary : Theme.muted;
+            }
+            preview-focus := FocusScope {
+                enabled: !root.loading;
+                key-pressed(event) => {
+                    if event.text == " " || event.text == Key.Return { root.preview(); return accept; }
+                    return reject;
+                }
+            }
+            preview-touch := TouchArea {
+                enabled: !root.loading; mouse-cursor: pointer;
+                clicked => { preview-focus.focus(); root.preview(); }
+                Tooltip { text: @markdown("\{I18n.chat_prompt_preview}"); }
+            }
+        }
+    }
+}
 
 // One entry kind per timeline row; the Rust projection stamps the matching
 // value (see src/timeline.rs).
@@ -576,7 +620,7 @@ component ProcessBar inherits Rectangle {
         loading: root.data.process-loading;
         failed: root.data.process-error;
         revision: root.data.process-revision;
-        active: root.data.open && root.data.process-root != "" && !root.data.process-local;
+        active: (root.data.open || root.show-live-entries) && root.data.process-root != "" && !root.data.process-local;
         live: root.data.status-kind == 1;
         page(direction) => { root.process-page(root.data.payload, direction); }
         toggle(index) => { root.toggle(index); }
@@ -743,6 +787,14 @@ export component TimelineRowView inherits Rectangle {
 
 export component TimelineView inherits Rectangle {
     in property <[TimelineRow]> rows;
+    in property <string> greeting;
+    in property <bool> greeting-loading: false;
+    in property <bool> show-activity: false;
+    in property <[ActivityWeek]> activity-sessions;
+    in property <[ActivityWeek]> activity-credits;
+    in property <[ActivityMonth]> activity-months;
+    in-out property <int> activity-tab: 0;
+    callback preview-prompt();
     // Fractional offset (row index / row count) of every user turn; the ruler
     // strip renders one tick per mark and jumping is proportional.
     in property <[float]> turn-marks: [];
@@ -836,10 +888,26 @@ export component TimelineView inherits Rectangle {
         // Wheel/touchpad scrolling stays available without reserving a track:
         // streaming row widths remain stable as the viewport scrolls.
         content-width: self.visible-width;
+        // ScrollView infers overflow from its child's minimum height. Keep
+        // that intrinsic constraint intact; empty-state centering must not
+        // replace it with the viewport height (or zero for a conversation).
+        content-height: max(self.visible-height, rows-column.preferred-height);
         rows-column := VerticalLayout {
             width: root.column-width;
             x: (rows-scroll.visible-width - root.column-width) / 2;
-            spacing: 0px; alignment: start;
+            spacing: 0px; alignment: root.show-activity ? center : start;
+            if root.show-activity : ActivityCard {
+                sessions: root.activity-sessions;
+                credits: root.activity-credits;
+                months: root.activity-months;
+                tab <=> root.activity-tab;
+            }
+            if root.show-activity : Rectangle { height: 18px; }
+            ChatGreeting {
+                text: root.greeting;
+                loading: root.greeting-loading;
+                preview => { root.preview-prompt(); }
+            }
             for item in root.rows : TimelineRowView {
                 entry: item;
                 process-height: min(Theme.workflow-height, root.height * 0.64);

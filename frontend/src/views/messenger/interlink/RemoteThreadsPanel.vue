@@ -6,14 +6,7 @@
       <div class="messenger-chat-empty-icon"><i class="fa-regular fa-comments" aria-hidden="true"></i></div>
       <div class="messenger-chat-empty-title">{{ text('还没有消息，发送第一条消息开始工作。', 'No messages yet. Send the first message to start.') }}</div>
     </div>
-    <article v-for="item in messages" :key="item.id" class="messenger-message messenger-message--timeline remote-thread-message" :class="{ mine: item.role === 'user' }">
-      <div class="messenger-message-main">
-        <div class="messenger-message-bubble" :class="item.role === 'user' ? '' : 'messenger-markdown'">
-          <MessageMarkdownBody v-if="item.role !== 'user'" :cache-key="`interlink:${props.target}:${props.workspaceId}:${props.openThreadId}:${item.id}`" :content="item.content" :streaming="false" :explicit-content="true" />
-          <span v-else class="remote-thread-user-content">{{ item.content }}</span>
-        </div>
-      </div>
-    </article>
+    <MessengerTurnRow v-for="slot in slots" :key="slot.key" :controller="props.controller" :turn="slot" />
     <p v-if="status" class="remote-thread-status" role="status">{{ status }}</p>
   </section>
 </template>
@@ -25,7 +18,9 @@ import { resolveAccessToken } from '@/api/requestAuth';
 import { resolveApiBase } from '@/config/runtime';
 import { runInterlinkCommand } from './interlinkCommandRunner';
 import { remoteThreadModel, remoteHistoryItems, type RemoteThreadItem } from './remoteThreadModel';
-import MessageMarkdownBody from '@/components/chat/MessageMarkdownBody.vue';
+import MessengerTurnRow from '@/views/messenger/sections/MessengerTurnRow.vue';
+import type { MessengerControllerContext } from '@/views/messenger/controller/messengerControllerContext';
+import { buildChatThreadTurnSlots } from '@/realtime/chat/chatThreadProjection';
 
 type RemoteThreadAttachment = {
   name?: unknown;
@@ -34,7 +29,7 @@ type RemoteThreadAttachment = {
   public_path?: unknown;
 };
 
-const props = withDefaults(defineProps<{ target: string; workspaceId: string; openThreadId?: string }>(), { openThreadId: '' });
+const props = withDefaults(defineProps<{ target: string; workspaceId: string; openThreadId?: string; controller: MessengerControllerContext }>(), { openThreadId: '' });
 const { language: locale } = useI18n();
 const text = (zh: string, en: string) => locale.value.startsWith('zh') ? zh : en;
 const selected = ref('');
@@ -42,6 +37,38 @@ const historyLoading = ref(false);
 const sending = ref(false);
 const busy = computed(() => historyLoading.value || sending.value);
 const messages = ref<RemoteThreadItem[]>([]);
+const renderVersion = ref(0);
+const slots = computed(() => {
+  void renderVersion.value;
+  if (!activeModel) return [];
+  return buildChatThreadTurnSlots(activeModel.state()).map((slot, index) => ({
+    key: slot.key,
+    rootTurnId: slot.rootTurnId,
+    user: { key: `${slot.key}:user`, sourceIndex: index * 2, message: normalizeProjectionMessage(slot.user) },
+    assistant: { key: `${slot.key}:assistant`, sourceIndex: index * 2 + 1, message: normalizeProjectionMessage(slot.assistant) }
+  }));
+});
+
+const normalizeProjectionMessage = (message: Record<string, unknown>): Record<string, any> => {
+  // MessengerAgentBubble consumes the legacy runtime field names while the
+  // v2 projection uses camelCase. Preserve both so the native renderer can be
+  // reused without a second local-only template.
+  const raw = (message.raw && typeof message.raw === 'object') ? message.raw as Record<string, unknown> : {};
+  return {
+    ...raw,
+    ...message,
+    role: message.role,
+    content: String(message.content || ''),
+    reasoning: String(message.reasoning || ''),
+    status: String(message.status || ''),
+    workflowItems: message.workflowItems || [],
+    timeline: message.timeline || [],
+    user_turn_id: message.userTurnId || raw.user_turn_id || '',
+    model_turn_id: message.modelTurnId || raw.model_turn_id || '',
+    root_turn_id: raw.root_turn_id || message.userTurnId || '',
+    item_id: raw.item_id || message.id || ''
+  };
+};
 const status = ref('');
 let commandAbort: AbortController | null = null;
 let historyAbort: AbortController | null = null;
@@ -51,6 +78,7 @@ let historyRequest = 0;
 let reconnect: ReturnType<typeof setTimeout> | null = null;
 let render: ReturnType<typeof setTimeout> | null = null;
 let retries = 0;
+let activeModel: ReturnType<typeof remoteThreadModel> | null = null;
 
 const closeWatch = () => {
   if (reconnect) clearTimeout(reconnect);
@@ -101,7 +129,13 @@ async function loadHistory() {
     });
     if (current !== generation || request !== historyRequest) return;
     if (result.status !== 'succeeded') throw new Error(result.errorSummary || result.errorCode);
-    setMessages(remoteHistoryItems(result.result?.items));
+    const snapshot = result.result?.snapshot;
+    if (activeModel && snapshot && activeModel.replace(snapshot)) {
+      renderVersion.value += 1;
+      setMessages(activeModel.items());
+    } else {
+      setMessages(remoteHistoryItems(result.result?.items));
+    }
     status.value = '';
     await nextTick();
     watchThread();
@@ -113,7 +147,8 @@ async function loadHistory() {
 }
 function watchThread() {
   closeWatch();
-  const model = remoteThreadModel(selected.value);
+  const model = activeModel || remoteThreadModel(selected.value);
+  activeModel = model;
   const base = new URL(resolveApiBase() || '/wunder', window.location.origin);
   const url = new URL(`${base.pathname.replace(/\/$/, '')}/interlink/remote_ws`, base.origin);
   url.protocol = base.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -127,8 +162,10 @@ function watchThread() {
     try {
       const frame = JSON.parse(String(event.data));
       if (frame.type === 'close' || frame.type === 'error') { status.value = String(frame.reason || frame.code || ''); connection.close(); return; }
-      if (model.apply(frame)) { void loadHistory(); return; }
-      if (!render) render = setTimeout(() => { render = null; if (socket === connection) setMessages(model.items()); }, 33);
+      if (model.apply(frame)) {
+        renderVersion.value += 1;
+        if (!render) render = setTimeout(() => { render = null; if (socket === connection) setMessages(model.items()); }, 33);
+      }
     } catch { status.value = text('实时数据无效，请刷新线程', 'Invalid live data; refresh the thread'); }
   };
   connection.onclose = () => {
@@ -199,6 +236,8 @@ watch(() => [props.target, props.workspaceId, props.openThreadId], ([target, wor
   if (target === previous?.[0] && workspaceId === previous?.[1] && id === previous?.[2]) return;
   stop();
   selected.value = String(id || '').trim();
+  activeModel = selected.value ? remoteThreadModel(selected.value) : null;
+  renderVersion.value += 1;
   messages.value = [];
   status.value = '';
   if (selected.value) void loadHistory();

@@ -34,13 +34,14 @@ export component ActivityCard inherits Rectangle {
     in-out property <int> tab: 0;
     in property <int> columns: 53;
     property <length> gap: 3px;
+    height: card.preferred-height + 8px;
 
     // The transcript pane is shared, so the card paints the chat background
     // behind itself instead of relying on what sits under it.
     Rectangle { x: 0px; y: 0px; width: 100%; height: 100%; background: Theme.chat; }
     VerticalLayout {
         x: 0px; y: 0px; width: 100%; height: 100%;
-        padding: 24px; spacing: 0px;
+        padding: 4px; spacing: 0px;
         alignment: center; cross-axis-alignment: center;
         Rectangle {
             vertical-stretch: 0;

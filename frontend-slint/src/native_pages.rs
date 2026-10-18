@@ -8,6 +8,7 @@ use wunder_desktop::{
 };
 
 pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
+    crate::native::wunder_model::install(app);
     crate::agent_editor::install(app);
     crate::agent_editor::install_save_handler(app, api.clone());
     crate::entity_state::bind_selection(app);
@@ -452,6 +453,17 @@ thread_local! {
 
 fn restart_cloud_status_poll(app_weak: slint::Weak<MainWindow>, api: Arc<NativeDesktop>) {
     let in_flight = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    // `cloud_status` is intentionally a local, lock-free projection so the
+    // sidebar remains responsive while offline.  Every fifth tick performs a
+    // bounded account fetch as well: the web client reads the authoritative
+    // server snapshot, while the desktop otherwise only has its session-file
+    // cache.  Without this calibration another client can spend quota and the
+    // desktop badge would stay stale until the next sign-in.
+    // Start with a refresh rather than waiting for the first five lightweight
+    // ticks.  This makes a restored desktop converge with the web account
+    // view as soon as the shell is ready, while subsequent refreshes remain
+    // rate-limited to one request per ten seconds.
+    let refresh_tick = Arc::new(std::sync::atomic::AtomicU8::new(0));
     CLOUD_POLL_TIMER.with(|timer| {
         timer.start(
             slint::TimerMode::Repeated,
@@ -467,8 +479,20 @@ fn restart_cloud_status_poll(app_weak: slint::Weak<MainWindow>, api: Arc<NativeD
                 let weak = app_weak.clone();
                 let api = api.clone();
                 let pending = in_flight.clone();
+                let refresh_account = refresh_tick.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % 5 == 0;
                 run_background(move || {
-                    let status = api.cloud_status();
+                    let status = if refresh_account {
+                        // Keep projecting the cached state when the network is
+                        // unavailable.  A 401 still marks the service
+                        // expired, so the fallback status makes that state
+                        // visible without replacing the balance with zero.
+                        match api.cloud_refresh_account() {
+                            Ok(status) => Ok(status),
+                            Err(_) => api.cloud_status(),
+                        }
+                    } else {
+                        api.cloud_status()
+                    };
                     let _ = weak.upgrade_in_event_loop(move |app| {
                         if !app.get_cloud_busy() {
                             if let Ok(status) = status {

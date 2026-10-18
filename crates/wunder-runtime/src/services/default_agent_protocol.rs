@@ -6,7 +6,8 @@ pub const DEFAULT_AGENT_META_PREFIX: &str = "default_agent:";
 pub const DEFAULT_AGENT_ID_ALIAS: &str = "__default__";
 pub const DEFAULT_AGENT_LEGACY_ENGLISH_NAME: &str = "Default Agent";
 pub const DEFAULT_AGENT_NAME: &str = "默认智能体";
-pub const DEFAULT_AGENT_GREETING: &str = "我是wunder，很高兴帮助你，试着把整理资料，分析数据，写文章等工作交给我吧~";
+pub const DEFAULT_AGENT_GREETING: &str =
+    "我是wunder，很高兴帮助你，试着把整理资料，分析数据，写文章等工作交给我吧~";
 pub const DEFAULT_AGENT_EXTRA_PROMPT: &str = "你是一个乐于助人的智能体";
 
 pub const DEFAULT_AGENT_PRESET_QUESTION_DRAW_GIF: &str = "制作一个骑自行车的鹈鹕gif";

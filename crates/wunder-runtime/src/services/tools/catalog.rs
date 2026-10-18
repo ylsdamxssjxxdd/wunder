@@ -1380,9 +1380,13 @@ fn desktop_builtin_tool_names() -> &'static HashSet<String> {
 
 pub fn filter_tool_names_by_model_capability(
     allowed_tool_names: HashSet<String>,
-    support_vision: bool,
+    support_vision: Option<bool>,
 ) -> HashSet<String> {
-    if support_vision {
+    // An omitted capability is common for OpenAI-compatible desktop models.
+    // Keep desktop control available until the provider explicitly declares
+    // that it cannot accept images; otherwise the desktop checkbox silently
+    // disappears from the model tool list.
+    if support_vision != Some(false) {
         return allowed_tool_names;
     }
     allowed_tool_names
@@ -1395,6 +1399,29 @@ pub fn filter_tool_names_by_model_capability(
                 && !desktop_control::is_desktop_control_tool_name(name)
         })
         .collect()
+}
+
+#[cfg(test)]
+mod model_capability_tests {
+    use super::filter_tool_names_by_model_capability;
+    use super::read_image_tool::TOOL_READ_IMAGE;
+    use std::collections::HashSet;
+
+    #[test]
+    fn unspecified_vision_capability_keeps_desktop_control_available() {
+        let names = HashSet::from(["桌面控制".to_string(), TOOL_READ_IMAGE.to_string()]);
+        let filtered = filter_tool_names_by_model_capability(names, None);
+        assert!(filtered.contains("桌面控制"));
+        assert!(filtered.contains(TOOL_READ_IMAGE));
+    }
+
+    #[test]
+    fn explicitly_unsupported_vision_removes_desktop_visual_tools() {
+        let names = HashSet::from(["桌面控制".to_string(), TOOL_READ_IMAGE.to_string()]);
+        let filtered = filter_tool_names_by_model_capability(names, Some(false));
+        assert!(!filtered.contains("桌面控制"));
+        assert!(!filtered.contains(TOOL_READ_IMAGE));
+    }
 }
 
 pub fn resolve_tool_name(name: &str) -> String {

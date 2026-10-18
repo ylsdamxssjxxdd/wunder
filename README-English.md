@@ -8,7 +8,7 @@ The core tenets are speed, stability, light weight, and universality. Actual tes
 
 | Icon | Form | Tech Stack | Role | How It Runs | Platforms |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| 🚀 | Hull (server) | Rust + axum 0.8; PostgreSQL | User-and-agent management platform (multi-tenancy, org units, agent app build & publish, gateway access & scheduling) | Server daemon, Docker deployment, HTTP / WebSocket access | Linux / Docker |
+| 🚀 | Hull (server) | Rust + axum 0.8; PostgreSQL | User-and-agent management platform. All users share a single sandbox with no barriers between them | Server daemon, Docker deployment | Linux / Docker |
 | 🐉 | Bridge (web) | Plain HTML + CSS + JavaScript (`web/`, no build) | Hull's governance console (four nav groups: system, agents, debugging, docs) | Browser access, statically mounted by the Hull at `/` | Cross-platform browsers |
 | 🐝 | Beehive (web) | Vue 3 + TypeScript (Vite build, `frontend/`) | Cloud AI workbench (the Hull's user frontend) | Browser access; the built `frontend/dist` is mounted read-only into an nginx container and served externally (default port 18001) — **not hosted by the Hull** | Cross-platform browsers |
 | 🍯 | Pupa (desktop) | Rust + Slint 1.18 (default frontend `frontend-slint/`, native UI, software rendering); SQLite | Local AI workbench (flagship form, install and go) | Local desktop process calling the engine in-process (no local HTTP); Electron / Tauri shells are no longer maintained | Windows 7 x86 and up; Linux (ubuntu18.04 baseline) x64 / arm64 AppImage |

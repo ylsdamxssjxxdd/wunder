@@ -38,20 +38,6 @@ export type DesktopBridge = {
   ) => Promise<DesktopScreenshotResult | null> | DesktopScreenshotResult | null;
   chooseDirectory?: (defaultPath?: string) => Promise<string | null> | string | null;
   openPathWithDefaultApp?: (targetPath: string) => Promise<boolean> | boolean;
-  showControllerHint?: (payload: {
-    x: number;
-    y: number;
-    description?: string;
-    durationMs?: number;
-  }) => Promise<boolean> | boolean;
-  showControllerDone?: (payload: {
-    x: number;
-    y: number;
-    description?: string;
-    durationMs?: number;
-  }) => Promise<boolean> | boolean;
-  showMonitorCountdown?: (payload: { waitMs: number }) => Promise<boolean> | boolean;
-  hideOverlay?: () => Promise<boolean> | boolean;
   showCompanion?: (payload: {
     id?: string;
     selectedId?: string;

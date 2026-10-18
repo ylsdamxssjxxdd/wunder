@@ -289,7 +289,7 @@ impl Orchestrator {
                     &skills_snapshot,
                     Some(&user_tool_bindings),
                 ),
-                llm_config.support_vision.unwrap_or(false),
+                llm_config.support_vision,
             );
             let allowed_tool_names = self.apply_preview_skill_tool_policy(
                 allowed_tool_names,

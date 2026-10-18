@@ -30,17 +30,18 @@ One call needs both a **position** and an **action**:
 
 Loose aliases are accepted too: `keyboard`→`press_key`, `send_text`→`type_text`, `sleep` / `observe` / `screenshot`→`wait`, `move`→`move_mouse`, `drag`→`drag_drop`, and hyphens and spaces are normalized automatically. An unknown action reports "unknown action".
 
-The action description is only used for the on-screen hint, and defaults to the action name itself.
+The action description is echoed in the action result, and defaults to the action name itself.
 
 ## Waiting and observing
 
-The `wait` action reads desktop windows and screen state. Give a wait duration (`delay_ms`, 0–30000 ms; anything larger is clamped to 30000), optionally with a one-line observation note (`note`) that is echoed back verbatim. The wait argument also accepts forms such as `wait_ms` and `wait`. A countdown hint appears on screen during the wait, and a screenshot follows.
+The `wait` action reads desktop windows and screen state. Give a wait duration (`delay_ms`, 0–30000 ms; anything larger is clamped to 30000), optionally with a one-line observation note (`note`) that is echoed back verbatim. The wait argument also accepts forms such as `wait_ms` and `wait`; a screenshot follows when the wait completes. This wait is the observation semantics, not a UI animation.
 
 ## Automatic behavior
 
 - **It takes a screenshot after every action.** It does not return the screen state from before the action; the outcome is delivered by the visual input that follows.
 - After a successful return, the orchestrator assembles the screenshots into a **user-role multimodal message** appended to the model: a text hint plus the screenshot from before the action (if any) and the current screenshot, so the tool result the model sees contains no image itself and the picture arrives through that appended message. Budget a task as "one action = one call + one look". A single screenshot entering context is capped at 8 MiB, and exceeding that fails.
-- Hints appear on screen: before an action runs, a red dot on the real screen says "AI is clicking here" and disappears when done; the `wait` action shows a countdown hint.
+- No action hint animation is shown, and no animation delay is added before or after an action. A screenshot is captured immediately after the action and returned as the observation receipt.
+- The result fields `action_applied`, `screenshot_after_action`, and `observation_ready` indicate that the action was issued and the current screenshot is ready for verification. Check the screenshot first and retry the same action only when the state is confirmed unchanged.
 
 ## Errors
 

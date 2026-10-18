@@ -5797,7 +5797,7 @@ checksum = "9edde0db4769d2dc68579893f2306b26c6ecfbe0ef499b013d731b7b9247e0b9"
 
 [[package]]
 name = "wunder-cli"
-version = "0.4.0"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -5830,7 +5830,7 @@ dependencies = [
 
 [[package]]
 name = "wunder-core"
-version = "0.4.0"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -5843,7 +5843,7 @@ dependencies = [
 
 [[package]]
 name = "wunder-desktop"
-version = "0.4.0"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -5869,7 +5869,7 @@ dependencies = [
 
 [[package]]
 name = "wunder-runtime"
-version = "0.4.0"
+version = "0.1.0"
 dependencies = [
  "aes",
  "anyhow",
@@ -5949,7 +5949,7 @@ dependencies = [
 
 [[package]]
 name = "wunder-server"
-version = "0.4.0"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",

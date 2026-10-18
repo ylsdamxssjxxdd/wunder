@@ -62,11 +62,7 @@ const INTERACTIVE_COMMAND_SESSION_EVENT_TYPES = new Set([
 
 const INTERACTIVE_CANONICAL_SIDE_EFFECT_EVENT_TYPES = new Set([
   'thread_control',
-  'workspace_update',
-  'desktop_control_hint',
-  'desktop_control_hint_done',
-  'desktop_control_countdown',
-  'desktop_control_countdown_done'
+  'workspace_update'
 ]);
 
 const INTERACTIVE_CONTROL_EVENT_TYPES = new Set([

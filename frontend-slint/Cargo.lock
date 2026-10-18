@@ -7492,7 +7492,7 @@ checksum = "3ad82d2a33cdc9674dc7465672f271e096168fcdbe0f799d9e6db8c5892679dc"
 
 [[package]]
 name = "wunder-core"
-version = "0.4.0"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -7504,7 +7504,7 @@ dependencies = [
 
 [[package]]
 name = "wunder-desktop"
-version = "0.4.0"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -7528,7 +7528,7 @@ dependencies = [
 
 [[package]]
 name = "wunder-frontend-slint"
-version = "0.4.0"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -7540,6 +7540,7 @@ dependencies = [
  "parley",
  "png",
  "pulldown-cmark 0.10.3",
+ "raw-window-handle",
  "resvg",
  "serde",
  "serde_json",
@@ -7556,7 +7557,7 @@ dependencies = [
 
 [[package]]
 name = "wunder-runtime"
-version = "0.4.0"
+version = "0.1.0"
 dependencies = [
  "aes",
  "anyhow",

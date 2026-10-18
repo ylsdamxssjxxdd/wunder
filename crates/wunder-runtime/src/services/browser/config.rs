@@ -140,13 +140,15 @@ pub fn effective_browser_config(config: &Config) -> EffectiveBrowserConfig {
         max_tabs_per_session: config.browser.limits.max_tabs_per_session.max(1),
         // A pooled browser is only useful if it can be handed to a session, so
         // the pool never outgrows the session table.
-        prewarm_sessions: config.browser.limits.prewarm_sessions.min(
-            if legacy_runtime {
+        prewarm_sessions: config
+            .browser
+            .limits
+            .prewarm_sessions
+            .min(if legacy_runtime {
                 config.tools.browser.max_sessions.max(1)
             } else {
                 config.browser.limits.max_sessions.max(1)
-            },
-        ),
+            }),
         max_snapshot_chars: config.browser.limits.max_snapshot_chars.clamp(1, 40000),
         max_download_bytes: config.browser.limits.max_download_bytes.max(1024),
         python_path: if legacy_runtime {

@@ -157,7 +157,11 @@ async fn content_endpoint_resolves_public_workspace_path_with_workspace_segment(
     );
     let (status, bytes) = send_request(&context.app, Method::GET, &path, Some(&token), None).await;
     let body: Value = serde_json::from_slice(&bytes).expect("content body");
-    assert_eq!(status, StatusCode::OK, "public workspace path failed: {body}");
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "public workspace path failed: {body}"
+    );
     assert_eq!(body["content"], "# 测试文件\n正文内容\n");
     assert_eq!(body["path"], "temp/edit_tool_test_2026.md");
 }

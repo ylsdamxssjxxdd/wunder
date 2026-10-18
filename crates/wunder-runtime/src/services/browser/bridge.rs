@@ -347,8 +347,10 @@ impl WarmPool {
                 let backoff = REAPER_PERIOD
                     .saturating_mul(1u32 << failures.min(5))
                     .min(WARM_RETRY_CEILING);
-                self.retry_after_ms
-                    .store(elapsed_millis() + backoff.as_millis() as u64, Ordering::Release);
+                self.retry_after_ms.store(
+                    elapsed_millis() + backoff.as_millis() as u64,
+                    Ordering::Release,
+                );
             }
         }
         self.launching.fetch_sub(1, Ordering::AcqRel);
@@ -835,7 +837,9 @@ fn spawn_remote_bridge(
             .get("error")
             .and_then(Value::as_str)
             .unwrap_or("sandbox rejected the browser bridge");
-        return Err(format!("Browser bridge failed to start in the sandbox: {error}"));
+        return Err(format!(
+            "Browser bridge failed to start in the sandbox: {error}"
+        ));
     }
     let ready_line = body
         .get("line")
@@ -898,8 +902,7 @@ fn remote_post(url: &str, payload: &Value, timeout: Duration) -> Result<Value, S
     if !status.is_success() {
         return Err(format!("sandbox returned HTTP {status}: {}", text.trim()));
     }
-    serde_json::from_str(text.trim())
-        .map_err(|err| format!("sandbox response was not JSON: {err}"))
+    serde_json::from_str(text.trim()).map_err(|err| format!("sandbox response was not JSON: {err}"))
 }
 
 impl BrowserBridge {
@@ -990,7 +993,6 @@ impl BrowserBridge {
         let _ = self.bridge_path.set(path);
         Ok(self.bridge_path.get().expect("bridge script path missing"))
     }
-
 }
 
 /// Write the embedded bridge script to a per-process temp path.
@@ -1792,11 +1794,7 @@ mod tests {
     fn ready_warm_session_is_handed_out_and_renamed() {
         let bridge = bridge_with_prewarm(300, 5, 1);
         let (session, _rx) = silent_session("warm-pool:1", 0);
-        bridge
-            .warm
-            .lock()
-            .unwrap()
-            .push(Arc::clone(&session));
+        bridge.warm.lock().unwrap().push(Arc::clone(&session));
         assert_eq!(bridge.warm_pool_state(), (1, 0));
 
         let adopted = bridge.take_warm().expect("a ready warm browser");
@@ -1824,7 +1822,9 @@ mod tests {
              bridge: error sending request for url (http://wunder-sandbox:9001/browser/bridges)"
         ));
         assert!(is_pipeline_unready("Connection refused (os error 111)"));
-        assert!(is_pipeline_unready("dns error: failed to lookup address information"));
+        assert!(is_pipeline_unready(
+            "dns error: failed to lookup address information"
+        ));
         assert!(!is_pipeline_unready(
             "Browser bridge failed to start: ModuleNotFoundError: No module named 'playwright'"
         ));
@@ -1836,7 +1836,9 @@ mod tests {
     fn warm_pool_backs_off_after_a_failed_launch() {
         let bridge = bridge_with_prewarm(300, 5, 1);
         // Backoff gate: no launch is attempted while the retry stamp is ahead.
-        bridge.warm_retry_after_ms.store(u64::MAX, Ordering::Release);
+        bridge
+            .warm_retry_after_ms
+            .store(u64::MAX, Ordering::Release);
         assert_eq!(bridge.top_up(), 0);
         assert_eq!(bridge.warm_pool_state(), (0, 0));
     }

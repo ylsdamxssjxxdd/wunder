@@ -270,7 +270,10 @@ pub struct CloudCommand {
 #[derive(Debug, Subcommand)]
 pub enum CloudSubcommand {
     /// Local inbound sharing: off / summary / full; writes still require approval.
-    Share { #[arg(value_enum)] mode: CloudShareMode },
+    Share {
+        #[arg(value_enum)]
+        mode: CloudShareMode,
+    },
     /// Log in to the cloud server / 登录云端舰体。
     Login(CloudLoginCommand),
 
@@ -318,7 +321,11 @@ pub enum CloudSubcommand {
 }
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
-pub enum CloudShareMode { Off, Summary, Full }
+pub enum CloudShareMode {
+    Off,
+    Summary,
+    Full,
+}
 
 /// `cloud ws …`: the workspace actions. The bare `cloud ws <PATH>` spelling is
 /// kept so scripts written before `ws ls` exists still run.

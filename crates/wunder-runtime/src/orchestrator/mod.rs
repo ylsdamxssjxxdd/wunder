@@ -277,7 +277,7 @@ impl Orchestrator {
                 &agent_record
                     .as_ref()
                     .map(|record| record.declared_skill_names.clone())
-                .unwrap_or_default(),
+                    .unwrap_or_default(),
             )
         };
         if session.tool_overrides.is_empty() {

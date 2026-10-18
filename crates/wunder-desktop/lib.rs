@@ -8,17 +8,17 @@ pub mod native;
 pub mod runtime;
 
 pub use native::{
-    AgentRecord, AgentSettingsEdit, ChannelAccountCard, ChannelAccountListing, ChannelBindingCard,
-    ChannelCatalogItem, ChannelLogEntry, CloudStatusView, CompanionAgentOverride,
-    CompanionOverlayState, CompanionPlacement, CronRecord, CronRunRecord, DesktopSettings,
-    LanPeerRecord, LanSettings, ModelEdit, ModelProbeOutcome, ModelRecord,
-    NativeChannelAccountEdit, NativeChannelBindingEdit, NativeChatAttachment, NativeChatEvent,
-    NativeChatInput, NativeContextUsage, NativeCronJobEdit, NativeDesktop, NativeMessage,
-    NativeNavigationOrder, NativePatchFile, NativePatchLine, NativeProfile, NativeQueueTurn,
-    NativeSession, NativeStream, NativeSubagentCard, NativeTerminalFrame, NativeTerminalSpec, NativeTerminalSignal, NativeTerminalWatch,
-    NativeWorkflowEntry, NativeWorkflowLine, NativeWorkflowSection, NativeWorkspace,
-    PromptPackInfo, PromptSegmentContent, RuntimeToolStatus, ToolRecord, WorkspaceDeleteSummary,
-    WorkspaceEdit, WorkspacePathReport, DEFAULT_AGENT_ID, WORKSPACE_COLORS, WORKSPACE_ICONS,
-    validate_cloud_password,
+    validate_cloud_password, AgentRecord, AgentSettingsEdit, ChannelAccountCard,
+    ChannelAccountListing, ChannelBindingCard, ChannelCatalogItem, ChannelLogEntry,
+    CloudStatusView, CompanionAgentOverride, CompanionOverlayState, CompanionPlacement, CronRecord,
+    CronRunRecord, DesktopSettings, LanPeerRecord, LanSettings, ModelEdit, ModelProbeOutcome,
+    ModelRecord, NativeChannelAccountEdit, NativeChannelBindingEdit, NativeChatAttachment,
+    NativeChatEvent, NativeChatInput, NativeContextUsage, NativeCronJobEdit, NativeDesktop,
+    NativeMessage, NativeNavigationOrder, NativePatchFile, NativePatchLine, NativeProfile,
+    NativeQueueTurn, NativeSession, NativeStream, NativeSubagentCard, NativeTerminalFrame,
+    NativeTerminalSignal, NativeTerminalSpec, NativeTerminalWatch, NativeWorkflowEntry,
+    NativeWorkflowLine, NativeWorkflowSection, NativeWorkspace, PromptPackInfo,
+    PromptSegmentContent, RuntimeToolStatus, ToolRecord, WorkspaceDeleteSummary, WorkspaceEdit,
+    WorkspacePathReport, DEFAULT_AGENT_ID, WORKSPACE_COLORS, WORKSPACE_ICONS,
 };
 pub use runtime::DesktopRuntime;

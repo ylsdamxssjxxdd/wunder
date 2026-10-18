@@ -386,7 +386,10 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
 /// the local timeline.  Cloud rows deliberately stay bounded by the page
 /// returned by the server; the cloud watcher replaces this model on every
 /// revision, so the UI never grows an unbounded second transcript.
-pub(crate) fn project_cloud_history(chat_rows: &[ChatViewRow], previous: ModelRc<TimelineRow>) -> Vec<TimelineRow> {
+pub(crate) fn project_cloud_history(
+    chat_rows: &[ChatViewRow],
+    previous: ModelRc<TimelineRow>,
+) -> Vec<TimelineRow> {
     let mut rows = Vec::with_capacity(chat_rows.len().saturating_mul(4));
     for (index, chat) in chat_rows.iter().enumerate() {
         let mut user = blank_row(
@@ -394,8 +397,11 @@ pub(crate) fn project_cloud_history(chat_rows: &[ChatViewRow], previous: ModelRc
             format!("cloud-user-{}", chat.root_turn_id),
         );
         user.text = chat.user.content.as_str().into();
-        user.blocks = previous.iter().find(|row| row.id == user.id && row.text == user.text)
-            .map(|row| row.blocks).unwrap_or_else(|| crate::message_blocks::from_text(&chat.user.content));
+        user.blocks = previous
+            .iter()
+            .find(|row| row.id == user.id && row.text == user.text)
+            .map(|row| row.blocks)
+            .unwrap_or_else(|| crate::message_blocks::from_text(&chat.user.content));
         rows.push(user);
 
         let mut process = blank_row(
@@ -410,9 +416,44 @@ pub(crate) fn project_cloud_history(chat_rows: &[ChatViewRow], previous: ModelRc
         )
         .into();
         process.summary = cloud_status_label(chat.status.as_str()).into();
-        process.visible = chat.workflow_count > 0 || chat.reasoning_count > 0;
+        process.visible = chat.workflow_count > 0
+            || chat.reasoning_count > 0
+            || !chat.assistant.reasoning.is_empty();
         process.status_kind = crate::timeline::status_kind(chat.status.as_str());
+        let process_id = process.process_idx;
+        let running_thought = process.status_kind == crate::timeline::STATUS_RUNNING
+            && chat.process_activity.kind == "thinking";
+        if running_thought {
+            process.summary = crate::timeline_text::thought_running().into();
+        }
         rows.push(process);
+
+        // The presentation feed already carries the current thought. Do not
+        // wait for the lazy process page (or its 1.5 s refresh) to render it.
+        if !chat.assistant.reasoning.is_empty() {
+            let id = if chat.reasoning_item_id.is_empty() {
+                &chat.assistant.item_id
+            } else {
+                &chat.reasoning_item_id
+            };
+            let mut reason = blank_row(crate::timeline::KIND_REASON, format!("reason-{id}"));
+            reason.process_idx = process_id;
+            reason.tool_name = if running_thought {
+                crate::timeline_text::thought_running()
+            } else {
+                crate::timeline_text::thought_done()
+            }
+            .into();
+            reason.detail = chat.assistant.reasoning.as_str().into();
+            reason.summary = crate::message_blocks::reasoning_preview(&chat.assistant.reasoning);
+            reason.status_kind = if running_thought {
+                crate::timeline::STATUS_RUNNING
+            } else {
+                crate::timeline::STATUS_DONE
+            };
+            reason.foldable = true;
+            rows.push(reason);
+        }
 
         let mut answer = blank_row(
             crate::timeline::KIND_BODY,
@@ -429,16 +470,29 @@ pub(crate) fn project_cloud_history(chat_rows: &[ChatViewRow], previous: ModelRc
         };
         answer.text = text.as_str().into();
         answer.status_kind = crate::timeline::status_kind(chat.status.as_str());
-        answer.blocks = previous.iter().find(|row| row.id == answer.id && row.text == answer.text && row.status_kind == answer.status_kind)
-            .map(|row| row.blocks).unwrap_or_else(|| {
+        answer.blocks = previous
+            .iter()
+            .find(|row| {
+                row.id == answer.id
+                    && row.text == answer.text
+                    && row.status_kind == answer.status_kind
+            })
+            .map(|row| row.blocks)
+            .unwrap_or_else(|| {
                 let mut blocks = crate::message_blocks::Blocks::new();
                 blocks.raw = text;
-                if matches!(chat.status.as_str(), "running" | "queued" | "pending") { blocks.flush(); }
-                else { blocks.finalize_markdown(); }
+                if matches!(chat.status.as_str(), "running" | "queued" | "pending") {
+                    blocks.flush();
+                } else {
+                    blocks.finalize_markdown();
+                }
                 ModelRc::from(blocks.model)
             });
         answer.foldable = true;
-        let mut footer = blank_row(crate::timeline::KIND_FOOTER, format!("cloud-footer-{}", chat.root_turn_id));
+        let mut footer = blank_row(
+            crate::timeline::KIND_FOOTER,
+            format!("cloud-footer-{}", chat.root_turn_id),
+        );
         footer.summary = answer.id.clone();
         footer.text = answer.text.clone();
         footer.stats = ModelRc::new(VecModel::from(crate::timeline::stat_metrics(
@@ -450,7 +504,9 @@ pub(crate) fn project_cloud_history(chat_rows: &[ChatViewRow], previous: ModelRc
         rows.push(answer);
         rows.push(footer);
     }
-    for (index, row) in rows.iter_mut().enumerate() { row.payload = index as i32; }
+    for (index, row) in rows.iter_mut().enumerate() {
+        row.payload = index as i32;
+    }
     rows
 }
 
@@ -607,8 +663,63 @@ mod tests {
     use super::*;
 
     #[test]
+    fn cloud_reasoning_updates_the_same_paged_child_before_completion() {
+        let mut chat = ChatViewRow {
+            root_turn_id: "fixture-cloud".into(),
+            status: "running".into(),
+            reasoning_count: 1,
+            reasoning_item_id: "fixture-execution:text-1".into(),
+            ..Default::default()
+        };
+        chat.assistant.reasoning = "First thought".into();
+        chat.process_activity.kind = "thinking".into();
+        let mut rows = project_cloud_history(&[chat.clone()], ModelRc::default());
+        crate::timeline_text::process_models(&mut rows);
+        assert!(rows[1].visible);
+        assert_eq!(rows[1].process_entries.row_count(), 1);
+        let child = rows[1].process_entries.clone();
+        assert_eq!(
+            child.row_data(0).unwrap().status_kind,
+            crate::timeline::STATUS_RUNNING
+        );
+        rows[1].process_paged = true;
+        rows[1].open = true;
+        let previous = VecModel::from(rows);
+        chat.assistant.reasoning.push_str(" continued");
+        let mut next = project_cloud_history(&[chat.clone()], ModelRc::default());
+        crate::timeline_text::restore_folds(&mut next, &previous);
+        crate::timeline_text::sync_reasoning_tails(&next);
+        assert_eq!(next[1].process_entries, child);
+        assert_eq!(child.row_count(), 1);
+        assert_eq!(child.row_data(0).unwrap().detail, "First thought continued");
+        assert!(next[1].open);
+
+        chat.reasoning_item_id = "fixture-execution:text-2".into();
+        chat.assistant.reasoning = "Next thought".into();
+        let previous = VecModel::from(next);
+        let mut next = project_cloud_history(&[chat], ModelRc::default());
+        crate::timeline_text::restore_folds(&mut next, &previous);
+        crate::timeline_text::sync_reasoning_tails(&next);
+        assert_eq!(child.row_count(), 2);
+        assert_eq!(
+            child.row_data(0).unwrap().status_kind,
+            crate::timeline::STATUS_DONE
+        );
+        assert_eq!(
+            child.row_data(1).unwrap().status_kind,
+            crate::timeline::STATUS_RUNNING
+        );
+        assert_eq!(child.row_data(1).unwrap().detail, "Next thought");
+    }
+
+    #[test]
     fn cloud_projection_uses_native_rows_and_keeps_frozen_blocks() {
-        let mut chat = ChatViewRow { root_turn_id: "fixture-cloud".into(), workflow_count: 2, status: "completed".into(), ..Default::default() };
+        let mut chat = ChatViewRow {
+            root_turn_id: "fixture-cloud".into(),
+            workflow_count: 2,
+            status: "completed".into(),
+            ..Default::default()
+        };
         chat.user.content = "Fixture input".into();
         chat.assistant.content = "## Fixture answer\n\n- First item\n- Second item".into();
         let rows = project_cloud_history(&[chat.clone()], ModelRc::default());

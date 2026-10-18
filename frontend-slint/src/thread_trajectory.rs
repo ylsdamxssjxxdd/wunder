@@ -12,6 +12,7 @@ use serde_json::{json, Value};
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::sync_channel;
+use std::time::{SystemTime, UNIX_EPOCH};
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 use wunder_desktop::NativeDesktop;
 
@@ -71,6 +72,50 @@ const TICK_STEPS_MS: [f64; 14] = [
     1_800_000.0,
     3_600_000.0,
 ];
+
+/// Return the same deterministic shape as the web export download:
+/// `<session-id>-<Date.now()>.jsonl`.
+///
+/// The native save dialog uses this as its initial filename.  Keep the
+/// sanitization at this boundary because a cloud/session identifier can come
+/// from a remote service and may contain characters rejected by Windows.
+fn trajectory_export_filename(session_id: &str, timestamp_ms: i128) -> String {
+    let value = session_id.trim();
+    let mut safe = String::with_capacity(value.len());
+    let mut previous_invalid = false;
+    let mut previous_whitespace = false;
+    for ch in value.chars() {
+        let invalid =
+            ch.is_control() || matches!(ch, '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|');
+        if invalid {
+            if !previous_invalid {
+                safe.push('_');
+            }
+            previous_invalid = true;
+            previous_whitespace = false;
+        } else if ch.is_whitespace() {
+            if !previous_whitespace {
+                safe.push('_');
+            }
+            previous_whitespace = true;
+            previous_invalid = false;
+        } else {
+            safe.push(ch);
+            previous_invalid = false;
+            previous_whitespace = false;
+        }
+    }
+    let prefix = if safe.is_empty() { "thread" } else { &safe };
+    format!("{prefix}-{}.jsonl", timestamp_ms.max(0))
+}
+
+fn trajectory_export_filename_now(session_id: &str) -> String {
+    let timestamp_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or_default();
+    trajectory_export_filename(session_id, timestamp_ms as i128)
+}
 
 #[derive(Default, Clone, Copy)]
 struct Usage {
@@ -3749,8 +3794,8 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         if session.is_empty() {
             return;
         }
-        let Some(path) = crate::file_dialog::save_file("导出线程日志", "thread-log.jsonl")
-        else {
+        let default_name = trajectory_export_filename_now(&session);
+        let Some(path) = crate::file_dialog::save_file("导出线程日志", &default_name) else {
             return;
         };
         let (tx, rx) = sync_channel(1);
@@ -3948,6 +3993,19 @@ fn poll(mut receive: impl FnMut() -> bool + 'static) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn export_filename_matches_web_shape_and_sanitizes_windows_names() {
+        assert_eq!(
+            trajectory_export_filename("sess_demo", 1_792_000_000_123),
+            "sess_demo-1792000000123.jsonl"
+        );
+        assert_eq!(
+            trajectory_export_filename(r#"  sess:demo/part  "#, 42),
+            "sess_demo_part-42.jsonl"
+        );
+        assert_eq!(trajectory_export_filename("   ", 7), "thread-7.jsonl");
+    }
 
     #[test]
     fn complete_timing_stays_stable_across_ledger_pages_and_selection() {

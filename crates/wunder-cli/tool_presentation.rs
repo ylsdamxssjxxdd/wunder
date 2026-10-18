@@ -457,7 +457,13 @@ mod tests {
         ("读取文件", ToolAccess::Explore, "读取", "Read", true),
         ("列出文件", ToolAccess::Explore, "列出", "List", true),
         ("搜索内容", ToolAccess::Explore, "搜索", "Search", true),
-        ("文件名匹配", ToolAccess::Explore, "匹配文件", "Find files", true),
+        (
+            "文件名匹配",
+            ToolAccess::Explore,
+            "匹配文件",
+            "Find files",
+            true,
+        ),
         (
             "读图工具",
             ToolAccess::Explore,

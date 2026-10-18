@@ -64,6 +64,7 @@ def main() -> int:
     sync_targets = [
         ROOT / "Cargo.toml",
         ROOT / "crates" / "wunder-desktop" / "Cargo.toml",
+        ROOT / "frontend-slint" / "Cargo.toml",
     ]
     for target in sync_targets:
         if replace_toml_package_version(target, version):

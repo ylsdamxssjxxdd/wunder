@@ -243,6 +243,70 @@ pub fn sync_process_child(model: &VecModel<TimelineRow>, row: &TimelineRow) {
     }
 }
 
+/// Merge the current presentation thought into a lazy durable page by item
+/// identity. All other entries, disclosure choices and model handles stay put.
+pub fn merge_reasoning_tail(bar: &TimelineRow, mut entry: ProcessEntry) {
+    use slint::Model;
+    if bar.process_newer {
+        return;
+    }
+    let Some(children) = bar
+        .process_entries
+        .as_any()
+        .downcast_ref::<VecModel<ProcessEntry>>()
+    else {
+        return;
+    };
+    for index in 0..children.row_count() {
+        let Some(mut old) = children.row_data(index) else {
+            continue;
+        };
+        if old.kind == crate::timeline::KIND_REASON
+            && old.id != entry.id
+            && old.status_kind == crate::timeline::STATUS_RUNNING
+        {
+            old.status_kind = crate::timeline::STATUS_DONE;
+            old.tool_name = thought_done().into();
+            children.set_row_data(index, old);
+        }
+    }
+    if let Some(index) = children.iter().position(|old| old.id == entry.id) {
+        let old = children.row_data(index).unwrap();
+        entry.open = old.open;
+        entry.payload = old.payload;
+        if entry.status_kind != crate::timeline::STATUS_RUNNING
+            && old.detail.len() > entry.detail.len()
+        {
+            entry.detail = old.detail;
+            entry.summary = crate::message_blocks::reasoning_preview(&entry.detail);
+        }
+        if children.row_data(index).as_ref() != Some(&entry) {
+            children.set_row_data(index, entry);
+        }
+    } else {
+        // Process pages retain at most 100 items, each with at most two rows.
+        // Reserve one bounded live tail rather than grow a second transcript.
+        if children.row_count() >= 201 {
+            children.remove(200);
+        }
+        entry.payload = -1 - bar.process_idx * 1024 - children.row_count() as i32;
+        children.push(entry);
+    }
+}
+
+pub fn sync_reasoning_tails(rows: &[TimelineRow]) {
+    for reason in rows
+        .iter()
+        .filter(|row| row.kind == crate::timeline::KIND_REASON)
+    {
+        if let Some(bar) = rows.iter().find(|row| {
+            row.kind == crate::timeline::KIND_PROCESS && row.process_idx == reason.process_idx
+        }) {
+            merge_reasoning_tail(bar, process_entry(reason));
+        }
+    }
+}
+
 /// History replacement builds one child model per process; live deltas patch
 /// the existing child VecModel instead of rebuilding the transcript.
 pub fn process_models(rows: &mut [TimelineRow]) {
@@ -325,8 +389,11 @@ pub fn restore_folds(rows: &mut [TimelineRow], previous: &VecModel<TimelineRow>)
                 if row.process_paged {
                     for index in 0..row.process_entries.row_count() {
                         if let Some(mut entry) = row.process_entries.row_data(index) {
-                            entry.payload = -1 - row.process_idx * 1024 - index as i32;
-                            row.process_entries.set_row_data(index, entry);
+                            let payload = -1 - row.process_idx * 1024 - index as i32;
+                            if entry.payload != payload {
+                                entry.payload = payload;
+                                row.process_entries.set_row_data(index, entry);
+                            }
                         }
                     }
                 }

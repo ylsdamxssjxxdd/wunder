@@ -1,5 +1,5 @@
-mod command_stream;
 pub mod browser_host;
+mod command_stream;
 pub mod server;
 
 use crate::config::Config;
@@ -866,10 +866,7 @@ mod tests {
             "文件名匹配",
             data.take(),
         );
-        assert_eq!(
-            rewritten["data"]["resolved_path"],
-            "/public/user/workspace"
-        );
+        assert_eq!(rewritten["data"]["resolved_path"], "/public/user/workspace");
         assert_eq!(
             rewritten["data"]["paths"][0],
             "/public/user/workspace/a.png"

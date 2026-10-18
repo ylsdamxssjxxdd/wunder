@@ -30,7 +30,6 @@ LEAKY_BASELINE = {
     "edit-agent-question",
     "new-thread",
     "open-active-workspace",
-    "open-prompt-preview",
     "open-workspace-folder",
     "pick-attachments",
     "refresh-chat",

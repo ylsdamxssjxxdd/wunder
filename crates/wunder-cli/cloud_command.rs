@@ -20,8 +20,20 @@ pub(crate) async fn handle_cloud(
     match command.command {
         CloudSubcommand::Share { mode } => {
             use crate::args::CloudShareMode;
-            cloud_shared().set_local_sharing(!matches!(mode, CloudShareMode::Off), matches!(mode, CloudShareMode::Full)).await?;
-            println!("{}", if matches!(mode, CloudShareMode::Off) { "Local sharing disabled" } else { "Local sharing enabled; remote mutations require approval" });
+            cloud_shared()
+                .set_local_sharing(
+                    !matches!(mode, CloudShareMode::Off),
+                    matches!(mode, CloudShareMode::Full),
+                )
+                .await?;
+            println!(
+                "{}",
+                if matches!(mode, CloudShareMode::Off) {
+                    "Local sharing disabled"
+                } else {
+                    "Local sharing enabled; remote mutations require approval"
+                }
+            );
             Ok(())
         }
         CloudSubcommand::Login(command) => cloud_login(runtime, global, command).await,
@@ -314,9 +326,29 @@ fn cloud_status_lines_at(status: &CloudStatus, is_zh: bool, now: f64) -> Vec<Str
     }
     lines.extend(cloud_connection_lines(status, is_zh, now));
     lines.push(if is_zh {
-        format!("本地远程访问: {} / 目录共享: {}", if status.inbound_enabled {"开启"} else {"关闭"}, if status.full_shadow {"完整"} else {"摘要"})
+        format!(
+            "本地远程访问: {} / 目录共享: {}",
+            if status.inbound_enabled {
+                "开启"
+            } else {
+                "关闭"
+            },
+            if status.full_shadow {
+                "完整"
+            } else {
+                "摘要"
+            }
+        )
     } else {
-        format!("inbound access: {} / catalog: {}", status.inbound_enabled, if status.full_shadow {"full"} else {"summary"})
+        format!(
+            "inbound access: {} / catalog: {}",
+            status.inbound_enabled,
+            if status.full_shadow {
+                "full"
+            } else {
+                "summary"
+            }
+        )
     });
     if let Some(max) = status.max_concurrent_calls {
         let active = status.concurrency_active.unwrap_or(0);

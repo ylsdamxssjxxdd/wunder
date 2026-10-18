@@ -107,7 +107,8 @@ struct SandboxBrowserCloseRequest {
 }
 
 #[derive(Debug, Deserialize)]
-struct SandboxCommandSessionControlRequest {    user_id: String,
+struct SandboxCommandSessionControlRequest {
+    user_id: String,
     session_id: String,
     command_session_id: String,
     #[serde(default)]
@@ -546,10 +547,9 @@ async fn health() -> impl IntoResponse {
 async fn create_browser_bridge(Json(request): Json<SandboxBrowserBridgeRequest>) -> Json<Value> {
     let bridge_id = request.bridge_id;
     let spec = request.spec;
-    let started = tokio::task::spawn_blocking(move || {
-        super::browser_host::create(bridge_id.as_str(), &spec)
-    })
-    .await;
+    let started =
+        tokio::task::spawn_blocking(move || super::browser_host::create(bridge_id.as_str(), &spec))
+            .await;
     match started {
         Ok(Ok(line)) => Json(json!({ "ok": true, "line": line })),
         Ok(Err(error)) => Json(json!({ "ok": false, "error": error })),

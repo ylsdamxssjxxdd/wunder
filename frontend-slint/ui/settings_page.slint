@@ -11,6 +11,7 @@ import { ChannelsPage } from "channels_page.slint";
 import { ToolsPage, ToolResource } from "tools_page.slint";
 import { ExpertData, MemoryCard, ArchiveCard, RuntimePoint } from "expert_data.slint";
 import { AvatarDialogState } from "avatar_dialog.slint";
+import { WunderModelCanvas } from "wunder_model_canvas.slint";
 
 // Web-style settings navigation entry: 36px circular icon badge, title and
 // subtitle rows, solid accent background with white text when selected.
@@ -339,7 +340,7 @@ export component SettingsPage inherits Rectangle {
     // in the general category and opens its own window, so it is not a
     // category. The navigation lists them in the web messenger's category
     // order: general, account, models, tools, agent, companion, cron, memory,
-    // channels, prompts, archived.
+    // channels, prompts, archived, wunder model.
     in-out property <int> settings-tab: 0;
     // Category filter typed into the navigation search box. Slint 1.18 strings
     // have no substring test, so the filter runs natively and the matching
@@ -349,7 +350,7 @@ export component SettingsPage inherits Rectangle {
     // no bitwise operators, so the native search projection ships booleans rather
     // than a mask; an all-true list means "no query". Index = nav position, not
     // tab id.
-    in-out property <[bool]> settings-category-flags: [true, true, true, true, true, true, true, true, true, true, true];
+    in-out property <[bool]> settings-category-flags: [true, true, true, true, true, true, true, true, true, true, true, true];
     out property <bool> settings-has-matches: root.count-visible() > 0;
     out property <int> settings-visible-count: root.count-visible();    // How many categories the current query keeps; the empty state and the test
     // projections both read this instead of re-deriving the flags.
@@ -364,7 +365,8 @@ export component SettingsPage inherits Rectangle {
             + (root.settings-category-flags[7] ? 1 : 0)
             + (root.settings-category-flags[8] ? 1 : 0)
             + (root.settings-category-flags[9] ? 1 : 0)
-            + (root.settings-category-flags[10] ? 1 : 0);
+            + (root.settings-category-flags[10] ? 1 : 0)
+            + (root.settings-category-flags[11] ? 1 : 0);
     }
     // Slint cannot test a substring, so the query is projected out and the
     // matching categories come back as a bit set.
@@ -373,6 +375,20 @@ export component SettingsPage inherits Rectangle {
     // Help moved out of the category list: the general page's button opens a
     // standalone help window owned by the native side.
     callback open-help();
+    in-out property <image> wunder-model-frame;
+    in-out property <string> wunder-model-status;
+    in-out property <bool> wunder-model-loading: true;
+    in-out property <bool> wunder-model-failed: false;
+    in-out property <bool> wunder-model-rotating: true;
+    in-out property <bool> wunder-model-native-active: false;
+    callback wunder-model-gesture(string, float, float);
+    callback wunder-model-reset();
+    callback wunder-model-retry();
+    callback wunder-model-toggle-rotate();
+    callback wunder-model-size-changed(int, int);
+    callback wunder-model-geometry-changed(int, int, int, int);
+    in property <length> wunder-model-width: 640px;
+    in property <length> wunder-model-height: 480px;
 
     // ---- embedded category state -------------------------------------------
     // The heavy surfaces own their own components; the shell only forwards
@@ -698,6 +714,13 @@ export component SettingsPage inherits Rectangle {
                             title: I18n.stc_archives; subtitle: I18n.stc_archives_note;
                             selected: root.settings-tab == 10;
                             clicked => { root.settings-tab = 10;  }
+                        }
+                        SettingsNavItem {
+                            visible: root.settings-category-flags[11];
+                            icon: @image-url("../assets/icons/eye.svg");
+                            title: I18n.wm_title; subtitle: I18n.wm_note;
+                            selected: root.settings-tab == 11;
+                            clicked => { root.settings-tab = 11; root.wunder-model-retry(); }
                         }
                         // A live query that matches nothing says so instead of
                         // leaving an empty column with no explanation.
@@ -1548,6 +1571,21 @@ export component SettingsPage inherits Rectangle {
                                 }
                             }
                         }
+                    }
+                    if root.settings-tab == 11 : WunderModelCanvas {
+                        frame: root.wunder-model-frame; status: root.wunder-model-status;
+                        loading: root.wunder-model-loading; failed: root.wunder-model-failed;
+                        rotating: root.wunder-model-rotating;
+                        native-active: root.wunder-model-native-active;
+                        gesture(kind, dx, dy) => { root.wunder-model-gesture(kind, dx, dy); }
+                        reset => { root.wunder-model-reset(); }
+                        retry => { root.wunder-model-retry(); }
+                        toggle-rotate => { root.wunder-model-toggle-rotate(); }
+                        size-changed(width, height) => { root.wunder-model-size-changed(width, height); }
+                        geometry-changed(x, y, width, height) => { root.wunder-model-geometry-changed(x, y, width, height); }
+                        // Visibility is driven by the shell, so the native
+                        // renderer can stop timers as soon as this page is
+                        // hidden or another category is selected.
                     }
                 }
             }

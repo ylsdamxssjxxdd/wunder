@@ -22,10 +22,9 @@ pub const TOOL_DESKTOP_CONTROL_ALIAS_SHORT: &str = "desktop";
 
 const MAX_WAIT_MS: u64 = 30_000;
 const MAX_SCREENSHOT_BYTES: u64 = 8 * 1024 * 1024;
-const OVERLAY_HINT_MS: u64 = 2000;
-const OVERLAY_DONE_MS: u64 = 2000;
-const OVERLAY_JITTER_MS: u64 = 120;
-const OVERLAY_HIDE_DELAY_MS: u64 = 80;
+// Give native menus and window state a frame to settle before the observation
+// screenshot. This is action stabilization, not a user-facing animation.
+const ACTION_SETTLE_MS: u64 = 80;
 const MAX_SESSION_FRAME_CACHE: usize = 2048;
 
 static LAST_SESSION_SCREENSHOTS: OnceLock<Mutex<HashMap<String, PathBuf>>> = OnceLock::new();
@@ -127,23 +126,6 @@ struct DesktopScreenshot {
     size_bytes: usize,
 }
 
-fn overlay_stream_enabled(context: &ToolContext<'_>) -> bool {
-    context
-        .event_emitter
-        .as_ref()
-        .map(|emitter| emitter.stream_enabled())
-        .unwrap_or(false)
-}
-
-fn emit_overlay_event(context: &ToolContext<'_>, event_type: &str, payload: Value) {
-    if !overlay_stream_enabled(context) {
-        return;
-    }
-    if let Some(emitter) = context.event_emitter.as_ref() {
-        emitter.emit(event_type, payload);
-    }
-}
-
 fn session_frame_cache() -> &'static Mutex<HashMap<String, PathBuf>> {
     LAST_SESSION_SCREENSHOTS.get_or_init(|| Mutex::new(HashMap::new()))
 }
@@ -187,10 +169,7 @@ fn trim_session_frame_cache(cache: &mut HashMap<String, PathBuf>) {
 
 pub fn is_desktop_control_tool_name(name: &str) -> bool {
     let cleaned = name.trim();
-    if matches!(
-        cleaned,
-        TOOL_DESKTOP_CONTROL | "桌面控制器" | "桌面监视器"
-    ) {
+    if matches!(cleaned, TOOL_DESKTOP_CONTROL | "桌面控制器" | "桌面监视器") {
         return true;
     }
     matches!(
@@ -229,36 +208,11 @@ pub async fn tool_desktop_control(context: &ToolContext<'_>, args: &Value) -> Re
     let wait_action = matches!(payload.action, DesktopAction::Wait);
     let wait_ms = payload.delay_ms.min(MAX_WAIT_MS);
     if wait_action {
-        if overlay_stream_enabled(context) {
-            emit_overlay_event(
-                context,
-                "desktop_control_countdown",
-                json!({ "wait_ms": wait_ms }),
-            );
-        }
         if wait_ms > 0 {
             sleep(Duration::from_millis(wait_ms)).await;
         }
-    } else if overlay_stream_enabled(context) {
-        emit_overlay_event(
-            context,
-            "desktop_control_hint",
-            json!({
-                "x": cx,
-                "y": cy,
-                "description": &description,
-                "duration_ms": OVERLAY_HINT_MS,
-            }),
-        );
-        if OVERLAY_HINT_MS > 0 {
-            sleep(Duration::from_millis(
-                OVERLAY_HINT_MS.saturating_add(OVERLAY_JITTER_MS),
-            ))
-            .await;
-        }
     }
 
-    let mut done_coords: Option<(i32, i32)> = None;
     match payload.action {
         DesktopAction::LeftClick => {
             mouse_click(MouseButton::Left, cx, cy)?;
@@ -320,9 +274,9 @@ pub async fn tool_desktop_control(context: &ToolContext<'_>, args: &Value) -> Re
             smooth_move(cx, cy, payload.duration_ms).await?;
         }
         DesktopAction::DragDrop => {
-            let to_bbox = payload.to_bbox.ok_or_else(|| {
-                anyhow!(crate::i18n::t("tool.desktop_control.to_bbox_required"))
-            })?;
+            let to_bbox = payload
+                .to_bbox
+                .ok_or_else(|| anyhow!(crate::i18n::t("tool.desktop_control.to_bbox_required")))?;
             let (to_cx_norm_raw, to_cy_norm_raw) = to_bbox.center();
             let to_cx_norm = to_cx_norm_raw.clamp(0, norm_width);
             let to_cy_norm = to_cy_norm_raw.clamp(0, norm_height);
@@ -336,40 +290,16 @@ pub async fn tool_desktop_control(context: &ToolContext<'_>, args: &Value) -> Re
             };
             smooth_move(to_cx, to_cy, drag_duration).await?;
             mouse_up(MouseButton::Left, to_cx, to_cy)?;
-            done_coords = Some((to_cx, to_cy));
         }
     }
 
+    if !wait_action && ACTION_SETTLE_MS > 0 {
+        sleep(Duration::from_millis(ACTION_SETTLE_MS)).await;
+    }
     let screenshot = capture_screenshot(&config).await?;
     let previous_screenshot_path =
         remember_previous_screenshot_for_session(context.session_id, &screenshot.path);
     persist_screenshot_to_user_container(context, &screenshot).await;
-    if wait_action {
-        if overlay_stream_enabled(context) {
-            emit_overlay_event(context, "desktop_control_countdown_done", json!({}));
-            if OVERLAY_HIDE_DELAY_MS > 0 {
-                sleep(Duration::from_millis(OVERLAY_HIDE_DELAY_MS)).await;
-            }
-        }
-    } else if overlay_stream_enabled(context) {
-        let (done_x, done_y) = done_coords.unwrap_or((cx, cy));
-        emit_overlay_event(
-            context,
-            "desktop_control_hint_done",
-            json!({
-                "x": done_x,
-                "y": done_y,
-                "description": &description,
-                "duration_ms": OVERLAY_DONE_MS,
-            }),
-        );
-        if OVERLAY_DONE_MS > 0 {
-            sleep(Duration::from_millis(
-                OVERLAY_DONE_MS.saturating_add(OVERLAY_JITTER_MS),
-            ))
-            .await;
-        }
-    }
     let elapsed_ms = started_at.elapsed().as_millis() as u64;
     let (summary, prompt_key) = if wait_action {
         (
@@ -409,6 +339,9 @@ pub async fn tool_desktop_control(context: &ToolContext<'_>, args: &Value) -> Re
             "screenshot_download_url": screenshot.download_url,
             "screenshot_bytes": screenshot.size_bytes,
             "elapsed_ms": elapsed_ms,
+            "action_applied": true,
+            "screenshot_after_action": true,
+            "observation_ready": true,
             "followup_prompt": prompt,
         }),
     ))
@@ -564,9 +497,7 @@ fn parse_bbox(value: &Value) -> Result<BBox> {
         Value::String(raw) => {
             let raw = raw.trim();
             if raw.is_empty() {
-                return Err(anyhow!(crate::i18n::t(
-                    "tool.desktop_control.invalid_bbox"
-                )));
+                return Err(anyhow!(crate::i18n::t("tool.desktop_control.invalid_bbox")));
             }
             let parsed = serde_json::from_str::<Value>(raw)
                 .map_err(|_| anyhow!(crate::i18n::t("tool.desktop_control.invalid_bbox")))?;
@@ -575,11 +506,7 @@ fn parse_bbox(value: &Value) -> Result<BBox> {
                 .cloned()
                 .ok_or_else(|| anyhow!(crate::i18n::t("tool.desktop_control.invalid_bbox")))?
         }
-        _ => {
-            return Err(anyhow!(crate::i18n::t(
-                "tool.desktop_control.invalid_bbox"
-            )))
-        }
+        _ => return Err(anyhow!(crate::i18n::t("tool.desktop_control.invalid_bbox"))),
     };
     if arr.len() == 4 {
         let x1 = parse_i32(Some(&arr[0]))
@@ -604,9 +531,7 @@ fn parse_bbox(value: &Value) -> Result<BBox> {
             y2: cy,
         });
     }
-    Err(anyhow!(crate::i18n::t(
-        "tool.desktop_control.invalid_bbox"
-    )))
+    Err(anyhow!(crate::i18n::t("tool.desktop_control.invalid_bbox")))
 }
 
 fn parse_i32(value: Option<&Value>) -> Option<i32> {
@@ -824,6 +749,26 @@ fn resolve_temp_dir() -> Result<PathBuf> {
     }
     let root = std::env::current_dir().map_err(|err| anyhow!(err))?;
     Ok(root.join("config").join("data").join("temp_dir"))
+}
+
+#[cfg(test)]
+mod temp_dir_tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn resolve_temp_dir_uses_shared_runtime_root() {
+        let _guard = ENV_LOCK.lock().expect("environment lock");
+        let root = std::env::temp_dir().join(format!(
+            "wunder-desktop-temp-root-{}",
+            Uuid::new_v4().simple()
+        ));
+        std::env::set_var("WUNDER_TEMP_DIR_ROOT", &root);
+        assert_eq!(resolve_temp_dir().expect("resolve temp root"), root);
+        std::env::remove_var("WUNDER_TEMP_DIR_ROOT");
+    }
 }
 
 fn sanitize_session_id(value: &str) -> String {
@@ -1229,9 +1174,7 @@ fn send_key_sequence(keys: &str) -> Result<()> {
         .filter(|s| !s.is_empty())
         .collect();
     if parts.is_empty() {
-        return Err(anyhow!(crate::i18n::t(
-            "tool.desktop_control.key_required"
-        )));
+        return Err(anyhow!(crate::i18n::t("tool.desktop_control.key_required")));
     }
     let mut modifiers = Vec::new();
     let mut main = None;
@@ -1253,9 +1196,7 @@ fn send_key_sequence(keys: &str) -> Result<()> {
         return Ok(());
     }
     if modifiers.is_empty() {
-        return Err(anyhow!(crate::i18n::t(
-            "tool.desktop_control.key_required"
-        )));
+        return Err(anyhow!(crate::i18n::t("tool.desktop_control.key_required")));
     }
     for modifier in modifiers {
         key_down(modifier)?;

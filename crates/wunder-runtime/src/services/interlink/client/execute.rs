@@ -38,13 +38,13 @@ use crate::approval_registry::ApprovalSource;
 use crate::core::approval::ApprovalResponse;
 use crate::core::blocking;
 use crate::core::long_task;
+use crate::schemas::AttachmentPayload;
 use crate::services::interlink::client::approval::{ApprovalGate, ApprovalPlan};
 use crate::services::interlink::client::shadow::{self, Sections};
 use crate::services::interlink::client::stream;
 use crate::services::interlink::client::{now_ts, TunnelWriter};
 use crate::services::interlink::secret::sha256_hex;
 use crate::services::tools::{execute_builtin_tool, sessions_spawn, DetachedToolContext};
-use crate::schemas::AttachmentPayload;
 use crate::state::AppState;
 
 /// Longest window a command id is remembered for (docs §4.3).
@@ -993,16 +993,38 @@ async fn threads_get(spec: &CommandSpec, ctx: &ExecContext) -> CommandReport {
         .unwrap_or(HISTORY_LIMIT_DEFAULT)
         .clamp(1, HISTORY_LIMIT_MAX);
     let workspace = ctx.state.workspace.clone();
-    // The projection the local UI consumes; the transcript crosses the tunnel
-    // only while this one command runs (docs §9.3).
-    match workspace
-        .load_history_async(&ctx.local_user_id, &thread_id, limit)
-        .await
-    {
-        Ok(items) => {
+    // Return the same atomic thread projection used by the native/web chat:
+    // turns, durable items, text blocks and cursor.  The old endpoint returned
+    // only flattened transcript rows, which made the cloud UI unable to render
+    // reasoning and tool work-process entries for a local thread.
+    let storage = ctx.state.storage.clone();
+    let owner = ctx.local_user_id.clone();
+    let lookup = thread_id.clone();
+    let snapshot = crate::core::blocking::run_db("interlink.client.thread_snapshot", move || {
+        storage.thread_snapshot_window(
+            &owner,
+            &lookup,
+            &crate::storage::ThreadSnapshotWindow {
+                max_turns: 12,
+                max_items: limit as usize,
+                max_blocks: (limit * 2).clamp(64, 512) as usize,
+                before_turn_index: None,
+            },
+        )
+    })
+    .await;
+    match snapshot {
+        Ok(snapshot) => {
+            let workspace = workspace.clone();
+            let owner = ctx.local_user_id.clone();
+            let lookup = thread_id.clone();
+            let items = workspace
+                .load_history_async(&owner, &lookup, limit)
+                .await
+                .unwrap_or_default();
             let rows = items.len();
             let report = CommandReport::succeeded(
-                json!({ "local_thread_id": thread_id, "items": items, "limit": limit }),
+                json!({ "local_thread_id": thread_id, "items": items, "snapshot": snapshot, "limit": limit }),
             );
             CommandReport {
                 usage: json!({"rows": rows}),
@@ -1081,7 +1103,9 @@ async fn create_remote_thread(
 ) -> CommandReport {
     match ctx.state.user_store.get_user_by_id(&ctx.local_user_id) {
         Ok(Some(_)) => {}
-        Ok(None) => return CommandReport::failed("USER_UNAVAILABLE", "local user is not registered"),
+        Ok(None) => {
+            return CommandReport::failed("USER_UNAVAILABLE", "local user is not registered")
+        }
         Err(err) => return CommandReport::failed("USER_UNAVAILABLE", sanitize(&err.to_string())),
     }
     let state = ctx.state.clone();
@@ -1091,7 +1115,9 @@ async fn create_remote_thread(
         .create_task_session_id(&ctx.local_user_id, agent)
     {
         Ok(id) => id,
-        Err(err) => return CommandReport::failed("THREAD_CREATE_FAILED", sanitize(&err.to_string())),
+        Err(err) => {
+            return CommandReport::failed("THREAD_CREATE_FAILED", sanitize(&err.to_string()))
+        }
     };
     let now = now_ts();
     let record = crate::storage::ChatSessionRecord {
@@ -1177,11 +1203,16 @@ async fn admit_turn(
     let session_id = match thread.clone() {
         Some(id) => id,
         None => {
-            let report = create_remote_thread(ctx, &spec.args, &agent, title.clone(), spawn_label.clone()).await;
+            let report =
+                create_remote_thread(ctx, &spec.args, &agent, title.clone(), spawn_label.clone())
+                    .await;
             if report.status != wunder_core::interlink::COMMAND_STATUS_SUCCEEDED {
                 return report;
             }
-            report.result["local_thread_id"].as_str().unwrap_or_default().to_string()
+            report.result["local_thread_id"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string()
         }
     };
 
@@ -1260,14 +1291,36 @@ fn parse_thread_attachments(args: &Value) -> Vec<AttachmentPayload> {
         .take(8)
         .filter_map(|value| {
             let object = value.as_object()?;
-            let name = object.get("name").and_then(Value::as_str).map(str::trim).filter(|v| !v.is_empty()).map(str::to_string);
-            let content = object.get("content").and_then(Value::as_str).map(str::to_string);
-            let content_type = object.get("mime_type").and_then(Value::as_str).map(str::to_string);
-            let public_path = object.get("public_path").and_then(Value::as_str).map(str::to_string);
-            if name.is_none() || content.as_deref().unwrap_or_default().trim().is_empty() && public_path.as_deref().unwrap_or_default().is_empty() {
+            let name = object
+                .get("name")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .map(str::to_string);
+            let content = object
+                .get("content")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            let content_type = object
+                .get("mime_type")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            let public_path = object
+                .get("public_path")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            if name.is_none()
+                || content.as_deref().unwrap_or_default().trim().is_empty()
+                    && public_path.as_deref().unwrap_or_default().is_empty()
+            {
                 return None;
             }
-            Some(AttachmentPayload { name, content, content_type, public_path })
+            Some(AttachmentPayload {
+                name,
+                content,
+                content_type,
+                public_path,
+            })
         })
         .collect()
 }
@@ -2208,41 +2261,138 @@ mod tests {
         config.storage.backend = "sqlite".into();
         config.storage.db_path = dir.path().join("fixture.db").to_string_lossy().into_owned();
         config.workspace.root = dir.path().join("engine").to_string_lossy().into_owned();
-        let state = Arc::new(AppState::new_with_options(
-            crate::config_store::ConfigStore::from_config(dir.path().join("config.yaml"), config.clone()),
-            config, crate::state::AppStateInitOptions::cli_default(),
-        ).unwrap());
-        let user = state.user_store.create_user("fixture_user", None, "fixture_password", None, None, vec!["user".into()], "active", false).unwrap().user_id;
+        let state = Arc::new(
+            AppState::new_with_options(
+                crate::config_store::ConfigStore::from_config(
+                    dir.path().join("config.yaml"),
+                    config.clone(),
+                ),
+                config,
+                crate::state::AppStateInitOptions::cli_default(),
+            )
+            .unwrap(),
+        );
+        let user = state
+            .user_store
+            .create_user(
+                "fixture_user",
+                None,
+                "fixture_password",
+                None,
+                None,
+                vec!["user".into()],
+                "active",
+                false,
+            )
+            .unwrap()
+            .user_id;
         for (index, id) in ["fixture-default", "fixture-named"].iter().enumerate() {
             let root = dir.path().join(id);
             std::fs::create_dir_all(&root).unwrap();
             std::fs::write(root.join(format!("file-{index}.txt")), b"fixture").unwrap();
-            state.storage.upsert_workspace(&wunder_core::storage_records::WorkspaceRecord {
-                workspace_id: (*id).into(), user_id: user.clone(), name: format!("Fixture {index}"),
-                root_path: root.to_string_lossy().into_owned(), icon: String::new(), color: String::new(),
-                sort_index: index as i64, created_at: 1.0, updated_at: 1.0,
-            }).unwrap();
+            state
+                .storage
+                .upsert_workspace(&wunder_core::storage_records::WorkspaceRecord {
+                    workspace_id: (*id).into(),
+                    user_id: user.clone(),
+                    name: format!("Fixture {index}"),
+                    root_path: root.to_string_lossy().into_owned(),
+                    icon: String::new(),
+                    color: String::new(),
+                    sort_index: index as i64,
+                    created_at: 1.0,
+                    updated_at: 1.0,
+                })
+                .unwrap();
         }
-        let ctx = ExecContext { state: state.clone(), local_user_id: user.clone(), workspace_id: None,
-            max_file_pull_bytes: 1024, chunk_bytes: 1024, rate_bps: 1024, source_tag: "remote:desktop:fixture".into() };
+        let ctx = ExecContext {
+            state: state.clone(),
+            local_user_id: user.clone(),
+            workspace_id: None,
+            max_file_pull_bytes: 1024,
+            chunk_bytes: 1024,
+            rate_bps: 1024,
+            source_tag: "remote:desktop:fixture".into(),
+        };
         let (writer, _control, _data) = TunnelWriter::new();
         let collector = shadow::ShadowCollector::new();
         let wake = Arc::new(Notify::new());
-        for (index, args) in [json!({}), json!({"workspace_id":""}), json!({"workspace_id":"fixture-named"})].into_iter().enumerate() {
-            let expected = if index == 2 { "fixture-named" } else { "fixture-default" };
-            let listing = execute(&spec(CMD_WORKSPACE_LIST, args.clone()), &ctx, &writer, &collector, &wake, CancellationToken::new()).await;
-            assert_eq!(listing.status, COMMAND_STATUS_SUCCEEDED, "{}", listing.payload());
+        for (index, args) in [
+            json!({}),
+            json!({"workspace_id":""}),
+            json!({"workspace_id":"fixture-named"}),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let expected = if index == 2 {
+                "fixture-named"
+            } else {
+                "fixture-default"
+            };
+            let listing = execute(
+                &spec(CMD_WORKSPACE_LIST, args.clone()),
+                &ctx,
+                &writer,
+                &collector,
+                &wake,
+                CancellationToken::new(),
+            )
+            .await;
+            assert_eq!(
+                listing.status,
+                COMMAND_STATUS_SUCCEEDED,
+                "{}",
+                listing.payload()
+            );
             let root = state.workspace.workspace_root(&ctx.scope_user(&args));
             assert_eq!(root, dir.path().join(expected));
-            let created = execute(&spec("thread.create", args.clone()), &ctx, &writer, &collector, &wake, CancellationToken::new()).await;
-            assert_eq!(created.status, COMMAND_STATUS_SUCCEEDED, "{}", created.payload());
+            let created = execute(
+                &spec("thread.create", args.clone()),
+                &ctx,
+                &writer,
+                &collector,
+                &wake,
+                CancellationToken::new(),
+            )
+            .await;
+            assert_eq!(
+                created.status,
+                COMMAND_STATUS_SUCCEEDED,
+                "{}",
+                created.payload()
+            );
             assert_eq!(created.result["workspace_id"], expected);
             let id = created.result["local_thread_id"].as_str().unwrap();
-            assert_eq!(state.user_store.get_chat_session(&user, id).unwrap().unwrap().workspace_id.as_deref(), Some(expected));
+            assert_eq!(
+                state
+                    .user_store
+                    .get_chat_session(&user, id)
+                    .unwrap()
+                    .unwrap()
+                    .workspace_id
+                    .as_deref(),
+                Some(expected)
+            );
             let threads = threads_list(&spec("threads.list", args), &ctx).await;
-            assert!(threads.result["threads"].as_array().unwrap().iter().any(|row| row["local_thread_id"] == id));
+            assert!(threads.result["threads"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|row| row["local_thread_id"] == id));
         }
-        let denied = execute(&spec(CMD_WORKSPACE_LIST, json!({"workspace_id":"fixture-missing"})), &ctx, &writer, &collector, &wake, CancellationToken::new()).await;
+        let denied = execute(
+            &spec(
+                CMD_WORKSPACE_LIST,
+                json!({"workspace_id":"fixture-missing"}),
+            ),
+            &ctx,
+            &writer,
+            &collector,
+            &wake,
+            CancellationToken::new(),
+        )
+        .await;
         assert_ne!(denied.status, COMMAND_STATUS_SUCCEEDED);
     }
 

@@ -38,13 +38,14 @@ pub use context::NativeContextUsage;
 #[path = "native_terminal.rs"]
 mod terminal;
 pub use terminal::{
-    NativeTerminal, NativeTerminalFrame, NativeTerminalSnapshot, NativeTerminalSpec, NativeTerminalSignal, NativeTerminalWatch,
+    NativeTerminal, NativeTerminalFrame, NativeTerminalSignal, NativeTerminalSnapshot,
+    NativeTerminalSpec, NativeTerminalWatch,
 };
 
-#[path = "native_chat_turns.rs"]
-mod chat_turns;
 #[path = "native_chat_process.rs"]
 mod chat_process;
+#[path = "native_chat_turns.rs"]
+mod chat_turns;
 pub use chat_process::{NativeProcessItem, NativeProcessPage};
 #[path = "native_observer.rs"]
 mod observer;
@@ -435,9 +436,11 @@ impl NativeDesktop {
             )? {
                 return Ok(());
             }
-            return Err(anyhow!(
-                "THREAD_IN_USE: thread lease expired; close and reopen the thread"
-            ));
+            // The heartbeat can be interrupted by a stalled UI or a transient
+            // SQLite lock. Drop the dead local token and reacquire atomically;
+            // this makes reopening after a crash/self-heal transparent while
+            // still preserving fencing against another live instance.
+            leases.remove(session_id);
         }
         use wunder_server::storage::ThreadOpenLeaseStatus;
         match self.state().storage.try_acquire_thread_open_lease(
@@ -804,15 +807,29 @@ impl NativeDesktop {
     }
 
     pub fn archive_session(&self, session_id: &str) -> Result<()> {
+        let session_id = session_id.trim();
+        anyhow::ensure!(!session_id.is_empty(), "线程不存在");
         let mut record = self
             .desktop
             .state
             .user_store
-            .get_chat_session(&self.desktop.user_id, session_id.trim())?
+            .get_chat_session(&self.desktop.user_id, session_id)?
             .ok_or_else(|| anyhow!("线程不存在"))?;
+        // Archiving is a terminal user action. Settle model turns, queued
+        // tasks, goals and monitor state first so an archived row can never be
+        // resurrected as running after the next catalog refresh.
+        self.ensure_thread_open(session_id)?;
+        self.runtime.block_on(
+            self.desktop
+                .state
+                .kernel
+                .thread_runtime
+                .cancel_session_activity(&self.desktop.user_id, session_id, "archive"),
+        )?;
         record.status = "archived".into();
         record.updated_at = now_ts();
-        self.desktop.state.user_store.upsert_chat_session(&record)
+        self.desktop.state.user_store.upsert_chat_session(&record)?;
+        self.close_session(session_id)
     }
 
     pub fn session_detail_page(
@@ -922,7 +939,11 @@ impl NativeDesktop {
         self.terminal.start(self.user_id(), spec)
     }
 
-    pub fn terminal_watch(&self, session_id: &str, terminal_id: &str) -> Result<NativeTerminalWatch> {
+    pub fn terminal_watch(
+        &self,
+        session_id: &str,
+        terminal_id: &str,
+    ) -> Result<NativeTerminalWatch> {
         self.terminal.watch(self.user_id(), session_id, terminal_id)
     }
 

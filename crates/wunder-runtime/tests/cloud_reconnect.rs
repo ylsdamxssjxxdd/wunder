@@ -693,7 +693,9 @@ async fn network_failure_marks_reconnecting_without_expiring() {
 
     let outcome = cloud.recover_auth(TOKEN_V1).await;
     assert!(outcome.is_err(), "network failure surfaces an error");
-    assert!(wunder_server::cloud::retryable_cloud_read(outcome.as_ref().unwrap_err()));
+    assert!(wunder_server::cloud::retryable_cloud_read(
+        outcome.as_ref().unwrap_err()
+    ));
     let status = cloud.status();
     assert_eq!(status.connection, "reconnecting");
     assert!(!status.expired, "network failure must not mark expired");

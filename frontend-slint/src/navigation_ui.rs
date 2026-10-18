@@ -70,7 +70,11 @@ fn row_spec(row: SidebarRow) -> RowSpec {
 /// group, while threads only ever reorder inside their own workspace.
 fn group_key(row: &RowSpec) -> (i32, &str) {
     (
-        if row.kind == 0 || row.kind == 2 { 0 } else { row.kind },
+        if row.kind == 0 || row.kind == 2 {
+            0
+        } else {
+            row.kind
+        },
         if row.kind == 1 {
             row.bucket.as_str()
         } else {
@@ -216,31 +220,12 @@ fn commit_order(cell: &RefCell<Vec<String>>, next: &[String]) -> bool {
 /// 100 entries, so this only guards against pathological projections.
 const MAX_TREE_ROWS: usize = 300;
 
-/// Web-aligned archive gate: a thread may archive only when it is neither
-/// running nor pending (queued/waiting) and not locked. The string families
-/// mirror `RuntimeStatus.normalize` in the Slint status global, so the row's
-/// status dot and its check square can never disagree.
+/// A thread may be archived whenever it is not actively owned by another
+/// instance. The native facade settles running/queued work as part of the
+/// archive transaction, so a stale status cannot make a thread permanent.
 fn thread_archivable(status: &str, locked: bool) -> bool {
-    if locked {
-        return false;
-    }
-    let pending = status == "pending"
-        || status == "queued"
-        || status == "waiting"
-        || status == "waiting_approval"
-        || status == "waiting_input"
-        || status == "waiting_user_input"
-        || status.starts_with("正在排队")
-        || status.starts_with("任务已排队")
-        || status.starts_with("模型请求正在排队")
-        || status.starts_with("等待");
-    let running = status == "running"
-        || status == "streaming"
-        || status == "executing"
-        || status.starts_with("正在")
-        || status.starts_with("模型响应中")
-        || status.starts_with("目标");
-    !pending && !running
+    let _ = status;
+    !locked
 }
 
 /// Rebuild the sidebar from the workspace facade plus the bounded conversation
@@ -322,7 +307,9 @@ fn rebuild_rows(app: &MainWindow) {
     let cards: Vec<(usize, WorkspaceCard)> = cards_model.iter().enumerate().collect();
     let mut ordered_keys = Vec::with_capacity(cards.len() + 1);
     let cloud_expanded = EXPANDED.with(|slot| slot.borrow().contains("cloud"));
-    if app.get_cloud_logged_in() { ordered_keys.push("cloud".to_string()); }
+    if app.get_cloud_logged_in() {
+        ordered_keys.push("cloud".to_string());
+    }
     ordered_keys.extend(cards.iter().map(|(_, card)| card.workspace_id.to_string()));
     WORKSPACE_ORDER.with(|slot| {
         let order = slot.borrow();
@@ -332,7 +319,9 @@ fn rebuild_rows(app: &MainWindow) {
         let expanded = slot.borrow();
         for key in ordered_keys {
             if key == "cloud" {
-                let Some(mut cloud) = cloud.clone() else { continue };
+                let Some(mut cloud) = cloud.clone() else {
+                    continue;
+                };
                 cloud.thread_count = cloud_threads.row_count() as i32;
                 cloud.expanded = cloud_expanded;
                 rows.push(cloud);
@@ -344,18 +333,32 @@ fn rebuild_rows(app: &MainWindow) {
                     {
                         rows.push(SidebarRow {
                             kind: 3,
-                            workspace_id: "".into(), name: "".into(), icon: "".into(), color: "".into(),
-                            thread_count: 0, expanded: false, selected: false,
-                            thread_id: thread.id.clone(), title: thread.title.clone(), status: thread.status.clone(),
-                            active: app.get_cloud_chat_active() && app.get_cloud_active_thread_id() == thread.id,
-                            payload: index as i32, origin: "cloud".into(),
-                            archivable: thread_archivable(thread.status.as_str(), false), checked: false,
+                            workspace_id: "".into(),
+                            name: "".into(),
+                            icon: "".into(),
+                            color: "".into(),
+                            thread_count: 0,
+                            expanded: false,
+                            selected: false,
+                            thread_id: thread.id.clone(),
+                            title: thread.title.clone(),
+                            status: thread.status.clone(),
+                            active: app.get_cloud_chat_active()
+                                && app.get_cloud_active_thread_id() == thread.id,
+                            payload: index as i32,
+                            origin: "cloud".into(),
+                            archivable: thread_archivable(thread.status.as_str(), false),
+                            checked: false,
                         });
                     }
                 }
                 continue;
             }
-            let Some((wi, card)) = cards.iter().find(|(_, card)| card.workspace_id.as_str() == key).cloned() else {
+            let Some((wi, card)) = cards
+                .iter()
+                .find(|(_, card)| card.workspace_id.as_str() == key)
+                .cloned()
+            else {
                 continue;
             };
             let expanded = selected == Some(wi) && expanded.contains(card.workspace_id.as_str());
@@ -555,12 +558,16 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
                 let mut expanded = slot.borrow_mut();
                 let was_expanded = expanded.contains(id.as_str());
                 expanded.clear();
-                if !was_expanded { expanded.insert(id); }
+                if !was_expanded {
+                    expanded.insert(id);
+                }
                 !was_expanded
             });
             app.set_selected_workspace(-1);
             let was_cloud = app.get_cloud_chat_active();
-            if !was_cloud { crate::cloud_threads::leave(&app); }
+            if !was_cloud {
+                crate::cloud_threads::leave(&app);
+            }
             THREAD_SELECTION.with(|slot| slot.borrow_mut().clear());
             app.set_sidebar_selection_mode(false);
             crate::workspace_files::set_target(
@@ -569,7 +576,9 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
                 crate::workspace_files::Target::Cloud,
             );
             crate::navigation_ui::project_sidebar(&app, None);
-            if should_expand && !was_cloud { app.invoke_cloud_open_threads(); }
+            if should_expand && !was_cloud {
+                app.invoke_cloud_open_threads();
+            }
         } else if row.kind == 0 {
             let workspace = row.payload;
             let id = row.workspace_id.to_string();
@@ -582,7 +591,9 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
                 let mut expanded = slot.borrow_mut();
                 let was_expanded = expanded.contains(id.as_str());
                 expanded.clear();
-                if !was_expanded { expanded.insert(id.clone()); }
+                if !was_expanded {
+                    expanded.insert(id.clone());
+                }
                 !was_expanded
             });
             THREAD_SELECTION.with(|slot| slot.borrow_mut().clear());
@@ -608,7 +619,11 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
             }
             crate::navigation_ui::project_sidebar(&app, None);
             if should_open_thread {
-                if let Some(index) = app.get_conversations().iter().position(|thread| thread.workspace_id == row.workspace_id) {
+                if let Some(index) = app
+                    .get_conversations()
+                    .iter()
+                    .position(|thread| thread.workspace_id == row.workspace_id)
+                {
                     app.invoke_select_conversation(index as i32);
                 }
             }
@@ -640,7 +655,10 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
         let specs: Vec<RowSpec> = (0..count)
             .filter_map(|i| rows_model.row_data(i).map(row_spec))
             .collect();
-        if specs.len() != count || !matches!(specs[from].kind, 0 | 1 | 2) || specs[from].id.is_empty() {
+        if specs.len() != count
+            || !matches!(specs[from].kind, 0 | 1 | 2)
+            || specs[from].id.is_empty()
+        {
             return;
         }
         let metrics = app.global::<SidebarMetrics>();
@@ -1034,7 +1052,12 @@ mod tests {
 
     #[test]
     fn cloud_header_reorders_with_local_workspace_headers() {
-        let rows = vec![cloud_header(), header("w1"), thread("a", "w1"), header("w2")];
+        let rows = vec![
+            cloud_header(),
+            header("w1"),
+            thread("a", "w1"),
+            header("w2"),
+        ];
         assert_eq!(dragged(&rows, 0, 60.0), "w1>cloud>w2");
         assert_eq!(dragged(&rows, 3, -4000.0), "w2>cloud>w1");
     }

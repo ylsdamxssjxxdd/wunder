@@ -58,6 +58,7 @@ pub(crate) fn reset_account(app: &MainWindow) {
     app.set_cloud_thread_index(0);
     app.set_cloud_thread_rows(ModelRc::default());
     app.set_cloud_thread_models(ModelRc::default());
+    app.set_cloud_greeting("".into());
 }
 
 #[cfg(test)]
@@ -191,6 +192,7 @@ fn load(app: &MainWindow, api: Arc<NativeDesktop>) {
         app.set_selected_agent_model("".into());
         app.set_reasoning_effort("default".into());
         app.set_context_known(false);
+        app.set_cloud_greeting("".into());
     }
     app.set_cloud_thread_busy(!id.is_empty());
     if id.is_empty() {
@@ -243,6 +245,9 @@ fn load(app: &MainWindow, api: Arc<NativeDesktop>) {
                 return;
             }
             WATCH.with(|watch| *watch.borrow_mut() = Some(token));
+            app.set_cloud_greeting(CATALOG.with(|catalog| catalog.borrow().0.iter()
+                .find(|agent| agent.id == view.agent_id || (view.agent_id.is_empty() && agent.id == "__default__"))
+                .map(|agent| agent.description.trim().to_string()).unwrap_or_default()).into());
             app.set_selected_model_key(view.model_key.into());
             app.set_reasoning_effort(view.reasoning_effort.into());
             publish_page(&app, &view.page, changed);

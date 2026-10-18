@@ -458,6 +458,15 @@ export const setInterlinkNodeEnabled = async (
   return { ok: data.ok === true, interlink_enabled: data.interlink_enabled === true };
 };
 
+/** Revoke and hide one of the caller's devices (the server keeps audit data). */
+export const removeInterlinkNode = async (deviceId: string): Promise<boolean> => {
+  const response = await api.delete(
+    `/interlink/nodes/${encodeURIComponent(String(deviceId || '').trim())}`
+  );
+  const data = unwrap(response?.data);
+  return data.removed === true || data.ok === true;
+};
+
 /** §5.3 清空云影子：删除该设备的投影（不触碰本地数据）。 */
 export const purgeInterlinkShadow = async (deviceId: string): Promise<boolean> => {
   const response = await api.post(

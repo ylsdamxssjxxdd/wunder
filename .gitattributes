@@ -1,1 +1,6 @@
 *.sh text eol=lf
+# Binary 3D assets should stay as small pointer files in Git. Each revised
+# GLB remains available through Git LFS without duplicating megabytes in the
+# normal repository history.
+web/third/models/*.glb filter=lfs diff=lfs merge=lfs -text
+frontend-slint/assets/models/*.glb filter=lfs diff=lfs merge=lfs -text

@@ -512,7 +512,11 @@ fn draw_ledger(frame: &mut Frame, area: Rect, v: &mut TrajectoryView, zh: bool) 
                 .get(&(row.turn_id.as_str(), row.model_round))
                 .copied()
                 .unwrap_or(1);
-            format!("▸ [{count} {}] {}", tr(zh, "次调用", "calls"), ledger_summary(row, zh))
+            format!(
+                "▸ [{count} {}] {}",
+                tr(zh, "次调用", "calls"),
+                ledger_summary(row, zh)
+            )
         } else {
             ledger_summary(row, zh)
         };
@@ -577,17 +581,24 @@ fn draw_detail(frame: &mut Frame, area: Rect, v: &mut TrajectoryView, zh: bool) 
     let content = detail_lines(v).unwrap_or(&fallback);
     let selected_tab = available[v.tab % available.len()];
     let rendered_markdown = if matches!(selected_tab, 1 | 4) {
-        Some(crate::tui::markdown_render::render_markdown_text_with_width(
-            content.join("\n").as_str(),
-            Some(area.width.saturating_sub(1) as usize),
-        ))
+        Some(
+            crate::tui::markdown_render::render_markdown_text_with_width(
+                content.join("\n").as_str(),
+                Some(area.width.saturating_sub(1) as usize),
+            ),
+        )
     } else {
         None
     };
     let markdown_lines = rendered_markdown.as_ref().map(|text| {
         text.lines
             .iter()
-            .map(|line| line.spans.iter().map(|span| span.content.as_ref()).collect::<String>())
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
             .collect::<Vec<_>>()
     });
     let display_lines = markdown_lines.as_deref().unwrap_or(content);
@@ -595,21 +606,27 @@ fn draw_detail(frame: &mut Frame, area: Rect, v: &mut TrajectoryView, zh: bool) 
     let capacity = area.height.saturating_sub(3) as usize;
     let scroll = v.detail_scroll.min(height.saturating_sub(capacity));
     let mut lines = vec![Line::from(labels)];
-    lines.extend(display_lines.iter().skip(scroll).take(capacity).map(|line| {
-        let mut offset = 0;
-        let tail = line
-            .char_indices()
-            .find_map(|(i, c)| {
-                if offset >= v.detail_x {
-                    Some(&line[i..])
-                } else {
-                    offset += UnicodeWidthChar::width(c).unwrap_or(0);
-                    None
-                }
-            })
-            .unwrap_or("");
-        Line::from(one(tail, area.width.saturating_sub(1) as usize))
-    }));
+    lines.extend(
+        display_lines
+            .iter()
+            .skip(scroll)
+            .take(capacity)
+            .map(|line| {
+                let mut offset = 0;
+                let tail = line
+                    .char_indices()
+                    .find_map(|(i, c)| {
+                        if offset >= v.detail_x {
+                            Some(&line[i..])
+                        } else {
+                            offset += UnicodeWidthChar::width(c).unwrap_or(0);
+                            None
+                        }
+                    })
+                    .unwrap_or("");
+                Line::from(one(tail, area.width.saturating_sub(1) as usize))
+            }),
+    );
     let title = format!(
         " {}{} {}/{} ",
         if v.detail_focus { "› " } else { "" },

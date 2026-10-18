@@ -1,5 +1,6 @@
 import { emptyChatThreadState, type ChatThreadFrame } from '@/realtime/chat/chatThreadTypes';
 import { applyChatThreadFrame, applyChatThreadSnapshot, composeItemText, type ChatThreadSnapshot } from '@/realtime/chat/chatThreadState';
+import type { ChatThreadState } from '@/realtime/chat/chatThreadTypes';
 
 export type RemoteThreadItem = { id: string; role: 'user' | 'assistant'; content: string };
 
@@ -19,16 +20,24 @@ function visibleItems(state: ReturnType<typeof emptyChatThreadState>): RemoteThr
 export function remoteThreadModel(thread: string) {
   const state = emptyChatThreadState(thread);
   return {
+    state(): ChatThreadState { return state; },
+    replace(snapshot: unknown): boolean {
+      if (!snapshot || typeof snapshot !== 'object') return false;
+      const result = applyChatThreadSnapshot(state, snapshot as ChatThreadSnapshot, Date.now());
+      return result.changed;
+    },
     apply(frame: Record<string, any>): boolean {
       const envelope = frame;
       if (envelope.thread_id !== thread) return false;
       const payload = envelope.payload || {};
-      if (frame.type === 'snapshot') {
-        applyChatThreadSnapshot(state, payload as ChatThreadSnapshot, Date.now());
+      if (frame.type === 'snapshot' || envelope.snapshot === true) {
+        const snapshot = payload;
+        return applyChatThreadSnapshot(state, snapshot as ChatThreadSnapshot, Date.now()).changed;
       } else if (payload.overflow) return true;
       else if (payload.event === 'thread_change') {
         const result = applyChatThreadFrame(state, { ...payload.data, event: 'thread_change', seq: envelope.seq } as ChatThreadFrame, Date.now());
         if (result.needResume) return true;
+        if (result.changed) return true;
       }
       // A fresh bounded snapshot heals gaps and bounds long-running subscriptions.
       return state.items.size > 256 || state.blocks.size > 256 || [...state.blocks.values()].some(fields => [...fields.values()].some(blocks => blocks.size > 256));

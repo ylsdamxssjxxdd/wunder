@@ -479,10 +479,11 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                         }
                         double-clicked => { root.clear-range(); }
                     }
-                    // Aggregated overview tiles carry their own web-matched
-                    // opacity. It takes precedence over focus dimming because
-                    // a bucket represents many records rather than one row.
-                    opacity: span.aggregate ? 0.86 : span.outside ? 0.2 : span.dimmed ? 0.14 : span.overview ? 0.94 : 1.0;
+                    // Overview tiles use the same 94% opacity as the web
+                    // trajectory. Aggregate is only a data-source marker; it
+                    // must not make an otherwise unselected bar look washed
+                    // out compared with the other overview segments.
+                    opacity: span.aggregate ? 0.94 : span.outside ? 0.2 : span.dimmed ? 0.14 : span.overview ? 0.94 : 1.0;
                     if span.overview : Rectangle {
                         x: max(0px, parent.width - 1px);
                         width: 1px;

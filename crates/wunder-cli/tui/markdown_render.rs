@@ -133,7 +133,9 @@ fn normalize_pipe_tables(input: &str) -> Cow<'_, str> {
             out.push_str(line);
             continue;
         };
-        if is_table_header_line(trimmed) && is_table_delimiter_line(next.trim_end_matches(['\r', '\n'])) {
+        if is_table_header_line(trimmed)
+            && is_table_delimiter_line(next.trim_end_matches(['\r', '\n']))
+        {
             let delimiter = next.trim_end_matches(['\r', '\n']);
             let normalized = table_segments(delimiter).map(|cells| {
                 let cells = cells
@@ -160,7 +162,11 @@ fn normalize_pipe_tables(input: &str) -> Cow<'_, str> {
         }
         out.push_str(line);
     }
-    if changed { Cow::Owned(out) } else { Cow::Borrowed(input) }
+    if changed {
+        Cow::Owned(out)
+    } else {
+        Cow::Borrowed(input)
+    }
 }
 
 fn body_contains_table(body: &str) -> bool {
@@ -1357,8 +1363,18 @@ mod tests {
     #[test]
     fn a_pipe_table_without_outer_pipes_is_rendered_as_a_grid() {
         let lines = rendered("Name | Value\n--- | ---\nalpha | 42\n", 40);
-        assert!(lines.iter().any(|line| line.contains("Name") && line.contains("Value")), "{lines:?}");
-        assert!(lines.iter().any(|line| line.contains("alpha") && line.contains("42")), "{lines:?}");
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("Name") && line.contains("Value")),
+            "{lines:?}"
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("alpha") && line.contains("42")),
+            "{lines:?}"
+        );
         assert!(lines.iter().any(|line| line.contains("|")), "{lines:?}");
     }
 

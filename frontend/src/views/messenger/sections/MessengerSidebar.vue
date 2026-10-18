@@ -27,8 +27,10 @@
             tabindex="0"
             draggable="true"
             :aria-label="workspaceName"
+            :aria-expanded="expandedWorkspaceKey === entry.key"
             @click="handleWorkspaceRowClick"
-            @keydown.enter.prevent="handleWorkspaceRowClick"
+            @keydown.enter.self.prevent="handleWorkspaceRowClick"
+            @keydown.space.self.prevent="handleWorkspaceRowClick"
             @dragstart="handleRowDragStart(entry, $event)"
             @dragend="handleRowDragEnd"
             @dragover.prevent="handleRowDragOver(entry)"
@@ -56,10 +58,9 @@
           </div>
 
           <!-- 云端线程树：云端工作区的子级。打开线程同时把目录目标切回云端。 -->
-          <!-- 线程是云端工作区的内容：只有云端工作区处于选中态才展开线程树；
-               选中别的工作区行时收起，回到参考端「选中最上个工作区才铺开线程」的形态。 -->
+          <!-- 展开与目录选中独立：收起线程树仍保留当前会话和文件目录。 -->
           <MessengerThreadTree
-            v-if="cloudRowSelected"
+            v-if="cloudRowSelected && expandedWorkspaceKey === entry.key"
             :items="threads"
             :active-session-id="activeSessionId"
             :agent-id="agentIdForApi"
@@ -83,9 +84,10 @@
           tabindex="0"
           draggable="true"
           :aria-label="t('interlink.workspace.rowAria', { name: workspaceRowLabel(entry) })"
+          :aria-expanded="isSelectedLocalEntry(entry) && expandedWorkspaceKey === entry.key"
           @click="selectWorkspaceRow(entry)"
-          @keydown.enter.prevent="selectWorkspaceRow(entry)"
-          @keydown.space.prevent="selectWorkspaceRow(entry)"
+          @keydown.enter.self.prevent="selectWorkspaceRow(entry)"
+          @keydown.space.self.prevent="selectWorkspaceRow(entry)"
           @dragstart="handleRowDragStart(entry, $event)"
           @dragend="handleRowDragEnd"
           @dragover.prevent="handleRowDragOver(entry)"
@@ -113,7 +115,7 @@
           </button>
         </div>
         <InterlinkThreadTree
-          v-if="isSelectedLocalEntry(entry)"
+          v-if="isSelectedLocalEntry(entry) && expandedWorkspaceKey === entry.key"
           :items="selectedRemoteThreads"
           :loading="remoteThreadsLoading"
           :error="remoteThreadsError"
@@ -276,6 +278,9 @@ type WorkspaceSidebarEntry =
   | ({ kind: 'local' } & InterlinkWorkspaceRow);
 
 const CLOUD_ENTRY_KEY = 'cloud';
+// One disclosure, matching the desktop workspace tree. Selection remains in
+// the route; collapsing never clears it or opens another conversation.
+const expandedWorkspaceKey = ref(CLOUD_ENTRY_KEY);
 const cloudSidebarEntry: WorkspaceSidebarEntry = { kind: 'cloud', key: CLOUD_ENTRY_KEY };
 
 const workspaceOrder = ref<string[]>([]);
@@ -365,7 +370,7 @@ const isRowSelected = (row: InterlinkWorkspaceRow): boolean => {
   return ws === row.workspaceId;
 };
 
-/** 云端工作区行的选中态：没有远程本地目标时云端行即选中，同时控制图标实心化与线程树展开。 */
+/** 目录选中态不随线程树收起而改变。 */
 const cloudRowSelected = computed(() => !interlinkRemoteSelected.value);
 
 /** The selected local workspace owns its own thread directory, mirroring the
@@ -395,6 +400,12 @@ const selectedLocalRow = computed(() => {
     interlinkDeviceTarget(row.deviceId) === target && row.workspaceId === workspace
   ) || null;
 });
+
+watch(
+  () => interlinkRemoteSelected.value ? selectedLocalRow.value?.key || '' : CLOUD_ENTRY_KEY,
+  key => { expandedWorkspaceKey.value = key; },
+  { immediate: true }
+);
 
 const selectedRemoteWorkspaceId = computed(() => selectedLocalRow.value?.workspaceId || '');
 const remoteLiveThreads = ref<InterlinkShadowThread[] | null>(null);
@@ -534,6 +545,7 @@ const createRemoteThread = async (entry: InterlinkWorkspaceRow): Promise<void> =
     // accepting a command result for the previous workspace.
     await writeInterlinkTarget(target, workspaceId);
     await nextTick();
+    expandedWorkspaceKey.value = entry.key;
     const outcome = await runInterlinkCommand({
       to: target,
       kind: 'thread.create',
@@ -598,14 +610,20 @@ watch(
 );
 
 const selectWorkspaceRow = (row: InterlinkWorkspaceRow): void => {
+  expandedWorkspaceKey.value = isRowSelected(row) && expandedWorkspaceKey.value === row.key ? '' : row.key;
   void writeInterlinkTarget(interlinkDeviceTarget(row.deviceId), row.workspaceId);
 };
 
 const handleWorkspaceRowClick = async (): Promise<void> => {
+  if (cloudRowSelected.value) {
+    expandedWorkspaceKey.value = expandedWorkspaceKey.value === CLOUD_ENTRY_KEY ? '' : CLOUD_ENTRY_KEY;
+    return;
+  }
   // The draft action also replaces the route from its current query. Wait for
   // the target change so it cannot reintroduce a stale local node/workspace.
   await backToCloudWorkspace();
   if (interlinkRemoteSelected.value) return;
+  expandedWorkspaceKey.value = CLOUD_ENTRY_KEY;
   emit('select-workspace');
 };
 
@@ -613,11 +631,13 @@ const handleWorkspaceRowClick = async (): Promise<void> => {
  * 文件区跟着回到云端工作目录——不会停在某个本地工作区的只读投影上。 */
 const handleThreadOpen = async (id: string): Promise<void> => {
   await backToCloudWorkspace();
+  expandedWorkspaceKey.value = CLOUD_ENTRY_KEY;
   emit('open-thread', id);
 };
 
 const handleNewTask = async (): Promise<void> => {
   await backToCloudWorkspace();
+  expandedWorkspaceKey.value = CLOUD_ENTRY_KEY;
   emit('new-task');
 };
 

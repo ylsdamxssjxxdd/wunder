@@ -209,10 +209,9 @@ fn postgres_log_maintenance_yields_on_summary_lock_and_reconcile() {
 
     let mut held = begin(&mut holder).unwrap();
     lock_usage(&mut held, true).unwrap();
-    let sweep = f
-        .db
-        .cleanup_orphan_session_logs_impl(200.0)
-        .expect("orphan cleanup should defer on a busy usage lock");
+    let sweep =
+        f.db.cleanup_orphan_session_logs_impl(200.0)
+            .expect("orphan cleanup should defer on a busy usage lock");
     assert!(sweep.deferred);
     assert!(!sweep.completed);
     let started = Instant::now();

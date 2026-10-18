@@ -119,11 +119,30 @@
       </div>
     </section>
 
+    <section class="messenger-settings-card messenger-settings-model-card">
+      <div class="messenger-settings-row">
+        <div class="messenger-settings-label">{{ t('wunderModel.title') }}</div>
+        <div class="messenger-settings-page-row-actions">
+          <button
+            class="messenger-settings-action ghost"
+            type="button"
+            data-testid="settings-open-wunder-model"
+            @click="toggleWunderModel"
+          >
+            <i class="fa-solid fa-binoculars" aria-hidden="true"></i>
+            {{ wunderModelVisible ? t('common.close') : t('wunderModel.title') }}
+          </button>
+        </div>
+      </div>
+      <div v-if="wunderModelVisible" class="messenger-settings-model-inline" data-testid="wunder-model-inline">
+        <div ref="wunderModelHost" class="messenger-settings-model-host" data-testid="wunder-model-mount"></div>
+      </div>
+    </section>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue';
 
 import { ElMessage } from 'element-plus';
 
@@ -132,6 +151,8 @@ import MessengerTestTools from '@/components/messenger/MessengerTestTools.vue';
 import { useI18n } from '@/i18n';
 import { resolveApiBase } from '@/config/runtime';
 import { useAuthStore } from '@/stores/auth';
+import { mountWunderModelViewer } from '../../../../../../web/shared/wunder-model-viewer.js';
+import '../../../../../../web/styles/wunder-model-viewer.css';
 import {
   getStressThreadJob,
   listStressThreads,
@@ -141,6 +162,44 @@ import {
 
 const props = defineProps<{ controller: MessengerControllerContext }>();
 const { t } = useI18n();
+const wunderModelVisible = ref(false);
+const wunderModelHost = ref<HTMLElement | null>(null);
+let wunderModelViewer: ReturnType<typeof mountWunderModelViewer> | null = null;
+
+const wunderModelLabels = () => ({
+  modelLabel: t('wunderModel.modelLabel'),
+  loading: t('wunderModel.loading'),
+  loadFailed: t('wunderModel.loadFailed'),
+  unavailable: t('wunderModel.unavailable'),
+  retry: t('wunderModel.retry'),
+  reset: t('wunderModel.reset'),
+  rotate: t('wunderModel.rotate'),
+  pause: t('wunderModel.pause')
+});
+const disposeWunderModel = () => {
+  wunderModelViewer?.dispose();
+  wunderModelViewer = null;
+};
+const mountWunderModel = async () => {
+  await nextTick();
+  if (!wunderModelVisible.value || !wunderModelHost.value || wunderModelViewer) return;
+  const apiBase = resolveApiBase();
+  const assetBase = /^https?:\/\//i.test(apiBase) ? new URL('/third/', apiBase).href : '/third/';
+  wunderModelViewer = mountWunderModelViewer(wunderModelHost.value, {
+    assetBase,
+    labels: wunderModelLabels()
+  });
+};
+const toggleWunderModel = () => { wunderModelVisible.value = !wunderModelVisible.value; };
+watch(wunderModelVisible, (visible) => {
+  if (visible) void mountWunderModel();
+  else disposeWunderModel();
+});
+onDeactivated(() => {
+  wunderModelVisible.value = false;
+  disposeWunderModel();
+});
+onBeforeUnmount(disposeWunderModel);
 const authStore = useAuthStore();
 
 // 与后端 UserStore::is_admin 同一判定口径：admin / super_admin。

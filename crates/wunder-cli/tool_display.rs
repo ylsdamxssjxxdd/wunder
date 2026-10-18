@@ -47,7 +47,11 @@ pub(crate) fn tool_result_ledger_summary(payload: &Value, is_zh: bool) -> Option
     if let Some(summary) = display.summary.filter(|text| !text.trim().is_empty()) {
         parts.push(summary);
     }
-    if let Some(detail) = display.details.iter().find(|detail| !detail.text.trim().is_empty()) {
+    if let Some(detail) = display
+        .details
+        .iter()
+        .find(|detail| !detail.text.trim().is_empty())
+    {
         let text = detail
             .label
             .as_deref()
@@ -560,14 +564,7 @@ fn summarize_generic_value(data: &Value, is_zh: bool) -> Option<ToolDisplaySumma
     }
     let mut details = Vec::new();
     let mut hidden = 0usize;
-    append_generic_value(
-        &mut details,
-        &mut hidden,
-        None,
-        data,
-        0,
-        is_zh,
-    );
+    append_generic_value(&mut details, &mut hidden, None, data, 0, is_zh);
     if details.is_empty() {
         return None;
     }
@@ -693,7 +690,13 @@ fn append_generic_leaf(details: &mut Vec<ToolDisplayLine>, path: &str, value: &V
     }
     let text = scalar_value_text(value)
         .or_else(|| (!value.is_null()).then(|| compact_structured(value)))
-        .unwrap_or_else(|| if is_zh { "空".to_string() } else { "null".to_string() });
+        .unwrap_or_else(|| {
+            if is_zh {
+                "空".to_string()
+            } else {
+                "null".to_string()
+            }
+        });
     details.push(ToolDisplayLine {
         label: Some(format!("{path}:")),
         text: truncate_text(text.as_str(), MAX_PREVIEW_CHARS),
@@ -1152,6 +1155,9 @@ mod tests {
         assert!(text.contains("status"), "{text}");
         assert!(text.contains("metrics.queued"), "{text}");
         assert!(text.contains("items"), "{text}");
-        assert!(!text.starts_with('{'), "generic results should not be JSON walls: {text}");
+        assert!(
+            !text.starts_with('{'),
+            "generic results should not be JSON walls: {text}"
+        );
     }
 }

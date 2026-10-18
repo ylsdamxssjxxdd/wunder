@@ -20,6 +20,8 @@ struct Projection {
     text_item: String,
     text: String,
     offset: usize,
+    reasoning: String,
+    reasoning_offset: usize,
     user_round: i64,
 }
 
@@ -49,6 +51,8 @@ impl Projection {
         self.text.clear();
         self.text_item.clear();
         self.offset = 0;
+        self.reasoning.clear();
+        self.reasoning_offset = 0;
         self.cursor = 0;
         let mut events = self.apply(
             &json!({"cursor":1,"change_type":"turn_upsert","turn_id":execution,
@@ -60,8 +64,19 @@ impl Projection {
             }
         }
         if let Some(blocks) = snapshot["blocks"].as_array() {
-            for block in blocks
-                .iter()
+            // Snapshot rows are grouped by field in storage, not by stream
+            // arrival. Restore the thought before opening its answer body.
+            for block in ["reasoning", "content"]
+                .into_iter()
+                .flat_map(|field| {
+                    blocks.iter().filter(move |block| {
+                        block.get("data").unwrap_or(block)["field"]
+                            .as_str()
+                            .or_else(|| block["field"].as_str())
+                            .unwrap_or("content")
+                            == field
+                    })
+                })
                 .filter(|block| block["item_id"] == self.text_item)
                 .cloned()
                 .collect::<Vec<_>>()
@@ -121,6 +136,8 @@ impl Projection {
                     self.text_item.clear();
                     self.text.clear();
                     self.offset = 0;
+                    self.reasoning.clear();
+                    self.reasoning_offset = 0;
                     events.push(json!({"event":"native_execution_started","data":{"root_turn_id":self.root,"turn_id":execution,"user_round":self.user_round}}));
                 }
                 self.status = p["status"].as_str().unwrap_or_default().into();
@@ -163,6 +180,24 @@ impl Projection {
                         self.text_item = id.into();
                         self.text.clear();
                         self.offset = 0;
+                        self.reasoning.clear();
+                        self.reasoning_offset = 0;
+                    }
+                    if let Some(reasoning) = payload["reasoning"].as_str() {
+                        // Completion snapshots repeat the streamed prefix. Only
+                        // send its missing suffix, before the associated body.
+                        ensure!(
+                            reasoning.len() <= 8 * 1024 * 1024,
+                            "native reasoning limit exceeded"
+                        );
+                        if let Some(delta) = reasoning
+                            .strip_prefix(&self.reasoning)
+                            .filter(|s| !s.is_empty())
+                        {
+                            events.push(json!({"event":"reasoning_delta","data":{"delta":delta,"model_round":round}}));
+                            self.reasoning = reasoning.into();
+                            self.reasoning_offset = reasoning.encode_utf16().count();
+                        }
                     }
                     if let Some(content) =
                         payload["content"].as_str().filter(|text| !text.is_empty())
@@ -210,14 +245,29 @@ impl Projection {
             }
             "text_block" if execution == self.execution => {
                 let id = data["item_id"].as_str().unwrap_or_default();
-                if id != self.text_item || p["field"].as_str().unwrap_or("content") != "content" {
+                let block = p.get("data").unwrap_or(p);
+                let field = p["field"]
+                    .as_str()
+                    .or_else(|| block["field"].as_str())
+                    .unwrap_or("content");
+                if id != self.text_item || !matches!(field, "content" | "reasoning") {
                     return Ok(events);
                 }
-                let block = p.get("data").unwrap_or(p);
-                let offset = block["content_offset"].as_u64().unwrap_or(0) as usize;
-                let text = block["content"].as_str().unwrap_or_default();
+                // Reasoning and body have independent UTF-16 clocks, even
+                // though both fields share the same assistant item identity.
+                let (current, applied, offset_key) = if field == "reasoning" {
+                    (
+                        &mut self.reasoning,
+                        &mut self.reasoning_offset,
+                        "reasoning_offset",
+                    )
+                } else {
+                    (&mut self.text, &mut self.offset, "content_offset")
+                };
+                let offset = block[offset_key].as_u64().unwrap_or(0) as usize;
+                let text = block[field].as_str().unwrap_or_default();
                 let end = offset + text.encode_utf16().count();
-                if end <= self.offset {
+                if end <= *applied {
                     return Ok(events);
                 }
                 // The emitter re-flushes the active tail block in place: the
@@ -225,30 +275,29 @@ impl Projection {
                 // longer text under a new change_seq. The durable block is
                 // authoritative, so the applied text is grown from the block
                 // start and the UI only receives the newly added suffix.
-                let delta = if offset < self.offset {
-                    let skip = self.offset - offset;
+                let delta = if offset < *applied {
+                    let skip = *applied - offset;
                     let split = utf16_byte_index(text, skip)
                         .ok_or_else(|| anyhow!("native text block rewrite boundary"))?;
                     ensure!(
-                        self.text.ends_with(&text[..split]),
+                        current.ends_with(&text[..split]),
                         "native text block rewrite mismatch"
                     );
-                    self.text.truncate(self.text.len() - text[..split].len());
+                    current.truncate(current.len() - text[..split].len());
                     &text[split..]
                 } else {
-                    ensure!(offset == self.offset, "native text block gap");
+                    ensure!(offset == *applied, "native text block gap");
                     text
                 };
                 ensure!(
-                    self.text.len() + text.len() <= 8 * 1024 * 1024,
+                    current.len() + text.len() <= 8 * 1024 * 1024,
                     "native text limit exceeded"
                 );
-                self.text.push_str(text);
-                self.offset = end;
+                current.push_str(text);
+                *applied = end;
                 let round = self.items.get(id).map(|v| v.2).unwrap_or(1);
-                events.push(
-                    json!({"event":"llm_output_delta","data":{"delta":delta,"model_round":round}}),
-                );
+                events.push(json!({"event":if field == "reasoning" {"reasoning_delta"} else {"llm_output_delta"},
+                    "data":{"delta":delta,"model_round":round}}));
             }
             _ => {}
         }
@@ -504,6 +553,61 @@ mod tests {
     }
 
     #[test]
+    fn reasoning_stream_has_its_own_clock_and_survives_snapshot_replay() {
+        let mut p = Projection {
+            root: "fixture-root".into(),
+            execution: "fixture-child".into(),
+            ..Default::default()
+        };
+        p.apply(
+            &json!({"cursor":1,"change_type":"item_upsert","turn_id":"fixture-child",
+            "payload":{"item_id":"fixture-child:text-1","kind":"assistant_message","revision":1,
+                "payload":{"content":"","model_round":1}}}),
+        )
+        .unwrap();
+        for (seq, text, expected) in [(2, "Think 🐣", "Think 🐣"), (3, "Think 🐣 more", " more")]
+        {
+            let events = p
+                .apply(
+                    &json!({"cursor":seq,"change_type":"text_block","turn_id":"fixture-child",
+                "item_id":"fixture-child:text-1","payload":{"field":"reasoning",
+                    "data":{"reasoning":text,"reasoning_offset":0}}}),
+                )
+                .unwrap();
+            assert_eq!(events.len(), 1);
+            assert_eq!(events[0]["event"], "reasoning_delta");
+            assert_eq!(events[0]["data"]["delta"], expected);
+        }
+        assert_eq!(p.reasoning_offset, 13);
+        assert_eq!(p.offset, 0);
+        let events = p.apply(&json!({"cursor":4,"change_type":"text_block","turn_id":"fixture-child",
+            "item_id":"fixture-child:text-1","payload":{"field":"content","content":"Reply","content_offset":0}})).unwrap();
+        assert_eq!(events[0]["data"]["delta"], "Reply");
+        let events = p
+            .apply(
+                &json!({"cursor":5,"change_type":"item_upsert","turn_id":"fixture-child",
+            "payload":{"item_id":"fixture-child:text-1","kind":"assistant_message","revision":2,
+                "payload":{"content":"Reply","reasoning":"Think 🐣 more!","model_round":1}}}),
+            )
+            .unwrap();
+        assert_eq!(events[0]["event"], "reasoning_delta");
+        assert_eq!(events[0]["data"]["delta"], "!");
+        assert_eq!(p.reasoning, "Think 🐣 more!");
+
+        let events = p.restore(&json!({"cursor":20,
+            "turns":[{"turn_id":"fixture-child","root_turn_id":"fixture-root","status":"running"}],
+            "items":[{"turn_id":"fixture-child","item_id":"fixture-child:text-1","kind":"assistant_message","revision":2,"payload":{"model_round":1}}],
+            "blocks":[{"item_id":"fixture-child:text-1","data":{"field":"reasoning","reasoning":"Recovered thought","reasoning_offset":0}},
+                {"item_id":"fixture-child:text-1","data":{"field":"content","content":"Recovered reply","content_offset":0}}]})).unwrap();
+        assert!(events
+            .iter()
+            .any(|event| event["event"] == "reasoning_delta"
+                && event["data"]["delta"] == "Recovered thought"));
+        assert_eq!(p.reasoning, "Recovered thought");
+        assert_eq!(p.text, "Recovered reply");
+    }
+
+    #[test]
     fn utf16_byte_index_maps_boundaries_and_rejects_surrogate_splits() {
         assert_eq!(utf16_byte_index("你好", 0), Some(0));
         assert_eq!(utf16_byte_index("你好", 1), Some(3));
@@ -650,6 +754,22 @@ mod tests {
         let item = format!("{child_id}:text-1");
         state.storage.append_thread_item("owner", &json!({"session_id":"fixture-session","turn_id":child_id,
             "item_id":item,"kind":"assistant_message","role":"assistant","model_round":1,"content":"","status":"running"})).unwrap();
+        state.storage.upsert_thread_text_block("owner", "fixture-session",
+            &json!({"item_id":item,"field":"reasoning","block_index":0,"event_id":1,
+                "data":{"field":"reasoning","reasoning_offset":0,"reasoning":"Fixture live thought"}})).unwrap();
+        let thought = tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                if let Some(NativeChatEvent::Event(event)) = receiver.recv().await {
+                    if event["event"] == "reasoning_delta" {
+                        break event;
+                    }
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(thought["data"]["delta"], "Fixture live thought");
+        assert!(!task.is_finished());
         state
             .storage
             .upsert_thread_text_block(

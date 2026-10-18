@@ -75,7 +75,10 @@ const FIXED_ARGS: &[(&str, &str)] = &[
         r#"{"questions":[{"question":"（模拟）是否继续下一步？","options":[{"label":"继续"},{"label":"暂停"}]}]}"#,
     ),
     // 真实机器控制：零位移、零等待，等价于空操作。
-    ("桌面控制", r#"{"bbox":[0,0,0,0],"action":"wait","delay_ms":0}"#),
+    (
+        "桌面控制",
+        r#"{"bbox":[0,0,0,0],"action":"wait","delay_ms":0}"#,
+    ),
     (
         "desktop_control",
         r#"{"bbox":[0,0,0,0],"action":"wait","delay_ms":0}"#,

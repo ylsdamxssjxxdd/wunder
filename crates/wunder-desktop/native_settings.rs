@@ -469,10 +469,23 @@ impl NativeDesktop {
         let thinking_token_budget = parse_u32(edit.thinking_token_budget, "思考预算", 0)?;
         let max_rounds = parse_u32(edit.max_rounds, "最大轮次", 1)?;
         let max_context = parse_u32(edit.max_context, "上下文长度", 1)?;
-        let history_compaction_ratio = parse_f32(edit.history_compaction_ratio, "历史压缩阈值比例", 0.1, 1.0)?;
-        let reasoning_effort = optional_choice(edit.reasoning_effort, "思考等级", &["none", "minimal", "low", "medium", "high", "xhigh"])?;
-        let simulation_speed = optional_choice(edit.simulation_speed, "模拟速度", &["fast", "medium", "slow"])?;
-        let tool_call_mode = optional_choice(edit.tool_call_mode, "工具调用方式", &["tool_call", "function_call", "freeform_call"])?;
+        let history_compaction_ratio =
+            parse_f32(edit.history_compaction_ratio, "历史压缩阈值比例", 0.1, 1.0)?;
+        let reasoning_effort = optional_choice(
+            edit.reasoning_effort,
+            "思考等级",
+            &["none", "minimal", "low", "medium", "high", "xhigh"],
+        )?;
+        let simulation_speed = optional_choice(
+            edit.simulation_speed,
+            "模拟速度",
+            &["fast", "medium", "slow"],
+        )?;
+        let tool_call_mode = optional_choice(
+            edit.tool_call_mode,
+            "工具调用方式",
+            &["tool_call", "function_call", "freeform_call"],
+        )?;
         let tts_voice = optional_text(edit.tts_voice, 256)?;
         let tts_response_format =
             optional_choice(edit.tts_response_format, "音频格式", &TTS_FORMATS)?;
@@ -496,7 +509,8 @@ impl NativeDesktop {
         let video_negative_prompt = optional_text(edit.video_negative_prompt, 4096)?;
         let video_steps = parse_u32_range(edit.video_steps, "视频采样步数", 1, 200)?;
         let video_guidance_scale = parse_f32(edit.video_guidance_scale, "视频引导系数", 0.0, 20.0)?;
-        let video_guidance_scale_2 = parse_f32(edit.video_guidance_scale_2, "视频引导系数 2", 0.0, 20.0)?;
+        let video_guidance_scale_2 =
+            parse_f32(edit.video_guidance_scale_2, "视频引导系数 2", 0.0, 20.0)?;
         let video_boundary_ratio = parse_f32(edit.video_boundary_ratio, "视频边界比例", 0.0, 1.0)?;
         let video_flow_shift = parse_f32(edit.video_flow_shift, "视频 flow shift", 0.0, f32::MAX)?;
         self.update_settings(|config, _| {
@@ -887,13 +901,26 @@ fn project(
                     .unwrap_or_default(),
                 max_rounds: value.max_rounds.map(|v| v.to_string()).unwrap_or_default(),
                 max_context: value.max_context.map(|v| v.to_string()).unwrap_or_default(),
-                history_compaction_ratio: value.history_compaction_ratio.map(format_number).unwrap_or_default(),
+                history_compaction_ratio: value
+                    .history_compaction_ratio
+                    .map(format_number)
+                    .unwrap_or_default(),
                 reasoning_effort: value.reasoning_effort.clone().unwrap_or_default(),
-                simulation_speed: value.simulation_speed.map(|v| match v {
-                    wunder_server::stable_core::virtual_model::VirtualModelSpeed::Medium => "medium",
-                    wunder_server::stable_core::virtual_model::VirtualModelSpeed::Slow => "slow",
-                    wunder_server::stable_core::virtual_model::VirtualModelSpeed::Fast => "fast",
-                }).unwrap_or_default().into(),
+                simulation_speed: value
+                    .simulation_speed
+                    .map(|v| match v {
+                        wunder_server::stable_core::virtual_model::VirtualModelSpeed::Medium => {
+                            "medium"
+                        }
+                        wunder_server::stable_core::virtual_model::VirtualModelSpeed::Slow => {
+                            "slow"
+                        }
+                        wunder_server::stable_core::virtual_model::VirtualModelSpeed::Fast => {
+                            "fast"
+                        }
+                    })
+                    .unwrap_or_default()
+                    .into(),
                 support_vision: value.support_vision.unwrap_or(false),
                 support_hearing: value.support_hearing.unwrap_or(false),
                 stream_include_usage: value.stream_include_usage.unwrap_or(false),
@@ -920,13 +947,31 @@ fn project(
                 video_size: optional_string(value.video_size.as_deref()),
                 video_seconds: value.video_seconds.map(format_number).unwrap_or_default(),
                 video_fps: value.video_fps.map(|v| v.to_string()).unwrap_or_default(),
-                video_num_frames: value.video_num_frames.map(|v| v.to_string()).unwrap_or_default(),
+                video_num_frames: value
+                    .video_num_frames
+                    .map(|v| v.to_string())
+                    .unwrap_or_default(),
                 video_negative_prompt: optional_string(value.video_negative_prompt.as_deref()),
-                video_steps: value.video_num_inference_steps.map(|v| v.to_string()).unwrap_or_default(),
-                video_guidance_scale: value.video_guidance_scale.map(format_number).unwrap_or_default(),
-                video_guidance_scale_2: value.video_guidance_scale_2.map(format_number).unwrap_or_default(),
-                video_boundary_ratio: value.video_boundary_ratio.map(format_number).unwrap_or_default(),
-                video_flow_shift: value.video_flow_shift.map(format_number).unwrap_or_default(),
+                video_steps: value
+                    .video_num_inference_steps
+                    .map(|v| v.to_string())
+                    .unwrap_or_default(),
+                video_guidance_scale: value
+                    .video_guidance_scale
+                    .map(format_number)
+                    .unwrap_or_default(),
+                video_guidance_scale_2: value
+                    .video_guidance_scale_2
+                    .map(format_number)
+                    .unwrap_or_default(),
+                video_boundary_ratio: value
+                    .video_boundary_ratio
+                    .map(format_number)
+                    .unwrap_or_default(),
+                video_flow_shift: value
+                    .video_flow_shift
+                    .map(format_number)
+                    .unwrap_or_default(),
                 video_frame_interpolation: value.video_enable_frame_interpolation.unwrap_or(false),
                 video_sync_mode: value.video_sync_mode.unwrap_or(false),
             }

@@ -29,7 +29,11 @@ pub struct CloudInterlinkError {
 
 impl fmt::Display for CloudInterlinkError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "cloud interlink {} failed: {} {}", self.operation, self.status, self.message)
+        write!(
+            f,
+            "cloud interlink {} failed: {} {}",
+            self.operation, self.status, self.message
+        )
     }
 }
 impl std::error::Error for CloudInterlinkError {}
@@ -44,7 +48,9 @@ impl fmt::Display for CloudTransportError {
 impl std::error::Error for CloudTransportError {}
 
 pub fn retryable_cloud_read(error: &anyhow::Error) -> bool {
-    if error.is::<CloudTransportError>() { return true; }
+    if error.is::<CloudTransportError>() {
+        return true;
+    }
     if let Some(error) = error.downcast_ref::<CloudInterlinkError>() {
         return matches!(error.status, 408 | 429 | 500..=599);
     }
@@ -60,15 +66,25 @@ mod read_retry_tests {
     #[test]
     fn retries_transient_reads_and_stops_for_permissions_or_missing_threads() {
         for status in [408, 429, 500, 502, 503, 504] {
-            let error = anyhow::Error::new(CloudInterlinkError { status, operation: "fixture", message: String::new() });
+            let error = anyhow::Error::new(CloudInterlinkError {
+                status,
+                operation: "fixture",
+                message: String::new(),
+            });
             assert!(retryable_cloud_read(&error));
         }
         for status in [400, 401, 403, 404, 409, 422] {
-            let error = anyhow::Error::new(CloudInterlinkError { status, operation: "fixture", message: String::new() });
+            let error = anyhow::Error::new(CloudInterlinkError {
+                status,
+                operation: "fixture",
+                message: String::new(),
+            });
             assert!(!retryable_cloud_read(&error));
         }
         assert!(!retryable_cloud_read(&anyhow::anyhow!("invalid fixture")));
-        assert!(retryable_cloud_read(&CloudTransportError("connection unavailable".into()).into()));
+        assert!(retryable_cloud_read(
+            &CloudTransportError("connection unavailable".into()).into()
+        ));
     }
 }
 

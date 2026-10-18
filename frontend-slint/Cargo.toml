@@ -1,6 +1,6 @@
 [package]
 name = "wunder-frontend-slint"
-version = "0.4.0"
+version = "0.1.0"
 edition = "2021"
 rust-version = "1.92"
 publish = false
@@ -41,6 +41,7 @@ serde = { version = "1", default-features = false, features = ["std", "derive"] 
 # The native screenshot path uses XGetImage on Linux. Keep this optional from
 # Windows builds so the Win7 dependency graph stays unchanged.
 x11-dl = "=2.21.0"
+raw-window-handle = "0.6"
 
 [target.'cfg(windows)'.dependencies]
 # Real console for the terminal panel. The winpty library is loaded at run
@@ -57,7 +58,9 @@ windows-sys = { version = "0.52", features = [
   "Win32_UI_Input_KeyboardAndMouse",
   "Win32_UI_WindowsAndMessaging",
   "Win32_UI_Controls_Dialogs",
+  "Win32_UI_Shell",
 ] }
+raw-window-handle = "0.6"
 # Folder picker: SHBrowseForFolderW lives behind the Win32_UI_Shell feature,
 # unavailable in the pinned 0.52 binding set above; the dialog path uses its
 # own binding copy instead of widening the shared feature list. The same copy

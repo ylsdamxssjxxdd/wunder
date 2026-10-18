@@ -93,6 +93,7 @@
             <RemoteThreadsPanel
               v-if="localThreadActive"
               ref="remoteThreadPanelRef"
+              :controller="controller"
               :target="localThreadTarget"
               :workspace-id="localThreadWorkspaceId"
               :open-thread-id="localThreadId"

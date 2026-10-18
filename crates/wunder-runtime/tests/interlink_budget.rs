@@ -402,12 +402,20 @@ async fn shadow_projection_keeps_default_and_named_workspaces_as_independent_roo
     let default_root = dir.path().join("default-root");
     std::fs::create_dir_all(&default_root).expect("create default root");
     std::fs::write(default_root.join("default.txt"), b"default root").expect("seed default root");
-    state.storage.upsert_workspace(&WorkspaceRecord {
-        workspace_id: "workspace-default".into(), user_id: user.into(),
-        name: "Default workspace".into(), root_path: default_root.to_string_lossy().into(),
-        icon: String::new(), color: String::new(), sort_index: 0,
-        created_at: 1.0, updated_at: 1.0,
-    }).expect("store default workspace");
+    state
+        .storage
+        .upsert_workspace(&WorkspaceRecord {
+            workspace_id: "workspace-default".into(),
+            user_id: user.into(),
+            name: "Default workspace".into(),
+            root_path: default_root.to_string_lossy().into(),
+            icon: String::new(),
+            color: String::new(),
+            sort_index: 0,
+            created_at: 1.0,
+            updated_at: 1.0,
+        })
+        .expect("store default workspace");
 
     let named_root = dir.path().join("named-root");
     std::fs::create_dir_all(&named_root).expect("create named root");
@@ -451,12 +459,20 @@ async fn shadow_projection_keeps_default_and_named_workspaces_as_independent_roo
     // A command that omits the id and one that explicitly selects the default
     // must resolve to the exact same folder, without a private engine subdir.
     use wunder_server::interlink::client::shadow::{default_workspace_id, workspace_scope};
-    assert_eq!(default_workspace_id(&state, user).as_deref(), Some("workspace-default"));
+    assert_eq!(
+        default_workspace_id(&state, user).as_deref(),
+        Some("workspace-default")
+    );
     let implicit = workspace_scope(&state, user, None);
     let explicit = workspace_scope(&state, user, Some("workspace-default"));
     assert_eq!(implicit, explicit);
     assert_eq!(state.workspace.workspace_root(&implicit), default_root);
-    assert_eq!(state.workspace.workspace_root(&workspace_scope(&state, user, Some("workspace-one"))), named_root);
+    assert_eq!(
+        state
+            .workspace
+            .workspace_root(&workspace_scope(&state, user, Some("workspace-one"))),
+        named_root
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -510,8 +510,11 @@ impl CloudService {
             let summary = format!("token refresh rejected: {}", status.as_u16());
             self.mark_reconnecting(&summary);
             return Err(super::CloudInterlinkError {
-                status: status.as_u16(), operation: "token refresh", message: summary,
-            }.into());
+                status: status.as_u16(),
+                operation: "token refresh",
+                message: summary,
+            }
+            .into());
         }
         let body = read_json(response).await;
         let data = &body["data"];
@@ -1317,8 +1320,11 @@ impl CloudService {
         let body = read_json(response).await;
         if !status.is_success() {
             return Err(super::CloudInterlinkError {
-                status: status.as_u16(), operation: what, message: error_message(&body),
-            }.into());
+                status: status.as_u16(),
+                operation: what,
+                message: error_message(&body),
+            }
+            .into());
         }
         Ok(body.get("data").cloned().unwrap_or(Value::Null))
     }
@@ -1352,93 +1358,247 @@ impl CloudService {
     }
 
     pub async fn cloud_thread_models(&self) -> Result<Value> {
-        self.interlink_data(|session| self.http.get(format!("{}/wunder/agents/models", session.server))
-            .bearer_auth(&session.token), "thread models").await
+        self.interlink_data(
+            |session| {
+                self.http
+                    .get(format!("{}/wunder/agents/models", session.server))
+                    .bearer_auth(&session.token)
+            },
+            "thread models",
+        )
+        .await
+    }
+
+    pub async fn cloud_thread_system_prompt(&self, thread: &str) -> Result<String> {
+        let path = if thread.trim().is_empty() {
+            "/wunder/chat/system-prompt".to_string()
+        } else {
+            format!(
+                "/wunder/chat/sessions/{}/system-prompt",
+                urlencode_component(thread)
+            )
+        };
+        let data = self
+            .interlink_data(
+                |session| {
+                    self.http
+                        .post(format!("{}{path}", session.server))
+                        .bearer_auth(&session.token)
+                        .json(&json!({}))
+                },
+                "thread system prompt",
+            )
+            .await?;
+        Ok(data["prompt"].as_str().unwrap_or_default().to_string())
     }
 
     pub async fn cloud_thread_set_model(&self, thread: &str, model: &str) -> Result<()> {
         let thread = urlencode_component(thread);
-        self.interlink_data(|session| self.http.post(format!("{}/wunder/chat/sessions/{thread}/model", session.server))
-            .bearer_auth(&session.token).json(&json!({"model_name":model})), "thread model").await?;
+        self.interlink_data(
+            |session| {
+                self.http
+                    .post(format!(
+                        "{}/wunder/chat/sessions/{thread}/model",
+                        session.server
+                    ))
+                    .bearer_auth(&session.token)
+                    .json(&json!({"model_name":model}))
+            },
+            "thread model",
+        )
+        .await?;
         Ok(())
     }
 
     pub async fn cloud_thread_set_effort(&self, thread: &str, effort: &str) -> Result<String> {
         let thread = urlencode_component(thread);
-        let data = self.interlink_data(|session| self.http.post(format!("{}/wunder/chat/sessions/{thread}/reasoning-effort", session.server))
-            .bearer_auth(&session.token).json(&json!({"reasoning_effort":effort})), "thread reasoning effort").await?;
-        Ok(data["reasoning_effort"].as_str().unwrap_or("default").into())
+        let data = self
+            .interlink_data(
+                |session| {
+                    self.http
+                        .post(format!(
+                            "{}/wunder/chat/sessions/{thread}/reasoning-effort",
+                            session.server
+                        ))
+                        .bearer_auth(&session.token)
+                        .json(&json!({"reasoning_effort":effort}))
+                },
+                "thread reasoning effort",
+            )
+            .await?;
+        Ok(data["reasoning_effort"]
+            .as_str()
+            .unwrap_or("default")
+            .into())
     }
 
     pub async fn cloud_thread_chat_page(&self, thread: &str, before: i64) -> Result<Value> {
         let thread = urlencode_component(thread);
-        self.interlink_data(|session| self.http.get(format!(
-            "{}/wunder/chat/sessions/{thread}/view/chat?before={before}&limit=12", session.server
-        )).bearer_auth(&session.token), "thread history").await
+        self.interlink_data(
+            |session| {
+                self.http
+                    .get(format!(
+                        "{}/wunder/chat/sessions/{thread}/view/chat?before={before}&limit=12",
+                        session.server
+                    ))
+                    .bearer_auth(&session.token)
+            },
+            "thread history",
+        )
+        .await
     }
 
     pub async fn cloud_thread_rename(&self, thread: &str, title: &str) -> Result<()> {
         let thread = urlencode_component(thread);
         let title = title.trim();
-        anyhow::ensure!(!title.is_empty() && title.chars().count() <= 120 && !title.chars().any(char::is_control), "invalid thread title");
-        self.interlink_data(|session| self.http.post(format!(
-            "{}/wunder/chat/sessions/{thread}/title", session.server
-        )).bearer_auth(&session.token).json(&json!({"title":title})), "thread rename").await?;
+        anyhow::ensure!(
+            !title.is_empty()
+                && title.chars().count() <= 120
+                && !title.chars().any(char::is_control),
+            "invalid thread title"
+        );
+        self.interlink_data(
+            |session| {
+                self.http
+                    .post(format!(
+                        "{}/wunder/chat/sessions/{thread}/title",
+                        session.server
+                    ))
+                    .bearer_auth(&session.token)
+                    .json(&json!({"title":title}))
+            },
+            "thread rename",
+        )
+        .await?;
         Ok(())
     }
 
     pub async fn cloud_thread_archive(&self, thread: &str) -> Result<()> {
         let thread = urlencode_component(thread);
-        self.interlink_data(|session| self.http.post(format!(
-            "{}/wunder/chat/sessions/{thread}/archive", session.server
-        )).bearer_auth(&session.token), "thread archive").await?;
+        self.interlink_data(
+            |session| {
+                self.http
+                    .post(format!(
+                        "{}/wunder/chat/sessions/{thread}/archive",
+                        session.server
+                    ))
+                    .bearer_auth(&session.token)
+            },
+            "thread archive",
+        )
+        .await?;
         Ok(())
     }
 
-    pub async fn cloud_thread_trajectory(&self, thread: &str, before: Option<i64>, after: Option<i64>, limit: usize) -> Result<Value> {
-        anyhow::ensure!(before.is_none() || after.is_none(), "ambiguous trajectory cursor");
+    pub async fn cloud_thread_trajectory(
+        &self,
+        thread: &str,
+        before: Option<i64>,
+        after: Option<i64>,
+        limit: usize,
+    ) -> Result<Value> {
+        anyhow::ensure!(
+            before.is_none() || after.is_none(),
+            "ambiguous trajectory cursor"
+        );
         let thread = urlencode_component(thread);
-        self.interlink_data(|session| {
-            let mut query = format!("limit={}", limit.clamp(1, 100));
-            if let Some(before) = before { query.push_str(&format!("&before={before}")); }
-            if let Some(after) = after { query.push_str(&format!("&after={after}")); }
-            self.http.get(format!("{}/wunder/chat/sessions/{thread}/view/trajectory?{query}", session.server))
-                .bearer_auth(&session.token)
-        }, "thread trajectory").await
+        self.interlink_data(
+            |session| {
+                let mut query = format!("limit={}", limit.clamp(1, 100));
+                if let Some(before) = before {
+                    query.push_str(&format!("&before={before}"));
+                }
+                if let Some(after) = after {
+                    query.push_str(&format!("&after={after}"));
+                }
+                self.http
+                    .get(format!(
+                        "{}/wunder/chat/sessions/{thread}/view/trajectory?{query}",
+                        session.server
+                    ))
+                    .bearer_auth(&session.token)
+            },
+            "thread trajectory",
+        )
+        .await
     }
 
     pub async fn cloud_thread_search(&self, thread: &str, query: &str) -> Result<Value> {
         let thread = urlencode_component(thread);
         let query = urlencode_component(query);
-        self.interlink_data(|session| self.http.get(format!(
-            "{}/wunder/chat/sessions/{thread}/view/search?q={query}", session.server
-        )).bearer_auth(&session.token), "thread search").await
+        self.interlink_data(
+            |session| {
+                self.http
+                    .get(format!(
+                        "{}/wunder/chat/sessions/{thread}/view/search?q={query}",
+                        session.server
+                    ))
+                    .bearer_auth(&session.token)
+            },
+            "thread search",
+        )
+        .await
     }
 
-    pub async fn cloud_thread_process(&self, thread: &str, root: &str, before: Option<i64>, after: Option<i64>) -> Result<Value> {
-        anyhow::ensure!(before.is_none() || after.is_none(), "ambiguous process cursor");
+    pub async fn cloud_thread_process(
+        &self,
+        thread: &str,
+        root: &str,
+        before: Option<i64>,
+        after: Option<i64>,
+    ) -> Result<Value> {
+        anyhow::ensure!(
+            before.is_none() || after.is_none(),
+            "ambiguous process cursor"
+        );
         let thread = urlencode_component(thread);
         let root = urlencode_component(root);
         let mut query = "limit=100".to_string();
         if let Some(before) = before.or_else(|| after.is_none().then_some(i64::MAX)) {
             query.push_str(&format!("&item_before={before}"));
         }
-        if let Some(after) = after { query.push_str(&format!("&item_after={after}")); }
-        self.interlink_data(|session| self.http.get(format!(
-            "{}/wunder/chat/sessions/{thread}/thread-log/turns/{root}?{query}", session.server
-        )).bearer_auth(&session.token), "thread process").await
+        if let Some(after) = after {
+            query.push_str(&format!("&item_after={after}"));
+        }
+        self.interlink_data(
+            |session| {
+                self.http
+                    .get(format!(
+                        "{}/wunder/chat/sessions/{thread}/thread-log/turns/{root}?{query}",
+                        session.server
+                    ))
+                    .bearer_auth(&session.token)
+            },
+            "thread process",
+        )
+        .await
     }
 
     /// Stream the authenticated NDJSON export to disk without retaining a
     /// transcript-sized byte buffer in the desktop process.
-    pub async fn cloud_export_thread_log(&self, thread: &str, path: &std::path::Path) -> Result<()> {
+    pub async fn cloud_export_thread_log(
+        &self,
+        thread: &str,
+        path: &std::path::Path,
+    ) -> Result<()> {
         use futures::StreamExt;
         use tokio::io::AsyncWriteExt;
         let thread = urlencode_component(thread);
-        let response = self.authed_send(|session| self.http.get(format!(
-            "{}/wunder/chat/sessions/{thread}/thread-log/export", session.server
-        )).bearer_auth(&session.token)).await?;
-        anyhow::ensure!(response.status().is_success(), "cloud thread export failed: {}", response.status());
+        let response = self
+            .authed_send(|session| {
+                self.http
+                    .get(format!(
+                        "{}/wunder/chat/sessions/{thread}/thread-log/export",
+                        session.server
+                    ))
+                    .bearer_auth(&session.token)
+            })
+            .await?;
+        anyhow::ensure!(
+            response.status().is_success(),
+            "cloud thread export failed: {}",
+            response.status()
+        );
         let mut file = tokio::fs::File::create(path).await?;
         let mut stream = response.bytes_stream();
         while let Some(chunk) = stream.next().await {
@@ -1448,7 +1608,13 @@ impl CloudService {
         Ok(())
     }
 
-    pub async fn cloud_thread_body(&self, thread: &str, body: &str, revision: i64, cursor: i64) -> Result<Value> {
+    pub async fn cloud_thread_body(
+        &self,
+        thread: &str,
+        body: &str,
+        revision: i64,
+        cursor: i64,
+    ) -> Result<Value> {
         let thread = urlencode_component(thread);
         let body = urlencode_component(body);
         self.interlink_data(|session| self.http.get(format!(

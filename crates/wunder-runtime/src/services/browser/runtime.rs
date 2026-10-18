@@ -570,9 +570,7 @@ fn browser_failure_details(action: &str, error: &str) -> serde_json::Map<String,
         Some("ERR_NAME_NOT_RESOLVED") => "TOOL_BROWSER_DNS_FAILED",
         Some(code) if is_retryable_net_error(code) => "TOOL_BROWSER_CONNECTION_FAILED",
         Some(_) => "TOOL_BROWSER_NAVIGATION_FAILED",
-        None if error.contains("timed out") || error.contains("Timeout") => {
-            "TOOL_BROWSER_TIMEOUT"
-        }
+        None if error.contains("timed out") || error.contains("Timeout") => "TOOL_BROWSER_TIMEOUT",
         None => "TOOL_BROWSER_COMMAND_FAILED",
     };
     let retryable = matches!(
@@ -643,7 +641,10 @@ fn extract_host(error: &str) -> Option<String> {
         .split(|ch: char| ch.is_whitespace() || ch == '"' || ch == '\'')
         .next()
         .unwrap_or_default();
-    Url::parse(candidate).ok()?.host_str().map(ToString::to_string)
+    Url::parse(candidate)
+        .ok()?
+        .host_str()
+        .map(ToString::to_string)
 }
 
 /// Drop the Playwright call log: operator detail, not model input. A stack that
@@ -651,7 +652,11 @@ fn extract_host(error: &str) -> Option<String> {
 fn compact_browser_error(error: &str) -> String {
     let head = error.split("Call log:").next().unwrap_or(error).trim();
     let first_line = head.lines().next().unwrap_or("").trim();
-    let compact = if first_line.is_empty() { head } else { first_line };
+    let compact = if first_line.is_empty() {
+        head
+    } else {
+        first_line
+    };
     if compact.is_empty() {
         "Unknown browser bridge error".to_string()
     } else {
@@ -1016,7 +1021,10 @@ mod tests {
             .extract_data(
                 super::BridgeResponse {
                     success: false,
-                    error: Some("Page.goto: net::ERR_NAME_NOT_RESOLVED at https://nope.invalid/".to_string()),
+                    error: Some(
+                        "Page.goto: net::ERR_NAME_NOT_RESOLVED at https://nope.invalid/"
+                            .to_string(),
+                    ),
                     traceback: None,
                     data: None,
                 },

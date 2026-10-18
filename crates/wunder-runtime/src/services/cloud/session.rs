@@ -138,7 +138,9 @@ impl Default for InterlinkSessionConfig {
 
 impl InterlinkSessionConfig {
     pub(super) fn migrate_workspace_sharing(&mut self) -> bool {
-        if self.sharing_configured { return false; }
+        if self.sharing_configured {
+            return false;
+        }
         self.enabled = true;
         self.full_shadow = true;
         self.sharing_configured = true;
@@ -508,11 +510,19 @@ mod tests {
 
     #[test]
     fn sharing_migration_is_once_only_and_preserves_explicit_opt_out() {
-        let mut legacy = InterlinkSessionConfig { enabled: false, ..Default::default() };
+        let mut legacy = InterlinkSessionConfig {
+            enabled: false,
+            ..Default::default()
+        };
         assert!(legacy.migrate_workspace_sharing());
         assert!(legacy.enabled && legacy.full_shadow && legacy.sharing_configured);
         assert!(!legacy.migrate_workspace_sharing());
-        let mut disabled = InterlinkSessionConfig { enabled: false, full_shadow: false, sharing_configured: true, ..Default::default() };
+        let mut disabled = InterlinkSessionConfig {
+            enabled: false,
+            full_shadow: false,
+            sharing_configured: true,
+            ..Default::default()
+        };
         assert!(!disabled.migrate_workspace_sharing());
         assert!(!disabled.enabled && !disabled.full_shadow);
     }

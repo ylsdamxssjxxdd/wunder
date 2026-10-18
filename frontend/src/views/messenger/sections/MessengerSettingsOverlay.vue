@@ -50,6 +50,11 @@ const t = props.controller.t;
 // Esc 关闭窗口：监听挂在 window 上，焦点在输入框内时同样生效。
 const handleWindowKeydown = (event: KeyboardEvent) => {
   if (event.key === 'Escape') {
+    // Element Plus dialogs are teleported outside this window. Let the top
+    // dialog consume Escape before closing the settings window beneath it.
+    const hasNestedDialog = Array.from(document.querySelectorAll<HTMLElement>('.el-overlay-dialog[aria-modal="true"]'))
+      .some((dialog) => dialog.getClientRects().length > 0);
+    if (hasNestedDialog) return;
     event.stopPropagation();
     emit('close');
   }

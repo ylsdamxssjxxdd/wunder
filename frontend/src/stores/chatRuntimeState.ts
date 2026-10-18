@@ -155,7 +155,7 @@ import { chatWatcherSharedState } from './chatSharedState';
 
 import { clearSessionCommandSessions, removeDemoChatSession, sortSessionsByActivity, syncDemoChatCache } from './chatDemoPanels';
 import { ensureGreetingMessage } from './chatGreeting';
-import { DEFAULT_AGENT_KEY, applyDesktopOverlayEvent, normalizeAgentKey, patchSessionRuntimeFields, persistAgentSession, persistDraftSession, resolvePersistedSessionId } from './chatPersist';
+import { DEFAULT_AGENT_KEY, normalizeAgentKey, patchSessionRuntimeFields, persistAgentSession, persistDraftSession, resolvePersistedSessionId } from './chatPersist';
 import { abortWatchStream, clearRuntimeInteractiveControllers, clearSessionWatcher, clearWatchdog, isWindowingEnabled, resolveMessageWindowLimit, resolveMessageWindowThreshold, setSessionLoading } from './chatRuntimeControls';
 import { clearChatSnapshot, scheduleChatSnapshot } from './chatSnapshot';
 import { buildMessage, clearAssistantRetryState, normalizeContextTokens, normalizeContextTotalTokens, normalizeMessageSubagents, parseOptionalCount, resolveTimestampIso, resolveTimestampMs } from './chatStats';
@@ -1772,13 +1772,6 @@ const COMMAND_SESSION_TOOL_OUTPUT_EVENTS = new Set([
   'tool_output_delta'
 ]);
 
-const DESKTOP_OVERLAY_STREAM_EVENTS = new Set([
-  'desktop_control_hint',
-  'desktop_control_hint_done',
-  'desktop_control_countdown',
-  'desktop_control_countdown_done'
-]);
-
 const applyCommandSessionCanonicalSideEffect = (runtimeStore, sessionId, eventType, payload, data) => {
   const normalizedEventType = String(eventType || '').trim().toLowerCase();
   if (
@@ -2003,10 +1996,6 @@ export const applyCanonicalStreamSideEffects = (
   }
   if (normalizedEventType === 'workspace_update') {
     applyWorkspaceUpdateCanonicalSideEffect(payload, data);
-    return;
-  }
-  if (DESKTOP_OVERLAY_STREAM_EVENTS.has(normalizedEventType)) {
-    applyDesktopOverlayEvent(normalizedEventType, data);
     return;
   }
   applyCommandSessionCanonicalSideEffect(store, sessionId, normalizedEventType, payload, data);

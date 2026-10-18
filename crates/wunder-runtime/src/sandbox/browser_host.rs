@@ -244,7 +244,10 @@ pub fn close(bridge_id: &str) -> bool {
     match removed {
         Some(bridge) => {
             bridge.reap();
-            debug!(bridge_id = bridge.bridge_id.as_str(), "Browser bridge stopped");
+            debug!(
+                bridge_id = bridge.bridge_id.as_str(),
+                "Browser bridge stopped"
+            );
             true
         }
         None => false,
@@ -269,11 +272,7 @@ pub fn list() -> Value {
             })
         })
         .collect::<Vec<_>>();
-    items.sort_by(|left, right| {
-        left["bridge_id"]
-            .as_str()
-            .cmp(&right["bridge_id"].as_str())
-    });
+    items.sort_by(|left, right| left["bridge_id"].as_str().cmp(&right["bridge_id"].as_str()));
     json!({ "bridges": items, "count": items.len(), "limit": MAX_BRIDGES })
 }
 

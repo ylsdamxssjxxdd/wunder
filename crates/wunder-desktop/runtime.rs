@@ -254,6 +254,12 @@ impl DesktopRuntime {
         set_env_path("WUNDER_DESKTOP_SETTINGS_PATH", &settings_path);
         set_env_path("WUNDER_DESKTOP_APP_DIR", &app_dir);
         set_env_path("WUNDER_HOME", &wunder_home);
+        // All ephemeral artifacts (desktop/browser screenshots, temp-dir
+        // downloads and channel exports) share the desktop runtime root.
+        // Without this export the runtime helpers fall back to the process
+        // directory, which puts screenshots beside the executable under
+        // `config/data/temp_dir` instead of the user's `.wunder` directory.
+        set_env_path("WUNDER_TEMP_DIR_ROOT", &temp_root);
         refresh_runtime_tool_env(&settings, &app_dir);
         set_env_path("WUNDER_DESKTOP_DEFAULT_WORKSPACE_ROOT", &workspace_root);
         set_env_path(BUILTIN_SKILLS_ROOT_ENV, &state_root.join("skills"));
@@ -470,16 +476,17 @@ fn resolve_workspace_root(
 
     let raw = settings_workspace.trim();
     if raw.is_empty() {
-        return Ok(std::env::var_os("WUNDER_DESKTOP_WORKSPACE_ROOT")
-            .map(PathBuf::from)
-            .map(|path| {
-                if path.is_absolute() {
-                    path
-                } else {
-                    wunder_home.join(path)
-                }
-            })
-            .unwrap_or_else(|| wunder_home.join("workspace")));
+        if let Some(path) = std::env::var_os("WUNDER_DESKTOP_WORKSPACE_ROOT").map(PathBuf::from) {
+            let path = if path.is_absolute() {
+                path
+            } else {
+                wunder_home.join(path)
+            };
+            if !is_transient_build_workspace_root(&path) {
+                return Ok(path);
+            }
+        }
+        return Ok(wunder_home.join("workspace"));
     }
 
     let path = PathBuf::from(raw);
@@ -491,6 +498,9 @@ fn resolve_workspace_root(
         return Ok(wunder_home.join("workspace"));
     }
     if path.is_absolute() {
+        if is_transient_build_workspace_root(&path) {
+            return Ok(wunder_home.join("workspace"));
+        }
         Ok(path)
     } else if raw.eq_ignore_ascii_case("WUNDER_WORK")
         || raw.eq_ignore_ascii_case("WUNDER_TEMPD")
@@ -500,6 +510,27 @@ fn resolve_workspace_root(
     } else {
         Ok(wunder_home.join(path))
     }
+}
+
+/// Build and smoke-test workspaces are created below a repository's `target`
+/// directory. They must never become the persisted desktop workspace after a
+/// test process exits; doing so makes the next蛹 launch point tools at a stale
+/// checkout path instead of the user's `.wunder` home.
+fn is_transient_build_workspace_root(path: &Path) -> bool {
+    let mut saw_target = false;
+    for ancestor in path.ancestors() {
+        let Some(name) = ancestor.file_name().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        if name.eq_ignore_ascii_case("target") {
+            saw_target = true;
+            continue;
+        }
+        if saw_target && ancestor.join(".git").exists() {
+            return true;
+        }
+    }
+    false
 }
 
 fn is_legacy_desktop_workspace_seed(raw: &str) -> bool {
@@ -1431,8 +1462,12 @@ fn enrich_virtual_replay_model(model: &mut wunder_server::config::LlmModelConfig
     model.provider = Some("virtual_replay".to_string());
     model.model_type.get_or_insert_with(|| "llm".to_string());
     model.enable = Some(true);
-    model.simulation_speed.get_or_insert(VirtualModelSpeed::Fast);
-    model.simulation.get_or_insert_with(VirtualModelOptions::default);
+    model
+        .simulation_speed
+        .get_or_insert(VirtualModelSpeed::Fast);
+    model
+        .simulation
+        .get_or_insert_with(VirtualModelOptions::default);
     model.timeout_s.get_or_insert(120);
     model.max_rounds.get_or_insert(1000);
     model.max_context.get_or_insert(131_072);
@@ -2078,6 +2113,30 @@ mod tests {
                 .expect("prefer explicit command-line workspace"),
             custom
         );
+    }
+
+    #[test]
+    fn desktop_workspace_root_recovers_from_repository_target_workspace() {
+        let fixture = std::env::temp_dir().join(format!(
+            "desktop-workspace-build-root-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let repository = fixture.join("repository");
+        let workspace = repository
+            .join("target")
+            .join("native-smoke-stack")
+            .join("workspace");
+        let home = fixture.join("home/.wunder");
+        fs::create_dir_all(&workspace).expect("create build workspace");
+        fs::create_dir_all(repository.join(".git")).expect("create repository marker");
+
+        assert_eq!(
+            resolve_workspace_root(None, workspace.to_string_lossy().as_ref(), &home)
+                .expect("recover transient build workspace"),
+            home.join("workspace")
+        );
+
+        let _ = fs::remove_dir_all(&fixture);
     }
 
     #[test]

@@ -1621,8 +1621,8 @@ fn filter_allowed_tools(
         .map(|name| resolve_tool_name(name.trim()))
         .filter(|name| !name.is_empty())
         .collect();
-    let desktop_control_tool_names = allow_desktop_control_tools
-        .then(|| HashSet::from([resolve_tool_name("desktop_control")]));
+    let desktop_control_tool_names =
+        allow_desktop_control_tools.then(|| HashSet::from([resolve_tool_name("desktop_control")]));
     let mut seen = HashSet::new();
     let mut output = Vec::new();
     for raw in values {

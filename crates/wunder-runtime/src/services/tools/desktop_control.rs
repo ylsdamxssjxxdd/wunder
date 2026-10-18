@@ -20,10 +20,7 @@ mod disabled {
 
     pub fn is_desktop_control_tool_name(name: &str) -> bool {
         let cleaned = name.trim();
-        if matches!(
-            cleaned,
-            TOOL_DESKTOP_CONTROL | "桌面控制器" | "桌面监视器"
-        ) {
+        if matches!(cleaned, TOOL_DESKTOP_CONTROL | "桌面控制器" | "桌面监视器") {
             return true;
         }
         matches!(

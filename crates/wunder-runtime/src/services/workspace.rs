@@ -3756,10 +3756,16 @@ mod tests {
             assert_eq!(workspace.public_physical_root(&scope), root);
             let file = root.join("fixture.txt");
             let display = workspace.display_path(&scope, &file);
-            assert_eq!(workspace.map_public_path(&scope, std::path::Path::new(&display)), Some(file));
+            assert_eq!(
+                workspace.map_public_path(&scope, std::path::Path::new(&display)),
+                Some(file)
+            );
             let run = workspace.scoped_external_run_workspace(&scope, "fixture-run");
             assert_eq!(workspace.user_root(&run), root.join("runs/fixture-run"));
-            assert_eq!(workspace.public_physical_root(&run), root.join("runs/fixture-run"));
+            assert_eq!(
+                workspace.public_physical_root(&run),
+                root.join("runs/fixture-run")
+            );
             fs::remove_dir(&root).unwrap();
             assert!(workspace.ensure_user_root(&scope).is_err());
             assert!(!root.exists());

@@ -104,8 +104,6 @@ const APP_CONFIG_DEFAULTS = {
       },
     ],
   },
-  // 默认首屏面板
-  defaultPanel: "monitor",
   // 监控轮询间隔（毫秒）
   monitorPollIntervalMs: 3000,
   // 系统提示词自动刷新延迟（毫秒）
@@ -132,9 +130,6 @@ const sanitizeConfig = (raw) => {
   }
   if (typeof raw.defaultUserId === "string") {
     next.defaultUserId = raw.defaultUserId.trim();
-  }
-  if (typeof raw.defaultPanel === "string") {
-    next.defaultPanel = raw.defaultPanel.trim();
   }
   if (typeof raw.language === "string") {
     next.language = raw.language.trim();

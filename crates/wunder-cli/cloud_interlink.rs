@@ -79,16 +79,17 @@ pub(crate) async fn handle_cloud_interlink(
     command: crate::args::CloudSubcommand,
 ) -> Result<()> {
     if cloud_shared().session().is_none() {
-        cloud_shared().adopt_shared_login().await.context(
-            "未登录云端（先 cloud login）/ not logged in (run cloud login first)",
-        )?;
+        cloud_shared()
+            .adopt_shared_login()
+            .await
+            .context("未登录云端（先 cloud login）/ not logged in (run cloud login first)")?;
     }
     match command {
         crate::args::CloudSubcommand::Agents => {
             let data = get_json(&session()?, "/wunder/agents").await?;
             println!("{}", serde_json::to_string_pretty(&data)?);
             Ok(())
-        },
+        }
         crate::args::CloudSubcommand::Devices => devices(runtime, global).await,
         crate::args::CloudSubcommand::Ws(command) => ws(runtime, global, command).await,
         crate::args::CloudSubcommand::Threads(command) => threads(runtime, global, command).await,
@@ -145,7 +146,13 @@ fn ws_base(session: &CloudSessionFile) -> String {
 async fn get_json(session: &CloudSessionFile, path: &str) -> Result<Value> {
     let _ = session;
     let client = http()?;
-    let response = cloud_shared().authed_send(|live| client.get(format!("{}{}", base_url(live), path)).bearer_auth(&live.token)).await
+    let response = cloud_shared()
+        .authed_send(|live| {
+            client
+                .get(format!("{}{}", base_url(live), path))
+                .bearer_auth(&live.token)
+        })
+        .await
         .context("request failed")?;
     let status = response.status();
     let body: Value = response.json().await.unwrap_or(Value::Null);
@@ -158,7 +165,13 @@ async fn get_json(session: &CloudSessionFile, path: &str) -> Result<Value> {
 async fn get_bytes(session: &CloudSessionFile, path: &str) -> Result<Vec<u8>> {
     let _ = session;
     let client = http()?;
-    let response = cloud_shared().authed_send(|live| client.get(format!("{}{}", base_url(live), path)).bearer_auth(&live.token)).await
+    let response = cloud_shared()
+        .authed_send(|live| {
+            client
+                .get(format!("{}{}", base_url(live), path))
+                .bearer_auth(&live.token)
+        })
+        .await
         .context("request failed")?;
     let status = response.status();
     if !status.is_success() {
@@ -171,7 +184,14 @@ async fn get_bytes(session: &CloudSessionFile, path: &str) -> Result<Vec<u8>> {
 async fn post_json(session: &CloudSessionFile, path: &str, body: Value) -> Result<Value> {
     let _ = session;
     let client = http()?;
-    let response = cloud_shared().authed_send(|live| client.post(format!("{}{}", base_url(live), path)).bearer_auth(&live.token).json(&body)).await
+    let response = cloud_shared()
+        .authed_send(|live| {
+            client
+                .post(format!("{}{}", base_url(live), path))
+                .bearer_auth(&live.token)
+                .json(&body)
+        })
+        .await
         .context("request failed")?;
     let status = response.status();
     let text: Value = response.json().await.unwrap_or(Value::Null);
@@ -217,7 +237,10 @@ async fn issue_and_wait(
         if data.get("approval_state").and_then(Value::as_str) == Some("pending")
             || TERMINAL_STATUSES.contains(&status)
         {
-            anyhow::ensure!(status != "succeeded" || !data["result"].is_null(), "RESULT_EXPIRED: command {command_id} result expired; refresh the view");
+            anyhow::ensure!(
+                status != "succeeded" || !data["result"].is_null(),
+                "RESULT_EXPIRED: command {command_id} result expired; refresh the view"
+            );
             return Ok(record);
         }
         if std::time::Instant::now() >= deadline {
@@ -1228,7 +1251,13 @@ async fn thread(
     let command = match command.action {
         crate::args::CloudThreadAction::Show(command) => command,
         crate::args::CloudThreadAction::Cancel(command) => {
-            let record = issue_and_wait(&session()?, &normalize_target(&command.to)?, "thread.cancel", json!({"local_thread_id": command.id})).await?;
+            let record = issue_and_wait(
+                &session()?,
+                &normalize_target(&command.to)?,
+                "thread.cancel",
+                json!({"local_thread_id": command.id}),
+            )
+            .await?;
             return print_command_outcome(&record, zh(global));
         }
         crate::args::CloudThreadAction::Answer(command) => {
@@ -1331,7 +1360,9 @@ async fn send(runtime: &CliRuntime, global: &GlobalArgs, command: CloudSendComma
     let session = session()?;
     let to_node = normalize_target(&command.to)?;
     let mut args = json!({"message": command.message});
-    if let Some(agent) = command.agent { args["agent"] = json!(agent); }
+    if let Some(agent) = command.agent {
+        args["agent"] = json!(agent);
+    }
     if let Some(thread) = command
         .thread
         .as_deref()
@@ -2348,7 +2379,10 @@ async fn watch(
     if target == "cloud" {
         let cloud = cloud_shared();
         let page = cloud.cloud_thread_view(&command.thread).await?;
-        let cursor = page.pointer("/page/view_seq").and_then(Value::as_i64).unwrap_or(0);
+        let cursor = page
+            .pointer("/page/view_seq")
+            .and_then(Value::as_i64)
+            .unwrap_or(0);
         println!("{}", serde_json::to_string(&page)?);
         let mut feed = cloud.watch_cloud_thread(command.thread.clone(), cursor);
         let deadline = tokio::time::Instant::now() + Duration::from_secs(command.seconds.max(1));
@@ -2378,9 +2412,16 @@ async fn watch(
         urlencode(&command.thread),
     );
     let mut request = url.into_client_request()?;
-    request.headers_mut().insert("authorization", format!("Bearer {}", session.token).parse()?);
-    request.headers_mut().insert("sec-websocket-protocol", "wunder-interlink-remote".parse()?);
-    request.headers_mut().insert("x-wunder-device-id", session.device_id.parse()?);
+    request.headers_mut().insert(
+        "authorization",
+        format!("Bearer {}", session.token).parse()?,
+    );
+    request
+        .headers_mut()
+        .insert("sec-websocket-protocol", "wunder-interlink-remote".parse()?);
+    request
+        .headers_mut()
+        .insert("x-wunder-device-id", session.device_id.parse()?);
     let (socket, _response) = tokio_tungstenite::connect_async(request)
         .await
         .map_err(|err| anyhow!("remote_ws 连接失败 / remote_ws connect failed: {err}"))?;
@@ -2613,7 +2654,14 @@ async fn audit(
     let session = session()?;
     let path = audit_query_path(&command);
     let url = format!("{}{}", base_url(&session), path);
-    let response = cloud_shared().authed_send(|live| http().expect("http client").get(&url).bearer_auth(&live.token)).await
+    let response = cloud_shared()
+        .authed_send(|live| {
+            http()
+                .expect("http client")
+                .get(&url)
+                .bearer_auth(&live.token)
+        })
+        .await
         .context("request failed")?;
     let status = response.status();
     let text = response.text().await.unwrap_or_default();

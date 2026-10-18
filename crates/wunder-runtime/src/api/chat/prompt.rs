@@ -45,10 +45,18 @@ async fn system_prompt(
     Json(payload): Json<SystemPromptRequest>,
 ) -> Result<Json<Value>, Response> {
     let resolved = resolve_user(&state, &headers, None).await?;
-    let user_context = build_user_tool_context(&state, &resolved.user.user_id).await;
+    build_agent_prompt_preview(state, resolved.user, payload).await
+}
+
+async fn build_agent_prompt_preview(
+    state: Arc<AppState>,
+    user: crate::storage::UserAccountRecord,
+    payload: SystemPromptRequest,
+) -> Result<Json<Value>, Response> {
+    let user_context = build_user_tool_context(&state, &user.user_id).await;
     let agent_record =
-        fetch_agent_record(&state, &resolved.user, payload.agent_id.as_deref(), false).await?;
-    let mut allowed = compute_allowed_tool_names(&resolved.user, &user_context);
+        fetch_agent_record(&state, &user, payload.agent_id.as_deref(), false).await?;
+    let mut allowed = compute_allowed_tool_names(&user, &user_context);
     let overrides = payload
         .tool_overrides
         .map(normalize_tool_overrides)
@@ -66,7 +74,7 @@ async fn system_prompt(
         .unwrap_or(false);
     let workspace_id = resolve_agent_workspace_id(
         &state,
-        &resolved.user.user_id,
+        &user.user_id,
         payload.agent_id.as_deref(),
         agent_record.as_ref(),
     );
@@ -78,9 +86,9 @@ async fn system_prompt(
             &tool_names,
             &user_context.skills,
             Some(&user_context.bindings),
-            &resolved.user.user_id,
+            &user.user_id,
             payload.agent_id.as_deref(),
-            UserStore::is_admin(&resolved.user),
+            UserStore::is_admin(&user),
             &workspace_id,
             None,
             agent_prompt.as_deref(),
@@ -89,7 +97,7 @@ async fn system_prompt(
         .await;
     let tooling_preview = build_prompt_tooling_preview_payload(
         &state,
-        &resolved.user.user_id,
+        &user.user_id,
         &user_context,
         &allowed,
         agent_record.as_ref(),
@@ -108,6 +116,15 @@ async fn session_system_prompt(
     Json(payload): Json<SystemPromptRequest>,
 ) -> Result<Json<Value>, Response> {
     let resolved = resolve_user(&state, &headers, None).await?;
+    build_session_prompt_preview(state, resolved.user, session_id, payload).await
+}
+
+async fn build_session_prompt_preview(
+    state: Arc<AppState>,
+    user: crate::storage::UserAccountRecord,
+    session_id: String,
+    payload: SystemPromptRequest,
+) -> Result<Json<Value>, Response> {
     let session_id = session_id.trim().to_string();
     if session_id.is_empty() {
         return Err(error_response(
@@ -117,12 +134,12 @@ async fn session_system_prompt(
     }
     let record = state
         .user_store
-        .get_chat_session(&resolved.user.user_id, &session_id)
+        .get_chat_session(&user.user_id, &session_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.session_not_found")))?;
     let workspace_id = resolve_agent_workspace_id(
         &state,
-        &resolved.user.user_id,
+        &user.user_id,
         record.agent_id.as_deref().or(payload.agent_id.as_deref()),
         None,
     );
@@ -138,22 +155,22 @@ async fn session_system_prompt(
         .map(|values| normalize_tool_overrides(values.clone()));
     let stored_prompt = state
         .workspace
-        .load_session_system_prompt_async(&resolved.user.user_id, &session_id, None)
+        .load_session_system_prompt_async(&user.user_id, &session_id, None)
         .await
         .unwrap_or(None);
     let frozen_tool_overrides = state
         .workspace
-        .load_session_frozen_tool_overrides_async(&resolved.user.user_id, &session_id)
+        .load_session_frozen_tool_overrides_async(&user.user_id, &session_id)
         .await;
-    let user_context = build_user_tool_context(&state, &resolved.user.user_id).await;
+    let user_context = build_user_tool_context(&state, &user.user_id).await;
     let agent_record = fetch_agent_record(
         &state,
-        &resolved.user,
+        &user,
         record.agent_id.as_deref().or(payload.agent_id.as_deref()),
         true,
     )
     .await?;
-    let mut allowed = compute_allowed_tool_names(&resolved.user, &user_context);
+    let mut allowed = compute_allowed_tool_names(&user, &user_context);
     let overrides = request_overrides.clone().unwrap_or_else(|| {
         resolve_session_tool_overrides(
             &record,
@@ -169,7 +186,7 @@ async fn session_system_prompt(
             if prompt_has_workdir(&prompt, &expected_public_workdir, &expected_local_workdir) {
                 let tooling_preview = build_prompt_tooling_preview_payload(
                     &state,
-                    &resolved.user.user_id,
+                    &user.user_id,
                     &user_context,
                     &allowed,
                     agent_record.as_ref(),
@@ -196,7 +213,7 @@ async fn session_system_prompt(
         .unwrap_or(false);
     let workspace_id = resolve_agent_workspace_id(
         &state,
-        &resolved.user.user_id,
+        &user.user_id,
         record.agent_id.as_deref().or(payload.agent_id.as_deref()),
         agent_record.as_ref(),
     );
@@ -208,9 +225,9 @@ async fn session_system_prompt(
             &tool_names,
             &user_context.skills,
             Some(&user_context.bindings),
-            &resolved.user.user_id,
+            &user.user_id,
             record.agent_id.as_deref().or(payload.agent_id.as_deref()),
-            UserStore::is_admin(&resolved.user),
+            UserStore::is_admin(&user),
             &workspace_id,
             None,
             agent_prompt.as_deref(),
@@ -219,7 +236,7 @@ async fn session_system_prompt(
         .await;
     let tooling_preview = build_prompt_tooling_preview_payload(
         &state,
-        &resolved.user.user_id,
+        &user.user_id,
         &user_context,
         &allowed,
         agent_record.as_ref(),
@@ -229,6 +246,36 @@ async fn session_system_prompt(
     Ok(Json(json!({
         "data": build_system_prompt_preview_payload(prompt, "pending", Some(tooling_preview)),
     })))
+}
+
+/// Native clients use the same read-only preview as the web UI, including
+/// frozen thread prompts, scoped tools, agent settings and memory sanitizing.
+pub async fn preview_system_prompt_for_user(
+    state: Arc<AppState>,
+    user_id: &str,
+    session_id: Option<&str>,
+    agent_id: Option<&str>,
+) -> anyhow::Result<String> {
+    let user = state
+        .user_store
+        .get_user_by_id(user_id)?
+        .ok_or_else(|| anyhow::anyhow!("desktop user unavailable"))?;
+    let payload = SystemPromptRequest {
+        agent_id: agent_id.map(str::to_string),
+        tool_overrides: None,
+        question: None,
+    };
+    let result = match session_id.map(str::trim).filter(|id| !id.is_empty()) {
+        Some(id) => build_session_prompt_preview(state, user, id.to_string(), payload).await,
+        None => build_agent_prompt_preview(state, user, payload).await,
+    };
+    let Json(value) = result.map_err(|response| {
+        anyhow::anyhow!("system prompt preview failed ({})", response.status())
+    })?;
+    Ok(value["data"]["prompt"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string())
 }
 
 fn prompt_has_workdir(prompt: &str, public_workdir: &str, local_workdir: &str) -> bool {

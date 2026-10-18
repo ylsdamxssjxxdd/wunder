@@ -28,8 +28,23 @@ struct HideProof {
     reference: Vec<u8>,
 }
 
+/// Native placement saved while the main HWND is kept out of the desktop.
+/// Moving it away before hiding gives DWM an actual surface change to compose;
+/// a plain SW_HIDE can otherwise leave the previous software-rendered frame in
+/// the screen DC for an unbounded number of reads.
+#[cfg(windows)]
+struct HideState {
+    proof: Option<HideProof>,
+    hwnd: isize,
+    rect: screen_capture::MonitorRect,
+    maximized: bool,
+}
+
 #[cfg(not(windows))]
 struct HideProof;
+
+#[cfg(not(windows))]
+struct HideState;
 
 /// Hide the main window on the UI thread and pin down what the capture would
 /// otherwise inherit from it. Must run on the UI thread, and the reference
@@ -40,16 +55,17 @@ struct HideProof;
 /// and ~150 KB instead of a 15 MB buffer per read, and a short blit is far less
 /// likely to be torn by a repaint *during* the blit, which would read as
 /// changed pixels while the ghost is still composed.
-fn hide_main_window(app: &slint::Weak<MainWindow>) -> (bool, Option<HideProof>) {
+fn hide_main_window(app: &slint::Weak<MainWindow>) -> (bool, Option<HideState>) {
     #[cfg(windows)]
     {
         use slint::winit_030::WinitWindowAccessor;
         use slint::winit_030::winit::raw_window_handle::HasWindowHandle;
         use windows_sys::Win32::Foundation::RECT;
-        use windows_sys::Win32::Graphics::Gdi::{
-            RedrawWindow, RDW_ALLCHILDREN, RDW_ERASE, RDW_INVALIDATE, RDW_UPDATENOW,
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            GetWindowRect, IsWindowVisible, SetWindowPos, HWND_BOTTOM, SWP_HIDEWINDOW,
+            SWP_NOSIZE, SWP_NOACTIVATE, SWP_NOSENDCHANGING,
         };
-        use windows_sys::Win32::UI::WindowsAndMessaging::GetWindowRect;
+        use windows_sys::Win32::Graphics::Dwm::DwmFlush;
 
         let Some(window) = app.upgrade() else {
             return (false, None);
@@ -89,9 +105,19 @@ fn hide_main_window(app: &slint::Weak<MainWindow>) -> (bool, Option<HideProof>) 
                     _ => None,
                 })
                 .or(rect);
-            (on_screen, rect)
+            let hwnd = native
+                .window_handle()
+                .ok()
+                .and_then(|handle| match handle.as_raw() {
+                    slint::winit_030::winit::raw_window_handle::RawWindowHandle::Win32(handle) => {
+                        Some(handle.hwnd.get() as isize)
+                    }
+                    _ => None,
+                });
+            let maximized = hwnd.is_some() && native.is_maximized();
+            (on_screen, rect, hwnd, maximized)
         });
-        let Some((on_screen, window_rect)) = native else {
+        let Some((on_screen, window_rect, hwnd, maximized)) = native else {
             let hidden = window.hide().is_ok();
             return (hidden, None);
         };
@@ -100,36 +126,58 @@ fn hide_main_window(app: &slint::Weak<MainWindow>) -> (bool, Option<HideProof>) 
             // capture must not re-show the window afterwards either.
             return (false, None);
         }
-        let proof = window_rect
-            .and_then(|rect| screen_capture::primary_monitor()?.intersection(&rect))
+        let Some(hwnd) = hwnd else {
+            let hidden = window.hide().is_ok();
+            return (hidden, None);
+        };
+        let Some(window_rect) = window_rect else {
+            let hidden = window.hide().is_ok();
+            return (hidden, None);
+        };
+        let proof = screen_capture::primary_monitor()
+            .and_then(|monitor| monitor.intersection(&window_rect))
             .and_then(|region| {
                 screen_capture::sample_region_preview(region)
                     .map(|reference| HideProof { region, reference })
             });
-        // Flush the software surface before ordering the HWND out. This keeps
-        // a pending menu/composer repaint from becoming the frame that DWM
-        // briefly serves after SW_HIDE.
-        if let Ok(hwnd) = window.window().window_handle().window_handle() {
-            if let slint::winit_030::winit::raw_window_handle::RawWindowHandle::Win32(handle) =
-                hwnd.as_raw()
-            {
-                unsafe {
-                    RedrawWindow(
-                        handle.hwnd.get() as isize,
-                        std::ptr::null(),
-                        0,
-                        RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW,
-                    );
-                }
-            }
+        // Move the real HWND outside the virtual desktop before hiding it.
+        // This is deliberately done on the UI thread, immediately after the
+        // reference sample, so DWM cannot keep serving the old surface while
+        // the worker begins its verification loop.
+        unsafe {
+            SetWindowPos(
+                hwnd,
+                HWND_BOTTOM,
+                window_rect.right.saturating_add(32),
+                window_rect.bottom.saturating_add(32),
+                0,
+                0,
+                SWP_HIDEWINDOW | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOSENDCHANGING,
+            );
+            let _ = DwmFlush();
         }
-        let hidden = window.hide().is_ok();
-        (hidden, if hidden { proof } else { None })
+        // The Win32 visibility bit is authoritative. Do not call Slint's
+        // window.hide() after this atomic operation: Winit may enqueue a
+        // software-surface repaint while applying set_visible(false), which
+        // is exactly the gray frame this path is meant to avoid.
+        let hidden = unsafe { IsWindowVisible(hwnd) == 0 };
+        (
+            hidden,
+            hidden.then_some(HideState {
+                proof,
+                hwnd,
+                rect: window_rect,
+                maximized,
+            }),
+        )
     }
     #[cfg(not(windows))]
     {
         match app.upgrade() {
-            Some(window) => (window.hide().is_ok(), None),
+            Some(window) => {
+                let hidden = window.hide().is_ok();
+                (hidden, hidden.then_some(HideState))
+            }
             None => (false, None),
         }
     }
@@ -146,14 +194,12 @@ fn hide_main_window(app: &slint::Weak<MainWindow>) -> (bool, Option<HideProof>) 
 /// mostly covered by other windows and its own pixels can legitimately never
 /// reach half of the region.
 ///
-/// No DwmFlush anywhere: on a static desktop it returns in ~5 ms, and measured
-/// right after a hide it came back in 13 ms with the ghost still fully on
-/// screen, so it does not force the composition that drops the window — it only
-/// delays the first useful read. The change itself lands between 35 ms and
-/// 75 ms after the hide for a window covering the whole monitor, and the pixels
-/// are the only signal that says so.
+/// The final pixel check remains necessary even after DwmFlush: flushing only
+/// waits for the compositor and does not prove that the exposed desktop has
+/// replaced the old software-rendered surface. The check is the signal that
+/// makes a premature capture impossible.
 #[cfg(windows)]
-fn wait_until_window_gone(proof: Option<&HideProof>) {
+fn wait_until_window_gone(proof: Option<&HideProof>) -> bool {
     let Some(proof) = proof else {
         // No verifiable region: the rect was unavailable or the window does
         // not touch the capture monitor. A short settle is all that is
@@ -162,7 +208,7 @@ fn wait_until_window_gone(proof: Option<&HideProof>) {
             println!("probe: no verifiable region, fixed settle only");
         }
         std::thread::sleep(HIDE_SETTLE);
-        return;
+        return true;
     };
     let started = std::time::Instant::now();
     let deadline = started + HIDE_POLL_DEADLINE;
@@ -187,13 +233,13 @@ fn wait_until_window_gone(proof: Option<&HideProof>) {
             }
         };
         if cleared {
-            return;
+            return true;
         }
         if std::time::Instant::now() >= deadline {
             if PROBE_VERBOSE.load(Ordering::Relaxed) {
                 println!("probe: hide verification reached its deadline");
             }
-            return;
+            return false;
         }
         std::thread::sleep(HIDE_POLL_INTERVAL);
     }
@@ -209,8 +255,67 @@ fn probe_ms(value: std::time::Duration) -> f64 {
 }
 
 #[cfg(not(windows))]
-fn wait_until_window_gone(_proof: Option<&HideProof>) {
+fn wait_until_window_gone(_proof: Option<&HideProof>) -> bool {
     std::thread::sleep(HIDE_SETTLE);
+    true
+}
+
+#[cfg(windows)]
+fn wait_for_hide(state: &HideState) -> bool {
+    wait_until_window_gone(state.proof.as_ref())
+}
+
+#[cfg(not(windows))]
+fn wait_for_hide(_state: &HideState) -> bool {
+    wait_until_window_gone(None)
+}
+
+#[cfg(windows)]
+fn restore_hidden_window(app: &slint::Weak<MainWindow>, state: &HideState) {
+    use slint::winit_030::WinitWindowAccessor;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        SetWindowPos, ShowWindow, HWND_TOP, SW_MAXIMIZE, SWP_NOACTIVATE, SWP_NOSENDCHANGING,
+    };
+    let width = state.rect.width().max(1);
+    let height = state.rect.height().max(1);
+    unsafe {
+        SetWindowPos(
+            state.hwnd,
+            HWND_TOP,
+            state.rect.left,
+            state.rect.top,
+            width,
+            height,
+            SWP_NOACTIVATE | SWP_NOSENDCHANGING,
+        );
+    }
+    if let Some(window) = app.upgrade() {
+        let _ = window.show();
+        if state.maximized {
+            unsafe { ShowWindow(state.hwnd, SW_MAXIMIZE) };
+        } else {
+            // Winit can apply its cached position after show; put the HWND
+            // back at the exact physical rectangle captured before hiding.
+            let _ = window.window().with_winit_window(|_| unsafe {
+                SetWindowPos(
+                    state.hwnd,
+                    HWND_TOP,
+                    state.rect.left,
+                    state.rect.top,
+                    width,
+                    height,
+                    SWP_NOACTIVATE | SWP_NOSENDCHANGING,
+                );
+            });
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn restore_hidden_window(app: &slint::Weak<MainWindow>, _state: &HideState) {
+    if let Some(window) = app.upgrade() {
+        let _ = window.show();
+    }
 }
 
 /// Settle used when the hide cannot be verified by pixels.
@@ -480,13 +585,17 @@ pub fn capture(app: slint::Weak<MainWindow>, hide_window: bool) {
         (false, None)
     };
     std::thread::spawn(move || {
-        if hidden {
-            wait_until_window_gone(proof.as_ref());
-        }
-        let result = screen_capture::capture_screen();
+        let verified = !hidden || proof.as_ref().is_some_and(wait_for_hide);
+        let result = if verified {
+            screen_capture::capture_screen()
+        } else {
+            Err("截图窗口尚未从屏幕合成中移除，请重试".into())
+        };
         let _ = slint::invoke_from_event_loop(move || {
             if hidden {
-                if let Some(window) = app.upgrade() {
+                if let Some(state) = proof.as_ref() {
+                    restore_hidden_window(&app, state);
+                } else if let Some(window) = app.upgrade() {
                     let _ = window.show();
                 }
             }
@@ -519,14 +628,18 @@ pub fn capture_fullscreen(app: slint::Weak<MainWindow>, hide_window: bool) {
         (false, None)
     };
     std::thread::spawn(move || {
-        if hidden {
-            wait_until_window_gone(proof.as_ref());
-        }
-        let result = screen_capture::capture_screen()
-            .and_then(|frame| save_attachment(frame.width, frame.height, &frame.rgba));
+        let verified = !hidden || proof.as_ref().is_some_and(wait_for_hide);
+        let result = if verified {
+            screen_capture::capture_screen()
+                .and_then(|frame| save_attachment(frame.width, frame.height, &frame.rgba))
+        } else {
+            Err("截图窗口尚未从屏幕合成中移除，请重试".into())
+        };
         let _ = slint::invoke_from_event_loop(move || {
             if hidden {
-                if let Some(window) = app.upgrade() {
+                if let Some(state) = proof.as_ref() {
+                    restore_hidden_window(&app, state);
+                } else if let Some(window) = app.upgrade() {
                     let _ = window.show();
                 }
             }

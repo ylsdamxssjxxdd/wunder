@@ -1,0 +1,65 @@
+.wunder-model-viewer {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  min-height: 280px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  color: #334155;
+  background: radial-gradient(ellipse at 50% 40%, #fff 0%, #edf2f7 75%);
+  font: 13px/1.5 "Segoe UI", sans-serif;
+}
+.wunder-model-stage { position: absolute; inset: 0; touch-action: none; }
+.wunder-model-stage canvas { display: block; width: 100%; height: 100%; }
+.wunder-model-stage:focus-visible { outline: 2px solid #487dc2; outline-offset: -3px; }
+.wunder-model-status {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 14px;
+  padding: 24px;
+  text-align: center;
+}
+.wunder-model-viewer [hidden] { display: none !important; }
+.wunder-model-toolbar {
+  position: absolute;
+  inset: auto 18px 38px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  pointer-events: none;
+}
+.wunder-model-coordinates { color: #64748b; font: 12px/1.4 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: nowrap; }
+.wunder-model-brand {
+  position: absolute;
+  left: 18px;
+  bottom: 14px;
+  color: #64748b;
+  font: 12px/1.4 "Segoe UI", sans-serif;
+  letter-spacing: .02em;
+  pointer-events: none;
+  user-select: none;
+}
+.wunder-model-viewer button {
+  border: 1px solid #cbd5e1;
+  border-radius: 7px;
+  background: #fff;
+  color: #334155;
+  font: inherit;
+  width: 38px;
+  height: 34px;
+  padding: 0;
+  cursor: pointer;
+  box-shadow: none;
+}
+.wunder-model-viewer button:hover { background: #e7eef8; }
+.wunder-model-viewer button:disabled { cursor: default; opacity: 0.5; }
+.wunder-model-viewer button[aria-pressed="true"] { background: #e0eafb; border-color: #7e9bca; }

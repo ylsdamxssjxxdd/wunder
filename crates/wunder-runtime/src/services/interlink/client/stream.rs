@@ -211,7 +211,11 @@ pub async fn pump_file(
     }
 }
 
-async fn send_chunk(tx: &mpsc::Sender<OutboundFrame>, cancel: &CancellationToken, bytes: Vec<u8>) -> Result<(), PumpOutcome> {
+async fn send_chunk(
+    tx: &mpsc::Sender<OutboundFrame>,
+    cancel: &CancellationToken,
+    bytes: Vec<u8>,
+) -> Result<(), PumpOutcome> {
     tokio::select! {
         biased;
         _ = cancel.cancelled() => Err(PumpOutcome::Cancelled),
@@ -231,7 +235,13 @@ mod tests {
         let task = tokio::spawn(async move { send_chunk(&sender, &token, vec![1]).await });
         tokio::task::yield_now().await;
         cancel.cancel();
-        assert_eq!(tokio::time::timeout(Duration::from_secs(1), task).await.unwrap().unwrap(), Err(PumpOutcome::Cancelled));
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(1), task)
+                .await
+                .unwrap()
+                .unwrap(),
+            Err(PumpOutcome::Cancelled)
+        );
     }
 }
 

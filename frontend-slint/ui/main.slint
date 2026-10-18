@@ -10,7 +10,7 @@ import { ProcessEntry } from "theme.slint";
 import { Composer, GoalBanner, InquiryPanel, StatusDock } from "composer.slint";
 import { TermSpan } from "terminal_view.slint";
 import { TimelineView } from "timeline.slint";
-import { ActivityCard, ActivityMonth, ActivityWeek } from "activity_card.slint";
+import { ActivityMonth, ActivityWeek } from "activity_card.slint";
 export { ActivityMonth, ActivityWeek }
 import { Sidebar, WorkspaceVisual } from "sidebar.slint";
 import { SidebarMetrics } from "drag_row.slint";
@@ -134,6 +134,7 @@ export component MainWindow inherits Window {
     in-out property <int> selected-model: -1;
     in-out property <string> active-session-id;
     in-out property <string> active-agent-id;
+    in-out property <string> cloud-greeting;
     in-out property <bool> busy: false;
     in-out property <bool> command-pending: false;
     // The terminal button opens a separate terminal window; chat remains in
@@ -512,9 +513,12 @@ export component MainWindow inherits Window {
     callback pick-rg-path();
     // The settings page's active category, shared with the smoke harness.
     in-out property <int> settings-active-panel: 0;
+    callback wunder-model-visibility(bool, int);
+    changed settings-open => { root.wunder-model-visibility(root.settings-open, root.settings-active-panel); }
     // Memory, usage and archive data are pulled on demand: the old expert page's
     // own tab strip is gone, so the active category is what selects the view.
     changed settings-active-panel => {
+        root.wunder-model-visibility(root.settings-open, root.settings-active-panel);
         if root.settings-active-panel == 6 || root.settings-active-panel == 10
             || root.settings-active-panel == 13 {
             root.refresh-expert();
@@ -855,6 +859,18 @@ export component MainWindow inherits Window {
     // flag per category, in §9.2 order.
     in-out property <string> settings-query: "";
     in-out property <[bool]> settings-category-flags: [true, true, true, true, true, true, true, true, true, true, true, true];
+    in-out property <image> wunder-model-frame;
+    in-out property <string> wunder-model-status;
+    in-out property <bool> wunder-model-loading: true;
+    in-out property <bool> wunder-model-failed: false;
+    in-out property <bool> wunder-model-rotating: true;
+    in-out property <bool> wunder-model-native-active: false;
+    callback wunder-model-gesture(string, float, float);
+    callback wunder-model-reset();
+    callback wunder-model-retry();
+    callback wunder-model-toggle-rotate();
+    callback wunder-model-size-changed(int, int);
+    callback wunder-model-geometry-changed(int, int, int, int);
     callback filter-settings-categories(string);
     // Help is not a category anymore: the general page raises this to open the
     // standalone help window.
@@ -1014,6 +1030,16 @@ export component MainWindow inherits Window {
                         timeline_view := TimelineView {
                             visible: true;
                             rows: root.timeline;
+                            greeting: root.cloud-chat-active ? root.cloud-greeting
+                                : root.agents.length > 0 ? root.agents[0].description : "";
+                            greeting-loading: root.prompt-preview-loading;
+                            preview-prompt => { root.open-prompt-preview(); }
+                            show-activity: root.timeline.length == 0 && !root.chat-loading
+                                && !root.session-loading && !root.cloud-thread-busy;
+                            activity-sessions: root.activity-sessions;
+                            activity-credits: root.activity-credits;
+                            activity-months: root.activity-months;
+                            activity-tab <=> root.activity-tab;
                             turn-marks: root.turn-marks;
                             follow-output <=> root.follow-output;
                             spinning: root.busy;
@@ -1025,16 +1051,6 @@ export component MainWindow inherits Window {
                             open-resource(id) => { root.timeline-open(id); }
                             open-subagent(id) => { root.timeline-open-subagent(id); }
                             stop-subagent(id) => { root.timeline-stop-subagent(id); }
-                        }
-                        // A thread without a single message is a blank pane; the
-                        // yearly activity grid holds that space until the first
-                        // message lands, then the transcript takes it back.
-                        if root.timeline.length == 0 && !root.chat-loading && !root.session-loading : ActivityCard {
-                            x: 0px; y: 0px; width: 100%; height: 100%;
-                            sessions: root.activity-sessions;
-                            credits: root.activity-credits;
-                            months: root.activity-months;
-                            tab <=> root.activity-tab;
                         }
                     }
                     // Status dock: the plan capsule sits between the timeline
@@ -1167,9 +1183,22 @@ export component MainWindow inherits Window {
                     }
                 }
                 Rectangle { height: 1px; background: Theme.border; }
-                SettingsPage {
+        SettingsPage {
         loading: root.settings-loading; saving: root.saving;
         status: root.status;
+        settings-category-flags: root.settings-category-flags;
+        wunder-model-frame <=> root.wunder-model-frame;
+        wunder-model-status <=> root.wunder-model-status;
+        wunder-model-loading <=> root.wunder-model-loading;
+        wunder-model-failed <=> root.wunder-model-failed;
+        wunder-model-rotating <=> root.wunder-model-rotating;
+        wunder-model-native-active <=> root.wunder-model-native-active;
+        wunder-model-gesture(kind, dx, dy) => { root.wunder-model-gesture(kind, dx, dy); }
+        wunder-model-reset => { root.wunder-model-reset(); }
+        wunder-model-retry => { root.wunder-model-retry(); }
+        wunder-model-toggle-rotate => { root.wunder-model-toggle-rotate(); }
+        wunder-model-size-changed(width, height) => { root.wunder-model-size-changed(width, height); }
+        wunder-model-geometry-changed(x, y, width, height) => { root.wunder-model-geometry-changed(x, y, width, height); }
         models: root.models; selected-model: root.selected-model;
         workspace-root <=> root.workspace-root; language <=> root.runtime-language;
         // The profile card and its edit dialog stay on the shell (the rail's
@@ -1406,7 +1435,6 @@ export component MainWindow inherits Window {
         open-expert-archive(id) => { root.open-expert-archive(id); }
 
         settings-query <=> root.settings-query;
-        settings-category-flags: root.settings-category-flags;
         settings-search(query) => { root.filter-settings-categories(query); }
         open-help => { root.open-help(); }
         // §9.3 agent form. Every editable field is two-way bound so the settings

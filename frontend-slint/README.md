@@ -55,12 +55,12 @@ powershell -ExecutionPolicy Bypass -File builders/build-win7-offline.ps1 -CargoC
 
 2026-09-23 完整原生 Win7 x86 Release 构建与 PE 门禁通过，产物约 76.6 MiB。该 32 位产物在当前 Windows 主机的隔离回归通过（`target/frontend-slint/native-win7-check-20260923-a/`）：聊天与全部已接入页面、配置重启回读，50,999 字节、184 次刷新、最大 UI 投影应用 1.010 ms、积压 30/128、峰值工作集约 70.6 MiB。无参数启动、重启及启动中关闭另经 `target/frontend-slint/native-win7-launch-20260923-a/` 验证，未创建 bridge 子进程或本机监听。**尚未在 Win7 真机执行**；编译、导入门禁及当前系统运行结果不能替代真机验证。
 
-Release 输出：`target/frontend-slint/dist/win7-x86/wunder-frontend-slint-0.4.0-win7-x86.exe`。构建脚本会检查最终 PE 是否为 i386，并拒绝 Win7 不支持的 WinRT/API Set 导入。
+Release 输出：`target/frontend-slint/dist/win7-x86/wunder-frontend-slint-0.1.0-win7-x86.exe`。构建脚本会检查最终 PE 是否为 i386，并拒绝 Win7 不支持的 WinRT/API Set 导入。
 
 ## 原生冒烟检查
 
 ```powershell
-wunder-frontend-slint-0.4.0-win7-x86.exe --smoke-check frontend-slint/artifacts/native
+wunder-frontend-slint-0.1.0-win7-x86.exe --smoke-check frontend-slint/artifacts/native
 ```
 
 它会生成 `smoke.txt` 和各页面的浅色截图，并通过真实指针事件验证侧边栏单击切换，再检查输入限制、会话隔离、任务切换、有界历史、新任务、专家编辑、模型编辑和默认项切换。
@@ -97,7 +97,7 @@ Rust 1.92 和 Cargo vendor 从同级 `Rust-builder/kylin-arm` 挂载，构建完
 
 ```bash
 bash frontend-slint/scripts/check-linux-arm64-appimage.sh \
-  target/slint/dist/linux-arm64/wunder-slint-0.4.0-linux-arm64.AppImage
+  target/slint/dist/linux-arm64/wunder-slint-0.1.0-linux-arm64.AppImage
 ```
 
 AppImage 启动时把 `WUNDER_TEMPD` 和 `WUNDER_WORK` 放到用户数据目录，不会写入只读的
@@ -153,3 +153,5 @@ Desktop CI 发布保留 Win7 32 位 EXE、Ubuntu 18.04 x86_64 AppImage 和 Ubunt
 常规执行 `python frontend-slint/scripts/check-chat-turns.py`：运行后端归属投影测试、原生流式投影测试及 Slint Viewer 编译/截图，产物在 `temp_dir/desktop-turn-review/`。无需真实后端服务或模型。隔离 SQLite 测试通过共享持久事件订阅器验证目标续跑间隙保持订阅、完成前收到部分正文、最终输出先于结束通知，以及订阅释放和显式取消；投影测试覆盖快照恢复、去重与模型轮次重置。Viewer 截图使用合成数据，仅证明布局；这些检查不替代真实模型调度或 Win7 真机性能验收。完整原生运行链另用 `check-native.py` 验证。
 
 目标后台续跑与排队任务按根用户轮次订阅 ThreadLog 持久游标，执行身份改变只更新原有助手区域。直接执行结束后先释放调度租约，再从调度前记录的游标接续；目标仍可继续或终态正文尚未消费完时不发送 `Finished`。订阅断开只停止观察，用户显式停止才取消目标和线程活动。
+
+Windows 可运行 `python frontend-slint/scripts/check-timeline-scroll.py`，用 Slint Viewer 真实窗口验证长记录滚轮上下移动、小窗口与长问候语溢出、流式期间保持历史阅读位置，以及回到最新后恢复跟随。脚本需要 Pillow，不启动后端或模型；隔离夹具、位置采样和截图写入 `target/.scratch/timeline-scroll-check/`。

@@ -37,6 +37,7 @@ mod activity;
 mod events;
 mod media;
 mod prompt;
+pub use prompt::preview_system_prompt_for_user;
 mod queue;
 mod sessions;
 mod stress;

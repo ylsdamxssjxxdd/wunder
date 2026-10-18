@@ -263,59 +263,23 @@ impl NativeDesktop {
         Ok(())
     }
 
-    /// Build a realtime system prompt preview, mirroring the server
-    /// `/chat/system-prompt` endpoint semantics for the desktop user.
+    /// Settings preview uses the default agent, without changing any thread.
     pub fn preview_system_prompt(&self) -> Result<String> {
-        let state = self.state().clone();
-        let user_id = self.user_id().to_string();
-        self.runtime.block_on(async move {
-            let user_context =
-                wunder_server::user_access::build_user_tool_context(&state, &user_id).await;
-            let user = state
-                .user_store
-                .get_user_by_id(&user_id)?
-                .ok_or_else(|| anyhow!("desktop user unavailable"))?;
-            let allowed =
-                wunder_server::user_access::compute_allowed_tool_names(&user, &user_context);
-            let mut tool_names: Vec<String> = allowed.into_iter().collect();
-            tool_names.sort();
-            if tool_names.is_empty() {
-                tool_names.push("__no_tools__".to_string());
-            }
-            let agent_record = state
-                .user_store
-                .get_user_agent_by_id("__default__")
-                .unwrap_or(None);
-            let agent_prompt = agent_record
-                .as_ref()
-                .map(|record| record.system_prompt.trim().to_string())
-                .filter(|value| !value.is_empty());
-            let preview_skill = agent_record
-                .as_ref()
-                .map(|record| record.preview_skill)
-                .unwrap_or(false);
-            let workspace_id = state
-                .workspace
-                .ensure_user_root(&user_id)
-                .unwrap_or_else(|_| state.workspace.root().to_path_buf());
-            let prompt = state
-                .kernel
-                .orchestrator
-                .build_system_prompt(
-                    &user_context.config,
-                    &tool_names,
-                    &user_context.skills,
-                    Some(&user_context.bindings),
-                    &user_id,
-                    None,
-                    wunder_server::user_store::UserStore::is_admin(&user),
-                    workspace_id.to_string_lossy().as_ref(),
-                    None,
-                    agent_prompt.as_deref(),
-                    preview_skill,
-                )
-                .await;
-            Ok(prompt)
-        })
+        self.preview_thread_system_prompt(None, None)
+    }
+
+    /// Read the active thread's frozen prompt, or preview its initial prompt.
+    pub fn preview_thread_system_prompt(
+        &self,
+        session_id: Option<&str>,
+        agent_id: Option<&str>,
+    ) -> Result<String> {
+        self.runtime
+            .block_on(wunder_server::api::chat::preview_system_prompt_for_user(
+                self.state().clone(),
+                self.user_id(),
+                session_id,
+                agent_id,
+            ))
     }
 }

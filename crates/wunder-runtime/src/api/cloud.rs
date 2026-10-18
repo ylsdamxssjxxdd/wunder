@@ -600,9 +600,29 @@ async fn register_device(
     } else {
         None
     };
+    // A client may lose its installation-id file during an upgrade or a
+    // profile migration.  Reusing the existing unrevoked identity by the
+    // stable `(user, client, name)` tuple prevents a second same-named device
+    // from being created for the same installation.  Revoked rows are never
+    // adopted; an explicit re-login then gets a fresh identity.
+    let identity_match = if binding.is_none() && requested_id.is_none() {
+        let lookup_storage = state.storage.clone();
+        let lookup_user = identity.user_id.clone();
+        let lookup_client = client.clone();
+        let lookup_name = name.clone();
+        blocking::run_db("api.cloud.find_device_identity", move || {
+            lookup_storage.find_cloud_device_by_identity(&lookup_user, &lookup_client, &lookup_name)
+        })
+        .await
+        .map_err(internal_error)?
+        .filter(|device| !device.revoked)
+    } else {
+        None
+    };
     let device_id = binding
         .as_ref()
         .map(|bound| bound.device_id.clone())
+        .or_else(|| identity_match.map(|device| device.device_id))
         .or_else(|| requested_id.map(str::to_string))
         .unwrap_or_else(|| Uuid::new_v4().to_string());
     if binding.as_ref().is_some_and(|bound| {

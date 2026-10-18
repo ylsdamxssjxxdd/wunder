@@ -50,6 +50,7 @@ mod tray;
 mod turn_stats;
 mod workspace_files;
 mod workspace_ui;
+mod native;
 
 static STARTUP_BOOT: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
 
@@ -110,7 +111,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if matches!(
         first_argument.as_deref().and_then(std::ffi::OsStr::to_str),
-        Some("--native-smoke" | "--native-restore")
+        Some("--native-smoke" | "--native-restore" | "--native-reasoning-smoke")
     ) {
         let directory = std::path::PathBuf::from(
             arguments
@@ -123,6 +124,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut args = wunder_desktop::args::DesktopArgs::native_defaults();
         args.temp_root = Some(directory.join("runtime").canonicalize()?);
         let restoring = first_argument.as_deref() == Some(std::ffi::OsStr::new("--native-restore"));
+        let reasoning = first_argument.as_deref() == Some(std::ffi::OsStr::new("--native-reasoning-smoke"));
         if !restoring {
             args.workspace = Some(directory.join("workspace"));
         }
@@ -130,13 +132,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // The restore phase deliberately runs a read-only guard: the streaming
         // phase's guard writes probe fixtures, and a check that mutates the
         // store cannot prove what survived the restart.
-        if !restoring {
+        if !restoring && !reasoning {
             native_smoke::check_runtime(&runtime)?;
         }
         native_runtime::install_ready_without_pets(&app, runtime.clone());
         app.show()?;
         startup_log("window_show_return", startup_boot);
-        return if restoring {
+        return if reasoning {
+            native_smoke::run_reasoning(&app, directory)
+        } else if restoring {
             native_restore::run(&app, directory, runtime)
         } else {
             native_smoke::run(&app, directory)

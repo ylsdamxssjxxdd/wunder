@@ -1214,7 +1214,7 @@ impl Orchestrator {
                 &skills_snapshot,
                 Some(&user_tool_bindings),
             ),
-            llm_config.support_vision.unwrap_or(false),
+            llm_config.support_vision,
         );
         let preview_skill = preview_skill_override.unwrap_or_else(|| {
             agent_id

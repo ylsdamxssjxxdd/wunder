@@ -2160,7 +2160,9 @@ function spanStyle(span: { model: TimelineSpan; left: number; width: number }): 
     top: `${7 + span.model.lane * 14}px`,
   }
   if ((span.model as OverviewSpan).aggregate) {
-    style.opacity = '0.86'
+    // Keep aggregate overview bars at the same strength as the
+    // `.tt-span-overview` rule and the native Slint trajectory.
+    style.opacity = '0.94'
     style.pointerEvents = 'auto'
   }
   return style

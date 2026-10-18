@@ -10,7 +10,7 @@ use std::sync::Arc;
 use axum::extract::{Path as AxumPath, Query as AxumQuery, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, patch, post};
+use axum::routing::{delete, get, patch, post};
 use axum::{Json, Router};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -60,6 +60,7 @@ pub fn router() -> Router<Arc<AppState>> {
             "/wunder/interlink/nodes/{device_id}/enabled",
             patch(set_enabled),
         )
+        .route("/wunder/interlink/nodes/{device_id}", delete(remove_device))
         .route("/wunder/interlink/commands", post(issue_command))
         .route("/wunder/interlink/commands/{command_id}", get(get_command))
         .route(
@@ -1508,6 +1509,65 @@ async fn set_enabled(
         "data": {"ok": true, "device_id": device_id, "interlink_enabled": request.enabled}
     }))
     .into_response()
+}
+
+/// Remove one of the caller's local devices from the user-facing directory.
+///
+/// This is a revocation rather than a physical delete: device logs and audit
+/// references remain addressable, while the credential, tunnel, shadow and
+/// outstanding commands are cut off immediately.  A later login receives a
+/// fresh device identity and cannot silently resurrect the revoked row.
+async fn remove_device(
+    State(state): State<Arc<AppState>>,
+    AxumPath(device_id): AxumPath<String>,
+    headers: HeaderMap,
+) -> Response {
+    let resolved = match resolve_user(&state, &headers, None).await {
+        Ok(resolved) => resolved,
+        Err(response) => return response,
+    };
+    let user_id = resolved.user.user_id.clone();
+    let device_id = device_id.trim().to_string();
+    if device_id.is_empty() {
+        return error_response(StatusCode::BAD_REQUEST, "device_id is required".to_string());
+    }
+    match load_device(&state, &device_id).await {
+        Ok(Some(device)) if !device.revoked && device.user_id == user_id => {}
+        Ok(_) => return shadow_device_error(),
+        Err(err) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }
+
+    let storage = state.storage.clone();
+    let lookup = device_id.clone();
+    if let Err(err) = blocking::run_db("api.interlink.remove_device", move || {
+        storage.set_cloud_device_revoked(&lookup, true)
+    })
+    .await
+    {
+        return error_response(StatusCode::INTERNAL_SERVER_ERROR, err.to_string());
+    }
+
+    // Revocation is a hard cut.  These operations are idempotent and safe if
+    // the device is already offline.
+    interlink_ws::close_tunnel(&device_id, "device_removed").await;
+    crate::services::interlink::remote::hub().close_node(&device_id);
+    let storage = state.storage.clone();
+    let shadow_id = device_id.clone();
+    let _ = blocking::run_db("api.interlink.remove_device_shadow", move || {
+        storage.delete_interlink_shadow(&shadow_id)
+    })
+    .await;
+    let _ =
+        commands::fail_device_commands(state.storage.clone(), &device_id, now_unix_seconds()).await;
+    audit_write(
+        &state,
+        AUDIT_POLICY_UPDATE,
+        &user_id,
+        &device_id,
+        vec![("by", json!("user")), ("removed", json!(true))],
+    )
+    .await;
+    Json(json!({"data": {"ok": true, "device_id": device_id, "removed": true}})).into_response()
 }
 
 // ---------------------------------------------------------------------------

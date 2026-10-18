@@ -56,7 +56,14 @@ fn bind(app: &MainWindow, api: Arc<NativeDesktop>, child: bool, pending: Rc<Cell
         else {
             return;
         };
-        if !row.open || row.process_root.is_empty() {
+        if !(row.open || (row.visible && row.status_kind == crate::timeline::STATUS_RUNNING))
+            || row.process_root.is_empty()
+        {
+            return;
+        }
+        // The stream owns this model until settlement. A durable page is
+        // necessarily behind its active tail, and must never replace it.
+        if row.process_local && row.status_kind == crate::timeline::STATUS_RUNNING {
             return;
         }
         if row.process_local && direction == 0 && !row.process_error {
@@ -114,7 +121,11 @@ fn bind(app: &MainWindow, api: Arc<NativeDesktop>, child: bool, pending: Rc<Cell
         let lookup = target.clone();
         let root_id = root.clone();
         let cloud = !child && app.get_cloud_chat_active();
-        let final_id = if cloud { crate::cloud_threads::final_message_id(&root) } else { String::new() };
+        let final_id = if cloud {
+            crate::cloud_threads::final_message_id(&root)
+        } else {
+            String::new()
+        };
         std::thread::spawn(move || {
             let result = if cloud {
                 backend.cloud_thread_process_page(&lookup, &root_id, &final_id, before, after)
@@ -159,11 +170,23 @@ fn bind(app: &MainWindow, api: Arc<NativeDesktop>, child: bool, pending: Rc<Cell
             if row.process_entries != entries {
                 return true;
             }
+            if row.process_local && row.status_kind == crate::timeline::STATUS_RUNNING {
+                return true;
+            }
             row.process_loading = false;
             match result {
                 Ok(page) => {
                     let (page_first, page_last) = (page.first, page.last);
                     apply_page(&mut row, page, direction);
+                    for reason in model.iter().filter(|reason| {
+                        reason.kind == crate::timeline::KIND_REASON
+                            && reason.process_idx == row.process_idx
+                    }) {
+                        crate::timeline_text::merge_reasoning_tail(
+                            &row,
+                            crate::timeline_text::process_entry(&reason),
+                        );
+                    }
                     if let Some(cursor) = cursors.borrow_mut().get_mut(&key) {
                         cursor.first = page_first;
                         cursor.last = page_last;
@@ -363,5 +386,64 @@ mod tests {
                 .unwrap()
                 .open
         );
+    }
+
+    #[test]
+    fn delayed_process_page_keeps_the_live_thought_and_older_page_stays_put() {
+        let mut row = TimelineRow {
+            kind: crate::timeline::KIND_PROCESS,
+            process_idx: 4,
+            process_entries: ModelRc::new(VecModel::<ProcessEntry>::default()),
+            ..Default::default()
+        };
+        let live = || ProcessEntry {
+            id: "reason-fixture-item".into(),
+            kind: crate::timeline::KIND_REASON,
+            detail: "Fixture thought continued".into(),
+            status_kind: crate::timeline::STATUS_RUNNING,
+            ..Default::default()
+        };
+        crate::timeline_text::merge_reasoning_tail(&row, live());
+        row.process_entries.set_row_data(
+            0,
+            ProcessEntry {
+                open: true,
+                ..row.process_entries.row_data(0).unwrap()
+            },
+        );
+        let child = row.process_entries.clone();
+        apply_page(
+            &mut row,
+            NativeProcessPage {
+                items: vec![NativeProcessItem {
+                    id: "fixture-item".into(),
+                    state: "running".into(),
+                    reasoning: "Fixture thought".into(),
+                    text: String::new(),
+                    tool: None,
+                }],
+                ..Default::default()
+            },
+            2,
+        );
+        crate::timeline_text::merge_reasoning_tail(&row, live());
+        assert_eq!(row.process_entries, child);
+        assert_eq!(child.row_count(), 1);
+        assert!(child.row_data(0).unwrap().open);
+        assert_eq!(
+            child.row_data(0).unwrap().detail,
+            "Fixture thought continued"
+        );
+        let stable = child.row_data(0).unwrap();
+        row.process_newer = true;
+        crate::timeline_text::merge_reasoning_tail(
+            &row,
+            ProcessEntry {
+                id: "reason-fixture-next".into(),
+                ..live()
+            },
+        );
+        assert_eq!(child.row_count(), 1);
+        assert_eq!(child.row_data(0).unwrap(), stable);
     }
 }

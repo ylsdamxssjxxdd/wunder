@@ -1368,8 +1368,8 @@
     "zh-CN": "当前平台不支持桌面控制。"
   },
   "tool.desktop_control.followup_prompt": {
-    "en-US": "Here is the latest desktop screenshot.",
-    "zh-CN": "这里是最新的桌面截图。"
+    "en-US": "The desktop action has been applied. The following is the latest screenshot after the action. Verify the result first; retry the same action only if the state is confirmed unchanged.",
+    "zh-CN": "桌面动作已经执行。下面是动作后的最新截图。请先根据截图确认结果，只有确认状态未变化时才重试相同动作。"
   },
   "tool.desktop_control.followup_prompt_wait": {
     "en-US": "Waited and captured a fresh desktop screenshot.",
@@ -1976,8 +1976,8 @@
     "zh-CN": "清洗后返回内容的最大字符数，可选。"
   },
   "tool.spec.desktop_control.description": {
-    "en-US": "Drive and observe the local desktop. Use bbox together with an action; keyboard actions use key or text, scrolling uses scroll_steps, drag uses to_bbox, and action=wait (with delay_ms) waits then returns a fresh screenshot for inspection.",
-    "zh-CN": "操作并观察本机桌面。用 bbox 配合 action 指定目标与动作；键盘动作用 key 或 text，滚动用 scroll_steps，拖拽用 to_bbox；action=wait（配合 delay_ms）先等待再返回一张新截图用于观察。"
+    "en-US": "Drive and observe the local desktop. Use bbox together with an action; keyboard actions use key or text, scrolling uses scroll_steps, drag uses to_bbox, and action=wait (with delay_ms) waits then returns a fresh screenshot for inspection. Every action returns an immediate post-action screenshot and an observation receipt; verify it before retrying the same action.",
+    "zh-CN": "操作并观察本机桌面。用 bbox 配合 action 指定目标与动作；键盘动作用 key 或 text，滚动用 scroll_steps，拖拽用 to_bbox；action=wait（配合 delay_ms）先等待再返回一张新截图用于观察。每次动作都会立即返回动作后截图和观察回执；重试相同动作前必须先核对截图。"
   },
   "tool.spec.desktop_control.args.bbox": {
     "en-US": "Target bbox in normalized screenshot space. Format: [x1,y1,x2,y2] or [cx,cy].",

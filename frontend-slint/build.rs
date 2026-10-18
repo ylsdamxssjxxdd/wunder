@@ -23,6 +23,7 @@ fn main() {
         println!("cargo:rerun-if-changed=assets/icons/{icon}");
     }
     println!("cargo:rerun-if-changed=assets/fonts/msyh.ttc");
+    println!("cargo:rerun-if-changed=assets/models/wunder.glb");
     let raw = std::fs::read("assets/fonts/msyh.ttc").expect("read bundled Microsoft YaHei");
     let compressed = lz4_flex::compress_prepend_size(&raw);
     let out_dir = std::path::PathBuf::from(std::env::var_os("OUT_DIR").expect("OUT_DIR"));

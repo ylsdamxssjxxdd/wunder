@@ -114,7 +114,7 @@ import { hasRetainedMessageConversationContext as hasRetainedConversationContext
 
 import { syncDemoChatCache } from './chatDemoPanels';
 import { filterSessionsByAgent, resolveSessionKey, writeSessionListCache } from './chatRuntimeState';
-import { DesktopOverlayBridge, SessionGoal, SessionOrchestrationLock } from './chatTypes';
+import { SessionGoal, SessionOrchestrationLock } from './chatTypes';
 
 export const CHAT_STATE_KEY = 'beeroom-chat-state';
 export const LEGACY_CHAT_STATE_KEY = 'wille-chat-state';
@@ -464,66 +464,4 @@ export const resolvePersistedSessionId = (agentId) => {
   const key = normalizeAgentKey(agentId);
   const state = readChatPersistState();
   return state.lastSessionByAgent?.[key] || '';
-};
-
-export const getDesktopOverlayBridge = (): DesktopOverlayBridge | null => {
-  if (typeof window === 'undefined') {
-    return null;
-  }
-  const candidate = (window as Window & { wunderDesktop?: DesktopOverlayBridge }).wunderDesktop;
-  return candidate || null;
-};
-
-export const applyDesktopOverlayEvent = (eventType: string, data: unknown): boolean => {
-  if (!false) {
-    return false;
-  }
-  const bridge = getDesktopOverlayBridge();
-  if (!bridge) {
-    return false;
-  }
-  const payload = (data && typeof data === 'object' ? data : {}) as Record<string, unknown>;
-  const toNumber = (value: unknown): number | null => {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : null;
-  };
-  if (eventType === 'desktop_control_hint' && typeof bridge.showControllerHint === 'function') {
-    const x = toNumber(payload.x);
-    const y = toNumber(payload.y);
-    if (x === null || y === null) return true;
-    const durationMs = toNumber(payload.duration_ms ?? payload.durationMs) ?? undefined;
-    bridge.showControllerHint({
-      x,
-      y,
-      description: typeof payload.description === 'string' ? payload.description : undefined,
-      durationMs
-    });
-    return true;
-  }
-  if (eventType === 'desktop_control_hint_done' && typeof bridge.showControllerDone === 'function') {
-    const x = toNumber(payload.x);
-    const y = toNumber(payload.y);
-    if (x === null || y === null) return true;
-    const durationMs = toNumber(payload.duration_ms ?? payload.durationMs) ?? undefined;
-    bridge.showControllerDone({
-      x,
-      y,
-      description: typeof payload.description === 'string' ? payload.description : undefined,
-      durationMs
-    });
-    return true;
-  }
-  if (eventType === 'desktop_control_countdown' && typeof bridge.showMonitorCountdown === 'function') {
-    const waitMs = toNumber(payload.wait_ms ?? payload.waitMs ?? 0) ?? 0;
-    bridge.showMonitorCountdown({ waitMs });
-    return true;
-  }
-  if (
-    eventType === 'desktop_control_countdown_done' &&
-    typeof bridge.hideOverlay === 'function'
-  ) {
-    bridge.hideOverlay();
-    return true;
-  }
-  return false;
 };

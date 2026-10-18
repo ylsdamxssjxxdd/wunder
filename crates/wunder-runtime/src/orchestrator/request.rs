@@ -332,8 +332,7 @@ impl Orchestrator {
         let allow_vision = self
             .resolve_llm_config(config, None)
             .ok()
-            .map(|(_, llm_config)| llm_config.support_vision.unwrap_or(false))
-            .unwrap_or(false);
+            .and_then(|(_, llm_config)| llm_config.support_vision);
         let allowed_tool_names = self.filter_tools_for_model_capability(
             self.resolve_allowed_tool_names(config, tool_names, skills, user_tool_bindings),
             allow_vision,

@@ -127,8 +127,13 @@ fn friendly_error(error: anyhow::Error, login: bool) -> anyhow::Error {
 }
 
 impl NativeDesktop {
-    pub fn cloud_set_local_sharing(&self, enabled: bool, full_shadow: bool) -> Result<CloudStatusView> {
-        self.runtime.block_on(shared().set_local_sharing(enabled, full_shadow))?;
+    pub fn cloud_set_local_sharing(
+        &self,
+        enabled: bool,
+        full_shadow: bool,
+    ) -> Result<CloudStatusView> {
+        self.runtime
+            .block_on(shared().set_local_sharing(enabled, full_shadow))?;
         Ok(CloudStatusView::project(shared().status()))
     }
     /// Login against `server` with a local-scope session. The engine persists

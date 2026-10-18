@@ -11,6 +11,83 @@ use wunder_desktop::{NativeChatEvent, NativeChatInput, NativeDesktop};
 
 pub const DELTA: &str = "增量测试内容。增量测试内容。增量测试内容。增量测试内容。\n";
 
+/// A real model stream, stopped after its first body: reason-only frames must
+/// create and update a visible child before either body or terminal output.
+pub fn run_reasoning(
+    app: &MainWindow,
+    directory: PathBuf,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let result = Rc::new(RefCell::new(None));
+    let output = result.clone();
+    let weak = app.as_weak();
+    let timer = Timer::default();
+    let started = Instant::now();
+    let mut phase = 0;
+    let mut first_detail = String::new();
+    let mut growth = 0;
+    timer.start(TimerMode::Repeated, Duration::from_millis(50), move || {
+        let Some(app) = weak.upgrade() else { return };
+        let checked = (|| -> Result<bool, Box<dyn std::error::Error>> {
+            ensure(started.elapsed() < Duration::from_secs(35), "reasoning smoke timed out")?;
+            if app.get_chat_loading() || app.get_session_loading() || app.get_creating_session() {
+                return Ok(false);
+            }
+            if phase == 0 {
+                app.invoke_new_thread();
+                phase = 1;
+            } else if phase == 1 {
+                app.set_draft("native-long".into());
+                app.invoke_send_message();
+                if app.get_busy() { phase = 2; }
+            } else if phase == 2 {
+                let process = app.get_timeline().iter().find(|row| row.kind == crate::timeline::KIND_PROCESS);
+                if let Some(process) = process {
+                    if let Some(reason) = process.process_entries.iter().find(|row| row.kind == crate::timeline::KIND_REASON && !row.detail.is_empty()) {
+                        ensure(process.visible && process.status_kind == crate::timeline::STATUS_RUNNING, "live reasoning process is hidden")?;
+                        if app.get_stream_bytes() == 0 {
+                            ensure(reason.status_kind == crate::timeline::STATUS_RUNNING, "reasoning settled before body")?;
+                        }
+                        if first_detail.is_empty() {
+                            ensure(app.get_stream_bytes() == 0, "first reasoning arrived after body")?;
+                            first_detail = reason.detail.to_string();
+                            crate::smoke::snapshot(&app, &directory.join("native-reasoning-first.png"))?;
+                            app.invoke_timeline_toggle(reason.payload);
+                        } else if reason.detail.len() > first_detail.len() && app.get_stream_bytes() == 0 {
+                            growth += 1;
+                            first_detail = reason.detail.to_string();
+                            crate::smoke::snapshot(&app, &directory.join("native-reasoning-live.png"))?;
+                        }
+                    }
+                }
+                if app.get_stream_bytes() > 0 {
+                    ensure(growth >= 2, "reasoning did not update before body output")?;
+                    app.invoke_stop_generation();
+                    phase = 3;
+                }
+                ensure(app.get_busy() || phase == 3, "turn ended before live reasoning was verified")?;
+            } else if phase == 3 && !app.get_busy() {
+                return Ok(true);
+            }
+            Ok(false)
+        })();
+        if matches!(checked, Ok(false)) { return; }
+        let report = match &checked {
+            Ok(_) => format!("PASS: native reasoning visible before body; {growth} live updates after disclosure\n"),
+            Err(error) => format!("FAIL: reasoning phase {phase}: {error}\n"),
+        };
+        *output.borrow_mut() = Some(std::fs::write(directory.join("smoke.txt"), report)
+            .map_err(|e| e.to_string()).and(checked.map(|_| ()).map_err(|e| e.to_string())));
+        let _ = slint::quit_event_loop();
+    });
+    app.run()?;
+    timer.stop();
+    result
+        .borrow_mut()
+        .take()
+        .ok_or("reasoning smoke did not run")??;
+    Ok(())
+}
+
 /// The runtime collapses online *_delta frames into thread_item_delta and
 /// keeps the semantic stream type in data.source_event.
 fn is_llm_text_delta(event: &serde_json::Value) -> bool {
@@ -47,7 +124,7 @@ pub fn check_runtime(desktop: &NativeDesktop) -> Result<(), Box<dyn std::error::
         "new history is not empty",
     )?;
     let mut stream = desktop.send_chat(NativeChatInput {
-        session_id: session.id,
+        session_id: session.id.clone(),
         content: "native-cancel".into(),
         reasoning_effort: None,
         client_message_id: Some("native-cancel-before-start".into()),
@@ -68,6 +145,9 @@ pub fn check_runtime(desktop: &NativeDesktop) -> Result<(), Box<dyn std::error::
         }
     }
     ensure(stopped, "early cancellation did not settle")?;
+    // Keep the smoke catalog isolated even when the harness is pointed at a
+    // reusable runtime directory.
+    desktop.archive_session(&session.id)?;
     check_queue_and_detach(desktop)?;
     Ok(())
 }
@@ -134,6 +214,10 @@ fn check_queue_and_detach(desktop: &NativeDesktop) -> Result<(), Box<dyn std::er
             .any(|row| !row.mine && row.text == "测试第一轮".repeat(80)),
         "detached turn was cancelled",
     )?;
+    // The smoke harness uses the same local catalog as the UI. Always close
+    // its probe threads so a successful run cannot leave permanent "running"
+    // rows in a developer's default workspace.
+    desktop.archive_session(&session.id)?;
     Ok(())
 }
 
@@ -150,10 +234,29 @@ pub fn run(app: &MainWindow, directory: PathBuf) -> Result<(), Box<dyn std::erro
     // then, so the turn under test has to be identified by id, not by index.
     let mut streamed_session: Option<String> = None;
     let start = Instant::now();
+    let mut live_reasoning_seen = false;
     timer.start(TimerMode::Repeated, Duration::from_millis(50), move || {
         let Some(app) = weak.upgrade() else { return };
+        if step == 3 && app.get_busy() && app.get_stream_bytes() == 0 && !live_reasoning_seen {
+            if let Some(process) = app.get_timeline().iter().find(|row| {
+                row.kind == crate::timeline::KIND_PROCESS && row.visible
+                    && row.status_kind == crate::timeline::STATUS_RUNNING
+                    && row.process_entries.iter().any(|entry| {
+                        entry.kind == crate::timeline::KIND_REASON && !entry.detail.is_empty()
+                            && entry.status_kind == crate::timeline::STATUS_RUNNING
+                    })
+            }) {
+                // Explicitly test the disclosure path too: opening a live
+                // process must never hand its model to the durable pager.
+                app.invoke_timeline_toggle(process.payload);
+                live_reasoning_seen = true;
+                let _ = crate::smoke::snapshot(&app, &directory.join("native-reasoning-live.png"));
+            }
+        }
         let checked = if start.elapsed() > Duration::from_secs(80) {
             Err(format!("step {step}: timed out; {}", app.get_status()).into())
+        } else if step == 3 && app.get_stream_bytes() > 0 && !live_reasoning_seen {
+            Err("reasoning was not visible before the first body delta".into())
         } else {
             advance(
                 &app,
@@ -197,7 +300,7 @@ fn advance(
     paused_bytes: &mut i32,
     streamed_session: &mut Option<String>,
 ) -> Result<bool, Box<dyn std::error::Error>> {
-    if *step == 3 && app.get_busy() && app.get_stream_updates() > 3 {
+    if *step == 3 && app.get_busy() && app.get_stream_bytes() > 0 && app.get_stream_updates() > 3 {
         if paused_scroll.is_none() {
             let rows = app.get_timeline();
             let footer = rows

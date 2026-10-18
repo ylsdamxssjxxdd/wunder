@@ -76,6 +76,7 @@ import {
 import { applyAuthHeaders, getAuthScope, initAdminAuth } from "./modules/admin-auth.js?v=20261017-04";
 
 import { getCurrentLanguage, setLanguage, t } from "./modules/i18n.js?v=20261015-06";
+import { initWunderModelPanel, toggleWunderModelPanel } from "./modules/wunder-model.js?v=20261018-07";
 
 
 
@@ -141,15 +142,8 @@ const bindSidebarCollapse = () => {
   window.addEventListener("resize", updateSidebarCollapse);
 };
 
-const toggleSidebarCollapse = () => {
-  sidebarCollapsed = !sidebarCollapsed;
-  document.body.classList.toggle("sidebar-collapsed", sidebarCollapsed);
-  if (!sidebarCollapsed) {
-    clearNavGroupHover();
-  }
-};
-
 const panelMap = {
+  wunderModel: { panel: document.getElementById("wunderModelPanel"), nav: elements.sidebarTitle },
 
   monitor: { panel: elements.monitorPanel, nav: elements.navMonitor },
 
@@ -332,6 +326,8 @@ const switchPanel = (panel) => {
   updateNavGroupState();
 
   state.runtime.activePanel = panel;
+  document.querySelector(".content")?.classList.toggle("wunder-model-content", panel === "wunderModel");
+  toggleWunderModelPanel(panel === "wunderModel");
   syncToolManagerShortcutState(panel);
 
   toggleMonitorPolling(panel === "monitor", { mode: "full" });
@@ -1109,124 +1105,16 @@ const bootstrap = async () => {
   bindGlobalInputs();
   bindSidebarCollapse();
   
-  // 绑定侧边栏标题点击事件
+  initWunderModelPanel();
   if (elements.sidebarTitle) {
-    elements.sidebarTitle.addEventListener("click", toggleSidebarCollapse);
+    elements.sidebarTitle.addEventListener("click", () => switchPanel("wunderModel"));
   }
 
   await initAdminAuth();
   applyAuthScopeVisibility();
   loadAdminDefaults({ silent: true }).catch(() => {});
-  const authScope = getAuthScope();
-  const leaderPanels = ["orgUnits", "userAccounts"];
-  let initialPanel = panelMap[APP_CONFIG.defaultPanel] ? APP_CONFIG.defaultPanel : "monitor";
-  if (authScope === "leader") {
-    initialPanel = leaderPanels.includes(initialPanel) ? initialPanel : "orgUnits";
-  }
-
-  switchPanel(initialPanel);
+  switchPanel("wunderModel");
   expandActiveNavGroupOnly();
-  if (authScope === "leader") {
-    if (initialPanel === "orgUnits") {
-      loadOrgUnits()
-        .then(() => {
-          state.panelLoaded.orgUnits = true;
-        })
-        .catch(() => {});
-    } else if (initialPanel === "userAccounts") {
-      loadUserAccounts()
-        .then(() => {
-          state.panelLoaded.userAccounts = true;
-        })
-        .catch(() => {});
-    }
-  }
-
-  if (initialPanel === "docsSite") {
-    ensureDocsSiteFrameLoaded();
-  }
-
-  if (initialPanel === "throughput" && !state.panelLoaded.throughput) {
-    initThroughputPanel().then(() => {
-      state.panelLoaded.throughput = true;
-    }).catch((error) => {
-      appendLog(t("app.panelLoadFailed", { panel: t("panel.throughput"), message: error.message }));
-    });
-  }
-
-  if (initialPanel === "performance" && !state.panelLoaded.performance) {
-    try {
-      initPerformancePanel();
-      state.panelLoaded.performance = true;
-    } catch (error) {
-      appendLog(
-        t("app.panelLoadFailed", { panel: t("panel.performance"), message: error.message })
-      );
-    }
-  }
-  if (initialPanel === "companions" && !state.panelLoaded.companions) {
-    loadCompanions({ silent: true })
-      .then(() => {
-        state.panelLoaded.companions = true;
-      })
-      .catch((error) => {
-        appendLog(t("app.panelLoadFailed", { panel: t("panel.companions"), message: error.message }));
-      });
-  }
-
-  if (initialPanel === "evaluation" && !state.panelLoaded.evaluation) {
-    initEvaluationPanel()
-      .then(() => {
-        state.panelLoaded.evaluation = true;
-      })
-      .catch((error) => {
-        appendLog(
-          t("app.panelLoadFailed", { panel: t("panel.evaluation"), message: error.message })
-        );
-      });
-  }
-
-  if (initialPanel === "multimodalDebug" && !state.panelLoaded.multimodalDebug) {
-    loadMultimodalDebugPanel()
-      .then(() => {
-        state.panelLoaded.multimodalDebug = true;
-      })
-      .catch((error) => {
-        appendLog(
-          t("app.panelLoadFailed", { panel: t("panel.multimodalDebug"), message: error.message })
-        );
-      });
-  }
-
-  if (initialPanel === "users") {
-
-    loadUserStats().catch((error) => {
-
-      appendLog(t("app.panelLoadFailed", { panel: t("panel.users"), message: error.message }));
-
-    });
-
-  }
-
-  if (initialPanel === "userAccounts") {
-
-    loadUserAccounts().catch((error) => {
-
-      appendLog(t("app.panelLoadFailed", { panel: t("panel.userAccounts"), message: error.message }));
-
-    });
-
-  }
-
-  if (initialPanel === "presetAgents") {
-    loadPresetAgents({ silent: true })
-      .then(() => {
-        state.panelLoaded.presetAgents = true;
-      })
-      .catch((error) => {
-        appendLog(t("app.panelLoadFailed", { panel: t("panel.presetAgents"), message: error.message }));
-      });
-  }
 
   loadWorkspace();
 

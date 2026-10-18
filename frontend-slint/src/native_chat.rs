@@ -27,8 +27,8 @@ use wunder_desktop::{
 mod commands;
 #[path = "native_chat_observer.rs"]
 mod observer;
-pub(crate) use observer::project_history;
 pub(crate) use observer::project_cloud_history;
+pub(crate) use observer::project_history;
 #[path = "native_chat_queue.rs"]
 mod queue;
 #[path = "native_chat_terminal.rs"]
@@ -386,7 +386,9 @@ thread_local! {
 /// running durably after its foreground subscription is released.
 pub(crate) fn prepare_external_timeline(app: &MainWindow) {
     CHAT_STATE.with(|slot| {
-        let Some(state) = slot.borrow().upgrade() else { return };
+        let Some(state) = slot.borrow().upgrade() else {
+            return;
+        };
         let mut state = state.borrow_mut();
         state.timer.stop();
         state.active = None;
@@ -396,7 +398,9 @@ pub(crate) fn prepare_external_timeline(app: &MainWindow) {
         state.timeline.borrow_mut().clear();
         let local_id = app.get_active_session_id().to_string();
         if !local_id.is_empty() {
-            if state.drafts.len() >= 100 { state.drafts.clear(); }
+            if state.drafts.len() >= 100 {
+                state.drafts.clear();
+            }
             let _ = state.desktop.close_session(&local_id);
             state.drafts.insert(local_id, app.get_draft().to_string());
             app.set_active_session_id("".into());
@@ -420,7 +424,9 @@ pub(crate) fn prepare_external_timeline(app: &MainWindow) {
 /// rows keep their models, fold state and layout when only the tail changes.
 pub(crate) fn replace_external_timeline(app: &MainWindow, mut rows: Vec<TimelineRow>, reset: bool) {
     CHAT_STATE.with(|slot| {
-        let Some(state) = slot.borrow().upgrade() else { return };
+        let Some(state) = slot.borrow().upgrade() else {
+            return;
+        };
         let timeline = state.borrow().timeline.clone();
         let mut timeline = timeline.borrow_mut();
         if reset {
@@ -431,23 +437,34 @@ pub(crate) fn replace_external_timeline(app: &MainWindow, mut rows: Vec<Timeline
             if let Some(previous) = model.as_any().downcast_ref::<VecModel<TimelineRow>>() {
                 crate::timeline_text::restore_folds(&mut rows, previous);
             }
-            let topology_changed = model.iter().map(|row| row.id).ne(rows.iter().map(|row| row.id.clone()));
+            crate::timeline_text::sync_reasoning_tails(&rows);
+            let topology_changed = model
+                .iter()
+                .map(|row| row.id)
+                .ne(rows.iter().map(|row| row.id.clone()));
             if topology_changed {
                 timeline.set_history(rows);
                 publish_timeline(app, &timeline);
                 return;
             }
             for (index, mut row) in rows.into_iter().enumerate() {
-                    if let Some(old) = model.row_data(index) {
-                        row.payload = index as i32;
-                        if old.text == row.text && old.status_kind == row.status_kind { row.blocks = old.blocks; }
-                        let stats_equal = old.stats.iter().eq(row.stats.iter());
-                        if old.text == row.text && old.summary == row.summary
-                            && old.visible == row.visible && old.status_kind == row.status_kind && stats_equal {
-                            continue;
-                        }
+                if let Some(old) = model.row_data(index) {
+                    row.payload = index as i32;
+                    if old.text == row.text && old.status_kind == row.status_kind {
+                        row.blocks = old.blocks;
                     }
-                    model.set_row_data(index, row);
+                    let stats_equal = old.stats.iter().eq(row.stats.iter());
+                    if old.text == row.text
+                        && old.summary == row.summary
+                        && old.detail == row.detail
+                        && old.visible == row.visible
+                        && old.status_kind == row.status_kind
+                        && stats_equal
+                    {
+                        continue;
+                    }
+                }
+                model.set_row_data(index, row);
             }
         }
         publish_timeline(app, &timeline);
@@ -561,12 +578,26 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
         app.set_prompt_preview_open(true);
         app.set_prompt_preview_loading(true);
         app.set_prompt_preview("".into());
+        let cloud = app.get_cloud_chat_active();
+        let session = if cloud { crate::cloud_threads::selected_id(&app) }
+            else { app.get_active_session_id().to_string() };
+        let agent = app.get_active_agent_id().to_string();
         let weak = app.as_weak();
         let desktop = desktop_preview.clone();
         std::thread::spawn(move || {
-            let result = desktop.preview_system_prompt();
+            let result = if cloud {
+                desktop.cloud_thread_system_prompt(&session)
+            } else {
+                desktop.preview_thread_system_prompt(Some(&session), Some(&agent))
+            };
             let _ = weak.upgrade_in_event_loop(move |app| {
                 app.set_prompt_preview_loading(false);
+                let current = if cloud { crate::cloud_threads::selected_id(&app) }
+                    else { app.get_active_session_id().to_string() };
+                if app.get_cloud_chat_active() != cloud || current != session {
+                    app.set_prompt_preview_open(false);
+                    return;
+                }
                 match result {
                     Ok(prompt) => app.set_prompt_preview(prompt.into()),
                     Err(error) => {
@@ -995,7 +1026,15 @@ fn refresh_chat(app: &MainWindow, state: Rc<RefCell<State>>, silent: bool) {
                     if app.get_active_session_id().is_empty()
                         && app.get_conversations().row_count() > 0
                     {
-                        app.invoke_select_conversation(0);
+                        // Opening a thread acquires a cross-process lease. Do
+                        // not auto-open a row that another live蛹/舵机 owns;
+                        // otherwise every fresh startup reports THREAD_IN_USE
+                        // before the user has chosen a conversation.
+                        if let Some(index) =
+                            app.get_conversations().iter().position(|row| !row.locked)
+                        {
+                            app.invoke_select_conversation(index as i32);
+                        }
                     }
                 }
                 Err(error) => app.set_status(format!("无法读取会话：{error}").into()),
@@ -1184,7 +1223,10 @@ fn bind_new_thread(app: &MainWindow, state: Rc<RefCell<State>>) {
     // server-side empty sessions.
     app.on_new_thread(move || {
         let Some(app) = weak.upgrade() else { return };
-        if app.get_cloud_chat_active() { app.invoke_cloud_new_thread(); return; }
+        if app.get_cloud_chat_active() {
+            app.invoke_cloud_new_thread();
+            return;
+        }
         if app.get_creating_session() || app.get_session_loading() || app.get_chat_loading() {
             return;
         }
@@ -1291,7 +1333,11 @@ fn bind_reasoning_effort(app: &MainWindow, state: Rc<RefCell<State>>) {
     app.on_save_session_reasoning_effort(move |value| {
         let Some(app) = weak.upgrade() else { return };
         if app.get_cloud_chat_active() {
-            crate::cloud_threads::set_effort(&app, state.borrow().desktop.clone(), value.to_string());
+            crate::cloud_threads::set_effort(
+                &app,
+                state.borrow().desktop.clone(),
+                value.to_string(),
+            );
             return;
         }
         let session = app.get_active_session_id().to_string();
@@ -2915,6 +2961,49 @@ fn format_count_i64(value: i64) -> String {
 #[cfg(test)]
 mod turn_tests {
     use super::*;
+
+    #[test]
+    fn runtime_reasoning_envelope_updates_the_live_process_before_body_or_final() {
+        let timeline = Rc::new(RefCell::new(crate::timeline::Timeline::new()));
+        let mut output = TurnOutput::new("fixture-session".into(), timeline.clone());
+        let mut live = timeline.borrow_mut();
+        live.begin_turn("fixture-root", "Fixture input");
+        for (index, delta) in ["First thought", " continued"].iter().enumerate() {
+            assert!(apply_event(
+                &mut output,
+                &mut live,
+                &serde_json::json!({
+                    "event":"thread_item_delta", "data":{"session_id":"fixture-session", "data":{
+                        "source_event":"llm_output_delta", "model_round":1, "reasoning_delta":delta
+                    }}
+                })
+            )
+            .unwrap());
+            live.flush();
+            let bar = live
+                .model()
+                .iter()
+                .find(|row| row.kind == crate::timeline::KIND_PROCESS)
+                .unwrap();
+            assert!(bar.visible);
+            assert!(bar.process_local);
+            assert!(!bar.process_paged);
+            assert_eq!(bar.status_kind, crate::timeline::STATUS_RUNNING);
+            assert_eq!(bar.process_entries.row_count(), 1);
+            let reason = bar.process_entries.row_data(0).unwrap();
+            assert_eq!(reason.status_kind, crate::timeline::STATUS_RUNNING);
+            assert_eq!(
+                reason.detail,
+                if index == 0 {
+                    "First thought"
+                } else {
+                    "First thought continued"
+                }
+            );
+            assert_eq!(live.answer_count(), 0);
+        }
+    }
+
     #[test]
     fn continuation_with_restarted_model_round_keeps_both_bodies() {
         let timeline = Rc::new(RefCell::new(crate::timeline::Timeline::new()));

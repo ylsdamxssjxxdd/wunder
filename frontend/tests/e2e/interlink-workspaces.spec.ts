@@ -90,6 +90,40 @@ test('local workspace rows own their threads and files, and cloud remains expand
   expect(errors).toEqual([]);
 });
 
+test('workspace disclosure toggles without changing the conversation or files', async ({ page }) => {
+  const commands = await prepare(page);
+  const rows = page.locator('.messenger-sidebar-workspace-row');
+  const cloud = rows.filter({ has: page.locator('.fa-cloud') });
+  await expect(page.locator('.mz-thread-select')).toHaveCount(2);
+  const originalUrl = page.url();
+  await cloud.click();
+  await expect(cloud).toHaveAttribute('aria-expanded', 'false');
+  await expect(page.locator('.mz-thread-select')).toHaveCount(0);
+  expect(page.url()).toBe(originalUrl);
+  await expect(page.locator('.workspace-file-name')).toHaveText(['cloud.txt']);
+  await cloud.press('Space');
+  await expect(cloud).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.locator('.mz-thread-select')).toHaveCount(2);
+  await cloud.press('Enter');
+  await expect(page.locator('.mz-thread-select')).toHaveCount(0);
+
+  const local = rows.filter({ hasText: 'Project one' });
+  await local.click();
+  await expect(local).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.locator('.interlink-thread-row')).toHaveText(['Thread one']);
+  const localUrl = page.url();
+  const commandCount = commands.size;
+  await local.click();
+  await expect(local).toHaveAttribute('aria-expanded', 'false');
+  await expect(page.locator('.interlink-thread-row')).toHaveCount(0);
+  expect(page.url()).toBe(localUrl);
+  await expect(page.locator('.workspace-file-name')).toHaveText(['one.txt']);
+  await local.press('Enter');
+  await expect(page.locator('.interlink-thread-row')).toHaveText(['Thread one']);
+  expect(commands.size).toBe(commandCount);
+  await page.screenshot({ path: 'test-results/workspace-disclosure.png' });
+});
+
 test('local file menu downloads exact bytes within the selected workspace', async ({ page }) => {
   const commands = await prepare(page);
   await page.locator('.messenger-sidebar-workspace-row').filter({ hasText: 'Project two' }).click();

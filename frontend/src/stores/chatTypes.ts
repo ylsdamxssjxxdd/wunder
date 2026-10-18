@@ -234,23 +234,6 @@ export type MessageSubagentItem = {
   };
 };
 
-export type DesktopOverlayBridge = {
-  showControllerHint?: (payload: {
-    x: number;
-    y: number;
-    description?: string;
-    durationMs?: number;
-  }) => Promise<boolean> | boolean;
-  showControllerDone?: (payload: {
-    x: number;
-    y: number;
-    description?: string;
-    durationMs?: number;
-  }) => Promise<boolean> | boolean;
-  showMonitorCountdown?: (payload: { waitMs: number }) => Promise<boolean> | boolean;
-  hideOverlay?: () => Promise<boolean> | boolean;
-};
-
 export type LoadSessionsOptions = {
   agent_id?: string | number | boolean | null | undefined;
   traceId?: string;

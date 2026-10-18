@@ -348,7 +348,6 @@ test('interactive projection-only stream keeps side-effect-heavy events on canon
   );
   assert.equal(shouldUseProjectionOnlyInteractiveStreamEvent('thread_control'), true);
   assert.equal(shouldUseProjectionOnlyInteractiveStreamEvent('workspace_update'), true);
-  assert.equal(shouldUseProjectionOnlyInteractiveStreamEvent('desktop_control_hint'), true);
   assert.equal(shouldUseProjectionOnlyInteractiveStreamEvent('command_session_start'), true);
   assert.equal(shouldUseProjectionOnlyInteractiveStreamEvent('command_session_delta'), true);
   assert.equal(shouldUseProjectionOnlyInteractiveStreamEvent('team_task_result'), true);

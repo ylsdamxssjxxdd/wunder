@@ -74,7 +74,8 @@ impl SqliteCloudStorage for SqliteStorage {
         let conn = self.open()?;
         let sql = format!(
             "SELECT {CLOUD_DEVICE_COLUMNS} FROM cloud_devices \
-             WHERE user_id = ? AND client = ? AND name = ?"
+             WHERE user_id = ? AND client = ? AND name = ? \
+             ORDER BY revoked ASC, last_seen_at DESC, created_at DESC LIMIT 1"
         );
         let row = conn
             .query_row(

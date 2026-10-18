@@ -117,7 +117,8 @@ impl PostgresCloudStorage for PostgresStorage {
         let mut conn = self.conn()?;
         let sql = format!(
             "SELECT {CLOUD_DEVICE_COLUMNS} FROM cloud_devices \
-             WHERE user_id = $1 AND client = $2 AND name = $3"
+             WHERE user_id = $1 AND client = $2 AND name = $3 \
+             ORDER BY revoked ASC, last_seen_at DESC, created_at DESC LIMIT 1"
         );
         let row = conn.query_opt(&sql, &[&cleaned_user, &cleaned_client, &cleaned_name])?;
         Ok(row.map(|row| map_cloud_device_row(&row)))

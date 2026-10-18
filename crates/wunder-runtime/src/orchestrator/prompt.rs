@@ -94,7 +94,7 @@ impl Orchestrator {
     pub(super) fn filter_tools_for_model_capability(
         &self,
         allowed_tool_names: HashSet<String>,
-        support_vision: bool,
+        support_vision: Option<bool>,
     ) -> HashSet<String> {
         filter_tool_names_by_model_capability(allowed_tool_names, support_vision)
     }

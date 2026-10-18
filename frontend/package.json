@@ -1,6 +1,6 @@
 {
   "name": "wunder-frontend",
-  "version": "0.3.9",
+  "version": "0.1.0",
   "description": "Wunder user frontend",
   "type": "module",
   "scripts": {

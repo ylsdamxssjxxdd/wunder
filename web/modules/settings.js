@@ -195,10 +195,6 @@ const applySettingsForm = (config) => {
   if (elements.settingsDefaultUserId) {
     elements.settingsDefaultUserId.value = config.defaultUserId || "";
   }
-  if (elements.settingsDefaultPanel) {
-    const resolved = resolveSelectValue(elements.settingsDefaultPanel, config.defaultPanel || "");
-    elements.settingsDefaultPanel.value = resolved;
-  }
   if (elements.settingsMonitorInterval) {
     elements.settingsMonitorInterval.value = String(config.monitorPollIntervalMs || "");
   }
@@ -1008,10 +1004,6 @@ const handleSaveSettings = async () => {
   const nextApiBase = getWunderBase();
   const nextApiKey = String(elements.apiKey?.value || "").trim();
   const nextDefaultUserId = String(elements.settingsDefaultUserId?.value || "").trim();
-  const nextDefaultPanel = resolveSelectValue(
-    elements.settingsDefaultPanel,
-    String(elements.settingsDefaultPanel?.value || "").trim()
-  );
   const nextMonitorInterval = resolveNumberInput(
     elements.settingsMonitorInterval?.value,
     APP_CONFIG.monitorPollIntervalMs,
@@ -1029,7 +1021,6 @@ const handleSaveSettings = async () => {
     defaultApiBase: nextApiBase,
     defaultApiKey: nextApiKey,
     defaultUserId: nextDefaultUserId,
-    defaultPanel: nextDefaultPanel,
     monitorPollIntervalMs: nextMonitorInterval,
     promptReloadDelayMs: nextPromptDelay,
     language: nextLanguage,

@@ -24,23 +24,27 @@
     <link rel="stylesheet" href="./app.css?v=20261017-04" />
     <link rel="stylesheet" href="./styles/throughput.css?v=20261012-01" />
     <link rel="stylesheet" href="styles/interlink-fleet.css?v=20261016-01" />
+    <link rel="stylesheet" href="./styles/wunder-model-viewer.css?v=20261018-07" />
+    <link rel="stylesheet" href="./styles/wunder-model.css?v=20261018-07" />
 </head>
   <body>
     <div class="app">
       <aside class="sidebar">
-        <button id="sidebarTitle" class="sidebar-title" type="button">
-          <i class="fa-solid fa-dragon"></i>
-          <span data-i18n="sidebar.title">舰桥</span>
-        </button>
+        <div class="sidebar-heading">
+          <button id="sidebarTitle" class="sidebar-title active" type="button" data-i18n-title="wunderModel.title" data-i18n-aria-label="wunderModel.title">
+            <i class="fa-solid fa-dragon" aria-hidden="true"></i>
+            <span data-i18n="sidebar.title">舰桥</span>
+          </button>
+        </div>
         <div class="sidebar-nav">
-          <div class="nav-group" data-group="system">
+          <div class="nav-group is-collapsed" data-group="system">
             <button class="nav-group-btn" type="button">
               <i class="fa-solid fa-server"></i>
               <span data-i18n="sidebar.group.system">系统</span>
               <i class="fa-solid fa-chevron-down nav-group-caret" aria-hidden="true"></i>
             </button>
             <div class="nav-children">
-              <button id="navMonitor" class="nav-btn active">
+              <button id="navMonitor" class="nav-btn">
                 <i class="fa-solid fa-heart"></i>
                 <span data-i18n="panel.monitor">内部状态</span>
               </button>
@@ -62,7 +66,7 @@
               </button>
             </div>
           </div>
-          <div class="nav-group" data-group="agent">
+          <div class="nav-group is-collapsed" data-group="agent">
             <button class="nav-group-btn" type="button">
               <i class="fa-solid fa-robot"></i>
               <span data-i18n="sidebar.group.agent">智能体</span>
@@ -91,7 +95,7 @@
               </button>
             </div>
           </div>
-          <div class="nav-group" data-group="debug">
+          <div class="nav-group is-collapsed" data-group="debug">
             <button class="nav-group-btn" type="button">
               <i class="fa-solid fa-bug"></i>
               <span data-i18n="sidebar.group.debug">调试</span>
@@ -120,7 +124,7 @@
               </button>
             </div>
           </div>
-          <div class="nav-group" data-group="docs">
+          <div class="nav-group is-collapsed" data-group="docs">
             <button class="nav-group-btn" type="button">
               <i class="fa-solid fa-book-open"></i>
               <span data-i18n="sidebar.group.docs">文档</span>
@@ -145,8 +149,11 @@
           </button>
         </div>
       </aside>
-      <main class="content">
-        <section id="monitorPanel" class="panel active">
+      <main class="content wunder-model-content">
+        <section id="wunderModelPanel" class="panel active">
+          <div id="wunderModelMount" class="wunder-model-mount"></div>
+        </section>
+        <section id="monitorPanel" class="panel">
           <div class="list-header">
             <h1 data-i18n="panel.monitor">内部状态</h1>
             <div class="header-actions monitor-header-actions">
@@ -1598,28 +1605,6 @@
                   <div class="form-row">
                     <label for="settingsDefaultUserId" data-i18n="settings.label.defaultUserId">Default user_id</label>
                     <input id="settingsDefaultUserId" type="text" placeholder="demo_user" />
-                  </div>
-                  <div class="form-row">
-                    <label for="settingsDefaultPanel" data-i18n="settings.label.defaultPanel">Default panel</label>
-                    <select id="settingsDefaultPanel">
-                      <option value="monitor" data-i18n="panel.monitor">Monitor</option>
-                      <option value="users" data-i18n="panel.users">Sessions</option>
-                      <option value="presetAgents" data-i18n="panel.presetAgents">Preset Agents</option>
-                      <option value="llm" data-i18n="panel.llm">LLM</option>
-                      <option value="settings" data-i18n="panel.settings">Settings</option>
-                      <option value="builtin" data-i18n="panel.builtin">Builtin</option>
-                      <option value="mcp" data-i18n="panel.mcp">MCP</option>
-                      <option value="knowledge" data-i18n="panel.knowledge">Knowledge</option>
-                      <option value="skills" data-i18n="panel.skills">Skills</option>
-                      <option value="throughput" data-i18n="panel.throughput">Throughput</option>
-                      <option value="performance" data-i18n="panel.performance">Performance</option>
-                      <option value="prompt" data-i18n="panel.prompt">Prompt</option>
-                      <option value="evaluation" data-i18n="panel.evaluation">Evaluation</option>
-                      <option value="multimodalDebug" data-i18n="panel.multimodalDebug">Multimodal Debug</option>
-                      <option value="debug" data-i18n="panel.debug">Debug</option>
-                      <option value="docsSite" data-i18n="panel.docsSite">Docs Site</option>
-                      <option value="apiDocs" data-i18n="panel.apiDocs">API Docs</option>
-                    </select>
                   </div>
                   <div class="form-row">
                     <label for="settingsLanguage" data-i18n="settings.label.language">Language</label>
@@ -4702,6 +4687,6 @@
     </div>
     <script src="./third/echarts/echarts.min.js?v=20260118-07"></script>
     <script src="./third/marked.min.js?v=20260118-07"></script>
-    <script type="module" src="./app.js?v=20261017-05"></script>
+    <script type="module" src="./app.js?v=20261018-07"></script>
   </body>
 </html>

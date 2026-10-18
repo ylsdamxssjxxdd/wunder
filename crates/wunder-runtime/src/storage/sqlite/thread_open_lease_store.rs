@@ -91,16 +91,17 @@ impl SqliteThreadOpenLeaseStorage for SqliteStorage {
             tx.commit()?;
             return Ok(ThreadOpenLeaseStatus::Acquired { fencing_token });
         }
-        // A running or queued turn owns the execution lock or a durable queue
-        // row. Keep the thread unavailable to a new UI even after the previous
-        // window disappears; both are durable sources of truth for work that
-        // must not be opened concurrently.
+        // Only a live execution lease blocks opening. Durable queue/turn rows
+        // are recoverable state: after a process crash they can remain in an
+        // active-looking status forever, so treating them as ownership would
+        // make the thread impossible to reopen or archive. The queue/runtime
+        // reconciler settles those rows when the owner is gone.
         let running: i64 = tx.query_row(
-            "SELECT CASE WHEN EXISTS (SELECT 1 FROM session_locks WHERE session_id = ? AND expires_at > ?)
-             OR EXISTS (SELECT 1 FROM agent_tasks WHERE session_id = ? AND status IN ('pending','retry','running'))
-             OR EXISTS (SELECT 1 FROM thread_turns WHERE session_id = ? AND status IN ('accepted','queued','running','waiting_input','waiting_approval'))
-             THEN 1 ELSE 0 END",
-            params![session_id, now, session_id, session_id],
+            "SELECT CASE WHEN EXISTS (
+                SELECT 1 FROM session_locks
+                WHERE session_id = ? AND expires_at > ?
+            ) THEN 1 ELSE 0 END",
+            params![session_id, now],
             |row| row.get(0),
         )?;
         if running > 0 {
@@ -292,5 +293,37 @@ mod tests {
                 .expect("open lease"),
             ThreadOpenLeaseStatus::Busy
         );
+    }
+
+    #[test]
+    fn durable_active_turn_without_execution_lock_is_recoverable() {
+        let dir = tempdir().unwrap();
+        let storage = SqliteStorage::new(
+            dir.path()
+                .join("recoverable.db")
+                .to_string_lossy()
+                .into_owned(),
+        );
+        storage.ensure_initialized().unwrap();
+        let accepted = storage
+            .accept_thread_turn("user", "thread", &serde_json::json!({"content":"fixture"}))
+            .unwrap();
+        let turn = accepted["turn_id"].as_str().unwrap();
+        storage
+            .update_thread_turn(
+                "user",
+                "thread",
+                turn,
+                "running",
+                "",
+                &serde_json::json!({}),
+            )
+            .unwrap();
+        assert!(matches!(
+            storage
+                .try_acquire_thread_open_lease("thread", "user", "new-instance", "desktop", 30.0)
+                .unwrap(),
+            ThreadOpenLeaseStatus::Acquired { .. }
+        ));
     }
 }

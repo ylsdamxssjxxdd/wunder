@@ -24,7 +24,9 @@ impl fmt::Display for UsageMaintenanceBusy {
 impl Error for UsageMaintenanceBusy {}
 
 pub(super) fn is_usage_maintenance_busy(error: &anyhow::Error) -> bool {
-    error.chain().any(|cause| cause.is::<UsageMaintenanceBusy>())
+    error
+        .chain()
+        .any(|cause| cause.is::<UsageMaintenanceBusy>())
 }
 
 /// Ceiling on committed batches, independent of the wall clock.  Time is the

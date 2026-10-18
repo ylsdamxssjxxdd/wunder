@@ -5,7 +5,7 @@ export const state = {
     monitorPollTimer: null,
     debugPollTimer: null,
     memoryPollTimer: null,
-    activePanel: "monitor",
+    activePanel: "wunderModel",
     debugSessionId: "",
     debugSessionStatus: "",
     debugSessionPinned: false,

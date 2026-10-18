@@ -96,6 +96,14 @@
             >
               {{ t('interlink.devices.purgeShadow') }}
             </button>
+            <button
+              class="messenger-settings-action ghost is-danger"
+              type="button"
+              :disabled="busyIds.has(node.node_id)"
+              @click="removeDevice(node)"
+            >
+              {{ t('interlink.devices.remove') }}
+            </button>
           </div>
         </article>
       </div>
@@ -119,6 +127,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';
 
 import {
+  removeInterlinkNode,
   purgeInterlinkShadow,
   setInterlinkNodeEnabled
 } from '@/api/interlink';
@@ -250,6 +259,29 @@ const purgeShadow = async (node: InterlinkNode): Promise<void> => {
     await purgeInterlinkShadow(node.node_id);
     node.shadow_revision = 0;
     ElMessage.success(t('interlink.devices.purgeDone'));
+  } catch (caught) {
+    ElMessage.error(resolveApiError(caught, t('interlink.devices.actionFailed')).message);
+  } finally {
+    busyIds.delete(node.node_id);
+  }
+};
+
+const removeDevice = async (node: InterlinkNode): Promise<void> => {
+  const confirmed = await confirmWithFallback(
+    t('interlink.devices.removeConfirmBody', { name: node.label || node.node_id }),
+    t('interlink.devices.removeConfirmTitle'),
+    {
+      type: 'warning',
+      confirmButtonText: t('interlink.devices.removeConfirmOk'),
+      cancelButtonText: t('common.cancel')
+    }
+  );
+  if (!confirmed || busyIds.has(node.node_id)) return;
+  busyIds.add(node.node_id);
+  try {
+    await removeInterlinkNode(node.node_id);
+    ElMessage.success(t('interlink.devices.removeDone'));
+    nodes.refresh();
   } catch (caught) {
     ElMessage.error(resolveApiError(caught, t('interlink.devices.actionFailed')).message);
   } finally {
