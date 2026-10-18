@@ -653,6 +653,9 @@ mod tests {
         assert_eq!(blocks[0].text, "交付文档");
         assert!(blocks[0].image.to_rgba8().is_some());
         assert_eq!(blocks[1].kind, KIND_IMAGE);
-        assert_eq!(blocks[1].image_source, "/workspaces/scope/workspace/output.webp");
+        assert_eq!(
+            blocks[1].image_source,
+            "/workspaces/scope/workspace/output.webp"
+        );
     }
 }

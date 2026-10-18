@@ -2,8 +2,8 @@
 use wunder_desktop::native::NativeWorkflowEntry;
 
 use crate::{
-    Conversation, DraftRecall, InquiryOption, InquiryQuestion, MainWindow, PlanStep,
-    TermSpan, TerminalWindow, TimelineRow,
+    Conversation, DraftRecall, InquiryOption, InquiryQuestion, MainWindow, PlanStep, TermSpan,
+    TerminalWindow, TimelineRow,
 };
 use serde_json::Value;
 use slint::{ComponentHandle, Model, ModelRc, Timer, TimerMode, VecModel};
@@ -28,6 +28,7 @@ mod commands;
 #[path = "native_chat_observer.rs"]
 mod observer;
 pub(crate) use observer::project_history;
+pub(crate) use observer::project_cloud_history;
 #[path = "native_chat_queue.rs"]
 mod queue;
 #[path = "native_chat_terminal.rs"]
@@ -80,7 +81,7 @@ impl TurnOutput {
         Self {
             session,
             timeline,
-            state: "正在生成…".into(),
+            state: "请求中".into(),
             round: 0,
             body_round: -1,
             user_round: 0,
@@ -377,6 +378,82 @@ struct State {
     send_seq: u64,
 }
 
+thread_local! {
+    static CHAT_STATE: RefCell<std::rc::Weak<RefCell<State>>> = RefCell::new(std::rc::Weak::new());
+}
+
+/// Hand the existing timeline to a remote data source. Local execution keeps
+/// running durably after its foreground subscription is released.
+pub(crate) fn prepare_external_timeline(app: &MainWindow) {
+    CHAT_STATE.with(|slot| {
+        let Some(state) = slot.borrow().upgrade() else { return };
+        let mut state = state.borrow_mut();
+        state.timer.stop();
+        state.active = None;
+        state.parked.clear();
+        state.observation.detach();
+        state.history_generation.fetch_add(1, Ordering::AcqRel);
+        state.timeline.borrow_mut().clear();
+        let local_id = app.get_active_session_id().to_string();
+        if !local_id.is_empty() {
+            if state.drafts.len() >= 100 { state.drafts.clear(); }
+            let _ = state.desktop.close_session(&local_id);
+            state.drafts.insert(local_id, app.get_draft().to_string());
+            app.set_active_session_id("".into());
+        }
+        app.set_draft("".into());
+        app.set_session_loading(false);
+        app.set_busy(false);
+        app.set_stopping(false);
+        app.set_goal_visible(false);
+        app.set_goal_active(false);
+        app.set_inquiry_visible(false);
+        app.set_queue_turns(ModelRc::default());
+        app.set_queue_overflow(0);
+        app.set_terminal_mode(false);
+        app.set_pending_attachments(ModelRc::default());
+        reset_activity(app);
+    });
+}
+
+/// Incrementally update the shared timeline by stable row id. Frozen cloud
+/// rows keep their models, fold state and layout when only the tail changes.
+pub(crate) fn replace_external_timeline(app: &MainWindow, mut rows: Vec<TimelineRow>, reset: bool) {
+    CHAT_STATE.with(|slot| {
+        let Some(state) = slot.borrow().upgrade() else { return };
+        let timeline = state.borrow().timeline.clone();
+        let mut timeline = timeline.borrow_mut();
+        if reset {
+            timeline.clear();
+            timeline.set_history(rows);
+        } else {
+            let model = timeline.model();
+            if let Some(previous) = model.as_any().downcast_ref::<VecModel<TimelineRow>>() {
+                crate::timeline_text::restore_folds(&mut rows, previous);
+            }
+            let topology_changed = model.iter().map(|row| row.id).ne(rows.iter().map(|row| row.id.clone()));
+            if topology_changed {
+                timeline.set_history(rows);
+                publish_timeline(app, &timeline);
+                return;
+            }
+            for (index, mut row) in rows.into_iter().enumerate() {
+                    if let Some(old) = model.row_data(index) {
+                        row.payload = index as i32;
+                        if old.text == row.text && old.status_kind == row.status_kind { row.blocks = old.blocks; }
+                        let stats_equal = old.stats.iter().eq(row.stats.iter());
+                        if old.text == row.text && old.summary == row.summary
+                            && old.visible == row.visible && old.status_kind == row.status_kind && stats_equal {
+                            continue;
+                        }
+                    }
+                    model.set_row_data(index, row);
+            }
+        }
+        publish_timeline(app, &timeline);
+    });
+}
+
 struct TerminalSession {
     io: crate::terminal_session::Session,
 }
@@ -446,6 +523,7 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
         send_seq: 0,
     }));
     observer::install(app, state.clone());
+    CHAT_STATE.with(|slot| *slot.borrow_mut() = Rc::downgrade(&state));
     bind_refresh(app, state.clone());
     bind_selection(app, state.clone());
     bind_new_thread(app, state.clone());
@@ -793,6 +871,9 @@ fn bind_refresh(app: &MainWindow, state: Rc<RefCell<State>>) {
 }
 
 fn refresh_chat(app: &MainWindow, state: Rc<RefCell<State>>, silent: bool) {
+    if app.get_cloud_chat_active() {
+        return;
+    }
     if app.get_chat_loading() || app.get_session_loading() || app.get_creating_session() {
         return;
     }
@@ -817,6 +898,9 @@ fn refresh_chat(app: &MainWindow, state: Rc<RefCell<State>>, silent: bool) {
             inflight.store(false, Ordering::Release);
             if !silent {
                 app.set_chat_loading(false);
+            }
+            if app.get_cloud_chat_active() {
+                return;
             }
             match result {
                 Ok(items) => {
@@ -847,7 +931,11 @@ fn refresh_chat(app: &MainWindow, state: Rc<RefCell<State>>, silent: bool) {
                                 goal_objective: goal.objective.into(),
                                 goal_phase: goal.phase.into(),
                                 goal_activation: goal.activation.into(),
-                                goal_rounds: format!("{}/{}", goal.rounds_started, goal.max_goal_rounds).into(),
+                                goal_rounds: format!(
+                                    "{}/{}",
+                                    goal.rounds_started, goal.max_goal_rounds
+                                )
+                                .into(),
                                 goal_seconds: 0,
                                 goal_paused,
                                 origin: item.origin.unwrap_or_default().into(),
@@ -865,9 +953,19 @@ fn refresh_chat(app: &MainWindow, state: Rc<RefCell<State>>, silent: bool) {
                             .map(|row| row.goal_objective.clone())
                             .unwrap_or_default(),
                     );
-                    app.set_goal_phase(active.map(|row| row.goal_phase.clone()).unwrap_or_default());
-                    app.set_goal_activation(active.map(|row| row.goal_activation.clone()).unwrap_or_default());
-                    app.set_goal_rounds(active.map(|row| row.goal_rounds.clone()).unwrap_or_default());
+                    app.set_goal_phase(
+                        active.map(|row| row.goal_phase.clone()).unwrap_or_default(),
+                    );
+                    app.set_goal_activation(
+                        active
+                            .map(|row| row.goal_activation.clone())
+                            .unwrap_or_default(),
+                    );
+                    app.set_goal_rounds(
+                        active
+                            .map(|row| row.goal_rounds.clone())
+                            .unwrap_or_default(),
+                    );
                     set_goal_clock(&app, active.map(|row| row.goal_seconds).unwrap_or(0));
                     app.set_goal_paused(active.is_some_and(|row| row.goal_paused));
                     update_active_thread_filter(&app, rows.iter().cloned());
@@ -899,9 +997,6 @@ fn refresh_chat(app: &MainWindow, state: Rc<RefCell<State>>, silent: bool) {
                     {
                         app.invoke_select_conversation(0);
                     }
-                    if !silent {
-                        app.set_status("内嵌运行时已就绪".into());
-                    }
                 }
                 Err(error) => app.set_status(format!("无法读取会话：{error}").into()),
             }
@@ -919,6 +1014,7 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
         let Some(row) = app.get_conversations().row_data(index as usize) else {
             return;
         };
+        crate::cloud_threads::leave(&app);
         let id = row.id.to_string();
         let desktop = state.borrow().desktop.clone();
         let previous_session = app.get_active_session_id().to_string();
@@ -1035,6 +1131,7 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
                             desktop.clone(),
                             session.workspace_id.as_deref(),
                         );
+                        app.set_selected_model_key("".into());
                         crate::entity_state::restore_agent(&app, &agent);
                         update_active_thread_filter_model(&app, &app.get_conversations());
                         crate::navigation_ui::project(&app);
@@ -1046,7 +1143,6 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
                         if let Some(model) = session.session_model_name.as_deref() {
                             crate::native_pages::select_model_key(&app, model);
                         }
-                        app.set_status("内嵌运行时已就绪".into());
                     }
                     Err(error) => app.set_status(format!("无法加载会话：{error}").into()),
                 }
@@ -1088,6 +1184,7 @@ fn bind_new_thread(app: &MainWindow, state: Rc<RefCell<State>>) {
     // server-side empty sessions.
     app.on_new_thread(move || {
         let Some(app) = weak.upgrade() else { return };
+        if app.get_cloud_chat_active() { app.invoke_cloud_new_thread(); return; }
         if app.get_creating_session() || app.get_session_loading() || app.get_chat_loading() {
             return;
         }
@@ -1153,6 +1250,10 @@ fn bind_thread_model(app: &MainWindow, state: Rc<RefCell<State>>) {
     let weak = app.as_weak();
     app.on_select_thread_model(move |key| {
         let Some(app) = weak.upgrade() else { return };
+        if app.get_cloud_chat_active() {
+            crate::cloud_threads::set_model(&app, state.borrow().desktop.clone(), key.to_string());
+            return;
+        }
         let key = key.trim().to_string();
         if key.is_empty() {
             return;
@@ -1170,7 +1271,7 @@ fn bind_thread_model(app: &MainWindow, state: Rc<RefCell<State>>) {
         std::thread::spawn(move || {
             let result = desktop.set_session_model(&session, &key);
             let _ = weak.upgrade_in_event_loop(move |app| {
-                if app.get_active_session_id() != session {
+                if app.get_cloud_chat_active() || app.get_active_session_id() != session {
                     return;
                 }
                 match result {
@@ -1189,6 +1290,10 @@ fn bind_reasoning_effort(app: &MainWindow, state: Rc<RefCell<State>>) {
     let weak = app.as_weak();
     app.on_save_session_reasoning_effort(move |value| {
         let Some(app) = weak.upgrade() else { return };
+        if app.get_cloud_chat_active() {
+            crate::cloud_threads::set_effort(&app, state.borrow().desktop.clone(), value.to_string());
+            return;
+        }
         let session = app.get_active_session_id().to_string();
         if session.is_empty() {
             return;
@@ -1198,7 +1303,7 @@ fn bind_reasoning_effort(app: &MainWindow, state: Rc<RefCell<State>>) {
         std::thread::spawn(move || {
             let result = desktop.save_session_reasoning_effort(&session, &value);
             let _ = weak.upgrade_in_event_loop(move |app| {
-                if app.get_active_session_id() != session {
+                if app.get_cloud_chat_active() || app.get_active_session_id() != session {
                     return;
                 }
                 match result {
@@ -1210,7 +1315,6 @@ fn bind_reasoning_effort(app: &MainWindow, state: Rc<RefCell<State>>) {
     });
 }
 
-
 fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
     let weak = app.as_weak();
     app.on_send_message(move || {
@@ -1219,6 +1323,16 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
             return;
         }
         let content = app.get_draft().trim().to_string();
+        if app.get_cloud_chat_active() {
+            if !crate::cloud_threads::is_active(&app) {
+                app.set_status("请先选择或新建云端线程".into());
+            } else if app.get_pending_attachments().row_count() > 0 {
+                app.set_status("云端线程暂不支持此附件，请先移除附件".into());
+            } else {
+                crate::cloud_threads::send(&app, state.borrow().desktop.clone(), content);
+            }
+            return;
+        }
         if app.get_terminal_mode() {
             // Terminal mode: the input belongs to the local shell, never the
             // model. "//" escapes a literal slash prefix; everything else is
@@ -1359,6 +1473,7 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
             let mut live = timeline.borrow_mut();
             live.set_highlight(true);
             live.begin_turn(&client_message_id, &display_content);
+            live.set_turn_status("请求中", 0);
             publish_timeline(&app, &live);
         }
         app.set_draft("".into());
@@ -1834,6 +1949,10 @@ fn bind_stop(app: &MainWindow, state: Rc<RefCell<State>>) {
     let weak = app.as_weak();
     app.on_stop_generation(move || {
         let Some(app) = weak.upgrade() else { return };
+        if app.get_cloud_chat_active() {
+            crate::cloud_threads::cancel(&app, state.borrow().desktop.clone());
+            return;
+        }
         if app.get_stopping() {
             return;
         }
@@ -2086,6 +2205,7 @@ fn start_timer(app: &MainWindow, state: Rc<RefCell<State>>) {
                     let mut live = timeline.borrow_mut();
                     live.set_highlight(true);
                     live.begin_turn(&entry.client_message_id, &content);
+                    live.set_turn_status("请求中", 0);
                     publish_timeline(&app, &live);
                 }
                 let mut output = TurnOutput::new(session.clone(), timeline.clone());
@@ -2243,7 +2363,6 @@ fn start_timer(app: &MainWindow, state: Rc<RefCell<State>>) {
                 publish_timeline(&app, &live);
                 app.set_stream_bytes(live.body_text().len().min(i32::MAX as usize) as i32);
                 drop(live);
-                app.set_status(active.state.as_str().into());
                 set_session_status(&app, &active.session, &active.state);
                 // Status dock: capsule state plus plan progress and file
                 // stats; the session plan cache only moves when the plan did.
@@ -2281,7 +2400,6 @@ fn start_timer(app: &MainWindow, state: Rc<RefCell<State>>) {
                 // With parked submissions still waiting the pump keeps running:
                 // the engine starts the successor as soon as this lease drops,
                 // and the next tick hands it the live slot.
-                app.set_status(active.state.as_str().into());
                 crate::workspace_files::execution_finished(&app, desktop.clone());
             }
             if done {
@@ -2397,7 +2515,7 @@ fn apply_event(
             }
             active.state = match data["status"].as_str() {
                 Some("queued") => "正在排队",
-                Some("running") => "正在生成…",
+                Some("running") => "请求中",
                 Some("cancelled" | "interrupted") => "已停止",
                 Some("failed") => "执行失败",
                 Some("waiting_input" | "waiting_user_input") => "等待用户输入",
@@ -2657,7 +2775,9 @@ fn apply_event(
             // the parent turn's state never rewrites it.
             let card = wunder_desktop::NativeSubagentCard::from_payload(data);
             match card {
-                Some(card) => timeline.upsert_subagent(&card),
+                Some(card) => {
+                    timeline.upsert_subagent(&card);
+                }
                 None => return Ok(false),
             }
         }
@@ -2844,11 +2964,11 @@ mod turn_tests {
         assert_eq!(reasons[1].detail, "Second thought");
     }
 
-    /// The statistics footer must land on the body block that ends the turn,
+    /// The statistics footer must land on the independent turn footer,
     /// both when the runtime rides it on the final answer and when it only
     /// arrives with the terminal event.
     #[test]
-    fn turn_statistics_reach_the_body_block_from_either_event() {
+    fn turn_statistics_reach_the_footer_from_either_event() {
         let timeline = Rc::new(RefCell::new(crate::timeline::Timeline::new()));
         let mut output = TurnOutput::new("fixture-session".into(), timeline.clone());
         let mut live = timeline.borrow_mut();
@@ -2869,12 +2989,12 @@ mod turn_tests {
             let mut live = timeline.borrow_mut();
             live.flush();
         }
-        let body_stats = |timeline: &Rc<RefCell<crate::timeline::Timeline>>| {
+        let footer_stats = |timeline: &Rc<RefCell<crate::timeline::Timeline>>| {
             let live = timeline.borrow();
             let model = live.model();
             let row = (0..slint::Model::row_count(&model))
                 .filter_map(|index| slint::Model::row_data(&model, index))
-                .find(|row| row.kind == crate::timeline::KIND_BODY)?;
+                .find(|row| row.kind == crate::timeline::KIND_FOOTER)?;
             Some(
                 row.stats
                     .iter()
@@ -2883,9 +3003,9 @@ mod turn_tests {
             )
         };
         assert_eq!(
-            body_stats(&timeline),
-            Some(Vec::new()),
-            "a streamed block has no metrics yet",
+            footer_stats(&timeline),
+            None,
+            "streamed text alone does not create numeric metrics",
         );
 
         // The final answer carries the turn's statistics.
@@ -2905,7 +3025,7 @@ mod turn_tests {
                 }}
             }}),
         );
-        let metrics = body_stats(&timeline).expect("a body row");
+        let metrics = footer_stats(&timeline).expect("a footer row");
         assert_eq!(
             metrics,
             vec![
@@ -2949,7 +3069,7 @@ mod turn_tests {
         let model = live.model();
         let metrics: Vec<(String, String)> = (0..slint::Model::row_count(&model))
             .filter_map(|index| slint::Model::row_data(&model, index))
-            .find(|row| row.kind == crate::timeline::KIND_BODY)
+            .find(|row| row.kind == crate::timeline::KIND_FOOTER)
             .map(|row| {
                 row.stats
                     .iter()

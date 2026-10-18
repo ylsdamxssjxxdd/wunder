@@ -59,7 +59,7 @@ Default tool sets, the desktop hidden set, and the desktop extra set all have a 
 | Default built-ins (13) | `定时任务`, `记忆管理`, `执行命令`, `命令会话`, `ptc`, `列出文件`, `glob`, `搜索内容`, `读取文件`, `网页抓取`, `技能调用`, `写入文件`, `文本编辑` |
 | Default skill | `技能创建器` |
 | Desktop hidden (neither selectable nor on by default) | `get_goal`, `create_goal`, `update_goal` (injected automatically by the runtime per session), `会话线程控制`, `会话让出` |
-| Desktop extras, on by default | `读图工具`, `桌面监视器`, `桌面控制器`, `子智能体控制` |
+| Desktop extras, on by default | `读图工具`, `桌面控制`, `子智能体控制` |
 
 `网页搜索` and `ptc` are **temporarily withdrawn, not deleted**: the code is kept and dispatch still recognizes them, but the availability check returns unavailable for both, so neither the model nor the user can see them. To restore them, remove the matching entries from the withdrawal list.
 

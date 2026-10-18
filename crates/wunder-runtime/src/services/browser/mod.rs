@@ -8,4 +8,4 @@ pub mod runtime;
 pub use config::browser_tools_enabled;
 pub use model::BrowserSessionScope;
 pub use provider::{active_provider, browser_registry, registered_tool_names, ContentBlock};
-pub use runtime::browser_service;
+pub use runtime::{browser_service, prewarm_browser_service};

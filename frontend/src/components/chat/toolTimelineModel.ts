@@ -16,7 +16,8 @@ import {
   type WorkflowItem
 } from './toolWorkflowRunModel';
 import { buildCollapsedToolWorkflowSummary } from './toolWorkflowCollapsedSummary';
-import { isTimelineEditToolRun } from './toolTimelinePatch';
+import { buildTimelineDiffStats, isTimelineEditToolRun } from './toolTimelinePatch';
+import type { TimelineDiffStats } from './toolTimelinePatch';
 import { resolveToolIconClass } from '@/utils/abilityVisuals';
 import { extractToolResultDataObject, parseToolWorkflowResultObject } from './toolWorkflowResultPayload';
 import { buildToolResultPreview } from './toolWorkflowPreview';
@@ -55,6 +56,8 @@ export type TimelineToolEntry = {
   summary: string;
   /** 摘要是否为命令/代码形态（用等宽字体渲染）。 */
   summaryMono: boolean;
+  /** 编辑/补丁类工具的 +/- 行数统计（其他工具为 null）。 */
+  diffStats: TimelineDiffStats | null;
   /** 目标标签（文件名 / 路径），点击在左栏工作目录区定位。 */
   targets: TimelineTargetChip[];
   /** 失败时的错误摘要（可展开查看）。 */
@@ -547,6 +550,7 @@ const resolveCompactionEntry = (
     metrics: { tokens: null, durationMs: null },
     summary: truncateSingleLine([instanceLabel, display.summaryTitle || display.resultSummary].filter(Boolean).join(' · ')),
     summaryMono: false,
+    diffStats: null,
     targets: [],
     errorText: status === 'failed' ? display.summaryNote || display.resultSummary : '',
     detailText: display.resultBody || display.copyBody || '',
@@ -604,6 +608,8 @@ export const buildTimelineToolEntry = (
     metrics: resolveRunMetrics(run),
     summary,
     summaryMono: isExecuteCommandToolName(run.toolName),
+    // +/- 统计只描述实际生效的改动：失败/取消的调用没有改出这个结果，不显示。
+    diffStats: status === 'failed' || status === 'cancelled' ? null : buildTimelineDiffStats(run),
     targets,
     errorText,
     detailText,

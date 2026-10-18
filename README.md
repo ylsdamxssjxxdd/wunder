@@ -56,8 +56,7 @@ wunder（心舰）是一个**智能体调度平台**
 | 视频生成 | `generate_video` | 按提示词生成视频 | 多模态 |
 | 语音生成 | `generate_speech` | 文本转语音 | 多模态 |
 | 声转文 | `transcribe_speech` | 语音转文字 | 多模态 |
-| 桌面监视器 | `desktop_monitor` | 读取桌面窗口与屏幕状态 | 桌面 |
-| 桌面控制器 | `desktop_controller` | 操作本机桌面（鼠标、键盘、窗口） | 桌面 |
+| 桌面控制 | `desktop_control` | 操作本机桌面并观察（鼠标、键盘、窗口） | 桌面 |
 | 子智能体控制 | `subagent_control` | 在任务中临时派生子智能体，结果回传后回收 | 线程与子智能体 |
 | 会话线程控制 | `thread_control` | 管理任务线程 / 分支线程（桌面端不开放） | 线程与子智能体 |
 | 自我状态 | `self_status` | 查询智能体自身的运行状态 | 系统与记忆 |

@@ -108,6 +108,12 @@ pub(crate) fn sync_tool_selection(app: &MainWindow) {
 
 fn apply_model(app: &MainWindow, model: ModelCard) {
     app.set_selected_model_card(model.clone());
+    app.set_settings_model_key(model.key.clone());
+    app.set_settings_model_provider(model.provider.clone());
+    app.set_settings_model_name(model.model.clone());
+    app.set_settings_model_base_url(model.base_url.clone());
+    app.set_settings_model_type(model.model_type.clone());
+    app.set_settings_model_is_default(model.is_default);
     // The settings page edits the selected model in place, so every selection
     // projects straight into the editor drafts (secrets stay empty: an empty
     // key field means "keep the stored secret" on save).
@@ -124,6 +130,13 @@ fn apply_model(app: &MainWindow, model: ModelCard) {
     app.set_model_thinking_budget_draft(model.thinking_token_budget.clone());
     app.set_model_max_rounds_draft(model.max_rounds.clone());
     app.set_model_max_context_draft(model.max_context.clone());
+    app.set_model_history_compaction_ratio_draft(model.history_compaction_ratio.clone());
+    app.set_model_reasoning_effort_draft(model.reasoning_effort.clone());
+    app.set_model_simulation_speed_draft(model.simulation_speed.clone());
+    app.set_model_support_vision_draft(model.support_vision);
+    app.set_model_support_hearing_draft(model.support_hearing);
+    app.set_model_stream_include_usage_draft(model.stream_include_usage);
+    app.set_model_tool_call_mode_draft(model.tool_call_mode.clone());
     app.set_model_tts_voice_draft(model.tts_voice.clone());
     app.set_model_tts_format_draft(model.tts_response_format.clone());
     app.set_model_tts_speed_draft(model.tts_speed.clone());
@@ -140,11 +153,16 @@ fn apply_model(app: &MainWindow, model: ModelCard) {
     app.set_model_video_size_draft(model.video_size.clone());
     app.set_model_video_seconds_draft(model.video_seconds.clone());
     app.set_model_video_fps_draft(model.video_fps.clone());
+    app.set_model_video_num_frames_draft(model.video_num_frames.clone());
     app.set_model_video_negative_draft(model.video_negative_prompt.clone());
-    app.set_selected_model_key(model.key);
-    app.set_selected_model_provider(model.provider);
-    app.set_selected_model_name(model.model);
-    app.set_selected_model_base_url(model.base_url);
-    app.set_selected_model_type(model.model_type);
-    app.set_selected_model_is_default(model.is_default);
+    app.set_model_video_steps_draft(model.video_steps.clone());
+    app.set_model_video_guidance_scale_draft(model.video_guidance_scale.clone());
+    app.set_model_video_guidance_scale_2_draft(model.video_guidance_scale_2.clone());
+    app.set_model_video_boundary_ratio_draft(model.video_boundary_ratio.clone());
+    app.set_model_video_flow_shift_draft(model.video_flow_shift.clone());
+    app.set_model_video_frame_interpolation_draft(model.video_frame_interpolation);
+    app.set_model_video_sync_mode_draft(model.video_sync_mode);
+    // Settings selection is intentionally separate from the composer's
+    // per-thread model override. Opening a model row must not switch the
+    // model shown below the composer.
 }

@@ -1,10 +1,13 @@
-//! Cloud view work runs off the UI thread; only bounded row deltas reach Slint.
-use crate::{CloudThreadCard, CloudTurn, MainWindow};
-use slint::{ComponentHandle, Model, ModelRc, VecModel};
+//! Cloud thread controller.
+//!
+//! Cloud threads are a data source for the ordinary desktop transcript, not a
+//! second chat product. This module owns only the bounded catalogue,
+//! page/watch lifecycle and command hand-off. `TimelineView` and `Composer`
+//! remain the single reader and writer surface for every thread.
+use crate::{CloudThreadCard, MainWindow, ModelCard};
+use slint::{ComponentHandle, ModelRc, VecModel};
 use std::{
     cell::RefCell,
-    collections::HashMap,
-    rc::Rc,
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc,
@@ -14,25 +17,72 @@ use wunder_desktop::{
     native::{NativeCloudAgent, NativeCloudThread},
     NativeDesktop,
 };
-use wunder_server::{
-    cloud::CloudThreadEvent,
-    stable_core::thread_view::{ChatViewRow, ThreadViewPage},
-};
+use wunder_server::{cloud::CloudThreadEvent, stable_core::thread_view::{ChatViewRow, ThreadViewPage}};
 
 thread_local! {
-    static CATALOG: RefCell<(Vec<NativeCloudAgent>,Vec<NativeCloudThread>)> = RefCell::new((Vec::new(),Vec::new()));
-    // A create request completes before the catalog refresh returns. Keep the
-    // id here so the refresh can select the exact new row instead of falling
-    // back to the "new thread" sentinel or the previous selection.
+    static CATALOG: RefCell<(Vec<NativeCloudAgent>, Vec<NativeCloudThread>)> = RefCell::new((Vec::new(), Vec::new()));
     static PENDING_SELECTION: RefCell<Option<String>> = const { RefCell::new(None) };
-    static ROWS: Rc<VecModel<CloudTurn>> = Rc::new(VecModel::default());
-    // Keep only the bounded page that is on screen. It carries lazy body refs
-    // for on-demand, lossless clipboard reads without retaining prior pages.
-    static MESSAGE_ROWS: RefCell<HashMap<String, ChatViewRow>> = RefCell::new(HashMap::new());
-    static NEXT_BEFORE: RefCell<Option<i64>> = const { RefCell::new(None) };
     static WATCH: RefCell<Option<wunder_server::cloud::CloudThreadCancellation>> = const { RefCell::new(None) };
+    static MESSAGES: RefCell<Vec<ChatViewRow>> = const { RefCell::new(Vec::new()) };
+    static LOADED_ID: RefCell<String> = const { RefCell::new(String::new()) };
+    static DRAFTS: RefCell<std::collections::HashMap<String, String>> = RefCell::new(std::collections::HashMap::new());
+    static ACCOUNT_KEY: RefCell<(bool, String, String)> = RefCell::new((false, String::new(), String::new()));
 }
+
 static GENERATION: AtomicU64 = AtomicU64::new(0);
+static ACCOUNT_GENERATION: AtomicU64 = AtomicU64::new(0);
+static CATALOG_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+pub(crate) fn account_status(app: &MainWindow, logged_in: bool, server: &str, username: &str) {
+    let key = (logged_in, server.to_string(), username.to_string());
+    let changed = ACCOUNT_KEY.with(|slot| {
+        let changed = *slot.borrow() != key;
+        *slot.borrow_mut() = key;
+        changed
+    });
+    if changed { reset_account(app); }
+}
+
+pub(crate) fn reset_account(app: &MainWindow) {
+    let was_cloud = app.get_cloud_chat_active();
+    leave(app);
+    if was_cloud { crate::native_chat::prepare_external_timeline(app); }
+    ACCOUNT_GENERATION.fetch_add(1, Ordering::AcqRel);
+    CATALOG_GENERATION.fetch_add(1, Ordering::AcqRel);
+    CATALOG.with(|slot| *slot.borrow_mut() = (Vec::new(), Vec::new()));
+    MESSAGES.with(|slot| slot.borrow_mut().clear());
+    DRAFTS.with(|slot| slot.borrow_mut().clear());
+    LOADED_ID.with(|slot| slot.borrow_mut().clear());
+    PENDING_SELECTION.with(|slot| *slot.borrow_mut() = None);
+    app.set_cloud_active_thread_id("".into());
+    app.set_cloud_thread_index(0);
+    app.set_cloud_thread_rows(ModelRc::default());
+    app.set_cloud_thread_models(ModelRc::default());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn row(round: i64, revision: i64) -> ChatViewRow {
+        ChatViewRow { root_turn_id: format!("fixture-{round}"), user_round: round, revision, ..Default::default() }
+    }
+
+    #[test]
+    fn cloud_replay_keeps_order_rejects_old_revisions_and_bounds_history() {
+        let mut rows = (1..=20).map(|round| row(round, 2)).collect::<Vec<_>>();
+        merge_messages(&mut rows, &[row(19, 1), row(21, 1), row(20, 3)], false);
+        assert_eq!(rows.len(), 20);
+        assert_eq!(rows.first().unwrap().user_round, 2);
+        assert_eq!(rows.last().unwrap().user_round, 21);
+        assert_eq!(rows.iter().find(|row| row.user_round == 19).unwrap().revision, 2);
+        assert_eq!(rows.iter().find(|row| row.user_round == 20).unwrap().revision, 3);
+        merge_messages(&mut rows, &[row(40, 1)], true);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].user_round, 40);
+    }
+}
+
 fn invalidate() -> u64 {
     WATCH.with(|watch| {
         if let Some(cancel) = watch.borrow_mut().take() {
@@ -41,101 +91,146 @@ fn invalidate() -> u64 {
     });
     GENERATION.fetch_add(1, Ordering::AcqRel) + 1
 }
+
 fn active(generation: u64) -> bool {
     GENERATION.load(Ordering::Acquire) == generation
 }
-fn thread_id(app: &MainWindow) -> String {
+
+pub(crate) fn leave(app: &MainWindow) {
+    save_draft(app);
+    invalidate();
+    if app.get_cloud_chat_active() {
+        app.set_busy(false);
+        app.set_stopping(false);
+        app.set_draft("".into());
+    }
+    app.set_cloud_chat_active(false);
+    app.set_cloud_thread_busy(false);
+    LOADED_ID.with(|slot| slot.borrow_mut().clear());
+}
+
+fn save_draft(app: &MainWindow) {
+    LOADED_ID.with(|id| {
+        if id.borrow().is_empty() { return; }
+        DRAFTS.with(|slot| {
+            let mut drafts = slot.borrow_mut();
+            if drafts.len() >= 100 && !drafts.contains_key(id.borrow().as_str()) { drafts.clear(); }
+            drafts.insert(id.borrow().clone(), app.get_draft().to_string());
+        });
+    });
+}
+
+pub(crate) fn is_active(app: &MainWindow) -> bool {
+    app.get_cloud_chat_active() && !selected_id(app).is_empty()
+}
+
+pub(crate) fn selected_id(app: &MainWindow) -> String {
+    app.get_cloud_active_thread_id().to_string()
+}
+
+pub(crate) fn final_message_id(root: &str) -> String {
+    MESSAGES.with(|slot| slot.borrow().iter()
+        .find(|row| row.root_turn_id == root)
+        .map(|row| row.assistant.item_id.clone()).unwrap_or_default())
+}
+
+fn selected_agent() -> String {
     CATALOG.with(|catalog| {
         catalog
             .borrow()
-            .1
-            .get(app.get_cloud_thread_index().saturating_sub(1) as usize)
-            .filter(|_| app.get_cloud_thread_index() > 0)
-            .map(|row| row.id.clone())
+            .0
+            .first()
+            .map(|agent| agent.id.clone())
             .unwrap_or_default()
     })
 }
-fn row(value: ChatViewRow) -> CloudTurn {
-    let assistant = if value.assistant.tail.is_empty() {
-        value.assistant.content
-    } else if value.assistant.tail_offset == 0 {
-        value.assistant.tail
-    } else {
-        format!("{}\n…\n{}", value.assistant.content, value.assistant.tail)
-    };
-    CloudTurn {
-        id: value.root_turn_id.into(),
-        user: value.user.content.into(),
-        assistant: assistant.into(),
-        status: value.status.into(),
-    }
-}
-fn apply_rows(app: &MainWindow, rows: Vec<ChatViewRow>, reset: bool) {
-    MESSAGE_ROWS.with(|stored| {
-        let mut stored = stored.borrow_mut();
-        if reset { stored.clear(); }
-        for value in &rows { stored.insert(value.root_turn_id.clone(), value.clone()); }
-    });
-    ROWS.with(|model| {
-        if reset {
-            model.set_vec(
-                rows.into_iter()
-                    .rev()
-                    .take(20)
-                    .collect::<Vec<_>>()
-                    .into_iter()
-                    .rev()
-                    .map(row)
-                    .collect::<Vec<_>>(),
-            );
+
+fn merge_messages(messages: &mut Vec<ChatViewRow>, incoming: &[ChatViewRow], replace: bool) {
+    if replace { messages.clear(); }
+    for row in incoming {
+        if let Some(existing) = messages.iter_mut().find(|old| old.root_turn_id == row.root_turn_id) {
+            if row.revision >= existing.revision { *existing = row.clone(); }
         } else {
-            for incoming in rows {
-                let incoming = row(incoming);
-                if let Some(index) = (0..model.row_count()).find(|&index| {
-                    model
-                        .row_data(index)
-                        .is_some_and(|old| old.id == incoming.id)
-                }) {
-                    if model.row_data(index).is_some_and(|old| old != incoming) {
-                        model.set_row_data(index, incoming);
-                    }
-                } else {
-                    model.push(incoming);
-                }
-            }
-            while model.row_count() > 20 {
-                model.remove(0);
-            }
+            messages.push(row.clone());
         }
-        app.set_cloud_turns(ModelRc::from(model.clone()));
-        let visible: std::collections::HashSet<String> = (0..model.row_count())
-            .filter_map(|index| model.row_data(index).map(|row| row.id.to_string()))
-            .collect();
-        MESSAGE_ROWS.with(|stored| stored.borrow_mut().retain(|id, _| visible.contains(id)));
-    });
+    }
+    messages.sort_by(|left, right| left.user_round.cmp(&right.user_round)
+        .then_with(|| left.created_time.total_cmp(&right.created_time))
+        .then_with(|| left.root_turn_id.cmp(&right.root_turn_id)));
+    if messages.len() > 20 { let remove = messages.len() - 20; messages.drain(..remove); }
 }
+
+fn publish_page(app: &MainWindow, page: &ThreadViewPage, replace: bool) {
+    // A degraded bootstrap is not an empty thread. Keep the committed view.
+    if page.degraded {
+        app.set_status("云端线程暂时读取缓慢，正在恢复连接".into());
+        return;
+    }
+    let rows = MESSAGES.with(|slot| {
+        let mut messages = slot.borrow_mut();
+        merge_messages(&mut messages, &page.chat, replace);
+        crate::native_chat::project_cloud_history(&messages, app.get_timeline())
+    });
+    crate::native_chat::replace_external_timeline(app, rows, replace);
+    app.set_busy(matches!(page.runtime_status.as_str(), "running" | "queued" | "pending" | "waiting_approval"));
+    app.set_stopping(false);
+    app.set_cloud_thread_status(page.runtime_status.clone().into());
+}
+
 fn load(app: &MainWindow, api: Arc<NativeDesktop>) {
-    let id = thread_id(app);
+    let id = selected_id(app);
     let generation = invalidate();
+    let changed = LOADED_ID.with(|slot| *slot.borrow() != id);
+    if changed {
+        save_draft(app);
+        crate::native_chat::prepare_external_timeline(app);
+        MESSAGES.with(|slot| slot.borrow_mut().clear());
+        LOADED_ID.with(|slot| *slot.borrow_mut() = id.clone());
+        app.set_draft(DRAFTS.with(|slot| slot.borrow().get(&id).cloned().unwrap_or_default()).into());
+        app.set_selected_model_key("".into());
+        app.set_selected_agent_model("".into());
+        app.set_reasoning_effort("default".into());
+        app.set_context_known(false);
+    }
     app.set_cloud_thread_busy(!id.is_empty());
-    app.set_cloud_thread_history_mode(false);
     if id.is_empty() {
-        apply_rows(app, Vec::new(), true);
+        crate::native_chat::replace_external_timeline(app, Vec::new(), true);
         return;
     }
     let weak = app.as_weak();
     std::thread::spawn(move || {
-        let page = api.cloud_thread_view(&id);
-        let (page, mut watch) = match page {
-            Ok(page) => {
-                let watch = api.cloud_thread_watch(&id, page.view_seq);
-                (page, watch)
+        let mut failures = 0u32;
+        let result = loop {
+            if !active(generation) { return; }
+            let result = api.cloud_thread_bootstrap(&id);
+            if result.as_ref().err().is_none_or(|error| !wunder_server::cloud::retryable_cloud_read(error)) {
+                break result;
+            }
+            failures = failures.saturating_add(1);
+            let _ = weak.upgrade_in_event_loop(move |app| {
+                if active(generation) {
+                    app.set_cloud_thread_busy(false);
+                    app.set_cloud_thread_status("reconnecting".into());
+                    app.set_status("云端暂时不可达，正在自动重连".into());
+                }
+            });
+            // One reader per selection, cancellable bounded backoff. A switch
+            // must not retain sleeping workers or accept an old bootstrap.
+            for _ in 0..((1u64 << failures.min(5)).min(30) * 10) {
+                if !active(generation) { return; }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+        };
+        let (view, mut watch) = match result {
+            Ok(view) => {
+                let watch = api.cloud_thread_watch(&id, view.page.view_seq);
+                (view, watch)
             }
             Err(error) => {
                 let _ = weak.upgrade_in_event_loop(move |app| {
                     if active(generation) {
                         app.set_cloud_thread_busy(false);
-                        app.set_cloud_thread_status(error.to_string().into());
+                        app.set_status(format!("无法读取云端线程：{error}").into());
                     }
                 });
                 return;
@@ -143,20 +238,48 @@ fn load(app: &MainWindow, api: Arc<NativeDesktop>) {
         };
         let token = watch.cancel_token();
         let _ = weak.upgrade_in_event_loop(move |app| {
-            if !active(generation) {
+            if !active(generation) || !is_active(&app) {
                 token.cancel();
                 return;
             }
             WATCH.with(|watch| *watch.borrow_mut() = Some(token));
-            apply_page(&app, page);
+            app.set_selected_model_key(view.model_key.into());
+            app.set_reasoning_effort(view.reasoning_effort.into());
+            publish_page(&app, &view.page, changed);
             app.set_cloud_thread_busy(false);
         });
+        // The command acknowledgement only means the turn was admitted.  A
+        // fast cloud run can finish between bootstrap and the websocket watch
+        // subscription, leaving the initial `running` projection stranded
+        // until the user changes threads.  Keep one bounded, cancellable
+        // reconciliation loop alongside the live stream so terminal state is
+        // visible without navigation.
+        let poll_api = api.clone();
+        let poll_weak = weak.clone();
+        let poll_id = id.clone();
+        std::thread::spawn(move || {
+            for _ in 0..400 {
+                std::thread::sleep(std::time::Duration::from_millis(750));
+                if !active(generation) { return; }
+                let Ok(view) = poll_api.cloud_thread_bootstrap(&poll_id) else { continue; };
+                let terminal = matches!(
+                    view.page.runtime_status.as_str(),
+                    "completed" | "failed" | "cancelled" | "canceled" | "timeout"
+                );
+                let _ = poll_weak.upgrade_in_event_loop(move |app| {
+                    if active(generation) && is_active(&app) {
+                        publish_page(&app, &view.page, false);
+                        if terminal {
+                            app.set_cloud_thread_busy(false);
+                            app.set_stopping(false);
+                        }
+                    }
+                });
+                if terminal { return; }
+            }
+        });
         while active(generation) {
-            let Some(event) = watch.blocking_recv() else {
-                break;
-            };
-            // Bounded producer/UI handoff. At most one callback can be queued;
-            // the upstream channel supplies backpressure while UI is busy.
+            let Some(event) = watch.blocking_recv() else { break };
             std::thread::sleep(std::time::Duration::from_millis(25));
             let mut events = vec![event];
             while events.len() < 32 {
@@ -167,25 +290,32 @@ fn load(app: &MainWindow, api: Arc<NativeDesktop>) {
             }
             let (applied, ack) = std::sync::mpsc::sync_channel(1);
             let weak_event = weak.clone();
+            let event_api = api.clone();
             let _ = weak_event.upgrade_in_event_loop(move |app| {
-                let _ = applied.send(());
-                if !active(generation) {
+                if !active(generation) || !is_active(&app) {
+                    let _ = applied.send(());
                     return;
                 }
                 for event in events {
                     match event {
                         CloudThreadEvent::Change(change) => {
-                            apply_rows(&app, change.rows, false);
-                            app.set_cloud_thread_status(change.runtime_status.into());
+                            let page = ThreadViewPage {
+                                runtime_status: change.runtime_status,
+                                chat: change.rows,
+                                ..ThreadViewPage::default()
+                            };
+                            publish_page(&app, &page, false);
                         }
-                        CloudThreadEvent::Connection(state) => {
-                            app.set_cloud_thread_status(state.into())
+                        CloudThreadEvent::Connection(status) => {
+                            app.set_cloud_thread_status(status.into());
                         }
                         CloudThreadEvent::Reload => {
-                            app.invoke_cloud_select_thread(app.get_cloud_thread_index())
+                            load(&app, event_api.clone());
+                            break;
                         }
                     }
                 }
+                let _ = applied.send(());
             });
             while active(generation) {
                 match ack.recv_timeout(std::time::Duration::from_millis(100)) {
@@ -196,322 +326,305 @@ fn load(app: &MainWindow, api: Arc<NativeDesktop>) {
         }
     });
 }
-fn apply_page(app: &MainWindow, page: ThreadViewPage) {
-    app.set_cloud_thread_status(page.runtime_status.into());
-    app.set_cloud_thread_has_older(page.has_more);
-    NEXT_BEFORE.with(|cursor| *cursor.borrow_mut() = page.next_before);
-    apply_rows(app, page.chat, true);
-}
 
-fn earlier(app: &MainWindow, api: Arc<NativeDesktop>) {
-    if app.get_cloud_thread_busy() {
-        return;
-    }
-    let Some(before) = NEXT_BEFORE.with(|cursor| *cursor.borrow()) else {
-        return;
-    };
-    let id = thread_id(app);
-    if id.is_empty() {
-        return;
-    }
-    let generation = invalidate();
-    app.set_cloud_thread_busy(true);
-    let weak = app.as_weak();
-    std::thread::spawn(move || {
-        let page = api.cloud_thread_history(&id, before);
-        let _ = weak.upgrade_in_event_loop(move |app| {
-            if !active(generation) {
-                return;
-            }
-            app.set_cloud_thread_busy(false);
-            match page {
-                Ok(page) => {
-                    apply_page(&app, page);
-                    app.set_cloud_thread_history_mode(true);
-                    app.set_cloud_thread_status("更早的消息页 / Earlier messages".into());
-                }
-                Err(error) => app.set_cloud_thread_status(error.to_string().into()),
-            }
-        });
-    });
-}
-
-fn copy_message(app: &MainWindow, api: Arc<NativeDesktop>, id: String, assistant: bool) {
-    if app.get_cloud_thread_busy() {
-        return;
-    }
-    let Some(message) = MESSAGE_ROWS.with(|rows| {
-        rows.borrow().get(&id).map(|row| {
-            if assistant { row.assistant.clone() } else { row.user.clone() }
-        })
-    }) else {
-        app.set_cloud_thread_status("消息已不在当前页，请刷新后重试 / Message is no longer on this page; refresh and try again".into());
-        return;
-    };
-    let thread = thread_id(app);
-    if thread.is_empty() {
-        return;
-    }
-    let generation = GENERATION.load(Ordering::Acquire);
-    app.set_cloud_thread_busy(true);
-    let weak = app.as_weak();
-    std::thread::spawn(move || {
-        let text = api.cloud_message_text(&thread, &message);
-        let _ = weak.upgrade_in_event_loop(move |app| {
-            if !active(generation) {
-                return;
-            }
-            app.set_cloud_thread_busy(false);
-            match text {
-                Ok(text) => {
-                    app.set_cloud_thread_copy_text(text.into());
-                    app.set_cloud_thread_copy_request(app.get_cloud_thread_copy_request().saturating_add(1));
-                    app.set_cloud_thread_status("已复制完整原文 / Complete original text copied".into());
-                }
-                Err(error) => app.set_cloud_thread_status(error.to_string().into()),
-            }
-        });
-    });
-}
-fn refresh(app: &MainWindow, api: Arc<NativeDesktop>) {
+fn refresh(app: &MainWindow, api: Arc<NativeDesktop>, preserve: Option<String>) {
     if app.get_cloud_thread_busy() {
         return;
     }
     app.set_cloud_thread_busy(true);
-    let generation = invalidate();
+    let request = CATALOG_GENERATION.fetch_add(1, Ordering::AcqRel) + 1;
+    let selection_generation = GENERATION.load(Ordering::Acquire);
     let weak = app.as_weak();
     std::thread::spawn(move || {
         let result = api
             .cloud_agents()
             .and_then(|agents| api.cloud_threads(0).map(|threads| (agents, threads)));
+        let models = api.cloud_thread_models();
         let _ = weak.upgrade_in_event_loop(move |app| {
-            if !active(generation) {
-                return;
-            }
+            if CATALOG_GENERATION.load(Ordering::Acquire) != request || !app.get_cloud_logged_in() { return; }
             app.set_cloud_thread_busy(false);
             match result {
                 Ok((agents, threads)) => {
-                    // Cloud list reads can lag the create command by one
-                    // request. Preserve the pending row from the local
-                    // catalog until the authoritative list observes it; the
-                    // next refresh then replaces its title/status naturally.
-                    let pending_id = PENDING_SELECTION.with(|pending| pending.borrow().clone());
-                    let mut threads = threads;
-                    if let Some(id) = pending_id.as_deref() {
-                        if !threads.iter().any(|row| row.id == id) {
-                            if let Some(row) = CATALOG.with(|catalog| {
-                                catalog.borrow().1.iter().find(|row| row.id == id).cloned()
-                            }) {
-                                threads.insert(0, row);
-                            }
-                        }
+                    if let Ok(models) = models {
+                        app.set_cloud_thread_models(ModelRc::new(VecModel::from(models.into_iter().map(|key| ModelCard {
+                            key: key.clone().into(), model: key.into(), provider: "cloud".into(), is_cloud: true,
+                            ..Default::default()
+                        }).collect::<Vec<_>>())));
                     }
-                    app.set_cloud_thread_rows(ModelRc::from(Rc::new(VecModel::from(
-                        threads.iter().map(|row| CloudThreadCard {
-                            id: row.id.clone().into(),
-                            title: row.title.clone().into(),
-                            status: row.status.clone().into(),
-                        }).collect::<Vec<_>>(),
-                    ))));
-                    app.set_cloud_agent_names(ModelRc::from(Rc::new(VecModel::from(
-                        agents
-                            .iter()
-                            .map(|row| row.name.clone().into())
-                            .collect::<Vec<slint::SharedString>>(),
-                    ))));
-                    let mut names: Vec<slint::SharedString> = vec!["＋ 新线程 / New thread".into()];
-                    names.extend(
-                        threads
-                            .iter()
-                            .map(|row| format!("{} · {}", row.title, row.status).into()),
-                    );
-                    app.set_cloud_thread_names(ModelRc::from(Rc::new(VecModel::from(names))));
-                    CATALOG.with(|catalog| *catalog.borrow_mut() = (agents, threads));
-                    let selected = PENDING_SELECTION.with(|pending| pending.borrow_mut().take())
-                        .and_then(|id| CATALOG.with(|catalog| {
-                            catalog.borrow().1.iter().position(|row| row.id == id)
-                        }))
+                    let pending = PENDING_SELECTION.with(|slot| slot.borrow_mut().take());
+                    let current = selected_id(&app);
+                    let preserve = if active(selection_generation) { preserve } else { Some(current) };
+                    let wanted = pending.or(preserve).or_else(|| {
+                        app.get_cloud_chat_active().then(|| selected_id(&app))
+                    });
+                    let selected = wanted
+                        .as_deref()
+                        .and_then(|id| threads.iter().position(|thread| thread.id == id))
                         .map(|index| index as i32 + 1)
                         .unwrap_or(0);
+                    app.set_cloud_thread_rows(ModelRc::new(VecModel::from(
+                        threads
+                            .iter()
+                            .map(|thread| CloudThreadCard {
+                                id: thread.id.clone().into(),
+                                title: thread.title.clone().into(),
+                                status: thread.status.clone().into(),
+                            })
+                            .collect::<Vec<_>>(),
+                    )));
+                    CATALOG.with(|catalog| *catalog.borrow_mut() = (agents, threads));
                     app.set_cloud_thread_index(selected);
-                    app.set_cloud_agent_index(0);
-                    app.set_cloud_thread_has_older(false);
-                    app.set_cloud_thread_history_mode(false);
-                    NEXT_BEFORE.with(|cursor| *cursor.borrow_mut() = None);
-                    apply_rows(&app, Vec::new(), true);
-                    app.set_cloud_thread_status("最近 50 个线程 / Up to 50 recent threads".into());
-                    // A refresh is also the authoritative catalog projection.
-                    // Rebuild after the selection is applied so the sidebar's
-                    // active marker and row tree never lag one event behind.
+                    // Refreshing another row never changes the active thread.
+                    if app.get_cloud_chat_active() {
+                        app.set_cloud_active_thread_id(wanted.filter(|_| selected > 0).unwrap_or_default().into());
+                    }
                     crate::navigation_ui::project_sidebar(&app, None);
-                    if selected > 0 {
-                        load(&app, api.clone());
+                    if app.get_cloud_chat_active() && active(selection_generation) {
+                        load(&app, api);
                     }
                 }
-                Err(error) => app.set_cloud_thread_status(error.to_string().into()),
+                Err(error) => app.set_status(format!("无法读取云端线程：{error}").into()),
             }
         });
     });
 }
+
+pub(crate) fn send(app: &MainWindow, api: Arc<NativeDesktop>, message: String) {
+    let id = selected_id(app);
+    if id.is_empty() || message.trim().is_empty() || app.get_cloud_thread_busy() {
+        return;
+    }
+    // The selected thread already owns its agent. Do not substitute the first
+    // agent from the account catalog when sending an existing conversation.
+    let agent = String::new();
+    let generation = GENERATION.load(Ordering::Acquire);
+    app.set_cloud_thread_busy(true);
+    app.set_busy(true);
+    let weak = app.as_weak();
+    std::thread::spawn(move || {
+        let result = api.cloud_thread_send(&id, &agent, &message);
+        let _ = weak.upgrade_in_event_loop(move |app| {
+            if !active(generation) || !is_active(&app) {
+                return;
+            }
+            app.set_cloud_thread_busy(false);
+            match result {
+                Ok(_) => {
+                    app.set_draft("".into());
+                    load(&app, api);
+                }
+                Err(error) => {
+                    app.set_busy(false);
+                    app.set_status(format!("无法发送云端消息：{error}").into());
+                    load(&app, api);
+                }
+            }
+        });
+    });
+}
+
+pub(crate) fn cancel(app: &MainWindow, api: Arc<NativeDesktop>) {
+    let id = selected_id(app);
+    if id.is_empty() || app.get_cloud_thread_busy() {
+        return;
+    }
+    let generation = GENERATION.load(Ordering::Acquire);
+    app.set_cloud_thread_busy(true);
+    app.set_stopping(true);
+    let weak = app.as_weak();
+    std::thread::spawn(move || {
+        let result = api.cloud_thread_cancel(&id);
+        let _ = weak.upgrade_in_event_loop(move |app| {
+            if !active(generation) || !is_active(&app) {
+                return;
+            }
+            app.set_cloud_thread_busy(false);
+            app.set_stopping(false);
+            match result {
+                Ok(()) => load(&app, api),
+                Err(error) => {
+                    app.set_status(format!("无法停止云端线程：{error}").into());
+                    load(&app, api);
+                }
+            }
+        });
+    });
+}
+
+pub(crate) fn set_model(app: &MainWindow, api: Arc<NativeDesktop>, key: String) {
+    if !is_active(app) || app.get_cloud_thread_busy() { return; }
+    let id = selected_id(app);
+    let generation = GENERATION.load(Ordering::Acquire);
+    let weak = app.as_weak();
+    std::thread::spawn(move || {
+        let result = api.cloud_thread_set_model(&id, &key);
+        let _ = weak.upgrade_in_event_loop(move |app| {
+            if !active(generation) || !is_active(&app) { return; }
+            match result {
+                Ok(()) => app.set_selected_model_key(key.into()),
+                Err(error) => app.set_status(format!("无法切换云端模型：{error}").into()),
+            }
+        });
+    });
+}
+
+pub(crate) fn set_effort(app: &MainWindow, api: Arc<NativeDesktop>, effort: String) {
+    if !is_active(app) || app.get_cloud_thread_busy() { return; }
+    let id = selected_id(app);
+    let generation = GENERATION.load(Ordering::Acquire);
+    let previous = app.get_reasoning_effort();
+    let weak = app.as_weak();
+    std::thread::spawn(move || {
+        let result = api.cloud_thread_set_effort(&id, &effort);
+        let _ = weak.upgrade_in_event_loop(move |app| {
+            if !active(generation) || !is_active(&app) { return; }
+            match result {
+                Ok(value) => app.set_reasoning_effort(value.into()),
+                Err(error) => {
+                    app.set_reasoning_effort(previous);
+                    app.set_status(format!("无法保存云端思考等级：{error}").into());
+                }
+            }
+        });
+    });
+}
+
+pub(crate) fn rename(app: &MainWindow, api: Arc<NativeDesktop>, id: String, title: String) {
+    if id.is_empty() || title.trim().is_empty() {
+        return;
+    }
+    let weak = app.as_weak();
+    let account = ACCOUNT_GENERATION.load(Ordering::Acquire);
+    std::thread::spawn(move || {
+        let result = api.cloud_thread_rename(&id, &title);
+        let _ = weak.upgrade_in_event_loop(move |app| { if ACCOUNT_GENERATION.load(Ordering::Acquire) != account { return; } match result {
+            Ok(()) => refresh(&app, api, Some(selected_id(&app))),
+            Err(error) => app.set_status(format!("无法重命名云端线程：{error}").into()),
+        }});
+    });
+}
+
+pub(crate) fn archive(app: &MainWindow, api: Arc<NativeDesktop>, id: String) {
+    if id.is_empty() {
+        return;
+    }
+    let account = ACCOUNT_GENERATION.load(Ordering::Acquire);
+    let weak = app.as_weak();
+    std::thread::spawn(move || {
+        let result = api.cloud_thread_archive(&id);
+        let _ = weak.upgrade_in_event_loop(move |app| { if ACCOUNT_GENERATION.load(Ordering::Acquire) != account { return; } match result {
+            Ok(()) => {
+                if is_active(&app) && selected_id(&app) == id {
+                    invalidate();
+                    app.set_cloud_thread_index(0);
+                    app.set_cloud_active_thread_id("".into());
+                    app.set_busy(false);
+                    crate::native_chat::replace_external_timeline(&app, Vec::new(), true);
+                }
+                refresh(&app, api, None);
+            }
+            Err(error) => app.set_status(format!("无法归档云端线程：{error}").into()),
+        }});
+    });
+}
+
 pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
+    let weak = app.as_weak();
+    let backend = api.clone();
+    app.on_cloud_copy_original(move |id| {
+        let Some(app) = weak.upgrade() else { return };
+        let root = id.strip_prefix("cloud-answer-").unwrap_or_default();
+        let Some(message) = MESSAGES.with(|slot| slot.borrow().iter().find(|row| row.root_turn_id == root).map(|row| row.assistant.clone())) else { return };
+        let thread = selected_id(&app);
+        let generation = GENERATION.load(Ordering::Acquire);
+        let weak = app.as_weak();
+        let backend = backend.clone();
+        std::thread::spawn(move || {
+            let result = backend.cloud_message_text(&thread, &message);
+            let _ = weak.upgrade_in_event_loop(move |app| {
+                if !active(generation) || !is_active(&app) { return; }
+                match result {
+                    Ok(text) => app.invoke_copy_raw(text.into()),
+                    Err(error) => app.set_status(format!("无法复制消息原文：{error}").into()),
+                }
+            });
+        });
+    });
+    let weak = app.as_weak();
+    let backend = api.clone();
+    app.on_cloud_rename_thread(move |id, title| {
+        if let Some(app) = weak.upgrade() {
+            rename(&app, backend.clone(), id.to_string(), title.to_string());
+        }
+    });
+    let weak = app.as_weak();
+    let backend = api.clone();
+    app.on_cloud_archive_thread(move |id| {
+        if let Some(app) = weak.upgrade() {
+            archive(&app, backend.clone(), id.to_string());
+        }
+    });
     let weak = app.as_weak();
     let backend = api.clone();
     app.on_cloud_open_threads(move || {
         if let Some(app) = weak.upgrade() {
+            if !app.get_cloud_chat_active() {
+                crate::native_chat::prepare_external_timeline(&app);
+                LOADED_ID.with(|slot| slot.borrow_mut().clear());
+            }
             app.set_cloud_chat_active(true);
-            refresh(&app, backend.clone());
+            refresh(&app, backend.clone(), Some(selected_id(&app)));
         }
     });
     let weak = app.as_weak();
     let backend = api.clone();
     app.on_cloud_new_thread(move || {
         let Some(app) = weak.upgrade() else { return };
-        if app.get_cloud_thread_busy() || !app.get_cloud_logged_in() { return; }
-        let agent = CATALOG.with(|catalog| catalog.borrow().0.first().map(|row| row.id.clone()).unwrap_or_default());
+        if app.get_cloud_thread_busy() || !app.get_cloud_logged_in() {
+            return;
+        }
+        // The workspace add button owns its target even when the previous
+        // chat and directory belonged to a local workspace.
+        crate::workspace_files::set_target(&app, backend.clone(), crate::workspace_files::Target::Cloud);
+        app.set_selected_workspace(-1);
+        let agent = selected_agent();
         app.set_cloud_thread_busy(true);
+        let account = ACCOUNT_GENERATION.load(Ordering::Acquire);
         let weak = app.as_weak();
         let api = backend.clone();
         std::thread::spawn(move || {
             let result = api.cloud_thread_create(&agent, "");
             let _ = weak.upgrade_in_event_loop(move |app| {
+                if ACCOUNT_GENERATION.load(Ordering::Acquire) != account { return; }
                 app.set_cloud_thread_busy(false);
                 match result {
                     Ok(thread) => {
-                        CATALOG.with(|catalog| catalog.borrow_mut().1.insert(0, thread));
-                        PENDING_SELECTION.with(|pending| {
-                            *pending.borrow_mut() = CATALOG.with(|catalog| {
-                                catalog.borrow().1.first().map(|row| row.id.clone())
-                            });
-                        });
+                        PENDING_SELECTION.with(|slot| *slot.borrow_mut() = Some(thread.id));
                         app.set_cloud_chat_active(true);
-                        refresh(&app, api);
+                        refresh(&app, api, None);
                     }
-                    Err(error) => app.set_cloud_thread_status(error.to_string().into()),
+                    Err(error) => app.set_status(format!("无法新建云端线程：{error}").into()),
                 }
             });
         });
     });
     let weak = app.as_weak();
-    app.on_cloud_close_threads(move || {
-        invalidate();
-        if let Some(app) = weak.upgrade() {
-            app.set_cloud_chat_active(false);
-            app.set_cloud_thread_busy(false);
-        }
-    });
-    let weak = app.as_weak();
     let backend = api.clone();
     app.on_cloud_reload_threads(move || {
         if let Some(app) = weak.upgrade() {
-            refresh(&app, backend.clone());
+            refresh(&app, backend.clone(), Some(selected_id(&app)));
         }
     });
     let weak = app.as_weak();
-    let backend = api.clone();
-    app.on_cloud_select_thread(move |_| {
+    app.on_cloud_select_thread(move |index| {
         if let Some(app) = weak.upgrade() {
-            load(&app, backend.clone());
-        }
-    });
-    let weak = app.as_weak();
-    let backend = api.clone();
-    app.on_cloud_older_thread(move || {
-        if let Some(app) = weak.upgrade() {
-            earlier(&app, backend.clone());
-        }
-    });
-    let weak = app.as_weak();
-    let backend = api.clone();
-    app.on_cloud_latest_thread(move || {
-        if let Some(app) = weak.upgrade() {
-            load(&app, backend.clone());
-        }
-    });
-    let weak = app.as_weak();
-    let backend = api.clone();
-    app.on_cloud_copy_message(move |id, assistant| {
-        if let Some(app) = weak.upgrade() {
-            copy_message(&app, backend.clone(), id.to_string(), assistant);
-        }
-    });
-    for action in 0..3 {
-        let weak = app.as_weak();
-        let backend = api.clone();
-        let run = move |approve: bool| {
-            let Some(app) = weak.upgrade() else { return };
-            if app.get_cloud_thread_busy() {
-                return;
-            }
-            let id = thread_id(&app);
-            let message = app.get_cloud_thread_message().to_string();
-            let approval = app.get_cloud_thread_approval().to_string();
-            let agent = CATALOG.with(|catalog| {
-                catalog
-                    .borrow()
-                    .0
-                    .get(app.get_cloud_agent_index() as usize)
-                    .map(|agent| agent.id.clone())
-                    .unwrap_or_default()
+            let id = CATALOG.with(|catalog| {
+                catalog.borrow().1.get(index.saturating_sub(1) as usize)
+                    .filter(|_| index > 0).map(|thread| thread.id.clone()).unwrap_or_default()
             });
-            let generation = invalidate();
-            app.set_cloud_thread_busy(true);
-            let backend = backend.clone();
-            let weak = app.as_weak();
-            std::thread::spawn(move || {
-                let result = match action {
-                    0 => backend.cloud_thread_send(&id, &agent, &message),
-                    1 => backend.cloud_thread_cancel(&id).map(|()| id.clone()),
-                    _ => backend
-                        .cloud_thread_answer(&id, &approval, approve)
-                        .map(|()| id.clone()),
-                };
-                let _ = weak.upgrade_in_event_loop(move |app| {
-                    if !active(generation) {
-                        return;
-                    }
-                    app.set_cloud_thread_busy(false);
-                    match result {
-                        Ok(id) => {
-                            if action == 0 {
-                                app.set_cloud_thread_message("".into());
-                            }
-                            let index = CATALOG.with(|catalog| {
-                                let mut catalog = catalog.borrow_mut();
-                                if let Some(index) = catalog.1.iter().position(|row| row.id == id) {
-                                    index + 1
-                                } else {
-                                    catalog.1.insert(
-                                        0,
-                                        NativeCloudThread {
-                                            id: id.clone(),
-                                            title: "新线程 / New thread".into(),
-                                            status: "active".into(),
-                                        },
-                                    );
-                                    catalog.1.truncate(50);
-                                    let mut names: Vec<slint::SharedString> =
-                                        vec!["＋ 新线程 / New thread".into()];
-                                    names.extend(
-                                        catalog.1.iter().map(|row| row.title.clone().into()),
-                                    );
-                                    app.set_cloud_thread_names(ModelRc::from(Rc::new(
-                                        VecModel::from(names),
-                                    )));
-                                    1
-                                }
-                            });
-                            app.set_cloud_thread_index(index as i32);
-                            load(&app, backend);
-                        }
-                        Err(error) => app.set_cloud_thread_status(error.to_string().into()),
-                    }
-                });
-            });
-        };
-        match action {
-            0 => app.on_cloud_send_thread(move || run(true)),
-            1 => app.on_cloud_stop_thread(move || run(true)),
-            _ => app.on_cloud_answer_thread(run),
-        };
-    }
+            app.set_cloud_active_thread_id(id.into());
+            crate::navigation_ui::project_sidebar(&app, None);
+            load(&app, api.clone());
+        }
+    });
 }

@@ -5,6 +5,8 @@ pub const BROWSER_DEPLOYMENT_AUTO: &str = "auto";
 pub const BROWSER_DEPLOYMENT_DESKTOP_EMBEDDED: &str = "desktop-embedded";
 pub const BROWSER_DEPLOYMENT_SERVER_EMBEDDED: &str = "server-embedded";
 pub const BROWSER_DEPLOYMENT_SIDECAR: &str = "sidecar";
+/// 浏览器进程跑在沙盒容器里：主进程只保留会话表与预热池，不启动 Python/Chromium。
+pub const BROWSER_DEPLOYMENT_SANDBOX: &str = "sandbox";
 pub const DEFAULT_BROWSER_PROFILE: &str = "managed";
 pub const BROWSER_LAUNCH_MODE: &str = "launch";
 pub const BROWSER_LAUNCH_MODE_ATTACH: &str = "attach";
@@ -26,6 +28,7 @@ pub struct EffectiveBrowserConfig {
     pub idle_timeout_secs: u64,
     pub max_sessions: usize,
     pub max_tabs_per_session: usize,
+    pub prewarm_sessions: usize,
     pub max_snapshot_chars: usize,
     pub max_download_bytes: usize,
     pub python_path: Option<String>,
@@ -42,11 +45,18 @@ pub struct EffectiveBrowserConfig {
     pub docker_use_no_sandbox: bool,
     pub docker_disable_dev_shm_usage: bool,
     pub docker_downloads_root: Option<PathBuf>,
+    /// Set only when `deployment = sandbox`: the endpoint hosting the bridge
+    /// processes. `None` means the bridge runs as a local child process.
+    pub sandbox_endpoint: Option<String>,
 }
 
 impl EffectiveBrowserConfig {
     pub fn profiles(&self) -> Vec<String> {
         vec![self.default_profile.clone()]
+    }
+
+    pub fn runs_in_sandbox(&self) -> bool {
+        self.sandbox_endpoint.is_some()
     }
 }
 
@@ -64,6 +74,12 @@ pub fn effective_browser_config(config: &Config) -> EffectiveBrowserConfig {
         BROWSER_DEPLOYMENT_DESKTOP_EMBEDDED.to_string()
     } else {
         normalize_browser_deployment(&config.browser.deployment)
+    };
+    // 沙盒部署下浏览器进程不在本进程树里，主进程只负责转发行命令。
+    let sandbox_endpoint = if deployment == BROWSER_DEPLOYMENT_SANDBOX {
+        crate::sandbox::browser_host_endpoint(config)
+    } else {
+        None
     };
     let allow_private_network = if legacy_runtime {
         true
@@ -122,6 +138,15 @@ pub fn effective_browser_config(config: &Config) -> EffectiveBrowserConfig {
             config.browser.limits.max_sessions.max(1)
         },
         max_tabs_per_session: config.browser.limits.max_tabs_per_session.max(1),
+        // A pooled browser is only useful if it can be handed to a session, so
+        // the pool never outgrows the session table.
+        prewarm_sessions: config.browser.limits.prewarm_sessions.min(
+            if legacy_runtime {
+                config.tools.browser.max_sessions.max(1)
+            } else {
+                config.browser.limits.max_sessions.max(1)
+            },
+        ),
         max_snapshot_chars: config.browser.limits.max_snapshot_chars.clamp(1, 40000),
         max_download_bytes: config.browser.limits.max_download_bytes.max(1024),
         python_path: if legacy_runtime {
@@ -170,6 +195,7 @@ pub fn effective_browser_config(config: &Config) -> EffectiveBrowserConfig {
         docker_use_no_sandbox: config.browser.docker.use_no_sandbox,
         docker_disable_dev_shm_usage: config.browser.docker.disable_dev_shm_usage,
         docker_downloads_root: normalize_path(&config.browser.docker.downloads_root),
+        sandbox_endpoint,
     }
 }
 
@@ -185,6 +211,8 @@ fn normalize_browser_deployment(value: &str) -> String {
         BROWSER_DEPLOYMENT_SERVER_EMBEDDED.to_string()
     } else if trimmed.eq_ignore_ascii_case(BROWSER_DEPLOYMENT_SIDECAR) {
         BROWSER_DEPLOYMENT_SIDECAR.to_string()
+    } else if trimmed.eq_ignore_ascii_case(BROWSER_DEPLOYMENT_SANDBOX) {
+        BROWSER_DEPLOYMENT_SANDBOX.to_string()
     } else {
         BROWSER_DEPLOYMENT_AUTO.to_string()
     }
@@ -259,5 +287,21 @@ mod tests {
         assert!(browser_tools_enabled(&config));
         let effective = effective_browser_config(&config);
         assert_eq!(effective.deployment, "auto");
+        assert!(!effective.runs_in_sandbox());
+    }
+
+    #[test]
+    fn sandbox_deployment_targets_the_sandbox_endpoint() {
+        let mut config = Config::default();
+        config.server.mode = "api".to_string();
+        config.browser.enabled = true;
+        config.tools.browser.enabled = true;
+        config.browser.deployment = "sandbox".to_string();
+        let effective = effective_browser_config(&config);
+        assert_eq!(effective.deployment, "sandbox");
+        assert!(effective.runs_in_sandbox());
+        // The endpoint always resolves to something: WUNDER_SANDBOX_ENDPOINT
+        // when set, otherwise the shipped default.
+        assert!(effective.sandbox_endpoint.is_some());
     }
 }

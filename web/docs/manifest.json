@@ -1,6 +1,6 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-10-17T04:46:40.358206+00:00",
+  "generated_at": "2026-10-17T23:57:53.301416+00:00",
   "site": {
     "name": "使用说明书",
     "description": "wunder is an agent orchestration platform: Pupa (desktop) is the local AI workbench, Beehive (web) is the cloud AI workbench, Helm (cli) is the manual local entry point, and the Hull (server) is the user and agent management platform. / wunder 是一个智能体调度平台：蛹（desktop）是本地 AI 工作台，蜂巢（web）是云端 AI 工作台，舵机（cli）是手工本地操作入口，舰体（server）是用户与智能体管理平台。",
@@ -230,7 +230,7 @@
                   {
                     "slug": "zh-CN/tools/desktop-control",
                     "title": "桌面控制",
-                    "summary": "桌面控制器与桌面监视器的启用条件、坐标与 17 个动作、截图追加给模型的方式、失败判定与回滚边界。",
+                    "summary": "桌面控制的启用条件、坐标与 17 个动作（含 wait 观察）、截图追加给模型的方式、失败判定与回滚边界。",
                     "url": "/docs/zh-CN/tools/desktop-control/"
                   }
                 ]
@@ -774,7 +774,7 @@
                   {
                     "slug": "en/tools/desktop-control",
                     "title": "Desktop Control",
-                    "summary": "Enablement conditions for Desktop Controller and Desktop Monitor, coordinates and the 17 actions, how screenshots are appended to the model, failure diagnosis, and rollback boundaries.",
+                    "summary": "Enablement conditions for Desktop Control, coordinates and the 17 actions (including the wait observation), how screenshots are appended to the model, failure diagnosis, and rollback boundaries.",
                     "url": "/docs/en/tools/desktop-control/"
                   }
                 ]
@@ -2854,8 +2854,8 @@
       "slug": "zh-CN/tools/desktop-control",
       "language": "zh-CN",
       "title": "桌面控制",
-      "summary": "桌面控制器与桌面监视器的启用条件、坐标与 17 个动作、截图追加给模型的方式、失败判定与回滚边界。",
-      "updated_at": "2026-10-16",
+      "summary": "桌面控制的启用条件、坐标与 17 个动作（含 wait 观察）、截图追加给模型的方式、失败判定与回滚边界。",
+      "updated_at": "2026-10-18",
       "read_when": [],
       "source_docs": [],
       "tab": "工具",
@@ -2878,12 +2878,12 @@
         {
           "id": "section-3",
           "level": 2,
-          "text": "桌面控制器"
+          "text": "参数"
         },
         {
           "id": "section-4",
           "level": 2,
-          "text": "桌面监视器"
+          "text": "等待与观察"
         },
         {
           "id": "section-5",
@@ -7155,8 +7155,8 @@
       "slug": "en/tools/desktop-control",
       "language": "en",
       "title": "Desktop Control",
-      "summary": "Enablement conditions for Desktop Controller and Desktop Monitor, coordinates and the 17 actions, how screenshots are appended to the model, failure diagnosis, and rollback boundaries.",
-      "updated_at": "2026-10-16",
+      "summary": "Enablement conditions for Desktop Control, coordinates and the 17 actions (including the wait observation), how screenshots are appended to the model, failure diagnosis, and rollback boundaries.",
+      "updated_at": "2026-10-18",
       "read_when": [],
       "source_docs": [],
       "tab": "Tools",
@@ -7174,12 +7174,12 @@
         {
           "id": "section-2",
           "level": 2,
-          "text": "Desktop Controller"
+          "text": "Arguments"
         },
         {
           "id": "section-3",
           "level": 2,
-          "text": "Desktop Monitor"
+          "text": "Waiting and observing"
         },
         {
           "id": "section-4",

@@ -93,7 +93,7 @@ fn read_page(
     Ok(project_page(&page, &final_id))
 }
 
-fn project_page(page: &Value, final_id: &str) -> NativeProcessPage {
+pub(super) fn project_page(page: &Value, final_id: &str) -> NativeProcessPage {
     let rows = page["items"]
         .as_array()
         .map(Vec::as_slice)

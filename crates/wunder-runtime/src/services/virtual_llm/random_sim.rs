@@ -75,18 +75,10 @@ const FIXED_ARGS: &[(&str, &str)] = &[
         r#"{"questions":[{"question":"（模拟）是否继续下一步？","options":[{"label":"继续"},{"label":"暂停"}]}]}"#,
     ),
     // 真实机器控制：零位移、零等待，等价于空操作。
+    ("桌面控制", r#"{"bbox":[0,0,0,0],"action":"wait","delay_ms":0}"#),
     (
-        "桌面控制器",
-        r#"{"bbox":[0,0,0,0],"action":"delay","delay_ms":0}"#,
-    ),
-    (
-        "desktop_controller",
-        r#"{"bbox":[0,0,0,0],"action":"delay","delay_ms":0}"#,
-    ),
-    ("桌面监视器", r#"{"wait_ms":0,"note":"__virtual_sim__"}"#),
-    (
-        "desktop_monitor",
-        r#"{"wait_ms":0,"note":"__virtual_sim__"}"#,
+        "desktop_control",
+        r#"{"bbox":[0,0,0,0],"action":"wait","delay_ms":0}"#,
     ),
     // 付费生成：最小提示词，产物落工作区 .temp/。
     (
@@ -835,14 +827,14 @@ mod tests {
             json!({"type":"function","function":{"name":"写入文件","parameters":json!({"type":"object"})}}),
             json!({"type":"function","function":{"name":"执行命令","parameters":json!({"type":"object"})}}),
             json!({"type":"function","function":{"name":"会话让出","parameters":json!({"type":"object"})}}),
-            json!({"type":"function","function":{"name":"桌面控制器","parameters":json!({"type":"object"})}}),
+            json!({"type":"function","function":{"name":"桌面控制","parameters":json!({"type":"object"})}}),
         ];
         let summaries = tool_summaries(Some(&tools));
         let names: Vec<&str> = summaries.iter().map(|(name, _)| name.as_str()).collect();
         // 全部工具都进入随机池，不再有“永不调用”的排除项。
         assert_eq!(
             names,
-            vec!["读取文件", "写入文件", "执行命令", "会话让出", "桌面控制器"]
+            vec!["读取文件", "写入文件", "执行命令", "会话让出", "桌面控制"]
         );
         assert!(tool_summaries(None).is_empty());
     }
@@ -976,8 +968,8 @@ mod tests {
         }
 
         // 桌面控制固定为无副作用空操作。
-        let desktop = fixed_arguments("desktop_controller", "desktop_controller").expect("desktop");
-        assert_eq!(desktop.get("action").and_then(Value::as_str), Some("delay"));
+        let desktop = fixed_arguments("desktop_control", "desktop_control").expect("desktop");
+        assert_eq!(desktop.get("action").and_then(Value::as_str), Some("wait"));
         assert_eq!(desktop.get("delay_ms").and_then(Value::as_i64), Some(0));
 
         // 子智能体普通调用固定为只读 list。

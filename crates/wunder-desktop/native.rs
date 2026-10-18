@@ -63,7 +63,7 @@ mod catalog;
 mod cloud;
 #[path = "native_cloud_threads.rs"]
 mod cloud_threads;
-pub use cloud_threads::{NativeCloudAgent, NativeCloudThread};
+pub use cloud_threads::{NativeCloudAgent, NativeCloudThread, NativeCloudThreadView};
 
 #[path = "native_interlink.rs"]
 mod interlink;

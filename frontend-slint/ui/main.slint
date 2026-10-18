@@ -15,8 +15,6 @@ export { ActivityMonth, ActivityWeek }
 import { Sidebar, WorkspaceVisual } from "sidebar.slint";
 import { SidebarMetrics } from "drag_row.slint";
 export { SidebarMetrics }
-import { CloudThreadsPanel, CloudTurn } from "cloud_threads.slint";
-export { CloudTurn }
 import { SettingsPage } from "settings_page.slint";
 import { I18n } from "i18n.slint";
 import { ThreadTrajectoryDialog } from "thread_trajectory.slint";
@@ -68,6 +66,10 @@ export component MainWindow inherits Window {
     callback open-workspace-folder(string);
     callback rename-thread(int, string);
     callback archive-thread(int);
+    callback cloud-rename-thread(string, string);
+    callback cloud-archive-thread(string);
+    callback cloud-open-trajectory(string);
+    callback cloud-copy-original(string);
     // Sidebar multi-select (web alignment): the tree reports intent, Rust owns
     // the checked set, the mode flag and the counts.
     in-out property <bool> sidebar-selection-mode: false;
@@ -159,17 +161,26 @@ export component MainWindow inherits Window {
     in-out property <int> terminal-caret-col: 0;
     in-out property <string> command-feedback;
     changed command-feedback => {
-        ToastState.message = root.command-feedback;
-        ToastState.kind = root.command-feedback.starts-with("命令执行失败") ? 2 : 0;
-        ToastState.revision += 1;
+        if root.command-feedback.starts-with("命令执行失败") {
+            ToastState.message = root.command-feedback;
+            ToastState.kind = 2;
+            ToastState.revision += 1;
+        }
     }
     // Backend errors only ever land on `status`, which no chat view renders;
     // surface error-shaped statuses as toasts so a failed runtime or storage
     // read can never look like a dead UI again.
     changed status => {
-        ToastState.message = root.status;
-        ToastState.kind = root.status.starts-with(I18n.cp_error_prefix) || root.status.starts-with(I18n.cp_fail_prefix) || root.status.starts-with("错误") || root.status.starts-with("⚠") ? 2 : 0;
-        ToastState.revision += 1;
+        if root.status.starts-with(I18n.cp_error_prefix)
+            || root.status.starts-with(I18n.cp_fail_prefix)
+            || root.status.starts-with("错误")
+            || root.status.replace-all("失败", "") != root.status
+            || root.status.replace-all("未保存", "") != root.status
+            || root.status.starts-with("⚠") {
+            ToastState.message = root.status;
+            ToastState.kind = 2;
+            ToastState.revision += 1;
+        }
     }
     in-out property <bool> goal-active: false;
     // A goal remains visible while paused or blocked; this is separate from
@@ -309,6 +320,7 @@ export component MainWindow inherits Window {
     in-out property <string> traj-search-body;
     in-out property <bool> traj-loading;
     in-out property <bool> traj-failed;
+    in-out property <string> traj-history-hint;
     callback traj-select-row(int);
     callback traj-fold-row(int, int);
     callback traj-select-tab(int);
@@ -536,34 +548,19 @@ export component MainWindow inherits Window {
     in-out property <string> cloud-server-draft;
     in-out property <string> cloud-user-draft;
     in-out property <string> cloud-pass-draft;
-    // Cloud conversations use the same sidebar hierarchy as local workspaces,
-    // while their bodies stay on the cloud façade instead of local SQLite.
+    // Cloud conversations use the same timeline and composer as local
+    // workspaces. The flag only chooses the data source.
     in-out property <bool> cloud-chat-active: false;
+    in-out property <[ModelCard]> cloud-thread-models: [];
     in-out property <[CloudThreadCard]> cloud-thread-rows;
-    in-out property <[string]> cloud-thread-names;
-    in-out property <[string]> cloud-agent-names;
-    in-out property <[CloudTurn]> cloud-turns;
     in-out property <int> cloud-thread-index: 0;
-    in-out property <int> cloud-agent-index: 0;
-    in-out property <string> cloud-thread-message;
-    in-out property <string> cloud-thread-approval;
+    in-out property <string> cloud-active-thread-id;
     in-out property <string> cloud-thread-status;
     in-out property <bool> cloud-thread-busy;
-    in-out property <bool> cloud-thread-has-older;
-    in-out property <bool> cloud-thread-history-mode;
-    in-out property <string> cloud-thread-copy-text;
-    in-out property <int> cloud-thread-copy-request;
     callback cloud-open-threads();
     callback cloud-new-thread();
-    callback cloud-close-threads();
     callback cloud-reload-threads();
     callback cloud-select-thread(int);
-    callback cloud-send-thread();
-    callback cloud-stop-thread();
-    callback cloud-answer-thread(bool);
-    callback cloud-older-thread();
-    callback cloud-latest-thread();
-    callback cloud-copy-message(string, bool);
     callback cloud-login();
     callback cloud-password-edited(string);
     callback cloud-logout();
@@ -624,10 +621,12 @@ export component MainWindow inherits Window {
     in-out property <int> thread-rename-payload: -1;
     in-out property <string> thread-rename-title;
     in-out property <string> thread-rename-draft;
+    in-out property <string> thread-rename-cloud-id;
     // Archive confirmation: the sidebar band parks the payload here, the
     // dialog decides.
     in-out property <bool> thread-archive-open: false;
     in-out property <int> thread-archive-pending: -1;
+    in-out property <string> thread-archive-cloud-id;
     in-out property <string> selected-model-key;
     in-out property <string> selected-model-provider;
     in-out property <string> selected-model-name;
@@ -635,6 +634,12 @@ export component MainWindow inherits Window {
     in-out property <string> selected-model-type;
     in-out property <bool> selected-model-is-default: false;
     in-out property <ModelCard> selected-model-card;
+    in-out property <string> settings-model-key;
+    in-out property <string> settings-model-provider;
+    in-out property <string> settings-model-name;
+    in-out property <string> settings-model-base-url;
+    in-out property <string> settings-model-type;
+    in-out property <bool> settings-model-is-default: false;
     // The models settings tab edits the selected model in place; `creating`
     // marks the unsaved new-model draft where the config key stays editable.
     in-out property <bool> model-creating: false;
@@ -650,6 +655,9 @@ export component MainWindow inherits Window {
     in-out property <string> model-thinking-budget-draft;
     in-out property <string> model-max-rounds-draft;
     in-out property <string> model-max-context-draft;
+    in-out property <string> model-history-compaction-ratio-draft;
+    in-out property <string> model-reasoning-effort-draft;
+    in-out property <string> model-simulation-speed-draft;
     in-out property <string> model-tts-voice-draft;
     in-out property <string> model-tts-format-draft;
     in-out property <string> model-tts-speed-draft;
@@ -666,9 +674,22 @@ export component MainWindow inherits Window {
     in-out property <string> model-video-size-draft;
     in-out property <string> model-video-seconds-draft;
     in-out property <string> model-video-fps-draft;
+    in-out property <string> model-video-num-frames-draft;
     in-out property <string> model-video-negative-draft;
-    in property <[string]> model-provider-presets: ["自定义（手动填写服务地址）", "openai_compatible", "openai", "anthropic", "openrouter", "siliconflow", "deepseek", "moonshot", "qwen", "groq", "mistral", "together", "vllm_omni", "whisper_cpp", "ollama", "lmstudio"];
+    in-out property <string> model-video-steps-draft;
+    in-out property <string> model-video-guidance-scale-draft;
+    in-out property <string> model-video-guidance-scale-2-draft;
+    in-out property <string> model-video-boundary-ratio-draft;
+    in-out property <string> model-video-flow-shift-draft;
+    in-out property <bool> model-video-frame-interpolation-draft;
+    in-out property <bool> model-video-sync-mode-draft;
+    in property <[string]> model-provider-presets: ["自定义（手动填写服务地址）", "openai_compatible", "openai", "anthropic", "openrouter", "siliconflow", "deepseek", "moonshot", "qwen", "groq", "mistral", "together", "vllm_omni", "whisper_cpp", "ollama", "lmstudio", "virtual_replay"];
+    in-out property <bool> model-support-vision-draft;
+    in-out property <bool> model-support-hearing-draft;
+    in-out property <bool> model-stream-include-usage-draft;
+    in-out property <string> model-tool-call-mode-draft;
     in property <[string]> model-type-presets: ["llm", "embedding", "asr", "tts", "image", "video"];
+    in-out property <[string]> virtual-replay-logs: [];
     in-out property <bool> stopping: false;
     in-out property <bool> recording: false;
     in-out property <bool> transcribing: false;
@@ -867,7 +888,7 @@ export component MainWindow inherits Window {
     }
     function open-new-model() {
         root.model-creating = true;
-        root.model-key-draft = ""; root.model-provider-draft = "openai_compatible"; root.model-name-draft = "";
+        root.model-key-draft = ""; root.model-provider-draft = ""; root.model-name-draft = "";
         root.model-base-url-draft = ""; root.model-token-draft = ""; root.model-type-draft = "llm";
         root.clear-model-param-drafts();
     }
@@ -897,16 +918,29 @@ export component MainWindow inherits Window {
                 new-workspace => { root.new-workspace(); }
                 move-row(index, travel) => { root.move-row(index, travel); }
                 archive-thread(index) => {
+                    root.thread-archive-cloud-id = "";
                     root.thread-archive-pending = index;
                     root.thread-archive-open = true;
                 }
                 rename-request(payload, title) => {
+                    root.thread-rename-cloud-id = "";
                     root.thread-rename-payload = payload;
                     root.thread-rename-title = title;
                     root.thread-rename-draft = title;
                     root.thread-rename-open = true;
                 }
                 open-trajectory(index) => { root.open-trajectory(index); }
+                cloud-rename-request(id, title) => {
+                    root.thread-rename-cloud-id = id;
+                    root.thread-rename-title = title;
+                    root.thread-rename-draft = title;
+                    root.thread-rename-open = true;
+                }
+                cloud-archive-request(id) => {
+                    root.thread-archive-cloud-id = id;
+                    root.thread-archive-open = true;
+                }
+                cloud-open-trajectory(id) => { root.cloud-open-trajectory(id); }
                 selection-mode: root.sidebar-selection-mode;
                 selected-count: root.sidebar-selected-count;
                 archivable-count: root.sidebar-archivable-count;
@@ -987,6 +1021,7 @@ export component MainWindow inherits Window {
                             toggle(index) => { root.timeline-toggle(index); }
                             process-page(index, direction) => { root.timeline-process-page(index, direction); }
                             copy-text(text) => { root.copy-raw(text); }
+                            copy-original(id) => { root.cloud-copy-original(id); }
                             open-resource(id) => { root.timeline-open(id); }
                             open-subagent(id) => { root.timeline-open-subagent(id); }
                             stop-subagent(id) => { root.timeline-stop-subagent(id); }
@@ -1049,21 +1084,21 @@ export component MainWindow inherits Window {
                                 dismiss => { root.inquiry-dismiss(); }
                             }
                             Composer {
-                                draft <=> root.draft; busy: root.command-pending || root.session-loading || root.creating-session || (root.chat-loading && !root.busy);
+                                draft <=> root.draft; busy: root.command-pending || root.session-loading || root.creating-session || (root.chat-loading && !root.busy) || (root.cloud-chat-active && root.cloud-thread-busy);
                             terminal-mode: false;
                             command => { root.terminal-mode = !root.terminal-mode; root.terminal-toggled(root.terminal-mode); }
                             send-key: root.runtime-send-key;
                             interrupt => { }
                             context-usage: root.context-usage; context-known: root.context-known; context-counts: root.context-counts; reasoning-effort <=> root.reasoning-effort;
-                            models: root.models;
-                            model-catalogue-count: root.model-catalogue-count;
+                            models: root.cloud-chat-active ? root.cloud-thread-models : root.models;
+                            model-catalogue-count: root.cloud-chat-active ? root.cloud-thread-models.length : root.model-catalogue-count;
                             cloud-ready: root.cloud-logged-in && !root.cloud-expired;
                             model-name: root.selected-model-key != "" ? root.selected-model-key : root.selected-agent-model;
                             model-key: root.selected-model-key;
                             model-saving: root.saving;
                             select-model(index, key) => { root.select-thread-model(key); }
                             open-model-settings => { root.settings-open = true; root.settings-active-panel = 1; root.refresh-settings(); }
-                            workspace-name: root.active-workspace-name;
+                            workspace-name: root.cloud-chat-active ? I18n.il_browse_title : root.active-workspace-name;
                             branch-name: root.active-workspace-branch;
                             permission-mode <=> root.permission-mode;
                             permission-changed(value) => { root.save-permission-mode(value); }
@@ -1153,10 +1188,15 @@ export component MainWindow inherits Window {
         stress-status <=> root.stress-status;
         generate-stress-thread => { root.generate-stress-thread(); }
         save-runtime => { root.save-runtime(); }
-        selected-key: root.selected-model-key; selected-provider: root.selected-model-provider;
-        selected-model-name: root.selected-model-name; selected-base-url: root.selected-model-base-url;
-        selected-type: root.selected-model-type; selected-is-default: root.selected-model-is-default;
+        selected-key: root.settings-model-key; selected-provider: root.settings-model-provider;
+        selected-model-name: root.settings-model-name; selected-base-url: root.settings-model-base-url;
+        selected-type: root.settings-model-type; selected-is-default: root.settings-model-is-default;
         selected-card: root.selected-model-card;
+        model-editor-provider: root.model-provider-draft;
+        model-editor-name: root.model-name-draft;
+        model-editor-base-url: root.model-base-url-draft;
+        model-editor-type: root.model-type-draft;
+        model-editor-is-default: root.selected-model-is-default;
         delete-model(key) => { root.delete-model(key); }
         select-model(index) => { root.select-model(index); }
         create-model => { root.open-new-model(); }
@@ -1193,6 +1233,7 @@ export component MainWindow inherits Window {
         model-provider-draft <=> root.model-provider-draft;
         model-provider-presets: root.model-provider-presets;
         model-type-presets: root.model-type-presets;
+        virtual-replay-logs: root.virtual-replay-logs;
         model-name-draft <=> root.model-name-draft;
         model-base-url-draft <=> root.model-base-url-draft;
         model-token-draft <=> root.model-token-draft;
@@ -1203,6 +1244,13 @@ export component MainWindow inherits Window {
         model-thinking-budget-draft <=> root.model-thinking-budget-draft;
         model-max-rounds-draft <=> root.model-max-rounds-draft;
         model-max-context-draft <=> root.model-max-context-draft;
+        model-history-compaction-ratio-draft <=> root.model-history-compaction-ratio-draft;
+        model-reasoning-effort-draft <=> root.model-reasoning-effort-draft;
+        model-simulation-speed-draft <=> root.model-simulation-speed-draft;
+        model-support-vision-draft <=> root.model-support-vision-draft;
+        model-support-hearing-draft <=> root.model-support-hearing-draft;
+        model-stream-include-usage-draft <=> root.model-stream-include-usage-draft;
+        model-tool-call-mode-draft <=> root.model-tool-call-mode-draft;
         model-tts-voice-draft <=> root.model-tts-voice-draft;
         model-tts-format-draft <=> root.model-tts-format-draft;
         model-tts-speed-draft <=> root.model-tts-speed-draft;
@@ -1219,7 +1267,15 @@ export component MainWindow inherits Window {
         model-video-size-draft <=> root.model-video-size-draft;
         model-video-seconds-draft <=> root.model-video-seconds-draft;
         model-video-fps-draft <=> root.model-video-fps-draft;
+        model-video-num-frames-draft <=> root.model-video-num-frames-draft;
         model-video-negative-draft <=> root.model-video-negative-draft;
+        model-video-steps-draft <=> root.model-video-steps-draft;
+        model-video-guidance-scale-draft <=> root.model-video-guidance-scale-draft;
+        model-video-guidance-scale-2-draft <=> root.model-video-guidance-scale-2-draft;
+        model-video-boundary-ratio-draft <=> root.model-video-boundary-ratio-draft;
+        model-video-flow-shift-draft <=> root.model-video-flow-shift-draft;
+        model-video-frame-interpolation-draft <=> root.model-video-frame-interpolation-draft;
+        model-video-sync-mode-draft <=> root.model-video-sync-mode-draft;
         probe-model-context => { root.probe-model-context(); }
         probe-model-voices => { root.probe-model-voices(); }
         theme <=> root.runtime-theme;
@@ -1400,6 +1456,7 @@ export component MainWindow inherits Window {
         search-hits: root.traj-search-hits;
         search-body: root.traj-search-body;
         loading: root.traj-loading; failed: root.traj-failed;
+        history-hint: root.traj-history-hint;
         close => { root.traj-open = false; }
         toggle-duration => { root.traj-toggle-duration(); }
         toggle-turns => { root.traj-toggle-turns(); }
@@ -1457,7 +1514,10 @@ export component MainWindow inherits Window {
         accepted(value) => {
             let title = value;
             root.thread-rename-open = false;
-            if title != root.thread-rename-title { root.rename-thread(root.thread-rename-payload, title); }
+            if title != root.thread-rename-title {
+                if root.thread-rename-cloud-id != "" { root.cloud-rename-thread(root.thread-rename-cloud-id, title); }
+                else { root.rename-thread(root.thread-rename-payload, title); }
+            }
         }
         canceled => { root.thread-rename-open = false; }
     }
@@ -1489,29 +1549,10 @@ export component MainWindow inherits Window {
         danger: true;
         confirmed => {
             root.thread-archive-open = false;
-            root.archive-thread(root.thread-archive-pending);
+            if root.thread-archive-cloud-id != "" { root.cloud-archive-thread(root.thread-archive-cloud-id); }
+            else { root.archive-thread(root.thread-archive-pending); }
         }
         canceled => { root.thread-archive-open = false; }
-    }
-    if root.cloud-chat-active : CloudThreadsPanel {
-        z: 230;
-        x: root.sidebar-width + 6px;
-        y: 0px;
-        width: root.width - self.x;
-        height: root.height;
-        threads: root.cloud-thread-names; agents: root.cloud-agent-names;
-        turns: root.cloud-turns; busy: root.cloud-thread-busy; status: root.cloud-thread-status;
-        has-older: root.cloud-thread-has-older; history-mode: root.cloud-thread-history-mode;
-        copy-text: root.cloud-thread-copy-text; copy-request: root.cloud-thread-copy-request;
-        thread-index <=> root.cloud-thread-index; agent-index <=> root.cloud-agent-index;
-        message <=> root.cloud-thread-message; approval <=> root.cloud-thread-approval;
-        refresh => { root.cloud-reload-threads(); }
-        select-thread(index) => { root.cloud-select-thread(index); }
-        send => { root.cloud-send-thread(); } stop => { root.cloud-stop-thread(); }
-        answer(approve) => { root.cloud-answer-thread(approve); }
-        older => { root.cloud-older-thread(); } latest => { root.cloud-latest-thread(); }
-        copy-message(id, assistant) => { root.cloud-copy-message(id, assistant); }
-        close => { root.cloud-close-threads(); }
     }
     // ---- interlink approval (§I9): one remote command at a time ----
     // ConfirmDialog has no meta line, so this is a light self-drawn modal: the

@@ -55,18 +55,6 @@ export component WorkspaceFilesPanel inherits Rectangle {
                     text: root.stats; color: Theme.muted; font-size: Theme.font-2xs;
                     vertical-alignment: center; overflow: elide;
                 }
-                Action {
-                    width: 22px; height: 22px; icon-size: 13px;
-                    icon: @image-url("../assets/icons/plus.svg"); label: I18n.common_more;
-                    enabled: !root.offline && !root.busy;
-                    clicked => { blank-menu.show({x: blank-menu.width - 8px, y: 0px}); }
-                }
-                Action {
-                    width: 22px; height: 22px; icon-size: 13px;
-                    icon: @image-url("../assets/icons/rotate-right.svg"); label: I18n.wf_menu_refresh;
-                    enabled: !root.offline && !root.busy;
-                    clicked => { root.refresh(); }
-                }
             }
             if root.rows.length > 0 && root.error != "" && !root.offline : Text {
                 text: root.error; color: Theme.danger; font-size: Theme.font-xs;
@@ -101,7 +89,7 @@ export component WorkspaceFilesPanel inherits Rectangle {
                     if root.rows.length == 0 && root.error != "" && !root.offline : VerticalLayout {
                         alignment: center; spacing: 8px;
                         Text { text: root.error; color: Theme.danger; font-size: Theme.font-xs; horizontal-alignment: center; wrap: word-wrap; }
-                        HorizontalLayout { alignment: center; Button { text: I18n.wf_reload; enabled: !root.busy; clicked => { root.refresh(); } } }
+                        HorizontalLayout { alignment: center; Button { text: I18n.wf_reload; enabled: !root.busy; clicked => { root.refresh(); } Tooltip { text: @markdown("\{I18n.wf_menu_refresh}"); } } }
                     }
                     if root.loading && root.rows.length == 0 && root.error == "" && !root.offline : Text {
                         text: I18n.wf_loading; color: Theme.muted; font-size: Theme.font-xs;
@@ -114,8 +102,8 @@ export component WorkspaceFilesPanel inherits Rectangle {
                         Text { text: I18n.wf_empty_hint; color: Theme.muted; font-size: Theme.font-2xs; horizontal-alignment: center; wrap: word-wrap; }
                         HorizontalLayout {
                             alignment: center; spacing: 8px;
-                            Button { text: I18n.wf_menu_new_dir; enabled: !root.busy; clicked => { root.menu(-1, 5); } }
-                            Button { text: I18n.wf_menu_new_file; enabled: !root.busy; clicked => { root.menu(-1, 6); } }
+                            Button { text: I18n.wf_menu_new_dir; enabled: !root.busy; clicked => { root.menu(-1, 5); } Tooltip { text: @markdown("\{I18n.wf_menu_new_dir}"); } }
+                            Button { text: I18n.wf_menu_new_file; enabled: !root.busy; clicked => { root.menu(-1, 6); } Tooltip { text: @markdown("\{I18n.wf_menu_new_file}"); } }
                         }
                     }
                     // Keep the same ListView alive during refreshes, preserving

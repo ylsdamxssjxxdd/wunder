@@ -487,7 +487,7 @@ export const applyDesktopOverlayEvent = (eventType: string, data: unknown): bool
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : null;
   };
-  if (eventType === 'desktop_controller_hint' && typeof bridge.showControllerHint === 'function') {
+  if (eventType === 'desktop_control_hint' && typeof bridge.showControllerHint === 'function') {
     const x = toNumber(payload.x);
     const y = toNumber(payload.y);
     if (x === null || y === null) return true;
@@ -500,7 +500,7 @@ export const applyDesktopOverlayEvent = (eventType: string, data: unknown): bool
     });
     return true;
   }
-  if (eventType === 'desktop_controller_hint_done' && typeof bridge.showControllerDone === 'function') {
+  if (eventType === 'desktop_control_hint_done' && typeof bridge.showControllerDone === 'function') {
     const x = toNumber(payload.x);
     const y = toNumber(payload.y);
     if (x === null || y === null) return true;
@@ -513,13 +513,13 @@ export const applyDesktopOverlayEvent = (eventType: string, data: unknown): bool
     });
     return true;
   }
-  if (eventType === 'desktop_monitor_countdown' && typeof bridge.showMonitorCountdown === 'function') {
+  if (eventType === 'desktop_control_countdown' && typeof bridge.showMonitorCountdown === 'function') {
     const waitMs = toNumber(payload.wait_ms ?? payload.waitMs ?? 0) ?? 0;
     bridge.showMonitorCountdown({ waitMs });
     return true;
   }
   if (
-    eventType === 'desktop_monitor_countdown_done' &&
+    eventType === 'desktop_control_countdown_done' &&
     typeof bridge.hideOverlay === 'function'
   ) {
     bridge.hideOverlay();

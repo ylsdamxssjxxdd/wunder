@@ -882,7 +882,7 @@ pub struct ToolsConfig {
     #[serde(default)]
     pub browser: BrowserToolConfig,
     #[serde(default)]
-    pub desktop_controller: DesktopControllerConfig,
+    pub desktop_control: DesktopControlConfig,
 }
 
 /// 工具生命周期钩子配置（对齐 dsh `hooks/hook-protocol` 风格）。
@@ -983,6 +983,11 @@ pub struct BrowserLimitsConfig {
         deserialize_with = "deserialize_usize_from_any"
     )]
     pub max_tabs_per_session: usize,
+    #[serde(
+        default = "default_browser_prewarm_sessions",
+        deserialize_with = "deserialize_usize_from_any"
+    )]
+    pub prewarm_sessions: usize,
     #[serde(
         default = "default_browser_max_snapshot_chars",
         deserialize_with = "deserialize_usize_from_any"
@@ -1257,17 +1262,17 @@ pub struct BrowserToolConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DesktopControllerConfig {
+pub struct DesktopControlConfig {
     #[serde(default)]
     #[serde(deserialize_with = "crate::config::deserialize_bool_from_any")]
     pub enabled: bool,
-    #[serde(default = "default_desktop_controller_norm_width")]
+    #[serde(default = "default_desktop_control_norm_width")]
     pub norm_width: i32,
-    #[serde(default = "default_desktop_controller_norm_height")]
+    #[serde(default = "default_desktop_control_norm_height")]
     pub norm_height: i32,
-    #[serde(default = "default_desktop_controller_max_frames")]
+    #[serde(default = "default_desktop_control_max_frames")]
     pub max_frames: usize,
-    #[serde(default = "default_desktop_controller_capture_timeout_ms")]
+    #[serde(default = "default_desktop_control_capture_timeout_ms")]
     pub capture_timeout_ms: u64,
 }
 
@@ -1319,6 +1324,7 @@ impl Default for BrowserLimitsConfig {
             max_sessions: default_browser_max_sessions(),
             idle_timeout_secs: default_browser_idle_timeout_secs(),
             max_tabs_per_session: default_browser_max_tabs_per_session(),
+            prewarm_sessions: default_browser_prewarm_sessions(),
             max_snapshot_chars: default_browser_max_snapshot_chars(),
             max_download_bytes: default_browser_max_download_bytes(),
         }
@@ -1481,14 +1487,14 @@ fn clean_inline_or_env(inline: Option<&str>, env_name: &str) -> Option<String> {
         })
 }
 
-impl Default for DesktopControllerConfig {
+impl Default for DesktopControlConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            norm_width: default_desktop_controller_norm_width(),
-            norm_height: default_desktop_controller_norm_height(),
-            max_frames: default_desktop_controller_max_frames(),
-            capture_timeout_ms: default_desktop_controller_capture_timeout_ms(),
+            norm_width: default_desktop_control_norm_width(),
+            norm_height: default_desktop_control_norm_height(),
+            max_frames: default_desktop_control_max_frames(),
+            capture_timeout_ms: default_desktop_control_capture_timeout_ms(),
         }
     }
 }
@@ -1617,12 +1623,28 @@ fn default_browser_timeout_secs() -> u64 {
     60
 }
 
+/// A browser session stays alive this long after its last command.
+///
+/// Chromium costs 45-60s to launch on a cold start, while a human pause
+/// between two turns is routinely 5-15 minutes. A short window therefore
+/// re-pays the launch cost inside one conversation; 30 minutes keeps the
+/// browser across a natural reading pause and is still bounded by
+/// `max_sessions` plus the least-recently-used eviction.
 fn default_browser_idle_timeout_secs() -> u64 {
-    300
+    1800
 }
 
 fn default_browser_max_sessions() -> usize {
     5
+}
+
+/// Browsers launched ahead of any request so the first session of a turn does
+/// not pay the 45-60s Chromium cold start. Pooled browsers hold no session
+/// state, so any caller can adopt one; the pool is refilled in the background
+/// and is exempt from the idle sweep until a session adopts it. `0` disables
+/// the pool and every session launches on demand, as before.
+fn default_browser_prewarm_sessions() -> usize {
+    1
 }
 
 fn default_browser_max_tabs_per_session() -> usize {
@@ -1657,19 +1679,19 @@ fn default_browser_docker_downloads_root() -> String {
     "./config/data/browser/downloads".to_string()
 }
 
-fn default_desktop_controller_norm_width() -> i32 {
+fn default_desktop_control_norm_width() -> i32 {
     1000
 }
 
-fn default_desktop_controller_norm_height() -> i32 {
+fn default_desktop_control_norm_height() -> i32 {
     1000
 }
 
-fn default_desktop_controller_max_frames() -> usize {
+fn default_desktop_control_max_frames() -> usize {
     3
 }
 
-fn default_desktop_controller_capture_timeout_ms() -> u64 {
+fn default_desktop_control_capture_timeout_ms() -> u64 {
     5000
 }
 
@@ -2598,6 +2620,13 @@ fn apply_browser_env_overrides(
     if let Some(value) = env_bool(env_lookup, "WUNDER_BROWSER_DOCKER_ENABLED") {
         browser.docker.enabled = value;
     }
+    if let Some(value) = env_usize(env_lookup, "WUNDER_BROWSER_PREWARM_SESSIONS") {
+        browser.limits.prewarm_sessions = value;
+    }
+    // 容器部署默认把浏览器放进沙盒：Chromium 的内存与崩溃都留在沙盒容器里。
+    if let Some(value) = non_empty_env(env_lookup, "WUNDER_BROWSER_DEPLOYMENT") {
+        browser.deployment = value;
+    }
 }
 
 fn non_empty_env(env_lookup: &dyn Fn(&str) -> Option<String>, name: &str) -> Option<String> {
@@ -3130,6 +3159,8 @@ storage:
             ("WUNDER_BROWSER_ENABLED", "true"),
             ("WUNDER_BROWSER_TOOL_ENABLED", "true"),
             ("WUNDER_BROWSER_DOCKER_ENABLED", "true"),
+            ("WUNDER_BROWSER_PREWARM_SESSIONS", "2"),
+            ("WUNDER_BROWSER_DEPLOYMENT", "sandbox"),
         ]);
 
         apply_env_overrides_from(&mut config, &|name| {
@@ -3150,6 +3181,8 @@ storage:
         assert!(config.browser.enabled);
         assert!(config.tools.browser.enabled);
         assert!(config.browser.docker.enabled);
+        assert_eq!(config.browser.limits.prewarm_sessions, 2);
+        assert_eq!(config.browser.deployment, "sandbox");
     }
 
     #[test]

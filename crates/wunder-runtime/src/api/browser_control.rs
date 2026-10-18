@@ -13,6 +13,7 @@ pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/wunder/browser/health", get(browser_health))
         .route("/wunder/browser/status", get(browser_status))
+        .route("/wunder/browser/prewarm", post(browser_prewarm))
         .route("/wunder/browser/profiles", get(browser_profiles))
         .route("/wunder/browser/session/start", post(browser_start))
         .route("/wunder/browser/session/stop", post(browser_stop))
@@ -35,6 +36,19 @@ async fn browser_health(State(state): State<Arc<AppState>>) -> Json<Value> {
 async fn browser_status(State(state): State<Arc<AppState>>) -> Json<Value> {
     let config = state.config_store.get().await;
     Json(browser_service(&config).status())
+}
+
+/// Trigger the warm pool on demand: the same work startup does, exposed so an
+/// operator can warm the browser after a deploy without opening a chat.
+async fn browser_prewarm(State(state): State<Arc<AppState>>) -> Json<Value> {
+    let config = state.config_store.get().await;
+    let service = browser_service(&config);
+    let launched = service.prewarm();
+    Json(json!({
+        "ok": true,
+        "launched": launched,
+        "warm_pool": service.status().get("warm_pool").cloned(),
+    }))
 }
 
 async fn browser_profiles(State(state): State<Arc<AppState>>) -> Result<Json<Value>, Response> {

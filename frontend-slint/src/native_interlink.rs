@@ -24,7 +24,11 @@ fn poll(app: &MainWindow, api: &Arc<NativeDesktop>) {
     let _status = api.interlink_status();
     // Cloud workspace access depends on outbound login, independently of
     // whether the user enabled the inbound device tunnel.
-    crate::workspace_files::tunnel_tick(app, api, app.get_cloud_logged_in() && !app.get_cloud_expired());
+    crate::workspace_files::tunnel_tick(
+        app,
+        api,
+        app.get_cloud_logged_in() && !app.get_cloud_expired(),
+    );
     if app.get_interlink_approval_open() {
         return;
     }

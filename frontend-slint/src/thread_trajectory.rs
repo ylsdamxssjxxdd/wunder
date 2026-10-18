@@ -201,6 +201,8 @@ struct SnapshotModel {
 #[derive(Default)]
 struct State {
     session: String,
+    cloud: bool,
+    generation: u64,
     model: Option<SnapshotModel>,
     page: Option<Value>,
     next_before: Option<i64>,
@@ -208,6 +210,7 @@ struct State {
     next_after: Option<i64>,
     has_newer: bool,
     loading_page: bool,
+    page_failed: bool,
     detail_generation: u64,
     detail_loading: bool,
     /// Only the selected body is hydrated; restore its small projection on
@@ -235,6 +238,8 @@ impl State {
     fn reset(&mut self, session: String) {
         let show_duration = self.show_duration;
         let detail_generation = self.detail_generation.wrapping_add(1);
+        let generation = self.generation.wrapping_add(1);
+        let search_generation = self.search_generation.wrapping_add(1);
         let detail_loading = self.detail_loading;
         *self = State {
             session,
@@ -242,6 +247,8 @@ impl State {
             view_width: 1.0,
             selected: -1,
             detail_generation,
+            generation,
+            search_generation,
             detail_loading,
             ..State::default()
         };
@@ -733,28 +740,15 @@ fn parse_view_page(page: &Value) -> SnapshotModel {
     let has_tiles = !tiles.is_empty();
     let level = page.get("tile_level").and_then(Value::as_u64).unwrap_or(0) as f64;
     let bucket_width = 128.0 * 8.0_f64.powf(level);
-    let detailed_ranges: Vec<(f64, f64)> = rows
+    // Subtract the exact geometry which will be painted, rather than raw
+    // persistence timestamps. Context/input rows are instantaneous in the
+    // detail model even if their persisted completion timestamp is later.
+    // Cutting the raw interval would remove coverage that no detail span
+    // restores, changing the compressed domain as more pages are loaded.
+    let detailed_ranges: Vec<(f64, f64)> = model
+        .spans
         .iter()
-        .filter_map(|row| {
-            let raw_start = row.get("started_at").and_then(Value::as_f64)?;
-            let start = if raw_start.abs() < 1e11 {
-                raw_start * 1000.0
-            } else {
-                raw_start
-            };
-            let end = row
-                .get("completed_at")
-                .and_then(Value::as_f64)
-                .map(|value| {
-                    if value.abs() < 1e11 {
-                        value * 1000.0
-                    } else {
-                        value
-                    }
-                })
-                .unwrap_or(start);
-            Some((start, end.max(start + 0.001)))
-        })
+        .map(|span| (span.start, span.end.max(span.start)))
         .collect();
     let mut overview = Vec::new();
     let mut start = f64::MAX;
@@ -950,7 +944,25 @@ fn parse_view_page(page: &Value) -> SnapshotModel {
         overview_end = 1.0;
     }
     let has_overview = has_tiles && start.is_finite() && end.is_finite();
-    let overview_spans = overview;
+
+    // Tiles and detail rows share one wall-clock coordinate system.  Applying
+    // idle compression to only one side makes the overview look sparse and,
+    // more seriously, makes a selected detail row land at a different x
+    // coordinate after the overview is painted.  Build one mapping from the
+    // union of both sets, then apply the same offset to every span.  A tile is
+    // deliberately part of the coverage set: when the ledger page contains a
+    // row outside the bounded tile range, its gap is still collapsed in the
+    // same way as the aggregate projection.
+    let mut overview_spans = overview;
+    if has_overview {
+        compress_idle_span_sets(&mut model.spans, &mut overview_spans);
+        refresh_timing_domain(&mut model);
+        let (compressed_start, compressed_end) = span_domain(&model.spans, &overview_spans);
+        if compressed_start.is_finite() && compressed_end.is_finite() {
+            overview_start = compressed_start;
+            overview_end = compressed_end.max(compressed_start + 1.0);
+        }
+    }
     model.overview_spans = overview_spans;
     model.overview_start = overview_start;
     model.overview_end = overview_end;
@@ -991,6 +1003,82 @@ fn compress_idle_spans(spans: &mut [SpanBase]) {
         span.start -= removed;
         span.end -= removed;
     }
+}
+
+/// Compress idle gaps in two projections with one shared mapping.
+///
+/// `overview_spans` are aggregate tile fragments while `detail_spans` are the
+/// currently loaded ledger rows.  They can overlap and are intentionally
+/// sorted together so an aggregate tile also contributes to the covered
+/// interval.  The offset is sampled at each span's start (the same rule as the
+/// single-slice compressor), preserving the duration of every span.
+fn compress_idle_span_sets(detail_spans: &mut [SpanBase], overview_spans: &mut [SpanBase]) {
+    #[derive(Clone, Copy)]
+    struct Entry {
+        start: f64,
+        end: f64,
+        source: u8,
+        index: usize,
+    }
+
+    let mut entries = Vec::with_capacity(detail_spans.len() + overview_spans.len());
+    entries.extend(detail_spans.iter().enumerate().map(|(index, span)| Entry {
+        start: span.start,
+        end: span.end.max(span.start),
+        source: 0,
+        index,
+    }));
+    entries.extend(
+        overview_spans
+            .iter()
+            .enumerate()
+            .map(|(index, span)| Entry {
+                start: span.start,
+                end: span.end.max(span.start),
+                source: 1,
+                index,
+            }),
+    );
+    entries.sort_by(|left, right| {
+        left.start
+            .total_cmp(&right.start)
+            .then_with(|| left.end.total_cmp(&right.end))
+            .then_with(|| left.source.cmp(&right.source))
+            .then_with(|| left.index.cmp(&right.index))
+    });
+
+    let mut detail_offsets = vec![0.0; detail_spans.len()];
+    let mut overview_offsets = vec![0.0; overview_spans.len()];
+    let mut removed = 0.0;
+    let mut covered: Option<f64> = None;
+    for entry in entries {
+        if let Some(end) = covered {
+            removed += (entry.start - end).max(0.0);
+        }
+        if entry.source == 0 {
+            detail_offsets[entry.index] = removed;
+        } else {
+            overview_offsets[entry.index] = removed;
+        }
+        covered = Some(covered.map_or(entry.end, |end| end.max(entry.end)));
+    }
+    for (span, offset) in detail_spans.iter_mut().zip(detail_offsets) {
+        span.start -= offset;
+        span.end -= offset;
+    }
+    for (span, offset) in overview_spans.iter_mut().zip(overview_offsets) {
+        span.start -= offset;
+        span.end -= offset;
+    }
+}
+
+fn span_domain(detail_spans: &[SpanBase], overview_spans: &[SpanBase]) -> (f64, f64) {
+    detail_spans
+        .iter()
+        .chain(overview_spans.iter())
+        .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), span| {
+            (lo.min(span.start), hi.max(span.end.max(span.start)))
+        })
 }
 
 fn refresh_timing_domain(model: &mut SnapshotModel) {
@@ -2182,26 +2270,18 @@ fn build_rows(state: &State, model: &SnapshotModel, texts: &Texts) -> Vec<TrajRo
             }
             .to_string();
         }
-        let detail = if cell.kind == KIND_TOOL || cell.kind == KIND_SUBTOOL {
+        let (arguments, result) = if cell.kind == KIND_TOOL || cell.kind == KIND_SUBTOOL {
             let args = cell
                 .input_detail
                 .as_deref()
                 .unwrap_or("")
                 .replace('\n', " ");
             let result = cell.result.as_deref().unwrap_or("").replace('\n', " ");
-            let mut detail = String::new();
-            if !args.is_empty() {
-                detail.push_str(&args.chars().take(120).collect::<String>());
-            }
-            if !result.is_empty() {
-                if !detail.is_empty() {
-                    detail.push_str(" → ");
-                }
-                detail.push_str(&result.chars().take(120).collect::<String>());
-            }
-            detail
+            let arguments = args.chars().take(120).collect::<String>();
+            let result = result.chars().take(120).collect::<String>();
+            (arguments, result)
         } else {
-            String::new()
+            (String::new(), String::new())
         };
         rows.push(TrajRow {
             kind: cell.kind,
@@ -2211,7 +2291,8 @@ fn build_rows(state: &State, model: &SnapshotModel, texts: &Texts) -> Vec<TrajRo
                 "".into()
             },
             text: text.into(),
-            detail: detail.into(),
+            arguments: arguments.into(),
+            result: result.into(),
             error: cell.is_error,
             request: if number > 0 { 1 } else { 0 },
             turn: record.turn.unwrap_or(0) as i32,
@@ -2227,7 +2308,8 @@ fn build_rows(state: &State, model: &SnapshotModel, texts: &Texts) -> Vec<TrajRo
                 kind,
                 badge: "".into(),
                 text: text.into(),
-                detail: "".into(),
+                arguments: "".into(),
+                result: "".into(),
                 error: false,
                 request: 0,
                 turn: record.turn.unwrap_or(0) as i32,
@@ -2277,10 +2359,12 @@ fn visible_span(start: f64, end: f64, window_lo: f64, window_total: f64) -> Opti
     if end < window_lo || start > window_lo + window_total {
         return None;
     }
-    // An instantaneous input at either endpoint must still have a visible mark.
-    let left = ((start - window_lo) / window_total).clamp(0.0, 0.998);
-    let right = ((end - window_lo) / window_total).min(1.0);
-    Some((left as f32, (right - left).max(0.002) as f32))
+    // Preserve the time geometry even for instantaneous events.  Slint owns
+    // the minimum pixel width; a ratio-based minimum grows with the window
+    // and makes short events look longer than their source timing.
+    let left = ((start - window_lo) / window_total).clamp(0.0, 1.0);
+    let right = ((end - window_lo) / window_total).clamp(0.0, 1.0);
+    Some((left as f32, (right - left).max(0.0) as f32))
 }
 
 /// Return the records which belong to the selected, stable trajectory step.
@@ -2318,6 +2402,13 @@ fn project_timeline(app: &MainWindow, state: &State, model: &SnapshotModel, text
     let window_total = view_width * total;
     let clamp_pos = |value: f64| ((value - window_lo) / window_total).clamp(0.0, 1.0) as f32;
     let focused_records = focused_record_indexes(model, state.selected);
+    let needle = state.query.trim().to_lowercase();
+    let overview_bucket_width = state
+        .page
+        .as_ref()
+        .and_then(|page| page.get("tile_level"))
+        .and_then(Value::as_u64)
+        .map_or(128.0, |level| 128.0 * 8.0_f64.powf(level as f64));
 
     let mut spans: Vec<TrajSpan> = Vec::new();
     let visible_detail_ranges: Vec<(f64, f64, Option<f64>, Option<f64>)> = model
@@ -2382,6 +2473,19 @@ fn project_timeline(app: &MainWindow, state: &State, model: &SnapshotModel, text
         let Some((start, width)) = visible_span(start, end, window_lo, window_total) else {
             continue;
         };
+        let cell = model
+            .records
+            .get(base.record)
+            .and_then(|record| model.cells.get(record.cell));
+        let error = cell.map(|cell| cell.is_error).unwrap_or_else(|| {
+            base.sequence_start.is_some_and(|sequence| {
+                model
+                    .overview_error_buckets
+                    .contains(&((sequence / overview_bucket_width).floor() as i64))
+            })
+        });
+        let dimmed = !needle.is_empty()
+            && (cell.is_none() || !record_needle(model, base.record).contains(&needle));
         spans.push(TrajSpan {
             lane: base.lane as i32,
             start,
@@ -2397,6 +2501,10 @@ fn project_timeline(app: &MainWindow, state: &State, model: &SnapshotModel, text
                 && state.selected >= 0
                 && base.record == state.selected as usize,
             outside,
+            overview: aggregate,
+            aggregate: aggregate && !model.overview_exact,
+            error,
+            dimmed,
         });
     }
 
@@ -2792,12 +2900,26 @@ fn tooltip_for(model: &SnapshotModel, texts: &Texts, record_index: i32) -> Strin
 fn apply_model(app: &MainWindow, state: &State) {
     let Some(snapshot) = &state.model else { return };
     let texts = Texts::new(app.global::<I18n>().get_zh());
+    project_history_hint(app, state);
     app.set_traj_loading(false);
     app.set_traj_failed(false);
     project_rows(app, state, snapshot, &texts);
     project_timeline(app, state, snapshot, &texts);
     project_details(app, state, snapshot, &texts);
     project_search(app, state);
+}
+
+fn project_history_hint(app: &MainWindow, state: &State) {
+    let i18n = app.global::<I18n>();
+    app.set_traj_history_hint(if state.loading_page {
+        i18n.get_traj_history_loading()
+    } else if state.page_failed {
+        i18n.get_traj_history_retry()
+    } else if state.has_more {
+        i18n.get_traj_history_older()
+    } else {
+        i18n.get_traj_history_start()
+    });
 }
 
 fn apply_detail(cell: &mut Cell, detail: &Value) {
@@ -2876,6 +2998,7 @@ fn hydrate_selected(app: &MainWindow, current: &Rc<RefCell<State>>, backend: &Ar
         };
         let request = (
             state.session.clone(),
+            state.cloud,
             cell.clone(),
             body.clone(),
             *revision,
@@ -2884,20 +3007,23 @@ fn hydrate_selected(app: &MainWindow, current: &Rc<RefCell<State>>, backend: &Ar
         state.detail_loading = true;
         request
     };
-    let (session, mut selected_cell, body, revision, generation) = request;
+    let (session, cloud, mut selected_cell, body, revision, generation) = request;
     let item = selected_cell.record_id.clone();
     let next_backend = backend.clone();
     let backend = backend.clone();
     let (tx, rx) = sync_channel(1);
     std::thread::spawn(move || {
-        let result = backend
-            .thread_trajectory_detail(&session, &body, revision)
-            .map(|detail| {
-                // Parse and format the selected payload off the UI thread too.
-                apply_detail(&mut selected_cell, &detail);
-                selected_cell.detail_ref = None;
-                selected_cell
-            });
+        let result = (if cloud {
+            backend.cloud_thread_trajectory_detail(&session, &body, revision)
+        } else {
+            backend.thread_trajectory_detail(&session, &body, revision)
+        })
+        .map(|detail| {
+            // Parse and format the selected payload off the UI thread too.
+            apply_detail(&mut selected_cell, &detail);
+            selected_cell.detail_ref = None;
+            selected_cell
+        });
         let _ = tx.send(result);
     });
     let weak = app.as_weak();
@@ -2963,7 +3089,13 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
             }
             state.newer_edge_latched = true;
             state.loading_page = true;
+            state.page_failed = false;
+            if let Some(app) = weak_edge.upgrade() {
+                project_history_hint(&app, &state);
+            }
             let session = state.session.clone();
+            let cloud = state.cloud;
+            let generation = state.generation;
             let after = state.next_after;
             drop(state);
             let (tx, rx) = sync_channel(1);
@@ -2971,7 +3103,11 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
             std::thread::spawn(move || {
                 let result = match after {
                     Some(cursor) => {
-                        backend.thread_trajectory_page_after(&session, Some(cursor), 100)
+                        if cloud {
+                            backend.cloud_thread_trajectory_page(&session, None, Some(cursor), 100)
+                        } else {
+                            backend.thread_trajectory_page_after(&session, Some(cursor), 100)
+                        }
                     }
                     None => Err(anyhow::anyhow!("missing newer trajectory cursor")),
                 };
@@ -2990,13 +3126,12 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                     return true;
                 };
                 let mut state = current_edge.borrow_mut();
-                if state.session != session {
-                    state.loading_page = false;
-                    state.newer_edge_latched = false;
+                if state.session != session || state.cloud != cloud || state.generation != generation {
                     return true;
                 }
                 match result {
                     Ok(page) => {
+                        state.page_failed = false;
                         let merged = state
                             .page
                             .as_ref()
@@ -3021,32 +3156,44 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                         }
                     }
                     Err(error) => {
+                        state.page_failed = true;
                         app.set_status(format!("无法读取更新轨迹：{error}").into());
                         state.newer_edge_latched = false;
                     }
                 }
                 state.newer_edge_latched = false;
                 state.loading_page = false;
+                project_history_hint(&app, &state);
                 drop(state);
                 hydrate_selected(&app, &current_edge, &detail_backend);
                 true
             });
             return;
         }
-        let (session, before) = {
+        let (session, cloud, generation, before) = {
             let mut state = current_edge.borrow_mut();
             if state.loading_page || !state.has_more || state.older_edge_latched {
                 return;
             }
             state.older_edge_latched = true;
             state.loading_page = true;
-            (state.session.clone(), state.next_before)
+            state.page_failed = false;
+            if let Some(app) = weak_edge.upgrade() {
+                project_history_hint(&app, &state);
+            }
+            (state.session.clone(), state.cloud, state.generation, state.next_before)
         };
         let (tx, rx) = sync_channel(1);
         let backend = backend_edge.clone();
         std::thread::spawn(move || {
             let result = match before {
-                Some(cursor) => backend.thread_trajectory_page(&session, Some(cursor), 100),
+                Some(cursor) => {
+                    if cloud {
+                        backend.cloud_thread_trajectory_page(&session, Some(cursor), None, 100)
+                    } else {
+                        backend.thread_trajectory_page(&session, Some(cursor), 100)
+                    }
+                }
                 None => Err(anyhow::anyhow!("missing trajectory cursor")),
             };
             let _ = tx.send((session, result));
@@ -3064,13 +3211,12 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                 return true;
             };
             let mut state = current_edge.borrow_mut();
-            if state.session != session {
-                state.loading_page = false;
-                state.older_edge_latched = false;
+            if state.session != session || state.cloud != cloud || state.generation != generation {
                 return true;
             }
             match result {
                 Ok(page) => {
+                    state.page_failed = false;
                     let merged = state
                         .page
                         .as_ref()
@@ -3095,22 +3241,27 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                     }
                 }
                 Err(error) => {
+                    state.page_failed = true;
                     app.set_status(format!("无法读取更早轨迹：{error}").into());
                     state.older_edge_latched = false;
                 }
             }
             state.older_edge_latched = false;
             state.loading_page = false;
+            project_history_hint(&app, &state);
             drop(state);
             hydrate_selected(&app, &current_edge, &detail_backend);
             true
         });
     });
 
-    app.on_open_trajectory(move |index| {
+    let open = move |index: i32, cloud_id: String| {
         let Some(app) = weak.upgrade() else { return };
         // index < 0 means "the active thread" (the settings-page entry point).
-        let session = if index < 0 {
+        let cloud = !cloud_id.is_empty();
+        let session = if cloud {
+            cloud_id
+        } else if index < 0 {
             app.get_active_session_id().to_string()
         } else {
             app.get_conversations()
@@ -3122,6 +3273,8 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
             return;
         }
         current.borrow_mut().reset(session.clone());
+        current.borrow_mut().cloud = cloud;
+        let generation = current.borrow().generation;
         app.set_traj_open(true);
         app.set_traj_loading(true);
         app.set_traj_failed(false);
@@ -3136,9 +3289,12 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
             // Read the shared bounded presentation projection.  It returns a
             // small detail window plus the complete overview tile pyramid;
             // unlike thread_snapshot this never materializes the raw history.
-            let parsed = backend
-                .thread_trajectory_page(&session, None, 100)
-                .map(|page| (page.clone(), parse_view_page(&page)));
+            let parsed = (if cloud {
+                backend.cloud_thread_trajectory_page(&session, None, None, 100)
+            } else {
+                backend.thread_trajectory_page(&session, None, 100)
+            })
+            .map(|page| (page.clone(), parse_view_page(&page)));
             let _ = tx.send((session, parsed));
         });
         let (weak, current) = (weak.clone(), current.clone());
@@ -3149,7 +3305,7 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
             let Some(app) = weak.upgrade() else {
                 return true;
             };
-            if current.borrow().session != session {
+            if current.borrow().session != session || current.borrow().cloud != cloud || current.borrow().generation != generation {
                 return true;
             }
             match result {
@@ -3180,7 +3336,10 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
             }
             true
         });
-    });
+    };
+    let open_local = open.clone();
+    app.on_open_trajectory(move |index| open_local(index, String::new()));
+    app.on_cloud_open_trajectory(move |id| open(-1, id.to_string()));
 
     let (weak, current, backend) = (app.as_weak(), state.clone(), api.clone());
     app.on_traj_select_row(move |index| {
@@ -3362,14 +3521,14 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
     app.on_traj_search_changed(move || {
         let Some(app) = weak.upgrade() else { return };
         let query = app.get_traj_query().to_string();
-        let (session, generation) = {
+        let (session, cloud, generation) = {
             let mut state = current.borrow_mut();
             state.query = query.clone();
             state.search_generation = state.search_generation.wrapping_add(1);
             state.search_hits.clear();
             state.search_text.clear();
             state.selected_search = None;
-            (state.session.clone(), state.search_generation)
+            (state.session.clone(), state.cloud, state.search_generation)
         };
         app.set_traj_search_hint("".into());
         apply_model(&app, &current.borrow());
@@ -3391,7 +3550,11 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                 let needle = needle.clone();
                 let tx = tx.clone();
                 std::thread::spawn(move || {
-                    let result = backend.thread_trajectory_search(&session, &needle);
+                    let result = if cloud {
+                        backend.cloud_thread_search(&session, &needle)
+                    } else {
+                        backend.thread_trajectory_search(&session, &needle)
+                    };
                     let _ = tx.send((session, generation, result));
                 });
             },
@@ -3407,7 +3570,7 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                 return true;
             };
             let state = current_done.borrow();
-            if state.session != session || state.search_generation != generation {
+            if state.session != session || state.cloud != cloud || state.search_generation != generation {
                 return true;
             }
             match result {
@@ -3446,7 +3609,7 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                         .unwrap_or(false);
                     drop(state);
                     let mut state = current_done.borrow_mut();
-                    if state.session != session || state.search_generation != generation {
+                    if state.session != session || state.cloud != cloud || state.search_generation != generation {
                         return true;
                     }
                     state.search_hits = hits;
@@ -3495,7 +3658,7 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
     let (weak, current, backend) = (app.as_weak(), state.clone(), api.clone());
     app.on_traj_search_hit(move |index| {
         let Some(app) = weak.upgrade() else { return };
-        let (session, generation, hit) = {
+        let (session, cloud, generation, hit) = {
             let mut state = current.borrow_mut();
             if index < 0 || index as usize >= state.search_hits.len() {
                 return;
@@ -3511,13 +3674,21 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                     state.selected = record as i32;
                 }
             }
-            (state.session.clone(), state.search_generation, hit)
+            (
+                state.session.clone(),
+                state.cloud,
+                state.search_generation,
+                hit,
+            )
         };
         let (tx, rx) = sync_channel(1);
         let backend = backend.clone();
         std::thread::spawn(move || {
-            let result =
-                backend.thread_trajectory_body(&session, &hit.body_id, hit.revision, hit.cursor);
+            let result = if cloud {
+                backend.cloud_thread_body(&session, &hit.body_id, hit.revision, hit.cursor)
+            } else {
+                backend.thread_trajectory_body(&session, &hit.body_id, hit.revision, hit.cursor)
+            };
             let _ = tx.send((session, generation, result));
         });
         let weak_done = app.as_weak();
@@ -3529,6 +3700,7 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
             let Some(app) = weak_done.upgrade() else {
                 return true;
             };
+            if current_done.borrow().session != session || current_done.borrow().cloud != cloud || current_done.borrow().search_generation != generation { return true; }
             let Ok(page) = result else {
                 app.set_traj_search_hint(
                     if app.global::<I18n>().get_zh() {
@@ -3541,7 +3713,7 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                 return true;
             };
             let mut state = current_done.borrow_mut();
-            if state.session != session || state.search_generation != generation {
+            if state.session != session || state.cloud != cloud || state.search_generation != generation {
                 return true;
             }
             state.search_text = page
@@ -3560,6 +3732,7 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
     app.on_traj_export(move || {
         let Some(app) = weak.upgrade() else { return };
         let session = current.borrow().session.clone();
+        let cloud = current.borrow().cloud;
         if session.is_empty() {
             return;
         }
@@ -3570,7 +3743,11 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         let (tx, rx) = sync_channel(1);
         let backend = backend.clone();
         std::thread::spawn(move || {
-            let result = backend.export_thread_log(&session, std::path::Path::new(&path));
+            let result = if cloud {
+                backend.cloud_export_thread_log(&session, std::path::Path::new(&path))
+            } else {
+                backend.export_thread_log(&session, std::path::Path::new(&path))
+            };
             let _ = tx.send((path, result));
         });
         let weak_done = app.as_weak();
@@ -3799,9 +3976,13 @@ mod tests {
         let mut incomplete = first.clone();
         incomplete["timeline_has_more"] = json!(true);
         assert!(!parse_view_page(&incomplete).overview_exact);
-        assert_eq!(visible_span(0.0, 0.0, 0.0, 5000.0), Some((0.0, 0.002)));
+        assert_eq!(visible_span(0.0, 0.0, 0.0, 5000.0), Some((0.0, 0.0)));
         let (start, width) = visible_span(5000.0, 5000.0, 0.0, 5000.0).unwrap();
-        assert!(width > 0.0 && start + width <= 1.0);
+        assert_eq!((start, width), (1.0, 0.0));
+        assert_eq!(
+            visible_span(2500.0, 2500.5, 0.0, 5000.0),
+            Some((0.5, 0.0001))
+        );
         assert!(visible_span(6000.0, 6000.0, 0.0, 5000.0).is_none());
     }
 
@@ -4157,6 +4338,136 @@ mod tests {
             .all(|pair| pair[0].end <= pair[1].start));
         assert!(model.has_overview);
         assert_eq!(model.overview_sequence_end, 128.0);
+    }
+
+    #[test]
+    fn aggregate_and_detail_spans_share_idle_compression_mapping() {
+        let mut detail = vec![
+            SpanBase {
+                start: 0.0,
+                end: 1.0,
+                record: 1,
+                kind: KIND_MESSAGE,
+                lane: 1,
+                ttft: None,
+                sequence_start: Some(1.0),
+                sequence_end: Some(2.0),
+            },
+            SpanBase {
+                start: 10.0,
+                end: 11.0,
+                record: 2,
+                kind: KIND_TOOL,
+                lane: 2,
+                ttft: None,
+                sequence_start: Some(2.0),
+                sequence_end: Some(3.0),
+            },
+        ];
+        let mut overview = vec![
+            SpanBase {
+                start: 0.0,
+                end: 5.0,
+                record: usize::MAX,
+                kind: KIND_MESSAGE,
+                lane: 1,
+                ttft: None,
+                sequence_start: None,
+                sequence_end: None,
+            },
+            SpanBase {
+                start: 10.0,
+                end: 20.0,
+                record: usize::MAX,
+                kind: KIND_TOOL,
+                lane: 2,
+                ttft: None,
+                sequence_start: None,
+                sequence_end: None,
+            },
+        ];
+        compress_idle_span_sets(&mut detail, &mut overview);
+        // The five-unit idle interval is removed in both projections.  The
+        // detail row and aggregate tile therefore remain clickable at the
+        // same normalized x coordinate.
+        assert_eq!((detail[1].start, detail[1].end), (5.0, 6.0));
+        assert_eq!((overview[1].start, overview[1].end), (5.0, 15.0));
+        assert_eq!(detail[0].end - detail[0].start, 1.0);
+        assert_eq!(overview[0].end - overview[0].start, 5.0);
+    }
+
+    #[test]
+    fn tile_fallback_compresses_global_idle_and_keeps_detail_aligned_across_pages() {
+        let earlier = json!({
+            "item_id":"fixture-earlier", "turn_id":"fixture-first", "user_round":1,
+            "created_seq":1, "kind":"assistant_message", "summary":"Earlier detail",
+            "started_at":1800000000.0, "completed_at":1800000002.0
+        });
+        let later = json!({
+            "item_id":"fixture-later", "turn_id":"fixture-second", "user_round":2,
+            "created_seq":129, "kind":"assistant_message", "summary":"Later detail",
+            "started_at":1800003600.0, "completed_at":1800003602.0
+        });
+        let tiles = json!([
+            {"bucket":0, "count":16, "start":1800000000.0, "end":1800000016.0,
+             "input_count":0, "model_count":16, "tool_count":0},
+            {"bucket":1, "count":16, "start":1800003600.0, "end":1800003616.0,
+             "input_count":0, "model_count":16, "tool_count":0}
+        ]);
+        let first_page = json!({
+            "trajectory":[later], "tiles":tiles, "tile_level":0, "timeline_has_more":true,
+            "has_more":true, "next_before":129
+        });
+        let initial = parse_view_page(&first_page);
+        assert!(initial.has_overview && !initial.overview_exact);
+        assert_eq!(initial.overview_end - initial.overview_start, 32000.0);
+        assert_eq!(initial.spans[0].start, initial.overview_start + 16000.0);
+        assert_eq!(initial.spans[0].end, initial.overview_start + 18000.0);
+        assert_eq!(initial.boundaries[0].1, initial.spans[0].start);
+
+        let older_page = json!({"trajectory":[earlier], "tiles":tiles, "tile_level":0,
+            "timeline_has_more":true, "has_more":false});
+        let loaded = parse_view_page(&merge_page_json(&first_page, &older_page, true));
+        assert_eq!(
+            (loaded.overview_start, loaded.overview_end),
+            (initial.overview_start, initial.overview_end)
+        );
+        let later_span = loaded
+            .spans
+            .iter()
+            .find(|span| span.sequence_start == Some(129.0))
+            .unwrap();
+        assert_eq!(
+            (later_span.start, later_span.end),
+            (initial.spans[0].start, initial.spans[0].end)
+        );
+        let later_boundary = loaded
+            .boundaries
+            .iter()
+            .find(|boundary| boundary.0 == 2)
+            .unwrap();
+        assert_eq!(later_boundary.1, later_span.start);
+        // Three thousand seconds of inactivity are removed globally, while
+        // exact row durations and aggregate durations keep their geometry.
+        let later_aggregate = loaded
+            .overview_spans
+            .iter()
+            .find(|span| {
+                span.sequence_start
+                    .is_some_and(|sequence| sequence >= 128.0)
+            })
+            .unwrap();
+        assert!(later_aggregate.start >= later_span.end);
+        assert!(later_aggregate.start <= later_span.end + 1.0);
+        let total = loaded.overview_end - loaded.overview_start;
+        let projected = visible_span(
+            later_span.start,
+            later_span.end,
+            loaded.overview_start,
+            total,
+        )
+        .unwrap();
+        assert_eq!(projected, (0.5, 0.0625));
     }
 
     #[test]

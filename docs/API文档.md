@@ -390,13 +390,12 @@ wunder 是一个**智能体调度平台**：蛹（desktop）是本地 AI 工作�
 - Docker compose 默认不再内置 Firecrawl 自托管服务组；默认部署回退为 Wunder 内置 `direct` 网页抓取，降低启动依赖和队列数据库复杂度。管理员侧“系统设置 / Firecrawl 网页抓取”只保存 Wunder 连接外部 Firecrawl 的参数，不负责启动、停止或修改 Docker 服务。
 - `网页抓取` 可以抓取 Bing/Google/DuckDuckGo/百度等搜索结果页作为线索页，但最终证据应继续抓取具体来源页面，不要把搜索结果摘要当成结论来源。
 - `网页抓取` 的失败结果现结构化暴露 `phase`（如 `validation/dns_lookup/request/response_body/extract`）、`failure_summary`、`next_step_hint` 与 `error_meta`；浏览器桥启动失败也会在 ready 前返回结构化 JSON，便于工作流区域直接展示真实故障原因（例如缺少 Playwright 浏览器二进制）。
-- 新增内置工具 `桌面控制器`（英文别名 `desktop_controller`/`controller`），通过 bbox+action 执行桌面操作，执行后自动附加桌面截图，仅 desktop 模式可用。
-- 新增内置工具 `桌面监视器`（英文别名 `desktop_monitor`/`monitor`），等待 wait_ms 后返回桌面截图并自动附加，仅 desktop 模式可用。
-- `桌面控制器/桌面监视器` 在同一会话内会额外返回 `previous_screenshot_path`；工具 followup 会按“上一帧 -> 当前帧”顺序自动回灌图片（首帧仅回灌当前帧）。
+- 内置工具 `桌面控制`（英文别名 `desktop_control`/`desktop`）已合并原 `桌面控制器` 与 `桌面监视器`：通过 bbox+action 执行桌面操作，并用 `wait` 动作（等待后截图，不注入输入）观察桌面，执行后自动附加桌面截图，仅 desktop 模式可用。
+- `桌面控制` 在同一会话内会额外返回 `previous_screenshot_path`；工具 followup 会按“上一帧 -> 当前帧”顺序自动回灌图片（首帧仅回灌当前帧）。
 - 新增内置工具 `休眠等待`（英文别名 `sleep`/`sleep_wait`/`pause`），参数 `seconds` 必填；用于主动等待（如 `300` 秒），并自动适配工具超时。
 - 内置工具 `读图工具`（英文别名 `read_image`/`view_image`），参数 `path` 必填，可通过 `frame_step` / `frame_rate` 控制 GIF / 视频取帧；工具会直接把本地图片、GIF 或视频预处理后的视觉内容送入模型上下文，具体查看意图来自当前对话，不再暴露 `prompt` 入参。
 - `读图工具` 仅在 `llm.models.<name>.support_vision=true` 的模型下会出现在可用工具列表中，非视觉模型会自动隐藏并拒绝调用。
-- `桌面控制器/桌面监视器` 仅在 `llm.models.<name>.support_vision=true` 的模型下会出现在可用工具列表中。
+- `桌面控制` 仅在 `llm.models.<name>.support_vision=true` 的模型下会出现在可用工具列表中。
 - `action=list` 返回当前在线节点清单（含 `node_id/commands/caps/scopes` 等信息）；`action=invoke` 需要 `node_id + command`，可选 `args/timeout_s/metadata`。
 - 兼容旧入参：未传 `action` 但同时提供 `node_id + command` 时仍按 `invoke` 处理。
 - A2A 服务工具命名为 `a2a@service`，服务由管理员配置并启用。

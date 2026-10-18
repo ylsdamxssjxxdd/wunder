@@ -17,6 +17,12 @@ pub struct NativeCloudThread {
     pub status: String,
 }
 
+pub struct NativeCloudThreadView {
+    pub page: ThreadViewPage,
+    pub model_key: String,
+    pub reasoning_effort: String,
+}
+
 impl NativeDesktop {
     pub fn cloud_agents(&self) -> Result<Vec<NativeCloudAgent>> {
         let data = self.runtime.block_on(self.state().cloud.cloud_agents())?;
@@ -69,14 +75,72 @@ impl NativeDesktop {
         })
     }
     pub fn cloud_thread_view(&self, thread: &str) -> Result<ThreadViewPage> {
+        Ok(self.cloud_thread_bootstrap(thread)?.page)
+    }
+
+    pub fn cloud_thread_bootstrap(&self, thread: &str) -> Result<NativeCloudThreadView> {
         let data = self
             .runtime
             .block_on(self.state().cloud.cloud_thread_view(thread))?;
-        Ok(serde_json::from_value(data["page"].clone())?)
+        Ok(NativeCloudThreadView {
+            page: serde_json::from_value(data["page"].clone())?,
+            model_key: string(&data["session"], "model_key"),
+            reasoning_effort: string(&data["session"], "reasoning_effort"),
+        })
+    }
+
+    pub fn cloud_thread_models(&self) -> Result<Vec<String>> {
+        let data = self.runtime.block_on(self.state().cloud.cloud_thread_models())?;
+        Ok(data["items"].as_array().into_iter().flatten().take(100)
+            .filter_map(|row| row["name"].as_str().or_else(|| row["key"].as_str()))
+            .map(str::to_string).collect())
+    }
+
+    pub fn cloud_thread_set_model(&self, thread: &str, model: &str) -> Result<()> {
+        self.runtime.block_on(self.state().cloud.cloud_thread_set_model(thread, model))
+    }
+
+    pub fn cloud_thread_set_effort(&self, thread: &str, effort: &str) -> Result<String> {
+        self.runtime.block_on(self.state().cloud.cloud_thread_set_effort(thread, effort))
     }
     pub fn cloud_thread_history(&self, thread: &str, before: i64) -> Result<ThreadViewPage> {
         let data = self.runtime.block_on(self.state().cloud.cloud_thread_chat_page(thread, before))?;
         Ok(serde_json::from_value(data["page"].clone())?)
+    }
+
+    pub fn cloud_thread_rename(&self, thread: &str, title: &str) -> Result<()> {
+        self.runtime.block_on(self.state().cloud.cloud_thread_rename(thread, title))
+    }
+
+    pub fn cloud_thread_archive(&self, thread: &str) -> Result<()> {
+        self.runtime.block_on(self.state().cloud.cloud_thread_archive(thread))
+    }
+
+    pub fn cloud_thread_trajectory_page(&self, thread: &str, before: Option<i64>, after: Option<i64>, limit: usize) -> Result<Value> {
+        let data = self.runtime.block_on(self.state().cloud.cloud_thread_trajectory(thread, before, after, limit))?;
+        Ok(data["page"].clone())
+    }
+
+    pub fn cloud_thread_trajectory_detail(&self, thread: &str, body: &str, revision: i64) -> Result<Value> {
+        let text = self.cloud_body_text(thread, &BodyRef { body_id: body.into(), revision, bytes: 0 })?;
+        Ok(serde_json::from_str(&text)?)
+    }
+
+    pub fn cloud_thread_search(&self, thread: &str, query: &str) -> Result<Value> {
+        self.runtime.block_on(self.state().cloud.cloud_thread_search(thread, query))
+    }
+
+    pub fn cloud_thread_body(&self, thread: &str, body: &str, revision: i64, cursor: i64) -> Result<Value> {
+        self.runtime.block_on(self.state().cloud.cloud_thread_body(thread, body, revision, cursor))
+    }
+
+    pub fn cloud_thread_process_page(&self, thread: &str, root: &str, final_id: &str, before: Option<i64>, after: Option<i64>) -> Result<super::NativeProcessPage> {
+        let page = self.runtime.block_on(self.state().cloud.cloud_thread_process(thread, root, before, after))?;
+        Ok(super::chat_process::project_page(&page["turn"], final_id))
+    }
+
+    pub fn cloud_export_thread_log(&self, thread: &str, path: &std::path::Path) -> Result<()> {
+        self.runtime.block_on(self.state().cloud.cloud_export_thread_log(thread, path))
     }
 
     /// Copy complete content on demand. Preview/tail text is never substituted
@@ -106,7 +170,7 @@ impl NativeDesktop {
                     text.push_str(&chunk);
                 }
                 if !page.has_more {
-                    anyhow::ensure!(text.len() == body.bytes, "message body is incomplete; refresh the thread");
+                    anyhow::ensure!(body.bytes == 0 || text.len() == body.bytes, "message body is incomplete; refresh the thread");
                     return Ok(text);
                 }
                 let next = page.next_cursor.ok_or_else(|| anyhow!("missing body cursor"))?;

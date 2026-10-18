@@ -113,21 +113,74 @@ pub fn with_user_round(mut metrics: Vec<Metric>, round: i64) -> Vec<Metric> {
 /// Web shows the current execution state in place of the settled user-round
 /// status. Numeric usage already observed is retained alongside it.
 pub fn with_status(metrics: Vec<Metric>, state: &str) -> Vec<Metric> {
-    let key = match state {
-        "已停止" | "cancelled" | "canceled" | "interrupted" | "stopped" => "status-stopped",
-        "执行失败" | "failed" | "error" | "rejected" => "status-error",
-        "等待用户输入" | "waiting_input" | "waiting_user_input" => "status-waiting",
-        "等待确认" | "waiting_approval" => "status-waiting",
+    // Runtime states can carry an informative suffix (for example, queue
+    // position).  The footer should retain that useful detail while selecting
+    // its presentation from the same status family as the web messenger.
+    let state = state.trim();
+    let (key, label) = match state {
+        "已停止" | "cancelled" | "canceled" | "interrupted" | "stopped" => {
+            ("status-stopped", "已停止")
+        }
+        "执行失败" | "failed" | "error" | "rejected" => ("status-error", "任务失败"),
+        "等待用户输入" | "waiting_input" | "waiting_user_input" | "等待确认"
+        | "waiting_approval" => ("status-waiting", "等待确认"),
+        "正在执行工具…" | "使用工具中" | "tool_running" | "tooling" => {
+            ("status-tool", "使用工具中")
+        }
+        "子智能体执行中" | "subagent_running" => ("status-subagent", "子智能体执行中"),
+        "正在思考…" | "正在生成…" | "模型输出中" | "model_outputting" | "streaming" => {
+            ("status-outputting", "模型输出中")
+        }
+        "模型响应中" | "请求中" | "requesting" | "waiting_first_output" => {
+            ("status-requesting", "请求中")
+        }
+        "上下文压缩中…" | "上下文压缩中" | "compacting" => {
+            ("status-compacting", "上下文压缩中")
+        }
+        "正在排队" | "任务已排队…" | "queued" | "pending" => ("status-queued", "排队中"),
         "" | "任务完成" | "输出已结束" | "completed" | "done" | "final" => return metrics,
-        _ => "status-running",
+        _ if state.starts_with("模型请求正在排队")
+            || state.starts_with("正在排队")
+            || state.starts_with("任务已排队") =>
+        {
+            ("status-queued", state)
+        }
+        _ if state.starts_with("正在执行工具") => ("status-tool", "使用工具中"),
+        _ if state.starts_with("上下文压缩中") => ("status-compacting", "上下文压缩中"),
+        _ if state.starts_with("模型响应中") => ("status-requesting", "请求中"),
+        _ if state.starts_with("正在思考") || state.starts_with("正在生成") => {
+            ("status-outputting", "模型输出中")
+        }
+        // A goal execution is still a request owned by this assistant bubble.
+        // Do not leak its internal scheduling phrase into the reader-facing
+        // status line.
+        _ if state.starts_with("目标继续执行") => ("status-requesting", "请求中"),
+        _ => ("status-running", "处理中"),
     };
     let mut result = vec![Metric {
         key: "status",
         icon: key,
-        value: state.into(),
+        value: label.into(),
     }];
     result.extend(metrics.into_iter().filter(|metric| metric.key != "round"));
     result
+}
+
+/// Child activity only overrides an active parent request/output/tool phase.
+/// Terminal, waiting, queued and compacting states retain their precedence.
+pub fn resolve_status(state: &str, has_running_subagent: bool) -> &str {
+    if has_running_subagent
+        && matches!(
+            with_status(Vec::new(), state)
+                .first()
+                .map(|metric| metric.icon),
+            Some("status-running" | "status-requesting" | "status-outputting" | "status-tool")
+        )
+    {
+        "subagent_running"
+    } else {
+        state
+    }
 }
 
 /// Match the web footer's precision for seconds, minutes and hours.
@@ -231,5 +284,32 @@ mod tests {
         let stats = json!({"interaction_duration_s": 1.0});
         assert!(message_stats(&json!({"message_stats": stats.clone()})).is_some());
         assert!(message_stats(&json!({"meta": {"message_stats": stats}})).is_some());
+    }
+
+    #[test]
+    fn child_activity_respects_terminal_and_waiting_status_priority() {
+        for state in [
+            "stopped",
+            "error",
+            "waiting_approval",
+            "queued",
+            "compacting",
+            "completed",
+        ] {
+            assert_eq!(resolve_status(state, true), state);
+        }
+        assert_eq!(resolve_status("tool_running", true), "subagent_running");
+        assert_eq!(resolve_status("requesting", false), "requesting");
+    }
+
+    #[test]
+    fn live_footer_normalizes_prefixed_queue_and_subagent_states() {
+        let queued = with_status(Vec::new(), "模型请求正在排队 · 前方 2 个任务");
+        assert_eq!(queued[0].icon, "status-queued");
+        assert_eq!(queued[0].value, "模型请求正在排队 · 前方 2 个任务");
+
+        let subagent = with_status(Vec::new(), "subagent_running");
+        assert_eq!(subagent[0].icon, "status-subagent");
+        assert_eq!(subagent[0].value, "子智能体执行中");
     }
 }

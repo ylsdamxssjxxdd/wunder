@@ -1037,19 +1037,19 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
             ]),
         },
         ToolSpec {
-            name: desktop_control::TOOL_DESKTOP_CONTROLLER.to_string(),
+            name: desktop_control::TOOL_DESKTOP_CONTROL.to_string(),
             title: None,
-            description: t("tool.spec.desktop_controller.description"),
+            description: t("tool.spec.desktop_control.description"),
             input_schema: super::schema::object(vec![
                 super::schema::array("bbox")
-                    .desc(t("tool.spec.desktop_controller.args.bbox"))
+                    .desc(t("tool.spec.desktop_control.args.bbox"))
                     .items(super::schema::integer("_"))
                     .any_of(vec![
                         json!({"type": "array", "items": {"type": "integer"}, "minItems": 4, "maxItems": 4}),
                         json!({"type": "array", "items": {"type": "integer"}, "minItems": 2, "maxItems": 2}),
                     ]),
                 super::schema::string("action")
-                    .desc(t("tool.spec.desktop_controller.args.action"))
+                    .desc(t("tool.spec.desktop_control.args.action"))
                     .enums(vec![
                         "left_click",
                         "left_double_click",
@@ -1065,49 +1065,39 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                         "scroll_up",
                         "press_key",
                         "type_text",
-                        "delay",
+                        "wait",
                         "move_mouse",
                         "drag_drop",
                     ]),
                 super::schema::string("key")
-                    .desc(t("tool.spec.desktop_controller.args.key"))
+                    .desc(t("tool.spec.desktop_control.args.key"))
                     .optional(),
                 super::schema::string("text")
-                    .desc(t("tool.spec.desktop_controller.args.text"))
+                    .desc(t("tool.spec.desktop_control.args.text"))
+                    .optional(),
+                super::schema::string("note")
+                    .desc(t("tool.spec.desktop_control.args.note"))
                     .optional(),
                 super::schema::integer("delay_ms")
-                    .desc(t("tool.spec.desktop_controller.args.delay_ms"))
+                    .desc(t("tool.spec.desktop_control.args.delay_ms"))
                     .min(0)
+                    .max(30000)
                     .optional(),
                 super::schema::integer("duration_ms")
-                    .desc(t("tool.spec.desktop_controller.args.duration_ms"))
+                    .desc(t("tool.spec.desktop_control.args.duration_ms"))
                     .min(0)
                     .optional(),
                 super::schema::integer("scroll_steps")
-                    .desc(t("tool.spec.desktop_controller.args.scroll_steps"))
+                    .desc(t("tool.spec.desktop_control.args.scroll_steps"))
                     .min(1)
                     .optional(),
                 super::schema::array("to_bbox")
-                    .desc(t("tool.spec.desktop_controller.args.to_bbox"))
+                    .desc(t("tool.spec.desktop_control.args.to_bbox"))
                     .items(super::schema::integer("_"))
                     .any_of(vec![
                         json!({"type": "array", "items": {"type": "integer"}, "minItems": 4, "maxItems": 4}),
                         json!({"type": "array", "items": {"type": "integer"}, "minItems": 2, "maxItems": 2}),
                     ])
-                    .optional(),
-            ]),
-        },
-        ToolSpec {
-            name: desktop_control::TOOL_DESKTOP_MONITOR.to_string(),
-            title: None,
-            description: t("tool.spec.desktop_monitor.description"),
-            input_schema: super::schema::object(vec![
-                super::schema::integer("wait_ms")
-                    .desc(t("tool.spec.desktop_monitor.args.wait_ms"))
-                    .min(0)
-                    .max(30000),
-                super::schema::string("note")
-                    .desc(t("tool.spec.desktop_monitor.args.note"))
                     .optional(),
             ]),
         },
@@ -1240,20 +1230,12 @@ pub fn builtin_aliases() -> HashMap<String, String> {
         web_fetch_tool::TOOL_WEB_FETCH.to_string(),
     );
     map.insert(
-        desktop_control::TOOL_DESKTOP_CONTROLLER_ALIAS.to_string(),
-        desktop_control::TOOL_DESKTOP_CONTROLLER.to_string(),
+        desktop_control::TOOL_DESKTOP_CONTROL_ALIAS.to_string(),
+        desktop_control::TOOL_DESKTOP_CONTROL.to_string(),
     );
     map.insert(
-        desktop_control::TOOL_DESKTOP_CONTROLLER_ALIAS_SHORT.to_string(),
-        desktop_control::TOOL_DESKTOP_CONTROLLER.to_string(),
-    );
-    map.insert(
-        desktop_control::TOOL_DESKTOP_MONITOR_ALIAS.to_string(),
-        desktop_control::TOOL_DESKTOP_MONITOR.to_string(),
-    );
-    map.insert(
-        desktop_control::TOOL_DESKTOP_MONITOR_ALIAS_SHORT.to_string(),
-        desktop_control::TOOL_DESKTOP_MONITOR.to_string(),
+        desktop_control::TOOL_DESKTOP_CONTROL_ALIAS_SHORT.to_string(),
+        desktop_control::TOOL_DESKTOP_CONTROL.to_string(),
     );
     map
 }
@@ -1499,8 +1481,7 @@ fn preferred_english_alias(canonical: &str) -> Option<&'static str> {
         "记忆管理" => Some("memory_manager"),
         web_search_tool::TOOL_WEB_SEARCH => Some(web_search_tool::TOOL_WEB_SEARCH_ALIAS),
         web_fetch_tool::TOOL_WEB_FETCH => Some(web_fetch_tool::TOOL_WEB_FETCH_ALIAS),
-        desktop_control::TOOL_DESKTOP_CONTROLLER => Some("desktop_controller"),
-        desktop_control::TOOL_DESKTOP_MONITOR => Some("desktop_monitor"),
+        desktop_control::TOOL_DESKTOP_CONTROL => Some("desktop_control"),
         self_status_tool::TOOL_SELF_STATUS => Some(self_status_tool::TOOL_SELF_STATUS_ALIAS),
         read_image_tool::TOOL_READ_IMAGE => Some(read_image_tool::TOOL_READ_IMAGE_ALIAS),
         multimodal_generation_tool::TOOL_GENERATE_SPEECH => {
@@ -2414,11 +2395,11 @@ mod tests {
     }
 
     #[test]
-    fn desktop_controller_schema_no_longer_requires_description_for_model_side() {
+    fn desktop_control_schema_no_longer_requires_description_for_model_side() {
         let spec = builtin_tool_specs_with_language("zh-CN")
             .into_iter()
-            .find(|spec| spec.name == "桌面控制器")
-            .expect("desktop controller spec");
+            .find(|spec| spec.name == "桌面控制")
+            .expect("desktop control spec");
         assert!(spec.description.contains("bbox"));
         assert!(spec.description.contains("scroll_steps"));
         assert!(spec.description.contains("to_bbox"));
@@ -2440,7 +2421,7 @@ mod tests {
             config.server.mode = mode.to_string();
             config.tools.builtin.enabled = vec!["执行命令".to_string()];
             config.tools.browser.enabled = true;
-            config.tools.desktop_controller.enabled = true;
+            config.tools.desktop_control.enabled = true;
             config.tools.web.search.enabled = true;
             config.tools.web.search.provider = "firecrawl".to_string();
 

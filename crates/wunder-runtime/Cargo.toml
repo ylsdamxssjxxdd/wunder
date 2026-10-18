@@ -71,6 +71,10 @@ name = "auth_refresh_routes"
 required-features = ["sqlite-storage"]
 
 [[test]]
+name = "workspace_public_path_routes"
+required-features = ["sqlite-storage"]
+
+[[test]]
 name = "backend_contracts"
 required-features = ["sqlite-storage"]
 
@@ -243,7 +247,7 @@ reqwest.workspace = true
 sysinfo = { workspace = true, optional = true }
 
 [target.'cfg(target_vendor = "win7")'.dependencies]
-reqwest = { version = "0.13", default-features = false, features = ["json", "stream", "multipart", "rustls-no-provider"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "stream", "multipart", "blocking", "rustls-no-provider"] }
 sysinfo = { version = "0.29.11", optional = true }
 
 [dev-dependencies]

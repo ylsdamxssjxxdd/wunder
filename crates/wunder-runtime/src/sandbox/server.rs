@@ -87,9 +87,27 @@ struct SandboxToolRequest {
     resources: SandboxResources,
 }
 
+/// 浏览器桥接托管请求：`deployment = sandbox` 时由服务端发起。
 #[derive(Debug, Deserialize)]
-struct SandboxCommandSessionControlRequest {
-    user_id: String,
+struct SandboxBrowserBridgeRequest {
+    bridge_id: String,
+    #[serde(default)]
+    spec: super::browser_host::BridgeSpec,
+}
+
+#[derive(Debug, Deserialize)]
+struct SandboxBrowserCommandRequest {
+    bridge_id: String,
+    line: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct SandboxBrowserCloseRequest {
+    bridge_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct SandboxCommandSessionControlRequest {    user_id: String,
     session_id: String,
     command_session_id: String,
     #[serde(default)]
@@ -447,6 +465,13 @@ pub fn build_router() -> Router {
             post(cancel_command_session),
         )
         .route("/sandboxes/release", post(release_sandbox))
+        // 浏览器桥接：服务端只转发行命令，Chromium 与它的内存都留在这个容器里。
+        .route(
+            "/browser/bridges",
+            get(list_browser_bridges).post(create_browser_bridge),
+        )
+        .route("/browser/bridges/command", post(command_browser_bridge))
+        .route("/browser/bridges/close", post(close_browser_bridge))
 }
 
 pub fn validate_runtime_readonly(readonly_rootfs: bool) -> Result<()> {
@@ -515,6 +540,47 @@ fn ensure_path_not_writable(path: &Path, label: &str) -> Result<()> {
 
 async fn health() -> impl IntoResponse {
     Json(json!({ "ok": true }))
+}
+
+/// Start one browser bridge in this container and wait for it to report ready.
+async fn create_browser_bridge(Json(request): Json<SandboxBrowserBridgeRequest>) -> Json<Value> {
+    let bridge_id = request.bridge_id;
+    let spec = request.spec;
+    let started = tokio::task::spawn_blocking(move || {
+        super::browser_host::create(bridge_id.as_str(), &spec)
+    })
+    .await;
+    match started {
+        Ok(Ok(line)) => Json(json!({ "ok": true, "line": line })),
+        Ok(Err(error)) => Json(json!({ "ok": false, "error": error })),
+        Err(error) => Json(json!({ "ok": false, "error": format!("bridge task failed: {error}") })),
+    }
+}
+
+/// Relay one protocol line to a hosted bridge and return its reply line.
+async fn command_browser_bridge(Json(request): Json<SandboxBrowserCommandRequest>) -> Json<Value> {
+    let bridge_id = request.bridge_id;
+    let line = request.line;
+    let replied =
+        tokio::task::spawn_blocking(move || super::browser_host::command(&bridge_id, &line)).await;
+    match replied {
+        Ok(Ok(reply)) => Json(json!({ "ok": true, "line": reply })),
+        Ok(Err(error)) => Json(json!({ "ok": false, "error": error })),
+        Err(error) => Json(json!({ "ok": false, "error": format!("bridge task failed: {error}") })),
+    }
+}
+
+async fn close_browser_bridge(Json(request): Json<SandboxBrowserCloseRequest>) -> Json<Value> {
+    let bridge_id = request.bridge_id;
+    let closed = tokio::task::spawn_blocking(move || super::browser_host::close(&bridge_id)).await;
+    match closed {
+        Ok(closed) => Json(json!({ "ok": true, "closed": closed })),
+        Err(error) => Json(json!({ "ok": false, "error": format!("bridge task failed: {error}") })),
+    }
+}
+
+async fn list_browser_bridges() -> Json<Value> {
+    Json(super::browser_host::list())
 }
 
 async fn execute_tool(Json(request): Json<SandboxToolRequest>) -> impl IntoResponse {

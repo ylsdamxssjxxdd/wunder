@@ -440,6 +440,84 @@ class Policy:
         return True, ""
 
 
+NET_ERROR_RE = re.compile(r"net::(ERR_[A-Z0-9_]+)")
+
+# `net::ERR_*` codes that name a broken or refused transport: the same URL will
+# fail again until the network changes, but a different host may still work.
+RETRYABLE_NET_ERRORS = frozenset(
+    {
+        "ERR_CONNECTION_CLOSED",
+        "ERR_CONNECTION_REFUSED",
+        "ERR_CONNECTION_RESET",
+        "ERR_CONNECTION_TIMED_OUT",
+        "ERR_CONNECTION_ABORTED",
+        "ERR_CONNECTION_FAILED",
+        "ERR_NETWORK_CHANGED",
+        "ERR_INTERNET_DISCONNECTED",
+        "ERR_TIMED_OUT",
+        "ERR_EMPTY_RESPONSE",
+        "ERR_ADDRESS_UNREACHABLE",
+    }
+)
+
+
+def failure_details(exc, url):
+    """Structured companion to a Playwright error message.
+
+    The message keeps the original text for humans; this payload gives the model
+    a `code`, the failing host and a retry verdict, mirroring the web_fetch
+    failure contract so one branch in the caller covers both tools.
+    """
+    message = str(exc)
+    match = NET_ERROR_RE.search(message)
+    net_error = match.group(1) if match else None
+    host = None
+    try:
+        host = urlparse(url).hostname
+    except Exception:
+        host = None
+    if net_error == "ERR_NAME_NOT_RESOLVED":
+        code = "TOOL_BROWSER_DNS_FAILED"
+    elif net_error in RETRYABLE_NET_ERRORS:
+        code = "TOOL_BROWSER_CONNECTION_FAILED"
+    elif net_error:
+        code = "TOOL_BROWSER_NAVIGATION_FAILED"
+    elif "Timeout" in message or "timeout" in message:
+        code = "TOOL_BROWSER_TIMEOUT"
+    else:
+        code = "TOOL_BROWSER_NAVIGATION_FAILED"
+    retryable = code in ("TOOL_BROWSER_CONNECTION_FAILED", "TOOL_BROWSER_TIMEOUT")
+    details = {
+        "phase": "navigation",
+        "code": code,
+        "retryable": retryable,
+        "failure_summary": compact_error(message),
+        "next_step_hint": (
+            "Retry once, then reach the same resource another way (an API endpoint, or web_fetch)."
+            if retryable
+            else "The address itself is the problem; pick a different URL or host."
+        ),
+    }
+    if host:
+        details["host"] = host
+    if net_error:
+        details["net_error"] = net_error
+    if retryable:
+        details["retry_after_ms"] = 30000
+    return details
+
+
+def compact_error(message):
+    """Drop the Playwright call log: it is operator detail, not model input."""
+    head = message.split("Call log:", 1)[0].strip()
+    head = head.split("\n", 1)[0].strip()
+    return head or message.strip().split("\n", 1)[0].strip()
+
+
+def _elapsed_ms(since):
+    return int((time.monotonic() - since) * 1000)
+
+
 def respond(data):
     sys.stdout.write(json.dumps(data, ensure_ascii=False) + "\n")
     sys.stdout.flush()
@@ -451,6 +529,11 @@ class BridgeSession:
         self.policy = policy
         self.timeout_ms = max(args.timeout, 1) * 1000
         self.blocked = []
+        # A cold start is the dominant cost of the first browser call, so the
+        # phases are timed and reported: without them a 50s launch is an
+        # undifferentiated "browser is slow" report.
+        self.startup_ms = {}
+        started = time.monotonic()
         try:
             from playwright.sync_api import sync_playwright
         except Exception:
@@ -461,7 +544,10 @@ class BridgeSession:
                 }
             )
             raise SystemExit(0)
+        self.startup_ms["import_ms"] = _elapsed_ms(started)
+        mark = time.monotonic()
         self.pw = sync_playwright().start()
+        self.startup_ms["driver_ms"] = _elapsed_ms(mark)
         launch_args = [item for item in args.launch_arg if item]
         # Launch strategy mirrors deepseek-harness `browser-use`: either launch a
         # managed browser (optionally on a user-supplied channel / executable) or
@@ -475,6 +561,7 @@ class BridgeSession:
         self.executable_path = executable_path
         self.attach_endpoint = attach_endpoint
         self._attached = self.mode == "attach" and bool(attach_endpoint)
+        mark = time.monotonic()
         if self._attached:
             self.browser = self.pw.chromium.connect_over_cdp(attach_endpoint)
             if self.browser.contexts:
@@ -496,6 +583,8 @@ class BridgeSession:
             self.browser = self.pw.chromium.launch(**launch_kwargs)
             self.context = self._new_context(args)
             self._owns_context = True
+        self.startup_ms["launch_ms"] = _elapsed_ms(mark)
+        self.startup_ms["total_ms"] = _elapsed_ms(started)
         self.pages = OrderedDict()
         self.pages_by_key = {}
         self.refs = {}
@@ -777,7 +866,13 @@ class BridgeSession:
         if not allowed:
             return {"success": False, "error": "Navigation blocked: %s" % reason}
         page, target_id = self._resolve_page(target_id)
-        page.goto(url, wait_until="domcontentloaded", timeout=self._timeout_ms(timeout_ms))
+        try:
+            page.goto(url, wait_until="domcontentloaded", timeout=self._timeout_ms(timeout_ms))
+        except Exception as exc:
+            # A raw Playwright stack is unreadable for the model and hides the
+            # two facts it can act on: which host failed and whether retrying
+            # can possibly help. Details are preserved, the call log is not.
+            return {"success": False, "error": str(exc), "data": failure_details(exc, url)}
         verdict = self._final_url_verdict(page)
         if verdict is not None:
             return verdict
@@ -1357,6 +1452,7 @@ def main():
                 "mode": session.mode,
                 "tabs": session._tabs_state(),
                 "active_target_id": session.active_target_id,
+                "startup_ms": session.startup_ms,
             },
         }
     )

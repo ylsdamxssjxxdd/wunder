@@ -6,21 +6,22 @@ import { I18n } from "i18n.slint";
 import { ThreadTrajectoryDialog } from "thread_trajectory.slint";
 
 export component TrajDemo inherits Window {
-    width: 1280px;
-    height: 800px;
+    preferred-width: 1280px;
+    preferred-height: 800px;
+    default-font-family: "Segoe UI";
     title: "trajectory demo";
 
     ThreadTrajectoryDialog {
         rows: [
-            { kind: 1, badge: "", text: "Check the deploy log for the failed job", detail: "", error: false, request: 0, turn: 1, turn-start: true, turn-end: false, foldable: true, collapsed: true, row-height: 30px, index: 0 },
-            { kind: 7, badge: "", text: "... 2 steps · 1 tool call", detail: "", error: false, request: 0, turn: 1, turn-start: false, turn-end: true, row-height: 20px, index: 0 },
-            { kind: 4, badge: "#1", text: "Plan looks fine. Running the reproduction now.", detail: "", error: false, request: 1, turn: 2, turn-start: true, turn-end: false, foldable: true, collapsed: false, row-height: 30px, index: 2 },
-            { kind: 5, badge: "", text: "demo_tool", detail: "{\"path\": \"logs/app.log\"} → exit 0, 12 lines matched", error: false, request: 0, turn: 2, turn-start: false, turn-end: false, row-height: 30px, index: 3 },
-            { kind: 4, badge: "#2", text: "The failure is a missing config key; applying the fix.", detail: "", error: false, request: 1, turn: 2, turn-start: false, turn-end: false, row-height: 30px, index: 4 },
-            { kind: 5, badge: "", text: "demo_tool", detail: "{\"path\": \"config.yaml\"} → patched 1 line", error: false, request: 0, turn: 2, turn-start: false, turn-end: false, row-height: 30px, index: 5 },
-            { kind: 3, badge: "", text: "Compacted summary of the earlier turns", detail: "", error: false, request: 0, turn: 3, turn-start: true, turn-end: false, foldable: true, collapsed: false, row-height: 30px, index: 6 },
-            { kind: 2, badge: "", text: "context note kept for the next step", detail: "", error: false, request: 0, turn: 3, turn-start: false, turn-end: false, row-height: 30px, index: 7 },
-            { kind: 4, badge: "#3", text: "Done. The pipeline is green again.", detail: "", error: true, request: 1, turn: 3, turn-start: false, turn-end: true, row-height: 30px, index: 8 }
+            { kind: 1, badge: "", text: "Check the deploy log for the failed job", error: false, request: 0, turn: 1, turn-start: true, turn-end: false, foldable: true, collapsed: true, row-height: 30px, index: 0 },
+            { kind: 7, badge: "", text: "... 2 steps · 1 tool call", error: false, request: 0, turn: 1, turn-start: false, turn-end: true, row-height: 20px, index: 0 },
+            { kind: 4, badge: "#1", text: "Plan looks fine. Running the reproduction now.", error: false, request: 1, turn: 2, turn-start: true, turn-end: false, foldable: true, collapsed: false, row-height: 30px, index: 2 },
+            { kind: 5, badge: "", text: "demo_tool", arguments: "{\"path\": \"logs/app.log\"}", result: "exit 0, 12 lines matched", error: false, request: 0, turn: 2, turn-start: false, turn-end: false, row-height: 30px, index: 3 },
+            { kind: 4, badge: "#2", text: "The failure is a missing config key; applying the fix.", error: false, request: 1, turn: 2, turn-start: false, turn-end: false, row-height: 30px, index: 4 },
+            { kind: 5, badge: "", text: "demo_tool", arguments: "{\"path\": \"config.yaml\"}", result: "patched 1 line", error: false, request: 0, turn: 2, turn-start: false, turn-end: false, row-height: 30px, index: 5 },
+            { kind: 3, badge: "", text: "Compacted summary of the earlier turns", error: false, request: 0, turn: 3, turn-start: true, turn-end: false, foldable: true, collapsed: false, row-height: 30px, index: 6 },
+            { kind: 2, badge: "", text: "context note kept for the next step", error: false, request: 0, turn: 3, turn-start: false, turn-end: false, row-height: 30px, index: 7 },
+            { kind: 4, badge: "#3", text: "Done. The pipeline is green again.", error: true, request: 1, turn: 3, turn-start: false, turn-end: true, row-height: 30px, index: 8 }
         ];
         spans: [
             { lane: 0, start: 0.02, width: 0.06, kind: 1, index: 0, ttft: -1.0, selected: false, outside: false },
@@ -30,7 +31,7 @@ export component TrajDemo inherits Window {
             { lane: 2, start: 0.58, width: 0.06, kind: 5, index: 5, ttft: -1.0, selected: false, outside: false },
             { lane: 1, start: 0.70, width: 0.10, kind: 3, index: 6, ttft: -1.0, selected: false, outside: false },
             { lane: 0, start: 0.82, width: 0.04, kind: 2, index: 7, ttft: -1.0, selected: false, outside: false },
-            { lane: 1, start: 0.88, width: 0.10, kind: 4, index: 8, ttft: 0.48, selected: false, outside: false }
+            { lane: 1, start: 0.88, width: 0.10, kind: 4, index: 8, error: true, ttft: 0.48, selected: false, outside: false }
         ];
         ticks: [
             { pos: 0.0, label: "0 ms" },

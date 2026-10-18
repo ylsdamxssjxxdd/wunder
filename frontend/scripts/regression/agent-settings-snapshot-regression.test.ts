@@ -13,19 +13,22 @@ import { buildDeclaredDependencyPayload } from '../../src/utils/agentDependencyS
 const WEB_FETCH_TOOL_NAME = '\u7f51\u9875\u6293\u53d6';
 const WEB_SEARCH_TOOL_NAME = '\u7f51\u9875\u641c\u7d22';
 
-test('agent settings normalize desktop tool aliases to persisted runtime names', () => {
-  assert.equal(resolveDesktopToolKind('desktop_controller'), 'controller');
-  assert.equal(resolveDesktopToolKind('desktop monitor'), 'monitor');
-  assert.equal(canonicalizeAgentToolName('desktop_controller'), '桌面控制器');
-  assert.equal(canonicalizeAgentToolName('desktop_monitor'), '桌面监视器');
+test('agent settings normalize desktop tool aliases to the merged desktop control name', () => {
+  assert.equal(resolveDesktopToolKind('desktop_control'), 'control');
+  assert.equal(resolveDesktopToolKind('desktop monitor'), 'control');
+  assert.equal(resolveDesktopToolKind('desktop_controller'), 'control');
+  assert.equal(canonicalizeAgentToolName('desktop_control'), '桌面控制');
+  assert.equal(canonicalizeAgentToolName('desktop_controller'), '桌面控制');
+  assert.equal(canonicalizeAgentToolName('桌面监视器'), '桌面控制');
   assert.deepEqual(
     normalizeAgentToolNamesForSettings([
       'desktop_controller',
       '桌面控制器',
       'desktop_monitor',
-      '桌面监视器'
+      '桌面监视器',
+      'desktop_control'
     ]),
-    ['桌面控制器', '桌面监视器']
+    ['桌面控制']
   );
 });
 
@@ -53,29 +56,28 @@ test('agent settings normalize web tool aliases to persisted runtime names', () 
 test('agent settings snapshots compare canonical saved dependency payloads', () => {
   const catalog = {
     builtin_tools: [
-      { name: '桌面控制器' },
-      { name: '桌面监视器' }
+      { name: '桌面控制' }
     ],
     skills: [
       { name: 'summarize' }
     ]
   };
   const currentAgent = {
-    tool_names: ['desktop_controller', 'summarize'],
+    tool_names: ['desktop_control', 'summarize'],
     declared_tool_names: ['stale_missing_tool'],
     declared_skill_names: ['summarize']
   };
   const selectedToolNames = normalizeAgentToolNamesForSettings([
-    'desktop_controller',
+    'desktop_control',
     'summarize'
   ]);
   const payload = buildDeclaredDependencyPayload(selectedToolNames, currentAgent, catalog);
 
-  assert.deepEqual(payload.tool_names, ['桌面控制器', 'summarize']);
-  assert.deepEqual(payload.declared_tool_names, ['桌面控制器', 'stale_missing_tool']);
+  assert.deepEqual(payload.tool_names, ['桌面控制', 'summarize']);
+  assert.deepEqual(payload.declared_tool_names, ['桌面控制', 'stale_missing_tool']);
   assert.deepEqual(payload.declared_skill_names, ['summarize']);
   assert.deepEqual(normalizeAgentToolNamesForSettingsSnapshot(payload.tool_names), [
     'summarize',
-    '桌面控制器'
+    '桌面控制'
   ]);
 });

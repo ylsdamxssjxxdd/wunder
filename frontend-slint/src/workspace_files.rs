@@ -490,7 +490,6 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
             return;
         };
         if row.kind != 0 {
-            app.set_status("目录暂不支持拖出，请使用下载或引用".into());
             return;
         }
         if DRAG_OUT.get() {
@@ -499,30 +498,18 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         DRAG_OUT.set(true);
         let path = row.path.to_string();
         let name = row.name.to_string();
-        app.set_status(format!("正在准备拖出 {name}…").into());
         let weak = app.as_weak();
         let worker_api = drag_api.clone();
         let target = current_target();
         let request = generation();
         std::thread::spawn(move || {
             let outcome = drag_out(&worker_api, &target, &path, &name);
-            let _ = weak.upgrade_in_event_loop(move |app| {
+            let _ = weak.upgrade_in_event_loop(move |_app| {
                 DRAG_OUT.set(false);
                 if !is_current(request) {
                     return;
                 }
-                match outcome {
-                    Ok(copied) => {
-                        if copied {
-                            app.set_status(format!("已复制 {name} 到目标位置").into());
-                        } else {
-                            app.set_status(
-                                format!("已取消拖出 {name}（本地副本保留在工作区）").into(),
-                            );
-                        }
-                    }
-                    Err(error) => app.set_status(format!("拖出失败：{error}").into()),
-                }
+                let _ = outcome;
             });
         });
     });

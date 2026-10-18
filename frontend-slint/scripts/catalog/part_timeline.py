@@ -1,6 +1,16 @@
 # -*- coding: utf-8 -*-
 # Chat timeline (§7): entry labels, tool group bars and the patch diff card.
 ENTRIES = [
+    ("tl_status_waiting", "等待确认", "Waiting for confirmation"),
+    ("tl_status_error", "任务失败", "Task failed"),
+    ("tl_status_stopped", "已停止", "Stopped"),
+    ("tl_status_queued", "排队中", "Queued"),
+    ("tl_status_compacting", "上下文压缩中", "Compacting context"),
+    ("tl_status_subagent", "子智能体执行中", "Subagent running"),
+    ("tl_status_tool", "使用工具中", "Using tools"),
+    ("tl_status_outputting", "模型输出中", "Model outputting"),
+    ("tl_status_requesting", "请求中", "Requesting"),
+    ("tl_status_running", "处理中", "Processing"),
     ("tl_process_loading", "正在加载…", "Loading…"),
     ("tl_process_retry", "加载失败，重试", "Loading failed. Retry"),
     ("tl_process_earlier", "查看更早的过程", "Earlier steps"),

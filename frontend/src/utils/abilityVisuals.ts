@@ -40,16 +40,14 @@ const ABILITY_RULES: AbilityRule[] = [
   { keywords: ['用户世界工具', 'user_world', 'user world'], icon: 'fa-earth-asia', tone: 'general' },
   { keywords: ['会话让出', 'sessions_yield', 'session yield', 'yield'], icon: 'fa-share-from-square', tone: 'automation' },
   { keywords: ['自我状态', 'self_status', 'self status'], icon: 'fa-gauge-high', tone: 'general' },
-  { keywords: ['桌面控制器'], icon: 'fa-computer-mouse', tone: 'general' },
-  { keywords: ['桌面监视器'], icon: 'fa-display', tone: 'general' },
+  { keywords: ['桌面控制'], icon: 'fa-computer-mouse', tone: 'general' },
   { keywords: ['渠道工具', 'channel_tool', 'channel tool', 'channel_send', 'channel_contacts'], icon: 'fa-comments', tone: 'general' },
   {
     keywords: ['最终回复', 'final response', 'final answer', 'final reply', 'final_response'],
     icon: 'fa-paper-plane',
     tone: 'general'
   },
-  { keywords: ['desktop_controller', 'desktop controller'], icon: 'fa-computer-mouse', tone: 'general' },
-  { keywords: ['desktop_monitor', 'desktop monitor', '桌面监控'], icon: 'fa-display', tone: 'general' },
+  { keywords: ['desktop_control', 'desktop control'], icon: 'fa-computer-mouse', tone: 'general' },
   { keywords: ['update_plan', 'plan board', '计划面板', '计划看板'], icon: 'fa-table-columns', tone: 'automation' },
   { keywords: ['question_panel', 'ask_panel', 'question panel', '问询面板'], icon: 'fa-circle-question', tone: 'general' },
   {

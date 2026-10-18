@@ -1308,8 +1308,7 @@ const toolSections = computed<ToolSection[]>(() =>
 
 const resolveDesktopToolCatalogValues = () => {
   const values = {
-    controller: '',
-    monitor: ''
+    control: ''
   };
   for (const section of toolSections.value) {
     for (const group of section.groups) {

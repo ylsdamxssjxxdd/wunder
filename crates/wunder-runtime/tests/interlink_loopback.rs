@@ -84,8 +84,8 @@ fn register_device(state: &AppState, user_id: &str) {
             DEVICE_ID,
             &CloudDeviceInterlinkPatch {
                 interlink_enabled: Some(true),
-                // The default grant is shadow:minimal, which uploads the
-                // summary only; the shadow assertions need the full level.
+                // Keep full metadata sharing explicit in this fixture;
+                // production grants still intersect the local declaration.
                 // `tool.exec` is off by default for every device (docs §9.2),
                 // so granting it here is also the admin-side L3 path.
                 capabilities: Some(

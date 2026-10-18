@@ -446,6 +446,46 @@ export const buildTimelineEditPatchView = (
   };
 };
 
+/** 条目行内 +/- 统计（与补丁卡片头部同一口径：新增行数 / 删除行数）。 */
+export type TimelineDiffStats = { added: number; deleted: number };
+
+const countTextLines = (text: string): number => {
+  const normalized = String(text || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  if (!normalized) return 0;
+  const parts = normalized.split('\n');
+  // 结尾换行产生的空尾行不是一行内容。
+  if (parts.length > 1 && parts[parts.length - 1] === '') parts.pop();
+  return parts.length;
+};
+
+/**
+ * 工具条目行内的 diff 统计：编辑 / 写入 / 补丁类工具返回 +/- 行数，其他返回 null。
+ * 只做行计数，不构建 diff 行视图；与 `buildTimelinePatchView` 同一参数来源与上限，
+ * 供时间线折叠态在文件名旁直接展示改动规模。
+ */
+export const buildTimelineDiffStats = (run: RawToolRun): TimelineDiffStats | null => {
+  if (isApplyPatchToolName(run.toolName)) {
+    const patchText = resolvePatchInputText(run);
+    if (!patchText) return null;
+    let added = 0;
+    let deleted = 0;
+    for (const row of patchText.split('\n')) {
+      if (row.startsWith('+') && !row.startsWith('+++')) added += 1;
+      else if (row.startsWith('-') && !row.startsWith('---')) deleted += 1;
+    }
+    return added > 0 || deleted > 0 ? { added, deleted } : null;
+  }
+  if (!isTimelineEditToolRun(run)) return null;
+  const edit = resolveEditLikeArgs(run);
+  if (!edit) return null;
+  if (edit.kind === 'replace' && edit.oldText === edit.newText) return null;
+  if (!edit.oldText && !edit.newText) return null;
+  const added = countTextLines(edit.newText);
+  // replace 的删除行是旧文本；create/write/insert 没有旧文本可删。
+  const deleted = edit.kind === 'replace' ? countTextLines(edit.oldText) : 0;
+  return added > 0 || deleted > 0 ? { added, deleted } : null;
+};
+
 /** 组装补丁卡片视图；非补丁/编辑工具或没有可解析参数时返回 null。 */
 export const buildTimelinePatchView = (
   run: RawToolRun,

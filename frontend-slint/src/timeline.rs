@@ -26,6 +26,7 @@ pub const KIND_TOOL: i32 = 3;
 pub const KIND_GROUP: i32 = 4;
 pub const KIND_SUBAGENT: i32 = 5;
 pub const KIND_PROCESS: i32 = 6;
+pub const KIND_FOOTER: i32 = 7;
 /// Status kinds: 0 done, 1 running, 2 failed.
 pub const STATUS_DONE: i32 = 0;
 pub const STATUS_RUNNING: i32 = 1;
@@ -58,9 +59,8 @@ pub fn stat_metrics(metrics: &[crate::turn_stats::Metric]) -> Vec<crate::TurnSta
     metrics
         .iter()
         .map(|metric| crate::TurnStatMetric {
-            // `status-running` is also the animation key in Slint. Keep the
-            // icon rather than the generic metric category so the footer can
-            // rotate the same glyph used by running process entries.
+            // Preserve the status-specific icon key so the footer can use the
+            // same icon and motion as the web status line.
             key: metric.icon.into(),
             value: metric.value.as_str().into(),
         })
@@ -154,7 +154,6 @@ fn blank(kind: i32, id: String) -> TimelineRow {
 
 /// One body block streamed by a model round and frozen when the round ends.
 struct Body {
-    placeholder: bool,
     text: String,
     blocks: crate::message_blocks::Blocks,
     index: usize,
@@ -213,6 +212,15 @@ pub struct Timeline {
     next_process: i32,
     process_bar: usize,
     last_body: usize,
+    /// A body opened immediately after a round boundary is the new answer
+    /// candidate.  A later reasoning frame in that same round must not pull
+    /// it into the process fold: the boundary already established its
+    /// ownership.  Tool calls still explicitly admit it as intermediate.
+    protected_body: usize,
+    /// The next body opened after `close_segments` starts as the answer tail.
+    protect_next_body: bool,
+    /// Independent turn footer, always after body/process/card rows.
+    footer: Cell<usize>,
     turn: Option<String>,
     /// The live turn ran to its end but its rows are still the only copy: the
     /// durable snapshot has not caught up with it yet.
@@ -288,6 +296,9 @@ impl Timeline {
             next_process: 0,
             process_bar: 0,
             last_body: usize::MAX,
+            protected_body: usize::MAX,
+            protect_next_body: false,
+            footer: Cell::new(usize::MAX),
             turn: None,
             settled: false,
             highlight: false,
@@ -407,6 +418,9 @@ impl Timeline {
         self.process = NO_PROCESS;
         self.process_bar = 0;
         self.last_body = usize::MAX;
+        self.protected_body = usize::MAX;
+        self.protect_next_body = false;
+        self.footer.set(usize::MAX);
         self.turn = None;
         self.settled = false;
         self.highlight = false;
@@ -418,10 +432,18 @@ impl Timeline {
     }
 
     fn push(&mut self, row: TimelineRow) -> usize {
-        let index = self.model.row_count();
         self.marks_dirty.set(true);
-        self.model.push(row);
-        index
+        let footer = self.footer.get();
+        if footer < self.model.row_count() {
+            // Only the footer moves; existing step handles remain stable.
+            self.model.insert(footer, row);
+            self.footer.set(footer + 1);
+            footer
+        } else {
+            let index = self.model.row_count();
+            self.model.push(row);
+            index
+        }
     }
 
     fn patch(&self, index: usize, edit: impl FnOnce(&mut TimelineRow)) {
@@ -488,9 +510,11 @@ impl Timeline {
         // Remove a row's old child projection when it leaves the live process.
         // Otherwise the process keeps a stale copy until durable history wins.
         if row.process_idx != NO_PROCESS && row.process_idx != process {
-            if let Some(bar) = self.model.iter().find(|bar| {
-                bar.kind == KIND_PROCESS && bar.process_idx == row.process_idx
-            }) {
+            if let Some(bar) = self
+                .model
+                .iter()
+                .find(|bar| bar.kind == KIND_PROCESS && bar.process_idx == row.process_idx)
+            {
                 if !bar.process_paged {
                     if let Some(children) = bar
                         .process_entries
@@ -522,6 +546,7 @@ impl Timeline {
         self.group = NO_GROUP;
         self.reasons = 0;
         self.discarded_steps = 0;
+        self.footer.set(usize::MAX);
         self.turn = Some(root.to_string());
         self.settled = false;
         let mut user = blank(KIND_USER, format!("user-turn-{root}"));
@@ -548,6 +573,7 @@ impl Timeline {
         self.next_process += 1;
         self.process = self.next_process;
         self.last_body = usize::MAX;
+        self.footer.set(usize::MAX);
         let mut bar = blank(KIND_PROCESS, format!("process-{root}"));
         bar.process_local = true;
         bar.text = crate::timeline_text::process_label(0).into();
@@ -555,6 +581,8 @@ impl Timeline {
         bar.visible = false;
         let index = self.push(bar);
         self.process_bar = index;
+        self.protected_body = usize::MAX;
+        self.protect_next_body = false;
         self.patch(index, |row| {
             row.payload = index as i32;
             row.process_idx = self.process;
@@ -606,8 +634,7 @@ impl Timeline {
                 // ordering but does not add a second step until a newer body
                 // replaces it.
                 steps += i32::from(
-                    row.kind != KIND_GROUP
-                        && !(admitted_live_body && index == self.last_body),
+                    row.kind != KIND_GROUP && !(admitted_live_body && index == self.last_body),
                 );
             }
         }
@@ -660,6 +687,34 @@ impl Timeline {
         });
     }
 
+    /// Admit the active body only when a later process item proves that it is
+    /// an intermediate print. Process items that precede the body belong to
+    /// the preceding model round and must not pull the current final answer
+    /// into the fold while it is still streaming. `after` is the newly added
+    /// structural row; keeping this local avoids treating an old process row
+    /// as evidence when history was rebased or a new final body was opened.
+    fn sync_active_body_process(&mut self, after: Option<usize>) {
+        if self.process == NO_PROCESS || self.last_body == usize::MAX {
+            return;
+        }
+        let index = self.last_body;
+        let Some(row) = self.model.row_data(index) else {
+            return;
+        };
+        if row.kind != KIND_BODY || row.text.is_empty() || row.process_idx == self.process {
+            return;
+        }
+        let proven_intermediate = after.is_some_and(|at| {
+            at > index
+                && self.model.row_data(at).is_some_and(|candidate| {
+                    matches!(candidate.kind, KIND_REASON | KIND_TOOL | KIND_GROUP)
+                })
+        });
+        if proven_intermediate {
+            self.patch_process_state(index, self.process, self.process_is_open());
+        }
+    }
+
     fn trim_process(&mut self) {
         while self.model.row_count().saturating_sub(self.process_bar + 1) > MAX_LIVE_PROCESS_ROWS {
             let protected_body = self.body.as_ref().map(|body| body.index);
@@ -694,6 +749,9 @@ impl Timeline {
                 }
             }
             self.model.remove(index);
+            if self.footer.get() != usize::MAX && self.footer.get() > index {
+                self.footer.set(self.footer.get() - 1);
+            }
             self.patch(self.process_bar, |bar| bar.process_older = true);
             self.tools.retain(|tool| tool.index != index);
             self.bars.retain(|bar| bar.index != index);
@@ -720,6 +778,11 @@ impl Timeline {
             if self.last_body != usize::MAX && self.last_body > index {
                 self.last_body -= 1;
             }
+            if self.protected_body == index {
+                self.protected_body = usize::MAX;
+            } else if self.protected_body > index {
+                self.protected_body -= 1;
+            }
             for shifted in index..self.model.row_count() {
                 if let Some(mut row) = self.model.row_data(shifted) {
                     row.payload = shifted as i32;
@@ -735,14 +798,6 @@ impl Timeline {
     /// text item per model round, so a block starts where the last one ended.
     pub fn start_body(&mut self, round: i64) -> usize {
         self.close_thinking(false);
-        if let Some(body) = self
-            .body
-            .as_mut()
-            .filter(|body| body.placeholder && body.text.is_empty())
-        {
-            body.placeholder = false;
-            return body.index;
-        }
         self.close_body();
         let blocks = crate::message_blocks::Blocks::new();
         self.body_serial = self.body_serial.wrapping_add(1);
@@ -752,8 +807,10 @@ impl Timeline {
         );
         row.blocks = ModelRc::from(blocks.model.clone());
         let index = self.push(row);
+        let protected = self.protect_next_body;
+        self.protect_next_body = false;
+        self.protected_body = if protected { index } else { usize::MAX };
         self.body = Some(Body {
-            placeholder: round == 0,
             text: String::new(),
             blocks,
             index,
@@ -767,22 +824,31 @@ impl Timeline {
     }
 
     pub fn append_body(&mut self, delta: &str) -> Result<(), String> {
-        let Some(body) = self.body.as_mut() else {
-            return Ok(());
-        };
-        body.blocks.append(delta)?;
-        body.text.push_str(delta);
-        body.pending = true;
+        {
+            let Some(body) = self.body.as_mut() else {
+                return Ok(());
+            };
+            body.blocks.append(delta)?;
+            body.text.push_str(delta);
+            body.pending = true;
+        }
+        // The preceding structural event may already have placed this body in
+        // the work process. Keep the child projection current immediately;
+        // the normal 33 ms flush still owns the visible markdown model.
+        self.sync_active_body_process(None);
         Ok(())
     }
 
     pub fn replace_body(&mut self, text: &str) -> Result<(), String> {
-        let Some(body) = self.body.as_mut() else {
-            return Ok(());
-        };
-        body.blocks.replace(text)?;
-        body.text = text.to_owned();
-        body.pending = true;
+        {
+            let Some(body) = self.body.as_mut() else {
+                return Ok(());
+            };
+            body.blocks.replace(text)?;
+            body.text = text.to_owned();
+            body.pending = true;
+        }
+        self.sync_active_body_process(None);
         Ok(())
     }
 
@@ -797,6 +863,10 @@ impl Timeline {
     /// Append a reasoning delta, opening a thinking entry for this segment.
     pub fn append_reasoning(&mut self, delta: &str) -> Result<(), String> {
         if self.thinking.is_none() {
+            // A body delta may still be pending in the same reducer frame.
+            // Flush before creating the structural row so admission can copy
+            // the actual intermediate text into the process child.
+            self.flush_body();
             self.mark_batch();
             let index = self.push(blank(
                 KIND_REASON,
@@ -819,6 +889,9 @@ impl Timeline {
                 summary: slint::SharedString::default(),
                 pending: false,
             });
+            if self.protected_body != self.last_body {
+                self.sync_active_body_process(Some(index));
+            }
             self.refresh_process_bar();
         }
         let Some(thinking) = self.thinking.as_mut() else {
@@ -1028,6 +1101,11 @@ impl Timeline {
             patch,
             group,
         });
+        // A result-only replay has no pending call frame to take the fast
+        // admission path above. The inserted tool row still proves that the
+        // preceding body is intermediate.
+        self.flush_body();
+        self.sync_active_body_process(Some(index));
         // Count the entry in the batch it was actually attached to.
         if let Some(bar) = self.bars.iter_mut().find(|bar| bar.group == group) {
             bar.entries += 1;
@@ -1079,10 +1157,19 @@ impl Timeline {
     pub fn close_segments(&mut self) {
         // A round boundary proves the preceding print was intermediate. Move
         // it before freezing so its position never jumps after the next tool.
+        // The previous round's protected answer marker expires at this
+        // boundary; a later reasoning/tool event is now evidence that the
+        // older body was an intermediate print. `start_body` installs the
+        // marker for the new round after this method returns.
+        self.protected_body = usize::MAX;
         self.include_active_body_in_process(false);
         self.close_thinking(false);
         self.close_body();
         self.close_batch();
+        // The next body belongs to the answer tail opened by the boundary.
+        // Keep this marker until `start_body` consumes it; a tool call can
+        // still override the marker through `include_active_body_in_process`.
+        self.protect_next_body = true;
     }
 
     /// Settle the turn: the last block freezes and the tail stops spinning.
@@ -1094,6 +1181,14 @@ impl Timeline {
             self.fail_running();
         }
         self.settled = true;
+        if let Some(footer) = self.ensure_footer() {
+            let text = self
+                .model
+                .row_data(self.last_body)
+                .map(|row| row.text)
+                .unwrap_or_default();
+            self.patch(footer, |row| row.text = text);
+        }
         self.refresh_process_bar();
         self.patch(self.process_bar, |row| {
             row.status_kind = if failed { STATUS_FAILED } else { STATUS_DONE }
@@ -1196,6 +1291,11 @@ impl Timeline {
                 row.text = text.as_str().into();
             }
         });
+        // Keep an already-admitted process child in sync with the same frame
+        // as the body text. Admission itself is performed by the structural
+        // event (reasoning/tool/round boundary), never by a body-only flush;
+        // this preserves the newest answer outside the fold.
+        self.refresh_process_bar();
     }
 
     /// Replace the whole model with durable history rows. Only for a timeline
@@ -1314,6 +1414,9 @@ impl Timeline {
         self.group = NO_GROUP;
         self.process = NO_PROCESS;
         self.last_body = usize::MAX;
+        self.protected_body = usize::MAX;
+        self.protect_next_body = false;
+        self.footer.set(usize::MAX);
     }
 
     /// Keep the reducer's fold ids ahead of whatever the snapshot published:
@@ -1350,8 +1453,14 @@ impl Timeline {
             bar.index = shift(bar.index);
         }
         self.process_bar = shift(self.process_bar);
+        if self.footer.get() != usize::MAX {
+            self.footer.set(shift(self.footer.get()));
+        }
         if self.last_body != usize::MAX {
             self.last_body = shift(self.last_body);
+        }
+        if self.protected_body != usize::MAX {
+            self.protected_body = shift(self.protected_body);
         }
     }
 
@@ -1423,41 +1532,35 @@ impl Timeline {
         }
     }
 
-    /// Attach the turn's statistics footer to the body block that ends it.
-    ///
-    /// The footer belongs to the turn, not to one text block, but it renders on
-    /// the body row's action line. Patching the trailing body row keeps a single
-    /// owner per turn, so a streamed turn and a reloaded one cannot both add one.
+    /// Update the independent footer without invalidating body/process layout.
     pub fn set_turn_stats(&self, stats: Vec<crate::TurnStatMetric>) {
-        for index in (0..self.model.row_count()).rev() {
-            let Some(row) = self.model.row_data(index) else {
-                return;
-            };
-            match row.kind {
-                KIND_BODY => {
-                    let stats = ModelRc::new(VecModel::from(stats));
-                    self.patch(index, |row| row.stats = stats);
-                    return;
-                }
-                // A user bubble marks the turn boundary; nothing to attach to.
-                KIND_USER => return,
-                _ => {}
-            }
+        let Some(index) = self.ensure_footer() else {
+            return;
+        };
+        let row = self.model.row_data(index).unwrap();
+        if row.stats.iter().ne(stats.iter().cloned()) {
+            self.patch(index, |row| row.stats = ModelRc::new(VecModel::from(stats)));
         }
     }
 
+    fn ensure_footer(&self) -> Option<usize> {
+        let root = self.turn.as_ref()?;
+        if self.footer.get() < self.model.row_count() {
+            return Some(self.footer.get());
+        }
+        let index = self.model.row_count();
+        self.model
+            .push(blank(KIND_FOOTER, format!("footer-{root}")));
+        self.footer.set(index);
+        self.marks_dirty.set(true);
+        Some(index)
+    }
+
     pub fn set_turn_status(&mut self, state: &str, round: i64) {
-        if self.turn.is_none() {
+        let Some(index) = self.ensure_footer() else {
             return;
-        }
-        if self.last_body == usize::MAX {
-            if self.process != NO_PROCESS {
-                self.start_body(0);
-            } else {
-                return;
-            }
-        }
-        let Some(row) = self.model.row_data(self.last_body) else {
+        };
+        let Some(row) = self.model.row_data(index) else {
             return;
         };
         let mut stats: Vec<_> = row
@@ -1465,6 +1568,12 @@ impl Timeline {
             .iter()
             .filter(|metric| !metric.key.starts_with("status-") && metric.key != "hashtag")
             .collect();
+        let has_running_subagent = (self.process_bar + 1..index).any(|at| {
+            self.model.row_data(at).is_some_and(|entry| {
+                entry.kind == KIND_SUBAGENT && entry.status_kind == STATUS_RUNNING
+            })
+        });
+        let state = crate::turn_stats::resolve_status(state, has_running_subagent);
         let metric = crate::turn_stats::with_status(
             crate::turn_stats::with_user_round(Vec::new(), round),
             state,
@@ -1473,9 +1582,6 @@ impl Timeline {
         prefix.append(&mut stats);
         if row.stats.iter().collect::<Vec<_>>() != prefix {
             self.set_turn_stats(prefix);
-        }
-        if self.settled {
-            self.patch(self.last_body, |row| row.foldable = true);
         }
         if state == "已停止" || state == "等待用户输入" || state == "等待确认" {
             self.patch(self.process_bar, |bar| bar.summary = state.into());
@@ -1488,16 +1594,10 @@ impl Timeline {
         if round <= 0 {
             return;
         }
-        for index in (0..self.model.row_count()).rev() {
+        if let Some(index) = self.ensure_footer() {
             let Some(row) = self.model.row_data(index) else {
-                continue;
-            };
-            if row.kind == KIND_USER {
                 return;
-            }
-            if row.kind != KIND_BODY {
-                continue;
-            }
+            };
             let mut stats: Vec<_> = row
                 .stats
                 .iter()
@@ -1510,9 +1610,7 @@ impl Timeline {
                     value: round.to_string().into(),
                 },
             );
-            let stats = ModelRc::new(VecModel::from(stats));
-            self.patch(index, |row| row.stats = stats);
-            return;
+            self.set_turn_stats(stats);
         }
     }
 }
@@ -1586,6 +1684,110 @@ mod tests {
     }
 
     #[test]
+    fn live_footer_is_unique_and_outside_every_process_step() {
+        let mut timeline = Timeline::new();
+        timeline.begin_turn("fixture-footer", "Fixture input");
+        timeline.set_turn_status("requesting", 1);
+        assert_eq!(
+            timeline.last_body,
+            usize::MAX,
+            "status must not create body placeholders"
+        );
+        timeline.append_reasoning("Fixture thought").unwrap();
+        timeline.flush();
+        timeline.start_body(1);
+        timeline.append_body("Fixture intermediate note").unwrap();
+        timeline.flush();
+        timeline.upsert_tool(&NativeWorkflowEntry::from_payload(
+            "fixture-footer-tool",
+            "read_file",
+            "Fixture result".into(),
+            "running",
+            &serde_json::json!({"args":{"path":"sample.txt"}}),
+        ));
+        timeline.set_turn_status("tool_running", 1);
+        let body = timeline.model.row_data(timeline.last_body).unwrap();
+        assert_ne!(body.process_idx, NO_PROCESS);
+        timeline.toggle(timeline.process_bar as i32);
+        let footer = timeline.model.row_data(timeline.footer.get()).unwrap();
+        assert_eq!(
+            timeline
+                .model
+                .iter()
+                .filter(|row| row.kind == KIND_FOOTER)
+                .count(),
+            1
+        );
+        assert_eq!(timeline.footer.get(), timeline.row_count() - 1);
+        assert_eq!(footer.process_idx, NO_PROCESS);
+        assert_eq!(footer.group_idx, NO_GROUP);
+        assert_eq!(footer.stats.row_data(0).unwrap().key, "status-tool");
+        assert!(footer.visible);
+    }
+
+    #[test]
+    fn prior_turn_child_activity_does_not_override_current_footer() {
+        let mut timeline = Timeline::new();
+        timeline.begin_turn("fixture-child", "Fixture input");
+        let mut child = blank(KIND_SUBAGENT, "fixture-child-card".into());
+        child.status_kind = STATUS_RUNNING;
+        timeline.push(child);
+        timeline.set_turn_status("requesting", 1);
+        assert_eq!(
+            timeline
+                .model
+                .row_data(timeline.footer.get())
+                .unwrap()
+                .stats
+                .row_data(0)
+                .unwrap()
+                .key,
+            "status-subagent"
+        );
+        timeline.set_turn_status("已停止", 1);
+        assert_eq!(
+            timeline
+                .model
+                .row_data(timeline.footer.get())
+                .unwrap()
+                .stats
+                .row_data(0)
+                .unwrap()
+                .key,
+            "status-stopped"
+        );
+        timeline.finish(false);
+        timeline.begin_turn("fixture-next", "Fixture next input");
+        timeline.set_turn_status("requesting", 2);
+        assert_eq!(
+            timeline
+                .model
+                .row_data(timeline.footer.get())
+                .unwrap()
+                .stats
+                .row_data(0)
+                .unwrap()
+                .key,
+            "status-requesting"
+        );
+        timeline.publish_history(durable_rows(2));
+        timeline.append_reasoning("Fixture next thought").unwrap();
+        timeline.set_turn_status("streaming", 2);
+        assert_eq!(timeline.footer.get(), timeline.row_count() - 1);
+        assert_eq!(
+            timeline
+                .model
+                .row_data(timeline.footer.get())
+                .unwrap()
+                .stats
+                .row_data(0)
+                .unwrap()
+                .key,
+            "status-outputting"
+        );
+    }
+
+    #[test]
     fn state_footer_survives_streaming_stopping_and_durable_handoff() {
         let mut timeline = Timeline::new();
         timeline.begin_turn("fixture-state", "Fixture input");
@@ -1606,13 +1808,13 @@ mod tests {
         )));
         timeline.finish(true);
         timeline.set_turn_status("已停止", 57);
-        let row = timeline.model.row_data(timeline.last_body).unwrap();
+        let row = timeline.model.row_data(timeline.footer.get()).unwrap();
         assert_eq!(row.stats.row_data(0).unwrap().key, "status-stopped");
         assert!(row
             .stats
             .iter()
             .any(|stat| stat.key == "screwdriver-wrench" && stat.value == "0"));
-        assert!(row.foldable);
+        assert_eq!(row.kind, KIND_FOOTER);
         assert_eq!(
             timeline
                 .model
@@ -1737,7 +1939,10 @@ mod tests {
         assert!(bar.visible);
         assert_eq!(bar.process_entries.row_count(), 2);
         assert_eq!(bar.process_entries.row_data(0).unwrap().kind, KIND_BODY);
-        assert_eq!(bar.process_entries.row_data(0).unwrap().text, "Intermediate model print");
+        assert_eq!(
+            bar.process_entries.row_data(0).unwrap().text,
+            "Intermediate model print"
+        );
         assert_eq!(bar.process_entries.row_data(1).unwrap().kind, KIND_TOOL);
         let body = timeline.model.row_data(timeline.last_body).unwrap();
         assert_eq!(body.process_idx, bar.process_idx);
@@ -1746,7 +1951,48 @@ mod tests {
         let bar = timeline.model.row_data(timeline.process_bar).unwrap();
         assert_eq!(bar.process_entries.row_count(), 1);
         assert_eq!(bar.process_entries.row_data(0).unwrap().kind, KIND_TOOL);
-        assert_eq!(timeline.model.row_data(timeline.last_body).unwrap().process_idx, NO_PROCESS);
+        assert_eq!(
+            timeline
+                .model
+                .row_data(timeline.last_body)
+                .unwrap()
+                .process_idx,
+            NO_PROCESS
+        );
+    }
+
+    #[test]
+    fn streaming_intermediate_body_stays_in_the_process_on_every_frame() {
+        let mut timeline = Timeline::new();
+        timeline.begin_turn("fixture-streaming-print", "Fixture input");
+
+        timeline.start_body(1);
+        timeline.append_body("First streamed note").unwrap();
+        timeline.flush();
+
+        // Starting the following work step proves the existing model print is
+        // intermediate. It must move before the next body token arrives.
+        timeline.append_reasoning("Next action").unwrap();
+        let bar = timeline.model.row_data(timeline.process_bar).unwrap();
+        assert_eq!(bar.process_entries.row_count(), 2);
+        assert_eq!(bar.process_entries.row_data(0).unwrap().kind, KIND_BODY);
+        assert_eq!(bar.process_entries.row_data(0).unwrap().text, "First streamed note");
+
+        // Further deltas patch that same process child in place. This mirrors
+        // the frame path that previously left all streaming text above the
+        // fold until the terminal history projection arrived.
+        timeline.append_body(" · continued").unwrap();
+        timeline.flush();
+        let bar = timeline.model.row_data(timeline.process_bar).unwrap();
+        assert_eq!(bar.process_entries.row_count(), 2);
+        assert_eq!(
+            bar.process_entries.row_data(0).unwrap().text,
+            "First streamed note · continued"
+        );
+        assert_eq!(
+            timeline.model.row_data(timeline.last_body).unwrap().process_idx,
+            bar.process_idx
+        );
     }
 
     #[test]
@@ -1759,7 +2005,7 @@ mod tests {
         )));
         timeline.set_user_round(57);
         timeline.set_user_round(57);
-        let body = timeline.model.row_data(timeline.last_body).unwrap();
+        let body = timeline.model.row_data(timeline.footer.get()).unwrap();
         assert_eq!(
             body.stats
                 .iter()

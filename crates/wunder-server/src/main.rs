@@ -75,6 +75,15 @@ async fn run_server(runtime_threads: runtime_tuning::ServerRuntimeThreads) -> an
         warn!("agent_queue.enabled=false: 运行中再发消息会被拒绝（USER_BUSY），聊天排队条不会出现");
     }
     state.lsp_manager.sync_with_config(&config).await;
+    // Chromium takes 45-60s to come up, so launch the warm pool while the rest
+    // of bootstrap finishes instead of making the first turn wait for it.
+    let warm_launches = wunder_runtime::services::browser::prewarm_browser_service(&config);
+    if warm_launches > 0 {
+        info!(
+            launches = warm_launches,
+            "browser warm pool launching in the background"
+        );
+    }
     long_task::spawn(
         "server.bootstrap.hydrate_mcp_tool_specs",
         hydrate_enabled_mcp_tool_specs(state.clone()),

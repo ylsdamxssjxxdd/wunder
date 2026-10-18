@@ -161,14 +161,14 @@ test('local threads load bounded pages in the selected workspace', async ({ page
   await expect(page.locator('.interlink-thread-tree').getByRole('button', { name: /加载更多|Load more/ })).toHaveCount(0);
 });
 
-test('opening a local thread retains its selected entry in the control dialog', async ({ page }) => {
+test('opening a local thread uses the main chat area', async ({ page }) => {
   await prepare(page);
   await page.locator('.messenger-sidebar-workspace-row').filter({ hasText: 'Project one' }).click();
   await page.locator('.interlink-thread-row', { hasText: 'Thread one' }).click();
-  const dialog = page.getByRole('dialog');
-  await expect(dialog.locator('select')).toHaveValue('fixture_thread_1');
-  await expect(dialog.locator('option:checked')).toHaveText('Thread one');
-  await expect(dialog.locator('.remote-thread-history')).toContainText('Fixture history');
+  const panel = page.locator('.remote-thread-panel');
+  await expect(panel).toBeVisible();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(panel).toContainText('Fixture history');
 });
 
 test('a pending rename cannot mutate the workspace selected after the prompt opened', async ({ page }) => {

@@ -718,7 +718,9 @@ impl WorkspaceManager {
     /// `workspace`），其余形态就是该作用域的根目录。
     pub(crate) fn user_root(&self, user_id: &str) -> PathBuf {
         let safe_id = self.safe_user_id(user_id);
-        if extract_external_run_workspace(&safe_id).is_some() {
+        if extract_external_run_workspace(&safe_id).is_some()
+            || extract_workspace_key_from_scoped_user(&safe_id).is_some()
+        {
             return self.workspace_root(&safe_id);
         }
         if !self.single_root && self.flatten_agent_scope_enabled() {
@@ -734,6 +736,14 @@ impl WorkspaceManager {
     /// （其下的 `workspace` 才是智能体云端目录），因此公共路径、真实路径与沙箱
     /// 容器内可见路径三者同名同义，映射互为逆函数。
     pub(crate) fn public_physical_root(&self, user_id: &str) -> PathBuf {
+        let safe_id = self.safe_user_id(user_id);
+        // Explicit host workspace/run bindings take precedence over the cloud
+        // agent layout, including when both forms share the same AppState.
+        if extract_workspace_key_from_scoped_user(&safe_id).is_some()
+            || extract_external_run_workspace(&safe_id).is_some()
+        {
+            return self.workspace_root(&safe_id);
+        }
         if !self.single_root && self.flatten_agent_scope_enabled() {
             return self.root.join(self.plain_cloud_user_id(user_id));
         }
@@ -3729,6 +3739,31 @@ mod tests {
     #[test]
     fn single_root_workspace_never_uses_temp_cleanup_ttl() {
         assert_eq!(effective_temp_cleanup_idle_ttl_s(true), 0.0);
+    }
+
+    #[test]
+    fn real_workspace_bindings_override_cloud_flattening_for_every_path_mapping() {
+        let (workspace, dir) = build_workspace_manager();
+        workspace.set_flatten_agent_scope(true);
+        for id in ["fixture-default", "fixture-named"] {
+            let root = dir.path().join(id);
+            fs::create_dir_all(&root).unwrap();
+            workspace.register_workspace_root(id, &root.to_string_lossy());
+            let scope = workspace.scoped_user_id_for_workspace("fixture_user", id);
+            assert_eq!(workspace.workspace_root(&scope), root);
+            assert_eq!(workspace.user_root(&scope), root);
+            assert_eq!(workspace.ensure_user_root(&scope).unwrap(), root);
+            assert_eq!(workspace.public_physical_root(&scope), root);
+            let file = root.join("fixture.txt");
+            let display = workspace.display_path(&scope, &file);
+            assert_eq!(workspace.map_public_path(&scope, std::path::Path::new(&display)), Some(file));
+            let run = workspace.scoped_external_run_workspace(&scope, "fixture-run");
+            assert_eq!(workspace.user_root(&run), root.join("runs/fixture-run"));
+            assert_eq!(workspace.public_physical_root(&run), root.join("runs/fixture-run"));
+            fs::remove_dir(&root).unwrap();
+            assert!(workspace.ensure_user_root(&scope).is_err());
+            assert!(!root.exists());
+        }
     }
 
     #[test]

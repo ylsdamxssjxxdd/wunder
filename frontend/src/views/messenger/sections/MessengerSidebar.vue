@@ -127,17 +127,6 @@
       </template>
     </div>
 
-    <!-- The live command stream is opened only by a selected workspace thread
-         row; there is no standalone control entry. The dialog remains the
-         message/approval transport while the tree owns navigation. -->
-    <RemoteThreadsPanel
-      v-if="interlinkRemoteSelected && remoteInterlinkNode"
-      :target="interlinkTarget"
-      :workspace-id="selectedRemoteWorkspaceId"
-      :node="remoteInterlinkNode"
-      :open-thread-id="remoteThreadToOpen"
-    />
-
     <div
       ref="splitterEl"
       class="messenger-sidebar-splitter"
@@ -185,7 +174,6 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import MessengerThreadTree from './MessengerThreadTree.vue';
 import InterlinkThreadTree from '@/views/messenger/interlink/InterlinkThreadTree.vue';
-import RemoteThreadsPanel from '@/views/messenger/interlink/RemoteThreadsPanel.vue';
 import WorkspaceFilesPanel from '@/views/messenger/workspace/WorkspaceFilesPanel.vue';
 import { useInterlinkNodes } from '@/views/messenger/interlink/useInterlinkNodes';
 import { useInterlinkNodeTarget } from '@/views/messenger/interlink/interlinkNodeTarget';
@@ -215,6 +203,7 @@ const emit = defineEmits<{
   'new-task': [];
   'select-workspace': [];
   'open-thread': [id: string];
+  'open-local-thread': [payload: { target: string; workspaceId: string; threadId: string }];
   'thread-trajectory': [id: string];
   'rename-thread': [id: string];
   'archive-thread': [id: string];
@@ -515,10 +504,13 @@ const loadSelectedRemoteShadow = async (append = false): Promise<void> => {
 };
 
 const openRemoteThread = async (threadId: string): Promise<void> => {
-  const serial = remoteShadowSerial;
-  remoteThreadToOpen.value = '';
-  await nextTick();
-  if (serial === remoteShadowSerial) remoteThreadToOpen.value = threadId;
+  if (!interlinkRemoteSelected.value || !interlinkTarget.value) return;
+  remoteThreadToOpen.value = threadId;
+  emit('open-local-thread', {
+    target: interlinkTarget.value,
+    workspaceId: selectedRemoteWorkspaceId.value,
+    threadId
+  });
 };
 
 /** Create a remote thread from the same workspace row affordance used by the

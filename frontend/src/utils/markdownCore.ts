@@ -391,14 +391,99 @@ const CODE_LANG_ALIASES = new Map([
   ['sh', 'shell'],
   ['shell', 'shell'],
   ['zsh', 'shell'],
-  ['sql', 'sql']
+  ['sql', 'sql'],
+  ['slint', 'slint'],
+  ['rs', 'rust'],
+  ['rust', 'rust'],
+  ['golang', 'go'],
+  ['go', 'go'],
+  ['java', 'java'],
+  ['kt', 'kotlin'],
+  ['kts', 'kotlin'],
+  ['kotlin', 'kotlin'],
+  ['swift', 'swift'],
+  ['c', 'c'],
+  ['h', 'c'],
+  ['cc', 'cpp'],
+  ['cxx', 'cpp'],
+  ['cpp', 'cpp'],
+  ['c++', 'cpp'],
+  ['hpp', 'cpp'],
+  ['cs', 'csharp'],
+  ['c#', 'csharp'],
+  ['csharp', 'csharp'],
+  ['php', 'php'],
+  ['rb', 'ruby'],
+  ['ruby', 'ruby'],
+  ['scala', 'scala'],
+  ['lua', 'lua'],
+  ['dart', 'dart'],
+  ['yml', 'yaml'],
+  ['yaml', 'yaml'],
+  ['toml', 'toml'],
+  ['ini', 'ini'],
+  ['conf', 'ini'],
+  ['xml', 'xml'],
+  ['svg', 'xml'],
+  ['html', 'html'],
+  ['htm', 'html'],
+  ['vue', 'html'],
+  ['css', 'css'],
+  ['scss', 'css'],
+  ['less', 'css']
 ]);
-const CODE_HIGHLIGHT_LANGS = new Set(['javascript', 'typescript', 'json', 'python', 'shell', 'sql']);
+const CODE_HIGHLIGHT_LANGS = new Set([
+  'javascript', 'typescript', 'json', 'python', 'shell', 'sql', 'slint',
+  'rust', 'go', 'java', 'kotlin', 'swift', 'c', 'cpp', 'csharp', 'php',
+  'ruby', 'scala', 'lua', 'dart', 'yaml', 'toml', 'ini', 'xml', 'html', 'css'
+]);
 const HIGHLIGHT_CACHE_LIMIT = 120;
 const HIGHLIGHT_CACHE_MAX_LENGTH = 8000;
 const CODE_BLOCK_MAX_LENGTH = 20000;
 const CODE_BLOCK_MAX_LINES = 400;
-const NUMBER_TOKEN_REGEX = /^-?\\d/;
+const NUMBER_TOKEN_REGEX = /^-?\d/;
+/** Hex colour literals (`#f8fafc`) belong to the number bucket, not the comment one. */
+const COLOR_LITERAL_REGEX = /^#[0-9a-fA-F]{3,8}$/;
+/** Languages whose `#` starts a comment, so a hex literal never appears there. */
+const HASH_COMMENT_LANGS = new Set(['python', 'shell', 'ruby', 'php', 'yaml', 'toml', 'ini']);
+/** In C and C++ a `#` line is a preprocessor directive, not a comment. */
+const PREPROCESSOR_LANGS = new Set(['c', 'cpp']);
+const PREPROCESSOR_REGEX = /^#\s*(?:include|define|undef|ifdef|ifndef|endif|if|else|elif|pragma|error|warning)\b/;
+/**
+ * Line comment markers per language.
+ *
+ * A shared heuristic cannot decide this: `;` opens an INI comment but ends a
+ * statement in half the languages here, and `#` is a comment in YAML yet a
+ * colour literal in Slint. Each language declares its own markers instead.
+ */
+const LINE_COMMENT_PREFIXES: Record<string, string[]> = {
+  javascript: ['//'],
+  typescript: ['//'],
+  json: [],
+  python: ['#'],
+  shell: ['#'],
+  sql: ['--'],
+  slint: ['//'],
+  rust: ['//'],
+  go: ['//'],
+  java: ['//'],
+  kotlin: ['//'],
+  swift: ['//'],
+  c: ['//'],
+  cpp: ['//'],
+  csharp: ['//'],
+  php: ['//', '#'],
+  ruby: ['#'],
+  scala: ['//'],
+  lua: ['--'],
+  dart: ['//'],
+  yaml: ['#'],
+  toml: ['#'],
+  ini: ['#', ';'],
+  xml: [],
+  html: [],
+  css: []
+};
 const SCRIPT_KEYWORDS = [
   'await',
   'async',
@@ -548,76 +633,951 @@ const SQL_KEYWORDS = [
   'all'
 ];
 const JSON_KEYWORDS = ['true', 'false', 'null'];
+const SLINT_KEYWORDS = [
+  // `in-out` must precede `in`: an alternation matches the leftmost branch that
+  // succeeds, so listing the short keyword first would split the compound one.
+  'in-out',
+  'in',
+  'out',
+  'component',
+  'inherits',
+  'export',
+  'import',
+  'from',
+  'struct',
+  'enum',
+  'global',
+  'singleton',
+  'callback',
+  'property',
+  'function',
+  'return',
+  'if',
+  'else',
+  'for',
+  'while',
+  'break',
+  'continue',
+  'states',
+  'transitions',
+  'animate',
+  'duration',
+  'easing',
+  'private',
+  'pure',
+  'init',
+  'parent',
+  'root',
+  'self',
+  'true',
+  'false'
+];
+const RUST_KEYWORDS = [
+  'as',
+  'async',
+  'await',
+  'break',
+  'const',
+  'continue',
+  'crate',
+  'dyn',
+  'else',
+  'enum',
+  'extern',
+  'false',
+  'fn',
+  'for',
+  'if',
+  'impl',
+  'in',
+  'let',
+  'loop',
+  'match',
+  'mod',
+  'move',
+  'mut',
+  'pub',
+  'ref',
+  'return',
+  'self',
+  'Self',
+  'static',
+  'struct',
+  'super',
+  'trait',
+  'true',
+  'type',
+  'unsafe',
+  'use',
+  'where',
+  'while',
+  // Primitive and prelude types carry as much meaning as keywords here.
+  'i8',
+  'i16',
+  'i32',
+  'i64',
+  'i128',
+  'isize',
+  'u8',
+  'u16',
+  'u32',
+  'u64',
+  'u128',
+  'usize',
+  'f32',
+  'f64',
+  'bool',
+  'char',
+  'str',
+  'String',
+  'Vec',
+  'Option',
+  'Result',
+  'Box',
+  'HashMap'
+];
+const GO_KEYWORDS = [
+  'break',
+  'case',
+  'chan',
+  'const',
+  'continue',
+  'default',
+  'defer',
+  'else',
+  'fallthrough',
+  'for',
+  'func',
+  'go',
+  'goto',
+  'if',
+  'import',
+  'interface',
+  'map',
+  'package',
+  'range',
+  'return',
+  'select',
+  'struct',
+  'switch',
+  'type',
+  'var',
+  'nil',
+  'true',
+  'false',
+  // Builtin types and the functions that show up in nearly every snippet.
+  'string',
+  'int',
+  'int8',
+  'int16',
+  'int32',
+  'int64',
+  'uint',
+  'uint8',
+  'uint32',
+  'uint64',
+  'float32',
+  'float64',
+  'bool',
+  'byte',
+  'rune',
+  'error',
+  'make',
+  'new',
+  'len',
+  'cap',
+  'append',
+  'panic',
+  'recover'
+];
+const JAVA_KEYWORDS = [
+  'abstract',
+  'assert',
+  'boolean',
+  'break',
+  'byte',
+  'case',
+  'catch',
+  'char',
+  'class',
+  'const',
+  'continue',
+  'default',
+  'do',
+  'double',
+  'else',
+  'enum',
+  'extends',
+  'final',
+  'finally',
+  'float',
+  'for',
+  'if',
+  'implements',
+  'import',
+  'instanceof',
+  'int',
+  'interface',
+  'long',
+  'native',
+  'new',
+  'package',
+  'private',
+  'protected',
+  'public',
+  'return',
+  'short',
+  'static',
+  'super',
+  'switch',
+  'synchronized',
+  'this',
+  'throw',
+  'throws',
+  'transient',
+  'try',
+  'void',
+  'volatile',
+  'while',
+  'record',
+  'sealed',
+  'var',
+  'true',
+  'false',
+  'null'
+];
+const KOTLIN_KEYWORDS = [
+  'as',
+  'break',
+  'class',
+  'continue',
+  'do',
+  'else',
+  'false',
+  'for',
+  'fun',
+  'if',
+  'in',
+  'interface',
+  'is',
+  'null',
+  'object',
+  'package',
+  'return',
+  'super',
+  'this',
+  'throw',
+  'true',
+  'try',
+  'typealias',
+  'val',
+  'var',
+  'when',
+  'while',
+  'by',
+  'catch',
+  'constructor',
+  'finally',
+  'get',
+  'import',
+  'init',
+  'set',
+  'companion',
+  'data',
+  'enum',
+  'inner',
+  'internal',
+  'lateinit',
+  'open',
+  'operator',
+  'out',
+  'override',
+  'private',
+  'protected',
+  'public',
+  'sealed',
+  'suspend',
+  'inline',
+  'reified'
+];
+const SWIFT_KEYWORDS = [
+  'as',
+  'associatedtype',
+  'break',
+  'case',
+  'catch',
+  'class',
+  'continue',
+  'default',
+  'defer',
+  'deinit',
+  'do',
+  'else',
+  'enum',
+  'extension',
+  'fallthrough',
+  'false',
+  'for',
+  'func',
+  'guard',
+  'if',
+  'import',
+  'in',
+  'init',
+  'inout',
+  'internal',
+  'is',
+  'let',
+  'nil',
+  'open',
+  'operator',
+  'private',
+  'protocol',
+  'public',
+  'repeat',
+  'rethrows',
+  'return',
+  'self',
+  'Self',
+  'static',
+  'struct',
+  'subscript',
+  'super',
+  'switch',
+  'throw',
+  'throws',
+  'true',
+  'try',
+  'typealias',
+  'var',
+  'where',
+  'while',
+  'weak',
+  'unowned'
+];
+const C_KEYWORDS = [
+  'auto',
+  'break',
+  'case',
+  'char',
+  'const',
+  'continue',
+  'default',
+  'do',
+  'double',
+  'else',
+  'enum',
+  'extern',
+  'float',
+  'for',
+  'goto',
+  'if',
+  'inline',
+  'int',
+  'long',
+  'register',
+  'restrict',
+  'return',
+  'short',
+  'signed',
+  'sizeof',
+  'static',
+  'struct',
+  'switch',
+  'typedef',
+  'union',
+  'unsigned',
+  'void',
+  'volatile',
+  'while'
+];
+const CPP_KEYWORDS = [
+  ...C_KEYWORDS,
+  'bool',
+  'catch',
+  'class',
+  'constexpr',
+  'consteval',
+  'decltype',
+  'delete',
+  'explicit',
+  'export',
+  'friend',
+  'mutable',
+  'namespace',
+  'new',
+  'noexcept',
+  'nullptr',
+  'operator',
+  'override',
+  'private',
+  'protected',
+  'public',
+  'template',
+  'this',
+  'throw',
+  'try',
+  'typename',
+  'using',
+  'virtual',
+  'concept',
+  'requires',
+  'true',
+  'false'
+];
+const CSHARP_KEYWORDS = [
+  'abstract',
+  'as',
+  'async',
+  'await',
+  'base',
+  'bool',
+  'break',
+  'byte',
+  'case',
+  'catch',
+  'char',
+  'checked',
+  'class',
+  'const',
+  'continue',
+  'decimal',
+  'default',
+  'delegate',
+  'do',
+  'double',
+  'else',
+  'enum',
+  'event',
+  'explicit',
+  'extern',
+  'false',
+  'finally',
+  'fixed',
+  'float',
+  'for',
+  'foreach',
+  'get',
+  'goto',
+  'if',
+  'implicit',
+  'in',
+  'int',
+  'interface',
+  'internal',
+  'is',
+  'lock',
+  'long',
+  'namespace',
+  'new',
+  'null',
+  'object',
+  'operator',
+  'out',
+  'override',
+  'params',
+  'private',
+  'protected',
+  'public',
+  'readonly',
+  'record',
+  'ref',
+  'return',
+  'sbyte',
+  'sealed',
+  'set',
+  'short',
+  'sizeof',
+  'stackalloc',
+  'static',
+  'string',
+  'struct',
+  'switch',
+  'this',
+  'throw',
+  'true',
+  'try',
+  'typeof',
+  'uint',
+  'ulong',
+  'unchecked',
+  'unsafe',
+  'ushort',
+  'using',
+  'var',
+  'virtual',
+  'void',
+  'volatile',
+  'while'
+];
+const PHP_KEYWORDS = [
+  'abstract',
+  'array',
+  'as',
+  'break',
+  'callable',
+  'case',
+  'catch',
+  'class',
+  'clone',
+  'const',
+  'continue',
+  'declare',
+  'default',
+  'do',
+  'echo',
+  'else',
+  'elseif',
+  'empty',
+  'endfor',
+  'endforeach',
+  'endif',
+  'endswitch',
+  'endwhile',
+  'enum',
+  'extends',
+  'final',
+  'finally',
+  'fn',
+  'for',
+  'foreach',
+  'function',
+  'global',
+  'if',
+  'implements',
+  'include',
+  'include_once',
+  'instanceof',
+  'insteadof',
+  'interface',
+  'isset',
+  'list',
+  'match',
+  'namespace',
+  'new',
+  'print',
+  'private',
+  'protected',
+  'public',
+  'readonly',
+  'require',
+  'require_once',
+  'return',
+  'static',
+  'switch',
+  'throw',
+  'trait',
+  'try',
+  'unset',
+  'use',
+  'var',
+  'while',
+  'yield',
+  'true',
+  'false',
+  'null'
+];
+const RUBY_KEYWORDS = [
+  'alias',
+  'and',
+  'begin',
+  'break',
+  'case',
+  'class',
+  'def',
+  'do',
+  'else',
+  'elsif',
+  'end',
+  'ensure',
+  'false',
+  'for',
+  'if',
+  'in',
+  'module',
+  'next',
+  'nil',
+  'not',
+  'or',
+  'redo',
+  'rescue',
+  'retry',
+  'return',
+  'self',
+  'super',
+  'then',
+  'true',
+  'undef',
+  'unless',
+  'until',
+  'when',
+  'while',
+  'yield',
+  'attr_accessor',
+  'attr_reader',
+  'attr_writer',
+  'require',
+  'require_relative',
+  'lambda',
+  'proc'
+];
+const SCALA_KEYWORDS = [
+  'abstract',
+  'case',
+  'catch',
+  'class',
+  'def',
+  'do',
+  'else',
+  'extends',
+  'false',
+  'final',
+  'finally',
+  'for',
+  'if',
+  'implicit',
+  'import',
+  'lazy',
+  'match',
+  'new',
+  'null',
+  'object',
+  'override',
+  'package',
+  'private',
+  'protected',
+  'return',
+  'sealed',
+  'super',
+  'this',
+  'throw',
+  'trait',
+  'true',
+  'try',
+  'type',
+  'val',
+  'var',
+  'while',
+  'with',
+  'yield',
+  'given',
+  'enum',
+  'extension',
+  'derives'
+];
+const LUA_KEYWORDS = [
+  'and',
+  'break',
+  'do',
+  'else',
+  'elseif',
+  'end',
+  'false',
+  'for',
+  'function',
+  'goto',
+  'if',
+  'in',
+  'local',
+  'nil',
+  'not',
+  'or',
+  'repeat',
+  'return',
+  'then',
+  'true',
+  'until',
+  'while'
+];
+const DART_KEYWORDS = [
+  'abstract',
+  'as',
+  'async',
+  'await',
+  'break',
+  'case',
+  'catch',
+  'class',
+  'const',
+  'continue',
+  'covariant',
+  'default',
+  'deferred',
+  'do',
+  'dynamic',
+  'else',
+  'enum',
+  'export',
+  'extends',
+  'extension',
+  'external',
+  'factory',
+  'false',
+  'final',
+  'finally',
+  'for',
+  'get',
+  'hide',
+  'if',
+  'implements',
+  'import',
+  'in',
+  'interface',
+  'is',
+  'late',
+  'library',
+  'mixin',
+  'new',
+  'null',
+  'on',
+  'operator',
+  'part',
+  'required',
+  'rethrow',
+  'return',
+  'set',
+  'show',
+  'static',
+  'super',
+  'switch',
+  'sync',
+  'this',
+  'throw',
+  'true',
+  'try',
+  'typedef',
+  'var',
+  'void',
+  'while',
+  'with',
+  'yield'
+];
+const YAML_KEYWORDS = ['true', 'false', 'null', 'yes', 'no', 'on', 'off'];
+const TOML_KEYWORDS = ['true', 'false'];
+/** Markup languages carry no keywords: tags and property names come from `extras`. */
+const MARKUP_KEYWORDS: string[] = [];
 
-const CODE_KEYWORDS = {
+const CODE_KEYWORDS: Record<string, Set<string>> = {
   javascript: new Set(SCRIPT_KEYWORDS),
   typescript: new Set(SCRIPT_KEYWORDS),
   python: new Set(PYTHON_KEYWORDS.map((item) => item.toLowerCase())),
   shell: new Set(SHELL_KEYWORDS),
   sql: new Set(SQL_KEYWORDS),
-  json: new Set(JSON_KEYWORDS)
+  json: new Set(JSON_KEYWORDS),
+  slint: new Set(SLINT_KEYWORDS),
+  rust: new Set(RUST_KEYWORDS),
+  go: new Set(GO_KEYWORDS),
+  java: new Set(JAVA_KEYWORDS),
+  kotlin: new Set(KOTLIN_KEYWORDS),
+  swift: new Set(SWIFT_KEYWORDS),
+  c: new Set(C_KEYWORDS),
+  cpp: new Set(CPP_KEYWORDS),
+  csharp: new Set(CSHARP_KEYWORDS),
+  php: new Set(PHP_KEYWORDS),
+  ruby: new Set(RUBY_KEYWORDS),
+  scala: new Set(SCALA_KEYWORDS),
+  lua: new Set(LUA_KEYWORDS),
+  dart: new Set(DART_KEYWORDS),
+  yaml: new Set(YAML_KEYWORDS),
+  toml: new Set(TOML_KEYWORDS),
+  ini: new Set(TOML_KEYWORDS),
+  xml: new Set(MARKUP_KEYWORDS),
+  html: new Set(MARKUP_KEYWORDS),
+  css: new Set(MARKUP_KEYWORDS)
 };
 
-const SCRIPT_TOKEN_REGEX = new RegExp(
-  [
-    '\\/\\*[\\s\\S]*?\\*\\/',
-    '\\/\\/[^\\n]*',
-    '`(?:\\\\.|[^`])*`',
-    '"(?:\\\\.|[^"\\\\])*"',
-    "'(?:\\\\.|[^'\\\\])*'",
-    '\\b\\d+(?:\\.\\d+)?\\b',
-    `\\b(?:${SCRIPT_KEYWORDS.join('|')})\\b`
-  ].join('|'),
-  'g'
-);
-const PYTHON_TOKEN_REGEX = new RegExp(
-  [
-    '"""[\\s\\S]*?"""',
-    "'''[\\s\\S]*?'''",
-    '#[^\\n]*',
-    '"(?:\\\\.|[^"\\\\])*"',
-    "'(?:\\\\.|[^'\\\\])*'",
-    '\\b\\d+(?:\\.\\d+)?\\b',
-    `\\b(?:${PYTHON_KEYWORDS.join('|')})\\b`
-  ].join('|'),
-  'g'
-);
-const SHELL_TOKEN_REGEX = new RegExp(
-  [
-    '#[^\\n]*',
-    '"(?:\\\\.|[^"\\\\])*"',
-    "'(?:\\\\.|[^'\\\\])*'",
-    '\\b\\d+(?:\\.\\d+)?\\b',
-    `\\b(?:${SHELL_KEYWORDS.join('|')})\\b`
-  ].join('|'),
-  'g'
-);
-const SQL_TOKEN_REGEX = new RegExp(
-  [
-    '\\/\\*[\\s\\S]*?\\*\\/',
-    '--[^\\n]*',
-    '"(?:\\\\.|[^"\\\\])*"',
-    "'(?:\\\\.|[^'\\\\])*'",
-    '\\b\\d+(?:\\.\\d+)?\\b',
-    `\\b(?:${SQL_KEYWORDS.join('|')})\\b`
-  ].join('|'),
-  'gi'
-);
-const JSON_TOKEN_REGEX = new RegExp(
-  [
-    '"(?:\\\\.|[^"\\\\])*"',
-    '\\b-?\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d+)?\\b',
-    `\\b(?:${JSON_KEYWORDS.join('|')})\\b`
-  ].join('|'),
-  'g'
-);
-const TOKEN_REGEX = {
+/**
+ * One lexer per language, declared as data instead of a hand-built regex.
+ *
+ * Branch order is fixed and matters: comments first so a `#` or `//` inside a
+ * string is never taken for one, then strings, numbers, language extras, and
+ * finally keywords.
+ */
+type TokenPattern = {
+  blockComment?: string;
+  lineComments?: string[];
+  strings?: string[];
+  numbers?: string;
+  extras?: string[];
+  keywords: string[];
+  caseInsensitive?: boolean;
+};
+const C_BLOCK_COMMENT = '\\/\\*[\\s\\S]*?\\*\\/';
+const XML_BLOCK_COMMENT = '<!--[\\s\\S]*?-->';
+const DEFAULT_STRINGS = ['"(?:\\\\.|[^"\\\\])*"', "'(?:\\\\.|[^'\\\\])*'"];
+const DEFAULT_NUMBERS = '\\b-?\\d+(?:\\.\\d+)?\\b';
+/** Dimensions keep their unit: `12px`, `200ms`, `50%`. */
+const SIZED_NUMBERS = '\\b-?\\d+(?:\\.\\d+)?(?:px|pt|rem|em|%|s|ms|deg|fr|vh|vw)?';
+const COLOR_LITERAL = '#[0-9a-fA-F]{3,8}';
+
+function buildTokenRegex(pattern: TokenPattern): RegExp {
+  const branches: string[] = [];
+  if (pattern.blockComment) branches.push(pattern.blockComment);
+  for (const marker of pattern.lineComments ?? []) branches.push(`${marker}[^\\n]*`);
+  branches.push(...(pattern.strings ?? DEFAULT_STRINGS));
+  branches.push(pattern.numbers ?? DEFAULT_NUMBERS);
+  branches.push(...(pattern.extras ?? []));
+  if (pattern.keywords.length) branches.push(`\\b(?:${pattern.keywords.join('|')})\\b`);
+  return new RegExp(branches.join('|'), pattern.caseInsensitive ? 'gi' : 'g');
+}
+
+const SCRIPT_TOKEN_REGEX = buildTokenRegex({
+  blockComment: C_BLOCK_COMMENT,
+  lineComments: ['\\/\\/'],
+  strings: ['`(?:\\\\.|[^`])*`', ...DEFAULT_STRINGS],
+  keywords: SCRIPT_KEYWORDS
+});
+const PYTHON_TOKEN_REGEX = buildTokenRegex({
+  lineComments: ['#'],
+  // Triple quotes precede the plain ones so a docstring is captured whole.
+  strings: ['"""[\\s\\S]*?"""', "'''[\\s\\S]*?'''", ...DEFAULT_STRINGS],
+  keywords: PYTHON_KEYWORDS
+});
+const SHELL_TOKEN_REGEX = buildTokenRegex({ lineComments: ['#'], keywords: SHELL_KEYWORDS });
+const SQL_TOKEN_REGEX = buildTokenRegex({
+  blockComment: C_BLOCK_COMMENT,
+  lineComments: ['--'],
+  keywords: SQL_KEYWORDS,
+  caseInsensitive: true
+});
+const JSON_TOKEN_REGEX = buildTokenRegex({
+  strings: ['"(?:\\\\.|[^"\\\\])*"'],
+  numbers: '\\b-?\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d+)?\\b',
+  keywords: JSON_KEYWORDS
+});
+const SLINT_TOKEN_REGEX = buildTokenRegex({
+  blockComment: C_BLOCK_COMMENT,
+  lineComments: ['\\/\\/'],
+  strings: ['"(?:\\\\.|[^"\\\\])*"'],
+  numbers: SIZED_NUMBERS,
+  extras: [COLOR_LITERAL, '<[A-Za-z_][A-Za-z0-9_]*>', '@[A-Za-z_][A-Za-z0-9_]*'],
+  keywords: SLINT_KEYWORDS
+});
+const RUST_TOKEN_REGEX = buildTokenRegex({
+  blockComment: C_BLOCK_COMMENT,
+  lineComments: ['\\/\\/'],
+  numbers: '\\b-?\\d+(?:\\.\\d+)?(?:[iuf](?:8|16|32|64|128|size))?\\b',
+  extras: ['#\\[[^\\]]*\\]', '\\b[a-z_][a-zA-Z0-9_]*!'],
+  keywords: RUST_KEYWORDS
+});
+const GO_TOKEN_REGEX = buildTokenRegex({
+  blockComment: C_BLOCK_COMMENT,
+  lineComments: ['\\/\\/'],
+  strings: ['`(?:[^`])*`', ...DEFAULT_STRINGS],
+  keywords: GO_KEYWORDS
+});
+const JAVA_TOKEN_REGEX = buildTokenRegex({
+  blockComment: C_BLOCK_COMMENT,
+  lineComments: ['\\/\\/'],
+  keywords: JAVA_KEYWORDS
+});
+const KOTLIN_TOKEN_REGEX = buildTokenRegex({
+  blockComment: C_BLOCK_COMMENT,
+  lineComments: ['\\/\\/'],
+  keywords: KOTLIN_KEYWORDS
+});
+const SWIFT_TOKEN_REGEX = buildTokenRegex({
+  blockComment: C_BLOCK_COMMENT,
+  lineComments: ['\\/\\/'],
+  keywords: SWIFT_KEYWORDS
+});
+const C_TOKEN_REGEX = buildTokenRegex({
+  blockComment: C_BLOCK_COMMENT,
+  lineComments: ['\\/\\/'],
+  extras: ['#\\s*[a-z]+'],
+  keywords: C_KEYWORDS
+});
+const CPP_TOKEN_REGEX = buildTokenRegex({
+  blockComment: C_BLOCK_COMMENT,
+  lineComments: ['\\/\\/'],
+  extras: ['#\\s*[a-z]+'],
+  keywords: CPP_KEYWORDS
+});
+const CSHARP_TOKEN_REGEX = buildTokenRegex({
+  blockComment: C_BLOCK_COMMENT,
+  lineComments: ['\\/\\/'],
+  strings: ['\\$"(?:\\\\.|[^"\\\\])*"', ...DEFAULT_STRINGS],
+  keywords: CSHARP_KEYWORDS
+});
+const PHP_TOKEN_REGEX = buildTokenRegex({
+  blockComment: C_BLOCK_COMMENT,
+  lineComments: ['\\/\\/', '#'],
+  extras: ['<\\?php', '\\$[A-Za-z_][A-Za-z0-9_]*'],
+  keywords: PHP_KEYWORDS
+});
+const RUBY_TOKEN_REGEX = buildTokenRegex({
+  lineComments: ['#'],
+  extras: ['@[A-Za-z_][A-Za-z0-9_]*', ':[A-Za-z_][A-Za-z0-9_]*'],
+  keywords: RUBY_KEYWORDS
+});
+const SCALA_TOKEN_REGEX = buildTokenRegex({
+  blockComment: C_BLOCK_COMMENT,
+  lineComments: ['\\/\\/'],
+  keywords: SCALA_KEYWORDS
+});
+const LUA_TOKEN_REGEX = buildTokenRegex({
+  lineComments: ['--'],
+  extras: ['--\\[\\[[\\s\\S]*?\\]\\]'],
+  keywords: LUA_KEYWORDS
+});
+const DART_TOKEN_REGEX = buildTokenRegex({
+  blockComment: C_BLOCK_COMMENT,
+  lineComments: ['\\/\\/'],
+  keywords: DART_KEYWORDS
+});
+const YAML_TOKEN_REGEX = buildTokenRegex({
+  lineComments: ['#'],
+  extras: ['[A-Za-z_][\\w.-]*(?=\\s*:)'],
+  keywords: YAML_KEYWORDS
+});
+const TOML_TOKEN_REGEX = buildTokenRegex({
+  lineComments: ['#'],
+  extras: ['\\[[A-Za-z_][\\w.-]*\\]'],
+  keywords: TOML_KEYWORDS
+});
+const INI_TOKEN_REGEX = buildTokenRegex({
+  lineComments: ['#', ';'],
+  extras: ['\\[[A-Za-z_][\\w.-]*\\]'],
+  keywords: TOML_KEYWORDS
+});
+const XML_TOKEN_REGEX = buildTokenRegex({
+  blockComment: XML_BLOCK_COMMENT,
+  extras: ['<\\/?[A-Za-z_][\\w:.-]*', '\\/?>'],
+  keywords: MARKUP_KEYWORDS
+});
+const CSS_TOKEN_REGEX = buildTokenRegex({
+  blockComment: C_BLOCK_COMMENT,
+  numbers: SIZED_NUMBERS,
+  extras: [COLOR_LITERAL, '@[a-z-]+', '[a-zA-Z-]+(?=\\s*:)'],
+  keywords: MARKUP_KEYWORDS
+});
+const TOKEN_REGEX: Record<string, RegExp> = {
   javascript: SCRIPT_TOKEN_REGEX,
   typescript: SCRIPT_TOKEN_REGEX,
   python: PYTHON_TOKEN_REGEX,
   shell: SHELL_TOKEN_REGEX,
   sql: SQL_TOKEN_REGEX,
-  json: JSON_TOKEN_REGEX
+  json: JSON_TOKEN_REGEX,
+  slint: SLINT_TOKEN_REGEX,
+  rust: RUST_TOKEN_REGEX,
+  go: GO_TOKEN_REGEX,
+  java: JAVA_TOKEN_REGEX,
+  kotlin: KOTLIN_TOKEN_REGEX,
+  swift: SWIFT_TOKEN_REGEX,
+  c: C_TOKEN_REGEX,
+  cpp: CPP_TOKEN_REGEX,
+  csharp: CSHARP_TOKEN_REGEX,
+  php: PHP_TOKEN_REGEX,
+  ruby: RUBY_TOKEN_REGEX,
+  scala: SCALA_TOKEN_REGEX,
+  lua: LUA_TOKEN_REGEX,
+  dart: DART_TOKEN_REGEX,
+  yaml: YAML_TOKEN_REGEX,
+  toml: TOML_TOKEN_REGEX,
+  ini: INI_TOKEN_REGEX,
+  xml: XML_TOKEN_REGEX,
+  html: XML_TOKEN_REGEX,
+  css: CSS_TOKEN_REGEX
 };
 
 const highlightCache = new Map();
@@ -897,12 +1857,18 @@ function highlightCode(code = '', lang = '') {
 }
 
 function classifyToken(token = '', lang = '') {
-  if (
-    token.startsWith('/*') ||
-    token.startsWith('//') ||
-    token.startsWith('#') ||
-    token.startsWith('--')
-  ) {
+  // Slint colours read as data, not as the line comment other languages use.
+  if (!HASH_COMMENT_LANGS.has(lang) && COLOR_LITERAL_REGEX.test(token)) {
+    return 'number';
+  }
+  if (PREPROCESSOR_LANGS.has(lang) && PREPROCESSOR_REGEX.test(token)) {
+    return 'keyword';
+  }
+  if (token.startsWith('/*') || token.startsWith('<!--')) {
+    return 'comment';
+  }
+  const lineComments = LINE_COMMENT_PREFIXES[lang];
+  if (lineComments?.some((prefix) => token.startsWith(prefix))) {
     return 'comment';
   }
   const firstChar = token[0];

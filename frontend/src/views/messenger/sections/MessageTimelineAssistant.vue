@@ -1,6 +1,6 @@
 <template>
   <div
-    class="timeline-assistant"
+    class="timeline-assistant messenger-markdown"
     :data-turn-id="String(message.__runtime_user_turn_id || message.user_turn_id || message.root_turn_id || '')"
   >
     <MessageTimelineTurnProcess
@@ -24,15 +24,10 @@
       块的顺序由投影层按 `created_seq` 定好；块渲染由 MessageTimelineBlocks 与
       子智能体详情弹窗共用，旧式单段正文（问候语、无块旧行）回退到本组件渲染。
     -->
-    <!-- The stream preview must stay in the same padded timeline block as the
-         terminal answer.  Switching to the body viewport while bytes are still
-         arriving used to drop the row's padding for the first few frames and
-         made the answer jump to the viewport's left edge. -->
-    <div v-if="!bodyStreaming && message.__thread_preview && message.__thread_body" class="timeline-body-block">
-      <ThreadBodyViewport :session-id="activeSessionId" :body="message.__thread_body" :preview="String(message.content||'')" :cache-key="`thread:${item.key}`" />
-    </div>
+    <!-- A settled turn renders one body block: terminal answers read the whole
+         durable body, so the row never swaps renderer mid-answer. -->
     <MessageTimelineBlocks
-      v-else-if="hasProjectionBlocks"
+      v-if="hasProjectionBlocks"
       :blocks="timelineBlocks"
       :workflow-items="workflowItems"
       :session-id="activeSessionId"
@@ -235,7 +230,6 @@
 </template>
 
 <script setup lang="ts">
-import ThreadBodyViewport from '@/components/chat/ThreadBodyViewport.vue';
 import { computed, onBeforeUnmount, ref, triggerRef, watch } from 'vue';
 
 import MessageMarkdownBody from '@/components/chat/MessageMarkdownBody.vue';
@@ -360,34 +354,42 @@ const runtimeContentVersion = computed(() => {
   return `${structureVersion}:${messageScopedVersion}`;
 });
 
+/** 一段线程视图正文：本地连续流 > 持久头 + 尾部窗口 > 持久预览。 */
+const resolveThreadBodyText = (): string => {
+  const preview = String(message.value.content || '');
+  // The durable row keeps a 2 KB head plus a rolling 2 KB tail window, so the
+  // middle of a long answer disappears as the stream advances. The local view
+  // is the only contiguous copy; use it whenever it still tracks the offset.
+  const live = String(message.value.__thread_live || '');
+  if (live && Number(message.value.__thread_live_offset ?? -1) === Number(message.value.__thread_content_offset ?? -2)) {
+    return live;
+  }
+  const tail = String(message.value.__thread_tail || '');
+  if (!tail) return preview;
+  const units = (value: string): number => [...value].reduce((total, char) => total + char.length, 0);
+  const previewUnits = units(preview);
+  const tailEnd = Number(message.value.__thread_tail_offset || tail.length || 0);
+  const tailUnits = units(tail);
+  const tailStart = Math.max(0, tailEnd - tailUnits);
+  if (previewUnits <= tailStart) return `${preview}${tail}`;
+  if (previewUnits >= tailEnd) return preview;
+  // The durable preview already contains the beginning of the active block;
+  // append only the unseen UTF-16 suffix instead of duplicating the block.
+  let consumed = previewUnits - tailStart;
+  let index = 0;
+  for (const char of tail) {
+    if (consumed <= 0) break;
+    consumed -= char.length;
+    index += char.length;
+  }
+  return `${preview}${tail.slice(index)}`;
+};
 const displayContent = computed(() => {
   void runtimeContentVersion.value;
-  const base = String(controller.buildAssistantDisplayContent?.(message.value, translate) || '');
-  // Thread-view rows carry a durable preview plus an ephemeral tail. Compose
-  // both before handing the text to the streaming renderer; the durable body
-  // viewport is intentionally used only after the turn settles.
-  if (message.value.__thread_view && message.value.streaming) {
-    const tail = String(message.value.__thread_tail || '');
-    if (!tail) return base;
-    const units = (value: string): number => [...value].reduce((total, char) => total + char.length, 0);
-    const baseUnits = units(base);
-    const tailEnd = Number(message.value.__thread_tail_offset || message.value.__thread_tail?.length || 0);
-    const tailUnits = units(tail);
-    const tailStart = Math.max(0, tailEnd - tailUnits);
-    if (baseUnits <= tailStart) return `${base}${tail}`;
-    if (baseUnits >= tailEnd) return base;
-    // The durable preview already contains the beginning of the active block;
-    // append only the unseen UTF-16 suffix instead of duplicating the block.
-    let consumed = baseUnits - tailStart;
-    let index = 0;
-    for (const char of tail) {
-      if (consumed <= 0) break;
-      consumed -= char.length;
-      index += char.length;
-    }
-    return `${base}${tail.slice(index)}`;
-  }
-  return base;
+  const body = message.value.__thread_view
+    ? resolveThreadBodyText()
+    : String(message.value.content || '');
+  return String(controller.buildAssistantDisplayContent?.(message.value, translate, body) || '');
 });
 const hasBody = computed(() => Boolean(controller.hasMessageContent?.(displayContent.value)));
 const bodyStreaming = computed(() =>

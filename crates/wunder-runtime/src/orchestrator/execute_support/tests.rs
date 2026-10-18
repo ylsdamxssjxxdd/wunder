@@ -701,11 +701,7 @@ fn approval_kind_for_tool_routes_exec_control_and_patch_tools() {
         ApprovalRequestKind::Exec
     );
     assert_eq!(
-        approval_kind_for_tool(&resolve_tool_name("desktop_controller")),
-        ApprovalRequestKind::Control
-    );
-    assert_eq!(
-        approval_kind_for_tool(&resolve_tool_name("desktop_monitor")),
+        approval_kind_for_tool(&resolve_tool_name("desktop_control")),
         ApprovalRequestKind::Control
     );
     assert_eq!(
@@ -718,7 +714,7 @@ fn approval_kind_for_tool_routes_exec_control_and_patch_tools() {
 fn approval_summary_for_tool_prefers_command_text_and_path_hints() {
     let execute_command = resolve_tool_name("execute_command");
     let write_file = resolve_tool_name("write_file");
-    let desktop_controller = resolve_tool_name("desktop_controller");
+    let desktop_control = resolve_tool_name("desktop_control");
     let exec_summary = approval_summary_for_tool(
         &execute_command,
         &json!({ "content": "  cargo test  " }),
@@ -730,7 +726,7 @@ fn approval_summary_for_tool_prefers_command_text_and_path_hints() {
         ApprovalRequestKind::Patch,
     );
     let control_summary = approval_summary_for_tool(
-        &desktop_controller,
+        &desktop_control,
         &json!({ "action": "click", "description": "  confirm button  " }),
         ApprovalRequestKind::Control,
     );
@@ -739,7 +735,7 @@ fn approval_summary_for_tool_prefers_command_text_and_path_hints() {
     assert_eq!(patch_summary, format!("{write_file}: docs/notes.md"));
     assert_eq!(
         control_summary,
-        format!("{desktop_controller}: action=click confirm button")
+        format!("{desktop_control}: action=click confirm button")
     );
 }
 
@@ -747,7 +743,7 @@ fn approval_summary_for_tool_prefers_command_text_and_path_hints() {
 fn approval_summary_for_tool_falls_back_to_tool_name_when_details_missing() {
     let execute_command = resolve_tool_name("execute_command");
     let write_file = resolve_tool_name("write_file");
-    let desktop_controller = resolve_tool_name("desktop_controller");
+    let desktop_control = resolve_tool_name("desktop_control");
     assert_eq!(
         approval_summary_for_tool(
             &execute_command,
@@ -766,11 +762,11 @@ fn approval_summary_for_tool_falls_back_to_tool_name_when_details_missing() {
     );
     assert_eq!(
         approval_summary_for_tool(
-            &desktop_controller,
+            &desktop_control,
             &json!({ "wait_ms": 1200 }),
             ApprovalRequestKind::Control,
         ),
-        format!("{desktop_controller}: wait_ms=1200")
+        format!("{desktop_control}: wait_ms=1200")
     );
 }
 

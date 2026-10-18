@@ -23,6 +23,13 @@ pub struct ModelRecord {
     pub thinking_token_budget: String,
     pub max_rounds: String,
     pub max_context: String,
+    pub history_compaction_ratio: String,
+    pub reasoning_effort: String,
+    pub simulation_speed: String,
+    pub support_vision: bool,
+    pub support_hearing: bool,
+    pub stream_include_usage: bool,
+    pub tool_call_mode: String,
     pub tts_voice: String,
     pub tts_response_format: String,
     pub tts_speed: String,
@@ -39,7 +46,15 @@ pub struct ModelRecord {
     pub video_size: String,
     pub video_seconds: String,
     pub video_fps: String,
+    pub video_num_frames: String,
     pub video_negative_prompt: String,
+    pub video_steps: String,
+    pub video_guidance_scale: String,
+    pub video_guidance_scale_2: String,
+    pub video_boundary_ratio: String,
+    pub video_flow_shift: String,
+    pub video_frame_interpolation: bool,
+    pub video_sync_mode: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -54,6 +69,9 @@ pub struct DesktopSettings {
     pub rg_path: String,
     pub tool_status: Vec<RuntimeToolStatus>,
     pub models: Vec<ModelRecord>,
+    /// Stable replay-log ids selectable by the virtual model editor. The log
+    /// content stays on disk and never enters the UI projection.
+    pub virtual_replay_logs: Vec<String>,
     pub lan: LanSettings,
 }
 
@@ -94,6 +112,13 @@ pub struct ModelEdit<'a> {
     pub thinking_token_budget: &'a str,
     pub max_rounds: &'a str,
     pub max_context: &'a str,
+    pub history_compaction_ratio: &'a str,
+    pub reasoning_effort: &'a str,
+    pub simulation_speed: &'a str,
+    pub support_vision: bool,
+    pub support_hearing: bool,
+    pub stream_include_usage: bool,
+    pub tool_call_mode: &'a str,
     pub tts_voice: &'a str,
     pub tts_response_format: &'a str,
     pub tts_speed: &'a str,
@@ -110,7 +135,15 @@ pub struct ModelEdit<'a> {
     pub video_size: &'a str,
     pub video_seconds: &'a str,
     pub video_fps: &'a str,
+    pub video_num_frames: &'a str,
     pub video_negative_prompt: &'a str,
+    pub video_steps: &'a str,
+    pub video_guidance_scale: &'a str,
+    pub video_guidance_scale_2: &'a str,
+    pub video_boundary_ratio: &'a str,
+    pub video_flow_shift: &'a str,
+    pub video_frame_interpolation: bool,
+    pub video_sync_mode: bool,
 }
 
 impl NativeDesktop {
@@ -436,6 +469,10 @@ impl NativeDesktop {
         let thinking_token_budget = parse_u32(edit.thinking_token_budget, "思考预算", 0)?;
         let max_rounds = parse_u32(edit.max_rounds, "最大轮次", 1)?;
         let max_context = parse_u32(edit.max_context, "上下文长度", 1)?;
+        let history_compaction_ratio = parse_f32(edit.history_compaction_ratio, "历史压缩阈值比例", 0.1, 1.0)?;
+        let reasoning_effort = optional_choice(edit.reasoning_effort, "思考等级", &["none", "minimal", "low", "medium", "high", "xhigh"])?;
+        let simulation_speed = optional_choice(edit.simulation_speed, "模拟速度", &["fast", "medium", "slow"])?;
+        let tool_call_mode = optional_choice(edit.tool_call_mode, "工具调用方式", &["tool_call", "function_call", "freeform_call"])?;
         let tts_voice = optional_text(edit.tts_voice, 256)?;
         let tts_response_format =
             optional_choice(edit.tts_response_format, "音频格式", &TTS_FORMATS)?;
@@ -455,7 +492,13 @@ impl NativeDesktop {
         let video_size = optional_text(edit.video_size, 64)?;
         let video_seconds = parse_f32(edit.video_seconds, "时长", 0.5, f32::MAX)?;
         let video_fps = parse_u32(edit.video_fps, "帧率", 1)?;
+        let video_num_frames = parse_u32(edit.video_num_frames, "总帧数", 1)?;
         let video_negative_prompt = optional_text(edit.video_negative_prompt, 4096)?;
+        let video_steps = parse_u32_range(edit.video_steps, "视频采样步数", 1, 200)?;
+        let video_guidance_scale = parse_f32(edit.video_guidance_scale, "视频引导系数", 0.0, 20.0)?;
+        let video_guidance_scale_2 = parse_f32(edit.video_guidance_scale_2, "视频引导系数 2", 0.0, 20.0)?;
+        let video_boundary_ratio = parse_f32(edit.video_boundary_ratio, "视频边界比例", 0.0, 1.0)?;
+        let video_flow_shift = parse_f32(edit.video_flow_shift, "视频 flow shift", 0.0, f32::MAX)?;
         self.update_settings(|config, _| {
             let key = edit.key.trim().to_string();
             if !config.llm.models.contains_key(&key) && config.llm.models.len() >= 200 {
@@ -478,6 +521,17 @@ impl NativeDesktop {
             entry.thinking_token_budget = thinking_token_budget;
             entry.max_rounds = max_rounds;
             entry.max_context = max_context;
+            entry.history_compaction_ratio = history_compaction_ratio;
+            entry.reasoning_effort = reasoning_effort.clone();
+            entry.simulation_speed = simulation_speed.as_deref().map(|value| match value {
+                "medium" => wunder_server::stable_core::virtual_model::VirtualModelSpeed::Medium,
+                "slow" => wunder_server::stable_core::virtual_model::VirtualModelSpeed::Slow,
+                _ => wunder_server::stable_core::virtual_model::VirtualModelSpeed::Fast,
+            });
+            entry.support_vision = Some(edit.support_vision);
+            entry.support_hearing = Some(edit.support_hearing);
+            entry.stream_include_usage = Some(edit.stream_include_usage);
+            entry.tool_call_mode = tool_call_mode.clone();
             entry.tts_voice = tts_voice.clone();
             entry.tts_response_format = tts_response_format.clone();
             entry.tts_speed = tts_speed;
@@ -494,7 +548,15 @@ impl NativeDesktop {
             entry.video_size = video_size.clone();
             entry.video_seconds = video_seconds;
             entry.video_fps = video_fps;
+            entry.video_num_frames = video_num_frames;
             entry.video_negative_prompt = video_negative_prompt.clone();
+            entry.video_num_inference_steps = video_steps;
+            entry.video_guidance_scale = video_guidance_scale;
+            entry.video_guidance_scale_2 = video_guidance_scale_2;
+            entry.video_boundary_ratio = video_boundary_ratio;
+            entry.video_flow_shift = video_flow_shift;
+            entry.video_enable_frame_interpolation = Some(edit.video_frame_interpolation);
+            entry.video_sync_mode = Some(edit.video_sync_mode);
             // An empty editor field preserves a stored secret; secrets never
             // return in DesktopSettings or enter a Slint list model.
             if !edit.api_key.trim().is_empty() {
@@ -825,6 +887,17 @@ fn project(
                     .unwrap_or_default(),
                 max_rounds: value.max_rounds.map(|v| v.to_string()).unwrap_or_default(),
                 max_context: value.max_context.map(|v| v.to_string()).unwrap_or_default(),
+                history_compaction_ratio: value.history_compaction_ratio.map(format_number).unwrap_or_default(),
+                reasoning_effort: value.reasoning_effort.clone().unwrap_or_default(),
+                simulation_speed: value.simulation_speed.map(|v| match v {
+                    wunder_server::stable_core::virtual_model::VirtualModelSpeed::Medium => "medium",
+                    wunder_server::stable_core::virtual_model::VirtualModelSpeed::Slow => "slow",
+                    wunder_server::stable_core::virtual_model::VirtualModelSpeed::Fast => "fast",
+                }).unwrap_or_default().into(),
+                support_vision: value.support_vision.unwrap_or(false),
+                support_hearing: value.support_hearing.unwrap_or(false),
+                stream_include_usage: value.stream_include_usage.unwrap_or(false),
+                tool_call_mode: value.tool_call_mode.clone().unwrap_or_default(),
                 tts_voice: optional_string(value.tts_voice.as_deref()),
                 tts_response_format: optional_string(value.tts_response_format.as_deref()),
                 tts_speed: value.tts_speed.map(format_number).unwrap_or_default(),
@@ -847,7 +920,15 @@ fn project(
                 video_size: optional_string(value.video_size.as_deref()),
                 video_seconds: value.video_seconds.map(format_number).unwrap_or_default(),
                 video_fps: value.video_fps.map(|v| v.to_string()).unwrap_or_default(),
+                video_num_frames: value.video_num_frames.map(|v| v.to_string()).unwrap_or_default(),
                 video_negative_prompt: optional_string(value.video_negative_prompt.as_deref()),
+                video_steps: value.video_num_inference_steps.map(|v| v.to_string()).unwrap_or_default(),
+                video_guidance_scale: value.video_guidance_scale.map(format_number).unwrap_or_default(),
+                video_guidance_scale_2: value.video_guidance_scale_2.map(format_number).unwrap_or_default(),
+                video_boundary_ratio: value.video_boundary_ratio.map(format_number).unwrap_or_default(),
+                video_flow_shift: value.video_flow_shift.map(format_number).unwrap_or_default(),
+                video_frame_interpolation: value.video_enable_frame_interpolation.unwrap_or(false),
+                video_sync_mode: value.video_sync_mode.unwrap_or(false),
             }
         })
         .collect::<Vec<_>>();
@@ -864,6 +945,14 @@ fn project(
         rg_path: persisted.rg_path.clone(),
         tool_status: runtime_tool_statuses(persisted, app_dir),
         models,
+        virtual_replay_logs: config
+            .llm
+            .virtual_replay
+            .enabled_logs
+            .iter()
+            .map(|log| log.id.clone())
+            .filter(|id| !id.trim().is_empty())
+            .collect(),
         lan,
     }
 }

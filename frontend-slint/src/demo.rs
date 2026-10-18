@@ -63,8 +63,9 @@ pub fn install(app: &MainWindow) {
             format!("已收到「{text}」。这是一条本地演示回复，可以继续检查条目展开与滚动效果。");
         let mut body = fixture_row(crate::timeline::KIND_BODY, model.row_count(), &reply);
         body.foldable = true;
-        body.stats = demo_stats("3.6s", "51.0 token/s", "6.1k", "812", "");
         model.push(body);
+        let mut footer = fixture_row(crate::timeline::KIND_FOOTER, model.row_count(), &reply);
+        footer.stats = demo_stats("3.6s", "51.0 token/s", "6.1k", "812", "");
         let group = model.row_count() as i32;
         let mut bar = fixture_row(
             crate::timeline::KIND_GROUP,
@@ -95,6 +96,7 @@ pub fn install(app: &MainWindow) {
             row.open = index == 1;
             model.push(row);
         }
+        model.push(footer);
         app.set_draft("".into());
         app.set_status("本地演示 · 消息未发送至后端".into());
         scroll_to_end(&app);
@@ -323,10 +325,12 @@ fn demo_timeline() -> Vec<TimelineRow> {
                 "已完成目录检查，并整理了可以继续使用的文件。",
             );
             body.foldable = true;
-            body.stats = demo_stats("8.2s", "42.5 token/s", "8.4k", "1.2k", "2");
             body
         },
     ];
+    let mut footer = fixture_row(crate::timeline::KIND_FOOTER, rows.len(), &rows[1].text);
+    footer.stats = demo_stats("8.2s", "42.5 token/s", "8.4k", "1.2k", "2");
+    rows.push(footer);
     rows.push(fixture_row(
         crate::timeline::KIND_USER,
         rows.len(),
@@ -420,8 +424,10 @@ fn demo_timeline() -> Vec<TimelineRow> {
         "目录结构正常，文本内容可读取，未发现格式问题。",
     );
     answer.foldable = true;
-    answer.stats = demo_stats("12.4s", "68234.0 token/s", "12.3k", "4.1k", "3");
+    let mut footer = fixture_row(crate::timeline::KIND_FOOTER, rows.len() + 1, &answer.text);
+    footer.stats = demo_stats("12.4s", "68234.0 token/s", "12.3k", "4.1k", "3");
     rows.push(answer);
+    rows.push(footer);
     crate::timeline_text::process_models(&mut rows);
     rows
 }

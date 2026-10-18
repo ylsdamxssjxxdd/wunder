@@ -1,4 +1,5 @@
 mod command_stream;
+pub mod browser_host;
 pub mod server;
 
 use crate::config::Config;
@@ -60,6 +61,12 @@ fn is_loopback_host(host: &str) -> bool {
 
 fn sandbox_endpoint_candidates(_config: &Config) -> Vec<String> {
     endpoint_candidates(env::var("WUNDER_SANDBOX_ENDPOINT").ok().as_deref())
+}
+
+/// 沙盒里托管浏览器桥接的入口。与工具执行共用同一个沙盒端点，
+/// 因此“浏览器跟着沙盒走”：沙盒在远端，浏览器也在远端。
+pub fn browser_host_endpoint(_config: &Config) -> Option<String> {
+    sandbox_endpoint_candidates(_config).into_iter().next()
 }
 
 fn endpoint_candidates(endpoint: Option<&str>) -> Vec<String> {

@@ -22,17 +22,8 @@ const TOOL_RULES: &[(&[&str], &str)] = &[
     ),
     (&["自我状态", "self_status", "self status"], "gauge-high"),
     (
-        &["桌面控制器", "desktop_controller", "desktop controller"],
+        &["桌面控制", "desktop_control", "desktop control"],
         "computer-mouse",
-    ),
-    (
-        &[
-            "桌面监视器",
-            "桌面监控",
-            "desktop_monitor",
-            "desktop monitor",
-        ],
-        "display",
     ),
     (
         &["计划面板", "计划看板", "update_plan", "plan board"],
@@ -245,8 +236,7 @@ const ABILITY_RULES: &[(&[&str], &str, &str)] = &[
         "gauge-high",
         "general",
     ),
-    (&["桌面控制器"], "computer-mouse", "general"),
-    (&["桌面监视器"], "display", "general"),
+    (&["桌面控制"], "computer-mouse", "general"),
     (
         &[
             "渠道工具",
@@ -270,13 +260,8 @@ const ABILITY_RULES: &[(&[&str], &str, &str)] = &[
         "general",
     ),
     (
-        &["desktop_controller", "desktop controller"],
+        &["desktop_control", "desktop control"],
         "computer-mouse",
-        "general",
-    ),
-    (
-        &["desktop_monitor", "desktop monitor", "桌面监控"],
-        "display",
         "general",
     ),
     (

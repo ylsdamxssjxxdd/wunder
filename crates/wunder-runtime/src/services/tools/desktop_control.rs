@@ -14,60 +14,29 @@ mod disabled {
     use anyhow::Result;
     use serde_json::{json, Value};
 
-    pub const TOOL_DESKTOP_CONTROLLER: &str = "桌面控制器";
-    pub const TOOL_DESKTOP_MONITOR: &str = "桌面监视器";
-    pub const TOOL_DESKTOP_CONTROLLER_ALIAS: &str = "desktop_controller";
-    pub const TOOL_DESKTOP_MONITOR_ALIAS: &str = "desktop_monitor";
-    pub const TOOL_DESKTOP_CONTROLLER_ALIAS_SHORT: &str = "controller";
-    pub const TOOL_DESKTOP_MONITOR_ALIAS_SHORT: &str = "monitor";
-
-    pub fn is_desktop_controller_tool_name(name: &str) -> bool {
-        let cleaned = name.trim();
-        if cleaned == TOOL_DESKTOP_CONTROLLER {
-            return true;
-        }
-        matches!(
-            cleaned.to_ascii_lowercase().as_str(),
-            TOOL_DESKTOP_CONTROLLER_ALIAS | TOOL_DESKTOP_CONTROLLER_ALIAS_SHORT
-        )
-    }
-
-    pub fn is_desktop_monitor_tool_name(name: &str) -> bool {
-        let cleaned = name.trim();
-        if cleaned == TOOL_DESKTOP_MONITOR {
-            return true;
-        }
-        matches!(
-            cleaned.to_ascii_lowercase().as_str(),
-            TOOL_DESKTOP_MONITOR_ALIAS | TOOL_DESKTOP_MONITOR_ALIAS_SHORT
-        )
-    }
+    pub const TOOL_DESKTOP_CONTROL: &str = "桌面控制";
+    pub const TOOL_DESKTOP_CONTROL_ALIAS: &str = "desktop_control";
+    pub const TOOL_DESKTOP_CONTROL_ALIAS_SHORT: &str = "desktop";
 
     pub fn is_desktop_control_tool_name(name: &str) -> bool {
-        is_desktop_controller_tool_name(name) || is_desktop_monitor_tool_name(name)
+        let cleaned = name.trim();
+        if cleaned == TOOL_DESKTOP_CONTROL {
+            return true;
+        }
+        matches!(
+            cleaned.to_ascii_lowercase().as_str(),
+            TOOL_DESKTOP_CONTROL_ALIAS | TOOL_DESKTOP_CONTROL_ALIAS_SHORT
+        )
     }
 
     pub fn desktop_tools_enabled(_config: &Config) -> bool {
         false
     }
 
-    pub async fn tool_desktop_controller(
-        _context: &ToolContext<'_>,
-        args: &Value,
-    ) -> Result<Value> {
+    pub async fn tool_desktop_control(_context: &ToolContext<'_>, args: &Value) -> Result<Value> {
         Ok(disabled_result(
-            TOOL_DESKTOP_CONTROLLER_ALIAS,
+            TOOL_DESKTOP_CONTROL_ALIAS,
             args.get("action").and_then(Value::as_str),
-        ))
-    }
-
-    pub async fn tool_desktop_monitor(_context: &ToolContext<'_>, args: &Value) -> Result<Value> {
-        Ok(disabled_result(
-            TOOL_DESKTOP_MONITOR_ALIAS,
-            args.get("wait_ms")
-                .or_else(|| args.get("wait"))
-                .map(Value::to_string)
-                .as_deref(),
         ))
     }
 
@@ -108,9 +77,9 @@ mod tests {
     use crate::config::Config;
 
     #[test]
-    fn disabled_desktop_control_keeps_aliases_but_hides_runtime_tools() {
-        assert!(is_desktop_control_tool_name(TOOL_DESKTOP_CONTROLLER));
-        assert!(is_desktop_control_tool_name(TOOL_DESKTOP_MONITOR_ALIAS));
+    fn disabled_desktop_control_keeps_alias_but_hides_runtime_tool() {
+        assert!(is_desktop_control_tool_name(TOOL_DESKTOP_CONTROL));
+        assert!(is_desktop_control_tool_name(TOOL_DESKTOP_CONTROL_ALIAS));
         assert!(!desktop_tools_enabled(&Config::default()));
     }
 }

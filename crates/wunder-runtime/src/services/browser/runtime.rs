@@ -51,12 +51,34 @@ impl BrowserControlService {
     }
 
     pub fn health(&self) -> Value {
+        let (warm_ready, warm_launching) = self.bridge.warm_pool_state();
         json!({
             "ok": true,
             "enabled": self.config.enabled,
             "deployment": self.config.deployment.clone(),
+            "bridge_host": self.bridge_host_label(),
             "sessions": self.bridge.session_count(),
+            "warm_ready": warm_ready,
+            "warm_launching": warm_launching,
         })
+    }
+
+    /// Where the bridge process actually lives, so a status reader does not have
+    /// to infer it from the deployment label.
+    fn bridge_host_label(&self) -> Value {
+        match self.config.sandbox_endpoint.as_deref() {
+            Some(endpoint) => json!({ "kind": "sandbox", "endpoint": endpoint }),
+            None => json!({ "kind": "local" }),
+        }
+    }
+
+    /// Start the warm pool without waiting for a request. Returns how many
+    /// launches were started; they finish in the background.
+    pub fn prewarm(&self) -> usize {
+        if !self.config.enabled {
+            return 0;
+        }
+        self.bridge.prewarm()
     }
 
     pub fn status(&self) -> Value {
@@ -72,11 +94,13 @@ impl BrowserControlService {
             }
             _ => self.bridge.session_keys(),
         };
+        let (warm_ready, warm_launching) = self.bridge.warm_pool_state();
         json!({
             "ok": true,
             "enabled": self.config.enabled,
             "tool_visible": self.config.tool_visible,
             "deployment": self.config.deployment.clone(),
+            "bridge_host": self.bridge_host_label(),
             "default_profile": self.config.default_profile.clone(),
             "profiles": self.config.profiles(),
             "limits": {
@@ -85,6 +109,12 @@ impl BrowserControlService {
                 "max_snapshot_chars": self.config.max_snapshot_chars,
                 "max_download_bytes": self.config.max_download_bytes,
                 "idle_timeout_secs": self.config.idle_timeout_secs,
+                "prewarm_sessions": self.config.prewarm_sessions,
+            },
+            "warm_pool": {
+                "target": self.config.prewarm_sessions,
+                "ready": warm_ready,
+                "launching": warm_launching,
             },
             "playwright": {
                 "headless": self.config.headless,
@@ -185,7 +215,7 @@ impl BrowserControlService {
                 }),
             )
             .await?;
-        self.extract_data(response, "Browser session start failed")
+        self.extract_data(response, "Browser session start failed", "start")
     }
 
     async fn stop(&self, scope: &BrowserSessionScope) -> Result<Value> {
@@ -215,7 +245,7 @@ impl BrowserControlService {
                 }),
             )
             .await?;
-        self.extract_data(response, "Browser tabs query failed")
+        self.extract_data(response, "Browser tabs query failed", "tabs")
     }
 
     async fn open(&self, scope: &BrowserSessionScope, args: &Value) -> Result<Value> {
@@ -238,7 +268,7 @@ impl BrowserControlService {
                 }),
             )
             .await?;
-        self.extract_data(response, "Open browser tab failed")
+        self.extract_data(response, "Open browser tab failed", "open")
     }
 
     async fn focus(&self, scope: &BrowserSessionScope, args: &Value) -> Result<Value> {
@@ -256,7 +286,7 @@ impl BrowserControlService {
                 }),
             )
             .await?;
-        self.extract_data(response, "Focus browser tab failed")
+        self.extract_data(response, "Focus browser tab failed", "focus")
     }
 
     async fn close(&self, scope: &BrowserSessionScope, args: &Value) -> Result<Value> {
@@ -277,7 +307,7 @@ impl BrowserControlService {
                 }),
             )
             .await?;
-        self.extract_data(response, "Close browser tab failed")
+        self.extract_data(response, "Close browser tab failed", "close")
     }
 
     async fn navigate(&self, scope: &BrowserSessionScope, args: &Value) -> Result<Value> {
@@ -301,7 +331,7 @@ impl BrowserControlService {
                 }),
             )
             .await?;
-        self.extract_data(response, "Navigate browser failed")
+        self.extract_data(response, "Navigate browser failed", "navigate")
     }
 
     async fn snapshot(&self, scope: &BrowserSessionScope, args: &Value) -> Result<Value> {
@@ -323,7 +353,7 @@ impl BrowserControlService {
                 }),
             )
             .await?;
-        self.extract_data(response, "Browser snapshot failed")
+        self.extract_data(response, "Browser snapshot failed", "snapshot")
     }
 
     async fn act(&self, scope: &BrowserSessionScope, args: &Value) -> Result<Value> {
@@ -351,7 +381,7 @@ impl BrowserControlService {
                 }),
             )
             .await?;
-        self.extract_data(response, "Browser act failed")
+        self.extract_data(response, "Browser act failed", "act")
     }
 
     async fn shortcut_act(
@@ -401,7 +431,7 @@ impl BrowserControlService {
                 }),
             )
             .await?;
-        let mut data = self.extract_data(response, "Browser screenshot failed")?;
+        let mut data = self.extract_data(response, "Browser screenshot failed", "screenshot")?;
         let base64_payload = data
             .get("image_base64")
             .and_then(Value::as_str)
@@ -442,7 +472,7 @@ impl BrowserControlService {
                 }),
             )
             .await?;
-        self.extract_data(response, "Browser page read failed")
+        self.extract_data(response, "Browser page read failed", "read_page")
     }
 
     /// Text payloads never exceed the configured character budget, whatever the
@@ -494,28 +524,151 @@ impl BrowserControlService {
         Ok(parsed.to_string())
     }
 
-    fn extract_data(&self, response: BridgeResponse, fallback_error: &str) -> Result<Value> {
+    fn extract_data(
+        &self,
+        response: BridgeResponse,
+        fallback_error: &str,
+        action: &str,
+    ) -> Result<Value> {
         if response.success {
-            Ok(response.data.unwrap_or_else(|| json!({ "ok": true })))
-        } else {
-            let message = format!(
-                "{}: {}",
-                fallback_error,
-                response
-                    .error
-                    .unwrap_or_else(|| "Unknown browser bridge error".to_string())
-            );
-            match response.data {
-                Some(data) => Err(BrowserCommandFailure { message, data }.into()),
-                None => Err(anyhow!(message)),
-            }
+            return Ok(response.data.unwrap_or_else(|| json!({ "ok": true })));
         }
+        let raw = response
+            .error
+            .unwrap_or_else(|| "Unknown browser bridge error".to_string());
+        let summary = compact_browser_error(&raw);
+        // Every failure carries the structured contract, even when the bridge
+        // answered with nothing: downstream turns a bare `{"tool": name}` into
+        // an error the model cannot branch on.
+        let mut data = match response.data {
+            Some(Value::Object(map)) => map,
+            Some(other) => {
+                let mut map = serde_json::Map::new();
+                map.insert("detail".to_string(), other);
+                map
+            }
+            None => serde_json::Map::new(),
+        };
+        // Bridge-supplied fields win: only the browser saw the real net error.
+        for (key, value) in browser_failure_details(action, &raw) {
+            data.entry(key).or_insert(value);
+        }
+        let message = format!("{fallback_error}: {summary}");
+        Err(BrowserCommandFailure {
+            message,
+            data: Value::Object(data),
+        }
+        .into())
+    }
+}
+
+/// Structured companion to a bridge error, shaped like the web_fetch failures so
+/// one branch covers both tools: `code`, the failing host, and a retry verdict.
+fn browser_failure_details(action: &str, error: &str) -> serde_json::Map<String, Value> {
+    let net_error = extract_net_error(error);
+    let code = match net_error.as_deref() {
+        Some("ERR_NAME_NOT_RESOLVED") => "TOOL_BROWSER_DNS_FAILED",
+        Some(code) if is_retryable_net_error(code) => "TOOL_BROWSER_CONNECTION_FAILED",
+        Some(_) => "TOOL_BROWSER_NAVIGATION_FAILED",
+        None if error.contains("timed out") || error.contains("Timeout") => {
+            "TOOL_BROWSER_TIMEOUT"
+        }
+        None => "TOOL_BROWSER_COMMAND_FAILED",
+    };
+    let retryable = matches!(
+        code,
+        "TOOL_BROWSER_CONNECTION_FAILED" | "TOOL_BROWSER_TIMEOUT"
+    );
+    let hint = if retryable {
+        "Retry once, then reach the same resource another way (an API endpoint, or web_fetch)."
+    } else {
+        "The address or the page is the problem; pick a different URL or host."
+    };
+    let mut map = serde_json::Map::new();
+    map.insert("action".to_string(), json!(action));
+    map.insert("code".to_string(), json!(code));
+    map.insert("phase".to_string(), json!("command"));
+    map.insert("retryable".to_string(), json!(retryable));
+    map.insert(
+        "failure_summary".to_string(),
+        json!(compact_browser_error(error)),
+    );
+    map.insert("next_step_hint".to_string(), json!(hint));
+    if let Some(host) = extract_host(error) {
+        map.insert("host".to_string(), json!(host));
+    }
+    if let Some(net_error) = net_error {
+        map.insert("net_error".to_string(), json!(net_error));
+    }
+    if retryable {
+        map.insert("retry_after_ms".to_string(), json!(30_000));
+    }
+    map
+}
+
+/// `net::ERR_*` codes that name a broken transport: the same URL fails again
+/// until the network changes, but a different host may still answer.
+fn is_retryable_net_error(code: &str) -> bool {
+    matches!(
+        code,
+        "ERR_CONNECTION_CLOSED"
+            | "ERR_CONNECTION_REFUSED"
+            | "ERR_CONNECTION_RESET"
+            | "ERR_CONNECTION_TIMED_OUT"
+            | "ERR_CONNECTION_ABORTED"
+            | "ERR_CONNECTION_FAILED"
+            | "ERR_NETWORK_CHANGED"
+            | "ERR_INTERNET_DISCONNECTED"
+            | "ERR_TIMED_OUT"
+            | "ERR_EMPTY_RESPONSE"
+            | "ERR_ADDRESS_UNREACHABLE"
+    )
+}
+
+fn extract_net_error(error: &str) -> Option<String> {
+    let rest = error.split_once("net::")?.1;
+    let code = rest
+        .split(|ch: char| !ch.is_ascii_uppercase() && !ch.is_ascii_digit() && ch != '_')
+        .next()
+        .unwrap_or_default()
+        .to_string();
+    (!code.is_empty()).then_some(code)
+}
+
+/// Host of the first http(s) URL in the message; Playwright names the failing
+/// URL in `Page.goto`, which is the only thing the caller can retry against.
+fn extract_host(error: &str) -> Option<String> {
+    let start = error.find("http")?;
+    let candidate = error[start..]
+        .split(|ch: char| ch.is_whitespace() || ch == '"' || ch == '\'')
+        .next()
+        .unwrap_or_default();
+    Url::parse(candidate).ok()?.host_str().map(ToString::to_string)
+}
+
+/// Drop the Playwright call log: operator detail, not model input. A stack that
+/// repeats the URL three times costs context and teaches the model nothing.
+fn compact_browser_error(error: &str) -> String {
+    let head = error.split("Call log:").next().unwrap_or(error).trim();
+    let first_line = head.lines().next().unwrap_or("").trim();
+    let compact = if first_line.is_empty() { head } else { first_line };
+    if compact.is_empty() {
+        "Unknown browser bridge error".to_string()
+    } else {
+        compact.to_string()
     }
 }
 
 pub fn browser_service(config: &Config) -> &'static BrowserControlService {
     static INSTANCE: OnceLock<BrowserControlService> = OnceLock::new();
     INSTANCE.get_or_init(|| BrowserControlService::new(effective_browser_config(config)))
+}
+
+/// Start the warm pool at process startup instead of on the first browser call,
+/// so the Chromium launch happens while nothing is waiting for it. Safe to call
+/// more than once: the pool only launches what it is missing.
+pub fn prewarm_browser_service(config: &Config) -> usize {
+    browser_service(config).prewarm()
 }
 
 /// Wall-clock budget for one bridge command.
@@ -816,6 +969,7 @@ mod tests {
                     data: Some(json!({"completed_steps":2,"failed_step":3})),
                 },
                 "Browser batch failed",
+                "act",
             )
             .unwrap_err();
         let failure = error
@@ -823,6 +977,110 @@ mod tests {
             .expect("structured failure");
         assert_eq!(failure.data["completed_steps"], 2);
         assert_eq!(failure.data["failed_step"], 3);
+    }
+
+    #[test]
+    fn connection_failure_carries_the_retry_contract() {
+        let service = BrowserControlService::new(effective_browser_config(&Config::default()));
+        let error = service
+            .extract_data(
+                super::BridgeResponse {
+                    success: false,
+                    error: Some(
+                        "Error: Page.goto: net::ERR_CONNECTION_CLOSED at https://github.com/heng30/flymoon\nCall log:\n  - navigating to \"https://github.com/heng30/flymoon\", waiting until \"domcontentloaded\"\n".to_string(),
+                    ),
+                    traceback: None,
+                    data: None,
+                },
+                "Navigate browser failed",
+                "navigate",
+            )
+            .unwrap_err();
+        let failure = error
+            .downcast_ref::<super::BrowserCommandFailure>()
+            .expect("a bare bridge error must still be structured");
+        assert_eq!(failure.data["code"], "TOOL_BROWSER_CONNECTION_FAILED");
+        assert_eq!(failure.data["host"], "github.com");
+        assert_eq!(failure.data["net_error"], "ERR_CONNECTION_CLOSED");
+        assert_eq!(failure.data["retryable"], true);
+        assert_eq!(failure.data["action"], "navigate");
+        // The call log is operator detail: it must not reach the model.
+        assert!(!failure.message.contains("Call log:"));
+        assert!(failure.message.contains("ERR_CONNECTION_CLOSED"));
+    }
+
+    #[test]
+    fn dns_failure_is_not_advertised_as_retryable() {
+        let service = BrowserControlService::new(effective_browser_config(&Config::default()));
+        let error = service
+            .extract_data(
+                super::BridgeResponse {
+                    success: false,
+                    error: Some("Page.goto: net::ERR_NAME_NOT_RESOLVED at https://nope.invalid/".to_string()),
+                    traceback: None,
+                    data: None,
+                },
+                "Navigate browser failed",
+                "navigate",
+            )
+            .unwrap_err();
+        let failure = error
+            .downcast_ref::<super::BrowserCommandFailure>()
+            .expect("structured failure");
+        assert_eq!(failure.data["code"], "TOOL_BROWSER_DNS_FAILED");
+        assert_eq!(failure.data["retryable"], false);
+        assert!(failure.data.get("retry_after_ms").is_none());
+    }
+
+    #[test]
+    fn bridge_supplied_details_win_over_the_derived_ones() {
+        let service = BrowserControlService::new(effective_browser_config(&Config::default()));
+        let error = service
+            .extract_data(
+                super::BridgeResponse {
+                    success: false,
+                    error: Some("boom".to_string()),
+                    traceback: None,
+                    data: Some(json!({"code": "TOOL_BROWSER_TIMEOUT", "phase": "navigation"})),
+                },
+                "Navigate browser failed",
+                "navigate",
+            )
+            .unwrap_err();
+        let failure = error
+            .downcast_ref::<super::BrowserCommandFailure>()
+            .expect("structured failure");
+        assert_eq!(failure.data["code"], "TOOL_BROWSER_TIMEOUT");
+        assert_eq!(failure.data["phase"], "navigation");
+        // Derived fields still fill the gaps the bridge left open.
+        assert_eq!(failure.data["action"], "navigate");
+    }
+
+    #[test]
+    fn error_classification_reads_host_and_net_code() {
+        let error = "Error: Page.goto: net::ERR_CONNECTION_REFUSED at https://example.com/a b";
+        assert_eq!(
+            super::extract_net_error(error).as_deref(),
+            Some("ERR_CONNECTION_REFUSED")
+        );
+        assert_eq!(super::extract_host(error).as_deref(), Some("example.com"));
+        assert!(super::is_retryable_net_error("ERR_CONNECTION_REFUSED"));
+        assert!(!super::is_retryable_net_error("ERR_NAME_NOT_RESOLVED"));
+        assert_eq!(super::extract_net_error("plain failure"), None);
+        assert_eq!(super::extract_host("no url here"), None);
+    }
+
+    #[test]
+    fn compact_error_keeps_one_line_and_drops_the_call_log() {
+        let raw = "Error: Page.goto: net::ERR_CONNECTION_CLOSED at https://a.example\nCall log:\n  - navigating\n";
+        assert_eq!(
+            super::compact_browser_error(raw),
+            "Error: Page.goto: net::ERR_CONNECTION_CLOSED at https://a.example"
+        );
+        assert_eq!(
+            super::compact_browser_error("  \n  "),
+            "Unknown browser bridge error"
+        );
     }
 
     #[test]

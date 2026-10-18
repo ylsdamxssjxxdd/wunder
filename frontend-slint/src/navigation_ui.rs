@@ -324,10 +324,10 @@ fn rebuild_rows(app: &MainWindow) {
                     title: thread.title.clone(),
                     status: thread.status.clone(),
                     active: app.get_cloud_chat_active()
-                        && app.get_cloud_thread_index() == index as i32 + 1,
+                        && app.get_cloud_active_thread_id() == thread.id,
                     payload: index as i32,
                     origin: "cloud".into(),
-                    archivable: false,
+                    archivable: thread_archivable(thread.status.as_str(), false),
                     checked: false,
                 });
             }
@@ -532,7 +532,7 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
             // Pinned cloud row: point the file panel back at the cloud
             // workspace and drop the local selection.
             app.set_selected_workspace(-1);
-            app.set_cloud_chat_active(false);
+            crate::cloud_threads::leave(&app);
             THREAD_SELECTION.with(|slot| slot.borrow_mut().clear());
             app.set_sidebar_selection_mode(false);
             crate::workspace_files::set_target(
@@ -545,6 +545,7 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
         } else if row.kind == 0 {
             let workspace = row.payload;
             let id = row.workspace_id.to_string();
+            let was_cloud = app.get_cloud_chat_active();
             // Selection reveals this workspace's threads, as in the web rail.
             // Clicking the selected row again keeps its tree open.
             EXPANDED.with(|slot| {
@@ -554,7 +555,13 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
             });
             THREAD_SELECTION.with(|slot| slot.borrow_mut().clear());
             app.set_sidebar_selection_mode(false);
-            app.set_cloud_chat_active(false);
+            crate::cloud_threads::leave(&app);
+            if was_cloud {
+                crate::native_chat::prepare_external_timeline(&app);
+                app.set_selected_model_key("".into());
+                app.set_reasoning_effort("default".into());
+                crate::entity_state::restore_agent(&app, app.get_active_agent_id().as_str());
+            }
             app.set_selected_workspace(workspace);
             // Mirror this workspace's folder in the working-directory panel.
             if let Some(card) = app.get_workspaces().row_data(workspace as usize) {
@@ -568,6 +575,9 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
                 }
             }
             crate::navigation_ui::project_sidebar(&app, None);
+            if let Some(index) = app.get_conversations().iter().position(|thread| thread.workspace_id == row.workspace_id) {
+                app.invoke_select_conversation(index as i32);
+            }
         } else if row.kind == 3 {
             app.set_cloud_thread_index(row.payload + 1);
             app.set_cloud_chat_active(true);
@@ -665,6 +675,7 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
         };
         match action {
             0 => {
+                crate::cloud_threads::leave(&app);
                 focus_workspace_of(&app, api.clone(), Some(card.workspace_id.as_str()));
                 app.invoke_new_thread();
             }

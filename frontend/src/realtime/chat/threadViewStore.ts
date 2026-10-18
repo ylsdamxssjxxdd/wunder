@@ -3,16 +3,17 @@
 import { shallowRef, markRaw } from 'vue';
 import type { ProcessActivity } from '@/components/chat/timelineActivity';
 import { reconcileChatQueueRows } from '@/stores/chatQueueLiveState';
+import { cancelThreadBodyHydration, enqueueThreadBodyHydration, resetThreadBodyHydration } from './threadBodyHydration';
 import type { ChatPlan } from './chatPlan';
 import { presentChatInquiry, type ChatInquiryPanel } from './chatInquiry';
 
 export interface ThreadBodyRef { body_id: string; revision: number; bytes: number }
-export interface ViewMessage { item_id: string; content: string; reasoning?: string; created_seq?: number; durable_seq?: number; content_offset?: number; reasoning_offset?: number; tail_offset?: number; body?: ThreadBodyRef; feedback?: unknown; stats?: unknown; tail?: string; failure?: string; attachments?: unknown[]; question_panel?: ChatInquiryPanel | null }
+export interface ViewMessage { item_id: string; content: string; reasoning?: string; created_seq?: number; durable_seq?: number; content_offset?: number; reasoning_offset?: number; tail_offset?: number; body?: ThreadBodyRef; feedback?: unknown; stats?: unknown; tail?: string; failure?: string; attachments?: unknown[]; /** Full body text once the lazy read landed, plus the identity it belongs to. */ hydrated_content?: string; hydrated_body?: string; /** Contiguous local view of a stream; the durable row drops its middle. */ live_content?: string; live_offset?: number; question_panel?: ChatInquiryPanel | null }
 export interface ChatViewRow { root_turn_id: string; execution_turn_id?:string; user_round: number; client_message_id?: string; revision: number; status: string; stop_reason?: string | null; queued_input?: { queue_id: string; reason: string; priority: number } | null; user: ViewMessage; assistant: ViewMessage; workflow_count: number; workspace_change_seq?: number; reasoning_count?: number; reasoning_item_id?: string; process_activity?: ProcessActivity; failed_count: number; subagents?: any[]; plan?: ChatPlan | null }
 export interface ThreadViewPage { runtime_status?:string;active_turn_id?:string; session_id: string; epoch: number; view_seq: number; projection_state: string; degraded?: boolean; diagnostic?: string | null; thread_empty: boolean | null; latest_round: number; chat: ChatViewRow[]; trajectory: any[]; tiles: any[]; tile_level: number; next_before: number | null; has_more: boolean; next_after?: number | null; has_newer?: boolean }
 export type ViewPhase = 'opening' | 'ready' | 'verified_empty' | 'refreshing' | 'error';
 export interface ViewSlot { key: string; rootTurnId: string; user: Record<string, any>; assistant: Record<string, any> }
-interface Entry { phase: ViewPhase; epoch: number; seq: number; generation: number; rows: Map<string, ChatViewRow>; slots: Map<string, ViewSlot>; order: string[]; next: number | null; more: boolean; bytes: number; error: string; atLatest: boolean; latestRound: number; latestStatus: string; headSeq: number; activeTurnId: string; headAuthoritative: boolean; submissionHead?: { id: string; seq: number } }
+interface Entry { key: string; phase: ViewPhase; epoch: number; seq: number; generation: number; rows: Map<string, ChatViewRow>; slots: Map<string, ViewSlot>; order: string[]; next: number | null; more: boolean; bytes: number; error: string; atLatest: boolean; latestRound: number; latestStatus: string; headSeq: number; activeTurnId: string; headAuthoritative: boolean; submissionHead?: { id: string; seq: number } }
 const entries = new Map<string, Entry>();
 export const threadViewClock = shallowRef(0);
 const MAX_BYTES = 48 * 1024 * 1024;
@@ -21,7 +22,7 @@ let activeKey = '';
 let nextGeneration = 0;
 function entry(key: string): Entry {
   let e = entries.get(key);
-  if (!e) { e = { phase: 'opening', epoch: 0, seq: 0, generation: 0, rows: new Map(), slots: new Map(), order: [], next: null, more: false, bytes: 0, error: '', atLatest: true, latestRound: 0, latestStatus: 'idle', headSeq: -1, activeTurnId: '', headAuthoritative: false }; entries.set(key, e); }
+  if (!e) { e = { key, phase: 'opening', epoch: 0, seq: 0, generation: 0, rows: new Map(), slots: new Map(), order: [], next: null, more: false, bytes: 0, error: '', atLatest: true, latestRound: 0, latestStatus: 'idle', headSeq: -1, activeTurnId: '', headAuthoritative: false }; entries.set(key, e); }
   return e;
 }
 let tailTimer:ReturnType<typeof setTimeout>|null=null;
@@ -53,7 +54,9 @@ function materialize(row: ChatViewRow): ViewSlot {
   const running = ['accepted','running','queued','waiting_input','waiting_approval'].includes(row.status);
   const make = (role: string, m: ViewMessage) => markRaw({ id: `tturn:${row.root_turn_id}:${role}`, role, content: m.content, item_id: m.item_id,
     turn_id: row.execution_turn_id??row.root_turn_id, root_turn_id: row.root_turn_id, user_round: row.user_round, client_message_id: row.client_message_id,
-    __runtime_projected: true, __thread_view:true, final: !running, state:role==='assistant'?(running?'streaming':row.status==='completed'?'final':row.status):'final', __thread_body: m.body, __thread_preview: Boolean(m.body && m.body.bytes > new TextEncoder().encode(m.content).length),
+    __runtime_projected: true, __thread_view:true, final: !running, state:role==='assistant'?(running?'streaming':row.status==='completed'?'final':row.status):'final',
+    // Only a still-truncated body needs an explicit read; copy falls back to it.
+    __thread_body: Boolean(m.body && m.body.bytes > new TextEncoder().encode(m.content).length) ? m.body : undefined,
     streaming: role === 'assistant' && running, status: role === 'assistant' ? row.status : 'completed',
     stop_reason: row.stop_reason, queued_input: row.queued_input, workspace_change_seq: row.workspace_change_seq ?? 0,
     // The process badge counts every visible process entry.  The server keeps
@@ -61,7 +64,8 @@ function materialize(row: ChatViewRow): ViewSlot {
     workflow_count: row.workflow_count, reasoning_count: Number(row.reasoning_count || 0), reasoning_item_id: row.reasoning_item_id || '', process_count: row.workflow_count + Number(row.reasoning_count || 0) + (role === 'assistant' && String(m.reasoning || '').trim() && !Number(row.reasoning_count || 0) ? 1 : 0), workflow_failed_count: row.failed_count, feedback: m.feedback, stats: m.stats, reasoning: m.reasoning || '',
     process_activity: row.process_activity?.kind ? row.process_activity : undefined,
     __thread_tail: m.tail, failureDetail:m.failure, attachments:m.attachments,
-    __thread_tail_offset: m.tail_offset,
+    __thread_tail_offset: m.tail_offset, __thread_content_offset: m.content_offset,
+    __thread_live: m.live_content, __thread_live_offset: m.live_offset,
     workflowItems: [], ...(role==='assistant'?{plan:row.plan ?? null,questionPanel:presentChatInquiry(m.question_panel,row.status)}:{}), ...(role==='assistant'&&Array.isArray(row.subagents)&&row.subagents.length>0?{subagents:row.subagents}:{}), failed: role === 'assistant' && ['failed','rejected'].includes(row.status), stopped: row.status === 'cancelled' });
   return markRaw({ key: row.client_message_id ? `turn:client:${row.client_message_id}` : `turn:${row.root_turn_id}`, rootTurnId: row.root_turn_id, user: make('user', row.user), assistant: make('assistant', row.assistant) });
 }
@@ -101,6 +105,98 @@ function mergeTail(previous: ViewMessage, next: ViewMessage): ViewMessage {
   }
   return { ...next, tail: merged.length > 2048 ? merged.slice(-2048) : merged, tail_offset: end };
 }
+/**
+ * Projection rows carry a bounded preview plus a `BodyRef`. The durable body is
+ * read lazily and written back into the row, so every answer renders through
+ * the ordinary Markdown pipeline (code blocks, tables, workspace links) instead
+ * of collapsing into plain text behind an expand control.
+ */
+type BodyRole = 'user' | 'assistant';
+const LIVE_ROW_STATUSES = ['accepted','running','queued','waiting_input','waiting_approval'];
+const bodyToken = (message: ViewMessage | undefined): string =>
+  message?.body ? `${message.body.body_id}@${message.body.revision}` : '';
+const bodyBytes = (text: string): number => new TextEncoder().encode(text).length;
+/** A streamed answer has two local extensions: the contiguous
+ *  text (`live_content`) and the lazy durable body (`hydrated_content`).
+ *  Both live outside the server's bounded preview and must survive later
+ *  pushes of the same row. */
+function keepLocalBody(previous: ViewMessage | undefined, next: ViewMessage): ViewMessage {
+  if (!previous) return next;
+  let out = next;
+  const token = bodyToken(next);
+  const hydrated = previous.hydrated_content;
+  if (hydrated && token && previous.hydrated_body === token &&
+      String(next.content || '').length < hydrated.length) {
+    const units = utf16Units(hydrated);
+    out = { ...out, content: hydrated, content_offset: units, tail: '', tail_offset: units,
+      hydrated_content: hydrated, hydrated_body: token };
+  }
+  // Only the same item continues the same stream; a new item starts empty.
+  if (previous.live_content && previous.item_id === next.item_id) {
+    out = { ...out, live_content: previous.live_content, live_offset: previous.live_offset };
+  }
+  return out;
+}
+/** Reset the local stream view once the durable body is authoritative. */
+function clearLiveStream(message: ViewMessage): ViewMessage {
+  return { ...message, live_content: '', live_offset: undefined, tail: '', tail_offset: utf16Units(message.content) };
+}
+function scheduleBodyHydration(e: Entry, id: string, role: BodyRole): void {
+  const row = e.rows.get(id);
+  const message = row?.[role];
+  if (!row || !message?.body || LIVE_ROW_STATUSES.includes(row.status)) return;
+  if (message.body.bytes <= bodyBytes(String(message.content || ''))) return;
+  const token = `${bodyToken(message)}:${role}:${id}`;
+  void enqueueThreadBodyHydration({
+    sessionId: e.key,
+    bodyId: message.body.body_id,
+    revision: message.body.revision,
+    token
+  }).then((content) => applyBodyHydration(e.key, id, role, token, content));
+}
+function applyBodyHydration(key: string, id: string, role: BodyRole, expected: string, content: string | null): void {
+  if (!content) return;
+  const e = entries.get(key);
+  const row = e?.rows.get(id);
+  if (!e || !row) return;
+  const message = row[role];
+  // A newer revision or another body already replaced the read target.
+  if (!message?.body || `${bodyToken(message)}:${role}:${id}` !== expected) return;
+  const units = utf16Units(content);
+  row[role] = { ...clearLiveStream(message), content, content_offset: units, tail: '', tail_offset: units,
+    hydrated_content: content, hydrated_body: bodyToken(message) };
+  e.slots.set(id, materialize(row));
+  notify();
+}
+/** Maximum characters retained for the local stream view of one answer. */
+const LIVE_STREAM_MAX_CHARS = 262144;
+/**
+ * The durable row keeps a 2 KB head plus a 2 KB tail window, so the middle of a
+ * long answer disappears as the stream advances — the body shrinks mid-output
+ * and grows again. Accumulating deltas locally restores one contiguous text.
+ * A gap in the offset sequence means frames were lost: drop the local view and
+ * wait for the next durable block instead of inventing the missing piece.
+ */
+function accumulateLiveStream(message: ViewMessage, delta: string, expected: number, deltaUnits: number): Partial<ViewMessage> {
+  const append = (prefix: string) => {
+    const next = prefix + delta;
+    return {
+      live_content: next.length > LIVE_STREAM_MAX_CHARS ? next.slice(-LIVE_STREAM_MAX_CHARS) : next,
+      live_offset: expected + deltaUnits
+    };
+  };
+  if (Number(message.live_offset) === expected) return append(String(message.live_content ?? ''));
+  // Joining a stream already in flight: the durable preview is its prefix
+  // whenever it covers exactly the offset the next frame starts from.
+  const preview = String(message.content || '');
+  if (!String(message.live_content ?? '') && utf16Units(preview) === expected) return append(preview);
+  return { live_content: '', live_offset: undefined };
+}
+function carryLocalBody(row: ChatViewRow, previous: ChatViewRow | undefined): ChatViewRow {
+  if (!previous) return row;
+  // The durable row never carries local accumulation; re-attach it per role.
+  return { ...row, user: keepLocalBody(previous.user, row.user), assistant: keepLocalBody(previous.assistant, row.assistant) };
+}
 function merge(e: Entry, row: ChatViewRow) {
   const old = e.rows.get(row.root_turn_id);
   if (old && old.revision >= row.revision) return;
@@ -135,7 +231,10 @@ function merge(e: Entry, row: ChatViewRow) {
         body:row.assistant.body?{...row.assistant.body,bytes:Math.max(row.assistant.body.bytes,old.assistant.body?.bytes??0)}:old.assistant.body}};
     }
   }
+  row = carryLocalBody(row, previous);
   e.rows.set(row.root_turn_id, markRaw(row)); e.slots.set(row.root_turn_id, materialize(row));
+  scheduleBodyHydration(e, row.root_turn_id, 'assistant');
+  scheduleBodyHydration(e, row.root_turn_id, 'user');
   if (!old) e.order.push(row.root_turn_id);
   if (row.client_message_id) {
     const pending = `pending:${row.client_message_id}`;
@@ -289,8 +388,8 @@ export function submitThreadView(key:string,client:string,content:string) { cons
   const queued = ['accepted','running','queued','waiting_input','waiting_approval'].includes(threadViewStatus(key) || '');
   if (!queued) e.submissionHead = { id, seq: e.headSeq };
   merge(e,{root_turn_id:id,user_round:Math.max(e.latestRound,...[...e.rows.values()].map(r=>r.user_round))+1,client_message_id:client,revision:-1,status:queued?'queued':'accepted',user:{item_id:'',content},assistant:{item_id:'',content:''},workflow_count:0,failed_count:0});e.phase='ready';bound(e);notify(); }
-export function resetThreadViews(){entries.clear();notify();}
-export function clearThreadView(key:string) {entries.delete(key);notify();}
+export function resetThreadViews(){entries.clear();resetThreadBodyHydration();notify();}
+export function clearThreadView(key:string) {entries.delete(key);cancelThreadBodyHydration(key);notify();}
 export function threadViewStatus(key:string):string|null {
   void threadViewClock.value;const e=entries.get(key);if(!e)return null;
   // A fresh submission bridges its previously observed head only. Later
@@ -374,6 +473,10 @@ export function applyThreadViewTail(key:string,payload:any):boolean {
     // Do not invent a contiguous answer across lost, duplicated or reordered tails.
     // The next durable block supplies an authoritative prefix/tail and offset.
     if(!Number.isSafeInteger(offset)||offset!==expected)return true;
+    const deltaUnits = [...delta].reduce((n, ch) => n + ch.length, 0);
+    // Read before the durable head/tail are rewritten: a seed compares the
+    // previous head against the offset this frame starts from.
+    const live = accumulateLiveStream(row.assistant, delta, expected, deltaUnits);
     const encoder=new TextEncoder();
     const prefix=(s:string)=>{let out='',bytes=0;for(const ch of s){const n=encoder.encode(ch).length;if(bytes+n>2048)break;out+=ch;bytes+=n;}return out;};
     if(offset===row.assistant.content.length && encoder.encode(row.assistant.content).length<2048) {
@@ -382,9 +485,9 @@ export function applyThreadViewTail(key:string,payload:any):boolean {
       const tail=(row.assistant.tail??'')+delta;let out='',bytes=0;for(const ch of [...tail].reverse()){const n=encoder.encode(ch).length;if(bytes+n>2048)break;out=ch+out;bytes+=n;}
       row.assistant={...row.assistant,tail:out};
     }
-    const deltaUnits = [...delta].reduce((n, ch) => n + ch.length, 0);
     advanceTailActivity(row, 'responding');
     row.assistant={...row.assistant,content_offset:expected+deltaUnits,
+      ...live,
       tail_offset: expected + deltaUnits,
       body:row.assistant.body?{...row.assistant.body,bytes:row.assistant.body.bytes+encoder.encode(delta).length}:undefined};
     e.slots.set(row.root_turn_id,materialize(row));notifyTail();return true;

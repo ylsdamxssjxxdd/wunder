@@ -9,6 +9,7 @@ import { MarkdownBlock } from "markdown.slint";
 import { PatchDiffCard } from "patch_diff_card.slint";
 import { WorkflowDetail } from "workflow_detail.slint";
 import { ToolIcons } from "tool_icons.slint";
+import { ProcessStatusIcon } from "status_icon.slint";
 import { ToolProcess } from "tool_process.slint";
 import { ScrollView } from "std-widgets.slint";
 
@@ -18,9 +19,18 @@ import { ScrollView } from "std-widgets.slint";
 // classes: stopwatch / gauge-high / layer-group / bolt / screwdriver-wrench.
 // Kept out of ToolIcons because these are message statistics, not tools.
 export global StatsIcons {
+    public pure function is-live(key: string) -> bool {
+        key.starts-with("status-") && key != "status-error" && key != "status-stopped";
+    }
     public pure function image(key: string) -> image {
         key == "hashtag" ? @image-url("../assets/icons/hashtag.svg") :
         key == "status-running" ? @image-url("../assets/icons/rotate-right.svg") :
+        key == "status-requesting" ? @image-url("../assets/icons/paper-plane.svg") :
+        key == "status-outputting" ? @image-url("../assets/icons/comment-dots.svg") :
+        key == "status-tool" ? @image-url("../assets/icons/screwdriver-wrench.svg") :
+        key == "status-subagent" ? @image-url("../assets/icons/fa-diagram-project.svg") :
+        key == "status-compacting" ? @image-url("../assets/icons/fa-compress.svg") :
+        key == "status-queued" ? @image-url("../assets/icons/fa-clock.svg") :
         key == "status-stopped" ? @image-url("../assets/icons/stop.svg") :
         key == "status-error" ? @image-url("../assets/icons/xmark.svg") :
         key == "status-waiting" ? @image-url("../assets/icons/fa-circle-question.svg") :
@@ -36,6 +46,16 @@ export global StatsIcons {
     // key is resolved through the same branch chain as the icon.
     public pure function label(key: string) -> string {
         key == "hashtag" ? I18n.tl_stat_round :
+        key == "status-running" ? I18n.tl_status_running :
+        key == "status-requesting" ? I18n.tl_status_requesting :
+        key == "status-outputting" ? I18n.tl_status_outputting :
+        key == "status-tool" ? I18n.tl_status_tool :
+        key == "status-subagent" ? I18n.tl_status_subagent :
+        key == "status-compacting" ? I18n.tl_status_compacting :
+        key == "status-queued" ? I18n.tl_status_queued :
+        key == "status-stopped" ? I18n.tl_status_stopped :
+        key == "status-error" ? I18n.tl_status_error :
+        key == "status-waiting" ? I18n.tl_status_waiting :
         key == "coins" ? I18n.tl_stat_credits :
         key == "stopwatch" ? I18n.tl_stat_duration :
         key == "gauge-high" ? I18n.tl_stat_speed :
@@ -45,6 +65,16 @@ export global StatsIcons {
         key;
     }
     public pure function hint(key: string) -> string {
+        key == "status-running" ? I18n.tl_status_running :
+        key == "status-requesting" ? I18n.tl_status_requesting :
+        key == "status-outputting" ? I18n.tl_status_outputting :
+        key == "status-tool" ? I18n.tl_status_tool :
+        key == "status-subagent" ? I18n.tl_status_subagent :
+        key == "status-compacting" ? I18n.tl_status_compacting :
+        key == "status-queued" ? I18n.tl_status_queued :
+        key == "status-stopped" ? I18n.tl_status_stopped :
+        key == "status-error" ? I18n.tl_status_error :
+        key == "status-waiting" ? I18n.tl_status_waiting :
         key == "gauge-high" ? I18n.tl_stat_speed_hint :
         key == "layer-group" ? I18n.tl_stat_context_hint :
         StatsIcons.label(key);
@@ -60,6 +90,7 @@ export global EntryKind {
     out property <int> group: 4;
     out property <int> subagent: 5;
     out property <int> process: 6;
+    out property <int> footer: 7;
 }
 
 // One shared rotation driver for every running spinner; a single timer in the
@@ -73,31 +104,8 @@ export global TimelineMetrics {
 // Status icon, matching the web entry row: a 12px outlined circle with a check
 // (done) or cross (failed), and a plain grey spinner while running. The old
 // filled green/red dot read as a status light; the outline reads as a tick.
-component StatusDot inherits Rectangle {
-    in property <int> status: 0;
-    in property <int> phase: 0;
-    width: 12px; height: 12px;
-    Rectangle {
-        visible: root.status != 1;
-        width: 12px; height: 12px; border-radius: 6px;
-        background: transparent;
-        border-width: 1px;
-        border-color: root.status == 2 ? Theme.danger : Theme.timeline-entry-soft;
-        Image {
-            x: 2px; y: 2px; width: 8px; height: 8px;
-            source: root.status == 2 ? @image-url("../assets/icons/xmark.svg") : @image-url("../assets/icons/check.svg");
-            colorize: root.status == 2 ? Theme.danger : Theme.muted; image-fit: contain;
-        }
-    }
-    Image {
-        visible: root.status == 1;
-        width: 12px; height: 12px;
-        source: @image-url("../assets/icons/rotate-right.svg");
-        colorize: Theme.muted; image-fit: contain;
-        // The software renderer keeps SVG transforms crisp at this size; the
-        // shared 120ms clock gives every running row one coherent phase.
-        transform-rotation: (TimelineSpin.angle + root.phase * 30.0) * 1deg;
-    }
+component StatusDot inherits ProcessStatusIcon {
+    in property <int> phase;
 }
 
 // Disclosure arrow: 0 collapsed, 90 expanded.
@@ -184,21 +192,40 @@ component UserBubble inherits HorizontalLayout {
 
 component FooterMetric inherits Rectangle {
     in property <TurnStatMetric> metric;
+    private property <bool> is-status: root.metric.key.starts-with("status-");
+    private property <bool> live: StatsIcons.is-live(root.metric.key);
+    private property <bool> warning: root.metric.key == "status-waiting" || root.metric.key == "status-compacting";
+    private property <bool> muted: root.metric.key == "status-queued" || root.metric.key == "status-stopped";
+    private property <color> tone: root.metric.key == "status-error" ? #dc2626
+        : root.warning ? #d97706 : root.muted ? #64748b : root.is-status ? #2563eb : Theme.muted;
+    private property <float> pulse: root.live ? 0.5 - 0.5 * cos(TimelineSpin.angle * 1deg) : 0;
     width: metric-row.preferred-width; height: 22px;
+    border-radius: 11px;
+    border-width: root.is-status ? 1px : 0px;
+    border-color: root.tone.with-alpha(0.2);
+    background: !root.is-status ? transparent : root.metric.key == "status-error" ? #fef2f2
+        : root.warning ? #fff7ed : root.muted ? #f8fafc : #eff6ff;
     accessible-role: text;
     accessible-label: StatsIcons.label(root.metric.key) + " " + root.metric.value;
     metric-row := HorizontalLayout {
-        spacing: 5px; alignment: start;
-        Image {
-            y: 5px; width: 12px; height: 12px;
-            source: StatsIcons.image(root.metric.key); colorize: Theme.muted; image-fit: contain;
-            // The footer owns the live request/tool phase as well. Share the
-            // process clock so the glyph reads exactly like a running entry.
-            transform-rotation: root.metric.key == "status-running" ? TimelineSpin.angle * 1deg : 0deg;
+        padding-left: root.is-status ? 8px : 0px;
+        padding-right: root.is-status ? 8px : 0px;
+        spacing: root.is-status ? 6px : 4px; alignment: start;
+        Rectangle {
+            width: 12px; height: 22px;
+            Image {
+                // Fixed outer slot: pulse never invalidates the footer layout.
+                width: 12px * (root.live ? 0.94 + 0.14 * root.pulse : 1);
+                height: self.width; x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2 - root.pulse * 1px;
+                source: StatsIcons.image(root.metric.key); colorize: root.tone;
+                opacity: root.live ? 0.58 + 0.42 * root.pulse : 0.9;
+            }
         }
         Text {
             height: 22px; text: root.metric.key == "hashtag" ? I18n.tl_user_round(root.metric.value) : root.metric.value;
-            color: root.metric.key == "status-error" ? Theme.danger : Theme.muted; font-size: Theme.font-xs; vertical-alignment: center;
+            color: root.is-status ? root.tone : Theme.text;
+            font-size: Theme.font-xs; font-weight: root.is-status ? 600 : 400; vertical-alignment: center;
         }
     }
     Tooltip { text: @markdown("\{StatsIcons.hint(root.metric.key)}"); }
@@ -208,14 +235,15 @@ component FooterMetric inherits Rectangle {
 component FooterStats inherits Rectangle {
     in property <[TurnStatMetric]> metrics;
     in property <length> available-width;
+    private property <bool> live: root.metrics.length > 0 && StatsIcons.is-live(root.metrics[0].key);
     min-width: 0px; preferred-width: 0px;
-    height: footer-column.preferred-height;
+    height: root.live ? 22px : footer-column.preferred-height;
+    if root.live : FooterMetric { x: 0px; y: 0px; metric: root.metrics[0]; }
     footer-column := FlexboxLayout {
+        visible: !root.live;
         width: root.available-width;
         spacing-horizontal: 12px; spacing-vertical: 0px; alignment: start;
-        for metric in root.metrics : FooterMetric {
-            metric: metric;
-        }
+        for metric in root.metrics : FooterMetric { metric: metric; }
     }
 }
 
@@ -225,70 +253,54 @@ component BodyBlock inherits Rectangle {
     callback copy-text(string);
     callback open-resource(string);
     height: body-column.preferred-height;
-    // No background tint for this block: an answer can be a screenful of text,
-    // and painting all of it on hover reads as the whole page changing colour.
-    // The hover only reveals the actions, as on the web.
-    // The block's own content is a *child* of this TouchArea, not a sibling:
-    // the hover-revealed copy button is a touch area too, and a
-    // sibling overlay hands the hover path over to them the moment the pointer
-    // reaches one. The buttons then hide, the path comes back, and the whole
-    // answer block flashes at the rate the pointer moves. As an ancestor the
-    // block keeps its hover while any descendant holds the pointer.
-    body-hover := TouchArea {
-        body-column := VerticalLayout {
-            padding-left: Theme.timeline-padding; padding-right: Theme.timeline-padding; padding-top: 6px; padding-bottom: 6px;
-            spacing: 8px;
-            body-text := VerticalLayout {
-                spacing: 6px;
-                if root.data.blocks.length == 0 && root.data.text != "" : TextInput {
-                    text: root.data.text; color: Theme.text; font-size: Theme.font-lg;
-                    read-only: true; wrap: word-wrap;
-                }
-                for block in root.data.blocks : MarkdownBlock {
-                    block: block;
-                    copy-code(text) => { root.copy-text(text); }
-                    open-resource(path) => { root.open-resource(path); }
+    body-column := VerticalLayout {
+        padding-left: Theme.timeline-padding; padding-right: Theme.timeline-padding;
+        padding-top: 6px; padding-bottom: 6px; spacing: 6px;
+        if root.data.blocks.length == 0 && root.data.text != "" : TextInput {
+            text: root.data.text; color: Theme.text; font-size: Theme.font-lg;
+            read-only: true; wrap: word-wrap;
+        }
+        for block in root.data.blocks : MarkdownBlock {
+            block: block;
+            copy-code(text) => { root.copy-text(text); }
+            open-resource(path) => { root.open-resource(path); }
+        }
+    }
+}
+
+// A turn owns its footer even when its text is empty or inside the process.
+component TurnFooter inherits Rectangle {
+    in property <TimelineRow> data;
+    callback copy-text(string);
+    callback copy-original(string);
+    function copy-answer() {
+        if root.data.id.starts-with("cloud-footer-") { root.copy-original(root.data.summary); }
+        else { root.copy-text(root.data.text); }
+    }
+    height: footer-row.preferred-height + 8px;
+    footer-row := HorizontalLayout {
+        x: Theme.timeline-padding; y: 4px; width: parent.width - 2 * Theme.timeline-padding;
+        spacing: 8px;
+        FooterStats { metrics: root.data.stats; available-width: root.width - 2 * Theme.timeline-padding - 30px; horizontal-stretch: 1; }
+        Rectangle {
+            visible: root.data.text != "";
+            width: 22px; height: 22px; border-radius: Theme.radius-tag;
+            accessible-role: button; accessible-label: I18n.common_copy;
+            accessible-action-default => { root.copy-answer(); }
+            forward-focus: copy-focus;
+            background: copy-area.has-hover ? Theme.selected : transparent;
+            Image {
+                x: 5px; y: 5px; width: 12px; height: 12px;
+                source: @image-url("../assets/icons/copy.svg"); colorize: Theme.muted;
+            }
+            copy-focus := FocusScope {
+                key-pressed(event) => {
+                    if event.text == " " || event.text == Key.Return { root.copy-answer(); return accept; }
+                    return reject;
                 }
             }
-            // The end-of-turn line: metrics on the left, actions on the right.
-            // It stays visible for a frozen block (no hover needed) because it is
-            // also the only place the turn's duration and speed are reported; a
-            // streaming block has neither and stays free of controls so the text
-            // never jumps while tokens arrive.
-            // Each metric is icon + value with the label as the tooltip, matching
-            // the web messenger's stats row.
-            if root.data.foldable || root.data.stats.length > 0 : HorizontalLayout {
-                spacing: 8px;
-                FooterStats { metrics: root.data.stats; available-width: root.width - 2 * Theme.timeline-padding - 60px; horizontal-stretch: 1; }
-                copy-hit := Rectangle {
-                    visible: root.data.text != "";
-                    width: 52px; height: 22px; border-radius: Theme.radius-tag;
-                    // The web messenger keeps the actions out of the reading flow
-                    // until the block is hovered; the metrics line stays put.
-                    opacity: body-hover.has-hover || copy-focus.has-focus ? 1 : 0;
-                    accessible-role: button; accessible-label: I18n.common_copy;
-                    accessible-action-default => { root.copy-text(root.data.text); }
-                    forward-focus: copy-focus;
-                    background: copy-area.has-hover ? Theme.selected : transparent;
-                    Image {
-                        x: 8px; y: 5px; width: 12px; height: 12px;
-                        source: @image-url("../assets/icons/copy.svg"); colorize: Theme.muted; image-fit: contain;
-                    }
-                    Text {
-                        x: 24px; y: 0px; width: self.preferred-width; height: parent.height;
-                        text: I18n.common_copy; color: Theme.muted; font-size: Theme.font-xs;
-                        vertical-alignment: center;
-                    }
-                    copy-focus := FocusScope {
-                        key-pressed(event) => {
-                            if event.text == " " || event.text == Key.Return { root.copy-text(root.data.text); return accept; }
-                            return reject;
-                        }
-                    }
-                    copy-area := TouchArea { mouse-cursor: pointer; clicked => { copy-focus.focus(); root.copy-text(root.data.text); } }
-                    Tooltip { text: @markdown("\{I18n.common_copy}"); }
-                }
-            }
+            copy-area := TouchArea { mouse-cursor: pointer; clicked => { copy-focus.focus(); root.copy-answer(); } }
+            Tooltip { text: @markdown("\{I18n.common_copy}"); }
         }
     }
 }
@@ -650,6 +662,7 @@ export component TimelineRowView inherits Rectangle {
     callback toggle(int);
     callback process-page(int, int);
     callback copy-text(string);
+    callback copy-original(string);
     callback open-resource(string);
     callback open-subagent(string);
     callback stop-subagent(string);
@@ -685,6 +698,11 @@ export component TimelineRowView inherits Rectangle {
             data: root.entry;
             copy-text(text) => { root.copy-text(text); }
             open-resource(path) => { root.open-resource(path); }
+        }
+        if root.shown && root.entry.kind == EntryKind.footer : TurnFooter {
+            data: root.entry;
+            copy-text(text) => { root.copy-text(text); }
+            copy-original(id) => { root.copy-original(id); }
         }
         if root.shown && (root.entry.kind == EntryKind.reason || root.entry.kind == EntryKind.tool) : FoldEntry {
             data: root.entry;
@@ -732,6 +750,7 @@ export component TimelineView inherits Rectangle {
     callback toggle(int);
     callback process-page(int, int);
     callback copy-text(string);
+    callback copy-original(string);
     callback open-resource(string);
     callback open-subagent(string);
     callback stop-subagent(string);
@@ -761,9 +780,12 @@ export component TimelineView inherits Rectangle {
             rows-scroll.visible-height / 2 - fraction * rows-scroll.content-height,
             rows-scroll.visible-height - rows-scroll.content-height, 0px);
     }
+    private property <[TurnStatMetric]> tail-stats: root.rows.length > 0
+        && root.rows[root.rows.length - 1].kind == EntryKind.footer ? root.rows[root.rows.length - 1].stats : [];
+    private property <bool> live-footer: root.tail-stats.length > 0 && StatsIcons.is-live(root.tail-stats[0].key);
     spin-timer := Timer {
-        interval: 120ms; running: root.spinning;
-        triggered => { TimelineSpin.angle = Math.mod(TimelineSpin.angle + 30.0, 360.0); }
+        interval: 30ms; running: root.spinning || root.live-footer;
+        triggered => { TimelineSpin.angle = Math.mod(TimelineSpin.angle + 9.0, 360.0); }
     }
     // A streamed line is laid out after the frame that triggered it. Follow on
     // two subsequent frames only after content changed. A permanently running
@@ -814,7 +836,8 @@ export component TimelineView inherits Rectangle {
                 toggle(target) => { root.toggle(target); }
                 process-page(index, direction) => { root.process-page(index, direction); }
                 copy-text(text) => { root.copy-text(text); }
-                    open-resource(id) => { root.open-resource(id); }
+                copy-original(id) => { root.copy-original(id); }
+                open-resource(id) => { root.open-resource(id); }
                 open-subagent(id) => { root.open-subagent(id); }
                 stop-subagent(id) => { root.stop-subagent(id); }
             }

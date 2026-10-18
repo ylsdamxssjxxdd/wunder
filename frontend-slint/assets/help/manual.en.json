@@ -326,7 +326,7 @@
           "kind": "lead",
           "spans": [
             {
-              "text": "One engine is shipped as several program forms; the difference is only in the access layer. The table below lists each form's tech stack, purpose, run model and OS support.",
+              "text": "wunder is an agent scheduling platform. One engine is shipped as several program forms; the difference is only in the access layer.",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -866,57 +866,6 @@
               "href": ""
             }
           ]
-        },
-        {
-          "kind": "h2",
-          "spans": [
-            {
-              "text": "Further reading",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "list",
-          "marker": "•",
-          "spans": [
-            {
-              "text": "wunder home",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "list",
-          "marker": "•",
-          "spans": [
-            {
-              "text": "Manual overview",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "list",
-          "marker": "•",
-          "spans": [
-            {
-              "text": "Quickstart",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
         }
       ]
     },
@@ -947,35 +896,7 @@
           "kind": "lead",
           "spans": [
             {
-              "text": "The Pupa (desktop) is wunder's desktop edition and the ",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": "default way to work",
-              "bold": true,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": ": a ",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": "local AI workbench",
-              "bold": true,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": ". It needs no Hull (server) deployment. It calls the engine natively in-process, has no port of its own, and routes through no HTTP/WebSocket relay.",
+              "text": "It calls the engine natively in-process, has no port of its own, and routes through no HTTP/WebSocket relay. Individual users install just this — there is no Hull (server) to deploy first.",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -987,7 +908,7 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "When to choose the Pupa",
+              "text": "Prerequisites",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -1208,10 +1129,34 @@
           ]
         },
         {
+          "kind": "paragraph",
+          "spans": [
+            {
+              "text": "The Pupa covers single-user local scenarios; sharing among several people runs through the Hull and the Beehive.",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
           "kind": "h2",
           "spans": [
             {
               "text": "Install and launch",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "paragraph",
+          "spans": [
+            {
+              "text": "Download the installer for your system from Releases.",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -1547,19 +1492,7 @@
               "href": ""
             },
             {
-              "text": " across. On startup it scans the work tree (up to 4096 items), restores the state of unfinished tasks from last time, and clears session locks and leftover tasks.",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "h2",
-          "spans": [
-            {
-              "text": "Interface layout (the main window has only two pages)",
+              "text": " across. \"Local first\" means data stays on your machine; it doesn't affect reaching remote models or web pages.",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -1571,7 +1504,31 @@
           "kind": "paragraph",
           "spans": [
             {
-              "text": "The main window has only two pages, Chat and Settings; everything else hangs off them as panels and dialogs.",
+              "text": "On startup it scans the work tree (up to 4096 items), restores the state of unfinished tasks from last time, and clears session locks and leftover tasks.",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "h2",
+          "spans": [
+            {
+              "text": "Interface layout",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "paragraph",
+          "spans": [
+            {
+              "text": "The main window has two switchable pages, Chat and Settings; everything else hangs off them as panels and dialogs.",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -1774,7 +1731,7 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "Get running in 5 steps",
+              "text": "First run",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -1786,31 +1743,7 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "1. Download and install",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "paragraph",
-          "spans": [
-            {
-              "text": "Download the installer for your system from Releases.",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "h2",
-          "spans": [
-            {
-              "text": "2. First launch",
+              "text": "Launch preparation",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -1834,7 +1767,7 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "3. Configure the model",
+              "text": "Model configuration",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -1937,7 +1870,7 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "4. Complete your account profile",
+              "text": "Account profile",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -1961,7 +1894,7 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "5. Start your first conversation",
+              "text": "First conversation",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -2011,7 +1944,19 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "What only the Pupa can do",
+              "text": "Capabilities unique to the Pupa",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "paragraph",
+          "spans": [
+            {
+              "text": "None of these exist on the Beehive, the Bridge, or the Helm:",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -2102,7 +2047,7 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "About device interlink",
+              "text": "Device interlink surfaces",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -2220,7 +2165,7 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "One-click workspace state reset",
+              "text": "Resetting the working state",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -2310,7 +2255,19 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "Two interaction constraints",
+              "text": "Interaction constraints",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "paragraph",
+          "spans": [
+            {
+              "text": "Two default behaviors are worth separating:",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -2357,213 +2314,6 @@
               "href": ""
             }
           ]
-        },
-        {
-          "kind": "h2",
-          "spans": [
-            {
-              "text": "Common questions",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "paragraph",
-          "spans": [
-            {
-              "text": "Where data lives",
-              "bold": true,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": " The workspace is under ",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": "~/.wunder/workspace",
-              "bold": false,
-              "code": true,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": ", session history is in local SQLite, and configuration is in ",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": "/config/desktop.settings.json",
-              "bold": false,
-              "code": true,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": ".",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "paragraph",
-          "spans": [
-            {
-              "text": "Migrating to another computer",
-              "bold": true,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": " Yes. Copy ",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": "~/.wunder",
-              "bold": false,
-              "code": true,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": " to the new machine.",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "paragraph",
-          "spans": [
-            {
-              "text": "Networking in local mode",
-              "bold": true,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": " Yes. \"Local first\" only means data stays on your machine; it doesn't affect reaching remote models or web pages.",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "paragraph",
-          "spans": [
-            {
-              "text": "Sharing among several people",
-              "bold": true,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": " The Pupa focuses on single-user local scenarios; for team collaboration, deploy the Hull and have members use the Beehive.",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "h2",
-          "spans": [
-            {
-              "text": "Further reading",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "list",
-          "marker": "•",
-          "spans": [
-            {
-              "text": "Quick Start",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "list",
-          "marker": "•",
-          "spans": [
-            {
-              "text": "Pupa Interface",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": "desktop-ui"
-            }
-          ]
-        },
-        {
-          "kind": "list",
-          "marker": "•",
-          "spans": [
-            {
-              "text": "Surfaces Overview",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "list",
-          "marker": "•",
-          "spans": [
-            {
-              "text": "First-Run Troubleshooting",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "list",
-          "marker": "•",
-          "spans": [
-            {
-              "text": "Troubleshooting",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
         }
       ]
     },
@@ -2594,7 +2344,7 @@
           "kind": "lead",
           "spans": [
             {
-              "text": "The Goal core lets an agent enter goal mode and keep working on one task. Attach a goal to a session and the agent carries on by itself, until it completes, is blocked, or exhausts the round budget.",
+              "text": "A goal is attached to a session; the agent keeps working on it until the goal completes, becomes blocked, or exhausts the round budget.",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -2606,19 +2356,7 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "How it works",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "paragraph",
-          "spans": [
-            {
-              "text": "A goal is driven by three tools:",
+              "text": "Driver tools",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -2724,10 +2462,22 @@
           ]
         },
         {
+          "kind": "h2",
+          "spans": [
+            {
+              "text": "Phases",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
           "kind": "paragraph",
           "spans": [
             {
-              "text": "A goal has only four phases: ",
+              "text": "Four values: ",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -2807,7 +2557,7 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "Key numbers",
+              "text": "Defaults",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -2846,7 +2596,7 @@
               "cells": [
                 [
                   {
-                    "text": "Default goal round cap",
+                    "text": "Goal round cap",
                     "bold": false,
                     "code": false,
                     "kbd": false,
@@ -2886,29 +2636,6 @@
                   }
                 ]
               ]
-            },
-            {
-              "header": false,
-              "cells": [
-                [
-                  {
-                    "text": "Phase values",
-                    "bold": false,
-                    "code": false,
-                    "kbd": false,
-                    "href": ""
-                  }
-                ],
-                [
-                  {
-                    "text": "active / paused / blocked / complete",
-                    "bold": false,
-                    "code": false,
-                    "kbd": false,
-                    "href": ""
-                  }
-                ]
-              ]
             }
           ]
         },
@@ -2916,7 +2643,7 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "Where it is used",
+              "text": "Entry points",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -3002,7 +2729,7 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "Boundaries and current limits",
+              "text": "Limits",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -3084,7 +2811,7 @@
               "href": ""
             },
             {
-              "text": " is needed to arm it again. When asking \"why has the goal stopped moving\", check first whether it is armed.",
+              "text": " is needed to arm it again. When a goal stops moving, check armed first.",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -3144,22 +2871,10 @@
           ]
         },
         {
-          "kind": "lead",
-          "spans": [
-            {
-              "text": "The Compatibility core lets the Pupa (desktop) and the Helm (cli) run in older operating-system environments, and states explicitly where that runtime environment is constrained.",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
           "kind": "h2",
           "spans": [
             {
-              "text": "Which older systems are supported",
+              "text": "Supported systems",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -3259,7 +2974,7 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "Why it runs",
+              "text": "Runtime constraints",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -3332,14 +3047,26 @@
           "marker": "•",
           "spans": [
             {
-              "text": "Startup recovery scan and self-check",
+              "text": "Startup checks",
               "bold": true,
               "code": false,
               "kbd": false,
               "href": ""
             },
             {
-              "text": ": recovery scanning and self-checking run at startup.",
+              "text": ": a recovery scan and self-check run at startup.",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "lead",
+          "spans": [
+            {
+              "text": "Both chains work offline, the interface needs no GPU, and command sessions adapt to legacy terminals — Windows 7 32-bit and Ubuntu 18.04 (x64 / arm64) can run the Pupa and the Helm directly.",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -3351,31 +3078,7 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "What it means for users",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "paragraph",
-          "spans": [
-            {
-              "text": "Windows 7 32-bit and Ubuntu 18.04 (x64 / arm64) are not excluded runtime environments; the Pupa and the Helm can be installed on old machines and run there. The interface renders on machines without a GPU. Command sessions are carried and decoded in old Windows terminals.",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "h2",
-          "spans": [
-            {
-              "text": "Boundaries and current limits",
+              "text": "Limits",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -3388,7 +3091,7 @@
           "marker": "•",
           "spans": [
             {
-              "text": "Build scripts still carry dead Tauri links — pointing at directories that no longer exist. That is an engineering gap and says nothing about capability.",
+              "text": "Build scripts still carry dead Tauri links, pointing at directories that no longer exist. That is an engineering gap, not a capability.",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -3415,7 +3118,7 @@
               "href": ""
             },
             {
-              "text": ", so the capability surface of old devices is narrower.",
+              "text": ", so the capability surface on legacy devices is narrower.",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -3448,34 +3151,10 @@
           ]
         },
         {
-          "kind": "h2",
-          "spans": [
-            {
-              "text": "Why compression is needed",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
           "kind": "lead",
           "spans": [
             {
-              "text": "An agent's \"memory\" has a ceiling — the history a single conversation can carry cannot grow without bound, and the model's context window sets that limit. As a conversation grows longer, the total of history plus tool results can exceed the ceiling.",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "paragraph",
-          "spans": [
-            {
-              "text": "Context compression trims the history without interrupting the conversation, keeping the most useful information so the conversation keeps running.",
+              "text": "How much history a single conversation can carry is set by the model's context window. As a conversation grows, the total of history plus tool results can exceed the ceiling, and compression trims the history without interrupting the conversation so it keeps running.",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -3499,7 +3178,57 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "How compression is graded",
+              "text": "Triggers",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "paragraph",
+          "spans": [
+            {
+              "text": "These situations tend to trigger compression: a very long conversation (dozens of rounds or more), a tool returning a large amount of content (reading a large file, many search results), and complex multi-step tasks.",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "paragraph",
+          "spans": [
+            {
+              "text": "To trigger it less often, open a new thread once a topic is done rather than keeping an old thread alive, keep prompts concise, and avoid pasting large repeated blocks; the ",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": "/compact",
+              "bold": false,
+              "code": true,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": " command triggers compression deliberately.",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "h2",
+          "spans": [
+            {
+              "text": "Levels",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -3688,7 +3417,7 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "What it protects and what it leaves alone",
+              "text": "What is protected",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -3736,7 +3465,7 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "Compression is inspectable",
+              "text": "Compression records",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -3760,69 +3489,7 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "In practice",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "paragraph",
-          "spans": [
-            {
-              "text": "These situations tend to trigger compression: a very long conversation (dozens of rounds or more), a tool returning a large amount of content (reading a large file, many search results), and complex multi-step tasks.",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "paragraph",
-          "spans": [
-            {
-              "text": "To trigger it less often, open a new thread once a topic is done rather than keeping an old thread alive, keep prompts concise, and avoid pasting large repeated blocks; the ",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": "/compact",
-              "bold": false,
-              "code": true,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": " command triggers compression deliberately.",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "paragraph",
-          "spans": [
-            {
-              "text": "After compression, quality mostly does not drop noticeably, because the system favors what the current task needs. Only in extreme cases (a very long conversation stacked with a large amount of tool output) might you notice the agent recalling early details less precisely, and then a new conversation thread is the fix.",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "h2",
-          "spans": [
-            {
-              "text": "Local reduction comes first",
+              "text": "Local reduction",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -3870,7 +3537,7 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "Related pages",
+              "text": "Limits",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -3879,58 +3546,10 @@
           ]
         },
         {
-          "kind": "list",
-          "marker": "•",
+          "kind": "paragraph",
           "spans": [
             {
-              "text": "Boundary Handling",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": " — system behavior under various boundary conditions",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "list",
-          "marker": "•",
-          "spans": [
-            {
-              "text": "Tokens and Quota",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": " — how context usage is measured",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "list",
-          "marker": "•",
-          "spans": [
-            {
-              "text": "Memory",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": "core-memory"
-            },
-            {
-              "text": " — the relationship between long-term data and context compression",
+              "text": "After compression, the system favors what the current task needs. Only in extreme cases (a very long conversation stacked with a large amount of tool output) might the agent recall early details less precisely, and then a new conversation thread is the fix.",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -3966,7 +3585,7 @@
           "kind": "lead",
           "spans": [
             {
-              "text": "The Subagents core forks a subtask inside a single thread: the parent thread hands one subtask to an independent executor, which runs it and passes the result back to the parent thread.",
+              "text": "The parent thread hands one subtask to an independent executor, which runs it and passes the result back to the parent thread.",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -3978,7 +3597,7 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "How it works",
+              "text": "Control actions",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -4206,7 +3825,7 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "Boundaries and current limits",
+              "text": "Limits",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -4282,33 +3901,7 @@
           "kind": "lead",
           "spans": [
             {
-              "text": "Scheduled tasks let the agent run automatically at a chosen time, for periodic reports, inspections, and reminders.",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "paragraph",
-          "spans": [
-            {
-              "text": "This is ",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": "engine-level scheduling",
-              "bold": true,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": ": the task definition is persisted in storage, and a background loop claims work by due time, independent of which session you happen to be viewing. Every run is recorded (",
+              "text": "The task definition is persisted in storage, and a background loop claims work by due time, independent of which session you happen to be viewing. Every run is recorded (",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -4350,7 +3943,7 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "Three kinds of schedule",
+              "text": "Schedule kinds",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -4686,7 +4279,7 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "Where results are delivered",
+              "text": "Result delivery",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -5057,7 +4650,7 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "The master switch",
+              "text": "Master switch",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -5083,21 +4676,63 @@
               "href": ""
             },
             {
-              "text": "), ",
+              "text": "), four kinds of write operation are rejected: ",
               "bold": false,
               "code": false,
               "kbd": false,
               "href": ""
             },
             {
-              "text": "only four kinds of write operation are rejected — `add`, `update`, `enable`, and `run`",
-              "bold": true,
+              "text": "add",
+              "bold": false,
+              "code": true,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": ", ",
+              "bold": false,
               "code": false,
               "kbd": false,
               "href": ""
             },
             {
-              "text": " (each with a clear message). Status, list, a single detail, run records, delete, and disable all remain available, so existing tasks can still be reviewed and cleaned up. This is not a blanket refusal of the whole interface.",
+              "text": "update",
+              "bold": false,
+              "code": true,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": ", ",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": "enable",
+              "bold": false,
+              "code": true,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": ", and ",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": "run",
+              "bold": false,
+              "code": true,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": ", each with a clear message. Status, list, a single detail, run records, delete, and disable all remain available, so existing tasks can still be reviewed and cleaned up.",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -5109,7 +4744,7 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "Where to create one, and support by form",
+              "text": "Entry points and support by form",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -5350,78 +4985,6 @@
               "href": ""
             }
           ]
-        },
-        {
-          "kind": "h2",
-          "spans": [
-            {
-              "text": "Related pages",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "list",
-          "marker": "•",
-          "spans": [
-            {
-              "text": "Schedule Task",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": " — tool parameters and usage",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "list",
-          "marker": "•",
-          "spans": [
-            {
-              "text": "Stability",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": " — the wider view of backoff and bounded design",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "list",
-          "marker": "•",
-          "spans": [
-            {
-              "text": "Agent Loop",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": " — how a triggered task enters the execution chain",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
         }
       ]
     },
@@ -5453,7 +5016,7 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "A channel is only an entry point",
+              "text": "Scope of responsibility",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -5465,7 +5028,7 @@
           "kind": "lead",
           "spans": [
             {
-              "text": "All execution happens in the engine. A channel does just two things: parse an external message into a unified inbound shape, and deliver the unified outbound shape back into an external protocol. Protocol adaptation stops at the entry; a channel does not copy business logic, does not keep its own storage, and does not change thread semantics.",
+              "text": "All execution happens in the engine. A channel does just two things: parse an external message into a unified inbound shape, and deliver the unified outbound shape back into an external protocol. Protocol adaptation stops at the entry; a channel does not copy business logic, does not keep its own storage, and does not change thread semantics. The same task thread can take a message from Beehive, continue it from Feishu, and finish it from Pupa; a channel never creates a second execution path.",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -5477,19 +5040,7 @@
           "kind": "paragraph",
           "spans": [
             {
-              "text": "So the same task thread can take a message from Beehive, continue it from Feishu, and finish it from Pupa; a channel never creates a second execution path.",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "paragraph",
-          "spans": [
-            {
-              "text": "A form (Pupa / Beehive / Helm / Hull) is the shape of running and access; a channel (Feishu / QQ / WeChat …) is an off-site platform.",
+              "text": "A form (Pupa / Beehive / Helm / Hull) is the shape of running and access; a channel (Feishu / QQ / WeChat …) is an off-site platform. The two are not one layer. The statement that many entries share one engine holds; what tends to be written wrong is the support level.",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -5501,7 +5052,7 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "Which channels are supported today",
+              "text": "Support level",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -5665,7 +5216,7 @@
           "kind": "paragraph",
           "spans": [
             {
-              "text": "The following platforms have no adapter at all: telegram, discord, slack, LINE, DingTalk. They exist only as generic-webhook directory entries, handled through the generic entry point and generic parsing — with no platform-specific signature verification, rich-text mapping, attachment download, or proactive push. The accurate statement is that they are visible in the directory and can send and receive text over a generic webhook, but they have no platform-specific adapter.",
+              "text": "The following platforms have no adapter at all: telegram, discord, slack, LINE, DingTalk. They exist only as generic-webhook directory entries, handled through the generic entry point and generic parsing — with no platform-specific signature verification, rich-text mapping, attachment download, or proactive push. The accurate statement is that they are visible in the directory and can send and receive text over a generic webhook, but they have no platform-specific adapter. Writing them up as \"supported channels\" is wrong.",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -5677,7 +5228,7 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "How a message finds its agent and workspace",
+              "text": "Binding resolution",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -5878,7 +5429,7 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "The boundaries of inbound, outbound, and rate limiting",
+              "text": "Inbound, outbound, and rate limiting",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -6040,7 +5591,7 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "Troubleshooting message problems",
+              "text": "Troubleshooting messages",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -6191,7 +5742,7 @@
           "marker": "•",
           "spans": [
             {
-              "text": "XMPP is not usable out of the box; while disabled by default it is a placeholder.",
+              "text": "XMPP is disabled by default, and while disabled it is a placeholder.",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -6263,98 +5814,6 @@
               "href": ""
             }
           ]
-        },
-        {
-          "kind": "h2",
-          "spans": [
-            {
-              "text": "Related pages",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "list",
-          "marker": "•",
-          "spans": [
-            {
-              "text": "WeChat Channel Integration",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": " — the details of weixin long polling",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "list",
-          "marker": "•",
-          "spans": [
-            {
-              "text": "Workspace Routing Reference",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": " — the rules that map a binding to a workspace",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "list",
-          "marker": "•",
-          "spans": [
-            {
-              "text": "Realtime",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": " — event push and refill",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "list",
-          "marker": "•",
-          "spans": [
-            {
-              "text": "Bridge Panel Guide",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": " — where channel accounts are configured",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
         }
       ]
     },
@@ -6381,22 +5840,10 @@
           ]
         },
         {
-          "kind": "h2",
-          "spans": [
-            {
-              "text": "What problem memory solves",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
           "kind": "lead",
           "spans": [
             {
-              "text": "An agent needs to \"remember\" long-term information — who the user is, what they prefer, what policies an organization has, what background a project has. If such material is cobbled together on the fly every time, the agent's behavior swings between good and bad.",
+              "text": "An agent needs long-term information — who the user is, what they prefer, what policies an organization has, what background a project has. Such material is injected once when the thread is created and stays frozen afterwards, never rewritten dynamically on every round.",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -6408,19 +5855,7 @@
           "kind": "paragraph",
           "spans": [
             {
-              "text": "wunder's approach is to inject it once when the thread is created and keep it frozen afterwards, never rewriting it dynamically on every round.",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "paragraph",
-          "spans": [
-            {
-              "text": "Three things follow: cognitive boundaries stay stable while the thread runs, so it does not drift as the conversation goes on; the system prompt stays stable, which helps cache acceleration; and it can clearly answer what background this thread started from.",
+              "text": "Three things follow: cognitive boundaries stay stable while the thread runs, so it does not drift as the conversation goes on; the system prompt stays stable, which helps cache acceleration; and it can clearly answer what background this thread started from. On the user side this shows up as personal preferences taking effect automatically in new conversations and the agent being able to use long-term material in the workspace and knowledge base. On the administrator side it shows up as controllable injection rules, sensitive information not leaking, conversations of the same kind starting from the same background, and a thread's initialization background being traceable.",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -6432,7 +5867,7 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "The two layers of memory",
+              "text": "The two layers",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -6468,43 +5903,7 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "Who it helps",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "paragraph",
-          "spans": [
-            {
-              "text": "For ordinary users: personal preferences are remembered and take effect automatically in new conversations; the agent does not \"forget\" who the user is as a conversation goes on; and the agent can use long-term material in the workspace and knowledge base.",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "paragraph",
-          "spans": [
-            {
-              "text": "For administrators: memory-injection rules are controllable, which keeps sensitive information from leaking; conversations of the same kind start from the same background, so results are more predictable; and a thread's initialization background can be traced.",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "h2",
-          "spans": [
-            {
-              "text": "What memory looks like",
+              "text": "Structure",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -6528,7 +5927,7 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "A few rules that go with it",
+              "text": "Freezing rules",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -6541,6 +5940,18 @@
           "spans": [
             {
               "text": "Once the system prompt is set it stays frozen, and later conversation never modifies it dynamically, which keeps thread behavior stable. Long-term memory is injected only once at thread creation; even if recall fires during a run, its result is only supplementary reference and never rewrites the system prompt.",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "h2",
+          "spans": [
+            {
+              "text": "Division of sources",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -6697,7 +6108,7 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "In practice",
+              "text": "When updates take effect",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -6709,7 +6120,19 @@
           "kind": "paragraph",
           "spans": [
             {
-              "text": "When a memory update takes effect depends on the thread: a newly created thread applies the latest memory automatically, while an existing thread is unaffected and keeps the copy from when it was created. So after you update a personal preference, a new conversation is needed for it to take effect.",
+              "text": "When a memory update takes effect depends on the thread: a newly created thread applies the latest memory automatically, while an existing thread is unaffected and keeps the copy from when it was created. After a personal preference is updated, a new conversation is needed for it to take effect.",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "h2",
+          "spans": [
+            {
+              "text": "Limits",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -6733,7 +6156,7 @@
           "kind": "paragraph",
           "spans": [
             {
-              "text": "More memory is not better. Injecting too much crowds the conversation's context space, introduces irrelevant information that disturbs judgment, and raises token consumption. The system therefore has intelligent selection and limiting mechanisms and does not inject without bound.",
+              "text": "More memory is not better. Injecting too much crowds the conversation's context space, introduces irrelevant information that disturbs judgment, and raises token consumption. The system therefore has selection and limiting mechanisms and does not inject without bound.",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -6745,7 +6168,7 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "A few clarifications",
+              "text": "Points not to mix up",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -6758,71 +6181,6 @@
           "spans": [
             {
               "text": "Memory does not update automatically every round; it is injected only at initialization and does not change during a run. Recall is a dynamic supplement and does not rewrite the base. Workspace files are not the same as memory either — a workspace is the scene of the current task, while memory is long-term accumulation.",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "h2",
-          "spans": [
-            {
-              "text": "Related pages",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "list",
-          "marker": "•",
-          "spans": [
-            {
-              "text": "Long-term Memory Details",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "list",
-          "marker": "•",
-          "spans": [
-            {
-              "text": "Prompts and Skills",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": " — how the system prompt is organized",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "list",
-          "marker": "•",
-          "spans": [
-            {
-              "text": "Context Compression",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": "core-context-compression"
-            },
-            {
-              "text": " — governing near-field history",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -6859,7 +6217,7 @@
           "kind": "lead",
           "spans": [
             {
-              "text": "The Multi-threading core raises throughput and resource use through concurrency control inside a single process: a single user can hold several task threads at once, and scheduling, locks, and realtime state are isolated per thread.",
+              "text": "A single user can hold several task threads at once, and scheduling, locks, and realtime state are isolated per thread so the threads do not block one another.",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -6871,7 +6229,7 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "How it works",
+              "text": "Concurrency control",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -6991,7 +6349,7 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "Key numbers",
+              "text": "Defaults",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -7100,7 +6458,7 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "Boundaries and current limits",
+              "text": "Limits",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -7189,7 +6547,7 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "The three gates of identity",
+              "text": "Identity checks",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -7275,7 +6633,7 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "Login state uses opaque tokens",
+              "text": "Tokens",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -7455,7 +6813,7 @@
           "kind": "paragraph",
           "spans": [
             {
-              "text": "A few key semantics:",
+              "text": "A token is not a self-contained JWT: it carries no claims and cannot be parsed offline. Validation is a database lookup, so revocation takes effect immediately.",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -7464,18 +6822,10 @@
           ]
         },
         {
-          "kind": "list",
-          "marker": "•",
+          "kind": "paragraph",
           "spans": [
             {
-              "text": "These are not JWTs.",
-              "bold": true,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": " A token carries no claims and cannot be parsed offline; validation is a database lookup, so revocation takes effect immediately.",
+              "text": "A few key semantics:",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -7574,7 +6924,7 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "Presence is split by form",
+              "text": "Presence",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -7612,7 +6962,7 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "The unit tree and the unit-head scope",
+              "text": "Unit tree",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -7676,7 +7026,7 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "Levels and credits are two different things",
+              "text": "Levels and credits",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -7768,7 +7118,7 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "An agent's definition document is not the same thing as a thread",
+              "text": "Worker cards and threads",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -7882,7 +7232,7 @@
           "kind": "paragraph",
           "spans": [
             {
-              "text": "After a preset agent is published, you can control which units can see it and decide which fields a bound user may change. Note that the disk directory for preset cards (",
+              "text": "Sessions bind to an agent by agent id, and their task threads stay independent of one another. After a preset agent is published, you can control which units can see it and decide which fields a bound user may change. Note that the disk directory for preset cards (",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -7966,7 +7316,7 @@
               "href": ""
             },
             {
-              "text": " the default. Sessions bind to an agent by agent id, and their task threads stay independent of one another.",
+              "text": " the default.",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -7978,7 +7328,7 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "Where data isolation lives",
+              "text": "Data isolation",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -8002,7 +7352,7 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "A few clarifications",
+              "text": "Points not to mix up",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -8087,78 +7437,6 @@
               "href": ""
             }
           ]
-        },
-        {
-          "kind": "h2",
-          "spans": [
-            {
-              "text": "Related pages",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "list",
-          "marker": "•",
-          "spans": [
-            {
-              "text": "Bridge Panel Guide",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": " — user management and unit management operations",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "list",
-          "marker": "•",
-          "spans": [
-            {
-              "text": "Quota and Token Usage",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": " — metering details",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "list",
-          "marker": "•",
-          "spans": [
-            {
-              "text": "Interlink",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": "interlink"
-            },
-            {
-              "text": " — how local devices and external callers join the Hull",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
         }
       ]
     },
@@ -8189,31 +7467,7 @@
           "kind": "lead",
           "spans": [
             {
-              "text": "wunder's tool system covers files, commands, the web, the desktop, collaboration, and system connections. Most built-in tools converge on one shared shell for both success and failure; a few stay outside it.",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "h2",
-          "spans": [
-            {
-              "text": "The tool matrix",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "paragraph",
-          "spans": [
-            {
-              "text": "Most canonical tool names the model sees are Chinese, each paired with an English alias, normalized by ",
+              "text": "Canonical tool names the model sees are mostly Chinese, each paired with an English alias, normalized by ",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -8256,6 +7510,18 @@
             },
             {
               "text": "), skill names, knowledge-base names, and user tool aliases are registered dynamically from configuration and are not in the table below.",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "h2",
+          "spans": [
+            {
+              "text": "The tool matrix",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -9133,7 +8399,7 @@
               "cells": [
                 [
                   {
-                    "text": "桌面监视器",
+                    "text": "桌面控制",
                     "bold": false,
                     "code": false,
                     "kbd": false,
@@ -9142,7 +8408,7 @@
                 ],
                 [
                   {
-                    "text": "desktop_monitor",
+                    "text": "desktop_control",
                     "bold": false,
                     "code": true,
                     "kbd": false,
@@ -9151,48 +8417,7 @@
                 ],
                 [
                   {
-                    "text": "读取桌面窗口与屏幕状态",
-                    "bold": false,
-                    "code": false,
-                    "kbd": false,
-                    "href": ""
-                  }
-                ],
-                [
-                  {
-                    "text": "桌面",
-                    "bold": false,
-                    "code": false,
-                    "kbd": false,
-                    "href": ""
-                  }
-                ]
-              ]
-            },
-            {
-              "header": false,
-              "cells": [
-                [
-                  {
-                    "text": "桌面控制器",
-                    "bold": false,
-                    "code": false,
-                    "kbd": false,
-                    "href": ""
-                  }
-                ],
-                [
-                  {
-                    "text": "desktop_controller",
-                    "bold": false,
-                    "code": true,
-                    "kbd": false,
-                    "href": ""
-                  }
-                ],
-                [
-                  {
-                    "text": "操作本机桌面（鼠标、键盘、窗口）",
+                    "text": "操作本机桌面并观察（鼠标、键盘、窗口）",
                     "bold": false,
                     "code": false,
                     "kbd": false,
@@ -9565,7 +8790,7 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "Choose a tool by situation",
+              "text": "Situations and tools",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -9574,10 +8799,858 @@
           ]
         },
         {
+          "kind": "table",
+          "rows": [
+            {
+              "header": true,
+              "cells": [
+                [
+                  {
+                    "text": "Situation",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "Use",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ]
+              ]
+            },
+            {
+              "header": false,
+              "cells": [
+                [
+                  {
+                    "text": "You have a URL and want that page's body",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "Web Fetch",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ]
+              ]
+            },
+            {
+              "header": false,
+              "cells": [
+                [
+                  {
+                    "text": "You only have keywords and need a public web source",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "Web search is currently delisted; once you have a URL, use Web Fetch",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ]
+              ]
+            },
+            {
+              "header": false,
+              "cells": [
+                [
+                  {
+                    "text": "You need to click, type, or wait for dynamic rendering",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "Browser",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ]
+              ]
+            },
+            {
+              "header": false,
+              "cells": [
+                [
+                  {
+                    "text": "Looking at local code",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "List directories or search with ",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  },
+                  {
+                    "text": "Workspace Files",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  },
+                  {
+                    "text": " first, then read the ranges you need",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ]
+              ]
+            },
+            {
+              "header": false,
+              "cells": [
+                [
+                  {
+                    "text": "A small, precise, context-matched code edit",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "the patch form of ",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  },
+                  {
+                    "text": "文本编辑",
+                    "bold": false,
+                    "code": true,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ]
+              ]
+            },
+            {
+              "header": false,
+              "cells": [
+                [
+                  {
+                    "text": "One exact text replacement",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "文本编辑",
+                    "bold": false,
+                    "code": true,
+                    "kbd": false,
+                    "href": ""
+                  },
+                  {
+                    "text": " in ",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  },
+                  {
+                    "text": "Workspace Files",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ]
+              ]
+            },
+            {
+              "header": false,
+              "cells": [
+                [
+                  {
+                    "text": "Complex replacement logic",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "run a script with ",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  },
+                  {
+                    "text": "Execute Command",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ]
+              ]
+            },
+            {
+              "header": false,
+              "cells": [
+                [
+                  {
+                    "text": "Rewriting or creating a whole file",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "write_file",
+                    "bold": false,
+                    "code": true,
+                    "kbd": false,
+                    "href": ""
+                  },
+                  {
+                    "text": " in ",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  },
+                  {
+                    "text": "Workspace Files",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ]
+              ]
+            },
+            {
+              "header": false,
+              "cells": [
+                [
+                  {
+                    "text": "Compiling, testing, or running a script",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "Execute Command",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ]
+              ]
+            },
+            {
+              "header": false,
+              "cells": [
+                [
+                  {
+                    "text": "Spinning up a temporary child run in the current session",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "Subagent Control",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ]
+              ]
+            },
+            {
+              "header": false,
+              "cells": [
+                [
+                  {
+                    "text": "Managing the task thread or branch threads",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "Thread Control",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ]
+              ]
+            }
+          ]
+        },
+        {
           "kind": "h2",
           "spans": [
             {
-              "text": "You only have keywords and want a web source",
+              "text": "Categories and docs",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "table",
+          "rows": [
+            {
+              "header": true,
+              "cells": [
+                [
+                  {
+                    "text": "Category",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "Pages",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ]
+              ]
+            },
+            {
+              "header": false,
+              "cells": [
+                [
+                  {
+                    "text": "Turn finishing and frontend coordination",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "Plan Panel / Question Panel / Sessions Yield: ",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  },
+                  {
+                    "text": "Plan Panel / Question Panel / Sessions Yield",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ]
+              ]
+            },
+            {
+              "header": false,
+              "cells": [
+                [
+                  {
+                    "text": "Workspace and code",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "List files / glob / search content / read file / write file / text edit: ",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  },
+                  {
+                    "text": "Workspace Files",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  },
+                  {
+                    "text": "; execute command / command session: ",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  },
+                  {
+                    "text": "Execute Command",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  },
+                  {
+                    "text": "; skill call: ",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  },
+                  {
+                    "text": "Skill Call",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ]
+              ]
+            },
+            {
+              "header": false,
+              "cells": [
+                [
+                  {
+                    "text": "Web",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "Web fetch: ",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  },
+                  {
+                    "text": "Web Fetch",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  },
+                  {
+                    "text": "; browser: ",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  },
+                  {
+                    "text": "Browser Tools",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ]
+              ]
+            },
+            {
+              "header": false,
+              "cells": [
+                [
+                  {
+                    "text": "Multimodal",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "Read image: ",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  },
+                  {
+                    "text": "Read Image",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  },
+                  {
+                    "text": "; generate image / generate video / generate speech / transcribe speech: canonical names ",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  },
+                  {
+                    "text": "图像生成",
+                    "bold": false,
+                    "code": true,
+                    "kbd": false,
+                    "href": ""
+                  },
+                  {
+                    "text": " / ",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  },
+                  {
+                    "text": "视频生成",
+                    "bold": false,
+                    "code": true,
+                    "kbd": false,
+                    "href": ""
+                  },
+                  {
+                    "text": " / ",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  },
+                  {
+                    "text": "语音生成",
+                    "bold": false,
+                    "code": true,
+                    "kbd": false,
+                    "href": ""
+                  },
+                  {
+                    "text": " / ",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  },
+                  {
+                    "text": "声转文",
+                    "bold": false,
+                    "code": true,
+                    "kbd": false,
+                    "href": ""
+                  },
+                  {
+                    "text": ", aliases ",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  },
+                  {
+                    "text": "generate_image",
+                    "bold": false,
+                    "code": true,
+                    "kbd": false,
+                    "href": ""
+                  },
+                  {
+                    "text": " / ",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  },
+                  {
+                    "text": "generate_video",
+                    "bold": false,
+                    "code": true,
+                    "kbd": false,
+                    "href": ""
+                  },
+                  {
+                    "text": " / ",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  },
+                  {
+                    "text": "generate_speech",
+                    "bold": false,
+                    "code": true,
+                    "kbd": false,
+                    "href": ""
+                  },
+                  {
+                    "text": " / ",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  },
+                  {
+                    "text": "transcribe_speech",
+                    "bold": false,
+                    "code": true,
+                    "kbd": false,
+                    "href": ""
+                  },
+                  {
+                    "text": "; no dedicated page in this section",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ]
+              ]
+            },
+            {
+              "header": false,
+              "cells": [
+                [
+                  {
+                    "text": "Desktop",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "Desktop control: ",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  },
+                  {
+                    "text": "Desktop Control",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ]
+              ]
+            },
+            {
+              "header": false,
+              "cells": [
+                [
+                  {
+                    "text": "Threads and subagents",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "Subagent control: ",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  },
+                  {
+                    "text": "Subagent Control",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  },
+                  {
+                    "text": "; thread control: ",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  },
+                  {
+                    "text": "Thread Control",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ]
+              ]
+            },
+            {
+              "header": false,
+              "cells": [
+                [
+                  {
+                    "text": "System and memory",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "Self status: ",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  },
+                  {
+                    "text": "Self Status",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  },
+                  {
+                    "text": "; memory manager: ",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  },
+                  {
+                    "text": "Memory Manager",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  },
+                  {
+                    "text": "; schedule task: ",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  },
+                  {
+                    "text": "Schedule Task",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ]
+              ]
+            },
+            {
+              "header": false,
+              "cells": [
+                [
+                  {
+                    "text": "Goal state",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "get_goal",
+                    "bold": false,
+                    "code": true,
+                    "kbd": false,
+                    "href": ""
+                  },
+                  {
+                    "text": " / ",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  },
+                  {
+                    "text": "create_goal",
+                    "bold": false,
+                    "code": true,
+                    "kbd": false,
+                    "href": ""
+                  },
+                  {
+                    "text": " / ",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  },
+                  {
+                    "text": "update_goal",
+                    "bold": false,
+                    "code": true,
+                    "kbd": false,
+                    "href": ""
+                  },
+                  {
+                    "text": " are injected by the runtime per session, and not offered for selection on the desktop endpoint",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "h2",
+          "spans": [
+            {
+              "text": "Result shell",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -9589,892 +9662,7 @@
           "kind": "paragraph",
           "spans": [
             {
-              "text": "Web search is currently delisted; when you already have a URL, read the page directly with ",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": "Web Fetch",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": ".",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "h2",
-          "spans": [
-            {
-              "text": "You only want to read the main content of a page",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "paragraph",
-          "spans": [
-            {
-              "text": "Start with ",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": "Web Fetch",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": "; do not jump straight to the browser.",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "h2",
-          "spans": [
-            {
-              "text": "You need to click, type, or wait for dynamic rendering",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "paragraph",
-          "spans": [
-            {
-              "text": "Use ",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": "Browser",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": ".",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "h2",
-          "spans": [
-            {
-              "text": "You want to look at local code",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "paragraph",
-          "spans": [
-            {
-              "text": "The usual order is: list directories or search with ",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": "Workspace Files",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": " first, then read the ranges you need.",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "h2",
-          "spans": [
-            {
-              "text": "You want to change code",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "list",
-          "marker": "•",
-          "spans": [
-            {
-              "text": "Small, precise, context-matched edits: use the patch form of ",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": "文本编辑",
-              "bold": false,
-              "code": true,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "list",
-          "marker": "•",
-          "spans": [
-            {
-              "text": "One exact text replacement: use ",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": "文本编辑",
-              "bold": false,
-              "code": true,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": " in ",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": "Workspace Files",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "list",
-          "marker": "•",
-          "spans": [
-            {
-              "text": "Complex replacement logic: run a script with ",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": "Execute Command",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "list",
-          "marker": "•",
-          "spans": [
-            {
-              "text": "Rewriting a whole file: use ",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": "write_file",
-              "bold": false,
-              "code": true,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": " in ",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": "Workspace Files",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "list",
-          "marker": "•",
-          "spans": [
-            {
-              "text": "Compiling, testing, or running a script: use ",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": "Execute Command",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "h2",
-          "spans": [
-            {
-              "text": "You want to collaborate",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "list",
-          "marker": "•",
-          "spans": [
-            {
-              "text": "Spinning up a temporary child run in the current session: use ",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": "Subagent Control",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "list",
-          "marker": "•",
-          "spans": [
-            {
-              "text": "Managing the task thread or branch threads: use ",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": "Thread Control",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "h2",
-          "spans": [
-            {
-              "text": "Docs by category",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "h2",
-          "spans": [
-            {
-              "text": "Turn finishing and frontend coordination",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "list",
-          "marker": "•",
-          "spans": [
-            {
-              "text": "Plan Panel / Question Panel / Sessions Yield: ",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": "Plan Panel / Question Panel / Sessions Yield",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "h2",
-          "spans": [
-            {
-              "text": "Workspace and code",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "list",
-          "marker": "•",
-          "spans": [
-            {
-              "text": "List files / glob / search content / read file / write file / text edit: ",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": "Workspace Files",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "list",
-          "marker": "•",
-          "spans": [
-            {
-              "text": "Execute command / command session: ",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": "Execute Command",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "list",
-          "marker": "•",
-          "spans": [
-            {
-              "text": "Skill call: ",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": "Skill Call",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "h2",
-          "spans": [
-            {
-              "text": "Web",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "list",
-          "marker": "•",
-          "spans": [
-            {
-              "text": "Web fetch: ",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": "Web Fetch",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "list",
-          "marker": "•",
-          "spans": [
-            {
-              "text": "Browser: ",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": "Browser Tools",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "h2",
-          "spans": [
-            {
-              "text": "Multimodal",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "list",
-          "marker": "•",
-          "spans": [
-            {
-              "text": "Read image: ",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": "Read Image",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "list",
-          "marker": "•",
-          "spans": [
-            {
-              "text": "Generate image / generate video / generate speech / transcribe speech: canonical names ",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": "图像生成",
-              "bold": false,
-              "code": true,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": " / ",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": "视频生成",
-              "bold": false,
-              "code": true,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": " / ",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": "语音生成",
-              "bold": false,
-              "code": true,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": " / ",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": "声转文",
-              "bold": false,
-              "code": true,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": ", aliases ",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": "generate_image",
-              "bold": false,
-              "code": true,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": " / ",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": "generate_video",
-              "bold": false,
-              "code": true,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": " / ",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": "generate_speech",
-              "bold": false,
-              "code": true,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": " / ",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": "transcribe_speech",
-              "bold": false,
-              "code": true,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": "; no dedicated page in this section.",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "h2",
-          "spans": [
-            {
-              "text": "Desktop",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "list",
-          "marker": "•",
-          "spans": [
-            {
-              "text": "Desktop monitor / desktop controller: ",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": "Desktop Control",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "h2",
-          "spans": [
-            {
-              "text": "Threads and subagents",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "list",
-          "marker": "•",
-          "spans": [
-            {
-              "text": "Subagent control: ",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": "Subagent Control",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "list",
-          "marker": "•",
-          "spans": [
-            {
-              "text": "Thread control: ",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": "Thread Control",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "h2",
-          "spans": [
-            {
-              "text": "System and memory",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "list",
-          "marker": "•",
-          "spans": [
-            {
-              "text": "Self status: ",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": "Self Status",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "list",
-          "marker": "•",
-          "spans": [
-            {
-              "text": "Memory manager: ",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": "Memory Manager",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "list",
-          "marker": "•",
-          "spans": [
-            {
-              "text": "Schedule task: ",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": "Schedule Task",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "h2",
-          "spans": [
-            {
-              "text": "Goal state",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "list",
-          "marker": "•",
-          "spans": [
-            {
-              "text": "get_goal",
-              "bold": false,
-              "code": true,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": " / ",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": "create_goal",
-              "bold": false,
-              "code": true,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": " / ",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": "update_goal",
-              "bold": false,
-              "code": true,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": ": injected by the runtime per session, and not offered for selection on the desktop endpoint.",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "h2",
-          "spans": [
-            {
-              "text": "How to read results",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "paragraph",
-          "spans": [
-            {
-              "text": "Most built-in tools return one shared shell on success: whether it succeeded, the action name, a state, a one-line summary, and a data area that carries the business result. Read the business result from the data area first. Some tools add one more line telling you what to do next.",
+              "text": "Most built-in tools return the same shell on success: whether it succeeded, the action name, a state, a one-line summary, and a data area that carries the business result. Read the business result from the data area first. Some tools add one more line telling you what to do next.",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -10498,7 +9686,7 @@
           "kind": "paragraph",
           "spans": [
             {
-              "text": "Failures use the same shared shell: an error line, a readable reason and fix hint, and data that helps with diagnosis.",
+              "text": "Failures use the same shell: an error line, a readable reason and fix hint, and data that helps with diagnosis.",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -10510,7 +9698,7 @@
           "kind": "paragraph",
           "spans": [
             {
-              "text": "A few exceptions do not use the shared shell:",
+              "text": "Exceptions that skip the shared shell:",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -10673,71 +9861,6 @@
             },
             {
               "text": "): success uses the shared shell; in its patch form, failures carry stricter error semantics than ordinary file tools.",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "h2",
-          "spans": [
-            {
-              "text": "See also",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "list",
-          "marker": "•",
-          "spans": [
-            {
-              "text": "How to read and write files and code → ",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": "Workspace Files",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "list",
-          "marker": "•",
-          "spans": [
-            {
-              "text": "How subagents are spawned and reclaimed → ",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": "Subagent Control",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "list",
-          "marker": "•",
-          "spans": [
-            {
-              "text": "What one specific tool returns → go to that tool's page",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -10980,21 +10103,7 @@
           "kind": "lead",
           "spans": [
             {
-              "text": "The Pupa is wunder's ",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": "local AI workbench",
-              "bold": true,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": ", and the default entry for individual users. It runs entirely on your own computer: there is no separate backend port and no network relay, and the interface calls the local engine directly.",
+              "text": "It runs entirely on your own computer: there is no separate backend port and no network relay, and the interface calls the local engine directly. It is the default entry for individual users.",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -11112,7 +10221,58 @@
           "marker": "•",
           "spans": [
             {
+              "text": "Sessions and tool logs: a local database",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "list",
+          "marker": "•",
+          "spans": [
+            {
               "text": "A separate compatibility port (18123 by default) serves a few older clients only; day-to-day use never touches it",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "paragraph",
+          "spans": [
+            {
+              "text": "\"Local-first\" means the data stays on this machine; it does not affect access to remote models or web pages.",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "paragraph",
+          "spans": [
+            {
+              "text": "Moving to another computer: copy the whole ",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": "~/.wunder",
+              "bold": false,
+              "code": true,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": " folder (workspace, database, and settings). On the first launch it scans the work tree and restores the state of tasks that were queued, waiting, running, or cancelling.",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -11124,7 +10284,7 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "The main window: only two pages",
+              "text": "Main window structure",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -11269,7 +10429,7 @@
               "href": ""
             },
             {
-              "text": " workspaces: the local directory, a cloud workspace, and remote device workspaces reached through device interconnection",
+              "text": " workspaces: the local directory, a cloud workspace, and remote device workspaces reached through device interconnection; locks and realtime state are isolated per thread",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -11329,6 +10489,18 @@
           "spans": [
             {
               "text": "Below each reply, \"Work process\" folds away intermediate thinking, tool batches, and interim output",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "paragraph",
+          "spans": [
+            {
+              "text": "With the session queue on, messages sent to a new thread during a run queue up instead of being rejected as \"user busy\".",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -11699,7 +10871,7 @@
           "kind": "paragraph",
           "spans": [
             {
-              "text": "These are distinct areas inside the Pupa, not separate pages:",
+              "text": "These areas live inside the two pages, not as pages of their own:",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -11989,7 +11161,7 @@
           "kind": "paragraph",
           "spans": [
             {
-              "text": "These are not available in the other interfaces:",
+              "text": "The Beehive, the Bridge, and the Helm have none of these:",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -12167,7 +11339,7 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "Capabilities that do not work yet",
+              "text": "Entries not wired up yet",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -12246,7 +11418,7 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "One-click reset of the working state",
+              "text": "Resetting the working state",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -12320,7 +11492,7 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "Pupa vs. Beehive",
+              "text": "Differences from the Beehive",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -12602,231 +11774,6 @@
               ]
             }
           ]
-        },
-        {
-          "kind": "h2",
-          "spans": [
-            {
-              "text": "Common questions",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "list",
-          "marker": "•",
-          "spans": [
-            {
-              "text": "Data location",
-              "bold": true,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": ": the workspace is at ",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": "~/.wunder/workspace",
-              "bold": false,
-              "code": true,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": ", sessions and tool logs are in a local database, and settings are at ",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": "/config/desktop.settings.json",
-              "bold": false,
-              "code": true,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": "; ",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": "WUNDER_HOME",
-              "bold": false,
-              "code": true,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": " moves the root elsewhere.",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "list",
-          "marker": "•",
-          "spans": [
-            {
-              "text": "Local mode can still go online",
-              "bold": true,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": ": \"local-first\" means the data stays on this machine; it does not affect access to remote models or web pages.",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "list",
-          "marker": "•",
-          "spans": [
-            {
-              "text": "Moving to another computer",
-              "bold": true,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": ": copy the whole ",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": "~/.wunder",
-              "bold": false,
-              "code": true,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": " folder (workspace, database, and settings). On the first launch it scans the work tree and restores the state of tasks that were queued, waiting, running, or cancelling.",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "list",
-          "marker": "•",
-          "spans": [
-            {
-              "text": "Creating threads while running",
-              "bold": true,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": ": one agent can hold several independent task threads at once, with locks and realtime state isolated per thread; with the session queue on, new messages queue up instead of being rejected as \"user busy\".",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "h2",
-          "spans": [
-            {
-              "text": "Further Reading",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "list",
-          "marker": "•",
-          "spans": [
-            {
-              "text": "Quick Start",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "list",
-          "marker": "•",
-          "spans": [
-            {
-              "text": "Pupa quick start",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": "install"
-            }
-          ]
-        },
-        {
-          "kind": "list",
-          "marker": "•",
-          "spans": [
-            {
-              "text": "Interface overview and capability matrix",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "list",
-          "marker": "•",
-          "spans": [
-            {
-              "text": "Beehive Interface",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "list",
-          "marker": "•",
-          "spans": [
-            {
-              "text": "Troubleshooting",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
         }
       ]
     },
@@ -12857,21 +11804,7 @@
           "kind": "lead",
           "spans": [
             {
-              "text": "Interlink connects the Beehive (web), the Pupa (desktop), and the Helm (cli) into one system: ",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": "unified presence + cross-end workspace visibility + two-way remote control",
-              "bold": true,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": ". Local devices open no public inbound entry point; all traffic is relayed through the Hull.",
+              "text": "Pupa remains a local AI workbench that works offline. After it signs in to the Hull, it can use cloud agents and threads without opening a local port. If the user explicitly enables local sharing, Beehive can access the device's authorized workspaces and threads through the Hull. Helm exposes the same operations for manual and scripted use.",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -12883,144 +11816,11 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "The three endpoints and prerequisites",
+              "text": "Sign-in and sharing",
               "bold": false,
               "code": false,
               "kbd": false,
               "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "table",
-          "rows": [
-            {
-              "header": true,
-              "cells": [
-                [
-                  {
-                    "text": "Name",
-                    "bold": false,
-                    "code": false,
-                    "kbd": false,
-                    "href": ""
-                  }
-                ],
-                [
-                  {
-                    "text": "Form",
-                    "bold": false,
-                    "code": false,
-                    "kbd": false,
-                    "href": ""
-                  }
-                ],
-                [
-                  {
-                    "text": "Role",
-                    "bold": false,
-                    "code": false,
-                    "kbd": false,
-                    "href": ""
-                  }
-                ]
-              ]
-            },
-            {
-              "header": false,
-              "cells": [
-                [
-                  {
-                    "text": "Beehive",
-                    "bold": false,
-                    "code": false,
-                    "kbd": false,
-                    "href": ""
-                  }
-                ],
-                [
-                  {
-                    "text": "web",
-                    "bold": false,
-                    "code": false,
-                    "kbd": false,
-                    "href": ""
-                  }
-                ],
-                [
-                  {
-                    "text": "The cloud AI workbench, provided with the Hull, opened in a browser",
-                    "bold": false,
-                    "code": false,
-                    "kbd": false,
-                    "href": ""
-                  }
-                ]
-              ]
-            },
-            {
-              "header": false,
-              "cells": [
-                [
-                  {
-                    "text": "Pupa",
-                    "bold": false,
-                    "code": false,
-                    "kbd": false,
-                    "href": ""
-                  }
-                ],
-                [
-                  {
-                    "text": "desktop",
-                    "bold": false,
-                    "code": false,
-                    "kbd": false,
-                    "href": ""
-                  }
-                ],
-                [
-                  {
-                    "text": "The local AI workbench, the desktop form, with direct access to files on this machine",
-                    "bold": false,
-                    "code": false,
-                    "kbd": false,
-                    "href": ""
-                  }
-                ]
-              ]
-            },
-            {
-              "header": false,
-              "cells": [
-                [
-                  {
-                    "text": "Helm",
-                    "bold": false,
-                    "code": false,
-                    "kbd": false,
-                    "href": ""
-                  }
-                ],
-                [
-                  {
-                    "text": "cli",
-                    "bold": false,
-                    "code": false,
-                    "kbd": false,
-                    "href": ""
-                  }
-                ],
-                [
-                  {
-                    "text": "The manual local entry point, the command-line form",
-                    "bold": false,
-                    "code": false,
-                    "kbd": false,
-                    "href": ""
-                  }
-                ]
-              ]
             }
           ]
         },
@@ -13028,7 +11828,7 @@
           "kind": "paragraph",
           "spans": [
             {
-              "text": "Prerequisites:",
+              "text": "The first Pupa or Helm sign-in creates an independent device session. It does not automatically expose local files or threads. The user can select off, summary sharing, or full sharing in account settings, and Bridge policy can further restrict every device.",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -13037,93 +11837,10 @@
           ]
         },
         {
-          "kind": "list",
-          "marker": "•",
+          "kind": "paragraph",
           "spans": [
             {
-              "text": "All three endpoints share the ",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": "wunder-runtime",
-              "bold": false,
-              "code": true,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": " engine and the ",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": "wunder-core",
-              "bold": false,
-              "code": true,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": " contract.",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "list",
-          "marker": "•",
-          "spans": [
-            {
-              "text": "The local device has signed in to the Hull through the existing cloud connection scheme, and holds ",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": "wund_",
-              "bold": false,
-              "code": true,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": " + ",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": "device_id",
-              "bold": false,
-              "code": true,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": ".",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "list",
-          "marker": "•",
-          "spans": [
-            {
-              "text": "The Hull is the sole authority for accounts, devices, quota, and policy.",
+              "text": "“Signed in”, “tunnel online”, and “this operation is authorized” are separate states. Sign-in permits cloud access; an online tunnel is required to operate a local device; mutations and execution also require capability, policy, and approval checks.",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -13135,7 +11852,58 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "The four capabilities",
+              "text": "Prerequisites",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "list",
+          "marker": "•",
+          "spans": [
+            {
+              "text": "Pupa or Helm is signed in to the Hull.",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "list",
+          "marker": "•",
+          "spans": [
+            {
+              "text": "To access a local device, that device is online and its owner enabled sharing.",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "list",
+          "marker": "•",
+          "spans": [
+            {
+              "text": "The Hull is the authority for accounts, devices, quota, and policy.",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "h2",
+          "spans": [
+            {
+              "text": "Capabilities",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -13192,7 +11960,7 @@
                 ],
                 [
                   {
-                    "text": "Unified presence",
+                    "text": "Device state",
                     "bold": false,
                     "code": false,
                     "kbd": false,
@@ -13201,7 +11969,7 @@
                 ],
                 [
                   {
-                    "text": "The Hull maintains a cross-end node directory, and the three endpoints share one state model — ",
+                    "text": "The Hull distinguishes a valid sign-in, a live tunnel, and effective capabilities; it presents ",
                     "bold": false,
                     "code": false,
                     "kbd": false,
@@ -13267,13 +12035,6 @@
                     "text": "offline",
                     "bold": false,
                     "code": true,
-                    "kbd": false,
-                    "href": ""
-                  },
-                  {
-                    "text": " — at second-level precision (local) and near-real-time precision (web)",
-                    "bold": false,
-                    "code": false,
                     "kbd": false,
                     "href": ""
                   }
@@ -13579,7 +12340,7 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "How to use it",
+              "text": "Entry Points",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -13591,7 +12352,7 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "Pupa (desktop)",
+              "text": "Pupa",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -13630,7 +12391,7 @@
               "cells": [
                 [
                   {
-                    "text": "Settings → the device interlink category",
+                    "text": "Account settings",
                     "bold": false,
                     "code": false,
                     "kbd": false,
@@ -13639,7 +12400,7 @@
                 ],
                 [
                   {
-                    "text": "Tunnel state, device table, cloud workspace browsing",
+                    "text": "Sign-in state, local sharing permission, and sharing level",
                     "bold": false,
                     "code": false,
                     "kbd": false,
@@ -13653,7 +12414,7 @@
               "cells": [
                 [
                   {
-                    "text": "Remote command approval dialog",
+                    "text": "Cloud agents and threads",
                     "bold": false,
                     "code": false,
                     "kbd": false,
@@ -13662,7 +12423,7 @@
                 ],
                 [
                   {
-                    "text": "Polls the pending queue every 2s; approve / reject",
+                    "text": "Agents, recent threads, send, stop, tool approval, live status, history pages, and full-text copy",
                     "bold": false,
                     "code": false,
                     "kbd": false,
@@ -13676,7 +12437,7 @@
               "cells": [
                 [
                   {
-                    "text": "Sidebar thread source badge",
+                    "text": "Local approval",
                     "bold": false,
                     "code": false,
                     "kbd": false,
@@ -13685,30 +12446,7 @@
                 ],
                 [
                   {
-                    "text": "Cloud / device",
-                    "bold": false,
-                    "code": false,
-                    "kbd": false,
-                    "href": ""
-                  }
-                ]
-              ]
-            },
-            {
-              "header": false,
-              "cells": [
-                [
-                  {
-                    "text": "Tunnel client",
-                    "bold": false,
-                    "code": false,
-                    "kbd": false,
-                    "href": ""
-                  }
-                ],
-                [
-                  {
-                    "text": "Hangs up as soon as the process starts",
+                    "text": "Controlled requests from Beehive to this machine",
                     "bold": false,
                     "code": false,
                     "kbd": false,
@@ -13771,7 +12509,7 @@
                 ],
                 [
                   {
-                    "text": "Presented as \"device as workspace\": a device appears as a sidebar workspace row, and the directory falls into place as threads are clicked",
+                    "text": "Local workspaces sit beside the cloud workspace: the default root is “device name-Local workspace”, named roots are “device name-workspace name”, and selecting one expands that workspace’s local threads beneath it",
                     "bold": false,
                     "code": false,
                     "kbd": false,
@@ -13809,7 +12547,7 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "Helm (cli)",
+              "text": "Helm",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -13886,6 +12624,34 @@
                   },
                   {
                     "text": "ws",
+                    "bold": false,
+                    "code": true,
+                    "kbd": false,
+                    "href": ""
+                  },
+                  {
+                    "text": " / ",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  },
+                  {
+                    "text": "threads",
+                    "bold": false,
+                    "code": true,
+                    "kbd": false,
+                    "href": ""
+                  },
+                  {
+                    "text": " / ",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  },
+                  {
+                    "text": "thread",
                     "bold": false,
                     "code": true,
                     "kbd": false,
@@ -14065,7 +12831,7 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "Security boundary",
+              "text": "Security Boundary",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -14486,7 +13252,7 @@
                 ],
                 [
                   {
-                    "text": "Approval needed by default, can be lowered to none",
+                    "text": "Local-device operations normally need local approval; a user's own cloud threads use account authorization",
                     "bold": false,
                     "code": false,
                     "kbd": false,
@@ -14612,18 +13378,6 @@
           ]
         },
         {
-          "kind": "paragraph",
-          "spans": [
-            {
-              "text": "The two worth remembering most:",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
           "kind": "list",
           "marker": "•",
           "spans": [
@@ -14709,7 +13463,69 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "Non-goals",
+              "text": "Constraints",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "h2",
+          "spans": [
+            {
+              "text": "Disconnection and recovery",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "paragraph",
+          "spans": [
+            {
+              "text": "The Pupa reconnects with backoff. While the Hull process remains running, its bounded queue retains commands that have not been sent and delivers them after reconnection. Commands already sent, executing, or awaiting approval on the device fail explicitly when their connection ends, avoiding duplicate operations.",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "paragraph",
+          "spans": [
+            {
+              "text": "After a Hull restart, unfinished commands are settled in bounded batches with ",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": "SERVER_RESTARTED",
+              "bold": false,
+              "code": true,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": ". Command bodies are not persisted, so arguments are never reconstructed from digests and writes are not replayed automatically. Queries can be submitted again; check the actual outcome of a write before resubmitting it through the normal approval flow. Remote thread views obtain a new snapshot after reconnecting.",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "h2",
+          "spans": [
+            {
+              "text": "Boundaries",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -14722,21 +13538,7 @@
           "marker": "•",
           "spans": [
             {
-              "text": "Local and cloud threads are ",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": "not merged",
-              "bold": true,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": ", and are not visible to each other. Interlink is remote operation, not data synchronization; a remote thread always exists on the other side marked as \"remote\".",
+              "text": "Local and cloud threads are not merged. Interlink is remote operation, not data synchronization.",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -14797,110 +13599,10 @@
           ]
         },
         {
-          "kind": "h2",
-          "spans": [
-            {
-              "text": "Cost",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            }
-          ]
-        },
-        {
-          "kind": "table",
-          "rows": [
-            {
-              "header": true,
-              "cells": [
-                [
-                  {
-                    "text": "Metric",
-                    "bold": false,
-                    "code": false,
-                    "kbd": false,
-                    "href": ""
-                  }
-                ],
-                [
-                  {
-                    "text": "Measured",
-                    "bold": false,
-                    "code": false,
-                    "kbd": false,
-                    "href": ""
-                  }
-                ]
-              ]
-            },
-            {
-              "header": false,
-              "cells": [
-                [
-                  {
-                    "text": "Idle tunnel CPU",
-                    "bold": false,
-                    "code": false,
-                    "kbd": false,
-                    "href": ""
-                  }
-                ],
-                [
-                  {
-                    "text": "0.114% of a single core",
-                    "bold": false,
-                    "code": false,
-                    "kbd": false,
-                    "href": ""
-                  }
-                ]
-              ]
-            },
-            {
-              "header": false,
-              "cells": [
-                [
-                  {
-                    "text": "Idle window memory",
-                    "bold": false,
-                    "code": false,
-                    "kbd": false,
-                    "href": ""
-                  }
-                ],
-                [
-                  {
-                    "text": "Working set growth 0.18 MB (one-time +4.7 MB at link setup, counted separately)",
-                    "bold": false,
-                    "code": false,
-                    "kbd": false,
-                    "href": ""
-                  }
-                ]
-              ]
-            }
-          ]
-        },
-        {
           "kind": "paragraph",
           "spans": [
             {
-              "text": "The numbers come from the two-phase same-process sampling of ",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": "scripts/interlink-bench/measure-idle.ps1",
-              "bold": false,
-              "code": true,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": " (one baseline phase and one tunnel phase, measuring the delta).",
+              "text": "Remote file reads use a 256 KiB inline-result boundary; larger device files use bounded chunks. Cloud-direct execution has no device data channel, so larger reads and writes must be split. Beehive does not offer binary upload, archive, or batch file operations.",
               "bold": false,
               "code": false,
               "kbd": false,

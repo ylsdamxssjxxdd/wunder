@@ -1,6 +1,6 @@
 import { I18n } from "i18n.slint";
 import { Theme, PromptPackCard, ToolCard, ModelCard, ProfileCard, FileCard, CronCard, CronRunCard, ChannelCatalogCard, ChannelAccountCard, ChannelBindingCard, ChannelLogCard } from "theme.slint";
-import { Action, FormField, MiddleHeader, MiddleFooter, PageState, PageStateKind } from "components.slint";
+import { Action, FormField, MiddleHeader, PageState, PageStateKind } from "components.slint";
 import { TextEditBase } from "textedit-base.slint";
 import { DragRow } from "drag_row.slint";
 import { ModelPresets } from "model_presets.slint";
@@ -246,6 +246,11 @@ export component SettingsPage inherits Rectangle {
     in property <string> selected-base-url;
     in property <string> selected-type;
     in property <bool> selected-is-default;
+    in property <string> model-editor-provider;
+    in property <string> model-editor-name;
+    in property <string> model-editor-base-url;
+    in property <string> model-editor-type;
+    in property <bool> model-editor-is-default;
     callback select-model(int);
     callback create-model();
     callback move-model(int, int);
@@ -266,6 +271,13 @@ export component SettingsPage inherits Rectangle {
     in-out property <string> model-thinking-budget-draft;
     in-out property <string> model-max-rounds-draft;
     in-out property <string> model-max-context-draft;
+    in-out property <string> model-history-compaction-ratio-draft;
+    in-out property <string> model-reasoning-effort-draft;
+    in-out property <string> model-simulation-speed-draft;
+    in-out property <bool> model-support-vision-draft;
+    in-out property <bool> model-support-hearing-draft;
+    in-out property <bool> model-stream-include-usage-draft;
+    in-out property <string> model-tool-call-mode-draft;
     in-out property <string> model-tts-voice-draft;
     in-out property <string> model-tts-format-draft;
     in-out property <string> model-tts-speed-draft;
@@ -282,9 +294,18 @@ export component SettingsPage inherits Rectangle {
     in-out property <string> model-video-size-draft;
     in-out property <string> model-video-seconds-draft;
     in-out property <string> model-video-fps-draft;
+    in-out property <string> model-video-num-frames-draft;
     in-out property <string> model-video-negative-draft;
+    in-out property <string> model-video-steps-draft;
+    in-out property <string> model-video-guidance-scale-draft;
+    in-out property <string> model-video-guidance-scale-2-draft;
+    in-out property <string> model-video-boundary-ratio-draft;
+    in-out property <string> model-video-flow-shift-draft;
+    in-out property <bool> model-video-frame-interpolation-draft;
+    in-out property <bool> model-video-sync-mode-draft;
     in property <[string]> model-provider-presets;
     in property <[string]> model-type-presets;
+    in property <[string]> virtual-replay-logs;
     callback probe-model-context();
     callback probe-model-voices();
     callback refresh();
@@ -695,7 +716,6 @@ export component SettingsPage inherits Rectangle {
                         }
                     }
                 }
-                MiddleFooter { text: root.status; }
             }
         }
         Rectangle {
@@ -985,7 +1005,7 @@ export component SettingsPage inherits Rectangle {
                                 HorizontalLayout { height: 46px; spacing: 8px;
                                     VerticalLayout { horizontal-stretch: 1; spacing: 2px;
                                         Text { height: 26px; text: root.model-creating ? I18n.model_editor_add : root.selected-key; color: Theme.text; font-size: Theme.font-headline; font-weight: 700; overflow: elide; }
-                                        Text { height: 17px; text: root.model-creating ? I18n.st_model_new_hint : ((root.selected-is-default ? I18n.st_models_default_badge + " · " : "") + I18n.st_model_colon + root.selected-model-name + " · " + root.selected-base-url); color: Theme.muted; font-size: Theme.font-xs; overflow: elide; }
+                                        Text { height: 17px; text: root.model-creating ? I18n.st_model_new_hint : ((root.model-editor-is-default ? I18n.st_models_default_badge + " · " : "") + I18n.st_model_colon + root.model-editor-name + " · " + root.model-editor-base-url); color: Theme.muted; font-size: Theme.font-xs; overflow: elide; }
                                     }
                                     // The former page-header actions live with the
                                     // form now that the title bar is gone.
@@ -1021,7 +1041,7 @@ export component SettingsPage inherits Rectangle {
                                                             root.model-provider-draft = "";
                                                         } else {
                                                             root.model-provider-draft = provider;
-                                                            root.model-base-url-draft = ModelPresets.base-url(provider);
+                                                            root.model-base-url-draft = provider == "virtual_replay" ? "" : ModelPresets.base-url(provider);
                                                         }
                                                     }
                                                 }
@@ -1029,6 +1049,7 @@ export component SettingsPage inherits Rectangle {
                                             }
                                             FormField { label: I18n.model_base_url_label; placeholder: I18n.model_base_url_placeholder; read-only: root.cloud-locked; text <=> root.model-base-url-draft; }
                                             FormField { label: I18n.model_token_label; placeholder: I18n.model_token_placeholder; secret: true; read-only: root.cloud-locked; text <=> root.model-token-draft; }
+                                            if root.model-provider-draft == "virtual_replay" && root.virtual-replay-logs.length > 0 : FormCombo { label: "回放日志"; items: root.virtual-replay-logs; value: root.model-name-draft; selected(value) => { root.model-name-draft = value; } }
                                         }
                                         // Generation / multimodal parameters per type.
                                         if root.model-type-draft == "llm" || root.model-type-draft == "" : SettingsCard {
@@ -1043,6 +1064,17 @@ export component SettingsPage inherits Rectangle {
                                                 FormField { horizontal-stretch: 1; label: I18n.st_param_thinking; placeholder: I18n.st_param_model_default; read-only: root.cloud-locked; text <=> root.model-thinking-budget-draft; }
                                             }
                                             FormField { label: I18n.st_param_max_rounds; placeholder: "1000"; read-only: root.cloud-locked; text <=> root.model-max-rounds-draft; }
+                                            HorizontalLayout { spacing: 10px;
+                                                FormField { horizontal-stretch: 1; label: I18n.st_param_history_ratio; placeholder: "0.9"; read-only: root.cloud-locked; text <=> root.model-history-compaction-ratio-draft; }
+                                                FormCombo { horizontal-stretch: 1; label: I18n.st_param_reasoning_effort; items: ["", "none", "minimal", "low", "medium", "high", "xhigh"]; value: root.model-reasoning-effort-draft; selected(value) => { root.model-reasoning-effort-draft = value; } }
+                                            }
+                                            if root.model-provider-draft == "virtual_replay" : FormCombo { label: I18n.st_param_simulation_speed; items: ["fast", "medium", "slow"]; value: root.model-simulation-speed-draft == "" ? "fast" : root.model-simulation-speed-draft; selected(value) => { root.model-simulation-speed-draft = value; } }
+                                            HorizontalLayout { spacing: 10px;
+                                                CheckBox { text: "支持视觉"; checked <=> root.model-support-vision-draft; }
+                                                CheckBox { text: "支持听觉"; checked <=> root.model-support-hearing-draft; }
+                                                CheckBox { text: "流式返回 usage"; checked <=> root.model-stream-include-usage-draft; }
+                                            }
+                                            FormCombo { label: "工具调用方式"; items: ["tool_call", "function_call", "freeform_call"]; value: root.model-tool-call-mode-draft; selected(value) => { root.model-tool-call-mode-draft = value; } }
                                             HorizontalLayout { spacing: 10px;
                                                 FormField { horizontal-stretch: 1; label: I18n.st_param_max_context; placeholder: I18n.st_param_context_hint; read-only: root.cloud-locked; text <=> root.model-max-context-draft; }
                                                 Rectangle { width: 104px; height: 62px;
@@ -1123,6 +1155,22 @@ export component SettingsPage inherits Rectangle {
                                             HorizontalLayout { spacing: 10px;
                                                 FormField { horizontal-stretch: 1; label: "FPS"; placeholder: "≥ 1"; text <=> root.model-video-fps-draft; }
                                                 FormField { horizontal-stretch: 1; label: I18n.st_param_negative; placeholder: I18n.st_param_model_default; text <=> root.model-video-negative-draft; }
+                                            }
+                                            HorizontalLayout { spacing: 10px;
+                                                FormField { horizontal-stretch: 1; label: "总帧数"; placeholder: "≥ 1"; text <=> root.model-video-num-frames-draft; }
+                                                FormField { horizontal-stretch: 1; label: "采样步数"; placeholder: "1 - 200"; text <=> root.model-video-steps-draft; }
+                                            }
+                                            HorizontalLayout { spacing: 10px;
+                                                FormField { horizontal-stretch: 1; label: "guidance_scale"; placeholder: "0 - 20"; text <=> root.model-video-guidance-scale-draft; }
+                                                FormField { horizontal-stretch: 1; label: "guidance_scale_2"; placeholder: "0 - 20"; text <=> root.model-video-guidance-scale-2-draft; }
+                                            }
+                                            HorizontalLayout { spacing: 10px;
+                                                FormField { horizontal-stretch: 1; label: "boundary_ratio"; placeholder: "0 - 1"; text <=> root.model-video-boundary-ratio-draft; }
+                                                FormField { horizontal-stretch: 1; label: "flow_shift"; placeholder: "≥ 0"; text <=> root.model-video-flow-shift-draft; }
+                                            }
+                                            HorizontalLayout { spacing: 10px;
+                                                CheckBox { text: "启用补帧"; checked <=> root.model-video-frame-interpolation-draft; }
+                                                CheckBox { text: "同步模式"; checked <=> root.model-video-sync-mode-draft; }
                                             }
                                         }
                                     }

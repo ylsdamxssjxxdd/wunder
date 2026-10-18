@@ -199,6 +199,26 @@ fn advance(
 ) -> Result<bool, Box<dyn std::error::Error>> {
     if *step == 3 && app.get_busy() && app.get_stream_updates() > 3 {
         if paused_scroll.is_none() {
+            let rows = app.get_timeline();
+            let footer = rows
+                .row_data(rows.row_count().saturating_sub(1))
+                .ok_or("live turn footer missing")?;
+            ensure(
+                footer.kind == crate::timeline::KIND_FOOTER,
+                "live status is not at the turn bottom",
+            )?;
+            ensure(
+                footer.process_idx == crate::timeline::NO_PROCESS,
+                "live footer entered the process fold",
+            )?;
+            ensure(
+                footer
+                    .stats
+                    .iter()
+                    .any(|metric| metric.key == "status-outputting"),
+                "stream status missing from footer",
+            )?;
+            crate::smoke::snapshot(app, &directory.join("native-chat-live.png"))?;
             app.set_draft("测试草稿".into());
             // The two-column shell replaced the old icon rail, so navigation is
             // driven by the sidebar's settings button and the settings sheet's

@@ -416,6 +416,7 @@ fn push_cloud_status(app: &MainWindow, status: CloudStatusView) {
         next_retry_at,
     } = status;
     let was_logged_in = app.get_cloud_logged_in();
+    crate::cloud_threads::account_status(app, logged_in, &server, &username);
     app.set_cloud_logged_in(logged_in);
     app.set_cloud_inbound_enabled(inbound_enabled);
     app.set_cloud_full_shadow(full_shadow);
@@ -488,12 +489,16 @@ fn restart_cloud_status_poll(app_weak: slint::Weak<MainWindow>, api: Arc<NativeD
 /// from the shell into the call; it is never logged nor persisted.
 fn bind_cloud(app: &MainWindow, api: Arc<NativeDesktop>) {
     restart_cloud_status_poll(app.as_weak(), api.clone());
-    let weak = app.as_weak(); let backend = api.clone();
+    let weak = app.as_weak();
+    let backend = api.clone();
     app.on_cloud_toggle_sharing(move |enabled, full| {
         let Some(app) = weak.upgrade() else { return };
-        if app.get_cloud_busy() { return; }
+        if app.get_cloud_busy() {
+            return;
+        }
         app.set_cloud_busy(true);
-        let weak = app.as_weak(); let backend = backend.clone();
+        let weak = app.as_weak();
+        let backend = backend.clone();
         std::thread::spawn(move || {
             let result = backend.cloud_set_local_sharing(enabled, full);
             let _ = weak.upgrade_in_event_loop(move |app| {
@@ -552,7 +557,10 @@ fn bind_cloud(app: &MainWindow, api: Arc<NativeDesktop>) {
     let weak = app.as_weak();
     app.on_cloud_password_edited(move |value| {
         let Some(app) = weak.upgrade() else { return };
-        let filtered: String = value.chars().filter(|ch| ch.is_ascii() && !ch.is_control()).collect();
+        let filtered: String = value
+            .chars()
+            .filter(|ch| ch.is_ascii() && !ch.is_control())
+            .collect();
         if value.as_str() != filtered {
             app.set_cloud_pass_draft(filtered.into());
             app.set_cloud_error("密码只能使用 ASCII 字符".into());
@@ -843,7 +851,6 @@ fn bind_agents(app: &MainWindow, api: Arc<NativeDesktop>) {
             return;
         }
         app.set_agents_loading(true);
-        app.set_status("正在同步…".into());
         let weak = weak.clone();
         let api = refresh_api.clone();
         run_background(move || {
@@ -962,7 +969,6 @@ fn bind_settings(app: &MainWindow, api: Arc<NativeDesktop>) {
                 match result {
                     Ok(settings) => {
                         apply_settings(&app, settings);
-                        app.set_status("本地设置已同步".into());
                     }
                     Err(error) => show_error(&app, format!("无法读取本地设置：{error}")),
                 }
@@ -995,6 +1001,16 @@ fn bind_settings(app: &MainWindow, api: Arc<NativeDesktop>) {
         let thinking_token_budget = app.get_model_thinking_budget_draft().trim().to_string();
         let max_rounds = app.get_model_max_rounds_draft().trim().to_string();
         let max_context = app.get_model_max_context_draft().trim().to_string();
+        let history_compaction_ratio = app
+            .get_model_history_compaction_ratio_draft()
+            .trim()
+            .to_string();
+        let reasoning_effort = app.get_model_reasoning_effort_draft().trim().to_string();
+        let simulation_speed = app.get_model_simulation_speed_draft().trim().to_string();
+        let support_vision = app.get_model_support_vision_draft();
+        let support_hearing = app.get_model_support_hearing_draft();
+        let stream_include_usage = app.get_model_stream_include_usage_draft();
+        let tool_call_mode = app.get_model_tool_call_mode_draft().trim().to_string();
         let tts_voice = app.get_model_tts_voice_draft().trim().to_string();
         let tts_response_format = app.get_model_tts_format_draft().trim().to_string();
         let tts_speed = app.get_model_tts_speed_draft().trim().to_string();
@@ -1011,7 +1027,24 @@ fn bind_settings(app: &MainWindow, api: Arc<NativeDesktop>) {
         let video_size = app.get_model_video_size_draft().trim().to_string();
         let video_seconds = app.get_model_video_seconds_draft().trim().to_string();
         let video_fps = app.get_model_video_fps_draft().trim().to_string();
+        let video_num_frames = app.get_model_video_num_frames_draft().trim().to_string();
         let video_negative_prompt = app.get_model_video_negative_draft().trim().to_string();
+        let video_steps = app.get_model_video_steps_draft().trim().to_string();
+        let video_guidance_scale = app
+            .get_model_video_guidance_scale_draft()
+            .trim()
+            .to_string();
+        let video_guidance_scale_2 = app
+            .get_model_video_guidance_scale_2_draft()
+            .trim()
+            .to_string();
+        let video_boundary_ratio = app
+            .get_model_video_boundary_ratio_draft()
+            .trim()
+            .to_string();
+        let video_flow_shift = app.get_model_video_flow_shift_draft().trim().to_string();
+        let video_frame_interpolation = app.get_model_video_frame_interpolation_draft();
+        let video_sync_mode = app.get_model_video_sync_mode_draft();
         let weak = weak.clone();
         let api = save_api.clone();
         run_background(move || {
@@ -1028,6 +1061,13 @@ fn bind_settings(app: &MainWindow, api: Arc<NativeDesktop>) {
                 thinking_token_budget: &thinking_token_budget,
                 max_rounds: &max_rounds,
                 max_context: &max_context,
+                history_compaction_ratio: &history_compaction_ratio,
+                reasoning_effort: &reasoning_effort,
+                simulation_speed: &simulation_speed,
+                support_vision,
+                support_hearing,
+                stream_include_usage,
+                tool_call_mode: &tool_call_mode,
                 tts_voice: &tts_voice,
                 tts_response_format: &tts_response_format,
                 tts_speed: &tts_speed,
@@ -1044,7 +1084,15 @@ fn bind_settings(app: &MainWindow, api: Arc<NativeDesktop>) {
                 video_size: &video_size,
                 video_seconds: &video_seconds,
                 video_fps: &video_fps,
+                video_num_frames: &video_num_frames,
                 video_negative_prompt: &video_negative_prompt,
+                video_steps: &video_steps,
+                video_guidance_scale: &video_guidance_scale,
+                video_guidance_scale_2: &video_guidance_scale_2,
+                video_boundary_ratio: &video_boundary_ratio,
+                video_flow_shift: &video_flow_shift,
+                video_frame_interpolation,
+                video_sync_mode,
             });
             let _ = weak.upgrade_in_event_loop(move |app| {
                 app.set_saving(false);
@@ -1052,7 +1100,7 @@ fn bind_settings(app: &MainWindow, api: Arc<NativeDesktop>) {
                     Ok(settings) => {
                         app.set_model_token_draft("".into());
                         apply_settings(&app, settings);
-                        select_model_key(&app, &key);
+                        crate::entity_state::restore_model(&app, &key);
                         app.set_status("模型配置已保存到本地运行时".into());
                     }
                     Err(error) => show_error(&app, format!("无法保存模型配置：{error}")),
@@ -1098,8 +1146,8 @@ fn bind_settings(app: &MainWindow, api: Arc<NativeDesktop>) {
         }
         // Optimistic switch: project the picked card into the composer label in
         // the same frame; persistence races behind and reverts on failure.
-        let previous_key = app.get_selected_model_key().to_string();
-        select_model_key(&app, &key);
+        let previous_key = app.get_settings_model_key().to_string();
+        crate::entity_state::restore_model(&app, &key);
         app.set_saving(true);
         let weak = weak.clone();
         let api = default_api.clone();
@@ -1110,12 +1158,12 @@ fn bind_settings(app: &MainWindow, api: Arc<NativeDesktop>) {
                 match result {
                     Ok(settings) => {
                         apply_settings(&app, settings);
-                        select_model_key(&app, &key);
+                        crate::entity_state::restore_model(&app, &key);
                         app.set_status("默认模型已更新".into());
                         app.invoke_refresh_agents();
                     }
                     Err(error) => {
-                        select_model_key(&app, &previous_key);
+                        crate::entity_state::restore_model(&app, &previous_key);
                         show_error(&app, format!("无法更新默认模型：{error}"));
                     }
                 }
@@ -1140,7 +1188,7 @@ fn bind_settings(app: &MainWindow, api: Arc<NativeDesktop>) {
         let row = rows.remove(from);
         rows.insert(to, row);
         // The highlight follows the model, not the slot it occupied.
-        let selected_key = app.get_selected_model_key().to_string();
+        let selected_key = app.get_settings_model_key().to_string();
         let selected = rows
             .iter()
             .position(|entry| entry.key == selected_key)
@@ -1214,7 +1262,7 @@ fn avatar_tone(color: &str) -> i32 {
 }
 
 pub(crate) fn apply_settings(app: &MainWindow, settings: DesktopSettings) {
-    let selected = app.get_selected_model_key();
+    let selected = app.get_settings_model_key();
     app.set_workspace_root(settings.workspace_root.into());
     app.set_runtime_language(settings.language.into());
     // 帮助窗口独立持有一份手册语言，跟随这里的界面语言变化。
@@ -1243,6 +1291,7 @@ pub(crate) fn apply_settings(app: &MainWindow, settings: DesktopSettings) {
     app.set_runtime_rg_status(status("rg").into());
     // The catalogue object projects the composer's full model list and mirrors
     // its size for the picker's "empty list" versus "nothing configured" split.
+    app.set_virtual_replay_logs(string_model(settings.virtual_replay_logs));
     model_catalogue().set(
         app,
         settings.models.into_iter().map(to_model_card).collect(),
@@ -1269,6 +1318,13 @@ fn to_model_card(model: wunder_desktop::ModelRecord) -> crate::ModelCard {
         thinking_token_budget: model.thinking_token_budget.into(),
         max_rounds: model.max_rounds.into(),
         max_context: model.max_context.into(),
+        history_compaction_ratio: model.history_compaction_ratio.into(),
+        reasoning_effort: model.reasoning_effort.into(),
+        simulation_speed: model.simulation_speed.into(),
+        support_vision: model.support_vision,
+        support_hearing: model.support_hearing,
+        stream_include_usage: model.stream_include_usage,
+        tool_call_mode: model.tool_call_mode.into(),
         tts_voice: model.tts_voice.into(),
         tts_response_format: model.tts_response_format.into(),
         tts_speed: model.tts_speed.into(),
@@ -1285,7 +1341,15 @@ fn to_model_card(model: wunder_desktop::ModelRecord) -> crate::ModelCard {
         video_size: model.video_size.into(),
         video_seconds: model.video_seconds.into(),
         video_fps: model.video_fps.into(),
+        video_num_frames: model.video_num_frames.into(),
         video_negative_prompt: model.video_negative_prompt.into(),
+        video_steps: model.video_steps.into(),
+        video_guidance_scale: model.video_guidance_scale.into(),
+        video_guidance_scale_2: model.video_guidance_scale_2.into(),
+        video_boundary_ratio: model.video_boundary_ratio.into(),
+        video_flow_shift: model.video_flow_shift.into(),
+        video_frame_interpolation: model.video_frame_interpolation,
+        video_sync_mode: model.video_sync_mode,
     }
 }
 
@@ -1320,7 +1384,16 @@ fn tool_status_text(status: &RuntimeToolStatus) -> String {
 
 pub(crate) fn select_model_key(app: &MainWindow, key: &str) {
     if let Some(index) = app.get_models().iter().position(|model| model.key == key) {
-        app.invoke_select_model(index as i32);
+        let model = app.get_models().row_data(index).unwrap_or_default();
+        // This helper is used by the composer and session restore. Keep the
+        // composer projection updated without routing through the settings
+        // editor selection callback.
+        app.set_selected_model_key(model.key);
+        app.set_selected_model_provider(model.provider);
+        app.set_selected_model_name(model.model);
+        app.set_selected_model_base_url(model.base_url);
+        app.set_selected_model_type(model.model_type);
+        app.set_selected_model_is_default(model.is_default);
     }
 }
 

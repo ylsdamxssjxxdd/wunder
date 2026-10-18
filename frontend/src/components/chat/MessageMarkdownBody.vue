@@ -15,15 +15,6 @@
     :class="{ 'message-markdown-body--assistant': assistantDisplay }"
     v-html="visibleHtml"
   ></div>
-  <button
-    v-if="isContentTruncated"
-    class="message-markdown-body-expand"
-    type="button"
-    :disabled="detailLoading"
-    @click="expandLongContent"
-  >
-    {{ t('common.expand') }}
-  </button>
 </template>
 
 <script setup lang="ts">
@@ -192,13 +183,15 @@ const normalizedContent = computed(() => {
 });
 const normalizedCacheKey = computed(() => [
   String(props.sessionId || chatStore.activeSessionId || ''), props.workspacePathContext,
-  t('common.expand'), String(props.cacheKey || '').trim()
+  String(props.cacheKey || '').trim()
 ].join('::'));
+// Long answers must render whole: the durable body read replaces any bounded
+// preview instead of asking the user to expand it.
 const isContentTruncated = computed(() =>
   props.streaming !== true &&
   !expandedLongContent.value &&
   hydratedContent.value === null &&
-  (props.contentTruncated === true || normalizedContent.value.length > HISTORY_MARKDOWN_INITIAL_CHARS)
+  props.contentTruncated === true
 );
 const renderContent = computed(() => {
   const source = normalizedContent.value;
@@ -556,7 +549,7 @@ watch(normalizedCacheKey, () => {
   hydratedContent.value = readHydratedHistoryContent(normalizedCacheKey.value);
 }, { immediate: true });
 
-const expandLongContent = async () => {
+const hydrateLongContent = async () => {
   if (detailLoading.value) return;
   const sessionId = String(props.sessionId || '').trim();
   const itemId = String(props.itemId || props.message?.item_id || '').trim();
@@ -594,6 +587,11 @@ const expandLongContent = async () => {
     }
   }
 };
+
+// A clipped durable preview is completed by the item read, never by a control.
+watch(isContentTruncated, (truncated) => {
+  if (truncated) void hydrateLongContent();
+}, { immediate: true });
 
 onBeforeUnmount(() => {
   disposed = true;

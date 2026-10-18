@@ -31,8 +31,7 @@ updated_at: 2026-10-16
 | 视频生成 | `generate_video` | 按提示词生成视频 | 多模态 |
 | 语音生成 | `generate_speech` | 文本转语音 | 多模态 |
 | 声转文 | `transcribe_speech` | 语音转文字 | 多模态 |
-| 桌面监视器 | `desktop_monitor` | 读取桌面窗口与屏幕状态 | 桌面 |
-| 桌面控制器 | `desktop_controller` | 操作本机桌面（鼠标、键盘、窗口） | 桌面 |
+| 桌面控制 | `desktop_control` | 操作本机桌面并观察（鼠标、键盘、窗口） | 桌面 |
 | 子智能体控制 | `subagent_control` | 在任务中临时派生子智能体，结果回传后回收 | 线程与子智能体 |
 | 会话线程控制 | `thread_control` | 管理任务线程 / 分支线程（桌面端不开放） | 线程与子智能体 |
 | 自我状态 | `self_status` | 查询智能体自身的运行状态 | 系统与记忆 |
@@ -66,7 +65,7 @@ updated_at: 2026-10-16
 | 工作区与代码 | 列出文件 / glob / 搜索内容 / 读取文件 / 写入文件 / 文本编辑：[工作区文件](/docs/zh-CN/tools/workspace-files/)；执行命令 / 命令会话：[执行命令](/docs/zh-CN/tools/exec/)；技能调用：[技能调用](/docs/zh-CN/tools/skill-call/) |
 | Web | 网页抓取：[网页抓取](/docs/zh-CN/tools/web-fetch/)；浏览器：[浏览器工具族](/docs/zh-CN/tools/browser/) |
 | 多模态 | 读图工具：[读图工具](/docs/zh-CN/tools/read-image/)；图像生成 / 视频生成 / 语音生成 / 声转文：[多模态生成](/docs/zh-CN/tools/multimodal-generation/) |
-| 桌面 | 桌面监视器 / 桌面控制器：[桌面控制](/docs/zh-CN/tools/desktop-control/) |
+| 桌面 | 桌面控制：[桌面控制](/docs/zh-CN/tools/desktop-control/) |
 | 线程与子智能体 | 子智能体控制：[子智能体控制](/docs/zh-CN/tools/subagent-control/)；会话线程控制：[会话线程控制](/docs/zh-CN/tools/thread-control/) |
 | 系统与记忆 | 自我状态：[自我状态](/docs/zh-CN/tools/self-status/)；记忆管理：[记忆管理](/docs/zh-CN/tools/memory-manager/)；定时任务：[定时任务](/docs/zh-CN/tools/schedule-task/) |
 | 目标态 | `get_goal` / `create_goal` / `update_goal` 由运行时按会话自动注入，不对桌面端开放选择 |

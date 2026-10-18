@@ -236,6 +236,14 @@ hooks: # 工具生命周期钩子（对齐 dsh hooks/hook-protocol；默认关�
 browser:
   enabled: ${WUNDER_BROWSER_ENABLED:-false}
   provider: playwright
+  # auto=浏览器随本进程启动；sandbox=桥接进程与 Chromium 都放到沙盒容器里，
+  # 主进程只保留会话表与预热池（容器部署推荐，Chromium 的内存与崩溃留在沙盒）
+  deployment: ${WUNDER_BROWSER_DEPLOYMENT:-auto}
+  limits:
+    max_sessions: 5 # 同时存活的浏览器进程数上限，超出按最久未用逐出
+    idle_timeout_secs: 1800 # 会话空闲回收阈值；冷启动约 45-60s，太短会在一轮对话内重复付
+    max_tabs_per_session: 8
+    prewarm_sessions: ${WUNDER_BROWSER_PREWARM_SESSIONS:-1} # 启动后后台预热的浏览器数，0 = 关闭
   playwright:
     mode: launch # launch=另起受控浏览器；attach=接管已在运行的浏览器
     channel: null # 复用本机浏览器：chrome / msedge / chromium ...

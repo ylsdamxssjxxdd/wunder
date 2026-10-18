@@ -21,15 +21,16 @@ export component WorkspaceAlignmentDemo inherits Window {
     // viewer fixture makes the real hover and native context-menu actions
     // observable without adding any production-only state to Sidebar.
     out property <string> last-thread-action: "";
+    in property <bool> cloud: false;
     accessible-role: groupbox;
     accessible-description: "command=" + root.last-command + ";workspace=" + root.last-workspace
         + ";thread=" + root.last-thread-action + ";opens=" + root.opened-count
         + ";clicks=" + root.clicked-count + ";split=" + root.split + ";saves=" + root.layout-saves;
     Sidebar {
         rows: [
-            {kind: 0, workspace-id: "fixture-a", name: "示例工作区", icon: "folder", color: "blue", selected: true, expanded: true, thread-count: 2, payload: 0},
-            {kind: 1, workspace-id: "fixture-a", thread-id: "fixture-thread-a", title: "示例线程", status: "done", active: true, archivable: true, payload: 0},
-            {kind: 1, workspace-id: "fixture-a", thread-id: "fixture-thread-b", title: "另一个线程", status: "running", payload: 1},
+            {kind: root.cloud ? 2 : 0, workspace-id: "fixture-a", name: "示例工作区", icon: "folder", color: "blue", selected: true, expanded: true, thread-count: 2, payload: 0},
+            {kind: root.cloud ? 3 : 1, workspace-id: "fixture-a", thread-id: "fixture-thread-a", title: "示例线程", status: "done", active: true, archivable: true, payload: 0},
+            {kind: root.cloud ? 3 : 1, workspace-id: "fixture-a", thread-id: "fixture-thread-b", title: "另一个线程", status: "running", payload: 1},
             {kind: 0, workspace-id: "fixture-b", name: "第二工作区", icon: "coffee", color: "orange", payload: 1}
         ];
         user-initial: "U"; user-color: Theme.accent;
@@ -63,6 +64,9 @@ export component WorkspaceAlignmentDemo inherits Window {
         rename-request(index, title) => { root.last-thread-action = "rename:" + index + ":" + title; }
         open-trajectory(index) => { root.last-thread-action = "trajectory:" + index; }
         archive-thread(index) => { root.last-thread-action = "archive:" + index; }
+        cloud-rename-request(id, title) => { root.last-thread-action = "rename:" + id + ":" + title; }
+        cloud-open-trajectory(id) => { root.last-thread-action = "trajectory:" + id; }
+        cloud-archive-request(id) => { root.last-thread-action = "archive:" + id; }
         begin-selection => { root.last-thread-action = "multi-select"; }
     }
 }

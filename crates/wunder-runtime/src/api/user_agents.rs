@@ -1621,12 +1621,8 @@ fn filter_allowed_tools(
         .map(|name| resolve_tool_name(name.trim()))
         .filter(|name| !name.is_empty())
         .collect();
-    let desktop_control_tool_names = allow_desktop_control_tools.then(|| {
-        HashSet::from([
-            resolve_tool_name("desktop_controller"),
-            resolve_tool_name("desktop_monitor"),
-        ])
-    });
+    let desktop_control_tool_names = allow_desktop_control_tools
+        .then(|| HashSet::from([resolve_tool_name("desktop_control")]));
     let mut seen = HashSet::new();
     let mut output = Vec::new();
     for raw in values {
@@ -2395,20 +2391,13 @@ mod tests {
     }
 
     #[test]
-    fn filter_allowed_tools_keeps_desktop_tools_in_desktop_mode() {
-        let requested = vec![
-            "desktop_controller".to_string(),
-            "desktop_monitor".to_string(),
-            "unknown_tool".to_string(),
-        ];
+    fn filter_allowed_tools_keeps_desktop_tool_in_desktop_mode() {
+        let requested = vec!["desktop_control".to_string(), "unknown_tool".to_string()];
         let allowed = HashSet::new();
 
         assert_eq!(
             filter_allowed_tools(&requested, &allowed, true),
-            vec![
-                crate::tools::resolve_tool_name("desktop_controller"),
-                crate::tools::resolve_tool_name("desktop_monitor"),
-            ]
+            vec![crate::tools::resolve_tool_name("desktop_control")]
         );
     }
 
@@ -2437,11 +2426,8 @@ mod tests {
     }
 
     #[test]
-    fn filter_allowed_tools_still_rejects_desktop_tools_outside_desktop_mode() {
-        let requested = vec![
-            "desktop_controller".to_string(),
-            "desktop_monitor".to_string(),
-        ];
+    fn filter_allowed_tools_still_rejects_desktop_tool_outside_desktop_mode() {
+        let requested = vec!["desktop_control".to_string()];
         let allowed = HashSet::new();
 
         assert!(filter_allowed_tools(&requested, &allowed, false).is_empty());

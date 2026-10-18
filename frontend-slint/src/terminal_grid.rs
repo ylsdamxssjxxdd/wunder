@@ -477,7 +477,9 @@ impl TerminalGrid {
         }
     }
 
-    pub fn bracketed_paste_enabled(&self) -> bool { self.parser.screen().bracketed_paste() }
+    pub fn bracketed_paste_enabled(&self) -> bool {
+        self.parser.screen().bracketed_paste()
+    }
 }
 
 fn push_decimal(target: &mut Vec<u8>, value: u32) {

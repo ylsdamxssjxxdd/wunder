@@ -262,6 +262,77 @@ test('path tools do not render the same file name twice beside the target chip',
   assert.equal(command.summary, 'python draw.py');
 });
 
+test('edit and write entries carry inline +/- line stats beside the target chip', () => {
+  // replace：+2 -1（与 diff 卡片头部同一口径）。
+  const replace = buildTimelineToolEntry(baseRun({
+    toolName: 'text_edit',
+    toolDisplayName: '文本编辑',
+    toolRuntimeName: 'text_edit',
+    callItem: callItem({
+      args: { file_path: 'src/a.rs', old_string: 'const A = 1;', new_string: 'const A = 2;\nconst B = 3;' }
+    })
+  }), t);
+  assert.deepEqual(replace.diffStats, { added: 2, deleted: 1 });
+
+  // create：旧文本不存在，只有新增行。
+  const create = buildTimelineToolEntry(baseRun({
+    toolName: 'text_edit',
+    toolDisplayName: '文本编辑',
+    toolRuntimeName: 'text_edit',
+    callItem: callItem({
+      args: { file_path: 'src/b.rs', command: 'create', file_text: 'line one\nline two\n' }
+    })
+  }), t);
+  assert.deepEqual(create.diffStats, { added: 2, deleted: 0 });
+
+  // 无参数变化的 replace 与非编辑工具没有统计。
+  const noop = buildTimelineToolEntry(baseRun({
+    toolName: 'text_edit',
+    toolDisplayName: '文本编辑',
+    toolRuntimeName: 'text_edit',
+    callItem: callItem({ args: { file_path: 'src/a.rs', old_string: 'a', new_string: 'a' } })
+  }), t);
+  assert.equal(noop.diffStats, null);
+  const command = buildTimelineToolEntry(baseRun({
+    callItem: callItem({ args: { content: 'python draw.py' } })
+  }), t);
+  assert.equal(command.diffStats, null);
+
+  // apply_patch：按补丁 +/- 行计数。
+  const patch = buildTimelineToolEntry(baseRun({
+    toolName: 'apply_patch',
+    toolDisplayName: '应用补丁',
+    toolRuntimeName: 'apply_patch',
+    callItem: callItem({
+      args: { patch: '*** Begin Patch\n*** Update File: src/a.rs\n@@\n-old line\n+new line\n+another\n*** End Patch' }
+    })
+  }), t);
+  assert.deepEqual(patch.diffStats, { added: 2, deleted: 1 });
+});
+
+test('failed edit entries drop the inline +/- stats', () => {
+  // 失败的编辑没有改出这组行数，条目行不再显示统计。
+  const failed = buildTimelineToolEntry(baseRun({
+    toolName: 'text_edit',
+    toolDisplayName: '文本编辑',
+    toolRuntimeName: 'text_edit',
+    callItem: callItem({ args: { file_path: 'src/a.rs', old_string: 'a', new_string: 'b' } }),
+    resultItem: callItem({ data: { error: 'string to replace not found' } })
+  }), t);
+  assert.equal(failed.status, 'failed');
+  assert.equal(failed.diffStats, null);
+
+  const cancelled = buildTimelineToolEntry(baseRun({
+    toolName: 'text_edit',
+    toolDisplayName: '文本编辑',
+    toolRuntimeName: 'text_edit',
+    callItem: callItem({ args: { file_path: 'src/a.rs', old_string: 'a', new_string: 'b' } }),
+    resultItem: callItem({ data: {} }, { status: 'cancelled' })
+  }), t);
+  assert.equal(cancelled.status, 'cancelled');
+  assert.equal(cancelled.diffStats, null);
+});
+
 test('text_edit replace folds into a red/green diff card with +/- stats', () => {
   const run = baseRun({
     toolName: 'text_edit',

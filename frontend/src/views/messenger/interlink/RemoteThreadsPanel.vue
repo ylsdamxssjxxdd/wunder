@@ -1,167 +1,99 @@
 <template>
-  <el-dialog v-model="visible" :title="text('设备线程', 'Device threads')" width="760px" destroy-on-close @closed="stop">
-    <div class="remote-thread-toolbar">
-      <button type="button" :disabled="busy" @click="reload">{{ text('刷新', 'Refresh') }}</button>
-      <select v-model="selected" :disabled="busy" @change="loadThread">
-        <option value="">{{ text('新线程', 'New thread') }}</option>
-        <option v-for="thread in threads" :key="thread.local_thread_id" :value="thread.local_thread_id">{{ thread.title || thread.local_thread_id }}</option>
-      </select>
-      <button type="button" :disabled="!selected || busy" @click="drive('thread.cancel')">{{ text('停止线程', 'Stop thread') }}</button>
+  <section class="remote-thread-panel is-inline">
+    <div class="remote-thread-context">
+      <span>{{ text('本地工作线程', 'Local work thread') }}</span>
+      <button type="button" :disabled="busy" :title="text('刷新线程', 'Refresh thread')" @click="reload">
+        <i class="fa-solid fa-rotate" :class="{ 'fa-spin': busy }" aria-hidden="true"></i>
+      </button>
     </div>
-    <p role="status">{{ status }}</p>
-    <pre class="remote-thread-history">{{ history }}</pre>
-    <textarea v-model="message" :placeholder="text('向此设备发送消息', 'Send a message to this device')" rows="3" maxlength="32000"></textarea>
-    <div class="remote-thread-toolbar">
-      <button type="button" :disabled="busy || !message.trim()" @click="drive('thread.message')">{{ text('发送', 'Send') }}</button>
-      <button v-if="busy" type="button" @click="abort?.abort()">{{ text('取消操作', 'Cancel operation') }}</button>
-      <button type="button" :disabled="busy || !selected" @click="answer">{{ text('处理工具审批', 'Answer tool approval') }}</button>
+    <div ref="historyRef" class="remote-thread-messages" aria-live="polite">
+      <div v-if="busy && !messages.length" class="remote-thread-empty">{{ text('正在加载线程…', 'Loading thread…') }}</div>
+      <div v-else-if="!messages.length" class="remote-thread-empty">{{ text('还没有消息，发送第一条消息开始工作。', 'No messages yet. Send the first message to start.') }}</div>
+      <article v-for="item in messages" :key="item.id" class="messenger-message remote-thread-message" :class="{ mine: item.role === 'user' }">
+        <div class="messenger-message-main">
+          <div class="messenger-message-bubble" :class="item.role === 'user' ? '' : 'messenger-markdown'">
+            <MessageMarkdownBody v-if="item.role !== 'user'" :cache-key="`interlink:${props.target}:${props.workspaceId}:${props.openThreadId}:${item.id}`" :content="item.content" :streaming="false" :explicit-content="true" />
+            <span v-else class="remote-thread-user-content">{{ item.content }}</span>
+          </div>
+        </div>
+      </article>
     </div>
-    <details v-if="events.length"><summary>{{ text('实时事件', 'Live events') }}</summary><pre class="remote-thread-events">{{ events.join('\n') }}</pre></details>
-  </el-dialog>
+    <p v-if="status" class="remote-thread-status" role="status">{{ status }}</p>
+    <form class="remote-thread-composer input-container input-container--world" @submit.prevent="send">
+      <div class="input-box input-box--world"><textarea v-model="message" class="composer-textarea" :disabled="busy || !selected" :placeholder="text('向本地线程发送消息', 'Send a message to this local thread')" rows="1" maxlength="32000" @keydown="handleInputKeydown"></textarea></div>
+      <div class="composer-action-row"><span class="remote-thread-target">{{ text('本地线程', 'Local thread') }}</span><button class="composer-send-btn" data-testid="remote-thread-send" type="submit" :disabled="busy || !selected || !message.trim()" :title="text('发送', 'Send')" :aria-label="text('发送', 'Send')"><i class="fa-solid fa-arrow-up composer-send-icon" aria-hidden="true"></i></button></div>
+    </form>
+  </section>
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue';
+import { nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { useI18n } from '@/i18n';
-import type { InterlinkNode } from '@/api/interlink';
 import { resolveAccessToken } from '@/api/requestAuth';
 import { resolveApiBase } from '@/config/runtime';
-import { mzDialog, mzPrompt } from '@/utils/mzDialog';
 import { runInterlinkCommand } from './interlinkCommandRunner';
-import { remoteThreadModel, remoteHistoryText } from './remoteThreadModel';
+import { remoteThreadModel, remoteHistoryItems, type RemoteThreadItem } from './remoteThreadModel';
+import MessageMarkdownBody from '@/components/chat/MessageMarkdownBody.vue';
 
-const props = withDefaults(defineProps<{
-  target: string;
-  workspaceId: string;
-  node: InterlinkNode | null;
-  openThreadId?: string;
-}>(), { openThreadId: '' });
+const props = withDefaults(defineProps<{ target: string; workspaceId: string; openThreadId?: string }>(), { openThreadId: '' });
 const { language: locale } = useI18n();
 const text = (zh: string, en: string) => locale.value.startsWith('zh') ? zh : en;
-const visible = ref(false), busy = ref(false), selected = ref(''), message = ref(''), history = ref(''), status = ref('');
-const threads = ref<Array<{ local_thread_id: string; title: string }>>([]);
-const events = ref<string[]>([]);
+const selected = ref('');
+const busy = ref(false);
+const message = ref('');
+const messages = ref<RemoteThreadItem[]>([]);
+const status = ref('');
+const historyRef = ref<HTMLElement | null>(null);
 let abort: AbortController | null = null, socket: WebSocket | null = null;
-let generation = 0;
-let reconnect: ReturnType<typeof setTimeout> | null = null;
-let render: ReturnType<typeof setTimeout> | null = null;
-let retries = 0;
-const target = computed(() => props.target);
-function closeWatch() { if (reconnect) clearTimeout(reconnect); reconnect = null; if (render) clearTimeout(render); render = null; const previous = socket; socket = null; previous?.close(); }
-function stop() { generation++; abort?.abort(); abort = null; closeWatch(); busy.value = false; }
+let generation = 0, reconnect: ReturnType<typeof setTimeout> | null = null, render: ReturnType<typeof setTimeout> | null = null, retries = 0;
+
+function closeWatch() { if (reconnect) clearTimeout(reconnect); reconnect = null; if (render) clearTimeout(render); render = null; const old = socket; socket = null; old?.close(); }
+function stop() { generation += 1; abort?.abort(); abort = null; closeWatch(); busy.value = false; }
+function setMessages(next: RemoteThreadItem[]) {
+  const follow = !historyRef.value || historyRef.value.scrollHeight - historyRef.value.scrollTop - historyRef.value.clientHeight < 80;
+  messages.value = next;
+  if (follow) void nextTick(() => { const el = historyRef.value; if (el) el.scrollTop = el.scrollHeight; });
+}
 async function command(kind: string, args: Record<string, unknown>) {
   abort = new AbortController();
-  const current = generation;
-  return runInterlinkCommand({ to: props.target, kind, args: { ...args, ...(props.workspaceId ? { workspace_id: props.workspaceId } : {}) }, signal: abort.signal,
-    onState: ({ record }) => { if (current === generation) status.value = record?.approval_state === 'pending' ? text('等待本地设备批准，可取消操作', 'Waiting for approval on the local device') : String(record?.status || ''); }
-  });
+  return runInterlinkCommand({ to: props.target, kind, args: { ...args, ...(props.workspaceId ? { workspace_id: props.workspaceId } : {}) }, signal: abort.signal });
 }
 async function reload() {
-  if (busy.value) return;
+  if (busy.value || !selected.value) return;
   busy.value = true; const current = generation;
   try {
-    const result = await command('threads.list', { limit: 50, offset: 0, workspace_id: props.workspaceId });
+    const result = await command('threads.get', { local_thread_id: selected.value, limit: 100 });
     if (current !== generation) return;
     if (result.status !== 'succeeded') throw new Error(result.errorSummary || result.errorCode);
-    threads.value = (Array.isArray(result.result?.threads) ? result.result.threads : []).slice(0, 50) as typeof threads.value;
-    if (selected.value && !threads.value.some(thread => thread.local_thread_id === selected.value)) {
-      threads.value = [{ local_thread_id: selected.value, title: selected.value }, ...threads.value.slice(0, 49)];
-    }
-    status.value = text('最近 50 个线程', 'Up to 50 recent threads');
-  } catch (error) { if (current === generation) status.value = String(error); }
-  finally { if (current === generation) { busy.value = false; if (selected.value) await loadThread(); } }
-}
-async function loadThread() {
-  closeWatch(); events.value = [];
-  if (!selected.value) { history.value = ''; return; }
-  busy.value = true; const current = generation;
-  try {
-    const result = await command('threads.get', { local_thread_id: selected.value, limit: 50 });
-    if (current !== generation) return;
-    if (result.status !== 'succeeded') throw new Error(result.errorSummary || result.errorCode);
-    history.value = remoteHistoryText(result.result?.items);
-    watchThread();
+    setMessages(remoteHistoryItems(result.result?.items)); status.value = ''; watchThread();
   } catch (error) { if (current === generation) status.value = String(error); }
   finally { if (current === generation) busy.value = false; }
 }
 function watchThread() {
-  const model = remoteThreadModel(selected.value);
-  const base = new URL(resolveApiBase() || '/wunder', window.location.origin);
-  const url = new URL(`${base.pathname.replace(/\/$/, '')}/interlink/remote_ws`, base.origin);
-  url.protocol = base.protocol === 'https:' ? 'wss:' : 'ws:';
-  url.searchParams.set('target', props.target); url.searchParams.set('thread', selected.value);
-  const connection = new WebSocket(url, ['wunder-interlink-remote', `wunder-auth.${resolveAccessToken()}`]);
-  socket = connection;
-  connection.onopen = () => { status.value = text('实时连接已恢复', 'Live connection restored'); };
-  connection.onmessage = event => {
-    if (socket !== connection) return;
-    events.value = [...events.value.slice(-79), String(event.data).slice(0, 12000)];
-    try {
-      const frame = JSON.parse(String(event.data));
-      retries = 0;
-      if (frame.type === 'close' || frame.type === 'error') {
-        status.value = String(frame.reason || frame.code || '');
-        if (['session_revoked','AUTH_REQUIRED','PERMISSION_DENIED','SUBSCRIBER_LIMIT'].includes(String(frame.reason || frame.code))) socket = null;
-        connection.close(); return;
-      }
-      if (model.apply(frame)) { connection.close(); return; }
-      if (!render) render = setTimeout(() => { render = null; if (socket === connection) { const text = model.text(); if (text) history.value = text; } }, 33);
-    } catch { status.value = text('实时数据无效，请刷新', 'Invalid live data; refresh the thread'); }
-  };
-  connection.onclose = () => {
-    if (socket !== connection || !visible.value) return;
-    status.value = text('实时连接中断，正在重连…', 'Live connection interrupted; reconnecting…');
-    reconnect = setTimeout(() => { reconnect = null; if (socket === connection && visible.value) void loadThread(); }, Math.min(30_000, 1000 * 2 ** Math.min(retries++, 5)));
-  };
+  closeWatch(); const model = remoteThreadModel(selected.value); const base = new URL(resolveApiBase() || '/wunder', window.location.origin);
+  const url = new URL(`${base.pathname.replace(/\/$/, '')}/interlink/remote_ws`, base.origin); url.protocol = base.protocol === 'https:' ? 'wss:' : 'ws:'; url.searchParams.set('target', props.target); url.searchParams.set('thread', selected.value);
+  const connection = new WebSocket(url, ['wunder-interlink-remote', `wunder-auth.${resolveAccessToken()}`]); socket = connection;
+  connection.onopen = () => { status.value = ''; retries = 0; };
+  connection.onmessage = event => { if (socket !== connection) return; try { const frame = JSON.parse(String(event.data)); if (frame.type === 'close' || frame.type === 'error') { status.value = String(frame.reason || frame.code || ''); connection.close(); return; } if (model.apply(frame)) { void reload(); return; } if (!render) render = setTimeout(() => { render = null; if (socket === connection) setMessages(model.items()); }, 33); } catch { status.value = text('实时数据无效，请刷新线程', 'Invalid live data; refresh the thread'); } };
+  connection.onclose = () => { if (socket !== connection) return; status.value = text('连接中断，正在恢复…', 'Connection interrupted; reconnecting…'); reconnect = setTimeout(() => { reconnect = null; if (socket === connection && selected.value) void reload(); }, Math.min(30_000, 1000 * 2 ** Math.min(retries++, 5))); };
 }
-async function drive(kind: string, extra: Record<string, unknown> = {}) {
-  if (busy.value) return;
-  busy.value = true; const current = generation;
-  let succeeded = false;
-  try {
-    const result = await command(kind, { ...(selected.value ? { local_thread_id: selected.value } : {}), ...(kind === 'thread.message' ? { message: message.value } : {}), ...extra });
-    if (current !== generation) return;
-    if (result.status !== 'succeeded') throw new Error(result.errorSummary || result.errorCode);
-    if (kind === 'thread.message') { message.value = ''; selected.value = String(result.result?.local_thread_id || selected.value); }
-    status.value = text('操作成功', 'Completed');
-    succeeded = true;
-  } catch (error) { if (current === generation) status.value = String(error); }
-  finally { if (current === generation) { busy.value = false; if (succeeded && selected.value) await loadThread(); } }
+async function send() {
+  if (busy.value || !selected.value || !message.value.trim()) return;
+  busy.value = true; const current = generation; const content = message.value.trim();
+  try { const result = await command('thread.message', { local_thread_id: selected.value, message: content }); if (current !== generation) return; if (result.status !== 'succeeded') throw new Error(result.errorSummary || result.errorCode); message.value = ''; status.value = ''; busy.value = false; await reload(); }
+  catch (error) { if (current === generation) status.value = String(error); }
+  finally { if (current === generation) busy.value = false; }
 }
-async function answer() {
-  const approvalId = String(
-    (await mzPrompt({
-      title: text('工具审批', 'Tool approval'),
-      message: text('输入待处理的工具审批 ID', 'Enter the pending tool approval ID')
-    })) || ''
-  );
-  if (!approvalId.trim()) return;
-  // 拒绝（cancel）走 deny；关闭弹窗（close）等于放弃作答。
-  const choice = await mzDialog({
-    title: text('确认', 'Confirm'),
-    message: text('允许此工具执行一次？也可以明确拒绝。', 'Allow this tool once, or explicitly reject it.'),
-    confirmText: text('允许一次', 'Allow once'),
-    cancelText: text('拒绝', 'Reject')
-  });
-  if (choice.action === 'close') return;
-  await drive('thread.answer', { approval_id: approvalId.trim(), decision: choice.action === 'cancel' ? 'deny' : 'approve_once' });
-}
-watch([target, () => props.workspaceId], () => { stop(); visible.value = false; selected.value = ''; history.value = ''; });
-watch(() => props.openThreadId, (threadId) => {
-  if (!threadId) return;
-  stop();
-  history.value = '';
-  status.value = '';
-  visible.value = true;
-  selected.value = threadId;
-  void reload();
-}, { immediate: true });
+function handleInputKeydown(event: KeyboardEvent) { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void send(); } }
+watch(() => props.openThreadId, id => { stop(); selected.value = String(id || '').trim(); messages.value = []; status.value = ''; if (selected.value) void reload(); }, { immediate: true });
 onBeforeUnmount(stop);
 </script>
 
 <style scoped>
-.remote-thread-toolbar { display:flex; gap:8px; align-items:center; padding:6px; }
-.remote-thread-history { max-height:340px; overflow:auto; white-space:pre-wrap; background:#f5f7fa; padding:12px; }
-.remote-thread-events { max-height:180px; overflow:auto; white-space:pre-wrap; }
-textarea { width:100%; box-sizing:border-box; }
+.remote-thread-panel.is-inline { display:flex; flex-direction:column; height:100%; min-height:0; padding:20px 28px 16px; box-sizing:border-box; background:var(--mz-bg,#fff); }
+.remote-thread-context,.remote-thread-composer,.remote-thread-messages,.remote-thread-status { width:min(900px,100%); margin-left:auto; margin-right:auto; }
+.remote-thread-context { display:flex; align-items:center; justify-content:space-between; min-height:28px; color:var(--mz-text-muted,#7b8494); font-size:12px; }
+.remote-thread-context button { border:0; background:transparent; color:inherit; cursor:pointer; padding:4px 6px; }
+.remote-thread-messages { flex:1; min-height:0; overflow:auto; padding:16px 0 24px; box-sizing:border-box; }
+.remote-thread-message { margin:0 0 18px; }.remote-thread-message.mine .messenger-message-main { display:flex; justify-content:flex-end; }.remote-thread-message .messenger-message-bubble { max-width:min(760px,92%); }.remote-thread-user-content { white-space:pre-wrap; overflow-wrap:anywhere; }.remote-thread-empty { display:grid; place-items:center; min-height:160px; color:var(--mz-text-muted,#7b8494); font-size:13px; text-align:center; }.remote-thread-status { flex:0 0 auto; margin-top:0; margin-bottom:6px; color:var(--mz-text-muted,#7b8494); font-size:12px; }.remote-thread-composer { flex:0 0 auto; }.remote-thread-composer .input-box { width:100%; }.remote-thread-composer .composer-textarea { min-height:44px; max-height:180px; resize:vertical; }.remote-thread-composer .composer-action-row { display:flex; align-items:center; justify-content:flex-end; min-height:38px; }.remote-thread-target { margin-right:10px; color:var(--mz-text-muted,#7b8494); font-size:12px; }
 </style>

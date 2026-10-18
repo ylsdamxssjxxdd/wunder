@@ -1315,73 +1315,65 @@
     "en-US": "Firecrawl Cloud search requires FIRECRAWL_API_KEY. Self-hosted Firecrawl can use FIRECRAWL_BASE_URL without an API key.",
     "zh-CN": "Firecrawl Cloud 搜索需要 FIRECRAWL_API_KEY；自托管 Firecrawl 可配置 FIRECRAWL_BASE_URL 且通常不需要 API Key。"
   },
-  "tool.desktop_controller.disabled": {
-    "en-US": "Desktop controller is disabled.",
-    "zh-CN": "桌面控制器未启用。"
+  "tool.desktop_control.disabled": {
+    "en-US": "Desktop control is disabled.",
+    "zh-CN": "桌面控制未启用。"
   },
-  "tool.desktop_controller.invalid_args": {
-    "en-US": "Invalid desktop controller arguments.",
-    "zh-CN": "桌面控制器参数无效。"
+  "tool.desktop_control.invalid_args": {
+    "en-US": "Invalid desktop control arguments.",
+    "zh-CN": "桌面控制参数无效。"
   },
-  "tool.desktop_controller.bbox_required": {
+  "tool.desktop_control.bbox_required": {
     "en-US": "bbox is required.",
     "zh-CN": "必须提供 bbox。"
   },
-  "tool.desktop_controller.invalid_bbox": {
+  "tool.desktop_control.invalid_bbox": {
     "en-US": "bbox must be a JSON array like [x1,y1,x2,y2] or [cx,cy] (no quotes).",
     "zh-CN": "bbox 必须是 JSON 数组，如 [x1,y1,x2,y2] 或 [cx,cy]，不要加引号。"
   },
-  "tool.desktop_controller.action_required": {
+  "tool.desktop_control.action_required": {
     "en-US": "action is required.",
     "zh-CN": "必须提供 action。"
   },
-  "tool.desktop_controller.description_required": {
-    "en-US": "description is required.",
-    "zh-CN": "必须提供 description。"
-  },
-  "tool.desktop_controller.unknown_action": {
+  "tool.desktop_control.unknown_action": {
     "en-US": "Unknown desktop action.",
     "zh-CN": "未知的桌面动作。"
   },
-  "tool.desktop_controller.key_required": {
+  "tool.desktop_control.key_required": {
     "en-US": "key is required for press_key.",
     "zh-CN": "press_key 需要 key。"
   },
-  "tool.desktop_controller.text_required": {
+  "tool.desktop_control.text_required": {
     "en-US": "text is required for type_text.",
     "zh-CN": "type_text 需要 text。"
   },
-  "tool.desktop_controller.to_bbox_required": {
+  "tool.desktop_control.to_bbox_required": {
     "en-US": "to_bbox is required for drag_drop.",
     "zh-CN": "drag_drop 需要 to_bbox。"
   },
-  "tool.desktop_controller.capture_failed": {
+  "tool.desktop_control.capture_failed": {
     "en-US": "Failed to capture desktop screenshot.",
     "zh-CN": "桌面截图失败。"
   },
-  "tool.desktop_controller.capture_timeout": {
+  "tool.desktop_control.capture_timeout": {
     "en-US": "Desktop screenshot timed out.",
     "zh-CN": "桌面截图超时。"
   },
-  "tool.desktop_controller.capture_too_large": {
+  "tool.desktop_control.capture_too_large": {
     "en-US": "Desktop screenshot is too large.",
     "zh-CN": "桌面截图过大。"
   },
-  "tool.desktop_controller.unsupported_platform": {
-    "en-US": "Desktop controller is not supported on this platform.",
-    "zh-CN": "当前平台不支持桌面控制器。"
+  "tool.desktop_control.unsupported_platform": {
+    "en-US": "Desktop control is not supported on this platform.",
+    "zh-CN": "当前平台不支持桌面控制。"
   },
-  "tool.desktop_controller.followup_prompt": {
+  "tool.desktop_control.followup_prompt": {
     "en-US": "Here is the latest desktop screenshot.",
     "zh-CN": "这里是最新的桌面截图。"
   },
-  "tool.desktop_monitor.wait_required": {
-    "en-US": "wait_ms is required.",
-    "zh-CN": "必须提供 wait_ms。"
-  },
-  "tool.desktop_monitor.followup_prompt": {
-    "en-US": "Desktop monitor captured a new screenshot.",
-    "zh-CN": "桌面监视器已捕获新截图。"
+  "tool.desktop_control.followup_prompt_wait": {
+    "en-US": "Waited and captured a fresh desktop screenshot.",
+    "zh-CN": "已等待并捕获一张新的桌面截图。"
   },
   "tool.replace.count_mismatch": {
     "en-US": "Replacement count mismatch.",
@@ -1983,57 +1975,45 @@
     "en-US": "Optional maximum number of characters to return after cleaning.",
     "zh-CN": "清洗后返回内容的最大字符数，可选。"
   },
-  "tool.spec.desktop_controller.description": {
-    "en-US": "Execute desktop input actions. Use bbox together with an action; keyboard actions use key or text, scrolling uses scroll_steps, and drag uses to_bbox.",
-    "zh-CN": "执行桌面输入动作。用 bbox 配合 action 指定目标与动作；键盘动作用 key 或 text，滚动用 scroll_steps，拖拽用 to_bbox。"
+  "tool.spec.desktop_control.description": {
+    "en-US": "Drive and observe the local desktop. Use bbox together with an action; keyboard actions use key or text, scrolling uses scroll_steps, drag uses to_bbox, and action=wait (with delay_ms) waits then returns a fresh screenshot for inspection.",
+    "zh-CN": "操作并观察本机桌面。用 bbox 配合 action 指定目标与动作；键盘动作用 key 或 text，滚动用 scroll_steps，拖拽用 to_bbox；action=wait（配合 delay_ms）先等待再返回一张新截图用于观察。"
   },
-  "tool.spec.desktop_controller.args.bbox": {
+  "tool.spec.desktop_control.args.bbox": {
     "en-US": "Target bbox in normalized screenshot space. Format: [x1,y1,x2,y2] or [cx,cy].",
     "zh-CN": "归一化截图坐标中的目标框，格式：[x1,y1,x2,y2] 或 [cx,cy]。"
   },
-  "tool.spec.desktop_controller.args.action": {
-    "en-US": "Action: left_click/left_double_click/right_click/middle_click/left_hold/right_hold/middle_hold/left_release/right_release/middle_release/scroll_down/scroll_up/press_key/type_text/delay/move_mouse/drag_drop.",
-    "zh-CN": "动作类型：left_click/left_double_click/right_click/middle_click/left_hold/right_hold/middle_hold/left_release/right_release/middle_release/scroll_down/scroll_up/press_key/type_text/delay/move_mouse/drag_drop。"
+  "tool.spec.desktop_control.args.action": {
+    "en-US": "Action: left_click/left_double_click/right_click/middle_click/left_hold/right_hold/middle_hold/left_release/right_release/middle_release/scroll_down/scroll_up/press_key/type_text/wait/move_mouse/drag_drop.",
+    "zh-CN": "动作类型：left_click/left_double_click/right_click/middle_click/left_hold/right_hold/middle_hold/left_release/right_release/middle_release/scroll_down/scroll_up/press_key/type_text/wait/move_mouse/drag_drop。"
   },
-  "tool.spec.desktop_controller.args.description": {
-    "en-US": "Short description of the intended action (for audit).",
-    "zh-CN": "动作意图描述（便于审计与确认）。"
-  },
-  "tool.spec.desktop_controller.args.key": {
+  "tool.spec.desktop_control.args.key": {
     "en-US": "Key for press_key, e.g., ctrl+c, enter, f5.",
     "zh-CN": "press_key 使用的按键，如 ctrl+c、enter、f5。"
   },
-  "tool.spec.desktop_controller.args.text": {
+  "tool.spec.desktop_control.args.text": {
     "en-US": "Text to type for type_text.",
     "zh-CN": "type_text 输入的文本。"
   },
-  "tool.spec.desktop_controller.args.delay_ms": {
-    "en-US": "Delay in milliseconds for action=delay.",
-    "zh-CN": "delay 动作的等待毫秒数。"
+  "tool.spec.desktop_control.args.note": {
+    "en-US": "Optional note echoed back, e.g. what you are waiting for.",
+    "zh-CN": "可选备注，会原样回显，例如说明在等待什么。"
   },
-  "tool.spec.desktop_controller.args.duration_ms": {
+  "tool.spec.desktop_control.args.delay_ms": {
+    "en-US": "Wait milliseconds for action=wait (0-30000).",
+    "zh-CN": "wait 动作的等待毫秒数（0-30000）。"
+  },
+  "tool.spec.desktop_control.args.duration_ms": {
     "en-US": "Duration in milliseconds for move_mouse/drag_drop.",
     "zh-CN": "move_mouse/drag_drop 的移动耗时（毫秒）。"
   },
-  "tool.spec.desktop_controller.args.scroll_steps": {
+  "tool.spec.desktop_control.args.scroll_steps": {
     "en-US": "Scroll steps for scroll_up/scroll_down (>=1).",
     "zh-CN": "scroll_up/scroll_down 的滚动步数（>=1）。"
   },
-  "tool.spec.desktop_controller.args.to_bbox": {
+  "tool.spec.desktop_control.args.to_bbox": {
     "en-US": "Target bbox for drag_drop, same format as bbox.",
     "zh-CN": "drag_drop 的目标 bbox，格式同 bbox。"
-  },
-  "tool.spec.desktop_monitor.description": {
-    "en-US": "Capture a fresh desktop screenshot after waiting wait_ms.",
-    "zh-CN": "等待 wait_ms 后返回一张新的桌面截图。"
-  },
-  "tool.spec.desktop_monitor.args.wait_ms": {
-    "en-US": "Wait milliseconds (0-30000).",
-    "zh-CN": "等待毫秒数（0-30000）。"
-  },
-  "tool.spec.desktop_monitor.args.note": {
-    "en-US": "Optional note for monitoring purpose.",
-    "zh-CN": "可选备注（监视目的）。"
   },
   "tool.spec.final.args.content": {
     "en-US": "Final response content.",

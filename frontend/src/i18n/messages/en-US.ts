@@ -1097,6 +1097,7 @@ export default {
   'chat.timeline.patch.replaceAll': 'Replace all',
   'chat.timeline.patch.insertAfterLine': 'after line {line}',
   'chat.timeline.entryOutputExitCode': 'Exit code {code}',
+  'chat.timeline.entryDiffStats': '{added} added, {deleted} deleted',
   'chat.inquiry.defaultQuestion': 'Choose an option to continue',
   'chat.inquiry.recommended': 'Recommended',
   'chat.inquiry.noPreference': 'No preference',

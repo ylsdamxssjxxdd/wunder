@@ -1,6 +1,7 @@
 //! Passive native updates are independent of locally submitted executions.
 use super::*;
 use wunder_desktop::native::{NativeChatTurn, NativeThreadUpdate, NativeThreadWatch};
+use wunder_server::stable_core::thread_view::ChatViewRow;
 
 #[derive(Default)]
 pub(super) struct Observation {
@@ -65,6 +66,10 @@ pub(super) fn install(app: &MainWindow, state: Rc<RefCell<State>>) {
                 return;
             };
             let mut current = state.borrow_mut();
+            if app.get_cloud_chat_active() {
+                current.observation.detach();
+                return;
+            }
             if current.active.is_some()
                 || !current.parked.is_empty()
                 || app.get_session_loading()
@@ -138,7 +143,9 @@ pub(super) fn install(app: &MainWindow, state: Rc<RefCell<State>>) {
                         app.set_goal_objective(goal.objective.clone().into());
                         app.set_goal_phase(goal.phase.clone().into());
                         app.set_goal_activation(goal.activation.clone().into());
-                        app.set_goal_rounds(format!("{}/{}", goal.rounds_started, goal.max_goal_rounds).into());
+                        app.set_goal_rounds(
+                            format!("{}/{}", goal.rounds_started, goal.max_goal_rounds).into(),
+                        );
                         app.set_goal_paused(goal.paused());
                         let rows = app.get_conversations();
                         if let Some(index) = rows.iter().position(|row| row.id == session) {
@@ -148,7 +155,9 @@ pub(super) fn install(app: &MainWindow, state: Rc<RefCell<State>>) {
                                 row.goal_objective = goal.objective.clone().into();
                                 row.goal_phase = goal.phase.clone().into();
                                 row.goal_activation = goal.activation.clone().into();
-                                row.goal_rounds = format!("{}/{}", goal.rounds_started, goal.max_goal_rounds).into();
+                                row.goal_rounds =
+                                    format!("{}/{}", goal.rounds_started, goal.max_goal_rounds)
+                                        .into();
                                 row.goal_paused = goal.paused();
                                 rows.set_row_data(index, row);
                                 crate::navigation_ui::project(&app);
@@ -177,7 +186,9 @@ pub(super) fn install(app: &MainWindow, state: Rc<RefCell<State>>) {
                 });
                 let finished = app.get_busy() && !busy;
                 app.set_busy(busy);
-                if finished { crate::workspace_files::execution_finished(&app, desktop.clone()); }
+                if finished {
+                    crate::workspace_files::execution_finished(&app, desktop.clone());
+                }
                 if !busy {
                     app.set_stopping(false);
                 }
@@ -338,21 +349,19 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
             row.payload = rows.len() as i32;
             rows.push(row);
         }
-        // The metrics belong to the turn and ride on the body row that ends it,
-        // which is also the row that owns the copy action: the same
-        // owner the live reducer picks with its backward walk.
+        // The footer stays outside the process, including reasoning-only turns.
+        let mut footer = blank_row(
+            crate::timeline::KIND_FOOTER,
+            format!("footer-{}", turn.root_id),
+        );
+        footer.stats = turn_stats(
+            &turn.assistant,
+            turn.subagents.iter().any(|card| card.is_running()),
+        );
         if let Some(body) = answer_at {
-            rows[body].stats = turn_stats(&turn.assistant);
-        } else {
-            let mut body = blank_row(
-                crate::timeline::KIND_BODY,
-                format!("status-{}", turn.root_id),
-            );
-            body.foldable = true;
-            body.stats = turn_stats(&turn.assistant);
-            answer_at = Some(rows.len());
-            rows.push(body);
+            footer.text = rows[body].text.clone();
         }
+        rows.push(footer);
         let end = rows.len();
         fold_history_process(
             rows.as_mut_slice(),
@@ -371,6 +380,90 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
     }
     crate::timeline_text::process_models(&mut rows);
     rows
+}
+
+/// Project the cloud presentation page into the same row vocabulary used by
+/// the local timeline.  Cloud rows deliberately stay bounded by the page
+/// returned by the server; the cloud watcher replaces this model on every
+/// revision, so the UI never grows an unbounded second transcript.
+pub(crate) fn project_cloud_history(chat_rows: &[ChatViewRow], previous: ModelRc<TimelineRow>) -> Vec<TimelineRow> {
+    let mut rows = Vec::with_capacity(chat_rows.len().saturating_mul(4));
+    for (index, chat) in chat_rows.iter().enumerate() {
+        let mut user = blank_row(
+            crate::timeline::KIND_USER,
+            format!("cloud-user-{}", chat.root_turn_id),
+        );
+        user.text = chat.user.content.as_str().into();
+        user.blocks = previous.iter().find(|row| row.id == user.id && row.text == user.text)
+            .map(|row| row.blocks).unwrap_or_else(|| crate::message_blocks::from_text(&chat.user.content));
+        rows.push(user);
+
+        let mut process = blank_row(
+            crate::timeline::KIND_PROCESS,
+            format!("cloud-process-{}", chat.root_turn_id),
+        );
+        process.process_root = chat.root_turn_id.as_str().into();
+        process.process_idx = index as i32 + 1;
+        process.payload = rows.len() as i32;
+        process.text = crate::timeline_text::process_label(
+            (chat.workflow_count + chat.reasoning_count).min(i32::MAX as i64) as i32,
+        )
+        .into();
+        process.summary = cloud_status_label(chat.status.as_str()).into();
+        process.visible = chat.workflow_count > 0 || chat.reasoning_count > 0;
+        process.status_kind = crate::timeline::status_kind(chat.status.as_str());
+        rows.push(process);
+
+        let mut answer = blank_row(
+            crate::timeline::KIND_BODY,
+            format!("cloud-answer-{}", chat.root_turn_id),
+        );
+        let text = if chat.assistant.tail.is_empty() {
+            chat.assistant.content.clone()
+        } else if chat.assistant.tail_offset == 0 {
+            chat.assistant.tail.clone()
+        } else if chat.assistant.content.is_empty() {
+            format!("…\n{}", chat.assistant.tail)
+        } else {
+            format!("{}\n…\n{}", chat.assistant.content, chat.assistant.tail)
+        };
+        answer.text = text.as_str().into();
+        answer.status_kind = crate::timeline::status_kind(chat.status.as_str());
+        answer.blocks = previous.iter().find(|row| row.id == answer.id && row.text == answer.text && row.status_kind == answer.status_kind)
+            .map(|row| row.blocks).unwrap_or_else(|| {
+                let mut blocks = crate::message_blocks::Blocks::new();
+                blocks.raw = text;
+                if matches!(chat.status.as_str(), "running" | "queued" | "pending") { blocks.flush(); }
+                else { blocks.finalize_markdown(); }
+                ModelRc::from(blocks.model)
+            });
+        answer.foldable = true;
+        let mut footer = blank_row(crate::timeline::KIND_FOOTER, format!("cloud-footer-{}", chat.root_turn_id));
+        footer.summary = answer.id.clone();
+        footer.text = answer.text.clone();
+        footer.stats = ModelRc::new(VecModel::from(crate::timeline::stat_metrics(
+            &crate::turn_stats::with_status(
+                crate::turn_stats::metrics(&chat.assistant.stats.clone().unwrap_or(Value::Null)),
+                cloud_status_label(chat.status.as_str()),
+            ),
+        )));
+        rows.push(answer);
+        rows.push(footer);
+    }
+    for (index, row) in rows.iter_mut().enumerate() { row.payload = index as i32; }
+    rows
+}
+
+fn cloud_status_label(status: &str) -> &'static str {
+    match status {
+        "completed" | "done" | "finished" | "success" => "任务完成",
+        "failed" | "error" | "rejected" => "执行失败",
+        "cancelled" | "canceled" | "stopped" => "已停止",
+        "queued" | "pending" => "正在排队",
+        "waiting_input" | "waiting_user_input" => "等待用户输入",
+        "waiting_approval" => "等待确认",
+        _ => "正在生成…",
+    }
 }
 
 fn is_queue_only_turn(turn: &NativeChatTurn) -> bool {
@@ -444,16 +537,18 @@ fn fold_history_process(
     bar.visible = steps > 0;
 }
 
-/// The turn's statistics footer, projected once per turn and attached to the
-/// body row that carries the durable answer.
-fn turn_stats(assistant: &wunder_desktop::NativeMessage) -> ModelRc<crate::TurnStatMetric> {
+/// The turn's statistics, shared by live and durable independent footer rows.
+fn turn_stats(
+    assistant: &wunder_desktop::NativeMessage,
+    has_running_subagent: bool,
+) -> ModelRc<crate::TurnStatMetric> {
     ModelRc::new(VecModel::from(crate::timeline::stat_metrics(
         &crate::turn_stats::with_status(
             crate::turn_stats::with_user_round(
                 crate::turn_stats::metrics_from_native(&assistant.stats),
                 assistant.user_round,
             ),
-            &assistant.stats_status,
+            crate::turn_stats::resolve_status(&assistant.stats_status, has_running_subagent),
         ),
     )))
 }
@@ -510,6 +605,24 @@ fn blank_row(kind: i32, id: String) -> TimelineRow {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cloud_projection_uses_native_rows_and_keeps_frozen_blocks() {
+        let mut chat = ChatViewRow { root_turn_id: "fixture-cloud".into(), workflow_count: 2, status: "completed".into(), ..Default::default() };
+        chat.user.content = "Fixture input".into();
+        chat.assistant.content = "## Fixture answer\n\n- First item\n- Second item".into();
+        let rows = project_cloud_history(&[chat.clone()], ModelRc::default());
+        assert_eq!(rows.len(), 4);
+        assert_eq!(rows[0].kind, crate::timeline::KIND_USER);
+        assert_eq!(rows[1].kind, crate::timeline::KIND_PROCESS);
+        assert_eq!(rows[1].process_root, "fixture-cloud");
+        assert_eq!(rows[2].kind, crate::timeline::KIND_BODY);
+        assert!(rows[2].blocks.row_count() > 0);
+        let held = rows[2].blocks.clone();
+        let next = project_cloud_history(&[chat], ModelRc::new(VecModel::from(rows)));
+        assert_eq!(next[2].blocks, held);
+        assert_eq!(next[1].payload, 1);
+    }
     use slint::ModelRc;
     use std::time::Instant;
     use wunder_desktop::native::NativeChatRound;
@@ -625,14 +738,14 @@ mod tests {
         let rows = project_history(&[turn]);
         let metrics: Vec<(String, String)> = rows
             .iter()
-            .find(|row| row.kind == crate::timeline::KIND_BODY)
+            .find(|row| row.kind == crate::timeline::KIND_FOOTER)
             .map(|row| {
                 row.stats
                     .iter()
                     .map(|metric| (metric.key.to_string(), metric.value.to_string()))
                     .collect()
             })
-            .expect("a body row carries the metrics");
+            .expect("a turn footer carries the metrics");
         assert_eq!(
             metrics,
             vec![
@@ -647,16 +760,16 @@ mod tests {
         );
     }
 
-    /// A turn the runtime reported no statistics for must render no footer at
-    /// all rather than a row of placeholders.
+    /// A turn the runtime reported no statistics for keeps an empty metrics model
+    /// rather than a row of placeholders. Its copy action remains available.
     #[test]
-    fn a_reloaded_turn_without_statistics_has_no_footer() {
+    fn a_reloaded_turn_without_statistics_has_no_placeholder_metrics() {
         let rows = project_history(&[fixture("fixture-plain", "Fixture answer", "completed")]);
         let count = rows
             .iter()
-            .find(|row| row.kind == crate::timeline::KIND_BODY)
+            .find(|row| row.kind == crate::timeline::KIND_FOOTER)
             .map(|row| row.stats.row_count())
-            .expect("a body row");
+            .expect("a footer row");
         assert_eq!(count, 0, "no metrics renders no row");
     }
 
@@ -724,6 +837,7 @@ mod tests {
                 crate::timeline::KIND_GROUP,
                 crate::timeline::KIND_REASON,
                 crate::timeline::KIND_BODY,
+                crate::timeline::KIND_FOOTER,
             ],
         );
         // The bubble carries the turn identity the live tail is matched on.
@@ -818,8 +932,8 @@ mod tests {
         };
         assert_eq!(
             laid_out(&timeline.model()),
-            50 * 3,
-            "the default column is one process line and one answer per turn",
+            50 * 4,
+            "the default column is bubble, process, answer and footer per turn",
         );
 
         // Reach the fully opened column the way a user does: one handle at a
@@ -839,10 +953,10 @@ mod tests {
         let exposed = laid_out(&rows);
         assert_eq!(opened, 50, "every turn's process ships folded");
         assert_eq!(
-            exposed, 1350,
+            exposed, 1400,
             "each process exposes its tools without an extra batch row",
         );
-        let mut kinds = [0usize; 7];
+        let mut kinds = [0usize; 8];
         for row in rows.iter() {
             kinds[row.kind as usize] += 1;
         }
@@ -859,10 +973,11 @@ mod tests {
         assert_eq!(kinds[3], 1200, "24 tool entries x 50 turns");
         assert_eq!(kinds[4], 50, "one batch bar per turn");
         assert_eq!(kinds[6], 50, "one process bar per turn");
+        assert_eq!(kinds[7], 50, "one footer per turn");
         // Rows are one flat vector: 50 turns x (1 bubble + 1 process bar +
-        // 1 batch bar + 24 tool entries + 1 answer) = 1400, with no nesting or
+        // 1 batch bar + 24 tool entries + 1 answer + 1 footer) = 1450, with no nesting or
         // duplication.
-        assert_eq!(rows.row_count(), 1400);
+        assert_eq!(rows.row_count(), 1450);
         // The projection is O(rows); keep a loose ceiling so a future change that
         // makes it quadratic fails here instead of on the user's machine.
         assert!(
@@ -1028,7 +1143,7 @@ mod tests {
             fixture("fixture-old", "Earlier answer", "任务完成"),
             fixture("fixture-new", "Latest answer", "任务完成"),
         ]);
-        assert_eq!(rows.len(), 6);
+        assert_eq!(rows.len(), 8);
         assert_eq!(rows[0].kind, crate::timeline::KIND_USER);
         assert_eq!(rows[0].id, "user-turn-fixture-old");
         assert_eq!(rows[1].kind, crate::timeline::KIND_PROCESS);
@@ -1036,19 +1151,19 @@ mod tests {
         assert_eq!(rows[1].text, crate::timeline_text::process_label(0));
         assert_eq!(rows[2].kind, crate::timeline::KIND_BODY);
         assert_eq!(rows[2].process_idx, crate::timeline::NO_PROCESS);
-        assert_eq!(rows[3].kind, crate::timeline::KIND_USER);
-        assert_eq!(rows[3].id, "user-turn-fixture-new");
-        assert_eq!(rows[4].kind, crate::timeline::KIND_PROCESS);
-        assert!(!rows[4].visible);
-        assert_eq!(rows[5].kind, crate::timeline::KIND_BODY);
-        assert_eq!(rows[5].text, "Latest answer");
+        assert_eq!(rows[4].kind, crate::timeline::KIND_USER);
+        assert_eq!(rows[4].id, "user-turn-fixture-new");
+        assert_eq!(rows[5].kind, crate::timeline::KIND_PROCESS);
+        assert!(!rows[5].visible);
+        assert_eq!(rows[6].kind, crate::timeline::KIND_BODY);
+        assert_eq!(rows[6].text, "Latest answer");
         for row in rows
             .iter()
             .filter(|row| row.kind != crate::timeline::KIND_PROCESS)
         {
             assert!(row.visible, "no content row is hidden");
         }
-        // The metrics ride on the newest answer.
+        // Body content has no footer metrics.
         assert_eq!(rows[2].stats.row_count(), 0, "no metrics renders no footer");
     }
 

@@ -17,6 +17,7 @@
         @new-task="startNewSession"
         @select-workspace="selectWorkspace"
         @open-thread="openThread"
+        @open-local-thread="openLocalThread"
         @thread-trajectory="openSessionTrajectory"
         @rename-thread="renameTimelineSession"
         @archive-thread="archiveTimelineSession"
@@ -89,14 +90,21 @@
             @scroll.passive="handleMessageListScroll"
             @click="handleMessageContentClick"
           >
-            <MessengerMessagePanel v-if="hasActiveThread" :controller="controller" />
+            <RemoteThreadsPanel
+              v-if="localThreadActive"
+              inline
+              :target="localThreadTarget"
+              :workspace-id="localThreadWorkspaceId"
+              :open-thread-id="localThreadId"
+            />
+            <MessengerMessagePanel v-else-if="hasActiveThread" :controller="controller" />
           </div>
 
-          <MessengerTurnRuler v-if="hasActiveThread" :controller="controller" />
+          <MessengerTurnRuler v-if="hasActiveThread && !localThreadActive" :controller="controller" />
         </div>
 
         <footer
-          v-if="showChatComposerFooter"
+          v-if="showChatComposerFooter && !localThreadActive"
           ref="chatFooterRef"
           class="messenger-chat-footer"
           :class="{ 'is-threaded': hasActiveThread }"
@@ -255,6 +263,7 @@ import MessengerTurnRuler from '@/views/messenger/sections/MessengerTurnRuler.vu
 import MessengerSettingsOverlay from '@/views/messenger/sections/MessengerSettingsOverlay.vue';
 import MessageGoalBar from '@/components/chat/MessageGoalBar.vue';
 import ComposerStatusDock from '@/components/chat/ComposerStatusDock.vue';
+import RemoteThreadsPanel from '@/views/messenger/interlink/RemoteThreadsPanel.vue';
 
 const controller = useMessengerViewController();
 trackShellUpdate(() => chatPerf.count('chat_shell_render'));
@@ -291,6 +300,10 @@ const chatStore = controller.chatStore;
 // ------------------------------------------------------------- shell state
 
 const hasActiveThread = vueComputed(() => Boolean(String(chatStore.activeSessionId || '')));
+const localThreadTarget = vueRef('');
+const localThreadWorkspaceId = vueRef('');
+const localThreadId = vueRef('');
+const localThreadActive = vueComputed(() => Boolean(localThreadTarget.value && localThreadId.value));
 const isSidebarDrawer = vueComputed(() => Number(controller.viewportWidth?.value || 0) <= 1023);
 const sidebarDrawerOpen = vueRef(false);
 const closeDrawerOnNarrow = () => {
@@ -388,13 +401,26 @@ const { backToCloud: backToCloudWorkspace } = useInterlinkNodeTarget();
 
 const openThread = (sessionId: string) => {
   closeDrawerOnNarrow();
+  localThreadTarget.value = '';
+  localThreadWorkspaceId.value = '';
+  localThreadId.value = '';
   // 侧栏线程都是云端线程：打开线程＝工作目录跟随切回云端（§6.3 线程驱动切换）。
   backToCloudWorkspace();
   void controller.openSessionById?.(sessionId);
 };
 
+const openLocalThread = (payload: { target: string; workspaceId: string; threadId: string }) => {
+  closeDrawerOnNarrow();
+  localThreadTarget.value = String(payload.target || '');
+  localThreadWorkspaceId.value = String(payload.workspaceId || '');
+  localThreadId.value = String(payload.threadId || '');
+};
+
 const selectWorkspace = () => {
   closeDrawerOnNarrow();
+  localThreadTarget.value = '';
+  localThreadWorkspaceId.value = '';
+  localThreadId.value = '';
   controller.openAgentDraftSession?.(controller.activeAgentId?.value || '');
 };
 

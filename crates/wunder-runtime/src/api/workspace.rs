@@ -190,10 +190,33 @@ async fn workspace_content(
     } else {
         normalized.clone()
     };
-    let target = state
-        .workspace
-        .resolve_path(&workspace_id, &target_path)
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let (target, target_path) = match public_path.as_ref() {
+        Some(public_path) => {
+            let target = resolve_public_workspace_target(&state, &workspace_id, public_path);
+            // Directory listings and the echoed `path` stay relative to the
+            // root the workspace listing APIs resolve against, not to the
+            // public physical root.
+            let user_root = state.workspace.user_root(&workspace_id);
+            let relative = target
+                .strip_prefix(&user_root)
+                .ok()
+                .map(|rel| {
+                    let text = rel.to_string_lossy().replace('\\', "/");
+                    if text.is_empty() {
+                        ".".to_string()
+                    } else {
+                        text
+                    }
+                })
+                .unwrap_or_else(|| target_path.clone());
+            (target, relative)
+        }
+        None => state
+            .workspace
+            .resolve_path(&workspace_id, &target_path)
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))
+            .map(|target| (target, target_path))?,
+    };
     if !target.exists() {
         let safe_offset = params.offset.max(0) as u64;
         let safe_limit = params.limit.max(0) as u64;
@@ -201,7 +224,7 @@ async fn workspace_content(
             return Ok(Json(WorkspaceContentResponse {
                 user_id,
                 workspace_id,
-                path: normalized,
+                path: target_path,
                 entry_type: "file".to_string(),
                 size: 0,
                 updated_time: String::new(),
@@ -317,7 +340,7 @@ async fn workspace_content(
     Ok(Json(WorkspaceContentResponse {
         user_id,
         workspace_id,
-        path: normalized,
+        path: target_path,
         entry_type: "file".to_string(),
         size: metadata.len(),
         updated_time,
@@ -1131,23 +1154,15 @@ async fn workspace_download(
         .workspace
         .ensure_user_root(&workspace_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    // A public path already includes the cloud user's `workspace` segment:
-    // `/workspaces/<user>/workspace/file`. Resolve it through the public-root
-    // mapping instead of treating `workspace/file` as relative to the current
-    // workspace, which would produce `workspace/workspace/file`.
-    let target = if let Some(public_path) = public_path.as_ref() {
-        let public_target = PathBuf::from(WORKSPACE_PUBLIC_PREFIX.trim_end_matches('/'))
-            .join(&public_path.workspace_id)
-            .join(&public_path.relative_path);
-        state
-            .workspace
-            .map_public_path(&workspace_id, &public_target)
-            .unwrap_or(public_target)
-    } else {
-        state
+    // A public path already includes the cloud user's `workspace` segment;
+    // `resolve_public_workspace_target` maps it through the public root so the
+    // `workspace` level is not duplicated on the physical path.
+    let target = match public_path.as_ref() {
+        Some(public_path) => resolve_public_workspace_target(&state, &workspace_id, public_path),
+        None => state
             .workspace
             .resolve_path(&workspace_id, &normalized)
-            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?,
     };
     if !target.exists() || !target.is_file() {
         return Err(error_response(
@@ -1381,6 +1396,24 @@ fn normalize_public_workspace_relative_path(value: &str) -> Option<String> {
         return None;
     }
     Some(segments.join("/"))
+}
+
+/// A public path already includes the cloud user's `workspace` segment:
+/// `/workspaces/<user>/workspace/file`. Resolve it through the public-root
+/// mapping instead of treating `workspace/file` as relative to the current
+/// workspace, which would produce `workspace/workspace/file`.
+fn resolve_public_workspace_target(
+    state: &AppState,
+    workspace_id: &str,
+    public_path: &WorkspacePublicPath,
+) -> PathBuf {
+    let public_target = PathBuf::from(WORKSPACE_PUBLIC_PREFIX.trim_end_matches('/'))
+        .join(&public_path.workspace_id)
+        .join(&public_path.relative_path);
+    state
+        .workspace
+        .map_public_path(workspace_id, &public_target)
+        .unwrap_or(public_target)
 }
 
 fn percent_decode_path(value: &str) -> String {

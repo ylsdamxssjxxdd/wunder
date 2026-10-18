@@ -1,7 +1,7 @@
 // Provider presets mirrored from wunder-runtime PROVIDER_PRESETS so the model
 // settings form can autofill endpoints without a runtime round-trip.
 export global ModelPresets {
-    out property <[string]> names: ["openai_compatible", "openai", "anthropic", "openrouter", "siliconflow", "deepseek", "moonshot", "qwen", "groq", "mistral", "together", "vllm_omni", "whisper_cpp", "ollama", "lmstudio"];
+    out property <[string]> names: ["openai_compatible", "openai", "anthropic", "openrouter", "siliconflow", "deepseek", "moonshot", "qwen", "groq", "mistral", "together", "vllm_omni", "whisper_cpp", "ollama", "lmstudio", "virtual_replay"];
     public pure function base-url(name: string) -> string {
         name == "openai" ? "https://api.openai.com/v1" :
         name == "anthropic" ? "https://api.anthropic.com/v1" :

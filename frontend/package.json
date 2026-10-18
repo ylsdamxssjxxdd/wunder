@@ -69,6 +69,7 @@
     "test:stop-run-guard": "node scripts/run-regression-tests.mjs stop-run-guard-regression.test.ts",
     "test:chat-session-merge": "node scripts/run-regression-tests.mjs chat-session-merge-regression.test.ts",
     "test:message-render": "node scripts/run-regression-tests.mjs message-render-regression.test.ts",
+    "test:markdown-code-highlight": "node scripts/run-regression-tests.mjs markdown-code-highlight-regression.test.ts",
     "test:workspace-refresh": "node scripts/run-regression-tests.mjs workspace-panel-refresh-regression.test.ts workspace-hydration-batch-regression.test.ts",
     "test:ability-visuals": "node scripts/run-regression-tests.mjs ability-visuals-regression.test.ts",
     "test:daily-activity-grid": "node scripts/run-regression-tests.mjs daily-activity-grid-regression.test.ts",

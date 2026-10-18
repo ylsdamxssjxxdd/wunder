@@ -75,6 +75,10 @@ pub const CAP_AGENT_SPAWN: &str = "agent.spawn";
 pub fn default_device_capabilities() -> Vec<String> {
     vec![
         CAP_SHADOW_MINIMAL.to_string(),
+        // Metadata publication still requires the local node to declare full
+        // sharing. The default server ceiling must allow that declaration;
+        // otherwise connected workspace names/trees can never be published.
+        CAP_SHADOW_FULL.to_string(),
         CAP_QUERY_BASIC.to_string(),
         CAP_THREAD_DRIVE.to_string(),
     ]

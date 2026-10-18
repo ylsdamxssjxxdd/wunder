@@ -199,6 +199,17 @@ pub fn preflight(
     if !capability_allowed(&spec.kind, capabilities) || !capability_allowed(&spec.kind, declared) {
         return Preflight::Reject(ERR_CAP_DENIED, "none");
     }
+    // Thread control is the normal chat surface of a connected workspace.  It
+    // is intentionally admitted without a second local prompt: the user has
+    // already authenticated the device and explicitly opened this workspace
+    // from the cloud UI.  File mutations and tool execution still follow the
+    // local approval policy below.
+    if matches!(
+        spec.kind.as_str(),
+        CMD_THREAD_CREATE | CMD_THREAD_MESSAGE | CMD_THREAD_CANCEL | CMD_THREAD_ANSWER
+    ) {
+        return Preflight::Allow;
+    }
     match gate.decide_plan(&spec.kind, &spec.actor, policy, now) {
         ApprovalPlan::AutoAllow => Preflight::Allow,
         ApprovalPlan::RequirePrompt => Preflight::NeedPrompt,
@@ -583,10 +594,7 @@ impl ExecContext {
                 .workspace
                 .scoped_user_id_for_workspace(&self.local_user_id, &workspace_id),
             None if self.local_user_id.trim().is_empty() => String::new(),
-            None => self
-                .state
-                .workspace
-                .scoped_user_id(&self.local_user_id, None),
+            None => shadow::workspace_scope(&self.state, &self.local_user_id, None),
         }
     }
 }
@@ -899,7 +907,9 @@ async fn threads_list(spec: &CommandSpec, ctx: &ExecContext) -> CommandReport {
                 .get("workspace_id")
                 .and_then(Value::as_str)
                 .map(|value| value.trim().to_string())
-                .or_else(|| ctx.workspace_id.clone()),
+                .filter(|value| !value.is_empty())
+                .or_else(|| ctx.workspace_id.clone())
+                .or_else(|| shadow::default_workspace_id(&ctx.state, &ctx.local_user_id)),
             ..Default::default()
         })
         .await
@@ -952,10 +962,7 @@ impl ExecContext {
                 .workspace
                 .scoped_user_id_for_workspace(&self.local_user_id, &workspace_id),
             None if self.local_user_id.trim().is_empty() => String::new(),
-            None => self
-                .state
-                .workspace
-                .scoped_user_id(&self.local_user_id, None),
+            None => shadow::workspace_scope(&self.state, &self.local_user_id, None),
         }
     }
 }
@@ -1095,15 +1102,16 @@ async fn create_remote_thread(
         updated_at: now,
         last_message_at: now,
         agent_id: (!agent.trim().is_empty()).then(|| agent.trim().to_string()),
-        // Keep an explicit empty id as the default local workspace. `arg_str`
-        // intentionally treats it as absent, matching threads.list.
+        // An omitted or empty id resolves to the same real default binding
+        // as directory reads and threads.list.
         workspace_id: args
             .get("workspace_id")
             .and_then(Value::as_str)
             .map(str::trim)
             .filter(|id| !id.is_empty())
             .map(str::to_string)
-            .or_else(|| ctx.workspace_id.clone()),
+            .or_else(|| ctx.workspace_id.clone())
+            .or_else(|| shadow::default_workspace_id(&state, &ctx.local_user_id)),
         tool_overrides: Vec::new(),
         parent_session_id: None,
         parent_message_id: None,
@@ -2167,6 +2175,52 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn workspace_commands_and_thread_creation_share_real_workspace_bindings() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = crate::config::Config::default();
+        config.server.mode = "desktop".into();
+        config.storage.backend = "sqlite".into();
+        config.storage.db_path = dir.path().join("fixture.db").to_string_lossy().into_owned();
+        config.workspace.root = dir.path().join("engine").to_string_lossy().into_owned();
+        let state = Arc::new(AppState::new_with_options(
+            crate::config_store::ConfigStore::from_config(dir.path().join("config.yaml"), config.clone()),
+            config, crate::state::AppStateInitOptions::cli_default(),
+        ).unwrap());
+        let user = state.user_store.create_user("fixture_user", None, "fixture_password", None, None, vec!["user".into()], "active", false).unwrap().user_id;
+        for (index, id) in ["fixture-default", "fixture-named"].iter().enumerate() {
+            let root = dir.path().join(id);
+            std::fs::create_dir_all(&root).unwrap();
+            std::fs::write(root.join(format!("file-{index}.txt")), b"fixture").unwrap();
+            state.storage.upsert_workspace(&wunder_core::storage_records::WorkspaceRecord {
+                workspace_id: (*id).into(), user_id: user.clone(), name: format!("Fixture {index}"),
+                root_path: root.to_string_lossy().into_owned(), icon: String::new(), color: String::new(),
+                sort_index: index as i64, created_at: 1.0, updated_at: 1.0,
+            }).unwrap();
+        }
+        let ctx = ExecContext { state: state.clone(), local_user_id: user.clone(), workspace_id: None,
+            max_file_pull_bytes: 1024, chunk_bytes: 1024, rate_bps: 1024, source_tag: "remote:desktop:fixture".into() };
+        let (writer, _control, _data) = TunnelWriter::new();
+        let collector = shadow::ShadowCollector::new();
+        let wake = Arc::new(Notify::new());
+        for (index, args) in [json!({}), json!({"workspace_id":""}), json!({"workspace_id":"fixture-named"})].into_iter().enumerate() {
+            let expected = if index == 2 { "fixture-named" } else { "fixture-default" };
+            let listing = execute(&spec(CMD_WORKSPACE_LIST, args.clone()), &ctx, &writer, &collector, &wake, CancellationToken::new()).await;
+            assert_eq!(listing.status, COMMAND_STATUS_SUCCEEDED, "{}", listing.payload());
+            let root = state.workspace.workspace_root(&ctx.scope_user(&args));
+            assert_eq!(root, dir.path().join(expected));
+            let created = execute(&spec("thread.create", args.clone()), &ctx, &writer, &collector, &wake, CancellationToken::new()).await;
+            assert_eq!(created.status, COMMAND_STATUS_SUCCEEDED, "{}", created.payload());
+            assert_eq!(created.result["workspace_id"], expected);
+            let id = created.result["local_thread_id"].as_str().unwrap();
+            assert_eq!(state.user_store.get_chat_session(&user, id).unwrap().unwrap().workspace_id.as_deref(), Some(expected));
+            let threads = threads_list(&spec("threads.list", args), &ctx).await;
+            assert!(threads.result["threads"].as_array().unwrap().iter().any(|row| row["local_thread_id"] == id));
+        }
+        let denied = execute(&spec(CMD_WORKSPACE_LIST, json!({"workspace_id":"fixture-missing"})), &ctx, &writer, &collector, &wake, CancellationToken::new()).await;
+        assert_ne!(denied.status, COMMAND_STATUS_SUCCEEDED);
+    }
+
+    #[tokio::test]
     async fn busy_refusal_allows_retry_but_preserves_overtaking_cancellation() {
         let ledger = CommandLedger::default();
         assert!(ledger.claim("fixture_busy", CMD_WORKSPACE_READ, 10.0).await);
@@ -2307,6 +2361,24 @@ mod tests {
             ),
             Preflight::Reject(ERR_UNKNOWN_KIND, "none")
         );
+    }
+
+    #[test]
+    fn thread_control_is_admitted_without_a_second_local_prompt() {
+        let gate = ApprovalGate::default();
+        let caps = vec!["thread.drive".to_string()];
+        for kind in [
+            CMD_THREAD_CREATE,
+            CMD_THREAD_MESSAGE,
+            CMD_THREAD_CANCEL,
+            CMD_THREAD_ANSWER,
+        ] {
+            assert_eq!(
+                preflight(&spec(kind, json!({})), &caps, &caps, &gate, "prompt", 0.0),
+                Preflight::Allow,
+                "{kind} should follow the connected workspace chat path"
+            );
+        }
     }
 
     #[test]

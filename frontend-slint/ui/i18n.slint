@@ -356,14 +356,6 @@ export global I18n {
     out property <string> ui_expand_sidebar: zh ? "展开侧栏" : "Expand sidebar";
     out property <string> ui_avatar_mine: zh ? "我" : "Me";
     out property <string> ui_search_placeholder: zh ? "搜索" : "Search";
-    out property <string> cloud_threads_title: zh ? "云端智能体与线程" : "Cloud agent and threads";
-    out property <string> cloud_threads_earlier: zh ? "更早消息" : "Earlier messages";
-    out property <string> cloud_threads_latest: zh ? "回到最新" : "Back to latest";
-    out property <string> cloud_threads_copy_user: zh ? "复制提问原文" : "Copy user text";
-    out property <string> cloud_threads_copy_reply: zh ? "复制回复原文" : "Copy reply text";
-    out property <string> cloud_threads_stop: zh ? "停止线程" : "Stop thread";
-    out property <string> cloud_threads_approval: zh ? "工具审批 ID" : "Tool approval ID";
-    out property <string> cloud_threads_allow_once: zh ? "允许一次" : "Allow once";
     out property <string> composer_goal_hint: zh ? "/goal  设置目标" : "/goal  set a goal";
     out property <string> composer_new_hint: zh ? "/new  新建线程" : "/new  new thread";
     out property <string> composer_stop_hint: zh ? "/stop  停止并退出目标态" : "/stop  stop and leave goal mode";
@@ -1052,6 +1044,9 @@ export global I18n {
     out property <string> st_param_thinking: zh ? "思考 token 预算" : "Thinking token budget";
     out property <string> st_param_max_rounds: zh ? "最大工具轮次" : "Max tool rounds";
     out property <string> st_param_max_context: zh ? "上下文长度" : "Context length";
+    out property <string> st_param_history_ratio: zh ? "历史压缩阈值比例" : "History compaction threshold";
+    out property <string> st_param_reasoning_effort: zh ? "默认思考等级" : "Default reasoning effort";
+    out property <string> st_param_simulation_speed: zh ? "模拟速度" : "Simulation speed";
     out property <string> st_param_context_hint: zh ? "探测或留空" : "Probe or leave empty";
     out property <string> st_param_model_default: zh ? "留空使用模型默认" : "Leave empty for the model default";
     out property <string> st_param_default_option: zh ? "默认" : "Default";
@@ -1221,6 +1216,16 @@ export global I18n {
     out property <string> tl_thought_done: zh ? "已思考" : "Thought";
     out property <string> tl_thought_running: zh ? "正在思考…" : "Thinking…";
     out property <string> tl_thought_failed: zh ? "思考中断" : "Thinking interrupted";
+    out property <string> tl_status_running: zh ? "处理中" : "Processing";
+    out property <string> tl_status_requesting: zh ? "请求中" : "Requesting";
+    out property <string> tl_status_outputting: zh ? "模型输出中" : "Model outputting";
+    out property <string> tl_status_tool: zh ? "使用工具中" : "Using tools";
+    out property <string> tl_status_subagent: zh ? "子智能体执行中" : "Subagent running";
+    out property <string> tl_status_compacting: zh ? "上下文压缩中" : "Compacting context";
+    out property <string> tl_status_queued: zh ? "排队中" : "Queued";
+    out property <string> tl_status_stopped: zh ? "已停止" : "Stopped";
+    out property <string> tl_status_error: zh ? "任务失败" : "Task failed";
+    out property <string> tl_status_waiting: zh ? "等待确认" : "Waiting for confirmation";
     public pure function tl_tool_calls(count: string) -> string { return zh ? "执行工具 " + count + " 次" : "Ran " + count + " tools"; }
     out property <string> tl_entry_output: zh ? "输出" : "Output";
     out property <string> tl_patch_pending: zh ? "待应用" : "Pending";
@@ -1307,7 +1312,7 @@ export global I18n {
     out property <string> traj_title: zh ? "线程轨迹" : "Thread trajectory";
     out property <string> traj_export: zh ? "导出日志" : "Export log";
     out property <string> traj_back: zh ? "返回" : "Back";
-    out property <string> traj_search: zh ? "搜索轨迹" : "Search trajectory";
+    out property <string> traj_search: zh ? "搜索完整线程" : "Search full thread";
     out property <string> traj_duration: zh ? "时长" : "Duration";
     out property <string> traj_turns: zh ? "轮次" : "Turns";
     out property <string> traj_calls: zh ? "调用" : "Calls";
@@ -1419,4 +1424,8 @@ export global I18n {
     public pure function wf_delete_body(name: string) -> string { return zh ? "删除「" + name + "」？云端文件不可恢复。" : "Delete \"" + name + "\"? Cloud files cannot be recovered."; }
     out property <string> wf_cloud_confirm_body: zh ? "云端要求确认后才会执行此操作。" : "The cloud asks for confirmation before running this.";
     out property <string> wf_btn_exec: zh ? "确认执行" : "Confirm";
+    out property <string> traj_history_start: zh ? "已到最早记录" : "Beginning of history";
+    out property <string> traj_history_older: zh ? "向上滚动查看更早记录" : "Scroll up for earlier records";
+    out property <string> traj_history_loading: zh ? "正在读取记录…" : "Loading records…";
+    out property <string> traj_history_retry: zh ? "读取暂时失败，继续滚动可重试" : "Could not load records; scroll to retry";
 }

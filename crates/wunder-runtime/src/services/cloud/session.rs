@@ -99,6 +99,11 @@ pub struct InterlinkSessionConfig {
     /// Explicit local consent to publish workspace/thread names and structure.
     #[serde(default)]
     pub full_shadow: bool,
+    /// Whether the user has explicitly saved the local sharing choice.  This
+    /// lets upgraded desktop sessions receive the connected-workspace default
+    /// once, while preserving a later explicit opt-out.
+    #[serde(default)]
+    pub sharing_configured: bool,
     /// Protocol version the node offers (docs §4.1 negotiation).
     #[serde(default = "default_interlink_protocol")]
     pub protocol: i64,
@@ -120,6 +125,7 @@ impl Default for InterlinkSessionConfig {
         Self {
             enabled: default_interlink_enabled(),
             full_shadow: false,
+            sharing_configured: false,
             protocol: default_interlink_protocol(),
             shadow_interval_s: default_interlink_shadow_interval_s(),
             approval_default: default_interlink_approval_default(),
@@ -131,6 +137,13 @@ impl Default for InterlinkSessionConfig {
 }
 
 impl InterlinkSessionConfig {
+    pub(super) fn migrate_workspace_sharing(&mut self) -> bool {
+        if self.sharing_configured { return false; }
+        self.enabled = true;
+        self.full_shadow = true;
+        self.sharing_configured = true;
+        true
+    }
     /// Shadow period clamped into a sane band; a hand-edited file cannot make
     /// the node poll every millisecond or never at all.
     pub fn shadow_interval_s(&self) -> u64 {
@@ -161,6 +174,7 @@ impl InterlinkSessionConfig {
         Self {
             enabled: self.enabled,
             full_shadow: self.full_shadow,
+            sharing_configured: self.sharing_configured,
             protocol: self.protocol.max(1),
             shadow_interval_s: self.shadow_interval_s(),
             approval_default: self.approval_policy().to_string(),
@@ -464,6 +478,7 @@ mod tests {
         let session = session_with_interlink(InterlinkSessionConfig {
             enabled: true,
             full_shadow: true,
+            sharing_configured: true,
             protocol: 1,
             shadow_interval_s: 5,
             approval_default: "allow_readonly".to_string(),
@@ -487,7 +502,19 @@ mod tests {
             Some(&"a".repeat(64)[..])
         );
         assert_eq!(loaded.interlink.secret_version, 3);
+        assert!(loaded.interlink.sharing_configured);
         assert_eq!(loaded.interlink.max_file_pull_bytes(), 1024 * 1024 * 1024);
+    }
+
+    #[test]
+    fn sharing_migration_is_once_only_and_preserves_explicit_opt_out() {
+        let mut legacy = InterlinkSessionConfig { enabled: false, ..Default::default() };
+        assert!(legacy.migrate_workspace_sharing());
+        assert!(legacy.enabled && legacy.full_shadow && legacy.sharing_configured);
+        assert!(!legacy.migrate_workspace_sharing());
+        let mut disabled = InterlinkSessionConfig { enabled: false, full_shadow: false, sharing_configured: true, ..Default::default() };
+        assert!(!disabled.migrate_workspace_sharing());
+        assert!(!disabled.enabled && !disabled.full_shadow);
     }
 
     #[test]

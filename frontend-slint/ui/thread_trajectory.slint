@@ -4,12 +4,16 @@
 // value for value so both shells render the same trajectory experience.
 import { Theme, TrajRow, TrajSpan, TrajTick, TrajBoundary, TrajTiming, TrajSection, TrajTab, TrajSearchHit } from "theme.slint";
 import { I18n } from "i18n.slint";
-import { ListView, ScrollView, LineEdit } from "std-widgets.slint";
-import { TextEditBase } from "textedit-base.slint";
+import { ListView, ScrollView } from "std-widgets.slint";
+
+// Keep the trajectory's typography independent of the surrounding workbench.
+component TrajText inherits Text { font-family: "Segoe UI"; }
+component TrajTextInput inherits TextInput { font-family: "Segoe UI"; }
 
 export global TrajTokens {
     out property <color> brand: #4176E6;
-    out property <color> brand-soft: #E3ECFB;
+    // Matches the browser's translucent badge fills composited over white.
+    out property <color> brand-soft: #4176E61A;
     out property <color> green: #22C55E;
     out property <color> green-mix: #36A762;
     out property <color> green-soft: #E6FAED;
@@ -18,7 +22,7 @@ export global TrajTokens {
     out property <color> red: #EC1313;
     out property <color> red-soft: #FDE8E8;
     out property <color> violet: #886BAE;
-    out property <color> violet-soft: #F1EBF7;
+    out property <color> violet-soft: #886BAE26;
     out property <color> text: #0F1115;
     out property <color> text-2: #61666B;
     out property <color> text-3: #81858C;
@@ -48,6 +52,9 @@ export global TrajTokens {
         kind == 5 || kind == 6 ? root.amber-soft :
         root.module;
     }
+    public pure function badge-color(kind: int) -> color {
+        kind == 0 || kind == 3 ? root.text-2 : root.kind-color(kind);
+    }
     public pure function kind-label(kind: int) -> string {
         kind == 0 ? I18n.traj_kind_system :
         kind == 1 ? I18n.traj_kind_user :
@@ -59,43 +66,50 @@ export global TrajTokens {
     }
 }
 
-// One dsh-style toggle pill: label + a glyph square that fills when on.
+// Compact toolbar toggle: mirrors the web glyph, 4px gap and 7px insets.
 component TrajToggle inherits Rectangle {
     in property <string> label;
     in property <bool> on;
+    in property <bool> clock: false;
     callback toggle();
     height: 22px;
     y: 5px;
-    width: toggle-label.preferred-width + 34px;
+    width: toggle-label.preferred-width + (root.clock ? 30px : 29px);
     border-radius: 4px;
-    background: root.on ? TrajTokens.active : transparent;
-    border-width: 1px;
-    border-color: root.on ? TrajTokens.border-3 : TrajTokens.border-2;
+    background: root.on ? TrajTokens.brand-soft : toggle-touch.has-hover ? TrajTokens.hover : transparent;
     HorizontalLayout {
-        padding-left: 8px; padding-right: 8px;
-        alignment: center; spacing: 5px;
-        Rectangle {
-            width: 10px; height: 10px;
-            y: (parent.height - 10px) / 2;
-            border-radius: 2px;
-            border-width: 1px; border-color: TrajTokens.text-3;
-            background: root.on ? TrajTokens.brand : transparent;
+        padding-left: 7px; padding-right: 7px;
+        alignment: center; spacing: 4px;
+        if root.clock : Image {
+            width: 12px; height: 12px;
+            source: @image-url("../assets/icons/trajectory-clock.svg");
+            colorize: root.on ? TrajTokens.brand : TrajTokens.text-2;
         }
-        toggle-label := Text {
+        if !root.clock : TrajText {
+            width: 11px; height: parent.height;
+            text: root.on ? "⊞" : "⊟";
+            color: root.on ? TrajTokens.brand : TrajTokens.text-2;
+            font-family: "Segoe UI Symbol";
+            font-size: 11px;
+            vertical-alignment: center;
+        }
+        toggle-label := TrajText {
             height: parent.height;
             text: root.label;
-            color: root.on ? TrajTokens.text : TrajTokens.text-2;
-            font-size: 11px; font-weight: 600;
+            color: root.on ? TrajTokens.brand : TrajTokens.text-2;
+            font-size: 12px;
             vertical-alignment: center;
         }
     }
-    TouchArea {
+    toggle-touch := TouchArea {
         mouse-cursor: pointer;
         clicked => { root.toggle(); }
     }
 }
 
 export component ThreadTrajectoryDialog inherits Rectangle {
+    min-width: 0px;
+    preferred-width: 1280px;
     // Ledger rows and timeline spans, projected in Rust. TrajSpan.index is the
     // ledger row index of the record behind the span, so one int drives both
     // the row highlight and the span highlight.
@@ -130,6 +144,7 @@ export component ThreadTrajectoryDialog inherits Rectangle {
     // Status.
     in property <bool> loading;
     in property <bool> failed;
+    in property <string> history-hint: I18n.traj_history_start;
     // Tooltip text (already formatted, lines separated by \n); position is
     // tracked Slint-side from the hovered span.
     in property <string> tooltip-text;
@@ -162,7 +177,7 @@ export component ThreadTrajectoryDialog inherits Rectangle {
     // whole history in the Slint thread.
     callback edge-reached(bool);
 
-    in-out property <length> details-width: 400px;
+    in-out property <length> details-width: clamp(0.38 * root.width, 320px, 440px);
     in-out property <bool> details-dragging: false;
     private property <length> press-x: 0px;
     private property <length> press-width: 0px;
@@ -171,8 +186,12 @@ export component ThreadTrajectoryDialog inherits Rectangle {
     private property <float> press-start: 0.0;
     private property <bool> drag-moved: false;
     private property <bool> press-pan: false;
+    private property <bool> track-hovered: false;
+    private property <length> track-hover-x: 0px;
 
     function handle-track-move(mouse-x: length) {
+        root.track-hovered = true;
+        root.track-hover-x = mouse-x;
         if root.timeline-pressed {
             if mouse-x < root.press-px - 3px || mouse-x > root.press-px + 3px {
                 root.drag-moved = true;
@@ -190,21 +209,20 @@ export component ThreadTrajectoryDialog inherits Rectangle {
     }
 
     background: white;
-    border-width: 1px;
-    border-color: Theme.border-strong;
+    border-width: 0px;
 
     VerticalLayout {
         // ---- toolbar (32px): back / toggles / search ----
         HorizontalLayout {
-            height: 32px;
-            padding-left: 10px; padding-right: 10px;
+            height: 31.5px;
+            padding-left: 8px; padding-right: 8px;
             spacing: 8px;
             Rectangle {
                 width: 22px; height: 22px; y: 5px; border-radius: 4px;
                 background: back-touch.has-hover ? TrajTokens.hover : transparent;
                 Image {
                     x: 4px; y: 4px; width: 14px; height: 14px;
-                    source: @image-url("../assets/icons/chevron-left.svg");
+                    source: @image-url("../assets/icons/trajectory-back.svg");
                     colorize: TrajTokens.text-2;
                 }
                 back-touch := TouchArea {
@@ -215,6 +233,7 @@ export component ThreadTrajectoryDialog inherits Rectangle {
             }
             TrajToggle {
                 label: I18n.traj_duration;
+                clock: true;
                 on: root.show-duration;
                 toggle => { root.toggle-duration(); }
             }
@@ -228,18 +247,61 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                 on: root.show-calls;
                 toggle => { root.toggle-calls(); }
             }
+            Rectangle { horizontal-stretch: 1; }
+            traj-search := Rectangle {
+                // Exact counterpart of web .tt-search: 164×22, 7px horizontal
+                // insets and a 12px icon. A native LineEdit cannot provide its
+                // own border/padding consistently across desktop platforms.
+                width: 164px; height: 22px; y: 5px;
+                background: white;
+                border-radius: 4px;
+                border-width: 0.5px;
+                border-color: traj-search-input.has-focus ? TrajTokens.brand : TrajTokens.border-3;
+                clip: true;
+                Image {
+                    x: 7px; y: 5px; width: 12px; height: 12px;
+                    source: @image-url("../assets/icons/trajectory-search.svg");
+                    colorize: traj-search-input.has-focus ? TrajTokens.brand : TrajTokens.text-3;
+                    image-fit: contain;
+                }
+                if root.query == "" && traj-search-input.preedit-text == "" : TrajText {
+                    x: 23px; width: parent.width - 30px; height: parent.height;
+                    text: I18n.traj_search;
+                    color: TrajTokens.caption;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+                traj-search-input := TrajTextInput {
+                    x: 23px; width: parent.width - 30px; height: parent.height;
+                    text <=> root.query;
+                    single-line: true;
+                    color: TrajTokens.text;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                    selection-background-color: TrajTokens.brand-soft;
+                    selection-foreground-color: TrajTokens.text;
+                    edited => { root.search-edited(); }
+                }
+            }
             Rectangle {
-                width: export-label.preferred-width + 24px;
+                width: export-label.preferred-width + 30px;
                 height: 22px;
                 y: 5px;
                 border-radius: 4px;
                 background: export-touch.has-hover ? TrajTokens.hover : transparent;
-                export-label := Text {
-                    x: 8px;
+                Image {
+                    x: 7px; y: 5px; width: 12px; height: 12px;
+                    source: @image-url("../assets/icons/trajectory-export.svg");
+                    colorize: TrajTokens.text-2;
+                    image-fit: contain;
+                }
+                export-label := TrajText {
+                    x: 23px;
                     height: parent.height;
                     text: I18n.traj_export;
                     color: TrajTokens.text-2;
-                    font-size: 11px;
+                    font-size: 12px;
                     vertical-alignment: center;
                 }
                 export-touch := TouchArea {
@@ -247,17 +309,9 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                     clicked => { root.export(); }
                 }
             }
-            Rectangle { horizontal-stretch: 1; }
-            traj-search := LineEdit {
-                width: 164px; height: 22px; y: 5px;
-                text <=> root.query;
-                font-size: 11px;
-                placeholder-text: I18n.traj_search;
-                edited => { root.search-edited(); }
-            }
         }
-        Rectangle { height: 1px; background: TrajTokens.border-1; }
-        if root.search-hint != "" : Text {
+        Rectangle { height: 0.5px; background: TrajTokens.border-2; }
+        if root.search-hint != "" : TrajText {
             height: 20px;
             x: 12px;
             text: root.search-hint;
@@ -280,59 +334,68 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                     for hit[i] in root.search-hits : Rectangle {
                         height: 17px;
                         background: hit-touch.has-hover ? TrajTokens.hover : transparent;
-                        Text { x: 4px; width: parent.width - 8px; text: hit.snippet; color: TrajTokens.text-2; font-size: 10px; overflow: elide; vertical-alignment: center; }
+                        TrajText { x: 4px; width: parent.width - 8px; text: hit.snippet; color: TrajTokens.text-2; font-size: 10px; overflow: elide; vertical-alignment: center; }
                         hit-touch := TouchArea { mouse-cursor: pointer; clicked => { root.select-search-hit(i); } }
                     }
                 }
             }
         }
-        if root.search-body != "" : Text {
-            height: 80px; x: 10px; width: parent.width - 20px;
-            text: root.search-body; color: TrajTokens.text-2; font-size: 10px;
-            overflow: clip; wrap: word-wrap;
+        if root.search-body != "" : Rectangle {
+            height: 80px;
+            min-width: 0px;
+            TrajText {
+                x: 10px; width: parent.width - 20px; height: parent.height;
+                text: root.search-body; color: TrajTokens.text-2; font-size: 10px;
+                overflow: clip; wrap: word-wrap;
+            }
         }
 
-        // ---- timeline: 16px axis + 50px track ----
+        // ---- timeline: 4px top padding + 16px axis + 50px track + 8px bottom ----
+        // The web ledger uses the same 78px plot box. Keeping the padding in
+        // the native view prevents the axis/track from appearing glued to the
+        // toolbar and leaves the coloured segments on the same baseline.
         Rectangle {
-            height: 67px;
+            height: 78px;
             clip: true;
             // Keep the 44px lane gutter separate from the track, matching the
             // web grid. Labels must never sit underneath a colored span.
             Rectangle {
-                y: 0px;
                 height: 16px;
                 x: 44px;
                 width: parent.width - 44px;
-                for tick in root.ticks : Text {
-                    x: min(max(tick.pos * parent.width - 16px, 0px), parent.width - 32px);
+                y: 4px;
+                for tick in root.ticks : TrajText {
+                    x: tick.pos * parent.width - self.preferred-width / 2;
                     y: 0px;
-                    width: 32px;
+                    height: parent.height;
                     horizontal-alignment: center;
                     text: tick.label;
-                    color: TrajTokens.caption;
+                    color: TrajTokens.text-3;
+                    font-family: Theme.font-mono;
                     font-size: 10px;
                     overflow: elide;
                 }
             }
             HorizontalLayout {
-                y: 17px;
+                y: 20px;
                 height: 50px;
                 Rectangle {
                     width: 44px;
-                    Rectangle { x: 43px; width: 1px; height: parent.height; background: TrajTokens.border-2; }
-                    Text { x: 0px; y: 7px; width: 41px; horizontal-alignment: right; text: I18n.traj_lane_input; color: TrajTokens.caption; font-size: 9px; }
-                    Text { x: 0px; y: 21px; width: 41px; horizontal-alignment: right; text: I18n.traj_lane_model; color: TrajTokens.caption; font-size: 9px; }
-                    Text { x: 0px; y: 35px; width: 41px; horizontal-alignment: right; text: I18n.traj_lane_tool; color: TrajTokens.caption; font-size: 9px; }
+                    Rectangle { x: 43.5px; width: 0.5px; height: parent.height; background: TrajTokens.border-2; }
+                    TrajText { x: 0px; y: 7px; width: 41px; height: 8px; vertical-alignment: center; horizontal-alignment: right; text: I18n.traj_lane_input; color: TrajTokens.text-3; font-size: 10px; }
+                    TrajText { x: 0px; y: 21px; width: 41px; height: 8px; vertical-alignment: center; horizontal-alignment: right; text: I18n.traj_lane_model; color: TrajTokens.text-3; font-size: 10px; }
+                    TrajText { x: 0px; y: 35px; width: 41px; height: 8px; vertical-alignment: center; horizontal-alignment: right; text: I18n.traj_lane_tool; color: TrajTokens.text-3; font-size: 10px; }
                 }
                 track := Rectangle {
                     horizontal-stretch: 1;
                     clip: true;
                 // turn boundaries behind the spans
                 for boundary in root.boundaries : Rectangle {
+                    visible: root.show-turns && !(root.spans.length > 0 && root.spans[0].overview);
                     x: boundary.pos * track.width;
-                    y: 4px;
-                    width: 1px;
-                    height: 42px;
+                    y: 0px;
+                    width: 0.5px;
+                    height: parent.height;
                     background: TrajTokens.border-2;
                 }
                 // Spans own mouse input; the transparent lane captures gaps.
@@ -349,8 +412,14 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                     }
                     moved => { root.handle-track-move(self.mouse-x); }
                     changed has-hover => {
-                        if self.has-hover { root.hover-position(root.view-start + self.mouse-x / track.width * root.view-width); }
-                        else { root.leave-span(); }
+                        if self.has-hover {
+                            root.track-hovered = true;
+                            root.track-hover-x = self.mouse-x;
+                            root.hover-mx = self.mouse-x;
+                            root.hover-my = 20px + self.mouse-y;
+                            root.hover-position(root.view-start + self.mouse-x / track.width * root.view-width);
+                        }
+                        else { root.track-hovered = false; root.leave-span(); }
                     }
                     scroll-event(event) => {
                         root.zoom(event.delta-y < 0px ? 0.8 : 1.25, self.mouse-x / track.width);
@@ -358,25 +427,21 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                     }
                     clicked => { if !root.drag-moved && !root.press-pan { root.select-position(root.view-start + self.mouse-x / track.width * root.view-width); } }
                 }
-                if root.selection-active : Rectangle {
-                    x: max(0px, (root.selection-start - root.view-start) / root.view-width * track.width);
-                    width: max(1px, (min(root.selection-end, root.view-start + root.view-width) - max(root.selection-start, root.view-start)) / root.view-width * track.width);
-                    y: 0px; height: parent.height;
-                    background: #4176E61F;
-                    border-width: 0px;
-                }
                 // spans; a span carries the ledger row index of its record so
                 // hovering highlights the row and vice versa
                 for span in root.spans : sp := Rectangle {
                     property <length> area: track.width;
-                    x: span.start * area;
+                    property <length> raw-width: span.width * area;
+                    // Match the web's subpixel separators; duration coordinates
+                    // share the same domain as the detail projection in Rust.
+                    property <length> gap: span.overview ? min(raw-width * 0.15, 0.5px) : min(raw-width * 0.08, 1px);
+                    x: min(span.start * area + gap, area - self.width);
                     y: 7px + span.lane * 14px;
-                    width: max(2px, span.width * area);
+                    width: max(span.overview ? 1px : 2px, raw-width - gap * 2);
+                    border-radius: span.overview ? 0px : 1px;
                     height: 8px;
-                    border-radius: 1px;
-                    background: TrajTokens.kind-color(span.kind);
-                    border-width: span.selected ? 1px : 0px;
-                    border-color: TrajTokens.kind-color(span.kind);
+                    background: span.error ? TrajTokens.red : TrajTokens.kind-color(span.kind);
+                    border-width: 0px;
                     span-touch := TouchArea {
                         mouse-cursor: pointer;
                         pointer-event(event) => {
@@ -393,7 +458,7 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                             root.handle-track-move(sp.x + self.mouse-x);
                             root.hover-span(span.index);
                             root.hover-mx = sp.x + self.mouse-x;
-                            root.hover-my = 17px + sp.y + self.mouse-y;
+                            root.hover-my = 20px + sp.y + self.mouse-y;
                         }
                         clicked => {
                             if !root.drag-moved && !root.press-pan {
@@ -402,7 +467,7 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                             }
                         }
                         changed has-hover => {
-                            if !self.has-hover { root.leave-span(); }
+                            if !self.has-hover { root.track-hovered = false; root.leave-span(); }
                         }
                     scroll-event(event) => {
                             root.zoom(event.delta-y < 0px ? 0.8 : 1.25, (sp.x + self.mouse-x) / track.width);
@@ -410,28 +475,49 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                         }
                         double-clicked => { root.clear-range(); }
                     }
-                    opacity: span.outside ? 0.2 : span.index < 0 ? 0.86 : 1.0;
+                    opacity: span.outside ? 0.2 : span.dimmed ? 0.14 : span.aggregate ? 0.86 : span.overview ? 0.94 : 1.0;
+                    if span.overview : Rectangle {
+                        x: max(0px, parent.width - 1px);
+                        width: 1px;
+                        height: parent.height;
+                        background: #FFFFFF6B;
+                    }
+                    // The browser shows these rings on hover.
+                    // The ring does not change bar geometry or click bounds.
+                    if span-touch.has-hover : Rectangle {
+                        x: -2px; y: -2px;
+                        width: parent.width + 4px; height: parent.height + 4px;
+                        border-radius: 3px;
+                        border-width: 1px;
+                        border-color: TrajTokens.brand;
+                        background: transparent;
+                        Rectangle {
+                            x: 1px; y: 1px;
+                            width: parent.width - 2px; height: parent.height - 2px;
+                            border-radius: 2px;
+                            border-width: 1px;
+                            border-color: white;
+                            background: transparent;
+                        }
+                    }
                 }
+                if root.track-hovered : Rectangle {
+                    x: root.track-hover-x - 1px; width: 2px;
+                    y: 0px; height: parent.height;
+                    background: TrajTokens.brand; opacity: 0.85;
                 }
-            }
-            // tooltip card; lives above the track, no TouchArea so it never
-            // steals hover from the span underneath
-            if root.hover-index >= 0 && root.tooltip-text != "" : Rectangle {
-                x: min(root.hover-mx + 12px, parent.width - 280px);
-                y: min(root.hover-my - 8px, parent.height - tooltip-lines.preferred-height - 16px);
-                width: min(272px, tooltip-lines.preferred-width + 20px);
-                height: tooltip-lines.preferred-height + 14px;
-                background: white;
-                border-radius: 6px;
-                border-width: 1px; border-color: TrajTokens.border-2;
-                drop-shadow-blur: 10px; drop-shadow-color: #00000022;
-                tooltip-lines := Text {
-                    x: 10px; y: 7px;
-                    width: parent.width - 20px;
-                    text: root.tooltip-text;
-                    color: TrajTokens.text-2;
-                    font-size: 10px;
-                    wrap: word-wrap;
+                // The browser paints the range selection after spans. It must
+                // therefore tint the active interval without obscuring the
+                // hit targets, and shows a 3px edge at both endpoints.
+                if root.selection-active : Rectangle {
+                    x: max(0px, (root.selection-start - root.view-start) / root.view-width * track.width);
+                    width: max(1px, (min(root.selection-end, root.view-start + root.view-width) - max(root.selection-start, root.view-start)) / root.view-width * track.width);
+                    y: 0px; height: parent.height;
+                    background: #4176E61F;
+                    border-width: 0px;
+                    Rectangle { x: 0px; y: 0px; width: 3px; height: parent.height; background: TrajTokens.brand; }
+                    Rectangle { x: parent.width - 3px; y: 0px; width: 3px; height: parent.height; background: TrajTokens.brand; }
+                }
                 }
             }
         }
@@ -440,14 +526,16 @@ export component ThreadTrajectoryDialog inherits Rectangle {
         Rectangle { height: 1px; background: TrajTokens.border-2; }
 
         // ---- body: ledger | resize handle | details ----
-        HorizontalLayout {
+        Rectangle {
             vertical-stretch: 1;
-            spacing: 0px;
+            min-width: 0px;
             // ledger
             Rectangle {
-                horizontal-stretch: 1;
+                x: 0px; y: 0px;
+                width: parent.width - (root.selected-index >= 0 ? clamp(min(root.details-width, root.width - 280px), 320px, 440px) + 4px : 0px);
+                height: parent.height;
                 clip: true;
-                if root.rows.length == 0 : Text {
+                if root.rows.length == 0 : TrajText {
                     width: parent.width;
                     y: 24px;
                     horizontal-alignment: center;
@@ -456,7 +544,8 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                     font-size: 12px;
                 }
                 if root.rows.length > 0 : ListView {
-                    width: parent.width; height: parent.height;
+                    y: 26px;
+                    width: parent.width; height: parent.height - 26px;
                     scrolled => {
                         if self.content-y > -80px {
                             root.edge-reached(true);
@@ -469,14 +558,15 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                         height: row.row-height;
                         background: row.kind <= 6 && row.index == root.selected-index ? TrajTokens.active : row-touch.has-hover ? TrajTokens.hover : transparent;
                         HorizontalLayout {
+                            height: parent.height;
                             // event column (84px): request marker and turn control
                             Rectangle {
-                    width: 84px;
+                                width: 84px;
                                 if row.request > 0 : Rectangle {
                                     // dsh requestBoundaryControl：16px 热区内一个
                                     // 5px 灰点（9px 白圈垫底盖住行线），全部固定在
                                     // 同一纵线上；hover 变品牌色并在右侧弹出标签。
-                                    x: 12px; y: (parent.height - 16px) / 2;
+                                    x: 12px; y: -8px;
                                     width: 16px; height: 16px;
                                     request-touch := TouchArea { }
                                     Rectangle {
@@ -501,7 +591,7 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                                         border-width: 0.5px;
                                         border-color: TrajTokens.border-3;
                                         background: white;
-                                        request-label := Text {
+                                        request-label := TrajText {
                                             x: 4px; height: parent.height;
                                             text: row.badge;
                                             color: TrajTokens.text-2;
@@ -512,15 +602,17 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                                     }
                                 }
                             }
-                            Rectangle { width: 1px; background: TrajTokens.border-1; }
                             // content column
                             Rectangle {
                                 horizontal-stretch: 1;
+                                height: parent.height;
                                 HorizontalLayout {
-                                    padding-left: 4px; padding-right: 12px;
-                                    spacing: 8px;
+                                    height: parent.height;
+                                    padding-left: 4px; padding-right: 8px;
+                                    spacing: row.kind == 7 || row.kind == 8 ? 0px : 8px;
                                     alignment: start;
-                                    if row.kind == 7 || row.kind == 8 : Text {
+                                    if row.kind == 7 || row.kind == 8 : Rectangle { width: 4px; }
+                                    if row.kind == 7 || row.kind == 8 : TrajText {
                                         height: parent.height;
                                         text: row.text;
                                         color: TrajTokens.text-2;
@@ -532,46 +624,66 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                                     if row.kind != 7 && row.kind != 8 : HorizontalLayout {
                                         height: parent.height;
                                         alignment: start;
-                                        spacing: 8px;
+                                        spacing: 0px;
                                         // Keep the category in a fixed 52px slot,
                                         // matching the web ledger's grid column.
                                         Rectangle {
                                             width: 52px;
                                             height: parent.height;
                                             if row.kind <= 6 : Rectangle {
-                                                x: max(0px, parent.width - self.width);
+                                                x: max(0px, parent.width - 8px - self.width);
                                                 y: (parent.height - 19px) / 2;
                                                 width: kind-label.preferred-width + 10px;
                                                 height: 19px;
-                                                border-radius: 3px;
+                                                border-radius: 4px;
                                                 background: TrajTokens.kind-soft(row.kind);
-                                                kind-label := Text {
+                                                kind-label := TrajText {
                                                     x: 5px; height: parent.height;
                                                     text: TrajTokens.kind-label(row.kind);
-                                                    color: TrajTokens.kind-color(row.kind);
-                                                    font-size: 10px; font-weight: 600;
+                                                    color: TrajTokens.badge-color(row.kind);
+                                                    font-size: 10px; font-weight: 650;
+                                                    letter-spacing: 0.35px;
                                                     vertical-alignment: center;
                                                 }
                                             }
                                         }
-                                        Text {
+                                        TrajText {
+                                            height: parent.height;
                                             text: row.text;
-                                            color: TrajTokens.text;
+                                            color: row.error ? TrajTokens.red : TrajTokens.text;
                                             font-size: 12px;
+                                            font-family: row.kind == 5 || row.kind == 6 ? Theme.font-mono : "Segoe UI";
                                             vertical-alignment: center;
                                             overflow: elide;
-                                            horizontal-stretch: 1;
+                                            horizontal-stretch: row.kind == 5 || row.kind == 6 ? 0 : 1;
+                                            max-width: row.kind == 5 || row.kind == 6 ? self.preferred-width : 100000px;
                                         }
-                                        if row.detail != "" : Text {
-                                            width: 45%;
-                                            text: row.detail;
+                                        if row.arguments != "" : Rectangle { width: 7px; }
+                                        if row.arguments != "" : TrajText {
+                                            height: parent.height;
+                                            text: row.arguments;
                                             color: TrajTokens.text-3;
-                                            font-size: 10px;
+                                            font-size: 12px;
                                             font-family: Theme.font-mono;
                                             vertical-alignment: center;
                                             overflow: elide;
+                                            horizontal-stretch: 1;
+                                            max-width: self.preferred-width;
                                         }
-                                        if row.error : Text {
+                                        if row.result != "" : Rectangle { width: 7px; }
+                                        if row.result != "" : TrajText {
+                                            height: parent.height;
+                                            text: "→  " + row.result;
+                                            color: TrajTokens.caption;
+                                            font-size: 12px;
+                                            vertical-alignment: center;
+                                            overflow: elide;
+                                            max-width: 480px;
+                                            horizontal-stretch: 0;
+                                        }
+                                        if row.error : Rectangle { width: 7px; }
+                                        if row.error : TrajText {
+                                            height: parent.height;
                                             width: 28px;
                                             text: I18n.traj_state_failed;
                                             color: TrajTokens.red;
@@ -580,7 +692,7 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                                             overflow: elide;
                                         }
                                     }
-                                    if row.error && (row.kind == 7 || row.kind == 8) : Text {
+                                    if row.error && (row.kind == 7 || row.kind == 8) : TrajText {
                                         height: parent.height;
                                         text: I18n.traj_state_failed;
                                         color: TrajTokens.red;
@@ -590,10 +702,10 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                                 }
                             }
                         }
-                        // turn start divider drawn over the row top
-                        if row.turn-start : Rectangle {
-                            y: 0px; width: parent.width; height: 1px;
-                            background: TrajTokens.border-2;
+                        Rectangle {
+                            y: parent.height - 1px;
+                            width: parent.width; height: 1px;
+                            background: TrajTokens.border-1;
                         }
                         row-focus := FocusScope {
                             key-pressed(event) => {
@@ -619,18 +731,18 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                             double-clicked => { if row.kind <= 6 { root.fold-row(row.index, 0); } }
                         }
                         if row.turn-start && row.foldable && row.kind <= 6 : Rectangle {
-                            x: row.request > 0 ? 36px : 4px; y: (parent.height - 16px) / 2; width: 44px; height: 16px;
+                            x: 36px; y: (parent.height - 18px) / 2; width: 44px; height: 18px;
                             background: turn-touch.has-hover ? TrajTokens.hover : transparent;
                             Image {
-                                x: 2px; y: 3px; width: 10px; height: 10px;
-                                source: row.collapsed ? @image-url("../assets/icons/chevron-right.svg") : @image-url("../assets/icons/chevron-down.svg");
-                                colorize: TrajTokens.text-2;
+                                x: 3px; y: 5px; width: 8px; height: 8px;
+                                source: row.collapsed ? @image-url("../assets/icons/trajectory-turn-right.svg") : @image-url("../assets/icons/trajectory-turn-down.svg");
+                                colorize: turn-touch.has-hover ? TrajTokens.brand : TrajTokens.text-2;
                             }
-                            Text {
-                                x: 14px; height: parent.height;
+                            TrajText {
+                                x: 15px; height: parent.height;
                                 text: "#" + row.turn;
-                                color: TrajTokens.text-2;
-                                font-size: 9px; vertical-alignment: center;
+                                color: turn-touch.has-hover ? TrajTokens.brand : TrajTokens.text-2;
+                                font-size: 12px; vertical-alignment: center;
                             }
                             turn-touch := TouchArea {
                                 mouse-cursor: pointer;
@@ -641,17 +753,32 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                         }
                     }
                 }
+                if root.rows.length > 0 : Rectangle {
+                    x: 0px; y: 0px;
+                    width: parent.width; height: 26px;
+                    background: #F7FAFF;
+                    Rectangle { y: parent.height - 1px; width: parent.width; height: 1px; background: #4176E638; }
+                    TrajText {
+                        x: 12px; height: parent.height; width: parent.width - 24px;
+                        text: root.history-hint;
+                        color: TrajTokens.text-2; font-size: 11px;
+                        vertical-alignment: center; overflow: elide;
+                    }
+                }
                 }
             // resize handle
-            Rectangle {
-                width: 5px;
+            if root.selected-index >= 0 : Rectangle {
+                x: parent.width - clamp(min(root.details-width, root.width - 280px), 320px, 440px);
+                y: 0px; height: parent.height;
+                width: 0px;
                 background: handle-touch.has-hover || root.details-dragging ? TrajTokens.border-2 : TrajTokens.border-1;
                 handle-touch := TouchArea {
+                    x: -4px; width: 8px;
                     mouse-cursor: ew-resize;
                     pointer-event(event) => {
                         if event.kind == PointerEventKind.down {
                             root.details-dragging = true;
-                            root.press-x = self.mouse-x;
+                            root.press-x = parent.x + self.mouse-x;
                             root.press-width = root.details-width;
                         }
                         if event.kind == PointerEventKind.up {
@@ -659,74 +786,86 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                         }
                     }
                     moved => {
-                        root.details-width = clamp(root.press-width - (self.mouse-x - root.press-x), 320px, 440px);
+                        root.details-width = clamp(root.press-width - (parent.x + self.mouse-x - root.press-x), 320px, 440px);
                     }
                 }
             }
             // details aside
-            details := Rectangle {
+            if root.selected-index >= 0 : details := Rectangle {
                 // 与蜂巢 .tt-details 对齐：clamp(320px, 38%, 440px) +
                 // max-width(100% - 280px) + 左侧 border-2。
                 width: clamp(min(root.details-width, root.width - 280px), 320px, 440px);
+                x: parent.width - self.width;
+                y: 0px;
+                height: parent.height;
+                min-width: 0px;
                 background: white;
-                border-width: 1px; border-color: TrajTokens.border-2;
+                clip: true;
                 VerticalLayout {
-                    padding-top: 8px;
+                    x: 0.5px; width: parent.width - 0.5px;
+                    spacing: 0px;
                     // header
                     HorizontalLayout {
-                        height: 38px;
+                        height: 41px;
                         padding-left: 12px; padding-right: 8px;
                         spacing: 8px;
                         Rectangle {
-                            width: header-badge.preferred-width + 14px; height: 18px;
-                            border-radius: 3px;
+                            width: header-badge.preferred-width + 10px; height: 19px;
+                            y: (42px - self.height) / 2;
+                            border-radius: 4px;
                             background: TrajTokens.kind-soft(root.detail-kind);
-                            header-badge := Text {
-                                x: 7px; height: parent.height;
+                            header-badge := TrajText {
+                                x: 5px; height: parent.height;
                                 text: root.detail-badge;
-                                color: TrajTokens.kind-color(root.detail-kind);
-                                font-size: 10px; font-weight: 600;
+                                color: TrajTokens.badge-color(root.detail-kind);
+                                font-size: 10px; font-weight: 650;
+                                letter-spacing: 0.35px;
                                 vertical-alignment: center;
                             }
                         }
-                        Text {
+                        TrajText {
                             height: parent.height;
                             text: root.detail-header;
-                            color: TrajTokens.text;
-                            font-size: 12px; font-weight: 600;
+                            color: TrajTokens.text-3;
+                            font-family: Theme.font-mono;
+                            font-size: 11px;
                             vertical-alignment: center;
                             overflow: elide;
                             horizontal-stretch: 1;
                         }
                         Rectangle {
-                            width: 20px; height: 20px; border-radius: 4px;
+                            width: 28px; height: 28px; border-radius: 4px;
+                            y: 7px;
                             background: close-touch.has-hover ? TrajTokens.hover : transparent;
-                            Image { x: 3px; y: 3px; width: 14px; height: 14px; source: @image-url("../assets/icons/xmark.svg"); colorize: TrajTokens.text-2; }
+                            Image { x: 8px; y: 8px; width: 12px; height: 12px; source: @image-url("../assets/icons/xmark.svg"); colorize: close-touch.has-hover ? TrajTokens.text : TrajTokens.text-3; }
                             close-touch := TouchArea { mouse-cursor: pointer; clicked => { root.select-row(-1); } }
                         }
                     }
                     Rectangle { height: 1px; background: TrajTokens.border-1; }
                     // tabs (underline style)
                     HorizontalLayout {
-                        height: 30px;
-                        padding-left: 12px;
-                        spacing: 14px;
+                        height: 33px;
+                        padding-left: 4px; padding-right: 4px;
+                        spacing: 0px;
+                        alignment: start;
                         for tab in root.detail-tabs : Rectangle {
-                            width: tab-title.preferred-width;
-                            tab-title := Text {
+                            width: tab-title.preferred-width + 18px;
+                            tab-title := TrajText {
+                                x: 9px;
                                 height: parent.height;
                                 text: tab.title;
-                                color: root.detail-tab == tab.kind ? TrajTokens.brand : TrajTokens.text-2;
-                                font-size: 12px; font-weight: root.detail-tab == tab.kind ? 600 : 400;
+                                color: root.detail-tab == tab.kind ? TrajTokens.brand : tab-touch.has-hover ? TrajTokens.text : TrajTokens.text-2;
+                                font-size: 12px; font-weight: root.detail-tab == tab.kind ? 500 : 400;
                                 vertical-alignment: center;
                             }
                             Rectangle {
-                                y: parent.height - 2px;
-                                width: parent.width;
+                                x: 9px; y: parent.height - 1px;
+                                width: parent.width - 18px;
                                 height: 2px;
+                                border-radius: 1px;
                                 background: root.detail-tab == tab.kind ? TrajTokens.brand : transparent;
                             }
-                            TouchArea {
+                            tab-touch := TouchArea {
                                 mouse-cursor: pointer;
                                 clicked => { root.select-tab(tab.kind); }
                             }
@@ -734,114 +873,214 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                     }
                     Rectangle { height: 1px; background: TrajTokens.border-1; }
                     // tab body
-                    ScrollView {
-                        horizontal-scrollbar-policy: always-off; vertical-scrollbar-policy: always-off;
-
-
+                    detail-scroll := ScrollView {
+                        horizontal-scrollbar-policy: always-off;
+                        vertical-scrollbar-policy: as-needed;
                         vertical-stretch: 1;
-                        // fixed width: a layout deriving its width from
-                        // no-wrap text content makes the flickable loop
-                        width: details.width - 26px;
+                        content-width: self.visible-width;
                         VerticalLayout {
+                            width: detail-scroll.visible-width;
                             min-width: 0px;
-                            padding: 12px;
-                            spacing: 10px;
+                            padding: 0px;
+                            spacing: 0px;
                             alignment: start;
                             // overview key/value rows
-                            for entry in root.overview-rows : HorizontalLayout {
-                                height: 20px;
-                                spacing: 8px;
-                                Text {
-                                    width: 96px;
-                                    text: entry.label;
-                                    color: TrajTokens.caption;
-                                    font-size: 11px;
-                                    vertical-alignment: center;
-                                    overflow: elide;
-                                }
-                                Text {
-                                    height: parent.height;
-                                    text: entry.value;
-                                    color: TrajTokens.text;
-                                    font-size: 11px;
-                                    vertical-alignment: center;
-                                    overflow: elide;
-                                    horizontal-stretch: 1;
+                            if root.overview-rows.length > 0 : VerticalLayout {
+                                padding-top: 8px; padding-bottom: 8px;
+                                spacing: 0px;
+                                for entry in root.overview-rows : Rectangle {
+                                    height: max(22px, overview-value.preferred-height);
+                                    HorizontalLayout {
+                                        height: parent.height;
+                                        padding-left: 14px; padding-right: 14px;
+                                        spacing: 8px;
+                                        TrajText {
+                                            width: 94px; height: 22px;
+                                            text: entry.label;
+                                            color: TrajTokens.text-3;
+                                            font-size: 13px;
+                                            vertical-alignment: center;
+                                            overflow: elide;
+                                        }
+                                        overview-value := TrajTextInput {
+                                            height: self.preferred-height;
+                                            text: entry.value;
+                                            color: TrajTokens.text;
+                                            font-size: 13px;
+                                            read-only: true; single-line: false;
+                                            wrap: word-wrap;
+                                            vertical-alignment: center;
+                                            horizontal-stretch: 1;
+                                            selection-background-color: TrajTokens.brand-soft;
+                                            selection-foreground-color: TrajTokens.text;
+                                        }
+                                    }
                                 }
                             }
                             // content sections (input / output / params / result / schema)
-                            for section in root.sections : VerticalLayout {
-                                spacing: 6px;
-                                alignment: start;
-                                Text {
-                                    height: 16px;
-                                    text: section.title;
-                                    color: TrajTokens.text;
-                                    font-size: 12px; font-weight: 600;
+                            for section in root.sections : section-card := Rectangle {
+                                private property <bool> expanded: true;
+                                private property <int> shown-record: root.selected-index;
+                                changed shown-record => { self.expanded = true; }
+                                private property <bool> code: root.detail-tab == 2 || root.detail-tab == 3 || root.detail-tab == 4;
+                                private property <bool> show-heading: root.detail-tab == 0;
+                                height: (self.show-heading ? 24.5px : 0px) + (self.expanded ? section-scroll.height : 0px);
+                                background: white;
+                                if section-card.show-heading : Rectangle {
+                                    x: 0px; y: 0px; width: parent.width; height: 1px;
+                                    background: TrajTokens.border-1;
                                 }
-                                TextEditBase {
+                                if section-card.show-heading : Rectangle {
+                                    x: 0px; y: 0.5px; width: parent.width; height: 24px;
+                                    HorizontalLayout {
+                                        height: parent.height;
+                                        padding-left: 14px; padding-bottom: 3px;
+                                        spacing: 4px; alignment: start;
+                                        TrajText {
+                                            height: parent.height;
+                                            text: section.title;
+                                            color: TrajTokens.text;
+                                            font-size: 13px; font-weight: 500;
+                                            vertical-alignment: center;
+                                        }
+                                        Rectangle {
+                                            width: 8px; height: parent.height;
+                                            Image {
+                                                x: 0px; y: (parent.height - 8px) / 2;
+                                                width: 8px; height: 8px;
+                                                source: section-card.expanded ? @image-url("../assets/icons/chevron-down.svg") : @image-url("../assets/icons/chevron-right.svg");
+                                                colorize: TrajTokens.text-3;
+                                            }
+                                        }
+                                    }
+                                    TouchArea {
+                                        mouse-cursor: pointer;
+                                        clicked => { section-card.expanded = !section-card.expanded; }
+                                    }
+                                }
+                                section-scroll := ScrollView {
+                                    visible: section-card.expanded;
+                                    x: 0px; y: section-card.show-heading ? 24.5px : 0px;
                                     width: parent.width;
-                                    height: 140px;
-                                    border-radius: 4px;
-                                    background: TrajTokens.code-bg;
-                                    border-width: 1px; border-color: TrajTokens.border-1;
-                                    clip: true;
-                                    text: section.body;
-                                    read-only: true;
-                                    wrap: word-wrap;
-                                    scroll-view-padding: 6px;
-                                    font-family: Theme.font-mono;
-                                    font-size: 11px;
-                                    foreground: TrajTokens.text-2;
-                                    selection-background-color: TrajTokens.brand-soft;
-                                    selection-foreground-color: TrajTokens.text;
+                                    height: min(280px, section-content.preferred-height + (section-card.code ? 28px : 54px));
+                                    horizontal-scrollbar-policy: always-off;
+                                    vertical-scrollbar-policy: as-needed;
+                                    content-width: self.visible-width;
+                                    content-height: section-content.preferred-height + (section-card.code ? 28px : 54px);
+                                    Rectangle {
+                                        width: section-scroll.visible-width;
+                                        height: section-content.preferred-height + (section-card.code ? 28px : 54px);
+                                        background: section-card.code ? TrajTokens.code-bg : white;
+                                        ContextMenuArea {
+                                            Menu {
+                                                MenuItem { title: @tr("Copy"); activated => { section-content.copy(); } }
+                                                MenuItem { title: @tr("Select All"); activated => { section-content.select-all(); } }
+                                            }
+                                            section-content := TrajTextInput {
+                                                x: 14px; y: section-card.code ? 14px : 25px;
+                                                width: section-scroll.visible-width - 28px;
+                                                height: self.preferred-height;
+                                                text: section.body;
+                                                read-only: true; single-line: false;
+                                                wrap: word-wrap;
+                                                font-family: section-card.code ? Theme.font-mono : "Segoe UI";
+                                                font-size: section-card.code ? 12px : 13px;
+                                                line-height-factor: section-card.code ? 1.05 : 1.18;
+                                                color: TrajTokens.text;
+                                                selection-background-color: TrajTokens.brand-soft;
+                                                selection-foreground-color: TrajTokens.text;
+                                            }
+                                        }
+                                    }
                                 }
                             }
                             // timing rows
-                            for timing in root.timing-rows : HorizontalLayout {
-                                height: 20px;
-                                spacing: 8px;
-                                Text {
-                                    width: 96px;
-                                    text: timing.label;
-                                    color: TrajTokens.caption;
-                                    font-size: 11px;
-                                    vertical-alignment: center;
-                                    overflow: elide;
-                                }
-                                Text {
-                                    height: parent.height;
-                                    text: timing.value;
-                                    color: TrajTokens.text;
-                                    font-size: 11px;
-                                    vertical-alignment: center;
-                                    overflow: elide;
-                                    horizontal-stretch: 1;
+                            if root.timing-rows.length > 0 : VerticalLayout {
+                                padding-top: 8px; padding-bottom: 8px;
+                                spacing: 0px;
+                                for timing in root.timing-rows : Rectangle {
+                                    height: max(22px, timing-value.preferred-height);
+                                    HorizontalLayout {
+                                        height: parent.height;
+                                        padding-left: 14px; padding-right: 14px;
+                                        spacing: 8px;
+                                        TrajText {
+                                            width: 94px; height: 22px;
+                                            text: timing.label;
+                                            color: TrajTokens.text-3;
+                                            font-size: 13px;
+                                            vertical-alignment: center;
+                                            overflow: elide;
+                                        }
+                                        timing-value := TrajTextInput {
+                                            height: self.preferred-height;
+                                            text: timing.value;
+                                            color: TrajTokens.text;
+                                            font-size: 13px;
+                                            read-only: true; single-line: false;
+                                            wrap: word-wrap;
+                                            vertical-alignment: center;
+                                            horizontal-stretch: 1;
+                                            selection-background-color: TrajTokens.brand-soft;
+                                            selection-foreground-color: TrajTokens.text;
+                                        }
+                                    }
                                 }
                             }
                             // raw tab; the list contents are tab-scoped by the
                             // Rust projection, raw shows only when filled
-                            if root.raw-text != "" : TextEditBase {
-                                width: parent.width;
-                                height: 260px;
-                                border-radius: 4px;
+                            if root.raw-text != "" : Rectangle {
+                                height: raw-content.preferred-height + 28px;
                                 background: TrajTokens.code-bg;
-                                border-width: 1px; border-color: TrajTokens.border-1;
-                                clip: true;
-                                text: root.raw-text;
-                                read-only: true;
-                                wrap: no-wrap;
-                                scroll-view-padding: 6px;
-                                font-family: Theme.font-mono;
-                                font-size: 11px;
-                                foreground: TrajTokens.text-2;
-                                selection-background-color: TrajTokens.brand-soft;
-                                selection-foreground-color: TrajTokens.text;
+                                ContextMenuArea {
+                                    Menu {
+                                        MenuItem { title: @tr("Copy"); activated => { raw-content.copy(); } }
+                                        MenuItem { title: @tr("Select All"); activated => { raw-content.select-all(); } }
+                                    }
+                                    raw-content := TrajTextInput {
+                                        x: 14px; y: 14px;
+                                        width: parent.width - 28px;
+                                        height: self.preferred-height;
+                                        text: root.raw-text;
+                                        read-only: true; single-line: false;
+                                        wrap: word-wrap;
+                                        font-family: Theme.font-mono;
+                                        font-size: 12px;
+                                        line-height-factor: 1.05;
+                                        color: TrajTokens.text;
+                                        selection-background-color: TrajTokens.brand-soft;
+                                        selection-foreground-color: TrajTokens.text;
+                                    }
+                                }
                             }
                         }
                     }
                 }
+                // Paint after the white section backgrounds so the divider
+                // remains continuous for the entire inspector height.
+                Rectangle { x: 0px; y: 0px; width: 0.5px; height: parent.height; background: TrajTokens.border-2; }
             }
+        }
+    }
+
+    // tooltip card; lives above the track, no TouchArea so it never
+    // steals hover from the span underneath
+    if root.hover-index >= 0 && root.tooltip-text != "" : Rectangle {
+        x: clamp(44px + root.hover-mx + 12px, 0px, root.width - self.width);
+        y: clamp(32px + root.hover-my + 12px, 0px, root.height - self.height);
+        width: min(320px, tooltip-lines.preferred-width + 16px);
+        height: tooltip-lines.preferred-height + 10px;
+        background: white;
+        border-radius: 4px;
+        border-width: 0.5px; border-color: TrajTokens.border-3;
+        drop-shadow-blur: 16px; drop-shadow-offset-y: 4px; drop-shadow-color: #0F11151F;
+        tooltip-lines := TrajText {
+            x: 8px; y: 5px;
+            width: parent.width - 16px;
+            text: root.tooltip-text;
+            color: TrajTokens.text;
+            font-size: 11px;
+            wrap: word-wrap;
         }
     }
 }

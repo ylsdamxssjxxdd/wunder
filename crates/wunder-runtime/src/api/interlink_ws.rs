@@ -1769,6 +1769,16 @@ mod tests {
     }
 
     #[test]
+    fn default_grants_allow_workspace_metadata_only_with_local_declaration() {
+        let defaults = default_device_capabilities();
+        assert!(grant_capabilities(&[CAP_SHADOW_FULL.into()], &defaults, &digest::DevicePolicy::default()).contains(&CAP_SHADOW_FULL.to_string()));
+        let declared = vec![CAP_SHADOW_MINIMAL.into(), CAP_QUERY_BASIC.into()];
+        assert!(!grant_capabilities(&declared, &defaults, &digest::DevicePolicy::default()).contains(&CAP_SHADOW_FULL.to_string()));
+        assert!(!defaults.contains(&CAP_TOOL_EXEC.to_string()));
+        assert!(!defaults.contains(&CAP_AGENT_SPAWN.to_string()));
+    }
+
+    #[test]
     fn interlink_switch_is_fail_open_on_unset_and_closed_on_false() {
         assert!(interlink_allowed(&None));
         let mut patch = CloudDeviceInterlinkPatch::default();

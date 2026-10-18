@@ -1073,6 +1073,7 @@ export default {
   'chat.timeline.patch.replaceAll': '全部替换',
   'chat.timeline.patch.insertAfterLine': '第 {line} 行后',
   'chat.timeline.entryOutputExitCode': '退出码 {code}',
+  'chat.timeline.entryDiffStats': '新增 {added} 行，删除 {deleted} 行',
   'chat.inquiry.defaultQuestion': '请选择你想继续的方向',
   'chat.inquiry.recommended': '推荐',
   'chat.inquiry.noPreference': '无偏好',

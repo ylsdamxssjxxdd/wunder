@@ -381,23 +381,27 @@ export global ToastState {
 export component ToastHost inherits Rectangle {
     // The host is sized by MainWindow. A standalone component has no parent
     // for Slint 1.18 to resolve a percentage width against.
-    width: 560px; height: 52px; x: 0px; y: 14px;
+    width: 480px; height: 48px; x: 0px; y: 14px;
     visible: ToastState.message != "";
     Rectangle {
-        width: min(560px, root.width - 48px);
-        height: 42px;
+        width: min(480px, root.width - 40px, max(240px, toast-text.preferred-width + 56px));
+        height: 40px;
         x: (root.width - self.width) / 2;
         y: 4px;
-        border-radius: Theme.radius-lg;
-        background: ToastState.kind == 2 ? Theme.danger-bg : ToastState.kind == 1 ? Theme.success-bg : Theme.surface;
+        border-radius: 12px;
+        background: ToastState.kind == 2 ? #FFF7F5 : Theme.surface;
         border-width: 1px;
-        border-color: ToastState.kind == 1 ? Theme.success : ToastState.kind == 2 ? Theme.danger : Theme.border;
-        drop-shadow-color: #00000024; drop-shadow-blur: 14px; drop-shadow-offset-y: 3px;
-        HorizontalLayout {
-            padding-left: 14px; padding-right: 10px; spacing: Theme.space-2; alignment: center;
-            Rectangle { width: 4px; height: 22px; border-radius: 2px; background: ToastState.kind == 1 ? Theme.success : ToastState.kind == 2 ? Theme.danger : Theme.accent; }
-            Image { width: 16px; height: 16px; source: ToastState.kind == 1 ? @image-url("../assets/icons/circle-check.svg") : ToastState.kind == 2 ? @image-url("../assets/icons/status-error.svg") : @image-url("../assets/icons/log-info.svg"); colorize: ToastState.kind == 1 ? Theme.success : ToastState.kind == 2 ? Theme.danger : Theme.accent; }
-            Text { horizontal-stretch: 1; text: ToastState.message; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; overflow: elide; }
+        border-color: ToastState.kind == 2 ? #E8B7AD : Theme.border;
+        drop-shadow-color: #00000018; drop-shadow-blur: 12px; drop-shadow-offset-y: 3px;
+        Image {
+            x: 14px; y: 12px; width: 16px; height: 16px;
+            source: ToastState.kind == 2 ? @image-url("../assets/icons/status-error.svg") : @image-url("../assets/icons/log-info.svg");
+            colorize: ToastState.kind == 2 ? Theme.danger : Theme.accent;
+        }
+        toast-text := Text {
+            x: 40px; y: 0px; width: parent.width - 54px; height: parent.height;
+            text: ToastState.message; color: Theme.text; font-size: Theme.font-sm;
+            vertical-alignment: center; overflow: elide;
         }
     }
 }

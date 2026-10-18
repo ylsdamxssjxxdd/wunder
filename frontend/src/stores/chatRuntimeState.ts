@@ -1773,10 +1773,10 @@ const COMMAND_SESSION_TOOL_OUTPUT_EVENTS = new Set([
 ]);
 
 const DESKTOP_OVERLAY_STREAM_EVENTS = new Set([
-  'desktop_controller_hint',
-  'desktop_controller_hint_done',
-  'desktop_monitor_countdown',
-  'desktop_monitor_countdown_done'
+  'desktop_control_hint',
+  'desktop_control_hint_done',
+  'desktop_control_countdown',
+  'desktop_control_countdown_done'
 ]);
 
 const applyCommandSessionCanonicalSideEffect = (runtimeStore, sessionId, eventType, payload, data) => {

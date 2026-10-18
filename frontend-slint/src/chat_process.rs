@@ -37,6 +37,8 @@ fn rows(app: &MainWindow, child: bool) -> ModelRc<TimelineRow> {
 fn session(app: &MainWindow, child: bool) -> String {
     if child {
         app.get_process_child_session().to_string()
+    } else if app.get_cloud_chat_active() {
+        crate::cloud_threads::selected_id(app)
     } else {
         app.get_active_session_id().to_string()
     }
@@ -111,8 +113,15 @@ fn bind(app: &MainWindow, api: Arc<NativeDesktop>, child: bool, pending: Rc<Cell
         let backend = api.clone();
         let lookup = target.clone();
         let root_id = root.clone();
+        let cloud = !child && app.get_cloud_chat_active();
+        let final_id = if cloud { crate::cloud_threads::final_message_id(&root) } else { String::new() };
         std::thread::spawn(move || {
-            let _ = tx.send(backend.chat_process_page(&lookup, &root_id, before, after));
+            let result = if cloud {
+                backend.cloud_thread_process_page(&lookup, &root_id, &final_id, before, after)
+            } else {
+                backend.chat_process_page(&lookup, &root_id, before, after)
+            };
+            let _ = tx.send(result);
         });
         let weak = app.as_weak();
         let cursors = cursors.clone();
@@ -134,7 +143,7 @@ fn bind(app: &MainWindow, api: Arc<NativeDesktop>, child: bool, pending: Rc<Cell
             let Some(app) = weak.upgrade() else {
                 return true;
             };
-            if session(&app, child) != target {
+            if session(&app, child) != target || (!child && app.get_cloud_chat_active() != cloud) {
                 return true;
             }
             let model = rows(&app, child);

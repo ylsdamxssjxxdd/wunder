@@ -1777,25 +1777,6 @@
   padding-right: 12px;
 }
 
-.message-markdown-body-expand {
-  margin-top: 8px;
-  padding: 4px 8px;
-  border: 1px solid rgba(var(--ui-accent-rgb), 0.28);
-  border-radius: 6px;
-  background: var(--ui-accent-soft);
-  color: var(--ui-accent-deep);
-  cursor: pointer;
-  font: inherit;
-  font-size: 12px;
-  line-height: 1.35;
-}
-
-.message-markdown-body-expand:hover,
-.message-markdown-body-expand:focus-visible {
-  border-color: rgba(var(--ui-accent-rgb), 0.5);
-  background: var(--ui-accent-soft-4);
-}
-
 .messenger-message.mine .messenger-message-bubble {
   background: rgba(var(--ui-accent-rgb), 0.12);
   border-color: rgba(var(--ui-accent-rgb), 0.3);
@@ -5134,6 +5115,9 @@
 
 .messenger-markdown .markdown-body .ai-code-copy {
   margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   border: 1px solid #d4d8df;
   border-radius: 999px;
   background: #ffffff;
@@ -5148,16 +5132,50 @@
   color: var(--hula-accent);
 }
 
+.messenger-markdown .markdown-body .ai-code-copy-icon {
+  width: 12px;
+  height: 12px;
+  font-size: 12px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
 .messenger-markdown .markdown-body .ai-code-block pre {
   margin: 0;
   padding: 10px 12px;
   overflow: auto;
+  background: transparent;
 }
 
 .messenger-markdown .markdown-body .ai-code-block code {
+  display: block;
+  font-family: "JetBrains Mono", "Fira Code", "SFMono-Regular", Consolas, "Liberation Mono", Menlo,
+    monospace;
   font-size: 12px;
   line-height: 1.55;
   color: #1f2937;
+  white-space: pre;
+}
+
+/* 语法高亮配色（浅色代码底）：与 .chat-shell 深色作用域同构，色值换成浅底可读的蜂巢暖色系。 */
+.messenger-markdown .markdown-body .ai-code-block code .token-comment {
+  color: #8a919c;
+}
+
+.messenger-markdown .markdown-body .ai-code-block code .token-string {
+  color: #2e7d32;
+}
+
+.messenger-markdown .markdown-body .ai-code-block code .token-number {
+  color: #b45309;
+}
+
+.messenger-markdown .markdown-body .ai-code-block code .token-keyword {
+  color: #1d4ed8;
+  font-weight: 600;
 }
 
 .messenger-markdown .markdown-body :not(pre) > code {

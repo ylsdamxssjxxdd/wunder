@@ -32,6 +32,14 @@
         </button>
       </span>
       <span
+        v-if="entry.diffStats"
+        class="tl-entry-diff"
+        :title="t('chat.timeline.entryDiffStats', { added: entry.diffStats.added, deleted: entry.diffStats.deleted })"
+      >
+        <span class="tl-entry-diff-add">+{{ entry.diffStats.added }}</span>
+        <span class="tl-entry-diff-del">-{{ entry.diffStats.deleted }}</span>
+      </span>
+      <span
         v-if="entry.summary"
         class="tl-entry-summary"
         :class="{ 'is-mono': entry.summaryMono }"
@@ -323,6 +331,27 @@ button.tl-entry-head:focus-visible {
 .tl-entry-chip:hover {
   background: var(--mz-selected, #f1efec);
   color: var(--mz-text-secondary, #3d3d3d);
+}
+
+/* 编辑/补丁条目的 +/- 行数：与补丁卡片头部同一配色（绿加红减），等宽对齐。 */
+.tl-entry-diff {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 18px;
+}
+
+.tl-entry-diff-add {
+  color: #16a34a;
+}
+
+.tl-entry-diff-del {
+  color: #dc2626;
 }
 
 /* 展开内容左内边距保持 24px（沟槽 20px + 24px = 44px），不被分组沟槽挤压。 */

@@ -91,11 +91,8 @@ pub async fn execute_builtin_tool(
         other if browser_tool::is_browser_tool_name(other) => {
             browser_tool::tool_browser(context, other, args).await
         }
-        desktop_control::TOOL_DESKTOP_CONTROLLER => {
-            desktop_control::tool_desktop_controller(context, args).await
-        }
-        desktop_control::TOOL_DESKTOP_MONITOR => {
-            desktop_control::tool_desktop_monitor(context, args).await
+        desktop_control::TOOL_DESKTOP_CONTROL => {
+            desktop_control::tool_desktop_control(context, args).await
         }
         sessions_yield_tool::TOOL_SESSIONS_YIELD => {
             sessions_yield_tool::execute_sessions_yield_tool(context, args).await

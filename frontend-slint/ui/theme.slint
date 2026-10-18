@@ -25,7 +25,8 @@ export struct TrajRow {
     kind: int,            // 0 system 1 user 2 context 3 compacted 4 message 5 tool 6 subtool 7 turn-summary 8 assistant-summary
     badge: string,        // event-column badge text (SYSTEM / USER / 请求 #N …)
     text: string,         // primary preview text
-    detail: string,       // one-line tool args → result preview
+    arguments: string,    // separately styled tool parameter preview
+    result: string,       // separately styled tool result preview
     error: bool,
     request: int,         // request number, 0 = none
     turn: int,            // user turn number, -1 = none
@@ -45,6 +46,10 @@ export struct TrajSpan {
     ttft: float,          // 0..1 first-token fraction inside the span, -1 = none
     selected: bool,
     outside: bool,
+    overview: bool,       // global overview uses 1px minimum and fine dividers
+    aggregate: bool,      // bucket without one stable source record
+    error: bool,
+    dimmed: bool,         // does not match the active search
 }
 export struct TrajSearchHit { item-id: string, body-id: string, revision: string, cursor: string, snippet: string }
 export struct TrajTick { pos: float, label: string }
@@ -237,10 +242,14 @@ export struct AgentCard {
 export struct ToolCard { name: string, description: string, category: string, enabled: bool, icon: string, tone: string }
 export struct ModelCard { key: string, provider: string, model: string, base-url: string, model-type: string, is-default: bool, is-cloud: bool,
     temperature: string, timeout-s: string, max-output: string, thinking-token-budget: string, max-rounds: string, max-context: string,
+    history-compaction-ratio: string, reasoning-effort: string, simulation-speed: string,
+    support-vision: bool, support-hearing: bool, stream-include-usage: bool, tool-call-mode: string,
     tts-voice: string, tts-response-format: string, tts-speed: string, tts-instructions: string,
     asr-language: string, asr-response-format: string, asr-temperature: string, asr-prompt: string,
     image-size: string, image-output-format: string, image-steps: string, image-guidance-scale: string, image-negative-prompt: string,
-    video-size: string, video-seconds: string, video-fps: string, video-negative-prompt: string }
+    video-size: string, video-seconds: string, video-fps: string, video-num-frames: string, video-negative-prompt: string,
+    video-steps: string, video-guidance-scale: string, video-guidance-scale-2: string, video-boundary-ratio: string, video-flow-shift: string,
+    video-frame-interpolation: bool, video-sync-mode: bool }
 // `avatar-color` stays the raw `#rrggbb` preference; `avatar-brush` is the same
 // value resolved natively, because Slint has no string→color cast. Avatar
 // surfaces (the sidebar settings button) paint the brush and print the glyph.

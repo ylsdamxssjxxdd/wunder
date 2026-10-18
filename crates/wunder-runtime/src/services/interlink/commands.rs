@@ -23,6 +23,7 @@ use wunder_core::interlink::{
     COMMAND_STATUS_SUCCEEDED, COMMAND_STATUS_TIMEOUT, DIRECTION_C2L, ERR_APPROVAL_EXPIRED,
     ERR_APPROVAL_REJECTED, ERR_CAP_DENIED, ERR_NODE_BUSY, ERR_NODE_OFFLINE, ERR_QUEUE_FULL,
     ERR_SERVER_RESTARTED, ERR_TIMEOUT, FRAME_COMMAND, REMOTE_FRAME_COMMAND,
+    CMD_THREAD_CREATE, CMD_THREAD_MESSAGE, CMD_THREAD_CANCEL, CMD_THREAD_ANSWER,
 };
 
 use super::{audit, blob, digest, registry, remote, DispatchError, OutboundFrame};
@@ -457,8 +458,13 @@ pub async fn issue(
     // The local-device approval boundary applies to C2L; cloud workspace writes
     // still require an explicit ticket, and in-thread tool approvals stay intact.
     let own_cloud_thread = spec.to_node == "cloud" && command_level(kind) == "L1";
-    let requires_approval = node.policy.forces_approval(kind)
+    let thread_control = matches!(
+        kind,
+        CMD_THREAD_CREATE | CMD_THREAD_MESSAGE | CMD_THREAD_CANCEL | CMD_THREAD_ANSWER
+    );
+    let requires_approval = !thread_control && node.policy.forces_approval(kind)
         || (!own_cloud_thread
+            && !thread_control
             && (requires_hard_approval(kind)
                 || limits
                     .require_approval_defaults

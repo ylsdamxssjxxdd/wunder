@@ -55,8 +55,7 @@ Canonical tool names are mostly Chinese (what the model sees), each with English
 | 视频生成 | `generate_video` | Generate a video from a prompt | Multimodal |
 | 语音生成 | `generate_speech` | Text to speech | Multimodal |
 | 声转文 | `transcribe_speech` | Speech to text | Multimodal |
-| 桌面监视器 | `desktop_monitor` | Read desktop window and screen state | Desktop |
-| 桌面控制器 | `desktop_controller` | Operate the local desktop (mouse, keyboard, windows) | Desktop |
+| 桌面控制 | `desktop_control` | Operate and observe the local desktop (mouse, keyboard, windows) | Desktop |
 | 子智能体控制 | `subagent_control` | Spawn temporary subagents during a task and reclaim them after results return | Threads & subagents |
 | 会话线程控制 | `thread_control` | Manage task threads / forked threads (not exposed on desktop) | Threads & subagents |
 | 自我状态 | `self_status` | Query the agent's own runtime status | System & memory |

@@ -693,6 +693,7 @@ async fn network_failure_marks_reconnecting_without_expiring() {
 
     let outcome = cloud.recover_auth(TOKEN_V1).await;
     assert!(outcome.is_err(), "network failure surfaces an error");
+    assert!(wunder_server::cloud::retryable_cloud_read(outcome.as_ref().unwrap_err()));
     let status = cloud.status();
     assert_eq!(status.connection, "reconnecting");
     assert!(!status.expired, "network failure must not mark expired");
@@ -705,6 +706,13 @@ async fn network_failure_marks_reconnecting_without_expiring() {
     .expect("session json");
     assert_eq!(persisted["token"], TOKEN_V1);
     assert_eq!(persisted["refresh_token"], REFRESH_V1);
+    let server = spawn_mock_server(Arc::new(|_| MockResponse::connection_dropped())).await;
+    let mut session = cloud.session().expect("session");
+    session.server = server;
+    cloud.install_session(session);
+    let error = cloud.cloud_thread_view("fixture-thread").await.unwrap_err();
+    assert!(wunder_server::cloud::retryable_cloud_read(&error));
+    assert_eq!(cloud.status().connection, "reconnecting");
     cloud.logout(&store).await.expect("logout");
 }
 

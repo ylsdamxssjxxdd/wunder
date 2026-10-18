@@ -1,0 +1,37 @@
+// Shared 12px process glyph. Geometry moves directly so software rendering
+// does not depend on SVG transform support.
+import { Theme, TimelineSpin } from "theme.slint";
+export component ProcessStatusIcon inherits Rectangle {
+    in property <int> status;
+    width: 12px; height: 12px;
+    if root.status != 1 : Rectangle {
+        x: 0px; y: 0px; width: 12px; height: 12px; border-radius: 6px;
+        border-width: 1px;
+        border-color: root.status == 2 ? Theme.danger : Theme.timeline-entry-soft;
+        if root.status == 0 : Path {
+            x: 2px; y: 2px; width: 8px; height: 8px;
+            viewbox-width: 8; viewbox-height: 8;
+            commands: "M 1 4 L 3 6 L 7 2";
+            fill: transparent; stroke: Theme.muted; stroke-width: 1px;
+            stroke-line-cap: round; stroke-line-join: round;
+        }
+        if root.status == 2 : Path {
+            x: 2px; y: 2px; width: 8px; height: 8px;
+            viewbox-width: 8; viewbox-height: 8;
+            commands: "M 2 2 L 6 6 M 6 2 L 2 6";
+            fill: transparent; stroke: Theme.danger; stroke-width: 1px; stroke-line-cap: round;
+        }
+    }
+    if root.status == 1 : Path {
+        x: 0px; y: 0px; width: 12px; height: 12px;
+        viewbox-width: 12; viewbox-height: 12;
+        fill: transparent; stroke: Theme.muted; stroke-width: 1.3px;
+        stroke-line-cap: round;
+        MoveTo { x: 6 + 4.7 * cos(TimelineSpin.angle * 1deg); y: 6 + 4.7 * sin(TimelineSpin.angle * 1deg); }
+        ArcTo {
+            x: 6 + 4.7 * cos((TimelineSpin.angle + 280) * 1deg);
+            y: 6 + 4.7 * sin((TimelineSpin.angle + 280) * 1deg);
+            radius-x: 4.7; radius-y: 4.7; large-arc: true; sweep: true;
+        }
+    }
+}

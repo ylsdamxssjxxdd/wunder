@@ -6567,8 +6567,8 @@
  },
  {
   "key": "traj_search",
-  "zh": "搜索轨迹",
-  "en": "Search trajectory"
+  "zh": "搜索完整线程",
+  "en": "Search full thread"
  },
  {
   "key": "traj_duration",
@@ -7137,5 +7137,25 @@
   "key": "wf_btn_exec",
   "zh": "确认执行",
   "en": "Confirm"
+ },
+ {
+  "key": "traj_history_start",
+  "zh": "已到最早记录",
+  "en": "Beginning of history"
+ },
+ {
+  "key": "traj_history_older",
+  "zh": "向上滚动查看更早记录",
+  "en": "Scroll up for earlier records"
+ },
+ {
+  "key": "traj_history_loading",
+  "zh": "正在读取记录…",
+  "en": "Loading records…"
+ },
+ {
+  "key": "traj_history_retry",
+  "zh": "读取暂时失败，继续滚动可重试",
+  "en": "Could not load records; scroll to retry"
  }
 ]

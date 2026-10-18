@@ -398,9 +398,8 @@ fn classify(name: &str) -> Option<ToolPresentation> {
         other if is_browser_group_name(other) || is_browser_tool_name(other) => {
             call(ToolAccess::Execute, "浏览网页", "Browse")
         }
-        "桌面控制器" | "桌面控制" => call(ToolAccess::Execute, "桌面控制", "Desktop"),
-        "桌面监视器" | "桌面监视" => {
-            call(ToolAccess::Execute, "桌面监视", "Desktop monitor")
+        "桌面控制" | "desktop_control" | "desktop" => {
+            call(ToolAccess::Execute, "桌面控制", "Desktop")
         }
         // Work handed to another agent, skill or channel.
         "技能调用" => call(ToolAccess::Delegate, "调用技能", "Run skill"),
@@ -499,17 +498,10 @@ mod tests {
         ),
         ("浏览器", ToolAccess::Execute, "浏览网页", "Browse", false),
         (
-            "桌面控制器",
+            "桌面控制",
             ToolAccess::Execute,
             "桌面控制",
             "Desktop",
-            false,
-        ),
-        (
-            "桌面监视器",
-            ToolAccess::Execute,
-            "桌面监视",
-            "Desktop monitor",
             false,
         ),
         (
@@ -687,8 +679,7 @@ mod tests {
             ("update_plan", "计划面板"),
             ("ask_panel", "问询面板"),
             ("schedule_task", "定时任务"),
-            ("desktop_controller", "桌面控制器"),
-            ("desktop_monitor", "桌面监视器"),
+            ("desktop_control", "桌面控制"),
             ("generate_speech", "语音生成"),
             ("transcribe_speech", "声转文"),
             ("generate_image", "图像生成"),
@@ -820,8 +811,8 @@ mod tests {
             assert_eq!(present(name).access, ToolAccess::Execute, "{name}");
             assert_eq!(present(name).verb(false), "Browse", "{name}");
         }
-        assert_eq!(present("桌面控制器").access, ToolAccess::Execute);
-        assert_eq!(present("desktop_monitor").verb(false), "Desktop monitor");
+        assert_eq!(present("桌面控制").access, ToolAccess::Execute);
+        assert_eq!(present("desktop_control").verb(false), "Desktop");
     }
 
     #[test]

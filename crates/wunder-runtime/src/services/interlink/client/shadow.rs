@@ -523,8 +523,39 @@ pub fn workspace_scope(
         Some(workspace_id) if !workspace_id.is_empty() => state
             .workspace
             .scoped_user_id_for_workspace(user, workspace_id),
-        _ => state.workspace.scoped_user_id(user, None),
+        _ => {
+            // A desktop always owns a real default workspace record.  The
+            // historical plain-user scope points at the engine's private
+            // directory and is therefore the wrong root for interlink.  Use
+            // the first stable workspace binding for the implicit target;
+            // an empty store still gets the legacy scope until migration
+            // creates its first record.
+            let default_id = default_workspace_id(state, user).inspect(|id| {
+                if let Ok(Some(record)) = state.storage.get_workspace(user, id) {
+                    state
+                        .workspace
+                        .register_workspace_root(&record.workspace_id, &record.root_path);
+                }
+            });
+            default_id
+                .as_deref()
+                .map(|id| state.workspace.scoped_user_id_for_workspace(user, id))
+                .unwrap_or_else(|| state.workspace.scoped_user_id(user, None))
+        }
     }
+}
+
+/// Stable implicit workspace id used by command calls that omit `workspace_id`.
+/// Desktop migration creates this record before the tunnel starts; an empty
+/// result remains compatible with CLI/legacy nodes.
+pub fn default_workspace_id(state: &Arc<AppState>, user: &str) -> Option<String> {
+    let mut records = state.storage.list_workspaces(user.trim()).ok()?;
+    records.sort_by(|left, right| {
+        left.sort_index
+            .cmp(&right.sort_index)
+            .then_with(|| left.workspace_id.cmp(&right.workspace_id))
+    });
+    records.into_iter().next().map(|record| record.workspace_id)
 }
 
 /// Build the `threads` section from the durable catalog: at most two bounded
@@ -762,26 +793,20 @@ async fn gather_workspace_entry(
     (entry, walk.truncated)
 }
 
-/// Build the workspace section: the default local root is always represented
-/// when the node is not pinned to one named workspace, followed by each bound
-/// folder. This keeps the default scope addressable while preserving one
-/// independent row per named workspace. The whole section stays inside the
-/// §6.1 entry budget; per-workspace shares shrink as the count grows.
+/// Publish the local workspace bindings as independent roots. A synthetic
+/// root exists only for a CLI store without workspace records.
 pub async fn gather_workspace(
     state: &Arc<AppState>,
     sources: &ShadowSources,
     limits: &TreeLimits,
 ) -> (Value, bool) {
     let user = sources.local_user_id.trim();
-    let include_default = sources.workspace_id.is_none();
-    // The default root is a first-class sidebar item. Reserve one of the
-    // shared projection slots for it so the node list and the full shadow can
-    // never disagree by returning 21 roots for a 20-root contract.
-    let named_limit = if include_default {
-        WORKSPACE_MAX.saturating_sub(1)
-    } else {
-        WORKSPACE_MAX
-    };
+    // Every desktop workspace is a first-class row.  Older projections
+    // synthesized an unnamed plain-user root in front of the records; that
+    // root was not the user's configured default folder and made commands,
+    // directory listings and thread creation disagree.  Keep the synthetic
+    // root only for an empty store/CLI node.
+    let named_limit = WORKSPACE_MAX;
     let (records, records_truncated) =
         workspace_records(state, user, sources.workspace_id.as_deref(), named_limit).await;
     let mut truncated = records_truncated;
@@ -801,32 +826,13 @@ pub async fn gather_workspace(
         entry["name"] = json!("");
         return (json!({ "workspaces": [entry], "roots": 1 }), truncated);
     }
-    let count = records.len() + if include_default { 1 } else { 0 };
+    let count = records.len();
     // Divide first so every projected workspace keeps a share and the sum
     // cannot exceed the global walk budget. A fixed floor would let a handful
     // of full trees consume all entries before later workspaces appeared.
     let per_workspace = (limits.max_entries / count).max(1);
     let mut entries = Vec::with_capacity(count);
     let mut used = 0usize;
-
-    if include_default {
-        let scope = workspace_scope(state, user, None);
-        let root = state.workspace.workspace_root(&scope);
-        let remaining = limits.max_entries - used;
-        let (mut entry, entry_truncated) = gather_workspace_entry(
-            state,
-            &scope,
-            &root,
-            per_workspace.min(remaining),
-            limits.depth,
-        )
-        .await;
-        truncated |= entry_truncated;
-        used += entry["tree"].as_array().map(Vec::len).unwrap_or(0);
-        entry["workspace_id"] = json!("");
-        entry["name"] = json!("");
-        entries.push(entry);
-    }
 
     for record in &records {
         if used >= limits.max_entries {

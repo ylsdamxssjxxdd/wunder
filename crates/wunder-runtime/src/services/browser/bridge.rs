@@ -6,8 +6,8 @@ use serde_json::Value;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Stdio};
-use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::atomic::{AtomicU32, AtomicU64, AtomicU8, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, info, warn};
@@ -22,8 +22,17 @@ pub const LAUNCH_GRACE: Duration = Duration::from_secs(30);
 const COMMAND_QUEUE_DEPTH: usize = 1;
 const REAPER_PERIOD: Duration = Duration::from_secs(30);
 const ATTACH_POLL: Duration = Duration::from_millis(50);
+/// A sandbox-hosted bridge has to survive the same page stalls a local one
+/// does; the ceiling only exists so a dead sandbox cannot pin the pump.
+const REMOTE_COMMAND_GRACE: Duration = Duration::from_secs(60);
+const REMOTE_CREATE_TIMEOUT: Duration = Duration::from_secs(180);
+const REMOTE_CLOSE_TIMEOUT: Duration = Duration::from_secs(3);
 /// A session this recently active is never stolen by the capacity eviction.
 const ACTIVE_PROTECT: Duration = Duration::from_secs(5);
+/// Session key prefix for browsers the warm pool owns. They stay out of the
+/// session table until a real session adopts one, so they neither count against
+/// `max_sessions` nor look reclaimable to the idle sweep.
+const WARM_KEY_PREFIX: &str = "warm-pool";
 
 const STATE_LAUNCHING: u8 = 0;
 const STATE_READY: u8 = 1;
@@ -68,7 +77,9 @@ struct SpawnedBridge {
 /// is shared: any teardown path can `kill()` it (non-blocking), which closes the
 /// pipes and wakes the pump, and the pump is the only place that `wait()`s.
 struct BridgeSession {
-    key: String,
+    /// Mutable because a warm-pool browser is launched before its owner exists
+    /// and is renamed when a session adopts it.
+    key: RwLock<String>,
     tx: mpsc::Sender<Command>,
     /// `None` only in tests that exercise lifecycle bookkeeping without a
     /// process; the pump takes it to reap, every other path only kills.
@@ -87,6 +98,21 @@ struct BridgeSession {
 impl BridgeSession {
     fn is_ready(&self) -> bool {
         self.state.load(Ordering::Acquire) == STATE_READY
+    }
+
+    fn key(&self) -> String {
+        self.key
+            .read()
+            .map(|guard| guard.clone())
+            .unwrap_or_else(|poisoned| poisoned.into_inner().clone())
+    }
+
+    /// Hand a pooled browser to its owner. Callers rename under the session
+    /// table lock, so the session is never reachable under two keys at once.
+    fn set_key(&self, key: &str) {
+        if let Ok(mut guard) = self.key.write() {
+            *guard = key.to_string();
+        }
     }
 
     fn is_launching(&self) -> bool {
@@ -156,8 +182,120 @@ fn elapsed_millis() -> u64 {
     epoch_start().elapsed().as_millis() as u64
 }
 
+/// Everything needed to launch a bridge process. Owned (not borrowed) so a
+/// warm-pool launch can run on a plain thread while the caller keeps serving.
+#[derive(Clone)]
+struct LaunchSpec {
+    config: EffectiveBrowserConfig,
+    bridge_path: PathBuf,
+}
+
+/// Longest a failed warm launch stops the pool from retrying. A host without
+/// Playwright must not retry every tick forever.
+const WARM_RETRY_CEILING: Duration = Duration::from_secs(900);
+
+/// Browsers kept hot so the first session of a turn does not wait out the
+/// Chromium launch. Every field is owned so the background maintainer and the
+/// launch threads can hold their own handle.
+#[derive(Clone)]
+struct WarmPool {
+    spec: LaunchSpec,
+    ready: Arc<Mutex<Vec<Arc<BridgeSession>>>>,
+    launching: Arc<AtomicUsize>,
+    /// Consecutive launch failures, which drive the retry backoff.
+    failures: Arc<AtomicUsize>,
+    /// Elapsed-ms stamp before which no launch is attempted.
+    retry_after_ms: Arc<AtomicU64>,
+    target: usize,
+}
+
+impl WarmPool {
+    fn warm_slot() -> u32 {
+        static SLOT: AtomicU32 = AtomicU32::new(0);
+        SLOT.fetch_add(1, Ordering::Relaxed)
+    }
+
+    /// Launch browsers until the pool holds `target` ready ones plus whatever
+    /// is already in flight. Launching is the slow part, so it happens on its
+    /// own thread and only readiness is awaited there.
+    fn top_up(&self) -> usize {
+        if elapsed_millis() < self.retry_after_ms.load(Ordering::Acquire) {
+            return 0;
+        }
+        let in_flight = self.launching.load(Ordering::Acquire);
+        let ready = self
+            .ready
+            .lock()
+            .map(|guard| guard.len())
+            .unwrap_or_else(|poisoned| poisoned.into_inner().len());
+        let missing = self.target.saturating_sub(ready + in_flight);
+        let mut launched = 0;
+        for _ in 0..missing {
+            self.launching.fetch_add(1, Ordering::AcqRel);
+            let pool = self.clone();
+            let slot = Self::warm_slot();
+            let spawned = std::thread::Builder::new()
+                .name(format!("browser-warm-{slot}"))
+                .spawn(move || pool.launch_and_park(slot));
+            if let Err(err) = spawned {
+                self.launching.fetch_sub(1, Ordering::AcqRel);
+                warn!(error = %err, "Failed to start warm browser launch thread");
+                break;
+            }
+            launched += 1;
+        }
+        launched
+    }
+
+    /// Launch one pooled browser and park it once it reports ready. Runs on a
+    /// plain thread: `blocking_recv` panics inside an async context.
+    fn launch_and_park(&self, slot: u32) {
+        let key = format!("{WARM_KEY_PREFIX}:{slot}");
+        let outcome = start_session(&key, &self.spec).and_then(|session| {
+            let startup = session
+                .startup_rx
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .take();
+            let ready = match startup {
+                Some(receiver) => receiver.blocking_recv().unwrap_or_else(|_| {
+                    Err("bridge pump ended before reporting readiness".to_string())
+                }),
+                None => Err("warm browser readiness was claimed by another caller".to_string()),
+            };
+            ready.map(|()| session)
+        });
+        match outcome {
+            Ok(session) => {
+                session.state.store(STATE_READY, Ordering::Release);
+                session.touch();
+                if let Ok(mut guard) = self.ready.lock() {
+                    guard.push(session);
+                }
+                self.failures.store(0, Ordering::Release);
+                self.retry_after_ms.store(0, Ordering::Release);
+                info!(slot, "Warm browser ready and parked");
+            }
+            Err(err) => {
+                warn!(slot, error = %err, "Warm browser did not become ready");
+                let failures = self.failures.fetch_add(1, Ordering::AcqRel) + 1;
+                let backoff = REAPER_PERIOD
+                    .saturating_mul(1u32 << failures.min(5))
+                    .min(WARM_RETRY_CEILING);
+                self.retry_after_ms
+                    .store(elapsed_millis() + backoff.as_millis() as u64, Ordering::Release);
+            }
+        }
+        self.launching.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
 pub struct BrowserBridge {
     sessions: Arc<DashMap<String, Arc<BridgeSession>>>,
+    warm: Arc<Mutex<Vec<Arc<BridgeSession>>>>,
+    warm_launching: Arc<AtomicUsize>,
+    warm_failures: Arc<AtomicUsize>,
+    warm_retry_after_ms: Arc<AtomicU64>,
     config: EffectiveBrowserConfig,
     bridge_path: OnceLock<PathBuf>,
     reaper_started: AtomicU8,
@@ -167,6 +305,10 @@ impl BrowserBridge {
     pub fn new(config: EffectiveBrowserConfig) -> Self {
         Self {
             sessions: Arc::new(DashMap::new()),
+            warm: Arc::new(Mutex::new(Vec::new())),
+            warm_launching: Arc::new(AtomicUsize::new(0)),
+            warm_failures: Arc::new(AtomicUsize::new(0)),
+            warm_retry_after_ms: Arc::new(AtomicU64::new(0)),
             config,
             bridge_path: OnceLock::new(),
             reaper_started: AtomicU8::new(0),
@@ -200,6 +342,86 @@ impl BrowserBridge {
             .collect::<Vec<_>>();
         keys.sort();
         keys
+    }
+
+    /// Launch the pool without waiting for the first browser call. Server
+    /// bootstrap calls this so the Chromium cost is paid while nobody is
+    /// waiting; returns how many launches were started.
+    pub fn prewarm(&self) -> usize {
+        self.ensure_reaper();
+        self.top_up()
+    }
+
+    /// `(ready, launching)` for the warm pool, so a slow first call can be told
+    /// apart from a pool that never filled.
+    pub fn warm_pool_state(&self) -> (usize, usize) {
+        let count = |guard: &Vec<Arc<BridgeSession>>| {
+            guard
+                .iter()
+                .filter(|session| session.is_ready() && !session.tx.is_closed())
+                .count()
+        };
+        let ready = match self.warm.lock() {
+            Ok(guard) => count(&guard),
+            Err(poisoned) => count(&poisoned.into_inner()),
+        };
+        (ready, self.warm_launching.load(Ordering::Acquire))
+    }
+
+    fn warm_target(&self) -> usize {
+        // Clamped again here: a pooled browser is useless without a free slot,
+        // and `EffectiveBrowserConfig` can be assembled outside the normal path.
+        self.config.prewarm_sessions.min(self.config.max_sessions)
+    }
+
+    fn warm_pool(&self) -> Option<WarmPool> {
+        if self.warm_target() == 0 {
+            return None;
+        }
+        let spec = match self.launch_spec() {
+            Ok(spec) => spec,
+            Err(err) => {
+                warn!(error = %err, "Warm browser pool unavailable");
+                return None;
+            }
+        };
+        Some(WarmPool {
+            spec,
+            ready: Arc::clone(&self.warm),
+            launching: Arc::clone(&self.warm_launching),
+            failures: Arc::clone(&self.warm_failures),
+            retry_after_ms: Arc::clone(&self.warm_retry_after_ms),
+            target: self.warm_target(),
+        })
+    }
+
+    fn top_up(&self) -> usize {
+        self.warm_pool().map(|pool| pool.top_up()).unwrap_or(0)
+    }
+
+    /// Take a ready browser out of the pool, dropping any that died or never
+    /// finished launching. Dropping lets the pump reap the child.
+    fn take_warm(&self) -> Option<Arc<BridgeSession>> {
+        let mut guard = self
+            .warm
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        while let Some(session) = guard.pop() {
+            // A closed command channel means the bridge process is gone, which
+            // the readiness flag alone cannot tell.
+            if session.is_ready() && !session.tx.is_closed() {
+                return Some(session);
+            }
+        }
+        None
+    }
+
+    fn launch_spec(&self) -> Result<LaunchSpec, String> {
+        let bridge_path = self.ensure_bridge_script()?.to_path_buf();
+        Ok(LaunchSpec {
+            config: self.config.clone(),
+            bridge_path,
+        })
     }
 
     pub async fn send_command(
@@ -295,7 +517,33 @@ impl BrowserBridge {
             }
         }
 
-        let session = self.launch(session_key)?;
+        // A pooled browser has already paid the Chromium launch, so adopt one
+        // before falling back to a cold start.
+        if let Some(warm) = self.take_warm() {
+            warm.set_key(session_key);
+            let displaced = match self.sessions.entry(session_key.to_string()) {
+                dashmap::mapref::entry::Entry::Occupied(entry) => Some(Arc::clone(entry.get())),
+                dashmap::mapref::entry::Entry::Vacant(vacant) => {
+                    vacant.insert(Arc::clone(&warm));
+                    None
+                }
+            };
+            if let Some(existing) = displaced {
+                // Another call won the race: this browser has no slot, so let
+                // go of it and attach to theirs instead.
+                drop(warm);
+                return self.attach(&existing, deadline).await;
+            }
+            // Keep the pool filled so the next session does not wait either.
+            self.top_up();
+            warm.touch();
+            return Ok(warm);
+        }
+
+        let session = match self.launch(session_key)? {
+            LaunchOutcome::Owned(session) => session,
+            LaunchOutcome::Adopted(existing) => return self.attach(&existing, deadline).await,
+        };
         let startup = session
             .startup_rx
             .lock()
@@ -350,108 +598,252 @@ impl BrowserBridge {
             self.remove_if_same(session);
             return Err(format!(
                 "Browser bridge session '{}' is being prepared by another call; retry this command.",
-                session.key
+                session.key()
             ));
         }
         self.remove_if_same(session);
         Err(format!(
             "Browser bridge session '{}' is no longer alive; retry the command.",
-            session.key
+            session.key()
         ))
     }
 
-    fn launch(&self, session_key: &str) -> Result<Arc<BridgeSession>, String> {
-        let (cmd_tx, cmd_rx) = mpsc::channel::<Command>(COMMAND_QUEUE_DEPTH);
-        let (startup_tx, startup_rx) = oneshot::channel::<Result<(), String>>();
-        let session = Arc::new(BridgeSession {
-            key: session_key.to_string(),
-            tx: cmd_tx,
-            child: Arc::new(Mutex::new(None)),
-            state: AtomicU8::new(STATE_LAUNCHING),
-            last_active_ms: AtomicU64::new(elapsed_millis()),
-            in_flight: Arc::new(AtomicU64::new(0)),
-            startup_rx: Mutex::new(Some(startup_rx)),
-        });
-        // Reserve the slot before touching the process: a concurrent caller
-        // attaches to this launch instead of starting a second browser.
-        match self.sessions.entry(session_key.to_string()) {
-            dashmap::mapref::entry::Entry::Occupied(_) => {
-                return Err(format!(
-                    "Browser bridge session '{session_key}' is being prepared by another call."
-                ));
-            }
+    /// Start a browser for `session_key` and register it, or attach to the
+    /// session a concurrent caller already registered under that key.
+    fn launch(&self, session_key: &str) -> Result<LaunchOutcome, String> {
+        let spec = self.launch_spec()?;
+        let session = start_session(session_key, &spec)?;
+        let displaced = match self.sessions.entry(session_key.to_string()) {
+            dashmap::mapref::entry::Entry::Occupied(entry) => Some(Arc::clone(entry.get())),
             dashmap::mapref::entry::Entry::Vacant(vacant) => {
                 vacant.insert(Arc::clone(&session));
-            }
-        }
-
-        let spawn_result = self.spawn_bridge();
-        let spawned = match spawn_result {
-            Ok(spawned) => spawned,
-            Err(err) => {
-                self.remove_if_same(&session);
-                return Err(err);
+                None
             }
         };
+        match displaced {
+            // Another call registered first, so this browser has no slot: the
+            // winner is returned and ours is reaped when the last Arc drops.
+            Some(existing) => Ok(LaunchOutcome::Adopted(existing)),
+            None => Ok(LaunchOutcome::Owned(session)),
+        }
+    }
+}
+
+/// What a caller got from starting a browser: either the session it now owns,
+/// or the one a racing caller registered first.
+enum LaunchOutcome {
+    Owned(Arc<BridgeSession>),
+    Adopted(Arc<BridgeSession>),
+}
+
+/// Spawn a bridge process and its pump thread without registering the session.
+/// Shared by the on-demand path and the warm pool, which registers later.
+fn start_session(session_key: &str, spec: &LaunchSpec) -> Result<Arc<BridgeSession>, String> {
+    let (cmd_tx, cmd_rx) = mpsc::channel::<Command>(COMMAND_QUEUE_DEPTH);
+    let (startup_tx, startup_rx) = oneshot::channel::<Result<(), String>>();
+    let session = Arc::new(BridgeSession {
+        key: RwLock::new(session_key.to_string()),
+        tx: cmd_tx,
+        child: Arc::new(Mutex::new(None)),
+        state: AtomicU8::new(STATE_LAUNCHING),
+        last_active_ms: AtomicU64::new(elapsed_millis()),
+        in_flight: Arc::new(AtomicU64::new(0)),
+        startup_rx: Mutex::new(Some(startup_rx)),
+    });
+
+    // Sandbox deployment: the bridge process belongs to the sandbox container,
+    // so this process only keeps the session table and the HTTP transport.
+    let (io, local_child): (Box<dyn BridgeExchange>, Option<Child>) =
+        match spec.config.sandbox_endpoint.as_deref() {
+            Some(endpoint) => {
+                let spawned = spawn_remote_bridge(endpoint, session_key, &spec.config)?;
+                let timeout = Duration::from_secs(spec.config.timeout_secs)
+                    .saturating_add(REMOTE_COMMAND_GRACE);
+                (
+                    Box::new(RemoteExchange::new(
+                        endpoint,
+                        spawned.bridge_id,
+                        spawned.ready_line,
+                        timeout,
+                    )),
+                    None,
+                )
+            }
+            None => {
+                let spawned = spawn_bridge(&spec.config, &spec.bridge_path)?;
+                (
+                    Box::new(LocalExchange::new(spawned.stdin, spawned.stdout)),
+                    Some(spawned.child),
+                )
+            }
+        };
+    {
         let mut guard = session
             .child
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        *guard = Some(spawned.child);
-        drop(guard);
-
-        let pump_child = Arc::clone(&session.child);
-        let pump_slot = short_slot(session_key);
-        let spawn_pump = std::thread::Builder::new()
-            .name(format!("browser-bridge-pump-{pump_slot}"))
-            .spawn(move || {
-                pump_loop(
-                    spawned.stdin,
-                    spawned.stdout,
-                    cmd_rx,
-                    startup_tx,
-                    pump_child,
-                )
-            });
-        if let Err(err) = spawn_pump {
-            self.remove_if_same(&session);
-            session.teardown();
-            return Err(format!("Failed to start browser bridge pump: {err}"));
-        }
-        Ok(session)
+        *guard = local_child;
     }
 
-    fn spawn_bridge(&self) -> Result<SpawnedBridge, String> {
-        let bridge_path = self.ensure_bridge_script()?.to_path_buf();
-        let mut child = self.spawn_command(&bridge_path).spawn().map_err(|err| {
+    let pump_child = Arc::clone(&session.child);
+    let pump_slot = short_slot(session_key);
+    let spawned_pump = std::thread::Builder::new()
+        .name(format!("browser-bridge-pump-{pump_slot}"))
+        .spawn(move || pump_loop(io, cmd_rx, startup_tx, pump_child));
+    if let Err(err) = spawned_pump {
+        // No pump means nobody will ever reap the child, so kill it here.
+        session.teardown();
+        return Err(format!("Failed to start browser bridge pump: {err}"));
+    }
+    Ok(session)
+}
+
+fn spawn_bridge(
+    config: &EffectiveBrowserConfig,
+    bridge_path: &Path,
+) -> Result<SpawnedBridge, String> {
+    let mut child = build_spawn_command(config, bridge_path)
+        .spawn()
+        .map_err(|err| {
             format!(
                 "Failed to spawn browser bridge: {err}. Ensure Python and Playwright are installed."
             )
         })?;
-        let stdin = child
-            .stdin
-            .take()
-            .ok_or("Failed to capture bridge stdin".to_string())?;
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or("Failed to capture bridge stdout".to_string())?;
-        Ok(SpawnedBridge {
-            child,
-            stdin,
-            stdout,
-        })
-    }
+    let stdin = child
+        .stdin
+        .take()
+        .ok_or("Failed to capture bridge stdin".to_string())?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or("Failed to capture bridge stdout".to_string())?;
+    Ok(SpawnedBridge {
+        child,
+        stdin,
+        stdout,
+    })
+}
 
+/// A bridge running inside the sandbox, plus the readiness line it opened with.
+struct SpawnedRemoteBridge {
+    bridge_id: String,
+    ready_line: String,
+}
+
+/// Ask the sandbox to start one bridge and wait for its readiness line.
+///
+/// The sandbox blocks until Python + Chromium report ready, so this call owns
+/// the whole cold start. A bridge id is unique per launch: a retired session
+/// must not collide with the process it just gave up.
+fn spawn_remote_bridge(
+    endpoint: &str,
+    session_key: &str,
+    config: &EffectiveBrowserConfig,
+) -> Result<SpawnedRemoteBridge, String> {
+    static LAUNCH_SEQ: AtomicU64 = AtomicU64::new(0);
+    let bridge_id = format!(
+        "{}-{}-{}",
+        short_slot(session_key),
+        std::process::id(),
+        LAUNCH_SEQ.fetch_add(1, Ordering::Relaxed)
+    );
+    let payload = serde_json::json!({
+        "bridge_id": bridge_id,
+        "spec": bridge_spec(config),
+    });
+    let body = remote_post(
+        &format!("{}/browser/bridges", endpoint.trim_end_matches('/')),
+        &payload,
+        REMOTE_CREATE_TIMEOUT,
+    )
+    .map_err(|err| {
+        format!(
+            "Browser runs in the sandbox but {endpoint} did not accept the bridge: {err}. \
+             Check that the sandbox container is running and WUNDER_SANDBOX_ENDPOINT is reachable."
+        )
+    })?;
+    if body.get("ok").and_then(Value::as_bool) != Some(true) {
+        let error = body
+            .get("error")
+            .and_then(Value::as_str)
+            .unwrap_or("sandbox rejected the browser bridge");
+        return Err(format!("Browser bridge failed to start in the sandbox: {error}"));
+    }
+    let ready_line = body
+        .get("line")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "Browser sandbox returned no readiness line".to_string())?
+        .to_string();
+    Ok(SpawnedRemoteBridge {
+        bridge_id,
+        ready_line,
+    })
+}
+
+/// The launch parameters a sandbox-hosted bridge needs. Everything is resolved
+/// here, so the sandbox never reads the server's browser config.
+fn bridge_spec(config: &EffectiveBrowserConfig) -> Value {
+    serde_json::json!({
+        "python_path": config.python_path,
+        "browsers_path": config.browsers_path,
+        "headless": config.headless,
+        "width": config.viewport_width,
+        "height": config.viewport_height,
+        "max_tabs": config.max_tabs_per_session,
+        "timeout_secs": config.timeout_secs,
+        "idle_timeout_secs": config.idle_timeout_secs,
+        "mode": config.launch_mode,
+        "channel": config.channel,
+        "executable_path": config.executable_path,
+        "attach_endpoint": config.attach_endpoint,
+        "allow_private_network": config.allow_private_network,
+        "deny_file_scheme": config.deny_file_scheme,
+        "hostname_allowlist": config.hostname_allowlist,
+        "launch_args": launch_args(config),
+        // The sandbox has its own filesystem layout; the server's downloads
+        // root would point at a directory that does not exist there.
+        "download_root": Value::Null,
+    })
+}
+
+fn remote_http() -> &'static reqwest::blocking::Client {
+    static CLIENT: OnceLock<reqwest::blocking::Client> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::blocking::Client::builder()
+            .connect_timeout(Duration::from_secs(5))
+            .build()
+            .unwrap_or_else(|_| reqwest::blocking::Client::new())
+    })
+}
+
+fn remote_post(url: &str, payload: &Value, timeout: Duration) -> Result<Value, String> {
+    let response = remote_http()
+        .post(url)
+        .timeout(timeout)
+        .json(payload)
+        .send()
+        .map_err(|err| err.to_string())?;
+    let status = response.status();
+    let text = response
+        .text()
+        .map_err(|err| format!("sandbox response read failed: {err}"))?;
+    if !status.is_success() {
+        return Err(format!("sandbox returned HTTP {status}: {}", text.trim()));
+    }
+    serde_json::from_str(text.trim())
+        .map_err(|err| format!("sandbox response was not JSON: {err}"))
+}
+
+impl BrowserBridge {
     fn remove_if_same(&self, session: &Arc<BridgeSession>) {
         self.sessions
-            .remove_if(&session.key, |_, existing| Arc::ptr_eq(existing, session));
+            .remove_if(&session.key(), |_, existing| Arc::ptr_eq(existing, session));
     }
 
     fn retire(&self, session: &Arc<BridgeSession>, reason: &str) {
         self.remove_if_same(session);
         session.teardown();
-        debug!(session_key = %session.key, reason, "Browser bridge session retired");
+        debug!(session_key = %session.key(), reason, "Browser bridge session retired");
     }
 
     /// Free a slot by killing the least recently used session that is not
@@ -501,7 +893,8 @@ impl BrowserBridge {
     }
 
     /// One timer task per process: without it an abandoned session only dies
-    /// when some later, unrelated browser call happens to sweep.
+    /// when some later, unrelated browser call happens to sweep. The same tick
+    /// refills the warm pool, which is what keeps it warm across a long idle.
     fn ensure_reaper(&self) {
         if self.reaper_started.swap(1, Ordering::AcqRel) == 1 {
             return;
@@ -512,108 +905,148 @@ impl BrowserBridge {
             self.reaper_started.store(0, Ordering::Release);
             return;
         }
-        let sweeper = BridgeSweeper {
+        let janitor = BridgeJanitor {
             sessions: Arc::clone(&self.sessions),
             idle_timeout_secs: self.config.idle_timeout_secs,
+            warm: self.warm_pool(),
         };
-        tokio::task::spawn(async move { sweeper.run().await });
+        tokio::task::spawn(async move { janitor.run().await });
     }
 
     fn ensure_bridge_script(&self) -> Result<&PathBuf, String> {
         if let Some(path) = self.bridge_path.get() {
             return Ok(path);
         }
-        // Per-process slot: several instances on one machine must not overwrite
-        // the embedded script while another one is mid-spawn.
-        let dir = std::env::temp_dir()
-            .join("wunder_browser")
-            .join(format!("pid-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).map_err(|err| format!("Failed to create temp dir: {err}"))?;
-        let path = dir.join("browser_bridge.py");
-        std::fs::write(&path, BRIDGE_SCRIPT)
-            .map_err(|err| format!("Failed to write bridge script: {err}"))?;
+        let path = write_bridge_script()?;
         debug!(path = %path.display(), "Wrote browser bridge script");
         let _ = self.bridge_path.set(path);
         Ok(self.bridge_path.get().expect("bridge script path missing"))
     }
 
-    fn spawn_command(&self, bridge_path: &Path) -> std::process::Command {
-        let mut command = std::process::Command::new(self.python_program());
-        command.arg(bridge_path.to_string_lossy().as_ref());
-        if self.config.headless {
-            command.arg("--headless");
-        } else {
-            command.arg("--no-headless");
-        }
-        command
-            .arg("--width")
-            .arg(self.config.viewport_width.to_string())
-            .arg("--height")
-            .arg(self.config.viewport_height.to_string())
-            .arg("--max-tabs")
-            .arg(self.config.max_tabs_per_session.to_string())
-            .arg("--timeout")
-            .arg(self.config.timeout_secs.to_string());
-        let launch_mode = self.config.launch_mode.trim();
-        if !launch_mode.is_empty() {
-            command.arg("--mode").arg(launch_mode);
-        }
-        if let Some(channel) = &self.config.channel {
-            command.arg("--channel").arg(channel);
-        }
-        if let Some(path) = &self.config.executable_path {
-            command.arg("--executable-path").arg(path);
-        }
-        if let Some(endpoint) = &self.config.attach_endpoint {
-            command.arg("--attach-endpoint").arg(endpoint);
-        }
-        // The URL policy is enforced inside the browser so that redirects,
-        // subresources and script-driven requests cannot route around it.
-        if self.config.allow_private_network {
-            command.arg("--allow-private-network");
-        }
-        if !self.config.deny_file_scheme {
-            command.arg("--allow-file-scheme");
-        }
-        for host in &self.config.hostname_allowlist {
-            command.arg("--allow-host").arg(host);
-        }
-        for arg in self.launch_args() {
-            command.arg(format!("--launch-arg={arg}"));
-        }
-        command.stdin(Stdio::piped());
-        command.stdout(Stdio::piped());
-        command.stderr(Stdio::null());
-        apply_browser_env(&mut command, &self.config);
-        command_utils::apply_platform_spawn_options_std(&mut command);
-        command
-    }
+}
 
-    fn python_program(&self) -> String {
-        self.config
-            .python_path
-            .clone()
-            .unwrap_or_else(|| if cfg!(windows) { "python" } else { "python3" }.to_string())
-    }
+/// Write the embedded bridge script to a per-process temp path.
+///
+/// Public within the crate because the sandbox host needs the same script: in
+/// `deployment = sandbox` the bridge process lives there, not here.
+pub(crate) fn write_bridge_script() -> Result<PathBuf, String> {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
 
-    fn launch_args(&self) -> Vec<String> {
-        let mut launch_args = self.config.launch_args.clone();
-        if self.config.docker_enabled {
-            if self.config.docker_use_no_sandbox
-                && !launch_args.iter().any(|item| item == "--no-sandbox")
-            {
-                launch_args.push("--no-sandbox".to_string());
-            }
-            if self.config.docker_disable_dev_shm_usage
-                && !launch_args
-                    .iter()
-                    .any(|item| item == "--disable-dev-shm-usage")
-            {
-                launch_args.push("--disable-dev-shm-usage".to_string());
-            }
-        }
-        launch_args
+    // Content-addressed name: a second instance reuses the file instead of
+    // truncating a script another process may be executing right now. Windows
+    // in particular refuses to write a file in use, and the failure would look
+    // like "browser is broken" rather than "two instances share a temp file".
+    let dir = std::env::temp_dir().join("wunder_browser");
+    std::fs::create_dir_all(&dir).map_err(|err| format!("Failed to create temp dir: {err}"))?;
+    let mut hasher = DefaultHasher::new();
+    BRIDGE_SCRIPT.hash(&mut hasher);
+    let name = format!("browser_bridge-{:016x}.py", hasher.finish());
+    let path = dir.join(&name);
+    let expected = BRIDGE_SCRIPT.len() as u64;
+    if std::fs::metadata(&path)
+        .map(|meta| meta.len() == expected)
+        .unwrap_or(false)
+    {
+        return Ok(path);
     }
+    // Write aside and rename, so a reader never sees a half-written script.
+    let staging = dir.join(format!("{name}.{}.tmp", std::process::id()));
+    std::fs::write(&staging, BRIDGE_SCRIPT)
+        .map_err(|err| format!("Failed to write bridge script: {err}"))?;
+    match std::fs::rename(&staging, &path) {
+        Ok(()) => Ok(path),
+        // Another process published the same content first; its file is fine.
+        Err(_) if path.exists() => {
+            let _ = std::fs::remove_file(&staging);
+            Ok(path)
+        }
+        Err(err) => {
+            let _ = std::fs::remove_file(&staging);
+            Err(format!("Failed to publish bridge script: {err}"))
+        }
+    }
+}
+
+/// Build the bridge child command. Free function so the warm pool can launch
+/// from a plain thread without borrowing the bridge.
+fn build_spawn_command(
+    config: &EffectiveBrowserConfig,
+    bridge_path: &Path,
+) -> std::process::Command {
+    let mut command = std::process::Command::new(python_program(config));
+    command.arg(bridge_path.to_string_lossy().as_ref());
+    if config.headless {
+        command.arg("--headless");
+    } else {
+        command.arg("--no-headless");
+    }
+    command
+        .arg("--width")
+        .arg(config.viewport_width.to_string())
+        .arg("--height")
+        .arg(config.viewport_height.to_string())
+        .arg("--max-tabs")
+        .arg(config.max_tabs_per_session.to_string())
+        .arg("--timeout")
+        .arg(config.timeout_secs.to_string());
+    let launch_mode = config.launch_mode.trim();
+    if !launch_mode.is_empty() {
+        command.arg("--mode").arg(launch_mode);
+    }
+    if let Some(channel) = &config.channel {
+        command.arg("--channel").arg(channel);
+    }
+    if let Some(path) = &config.executable_path {
+        command.arg("--executable-path").arg(path);
+    }
+    if let Some(endpoint) = &config.attach_endpoint {
+        command.arg("--attach-endpoint").arg(endpoint);
+    }
+    // The URL policy is enforced inside the browser so that redirects,
+    // subresources and script-driven requests cannot route around it.
+    if config.allow_private_network {
+        command.arg("--allow-private-network");
+    }
+    if !config.deny_file_scheme {
+        command.arg("--allow-file-scheme");
+    }
+    for host in &config.hostname_allowlist {
+        command.arg("--allow-host").arg(host);
+    }
+    for arg in launch_args(config) {
+        command.arg(format!("--launch-arg={arg}"));
+    }
+    command.stdin(Stdio::piped());
+    command.stdout(Stdio::piped());
+    command.stderr(Stdio::null());
+    apply_browser_env(&mut command, config);
+    command_utils::apply_platform_spawn_options_std(&mut command);
+    command
+}
+
+fn python_program(config: &EffectiveBrowserConfig) -> String {
+    config
+        .python_path
+        .clone()
+        .unwrap_or_else(|| if cfg!(windows) { "python" } else { "python3" }.to_string())
+}
+
+fn launch_args(config: &EffectiveBrowserConfig) -> Vec<String> {
+    let mut launch_args = config.launch_args.clone();
+    if config.docker_enabled {
+        if config.docker_use_no_sandbox && !launch_args.iter().any(|item| item == "--no-sandbox") {
+            launch_args.push("--no-sandbox".to_string());
+        }
+        if config.docker_disable_dev_shm_usage
+            && !launch_args
+                .iter()
+                .any(|item| item == "--disable-dev-shm-usage")
+        {
+            launch_args.push("--disable-dev-shm-usage".to_string());
+        }
+    }
+    launch_args
 }
 
 /// Wall-clock budget for a launch: the configured command timeout plus grace for
@@ -663,22 +1096,28 @@ fn sweep_at(sessions: &DashMap<String, Arc<BridgeSession>>, now_ms: u64, limit: 
     removed
 }
 
-struct BridgeSweeper {
+/// Periodic maintenance: reclaim abandoned sessions and keep the warm pool
+/// filled. One task per process, started on the first browser call.
+struct BridgeJanitor {
     sessions: Arc<DashMap<String, Arc<BridgeSession>>>,
     idle_timeout_secs: u64,
+    warm: Option<WarmPool>,
 }
 
-impl BridgeSweeper {
+impl BridgeJanitor {
     async fn run(self) {
-        if self.idle_timeout_secs == 0 {
-            return;
-        }
+        let sweep = self.idle_timeout_secs > 0;
         let limit = Duration::from_secs(self.idle_timeout_secs);
         let mut ticker = tokio::time::interval(REAPER_PERIOD);
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             ticker.tick().await;
-            sweep_at(&self.sessions, elapsed_millis(), limit);
+            if sweep {
+                sweep_at(&self.sessions, elapsed_millis(), limit);
+            }
+            if let Some(pool) = &self.warm {
+                pool.top_up();
+            }
         }
     }
 }
@@ -696,14 +1135,12 @@ fn short_slot(session_key: &str) -> String {
 /// Blocking bridge I/O for one session. Exits by killing and reaping the child,
 /// which is also what unblocks this thread when the page has wedged.
 fn pump_loop(
-    mut stdin: ChildStdin,
-    stdout: ChildStdout,
+    mut io: Box<dyn BridgeExchange>,
     mut cmd_rx: mpsc::Receiver<Command>,
     startup_tx: oneshot::Sender<Result<(), String>>,
     child: Arc<Mutex<Option<Child>>>,
 ) {
-    let mut reader = BufReader::new(stdout);
-    let startup = read_ready(&mut reader);
+    let startup = io.ready();
     let ready = startup.is_ok();
     let _ = startup_tx.send(startup);
     // A failed handshake must still reach the awaiting caller as a launch
@@ -713,9 +1150,7 @@ fn pump_loop(
             let Some(command) = cmd_rx.blocking_recv() else {
                 break;
             };
-            let outcome =
-                write_command(&mut stdin, &command.line).and_then(|_| read_reply(&mut reader));
-            match outcome {
+            match io.exchange(&command.line) {
                 Ok(response) => {
                     if command.reply.send(response).is_err() {
                         // Caller gave up (deadline or cancellation). Keep
@@ -732,12 +1167,118 @@ fn pump_loop(
         }
     }
 
+    io.close();
     // Last word on the process: kill if something else did not, then reap.
     if let Ok(mut guard) = child.lock() {
         if let Some(mut child) = guard.take() {
             let _ = child.kill();
             let _ = child.wait();
         }
+    }
+}
+
+/// Where the bridge process lives. Both sides speak the same line protocol;
+/// only the pipe differs, so sessions, warm pooling and error contracts stay
+/// identical whether Chromium runs locally or in the sandbox container.
+trait BridgeExchange: Send {
+    /// Consume the startup line.
+    fn ready(&mut self) -> Result<(), String>;
+    /// One command line in, one reply line out.
+    fn exchange(&mut self, line: &str) -> Result<BridgeResponse, String>;
+    /// Release the far end. Called once by the pump on every exit path.
+    fn close(&mut self);
+}
+
+struct LocalExchange {
+    stdin: ChildStdin,
+    reader: BufReader<ChildStdout>,
+}
+
+impl LocalExchange {
+    fn new(stdin: ChildStdin, stdout: ChildStdout) -> Self {
+        Self {
+            stdin,
+            reader: BufReader::new(stdout),
+        }
+    }
+}
+
+impl BridgeExchange for LocalExchange {
+    fn ready(&mut self) -> Result<(), String> {
+        read_ready(&mut self.reader)
+    }
+
+    fn exchange(&mut self, line: &str) -> Result<BridgeResponse, String> {
+        write_command(&mut self.stdin, line).and_then(|_| read_reply(&mut self.reader))
+    }
+
+    fn close(&mut self) {}
+}
+
+/// Bridge hosted by the sandbox. The ready line arrives with the create call,
+/// so `ready()` only replays its verdict instead of opening a second read.
+struct RemoteExchange {
+    endpoint: String,
+    bridge_id: String,
+    ready_line: Option<String>,
+    /// The page's own timeout plus room for the sandbox hop; a wedged page must
+    /// fail the command instead of pinning the pump.
+    command_timeout: Duration,
+}
+
+impl RemoteExchange {
+    fn new(
+        endpoint: &str,
+        bridge_id: String,
+        ready_line: String,
+        command_timeout: Duration,
+    ) -> Self {
+        Self {
+            endpoint: endpoint.trim_end_matches('/').to_string(),
+            bridge_id,
+            ready_line: Some(ready_line),
+            command_timeout,
+        }
+    }
+}
+
+impl BridgeExchange for RemoteExchange {
+    fn ready(&mut self) -> Result<(), String> {
+        let line = self
+            .ready_line
+            .take()
+            .ok_or_else(|| "Browser sandbox returned no readiness line".to_string())?;
+        parse_ready_line(&line)
+    }
+
+    fn exchange(&mut self, line: &str) -> Result<BridgeResponse, String> {
+        let body = remote_post(
+            &format!("{}/browser/bridges/command", self.endpoint),
+            &serde_json::json!({ "bridge_id": self.bridge_id, "line": line }),
+            self.command_timeout,
+        )?;
+        if body.get("ok").and_then(Value::as_bool) != Some(true) {
+            let error = body
+                .get("error")
+                .and_then(Value::as_str)
+                .unwrap_or("browser sandbox command failed")
+                .to_string();
+            return Err(format!("Browser sandbox: {error}"));
+        }
+        let reply = body
+            .get("line")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "Browser sandbox returned an empty reply".to_string())?;
+        serde_json::from_str(reply.trim())
+            .map_err(|err| format!("Failed to parse browser response: {err}"))
+    }
+
+    fn close(&mut self) {
+        let _ = remote_post(
+            &format!("{}/browser/bridges/close", self.endpoint),
+            &serde_json::json!({ "bridge_id": self.bridge_id }),
+            REMOTE_CLOSE_TIMEOUT,
+        );
     }
 }
 
@@ -752,9 +1293,16 @@ fn read_ready(reader: &mut BufReader<ChildStdout>) -> Result<(), String> {
                 .to_string(),
         );
     }
-    let ready: BridgeResponse = serde_json::from_str(line.trim())
-        .map_err(|err| format!("Bridge startup failed: {err}. Output: {}", line.trim()))?;
+    parse_ready_line(line.trim())
+}
+
+/// Interpret the bridge's first protocol line. Shared by the local pipe and the
+/// sandbox transport so both report launch failures the same way.
+fn parse_ready_line(line: &str) -> Result<(), String> {
+    let ready: BridgeResponse = serde_json::from_str(line)
+        .map_err(|err| format!("Bridge startup failed: {err}. Output: {line}"))?;
     if ready.success {
+        log_startup_cost(ready.data.as_ref());
         return Ok(());
     }
     let error = ready
@@ -770,6 +1318,39 @@ fn read_ready(reader: &mut BufReader<ChildStdout>) -> Result<(), String> {
     Err(format!(
         "Browser bridge failed to start: {error}{traceback}"
     ))
+}
+
+/// A cold start is paid once per browser session, so it is worth knowing which
+/// phase owns it: Python import, the Playwright driver, or Chromium itself.
+fn log_startup_cost(data: Option<&Value>) {
+    let Some(data) = data else {
+        return;
+    };
+    let total_ms = data
+        .get("startup_ms")
+        .and_then(|value| value.get("total_ms"))
+        .and_then(Value::as_u64);
+    let Some(total_ms) = total_ms else {
+        return;
+    };
+    let phases = || {
+        let startup = data.get("startup_ms").and_then(Value::as_object);
+        ["import_ms", "driver_ms", "launch_ms"]
+            .into_iter()
+            .filter_map(|key| {
+                startup
+                    .and_then(|map| map.get(key))
+                    .and_then(Value::as_u64)
+                    .map(|value| format!("{key}={value}"))
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    if total_ms >= 10_000 {
+        warn!(total_ms, breakdown = %phases(), "Browser bridge cold start was slow");
+    } else {
+        debug!(total_ms, breakdown = %phases(), "Browser bridge ready");
+    }
 }
 
 fn write_command(stdin: &mut ChildStdin, line: &str) -> Result<(), String> {
@@ -797,6 +1378,21 @@ fn read_reply(reader: &mut BufReader<ChildStdout>) -> Result<BridgeResponse, Str
 }
 
 fn apply_browser_env(command: &mut std::process::Command, config: &EffectiveBrowserConfig) {
+    apply_bridge_environment(
+        command,
+        config.browsers_path.as_deref(),
+        config.docker_downloads_root.as_deref(),
+    );
+}
+
+/// Environment for a bridge process. Shared with the sandbox host so both
+/// sides start Python the same way: a cleared environment plus the few keys
+/// Playwright actually needs, never the server's own secrets.
+pub(crate) fn apply_bridge_environment(
+    command: &mut std::process::Command,
+    browsers_path: Option<&str>,
+    download_root: Option<&Path>,
+) {
     command.env_clear();
     for key in [
         "SYSTEMROOT",
@@ -819,12 +1415,12 @@ fn apply_browser_env(command: &mut std::process::Command, config: &EffectiveBrow
         }
     }
     command.env("PYTHONIOENCODING", "utf-8");
-    if let Some(path) = &config.browsers_path {
+    if let Some(path) = browsers_path {
         command.env("PLAYWRIGHT_BROWSERS_PATH", path);
     } else if let Ok(value) = std::env::var("PLAYWRIGHT_BROWSERS_PATH") {
         command.env("PLAYWRIGHT_BROWSERS_PATH", value);
     }
-    if let Some(path) = &config.docker_downloads_root {
+    if let Some(path) = download_root {
         command.env("WUNDER_BROWSER_DOWNLOAD_ROOT", path);
     }
     if let Ok(value) = std::env::var("PLAYWRIGHT_DOWNLOAD_HOST") {
@@ -838,15 +1434,15 @@ fn apply_browser_env(command: &mut std::process::Command, config: &EffectiveBrow
 #[cfg(test)]
 mod tests {
     use super::{
-        elapsed_millis, launch_deadline, pick_evict_candidate, short_slot, sweep_at,
-        BridgeResponse, BridgeSession, BrowserBridge, Command, ACTIVE_PROTECT, LAUNCH_GRACE,
-        STATE_LAUNCHING, STATE_READY,
+        bridge_spec, elapsed_millis, launch_deadline, parse_ready_line, pick_evict_candidate,
+        short_slot, sweep_at, BridgeResponse, BridgeSession, BrowserBridge, Command, ACTIVE_PROTECT,
+        LAUNCH_GRACE, STATE_LAUNCHING, STATE_READY,
     };
     use crate::config::Config;
     use crate::services::browser::config::effective_browser_config;
     use serde_json::json;
     use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
-    use std::sync::{Arc, Mutex};
+    use std::sync::{Arc, Mutex, RwLock};
     use std::time::Duration;
     use tokio::sync::mpsc;
 
@@ -892,12 +1488,21 @@ mod tests {
     }
 
     fn bridge_with(idle_timeout_secs: u64, max_sessions: usize) -> BrowserBridge {
+        bridge_with_prewarm(idle_timeout_secs, max_sessions, 0)
+    }
+
+    fn bridge_with_prewarm(
+        idle_timeout_secs: u64,
+        max_sessions: usize,
+        prewarm_sessions: usize,
+    ) -> BrowserBridge {
         let mut config = Config::default();
         config.browser.enabled = true;
         config.tools.browser.enabled = true;
         let mut effective = effective_browser_config(&config);
         effective.idle_timeout_secs = idle_timeout_secs;
         effective.max_sessions = max_sessions;
+        effective.prewarm_sessions = prewarm_sessions;
         BrowserBridge::new(effective)
     }
 
@@ -906,7 +1511,7 @@ mod tests {
     fn silent_session(key: &str, idle_ms: u64) -> (Arc<BridgeSession>, mpsc::Receiver<Command>) {
         let (tx, rx) = mpsc::channel::<Command>(1);
         let session = Arc::new(BridgeSession {
-            key: key.to_string(),
+            key: RwLock::new(key.to_string()),
             tx,
             child: Arc::new(Mutex::new(None)),
             state: AtomicU8::new(STATE_READY),
@@ -953,10 +1558,10 @@ mod tests {
                 reply,
             })
             .unwrap();
-        bridge.sessions.insert(session.key.clone(), session.clone());
+        bridge.sessions.insert(session.key(), session.clone());
         let error = bridge
             .send_command(
-                &session.key,
+                &session.key(),
                 json!({"action":"tabs"}),
                 Duration::from_millis(30),
             )
@@ -1097,5 +1702,93 @@ mod tests {
         }
         assert_eq!(bridge.session_count(), 0);
         assert!(!session.is_ready());
+    }
+
+    #[test]
+    fn warm_pool_is_disabled_by_zero_target() {
+        let bridge = bridge_with_prewarm(300, 5, 0);
+        assert_eq!(bridge.warm_target(), 0);
+        assert_eq!(bridge.prewarm(), 0);
+        bridge.warm_pool_state();
+        assert_eq!(bridge.warm_pool_state(), (0, 0));
+    }
+
+    #[test]
+    fn prewarm_target_never_exceeds_the_session_table() {
+        let bridge = bridge_with_prewarm(300, 2, 9);
+        assert_eq!(bridge.warm_target(), 2);
+    }
+
+    #[test]
+    fn ready_warm_session_is_handed_out_and_renamed() {
+        let bridge = bridge_with_prewarm(300, 5, 1);
+        let (session, _rx) = silent_session("warm-pool:1", 0);
+        bridge
+            .warm
+            .lock()
+            .unwrap()
+            .push(Arc::clone(&session));
+        assert_eq!(bridge.warm_pool_state(), (1, 0));
+
+        let adopted = bridge.take_warm().expect("a ready warm browser");
+        adopted.set_key("u1:thread");
+        assert_eq!(adopted.key(), "u1:thread");
+        assert!(bridge.warm.lock().unwrap().is_empty());
+        // Pooled browsers never count as sessions until they are adopted.
+        assert_eq!(bridge.session_count(), 0);
+    }
+
+    #[test]
+    fn dead_warm_session_is_discarded_instead_of_handed_out() {
+        let bridge = bridge_with_prewarm(300, 5, 1);
+        let (session, _rx) = silent_session("warm-pool:2", 0);
+        session.mark_dead();
+        bridge.warm.lock().unwrap().push(session);
+        assert!(bridge.take_warm().is_none());
+        assert_eq!(bridge.warm_pool_state(), (0, 0));
+    }
+
+    #[test]
+    fn warm_pool_backs_off_after_a_failed_launch() {
+        let bridge = bridge_with_prewarm(300, 5, 1);
+        // Backoff gate: no launch is attempted while the retry stamp is ahead.
+        bridge.warm_retry_after_ms.store(u64::MAX, Ordering::Release);
+        assert_eq!(bridge.top_up(), 0);
+        assert_eq!(bridge.warm_pool_state(), (0, 0));
+    }
+
+    #[test]
+    fn sandbox_ready_line_uses_the_local_launch_verdict() {
+        let ready = json!({"success": true, "data": {"status": "ready"}}).to_string();
+        assert!(parse_ready_line(&ready).is_ok());
+        let failed = json!({"success": false, "error": "playwright not installed"}).to_string();
+        let err = parse_ready_line(&failed).expect_err("startup failure");
+        assert!(err.contains("playwright not installed"), "got: {err}");
+    }
+
+    #[test]
+    fn sandbox_spec_carries_the_launch_policy() {
+        // The sandbox reads no browser config of its own, so every policy knob
+        // that shapes the launch has to travel in the spec.
+        let mut config = Config::default();
+        config.browser.enabled = true;
+        config.tools.browser.enabled = true;
+        config.browser.deployment = "sandbox".to_string();
+        config.browser.playwright.timeout_secs = 45;
+        config.browser.limits.max_tabs_per_session = 3;
+        config.browser.security.hostname_allowlist = vec!["Example.com".to_string()];
+        config.browser.docker.enabled = true;
+        let effective = effective_browser_config(&config);
+        let spec = bridge_spec(&effective);
+        assert_eq!(spec["timeout_secs"], 45);
+        assert_eq!(spec["max_tabs"], 3);
+        assert_eq!(spec["hostname_allowlist"][0], "example.com");
+        assert_eq!(spec["mode"], "launch");
+        // Container launch args must survive the hop, or Chromium cannot start
+        // in the sandbox container at all.
+        let args = spec["launch_args"].as_array().expect("launch args");
+        assert!(args.iter().any(|arg| arg == "--no-sandbox"));
+        // The server's downloads root points at a path the sandbox lacks.
+        assert!(spec["download_root"].is_null());
     }
 }

@@ -10,8 +10,8 @@ test('remote threads keep workspace identity, render live text and preserve fail
     const source = await (await fetch(panelUrl)).text();
     const vueUrl = source.match(/from\s+["']([^"']*\/vue\.js[^"']*)["']/)?.[1];
     if (!vueUrl) throw new Error('Missing fixture runtime');
-    const [{ createApp, h }, { default: Panel }, { default: api }, { installElementPlus }] = await Promise.all([
-      import(vueUrl), import(panelUrl), import('/src/api/http.ts'), import('/src/plugins/elementPlus.ts')
+    const [{ createApp, h }, { default: Panel }, { default: api }] = await Promise.all([
+      import(vueUrl), import(panelUrl), import('/src/api/http.ts')
     ]);
     const host = document.createElement('div');
     document.body.append(host);
@@ -36,8 +36,8 @@ test('remote threads keep workspace identity, render live text and preserve fail
         commands.push(body);
         data = { command_id: String(commands.length), status: 'issued' };
       } else {
-        const command = commands[Number(url.split('/').at(-1)) - 1];
-        const result = command.kind === 'threads.list'
+        const command = commands[Number(url.split('/').at(-1)) - 1] || commands.at(-1);
+        const result = command?.kind === 'threads.list'
           ? { threads: [{ local_thread_id: 'fixture_thread', title: 'Fixture thread' }] }
           : { items: [{ role: 'assistant', content: 'Fixture history' }] };
         data = { command_id: String(commands.length), kind: command.kind,
@@ -48,20 +48,19 @@ test('remote threads keep workspace identity, render live text and preserve fail
       return { status: 200, statusText: 'OK', headers: {}, config, data: { data } };
     };
     const app = createApp({ setup: () => () => h(Panel, {
-      target: 'device:fixture_device', workspaceId: 'fixture_workspace', node: null,
-      openThreadId: 'fixture_thread'
+      target: 'device:fixture_device', workspaceId: 'fixture_workspace', openThreadId: 'fixture_thread'
     }) });
-    installElementPlus(app);
     app.mount(host);
     (window as any).__remoteFixture = { commands, sockets, dispose() {
       app.unmount(); host.remove(); api.defaults.adapter = originalAdapter; window.WebSocket = OriginalSocket;
     } };
   });
   try {
-    const dialog = page.getByRole('dialog');
-    await expect(dialog.locator('option', { hasText: 'Fixture thread' })).toHaveCount(1);
-    await dialog.locator('select').selectOption('fixture_thread');
-    await expect(dialog.locator('.remote-thread-history')).toContainText('Fixture history');
+    const panel = page.locator('.remote-thread-panel');
+    await expect(panel).toBeVisible();
+    await expect(panel).not.toHaveClass(/el-dialog/);
+    await expect.poll(() => page.evaluate(() => (window as any).__remoteFixture.commands.map((item: any) => item.kind))).toContain('threads.get');
+    await expect(panel).toContainText('Fixture history');
     await page.evaluate(() => {
       const socket = (window as any).__remoteFixture.sockets.at(-1);
       socket.onmessage({ data: JSON.stringify({ type: 'snapshot', thread_id: 'fixture_thread', payload: {
@@ -69,11 +68,11 @@ test('remote threads keep workspace identity, render live text and preserve fail
           status: 'completed', revision: 1, payload: { role: 'assistant', content: '<Fixture live>' } }]
       } }) });
     });
-    await expect(dialog.locator('.remote-thread-history')).toContainText('<Fixture live>');
-    await expect(dialog.locator('.remote-thread-history fixture')).toHaveCount(0);
-    await dialog.locator('textarea').fill('Fixture message');
-    await dialog.getByRole('button', { name: /^发送$|^Send$/ }).click();
-    await expect(dialog.getByRole('status')).toContainText('Fixture refusal');
+    await expect(panel).toContainText('<Fixture live>');
+    await expect(panel.locator('fixture')).toHaveCount(0);
+    await panel.locator('textarea').fill('Fixture message');
+    await panel.getByRole('button', { name: /^发送$|^Send$/ }).click();
+    await expect(panel.getByRole('status')).toContainText('Fixture refusal');
     const evidence = await page.evaluate(() => {
       const fixture = (window as any).__remoteFixture;
       return { commands: fixture.commands, url: String(fixture.sockets[0].url), protocols: fixture.sockets[0].protocols };
