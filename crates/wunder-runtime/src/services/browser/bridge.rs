@@ -6,7 +6,7 @@ use serde_json::Value;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Stdio};
-use std::sync::atomic::{AtomicU32, AtomicU64, AtomicU8, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, oneshot};
@@ -194,6 +194,16 @@ struct LaunchSpec {
 /// Playwright must not retry every tick forever.
 const WARM_RETRY_CEILING: Duration = Duration::from_secs(900);
 
+/// A compose stack starts the sandbox only after the API reports healthy, so
+/// the first warm launch can beat the sandbox listener by a second or two.
+/// These attempts cover that window without turning it into a warning.
+const WARM_PIPELINE_ATTEMPTS: u32 = 4;
+const WARM_PIPELINE_BACKOFF: Duration = Duration::from_millis(1200);
+/// Retry gap while the sandbox stays unreachable. Much shorter than
+/// `WARM_RETRY_CEILING`: an unreachable sandbox usually comes up on its own,
+/// while a broken local launch will not.
+const WARM_PIPELINE_RETRY: Duration = Duration::from_secs(30);
+
 /// Browsers kept hot so the first session of a turn does not wait out the
 /// Chromium launch. Every field is owned so the background maintainer and the
 /// launch threads can hold their own handle.
@@ -206,7 +216,28 @@ struct WarmPool {
     failures: Arc<AtomicUsize>,
     /// Elapsed-ms stamp before which no launch is attempted.
     retry_after_ms: Arc<AtomicU64>,
+    /// Set once an unreachable sandbox has been reported, so a stack that comes
+    /// up in the wrong order logs one line instead of one per retry.
+    pipeline_warned: Arc<AtomicBool>,
     target: usize,
+}
+
+/// Tell "the sandbox is not listening yet" apart from "the browser cannot be
+/// launched here". Only the first one deserves patience and a quiet log.
+fn is_pipeline_unready(error: &str) -> bool {
+    let lower = error.to_ascii_lowercase();
+    [
+        "did not accept the bridge",
+        "error sending request",
+        "connection refused",
+        "actively refused",
+        "os error 10061",
+        "dns error",
+        "failed to lookup address",
+        "connection timed out",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
 }
 
 impl WarmPool {
@@ -251,20 +282,37 @@ impl WarmPool {
     /// plain thread: `blocking_recv` panics inside an async context.
     fn launch_and_park(&self, slot: u32) {
         let key = format!("{WARM_KEY_PREFIX}:{slot}");
-        let outcome = start_session(&key, &self.spec).and_then(|session| {
-            let startup = session
-                .startup_rx
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .take();
-            let ready = match startup {
-                Some(receiver) => receiver.blocking_recv().unwrap_or_else(|_| {
-                    Err("bridge pump ended before reporting readiness".to_string())
-                }),
-                None => Err("warm browser readiness was claimed by another caller".to_string()),
-            };
-            ready.map(|()| session)
-        });
+        let mut attempt = 0;
+        let outcome = loop {
+            let outcome = start_session(&key, &self.spec).and_then(|session| {
+                let startup = session
+                    .startup_rx
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .take();
+                let ready = match startup {
+                    Some(receiver) => receiver.blocking_recv().unwrap_or_else(|_| {
+                        Err("bridge pump ended before reporting readiness".to_string())
+                    }),
+                    None => Err("warm browser readiness was claimed by another caller".to_string()),
+                };
+                ready.map(|()| session)
+            });
+            match outcome {
+                Ok(session) => break Ok(session),
+                Err(err) if attempt + 1 < WARM_PIPELINE_ATTEMPTS && is_pipeline_unready(&err) => {
+                    attempt += 1;
+                    debug!(
+                        slot,
+                        attempt,
+                        error = %err,
+                        "Sandbox not listening for the warm browser yet"
+                    );
+                    std::thread::sleep(WARM_PIPELINE_BACKOFF * attempt);
+                }
+                Err(err) => break Err(err),
+            }
+        };
         match outcome {
             Ok(session) => {
                 session.state.store(STATE_READY, Ordering::Release);
@@ -274,7 +322,24 @@ impl WarmPool {
                 }
                 self.failures.store(0, Ordering::Release);
                 self.retry_after_ms.store(0, Ordering::Release);
+                self.pipeline_warned.store(false, Ordering::Release);
                 info!(slot, "Warm browser ready and parked");
+            }
+            Err(err) if is_pipeline_unready(&err) => {
+                self.retry_after_ms.store(
+                    elapsed_millis() + WARM_PIPELINE_RETRY.as_millis() as u64,
+                    Ordering::Release,
+                );
+                if self.pipeline_warned.swap(true, Ordering::AcqRel) {
+                    debug!(slot, error = %err, "Sandbox still not accepting the warm pool");
+                } else {
+                    warn!(
+                        slot,
+                        error = %err,
+                        "Sandbox has not accepted the warm pool yet; retrying every {}s",
+                        WARM_PIPELINE_RETRY.as_secs()
+                    );
+                }
             }
             Err(err) => {
                 warn!(slot, error = %err, "Warm browser did not become ready");
@@ -296,6 +361,7 @@ pub struct BrowserBridge {
     warm_launching: Arc<AtomicUsize>,
     warm_failures: Arc<AtomicUsize>,
     warm_retry_after_ms: Arc<AtomicU64>,
+    warm_pipeline_warned: Arc<AtomicBool>,
     config: EffectiveBrowserConfig,
     bridge_path: OnceLock<PathBuf>,
     reaper_started: AtomicU8,
@@ -309,6 +375,7 @@ impl BrowserBridge {
             warm_launching: Arc::new(AtomicUsize::new(0)),
             warm_failures: Arc::new(AtomicUsize::new(0)),
             warm_retry_after_ms: Arc::new(AtomicU64::new(0)),
+            warm_pipeline_warned: Arc::new(AtomicBool::new(false)),
             config,
             bridge_path: OnceLock::new(),
             reaper_started: AtomicU8::new(0),
@@ -391,6 +458,7 @@ impl BrowserBridge {
             launching: Arc::clone(&self.warm_launching),
             failures: Arc::clone(&self.warm_failures),
             retry_after_ms: Arc::clone(&self.warm_retry_after_ms),
+            pipeline_warned: Arc::clone(&self.warm_pipeline_warned),
             target: self.warm_target(),
         })
     }
@@ -1434,9 +1502,10 @@ pub(crate) fn apply_bridge_environment(
 #[cfg(test)]
 mod tests {
     use super::{
-        bridge_spec, elapsed_millis, launch_deadline, parse_ready_line, pick_evict_candidate,
-        short_slot, sweep_at, BridgeResponse, BridgeSession, BrowserBridge, Command, ACTIVE_PROTECT,
-        LAUNCH_GRACE, STATE_LAUNCHING, STATE_READY,
+        bridge_spec, elapsed_millis, is_pipeline_unready, launch_deadline, parse_ready_line,
+        pick_evict_candidate, short_slot, sweep_at, BridgeResponse, BridgeSession, BrowserBridge,
+        Command, ACTIVE_PROTECT, LAUNCH_GRACE, STATE_LAUNCHING, STATE_READY, WARM_PIPELINE_RETRY,
+        WARM_RETRY_CEILING,
     };
     use crate::config::Config;
     use crate::services::browser::config::effective_browser_config;
@@ -1746,6 +1815,21 @@ mod tests {
         bridge.warm.lock().unwrap().push(session);
         assert!(bridge.take_warm().is_none());
         assert_eq!(bridge.warm_pool_state(), (0, 0));
+    }
+
+    #[test]
+    fn sandbox_connect_failures_count_as_unready_pipeline() {
+        assert!(is_pipeline_unready(
+            "Browser runs in the sandbox but http://wunder-sandbox:9001 did not accept the \
+             bridge: error sending request for url (http://wunder-sandbox:9001/browser/bridges)"
+        ));
+        assert!(is_pipeline_unready("Connection refused (os error 111)"));
+        assert!(is_pipeline_unready("dns error: failed to lookup address information"));
+        assert!(!is_pipeline_unready(
+            "Browser bridge failed to start: ModuleNotFoundError: No module named 'playwright'"
+        ));
+        // An unreachable sandbox is retried far sooner than a broken launch.
+        assert!(WARM_PIPELINE_RETRY < WARM_RETRY_CEILING);
     }
 
     #[test]

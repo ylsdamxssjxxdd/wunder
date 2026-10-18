@@ -7,6 +7,10 @@ use serde::{Deserialize, Serialize};
 pub struct NativeNavigationOrder {
     pub agents: Vec<String>,
     pub threads: Vec<String>,
+    /// Sidebar workspace row order. The cloud sentinel uses the stable
+    /// `cloud` key alongside local workspace ids.
+    #[serde(default)]
+    pub workspaces: Vec<String>,
     /// Model config display order; the model list itself is an unordered map.
     #[serde(default)]
     pub models: Vec<String>,
@@ -47,7 +51,7 @@ impl NativeDesktop {
         self.save_navigation_order(&order)
     }
     pub fn save_navigation_order(&self, order: &NativeNavigationOrder) -> Result<()> {
-        for ids in [&order.agents, &order.threads] {
+        for ids in [&order.agents, &order.threads, &order.workspaces] {
             if ids.len() > 100 || ids.iter().any(|id| id.len() > 256 || id.is_empty()) {
                 bail!("Invalid navigation order");
             }
@@ -73,5 +77,10 @@ impl NativeDesktop {
             &serde_json::to_string(order)?,
         )?;
         Ok(())
+    }
+    pub fn save_workspace_order(&self, ids: &[String]) -> Result<()> {
+        let mut order = self.navigation_order()?;
+        order.workspaces = ids.to_vec();
+        self.save_navigation_order(&order)
     }
 }

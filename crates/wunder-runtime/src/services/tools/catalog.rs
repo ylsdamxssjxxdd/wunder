@@ -1402,6 +1402,15 @@ pub fn resolve_tool_name(name: &str) -> String {
     alias_map
         .get(name)
         .cloned()
+        .or_else(|| match name.trim() {
+            // These aliases are migration-only. They are deliberately kept
+            // out of builtin_aliases so old names are accepted from persisted
+            // session snapshots without being exposed as separate tools.
+            "桌面控制器" | "桌面监视器" | "desktop_controller" | "desktop_monitor" => {
+                Some(desktop_control::TOOL_DESKTOP_CONTROL.to_string())
+            }
+            _ => None,
+        })
         .unwrap_or_else(|| name.to_string())
 }
 
@@ -1904,6 +1913,20 @@ mod tests {
             "文本编辑",
         ] {
             assert_eq!(resolve_tool_name(alias), "文本编辑", "alias {alias}");
+        }
+    }
+
+    #[test]
+    fn merged_desktop_control_aliases_migrate_old_session_names() {
+        for alias in [
+            "桌面控制",
+            "桌面控制器",
+            "桌面监视器",
+            "desktop_control",
+            "desktop_controller",
+            "desktop_monitor",
+        ] {
+            assert_eq!(resolve_tool_name(alias), "桌面控制", "alias {alias}");
         }
     }
     use crate::i18n;

@@ -1260,6 +1260,19 @@ fn markdown_preview_text(text: &str) -> String {
     }
 }
 
+/// Keep a ledger row's hot-path preview on one physical line.  The detail
+/// inspector still receives the original multiline payload, but fixed-height
+/// rows must never let source newlines change their measured height and overlap
+/// the next row.
+fn single_line_preview(text: &str) -> String {
+    let compact = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if compact.chars().count() > TEXT_PREVIEW_LIMIT {
+        compact.chars().take(TEXT_PREVIEW_LIMIT).collect::<String>() + "…"
+    } else {
+        compact
+    }
+}
+
 fn strip_inline_markup(line: &str) -> String {
     let mut out = String::with_capacity(line.len());
     let mut index = 0usize;
@@ -1457,7 +1470,7 @@ fn build_cell(item: &Value, payload: &Value, kind: i32, index: usize) -> Cell {
             .map(content_to_text)
             .find(|value| !value.trim().is_empty() && !value.trim().eq_ignore_ascii_case("history"))
             .unwrap_or_default();
-            cell.text = summary_text.trim().to_string();
+            cell.text = single_line_preview(&summary_text);
             cell.output_detail = non_empty(&summary_text);
         }
         _ => {
@@ -2240,7 +2253,7 @@ fn build_rows(state: &State, model: &SnapshotModel, texts: &Texts) -> Vec<TrajRo
         }
         let cell = &model.cells[record.cell];
         let number = request_numbers.get(&cell.index).copied().unwrap_or(0);
-        let mut text = cell.text.clone();
+        let mut text = single_line_preview(&cell.text);
         if text.trim().is_empty() {
             let zh = texts.zh;
             text = if cell.tool_call_only {
@@ -2277,8 +2290,8 @@ fn build_rows(state: &State, model: &SnapshotModel, texts: &Texts) -> Vec<TrajRo
                 .unwrap_or("")
                 .replace('\n', " ");
             let result = cell.result.as_deref().unwrap_or("").replace('\n', " ");
-            let arguments = args.chars().take(120).collect::<String>();
-            let result = result.chars().take(120).collect::<String>();
+            let arguments = single_line_preview(&args.chars().take(120).collect::<String>());
+            let result = single_line_preview(&result.chars().take(120).collect::<String>());
             (arguments, result)
         } else {
             (String::new(), String::new())
@@ -2447,12 +2460,12 @@ fn project_timeline(app: &MainWindow, state: &State, model: &SnapshotModel, text
         } else {
             (base.record as f64, base.record as f64 + 1.0)
         };
-        // Aggregate overview tiles have no stable source record. Treat them as
-        // outside while a concrete record is focused; never infer membership
-        // from an overlapping time interval.
-        let outside = focused_records
-            .as_ref()
-            .is_some_and(|focused| base.record == usize::MAX || !focused.contains(&base.record));
+        // Aggregate overview tiles have no stable source record. Keep them at
+        // their normal overview opacity while a concrete record is focused;
+        // only spans tied to a real record participate in focus dimming.
+        let outside = focused_records.as_ref().is_some_and(|focused| {
+            base.record != usize::MAX && !focused.contains(&base.record)
+        });
         if aggregate && !model.overview_exact {
             let overlaps = visible_detail_ranges.iter().any(
                 |(detail_start, detail_end, sequence_start, sequence_end)| {
@@ -4263,6 +4276,10 @@ mod tests {
         assert_eq!(
             markdown_preview_text("# 标题\n- 甲 **粗** 乙"),
             "标题\n甲 粗 乙"
+        );
+        assert_eq!(
+            single_line_preview("  第一行\r\n第二行\t含有  多余空格  "),
+            "第一行 第二行 含有 多余空格"
         );
     }
 

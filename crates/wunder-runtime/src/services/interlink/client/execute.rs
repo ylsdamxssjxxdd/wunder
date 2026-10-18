@@ -44,6 +44,7 @@ use crate::services::interlink::client::stream;
 use crate::services::interlink::client::{now_ts, TunnelWriter};
 use crate::services::interlink::secret::sha256_hex;
 use crate::services::tools::{execute_builtin_tool, sessions_spawn, DetachedToolContext};
+use crate::schemas::AttachmentPayload;
 use crate::state::AppState;
 
 /// Longest window a command id is remembered for (docs §4.3).
@@ -1047,9 +1048,11 @@ async fn drive_thread(
     collector: &shadow::ShadowCollector,
     shadow_wake: &Arc<Notify>,
 ) -> CommandReport {
-    let Some(message) = arg_str(&spec.args, "message") else {
-        return CommandReport::failed("MESSAGE_REQUIRED", "message is required");
-    };
+    let message = arg_str(&spec.args, "message").unwrap_or_default();
+    let attachments = parse_thread_attachments(&spec.args);
+    if message.is_empty() && attachments.is_empty() {
+        return CommandReport::failed("MESSAGE_REQUIRED", "message or attachments is required");
+    }
     let report = admit_turn(
         spec,
         ctx,
@@ -1057,6 +1060,7 @@ async fn drive_thread(
         arg_str(&spec.args, "agent").unwrap_or_default(),
         arg_str(&spec.args, "title"),
         message,
+        attachments,
         None,
     )
     .await;
@@ -1145,6 +1149,7 @@ async fn admit_turn(
     agent: String,
     title: Option<String>,
     message: String,
+    attachments: Vec<AttachmentPayload>,
     spawn_label: Option<String>,
 ) -> CommandReport {
     let user = match ctx.state.user_store.get_user_by_id(&ctx.local_user_id) {
@@ -1192,7 +1197,7 @@ async fn admit_turn(
         &session_id,
         message,
         client_message_id,
-        Vec::new(),
+        attachments,
         None,
     )
     .await
@@ -1245,6 +1250,26 @@ async fn admit_turn(
         }
         Err(err) => CommandReport::failed("SUBMIT_FAILED", sanitize(&err.to_string())),
     }
+}
+
+fn parse_thread_attachments(args: &Value) -> Vec<AttachmentPayload> {
+    args.get("attachments")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .take(8)
+        .filter_map(|value| {
+            let object = value.as_object()?;
+            let name = object.get("name").and_then(Value::as_str).map(str::trim).filter(|v| !v.is_empty()).map(str::to_string);
+            let content = object.get("content").and_then(Value::as_str).map(str::to_string);
+            let content_type = object.get("mime_type").and_then(Value::as_str).map(str::to_string);
+            let public_path = object.get("public_path").and_then(Value::as_str).map(str::to_string);
+            if name.is_none() || content.as_deref().unwrap_or_default().trim().is_empty() && public_path.as_deref().unwrap_or_default().is_empty() {
+                return None;
+            }
+            Some(AttachmentPayload { name, content, content_type, public_path })
+        })
+        .collect()
 }
 
 async fn thread_cancel(spec: &CommandSpec, ctx: &ExecContext) -> CommandReport {
@@ -2093,6 +2118,7 @@ async fn agent_spawn(
                 agent,
                 arg_str(&spec.args, "title"),
                 task,
+                Vec::new(),
                 label,
             )
             .await

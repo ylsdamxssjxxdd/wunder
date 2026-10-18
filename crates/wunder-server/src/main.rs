@@ -77,7 +77,10 @@ async fn run_server(runtime_threads: runtime_tuning::ServerRuntimeThreads) -> an
     state.lsp_manager.sync_with_config(&config).await;
     // Chromium takes 45-60s to come up, so launch the warm pool while the rest
     // of bootstrap finishes instead of making the first turn wait for it.
-    let warm_launches = wunder_runtime::services::browser::prewarm_browser_service(&config);
+    // `wunder-runtime` exposes the library crate as `wunder_server`; use the
+    // public browser service re-export here so the server binary also builds
+    // when the package is compiled from a clean container.
+    let warm_launches = wunder_server::browser::prewarm_browser_service(&config);
     if warm_launches > 0 {
         info!(
             launches = warm_launches,

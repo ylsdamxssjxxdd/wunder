@@ -44,6 +44,12 @@ fn hide_main_window(app: &slint::Weak<MainWindow>) -> (bool, Option<HideProof>) 
     #[cfg(windows)]
     {
         use slint::winit_030::WinitWindowAccessor;
+        use slint::winit_030::winit::raw_window_handle::HasWindowHandle;
+        use windows_sys::Win32::Foundation::RECT;
+        use windows_sys::Win32::Graphics::Gdi::{
+            RedrawWindow, RDW_ALLCHILDREN, RDW_ERASE, RDW_INVALIDATE, RDW_UPDATENOW,
+        };
+        use windows_sys::Win32::UI::WindowsAndMessaging::GetWindowRect;
 
         let Some(window) = app.upgrade() else {
             return (false, None);
@@ -60,6 +66,29 @@ fn hide_main_window(app: &slint::Weak<MainWindow>) -> (bool, Option<HideProof>) 
             });
             let on_screen =
                 native.is_visible().unwrap_or(true) && !native.is_minimized().unwrap_or(false);
+            // Maximized windows can report a stale Winit outer rectangle for
+            // one message turn after the work-area/DPI update. Query the HWND
+            // rectangle immediately before hiding so the proof covers exactly
+            // the pixels that the desktop capture can still contain.
+            let rect = native
+                .window_handle()
+                .ok()
+                .and_then(|handle| match handle.as_raw() {
+                    slint::winit_030::winit::raw_window_handle::RawWindowHandle::Win32(handle) => {
+                        let mut native_rect: RECT = unsafe { std::mem::zeroed() };
+                        let hwnd = handle.hwnd.get() as isize;
+                        (unsafe { GetWindowRect(hwnd, &mut native_rect) } != 0).then_some(
+                            screen_capture::MonitorRect {
+                                left: native_rect.left,
+                                top: native_rect.top,
+                                right: native_rect.right,
+                                bottom: native_rect.bottom,
+                            },
+                        )
+                    }
+                    _ => None,
+                })
+                .or(rect);
             (on_screen, rect)
         });
         let Some((on_screen, window_rect)) = native else {
@@ -77,6 +106,23 @@ fn hide_main_window(app: &slint::Weak<MainWindow>) -> (bool, Option<HideProof>) 
                 screen_capture::sample_region_preview(region)
                     .map(|reference| HideProof { region, reference })
             });
+        // Flush the software surface before ordering the HWND out. This keeps
+        // a pending menu/composer repaint from becoming the frame that DWM
+        // briefly serves after SW_HIDE.
+        if let Ok(hwnd) = window.window().window_handle().window_handle() {
+            if let slint::winit_030::winit::raw_window_handle::RawWindowHandle::Win32(handle) =
+                hwnd.as_raw()
+            {
+                unsafe {
+                    RedrawWindow(
+                        handle.hwnd.get() as isize,
+                        std::ptr::null(),
+                        0,
+                        RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW,
+                    );
+                }
+            }
+        }
         let hidden = window.hide().is_ok();
         (hidden, if hidden { proof } else { None })
     }
@@ -516,23 +562,23 @@ fn show_selector(app: slint::Weak<MainWindow>, frame: screen_capture::ScreenCapt
         overlay.set_sel_y(0.0);
         overlay.set_sel_w(0.0);
         overlay.set_sel_h(0.0);
-        // Physical sizing avoids DPI rounding on legacy primary monitors, and
-        // the capture origin is reused verbatim so the selector covers exactly
-        // the captured pixels instead of a virtual-desktop approximation.
+        // A borderless top-level window whose size is merely requested can be
+        // constrained to the Windows work area. That makes a 1600 px capture
+        // render into a 1516 px selector: the preview is scaled and the real
+        // taskbar remains outside the dimming layer. Fullscreen owns the whole
+        // monitor, including the taskbar strip; the physical placement below
+        // selects the same monitor whose pixels were frozen.
         let window = overlay.window();
         window.set_position(slint::PhysicalPosition::new(origin_x, origin_y));
         window.set_size(slint::PhysicalSize::new(width, height));
+        window.set_fullscreen(true);
         PENDING.with(|pending| *pending.borrow_mut() = Some((frame, 1.0)));
         overlay
             .show()
             .map_err(|error| format!("无法显示截图选区：{error}"))?;
-        // Re-assert after the native window exists: creation-time placement can
-        // still resolve asynchronously, and the scale factor must describe the
-        // monitor the selector actually landed on. Reading it before `show`
-        // returned a provisional factor, which left the selection space
-        // disagreeing with the frozen frame.
-        window.set_position(slint::PhysicalPosition::new(origin_x, origin_y));
-        window.set_size(slint::PhysicalSize::new(width, height));
+        // The full-screen transition can select the monitor only after its
+        // native surface exists. Its scale factor therefore has to be read
+        // after `show`, then shared by selection and crop conversion.
         let scale = window.scale_factor().max(1.0);
         overlay.set_screen_width(width as f32 / scale);
         overlay.set_screen_height(height as f32 / scale);

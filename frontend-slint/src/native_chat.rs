@@ -1511,11 +1511,21 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
 fn bind_attachments(app: &MainWindow) {
     let weak = app.as_weak();
     app.on_capture_screenshot(move |hide_window, region| {
-        if region {
-            crate::screenshot::capture(weak.clone(), hide_window);
-        } else {
-            crate::screenshot::capture_fullscreen(weak.clone(), hide_window);
-        }
+        // The composer menu is closed by the same Slint callback that starts
+        // the capture. Defer one event-loop turn so its popup and the final
+        // composer frame are painted before the main window is hidden. Without
+        // this boundary the desktop read can retain the pre-close frame in
+        // the compositor, which looks like a partial ghost in the selector.
+        slint::Timer::single_shot(std::time::Duration::from_millis(32), {
+            let weak = weak.clone();
+            move || {
+                if region {
+                    crate::screenshot::capture(weak, hide_window);
+                } else {
+                    crate::screenshot::capture_fullscreen(weak, hide_window);
+                }
+            }
+        });
     });
     // §8.2 file attachment: the native picker blocks, so it runs off the UI
     // thread and the chips land back through the event loop.

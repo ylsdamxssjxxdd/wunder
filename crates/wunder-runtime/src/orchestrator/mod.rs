@@ -262,8 +262,8 @@ impl Orchestrator {
             .load_session_frozen_tool_overrides(&user.user_id, &session.session_id);
         let overrides = if !session.tool_overrides.is_empty() {
             normalize_tool_overrides_for_session(session.tool_overrides.clone(), TOOL_OVERRIDE_NONE)
-        } else if let Some(snapshot) = frozen_tool_overrides {
-            normalize_tool_overrides_for_session(snapshot, TOOL_OVERRIDE_NONE)
+        } else if let Some(snapshot) = frozen_tool_overrides.as_ref() {
+            normalize_tool_overrides_for_session(snapshot.clone(), TOOL_OVERRIDE_NONE)
         } else {
             crate::services::agent_abilities::resolve_agent_runtime_tool_names(
                 &agent_record
@@ -277,9 +277,20 @@ impl Orchestrator {
                 &agent_record
                     .as_ref()
                     .map(|record| record.declared_skill_names.clone())
-                    .unwrap_or_default(),
+                .unwrap_or_default(),
             )
         };
+        if session.tool_overrides.is_empty() {
+            if let Some(snapshot) = frozen_tool_overrides.as_deref() {
+                if snapshot != overrides.as_slice() {
+                    self.workspace.save_session_frozen_tool_overrides(
+                        &user.user_id,
+                        &session.session_id,
+                        &overrides,
+                    );
+                }
+            }
+        }
         let agent_defaults = crate::services::agent_abilities::resolve_agent_runtime_tool_names(
             &agent_record
                 .as_ref()
@@ -318,7 +329,7 @@ fn normalize_tool_overrides_for_session(values: Vec<String>, none_token: &str) -
     let mut output = Vec::new();
     let mut has_none = false;
     for raw in values {
-        let name = raw.trim().to_string();
+        let name = crate::tools::resolve_tool_name(raw.trim());
         if name.is_empty() || seen.contains(&name) {
             continue;
         }
@@ -346,10 +357,28 @@ fn resolve_override_name_with_allowed_for_session(
     if allowed.contains(cleaned) {
         return Some(cleaned.to_string());
     }
+    let canonical = crate::tools::resolve_tool_name(cleaned);
+    if canonical != cleaned
+        && (allowed.contains(&canonical)
+            || allowed
+                .iter()
+                .any(|name| crate::tools::resolve_tool_name(name) == canonical))
+    {
+        return Some(canonical);
+    }
     for (index, _) in cleaned.match_indices('@') {
         let suffix = cleaned[index + 1..].trim();
         if !suffix.is_empty() && allowed.contains(suffix) {
             return Some(suffix.to_string());
+        }
+        let canonical_suffix = crate::tools::resolve_tool_name(suffix);
+        if !suffix.is_empty()
+            && (allowed.contains(&canonical_suffix)
+                || allowed
+                    .iter()
+                    .any(|name| crate::tools::resolve_tool_name(name) == canonical_suffix))
+        {
+            return Some(canonical_suffix);
         }
     }
     None

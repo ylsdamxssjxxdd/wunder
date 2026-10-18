@@ -32,7 +32,7 @@ export global WorkspaceVisual {
         : name == "alien" ? @image-url("../assets/icons/workspace/alien.svg")
         : name == "bell" ? @image-url("../assets/icons/workspace/bell.svg")
         : name == "flask" ? @image-url("../assets/icons/workspace/flask.svg")
-        : name == "cloud" ? @image-url("../assets/icons/cloud.svg")
+        : name == "cloud" ? @image-url("../assets/icons/workspace/cloud.svg")
         : @image-url("../assets/icons/workspace/folder.svg");
     }
 
@@ -386,6 +386,7 @@ export component Sidebar inherits Rectangle {
                         row-index: ri;
                         row-kind: row.kind;
                         workspace-id: row.workspace-id;
+                        tooltip: row.expanded ? I18n.ws_collapse_threads : I18n.ws_expand_threads;
                         activate => { root.select-row(ri); }
                         move-by(travel) => { root.move-row(ri, travel); }
                         // Selection indicator on the workspace row.
@@ -502,6 +503,7 @@ export component Sidebar inherits Rectangle {
                         cloud-thread-touch := TouchArea {
                             mouse-cursor: pointer;
                             accessible-role: button; accessible-label: row.title;
+                            Tooltip { text: @markdown("\{row.title}"); }
                             clicked => { root.select-row(ri); }
                             ThreadRow {
                                 width: parent.width; height: parent.height;
@@ -519,23 +521,31 @@ export component Sidebar inherits Rectangle {
                     // new-thread affordance as local workspace rows; the
                     // native projection expands its bounded cloud thread rows
                     // directly beneath it.
-                    if row.kind == 2 : Rectangle {
+                    if row.kind == 2 : DragRow {
                         height: parent.height;
                         width: parent.width;
-                        background: row.selected ? Theme.selected : transparent;
-                        cloud-touch := TouchArea {
-                            mouse-cursor: pointer;
-                            accessible-role: button; accessible-label: row.name;
-                            clicked => { root.select-row(ri); }
-                        }
+                        enabled: !root.busy;
+                        selected: row.selected;
+                        selected-color: Theme.selected;
+                        label: row.name;
+                        row-index: ri;
+                        row-kind: row.kind;
+                        workspace-id: "cloud";
+                        tooltip: row.expanded ? I18n.ws_collapse_threads : I18n.ws_expand_threads;
+                        activate => { root.select-row(ri); }
+                        move-by(travel) => { root.move-row(ri, travel); }
                         Rectangle { x: 0px; y: 5px; width: 2px; height: 24px; border-radius: 1px; background: row.selected ? Theme.accent : transparent; }
                         HorizontalLayout {
-                            padding-left: 12px; padding-right: 40px; spacing: 8px;
+                            padding-left: 12px; padding-right: 32px; spacing: 8px;
                             Rectangle {
                                 y: (parent.height - 22px) / 2;
                                 width: 22px; height: 22px; border-radius: 6px;
-                                background: Theme.accent.transparentize(0.87);
-                                Image { x: 2px; y: 2px; width: 18px; height: 18px; source: WorkspaceVisual.icon("cloud"); colorize: Theme.accent; }
+                                background: row.expanded ? Theme.accent.transparentize(0.87) : Theme.hover;
+                                Image {
+                                    x: 2px; y: 2px; width: 18px; height: 18px;
+                                    source: WorkspaceVisual.icon("cloud"); image-fit: contain;
+                                    colorize: row.expanded ? Theme.accent : Theme.muted;
+                                }
                             }
                             Text {
                                 height: parent.height; text: row.name;

@@ -490,8 +490,16 @@ component ProcessBar inherits Rectangle {
     callback process-page(int, int);
     callback copy-text(string);
     callback open-resource(string);
+    // During a live turn the current work is the visible tail of the
+    // conversation. Keep it unfolded while running; once the turn settles,
+    // the normal user-controlled fold state takes over again.
+    // Visibility is the structural signal. Depending on a nested model's
+    // length here makes the first insert wait for Slint to propagate a child
+    // model notification through the parent row; the bar itself is already
+    // marked visible by the reducer in the same frame as that insert.
+    private property <bool> show-live-entries: root.data.status-kind == 1 && root.data.visible;
     // One step heavier than a batch bar: it owns a whole turn's process.
-    height: root.data.open ? 40px + process-body.height : 34px;
+    height: root.data.open || root.show-live-entries ? 40px + process-body.height : 34px;
     border-radius: Theme.radius-tag;
     // Keep the work-process row calm while the pointer moves across it. The
     // affordance is the small left control, matching the compact web header.
@@ -530,7 +538,7 @@ component ProcessBar inherits Rectangle {
                 width: 12px; height: 12px;
                 source: @image-url("../assets/icons/disclosure.svg");
                 colorize: Theme.muted; image-fit: contain;
-                transform-rotation: root.data.open ? 90deg : 0deg;
+                transform-rotation: root.data.open || root.show-live-entries ? 90deg : 0deg;
             }
             process-hit := TouchArea {
                 mouse-cursor: pointer;
@@ -555,11 +563,13 @@ component ProcessBar inherits Rectangle {
         }
     }
     process-body := ToolProcess {
-        visible: root.data.open;
+        visible: root.data.open || root.show-live-entries;
         x: 0px; y: 34px;
         width: parent.width;
         viewport-limit: root.process-height;
-        entries: root.data.open ? root.data.process-entries : [];
+        // Keep the stable child model bound while collapsed during a live turn.
+        // Replacing it with [] deferred insert notifications until settlement.
+        entries: root.data.process-entries;
         paged: root.data.process-paged;
         has-older: root.data.process-older;
         has-newer: root.data.process-newer;

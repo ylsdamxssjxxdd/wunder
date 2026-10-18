@@ -187,12 +187,18 @@ fn trim_session_frame_cache(cache: &mut HashMap<String, PathBuf>) {
 
 pub fn is_desktop_control_tool_name(name: &str) -> bool {
     let cleaned = name.trim();
-    if cleaned == TOOL_DESKTOP_CONTROL {
+    if matches!(
+        cleaned,
+        TOOL_DESKTOP_CONTROL | "桌面控制器" | "桌面监视器"
+    ) {
         return true;
     }
     matches!(
         cleaned.to_ascii_lowercase().as_str(),
-        TOOL_DESKTOP_CONTROL_ALIAS | TOOL_DESKTOP_CONTROL_ALIAS_SHORT
+        TOOL_DESKTOP_CONTROL_ALIAS
+            | TOOL_DESKTOP_CONTROL_ALIAS_SHORT
+            | "desktop_controller"
+            | "desktop_monitor"
     )
 }
 

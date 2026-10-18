@@ -84,7 +84,7 @@ export component WorkspaceFilesPanel inherits Rectangle {
                     if root.offline : VerticalLayout {
                         alignment: center; spacing: 8px;
                         Text { text: I18n.wf_offline; color: Theme.muted; font-size: Theme.font-xs; horizontal-alignment: center; wrap: word-wrap; }
-                        HorizontalLayout { alignment: center; Button { text: I18n.wf_connect; clicked => { root.connect(); } } }
+                        HorizontalLayout { alignment: center; Button { text: I18n.wf_connect; clicked => { root.connect(); } Tooltip { text: @markdown("连接云端工作目录"); } } }
                     }
                     if root.rows.length == 0 && root.error != "" && !root.offline : VerticalLayout {
                         alignment: center; spacing: 8px;

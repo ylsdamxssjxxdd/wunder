@@ -578,6 +578,11 @@ impl Timeline {
         bar.process_local = true;
         bar.text = crate::timeline_text::process_label(0).into();
         bar.process_entries = ModelRc::new(VecModel::<crate::ProcessEntry>::default());
+        // The local stream can emit a reasoning delta immediately after the
+        // user send. Mark the fold live here rather than waiting for the
+        // optional native identity frame, so its first child is rendered in
+        // that same coalesced UI frame.
+        bar.status_kind = STATUS_RUNNING;
         bar.visible = false;
         let index = self.push(bar);
         self.process_bar = index;
@@ -1857,6 +1862,27 @@ mod tests {
             .find(|row| row.kind == KIND_PROCESS)
             .unwrap();
         assert_eq!(process.summary, "已完成");
+    }
+
+    #[test]
+    fn running_thought_is_projected_into_the_process_before_settlement() {
+        let mut timeline = Timeline::new();
+        timeline.begin_turn("fixture-live-thought", "Fixture input");
+        timeline.append_reasoning("First live thought").unwrap();
+        timeline.flush();
+
+        let bar = timeline.model.row_data(timeline.process_bar).unwrap();
+        assert!(bar.visible);
+        assert_eq!(bar.status_kind, STATUS_RUNNING);
+        assert_eq!(bar.process_entries.row_count(), 1);
+        let children = bar.process_entries.clone();
+        assert_eq!(children.row_data(0).unwrap().kind, KIND_REASON);
+        assert_eq!(children.row_data(0).unwrap().detail, "First live thought");
+
+        timeline.append_reasoning(" · continued").unwrap();
+        timeline.flush();
+        assert_eq!(timeline.model.row_data(timeline.process_bar).unwrap().process_entries, children);
+        assert_eq!(children.row_data(0).unwrap().detail, "First live thought · continued");
     }
 
     #[test]

@@ -84,15 +84,15 @@
             class="messenger-chat-body"
             data-testid="messenger-message-list"
             :class="{
-              'is-messages': hasActiveThread,
-              'is-agent': resolvedMessageConversationKind === 'agent'
+              'is-messages': hasActiveThread || localThreadActive,
+              'is-agent': resolvedMessageConversationKind === 'agent' || localThreadActive
             }"
             @scroll.passive="handleMessageListScroll"
             @click="handleMessageContentClick"
           >
             <RemoteThreadsPanel
               v-if="localThreadActive"
-              inline
+              ref="remoteThreadPanelRef"
               :target="localThreadTarget"
               :workspace-id="localThreadWorkspaceId"
               :open-thread-id="localThreadId"
@@ -104,10 +104,10 @@
         </div>
 
         <footer
-          v-if="showChatComposerFooter && !localThreadActive"
+          v-if="showChatComposerFooter || localThreadActive"
           ref="chatFooterRef"
           class="messenger-chat-footer"
-          :class="{ 'is-threaded': hasActiveThread }"
+          :class="{ 'is-threaded': hasActiveThread || localThreadActive }"
         >
           <button
             v-if="showScrollBottomButton"
@@ -119,7 +119,19 @@
           >
             <i class="fa-solid fa-angles-down" aria-hidden="true"></i>
           </button>
-          <div v-if="resolvedMessageConversationKind === 'agent'" class="messenger-agent-composer messenger-composer-scope chat-shell">
+          <div v-if="localThreadActive" class="messenger-agent-composer messenger-composer-scope chat-shell">
+            <ChatComposer
+              :loading="localThreadSending"
+              :send-key="messengerSendKey"
+              :context-messages="localThreadMessages"
+              approval-mode="full_auto"
+              :approval-mode-editable="false"
+              :voice-supported="false"
+              @send="sendLocalThreadMessage"
+              @stop="stopLocalThreadMessage"
+            />
+          </div>
+          <div v-else-if="resolvedMessageConversationKind === 'agent'" class="messenger-agent-composer messenger-composer-scope chat-shell">
             <ComposerStatusDock
               :session-id="String(chatStore.activeSessionId || '')"
               :loading="agentSessionLoading"
@@ -264,6 +276,7 @@ import MessengerSettingsOverlay from '@/views/messenger/sections/MessengerSettin
 import MessageGoalBar from '@/components/chat/MessageGoalBar.vue';
 import ComposerStatusDock from '@/components/chat/ComposerStatusDock.vue';
 import RemoteThreadsPanel from '@/views/messenger/interlink/RemoteThreadsPanel.vue';
+import type { RemoteThreadItem } from '@/views/messenger/interlink/remoteThreadModel';
 
 const controller = useMessengerViewController();
 trackShellUpdate(() => chatPerf.count('chat_shell_render'));
@@ -304,6 +317,23 @@ const localThreadTarget = vueRef('');
 const localThreadWorkspaceId = vueRef('');
 const localThreadId = vueRef('');
 const localThreadActive = vueComputed(() => Boolean(localThreadTarget.value && localThreadId.value));
+const remoteThreadPanelRef = vueRef<{
+  messages?: RemoteThreadItem[];
+  busy?: boolean;
+  sendMessage?: (content: string, attachments?: unknown[]) => Promise<boolean>;
+  stopMessage?: () => Promise<void>;
+} | null>(null);
+const localThreadSending = vueComputed(() => Boolean(remoteThreadPanelRef.value?.busy));
+const localThreadMessages = vueComputed(() => remoteThreadPanelRef.value?.messages || []);
+const sendLocalThreadMessage = async (payload: { content?: string; attachments?: unknown[] }) => {
+  const content = String(payload?.content || '').trim();
+  if (content || (Array.isArray(payload?.attachments) && payload.attachments.length)) {
+    await remoteThreadPanelRef.value?.sendMessage?.(content, payload.attachments);
+  }
+};
+const stopLocalThreadMessage = async () => {
+  await remoteThreadPanelRef.value?.stopMessage?.();
+};
 const isSidebarDrawer = vueComputed(() => Number(controller.viewportWidth?.value || 0) <= 1023);
 const sidebarDrawerOpen = vueRef(false);
 const closeDrawerOnNarrow = () => {

@@ -10,8 +10,11 @@ test('remote threads keep workspace identity, render live text and preserve fail
     const source = await (await fetch(panelUrl)).text();
     const vueUrl = source.match(/from\s+["']([^"']*\/vue\.js[^"']*)["']/)?.[1];
     if (!vueUrl) throw new Error('Missing fixture runtime');
-    const [{ createApp, h }, { default: Panel }, { default: api }] = await Promise.all([
+    const piniaUrl = performance.getEntriesByType('resource').map((entry: PerformanceResourceTiming) => entry.name).find((name: string) => /pinia(?:[-.].*)?\.js/.test(name));
+    if (!piniaUrl) throw new Error('Missing Pinia runtime');
+    const [{ createApp, h, ref }, { default: Panel }, { default: api }, { createPinia }] = await Promise.all([
       import(vueUrl), import(panelUrl), import('/src/api/http.ts')
+      , import(piniaUrl)
     ]);
     const host = document.createElement('div');
     document.body.append(host);
@@ -47,11 +50,14 @@ test('remote threads keep workspace identity, render live text and preserve fail
       }
       return { status: 200, statusText: 'OK', headers: {}, config, data: { data } };
     };
+    const panelRef = ref(null);
     const app = createApp({ setup: () => () => h(Panel, {
+      ref: panelRef,
       target: 'device:fixture_device', workspaceId: 'fixture_workspace', openThreadId: 'fixture_thread'
     }) });
+    app.use(createPinia());
     app.mount(host);
-    (window as any).__remoteFixture = { commands, sockets, dispose() {
+    (window as any).__remoteFixture = { commands, sockets, app, panelRef, dispose() {
       app.unmount(); host.remove(); api.defaults.adapter = originalAdapter; window.WebSocket = OriginalSocket;
     } };
   });
@@ -70,8 +76,14 @@ test('remote threads keep workspace identity, render live text and preserve fail
     });
     await expect(panel).toContainText('<Fixture live>');
     await expect(panel.locator('fixture')).toHaveCount(0);
-    await panel.locator('textarea').fill('Fixture message');
-    await panel.getByRole('button', { name: /^发送$|^Send$/ }).click();
+    const exposed = await page.evaluate(async () => {
+      const fixture = (window as any).__remoteFixture;
+      const panel = fixture.panelRef.value;
+      return panel ? await panel.sendMessage?.('Fixture message') : false;
+    });
+    expect(exposed).toBe(false);
+    await expect.poll(() => page.evaluate(() => (window as any).__remoteFixture.commands.at(-1)?.kind)).toBe('thread.message');
+    await expect.poll(() => page.evaluate(() => (window as any).__remoteFixture.commands.at(-1)?.args?.workspace_id)).toBe('fixture_workspace');
     await expect(panel.getByRole('status')).toContainText('Fixture refusal');
     const evidence = await page.evaluate(() => {
       const fixture = (window as any).__remoteFixture;

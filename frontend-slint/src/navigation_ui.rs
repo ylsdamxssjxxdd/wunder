@@ -60,6 +60,7 @@ fn row_spec(row: SidebarRow) -> RowSpec {
         id: match row.kind {
             0 => row.workspace_id.to_string(),
             1 => row.thread_id.to_string(),
+            2 => "cloud".to_string(),
             _ => String::new(),
         },
     }
@@ -69,13 +70,20 @@ fn row_spec(row: SidebarRow) -> RowSpec {
 /// group, while threads only ever reorder inside their own workspace.
 fn group_key(row: &RowSpec) -> (i32, &str) {
     (
-        row.kind,
+        if row.kind == 0 || row.kind == 2 { 0 } else { row.kind },
         if row.kind == 1 {
             row.bucket.as_str()
         } else {
             ""
         },
     )
+}
+
+/// A workspace header drags only against another header. Its child threads are
+/// intentionally excluded: visual hierarchy must not turn a drag from the
+/// cloud row into a thread move target.
+fn is_workspace_header(row: &RowSpec) -> bool {
+    row.kind == 0 || row.kind == 2
 }
 
 fn row_height(kind: i32, thread_px: f32, group_px: f32) -> f32 {
@@ -134,7 +142,13 @@ fn plan_drag(
 ) -> Option<DragPlan> {
     let key = group_key(&rows[from]);
     let members: Vec<usize> = (0..rows.len())
-        .filter(|&index| group_key(&rows[index]) == key)
+        .filter(|&index| {
+            if is_workspace_header(&rows[from]) {
+                is_workspace_header(&rows[index])
+            } else {
+                group_key(&rows[index]) == key
+            }
+        })
         .collect();
     let from_pos = members.iter().position(|&index| index == from)?;
     // The slot the pointer opened, as "insert before this tree row". A slot
@@ -301,47 +315,49 @@ fn rebuild_rows(app: &MainWindow) {
     });
     let selection_mode = app.get_sidebar_selection_mode();
     let mut rows: Vec<SidebarRow> = Vec::with_capacity(cards_model.row_count() * 4 + 1);
-    if let Some(mut cloud) = cloud {
-        let cloud_threads = app.get_cloud_thread_rows();
-        cloud.thread_count = cloud_threads.row_count() as i32;
-        rows.push(cloud);
-        if crate::workspace_files::is_cloud_target() {
-            for (index, thread) in cloud_threads
-                .iter()
-                .take(MAX_TREE_ROWS.saturating_sub(rows.len()))
-                .enumerate()
-            {
-                rows.push(SidebarRow {
-                    kind: 3,
-                    workspace_id: "".into(),
-                    name: "".into(),
-                    icon: "".into(),
-                    color: "".into(),
-                    thread_count: 0,
-                    expanded: false,
-                    selected: false,
-                    thread_id: thread.id.clone(),
-                    title: thread.title.clone(),
-                    status: thread.status.clone(),
-                    active: app.get_cloud_chat_active()
-                        && app.get_cloud_active_thread_id() == thread.id,
-                    payload: index as i32,
-                    origin: "cloud".into(),
-                    archivable: thread_archivable(thread.status.as_str(), false),
-                    checked: false,
-                });
-            }
-        }
-    }
-    // Persisted manual order; un-ordered ids keep their facade position.
-    let mut cards: Vec<(usize, WorkspaceCard)> = cards_model.iter().enumerate().collect();
+    let cloud_threads = app.get_cloud_thread_rows();
+    // Persisted manual order; un-ordered ids keep their facade position. The
+    // cloud sentinel is part of this same sequence so it can be dragged with
+    // local workspace rows.
+    let cards: Vec<(usize, WorkspaceCard)> = cards_model.iter().enumerate().collect();
+    let mut ordered_keys = Vec::with_capacity(cards.len() + 1);
+    let cloud_expanded = EXPANDED.with(|slot| slot.borrow().contains("cloud"));
+    if app.get_cloud_logged_in() { ordered_keys.push("cloud".to_string()); }
+    ordered_keys.extend(cards.iter().map(|(_, card)| card.workspace_id.to_string()));
     WORKSPACE_ORDER.with(|slot| {
         let order = slot.borrow();
-        cards.sort_by_key(|(_, card)| order_rank(&order, card.workspace_id.as_str()));
+        ordered_keys.sort_by_key(|key| order_rank(&order, key));
     });
     EXPANDED.with(|slot| {
         let expanded = slot.borrow();
-        for (wi, card) in cards {
+        for key in ordered_keys {
+            if key == "cloud" {
+                let Some(mut cloud) = cloud.clone() else { continue };
+                cloud.thread_count = cloud_threads.row_count() as i32;
+                cloud.expanded = cloud_expanded;
+                rows.push(cloud);
+                if crate::workspace_files::is_cloud_target() && cloud_expanded {
+                    for (index, thread) in cloud_threads
+                        .iter()
+                        .take(MAX_TREE_ROWS.saturating_sub(rows.len()))
+                        .enumerate()
+                    {
+                        rows.push(SidebarRow {
+                            kind: 3,
+                            workspace_id: "".into(), name: "".into(), icon: "".into(), color: "".into(),
+                            thread_count: 0, expanded: false, selected: false,
+                            thread_id: thread.id.clone(), title: thread.title.clone(), status: thread.status.clone(),
+                            active: app.get_cloud_chat_active() && app.get_cloud_active_thread_id() == thread.id,
+                            payload: index as i32, origin: "cloud".into(),
+                            archivable: thread_archivable(thread.status.as_str(), false), checked: false,
+                        });
+                    }
+                }
+                continue;
+            }
+            let Some((wi, card)) = cards.iter().find(|(_, card)| card.workspace_id.as_str() == key).cloned() else {
+                continue;
+            };
             let expanded = selected == Some(wi) && expanded.contains(card.workspace_id.as_str());
             rows.push(SidebarRow {
                 kind: 0,
@@ -492,10 +508,13 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
     let layout_api = desktop.clone();
     std::thread::spawn(move || {
         let ratio = layout_api.sidebar_split_ratio().unwrap_or(0.6);
-        let order = layout_api.navigation_order().unwrap_or_default().threads;
+        let navigation = layout_api.navigation_order().unwrap_or_default();
+        let order = navigation.threads;
+        let workspace_order = navigation.workspaces;
         let _ = weak.upgrade_in_event_loop(move |app| {
             app.set_sidebar_split_ratio(ratio);
             THREAD_ORDER.with(|slot| *slot.borrow_mut() = order);
+            WORKSPACE_ORDER.with(|slot| *slot.borrow_mut() = workspace_order);
             project_sidebar(&app, None);
         });
     });
@@ -531,8 +550,17 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
         if row.kind == 2 {
             // Pinned cloud row: point the file panel back at the cloud
             // workspace and drop the local selection.
+            let id = "cloud".to_string();
+            let should_expand = EXPANDED.with(|slot| {
+                let mut expanded = slot.borrow_mut();
+                let was_expanded = expanded.contains(id.as_str());
+                expanded.clear();
+                if !was_expanded { expanded.insert(id); }
+                !was_expanded
+            });
             app.set_selected_workspace(-1);
-            crate::cloud_threads::leave(&app);
+            let was_cloud = app.get_cloud_chat_active();
+            if !was_cloud { crate::cloud_threads::leave(&app); }
             THREAD_SELECTION.with(|slot| slot.borrow_mut().clear());
             app.set_sidebar_selection_mode(false);
             crate::workspace_files::set_target(
@@ -541,17 +569,21 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
                 crate::workspace_files::Target::Cloud,
             );
             crate::navigation_ui::project_sidebar(&app, None);
-            app.invoke_cloud_open_threads();
+            if should_expand && !was_cloud { app.invoke_cloud_open_threads(); }
         } else if row.kind == 0 {
             let workspace = row.payload;
             let id = row.workspace_id.to_string();
             let was_cloud = app.get_cloud_chat_active();
-            // Selection reveals this workspace's threads, as in the web rail.
-            // Clicking the selected row again keeps its tree open.
-            EXPANDED.with(|slot| {
+            // A workspace header is also its tree disclosure: activating it
+            // toggles its children. The selected workspace remains the active
+            // directory while collapsed, so the icon can return to its hollow
+            // state without changing the current conversation.
+            let should_open_thread = EXPANDED.with(|slot| {
                 let mut expanded = slot.borrow_mut();
+                let was_expanded = expanded.contains(id.as_str());
                 expanded.clear();
-                expanded.insert(id);
+                if !was_expanded { expanded.insert(id.clone()); }
+                !was_expanded
             });
             THREAD_SELECTION.with(|slot| slot.borrow_mut().clear());
             app.set_sidebar_selection_mode(false);
@@ -575,8 +607,10 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
                 }
             }
             crate::navigation_ui::project_sidebar(&app, None);
-            if let Some(index) = app.get_conversations().iter().position(|thread| thread.workspace_id == row.workspace_id) {
-                app.invoke_select_conversation(index as i32);
+            if should_open_thread {
+                if let Some(index) = app.get_conversations().iter().position(|thread| thread.workspace_id == row.workspace_id) {
+                    app.invoke_select_conversation(index as i32);
+                }
             }
         } else if row.kind == 3 {
             app.set_cloud_thread_index(row.payload + 1);
@@ -593,8 +627,8 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
     let weak = app.as_weak();
     // Drag reorder: the grabbed row reports how far the pointer travelled, the
     // tree pitch says which row that lands on, and the row takes that slot in
-    // its own group. Threads cannot leave their workspace and the pinned cloud
-    // row cannot be dragged or dropped on at all.
+    // its own group. Threads cannot leave their workspace; the cloud header
+    // shares the local-workspace group and persists as the `cloud` sentinel.
     let order_api = desktop.clone();
     app.on_move_row(move |index, travel| {
         let Some(app) = weak.upgrade() else { return };
@@ -606,7 +640,7 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
         let specs: Vec<RowSpec> = (0..count)
             .filter_map(|i| rows_model.row_data(i).map(row_spec))
             .collect();
-        if specs.len() != count || !matches!(specs[from].kind, 0 | 1) || specs[from].id.is_empty() {
+        if specs.len() != count || !matches!(specs[from].kind, 0 | 1 | 2) || specs[from].id.is_empty() {
             return;
         }
         let metrics = app.global::<SidebarMetrics>();
@@ -627,11 +661,11 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
         };
         if applied {
             crate::navigation_ui::project_sidebar(&app, None);
-            if specs[from].kind == 0 {
+            if specs[from].kind == 0 || specs[from].kind == 2 {
                 let api = order_api.clone();
                 let weak = app.as_weak();
                 std::thread::spawn(move || {
-                    let result = api.reorder_workspaces(&next);
+                    let result = api.save_workspace_order(&next);
                     let _ = weak.upgrade_in_event_loop(move |app| {
                         if let Err(error) = result {
                             app.set_status(format!("无法保存工作区顺序：{error}").into());
@@ -924,6 +958,14 @@ mod tests {
         }
     }
 
+    fn cloud_header() -> RowSpec {
+        RowSpec {
+            kind: 2,
+            bucket: String::new(),
+            id: "cloud".to_string(),
+        }
+    }
+
     fn thread(id: &str, workspace: &str) -> RowSpec {
         RowSpec {
             kind: 1,
@@ -988,6 +1030,13 @@ mod tests {
         assert_eq!(dragged(&rows, 0, 120.0), "w1>w2");
         // 140px is its lower half: the two headers trade places.
         assert_eq!(dragged(&rows, 0, 140.0), "w2>w1");
+    }
+
+    #[test]
+    fn cloud_header_reorders_with_local_workspace_headers() {
+        let rows = vec![cloud_header(), header("w1"), thread("a", "w1"), header("w2")];
+        assert_eq!(dragged(&rows, 0, 60.0), "w1>cloud>w2");
+        assert_eq!(dragged(&rows, 3, -4000.0), "w2>cloud>w1");
     }
 
     #[test]

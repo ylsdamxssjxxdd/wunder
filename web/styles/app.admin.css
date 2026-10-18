@@ -4656,6 +4656,24 @@
   color: #3a7afe;
 }
 
+/* 模型配置面板背景立绘（web/images/ayanami.webp，随 web 目录挂载于站点根路径） */
+#llmPanel {
+  position: relative;
+}
+
+#llmPanel::after {
+  content: "";
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  width: min(560px, 50%);
+  aspect-ratio: 1408 / 768;
+  background: url("/images/ayanami.webp") right bottom / contain no-repeat;
+  opacity: 0.22;
+  pointer-events: none;
+  z-index: 2;
+}
+
 .checkbox-row {
   display: inline-flex;
   align-items: center;

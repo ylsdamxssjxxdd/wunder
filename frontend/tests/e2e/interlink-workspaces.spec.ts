@@ -162,13 +162,20 @@ test('local threads load bounded pages in the selected workspace', async ({ page
 });
 
 test('opening a local thread uses the main chat area', async ({ page }) => {
-  await prepare(page);
+  const commands = await prepare(page);
   await page.locator('.messenger-sidebar-workspace-row').filter({ hasText: 'Project one' }).click();
   await page.locator('.interlink-thread-row', { hasText: 'Thread one' }).click();
   const panel = page.locator('.remote-thread-panel');
   await expect(panel).toBeVisible();
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await expect(panel).toContainText('Fixture history');
+  await expect(page.getByTestId('chat-composer-input')).toBeVisible();
+  await page.getByTestId('chat-composer-input').fill('Local composer message');
+  await page.getByTestId('chat-composer-send').click();
+  await expect.poll(() => [...commands.values()].some(command => command.kind === 'thread.message')).toBe(true);
+  const message = [...commands.values()].find(command => command.kind === 'thread.message');
+  expect(message?.args).toMatchObject({ workspace_id: 'fixture_one', local_thread_id: 'fixture_thread_1', message: 'Local composer message' });
+  expect(message?.args.attachments).toBeUndefined();
 });
 
 test('a pending rename cannot mutate the workspace selected after the prompt opened', async ({ page }) => {

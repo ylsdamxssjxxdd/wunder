@@ -80,10 +80,14 @@ component TrajToggle inherits Rectangle {
     HorizontalLayout {
         padding-left: 7px; padding-right: 7px;
         alignment: center; spacing: 4px;
-        if root.clock : Image {
-            width: 12px; height: 12px;
-            source: @image-url("../assets/icons/trajectory-clock.svg");
-            colorize: root.on ? TrajTokens.brand : TrajTokens.text-2;
+        if root.clock : Rectangle {
+            width: 12px; height: parent.height;
+            Image {
+                x: 0px; y: (parent.height - self.height) / 2 + 1px;
+                width: 12px; height: 12px;
+                source: @image-url("../assets/icons/trajectory-clock.svg");
+                colorize: root.on ? TrajTokens.brand : TrajTokens.text-2;
+            }
         }
         if !root.clock : TrajText {
             width: 11px; height: parent.height;
@@ -475,7 +479,10 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                         }
                         double-clicked => { root.clear-range(); }
                     }
-                    opacity: span.outside ? 0.2 : span.dimmed ? 0.14 : span.aggregate ? 0.86 : span.overview ? 0.94 : 1.0;
+                    // Aggregated overview tiles carry their own web-matched
+                    // opacity. It takes precedence over focus dimming because
+                    // a bucket represents many records rather than one row.
+                    opacity: span.aggregate ? 0.86 : span.outside ? 0.2 : span.dimmed ? 0.14 : span.overview ? 0.94 : 1.0;
                     if span.overview : Rectangle {
                         x: max(0px, parent.width - 1px);
                         width: 1px;
@@ -606,6 +613,7 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                             Rectangle {
                                 horizontal-stretch: 1;
                                 height: parent.height;
+                                clip: true;
                                 HorizontalLayout {
                                     height: parent.height;
                                     padding-left: 4px; padding-right: 8px;
@@ -618,7 +626,7 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                                         color: TrajTokens.text-2;
                                         font-size: 11px;
                                         vertical-alignment: center;
-                                        overflow: elide;
+                                        overflow: elide; wrap: no-wrap;
                                         horizontal-stretch: 1;
                                     }
                                     if row.kind != 7 && row.kind != 8 : HorizontalLayout {
@@ -654,7 +662,7 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                                             font-size: 12px;
                                             font-family: row.kind == 5 || row.kind == 6 ? Theme.font-mono : "Segoe UI";
                                             vertical-alignment: center;
-                                            overflow: elide;
+                                            overflow: elide; wrap: no-wrap;
                                             horizontal-stretch: row.kind == 5 || row.kind == 6 ? 0 : 1;
                                             max-width: row.kind == 5 || row.kind == 6 ? self.preferred-width : 100000px;
                                         }
@@ -666,7 +674,7 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                                             font-size: 12px;
                                             font-family: Theme.font-mono;
                                             vertical-alignment: center;
-                                            overflow: elide;
+                                            overflow: elide; wrap: no-wrap;
                                             horizontal-stretch: 1;
                                             max-width: self.preferred-width;
                                         }
@@ -677,7 +685,7 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                                             color: TrajTokens.caption;
                                             font-size: 12px;
                                             vertical-alignment: center;
-                                            overflow: elide;
+                                            overflow: elide; wrap: no-wrap;
                                             max-width: 480px;
                                             horizontal-stretch: 0;
                                         }

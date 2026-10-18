@@ -51,7 +51,7 @@ pub(crate) fn normalize_tool_overrides(values: Vec<String>) -> Vec<String> {
     let mut output = Vec::new();
     let mut has_none = false;
     for raw in values {
-        let name = raw.trim().to_string();
+        let name = resolve_tool_name(raw.trim());
         if name.is_empty() || seen.contains(&name) {
             continue;
         }
@@ -197,6 +197,17 @@ pub(crate) fn build_effective_tool_names(
         .workspace
         .load_session_frozen_tool_overrides(user_id, &record.session_id);
     let overrides = resolve_session_tool_overrides(record, frozen_tool_overrides.as_deref(), agent);
+    if record.tool_overrides.is_empty() {
+        if let Some(snapshot) = frozen_tool_overrides.as_deref() {
+            if snapshot != overrides.as_slice() {
+                context.workspace.save_session_frozen_tool_overrides(
+                    user_id,
+                    &record.session_id,
+                    &overrides,
+                );
+            }
+        }
+    }
     let allowed = apply_tool_overrides(allowed, &overrides, context.config, context.skills);
     Ok(finalize_tool_names(allowed))
 }

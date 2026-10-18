@@ -32,15 +32,20 @@ export component DragRow inherits Rectangle {
     in property <int> row-index: -1;
     in property <int> row-kind: -1;
     in property <string> workspace-id: "";
+    // Tooltip is attached to the row's real pointer target below. Callers can
+    // describe disclosure rows without putting a Tooltip on a visual overlay.
+    in property <string> tooltip: root.label;
     out property <bool> hover: touch.has-hover;
     callback activate();
     callback move-by(int);
     private property <bool> dragging: DragPreview.active && DragPreview.source-index == root.row-index;
-    // A row only accepts another row of its own kind, and a thread never
-    // leaves the workspace it is listed under.
+    // Workspace headers (local and cloud) form one drag group. Threads stay
+    // in their own kind and never leave the workspace they are listed under.
     private property <bool> droppable: DragPreview.active
         && root.row-index != DragPreview.source-index
-        && root.row-kind == DragPreview.source-kind
+        && ((root.row-kind == 0 || root.row-kind == 2)
+            ? (DragPreview.source-kind == 0 || DragPreview.source-kind == 2)
+            : root.row-kind == DragPreview.source-kind)
         && (root.row-kind != 1 || root.workspace-id == DragPreview.source-workspace);
     private property <bool> drop-target: root.droppable
         && DragPreview.pointer-y >= root.absolute-position.y
@@ -115,6 +120,7 @@ export component DragRow inherits Rectangle {
             }
         }
         @children
+        if root.tooltip != "" : Tooltip { text: @markdown("\{root.tooltip}"); }
     }
     // Target rows show a highlighted seam that animates from before to after.
     if root.drop-target : Rectangle {

@@ -114,7 +114,7 @@ pub(crate) fn normalize_tool_overrides(values: Vec<String>) -> Vec<String> {
     let mut output = Vec::new();
     let mut has_none = false;
     for raw in values {
-        let name = raw.trim().to_string();
+        let name = crate::tools::resolve_tool_name(raw.trim());
         if name.is_empty() || seen.contains(&name) {
             continue;
         }

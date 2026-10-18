@@ -15,7 +15,7 @@ impl Orchestrator {
             frozen.as_deref(),
             agent,
         );
-        if frozen.is_none() {
+        if frozen.as_deref() != Some(overrides.as_slice()) {
             self.workspace.save_session_frozen_tool_overrides(
                 &session.user_id,
                 &session.session_id,
