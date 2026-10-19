@@ -219,6 +219,57 @@ pub fn install(app: &MainWindow) {
     app.on_pick_git_path(|| {});
     app.on_pick_rg_path(|| {});
     let weak = app.as_weak();
+    app.on_create_model(move || {
+        let Some(app) = weak.upgrade() else { return };
+        let mut models: Vec<_> = app.get_models().iter().collect();
+        let mut key = "新模型".to_string();
+        let mut suffix = 1usize;
+        while models.iter().any(|entry| entry.key == key) {
+            key = format!("新模型{suffix}");
+            suffix += 1;
+        }
+        models.insert(
+            0,
+            ModelCard {
+                key: key.clone().into(),
+                provider: "openai_compatible".into(),
+                model: "".into(),
+                model_type: "llm".into(),
+                tool_call_mode: "function_call".into(),
+                ..Default::default()
+            },
+        );
+        store_models(&app, models);
+        crate::entity_state::restore_model(&app, &key);
+        app.set_model_creating(true);
+        app.set_model_key_draft(key.into());
+        app.set_model_provider_draft("openai_compatible".into());
+        app.set_model_name_draft("".into());
+        app.set_model_base_url_draft("".into());
+        app.set_model_token_draft("".into());
+        app.set_model_type_draft("llm".into());
+        app.set_model_tool_call_mode_draft("function_call".into());
+        app.set_status("已创建新的模型草稿 · 仅本次演示有效".into());
+    });
+    let weak = app.as_weak();
+    app.on_discard_model_draft(move || {
+        let Some(app) = weak.upgrade() else { return };
+        if !app.get_model_creating() {
+            return;
+        }
+        let selected = usize::try_from(app.get_selected_model()).ok();
+        let models: Vec<_> = app
+            .get_models()
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| Some(*index) != selected)
+            .map(|(_, entry)| entry)
+            .collect();
+        store_models(&app, models);
+        app.set_model_creating(false);
+        crate::entity_state::restore_model(&app, "");
+    });
+    let weak = app.as_weak();
     app.on_save_model(move || {
         let Some(app) = weak.upgrade() else { return };
         let key = app.get_model_key_draft().trim().to_string();

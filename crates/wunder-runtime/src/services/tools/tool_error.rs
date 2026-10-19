@@ -168,7 +168,24 @@ pub(crate) fn build_execute_command_failure_message(results: &[Value], timed_out
         .and_then(|item| item.get("returncode"))
         .and_then(Value::as_i64)
     {
-        return format!("命令退出码 {returncode}。");
+        let mut message = format!("命令退出码 {returncode}。");
+        if let Some(last) = results.last() {
+            let stderr_blank = last
+                .get("stderr")
+                .and_then(Value::as_str)
+                .map(|text| text.trim().is_empty())
+                .unwrap_or(true);
+            let stdout_has_output = last
+                .get("stdout")
+                .and_then(Value::as_str)
+                .is_some_and(|text| !text.trim().is_empty());
+            if stderr_blank && stdout_has_output {
+                message.push_str(
+                    "stdout 已有部分输出，所需信息可能已在其中，可基于它继续而不必重跑。",
+                );
+            }
+        }
+        return message;
     }
     "命令执行失败。".to_string()
 }
@@ -278,5 +295,56 @@ mod tests {
         assert!(payload["diagnostics"][0]["output"]
             .as_str()
             .is_some_and(|text| text.contains("IndentationError")));
+    }
+
+    #[test]
+    fn build_execute_command_failure_message_points_to_partial_stdout_when_stderr_blank() {
+        let message = build_execute_command_failure_message(
+            &[json!({
+                "command": "grep needle notes.txt",
+                "returncode": 1,
+                "stdout": "needle first hit\nneedle second hit\n",
+                "stderr": ""
+            })],
+            false,
+        );
+        assert!(message.contains("命令退出码 1。"));
+        assert!(message.contains("stdout 已有部分输出"));
+    }
+
+    #[test]
+    fn build_execute_command_failure_message_keeps_plain_message_when_stderr_present() {
+        let message = build_execute_command_failure_message(
+            &[json!({
+                "command": "false",
+                "returncode": 2,
+                "stdout": "partial\n",
+                "stderr": "boom\n"
+            })],
+            false,
+        );
+        assert_eq!(message, "命令退出码 2。");
+    }
+
+    #[test]
+    fn build_execute_command_failure_data_falls_back_to_stdout_when_stderr_blank() {
+        let payload = build_execute_command_failure_data(
+            &[json!({
+                "command": "grep needle notes.txt",
+                "command_index": 0,
+                "returncode": 1,
+                "stderr": "",
+                "stdout": "needle first hit\nneedle second hit\n"
+            })],
+            1,
+            false,
+            0,
+            false,
+        );
+        assert!(payload.get("stderr").is_none());
+        assert_eq!(
+            payload["stdout"],
+            json!("needle first hit\nneedle second hit")
+        );
     }
 }

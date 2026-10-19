@@ -1,6 +1,6 @@
 use crate::core::approval::{ApprovalRequestKind, ApprovalResponse};
 use std::collections::HashMap;
-use tokio::sync::{oneshot, Mutex};
+use tokio::sync::{Mutex, oneshot};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ApprovalSource {

@@ -17,7 +17,10 @@ use wunder_desktop::{
     native::{NativeCloudAgent, NativeCloudThread},
     NativeDesktop,
 };
-use wunder_server::{cloud::CloudThreadEvent, stable_core::thread_view::{ChatViewRow, ThreadViewPage}};
+use wunder_server::{
+    cloud::CloudThreadEvent,
+    stable_core::thread_view::{ChatViewRow, ThreadViewPage},
+};
 
 thread_local! {
     static CATALOG: RefCell<(Vec<NativeCloudAgent>, Vec<NativeCloudThread>)> = RefCell::new((Vec::new(), Vec::new()));
@@ -40,13 +43,17 @@ pub(crate) fn account_status(app: &MainWindow, logged_in: bool, server: &str, us
         *slot.borrow_mut() = key;
         changed
     });
-    if changed { reset_account(app); }
+    if changed {
+        reset_account(app);
+    }
 }
 
 pub(crate) fn reset_account(app: &MainWindow) {
     let was_cloud = app.get_cloud_chat_active();
     leave(app);
-    if was_cloud { crate::native_chat::prepare_external_timeline(app); }
+    if was_cloud {
+        crate::native_chat::prepare_external_timeline(app);
+    }
     ACCOUNT_GENERATION.fetch_add(1, Ordering::AcqRel);
     CATALOG_GENERATION.fetch_add(1, Ordering::AcqRel);
     CATALOG.with(|slot| *slot.borrow_mut() = (Vec::new(), Vec::new()));
@@ -66,7 +73,12 @@ mod tests {
     use super::*;
 
     fn row(round: i64, revision: i64) -> ChatViewRow {
-        ChatViewRow { root_turn_id: format!("fixture-{round}"), user_round: round, revision, ..Default::default() }
+        ChatViewRow {
+            root_turn_id: format!("fixture-{round}"),
+            user_round: round,
+            revision,
+            ..Default::default()
+        }
     }
 
     #[test]
@@ -76,8 +88,20 @@ mod tests {
         assert_eq!(rows.len(), 20);
         assert_eq!(rows.first().unwrap().user_round, 2);
         assert_eq!(rows.last().unwrap().user_round, 21);
-        assert_eq!(rows.iter().find(|row| row.user_round == 19).unwrap().revision, 2);
-        assert_eq!(rows.iter().find(|row| row.user_round == 20).unwrap().revision, 3);
+        assert_eq!(
+            rows.iter()
+                .find(|row| row.user_round == 19)
+                .unwrap()
+                .revision,
+            2
+        );
+        assert_eq!(
+            rows.iter()
+                .find(|row| row.user_round == 20)
+                .unwrap()
+                .revision,
+            3
+        );
         merge_messages(&mut rows, &[row(40, 1)], true);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].user_round, 40);
@@ -112,10 +136,14 @@ pub(crate) fn leave(app: &MainWindow) {
 
 fn save_draft(app: &MainWindow) {
     LOADED_ID.with(|id| {
-        if id.borrow().is_empty() { return; }
+        if id.borrow().is_empty() {
+            return;
+        }
         DRAFTS.with(|slot| {
             let mut drafts = slot.borrow_mut();
-            if drafts.len() >= 100 && !drafts.contains_key(id.borrow().as_str()) { drafts.clear(); }
+            if drafts.len() >= 100 && !drafts.contains_key(id.borrow().as_str()) {
+                drafts.clear();
+            }
             drafts.insert(id.borrow().clone(), app.get_draft().to_string());
         });
     });
@@ -130,9 +158,13 @@ pub(crate) fn selected_id(app: &MainWindow) -> String {
 }
 
 pub(crate) fn final_message_id(root: &str) -> String {
-    MESSAGES.with(|slot| slot.borrow().iter()
-        .find(|row| row.root_turn_id == root)
-        .map(|row| row.assistant.item_id.clone()).unwrap_or_default())
+    MESSAGES.with(|slot| {
+        slot.borrow()
+            .iter()
+            .find(|row| row.root_turn_id == root)
+            .map(|row| row.assistant.item_id.clone())
+            .unwrap_or_default()
+    })
 }
 
 fn selected_agent() -> String {
@@ -147,18 +179,31 @@ fn selected_agent() -> String {
 }
 
 fn merge_messages(messages: &mut Vec<ChatViewRow>, incoming: &[ChatViewRow], replace: bool) {
-    if replace { messages.clear(); }
+    if replace {
+        messages.clear();
+    }
     for row in incoming {
-        if let Some(existing) = messages.iter_mut().find(|old| old.root_turn_id == row.root_turn_id) {
-            if row.revision >= existing.revision { *existing = row.clone(); }
+        if let Some(existing) = messages
+            .iter_mut()
+            .find(|old| old.root_turn_id == row.root_turn_id)
+        {
+            if row.revision >= existing.revision {
+                *existing = row.clone();
+            }
         } else {
             messages.push(row.clone());
         }
     }
-    messages.sort_by(|left, right| left.user_round.cmp(&right.user_round)
-        .then_with(|| left.created_time.total_cmp(&right.created_time))
-        .then_with(|| left.root_turn_id.cmp(&right.root_turn_id)));
-    if messages.len() > 20 { let remove = messages.len() - 20; messages.drain(..remove); }
+    messages.sort_by(|left, right| {
+        left.user_round
+            .cmp(&right.user_round)
+            .then_with(|| left.created_time.total_cmp(&right.created_time))
+            .then_with(|| left.root_turn_id.cmp(&right.root_turn_id))
+    });
+    if messages.len() > 20 {
+        let remove = messages.len() - 20;
+        messages.drain(..remove);
+    }
 }
 
 fn publish_page(app: &MainWindow, page: &ThreadViewPage, replace: bool) {
@@ -173,7 +218,10 @@ fn publish_page(app: &MainWindow, page: &ThreadViewPage, replace: bool) {
         crate::native_chat::project_cloud_history(&messages, app.get_timeline())
     });
     crate::native_chat::replace_external_timeline(app, rows, replace);
-    app.set_busy(matches!(page.runtime_status.as_str(), "running" | "queued" | "pending" | "waiting_approval"));
+    app.set_busy(matches!(
+        page.runtime_status.as_str(),
+        "running" | "queued" | "pending" | "waiting_approval"
+    ));
     app.set_stopping(false);
     app.set_cloud_thread_status(page.runtime_status.clone().into());
 }
@@ -187,7 +235,11 @@ fn load(app: &MainWindow, api: Arc<NativeDesktop>) {
         crate::native_chat::prepare_external_timeline(app);
         MESSAGES.with(|slot| slot.borrow_mut().clear());
         LOADED_ID.with(|slot| *slot.borrow_mut() = id.clone());
-        app.set_draft(DRAFTS.with(|slot| slot.borrow().get(&id).cloned().unwrap_or_default()).into());
+        app.set_draft(
+            DRAFTS
+                .with(|slot| slot.borrow().get(&id).cloned().unwrap_or_default())
+                .into(),
+        );
         app.set_selected_model_key("".into());
         app.set_selected_agent_model("".into());
         app.set_reasoning_effort("default".into());
@@ -203,9 +255,15 @@ fn load(app: &MainWindow, api: Arc<NativeDesktop>) {
     std::thread::spawn(move || {
         let mut failures = 0u32;
         let result = loop {
-            if !active(generation) { return; }
+            if !active(generation) {
+                return;
+            }
             let result = api.cloud_thread_bootstrap(&id);
-            if result.as_ref().err().is_none_or(|error| !wunder_server::cloud::retryable_cloud_read(error)) {
+            if result
+                .as_ref()
+                .err()
+                .is_none_or(|error| !wunder_server::cloud::retryable_cloud_read(error))
+            {
                 break result;
             }
             failures = failures.saturating_add(1);
@@ -219,7 +277,9 @@ fn load(app: &MainWindow, api: Arc<NativeDesktop>) {
             // One reader per selection, cancellable bounded backoff. A switch
             // must not retain sleeping workers or accept an old bootstrap.
             for _ in 0..((1u64 << failures.min(5)).min(30) * 10) {
-                if !active(generation) { return; }
+                if !active(generation) {
+                    return;
+                }
                 std::thread::sleep(std::time::Duration::from_millis(100));
             }
         };
@@ -245,9 +305,22 @@ fn load(app: &MainWindow, api: Arc<NativeDesktop>) {
                 return;
             }
             WATCH.with(|watch| *watch.borrow_mut() = Some(token));
-            app.set_cloud_greeting(CATALOG.with(|catalog| catalog.borrow().0.iter()
-                .find(|agent| agent.id == view.agent_id || (view.agent_id.is_empty() && agent.id == "__default__"))
-                .map(|agent| agent.description.trim().to_string()).unwrap_or_default()).into());
+            app.set_cloud_greeting(
+                CATALOG
+                    .with(|catalog| {
+                        catalog
+                            .borrow()
+                            .0
+                            .iter()
+                            .find(|agent| {
+                                agent.id == view.agent_id
+                                    || (view.agent_id.is_empty() && agent.id == "__default__")
+                            })
+                            .map(|agent| agent.description.trim().to_string())
+                            .unwrap_or_default()
+                    })
+                    .into(),
+            );
             app.set_selected_model_key(view.model_key.into());
             app.set_reasoning_effort(view.reasoning_effort.into());
             publish_page(&app, &view.page, changed);
@@ -265,8 +338,12 @@ fn load(app: &MainWindow, api: Arc<NativeDesktop>) {
         std::thread::spawn(move || {
             for _ in 0..400 {
                 std::thread::sleep(std::time::Duration::from_millis(750));
-                if !active(generation) { return; }
-                let Ok(view) = poll_api.cloud_thread_bootstrap(&poll_id) else { continue; };
+                if !active(generation) {
+                    return;
+                }
+                let Ok(view) = poll_api.cloud_thread_bootstrap(&poll_id) else {
+                    continue;
+                };
                 let terminal = matches!(
                     view.page.runtime_status.as_str(),
                     "completed" | "failed" | "cancelled" | "canceled" | "timeout"
@@ -280,11 +357,15 @@ fn load(app: &MainWindow, api: Arc<NativeDesktop>) {
                         }
                     }
                 });
-                if terminal { return; }
+                if terminal {
+                    return;
+                }
             }
         });
         while active(generation) {
-            let Some(event) = watch.blocking_recv() else { break };
+            let Some(event) = watch.blocking_recv() else {
+                break;
+            };
             std::thread::sleep(std::time::Duration::from_millis(25));
             let mut events = vec![event];
             while events.len() < 32 {
@@ -346,22 +427,36 @@ fn refresh(app: &MainWindow, api: Arc<NativeDesktop>, preserve: Option<String>) 
             .and_then(|agents| api.cloud_threads(0).map(|threads| (agents, threads)));
         let models = api.cloud_thread_models();
         let _ = weak.upgrade_in_event_loop(move |app| {
-            if CATALOG_GENERATION.load(Ordering::Acquire) != request || !app.get_cloud_logged_in() { return; }
+            if CATALOG_GENERATION.load(Ordering::Acquire) != request || !app.get_cloud_logged_in() {
+                return;
+            }
             app.set_cloud_thread_busy(false);
             match result {
                 Ok((agents, threads)) => {
                     if let Ok(models) = models {
-                        app.set_cloud_thread_models(ModelRc::new(VecModel::from(models.into_iter().map(|key| ModelCard {
-                            key: key.clone().into(), model: key.into(), provider: "cloud".into(), is_cloud: true,
-                            ..Default::default()
-                        }).collect::<Vec<_>>())));
+                        app.set_cloud_thread_models(ModelRc::new(VecModel::from(
+                            models
+                                .into_iter()
+                                .map(|key| ModelCard {
+                                    key: key.clone().into(),
+                                    model: key.into(),
+                                    provider: "cloud".into(),
+                                    is_cloud: true,
+                                    ..Default::default()
+                                })
+                                .collect::<Vec<_>>(),
+                        )));
                     }
                     let pending = PENDING_SELECTION.with(|slot| slot.borrow_mut().take());
                     let current = selected_id(&app);
-                    let preserve = if active(selection_generation) { preserve } else { Some(current) };
-                    let wanted = pending.or(preserve).or_else(|| {
-                        app.get_cloud_chat_active().then(|| selected_id(&app))
-                    });
+                    let preserve = if active(selection_generation) {
+                        preserve
+                    } else {
+                        Some(current)
+                    };
+                    let wanted = pending
+                        .or(preserve)
+                        .or_else(|| app.get_cloud_chat_active().then(|| selected_id(&app)));
                     let selected = wanted
                         .as_deref()
                         .and_then(|id| threads.iter().position(|thread| thread.id == id))
@@ -381,7 +476,9 @@ fn refresh(app: &MainWindow, api: Arc<NativeDesktop>, preserve: Option<String>) 
                     app.set_cloud_thread_index(selected);
                     // Refreshing another row never changes the active thread.
                     if app.get_cloud_chat_active() {
-                        app.set_cloud_active_thread_id(wanted.filter(|_| selected > 0).unwrap_or_default().into());
+                        app.set_cloud_active_thread_id(
+                            wanted.filter(|_| selected > 0).unwrap_or_default().into(),
+                        );
                     }
                     crate::navigation_ui::project_sidebar(&app, None);
                     if app.get_cloud_chat_active() && active(selection_generation) {
@@ -457,14 +554,18 @@ pub(crate) fn cancel(app: &MainWindow, api: Arc<NativeDesktop>) {
 }
 
 pub(crate) fn set_model(app: &MainWindow, api: Arc<NativeDesktop>, key: String) {
-    if !is_active(app) || app.get_cloud_thread_busy() { return; }
+    if !is_active(app) || app.get_cloud_thread_busy() {
+        return;
+    }
     let id = selected_id(app);
     let generation = GENERATION.load(Ordering::Acquire);
     let weak = app.as_weak();
     std::thread::spawn(move || {
         let result = api.cloud_thread_set_model(&id, &key);
         let _ = weak.upgrade_in_event_loop(move |app| {
-            if !active(generation) || !is_active(&app) { return; }
+            if !active(generation) || !is_active(&app) {
+                return;
+            }
             match result {
                 Ok(()) => app.set_selected_model_key(key.into()),
                 Err(error) => app.set_status(format!("无法切换云端模型：{error}").into()),
@@ -474,7 +575,9 @@ pub(crate) fn set_model(app: &MainWindow, api: Arc<NativeDesktop>, key: String) 
 }
 
 pub(crate) fn set_effort(app: &MainWindow, api: Arc<NativeDesktop>, effort: String) {
-    if !is_active(app) || app.get_cloud_thread_busy() { return; }
+    if !is_active(app) || app.get_cloud_thread_busy() {
+        return;
+    }
     let id = selected_id(app);
     let generation = GENERATION.load(Ordering::Acquire);
     let previous = app.get_reasoning_effort();
@@ -482,7 +585,9 @@ pub(crate) fn set_effort(app: &MainWindow, api: Arc<NativeDesktop>, effort: Stri
     std::thread::spawn(move || {
         let result = api.cloud_thread_set_effort(&id, &effort);
         let _ = weak.upgrade_in_event_loop(move |app| {
-            if !active(generation) || !is_active(&app) { return; }
+            if !active(generation) || !is_active(&app) {
+                return;
+            }
             match result {
                 Ok(value) => app.set_reasoning_effort(value.into()),
                 Err(error) => {
@@ -502,10 +607,15 @@ pub(crate) fn rename(app: &MainWindow, api: Arc<NativeDesktop>, id: String, titl
     let account = ACCOUNT_GENERATION.load(Ordering::Acquire);
     std::thread::spawn(move || {
         let result = api.cloud_thread_rename(&id, &title);
-        let _ = weak.upgrade_in_event_loop(move |app| { if ACCOUNT_GENERATION.load(Ordering::Acquire) != account { return; } match result {
-            Ok(()) => refresh(&app, api, Some(selected_id(&app))),
-            Err(error) => app.set_status(format!("无法重命名云端线程：{error}").into()),
-        }});
+        let _ = weak.upgrade_in_event_loop(move |app| {
+            if ACCOUNT_GENERATION.load(Ordering::Acquire) != account {
+                return;
+            }
+            match result {
+                Ok(()) => refresh(&app, api, Some(selected_id(&app))),
+                Err(error) => app.set_status(format!("无法重命名云端线程：{error}").into()),
+            }
+        });
     });
 }
 
@@ -517,19 +627,24 @@ pub(crate) fn archive(app: &MainWindow, api: Arc<NativeDesktop>, id: String) {
     let weak = app.as_weak();
     std::thread::spawn(move || {
         let result = api.cloud_thread_archive(&id);
-        let _ = weak.upgrade_in_event_loop(move |app| { if ACCOUNT_GENERATION.load(Ordering::Acquire) != account { return; } match result {
-            Ok(()) => {
-                if is_active(&app) && selected_id(&app) == id {
-                    invalidate();
-                    app.set_cloud_thread_index(0);
-                    app.set_cloud_active_thread_id("".into());
-                    app.set_busy(false);
-                    crate::native_chat::replace_external_timeline(&app, Vec::new(), true);
-                }
-                refresh(&app, api, None);
+        let _ = weak.upgrade_in_event_loop(move |app| {
+            if ACCOUNT_GENERATION.load(Ordering::Acquire) != account {
+                return;
             }
-            Err(error) => app.set_status(format!("无法归档云端线程：{error}").into()),
-        }});
+            match result {
+                Ok(()) => {
+                    if is_active(&app) && selected_id(&app) == id {
+                        invalidate();
+                        app.set_cloud_thread_index(0);
+                        app.set_cloud_active_thread_id("".into());
+                        app.set_busy(false);
+                        crate::native_chat::replace_external_timeline(&app, Vec::new(), true);
+                    }
+                    refresh(&app, api, None);
+                }
+                Err(error) => app.set_status(format!("无法归档云端线程：{error}").into()),
+            }
+        });
     });
 }
 
@@ -539,7 +654,14 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
     app.on_cloud_copy_original(move |id| {
         let Some(app) = weak.upgrade() else { return };
         let root = id.strip_prefix("cloud-answer-").unwrap_or_default();
-        let Some(message) = MESSAGES.with(|slot| slot.borrow().iter().find(|row| row.root_turn_id == root).map(|row| row.assistant.clone())) else { return };
+        let Some(message) = MESSAGES.with(|slot| {
+            slot.borrow()
+                .iter()
+                .find(|row| row.root_turn_id == root)
+                .map(|row| row.assistant.clone())
+        }) else {
+            return;
+        };
         let thread = selected_id(&app);
         let generation = GENERATION.load(Ordering::Acquire);
         let weak = app.as_weak();
@@ -547,7 +669,9 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         std::thread::spawn(move || {
             let result = backend.cloud_message_text(&thread, &message);
             let _ = weak.upgrade_in_event_loop(move |app| {
-                if !active(generation) || !is_active(&app) { return; }
+                if !active(generation) || !is_active(&app) {
+                    return;
+                }
                 match result {
                     Ok(text) => app.invoke_copy_raw(text.into()),
                     Err(error) => app.set_status(format!("无法复制消息原文：{error}").into()),
@@ -590,7 +714,11 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         }
         // The workspace add button owns its target even when the previous
         // chat and directory belonged to a local workspace.
-        crate::workspace_files::set_target(&app, backend.clone(), crate::workspace_files::Target::Cloud);
+        crate::workspace_files::set_target(
+            &app,
+            backend.clone(),
+            crate::workspace_files::Target::Cloud,
+        );
         app.set_selected_workspace(-1);
         let agent = selected_agent();
         app.set_cloud_thread_busy(true);
@@ -600,7 +728,9 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         std::thread::spawn(move || {
             let result = api.cloud_thread_create(&agent, "");
             let _ = weak.upgrade_in_event_loop(move |app| {
-                if ACCOUNT_GENERATION.load(Ordering::Acquire) != account { return; }
+                if ACCOUNT_GENERATION.load(Ordering::Acquire) != account {
+                    return;
+                }
                 app.set_cloud_thread_busy(false);
                 match result {
                     Ok(thread) => {
@@ -624,8 +754,13 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
     app.on_cloud_select_thread(move |index| {
         if let Some(app) = weak.upgrade() {
             let id = CATALOG.with(|catalog| {
-                catalog.borrow().1.get(index.saturating_sub(1) as usize)
-                    .filter(|_| index > 0).map(|thread| thread.id.clone()).unwrap_or_default()
+                catalog
+                    .borrow()
+                    .1
+                    .get(index.saturating_sub(1) as usize)
+                    .filter(|_| index > 0)
+                    .map(|thread| thread.id.clone())
+                    .unwrap_or_default()
             });
             app.set_cloud_active_thread_id(id.into());
             crate::navigation_ui::project_sidebar(&app, None);

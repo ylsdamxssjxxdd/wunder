@@ -11,10 +11,11 @@ use crate::{
 use anyhow::{anyhow, Result};
 use bytes::Bytes;
 use serde_json::{json, Value};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::runtime::Runtime;
 use wunder_server::DesktopTerminalSnapshot;
 #[path = "native_trajectory.rs"]
@@ -64,6 +65,8 @@ mod catalog;
 mod cloud;
 #[path = "native_cloud_threads.rs"]
 mod cloud_threads;
+#[path = "native_external.rs"]
+mod external;
 pub use cloud_threads::{NativeCloudAgent, NativeCloudThread, NativeCloudThreadView};
 
 #[path = "native_interlink.rs"]
@@ -170,6 +173,29 @@ pub struct NativeSession {
     /// session row's `spawned_by`; `None` for locally created threads.
     pub origin: Option<String>,
 }
+
+/// One bounded thread-open snapshot. `change_cursor` is captured before the
+/// history page, so a watcher can replay every commit made while a slow disk
+/// was reading that page. Replaying an already present root is harmless; a
+/// later commit being skipped is not.
+#[derive(Debug, Clone)]
+pub struct NativeChatSnapshot {
+    pub session: NativeSession,
+    pub turns: Vec<NativeChatTurn>,
+    pub change_cursor: i64,
+}
+
+/// A short lived, bounded projection cache for thread switching.  The
+/// observer still replays changes from `change_cursor`, so this cache is only
+/// a fast first paint and never the source of truth.
+#[derive(Debug, Clone)]
+struct CachedNativeChatSnapshot {
+    snapshot: NativeChatSnapshot,
+    cached_at: Instant,
+}
+
+const CHAT_SNAPSHOT_CACHE_LIMIT: usize = 8;
+const CHAT_SNAPSHOT_CACHE_TTL: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct NativeMessage {
@@ -313,7 +339,31 @@ pub struct NativeDesktop {
     settings_lock: std::sync::Mutex<()>,
     terminal: NativeTerminal,
     instance_id: String,
-    open_threads: Arc<std::sync::Mutex<std::collections::HashMap<String, u64>>>,
+    open_threads: Arc<Mutex<HashMap<String, u64>>>,
+    /// Recent thread headers are reused when the user switches away and back.
+    /// Keeping this on the façade avoids a second HDD history decode while the
+    /// durable observer catches up from the saved cursor.
+    chat_snapshot_cache: Arc<Mutex<HashMap<String, CachedNativeChatSnapshot>>>,
+    /// Every local selection/use bumps this counter. Delayed selection cleanup
+    /// captures a value and only releases a lease if nobody returned to that
+    /// thread in the meantime.
+    lease_activity: Arc<Mutex<HashMap<String, u64>>>,
+    /// Monotonic source for activity generations. Keeping this separate from
+    /// the bounded per-open map prevents a delayed close from matching a
+    /// reopened thread merely because its old entry was removed and recreated.
+    lease_generation: Arc<AtomicU64>,
+    /// Last successful ownership confirmation. Reopening a thread during this
+    /// short healthy interval is pure in-memory work; after it expires we
+    /// verify the fencing token before trusting the cached projection.
+    lease_confirmed: Arc<Mutex<HashMap<String, Instant>>>,
+    /// Close requests issued while a model run is still active are deferred;
+    /// dropping the UI lease at that boundary made A -> B -> A fail because
+    /// the runtime execution lock correctly prevented a new owner.
+    lease_reapers: Arc<Mutex<HashMap<String, u64>>>,
+    /// Serializes short local lease transitions. SQLite's fencing protects
+    /// processes; this prevents an opener and a delayed local reaper from
+    /// observing and then independently mutating the same in-memory token.
+    lease_operations: Arc<Mutex<()>>,
     lease_heartbeat_stop: Arc<AtomicBool>,
 }
 
@@ -375,10 +425,17 @@ impl NativeDesktop {
             resolve_winpty_library(&desktop.app_dir, &settings),
         );
         let instance_id = uuid::Uuid::new_v4().simple().to_string();
-        let open_threads: Arc<std::sync::Mutex<std::collections::HashMap<String, u64>>> =
-            Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+        let open_threads: Arc<Mutex<HashMap<String, u64>>> = Arc::new(Mutex::new(HashMap::new()));
+        let chat_snapshot_cache = Arc::new(Mutex::new(HashMap::new()));
+        let lease_activity = Arc::new(Mutex::new(HashMap::new()));
+        let lease_generation = Arc::new(AtomicU64::new(0));
+        let lease_confirmed = Arc::new(Mutex::new(HashMap::new()));
+        let lease_reapers = Arc::new(Mutex::new(HashMap::new()));
+        let lease_operations = Arc::new(Mutex::new(()));
         let lease_heartbeat_stop = Arc::new(AtomicBool::new(false));
         let heartbeat_threads = Arc::clone(&open_threads);
+        let heartbeat_confirmed = Arc::clone(&lease_confirmed);
+        let heartbeat_operations = Arc::clone(&lease_operations);
         let heartbeat_stop = Arc::clone(&lease_heartbeat_stop);
         let heartbeat_storage = Arc::clone(&desktop.state.storage);
         let heartbeat_instance = instance_id.clone();
@@ -399,12 +456,20 @@ impl NativeDesktop {
                         })
                         .unwrap_or_default();
                     for (session, token) in sessions {
-                        let _ = heartbeat_storage.touch_thread_open_lease(
-                            &session,
-                            &heartbeat_instance,
-                            token,
-                            30.0,
-                        );
+                        // Keep a heartbeat from repopulating confirmation
+                        // after a close/reopen transition has retired this
+                        // snapshot's token.
+                        let Ok(_operation) = heartbeat_operations.lock() else {
+                            continue;
+                        };
+                        if heartbeat_storage
+                            .touch_thread_open_lease(&session, &heartbeat_instance, token, 30.0)
+                            .unwrap_or(false)
+                        {
+                            if let Ok(mut confirmed) = heartbeat_confirmed.lock() {
+                                confirmed.insert(session, Instant::now());
+                            }
+                        }
                     }
                 }
             })
@@ -416,6 +481,12 @@ impl NativeDesktop {
             terminal,
             instance_id,
             open_threads,
+            chat_snapshot_cache,
+            lease_activity,
+            lease_generation,
+            lease_confirmed,
+            lease_reapers,
+            lease_operations,
             lease_heartbeat_stop,
         })
     }
@@ -423,25 +494,62 @@ impl NativeDesktop {
     fn ensure_thread_open(&self, session_id: &str) -> Result<()> {
         let session_id = session_id.trim();
         anyhow::ensure!(!session_id.is_empty(), "线程不存在");
-        let mut leases = self
+        // Keep every local transition of one fencing token ordered. Without
+        // this an old idle reaper can race a second opener after both have
+        // inspected the same token, then drop the lease the opener returned.
+        let _operation = self
+            .lease_operations
+            .lock()
+            .map_err(|_| anyhow!("thread lease operation unavailable"))?;
+        let existing = self
             .open_threads
             .lock()
-            .map_err(|_| anyhow!("thread lease state unavailable"))?;
-        if let Some(&fencing_token) = leases.get(session_id) {
+            .map_err(|_| anyhow!("thread lease state unavailable"))?
+            .get(session_id)
+            .copied();
+        if let Some(fencing_token) = existing {
+            let recently_confirmed = self
+                .lease_confirmed
+                .lock()
+                .ok()
+                .and_then(|confirmed| confirmed.get(session_id).copied())
+                .is_some_and(|confirmed| confirmed.elapsed() < Duration::from_secs(20));
+            if recently_confirmed {
+                // The heartbeat refreshes durable TTLs. Returning during its
+                // healthy window avoids SQLite work on the interaction path.
+                self.mark_thread_lease_used(session_id);
+                return Ok(());
+            }
             if self.state().storage.touch_thread_open_lease(
                 session_id,
                 &self.instance_id,
                 fencing_token,
                 30.0,
             )? {
+                if let Ok(mut confirmed) = self.lease_confirmed.lock() {
+                    confirmed.insert(session_id.to_string(), Instant::now());
+                }
+                self.mark_thread_lease_used(session_id);
                 return Ok(());
             }
-            // The heartbeat can be interrupted by a stalled UI or a transient
-            // SQLite lock. Drop the dead local token and reacquire atomically;
-            // this makes reopening after a crash/self-heal transparent while
-            // still preserving fencing against another live instance.
-            leases.remove(session_id);
+            let mut leases = self
+                .open_threads
+                .lock()
+                .map_err(|_| anyhow!("thread lease state unavailable"))?;
+            if leases.get(session_id).copied() == Some(fencing_token) {
+                leases.remove(session_id);
+            }
+            if let Ok(mut confirmed) = self.lease_confirmed.lock() {
+                confirmed.remove(session_id);
+            }
+            if let Ok(mut activity) = self.lease_activity.lock() {
+                activity.remove(session_id);
+            }
         }
+        let mut leases = self
+            .open_threads
+            .lock()
+            .map_err(|_| anyhow!("thread lease state unavailable"))?;
         use wunder_server::storage::ThreadOpenLeaseStatus;
         match self.state().storage.try_acquire_thread_open_lease(
             session_id,
@@ -452,6 +560,11 @@ impl NativeDesktop {
         )? {
             ThreadOpenLeaseStatus::Acquired { fencing_token } => {
                 leases.insert(session_id.to_string(), fencing_token);
+                drop(leases);
+                if let Ok(mut confirmed) = self.lease_confirmed.lock() {
+                    confirmed.insert(session_id.to_string(), Instant::now());
+                }
+                self.mark_thread_lease_used(session_id);
                 Ok(())
             }
             ThreadOpenLeaseStatus::Busy => Err(anyhow!(
@@ -469,20 +582,163 @@ impl NativeDesktop {
         if session_id.is_empty() {
             return Ok(());
         }
-        let mut leases = self
+        let _operation = self
+            .lease_operations
+            .lock()
+            .map_err(|_| anyhow!("thread lease operation unavailable"))?;
+        let fencing_token = self
             .open_threads
             .lock()
-            .map_err(|_| anyhow!("thread lease state unavailable"))?;
-        let fencing_token = leases.get(session_id).copied();
+            .map_err(|_| anyhow!("thread lease state unavailable"))?
+            .get(session_id)
+            .copied();
         if let Some(fencing_token) = fencing_token {
             self.state().storage.release_thread_open_lease(
                 session_id,
                 &self.instance_id,
                 fencing_token,
             )?;
-            leases.remove(session_id);
+            if let Ok(mut leases) = self.open_threads.lock() {
+                if leases.get(session_id).copied() == Some(fencing_token) {
+                    leases.remove(session_id);
+                }
+            }
+            if let Ok(mut activity) = self.lease_activity.lock() {
+                activity.remove(session_id);
+            }
+            if let Ok(mut confirmed) = self.lease_confirmed.lock() {
+                confirmed.remove(session_id);
+            }
         }
         Ok(())
+    }
+
+    /// Delay a navigation-originated release briefly. If the user switches
+    /// A -> B -> A in that interval, A's activity generation changes and the
+    /// stale B cleanup becomes a no-op instead of closing the newly selected
+    /// thread underneath its observer.
+    pub fn defer_close_session(self: &Arc<Self>, session_id: &str, grace: Duration) {
+        let session_id = session_id.trim().to_string();
+        if session_id.is_empty() {
+            return;
+        }
+        let activity = self
+            .lease_activity
+            .lock()
+            .ok()
+            .and_then(|activity| activity.get(&session_id).copied());
+        let Some(activity) = activity else {
+            return;
+        };
+        let desktop = Arc::clone(self);
+        thread::spawn(move || {
+            thread::sleep(grace);
+            let unchanged = desktop
+                .lease_activity
+                .lock()
+                .map(|current| current.get(&session_id).copied() == Some(activity))
+                .unwrap_or(false);
+            if unchanged {
+                desktop.close_session_when_idle(session_id, activity);
+            }
+        });
+    }
+
+    fn mark_thread_lease_used(&self, session_id: &str) {
+        if let Ok(mut activity) = self.lease_activity.lock() {
+            let next = self
+                .lease_generation
+                .fetch_add(1, Ordering::Relaxed)
+                .wrapping_add(1);
+            activity.insert(session_id.to_string(), next);
+        }
+    }
+
+    fn close_session_when_idle(&self, session_id: String, activity: u64) {
+        let should_start = self
+            .lease_reapers
+            .lock()
+            .map(
+                |mut reapers| match reapers.insert(session_id.clone(), activity) {
+                    Some(previous) => previous != activity,
+                    None => true,
+                },
+            )
+            .unwrap_or(false);
+        if !should_start {
+            return;
+        }
+        let storage = self.state().storage.clone();
+        let open_threads = self.open_threads.clone();
+        let lease_activity = self.lease_activity.clone();
+        let lease_confirmed = self.lease_confirmed.clone();
+        let lease_reapers = self.lease_reapers.clone();
+        let lease_operations = self.lease_operations.clone();
+        let instance_id = self.instance_id.clone();
+        let user_id = self.user_id().to_string();
+        thread::spawn(move || {
+            loop {
+                let current_activity = lease_activity
+                    .lock()
+                    .ok()
+                    .and_then(|current| current.get(&session_id).copied());
+                let current_reaper = lease_reapers
+                    .lock()
+                    .ok()
+                    .and_then(|current| current.get(&session_id).copied());
+                if current_activity != Some(activity) || current_reaper != Some(activity) {
+                    break;
+                }
+                let still_owned = open_threads
+                    .lock()
+                    .map(|leases| leases.get(&session_id).copied())
+                    .unwrap_or(None);
+                let Some(fencing_token) = still_owned else {
+                    break;
+                };
+                let running = storage
+                    .list_session_locks_by_user(&user_id)
+                    .map(|locks| locks.iter().any(|lock| lock.session_id == session_id))
+                    .unwrap_or(true);
+                if running {
+                    thread::sleep(Duration::from_secs(1));
+                    continue;
+                }
+                // Re-check activity under the same process-local transition
+                // lock used by open/close. An opener either advances the
+                // generation before we enter, or waits until the durable
+                // release finishes and acquires a fresh fencing token.
+                let Ok(_operation) = lease_operations.lock() else {
+                    break;
+                };
+                let Ok(activity_guard) = lease_activity.lock() else {
+                    break;
+                };
+                if activity_guard.get(&session_id).copied() != Some(activity) {
+                    break;
+                }
+                if let Ok(mut leases) = open_threads.lock() {
+                    if leases.get(&session_id).copied() == Some(fencing_token) {
+                        leases.remove(&session_id);
+                        if let Ok(mut confirmed) = lease_confirmed.lock() {
+                            confirmed.remove(&session_id);
+                        }
+                        let _ = storage.release_thread_open_lease(
+                            &session_id,
+                            &instance_id,
+                            fencing_token,
+                        );
+                    }
+                }
+                drop(activity_guard);
+                break;
+            }
+            if let Ok(mut active) = lease_reapers.lock() {
+                if active.get(&session_id).copied() == Some(activity) {
+                    active.remove(&session_id);
+                }
+            }
+        });
     }
 
     pub fn user_id(&self) -> &str {
@@ -739,10 +995,77 @@ impl NativeDesktop {
             .user_store
             .get_chat_session(&self.desktop.user_id, cleaned)?
             .ok_or_else(|| anyhow!("chat session not found"))?;
-        self.ensure_thread_open(cleaned)?;
         let turns = self.load_chat_turns(cleaned)?;
         let workspaces = self.workspace_lookup();
         Ok((self.session_with_stats(record, &workspaces), turns))
+    }
+
+    /// Bounded, detail-free history for thread selection. Full rounds and
+    /// tool output stay behind `chat_process_page`, which is invoked only
+    /// after the work-process disclosure is opened.
+    pub fn load_chat_headers(&self, session_id: &str) -> Result<Vec<NativeChatTurn>> {
+        chat_turns::load_turn_headers(self.state(), self.user_id(), session_id)
+    }
+
+    /// Acquire the local open lease, then take the compact initial history and
+    /// its replay cursor in one worker-owned sequence. The cursor deliberately
+    /// precedes the history page: writes which race a mechanical-disk read are
+    /// replayed through the passive watcher instead of being lost between two
+    /// otherwise independent façade calls.
+    pub fn open_chat_snapshot(&self, session_id: &str) -> Result<NativeChatSnapshot> {
+        let session_id = session_id.trim();
+        self.ensure_thread_open(session_id)?;
+        if let Some(snapshot) = self.cached_chat_snapshot(session_id) {
+            return Ok(snapshot);
+        }
+        let record = self
+            .state()
+            .user_store
+            .get_chat_session(self.user_id(), session_id)?
+            .ok_or_else(|| anyhow!("chat session not found"))?;
+        let workspaces = self.workspace_lookup();
+        let session = self.session_with_stats(record, &workspaces);
+        let change_cursor = self
+            .state()
+            .storage
+            .latest_thread_change_seq_by_session(session_id)?;
+        let turns = self.load_chat_headers(session_id)?;
+        let snapshot = NativeChatSnapshot {
+            session,
+            turns,
+            change_cursor,
+        };
+        self.store_chat_snapshot(session_id, snapshot.clone());
+        Ok(snapshot)
+    }
+
+    fn cached_chat_snapshot(&self, session_id: &str) -> Option<NativeChatSnapshot> {
+        let mut cache = self.chat_snapshot_cache.lock().ok()?;
+        cache.retain(|_, entry| entry.cached_at.elapsed() <= CHAT_SNAPSHOT_CACHE_TTL);
+        cache.get(session_id).map(|entry| entry.snapshot.clone())
+    }
+
+    fn store_chat_snapshot(&self, session_id: &str, snapshot: NativeChatSnapshot) {
+        let Ok(mut cache) = self.chat_snapshot_cache.lock() else {
+            return;
+        };
+        cache.retain(|_, entry| entry.cached_at.elapsed() <= CHAT_SNAPSHOT_CACHE_TTL);
+        if !cache.contains_key(session_id) && cache.len() >= CHAT_SNAPSHOT_CACHE_LIMIT {
+            if let Some(oldest) = cache
+                .iter()
+                .min_by_key(|(_, entry)| entry.cached_at)
+                .map(|(id, _)| id.clone())
+            {
+                cache.remove(&oldest);
+            }
+        }
+        cache.insert(
+            session_id.to_string(),
+            CachedNativeChatSnapshot {
+                snapshot,
+                cached_at: Instant::now(),
+            },
+        );
     }
 
     /// Create a thread in the given workspace (or the default workspace when
@@ -1077,6 +1400,74 @@ impl Drop for NativeDesktop {
                 fencing_token,
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod thread_switch_tests {
+    use super::*;
+
+    fn start_isolated() -> NativeDesktop {
+        let directory = tempfile::tempdir().expect("temporary desktop root");
+        let config = directory.path().join("runtime/config");
+        std::fs::create_dir_all(&config).expect("config directory");
+        std::fs::write(config.join("wunder.yaml"), "{}\n").expect("runtime config");
+        let settings = serde_json::json!({
+            "workspace_root": "", "desktop_token": "", "updated_at": 0,
+            "lan_mesh": {"enabled": false},
+            "llm": {"default": "test-model", "models": {
+                "test-model": {"provider": "openai", "model": "test-model", "model_type": "llm",
+                               "base_url": "http://127.0.0.1:9/v1", "timeout_s": 5,
+                               "support_vision": false}
+            }}
+        });
+        std::fs::write(
+            config.join("desktop.settings.json"),
+            serde_json::to_vec(&settings).expect("settings json"),
+        )
+        .expect("desktop settings");
+        let mut args = DesktopArgs::native_defaults();
+        args.temp_root = Some(
+            directory
+                .path()
+                .join("runtime")
+                .canonicalize()
+                .expect("runtime root"),
+        );
+        args.workspace = Some(directory.path().join("workspace"));
+        // The runtime keeps SQLite alive after this helper returns.
+        std::mem::forget(directory);
+        NativeDesktop::start_with_args(args).expect("isolated desktop")
+    }
+
+    #[test]
+    fn reopened_local_thread_reuses_lease_and_header_snapshot() {
+        let desktop = Arc::new(start_isolated());
+        let session = desktop.create_session(None).expect("session");
+        let first = desktop.open_chat_snapshot(&session.id).expect("first open");
+        desktop.defer_close_session(&session.id, Duration::from_millis(10));
+        let second = desktop.open_chat_snapshot(&session.id).expect("reopen");
+        assert_eq!(first.session.id, second.session.id);
+        assert_eq!(first.change_cursor, second.change_cursor);
+        std::thread::sleep(Duration::from_millis(30));
+        assert!(
+            desktop
+                .open_threads
+                .lock()
+                .expect("lease map")
+                .contains_key(&session.id),
+            "a stale delayed close must not release a thread selected again"
+        );
+        desktop.defer_close_session(&session.id, Duration::from_millis(10));
+        std::thread::sleep(Duration::from_millis(30));
+        assert!(
+            !desktop
+                .open_threads
+                .lock()
+                .expect("lease map")
+                .contains_key(&session.id),
+            "the current delayed close releases an idle thread after the grace window"
+        );
     }
 }
 

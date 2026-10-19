@@ -541,7 +541,7 @@ struct CommandRunResult {
 
 pub(crate) fn compact_command_result_for_model(item: &Value) -> Value {
     let output_meta = item.get("output_meta").and_then(Value::as_object);
-    json!({
+    let mut compacted = json!({
         "command": item.get("command").cloned().unwrap_or(Value::Null),
         "command_index": item.get("command_index").cloned().unwrap_or(Value::Null),
         "command_session_id": item.get("command_session_id").cloned().unwrap_or(Value::Null),
@@ -560,7 +560,11 @@ pub(crate) fn compact_command_result_for_model(item: &Value) -> Value {
             .and_then(|meta| meta.get("omitted_bytes"))
             .cloned()
             .unwrap_or(Value::Null),
-    })
+    });
+    if let Some(warning) = item.get("warning").filter(|value| !value.is_null()) {
+        compacted["warning"] = warning.clone();
+    }
+    compacted
 }
 
 fn compact_command_results_for_model(items: &[Value]) -> Vec<Value> {
@@ -2131,7 +2135,7 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
         if command_truncated {
             guarded_truncated_commands = guarded_truncated_commands.saturating_add(1);
         }
-        results.push(json!({
+        let mut result_entry = json!({
             "command": command,
             "command_index": command_index,
             "command_session_id": run.command_session_id,
@@ -2145,7 +2149,14 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
                 "stdout": run.stdout_capture.to_json(),
                 "stderr": run.stderr_capture.to_json(),
             },
-        }));
+        });
+        if run.returncode == 0 && !run.stderr.trim().is_empty() {
+            result_entry["warning"] = Value::String(
+                "退出码为 0 但 stderr 非空；若命令包含管道，PowerShell/Cmd 下中间命令的失败可能不影响退出码，请检查 stderr 确认结果可信。"
+                    .to_string(),
+            );
+        }
+        results.push(result_entry);
         if run.running {
             context.workspace.mark_tree_dirty(context.workspace_id);
             let guidance = i18n::t("tool.exec.background_next_step");

@@ -33,8 +33,8 @@ pub fn init_process_dpi_awareness() {
         let _ = SetProcessDPIAware();
     });
 
-    unsafe fn load_user32_set_process_dpi_awareness_context(
-    ) -> Option<SetProcessDpiAwarenessContextFn> {
+    unsafe fn load_user32_set_process_dpi_awareness_context()
+    -> Option<SetProcessDpiAwarenessContextFn> {
         let module = load_library(wide_null("user32.dll").as_slice());
         if module == 0 {
             return None;

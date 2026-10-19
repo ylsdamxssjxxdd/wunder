@@ -2508,9 +2508,9 @@ fn project_timeline(app: &MainWindow, state: &State, model: &SnapshotModel, text
         // Aggregate overview tiles have no stable source record. Keep them at
         // their normal overview opacity while a concrete record is focused;
         // only spans tied to a real record participate in focus dimming.
-        let outside = focused_records.as_ref().is_some_and(|focused| {
-            base.record != usize::MAX && !focused.contains(&base.record)
-        });
+        let outside = focused_records
+            .as_ref()
+            .is_some_and(|focused| base.record != usize::MAX && !focused.contains(&base.record));
         if aggregate && !model.overview_exact {
             let overlaps = visible_detail_ranges.iter().any(
                 |(detail_start, detail_end, sequence_start, sequence_end)| {
@@ -3184,7 +3184,10 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                     return true;
                 };
                 let mut state = current_edge.borrow_mut();
-                if state.session != session || state.cloud != cloud || state.generation != generation {
+                if state.session != session
+                    || state.cloud != cloud
+                    || state.generation != generation
+                {
                     return true;
                 }
                 match result {
@@ -3239,7 +3242,12 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
             if let Some(app) = weak_edge.upgrade() {
                 project_history_hint(&app, &state);
             }
-            (state.session.clone(), state.cloud, state.generation, state.next_before)
+            (
+                state.session.clone(),
+                state.cloud,
+                state.generation,
+                state.next_before,
+            )
         };
         let (tx, rx) = sync_channel(1);
         let backend = backend_edge.clone();
@@ -3363,7 +3371,10 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
             let Some(app) = weak.upgrade() else {
                 return true;
             };
-            if current.borrow().session != session || current.borrow().cloud != cloud || current.borrow().generation != generation {
+            if current.borrow().session != session
+                || current.borrow().cloud != cloud
+                || current.borrow().generation != generation
+            {
                 return true;
             }
             match result {
@@ -3628,7 +3639,10 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                 return true;
             };
             let state = current_done.borrow();
-            if state.session != session || state.cloud != cloud || state.search_generation != generation {
+            if state.session != session
+                || state.cloud != cloud
+                || state.search_generation != generation
+            {
                 return true;
             }
             match result {
@@ -3667,7 +3681,10 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                         .unwrap_or(false);
                     drop(state);
                     let mut state = current_done.borrow_mut();
-                    if state.session != session || state.cloud != cloud || state.search_generation != generation {
+                    if state.session != session
+                        || state.cloud != cloud
+                        || state.search_generation != generation
+                    {
                         return true;
                     }
                     state.search_hits = hits;
@@ -3758,7 +3775,12 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
             let Some(app) = weak_done.upgrade() else {
                 return true;
             };
-            if current_done.borrow().session != session || current_done.borrow().cloud != cloud || current_done.borrow().search_generation != generation { return true; }
+            if current_done.borrow().session != session
+                || current_done.borrow().cloud != cloud
+                || current_done.borrow().search_generation != generation
+            {
+                return true;
+            }
             let Ok(page) = result else {
                 app.set_traj_search_hint(
                     if app.global::<I18n>().get_zh() {
@@ -3771,7 +3793,10 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                 return true;
             };
             let mut state = current_done.borrow_mut();
-            if state.session != session || state.cloud != cloud || state.search_generation != generation {
+            if state.session != session
+                || state.cloud != cloud
+                || state.search_generation != generation
+            {
                 return true;
             }
             state.search_text = page
@@ -3815,7 +3840,10 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
             };
             if let Some(app) = weak_done.upgrade() {
                 match result {
-                    Ok(()) => app.set_status(format!("线程日志已导出：{path}").into()),
+                    Ok(()) => {
+                        app.set_status(format!("线程日志已导出：{path}").into());
+                        crate::native_pages::show_toast(&app, format!("线程日志已导出：{path}"), 1);
+                    }
                     Err(error) => app.set_status(format!("导出线程日志失败：{error}").into()),
                 }
             }

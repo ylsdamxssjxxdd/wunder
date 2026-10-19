@@ -1,6 +1,7 @@
 use std::ffi::{c_void, OsString};
 use std::os::windows::prelude::OsStringExt;
 use std::ptr::null_mut;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use windows_sys::Win32::Foundation::{POINT, RECT};
 use windows_sys::Win32::Globalization::HIMC;
@@ -10,7 +11,9 @@ use windows_sys::Win32::UI::Input::Ime::{
     ATTR_TARGET_NOTCONVERTED, CANDIDATEFORM, CFS_EXCLUDE, CFS_POINT, COMPOSITIONFORM, GCS_COMPATTR,
     GCS_COMPSTR, GCS_CURSORPOS, GCS_RESULTSTR, IACE_CHILDREN, IACE_DEFAULT,
 };
-use windows_sys::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_IMMENABLED};
+use windows_sys::Win32::UI::WindowsAndMessaging::{
+    GetSystemMetrics, NID_READY, SM_DIGITIZER, SM_IMMENABLED,
+};
 
 use crate::dpi::{Position, Size};
 use crate::platform::windows::HWND;
@@ -133,14 +136,66 @@ impl ImeContext {
     }
 
     pub unsafe fn set_ime_allowed(hwnd: HWND, allowed: bool) {
-        if !unsafe { ImeContext::system_has_ime() } {
-            return;
-        }
-
         if allowed {
+            // The on-screen keyboard is independent from the legacy IMM
+            // context. Try it even on installations where IMM reports no
+            // active IME, then keep the normal association call conditional.
+            Self::show_touch_keyboard_if_available();
+            if !unsafe { ImeContext::system_has_ime() } {
+                return;
+            }
             unsafe { ImmAssociateContextEx(hwnd, 0, IACE_DEFAULT) };
         } else {
+            if !unsafe { ImeContext::system_has_ime() } {
+                TABTIP_STARTED.store(false, Ordering::Release);
+                return;
+            }
             unsafe { ImmAssociateContextEx(hwnd, 0, IACE_CHILDREN) };
+            TABTIP_STARTED.store(false, Ordering::Release);
+        }
+    }
+
+    /// Ask the Windows Tablet PC Input Panel to show after a text control gets
+    /// focus.  This is deliberately limited to systems reporting an attached
+    /// digitizer, so keyboard-only desktops never spawn a helper process.
+    fn show_touch_keyboard_if_available() {
+        if TABTIP_STARTED.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        unsafe {
+            if GetSystemMetrics(SM_DIGITIZER) as u32 & NID_READY == 0 {
+                TABTIP_STARTED.store(false, Ordering::Release);
+                return;
+            }
+        }
+
+        let mut candidates = Vec::with_capacity(4);
+        for variable in ["CommonProgramFiles", "CommonProgramFiles(x86)"] {
+            if let Ok(root) = std::env::var(variable) {
+                candidates
+                    .push(std::path::PathBuf::from(root).join("microsoft shared\\ink\\TabTip.exe"));
+            }
+        }
+        candidates.push(std::path::PathBuf::from(
+            r"C:\Program Files\Common Files\microsoft shared\ink\TabTip.exe",
+        ));
+        candidates.push(std::path::PathBuf::from(
+            r"C:\Program Files (x86)\Common Files\microsoft shared\ink\TabTip.exe",
+        ));
+
+        for path in candidates {
+            if path.is_file() {
+                if std::process::Command::new(path).spawn().is_err() {
+                    TABTIP_STARTED.store(false, Ordering::Release);
+                }
+                return;
+            }
+        }
+
+        // On newer Windows releases TabTip can be resolved from the app
+        // execution alias even when the legacy path is not present.
+        if std::process::Command::new("TabTip.exe").spawn().is_err() {
+            TABTIP_STARTED.store(false, Ordering::Release);
         }
     }
 
@@ -148,6 +203,8 @@ impl ImeContext {
         unsafe { GetSystemMetrics(SM_IMMENABLED) != 0 }
     }
 }
+
+static TABTIP_STARTED: AtomicBool = AtomicBool::new(false);
 
 impl Drop for ImeContext {
     fn drop(&mut self) {

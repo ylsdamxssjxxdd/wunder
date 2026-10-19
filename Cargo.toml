@@ -5,6 +5,7 @@ members = [
   "crates/wunder-server",
   "crates/wunder-cli",
   "crates/wunder-desktop",
+  "crates/wunder-egui",
 ]
 default-members = ["crates/wunder-server"]
 resolver = "2"
@@ -116,3 +117,9 @@ incremental = false
 # builds emit a DLL whose link fails on missing DW2 unwind symbols with
 # rust-lld, and desktop/CLI would otherwise compile different html2md code.
 html2md = { path = "frontend-slint/vendor/html2md-0.2.15" }
+# arboard uses a Windows 8 PathCch import for an operation that is implemented
+# locally here, so the Win7 egui release can retain clipboard file-drop support.
+arboard = { path = "crates/wunder-egui/vendor/arboard-3.7.0-win7" }
+# Win7 IME compatibility: the stock winit backend can forward a legacy IME
+# WM_CHAR twice alongside the authoritative WM_IME_COMPOSITION commit.
+winit = { path = "crates/wunder-egui/vendor/winit-0.30.13-win7" }

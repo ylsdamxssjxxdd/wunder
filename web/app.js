@@ -76,7 +76,7 @@ import {
 import { applyAuthHeaders, getAuthScope, initAdminAuth } from "./modules/admin-auth.js?v=20261017-04";
 
 import { getCurrentLanguage, setLanguage, t } from "./modules/i18n.js?v=20261015-06";
-import { initWunderModelPanel, toggleWunderModelPanel } from "./modules/wunder-model.js?v=20261018-07";
+import { initWunderModelPanel, toggleWunderModelPanel } from "./modules/wunder-model.js?v=20261019-34";
 
 
 
@@ -183,6 +183,12 @@ const panelMap = {
   docsSite: { panel: elements.docsSitePanel, nav: elements.navDocsSite },
 
 };
+
+const panelEntries = Object.entries(panelMap);
+const panelNavButtons = new Set(
+  panelEntries.map(([, entry]) => entry.nav).filter(Boolean)
+);
+const contentElement = document.querySelector(".content");
 
 const TOOL_MANAGER_PANELS = new Set(["builtin", "mcp", "knowledge", "skills", "toolVisibility"]);
 
@@ -300,24 +306,14 @@ const switchPanel = (panel) => {
     return;
   }
 
-  const previousPanel = state.runtime.activePanel;
-  const navButtons = new Set();
-
-  Object.values(panelMap).forEach((entry) => {
-    if (entry.nav) {
-      navButtons.add(entry.nav);
-    }
-  });
-
-  Object.keys(panelMap).forEach((key) => {
-    const entry = panelMap[key];
+  panelEntries.forEach(([key, entry]) => {
     const isActive = key === panel;
     if (entry.panel) {
       entry.panel.classList.toggle("active", isActive);
     }
   });
 
-  navButtons.forEach((button) => button.classList.remove("active"));
+  panelNavButtons.forEach((button) => button.classList.remove("active"));
   const activeNav = panelMap[panel].nav;
   if (activeNav) {
     activeNav.classList.add("active");
@@ -326,7 +322,7 @@ const switchPanel = (panel) => {
   updateNavGroupState();
 
   state.runtime.activePanel = panel;
-  document.querySelector(".content")?.classList.toggle("wunder-model-content", panel === "wunderModel");
+  contentElement?.classList.toggle("wunder-model-content", panel === "wunderModel");
   toggleWunderModelPanel(panel === "wunderModel");
   syncToolManagerShortcutState(panel);
 
@@ -1113,7 +1109,10 @@ const bootstrap = async () => {
   await initAdminAuth();
   applyAuthScopeVisibility();
   loadAdminDefaults({ silent: true }).catch(() => {});
-  switchPanel("wunderModel");
+  switchPanel("monitor");
+  loadMonitorData()
+    .then(() => { state.panelLoaded.monitor = true; })
+    .catch((error) => appendLog(t("app.panelLoadFailed", { panel: t("panel.monitor"), message: error.message })));
   expandActiveNavGroupOnly();
 
   loadWorkspace();

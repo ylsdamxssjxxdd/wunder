@@ -93,7 +93,11 @@ case "${mode}" in
       run_binary
     fi
 
-    cargo build --release -p wunder-server --bin wunder-server --features "${server_features}"
+    # A source-mounted compose deployment must be able to resolve dependencies
+    # introduced by a newer Cargo.lock. Cargo uses its cache first and fetches
+    # only a missing package; forcing --offline here made a normal update loop
+    # forever when the mounted cache did not yet contain that package.
+    CARGO_NET_OFFLINE=false cargo build --locked --release -p wunder-server --bin wunder-server --features "${server_features}"
     printf '%s' "${server_features}" > "${feature_stamp}"
     run_binary
     ;;

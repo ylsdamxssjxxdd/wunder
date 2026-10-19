@@ -10,6 +10,88 @@ const MAX_INPUT_BYTES: usize = 16_384;
 /// sending messages behave like the native path without a runtime.
 pub fn install(app: &MainWindow) {
     crate::demo_entities::install(app);
+    // Demo data is opt-in. Production MainWindow starts with empty models so
+    // the first native frame cannot show a fabricated running thread.
+    app.set_chat_loading(false);
+    app.set_connected(true);
+    app.set_status("本地演示".into());
+    app.set_selected_workspace(0);
+    app.set_workspaces(ModelRc::new(VecModel::from(vec![
+        crate::WorkspaceCard {
+            workspace_id: "demo-workspace".into(),
+            name: "演示工作区".into(),
+            icon: "folder".into(),
+            color: "blue".into(),
+            root_path: "示例/项目".into(),
+            thread_count: 2,
+            expanded: true,
+            selected: true,
+        },
+        crate::WorkspaceCard {
+            workspace_id: "demo-reference".into(),
+            name: "演示资料".into(),
+            icon: "coffee".into(),
+            color: "orange".into(),
+            root_path: "示例/资料".into(),
+            thread_count: 1,
+            expanded: true,
+            selected: false,
+        },
+    ])));
+    app.set_sidebar_rows(ModelRc::new(VecModel::from(vec![
+        crate::SidebarRow {
+            kind: 0,
+            workspace_id: "demo-workspace".into(),
+            name: "演示工作区".into(),
+            icon: "folder".into(),
+            color: "blue".into(),
+            thread_count: 2,
+            expanded: true,
+            selected: true,
+            ..Default::default()
+        },
+        crate::SidebarRow {
+            kind: 1,
+            workspace_id: "demo-workspace".into(),
+            thread_id: "t1".into(),
+            title: "检查示例文件".into(),
+            status: "done".into(),
+            active: true,
+            payload: 0,
+            archivable: true,
+            ..Default::default()
+        },
+        crate::SidebarRow {
+            kind: 1,
+            workspace_id: "demo-workspace".into(),
+            thread_id: "t2".into(),
+            title: "整理示例内容".into(),
+            status: "idle".into(),
+            payload: 1,
+            archivable: true,
+            ..Default::default()
+        },
+        crate::SidebarRow {
+            kind: 0,
+            workspace_id: "demo-reference".into(),
+            name: "演示资料".into(),
+            icon: "coffee".into(),
+            color: "orange".into(),
+            thread_count: 1,
+            expanded: true,
+            ..Default::default()
+        },
+        crate::SidebarRow {
+            kind: 1,
+            workspace_id: "demo-reference".into(),
+            thread_id: "t3".into(),
+            title: "读取示例资料".into(),
+            status: "running".into(),
+            payload: 2,
+            origin: "device:demo".into(),
+            ..Default::default()
+        },
+    ])));
     // Keep the preview representative of a live target without making the
     // production window fabricate a target before the backend has one.
     app.set_goal_visible(true);

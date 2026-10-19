@@ -589,6 +589,16 @@ pub fn tool_card_visual(name: &str, description: &str, category: &str) -> Abilit
             tone: "mcp",
         };
     }
+    // A skill is represented as a readable, reusable instruction package.
+    // Its category is authoritative: name keywords such as "网页" or
+    // "气象" describe the skill subject and must not turn it into a browser
+    // or search tool in the settings catalogue.
+    if kind_skill {
+        return AbilityVisual {
+            icon: "book",
+            tone: "skill",
+        };
+    }
     let mut text = normalize(name);
     for part in [description, category] {
         let part = normalize(part);
@@ -696,6 +706,10 @@ mod tests {
         assert_eq!((mcp.icon, mcp.tone), ("plug", "mcp"));
         let skill = tool_card_visual("写作技能", "长文工作流", "技能");
         assert_eq!((skill.icon, skill.tone), ("book", "skill"));
+        for name in ["3D网页", "技能创建器", "通用气象知识"] {
+            let skill = tool_card_visual(name, "", "技能");
+            assert_eq!((skill.icon, skill.tone), ("book", "skill"), "{name}");
+        }
         let kb = tool_card_visual("产品知识库", "文档检索", "知识库");
         assert_eq!((kb.icon, kb.tone), ("database", "knowledge"));
         let term = tool_card_visual("执行命令", "运行 shell 命令", "内置工具");

@@ -22,6 +22,7 @@ pub mod path_utils;
 pub mod process_file_lock;
 pub mod python_runtime;
 pub mod repo_assets;
+pub(crate) mod retry;
 pub mod runtime_metrics;
 pub mod runtime_tuning;
 pub mod rustls_provider;

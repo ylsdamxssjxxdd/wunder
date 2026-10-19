@@ -11,7 +11,7 @@ import { WorkflowDetail } from "workflow_detail.slint";
 import { ToolIcons } from "tool_icons.slint";
 import { ProcessStatusIcon } from "status_icon.slint";
 import { ToolProcess } from "tool_process.slint";
-import { ScrollView } from "std-widgets.slint";
+import { ScrollView, Spinner } from "std-widgets.slint";
 import { ActivityCard, ActivityWeek, ActivityMonth } from "activity_card.slint";
 
 // Presentation only: greetings never enter the transcript or its row indices.
@@ -788,6 +788,8 @@ export component TimelineRowView inherits Rectangle {
 export component TimelineView inherits Rectangle {
     in property <[TimelineRow]> rows;
     in property <string> greeting;
+    in property <bool> loading: false;
+    in property <string> loading-text: I18n.st_runtime_loading;
     in property <bool> greeting-loading: false;
     in property <bool> show-activity: false;
     in property <[ActivityWeek]> activity-sessions;
@@ -895,7 +897,21 @@ export component TimelineView inherits Rectangle {
         rows-column := VerticalLayout {
             width: root.column-width;
             x: (rows-scroll.visible-width - root.column-width) / 2;
-            spacing: 0px; alignment: root.show-activity ? center : start;
+            spacing: 0px; alignment: root.show-activity || root.loading ? center : start;
+            if root.loading : Rectangle {
+                height: 76px;
+                HorizontalLayout {
+                    alignment: center;
+                    spacing: Theme.space-2;
+                    Spinner { width: 18px; height: 18px; }
+                    Text {
+                        text: root.loading-text;
+                        color: Theme.muted;
+                        font-size: Theme.font-sm;
+                        vertical-alignment: center;
+                    }
+                }
+            }
             if root.show-activity : ActivityCard {
                 sessions: root.activity-sessions;
                 credits: root.activity-credits;
@@ -903,7 +919,7 @@ export component TimelineView inherits Rectangle {
                 tab <=> root.activity-tab;
             }
             if root.show-activity : Rectangle { height: 18px; }
-            ChatGreeting {
+            if !root.loading : ChatGreeting {
                 text: root.greeting;
                 loading: root.greeting-loading;
                 preview => { root.preview-prompt(); }

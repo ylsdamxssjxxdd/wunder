@@ -707,6 +707,80 @@ button.messenger-sidebar-workspace-row {
   flex-shrink: 0;
 }
 
+.workspace-files-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 4px;
+  min-height: 30px;
+  padding: 0 var(--mz-sidebar-padding) 4px;
+  border-bottom: 1px solid var(--mz-border);
+  background: var(--mz-surface);
+}
+
+.workspace-files-upload-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  border: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.workspace-files-action {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 24px;
+  padding: 3px 7px;
+  border: 1px solid var(--mz-border-strong);
+  border-radius: var(--mz-radius-tag);
+  color: var(--mz-text-secondary);
+  background: var(--mz-surface);
+  font: inherit;
+  font-size: var(--mz-font-xs);
+  line-height: 1;
+  cursor: pointer;
+}
+
+.workspace-files-action:hover:not(:disabled) {
+  border-color: var(--mz-primary);
+  color: var(--mz-primary);
+  background: var(--mz-primary-tint);
+}
+
+.workspace-files-action:focus-visible {
+  outline: 2px solid var(--mz-primary);
+  outline-offset: 1px;
+}
+
+.workspace-files-action:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.workspace-files-action--primary {
+  border-color: var(--mz-primary);
+  color: #fff;
+  background: var(--mz-primary);
+}
+
+.workspace-files-action--primary:hover:not(:disabled) {
+  color: #fff;
+  background: var(--mz-primary-hover, #b95739);
+}
+
+.workspace-files-action--icon {
+  flex: 0 0 25px;
+  width: 25px;
+  padding: 3px;
+}
+
 
 .workspace-files-selection {
   display: flex;

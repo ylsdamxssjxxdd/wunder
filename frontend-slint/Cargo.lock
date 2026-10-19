@@ -7540,7 +7540,6 @@ dependencies = [
  "parley",
  "png",
  "pulldown-cmark 0.10.3",
- "raw-window-handle",
  "resvg",
  "serde",
  "serde_json",

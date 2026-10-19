@@ -222,6 +222,7 @@ const VIDEO_MIME_TYPES: Record<string, string> = {
 
 export type WorkspaceResourcePreviewKind =
   | 'image'
+  | 'html'
   | 'svg'
   | 'pdf'
   | 'audio'
@@ -263,6 +264,7 @@ export const resolveWorkspaceResourceMimeType = (
   kind: WorkspaceResourcePreviewKind,
   extension = ''
 ): string => {
+  if (kind === 'html') return 'text/html';
   if (kind === 'svg') return IMAGE_MIME_TYPES.svg;
   if (kind === 'image') return IMAGE_MIME_TYPES[extension] || '';
   if (kind === 'audio') return AUDIO_MIME_TYPES[extension] || '';

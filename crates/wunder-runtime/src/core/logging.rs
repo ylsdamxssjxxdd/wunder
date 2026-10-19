@@ -12,15 +12,15 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::{Duration, SystemTime};
 use tracing::field::{Field, Visit};
-use tracing::{error, info, warn, Event, Level, Subscriber};
+use tracing::{Event, Level, Subscriber, error, info, warn};
 use tracing_appender::non_blocking::WorkerGuard;
+use tracing_subscriber::fmt::FmtContext;
 use tracing_subscriber::fmt::format::{FormatEvent, FormatFields, Writer};
 use tracing_subscriber::fmt::time::FormatTime;
-use tracing_subscriber::fmt::FmtContext;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::util::SubscriberInitExt;
-use tracing_subscriber::{fmt, EnvFilter};
+use tracing_subscriber::{EnvFilter, fmt};
 
 const DEFAULT_LOG_LEVEL: &str = "info";
 const DEFAULT_SERVER_LOG_DIR: &str = "./config/data/logs/server";

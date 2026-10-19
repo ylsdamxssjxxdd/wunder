@@ -50,7 +50,6 @@ mod tray;
 mod turn_stats;
 mod workspace_files;
 mod workspace_ui;
-mod native;
 
 static STARTUP_BOOT: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
 
@@ -66,6 +65,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let first_argument = arguments.next();
     let app = MainWindow::new()?;
     startup_log("main_window_new", startup_boot);
+    install_composer_popover_dismissal(&app);
     install_first_frame_probe(startup_boot);
     let close_weak = app.as_weak();
     app.window().on_close_requested(move || {
@@ -124,7 +124,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut args = wunder_desktop::args::DesktopArgs::native_defaults();
         args.temp_root = Some(directory.join("runtime").canonicalize()?);
         let restoring = first_argument.as_deref() == Some(std::ffi::OsStr::new("--native-restore"));
-        let reasoning = first_argument.as_deref() == Some(std::ffi::OsStr::new("--native-reasoning-smoke"));
+        let reasoning =
+            first_argument.as_deref() == Some(std::ffi::OsStr::new("--native-reasoning-smoke"));
         if !restoring {
             args.workspace = Some(directory.join("workspace"));
         }
@@ -157,6 +158,120 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     maximize_main_window(&app);
     app.run()?;
     Ok(())
+}
+
+/// Close the composer menus when the pointer is pressed elsewhere, while still
+/// allowing that same press to reach the real Slint control underneath. A
+/// full-window transparent TouchArea would consume the first click and make
+/// sidebars, threads and the editor feel one click behind, so this filter only
+/// performs a few geometry checks on press events.
+fn install_composer_popover_dismissal(app: &MainWindow) {
+    use slint::winit_030::{winit, EventResult, WinitWindowAccessor};
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    let weak = app.as_weak();
+    let last_physical_pointer = Rc::new(Cell::new(None::<(f64, f64)>));
+    let pointer_for_filter = Rc::clone(&last_physical_pointer);
+    app.window().on_winit_window_event(move |window, event| {
+        let scale = f64::from(window.scale_factor()).max(0.001);
+        match event {
+            winit::event::WindowEvent::CursorMoved { position, .. } => {
+                pointer_for_filter.set(Some((position.x, position.y)));
+                return EventResult::Propagate;
+            }
+            winit::event::WindowEvent::MouseInput {
+                state: winit::event::ElementState::Pressed,
+                button: winit::event::MouseButton::Left,
+                ..
+            } => {}
+            winit::event::WindowEvent::Touch(touch)
+                if touch.phase == winit::event::TouchPhase::Started =>
+            {
+                pointer_for_filter.set(Some((touch.location.x, touch.location.y)));
+            }
+            _ => return EventResult::Propagate,
+        }
+
+        let Some((physical_x, physical_y)) = pointer_for_filter.get() else {
+            return EventResult::Propagate;
+        };
+        let point = (physical_x / scale as f64) as f32;
+        let point_y = (physical_y / scale as f64) as f32;
+        let Some(app) = weak.upgrade() else {
+            return EventResult::Propagate;
+        };
+        if !app.get_composer_popover_open() {
+            return EventResult::Propagate;
+        }
+
+        let inside = |x: f32, y: f32, width: f32, height: f32| {
+            width > 0.0
+                && height > 0.0
+                && point >= x
+                && point < x + width
+                && point_y >= y
+                && point_y < y + height
+        };
+        let in_plus_trigger = inside(
+            app.get_composer_plus_trigger_x(),
+            app.get_composer_plus_trigger_y(),
+            app.get_composer_plus_trigger_width(),
+            app.get_composer_plus_trigger_height(),
+        );
+        let in_model_trigger = inside(
+            app.get_composer_model_trigger_x(),
+            app.get_composer_model_trigger_y(),
+            app.get_composer_model_trigger_width(),
+            app.get_composer_model_trigger_height(),
+        );
+        let in_model_menu = inside(
+            app.get_composer_model_menu_x(),
+            app.get_composer_model_menu_y(),
+            app.get_composer_model_menu_width(),
+            app.get_composer_model_menu_height(),
+        );
+        let in_plus_menu = inside(
+            app.get_composer_plus_menu_x(),
+            app.get_composer_plus_menu_y(),
+            app.get_composer_plus_menu_width(),
+            app.get_composer_plus_menu_height(),
+        );
+        let in_active_flyout = inside(
+            app.get_composer_command_menu_x(),
+            app.get_composer_command_menu_y(),
+            app.get_composer_command_menu_width(),
+            app.get_composer_command_menu_height(),
+        ) || inside(
+            app.get_composer_preset_menu_x(),
+            app.get_composer_preset_menu_y(),
+            app.get_composer_preset_menu_width(),
+            app.get_composer_preset_menu_height(),
+        ) || inside(
+            app.get_composer_permission_menu_x(),
+            app.get_composer_permission_menu_y(),
+            app.get_composer_permission_menu_width(),
+            app.get_composer_permission_menu_height(),
+        ) || inside(
+            app.get_composer_screenshot_menu_x(),
+            app.get_composer_screenshot_menu_y(),
+            app.get_composer_screenshot_menu_width(),
+            app.get_composer_screenshot_menu_height(),
+        );
+
+        // Keep clicks on the currently open popover and its trigger intact.
+        // The other trigger is deliberately treated as outside: closing the
+        // old popover first lets the same click open the newly selected one.
+        let keep_open = if app.get_composer_model_open() {
+            in_model_menu || in_model_trigger
+        } else {
+            in_plus_menu || in_active_flyout || in_plus_trigger
+        };
+        if !keep_open {
+            app.invoke_dismiss_composer_popovers();
+        }
+        EventResult::Propagate
+    });
 }
 
 fn startup_timing_enabled() -> bool {

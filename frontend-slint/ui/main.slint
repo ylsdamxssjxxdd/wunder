@@ -6,6 +6,7 @@ import { RuntimeStatus } from "runtime_status.slint";
 import { I18n } from "i18n.slint";
 import { Theme, DesktopPage, Conversation, WorkspaceCard, SidebarRow, CloudThreadCard, TextBlock, WorkflowLine, WorkflowSection, ToolWorkflowEntry, TimelineRow, TimelineCounts, TurnStatMetric, PatchCard, PatchLine, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, TrajRow, TrajSpan, TrajTick, TrajBoundary, TrajTiming, TrajSection, TrajTab, TrajSearchHit, CronCard, CronRunCard, PromptPackCard, ChannelCatalogCard, ChannelAccountCard, ChannelBindingCard, ChannelLogCard, AvatarOption, AvatarColorChip, CompanionCard, PlanStep, InquiryQuestion, QueueTurn, DraftRecall, InterlinkApproval, WorkspaceFileRow } from "theme.slint";
 import { Action, EdgeToggle, RailButton, Avatar, FormField, MiddleHeader, MiddleFooter, ConfirmDialog, InfoDialog, ToastHost, ToastState } from "components.slint";
+export { ToastState }
 import { ProcessEntry } from "theme.slint";
 import { Composer, GoalBanner, InquiryPanel, StatusDock } from "composer.slint";
 import { TermSpan } from "terminal_view.slint";
@@ -43,18 +44,12 @@ export { TerminalWindow } from "terminal_window.slint";
 export { ScreenshotOverlay } from "screenshot_overlay.slint";
 
 export component MainWindow inherits Window {
-    in-out property <[SidebarRow]> sidebar-rows: [
-        { kind: 0, workspace-id: "ws-preview-a", name: I18n.ws_preview_default, icon: "folder", color: "blue", thread-count: 2, expanded: true, selected: true, thread-id: "", title: "", status: "", active: false, payload: 0, origin: "", archivable: false, checked: false },
-        { kind: 1, workspace-id: "ws-preview-a", name: "", icon: "", color: "", thread-count: 0, expanded: false, selected: false, thread-id: "t1", title: I18n.main_preview_prompt, status: "done", active: true, payload: 0, origin: "", archivable: true, checked: false },
-        { kind: 1, workspace-id: "ws-preview-a", name: "", icon: "", color: "", thread-count: 0, expanded: false, selected: false, thread-id: "t2", title: I18n.main_preview_step_title2, status: "idle", active: false, payload: 1, origin: "cloud", archivable: true, checked: true },
-        { kind: 0, workspace-id: "ws-preview-b", name: I18n.ws_preview_docs, icon: "coffee", color: "orange", thread-count: 1, expanded: true, selected: false, thread-id: "", title: "", status: "", active: false, payload: 1, origin: "", archivable: false, checked: false },
-        { kind: 1, workspace-id: "ws-preview-b", name: "", icon: "", color: "", thread-count: 0, expanded: false, selected: false, thread-id: "t3", title: I18n.main_preview_step_title1, status: "running", active: false, payload: 2, origin: "device:demo", archivable: false, checked: false }
-    ];
-    in-out property <[WorkspaceCard]> workspaces: [
-        { workspace-id: "ws-preview-a", name: I18n.ws_preview_default, icon: "folder", color: "blue", root-path: I18n.ws_preview_root_a, thread-count: 2, expanded: true, selected: true },
-        { workspace-id: "ws-preview-b", name: I18n.ws_preview_docs, icon: "coffee", color: "orange", root-path: I18n.ws_preview_root_b, thread-count: 1, expanded: true, selected: false }
-    ];
-    in-out property <int> selected-workspace: 0;
+    // Production starts from a real empty projection. Preview fixtures are
+    // injected by demo::install() only for --demo and smoke-check runs, so the
+    // first native frame can never present a fabricated running thread.
+    in-out property <[SidebarRow]> sidebar-rows: [];
+    in-out property <[WorkspaceCard]> workspaces: [];
+    in-out property <int> selected-workspace: -1;
     callback select-row(int);
     callback workspace-menu(int, int);
     callback new-workspace();
@@ -65,7 +60,7 @@ export component MainWindow inherits Window {
     callback move-row(int, int);
     callback open-workspace-folder(string);
     callback rename-thread(int, string);
-    callback archive-thread(int);
+    callback archive-thread(string);
     callback cloud-rename-thread(string, string);
     callback cloud-archive-thread(string);
     callback cloud-open-trajectory(string);
@@ -75,6 +70,45 @@ export component MainWindow inherits Window {
     in-out property <bool> sidebar-selection-mode: false;
     in-out property <int> sidebar-selected-count: 0;
     in-out property <int> sidebar-archivable-count: 0;
+    // Window-local composer popover geometry. Rust reads these only for a
+    // pointer press while a popover is visible, then lets the actual Slint
+    // click continue to its destination.
+    out property <bool> composer-popover-open: composer.popover-open;
+    out property <bool> composer-plus-open: composer.plus-open-state;
+    out property <bool> composer-model-open: composer.model-open-state;
+    out property <length> composer-plus-trigger-x: composer.plus-trigger-x;
+    out property <length> composer-plus-trigger-y: composer.plus-trigger-y;
+    out property <length> composer-plus-trigger-width: composer.plus-trigger-width;
+    out property <length> composer-plus-trigger-height: composer.plus-trigger-height;
+    out property <length> composer-plus-menu-x: composer.plus-menu-x;
+    out property <length> composer-plus-menu-y: composer.plus-menu-y;
+    out property <length> composer-plus-menu-width: composer.plus-menu-width;
+    out property <length> composer-plus-menu-height: composer.plus-menu-height;
+    out property <length> composer-model-trigger-x: composer.model-trigger-x;
+    out property <length> composer-model-trigger-y: composer.model-trigger-y;
+    out property <length> composer-model-trigger-width: composer.model-trigger-width;
+    out property <length> composer-model-trigger-height: composer.model-trigger-height;
+    out property <length> composer-model-menu-x: composer.model-menu-x;
+    out property <length> composer-model-menu-y: composer.model-menu-y;
+    out property <length> composer-model-menu-width: composer.model-menu-width;
+    out property <length> composer-model-menu-height: composer.model-menu-height;
+    out property <length> composer-command-menu-x: composer.command-menu-x;
+    out property <length> composer-command-menu-y: composer.command-menu-y;
+    out property <length> composer-command-menu-width: composer.command-menu-width;
+    out property <length> composer-command-menu-height: composer.command-menu-height;
+    out property <length> composer-preset-menu-x: composer.preset-menu-x;
+    out property <length> composer-preset-menu-y: composer.preset-menu-y;
+    out property <length> composer-preset-menu-width: composer.preset-menu-width;
+    out property <length> composer-preset-menu-height: composer.preset-menu-height;
+    out property <length> composer-permission-menu-x: composer.permission-menu-x;
+    out property <length> composer-permission-menu-y: composer.permission-menu-y;
+    out property <length> composer-permission-menu-width: composer.permission-menu-width;
+    out property <length> composer-permission-menu-height: composer.permission-menu-height;
+    out property <length> composer-screenshot-menu-x: composer.screenshot-menu-x;
+    out property <length> composer-screenshot-menu-y: composer.screenshot-menu-y;
+    out property <length> composer-screenshot-menu-width: composer.screenshot-menu-width;
+    out property <length> composer-screenshot-menu-height: composer.screenshot-menu-height;
+    public function dismiss-composer-popovers() { composer.dismiss-popovers(); }
     callback sidebar-begin-selection();
     callback sidebar-exit-selection();
     callback sidebar-toggle-selection(int);
@@ -191,11 +225,10 @@ export component MainWindow inherits Window {
     in-out property <string> goal-activation;
     in-out property <string> goal-rounds;
     // Goal banner state; the projection and the observer goal tick write the
-    // objective, the accumulated seconds and the paused flag. The preview
-    // values only exist so slint-viewer renders the banner without a backend.
+    // objective, the accumulated seconds and the paused flag.
     in-out property <string> goal-objective;
     in-out property <int> goal-seconds: 0;
-    in-out property <string> goal-elapsed: I18n.cpv_goal_elapsed_demo;
+    in-out property <string> goal-elapsed;
     in-out property <bool> goal-paused: false;
     in-out property <bool> goal-editing: false;
     in-out property <string> goal-edit-draft;
@@ -203,18 +236,12 @@ export component MainWindow inherits Window {
     callback goal-pause-toggle();
     callback goal-clear();
     // ---- status dock (plan capsule above the goal banner) ----
-    // The dock only exists while the plan tool has steps, so the preview
-    // defaults carry a plan; slint-viewer then renders it without a backend and
-    // the native projection overwrites the values from the live turn.
-    in-out property <bool> activity-running: true;
-    in-out property <int> activity-steps-done: 1;
-    in-out property <int> activity-steps-total: 3;
-    in-out property <string> activity-plan-explanation: I18n.dock_demo_explain;
-    in-out property <[PlanStep]> activity-plan-steps: [
-        { step: I18n.dock_demo_step_1, status: "completed" },
-        { step: I18n.dock_demo_step_2, status: "in_progress" },
-        { step: I18n.dock_demo_step_3, status: "pending" },
-    ];
+    // The dock only exists while the active thread has a published plan.
+    in-out property <bool> activity-running: false;
+    in-out property <int> activity-steps-done: 0;
+    in-out property <int> activity-steps-total: 0;
+    in-out property <string> activity-plan-explanation;
+    in-out property <[PlanStep]> activity-plan-steps: [];
     // Dismissal clears through the Rust side (plan cache + turn state) so the
     // next flush frame cannot silently restore the checklist.
     callback activity-plan-dismiss();
@@ -237,11 +264,13 @@ export component MainWindow inherits Window {
     callback inquiry-no-preference();
     callback inquiry-page-move(int);
     callback inquiry-dismiss();
-    // Fractional offset of every user turn for the right-edge ruler. The
-    // preview marks match the fixture timeline (user rows at 0 and 3 of 6).
-    in-out property <[float]> turn-marks: [0.0, 0.5];
+    // Fractional offset of every user turn for the right-edge ruler.
+    in-out property <[float]> turn-marks: [];
     in-out property <bool> connected: false;
-    in-out property <bool> chat-loading: false;
+    // The default is deliberately loading: MainWindow exists before the
+    // asynchronous local runtime does, so a first frame must never resemble a
+    // populated conversation. Demo and smoke modes explicitly clear it.
+    in-out property <bool> chat-loading: true;
     in-out property <bool> session-loading: false;
     in-out property <bool> creating-session: false;
     // New-thread activity heatmap: sparse day buckets projected natively into
@@ -373,31 +402,7 @@ export component MainWindow inherits Window {
     // rendered in the sidebar tree.
     in-out property <int> active-thread-count: 0;
     in-out property <string> active-thread-status: "idle";
-    // This preview timeline is replaced immediately by the native projection.
-    // It intentionally exercises every entry type in slint-viewer: user bubble,
-    // body block, tool group bar and one unfolded diff.
-    // `h` is the height the native layout measured for each row; the fixture
-    // states it because the viewer has no projection to report one.
-    in-out property <[TimelineRow]> timeline: [
-        { kind: 0, visible: true, text: I18n.main_preview_step_title2, foldable: false, group-idx: -1, group-open: false, payload: 0 },
-        { kind: 1, visible: true, text: I18n.main_preview_answer, foldable: true, group-idx: -1, group-open: false, payload: 1 },
-        { kind: 0, visible: true, text: I18n.main_preview_prompt, foldable: false, group-idx: -1, group-open: false, payload: 2 },
-        { kind: 1, visible: true, text: I18n.main_preview_answer, foldable: true, group-idx: -1, group-open: false, payload: 3 },
-        { kind: 4, visible: true, text: I18n.tl_tool_calls(2), open: true, foldable: false, group-idx: 0, group-open: true, payload: 4 },
-        { kind: 2, visible: true, tool-name: I18n.msg_thought, summary: I18n.main_preview_reasoning, detail: I18n.main_preview_reasoning, status-kind: 0, open: false, foldable: true, group-idx: 0, group-open: true, payload: 5 },
-        { kind: 3, visible: true, tool-name: I18n.main_preview_step_title1, tool-icon: "folder-open", target: I18n.ws_preview_root_a, detail: I18n.main_preview_detail1, status-kind: 0, open: false, foldable: true, group-idx: 0, group-open: true, payload: 6 },
-        { kind: 3, visible: true, tool-name: I18n.main_preview_step_title2, tool-icon: "file-pen", target: I18n.pd_preview_path, status-kind: 0, open: true, foldable: true, group-idx: 0, group-open: true, payload: 7,
-            patch: [{
-                path: I18n.pd_preview_path, action: I18n.pd_action_update, added: "41", deleted: "41",
-                lines: [
-                    { number: "136", text: "fn run(...) {", kind: "context" },
-                    { number: "137", text: "    let old = previous();", kind: "delete" },
-                    { number: "137", text: "    let new = current();", kind: "add" },
-                    { number: "138", text: "}", kind: "context" }
-                ]
-            }]
-        }
-    ];
+    in-out property <[TimelineRow]> timeline: [];
     in-out property <[AgentCard]> agents: [];
     in-out property <[ToolCard]> tools: [];
     in-out property <bool> cron-loading: false;
@@ -486,9 +491,7 @@ export component MainWindow inherits Window {
     callback start-channel-qr();
     callback cancel-channel-qr();
     callback reconnect-channel();
-    in-out property <[ModelCard]> models: [
-        { key: I18n.common_default_model, provider: "", model: I18n.common_unknown, base-url: "", model-type: "llm", is-default: true, is-cloud: false }
-    ];
+    in-out property <[ModelCard]> models: [];
     in-out property <string> selected-agent-name;
     in-out property <string> selected-agent-description;
     in-out property <string> selected-agent-model;
@@ -513,12 +516,12 @@ export component MainWindow inherits Window {
     callback pick-rg-path();
     // The settings page's active category, shared with the smoke harness.
     in-out property <int> settings-active-panel: 0;
-    callback wunder-model-visibility(bool, int);
-    changed settings-open => { root.wunder-model-visibility(root.settings-open, root.settings-active-panel); }
+    changed settings-open => {
+        if !root.settings-open && root.model-creating { root.discard-model-draft(); }
+    }
     // Memory, usage and archive data are pulled on demand: the old expert page's
     // own tab strip is gone, so the active category is what selects the view.
     changed settings-active-panel => {
-        root.wunder-model-visibility(root.settings-open, root.settings-active-panel);
         if root.settings-active-panel == 6 || root.settings-active-panel == 10
             || root.settings-active-panel == 13 {
             root.refresh-expert();
@@ -569,6 +572,7 @@ export component MainWindow inherits Window {
     callback cloud-password-edited(string);
     callback cloud-logout();
     callback cloud-refresh-account();
+    callback open-wunder-model();
     callback cloud-toggle-sync(bool);
     // ---- interlink approval (§I9) ----
     // The 2s poll drains the approval queue; the settings page no longer
@@ -626,10 +630,10 @@ export component MainWindow inherits Window {
     in-out property <string> thread-rename-title;
     in-out property <string> thread-rename-draft;
     in-out property <string> thread-rename-cloud-id;
-    // Archive confirmation: the sidebar band parks the payload here, the
-    // dialog decides.
+    // Archive confirmation keeps a stable thread id instead of a mutable list
+    // index, so a catalogue refresh cannot redirect a confirmed archive.
     in-out property <bool> thread-archive-open: false;
-    in-out property <int> thread-archive-pending: -1;
+    in-out property <string> thread-archive-pending;
     in-out property <string> thread-archive-cloud-id;
     in-out property <string> selected-model-key;
     in-out property <string> selected-model-provider;
@@ -687,7 +691,7 @@ export component MainWindow inherits Window {
     in-out property <string> model-video-flow-shift-draft;
     in-out property <bool> model-video-frame-interpolation-draft;
     in-out property <bool> model-video-sync-mode-draft;
-    in property <[string]> model-provider-presets: ["自定义（手动填写服务地址）", "openai_compatible", "openai", "anthropic", "openrouter", "siliconflow", "deepseek", "moonshot", "qwen", "groq", "mistral", "together", "vllm_omni", "whisper_cpp", "ollama", "lmstudio", "virtual_replay"];
+    in property <[string]> model-provider-presets: ["自定义（手动填写服务地址）", "openai compatible", "openai", "anthropic", "openrouter", "siliconflow", "deepseek", "moonshot", "qwen", "groq", "mistral", "together", "vllm_omni", "whisper_cpp", "ollama", "lmstudio", "virtual_replay"];
     in-out property <bool> model-support-vision-draft;
     in-out property <bool> model-support-hearing-draft;
     in-out property <bool> model-stream-include-usage-draft;
@@ -807,6 +811,8 @@ export component MainWindow inherits Window {
     callback save-runtime();
     callback refresh-settings();
     callback select-model(int);
+    callback create-model();
+    callback discard-model-draft();
     callback move-model(int, int);
     callback save-model();
     callback set-default-model(string);
@@ -858,19 +864,7 @@ export component MainWindow inherits Window {
     // query is filtered natively and the matching categories come back as one
     // flag per category, in §9.2 order.
     in-out property <string> settings-query: "";
-    in-out property <[bool]> settings-category-flags: [true, true, true, true, true, true, true, true, true, true, true, true];
-    in-out property <image> wunder-model-frame;
-    in-out property <string> wunder-model-status;
-    in-out property <bool> wunder-model-loading: true;
-    in-out property <bool> wunder-model-failed: false;
-    in-out property <bool> wunder-model-rotating: true;
-    in-out property <bool> wunder-model-native-active: false;
-    callback wunder-model-gesture(string, float, float);
-    callback wunder-model-reset();
-    callback wunder-model-retry();
-    callback wunder-model-toggle-rotate();
-    callback wunder-model-size-changed(int, int);
-    callback wunder-model-geometry-changed(int, int, int, int);
+    in-out property <[bool]> settings-category-flags: [true, true, true, true, true, true, true, true, true, true, true];
     callback filter-settings-categories(string);
     // Help is not a category anymore: the general page raises this to open the
     // standalone help window.
@@ -904,8 +898,14 @@ export component MainWindow inherits Window {
     }
     function open-new-model() {
         root.model-creating = true;
-        root.model-key-draft = ""; root.model-provider-draft = ""; root.model-name-draft = "";
+        // The native side inserts the draft into the shared catalogue in the
+        // same callback turn.  Keeping the defaults here makes the right-hand
+        // form useful immediately, even before the catalogue projection lands.
+        root.model-key-draft = "新模型";
+        root.model-provider-draft = "openai_compatible";
+        root.model-name-draft = "";
         root.model-base-url-draft = ""; root.model-token-draft = ""; root.model-type-draft = "llm";
+        root.model-tool-call-mode-draft = "function_call";
         root.clear-model-param-drafts();
     }
 
@@ -933,9 +933,9 @@ export component MainWindow inherits Window {
                 workspace-menu(workspace, action) => { root.workspace-menu(workspace, action); }
                 new-workspace => { root.new-workspace(); }
                 move-row(index, travel) => { root.move-row(index, travel); }
-                archive-thread(index) => {
+                archive-thread(id) => {
                     root.thread-archive-cloud-id = "";
-                    root.thread-archive-pending = index;
+                    root.thread-archive-pending = id;
                     root.thread-archive-open = true;
                 }
                 rename-request(payload, title) => {
@@ -995,18 +995,22 @@ export component MainWindow inherits Window {
                     : resize-touch.has-hover ? Theme.border-strong : transparent;
                 resize-touch := TouchArea {
                     mouse-cursor: ew-resize;
-                    property <length> start-x;
+                    // `mouse-x` is local to this handle. Resizing moves the
+                    // handle itself, so using it as the drag origin feeds the
+                    // new sidebar width back into the next delta and makes the
+                    // divider shake. Track the window-relative pointer instead.
+                    property <length> start-absolute-x;
                     property <length> start-width;
                     pointer-event(event) => {
-                        if event.kind == PointerEventKind.down {
+                        if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
                             root.sidebar-width = clamp(root.sidebar-width, 170px, 420px);
                             start-width = root.sidebar-width;
-                            start-x = self.mouse-x;
+                            start-absolute-x = self.absolute-position.x + self.mouse-x;
                         }
                     }
                     moved => {
                         if self.pressed {
-                            root.sidebar-width = clamp(start-width + (self.mouse-x - start-x), 170px, 420px);
+                            root.sidebar-width = clamp(start-width + (self.absolute-position.x + self.mouse-x - start-absolute-x), 170px, 420px);
                         }
                     }
                 }
@@ -1030,6 +1034,12 @@ export component MainWindow inherits Window {
                         timeline_view := TimelineView {
                             visible: true;
                             rows: root.timeline;
+                            loading: root.chat-loading || root.session-loading
+                                || (root.cloud-chat-active && root.cloud-thread-busy);
+                            loading-text: root.session-loading ? (I18n.zh ? "正在打开线程，读取历史记录…" : "Opening thread and reading history…")
+                                : root.chat-loading ? I18n.st_runtime_loading
+                                : root.cloud-chat-active && root.cloud-thread-busy ? (I18n.zh ? "正在打开线程，读取历史记录…" : "Opening thread and reading history…")
+                                : I18n.st_runtime_loading;
                             greeting: root.cloud-chat-active ? root.cloud-greeting
                                 : root.agents.length > 0 ? root.agents[0].description : "";
                             greeting-loading: root.prompt-preview-loading;
@@ -1099,7 +1109,7 @@ export component MainWindow inherits Window {
                                 page-move(delta) => { root.inquiry-page-move(delta); }
                                 dismiss => { root.inquiry-dismiss(); }
                             }
-                            Composer {
+                            composer := Composer {
                                 draft <=> root.draft; busy: root.command-pending || root.session-loading || root.creating-session || (root.chat-loading && !root.busy) || (root.cloud-chat-active && root.cloud-thread-busy);
                             terminal-mode: false;
                             command => { root.terminal-mode = !root.terminal-mode; root.terminal-toggled(root.terminal-mode); }
@@ -1107,6 +1117,9 @@ export component MainWindow inherits Window {
                             interrupt => { }
                             context-usage: root.context-usage; context-known: root.context-known; context-counts: root.context-counts; reasoning-effort <=> root.reasoning-effort;
                             models: root.cloud-chat-active ? root.cloud-thread-models : root.models;
+                            // The local built-in agent owns the saved quick prompts; a
+                            // cloud thread keeps its service-side composer scope.
+                            preset-questions: root.cloud-chat-active ? [] : root.selected-agent-preset-questions;
                             model-catalogue-count: root.cloud-chat-active ? root.cloud-thread-models.length : root.model-catalogue-count;
                             cloud-ready: root.cloud-logged-in && !root.cloud-expired;
                             model-name: root.selected-model-key != "" ? root.selected-model-key : root.selected-agent-model;
@@ -1184,21 +1197,11 @@ export component MainWindow inherits Window {
                 }
                 Rectangle { height: 1px; background: Theme.border; }
         SettingsPage {
+        horizontal-stretch: 1;
+        vertical-stretch: 1;
         loading: root.settings-loading; saving: root.saving;
         status: root.status;
         settings-category-flags: root.settings-category-flags;
-        wunder-model-frame <=> root.wunder-model-frame;
-        wunder-model-status <=> root.wunder-model-status;
-        wunder-model-loading <=> root.wunder-model-loading;
-        wunder-model-failed <=> root.wunder-model-failed;
-        wunder-model-rotating <=> root.wunder-model-rotating;
-        wunder-model-native-active <=> root.wunder-model-native-active;
-        wunder-model-gesture(kind, dx, dy) => { root.wunder-model-gesture(kind, dx, dy); }
-        wunder-model-reset => { root.wunder-model-reset(); }
-        wunder-model-retry => { root.wunder-model-retry(); }
-        wunder-model-toggle-rotate => { root.wunder-model-toggle-rotate(); }
-        wunder-model-size-changed(width, height) => { root.wunder-model-size-changed(width, height); }
-        wunder-model-geometry-changed(x, y, width, height) => { root.wunder-model-geometry-changed(x, y, width, height); }
         models: root.models; selected-model: root.selected-model;
         workspace-root <=> root.workspace-root; language <=> root.runtime-language;
         // The profile card and its edit dialog stay on the shell (the rail's
@@ -1228,7 +1231,8 @@ export component MainWindow inherits Window {
         model-editor-is-default: root.selected-model-is-default;
         delete-model(key) => { root.delete-model(key); }
         select-model(index) => { root.select-model(index); }
-        create-model => { root.open-new-model(); }
+        create-model => { root.open-new-model(); root.create-model(); }
+        discard-model-draft => { root.discard-model-draft(); }
         move-model(from, delta) => { root.move-model(from, delta); }
         save-model => { root.save-model(); }
         set-default-model(key) => { root.set-default-model(key); }
@@ -1256,6 +1260,7 @@ export component MainWindow inherits Window {
         cloud-login => { root.cloud-login(); }
         cloud-logout => { root.cloud-logout(); }
         cloud-refresh-account => { root.cloud-refresh-account(); }
+        open-wunder-model => { root.open-wunder-model(); }
         cloud-toggle-sync(enabled) => { root.cloud-toggle-sync(enabled); }
         model-creating <=> root.model-creating;
         model-key-draft <=> root.model-key-draft;

@@ -1377,7 +1377,41 @@ impl Timeline {
     fn replace_rows(&self, mut rows: Vec<TimelineRow>) {
         crate::timeline_text::restore_folds(&mut rows, &self.model);
         self.marks_dirty.set(true);
-        self.model.set_vec(rows);
+        let same_topology = self.model.row_count() == rows.len()
+            && self
+                .model
+                .iter()
+                .map(|row| row.id)
+                .eq(rows.iter().map(|row| row.id.clone()));
+        if same_topology {
+            // Durable polling often changes one tail row only. Replacing the
+            // whole VecModel briefly gives ScrollView a zero-height column on
+            // older Slint/Windows backends; it clamps to the top, then the
+            // next layout pass scrolls back to the answer. Patch the stable
+            // rows instead so neither the scroll anchor nor completed cells
+            // are torn down during a passive refresh.
+            for (index, mut row) in rows.into_iter().enumerate() {
+                let Some(old) = self.model.row_data(index) else {
+                    continue;
+                };
+                if old.text == row.text && old.status_kind == row.status_kind {
+                    row.blocks = old.blocks.clone();
+                }
+                if old.detail == row.detail {
+                    row.sections = old.sections.clone();
+                    row.patch = old.patch.clone();
+                }
+                if old.stats.iter().eq(row.stats.iter()) {
+                    row.stats = old.stats.clone();
+                }
+                if old == row {
+                    continue;
+                }
+                self.model.set_row_data(index, row);
+            }
+        } else {
+            self.model.set_vec(rows);
+        }
         self.sync_turn_marks();
     }
 
@@ -1881,8 +1915,18 @@ mod tests {
 
         timeline.append_reasoning(" · continued").unwrap();
         timeline.flush();
-        assert_eq!(timeline.model.row_data(timeline.process_bar).unwrap().process_entries, children);
-        assert_eq!(children.row_data(0).unwrap().detail, "First live thought · continued");
+        assert_eq!(
+            timeline
+                .model
+                .row_data(timeline.process_bar)
+                .unwrap()
+                .process_entries,
+            children
+        );
+        assert_eq!(
+            children.row_data(0).unwrap().detail,
+            "First live thought · continued"
+        );
     }
 
     #[test]
@@ -2002,7 +2046,10 @@ mod tests {
         let bar = timeline.model.row_data(timeline.process_bar).unwrap();
         assert_eq!(bar.process_entries.row_count(), 2);
         assert_eq!(bar.process_entries.row_data(0).unwrap().kind, KIND_BODY);
-        assert_eq!(bar.process_entries.row_data(0).unwrap().text, "First streamed note");
+        assert_eq!(
+            bar.process_entries.row_data(0).unwrap().text,
+            "First streamed note"
+        );
 
         // Further deltas patch that same process child in place. This mirrors
         // the frame path that previously left all streaming text above the
@@ -2016,7 +2063,11 @@ mod tests {
             "First streamed note · continued"
         );
         assert_eq!(
-            timeline.model.row_data(timeline.last_body).unwrap().process_idx,
+            timeline
+                .model
+                .row_data(timeline.last_body)
+                .unwrap()
+                .process_idx,
             bar.process_idx
         );
     }

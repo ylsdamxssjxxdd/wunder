@@ -101,7 +101,7 @@ pub fn effective_browser_config(config: &Config) -> EffectiveBrowserConfig {
     if config.browser.docker.enabled {
         launch_args.extend(config.browser.docker.extra_launch_args.clone());
     }
-    EffectiveBrowserConfig {
+    let mut effective = EffectiveBrowserConfig {
         enabled: browser_runtime_enabled(config),
         tool_visible: browser_tools_enabled(config),
         deployment,
@@ -198,6 +198,29 @@ pub fn effective_browser_config(config: &Config) -> EffectiveBrowserConfig {
         docker_disable_dev_shm_usage: config.browser.docker.disable_dev_shm_usage,
         docker_downloads_root: normalize_path(&config.browser.docker.downloads_root),
         sandbox_endpoint,
+    };
+    apply_launch_executable_fallback(&mut effective);
+    effective
+}
+
+/// Launch 模式下，channel 与 executable_path 均未解析出值时探测本机可用浏览器
+/// 兜底，避免首次调用直接撞 "Executable doesn't exist"。legacy desktop 上方把
+/// channel/executable_path 强制置 None，是因为旧配置面（tools.browser.*）没有
+/// 这两个字段、不应沿用新配置面的残留值；探测在组装之后运行，只填补仍为 None
+/// 的情形，与该清空逻辑互补而非冲突，显式配置（非 legacy）始终优先。
+fn apply_launch_executable_fallback(effective: &mut EffectiveBrowserConfig) {
+    if effective.launch_mode != BROWSER_LAUNCH_MODE
+        || effective.channel.is_some()
+        || effective.executable_path.is_some()
+    {
+        return;
+    }
+    // 沙盒部署的浏览器不在本机，注入本机路径只会把远端启动引向错误目标。
+    if effective.sandbox_endpoint.is_some() {
+        return;
+    }
+    if let Some(path) = super::probe::probe_launch_executable(effective.browsers_path.as_deref()) {
+        effective.executable_path = Some(path.to_string_lossy().into_owned());
     }
 }
 
@@ -290,6 +313,32 @@ mod tests {
         let effective = effective_browser_config(&config);
         assert_eq!(effective.deployment, "auto");
         assert!(!effective.runs_in_sandbox());
+    }
+
+    #[test]
+    fn explicit_channel_and_executable_path_are_never_overridden() {
+        let mut config = Config::default();
+        config.server.mode = "api".to_string();
+        config.browser.enabled = true;
+        config.tools.browser.enabled = true;
+        config.browser.playwright.channel = Some("msedge".to_string());
+        config.browser.playwright.executable_path = Some("custom/browser.exe".to_string());
+        let effective = effective_browser_config(&config);
+        assert_eq!(effective.channel.as_deref(), Some("msedge"));
+        assert_eq!(effective.executable_path.as_deref(), Some("custom/browser.exe"));
+    }
+
+    #[test]
+    fn attach_mode_never_probes_a_launch_executable() {
+        let mut config = Config::default();
+        config.server.mode = "api".to_string();
+        config.browser.enabled = true;
+        config.tools.browser.enabled = true;
+        config.browser.playwright.mode = "attach".to_string();
+        config.browser.playwright.attach_endpoint = Some("http://127.0.0.1:9222".to_string());
+        let effective = effective_browser_config(&config);
+        assert_eq!(effective.launch_mode, "attach");
+        assert!(effective.executable_path.is_none());
     }
 
     #[test]

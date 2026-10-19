@@ -35,14 +35,43 @@ impl NativeThreadWatch {
 
 impl NativeDesktop {
     pub fn watch_chat(&self, session: &str) -> NativeThreadWatch {
-        let (output, receiver) = mpsc::channel(8);
+        // The legacy general-purpose watcher can be called without a prior
+        // selection snapshot (for example by the egui shell), so preserve its
+        // ownership guard. The Slint selection path uses the overload below
+        // after `open_chat_snapshot` has already done this work on its worker.
         if let Err(error) = self.open_session(session) {
+            let (output, receiver) = mpsc::channel(8);
             let _ = output.try_send(NativeThreadUpdate::Failed(error.to_string()));
             return NativeThreadWatch {
                 receiver,
                 cancel: CancellationToken::new(),
             };
         }
+        self.watch_chat_with_initial(session, None)
+    }
+
+    /// Start watching a thread which the caller has already opened with
+    /// `open_chat_snapshot` or `open_session`. A selection can pass the turns
+    /// it already loaded so a slow disk is read only once; this method does
+    /// not issue a duplicate lease heartbeat on its own.
+    pub fn watch_chat_with_initial(
+        &self,
+        session: &str,
+        initial: Option<Vec<NativeChatTurn>>,
+    ) -> NativeThreadWatch {
+        self.watch_chat_with_initial_cursor(session, initial, None)
+    }
+
+    /// Start an already-opened thread watcher with an optional cursor captured
+    /// before its initial snapshot. Keeping this cursor with the snapshot
+    /// closes the HDD race where a write lands between two independent reads.
+    pub fn watch_chat_with_initial_cursor(
+        &self,
+        session: &str,
+        initial: Option<Vec<NativeChatTurn>>,
+        initial_cursor: Option<i64>,
+    ) -> NativeThreadWatch {
+        let (output, receiver) = mpsc::channel(8);
         let cancel = CancellationToken::new();
         let token = cancel.clone();
         let state = self.state().clone();
@@ -51,7 +80,9 @@ impl NativeDesktop {
         self.runtime.spawn(async move {
             tokio::select! {
                 _ = token.cancelled() => {},
-                result = observe(state, user, session, &output, &token) => {
+                result = async {
+                    observe(state, user, session, initial, initial_cursor, &output, &token).await
+                } => {
                     if let Err(error) = result {
                         tracing::warn!(%error, "native thread observation failed");
                         let _ = output.send(NativeThreadUpdate::Failed("线程更新失败，请重新选择线程".into())).await;
@@ -67,6 +98,8 @@ async fn observe(
     state: Arc<AppState>,
     user: String,
     session: String,
+    mut initial: Option<Vec<NativeChatTurn>>,
+    mut initial_cursor: Option<i64>,
     output: &mpsc::Sender<NativeThreadUpdate>,
     cancel: &CancellationToken,
 ) -> Result<()> {
@@ -74,14 +107,23 @@ async fn observe(
         let db = state.clone();
         let owner = user.clone();
         let target = session.clone();
+        let initial_turns = initial.take();
+        let snapshot_cursor = initial_cursor.take();
         let (cursor, turns) = blocking::run_db("native.observe.initial", move || {
             db.user_store
                 .get_chat_session(&owner, &target)?
                 .ok_or_else(|| anyhow!("chat session not found"))?;
-            // Read the watermark BEFORE history. Concurrent writes are replayed;
-            // stable root identities make those repetitions harmless.
-            let cursor = db.storage.latest_thread_change_seq_by_session(&target)?;
-            Ok((cursor, chat_turns::load_turns(&db, &owner, &target)?))
+            // A selected-thread snapshot is read after this cursor. Replaying
+            // concurrent roots is harmless because identities are stable;
+            // starting after them would lose a commit that races a slow disk
+            // history read. A cold watcher likewise reads before history.
+            let cursor =
+                snapshot_cursor.unwrap_or(db.storage.latest_thread_change_seq_by_session(&target)?);
+            let turns = match initial_turns {
+                Some(turns) => turns,
+                None => chat_turns::load_turn_headers(&db, &owner, &target)?,
+            };
+            Ok((cursor, turns))
         })
         .await?;
         if output.send(NativeThreadUpdate::Reset(turns)).await.is_err() {
@@ -308,7 +350,7 @@ mod tests {
         let task = tokio::spawn(async move {
             tokio::select! {
                 _ = token.cancelled() => Ok(()),
-                result = observe(db, user.into(), session.into(), &output, &token) => result,
+                result = observe(db, user.into(), session.into(), None, None, &output, &token) => result,
             }
         });
         assert!(next(&mut receiver).await.is_empty());
@@ -402,6 +444,8 @@ mod tests {
                 db,
                 user.into(),
                 session.into(),
+                None,
+                None,
                 &output,
                 &CancellationToken::new(),
             )
@@ -421,6 +465,8 @@ mod tests {
             state,
             "fixture-other".into(),
             session.into(),
+            None,
+            None,
             &output,
             &CancellationToken::new()
         )

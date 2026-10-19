@@ -6023,8 +6023,12 @@ function installMessengerControllerWorkspaceResourceHydration(ctx: MessengerCont
           return;
       }
       if (previewKind === 'onlyoffice') {
-          const resource = ctx.resolveWorkspaceResource(workspacePath);
-          const relativePath = String(resource?.relativePath || workspacePath).trim();
+        const resource = ctx.resolveWorkspaceResource(workspacePath);
+        // Keep a public workspace reference intact. The server resolves this
+        // canonical path to the same file used by normal workspace downloads;
+        // stripping its `workspace/` segment made OnlyOffice look one level too
+        // deep for files cited from a chat message.
+        const officePath = String(resource?.publicPath || workspacePath).trim();
           if (false) {
               const opened = await ctx.openWorkspaceResourceWithDefaultApp(workspacePath);
               if (opened) {
@@ -6033,7 +6037,7 @@ function installMessengerControllerWorkspaceResourceHydration(ctx: MessengerCont
           }
           ctx.resourcePreviewVisible.value = false;
           ctx.onlyOfficeVisible.value = true;
-          ctx.onlyOfficePath.value = relativePath;
+          ctx.onlyOfficePath.value = officePath;
           ctx.onlyOfficeUserId.value = String(resource?.requestUserId || userId).trim();
           ctx.onlyOfficeAgentId.value = String(resource?.requestAgentId || '').trim();
           ctx.onlyOfficeContainerId.value =

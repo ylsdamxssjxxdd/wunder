@@ -771,9 +771,14 @@ impl WorkspaceManager {
     }
 
     pub fn display_path(&self, user_id: &str, target: &Path) -> String {
+        let normalized_target = normalize_target_path(target);
+        if self.single_root {
+            // 本地形态（CLI/蛹）没有 /workspaces 公共路由，模型引用与前端渲染
+            // 都直接使用本地绝对路径，避免云端公共路径形态泄漏到本地会话。
+            return normalized_target.to_string_lossy().replace('\\', "/");
+        }
         let public_physical_root = self.public_physical_root(user_id);
         let normalized_user_root = normalize_target_path(&public_physical_root);
-        let normalized_target = normalize_target_path(target);
         if let Ok(rel) = normalized_target.strip_prefix(&normalized_user_root) {
             let public_root = self.public_root(user_id);
             let display = if rel.as_os_str().is_empty() {

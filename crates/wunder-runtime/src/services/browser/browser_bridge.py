@@ -605,13 +605,28 @@ class BridgeSession:
             self.active_target_id = next(iter(self.pages))
 
     def _new_context(self, args):
-        return self.browser.new_context(
-            viewport={"width": args.width, "height": args.height},
-            accept_downloads=True,
-            user_agent=(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                "(KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36"
-            ),
+        options = {
+            "viewport": {"width": args.width, "height": args.height},
+            "accept_downloads": True,
+        }
+        user_agent = self._launch_user_agent()
+        if user_agent:
+            options["user_agent"] = user_agent
+        return self.browser.new_context(**options)
+
+    def _launch_user_agent(self):
+        # The UA must name the browser actually being driven (an older bundled
+        # Chromium or a system Edge/Chrome), not a hardcoded build. Without a
+        # version, leave the browser's own default UA untouched.
+        try:
+            version = (self.browser.version or "").strip()
+        except Exception:
+            return None
+        if not version:
+            return None
+        return (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/%s Safari/537.36" % version
         )
 
     def _handle_route(self, route, request):

@@ -277,7 +277,7 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
                                 .ok()
                                 .and_then(|index| app.get_workspaces().row_data(index))
                                 .is_some_and(|card| card.workspace_id == id);
-                        crate::navigation_ui::project_sidebar(&app, Some(&api_refresh));
+                        crate::navigation_ui::project_sidebar(&app, Some(api_refresh.clone()));
                         if focus {
                             crate::navigation_ui::focus_workspace_of(&app, api_refresh, Some(&id));
                         }
@@ -361,7 +361,7 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
                             .ok()
                             .and_then(|index| app.get_workspaces().row_data(index))
                             .is_some_and(|card| card.workspace_id == workspace_id);
-                        crate::navigation_ui::project_sidebar(&app, Some(&api));
+                        crate::navigation_ui::project_sidebar(&app, Some(api.clone()));
                         if deleted_selected {
                             if let Some(card) = app.get_workspaces().row_data(0) {
                                 crate::navigation_ui::focus_workspace_of(

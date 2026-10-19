@@ -182,3 +182,25 @@ async fn sandbox_background_output_streams_independently_and_polls_incrementally
         .unwrap();
     server.abort();
 }
+
+#[test]
+fn compact_command_result_for_model_passes_stderr_warning_through() {
+    let with_warning = compact_command_result_for_model(&json!({
+        "command": "echo ok | sort",
+        "command_index": 0,
+        "returncode": 0,
+        "stdout": "ok\n",
+        "stderr": "sort: open failed: missing\n",
+        "warning": "退出码为 0 但 stderr 非空"
+    }));
+    assert_eq!(with_warning["warning"], json!("退出码为 0 但 stderr 非空"));
+
+    let without_warning = compact_command_result_for_model(&json!({
+        "command": "echo ok",
+        "command_index": 0,
+        "returncode": 0,
+        "stdout": "ok\n",
+        "stderr": ""
+    }));
+    assert!(without_warning.get("warning").is_none());
+}

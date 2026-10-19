@@ -72,7 +72,13 @@ component ModelPicker inherits Rectangle {
     callback select-model(int, string);
     callback effort-changed(string);
     callback open-settings();
+    // Lets the parent close the other composer popover when this picker opens.
+    callback opened();
     in-out property <bool> open: false;
+    out property <length> menu-x: root.open ? model_menu.absolute-position.x : -1px;
+    out property <length> menu-y: root.open ? model_menu.absolute-position.y : -1px;
+    out property <length> menu-width: root.open ? model_menu.width : 0px;
+    out property <length> menu-height: root.open ? model_menu.height : 0px;
     height: 30px;
     // Explicit content width: 8px padding each side + 16px brain + 2×6px
     // spacing + 10px chevron, plus the measured name (eliding past 180px like
@@ -97,7 +103,10 @@ component ModelPicker inherits Rectangle {
         background: root.open ? Theme.accent-soft : trigger-touch.has-hover ? Theme.hover : transparent;
         accessible-role: button;
         accessible-label: I18n.cp_model_pick;
-        accessible-action-default => { root.open = !root.open; }
+        accessible-action-default => {
+            root.open = !root.open;
+            if root.open { root.opened(); }
+        }
         HorizontalLayout {
             padding-left: 8px; padding-right: 8px; spacing: 6px;
             // 液位大脑：占用越高填充越满，接近上限转警示色。布局行对固定高度
@@ -145,14 +154,18 @@ component ModelPicker inherits Rectangle {
         trigger-touch := TouchArea {
             x: 0px; y: 0px; width: parent.width; height: parent.height;
             mouse-cursor: pointer;
-            clicked => { root.open = !root.open; }
+            clicked => {
+                root.open = !root.open;
+                if root.open { root.opened(); }
+            }
         }
     }
 
     // Popover anchored to the trigger's right edge and drawn upward so it
     // clears the input card above the action row. 对齐蜂巢 ModelPickerPopover：
     // 顶部上下文行 → 可滚动模型列表 → 底部推理力度 pills。
-    if root.open : Rectangle {
+    model_menu := Rectangle {
+        visible: root.open;
         x: parent.width - 300px;
         y: -self.height - 8px;
         width: 300px; height: 340px;
@@ -1029,6 +1042,7 @@ component CommandFlyout inherits Rectangle {
 }
 
 component PresetFlyout inherits Rectangle {
+    in property <[string]> questions: [];
     callback pick(string);
     width: 268px;
     height: body.preferred-height;
@@ -1038,7 +1052,7 @@ component PresetFlyout inherits Rectangle {
     body := VerticalLayout {
         padding: 8px; spacing: 4px;
         Text { text: I18n.ag_preset_questions; color: Theme.text; font-size: Theme.font-xs; font-weight: 600; }
-        for preset in [I18n.cp_preset_q1, I18n.cp_preset_q2] : Rectangle {
+        for preset in root.questions : Rectangle {
             height: 28px; border-radius: 5px;
             background: preset-touch.has-hover ? Theme.accent-soft : transparent;
             accessible-role: list-item; accessible-label: preset;
@@ -1134,6 +1148,10 @@ export component Composer inherits Rectangle {
     in property <bool> cloud-ready: true;
     callback select-model(int, string);
     callback open-model-settings();
+    // Project the selected agent's saved quick prompts. This makes the
+    // composer use the same four default prompts as 蜂巢 and preserves a
+    // user's own agent edits without duplicating defaults in the UI.
+    in property <[string]> preset-questions: [];
     in property <[ChatAttachment]> attachments: [];
     in property <string> send-key: "enter";
     // §8.5 status line under the box.
@@ -1190,10 +1208,10 @@ export component Composer inherits Rectangle {
     height: 154px + (root.attachments.length > 0 ? 36px : 0px)
         + (root.branch-name != "" ? 22px : 0px) + root.queue-height;
     private property <bool> plus-open: false;
+    private property <bool> model-open: false;
     private property <bool> preset-open: false;
     private property <bool> command-open: false;
     private property <bool> screenshot-open: false;
-    private property <bool> model-open: false;
     private property <bool> permission-open: false;
     // 蜂巢同款发送门禁: terminal mode only sends typed text; the chat modes
     // also allow attachment-only and answered-inquiry sends.
@@ -1208,17 +1226,53 @@ export component Composer inherits Rectangle {
     private property <string> permission-label: root.permission-mode == "auto_edit" ? I18n.cp_permission_write
         : root.permission-mode == "suggest" ? I18n.cp_permission_command
         : I18n.cp_permission_full;
+    // The native Winit filter uses these window-local rectangles to dismiss
+    // popovers without putting a full-window TouchArea above the real controls.
+    // Keeping the geometry in Slint means DPI and responsive layout changes do
+    // not require a second coordinate system in Rust.
+    out property <bool> popover-open: root.plus-open || root.model-open;
+    out property <bool> plus-open-state: root.plus-open;
+    out property <bool> model-open-state: root.model-open;
+    out property <length> plus-trigger-x: plus-btn.absolute-position.x;
+    out property <length> plus-trigger-y: plus-btn.absolute-position.y;
+    out property <length> plus-trigger-width: plus-btn.width;
+    out property <length> plus-trigger-height: plus-btn.height;
+    out property <length> plus-menu-x: root.plus-open ? plus_menu.absolute-position.x : -1px;
+    out property <length> plus-menu-y: root.plus-open ? plus_menu.absolute-position.y : -1px;
+    out property <length> plus-menu-width: root.plus-open ? plus_menu.width : 0px;
+    out property <length> plus-menu-height: root.plus-open ? plus_menu.height : 0px;
+    out property <length> model-trigger-x: model-picker.absolute-position.x;
+    out property <length> model-trigger-y: model-picker.absolute-position.y;
+    out property <length> model-trigger-width: model-picker.width;
+    out property <length> model-trigger-height: model-picker.height;
+    out property <length> model-menu-x: root.model-open ? model-picker.menu-x : -1px;
+    out property <length> model-menu-y: root.model-open ? model-picker.menu-y : -1px;
+    out property <length> model-menu-width: root.model-open ? model-picker.menu-width : 0px;
+    out property <length> model-menu-height: root.model-open ? model-picker.menu-height : 0px;
+    out property <length> command-menu-x: root.command-open ? command_flyout.absolute-position.x : -1px;
+    out property <length> command-menu-y: root.command-open ? command_flyout.absolute-position.y : -1px;
+    out property <length> command-menu-width: root.command-open ? command_flyout.width : 0px;
+    out property <length> command-menu-height: root.command-open ? command_flyout.height : 0px;
+    out property <length> preset-menu-x: root.preset-open ? preset_flyout.absolute-position.x : -1px;
+    out property <length> preset-menu-y: root.preset-open ? preset_flyout.absolute-position.y : -1px;
+    out property <length> preset-menu-width: root.preset-open ? preset_flyout.width : 0px;
+    out property <length> preset-menu-height: root.preset-open ? preset_flyout.height : 0px;
+    out property <length> permission-menu-x: root.permission-open ? permission_flyout.absolute-position.x : -1px;
+    out property <length> permission-menu-y: root.permission-open ? permission_flyout.absolute-position.y : -1px;
+    out property <length> permission-menu-width: root.permission-open ? permission_flyout.width : 0px;
+    out property <length> permission-menu-height: root.permission-open ? permission_flyout.height : 0px;
+    out property <length> screenshot-menu-x: root.screenshot-open ? screenshot_flyout.absolute-position.x : -1px;
+    out property <length> screenshot-menu-y: root.screenshot-open ? screenshot_flyout.absolute-position.y : -1px;
+    out property <length> screenshot-menu-width: root.screenshot-open ? screenshot_flyout.width : 0px;
+    out property <length> screenshot-menu-height: root.screenshot-open ? screenshot_flyout.height : 0px;
+    public function dismiss-popovers() {
+        root.model-open = false;
+        root.plus-open = false;
+        root.close-submenus();
+    }
     // Popover bookkeeping: the plus menu and its cascading flyouts are mutually
     // exclusive with the model popover, mirroring the web menu's single-open
     // behaviour.
-    function toggle-plus-menu() {
-        root.plus-open = !root.plus-open;
-        root.command-open = false;
-        root.preset-open = false;
-        root.permission-open = false;
-        root.screenshot-open = false;
-        root.model-open = false;
-    }
     function close-submenus() {
         root.command-open = false;
         root.preset-open = false;
@@ -1357,10 +1411,18 @@ export component Composer inherits Rectangle {
                         image-fit: contain;
                     }
                     accessible-role: button; accessible-label: I18n.cp_more;
-                    accessible-action-default => { root.toggle-plus-menu(); }
+                    accessible-action-default => {
+                        root.plus-open = !root.plus-open;
+                        root.model-open = false;
+                        root.close-submenus();
+                    }
                     plus-touch := TouchArea {
                         mouse-cursor: pointer;
-                        clicked => { root.toggle-plus-menu(); }
+                        clicked => {
+                            root.plus-open = !root.plus-open;
+                            root.model-open = false;
+                            root.close-submenus();
+                        }
                     }
                 }
                 // Typed "/" still expands the command list in place whenever
@@ -1369,7 +1431,8 @@ export component Composer inherits Rectangle {
                     x: 0px; y: -self.height - 8px; z: 30;
                     pick(value) => { root.draft = value; editor.focus(); }
                 }
-                if root.plus-open : Rectangle {
+                plus_menu := Rectangle {
+                    visible: root.plus-open;
                     x: 0px;
                     y: -self.height - 8px;
                     width: 220px;
@@ -1378,164 +1441,169 @@ export component Composer inherits Rectangle {
                     border-radius: Theme.radius-lg; background: Theme.surface;
                     border-width: 1px; border-color: Theme.border;
                     drop-shadow-color: #00000024; drop-shadow-blur: 16px; drop-shadow-offset-y: 3px;
-                    menu-body := VerticalLayout {
-                        padding: 6px; spacing: 2px;
-                        // 命令: the slash list cascades out of the row.
-                        Rectangle {
-                            height: 34px; border-radius: Theme.radius-sm;
-                            background: root.command-open || cmd-row-touch.has-hover ? Theme.hover : transparent;
-                            accessible-role: list-item; accessible-label: I18n.cp_commands;
-                            Image { x: 8px; y: 9px; width: 16px; height: 16px; source: @image-url("../assets/icons/terminal.svg"); colorize: Theme.text-secondary; image-fit: contain; }
-                            Text { x: 32px; width: parent.width - 44px; height: parent.height; text: I18n.cp_commands; color: Theme.text; font-size: Theme.font-md; vertical-alignment: center; overflow: elide; }
-                            Image { x: parent.width - 17px; y: 12px; width: 9px; height: 9px; source: @image-url("../assets/icons/chevron-right.svg"); colorize: Theme.muted; image-fit: contain; }
-                            cmd-row-touch := TouchArea {
-                                mouse-cursor: pointer;
-                                clicked => {
-                                    root.command-open = !root.command-open;
-                                    root.preset-open = false;
-                                    root.permission-open = false;
-                                    root.screenshot-open = false;
+                        menu-body := VerticalLayout {
+                            padding: 6px; spacing: 2px;
+                            // 命令: the slash list cascades out of the row.
+                            Rectangle {
+                                height: 34px; border-radius: Theme.radius-sm;
+                                background: root.command-open || cmd-row-touch.has-hover ? Theme.hover : transparent;
+                                accessible-role: list-item; accessible-label: I18n.cp_commands;
+                                Image { x: 8px; y: 9px; width: 16px; height: 16px; source: @image-url("../assets/icons/terminal.svg"); colorize: Theme.text-secondary; image-fit: contain; }
+                                Text { x: 32px; width: parent.width - 44px; height: parent.height; text: I18n.cp_commands; color: Theme.text; font-size: Theme.font-md; vertical-alignment: center; overflow: elide; }
+                                Image { x: parent.width - 17px; y: 12px; width: 9px; height: 9px; source: @image-url("../assets/icons/chevron-right.svg"); colorize: Theme.muted; image-fit: contain; }
+                                cmd-row-touch := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => {
+                                        root.command-open = !root.command-open;
+                                        root.preset-open = false;
+                                        root.permission-open = false;
+                                        root.screenshot-open = false;
+                                    }
+                                }
+                                command_flyout := CommandFlyout {
+                                    visible: root.command-open;
+                                    x: parent.width + 12px;
+                                    y: parent.height + 7px - self.height;
+                                    z: 2;
+                                    pick(value) => { root.plus-open = false; root.draft = value; editor.focus(); }
                                 }
                             }
-                            if root.command-open : CommandFlyout {
-                                x: parent.width + 12px;
-                                y: parent.height + 7px - self.height;
-                                z: 2;
-                                pick(value) => { root.plus-open = false; root.command-open = false; root.draft = value; editor.focus(); }
-                            }
-                        }
-                        // 预设问题
-                        Rectangle {
-                            height: 34px; border-radius: Theme.radius-sm;
-                            background: root.preset-open || preset-row-touch.has-hover ? Theme.hover : transparent;
-                            accessible-role: list-item; accessible-label: I18n.ag_preset_questions;
-                            Image { x: 8px; y: 9px; width: 16px; height: 16px; source: @image-url("../assets/icons/wand-magic-sparkles.svg"); colorize: Theme.text-secondary; image-fit: contain; }
-                            Text { x: 32px; width: parent.width - 44px; height: parent.height; text: I18n.ag_preset_questions; color: Theme.text; font-size: Theme.font-md; vertical-alignment: center; overflow: elide; }
-                            Image { x: parent.width - 17px; y: 12px; width: 9px; height: 9px; source: @image-url("../assets/icons/chevron-right.svg"); colorize: Theme.muted; image-fit: contain; }
-                            preset-row-touch := TouchArea {
-                                mouse-cursor: pointer;
-                                clicked => {
-                                    root.preset-open = !root.preset-open;
-                                    root.command-open = false;
-                                    root.permission-open = false;
-                                    root.screenshot-open = false;
+                            // 预设问题
+                            Rectangle {
+                                height: 34px; border-radius: Theme.radius-sm;
+                                background: root.preset-open || preset-row-touch.has-hover ? Theme.hover : transparent;
+                                accessible-role: list-item; accessible-label: I18n.ag_preset_questions;
+                                Image { x: 8px; y: 9px; width: 16px; height: 16px; source: @image-url("../assets/icons/wand-magic-sparkles.svg"); colorize: Theme.text-secondary; image-fit: contain; }
+                                Text { x: 32px; width: parent.width - 44px; height: parent.height; text: I18n.ag_preset_questions; color: Theme.text; font-size: Theme.font-md; vertical-alignment: center; overflow: elide; }
+                                Image { x: parent.width - 17px; y: 12px; width: 9px; height: 9px; source: @image-url("../assets/icons/chevron-right.svg"); colorize: Theme.muted; image-fit: contain; }
+                                preset-row-touch := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => {
+                                        root.preset-open = !root.preset-open;
+                                        root.command-open = false;
+                                        root.permission-open = false;
+                                        root.screenshot-open = false;
+                                    }
+                                }
+                                preset_flyout := PresetFlyout {
+                                    visible: root.preset-open;
+                                    questions: root.preset-questions;
+                                    x: parent.width + 12px;
+                                    y: parent.height + 7px - self.height;
+                                    z: 2;
+                                    pick(value) => { root.plus-open = false; root.draft = value; editor.focus(); }
                                 }
                             }
-                            if root.preset-open : PresetFlyout {
-                                x: parent.width + 12px;
-                                y: parent.height + 7px - self.height;
-                                z: 2;
-                                pick(value) => { root.plus-open = false; root.preset-open = false; root.draft = value; editor.focus(); }
-                            }
-                        }
-                        // 审批模式: the row carries the current mode, the flyout
-                        // switches it.
-                        Rectangle {
-                            height: 34px; border-radius: Theme.radius-sm;
-                            background: root.permission-open || perm-row-touch.has-hover ? Theme.hover : transparent;
-                            accessible-role: list-item; accessible-label: I18n.cp_permission;
-                            Image { x: 8px; y: 9px; width: 16px; height: 16px; source: @image-url("../assets/icons/shield.svg"); colorize: root.permission-mode == "full_auto" ? Theme.muted : Theme.accent; image-fit: contain; }
-                            Text { x: 32px; width: parent.width - 110px; height: parent.height; text: I18n.cp_permission; color: Theme.text; font-size: Theme.font-md; vertical-alignment: center; overflow: elide; }
-                            Text {
-                                x: parent.width - 78px; width: 56px; height: parent.height;
-                                text: root.permission-label;
-                                color: Theme.muted; font-size: Theme.font-xs;
-                                vertical-alignment: center; horizontal-alignment: right; overflow: elide;
-                            }
-                            Image { x: parent.width - 17px; y: 12px; width: 9px; height: 9px; source: @image-url("../assets/icons/chevron-right.svg"); colorize: Theme.muted; image-fit: contain; }
-                            perm-row-touch := TouchArea {
-                                mouse-cursor: pointer;
-                                clicked => {
-                                    root.permission-open = !root.permission-open;
-                                    root.command-open = false;
-                                    root.preset-open = false;
-                                    root.screenshot-open = false;
+                            // 审批模式: the row carries the current mode, the flyout
+                            // switches it.
+                            Rectangle {
+                                height: 34px; border-radius: Theme.radius-sm;
+                                background: root.permission-open || perm-row-touch.has-hover ? Theme.hover : transparent;
+                                accessible-role: list-item; accessible-label: I18n.cp_permission;
+                                Image { x: 8px; y: 9px; width: 16px; height: 16px; source: @image-url("../assets/icons/shield.svg"); colorize: root.permission-mode == "full_auto" ? Theme.muted : Theme.accent; image-fit: contain; }
+                                Text { x: 32px; width: parent.width - 110px; height: parent.height; text: I18n.cp_permission; color: Theme.text; font-size: Theme.font-md; vertical-alignment: center; overflow: elide; }
+                                Text {
+                                    x: parent.width - 78px; width: 56px; height: parent.height;
+                                    text: root.permission-label;
+                                    color: Theme.muted; font-size: Theme.font-xs;
+                                    vertical-alignment: center; horizontal-alignment: right; overflow: elide;
+                                }
+                                Image { x: parent.width - 17px; y: 12px; width: 9px; height: 9px; source: @image-url("../assets/icons/chevron-right.svg"); colorize: Theme.muted; image-fit: contain; }
+                                perm-row-touch := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => {
+                                        root.permission-open = !root.permission-open;
+                                        root.command-open = false;
+                                        root.preset-open = false;
+                                        root.screenshot-open = false;
+                                    }
+                                }
+                                permission_flyout := PermissionFlyout {
+                                    visible: root.permission-open;
+                                    x: parent.width + 12px;
+                                    y: parent.height + 7px - self.height;
+                                    z: 2;
+                                    mode: root.permission-mode;
+                                    changed(value) => {
+                                        root.permission-mode = value;
+                                        root.permission-changed(value);
+                                        root.permission-open = false;
+                                    }
                                 }
                             }
-                            if root.permission-open : PermissionFlyout {
-                                x: parent.width + 12px;
-                                y: parent.height + 7px - self.height;
-                                z: 2;
-                                mode: root.permission-mode;
-                                changed(value) => {
-                                    root.permission-mode = value;
-                                    root.permission-changed(value);
-                                    root.permission-open = false;
+                            // 语音输入: direct action; the row flips to a stop glyph
+                            // and the elapsed timer while capturing.
+                            Rectangle {
+                                height: 34px; border-radius: Theme.radius-sm;
+                                background: voice-row-touch.has-hover ? Theme.hover : transparent;
+                                accessible-role: list-item; accessible-label: I18n.cp_voice_input;
+                                Image {
+                                    x: 8px; y: 9px; width: 16px; height: 16px;
+                                    source: root.recording ? @image-url("../assets/icons/stop.svg") : @image-url("../assets/icons/microphone.svg");
+                                    colorize: root.recording ? Theme.danger : Theme.text-secondary;
+                                    image-fit: contain;
+                                }
+                                Text { x: 32px; width: parent.width - 110px; height: parent.height; text: I18n.cp_voice_input; color: Theme.text; font-size: Theme.font-md; vertical-alignment: center; overflow: elide; }
+                                if root.transcribing : Text {
+                                    x: parent.width - 78px; width: 62px; height: parent.height;
+                                    text: I18n.cp_transcribing;
+                                    color: Theme.muted; font-size: Theme.font-xs;
+                                    vertical-alignment: center; horizontal-alignment: right; overflow: elide;
+                                }
+                                if root.recording : Text {
+                                    x: parent.width - 78px; width: 62px; height: parent.height;
+                                    text: root.recording-elapsed;
+                                    color: Theme.danger; font-size: Theme.font-xs; font-weight: 600;
+                                    vertical-alignment: center; horizontal-alignment: right; overflow: elide;
+                                }
+                                voice-row-touch := TouchArea {
+                                    enabled: !root.transcribing;
+                                    mouse-cursor: pointer;
+                                    clicked => { root.record-voice(); }
+                                }
+                            }
+                            // 截图
+                            Rectangle {
+                                height: 34px; border-radius: Theme.radius-sm;
+                                background: root.screenshot-open || shot-row-touch.has-hover ? Theme.hover : transparent;
+                                accessible-role: list-item; accessible-label: I18n.cp_screenshot;
+                                Image { x: 8px; y: 9px; width: 16px; height: 16px; source: @image-url("../assets/icons/camera.svg"); colorize: Theme.text-secondary; image-fit: contain; }
+                                Text { x: 32px; width: parent.width - 44px; height: parent.height; text: I18n.cp_screenshot; color: Theme.text; font-size: Theme.font-md; vertical-alignment: center; overflow: elide; }
+                                Image { x: parent.width - 17px; y: 12px; width: 9px; height: 9px; source: @image-url("../assets/icons/chevron-right.svg"); colorize: Theme.muted; image-fit: contain; }
+                                shot-row-touch := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => {
+                                        root.screenshot-open = !root.screenshot-open;
+                                        root.command-open = false;
+                                        root.preset-open = false;
+                                        root.permission-open = false;
+                                    }
+                                }
+                                screenshot_flyout := ScreenshotFlyout {
+                                    visible: root.screenshot-open;
+                                    x: parent.width + 12px;
+                                    y: parent.height + 7px - self.height;
+                                    z: 2;
+                                    pick(hide, region) => { root.plus-open = false; root.screenshot(hide, region); }
+                                }
+                            }
+                            // 终端模式: direct toggle; the check marks the live mode.
+                            Rectangle {
+                                height: 34px; border-radius: Theme.radius-sm;
+                                background: term-row-touch.has-hover ? Theme.hover : transparent;
+                                accessible-role: list-item; accessible-label: I18n.cp_terminal_mode;
+                                Image { x: 8px; y: 9px; width: 16px; height: 16px; source: @image-url("../assets/icons/fa-display.svg"); colorize: root.terminal-mode ? Theme.accent : Theme.text-secondary; image-fit: contain; }
+                                Text { x: 32px; width: parent.width - 44px; height: parent.height; text: I18n.cp_terminal_mode; color: Theme.text; font-size: Theme.font-md; vertical-alignment: center; overflow: elide; }
+                                if root.terminal-mode : Image {
+                                    x: parent.width - 21px; y: 9px; width: 16px; height: 16px;
+                                    source: @image-url("../assets/icons/check.svg"); colorize: Theme.accent; image-fit: contain;
+                                }
+                                term-row-touch := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => { root.plus-open = false; root.command(); }
                                 }
                             }
                         }
-                        // 语音输入: direct action; the row flips to a stop glyph
-                        // and the elapsed timer while capturing.
-                        Rectangle {
-                            height: 34px; border-radius: Theme.radius-sm;
-                            background: voice-row-touch.has-hover ? Theme.hover : transparent;
-                            accessible-role: list-item; accessible-label: I18n.cp_voice_input;
-                            Image {
-                                x: 8px; y: 9px; width: 16px; height: 16px;
-                                source: root.recording ? @image-url("../assets/icons/stop.svg") : @image-url("../assets/icons/microphone.svg");
-                                colorize: root.recording ? Theme.danger : Theme.text-secondary;
-                                image-fit: contain;
-                            }
-                            Text { x: 32px; width: parent.width - 110px; height: parent.height; text: I18n.cp_voice_input; color: Theme.text; font-size: Theme.font-md; vertical-alignment: center; overflow: elide; }
-                            if root.transcribing : Text {
-                                x: parent.width - 78px; width: 62px; height: parent.height;
-                                text: I18n.cp_transcribing;
-                                color: Theme.muted; font-size: Theme.font-xs;
-                                vertical-alignment: center; horizontal-alignment: right; overflow: elide;
-                            }
-                            if root.recording : Text {
-                                x: parent.width - 78px; width: 62px; height: parent.height;
-                                text: root.recording-elapsed;
-                                color: Theme.danger; font-size: Theme.font-xs; font-weight: 600;
-                                vertical-alignment: center; horizontal-alignment: right; overflow: elide;
-                            }
-                            voice-row-touch := TouchArea {
-                                enabled: !root.transcribing;
-                                mouse-cursor: pointer;
-                                clicked => { root.record-voice(); }
-                            }
-                        }
-                        // 截图
-                        Rectangle {
-                            height: 34px; border-radius: Theme.radius-sm;
-                            background: root.screenshot-open || shot-row-touch.has-hover ? Theme.hover : transparent;
-                            accessible-role: list-item; accessible-label: I18n.cp_screenshot;
-                            Image { x: 8px; y: 9px; width: 16px; height: 16px; source: @image-url("../assets/icons/camera.svg"); colorize: Theme.text-secondary; image-fit: contain; }
-                            Text { x: 32px; width: parent.width - 44px; height: parent.height; text: I18n.cp_screenshot; color: Theme.text; font-size: Theme.font-md; vertical-alignment: center; overflow: elide; }
-                            Image { x: parent.width - 17px; y: 12px; width: 9px; height: 9px; source: @image-url("../assets/icons/chevron-right.svg"); colorize: Theme.muted; image-fit: contain; }
-                            shot-row-touch := TouchArea {
-                                mouse-cursor: pointer;
-                                clicked => {
-                                    root.screenshot-open = !root.screenshot-open;
-                                    root.command-open = false;
-                                    root.preset-open = false;
-                                    root.permission-open = false;
-                                }
-                            }
-                            if root.screenshot-open : ScreenshotFlyout {
-                                x: parent.width + 12px;
-                                y: parent.height + 7px - self.height;
-                                z: 2;
-                                pick(hide, region) => { root.plus-open = false; root.screenshot-open = false; root.screenshot(hide, region); }
-                            }
-                        }
-                        // 终端模式: direct toggle; the check marks the live mode.
-                        Rectangle {
-                            height: 34px; border-radius: Theme.radius-sm;
-                            background: term-row-touch.has-hover ? Theme.hover : transparent;
-                            accessible-role: list-item; accessible-label: I18n.cp_terminal_mode;
-                            Image { x: 8px; y: 9px; width: 16px; height: 16px; source: @image-url("../assets/icons/fa-display.svg"); colorize: root.terminal-mode ? Theme.accent : Theme.text-secondary; image-fit: contain; }
-                            Text { x: 32px; width: parent.width - 44px; height: parent.height; text: I18n.cp_terminal_mode; color: Theme.text; font-size: Theme.font-md; vertical-alignment: center; overflow: elide; }
-                            if root.terminal-mode : Image {
-                                x: parent.width - 21px; y: 9px; width: 16px; height: 16px;
-                                source: @image-url("../assets/icons/check.svg"); colorize: Theme.accent; image-fit: contain;
-                            }
-                            term-row-touch := TouchArea {
-                                mouse-cursor: pointer;
-                                clicked => { root.plus-open = false; root.command(); }
-                            }
-                        }
-                    }
                 }
             }
             // 工作目录状态栏（对齐蜂巢 ComposerStatusBar）。
@@ -1559,7 +1627,7 @@ export component Composer inherits Rectangle {
             // its content width — the row's leftover space belongs to the
             // spacer, and a stretched picker would push the popover's right
             // edge past the trigger's.
-            ModelPicker {
+            model-picker := ModelPicker {
                 horizontal-stretch: 0;
                 models: root.models;
                 has-catalogue: root.model-catalogue-count > 0;
@@ -1572,6 +1640,10 @@ export component Composer inherits Rectangle {
                 effort <=> root.reasoning-effort;
                 saving: root.model-saving;
                 open <=> root.model-open;
+                opened => {
+                    root.plus-open = false;
+                    root.close-submenus();
+                }
                 select-model(index, name) => { root.select-model(index, name); }
                 effort-changed(value) => { root.reasoning-effort-changed(value); }
                 open-settings => { root.open-model-settings(); }

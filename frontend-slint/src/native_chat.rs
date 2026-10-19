@@ -348,6 +348,10 @@ struct State {
     drafts: std::collections::HashMap<String, String>,
     recording: Option<Recording>,
     list_inflight: Arc<AtomicBool>,
+    /// Only the first successful catalogue load may choose an initial thread.
+    /// Ordinary refreshes (including archive completion) must leave the user's
+    /// current workspace and empty state untouched.
+    initial_auto_open: bool,
     /// Each local workspace owns an independent shell, screen and transcript.
     terminals: std::collections::HashMap<String, WorkspaceTerminal>,
     terminal_window: Option<Rc<TerminalWindow>>,
@@ -369,6 +373,8 @@ struct State {
     parked: VecDeque<ParkedTurn>,
     /// Engine queue rows behind the strip projection; the façade bounds the list.
     queue_cache: Vec<NativeQueueTurn>,
+    /// Only the latest asynchronous queue read may update the composer strip.
+    queue_generation: Arc<AtomicU64>,
     /// Debounce deadline of the next strip refresh, while traffic is running.
     queue_due: Option<Instant>,
     /// ArrowUp/ArrowDown walk state of the composer draft.
@@ -380,6 +386,40 @@ struct State {
 
 thread_local! {
     static CHAT_STATE: RefCell<std::rc::Weak<RefCell<State>>> = RefCell::new(std::rc::Weak::new());
+    static INITIAL_HISTORY: RefCell<Option<(String, Vec<wunder_desktop::native::NativeChatTurn>, i64)>> = RefCell::new(None);
+}
+
+/// Retain one selected-thread snapshot until the passive watcher attaches. The
+/// slot is deliberately single-entry and thread-local: it bounds memory and
+/// stays on the Slint thread while workers only transfer their result through
+/// `upgrade_in_event_loop`.
+pub(crate) fn seed_initial_history(
+    app: &MainWindow,
+    session: &str,
+    turns: Vec<wunder_desktop::native::NativeChatTurn>,
+    cursor: i64,
+) {
+    if app.get_active_session_id() != session {
+        return;
+    }
+    INITIAL_HISTORY.with(|slot| *slot.borrow_mut() = Some((session.to_string(), turns, cursor)));
+}
+
+pub(crate) fn take_initial_history(
+    session: &str,
+) -> Option<(Vec<wunder_desktop::native::NativeChatTurn>, i64)> {
+    INITIAL_HISTORY.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        if slot.as_ref().is_some_and(|(id, _, _)| id == session) {
+            slot.take().map(|(_, turns, cursor)| (turns, cursor))
+        } else {
+            None
+        }
+    })
+}
+
+fn clear_initial_history() {
+    INITIAL_HISTORY.with(|slot| *slot.borrow_mut() = None);
 }
 
 /// Hand the existing timeline to a remote data source. Local execution keeps
@@ -401,7 +441,12 @@ pub(crate) fn prepare_external_timeline(app: &MainWindow) {
             if state.drafts.len() >= 100 {
                 state.drafts.clear();
             }
-            let _ = state.desktop.close_session(&local_id);
+            // Release navigation ownership through the idle-aware reaper. A
+            // local run may continue after the cloud view takes focus; closing
+            // its lease eagerly recreates the same self-conflict on return.
+            let desktop = state.desktop.clone();
+            let released_id = local_id.clone();
+            desktop.defer_close_session(&released_id, Duration::from_secs(2));
             state.drafts.insert(local_id, app.get_draft().to_string());
             app.set_active_session_id("".into());
         }
@@ -502,6 +547,11 @@ impl Drop for Recording {
 pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
     app.set_connected(true);
     app.set_status("正在加载内嵌运行时…".into());
+    // `MainWindow` deliberately starts in a loading state so its first native
+    // frame cannot expose preview fixtures. This installer is also used by
+    // isolated native checks, which bypass `native_runtime::install`; clear
+    // that bootstrap gate before the first real refresh below.
+    app.set_chat_loading(false);
     // The dock ships with slint-viewer demo values; a real runtime clears them
     // once and lets the turn flush (or the selection reset) drive it after.
     reset_activity(app);
@@ -524,6 +574,7 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
         drafts: std::collections::HashMap::new(),
         recording: None,
         list_inflight: Arc::new(AtomicBool::new(false)),
+        initial_auto_open: true,
         terminals: std::collections::HashMap::new(),
         terminal_window,
         terminal_model: Rc::new(VecModel::default()),
@@ -535,6 +586,7 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
         inquiries: std::collections::HashMap::new(),
         parked: VecDeque::new(),
         queue_cache: Vec::new(),
+        queue_generation: Arc::new(AtomicU64::new(0)),
         queue_due: None,
         recall: Recall::default(),
         send_seq: 0,
@@ -579,8 +631,11 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
         app.set_prompt_preview_loading(true);
         app.set_prompt_preview("".into());
         let cloud = app.get_cloud_chat_active();
-        let session = if cloud { crate::cloud_threads::selected_id(&app) }
-            else { app.get_active_session_id().to_string() };
+        let session = if cloud {
+            crate::cloud_threads::selected_id(&app)
+        } else {
+            app.get_active_session_id().to_string()
+        };
         let agent = app.get_active_agent_id().to_string();
         let weak = app.as_weak();
         let desktop = desktop_preview.clone();
@@ -592,8 +647,11 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
             };
             let _ = weak.upgrade_in_event_loop(move |app| {
                 app.set_prompt_preview_loading(false);
-                let current = if cloud { crate::cloud_threads::selected_id(&app) }
-                    else { app.get_active_session_id().to_string() };
+                let current = if cloud {
+                    crate::cloud_threads::selected_id(&app)
+                } else {
+                    app.get_active_session_id().to_string()
+                };
                 if app.get_cloud_chat_active() != cloud || current != session {
                     app.set_prompt_preview_open(false);
                     return;
@@ -697,6 +755,22 @@ pub(crate) fn markdown_root(app: &MainWindow) -> String {
 /// turn-ruler marks always move together, so the ruler can never drift from
 /// the visible rows.
 pub(crate) fn publish_timeline(app: &MainWindow, live: &crate::timeline::Timeline) {
+    publish_timeline_with_follow(app, live, true);
+}
+
+/// Publish a durable refresh without treating it as new streamed output. A
+/// history patch may briefly change nested process heights while Slint lays out
+/// the page; asking the viewport to follow each such intermediate height was
+/// what made the reader jump to the top and then return to the answer tail.
+pub(crate) fn publish_timeline_passive(app: &MainWindow, live: &crate::timeline::Timeline) {
+    publish_timeline_with_follow(app, live, false);
+}
+
+fn publish_timeline_with_follow(
+    app: &MainWindow,
+    live: &crate::timeline::Timeline,
+    follow_output: bool,
+) {
     if live.needs_publish() {
         app.set_timeline(live.model());
         app.set_turn_marks(live.marks_model());
@@ -705,7 +779,9 @@ pub(crate) fn publish_timeline(app: &MainWindow, live: &crate::timeline::Timelin
     // One monotonic view revision covers live frames and durable history
     // refreshes alike. TimelineView uses it to schedule a bounded follow-tail
     // correction instead of polling content-y forever.
-    app.set_stream_updates(app.get_stream_updates().wrapping_add(1));
+    if follow_output {
+        app.set_stream_updates(app.get_stream_updates().wrapping_add(1));
+    }
     crate::activity_ui::notify_timeline_rows(live.row_count());
 }
 
@@ -908,7 +984,15 @@ fn refresh_chat(app: &MainWindow, state: Rc<RefCell<State>>, silent: bool) {
     if app.get_chat_loading() || app.get_session_loading() || app.get_creating_session() {
         return;
     }
-    let desktop = state.borrow().desktop.clone();
+    let (desktop, allow_initial_auto_open) = {
+        let mut current = state.borrow_mut();
+        let allow_initial_auto_open = current.initial_auto_open;
+        // Consume this before the worker runs. A later ordinary refresh must
+        // never become an implicit cross-workspace navigation merely because
+        // the first list read is still in flight.
+        current.initial_auto_open = false;
+        (current.desktop.clone(), allow_initial_auto_open)
+    };
     let weak = app.as_weak();
     let inflight = state.borrow().list_inflight.clone();
     if inflight.swap(true, Ordering::AcqRel) {
@@ -1004,16 +1088,16 @@ fn refresh_chat(app: &MainWindow, state: Rc<RefCell<State>>, silent: bool) {
                         app.set_conversations(ModelRc::new(VecModel::from(rows)));
                     }
                     crate::navigation_ui::project(&app);
-                    crate::navigation_ui::project_sidebar(&app, Some(&desktop));
+                    crate::navigation_ui::project_sidebar(&app, Some(desktop.clone()));
                     // The working-directory panel opens on the selected
                     // workspace's folder, never on the cloud hint; once a
                     // thread is focused (auto-selected below) its own
                     // workspace refines the target.
                     if app.get_active_session_id().is_empty() {
                         let cards = app.get_workspaces();
-                        let selected = usize::try_from(app.get_selected_workspace()).unwrap_or(0);
-                        if let Some(card) = cards
-                            .row_data(selected.min(cards.row_count().saturating_sub(1)))
+                        let selected = usize::try_from(app.get_selected_workspace()).ok();
+                        if let Some(card) = selected
+                            .and_then(|index| cards.row_data(index))
                             .filter(|card| !card.root_path.is_empty())
                         {
                             crate::workspace_files::set_target(
@@ -1025,6 +1109,7 @@ fn refresh_chat(app: &MainWindow, state: Rc<RefCell<State>>, silent: bool) {
                     }
                     if app.get_active_session_id().is_empty()
                         && app.get_conversations().row_count() > 0
+                        && allow_initial_auto_open
                     {
                         // Opening a thread acquires a cross-process lease. Do
                         // not auto-open a row that another live蛹/舵机 owns;
@@ -1057,13 +1142,10 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
         let id = row.id.to_string();
         let desktop = state.borrow().desktop.clone();
         let previous_session = app.get_active_session_id().to_string();
-        if let Err(error) = desktop.open_session(&id) {
-            app.set_status(format!("无法打开线程：{error}").into());
-            return;
-        }
-        if !previous_session.is_empty() && previous_session != id {
-            let _ = desktop.close_session(&previous_session);
-        }
+        clear_initial_history();
+        // Thread lease I/O is deliberately deferred to the worker below. On a
+        // mechanical disk, acquiring the new lease and releasing the previous
+        // one here froze the Slint event loop before it could paint feedback.
         app.set_goal_active(row.goal_active);
         app.set_goal_visible(row.goal_visible);
         app.set_goal_objective(row.goal_objective.clone());
@@ -1121,9 +1203,6 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
             }
             app.set_draft(current.drafts.get(&id).cloned().unwrap_or_default().into());
         }
-        // The strip is the engine's queue of the thread now on screen, not a
-        // leftover of the one that was just left behind.
-        publish_queue(&app, &state, &id);
         let generation = state.borrow().history_generation.clone();
         let request = generation.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
         let weak = app.as_weak();
@@ -1132,6 +1211,19 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
         reset_context_usage(&app);
         app.set_active_session_id(id.clone().into());
         app.set_session_loading(true);
+        app.set_status("正在打开线程，读取历史记录…".into());
+        if !previous_session.is_empty() && previous_session != id {
+            // The selected predecessor should not keep an open lease forever
+            // when the newly selected thread cannot be opened. The reaper
+            // waits for an in-flight run, while its lease activity generation
+            // turns an A → B → A return into a no-op before this grace period
+            // expires.
+            desktop.defer_close_session(&previous_session, Duration::from_secs(2));
+        }
+        // The strip is the engine's queue of the thread now on screen, not a
+        // leftover of the one that was just left behind. Queue reads are
+        // SQLite I/O, so the visible selection never waits for them.
+        refresh_queue_async(&app, &state, &id);
         let timeline = state.borrow().timeline.clone();
         timeline.borrow_mut().clear();
         // Keep MainWindow attached to the one stable VecModel owned by the
@@ -1147,16 +1239,33 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
             live.sync_turn_marks();
         }
         std::thread::spawn(move || {
-            let result = desktop.get_session_info(&id);
+            // Lease acquisition and metadata stay on the worker. The first
+            // history pass reads headers only; folded process details are
+            // paged on demand after the user opens that process.
+            let result = desktop.open_chat_snapshot(&id);
+            let opened = result.is_ok();
             let _ = weak.upgrade_in_event_loop(move |app| {
                 if app.get_active_session_id() != id
                     || generation.load(Ordering::Relaxed) != request
                 {
+                    // A later selection won. Release only when another id is
+                    // currently active; for A → B → A the current A worker
+                    // shares the lease and must not be disconnected by this
+                    // stale response.
+                    if opened && app.get_active_session_id() != id {
+                        desktop.defer_close_session(&id, Duration::from_secs(2));
+                    }
                     return;
                 }
-                app.set_session_loading(false);
                 match result {
-                    Ok(session) => {
+                    Ok(snapshot) => {
+                        // The observer is selected by the id and adopts this
+                        // snapshot on its next UI tick. Keeping it in the
+                        // window-independent response avoids moving Rc state
+                        // across the native worker boundary.
+                        let history = snapshot.turns;
+                        let history_cursor = snapshot.change_cursor;
+                        let session = snapshot.session;
                         let agent = session.agent_id.unwrap_or_else(|| "__default__".into());
                         if app.get_active_agent_id() != agent {
                             app.set_active_agent_id(agent.clone().into());
@@ -1182,8 +1291,29 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
                         if let Some(model) = session.session_model_name.as_deref() {
                             crate::native_pages::select_model_key(&app, model);
                         }
+                        crate::native_chat::seed_initial_history(
+                            &app,
+                            id.as_str(),
+                            history,
+                            history_cursor,
+                        );
+                        // The durable snapshot is ready; let the observer
+                        // attach on its next frame. Keep the loading overlay
+                        // until that frame publishes history, so a slow disk
+                        // never flashes the welcome card between threads.
                     }
-                    Err(error) => app.set_status(format!("无法加载会话：{error}").into()),
+                    Err(error) => {
+                        app.set_session_loading(false);
+                        // This id has no established lease or observer. Clear
+                        // it before the next observer tick so it cannot attach
+                        // through the "already opened" watcher variant after
+                        // an acquisition failure. The next selection starts
+                        // from a clean, empty timeline.
+                        app.set_active_session_id("".into());
+                        app.set_queue_turns(ModelRc::default());
+                        app.set_queue_overflow(0);
+                        app.set_status(format!("无法打开线程：{error}").into());
+                    }
                 }
             });
         });
@@ -1504,11 +1634,11 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
             app.set_pending_attachments(ModelRc::default());
             state.borrow_mut().inquiries.remove(&session);
             publish_inquiry(&app, &session, &state.borrow());
-            let desktop = state.borrow().desktop.clone();
-            let mut st = state.borrow_mut();
-            queue::publish(&app, &desktop, &session, &mut st.queue_cache);
-            queue::schedule_due(&mut st.queue_due, Duration::from_millis(220));
-            drop(st);
+            refresh_queue_async(&app, &state, &session);
+            queue::schedule_due(
+                &mut state.borrow_mut().queue_due,
+                Duration::from_millis(220),
+            );
             app.set_status("已加入等待发送".into());
             return;
         }
@@ -1764,13 +1894,48 @@ fn finish_voice_recording(
     });
 }
 
-/// Republish the engine's queue for `session` into the composer strip. The
-/// façade call blocks on a bounded DB read, so it only runs on the boundaries
-/// that actually move the queue.
-fn publish_queue(app: &MainWindow, state: &Rc<RefCell<State>>, session: &str) {
-    let desktop = state.borrow().desktop.clone();
-    let mut st = state.borrow_mut();
-    queue::publish(app, &desktop, session, &mut st.queue_cache);
+/// Load a bounded queue snapshot off the Slint event loop. Selection and queue
+/// actions share this helper so a cold SQLite cache on an old HDD never delays
+/// the click acknowledgement.
+fn refresh_queue_async(app: &MainWindow, state: &Rc<RefCell<State>>, session: &str) {
+    let session = session.trim().to_string();
+    if session.is_empty() {
+        state.borrow_mut().queue_cache.clear();
+        queue::publish_rows(app, &[]);
+        return;
+    }
+    let (desktop, generation) = {
+        let current = state.borrow();
+        (current.desktop.clone(), current.queue_generation.clone())
+    };
+    request_queue_refresh(app, desktop, session, generation);
+}
+
+fn request_queue_refresh(
+    app: &MainWindow,
+    desktop: Arc<NativeDesktop>,
+    session: String,
+    generation: Arc<AtomicU64>,
+) {
+    let request = generation.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
+    let weak = app.as_weak();
+    std::thread::spawn(move || {
+        let rows = desktop.list_queue_turns(&session).unwrap_or_default();
+        let _ = weak.upgrade_in_event_loop(move |app| {
+            if app.get_active_session_id() != session
+                || generation.load(Ordering::Relaxed) != request
+            {
+                return;
+            }
+            CHAT_STATE.with(|slot| {
+                let Some(state) = slot.borrow().upgrade() else {
+                    return;
+                };
+                state.borrow_mut().queue_cache = rows.clone();
+                queue::publish_rows(&app, &rows);
+            });
+        });
+    });
 }
 
 /// 撤下一轮：取消引擎里那条还没开跑的轮次，并丢弃本窗口为它持有的订阅。
@@ -1821,7 +1986,7 @@ fn withdraw_queue_turn(
             st.parked.remove(index);
         }
     }
-    publish_queue(app, state, session);
+    refresh_queue_async(app, state, session);
     if refill {
         if let Some(text) = content.filter(|text| !text.trim().is_empty()) {
             let draft = app.get_draft().to_string();
@@ -1852,7 +2017,7 @@ fn bind_queue(app: &MainWindow, state: Rc<RefCell<State>>) {
             Ok(()) => app.set_status("已插话，将在当前动作边界优先执行".into()),
             Err(error) => app.set_status(format!("插话失败：{error}").into()),
         }
-        publish_queue(&app, &state_interject, &session);
+        refresh_queue_async(&app, &state_interject, &session);
     });
 
     let weak = app.as_weak();
@@ -1894,7 +2059,7 @@ fn bind_queue(app: &MainWindow, state: Rc<RefCell<State>>) {
         let Some(next) = queue::move_within(&ids, queue_id.as_str(), delta) else {
             // The row vanished underneath the drag: take the order from the
             // engine instead of writing back a list it no longer recognises.
-            publish_queue(&app, &state_reorder, &session);
+            refresh_queue_async(&app, &state_reorder, &session);
             return;
         };
         if next.is_empty() {
@@ -1904,7 +2069,7 @@ fn bind_queue(app: &MainWindow, state: Rc<RefCell<State>>) {
         if let Err(error) = desktop.reorder_queue_turns(&session, &next) {
             app.set_status(format!("顺序未保存：{error}").into());
         }
-        publish_queue(&app, &state_reorder, &session);
+        refresh_queue_async(&app, &state_reorder, &session);
     });
 
     // The walk is a pure read over this thread's timeline, so it needs neither
@@ -2282,7 +2447,6 @@ fn start_timer(app: &MainWindow, state: Rc<RefCell<State>>) {
                 queue::schedule_due(&mut state.queue_due, Duration::from_millis(0));
             }
             if parked_moved || queue::due_arrived(&mut state.queue_due) {
-                queue::publish(&app, &desktop, &active_session, &mut state.queue_cache);
                 // Promotion is the point at which the request owns the live
                 // slot. Hide its queue card immediately; the next refresh will
                 // still use the engine snapshot for every other row.
@@ -2294,6 +2458,13 @@ fn start_timer(app: &MainWindow, state: Rc<RefCell<State>>) {
                     queue::without_client_id(&mut state.queue_cache, client_message_id.as_str());
                     queue::publish_rows(&app, &state.queue_cache);
                 }
+                let queue_generation = state.queue_generation.clone();
+                request_queue_refresh(
+                    &app,
+                    desktop.clone(),
+                    active_session.clone(),
+                    queue_generation,
+                );
             }
             // The turn is taken out of the state for the tick so the flush can
             // also touch the plan cache and signature without fighting the

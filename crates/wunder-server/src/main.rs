@@ -131,6 +131,8 @@ async fn run_server(runtime_threads: runtime_tuning::ServerRuntimeThreads) -> an
         "frontend/src/assets/agent-avatars",
         "/wunder/assets/agent-avatars",
     );
+    // A stable bridge namespace also works behind the user frontend's proxy.
+    let app = mount_static(app, "web", "/bridge");
     let app = mount_static(app, "web", "/");
     let app = mount_static(app, "docs/ppt", "/wunder/ppt");
     let app = mount_static(app, "docs/ppt-en", "/wunder/ppt-en");

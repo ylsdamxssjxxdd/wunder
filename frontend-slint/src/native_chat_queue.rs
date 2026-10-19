@@ -10,7 +10,7 @@ use crate::{DraftRecall, MainWindow, QueueTurn};
 use slint::{ModelRc, SharedString, VecModel};
 use std::collections::VecDeque;
 use std::rc::Rc;
-use wunder_desktop::{NativeChatEvent, NativeDesktop, NativeQueueTurn, NativeStream};
+use wunder_desktop::{NativeChatEvent, NativeQueueTurn, NativeStream};
 
 /// Parked submissions this window still holds a subscriber for. A thread's
 /// queue is short by design and every entry owns a bounded event channel, so
@@ -172,24 +172,6 @@ pub fn publish_rows(app: &MainWindow, rows: &[NativeQueueTurn]) {
     let (projected, hidden) = project_rows(rows);
     app.set_queue_turns(ModelRc::from(Rc::new(VecModel::from(projected))));
     app.set_queue_overflow(hidden as i32);
-}
-
-/// Publish the engine's queue for `session`. This is a blocking call, so it
-/// runs only on the boundaries that actually move the queue (send, action,
-/// thread switch) and behind the tick's debounce.
-pub fn publish(
-    app: &MainWindow,
-    desktop: &NativeDesktop,
-    session: &str,
-    cache: &mut Vec<NativeQueueTurn>,
-) {
-    let rows = if session.is_empty() {
-        Vec::new()
-    } else {
-        desktop.list_queue_turns(session).unwrap_or_default()
-    };
-    *cache = rows;
-    publish_rows(app, cache);
 }
 
 /// Ask the strip to refresh soon; `None` clears the pending request.

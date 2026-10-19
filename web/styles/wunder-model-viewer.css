@@ -48,18 +48,3 @@
   pointer-events: none;
   user-select: none;
 }
-.wunder-model-viewer button {
-  border: 1px solid #cbd5e1;
-  border-radius: 7px;
-  background: #fff;
-  color: #334155;
-  font: inherit;
-  width: 38px;
-  height: 34px;
-  padding: 0;
-  cursor: pointer;
-  box-shadow: none;
-}
-.wunder-model-viewer button:hover { background: #e7eef8; }
-.wunder-model-viewer button:disabled { cursor: default; opacity: 0.5; }
-.wunder-model-viewer button[aria-pressed="true"] { background: #e0eafb; border-color: #7e9bca; }

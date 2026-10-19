@@ -8,7 +8,6 @@ use wunder_desktop::{
 };
 
 pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
-    crate::native::wunder_model::install(app);
     crate::agent_editor::install(app);
     crate::agent_editor::install_save_handler(app, api.clone());
     crate::entity_state::bind_selection(app);
@@ -48,7 +47,9 @@ fn bind_model_probes(app: &MainWindow, api: Arc<NativeDesktop>) {
         let model = app.get_model_name_draft().trim().to_string();
         let base_url = app.get_model_base_url_draft().trim().to_string();
         let token = app.get_model_token_draft().trim().to_string();
-        let known_key = !key.is_empty() && app.get_models().iter().any(|entry| entry.key == key);
+        let known_key = !app.get_model_creating()
+            && !key.is_empty()
+            && app.get_models().iter().any(|entry| entry.key == key);
         let token_override = (!token.is_empty()).then(|| token.clone());
         let weak = app.as_weak();
         let api = context_api.clone();
@@ -62,9 +63,7 @@ fn bind_model_probes(app: &MainWindow, api: Arc<NativeDesktop>) {
             let _ = weak.upgrade_in_event_loop(move |app| match result {
                 Ok(outcome) => {
                     app.set_status(outcome.message.clone().into());
-                    app.set_dialog_title("上下文探测".into());
-                    app.set_dialog_text(outcome.message.into());
-                    app.set_dialog_open(true);
+                    show_toast(&app, outcome.message, 1);
                 }
                 Err(error) => show_error(&app, format!("无法探测上下文：{error}")),
             });
@@ -86,7 +85,9 @@ fn bind_model_probes(app: &MainWindow, api: Arc<NativeDesktop>) {
         let model = app.get_model_name_draft().trim().to_string();
         let base_url = app.get_model_base_url_draft().trim().to_string();
         let token = app.get_model_token_draft().trim().to_string();
-        let known_key = !key.is_empty() && app.get_models().iter().any(|entry| entry.key == key);
+        let known_key = !app.get_model_creating()
+            && !key.is_empty()
+            && app.get_models().iter().any(|entry| entry.key == key);
         let token_override = (!token.is_empty()).then(|| token.clone());
         let weak = app.as_weak();
         let api = voice_api.clone();
@@ -101,8 +102,7 @@ fn bind_model_probes(app: &MainWindow, api: Arc<NativeDesktop>) {
                 Ok(voices) => {
                     if voices.is_empty() {
                         app.set_status("提供方未返回语音列表".into());
-                        app.set_dialog_title("语音列表探测".into());
-                        app.set_dialog_text("提供方未返回语音列表。".into());
+                        show_toast(&app, "提供方未返回语音列表。".into(), 1);
                     } else {
                         let preview = voices
                             .iter()
@@ -116,10 +116,8 @@ fn bind_model_probes(app: &MainWindow, api: Arc<NativeDesktop>) {
                             String::new()
                         };
                         app.set_status(format!("语音列表探测成功：{} 项", voices.len()).into());
-                        app.set_dialog_title("语音列表探测".into());
-                        app.set_dialog_text(format!("{preview}{more}").into());
+                        show_toast(&app, format!("{preview}{more}"), 1);
                     }
-                    app.set_dialog_open(true);
                 }
                 Err(error) => show_error(&app, format!("无法探测语音列表：{error}")),
             });
@@ -479,7 +477,8 @@ fn restart_cloud_status_poll(app_weak: slint::Weak<MainWindow>, api: Arc<NativeD
                 let weak = app_weak.clone();
                 let api = api.clone();
                 let pending = in_flight.clone();
-                let refresh_account = refresh_tick.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % 5 == 0;
+                let refresh_account =
+                    refresh_tick.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % 5 == 0;
                 run_background(move || {
                     let status = if refresh_account {
                         // Keep projecting the cached state when the network is
@@ -513,6 +512,27 @@ fn restart_cloud_status_poll(app_weak: slint::Weak<MainWindow>, api: Arc<NativeD
 /// from the shell into the call; it is never logged nor persisted.
 fn bind_cloud(app: &MainWindow, api: Arc<NativeDesktop>) {
     restart_cloud_status_poll(app.as_weak(), api.clone());
+    let weak = app.as_weak();
+    let browser_api = api.clone();
+    let opening = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    app.on_open_wunder_model(move || {
+        let Some(app) = weak.upgrade() else { return };
+        if opening.swap(true, std::sync::atomic::Ordering::AcqRel) {
+            return;
+        }
+        let server = app.get_cloud_server_draft().to_string();
+        let api = browser_api.clone();
+        let opening = opening.clone();
+        let weak = app.as_weak();
+        run_background(move || {
+            let result = api.open_bridge_model(&server);
+            opening.store(false, std::sync::atomic::Ordering::Release);
+            let _ = weak.upgrade_in_event_loop(move |app| match result {
+                Ok(()) => app.set_status("已在系统浏览器打开眺望心舰".into()),
+                Err(error) => show_error(&app, error.to_string()),
+            });
+        });
+    });
     let weak = app.as_weak();
     let backend = api.clone();
     app.on_cloud_toggle_sharing(move |enabled, full| {
@@ -900,6 +920,61 @@ fn bind_settings(app: &MainWindow, api: Arc<NativeDesktop>) {
     // 线程渲染压测：解析两个轮次输入后交给 facade 同步生成，工作线程把节流后的
     // 进度推回状态行；完成后刷新线程列表，让新线程立即可见。
     let weak = app.as_weak();
+    app.on_create_model(move || {
+        let Some(app) = weak.upgrade() else { return };
+        if app.get_saving() || app.get_settings_loading() {
+            return;
+        }
+        let mut rows = app.get_models().iter().collect::<Vec<_>>();
+        let mut key = "新模型".to_string();
+        let mut suffix = 1usize;
+        while rows.iter().any(|entry| entry.key == key) {
+            key = format!("新模型{suffix}");
+            suffix += 1;
+        }
+        let entry = crate::ModelCard {
+            key: key.clone().into(),
+            provider: "openai_compatible".into(),
+            model: "".into(),
+            base_url: "".into(),
+            model_type: "llm".into(),
+            is_default: false,
+            tool_call_mode: "function_call".into(),
+            ..Default::default()
+        };
+        rows.insert(0, entry);
+        model_catalogue().set(&app, rows);
+        app.set_selected_model(0);
+        crate::entity_state::restore_model(&app, &key);
+        app.set_model_creating(true);
+        app.set_model_key_draft(key.into());
+        app.set_model_provider_draft("openai_compatible".into());
+        app.set_model_name_draft("".into());
+        app.set_model_base_url_draft("".into());
+        app.set_model_token_draft("".into());
+        app.set_model_type_draft("llm".into());
+        app.set_model_tool_call_mode_draft("function_call".into());
+        app.set_status("已创建新的模型草稿，请填写模型名称后保存".into());
+    });
+    let weak = app.as_weak();
+    app.on_discard_model_draft(move || {
+        let Some(app) = weak.upgrade() else { return };
+        if !app.get_model_creating() {
+            return;
+        }
+        let selected = usize::try_from(app.get_selected_model()).ok();
+        let rows = app
+            .get_models()
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| Some(*index) != selected)
+            .map(|(_, entry)| entry)
+            .collect::<Vec<_>>();
+        model_catalogue().set(&app, rows);
+        app.set_model_creating(false);
+        crate::entity_state::restore_model(&app, "");
+    });
+    let weak = app.as_weak();
     let stress_api = api.clone();
     app.on_generate_stress_thread(move || {
         let Some(app) = weak.upgrade() else { return };
@@ -1198,6 +1273,9 @@ fn bind_settings(app: &MainWindow, api: Arc<NativeDesktop>) {
     let order_api = api.clone();
     app.on_move_model(move |from, delta| {
         let Some(app) = weak.upgrade() else { return };
+        if app.get_model_creating() {
+            return;
+        }
         let Ok(from) = usize::try_from(from) else {
             return;
         };
@@ -1449,7 +1527,7 @@ impl ModelCatalogue {
     }
 }
 
-fn model_from<T: Clone + 'static>(rows: Vec<T>) -> ModelRc<T> {
+pub(crate) fn model_from<T: Clone + 'static>(rows: Vec<T>) -> ModelRc<T> {
     ModelRc::from(Rc::new(VecModel::from(rows)))
 }
 
@@ -1463,6 +1541,16 @@ pub(crate) fn run_background(task: impl FnOnce() + Send + 'static) {
 
 pub(crate) fn show_error(app: &MainWindow, error: String) {
     app.set_status(format!("错误：{error}").into());
+}
+
+/// Show short-lived feedback through the shell-owned toast layer. Unlike the
+/// legacy info dialog this stays above the settings overlay and does not block
+/// the editor while a probe result is being read.
+pub(crate) fn show_toast(app: &MainWindow, message: String, kind: i32) {
+    let toast = app.global::<crate::ToastState>();
+    toast.set_message(message.into());
+    toast.set_kind(kind);
+    toast.set_revision(toast.get_revision().wrapping_add(1));
 }
 
 #[cfg(test)]

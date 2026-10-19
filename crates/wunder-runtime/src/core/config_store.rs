@@ -1,16 +1,16 @@
 // Config store: read and persist a single config file.
 use super::process_file_lock::ProcessFileLock;
 use crate::config::{
-    config_path_default as resolve_default_config_path, load_config_from_path, resolve_config_path,
-    try_load_config_from_path, Config,
+    Config, config_path_default as resolve_default_config_path, load_config_from_path,
+    resolve_config_path, try_load_config_from_path,
 };
 use crate::core::atomic_write::atomic_write_text;
 use crate::i18n;
 use anyhow::{Context, Result};
 use std::path::PathBuf;
 use std::sync::{
-    atomic::{AtomicU64, Ordering},
     Arc,
+    atomic::{AtomicU64, Ordering},
 };
 use std::time::{Duration, SystemTime};
 use tokio::sync::RwLock;

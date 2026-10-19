@@ -8,7 +8,7 @@ use crate::channels::outbound_attachments::{
 use crate::channels::outbox::{compute_retry_at, resolve_outbox_config};
 use crate::channels::types::{ChannelAccountConfig, ChannelMessage, ChannelOutboundMessage};
 use crate::channels::weixin;
-use crate::core::{blocking, runtime_metrics};
+use crate::core::{blocking, retry::database_retry_delay, runtime_metrics};
 use crate::storage::{ChannelOutboxRecord, UpdateChannelOutboxStatusParams};
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
@@ -320,15 +320,18 @@ impl ChannelHub {
     }
 
     pub(super) async fn outbox_loop(&self) {
+        let mut database_failures = 0_u32;
         loop {
             let config = self.config_store.get().await;
             if !channels_runtime_enabled(&config) {
+                database_failures = 0;
                 runtime_metrics::record_loop_tick("channels.outbox.loop", "disabled");
                 sleep(Duration::from_millis(1000)).await;
                 continue;
             }
             let outbox_cfg = resolve_outbox_config(config.channels.outbox.clone());
             if !outbox_cfg.worker_enabled {
+                database_failures = 0;
                 runtime_metrics::record_loop_tick("channels.outbox.loop", "worker_disabled");
                 sleep(Duration::from_millis(outbox_cfg.poll_interval_ms)).await;
                 continue;
@@ -336,6 +339,7 @@ impl ChannelHub {
             let pending = self.list_pending_outbox(outbox_cfg.max_batch as i64).await;
             match pending {
                 Ok(items) => {
+                    database_failures = 0;
                     if items.is_empty() {
                         runtime_metrics::record_loop_tick("channels.outbox.loop", "empty");
                         sleep(Duration::from_millis(outbox_cfg.poll_interval_ms)).await;
@@ -390,8 +394,18 @@ impl ChannelHub {
                 }
                 Err(err) => {
                     runtime_metrics::record_loop_tick("channels.outbox.loop", "error");
-                    error!("load pending outbox failed: {err}");
-                    sleep(Duration::from_millis(outbox_cfg.poll_interval_ms)).await;
+                    // `{:#}` keeps the anyhow source chain.  A PostgreSQL
+                    // pool error otherwise renders only as the opaque
+                    // `...creating a new object: db error`, hiding the
+                    // server's SQLSTATE/message (for example connection
+                    // slots exhausted or an administrator shutdown).
+                    error!("load pending outbox failed: {err:#}");
+                    database_failures = database_failures.saturating_add(1);
+                    sleep(database_retry_delay(
+                        outbox_cfg.poll_interval_ms,
+                        database_failures,
+                    ))
+                    .await;
                 }
             }
         }

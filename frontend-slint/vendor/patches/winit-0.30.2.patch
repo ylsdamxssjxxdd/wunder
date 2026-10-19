@@ -1,7 +1,7 @@
-diff --git a/D:/proj/rcho/target/tmp/patch-verify/winit-0.30.2/src/platform/x11.rs b/winit-0.30.2/src/platform/x11.rs
+diff --git a/src/platform/x11.rs b/src/platform/x11.rs
 index 749c400..4ab900c 100644
---- a/D:/proj/rcho/target/tmp/patch-verify/winit-0.30.2/src/platform/x11.rs
-+++ b/winit-0.30.2/src/platform/x11.rs
+--- a/src/platform/x11.rs
++++ b/src/platform/x11.rs
 @@ -81,9 +81,7 @@ pub type XWindow = u32;
  #[inline]
  pub fn register_xlib_error_hook(hook: XlibErrorHook) {
@@ -13,10 +13,10 @@ index 749c400..4ab900c 100644
  }
  
  /// Additional methods on [`ActiveEventLoop`] that are specific to X11.
-diff --git a/D:/proj/rcho/target/tmp/patch-verify/winit-0.30.2/src/platform_impl/linux/mod.rs b/winit-0.30.2/src/platform_impl/linux/mod.rs
+diff --git a/src/platform_impl/linux/mod.rs b/src/platform_impl/linux/mod.rs
 index 776689f..6f1f5e3 100644
---- a/D:/proj/rcho/target/tmp/patch-verify/winit-0.30.2/src/platform_impl/linux/mod.rs
-+++ b/winit-0.30.2/src/platform_impl/linux/mod.rs
+--- a/src/platform_impl/linux/mod.rs
++++ b/src/platform_impl/linux/mod.rs
 @@ -643,7 +643,12 @@ pub(crate) enum PlatformCustomCursor {
  
  /// Hooks for X11 errors.
@@ -40,10 +40,10 @@ index 776689f..6f1f5e3 100644
              error_handled |= hook(display as *mut _, event as *mut _);
          }
  
-diff --git a/D:/proj/rcho/target/tmp/patch-verify/winit-0.30.2/src/platform_impl/linux/x11/ime/context.rs b/winit-0.30.2/src/platform_impl/linux/x11/ime/context.rs
+diff --git a/src/platform_impl/linux/x11/ime/context.rs b/src/platform_impl/linux/x11/ime/context.rs
 index aa046af..3710d6d 100644
---- a/D:/proj/rcho/target/tmp/patch-verify/winit-0.30.2/src/platform_impl/linux/x11/ime/context.rs
-+++ b/winit-0.30.2/src/platform_impl/linux/x11/ime/context.rs
+--- a/src/platform_impl/linux/x11/ime/context.rs
++++ b/src/platform_impl/linux/x11/ime/context.rs
 @@ -158,7 +158,13 @@ struct PreeditCallbacks {
  impl PreeditCallbacks {
      pub fn new(client_data: ffi::XPointer) -> PreeditCallbacks {
@@ -59,10 +59,19 @@ index aa046af..3710d6d 100644
                  preedit_start_callback as usize,
              )
          });
-diff --git a/D:/proj/rcho/target/tmp/patch-verify/winit-0.30.2/src/platform_impl/windows/event_loop.rs b/winit-0.30.2/src/platform_impl/windows/event_loop.rs
-index 4fc3155..ec08c8e 100644
---- a/D:/proj/rcho/target/tmp/patch-verify/winit-0.30.2/src/platform_impl/windows/event_loop.rs
-+++ b/winit-0.30.2/src/platform_impl/windows/event_loop.rs
+diff --git a/src/platform_impl/windows/event_loop.rs b/src/platform_impl/windows/event_loop.rs
+index 4fc3155..beb0c20 100644
+--- a/src/platform_impl/windows/event_loop.rs
++++ b/src/platform_impl/windows/event_loop.rs
+@@ -2,7 +2,7 @@
+ 
+ mod runner;
+ 
+-use std::cell::Cell;
++use std::cell::{Cell, RefCell};
+ use std::collections::VecDeque;
+ use std::ffi::c_void;
+ use std::marker::PhantomData;
 @@ -46,6 +46,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
      SWP_NOSIZE, SWP_NOZORDER, WHEEL_DELTA, WINDOWPOS, WMSZ_BOTTOM, WMSZ_BOTTOMLEFT,
      WMSZ_BOTTOMRIGHT, WMSZ_LEFT, WMSZ_RIGHT, WMSZ_TOP, WMSZ_TOPLEFT, WMSZ_TOPRIGHT,
@@ -71,7 +80,155 @@ index 4fc3155..ec08c8e 100644
      WM_EXITSIZEMOVE, WM_GETMINMAXINFO, WM_IME_COMPOSITION, WM_IME_ENDCOMPOSITION,
      WM_IME_SETCONTEXT, WM_IME_STARTCOMPOSITION, WM_INPUT, WM_INPUT_DEVICE_CHANGE, WM_KEYDOWN,
      WM_KEYUP, WM_KILLFOCUS, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP,
-@@ -2021,7 +2022,12 @@ unsafe fn public_window_callback_inner(
+@@ -88,6 +89,56 @@ use runner::{EventLoopRunner, EventLoopRunnerShared};
+ use super::window::set_skip_taskbar;
+ use super::SelectedCursor;
+ 
++/// Tracks the one `WM_CHAR` sequence that a legacy IME may emit after it has
++/// already committed the same text through `WM_IME_COMPOSITION`.
++///
++/// Some legacy Windows IMEs can send this sequence after
++/// `WM_IME_ENDCOMPOSITION`, when `ime_state` is already disabled. Keeping the
++/// exact commit text until the next key press lets the window procedure drop
++/// only that duplicate and keeps direct Unicode keyboard layouts untouched.
++#[derive(Default)]
++pub(crate) struct ImeCommitDeduplicator {
++    pending_text: Option<String>,
++}
++
++impl ImeCommitDeduplicator {
++    fn record_commit(&mut self, text: String) {
++        self.pending_text = (!text.is_empty()).then_some(text);
++    }
++
++    fn begin_key_press(&mut self) {
++        self.pending_text = None;
++    }
++
++    fn suppress_keyboard_text(
++        &mut self,
++        ime_composition_active: bool,
++        text: Option<&str>,
++    ) -> bool {
++        let Some(text) = text.filter(|text| !text.is_empty()) else {
++            return false;
++        };
++
++        if let Some(pending) = self.pending_text.as_deref() {
++            if pending == text {
++                self.pending_text = None;
++                return true;
++            }
++            if let Some(rest) = pending.strip_prefix(text) {
++                self.pending_text = (!rest.is_empty()).then(|| rest.to_owned());
++                return true;
++            }
++            // A different text event belongs to a later key press. Do not let
++            // an unmatched old commit affect any future normal input.
++            self.pending_text = None;
++        }
++
++        // This is the original guard for IMEs that send WM_CHAR while their
++        // composition is still active. The commit path remains authoritative.
++        ime_composition_active && text.chars().any(|ch| !ch.is_ascii())
++    }
++}
++
+ /// some backends like macos uses an uninhabited `Never` type,
+ /// on windows, `UserEvent`s are also dispatched through the
+ /// WNDPROC callback, and due to the re-entrant nature of the
+@@ -113,6 +164,7 @@ pub(crate) struct WindowData {
+     pub window_state: Arc<Mutex<WindowState>>,
+     pub event_loop_runner: EventLoopRunnerShared<UserEventPlaceholder>,
+     pub key_event_builder: KeyEventBuilder,
++    pub(crate) ime_commit_deduplicator: RefCell<ImeCommitDeduplicator>,
+     pub _file_drop_handler: Option<FileDropHandler>,
+     pub userdata_removed: Cell<bool>,
+     pub recurse_depth: Cell<u32>,
+@@ -126,6 +178,28 @@ impl WindowData {
+     fn window_state_lock(&self) -> MutexGuard<'_, WindowState> {
+         self.window_state.lock().unwrap()
+     }
++
++    fn begin_key_press(&self) {
++        self.ime_commit_deduplicator.borrow_mut().begin_key_press();
++    }
++
++    fn suppress_ime_keyboard_text(
++        &self,
++        ime_composition_active: bool,
++        text: Option<&str>,
++    ) -> bool {
++        self.ime_commit_deduplicator
++            .borrow_mut()
++            .suppress_keyboard_text(ime_composition_active, text)
++    }
++
++    fn send_ime_commit(&self, window: HWND, text: String) {
++        self.ime_commit_deduplicator.borrow_mut().record_commit(text.clone());
++        self.send_event(Event::WindowEvent {
++            window_id: RootWindowId(WindowId(window)),
++            event: WindowEvent::Ime(Ime::Commit(text)),
++        });
++    }
+ }
+ 
+ struct ThreadMsgTargetData {
+@@ -1052,9 +1126,29 @@ unsafe fn public_window_callback_inner(
+ 
+     let keyboard_callback = || {
+         use crate::event::WindowEvent::KeyboardInput;
++        if matches!(msg, WM_KEYDOWN | WM_SYSKEYDOWN) {
++            // A new physical press makes any unconsumed commit stale. This
++            // keeps the narrow post-commit window from swallowing a later
++            // character that happens to be the same text.
++            userdata.begin_key_press();
++        }
+         let events =
+             userdata.key_event_builder.process_message(window, msg, wparam, lparam, &mut result);
++        // Some legacy Windows IMEs emit a
++        // translated WM_CHAR in addition to their IME commit. The character
++        // may arrive after WM_IME_ENDCOMPOSITION, so state alone cannot tell
++        // whether it is duplicate text. Match it against the actual commit.
++        let ime_composition_active = {
++            let state = userdata.window_state_lock();
++            state.ime_allowed && state.ime_state != ImeState::Disabled
++        };
+         for event in events {
++            if userdata.suppress_ime_keyboard_text(
++                ime_composition_active,
++                event.event.text.as_deref(),
++            ) {
++                continue;
++            }
+             userdata.send_event(Event::WindowEvent {
+                 window_id: RootWindowId(WindowId(window)),
+                 event: KeyboardInput {
+@@ -1441,10 +1535,7 @@ unsafe fn public_window_callback_inner(
+                             window_id: RootWindowId(WindowId(window)),
+                             event: WindowEvent::Ime(Ime::Preedit(String::new(), None)),
+                         });
+-                        userdata.send_event(Event::WindowEvent {
+-                            window_id: RootWindowId(WindowId(window)),
+-                            event: WindowEvent::Ime(Ime::Commit(text)),
+-                        });
++                        userdata.send_ime_commit(window, text);
+                     }
+                 }
+ 
+@@ -1483,10 +1574,7 @@ unsafe fn public_window_callback_inner(
+                             window_id: RootWindowId(WindowId(window)),
+                             event: WindowEvent::Ime(Ime::Preedit(String::new(), None)),
+                         });
+-                        userdata.send_event(Event::WindowEvent {
+-                            window_id: RootWindowId(WindowId(window)),
+-                            event: WindowEvent::Ime(Ime::Commit(text)),
+-                        });
++                        userdata.send_ime_commit(window, text);
+                     }
+                 }
+ 
+@@ -2021,7 +2109,12 @@ unsafe fn public_window_callback_inner(
  
          WM_NCACTIVATE => {
              let is_active = wparam != false.into();
@@ -85,7 +242,7 @@ index 4fc3155..ec08c8e 100644
              if active_focus_changed {
                  if is_active {
                      unsafe { gain_active_focus(window, userdata) };
-@@ -2029,7 +2035,28 @@ unsafe fn public_window_callback_inner(
+@@ -2029,7 +2122,28 @@ unsafe fn public_window_callback_inner(
                      unsafe { lose_active_focus(window, userdata) };
                  }
              }
@@ -115,7 +272,7 @@ index 4fc3155..ec08c8e 100644
          },
  
          WM_SETFOCUS => {
-@@ -2083,6 +2110,38 @@ unsafe fn public_window_callback_inner(
+@@ -2083,6 +2197,38 @@ unsafe fn public_window_callback_inner(
              let window_state = userdata.window_state_lock();
              let window_flags = window_state.window_flags;
  
@@ -154,7 +311,39 @@ index 4fc3155..ec08c8e 100644
              if window_state.min_size.is_some() || window_state.max_size.is_some() {
                  if let Some(min_size) = window_state.min_size {
                      let min_size = min_size.to_physical(window_state.scale_factor);
-@@ -2441,7 +2500,7 @@ unsafe extern "system" fn thread_event_target_callback(
+@@ -2362,6 +2508,31 @@ unsafe fn public_window_callback_inner(
+     }
+ }
+ 
++#[cfg(test)]
++mod tests {
++    use super::ImeCommitDeduplicator;
++
++    #[test]
++    fn legacy_ime_commit_consumes_only_its_matching_keyboard_text() {
++        let mut deduplicator = ImeCommitDeduplicator::default();
++        deduplicator.record_commit("你好".into());
++        // A legacy IME may deliver this after WM_IME_ENDCOMPOSITION.
++        assert!(deduplicator.suppress_keyboard_text(false, Some("你好")));
++        assert!(!deduplicator.suppress_keyboard_text(false, Some("你好")));
++
++        deduplicator.record_commit("你好".into());
++        assert!(deduplicator.suppress_keyboard_text(false, Some("你")));
++        assert!(deduplicator.suppress_keyboard_text(false, Some("好")));
++
++        deduplicator.record_commit("你好".into());
++        deduplicator.begin_key_press();
++        assert!(!deduplicator.suppress_keyboard_text(false, Some("你好")));
++
++        assert!(deduplicator.suppress_keyboard_text(true, Some("中")));
++        assert!(!deduplicator.suppress_keyboard_text(false, Some("中")));
++    }
++}
++
+ unsafe extern "system" fn thread_event_target_callback(
+     window: HWND,
+     msg: u32,
+@@ -2441,7 +2612,7 @@ unsafe extern "system" fn thread_event_target_callback(
      if userdata_removed {
          drop(userdata);
      } else {
@@ -163,10 +352,113 @@ index 4fc3155..ec08c8e 100644
      }
      result
  }
-diff --git a/D:/proj/rcho/target/tmp/patch-verify/winit-0.30.2/src/platform_impl/windows/util.rs b/winit-0.30.2/src/platform_impl/windows/util.rs
+diff --git a/src/platform_impl/windows/ime.rs b/src/platform_impl/windows/ime.rs
+index 6761487..664131f 100644
+--- a/src/platform_impl/windows/ime.rs
++++ b/src/platform_impl/windows/ime.rs
+@@ -1,6 +1,7 @@
+ use std::ffi::{c_void, OsString};
+ use std::os::windows::prelude::OsStringExt;
+ use std::ptr::null_mut;
++use std::sync::atomic::{AtomicBool, Ordering};
+ 
+ use windows_sys::Win32::Foundation::{POINT, RECT};
+ use windows_sys::Win32::Globalization::HIMC;
+@@ -10,7 +11,9 @@ use windows_sys::Win32::UI::Input::Ime::{
+     ATTR_TARGET_NOTCONVERTED, CANDIDATEFORM, CFS_EXCLUDE, CFS_POINT, COMPOSITIONFORM, GCS_COMPATTR,
+     GCS_COMPSTR, GCS_CURSORPOS, GCS_RESULTSTR, IACE_CHILDREN, IACE_DEFAULT,
+ };
+-use windows_sys::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_IMMENABLED};
++use windows_sys::Win32::UI::WindowsAndMessaging::{
++    GetSystemMetrics, NID_READY, SM_DIGITIZER, SM_IMMENABLED,
++};
+ 
+ use crate::dpi::{Position, Size};
+ use crate::platform::windows::HWND;
+@@ -133,14 +136,66 @@ impl ImeContext {
+     }
+ 
+     pub unsafe fn set_ime_allowed(hwnd: HWND, allowed: bool) {
+-        if !unsafe { ImeContext::system_has_ime() } {
+-            return;
+-        }
+-
+         if allowed {
++            // The on-screen keyboard is independent from the legacy IMM
++            // context. Try it even on installations where IMM reports no
++            // active IME, then keep the normal association call conditional.
++            Self::show_touch_keyboard_if_available();
++            if !unsafe { ImeContext::system_has_ime() } {
++                return;
++            }
+             unsafe { ImmAssociateContextEx(hwnd, 0, IACE_DEFAULT) };
+         } else {
++            if !unsafe { ImeContext::system_has_ime() } {
++                TABTIP_STARTED.store(false, Ordering::Release);
++                return;
++            }
+             unsafe { ImmAssociateContextEx(hwnd, 0, IACE_CHILDREN) };
++            TABTIP_STARTED.store(false, Ordering::Release);
++        }
++    }
++
++    /// Ask the Windows Tablet PC Input Panel to show after a text control gets
++    /// focus.  This is deliberately limited to systems reporting an attached
++    /// digitizer, so keyboard-only desktops never spawn a helper process.
++    fn show_touch_keyboard_if_available() {
++        if TABTIP_STARTED.swap(true, Ordering::AcqRel) {
++            return;
++        }
++        unsafe {
++            if GetSystemMetrics(SM_DIGITIZER) as u32 & NID_READY == 0 {
++                TABTIP_STARTED.store(false, Ordering::Release);
++                return;
++            }
++        }
++
++        let mut candidates = Vec::with_capacity(4);
++        for variable in ["CommonProgramFiles", "CommonProgramFiles(x86)"] {
++            if let Ok(root) = std::env::var(variable) {
++                candidates
++                    .push(std::path::PathBuf::from(root).join("microsoft shared\\ink\\TabTip.exe"));
++            }
++        }
++        candidates.push(std::path::PathBuf::from(
++            r"C:\Program Files\Common Files\microsoft shared\ink\TabTip.exe",
++        ));
++        candidates.push(std::path::PathBuf::from(
++            r"C:\Program Files (x86)\Common Files\microsoft shared\ink\TabTip.exe",
++        ));
++
++        for path in candidates {
++            if path.is_file() {
++                if std::process::Command::new(path).spawn().is_err() {
++                    TABTIP_STARTED.store(false, Ordering::Release);
++                }
++                return;
++            }
++        }
++
++        // On newer Windows releases TabTip can be resolved from the app
++        // execution alias even when the legacy path is not present.
++        if std::process::Command::new("TabTip.exe").spawn().is_err() {
++            TABTIP_STARTED.store(false, Ordering::Release);
+         }
+     }
+ 
+@@ -149,6 +204,8 @@ impl ImeContext {
+     }
+ }
+ 
++static TABTIP_STARTED: AtomicBool = AtomicBool::new(false);
++
+ impl Drop for ImeContext {
+     fn drop(&mut self) {
+         unsafe { ImmReleaseContext(self.hwnd, self.himc) };
+diff --git a/src/platform_impl/windows/util.rs b/src/platform_impl/windows/util.rs
 index 87bcbd4..f55eef0 100644
---- a/D:/proj/rcho/target/tmp/patch-verify/winit-0.30.2/src/platform_impl/windows/util.rs
-+++ b/winit-0.30.2/src/platform_impl/windows/util.rs
+--- a/src/platform_impl/windows/util.rs
++++ b/src/platform_impl/windows/util.rs
 @@ -219,6 +219,7 @@ pub type GetDpiForMonitor = unsafe extern "system" fn(
      dpi_y: *mut u32,
  ) -> HRESULT;
@@ -204,10 +496,22 @@ index 87bcbd4..f55eef0 100644
  pub type GetPointerPenInfo =
      unsafe extern "system" fn(pointId: u32, penInfo: *mut POINTER_PEN_INFO) -> BOOL;
  
-diff --git a/D:/proj/rcho/target/tmp/patch-verify/winit-0.30.2/src/platform_impl/windows/window_state.rs b/winit-0.30.2/src/platform_impl/windows/window_state.rs
+diff --git a/src/platform_impl/windows/window.rs b/src/platform_impl/windows/window.rs
+index 23fec32..7d73645 100644
+--- a/src/platform_impl/windows/window.rs
++++ b/src/platform_impl/windows/window.rs
+@@ -1206,6 +1206,7 @@ impl<'a> InitData<'a> {
+             window_state: win.window_state.clone(),
+             event_loop_runner: self.event_loop.runner_shared.clone(),
+             key_event_builder: KeyEventBuilder::default(),
++            ime_commit_deduplicator: std::cell::RefCell::default(),
+             _file_drop_handler: file_drop_handler,
+             userdata_removed: Cell::new(false),
+             recurse_depth: Cell::new(0),
+diff --git a/src/platform_impl/windows/window_state.rs b/src/platform_impl/windows/window_state.rs
 index 911467b..fd4de84 100644
---- a/D:/proj/rcho/target/tmp/patch-verify/winit-0.30.2/src/platform_impl/windows/window_state.rs
-+++ b/winit-0.30.2/src/platform_impl/windows/window_state.rs
+--- a/src/platform_impl/windows/window_state.rs
++++ b/src/platform_impl/windows/window_state.rs
 @@ -309,6 +309,19 @@ impl WindowFlags {
              style &= !WS_OVERLAPPEDWINDOW;
          }

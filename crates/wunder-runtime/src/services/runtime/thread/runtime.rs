@@ -1,6 +1,6 @@
 use crate::config_store::ConfigStore;
 use crate::core::long_task;
-use crate::core::{blocking, runtime_metrics};
+use crate::core::{blocking, retry::database_retry_delay, runtime_metrics};
 use crate::i18n;
 use crate::monitor::MonitorState;
 use crate::orchestrator::{Orchestrator, OrchestratorError};
@@ -1395,19 +1395,32 @@ impl ThreadRuntime {
             warn!("agent queue loop skipped: receiver already taken");
             return;
         };
+        let mut database_failures = 0_u32;
         loop {
             let config = self.config_store.get().await;
             let poll_interval = config.agent_queue.poll_interval_ms.max(200);
+            let retry_interval = if database_failures == 0 {
+                std::time::Duration::from_millis(poll_interval)
+            } else {
+                database_retry_delay(poll_interval, database_failures)
+            };
             tokio::select! {
-                _ = rx.recv() => {
+                _ = rx.recv(), if database_failures == 0 => {
                     runtime_metrics::record_loop_tick("runtime.thread.queue_loop", "wake");
                 },
-                _ = tokio::time::sleep(std::time::Duration::from_millis(poll_interval)) => {
+                _ = tokio::time::sleep(retry_interval) => {
                     runtime_metrics::record_loop_tick("runtime.thread.queue_loop", "poll");
                 },
             }
-            if let Err(err) = self.process_pending_tasks().await {
-                warn!("agent queue loop error: {err}");
+            match self.process_pending_tasks().await {
+                Ok(()) => database_failures = 0,
+                Err(err) => {
+                    database_failures = database_failures.saturating_add(1);
+                    warn!(
+                        "agent queue database unavailable; retrying in {}ms: {err:#}",
+                        database_retry_delay(poll_interval, database_failures).as_millis()
+                    );
+                }
             }
         }
     }
@@ -1422,8 +1435,10 @@ impl ThreadRuntime {
             {
                 Ok(items) => items,
                 Err(err) => {
-                    warn!("load pending agent tasks failed: {err}");
-                    Vec::new()
+                    // Preserve the database driver's source chain so a pool
+                    // create failure reports the PostgreSQL reason instead of
+                    // only deadpool's generic `db error` wrapper.
+                    return Err(err);
                 }
             }
         };

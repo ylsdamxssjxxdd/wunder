@@ -198,7 +198,7 @@ impl BrowserControlService {
         self.bridge
             .send_command(session_key, payload, deadline)
             .await
-            .map_err(anyhow::Error::msg)
+            .map_err(|error| enrich_launch_error(error, &self.config))
     }
 
     async fn start(&self, scope: &BrowserSessionScope) -> Result<Value> {
@@ -604,10 +604,77 @@ fn browser_failure_details(action: &str, error: &str) -> serde_json::Map<String,
     map
 }
 
+/// Launch-phase failures carry no Playwright `net::` code, so they are
+/// recognized by the bridge's own startup wording.
+fn is_browser_launch_error(text: &str) -> bool {
+    const MARKERS: &[&str] = &[
+        "Browser bridge failed to start",
+        "Executable doesn't exist",
+        "playwright not installed",
+        "Please run: playwright install",
+    ];
+    MARKERS.iter().any(|marker| text.contains(marker))
+}
+
+/// A launch failure reaches the model as a bare binary error ("Executable
+/// doesn't exist ... Please run: playwright install") that names no fix the
+/// user can actually apply. Rewrite it into actionable guidance: the config
+/// keys that pick a browser, every probed local browser with its on-disk
+/// verdict, and the original error kept at the end for diagnosis.
+fn enrich_launch_error(raw: String, config: &EffectiveBrowserConfig) -> anyhow::Error {
+    // 沙盒部署的启动失败发生在远端，本机探测结果只会误导。
+    if config.sandbox_endpoint.is_some() || !is_browser_launch_error(&raw) {
+        return anyhow::Error::msg(raw);
+    }
+    let candidates = super::probe::collect_browser_candidates(config.browsers_path.as_deref());
+    let mut message = String::from(
+        "浏览器启动失败：未找到可用的浏览器程序。可选解决方式（任选其一）：\n\
+         1. 在 wunder.yaml 中配置 browser.playwright.executable_path，直接指定浏览器可执行文件路径；\n\
+         2. 或在 wunder.yaml 中配置 browser.playwright.channel 为 chrome 或 msedge，使用系统浏览器；\n\
+         3. 或导入包含浏览器的补充包（浏览器位于补充包根目录 opt/browser/ 下）；\n\
+         4. 或运行 playwright install chromium 安装 Playwright 默认浏览器。\n\
+         本机浏览器探测结果：",
+    );
+    let mut any_found = false;
+    for candidate in &candidates {
+        any_found |= candidate.exists;
+        message.push_str(&format!(
+            "\n- {}：{}（{}）",
+            candidate.source,
+            candidate.path.display(),
+            if candidate.exists { "存在" } else { "不存在" }
+        ));
+    }
+    if !any_found {
+        message.push_str("\n- 未探测到任何可用浏览器，请采用上述方式 1、3 或 4。");
+    }
+    message.push_str(&format!(
+        "\n当前生效配置：channel={}，executable_path={}。\n原始错误：{raw}",
+        config.channel.as_deref().unwrap_or("未配置"),
+        config.executable_path.as_deref().unwrap_or("未配置"),
+    ));
+    BrowserCommandFailure {
+        message,
+        data: json!({
+            "code": "TOOL_BROWSER_LAUNCH_FAILED",
+            "phase": "launch",
+            "retryable": false,
+            "candidates": candidates
+                .iter()
+                .map(|candidate| json!({
+                    "source": candidate.source,
+                    "path": candidate.path.to_string_lossy(),
+                    "exists": candidate.exists,
+                }))
+                .collect::<Vec<_>>(),
+        }),
+    }
+    .into()
+}
+
 /// `net::ERR_*` codes that name a broken transport: the same URL fails again
 /// until the network changes, but a different host may still answer.
-fn is_retryable_net_error(code: &str) -> bool {
-    matches!(
+fn is_retryable_net_error(code: &str) -> bool {    matches!(
         code,
         "ERR_CONNECTION_CLOSED"
             | "ERR_CONNECTION_REFUSED"
@@ -1089,6 +1156,43 @@ mod tests {
             super::compact_browser_error("  \n  "),
             "Unknown browser bridge error"
         );
+    }
+
+    #[test]
+    fn launch_error_is_rewritten_into_actionable_guidance() {
+        let config = effective_browser_config(&Config::default());
+        let raw = "Browser bridge failed to start: Error: Executable doesn't exist at \
+                   browsers/chromium-1091/chrome-win/chrome.exe\nPlease run: playwright install"
+            .to_string();
+        let error = super::enrich_launch_error(raw.clone(), &config);
+        let failure = error
+            .downcast_ref::<super::BrowserCommandFailure>()
+            .expect("launch failures must become structured");
+        assert_eq!(failure.data["code"], "TOOL_BROWSER_LAUNCH_FAILED");
+        assert_eq!(failure.data["retryable"], false);
+        assert!(failure.message.contains("browser.playwright.executable_path"));
+        assert!(failure.message.contains("browser.playwright.channel"));
+        assert!(failure.message.contains("补充包"));
+        assert!(failure.message.contains("探测结果"));
+        assert!(failure.message.ends_with(&format!("原始错误：{raw}")));
+    }
+
+    #[test]
+    fn non_launch_bridge_errors_keep_the_plain_message() {
+        let config = effective_browser_config(&Config::default());
+        let error = super::enrich_launch_error("Browser bridge closed unexpectedly".to_string(), &config);
+        assert!(error.downcast_ref::<super::BrowserCommandFailure>().is_none());
+        assert_eq!(error.to_string(), "Browser bridge closed unexpectedly");
+    }
+
+    #[test]
+    fn launch_error_markers_cover_the_bridge_startup_wording() {
+        assert!(super::is_browser_launch_error("Browser bridge failed to start: boom"));
+        assert!(super::is_browser_launch_error("Executable doesn't exist at x"));
+        assert!(super::is_browser_launch_error("playwright not installed"));
+        assert!(super::is_browser_launch_error("Please run: playwright install"));
+        assert!(!super::is_browser_launch_error("Browser bridge closed unexpectedly"));
+        assert!(!super::is_browser_launch_error("net::ERR_CONNECTION_REFUSED"));
     }
 
     #[test]

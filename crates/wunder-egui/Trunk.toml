@@ -1,0 +1,4 @@
+dist = "dist"
+public_url = "/"
+filehash = true
+minify = "on_release"

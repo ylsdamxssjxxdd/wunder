@@ -28,6 +28,16 @@ impl Observation {
         self.ready
     }
 
+    /// Adopt a durable snapshot obtained while the selection worker was
+    /// acquiring the thread lease. This puts meaningful history on screen
+    /// before the passive watcher performs its own refresh.
+    pub(super) fn seed(&mut self, session: &str, turns: Vec<NativeChatTurn>) {
+        self.session = session.to_string();
+        self.turns = turns;
+        self.rows = project_history(&self.turns);
+        self.ready = true;
+    }
+
     /// Remove a withdrawn queue placeholder before the watcher catches up.
     pub(super) fn remove_turn(&mut self, root_id: &str) -> bool {
         let before = self.turns.len();
@@ -51,7 +61,7 @@ impl Observation {
         live.set_markdown_root(root);
         live.publish_history(self.rows.clone());
         live.hydrate_markdown_images();
-        crate::native_chat::publish_timeline(app, &live);
+        crate::native_chat::publish_timeline_passive(app, &live);
     }
 }
 
@@ -70,10 +80,7 @@ pub(super) fn install(app: &MainWindow, state: Rc<RefCell<State>>) {
                 current.observation.detach();
                 return;
             }
-            if current.active.is_some()
-                || !current.parked.is_empty()
-                || app.get_session_loading()
-                || app.get_creating_session()
+            if current.active.is_some() || !current.parked.is_empty() || app.get_creating_session()
             {
                 return;
             }
@@ -84,13 +91,37 @@ pub(super) fn install(app: &MainWindow, state: Rc<RefCell<State>>) {
             timeline
                 .borrow_mut()
                 .set_markdown_root(crate::native_chat::markdown_root(&app));
-            let observation = &mut current.observation;
             let session = app.get_active_session_id().to_string();
+            let initial = crate::native_chat::take_initial_history(&session);
+            let observation = &mut current.observation;
             if observation.session != session {
                 observation.detach();
-                observation.session = session.clone();
                 if !session.is_empty() {
-                    observation.watch = Some(desktop.watch_chat(&session));
+                    // Thread selection acquires its lease and reads the compact
+                    // history on a worker. Do not attach a cold watcher while
+                    // that request is in flight: it would immediately repeat
+                    // both the lease touch and the HDD history read, and then
+                    // consume the worker snapshot too late to use it. An
+                    // opening error clears `session_loading`, which makes the
+                    // next tick attach cold and report watcher errors normally.
+                    if initial.is_none() && app.get_session_loading() {
+                        return;
+                    }
+                    observation.session = session.clone();
+                    if let Some((turns, _)) = initial.as_ref() {
+                        // Project the background snapshot immediately. The
+                        // watch still verifies and follows durable changes,
+                        // but the loading overlay can now leave without a
+                        // blank welcome screen between threads.
+                        observation.seed(&session, turns.clone());
+                        observation.publish(&app, &timeline);
+                        app.set_session_loading(false);
+                    }
+                    let (turns, cursor) = initial
+                        .map(|(turns, cursor)| (Some(turns), Some(cursor)))
+                        .unwrap_or((None, None));
+                    observation.watch =
+                        Some(desktop.watch_chat_with_initial_cursor(&session, turns, cursor));
                 }
             }
             let mut dirty = false;
@@ -110,6 +141,7 @@ pub(super) fn install(app: &MainWindow, state: Rc<RefCell<State>>) {
                         observation.turns = turns;
                         reset = true;
                         dirty = true;
+                        app.set_session_loading(false);
                     }
                     NativeThreadUpdate::Turns(turns) => {
                         for turn in turns {
@@ -166,6 +198,7 @@ pub(super) fn install(app: &MainWindow, state: Rc<RefCell<State>>) {
                     }
                     NativeThreadUpdate::Failed(error) => {
                         observation.watch = None;
+                        app.set_session_loading(false);
                         app.set_status(error.into());
                     }
                 }
@@ -229,18 +262,32 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
         user.id = format!("user-turn-{}", turn.root_id).into();
         rows.push(user);
         process += 1;
-        let bar_at = rows.len();
+        let process_bar_at = rows.len();
         let mut bar = blank_row(
             crate::timeline::KIND_PROCESS,
             format!("process-{}", turn.root_id),
         );
-        bar.payload = bar_at as i32;
+        bar.payload = process_bar_at as i32;
         bar.process_idx = process;
         bar.process_root = turn.root_id.as_str().into();
         bar.text = crate::timeline_text::process_label(0).into();
         bar.visible = false;
         rows.push(bar);
         let mut answer_at = None;
+        // Header snapshots intentionally defer completed process details. The
+        // process bar remains an actionable lightweight row; its first open
+        // requests the normal keyset page in `chat_process`.
+        if turn.rounds.is_empty() {
+            let mut answer = blank_row(
+                crate::timeline::KIND_BODY,
+                format!("answer-{}", turn.root_id),
+            );
+            answer.text = turn.assistant.text.as_str().into();
+            answer.blocks = crate::message_blocks::from_text(&turn.assistant.text);
+            answer.foldable = true;
+            answer_at = Some(rows.len());
+            rows.push(answer);
+        }
         for round in &turn.rounds {
             let tools = round.items.len() as i32;
             let activity = !round.reasoning.is_empty() || tools > 0;
@@ -265,14 +312,14 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
             batch += 1;
             // The folded bar reads out the newest entry of its batch, exactly
             // as the live reducer stamps it.
-            let bar_at = rows.len();
+            let group_bar_at = rows.len();
             let mut latest = slint::SharedString::default();
             let mut bar = blank_row(
                 crate::timeline::KIND_GROUP,
                 format!("group-{}-{}", round.execution, round.round),
             );
             bar.text = crate::timeline_text::tool_calls(tools).into();
-            bar.payload = bar_at as i32;
+            bar.payload = group_bar_at as i32;
             bar.group_idx = group;
             bar.visible = false;
             bar.group_open = true;
@@ -282,7 +329,19 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
             if !round.reasoning.is_empty() {
                 let mut reason = blank_row(
                     crate::timeline::KIND_REASON,
-                    format!("reason-{}-{}", round.execution, round.round),
+                    // Match the durable process pager (`reason-{item_id}`)
+                    // instead of deriving an id from a round ordinal. A
+                    // continuation can restart those ordinals, and differing
+                    // ids made one thought appear once in the live summary
+                    // and again after the process page arrived.
+                    format!(
+                        "reason-{}",
+                        if round.item_id.is_empty() {
+                            format!("{}-{}", round.execution, round.round)
+                        } else {
+                            round.item_id.clone()
+                        }
+                    ),
                 );
                 reason.tool_name = crate::timeline_text::thought_done().into();
                 reason.summary = crate::message_blocks::reasoning_preview(&round.reasoning)
@@ -336,7 +395,7 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
                 row.foldable = true;
                 rows.push(row);
             }
-            rows[bar_at].summary = latest;
+            rows[group_bar_at].summary = latest;
         }
         // Child runs render as cards at the turn's tail, the same place the web
         // messenger parks its subagent panel. The projection is shared with the
@@ -365,17 +424,17 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
         let end = rows.len();
         fold_history_process(
             rows.as_mut_slice(),
-            bar_at,
+            process_bar_at,
             end,
             process,
             &turn.assistant.state,
             answer_at.unwrap_or(usize::MAX),
         );
         if turn.process_steps > 0 {
-            rows[bar_at].text =
+            rows[process_bar_at].text =
                 crate::timeline_text::process_label(turn.process_steps.min(i32::MAX as i64) as i32)
                     .into();
-            rows[bar_at].visible = true;
+            rows[process_bar_at].visible = true;
         }
     }
     crate::timeline_text::process_models(&mut rows);
@@ -758,6 +817,7 @@ mod tests {
             },
             assistant: message,
             rounds: vec![NativeChatRound {
+                item_id: format!("{root}:text-1"),
                 round: 1,
                 execution: root.into(),
                 is_answer: true,
@@ -912,6 +972,7 @@ mod tests {
         let mut turn = fixture("fixture-rounds", "结论", "任务完成");
         turn.rounds = vec![
             NativeChatRound {
+                item_id: "fixture-rounds:text-1".into(),
                 round: 1,
                 execution: "fixture-rounds".into(),
                 is_answer: false,
@@ -926,6 +987,7 @@ mod tests {
                 )],
             },
             NativeChatRound {
+                item_id: "fixture-rounds:text-2".into(),
                 round: 2,
                 execution: "fixture-rounds".into(),
                 is_answer: true,

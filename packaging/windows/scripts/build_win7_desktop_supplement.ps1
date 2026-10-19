@@ -11,7 +11,7 @@ wunder-supplement-win7-<arch>[-<profile>].zip.
 
 The archive is imported into WUNDER_HOME (default: the user's .wunder
 directory); both local forms auto-detect opt/python, opt/git, opt/rg and
-opt/ffmpeg on startup.
+opt/ffmpeg on startup, and probe opt/browser for a bundled browser.
 
 .PARAMETER Arch
 Target architecture: ia32 (default, Windows 7) or x64.
@@ -29,8 +29,9 @@ pip index URL. Defaults to the manifest defaultPackageIndexUrl (Tsinghua Tuna).
 .PARAMETER RefreshDownloads
 Redownload cached archives instead of reusing them.
 
-.PARAMETER PythonArchivePath / GitArchivePath / RgArchivePath / FfmpegArchivePath
-Use hand-prepared local archives instead of downloading.
+.PARAMETER PythonArchivePath / GitArchivePath / RgArchivePath / FfmpegArchivePath / BrowserArchivePath
+Use hand-prepared local archives instead of downloading. BrowserArchivePath
+also accepts an unpacked browser directory and is staged into opt/browser.
 
 .PARAMETER BestEffort
 Install requirements package-by-package and continue past failures (records them).
@@ -56,6 +57,8 @@ param(
   [string]$RgArchivePath = '',
 
   [string]$FfmpegArchivePath = '',
+
+  [string]$BrowserArchivePath = '',
 
   [switch]$SkipFfmpeg,
 
@@ -149,6 +152,34 @@ function Get-DownloadedFile {
   return $Destination
 }
 
+function Get-PeMachine {
+  param([string]$Path)
+  if (-not (Test-Path -LiteralPath $Path)) { Fail "PE file not found: $Path" }
+  $bytes = [System.IO.File]::ReadAllBytes($Path)
+  if ($bytes.Length -lt 0x40 -or $bytes[0] -ne 0x4d -or $bytes[1] -ne 0x5a) {
+    Fail "not a Windows PE image: $Path"
+  }
+  $peOffset = [BitConverter]::ToInt32($bytes, 0x3c)
+  if ($peOffset -lt 0 -or $peOffset + 6 -gt $bytes.Length -or
+      $bytes[$peOffset] -ne 0x50 -or $bytes[$peOffset + 1] -ne 0x45 -or
+      $bytes[$peOffset + 2] -ne 0 -or $bytes[$peOffset + 3] -ne 0) {
+    Fail "invalid PE header: $Path"
+  }
+  return [BitConverter]::ToUInt16($bytes, $peOffset + 4)
+}
+
+function Assert-PeMachine {
+  param([string]$Path, [ValidateSet('ia32', 'x64')][string]$Arch)
+  $machine = Get-PeMachine -Path $Path
+  $expected = if ($Arch -eq 'ia32') { 0x014c } else { 0x8664 }
+  if ($machine -ne $expected) {
+    $actual = ('0x{0:x4}' -f $machine)
+    $wanted = if ($Arch -eq 'ia32') { 'i386 (32-bit)' } else { 'x86-64 (64-bit)' }
+    Fail "wrong PE architecture for ${Path}: got $actual, expected $wanted"
+  }
+  Write-Step "validated PE architecture ($Arch): $Path"
+}
+
 function Expand-ZipInto {
   param([string]$Archive, [string]$Destination)
   if (Test-Path -LiteralPath $Destination) { Remove-Item -LiteralPath $Destination -Recurse -Force }
@@ -188,6 +219,69 @@ function Expand-SevenZipSelfExtractor {
   $arg = '-o"' + $Destination + '"'
   $proc = Start-Process -FilePath $Archive -ArgumentList @($arg, '-y') -Wait -PassThru -NoNewWindow
   if ($proc.ExitCode -ne 0) { Fail "7z self-extractor failed ($($proc.ExitCode)) for $Archive" }
+}
+
+function Install-BundledBrowser {
+  # Stages a hand-prepared browser payload (.zip or directory) into the given
+  # destination (opt/browser) and normalizes the layout so $ExpectedExe (by
+  # default chrome-win/chrome.exe) exists. The runtime probes
+  # opt/browser/<expectedExe> first and opt/browser/chrome.exe as fallback.
+  param(
+    [string]$Source,
+    [string]$Destination,
+    [string]$ExpectedExe,
+    [ValidateSet('ia32', 'x64')][string]$Arch
+  )
+  $expectedRel = $ExpectedExe -replace '/', '\'
+  if (Test-Path -LiteralPath $Destination) { Remove-Item -LiteralPath $Destination -Recurse -Force }
+  Ensure-Directory $Destination
+  $item = Get-Item -LiteralPath $Source
+  if ($item.PSIsContainer) {
+    if (Test-Path -LiteralPath (Join-Path $item.FullName 'chrome.exe')) {
+      # The directory itself is the browser dir (e.g. chrome-win); keep its name.
+      Copy-Item -LiteralPath $item.FullName -Destination $Destination -Recurse -Force
+    } else {
+      Copy-Item -Path (Join-Path $item.FullName '*') -Destination $Destination -Recurse -Force
+    }
+  } elseif ($item.Extension -ieq '.zip') {
+    Expand-Archive -LiteralPath $item.FullName -DestinationPath $Destination -Force
+  } else {
+    Fail "browser source must be a .zip archive or a directory: $Source"
+  }
+
+  $expectedPath = Join-Path $Destination $expectedRel
+  if (-not (Test-Path -LiteralPath $expectedPath)) {
+    $found = @(Get-ChildItem -LiteralPath $Destination -Recurse -File -Filter 'chrome.exe')
+    if ($found.Count -eq 0) { Fail "chrome.exe not found in browser payload: $Source" }
+    $chromeExe = $found[0].FullName
+    if ($chromeExe -eq (Join-Path $Destination 'chrome.exe')) {
+      # Top-level chrome.exe matches the runtime fallback probe; leave as is.
+      $expectedPath = $chromeExe
+      $expectedRel = 'chrome.exe'
+    } else {
+      $expectedDir = Split-Path -Parent $expectedRel
+      if ([string]::IsNullOrWhiteSpace($expectedDir)) { Fail "cannot rearrange browser payload for expectedExe '$ExpectedExe'" }
+      $targetDir = Join-Path $Destination $expectedDir
+      $parentDir = Split-Path -Parent $chromeExe
+      if ((Test-Path -LiteralPath $targetDir) -and ($parentDir.StartsWith($targetDir, [System.StringComparison]::OrdinalIgnoreCase))) {
+        Fail "browser payload has a partial $expectedDir tree without chrome.exe at its root: $Source"
+      }
+      if (Test-Path -LiteralPath $targetDir) { Remove-Item -LiteralPath $targetDir -Recurse -Force }
+      Ensure-Directory (Split-Path -Parent $targetDir)
+      Move-Item -LiteralPath $parentDir -Destination $targetDir
+      $expectedPath = Join-Path $Destination $expectedRel
+      if (-not (Test-Path -LiteralPath $expectedPath)) { Fail "failed to rearrange browser payload so $ExpectedExe exists" }
+    }
+  }
+
+  if ($Arch -eq 'ia32') {
+    Assert-PeMachine -Path $expectedPath -Arch $Arch
+  } else {
+    # A 32-bit Chrome also runs under WoW64 on x64 Windows, so only report.
+    $machine = Get-PeMachine -Path $expectedPath
+    Write-Step ('browser PE machine: 0x{0:x4} (x64 pack accepts both 32/64-bit)' -f $machine)
+  }
+  Write-Step "bundled browser staged at opt/browser/$($expectedRel -replace '\\', '/')"
 }
 
 function Write-Utf8NoBom {
@@ -356,6 +450,16 @@ if (-not [string]::IsNullOrWhiteSpace($requirementsRel)) {
   }
 }
 
+# Playwright 1.16+ puts an x64 Node runtime in the win32 wheel. The Win7
+# requirements deliberately pin 1.15.2, whose driver/node.exe is native i386.
+# Keep this as a release gate so a future dependency update cannot silently
+# make the Win7 package unloadable on 32-bit Windows.
+$playwrightDriverNode = Join-Path $pythonRoot 'Lib\site-packages\playwright\driver\node.exe'
+if (-not (Test-Path -LiteralPath $playwrightDriverNode)) {
+  Fail "Playwright driver node.exe missing after package installation: $playwrightDriverNode"
+}
+Assert-PeMachine -Path $playwrightDriverNode -Arch $Arch
+
 # ---------------------------------------------------------------------------
 # Playwright browsers (manifest-driven; off for the Win7 pack)
 # ---------------------------------------------------------------------------
@@ -430,6 +534,33 @@ if (-not $SkipFfmpeg) {
 }
 
 # ---------------------------------------------------------------------------
+# Bundled browser (optional; hand-fed Chrome 109 win32, manifest browser section)
+# ---------------------------------------------------------------------------
+$browserMeta = Get-PropertyValue -Object $manifest -Name 'browser'
+$browserEnabled = [bool](Get-PropertyValue -Object $browserMeta -Name 'enabled' -Default $false)
+$browserVersion = [string](Get-PropertyValue -Object $browserMeta -Name 'version' -Default '')
+$browserExeRel = [string](Get-PropertyValue -Object $browserMeta -Name 'expectedExe' -Default 'chrome-win/chrome.exe')
+$browserDestRel = [string](Get-PropertyValue -Object $browserMeta -Name 'dest' -Default 'opt\browser')
+$browserBundled = $false
+$browserSourceLeaf = ''
+if ($browserEnabled) {
+  $browserSrc = $BrowserArchivePath
+  if ([string]::IsNullOrWhiteSpace($browserSrc)) { $browserSrc = [string](Get-PropertyValue -Object $browserMeta -Name 'archivePath' -Default '') }
+  if (-not [string]::IsNullOrWhiteSpace($browserSrc)) {
+    if (-not (Test-Path -LiteralPath $browserSrc)) { Fail "browser archive not found: $browserSrc" }
+    $browserRoot = Join-Path $packRoot $browserDestRel
+    Write-Step "staging browser $browserVersion into $browserRoot"
+    Install-BundledBrowser -Source $browserSrc -Destination $browserRoot -ExpectedExe $browserExeRel -Arch $Arch
+    $browserBundled = $true
+    $browserSourceLeaf = Split-Path -Leaf $browserSrc
+  } else {
+    Write-Step 'browser archivePath empty; supplement ships without a bundled browser'
+  }
+} else {
+  Write-Step 'bundled browser disabled in manifest (browser.enabled=false)'
+}
+
+# ---------------------------------------------------------------------------
 # Validate imports
 # ---------------------------------------------------------------------------
 $validate = @(Get-PropertyValue -Object $profileNode -Name 'validateImports' -Default @())
@@ -448,7 +579,7 @@ if ($PythonProfile -eq 'common') { $zipName = $zipName + '-common' }
 $zipName = $zipName + '.zip'
 $zipPath = Join-Path $distDir $zipName
 
-$browserNote = if ($browserInstalled) { 'Playwright Chromium in opt/python/ms-playwright' } else { 'not bundled; the browser_* tools reuse a locally installed browser' }
+$browserNote = if ($browserBundled) { "bundled Chrome $browserVersion at opt/browser/$browserExeRel (win32); the browser_* tools detect it automatically" } elseif ($browserInstalled) { 'Playwright Chromium in opt/python/ms-playwright' } else { 'not bundled; the browser_* tools reuse a locally installed browser' }
 $readmeText = @'
 Wunder Desktop Windows supplement (__ARCH__, profile: __PROFILE__)
 
@@ -457,6 +588,7 @@ Contents:
   opt/git      PortableGit __GITVER__
   opt/rg       ripgrep __RGVER__
   opt/ffmpeg   ffmpeg __FFVER__ (when bundled)
+  opt/browser  Chrome __BROWSERVER__ win32 at __BROWSEREXE__ (when bundled)
 
 Use Import supplement in the Pupa settings to install into WUNDER_HOME.
 For manual installation, close processes using this runtime and unpack into
@@ -465,7 +597,7 @@ opt/python, opt/git, opt/rg and opt/ffmpeg, and prepend their bins to PATH.
 
 Browsers: __BROWSER__
 '@
-$readmeText = $readmeText.Replace('__ARCH__', $archLabel).Replace('__PROFILE__', $PythonProfile).Replace('__PYVER__', $pyVer).Replace('__GITVER__', $gitVersion).Replace('__RGVER__', $rgVersion).Replace('__FFVER__', $ffVersion).Replace('__BROWSER__', $browserNote)
+$readmeText = $readmeText.Replace('__ARCH__', $archLabel).Replace('__PROFILE__', $PythonProfile).Replace('__PYVER__', $pyVer).Replace('__GITVER__', $gitVersion).Replace('__RGVER__', $rgVersion).Replace('__FFVER__', $ffVersion).Replace('__BROWSERVER__', $browserVersion).Replace('__BROWSEREXE__', $browserExeRel).Replace('__BROWSER__', $browserNote)
 Write-Utf8NoBom -Path (Join-Path $packRoot 'README-win7-supplement.txt') -Content $readmeText
 
 $metaObj = [ordered]@{
@@ -473,11 +605,25 @@ $metaObj = [ordered]@{
   arch          = $Arch
   profile       = $PythonProfile
   generatedAt   = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
-  python        = [ordered]@{ version = $pyVer; packages = [string[]]$installedPackages }
+  python        = [ordered]@{
+    version = $pyVer
+    packages = [string[]]$installedPackages
+    playwrightDriverNode = [ordered]@{
+      path = 'opt/python/Lib/site-packages/playwright/driver/node.exe'
+      machine = if ($Arch -eq 'ia32') { 'i386' } else { 'x86_64' }
+    }
+  }
   git           = [ordered]@{ version = $gitVersion }
   rg            = [ordered]@{ version = $rgVersion }
   ffmpeg        = [ordered]@{ version = $ffVersion; bundled = $ffmpegBundled }
-  browser       = [ordered]@{ installBrowser = $installBrowser; installed = $browserInstalled }
+  browser       = [ordered]@{
+    installBrowser = $installBrowser
+    installed = $browserInstalled
+    bundled = $browserBundled
+    version = $browserVersion
+    expectedExe = ('opt/browser/' + $browserExeRel)
+    source = if ($browserBundled) { $browserSourceLeaf } else { '' }
+  }
   failedPackages = [string[]]$failedPackages
   missingImports = [string[]]$missingImports
 }

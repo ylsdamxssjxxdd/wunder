@@ -1,6 +1,7 @@
 pub mod bridge;
 pub mod config;
 pub mod model;
+pub mod probe;
 pub mod provider;
 pub mod providers;
 pub mod runtime;

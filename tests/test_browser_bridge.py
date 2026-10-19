@@ -15,6 +15,34 @@ bridge = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(bridge)
 
 
+class LaunchUserAgentTests(unittest.TestCase):
+    """UA shaping needs no live browser: it only reads browser.version."""
+
+    def _ua(self, browser):
+        fake = argparse.Namespace(browser=browser)
+        return bridge.BridgeSession._launch_user_agent(fake)
+
+    def test_user_agent_follows_the_real_browser_version(self):
+        class FakeBrowser:
+            version = "109.0.5414.46"
+
+        ua = self._ua(FakeBrowser())
+        self.assertIn("Chrome/109.0.5414.46", ua)
+        self.assertNotIn("135.0.0.0", ua)
+
+    def test_missing_version_keeps_the_browser_default_ua(self):
+        class EmptyVersion:
+            version = ""
+
+        class FailingVersion:
+            @property
+            def version(self):
+                raise RuntimeError("no version channel")
+
+        self.assertIsNone(self._ua(EmptyVersion()))
+        self.assertIsNone(self._ua(FailingVersion()))
+
+
 class BrowserBridgeTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

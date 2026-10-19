@@ -32,6 +32,32 @@ build.bat -t cli -a linux-amd64
 build.bat -All -AppImageRuntimeArm64 X:\runtime-arm64.AppImage -AppImageRuntimeAmd64 X:\runtime-amd64.AppImage
 ```
 
+egui 版本提供独立的本机快速构建入口，不改变默认 Slint Desktop 发布矩阵：
+
+```bat
+build.bat -Egui
+```
+
+Win7 x86 发布必须选择 Win7 目标，而不能把上面的本机 x64 产物复制到旧系统：
+
+```bat
+build.bat -Egui -a win7-x86
+```
+
+```bash
+./build.sh --egui
+```
+
+本机快速构建产物位于 `target/wunder-egui/release/wunder-egui.exe`（Windows）或
+`target/wunder-egui/release/wunder-egui`（Linux）。该入口使用当前构建主机的 native
+Glow 后端，便于先运行 `--demo` 做视觉验收。Win7 x86 的产物位于
+`target/wunder-egui/dist/win7-x86/wunder-egui-<version>-win7-x86.exe`，使用
+`i686-win7-windows-gnu` 重编标准库。发布前会解析 PE 导入表，拒绝
+`bcryptprimitives.dll`、`ProcessPrng`、`api-ms-win-*`、`WaitOnAddress` 等 Win7
+不兼容项，并写出同目录的 `imports.txt`。Win7 目标依赖独立的
+`Rust-builder/win7/offline/cargo-vendor-egui` 锁定快照；缺失依赖时构建应直接失败，
+不得改用主机 Cargo 或手工复制系统 DLL。
+
 `-all` 为完整发布构建 Linux ARM64、Linux amd64 与 Win7 x86 的 Desktop/CLI；Linux Desktop 产物均为 AppImage，CLI 在所有目标都只产生普通 ELF/EXE，绝不打包 AppImage。Windows 的 `-All` 默认分别使用相邻的 `Rust-builder/kylin-arm` 和 `Rust-builder/win7`；如需覆盖，使用 `-KylinBuilderRoot` 与 `-Win7BuilderRoot`，不要把两套 SDK 指到同一目录。
 
 底层实现包括 `build-linux-*-*.sh`、`build-cli-*.sh`、`build-win7-*.ps1`、`build-win7-arm64-offline.sh`、`build-cli-win7-arm64-offline.sh` 和链接器辅助脚本。其中 `build-linux-appimage-native.sh` 是 CI 专用入口：在已预装 Ubuntu 18.04 工具链的容器内在线原生构建并打包 AppImage，不依赖 kylin-arm 离线 SDK，打包语义与 `build-linux-arm64-appimage.sh` 保持同步。Win7 Windows 本机构建固定使用相邻的 `Rust-builder/win7/offline`；Linux ARM64 开发机与 Windows Docker 的 Linux 交叉构建固定使用相邻的 `Rust-builder/kylin-arm/offline`（Win7 交叉使用其中的 `nightly-2026-03-14-aarch64-unknown-linux-gnu` 工具链 + rust-src，-Z build-std 重编 std，MinGW 链接与导入库由 `mingw-i686-windows-gnu` 提供，sdk-version 戳接受 wunder/rcho 两种印记）。Linux 可通过 `WUNDER_BUILDER_ROOT` 覆盖 kylin-arm 根目录；Windows 分别通过 `-KylinBuilderRoot`、`-Win7BuilderRoot` 覆盖两套 SDK。脚本不探测或回退到旧 SDK 目录。

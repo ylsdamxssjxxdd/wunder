@@ -1,4 +1,4 @@
-﻿# Windows 7 补充包打包说明
+# Windows 7 补充包打包说明
 
 本目录用于构建给 `wunder-desktop` Windows 7 试包配套的补充包（压缩包名 `wunder-supplement-…`），提供：
 
@@ -6,6 +6,7 @@
 - `opt/git`：给 `git clone`、`git status`、补丁应用与仓库操作使用的内置 Git
 - `opt/rg`：给 `search_content` 与命令行检索使用的内置 ripgrep
 - `opt/ffmpeg`：随包附带的静态 ffmpeg（`opt/ffmpeg/bin` 已由桌面运行时自动接入 `PATH`）
+- `opt/browser`：（可选）用户自备的 Chrome 109 win32 浏览器，供 `browser_*` 工具开箱使用，详见「内置浏览器（可选）」
 
 补充包设计目标：**统一安装到 `WUNDER_HOME/opt`，蛹与舵机共用一份运行环境**。
 
@@ -20,6 +21,7 @@
 - Python：`3.8.10 embeddable package`
   - Python 官方从 `3.9` 开始要求 Windows `8.1+`，因此 Win7 路线固定使用 `3.8`。
   - 当前脚本使用官方可下载的 embeddable 压缩包，便于安装到共享用户目录。
+- Playwright 驱动：`playwright==1.16+` 的官方 `win32` wheel 会带 x64 的 `driver/node.exe`。Win7 包固定使用 `playwright==1.15.2`，它的 `win32` wheel 原生携带 i386 Node 12.20.1；构建时会将该文件的 PE 架构作为硬门禁，防止升级依赖后重新混入 x64 驱动。
 - Git：`MinGit 2.46.2`
   - Git for Windows FAQ 将 `2.46.2` 标为最后支持 Windows `7 / 8 / 8.1` 的版本。
   - `MinGit` 适合嵌入第三方桌面应用，体积比完整安装包更小。
@@ -72,9 +74,27 @@ opt/
   git/
   rg/
   ffmpeg/
+  browser/        （可选，投喂 Chrome 109 压缩包后才会出现）
 README-win7-supplement.txt
 wunder-win7-supplement.json
 ```
+
+## 内置浏览器（可选）
+
+Win7 最高只支持到 Chrome 109（`109.0.5414.x`，最后一个支持 Windows 7 的 Chrome 版本）。补充包支持把用户自备的 Chrome 109 win32 浏览器目录打进包内，导入后蛹的 `browser_*` 工具开箱可用。
+
+- 布局：浏览器解到补充包的 `opt/browser/`，默认要求存在 `opt/browser/chrome-win/chrome.exe`；`opt/browser/chrome.exe` 也是运行时认可的回退探测位置。若投喂的压缩包顶层只有一层包裹目录（如 `chrome-win/` 或 `chrome-win32/`），会保留其结构；若解开后找不到 `chrome-win/chrome.exe`，脚本会在解包结果中递归定位 `chrome.exe` 并重排到 `chrome-win/chrome.exe`，仍找不到则报错退出。ia32 档还会校验 `chrome.exe` 的 PE 架构必须是 32 位。
+- 投喂方式（二选一）：
+  - 命令行参数（优先级更高）：
+    ```powershell
+    powershell -ExecutionPolicy Bypass -File packaging/windows/scripts/build_win7_desktop_supplement.ps1 `
+      -Arch ia32 `
+      -BrowserArchivePath <本地目录>\chrome-109-win32.zip
+    ```
+  - 或在 `packaging/windows/scripts/win7-supplement-manifest.json` 的顶层 `browser.archivePath` 填入压缩包路径。
+  - `-BrowserArchivePath` 既接受 `.zip` 压缩包，也接受已解开的浏览器目录。不提供任何路径时行为与之前一致：包内不含浏览器，不报错。
+- 获取途径：Chrome 官方旧版离线安装包（win32 的 109.0.5414.x）或可信镜像；解出安装包内的 `chrome.7z`/`chrome-win` 目录即可投喂。浏览器二进制是否允许再分发由投喂者自行确认，本仓库不替使用者做合规结论。
+- 运行时如何被发现：在蛹设置中导入补充包后，运行时会自动探测 `WUNDER_HOME/opt/browser/chrome-win/chrome.exe`（回退 `opt/browser/chrome.exe`），`browser_*` 工具直接使用，无需手工修改 `wunder.yaml`。
 
 ## 使用方式
 
@@ -87,6 +107,7 @@ wunder-win7-supplement.json
    - `opt/git`
    - `opt/rg`
    - `opt/ffmpeg`
+   - `opt/browser`（若打包时投喂了浏览器）
 4. 重新启动蛹或舵机。
 
 两端启动时会自动：

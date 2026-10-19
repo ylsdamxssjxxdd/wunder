@@ -294,7 +294,7 @@ export component Sidebar inherits Rectangle {
     callback workspace-menu(int, int);
     callback new-workspace();
     callback move-row(int, int);
-    callback archive-thread(int);
+    callback archive-thread(string);
     // Multi-select (web alignment): the tree enters selection mode from a
     // context menu, clicks toggle rows, the bar at the tree's foot
     // selects all / closes / archives. The native side owns the checked set,
@@ -486,7 +486,7 @@ export component Sidebar inherits Rectangle {
                             data: row;
                             hover: parent.hover;
                             selecting: root.selection-mode;
-                            archive => { root.archive-thread(row.payload); }
+                            archive => { root.archive-thread(row.thread-id); }
                             // Renaming needs a draft the user can still abandon, so
                             // the pen asks the shell for the prompt dialog instead
                             // of editing in place.

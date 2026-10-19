@@ -16,7 +16,8 @@ test.use({
 test.beforeAll(async () => {
   staticServer = createServer(async (request, response) => {
     const pathname = decodeURIComponent(new URL(request.url || '/', 'http://fixture.local').pathname);
-    const target = path.resolve(webRoot, `.${pathname === '/' ? '/index.html' : pathname}`);
+    const assetPath = pathname.replace(/^\/bridge(?=\/)/, '');
+    const target = path.resolve(webRoot, `.${assetPath === '/' ? '/index.html' : assetPath}`);
     if (!target.startsWith(`${webRoot}${path.sep}`)) { response.writeHead(403).end(); return; }
     try {
       const bytes = await readFile(target);
@@ -121,17 +122,31 @@ test('leader scope also lands on the model while retaining its navigation permis
   await expect(page.locator('#navOrgUnits')).toBeVisible();
 });
 
-test('hive settings opens the shared viewer and destroys it on close', async ({ page }) => {
+test('standalone bridge model loads without a management session', async ({ page }) => {
   const errors: string[] = [];
-  const requests: string[] = [];
+  const apiRequests: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
-  page.on('request', request => requests.push(request.url()));
-  // Keep assets on the same origin, as the production /third proxy does.
-  await page.route('**/third/**', async route => {
-    const url = new URL(route.request().url());
-    const response = await page.request.get(`${bridgeUrl}${url.pathname}`);
-    await route.fulfill({ response });
+  page.on('request', request => {
+    if (new URL(request.url()).pathname.includes('/wunder/')) apiRequests.push(request.url());
   });
+  await page.goto(`${bridgeUrl}/bridge/wunder-model.html`);
+  await expect(page.locator('.wunder-model-viewer')).toHaveAttribute('data-state', 'ready', { timeout: 25000 });
+  await expect(page.locator('#adminLoginModal')).toHaveCount(0);
+  await expect(page.locator('[data-model-coordinates]')).toContainText('Y -4.88');
+  const canvas = page.locator('canvas');
+  const box = (await canvas.boundingBox())!;
+  expect(box.x).toBe(0);
+  expect(box.y).toBe(0);
+  expect(box.width).toBe(1440);
+  expect(box.height).toBe(900);
+  await canvas.screenshot({ path: 'test-results/wunder-model-standalone.png' });
+  const first = await canvas.screenshot();
+  await expect(async () => expect(Buffer.compare(first, await canvas.screenshot())).not.toBe(0)).toPass();
+  expect(apiRequests).toEqual([]);
+  expect(errors).toEqual([]);
+});
+
+async function openHiveAccountSettings(page: Page) {
   await page.routeWebSocket(/\/wunder\//, socket => socket.close());
   await page.route(url => url.pathname.startsWith('/wunder/'), route => route.fulfill({ json: { data: { items: [] } } }));
   await page.goto('/__e2e/messenger-view-performance?session_id=perf-session-a');
@@ -144,29 +159,46 @@ test('hive settings opens the shared viewer and destroys it on close', async ({ 
     router.replace = (location: any) => replace(typeof location === 'object'
       ? { ...location, path: '/__e2e/messenger-view-performance' } : location);
   });
-  const open = page.getByTestId('settings-open-wunder-model');
+  const account = page.locator('[data-settings-category="account"]');
   // The fixture's initial thread route can finish after the first settings click.
   await expect(async () => {
-    if (!(await open.count())) await page.locator('.messenger-sidebar-settings').click();
-    await expect(open).toBeVisible({ timeout: 1500 });
+    if (!(await account.count())) await page.locator('.messenger-sidebar-settings').click();
+    await expect(account).toBeVisible({ timeout: 1500 });
   }).toPass({ timeout: 15000 });
-  expect(requests.some(url => url.includes('/models/wunder.glb'))).toBe(false);
+  await page.locator('[data-settings-category="general"]').click();
+  await expect(page.getByTestId('settings-open-wunder-model')).toHaveCount(0);
+  await account.click();
+  await expect(page.getByTestId('settings-open-wunder-model')).toBeVisible();
+}
+
+test('hive account opens the bridge model in a new window without loading a local viewer', async ({ page, context }) => {
+  const errors: string[] = [];
+  const requests: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  page.on('request', request => requests.push(request.url()));
+  await context.route('**/bridge/wunder-model.html', async route => {
+    const url = new URL(route.request().url());
+    expect(url.pathname).toBe('/bridge/wunder-model.html');
+    await route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>Model window</title>' });
+  });
+  await openHiveAccountSettings(page);
+  const open = page.getByTestId('settings-open-wunder-model');
+  expect(requests.some(url => /\/models\/|wunder-model-viewer\.js/.test(url))).toBe(false);
+  const popupPromise = page.waitForEvent('popup');
   await open.click();
-  await expect(page.locator('.wunder-model-viewer')).toHaveAttribute('data-state', 'ready', { timeout: 25000 });
-  await expect(page.locator('[data-action="reset"]')).toHaveCount(0);
-  await expect(page.locator('[data-action="rotate"]')).toHaveCount(0);
-  await expect(page.locator('.wunder-model-dialog')).toHaveCount(0);
-  await expect(page.locator('[data-testid="wunder-model-inline"]')).toBeVisible();
-  const box = (await page.locator('.wunder-model-viewer canvas').boundingBox())!;
-  expect(box.x).toBeGreaterThan(0);
-  expect(box.y).toBeGreaterThan(0);
-  expect(box.width).toBeLessThan(1440);
-  expect(box.height).toBeLessThan(900);
-  await page.screenshot({ path: 'test-results/wunder-model-hive.png' });
-  await page.keyboard.press('Escape');
+  const popup = await popupPromise;
+  await popup.waitForLoadState();
+  await expect(popup).toHaveURL(new URL('/bridge/wunder-model.html', page.url()).href);
+  expect(await popup.evaluate(() => window.opener)).toBeNull();
   await expect(page.locator('.wunder-model-viewer')).toHaveCount(0);
-  await expect(page.getByTestId('messenger-settings')).toBeVisible();
-  await open.click();
-  await expect(page.locator('.wunder-model-viewer')).toHaveAttribute('data-state', 'ready', { timeout: 25000 });
+  expect(requests.some(url => /\/models\/|wunder-model-viewer\.js/.test(url))).toBe(false);
   expect(errors).toEqual([]);
+});
+
+test('hive account explains when the browser blocks the model window', async ({ page }) => {
+  await openHiveAccountSettings(page);
+  await page.evaluate(() => { window.open = () => null; });
+  await page.getByTestId('settings-open-wunder-model').click();
+  await expect(page.locator('.el-message--warning')).toContainText('浏览器拦截了新窗口');
+  await expect(page.locator('.wunder-model-viewer')).toHaveCount(0);
 });

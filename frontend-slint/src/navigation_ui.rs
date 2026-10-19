@@ -3,7 +3,11 @@
 //! the sidebar tree projection (workspaces with their threads).
 use crate::{MainWindow, SidebarMetrics, SidebarRow, WorkspaceCard};
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
-use std::{cell::RefCell, collections::HashSet, sync::Arc};
+use std::{
+    cell::{Cell, RefCell},
+    collections::HashSet,
+    sync::Arc,
+};
 use wunder_desktop::NativeDesktop;
 
 pub(crate) fn agent_key(id: Option<&str>) -> &str {
@@ -29,6 +33,45 @@ thread_local! {
     /// selection mode; every projection re-derives each row's `checked` from
     /// it so status refreshes and reorders never drop a tick.
     static THREAD_SELECTION: RefCell<HashSet<String>> = RefCell::new(HashSet::new());
+    /// Monotonic guard for asynchronous workspace catalogue reads. A stale
+    /// SQLite result must never replace a newer catalogue result.
+    static WORKSPACE_REFRESH_GENERATION: Cell<u64> = const { Cell::new(0) };
+}
+
+fn next_workspace_refresh_generation() -> u64 {
+    WORKSPACE_REFRESH_GENERATION.with(|slot| {
+        let next = slot.get().wrapping_add(1);
+        slot.set(next);
+        next
+    })
+}
+
+fn workspace_refresh_is_current(request: u64) -> bool {
+    WORKSPACE_REFRESH_GENERATION.with(|slot| slot.get() == request)
+}
+
+fn selected_workspace_id(app: &MainWindow) -> Option<String> {
+    usize::try_from(app.get_selected_workspace())
+        .ok()
+        .and_then(|index| app.get_workspaces().row_data(index))
+        .map(|card| card.workspace_id.to_string())
+}
+
+fn refreshed_workspace_selection(
+    selected_id: Option<&str>,
+    workspace_ids: &[&str],
+    cloud_target: bool,
+) -> i32 {
+    selected_id
+        .and_then(|id| workspace_ids.iter().position(|candidate| *candidate == id))
+        .map(|index| index as i32)
+        .unwrap_or_else(|| {
+            if cloud_target || workspace_ids.is_empty() {
+                -1
+            } else {
+                0
+            }
+        })
 }
 
 /// Rank of `id` in a manual order list: unknown ids come first (stable), the
@@ -231,46 +274,61 @@ fn thread_archivable(status: &str, locked: bool) -> bool {
 /// Rebuild the sidebar from the workspace facade plus the bounded conversation
 /// list. `desktop` is only needed on the first call and after workspace CRUD;
 /// row rebuilds reuse the existing cards so selection changes cost no I/O.
-pub(crate) fn project_sidebar(app: &MainWindow, desktop: Option<&NativeDesktop>) {
+/// It is an `Arc` because the refresh owns a background worker; accepting a
+/// borrowed facade here would let that reference escape into the worker.
+pub(crate) fn project_sidebar(app: &MainWindow, desktop: Option<Arc<NativeDesktop>>) {
     if let Some(desktop) = desktop {
-        let selected_id = usize::try_from(app.get_selected_workspace())
-            .ok()
-            .and_then(|index| app.get_workspaces().row_data(index))
-            .map(|card| card.workspace_id.to_string());
-        match desktop.list_workspaces() {
-            Ok(list) => {
-                let cards: Vec<WorkspaceCard> = list
-                    .iter()
-                    .map(|w| WorkspaceCard {
-                        workspace_id: w.workspace_id.as_str().into(),
-                        name: w.name.as_str().into(),
-                        icon: w.icon.as_str().into(),
-                        color: w.color.as_str().into(),
-                        root_path: w.root_path.as_str().into(),
-                        thread_count: w.thread_count as i32,
-                        expanded: true,
-                        selected: false,
-                    })
-                    .collect();
-                app.set_workspaces(ModelRc::new(VecModel::from(cards)));
-                let count = app.get_workspaces().row_count();
-                let index = selected_id.and_then(|id| {
-                    app.get_workspaces()
-                        .iter()
-                        .position(|card| card.workspace_id == id)
-                });
-                app.set_selected_workspace(index.map(|index| index as i32).unwrap_or(
-                    if crate::workspace_files::is_cloud_target() {
-                        -1
-                    } else if count > 0 {
-                        0
-                    } else {
-                        -1
-                    },
-                ));
-            }
-            Err(error) => app.set_status(format!("无法读取工作区：{error}").into()),
-        }
+        // Workspace counting opens SQLite too. Rendering a refreshed session
+        // catalogue must not make the Slint event loop wait for that I/O.
+        let request = next_workspace_refresh_generation();
+        let weak = app.as_weak();
+        std::thread::spawn(move || {
+            let result = desktop.list_workspaces();
+            let _ = weak.upgrade_in_event_loop(move |app| {
+                if !workspace_refresh_is_current(request) {
+                    return;
+                }
+                match result {
+                    Ok(list) => {
+                        // Resolve the selected id at commit time. A user can
+                        // click another workspace while the HDD is reading;
+                        // the request-start index is no longer authoritative.
+                        let selected_id = selected_workspace_id(&app);
+                        let cards: Vec<WorkspaceCard> = list
+                            .iter()
+                            .map(|w| WorkspaceCard {
+                                workspace_id: w.workspace_id.as_str().into(),
+                                name: w.name.as_str().into(),
+                                icon: w.icon.as_str().into(),
+                                color: w.color.as_str().into(),
+                                root_path: w.root_path.as_str().into(),
+                                thread_count: w.thread_count as i32,
+                                expanded: true,
+                                selected: false,
+                            })
+                            .collect();
+                        app.set_workspaces(ModelRc::new(VecModel::from(cards)));
+                        let workspace_ids: Vec<&str> = app
+                            .get_workspaces()
+                            .iter()
+                            .map(|card| card.workspace_id.as_str())
+                            .collect();
+                        app.set_selected_workspace(refreshed_workspace_selection(
+                            selected_id.as_deref(),
+                            &workspace_ids,
+                            crate::workspace_files::is_cloud_target(),
+                        ));
+                        rebuild_rows(&app);
+                    }
+                    Err(error) => app.set_status(format!("无法读取工作区：{error}").into()),
+                }
+            });
+        });
+        // Retain the current sidebar projection until the background refresh
+        // returns. Rebuilding here is pure model work and gives clicks an
+        // immediate visual response without blocking for SQLite.
+        rebuild_rows(app);
+        return;
     }
     rebuild_rows(app);
 }
@@ -587,14 +645,13 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
             // toggles its children. The selected workspace remains the active
             // directory while collapsed, so the icon can return to its hollow
             // state without changing the current conversation.
-            let should_open_thread = EXPANDED.with(|slot| {
+            EXPANDED.with(|slot| {
                 let mut expanded = slot.borrow_mut();
                 let was_expanded = expanded.contains(id.as_str());
                 expanded.clear();
                 if !was_expanded {
                     expanded.insert(id.clone());
                 }
-                !was_expanded
             });
             THREAD_SELECTION.with(|slot| slot.borrow_mut().clear());
             app.set_sidebar_selection_mode(false);
@@ -618,15 +675,10 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
                 }
             }
             crate::navigation_ui::project_sidebar(&app, None);
-            if should_open_thread {
-                if let Some(index) = app
-                    .get_conversations()
-                    .iter()
-                    .position(|thread| thread.workspace_id == row.workspace_id)
-                {
-                    app.invoke_select_conversation(index as i32);
-                }
-            }
+            // Expanding a workspace is a lightweight navigation action. Do not
+            // implicitly open its first thread: on Win7/HDD that would start a
+            // lease and history read while the user is only trying to reveal
+            // the tree. A thread is opened only by an explicit row click.
         } else if row.kind == 3 {
             app.set_cloud_thread_index(row.payload + 1);
             app.set_cloud_chat_active(true);
@@ -772,12 +824,13 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
     let weak = app.as_weak();
     let api = desktop.clone();
     app.on_archive_thread(move |index| {
-        let Some(app) = weak.upgrade() else { return };
-        let Some(row) = app.get_conversations().row_data(index as usize) else {
+        if weak.upgrade().is_none() {
             return;
-        };
-        let id = row.id.to_string();
-        let was_active = app.get_active_session_id().as_str() == id.as_str();
+        }
+        let id = index.trim().to_string();
+        if id.is_empty() {
+            return;
+        }
         let api = api.clone();
         let weak = weak.clone();
         std::thread::spawn(move || {
@@ -792,10 +845,13 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
                 THREAD_SELECTION.with(|slot| {
                     slot.borrow_mut().remove(id.as_str());
                 });
-                app.invoke_refresh_chat();
-                if was_active {
+                // Decide from the state that exists *now*, rather than from
+                // the click-time snapshot. The user may have opened another
+                // thread while the archive transaction was on disk.
+                if app.get_active_session_id().as_str() == id.as_str() {
                     app.set_active_session_id("".into());
                 }
+                app.invoke_refresh_chat();
                 crate::navigation_ui::project_sidebar(&app, None);
             });
         });
@@ -868,21 +924,26 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
     let weak = app.as_weak();
     let api = desktop.clone();
     app.on_sidebar_archive_selected(move || {
-        let Some(app) = weak.upgrade() else { return };
+        if weak.upgrade().is_none() {
+            return;
+        }
         let ids: Vec<String> =
             THREAD_SELECTION.with(|slot| slot.borrow().iter().cloned().collect());
         if ids.is_empty() {
             return;
         }
-        let was_active_id = app.get_active_session_id().to_string();
         let api = api.clone();
         let weak = weak.clone();
         std::thread::spawn(move || {
             let mut archived = 0usize;
+            let mut archived_ids = HashSet::new();
             let mut first_error: Option<String> = None;
             for id in &ids {
                 match api.archive_session(id) {
-                    Ok(()) => archived += 1,
+                    Ok(()) => {
+                        archived += 1;
+                        archived_ids.insert(id.clone());
+                    }
                     Err(error) => {
                         if first_error.is_none() {
                             first_error = Some(format!("{error}"));
@@ -899,9 +960,13 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
                 } else {
                     app.set_status(format!("已归档 {archived} 个线程").into());
                 }
-                app.invoke_refresh_chat();
-                if ids.iter().any(|id| id.as_str() == was_active_id.as_str()) {
+                // A newer user selection wins over the old multi-select
+                // batch. Only clear the session that was actually archived.
+                if archived_ids.contains(app.get_active_session_id().as_str()) {
                     app.set_active_session_id("".into());
+                }
+                if archived > 0 {
+                    app.invoke_refresh_chat();
                 }
                 crate::navigation_ui::project_sidebar(&app, None);
             });
@@ -960,6 +1025,23 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn refreshed_workspace_selection_keeps_the_stable_id() {
+        let ids = ["workspace-a", "workspace-b", "workspace-c"];
+        assert_eq!(
+            refreshed_workspace_selection(Some("workspace-b"), &ids, false),
+            1
+        );
+    }
+
+    #[test]
+    fn refreshed_workspace_selection_never_maps_an_invalid_choice_to_the_tail() {
+        let ids = ["workspace-a", "workspace-b", "workspace-c"];
+        assert_eq!(refreshed_workspace_selection(Some("gone"), &ids, false), 0);
+        assert_eq!(refreshed_workspace_selection(None, &ids, true), -1);
+        assert_eq!(refreshed_workspace_selection(None, &[], false), -1);
+    }
 
     #[test]
     fn agent_key_normalizes_legacy_ids() {

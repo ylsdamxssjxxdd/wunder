@@ -675,22 +675,30 @@ mod tests {
         super::record_loop_tick(&loop_label, "poll");
 
         let snapshot = super::snapshot();
-        assert!(snapshot
-            .blocking
-            .iter()
-            .any(|item| item.label == blocking_label && item.calls > 0));
-        assert!(snapshot
-            .queues
-            .iter()
-            .any(|item| item.name == queue_label && item.busy > 0));
-        assert!(snapshot
-            .long_tasks
-            .iter()
-            .any(|item| item.label == long_label && item.finished > 0));
-        assert!(snapshot
-            .loop_ticks
-            .iter()
-            .any(|item| item.label == loop_label && item.ticks > 0));
+        assert!(
+            snapshot
+                .blocking
+                .iter()
+                .any(|item| item.label == blocking_label && item.calls > 0)
+        );
+        assert!(
+            snapshot
+                .queues
+                .iter()
+                .any(|item| item.name == queue_label && item.busy > 0)
+        );
+        assert!(
+            snapshot
+                .long_tasks
+                .iter()
+                .any(|item| item.label == long_label && item.finished > 0)
+        );
+        assert!(
+            snapshot
+                .loop_ticks
+                .iter()
+                .any(|item| item.label == loop_label && item.ticks > 0)
+        );
     }
 
     #[test]

@@ -257,19 +257,6 @@ pub fn merge_reasoning_tail(bar: &TimelineRow, mut entry: ProcessEntry) {
     else {
         return;
     };
-    for index in 0..children.row_count() {
-        let Some(mut old) = children.row_data(index) else {
-            continue;
-        };
-        if old.kind == crate::timeline::KIND_REASON
-            && old.id != entry.id
-            && old.status_kind == crate::timeline::STATUS_RUNNING
-        {
-            old.status_kind = crate::timeline::STATUS_DONE;
-            old.tool_name = thought_done().into();
-            children.set_row_data(index, old);
-        }
-    }
     if let Some(index) = children.iter().position(|old| old.id == entry.id) {
         let old = children.row_data(index).unwrap();
         entry.open = old.open;
@@ -283,7 +270,51 @@ pub fn merge_reasoning_tail(bar: &TimelineRow, mut entry: ProcessEntry) {
         if children.row_data(index).as_ref() != Some(&entry) {
             children.set_row_data(index, entry);
         }
+    } else if let Some(index) = (0..children.row_count())
+        .filter_map(|index| {
+            let old = children.row_data(index)?;
+            if old.kind != crate::timeline::KIND_REASON {
+                return None;
+            }
+            let old_detail = old.detail.as_str();
+            let new_detail = entry.detail.as_str();
+            // The live reducer and the durable pager use different row ids for
+            // the same reasoning segment. Match their bounded text when the
+            // ids differ, otherwise every refresh appends another “已思考”.
+            let overlap = if old_detail == new_detail {
+                old_detail.len()
+            } else if old_detail.starts_with(new_detail) {
+                new_detail.len()
+            } else if new_detail.starts_with(old_detail) {
+                old_detail.len()
+            } else {
+                return None;
+            };
+            Some((overlap, index))
+        })
+        .max_by_key(|(overlap, _)| *overlap)
+        .map(|(_, index)| index)
+    {
+        let old = children.row_data(index).unwrap();
+        entry.open = old.open;
+        entry.payload = old.payload;
+        children.set_row_data(index, entry);
     } else {
+        // A new live segment settles any previous running thought. Do this
+        // only after trying the text match above, so a durable/live identity
+        // mismatch cannot manufacture a second completed thought row.
+        for index in 0..children.row_count() {
+            let Some(mut old) = children.row_data(index) else {
+                continue;
+            };
+            if old.kind == crate::timeline::KIND_REASON
+                && old.status_kind == crate::timeline::STATUS_RUNNING
+            {
+                old.status_kind = crate::timeline::STATUS_DONE;
+                old.tool_name = thought_done().into();
+                children.set_row_data(index, old);
+            }
+        }
         // Process pages retain at most 100 items, each with at most two rows.
         // Reserve one bounded live tail rather than grow a second transcript.
         if children.row_count() >= 201 {
@@ -492,6 +523,7 @@ pub fn tool_metrics(entry: &NativeWorkflowEntry) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use slint::Model;
 
     #[test]
     fn command_summary_uses_only_invocation_and_never_result_text() {
@@ -510,5 +542,34 @@ mod tests {
         entry.preview.clear();
         assert_eq!(tool_summary(&entry), "");
         assert_eq!(tool_target(&entry).0, "");
+    }
+
+    #[test]
+    fn durable_thought_reuses_a_live_tail_with_a_different_identity() {
+        let children = ModelRc::new(VecModel::from(vec![ProcessEntry {
+            id: "reason-live-tail".into(),
+            kind: crate::timeline::KIND_REASON,
+            detail: "Fixture thought".into(),
+            status_kind: crate::timeline::STATUS_RUNNING,
+            ..Default::default()
+        }]));
+        let bar = TimelineRow {
+            kind: crate::timeline::KIND_PROCESS,
+            process_idx: 3,
+            process_entries: children.clone(),
+            ..Default::default()
+        };
+        merge_reasoning_tail(
+            &bar,
+            ProcessEntry {
+                id: "reason-fixture:text-1".into(),
+                kind: crate::timeline::KIND_REASON,
+                detail: "Fixture thought".into(),
+                status_kind: crate::timeline::STATUS_DONE,
+                ..Default::default()
+            },
+        );
+        assert_eq!(children.row_count(), 1);
+        assert_eq!(children.row_data(0).unwrap().id, "reason-fixture:text-1");
     }
 }

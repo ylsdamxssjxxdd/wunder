@@ -58,6 +58,30 @@
         </button>
       </div>
     </section>
+
+    <section class="messenger-settings-card" data-testid="settings-wunder-model">
+      <div class="messenger-settings-group-head">
+        <div class="messenger-settings-title">{{ t('messenger.settingsPage.account.wunderModelGroup') }}</div>
+      </div>
+      <div class="messenger-settings-row">
+        <div class="messenger-settings-page-row-main">
+          <i class="fa-solid fa-binoculars messenger-settings-page-row-icon" aria-hidden="true"></i>
+          <div>
+            <div class="messenger-settings-label">{{ t('messenger.settingsPage.account.wunderModelOpen') }}</div>
+            <div class="messenger-settings-hint">{{ t('messenger.settingsPage.account.wunderModelHint') }}</div>
+          </div>
+        </div>
+        <button
+          class="messenger-settings-action ghost"
+          type="button"
+          data-testid="settings-open-wunder-model"
+          @click="openWunderModel"
+        >
+          <i class="fa-solid fa-arrow-up-right-from-square" aria-hidden="true"></i>
+          {{ t('messenger.settingsPage.account.wunderModelOpen') }}
+        </button>
+      </div>
+    </section>
   </div>
 </template>
 
@@ -65,6 +89,8 @@
 import { onActivated, onDeactivated, ref } from 'vue';
 
 import AgentDailyTrendChart from '@/components/messenger/AgentDailyTrendChart.vue';
+import { ElMessage } from 'element-plus';
+import { resolveApiBase } from '@/config/runtime';
 import { useI18n } from '@/i18n';
 import { confirmWithFallback } from '@/utils/confirm';
 import type { MessengerControllerContext } from '@/views/messenger/controller/messengerControllerContext';
@@ -114,5 +140,24 @@ const handleLogout = async () => {
     }
   );
   if (confirmed) void handleSettingsLogout?.();
+};
+
+// The standalone page shares the bridge renderer. Resolving it beside the API
+// base preserves deployments that publish the hull behind a path prefix.
+const resolveBridgeUrl = () => {
+  const apiUrl = new URL(resolveApiBase() || '/wunder', window.location.href);
+  apiUrl.username = '';
+  apiUrl.password = '';
+  const servicePath = apiUrl.pathname.replace(/\/+$/, '').replace(/\/wunder$/, '');
+  return new URL(`${servicePath}/bridge/wunder-model.html`, apiUrl).href;
+};
+
+const openWunderModel = () => {
+  const opened = window.open(resolveBridgeUrl(), '_blank', 'width=1180,height=860');
+  if (!opened) {
+    ElMessage.warning(t('messenger.settingsPage.account.wunderModelOpenFailed'));
+    return;
+  }
+  opened.opener = null;
 };
 </script>

@@ -134,6 +134,18 @@ impl Orchestrator {
             user_tool_bindings,
             "en-US",
         );
+        // 本地形态（CLI/蛹）下把云端 /workspaces 公共路径语义重写为本地绝对路径，
+        // 与系统提示词里的工具规格保持一致，避免模型在 function_call 模式下
+        // 只看到服务端路径约定。
+        let specs = if crate::services::prompting::is_local_runtime_mode(&config.server.mode) {
+            crate::services::prompting::localize_tool_specs_for_local_runtime(
+                specs,
+                &self.workspace,
+                workspace_id,
+            )
+        } else {
+            specs
+        };
         if specs.is_empty() {
             return None;
         }

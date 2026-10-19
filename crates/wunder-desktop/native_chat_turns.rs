@@ -4,7 +4,7 @@ use super::{
 };
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
-use wunder_server::storage::StorageBackend;
+use wunder_server::{stable_core::thread_view::ChatViewRow, storage::StorageBackend};
 
 /// Child-run cards one turn projects. A turn spawning more children than the
 /// cap keeps the newest cards; the runtime list view remains the full index.
@@ -26,9 +26,31 @@ pub struct NativeChatTurn {
     pub process_steps: i64,
 }
 
+/// Compact thread-open projection. It intentionally contains no process
+/// entries: detailed tool history is keyset-paged when the user opens the
+/// work-process bar, keeping initial selection fast on slow storage.
+pub fn load_turn_headers(
+    state: &wunder_server::state::AppState,
+    user: &str,
+    session: &str,
+) -> Result<Vec<NativeChatTurn>> {
+    let page = state
+        .storage
+        .thread_view_page(user, session, "chat", None, 50)?;
+    Ok(page
+        .chat
+        .iter()
+        .filter_map(load_turn_header)
+        .collect::<Vec<_>>())
+}
+
 /// One model round of an assistant turn.
 #[derive(Debug, Clone, PartialEq)]
 pub struct NativeChatRound {
+    /// Stable assistant item identity. Reasoning and process-page rows use
+    /// this exact id, so a passive refresh updates the live thought instead of
+    /// appending a second completed copy.
+    pub item_id: String,
     pub round: i64,
     /// Model-round ordinals restart for a continuation execution.
     pub execution: String,
@@ -135,6 +157,63 @@ pub(super) fn load_turn(
         }
     }
     Ok(projected)
+}
+
+fn load_turn_header(chat: &ChatViewRow) -> Option<NativeChatTurn> {
+    let id = chat.root_turn_id.as_str();
+    if id.is_empty() {
+        return None;
+    }
+    let user_message = NativeMessage {
+        turn_id: id.to_string(),
+        text: chat.user.content.clone(),
+        mine: true,
+        created_at: chat.created_time,
+        state: String::new(),
+        stats_status: String::new(),
+        user_round: chat.user_round,
+        stats: super::NativeMessageStats::default(),
+    };
+    let state_label = match chat.status.as_str() {
+        "cancelled" | "interrupted" | "stopped" => "已停止",
+        "failed" | "rejected" => "执行失败",
+        "queued" => "正在排队",
+        "waiting_input" | "waiting_user_input" => "等待用户输入",
+        "waiting_approval" => "等待确认",
+        "completed" => "任务完成",
+        _ => "正在生成…",
+    };
+    let assistant = NativeMessage {
+        turn_id: id.to_string(),
+        text: chat.assistant.content.clone(),
+        mine: false,
+        created_at: chat.updated_time,
+        state: state_label.to_string(),
+        stats_status: state_label.to_string(),
+        user_round: chat.user_round,
+        stats: super::NativeMessageStats::from_payload(
+            &chat.assistant.stats.clone().unwrap_or(Value::Null),
+        ),
+    };
+    let subagents = chat
+        .subagents
+        .iter()
+        .rev()
+        .take(MAX_TURN_SUBAGENTS)
+        .filter_map(|card| {
+            let mut runtime = card.clone();
+            runtime["can_terminate"] = card["canTerminate"].clone();
+            NativeSubagentCard::from_payload(&json!({"item_id":card["key"],"runtime":runtime}))
+        })
+        .collect::<Vec<_>>();
+    Some(NativeChatTurn {
+        root_id: id.to_string(),
+        user: user_message,
+        assistant,
+        rounds: Vec::new(),
+        subagents,
+        process_steps: chat.workflow_count + chat.reasoning_count,
+    })
 }
 
 pub(super) fn recover_fields(
@@ -307,12 +386,14 @@ fn project_turn(root: &Value, items: &[Value]) -> Option<NativeChatTurn> {
                 .find(|slot| slot.round == round && slot.execution == execution)
             {
                 Some(slot) => {
+                    slot.item_id = item["item_id"].as_str().unwrap_or_default().to_owned();
                     slot.text = text;
                     slot.reasoning = reasoning;
                     slot.is_answer =
                         latest.is_some_and(|latest| latest["item_id"] == item["item_id"]);
                 }
                 None => rounds.push(NativeChatRound {
+                    item_id: item["item_id"].as_str().unwrap_or_default().to_owned(),
                     round,
                     execution: execution.into(),
                     is_answer: latest.is_some_and(|latest| latest["item_id"] == item["item_id"]),
@@ -387,6 +468,7 @@ fn project_turn(root: &Value, items: &[Value]) -> Option<NativeChatTurn> {
         {
             Some(slot) => slot.items.push(entry),
             None => rounds.push(NativeChatRound {
+                item_id: String::new(),
                 round,
                 execution: execution.into(),
                 is_answer: false,

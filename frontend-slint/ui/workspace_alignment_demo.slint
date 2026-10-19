@@ -63,7 +63,7 @@ export component WorkspaceAlignmentDemo inherits Window {
         workspace-menu(index, action) => { root.last-workspace = index; root.last-command = action; }
         rename-request(index, title) => { root.last-thread-action = "rename:" + index + ":" + title; }
         open-trajectory(index) => { root.last-thread-action = "trajectory:" + index; }
-        archive-thread(index) => { root.last-thread-action = "archive:" + index; }
+        archive-thread(id) => { root.last-thread-action = "archive:" + id; }
         cloud-rename-request(id, title) => { root.last-thread-action = "rename:" + id + ":" + title; }
         cloud-open-trajectory(id) => { root.last-thread-action = "trajectory:" + id; }
         cloud-archive-request(id) => { root.last-thread-action = "archive:" + id; }

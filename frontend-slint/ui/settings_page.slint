@@ -5,13 +5,12 @@ import { TextEditBase } from "textedit-base.slint";
 import { DragRow } from "drag_row.slint";
 import { ModelPresets } from "model_presets.slint";
 import { ExpertToolGroup, ExpertToolPicker } from "expert_widgets.slint";
-import { CheckBox, ComboBox, ScrollView, Switch } from "std-widgets.slint";
+import { Button, CheckBox, ComboBox, ScrollView, Switch } from "std-widgets.slint";
 import { CronPage } from "cron_page.slint";
 import { ChannelsPage } from "channels_page.slint";
 import { ToolsPage, ToolResource } from "tools_page.slint";
 import { ExpertData, MemoryCard, ArchiveCard, RuntimePoint } from "expert_data.slint";
 import { AvatarDialogState } from "avatar_dialog.slint";
-import { WunderModelCanvas } from "wunder_model_canvas.slint";
 
 // Web-style settings navigation entry: 36px circular icon badge, title and
 // subtitle rows, solid accent background with white text when selected.
@@ -169,10 +168,12 @@ export component ThemeModeRow inherits Rectangle {
     if !root.last : Rectangle { y: parent.height - 1px; width: parent.width; height: 1px; background: Theme.border; }
 }
 
-// Settings shell (§9): a 12-category navigation on the left and the selected
+// Settings shell (§9): an 11-category navigation on the left and the selected
 // category's cards on the right. It replaces the old five-tab entity page; the
 // per-category panels below reuse the existing native callbacks unchanged.
 export component SettingsPage inherits Rectangle {
+    horizontal-stretch: 1;
+    vertical-stretch: 1;
     in property <bool> loading: false;
     in property <bool> saving: false;
     in property <[ModelCard]> models;
@@ -227,6 +228,7 @@ export component SettingsPage inherits Rectangle {
     callback cloud-login();
     callback cloud-logout();
     callback cloud-refresh-account();
+    callback open-wunder-model();
     callback cloud-toggle-sync(bool);
     // Engine-managed cloud entries (`cloud/<id>`): the editor locks them and
     // removes the delete shortcut; logout clears them in one go. Guards
@@ -254,6 +256,7 @@ export component SettingsPage inherits Rectangle {
     in property <bool> model-editor-is-default;
     callback select-model(int);
     callback create-model();
+    callback discard-model-draft();
     callback move-model(int, int);
     callback save-model();
     callback set-default-model(string);
@@ -340,7 +343,7 @@ export component SettingsPage inherits Rectangle {
     // in the general category and opens its own window, so it is not a
     // category. The navigation lists them in the web messenger's category
     // order: general, account, models, tools, agent, companion, cron, memory,
-    // channels, prompts, archived, wunder model.
+    // channels, prompts and archived threads.
     in-out property <int> settings-tab: 0;
     // Category filter typed into the navigation search box. Slint 1.18 strings
     // have no substring test, so the filter runs natively and the matching
@@ -350,7 +353,7 @@ export component SettingsPage inherits Rectangle {
     // no bitwise operators, so the native search projection ships booleans rather
     // than a mask; an all-true list means "no query". Index = nav position, not
     // tab id.
-    in-out property <[bool]> settings-category-flags: [true, true, true, true, true, true, true, true, true, true, true, true];
+    in-out property <[bool]> settings-category-flags: [true, true, true, true, true, true, true, true, true, true, true];
     out property <bool> settings-has-matches: root.count-visible() > 0;
     out property <int> settings-visible-count: root.count-visible();    // How many categories the current query keeps; the empty state and the test
     // projections both read this instead of re-deriving the flags.
@@ -365,8 +368,7 @@ export component SettingsPage inherits Rectangle {
             + (root.settings-category-flags[7] ? 1 : 0)
             + (root.settings-category-flags[8] ? 1 : 0)
             + (root.settings-category-flags[9] ? 1 : 0)
-            + (root.settings-category-flags[10] ? 1 : 0)
-            + (root.settings-category-flags[11] ? 1 : 0);
+            + (root.settings-category-flags[10] ? 1 : 0);
     }
     // Slint cannot test a substring, so the query is projected out and the
     // matching categories come back as a bit set.
@@ -375,21 +377,6 @@ export component SettingsPage inherits Rectangle {
     // Help moved out of the category list: the general page's button opens a
     // standalone help window owned by the native side.
     callback open-help();
-    in-out property <image> wunder-model-frame;
-    in-out property <string> wunder-model-status;
-    in-out property <bool> wunder-model-loading: true;
-    in-out property <bool> wunder-model-failed: false;
-    in-out property <bool> wunder-model-rotating: true;
-    in-out property <bool> wunder-model-native-active: false;
-    callback wunder-model-gesture(string, float, float);
-    callback wunder-model-reset();
-    callback wunder-model-retry();
-    callback wunder-model-toggle-rotate();
-    callback wunder-model-size-changed(int, int);
-    callback wunder-model-geometry-changed(int, int, int, int);
-    in property <length> wunder-model-width: 640px;
-    in property <length> wunder-model-height: 480px;
-
     // ---- embedded category state -------------------------------------------
     // The heavy surfaces own their own components; the shell only forwards
     // state and callbacks, so their logic stays in one place.
@@ -608,6 +595,7 @@ export component SettingsPage inherits Rectangle {
 
     HorizontalLayout {
         spacing: 0px;
+        vertical-stretch: 1;
         // §9.1 navigation column.
         SettingsNav := Rectangle {
             width: 260px;
@@ -715,13 +703,6 @@ export component SettingsPage inherits Rectangle {
                             selected: root.settings-tab == 10;
                             clicked => { root.settings-tab = 10;  }
                         }
-                        SettingsNavItem {
-                            visible: root.settings-category-flags[11];
-                            icon: @image-url("../assets/icons/eye.svg");
-                            title: I18n.wm_title; subtitle: I18n.wm_note;
-                            selected: root.settings-tab == 11;
-                            clicked => { root.settings-tab = 11; root.wunder-model-retry(); }
-                        }
                         // A live query that matches nothing says so instead of
                         // leaving an empty column with no explanation.
                         if !root.settings-has-matches : Rectangle {
@@ -743,8 +724,13 @@ export component SettingsPage inherits Rectangle {
         }
         Rectangle {
             width: root.width - SettingsNav.width;
+            // The model tab is a direct canvas child rather than a ScrollView.
+            // Keep this column stretched so the canvas receives the full
+            // overlay height instead of a zero preferred height.
+            vertical-stretch: 1;
             VerticalLayout {
                 width: parent.width;
+                vertical-stretch: 1;
                 spacing: 0px;
                     if root.settings-tab == 0 : ScrollView { vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
                         VerticalLayout { padding: 24px; spacing: 14px; alignment: start; vertical-stretch: 1;
@@ -970,6 +956,16 @@ export component SettingsPage inherits Rectangle {
                                     }
                                 }
                             }
+                            SettingsCard {
+                                SettingsCardHeader { title: I18n.st_wunder_model_title; subtitle: I18n.st_wunder_model_hint; }
+                                HorizontalLayout { spacing: 10px;
+                                    Button {
+                                        text: I18n.st_wunder_model_open;
+                                        clicked => { root.open-wunder-model(); }
+                                    }
+                                    Rectangle { horizontal-stretch: 1; }
+                                }
+                            }
                         }
                     }
                     // Models tab, mirroring the web messenger model settings:
@@ -982,7 +978,7 @@ export component SettingsPage inherits Rectangle {
                                     Text { height: 30px; text: I18n.st_models_list_title; color: Theme.text; font-size: Theme.font-md; font-weight: 600; vertical-alignment: center; }
                                     Rectangle { horizontal-stretch: 1; }
                                     Action { icon: @image-url("../assets/icons/rotate-right.svg"); enabled: !root.loading; label: I18n.common_refresh; clicked => { root.refresh(); } }
-                                    Action { icon: @image-url("../assets/icons/plus.svg"); label: I18n.model_editor_add; show-label: true; primary: true; enabled: !root.loading && !root.saving; clicked => { root.create-model(); } }
+                                    Action { icon: @image-url("../assets/icons/plus.svg"); label: I18n.model_editor_add; show-label: true; primary: true; enabled: !root.loading && !root.saving && !root.model-creating; clicked => { root.create-model(); } }
                                 }
                                 ScrollView { vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
                                     VerticalLayout { alignment: start; spacing: 6px;
@@ -1058,13 +1054,13 @@ export component SettingsPage inherits Rectangle {
                                                     label: I18n.model_provider_label;
                                                     enabled: !root.cloud-locked;
                                                     items: root.model-provider-presets;
-                                                    value: root.model-provider-draft == "" ? root.model-provider-presets[0] : root.model-provider-draft;
+                                                    value: root.model-provider-draft == "" ? root.model-provider-presets[0] : (root.model-provider-draft == "openai_compatible" ? "openai compatible" : root.model-provider-draft);
                                                     selected(provider) => {
                                                         if (provider == root.model-provider-presets[0]) {
                                                             root.model-provider-draft = "";
                                                         } else {
-                                                            root.model-provider-draft = provider;
-                                                            root.model-base-url-draft = provider == "virtual_replay" ? "" : ModelPresets.base-url(provider);
+                                                            root.model-provider-draft = provider == "openai compatible" ? "openai_compatible" : provider;
+                                                            root.model-base-url-draft = provider == "virtual_replay" ? "" : ModelPresets.base-url(provider == "openai compatible" ? "openai_compatible" : provider);
                                                         }
                                                     }
                                                 }
@@ -1097,11 +1093,11 @@ export component SettingsPage inherits Rectangle {
                                                 CheckBox { text: "支持听觉"; checked <=> root.model-support-hearing-draft; }
                                                 CheckBox { text: "流式返回 usage"; checked <=> root.model-stream-include-usage-draft; }
                                             }
-                                            FormCombo { label: "工具调用方式"; items: ["tool_call", "function_call", "freeform_call"]; value: root.model-tool-call-mode-draft; selected(value) => { root.model-tool-call-mode-draft = value; } }
+                                            FormCombo { label: "工具调用方式"; items: ["tool_call", "functioncall", "freeform_call"]; value: root.model-tool-call-mode-draft == "function_call" ? "functioncall" : root.model-tool-call-mode-draft; selected(value) => { root.model-tool-call-mode-draft = value == "functioncall" ? "function_call" : value; } }
                                             HorizontalLayout { spacing: 10px;
                                                 FormField { horizontal-stretch: 1; label: I18n.st_param_max_context; placeholder: I18n.st_param_context_hint; read-only: root.cloud-locked; text <=> root.model-max-context-draft; }
-                                                Rectangle { width: 104px; height: 62px;
-                                                    Action { y: 26px; width: 104px; label: I18n.model_probe_context; show-label: true; enabled: !root.saving && !root.cloud-locked && root.model-name-draft != "" && root.model-base-url-draft != ""; clicked => { root.probe-model-context(); } }
+                                                Rectangle { width: 116px; height: 62px;
+                                                    Action { y: 26px; width: 116px; height: 36px; icon: @image-url("../assets/icons/wand-magic-sparkles.svg"); label: I18n.model_probe_context; show-label: true; primary: true; enabled: !root.saving && !root.cloud-locked && root.model-name-draft != "" && root.model-base-url-draft != ""; clicked => { root.probe-model-context(); } }
                                                 }
                                             }
                                         }
@@ -1571,21 +1567,6 @@ export component SettingsPage inherits Rectangle {
                                 }
                             }
                         }
-                    }
-                    if root.settings-tab == 11 : WunderModelCanvas {
-                        frame: root.wunder-model-frame; status: root.wunder-model-status;
-                        loading: root.wunder-model-loading; failed: root.wunder-model-failed;
-                        rotating: root.wunder-model-rotating;
-                        native-active: root.wunder-model-native-active;
-                        gesture(kind, dx, dy) => { root.wunder-model-gesture(kind, dx, dy); }
-                        reset => { root.wunder-model-reset(); }
-                        retry => { root.wunder-model-retry(); }
-                        toggle-rotate => { root.wunder-model-toggle-rotate(); }
-                        size-changed(width, height) => { root.wunder-model-size-changed(width, height); }
-                        geometry-changed(x, y, width, height) => { root.wunder-model-geometry-changed(x, y, width, height); }
-                        // Visibility is driven by the shell, so the native
-                        // renderer can stop timers as soon as this page is
-                        // hidden or another category is selected.
                     }
                 }
             }

@@ -50,6 +50,7 @@
       :class="{
         embed: isEmbedded,
         'is-image': previewKind === 'image',
+        'is-html': previewKind === 'html',
         'is-svg': previewKind === 'svg',
         'is-audio': previewKind === 'audio',
         'is-video': previewKind === 'video'
@@ -72,7 +73,11 @@
         :alt="title"
         :active="visible"
       />
-      <iframe v-else-if="previewKind === 'pdf' || previewKind === 'svg'" :src="previewUrl"></iframe>
+      <iframe
+        v-else-if="previewKind === 'html' || previewKind === 'pdf' || previewKind === 'svg'"
+        :src="previewUrl"
+        :sandbox="previewKind === 'html' ? 'allow-scripts' : undefined"
+      ></iframe>
       <audio
         v-else-if="previewKind === 'audio'"
         class="workspace-preview-audio"
@@ -159,7 +164,7 @@ const handleDraftUpdate = (value: string) => {
 };
 
 const isEmbedded = computed(() =>
-  ['image', 'svg', 'pdf', 'audio', 'video'].includes(props.previewKind)
+  ['image', 'html', 'svg', 'pdf', 'audio', 'video'].includes(props.previewKind)
 );
 
 const handleVisibleChange = (nextVisible: boolean) => {

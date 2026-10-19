@@ -23,6 +23,57 @@
       </div>
     </div>
 
+    <div v-if="!selectionMode" class="workspace-files-actions" role="toolbar" :aria-label="t('messenger.filesArea.group')">
+      <template v-if="!remoteInterlinkActive">
+        <input
+          ref="uploadInputRef"
+          class="workspace-files-upload-input"
+          type="file"
+          multiple
+          tabindex="-1"
+          @change="handleUploadInputChange"
+        />
+        <button
+          class="workspace-files-action workspace-files-action--primary"
+          type="button"
+          :title="t('messenger.filesArea.upload')"
+          @click="openUploadPicker"
+        >
+          <i class="fa-solid fa-arrow-up-from-bracket" aria-hidden="true"></i>
+          <span>{{ t('common.upload') }}</span>
+        </button>
+        <button
+          class="workspace-files-action"
+          type="button"
+          :disabled="busy"
+          :title="t('messenger.filesArea.archiveCurrent')"
+          @click="handleDownloadCurrentDirectory"
+        >
+          <i class="fa-solid fa-file-zipper" aria-hidden="true"></i>
+          <span>{{ t('common.download') }}</span>
+        </button>
+        <button
+          class="workspace-files-action workspace-files-action--icon"
+          type="button"
+          :title="t('messenger.filesArea.select')"
+          :aria-label="t('messenger.filesArea.select')"
+          @click="enterSelectionMode"
+        >
+          <i class="fa-solid fa-list-check" aria-hidden="true"></i>
+        </button>
+      </template>
+      <button
+        class="workspace-files-action workspace-files-action--icon"
+        type="button"
+        :disabled="refreshing"
+        :title="t('common.refresh')"
+        :aria-label="t('common.refresh')"
+        @click="handleRefresh({ forceTree: true })"
+      >
+        <i class="fa-solid fa-rotate-right" :class="{ 'fa-spin': refreshing }" aria-hidden="true"></i>
+      </button>
+    </div>
+
     <div v-if="remoteOperationState" class="workspace-files-remote-note" role="status">
       {{ remoteOperationState }}
       <button type="button" @click="cancelRemoteOperation">{{ t('common.cancel') }}</button>
@@ -221,6 +272,7 @@ import { useWorkspaceFileTree } from './workspaceFileTree';
 import { createWorkspaceDirectoryRefresh } from './workspaceDirectoryRefresh';
 import { createWorkspaceUploadQueue, type WorkspaceUploadTask } from './workspaceUploadQueue';
 import { onWorkspaceRefresh } from '@/utils/workspaceEvents';
+import { buildWorkspaceHtmlPreviewDocument } from '@/components/chat/workspaceHtmlPreview';
 
 // The heavy editors are loaded only when the user actually opens such a file.
 const OnlyOfficeEditorDialog = defineAsyncComponent(
@@ -234,6 +286,7 @@ const { t } = useI18n();
 
 /** Text/code editing is capped; larger files are download-only (plan §6.3). */
 const WORKSPACE_TEXT_EDIT_MAX_BYTES = 2 * 1024 * 1024;
+const HTML_PREVIEW_EXTENSIONS = new Set(['html', 'htm', 'xhtml']);
 const UPLOAD_MAX_FILES_PER_DROP = 200;
 const STATS_REFRESH_DEBOUNCE_MS = 1500;
 const METAFILE_EXTENSIONS = new Set(['wmf', 'emf']);
@@ -430,6 +483,7 @@ const {
 } = tree;
 
 const uploadTarget = ref('');
+const uploadInputRef = ref<HTMLInputElement | null>(null);
 const busy = ref(false);
 const refreshing = ref(false);
 const dragActive = ref(false);
@@ -581,6 +635,20 @@ const enqueueFiles = (files: File[], targetPath: string) => {
   if (result.rejected > 0) {
     ElMessage.warning(t('messenger.filesArea.uploadQueueFull', { count: result.rejected }));
   }
+};
+
+const openUploadPicker = () => {
+  if (remoteInterlinkActive.value) return;
+  uploadInputRef.value?.click();
+};
+
+const handleUploadInputChange = (event: Event) => {
+  const input = event.target as HTMLInputElement | null;
+  const files = Array.from(input?.files || []);
+  // Clear the input before queueing so retrying the same local file opens a
+  // new upload request instead of being ignored by the browser change event.
+  if (input) input.value = '';
+  enqueueFiles(files.slice(0, UPLOAD_MAX_FILES_PER_DROP), uploadTarget.value);
 };
 
 const handleDragEnter = () => {
@@ -795,6 +863,20 @@ const handleRefresh = async (options: { forceTree?: boolean } = {}) => {
     return;
   }
   await directoryRefresh.request(options);
+};
+
+const enterSelectionMode = () => {
+  if (remoteInterlinkActive.value) return;
+  tree.clearSelection();
+  selectionMode.value = true;
+};
+
+const handleDownloadCurrentDirectory = async () => {
+  if (remoteInterlinkActive.value) return;
+  await runAction(
+    () => downloadWorkspaceDirectoryArchive(uploadTarget.value),
+    t('messenger.filesArea.downloadFailed')
+  );
 };
 
 const directoryRefresh = createWorkspaceDirectoryRefresh(tree, {
@@ -1117,7 +1199,7 @@ const quoteEntryToChat = (row: WorkspaceVisibleRow) => {
 
 // ------------------------------------------------------------------ preview
 
-type PreviewKind = 'text' | 'image' | 'svg' | 'pdf' | 'audio' | 'video' | 'onlyoffice' | 'drawio' | 'unsupported';
+type PreviewKind = 'text' | 'html' | 'image' | 'svg' | 'pdf' | 'audio' | 'video' | 'onlyoffice' | 'drawio' | 'unsupported';
 
 const preview = reactive({
   visible: false,
@@ -1137,12 +1219,15 @@ const preview = reactive({
 
 const officeDialog = reactive({ visible: false, path: '' });
 const drawioDialog = reactive({ visible: false, path: '' });
+let previewHtmlObjectUrls: string[] = [];
 
 const releasePreviewUrl = () => {
   if (preview.previewUrl) {
     URL.revokeObjectURL(preview.previewUrl);
     preview.previewUrl = '';
   }
+  previewHtmlObjectUrls.forEach((url) => URL.revokeObjectURL(url));
+  previewHtmlObjectUrls = [];
 };
 
 let previewAbort: AbortController | null = null;
@@ -1184,6 +1269,24 @@ const openPreview = async (path: string, name: string, size: number) => {
 
   try {
     if (kind === 'text') {
+      const extension = extractWorkspaceResourceExtension(name);
+      if (HTML_PREVIEW_EXTENSIONS.has(extension)) {
+        const source = await fetchWorkspacePathBlob(path);
+        const previewDocument = await buildWorkspaceHtmlPreviewDocument({
+          rawHtml: await source.blob.text(),
+          entryPath: path,
+          fetchResource: async (relativePath) => {
+            const resource = await fetchWorkspacePathBlob(relativePath);
+            return resource.blob;
+          }
+        });
+        preview.previewKind = 'html';
+        previewHtmlObjectUrls = previewDocument.objectUrls;
+        preview.previewUrl = URL.createObjectURL(
+          new Blob([previewDocument.html], { type: 'text/html; charset=utf-8' })
+        );
+        return;
+      }
       if (size > WORKSPACE_TEXT_EDIT_MAX_BYTES) {
         preview.tooLarge = true;
         preview.hint = resolveWorkspacePreviewTooLargeHint();

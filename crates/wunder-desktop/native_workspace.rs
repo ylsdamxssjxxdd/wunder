@@ -15,7 +15,7 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 use wunder_server::interlink::client::shadow::Sections;
-use wunder_server::storage::WorkspaceRecord;
+use wunder_server::storage::{WorkspaceRecord, USER_PRIVATE_CONTAINER_ID};
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::process::Command;
@@ -764,10 +764,23 @@ impl NativeDesktop {
     pub fn workspace_image_bytes(&self, root_path: &str, relative: &str) -> Result<Vec<u8>> {
         const MAX_IMAGE_BYTES: u64 = 16 * 1024 * 1024;
         let root = PathBuf::from(root_path);
-        if !root.is_dir() {
-            bail!(WORKSPACE_ROOT_MISSING);
-        }
-        let target = workspace_resource_target(&root, relative)?;
+        // Chat attachments are persisted in the private user workspace, while
+        // their message-facing path uses the public `/workspaces/<scope>/…`
+        // namespace (or, in the local single-root form, an absolute path
+        // inside the private workspace).  The active thread can belong to a
+        // user-selected workspace, so resolving that path against `root`
+        // would point at the wrong folder and leave the image stuck at
+        // "暂未加载".  Only the exact private public root / private absolute
+        // root and `chat_attachments/` prefix are remapped; all other sources
+        // keep the regular workspace containment check below.
+        let target = if let Some(target) = self.chat_attachment_target(relative)? {
+            target
+        } else {
+            if !root.is_dir() {
+                bail!(WORKSPACE_ROOT_MISSING);
+            }
+            workspace_resource_target(&root, relative)?
+        };
         let metadata = target.metadata()?;
         if !metadata.is_file() {
             bail!("请选择工作目录中的图片文件");
@@ -794,6 +807,48 @@ impl NativeDesktop {
             bail!("图片大小超出展示上限");
         }
         Ok(bytes)
+    }
+
+    /// Resolve a persisted chat attachment from its public workspace path to
+    /// the controlled private user workspace.  Returning `None` means that
+    /// the source is an ordinary workspace-relative image and should be
+    /// resolved against the caller-provided workspace root.
+    fn chat_attachment_target(&self, source: &str) -> Result<Option<PathBuf>> {
+        let private_scope = self
+            .state()
+            .workspace
+            .scoped_user_id_by_container(self.user_id(), USER_PRIVATE_CONTAINER_ID);
+        let public_root = self.state().workspace.public_root(&private_scope);
+        let private_root = self.state().workspace.workspace_root(&private_scope);
+        if let Some(relative) = chat_attachment_relative(source, &public_root) {
+            if !private_root.is_dir() {
+                bail!(WORKSPACE_ROOT_MISSING);
+            }
+            return Ok(Some(workspace_resource_target(&private_root, &relative)?));
+        }
+        // 本地单根形态下新附件的消息路径是私有工作区内的绝对路径（见
+        // WorkspaceManager::display_path 的单根分支）。同样只放行
+        // chat_attachments/ 前缀，避免消息内容变成任意文件读取器。
+        let decoded = percent_decode_path(source)?.replace('\\', "/");
+        let candidate = PathBuf::from(decoded);
+        if !candidate.is_absolute() {
+            return Ok(None);
+        }
+        let Ok(canonical) = candidate.canonicalize() else {
+            return Ok(None);
+        };
+        let root_canonical = private_root.canonicalize().unwrap_or(private_root);
+        let Ok(relative) = canonical.strip_prefix(&root_canonical) else {
+            return Ok(None);
+        };
+        if !relative
+            .to_string_lossy()
+            .replace('\\', "/")
+            .starts_with("chat_attachments/")
+        {
+            return Ok(None);
+        }
+        Ok(Some(canonical))
     }
 }
 
@@ -883,25 +938,8 @@ fn workspace_resource_target(root: &Path, source: &str) -> Result<PathBuf> {
         return Ok(target);
     } else {
         // Decode URL-escaped relative filenames before enforcing the boundary.
-        let mut bytes = Vec::new();
-        let raw = source.as_bytes();
-        let mut index = 0;
-        while index < raw.len() {
-            if raw[index] == b'%' && index + 2 < raw.len() {
-                if let (Some(a), Some(b)) = (
-                    (raw[index + 1] as char).to_digit(16),
-                    (raw[index + 2] as char).to_digit(16),
-                ) {
-                    bytes.push((a * 16 + b) as u8);
-                    index += 3;
-                    continue;
-                }
-            }
-            bytes.push(raw[index]);
-            index += 1;
-        }
-        let decoded = String::from_utf8(bytes)?.replace('\\', "/");
-        PathBuf::from(normalize_public_workspace_source(&decoded))
+        let decoded = percent_decode_path(source)?.replace('\\', "/");
+        PathBuf::from(normalize_public_workspace_source(&decoded, root))
     };
     if path
         .components()
@@ -919,15 +957,70 @@ fn workspace_resource_target(root: &Path, source: &str) -> Result<PathBuf> {
     Ok(target)
 }
 
+/// Return the workspace-relative attachment path when `source` is one of the
+/// public paths emitted for the current user's private workspace.  Matching is
+/// deliberately exact: a message cannot use this shortcut to read another
+/// scope or an arbitrary local path.
+fn chat_attachment_relative(source: &str, public_root: &Path) -> Option<String> {
+    let source = source.strip_prefix("\\\\?\\").unwrap_or(source);
+    let source = source.split(['?', '#']).next().unwrap_or_default();
+    if source.starts_with("file:") || source.starts_with("\\\\") || source.starts_with("//") {
+        return None;
+    }
+    let decoded = percent_decode_path(source).ok()?.replace('\\', "/");
+    let source = decoded.trim_start_matches('/');
+    let public_root = public_root
+        .to_string_lossy()
+        .replace('\\', "/")
+        .trim_matches('/')
+        .to_string();
+    let remainder = source.strip_prefix(&public_root)?;
+    let remainder = remainder.strip_prefix('/')?;
+    if !remainder.starts_with("chat_attachments/") {
+        return None;
+    }
+    Some(remainder.to_string())
+}
+
+fn percent_decode_path(source: &str) -> Result<String> {
+    let mut bytes = Vec::with_capacity(source.len());
+    let raw = source.as_bytes();
+    let mut index = 0;
+    while index < raw.len() {
+        if raw[index] == b'%' && index + 2 < raw.len() {
+            if let (Some(a), Some(b)) = (
+                (raw[index + 1] as char).to_digit(16),
+                (raw[index + 2] as char).to_digit(16),
+            ) {
+                bytes.push((a * 16 + b) as u8);
+                index += 3;
+                continue;
+            }
+        }
+        bytes.push(raw[index]);
+        index += 1;
+    }
+    Ok(String::from_utf8(bytes)?)
+}
+
 /// Convert the logical paths emitted by cloud agents back to the local
 /// workspace-relative form before applying the normal containment check.
-/// Both `/workspaces/<scope>/file` and the cloud form
-/// `/workspaces/<user>/workspace/file` are accepted.
-fn normalize_public_workspace_source(source: &str) -> String {
+/// Accepted forms:
+/// - `/workspaces/<relative>` — local single-root form (CLI/desktop), where
+///   the segment after `workspaces/` is already part of the relative path;
+/// - `/workspaces/<scope>/file` and the cloud form
+///   `/workspaces/<user>/workspace/file`.
+/// The single-root interpretation wins whenever the whole remainder resolves
+/// to an existing entry inside `root`; otherwise the first segment is treated
+/// as a scope and stripped.
+fn normalize_public_workspace_source(source: &str, root: &Path) -> String {
     let normalized = source.trim_start_matches('/');
     let Some(rest) = normalized.strip_prefix("workspaces/") else {
         return source.to_string();
     };
+    if !rest.trim().is_empty() && root.join(rest).exists() {
+        return rest.to_string();
+    }
     let mut parts = rest.splitn(2, '/');
     let _scope = parts.next().unwrap_or_default();
     let remainder = parts.next().unwrap_or_default();
@@ -1040,14 +1133,54 @@ mod tests {
 
     #[test]
     fn public_workspace_markdown_paths_become_workspace_relative() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
         assert_eq!(
-            normalize_public_workspace_source("/workspaces/demo/workspace/爱心.png"),
+            normalize_public_workspace_source("/workspaces/demo/workspace/爱心.png", root),
             "爱心.png"
         );
         assert_eq!(
-            normalize_public_workspace_source("/workspaces/demo__c__1/reports/result.pdf"),
+            normalize_public_workspace_source("/workspaces/demo__c__1/reports/result.pdf", root),
             "reports/result.pdf"
         );
+    }
+
+    #[test]
+    fn single_root_public_paths_keep_the_whole_relative_path() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        std::fs::create_dir_all(root.join("temp")).unwrap();
+        std::fs::write(root.join("temp/shot.png"), b"png").unwrap();
+        // 本地单根形态：temp 是真实目录而不是用户 scope，必须整段保留。
+        assert_eq!(
+            normalize_public_workspace_source("/workspaces/temp/shot.png", root),
+            "temp/shot.png"
+        );
+        // 整段不存在时仍回退到云端 scope 解释。
+        assert_eq!(
+            normalize_public_workspace_source("/workspaces/temp/missing.png", root),
+            "missing.png"
+        );
+    }
+
+    #[test]
+    fn chat_attachment_paths_match_only_the_current_private_public_root() {
+        let root = Path::new("/workspaces/current-user");
+        assert_eq!(
+            chat_attachment_relative(
+                "/workspaces/current-user/chat_attachments/session/image%20one.png",
+                root,
+            ),
+            Some("chat_attachments/session/image one.png".into())
+        );
+        for source in [
+            "/workspaces/another-user/chat_attachments/session/image.png",
+            "/workspaces/current-user/workspace/image.png",
+            "file:///tmp/chat_attachments/image.png",
+            "https://example.invalid/chat_attachments/image.png",
+        ] {
+            assert!(chat_attachment_relative(source, root).is_none(), "{source}");
+        }
     }
 
     #[test]

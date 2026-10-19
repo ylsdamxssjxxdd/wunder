@@ -20,6 +20,7 @@ use tracing::{info, warn};
 use url::Url;
 
 const MAX_PATH_DECODE_PASSES: usize = 3;
+const WORKSPACE_PUBLIC_PREFIX: &str = "/workspaces/";
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
@@ -33,11 +34,22 @@ async fn editor_config(
     headers: HeaderMap,
     Query(params): Query<OnlyOfficeEditorConfigQuery>,
 ) -> Result<Json<OnlyOfficeEditorConfigResponse>, Response> {
-    let resolved_user = resolve_user(&state, &headers, params.user_id.as_deref()).await?;
+    let public_path = parse_workspace_public_path(&params.path);
+    let requested_user_id = public_path
+        .as_ref()
+        .map(|path| path.workspace_id.as_str())
+        .or(params.user_id.as_deref());
+    let resolved_user = resolve_user(&state, &headers, requested_user_id).await?;
     let user_id = resolved_user.user.user_id;
     let agent_id = normalize_agent_id(params.agent_id.as_deref());
-    let workspace_id = resolve_workspace_id(&state, &user_id, agent_id);
-    let normalized_path = normalize_relative_path(&params.path);
+    let workspace_id = public_path
+        .as_ref()
+        .map(|path| path.workspace_id.clone())
+        .unwrap_or_else(|| resolve_workspace_id(&state, &user_id, agent_id));
+    let normalized_path = public_path
+        .as_ref()
+        .map(WorkspacePublicPath::canonical_path)
+        .unwrap_or_else(|| normalize_relative_path(&params.path));
     info!(
         target: "desktop_debug",
         action = "onlyoffice_config_request",
@@ -79,10 +91,8 @@ async fn editor_config(
         .workspace
         .ensure_user_root(&workspace_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    let target = state
-        .workspace
-        .resolve_path(&workspace_id, &normalized_path)
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let target = resolve_onlyoffice_target(&state, &workspace_id, &normalized_path)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err))?;
     info!(
         target: "desktop_debug",
         action = "onlyoffice_config_resolved_path",
@@ -165,10 +175,8 @@ async fn file_download(
         onlyoffice_service::TOKEN_KIND_FILE,
     )
     .map_err(|err| error_response(StatusCode::UNAUTHORIZED, format!("invalid token: {err}")))?;
-    let target = state
-        .workspace
-        .resolve_path(&token.workspace_id, &token.path)
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let target = resolve_onlyoffice_target(&state, &token.workspace_id, &token.path)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err))?;
     if !target.exists() || !target.is_file() {
         return Err(error_response(
             StatusCode::NOT_FOUND,
@@ -224,10 +232,7 @@ async fn save_callback(
     else {
         return Ok(Json(OnlyOfficeCallbackResponse::error(1)));
     };
-    let target = match state
-        .workspace
-        .resolve_path(&token.workspace_id, &token.path)
-    {
+    let target = match resolve_onlyoffice_target(&state, &token.workspace_id, &token.path) {
         Ok(path) => path,
         Err(_) => return Ok(Json(OnlyOfficeCallbackResponse::error(1))),
     };
@@ -360,6 +365,108 @@ fn normalize_relative_path(value: &str) -> String {
         return String::new();
     }
     trimmed.trim_start_matches('/').to_string()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct WorkspacePublicPath {
+    workspace_id: String,
+    relative_path: String,
+}
+
+impl WorkspacePublicPath {
+    fn canonical_path(&self) -> String {
+        format!(
+            "{WORKSPACE_PUBLIC_PREFIX}{}/{}",
+            self.workspace_id, self.relative_path
+        )
+    }
+}
+
+fn resolve_public_workspace_target(
+    state: &AppState,
+    workspace_id: &str,
+    public_path: &WorkspacePublicPath,
+) -> std::path::PathBuf {
+    let public_target = std::path::PathBuf::from(WORKSPACE_PUBLIC_PREFIX.trim_end_matches('/'))
+        .join(&public_path.workspace_id)
+        .join(&public_path.relative_path);
+    state
+        .workspace
+        .map_public_path(workspace_id, &public_target)
+        .unwrap_or(public_target)
+}
+
+/// Resolve both legacy relative tokens and public workspace references. Chat
+/// citations retain `/workspaces/<scope>/...`; all OnlyOffice endpoints map
+/// that form back to the same physical file before reading or writing it.
+fn resolve_onlyoffice_target(
+    state: &AppState,
+    workspace_id: &str,
+    path: &str,
+) -> Result<std::path::PathBuf, String> {
+    if let Some(public_path) = parse_workspace_public_path(path) {
+        if !workspace_public_path_matches_scope(workspace_id, &public_path) {
+            return Err("workspace path does not match the token scope".to_string());
+        }
+        return Ok(resolve_public_workspace_target(
+            state,
+            workspace_id,
+            &public_path,
+        ));
+    }
+    state
+        .workspace
+        .resolve_path(workspace_id, path)
+        .map_err(|err| err.to_string())
+}
+
+fn workspace_public_path_matches_scope(
+    workspace_id: &str,
+    public_path: &WorkspacePublicPath,
+) -> bool {
+    public_path.workspace_id == workspace_id
+}
+
+/// Recognize the public workspace address emitted in chat messages. The
+/// workspace download endpoints already accept this form; the OnlyOffice
+/// configuration endpoint must preserve it too so its file and callback tokens
+/// resolve to the identical physical file.
+fn parse_workspace_public_path(value: &str) -> Option<WorkspacePublicPath> {
+    let decoded = percent_decode_path(value);
+    let normalized = decoded.replace('\\', "/");
+    let trimmed = normalized
+        .trim()
+        .strip_prefix("./")
+        .unwrap_or(normalized.trim());
+    let rest = trimmed
+        .strip_prefix(WORKSPACE_PUBLIC_PREFIX)
+        .or_else(|| trimmed.strip_prefix("workspaces/"))?;
+    let mut parts = rest.split('/');
+    let workspace_id = parts.next()?.trim();
+    if workspace_id.is_empty()
+        || !workspace_id
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
+    {
+        return None;
+    }
+    let mut segments = Vec::new();
+    for segment in parts {
+        if segment.is_empty() || segment == "." {
+            continue;
+        }
+        if segment == ".." {
+            return None;
+        }
+        segments.push(segment);
+    }
+    if segments.is_empty() {
+        return None;
+    }
+    Some(WorkspacePublicPath {
+        workspace_id: workspace_id.to_string(),
+        relative_path: segments.join("/"),
+    })
 }
 
 fn percent_decode_path(value: &str) -> String {
@@ -606,6 +713,43 @@ mod tests {
     #[test]
     fn normalize_relative_path_keeps_plus_literal() {
         assert_eq!(normalize_relative_path("a+b.docx"), "a+b.docx");
+    }
+
+    #[test]
+    fn public_workspace_path_stays_canonical_for_onlyoffice_tokens() {
+        assert_eq!(
+            parse_workspace_public_path(
+                "/workspaces/user_scope/workspace/reports/%E6%B5%8B%E8%AF%95.docx"
+            ),
+            Some(WorkspacePublicPath {
+                workspace_id: "user_scope".to_string(),
+                relative_path: "workspace/reports/测试.docx".to_string(),
+            })
+        );
+        assert_eq!(
+            parse_workspace_public_path(
+                "/workspaces/user_scope/workspace/reports/%E6%B5%8B%E8%AF%95.docx"
+            )
+            .expect("public workspace path")
+            .canonical_path(),
+            "/workspaces/user_scope/workspace/reports/测试.docx"
+        );
+    }
+
+    #[test]
+    fn public_workspace_path_rejects_traversal() {
+        assert_eq!(
+            parse_workspace_public_path("/workspaces/user_scope/workspace/../private.docx"),
+            None
+        );
+    }
+
+    #[test]
+    fn onlyoffice_target_rejects_mismatched_public_scope() {
+        let parsed = parse_workspace_public_path("/workspaces/other_scope/workspace/file.docx")
+            .expect("public workspace path");
+        assert!(!workspace_public_path_matches_scope("user_scope", &parsed));
+        assert!(workspace_public_path_matches_scope("other_scope", &parsed));
     }
 }
 

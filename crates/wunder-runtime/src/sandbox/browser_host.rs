@@ -292,7 +292,10 @@ pub fn sweep_idle() -> usize {
         .collect::<Vec<_>>();
     for bridge_id in &expired_ids {
         if close(bridge_id) {
-            warn!(bridge_id, "Idle browser bridge in the sandbox was reaped");
+            // Idle expiry is the configured resource policy, not a bridge
+            // failure. Keep it available for diagnostics without flooding the
+            // service warning stream during normal quiet periods.
+            debug!(bridge_id, "Idle browser bridge in the sandbox was reaped");
         }
     }
     expired_ids.len()

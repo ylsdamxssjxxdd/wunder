@@ -45,6 +45,31 @@ pub fn bind_selection(app: &MainWindow) {
         else {
             return;
         };
+        // A newly added model is projected immediately so the left list gives
+        // instant feedback. Selecting another row abandons that unsaved row;
+        // remove it before applying the requested persisted model.
+        if app.get_model_creating() && index != app.get_selected_model() {
+            let draft_index = usize::try_from(app.get_selected_model()).ok();
+            let models = app
+                .get_models()
+                .iter()
+                .enumerate()
+                .filter(|(row_index, _)| Some(*row_index) != draft_index)
+                .map(|(_, entry)| entry)
+                .collect::<Vec<_>>();
+            crate::native_pages::model_catalogue().set(&app, models);
+            app.set_model_creating(false);
+            let Some(target_index) = app
+                .get_models()
+                .iter()
+                .position(|entry| entry.key == model.key)
+            else {
+                return;
+            };
+            app.set_selected_model(target_index as i32);
+            apply_model(&app, model);
+            return;
+        }
         app.set_selected_model(index);
         apply_model(&app, model);
     });

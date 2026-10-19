@@ -172,6 +172,17 @@ pub fn resolve_git_bash_shell(git_bin: &Path) -> Option<ShellLaunch> {
     })
 }
 
+/// Prefix bash commands with `set -o pipefail` so a failing middle stage of a
+/// pipeline propagates its exit code instead of being masked by the last
+/// command's success. Commands that already manage pipefail are kept as-is.
+fn bash_command_with_pipefail(command: &str) -> String {
+    if command.contains("pipefail") {
+        command.to_string()
+    } else {
+        format!("set -o pipefail; {command}")
+    }
+}
+
 /// Build a shell interpreter command for the resolved shell.
 pub fn build_shell_command_with_shell(command: &str, cwd: &Path, shell: &ShellLaunch) -> Command {
     #[cfg(windows)]
@@ -185,7 +196,9 @@ pub fn build_shell_command_with_shell(command: &str, cwd: &Path, shell: &ShellLa
                 let mut cmd = Command::new(bash_bin);
                 // Non-login shell; PATH carrying the POSIX toolchain is applied
                 // by the caller so it works even on stripped MinGit layouts.
-                cmd.arg("-c").arg(command).current_dir(cwd);
+                cmd.arg("-c")
+                    .arg(bash_command_with_pipefail(command))
+                    .current_dir(cwd);
                 apply_platform_spawn_options(&mut cmd);
                 cmd
             }
@@ -198,7 +211,9 @@ pub fn build_shell_command_with_shell(command: &str, cwd: &Path, shell: &ShellLa
     {
         let _ = shell;
         let mut cmd = Command::new("bash");
-        cmd.arg("-lc").arg(command).current_dir(cwd);
+        cmd.arg("-lc")
+            .arg(bash_command_with_pipefail(command))
+            .current_dir(cwd);
         cmd
     }
 }
@@ -630,5 +645,76 @@ mod tests {
             .map(|arg| arg.to_string_lossy().to_string())
             .collect::<Vec<_>>();
         assert_eq!(args, vec!["-m", "pip", "install", "wunder"]);
+    }
+
+    #[test]
+    fn bash_command_with_pipefail_injects_once() {
+        assert_eq!(
+            bash_command_with_pipefail("echo ok | head"),
+            "set -o pipefail; echo ok | head"
+        );
+        assert_eq!(
+            bash_command_with_pipefail("set -o pipefail; echo ok | head"),
+            "set -o pipefail; echo ok | head"
+        );
+    }
+
+    fn command_args(command: &Command) -> Vec<String> {
+        command
+            .as_std()
+            .get_args()
+            .map(|arg| arg.to_string_lossy().to_string())
+            .collect()
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn build_shell_command_with_bash_injects_pipefail() {
+        let shell = ShellLaunch {
+            kind: ShellKind::Bash,
+            bash_bin: Some(PathBuf::from("bash")),
+            path_dirs: Vec::new(),
+        };
+        let command = build_shell_command_with_shell("echo ok | head", Path::new("."), &shell);
+        assert_eq!(
+            command_args(&command),
+            vec!["-c", "set -o pipefail; echo ok | head"]
+        );
+
+        let prefixed =
+            build_shell_command_with_shell("set -o pipefail; echo ok | head", Path::new("."), &shell);
+        assert_eq!(
+            command_args(&prefixed),
+            vec!["-c", "set -o pipefail; echo ok | head"]
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn build_shell_command_keeps_powershell_and_cmd_text_untouched() {
+        for kind in [ShellKind::PowerShell, ShellKind::Cmd] {
+            let shell = ShellLaunch {
+                kind,
+                bash_bin: None,
+                path_dirs: Vec::new(),
+            };
+            let command = build_shell_command_with_shell("echo ok | head", Path::new("."), &shell);
+            let args = command_args(&command);
+            assert!(
+                args.iter().all(|arg| !arg.contains("pipefail")),
+                "{kind:?} args should not be rewritten: {args:?}"
+            );
+            assert!(args.iter().any(|arg| arg.contains("echo ok | head")));
+        }
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn build_shell_command_injects_pipefail_on_unix() {
+        let command = build_shell_command("echo ok | head", Path::new("."));
+        assert_eq!(
+            command_args(&command),
+            vec!["-lc", "set -o pipefail; echo ok | head"]
+        );
     }
 }

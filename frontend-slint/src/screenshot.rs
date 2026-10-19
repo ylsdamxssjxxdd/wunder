@@ -41,9 +41,6 @@ struct HideState {
 }
 
 #[cfg(not(windows))]
-struct HideProof;
-
-#[cfg(not(windows))]
 struct HideState;
 
 /// Hide the main window on the UI thread and pin down what the capture would
@@ -58,14 +55,14 @@ struct HideState;
 fn hide_main_window(app: &slint::Weak<MainWindow>) -> (bool, Option<HideState>) {
     #[cfg(windows)]
     {
-        use slint::winit_030::WinitWindowAccessor;
         use slint::winit_030::winit::raw_window_handle::HasWindowHandle;
+        use slint::winit_030::WinitWindowAccessor;
         use windows_sys::Win32::Foundation::RECT;
+        use windows_sys::Win32::Graphics::Dwm::DwmFlush;
         use windows_sys::Win32::UI::WindowsAndMessaging::{
             GetWindowRect, IsWindowVisible, SetWindowPos, HWND_BOTTOM, SWP_HIDEWINDOW,
-            SWP_NOSIZE, SWP_NOACTIVATE, SWP_NOSENDCHANGING,
+            SWP_NOACTIVATE, SWP_NOSENDCHANGING, SWP_NOSIZE,
         };
-        use windows_sys::Win32::Graphics::Dwm::DwmFlush;
 
         let Some(window) = app.upgrade() else {
             return (false, None);
@@ -189,10 +186,14 @@ fn hide_main_window(app: &slint::Weak<MainWindow>) -> (bool, Option<HideState>) 
 /// DWM, on the exposed underlying windows repainting), and neither settles at
 /// a predictable time — every fixed wait raced that and froze the window
 /// mid-hide into the captured frame. So the worker re-samples the region the
-/// window occupied and returns only once its pixels have changed against the
-/// pre-hide reference. The deadline only bounds the case where the window was
-/// mostly covered by other windows and its own pixels can legitimately never
-/// reach half of the region.
+/// window occupied and returns once its pixels have changed against the
+/// pre-hide reference.
+///
+/// A negative result is deliberately advisory. On Win7 the desktop can expose
+/// a near-identical underlying surface, making a pixel-difference proof
+/// impossible even though the HWND is already hidden. The visibility bit is
+/// authoritative in that case; callers add a bounded settle and still capture
+/// instead of restoring the window and reporting a false hide failure.
 ///
 /// The final pixel check remains necessary even after DwmFlush: flushing only
 /// waits for the compositor and does not prove that the exposed desktop has
@@ -254,27 +255,32 @@ fn probe_ms(value: std::time::Duration) -> f64 {
     value.as_secs_f64() * 1000.0
 }
 
-#[cfg(not(windows))]
-fn wait_until_window_gone(_proof: Option<&HideProof>) -> bool {
-    std::thread::sleep(HIDE_SETTLE);
-    true
-}
-
 #[cfg(windows)]
 fn wait_for_hide(state: &HideState) -> bool {
     wait_until_window_gone(state.proof.as_ref())
 }
 
-#[cfg(not(windows))]
-fn wait_for_hide(_state: &HideState) -> bool {
-    wait_until_window_gone(None)
+/// Give a successfully hidden HWND time to leave the desktop before the GDI
+/// capture. Pixel proof protects the usual path from a stale software frame,
+/// but it is not a correctness prerequisite: an HWND which Win32 reports as
+/// hidden must still produce a screenshot on legacy compositors.
+fn settle_hidden_window(state: Option<&HideState>) {
+    #[cfg(windows)]
+    {
+        if state.is_some_and(wait_for_hide) {
+            return;
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = state;
+    std::thread::sleep(HIDE_SETTLE);
 }
 
 #[cfg(windows)]
 fn restore_hidden_window(app: &slint::Weak<MainWindow>, state: &HideState) {
     use slint::winit_030::WinitWindowAccessor;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        SetWindowPos, ShowWindow, HWND_TOP, SW_MAXIMIZE, SWP_NOACTIVATE, SWP_NOSENDCHANGING,
+        SetWindowPos, ShowWindow, HWND_TOP, SWP_NOACTIVATE, SWP_NOSENDCHANGING, SW_MAXIMIZE,
     };
     let width = state.rect.width().max(1);
     let height = state.rect.height().max(1);
@@ -585,12 +591,10 @@ pub fn capture(app: slint::Weak<MainWindow>, hide_window: bool) {
         (false, None)
     };
     std::thread::spawn(move || {
-        let verified = !hidden || proof.as_ref().is_some_and(wait_for_hide);
-        let result = if verified {
-            screen_capture::capture_screen()
-        } else {
-            Err("截图窗口尚未从屏幕合成中移除，请重试".into())
-        };
+        if hidden {
+            settle_hidden_window(proof.as_ref());
+        }
+        let result = screen_capture::capture_screen();
         let _ = slint::invoke_from_event_loop(move || {
             if hidden {
                 if let Some(state) = proof.as_ref() {
@@ -628,13 +632,11 @@ pub fn capture_fullscreen(app: slint::Weak<MainWindow>, hide_window: bool) {
         (false, None)
     };
     std::thread::spawn(move || {
-        let verified = !hidden || proof.as_ref().is_some_and(wait_for_hide);
-        let result = if verified {
-            screen_capture::capture_screen()
-                .and_then(|frame| save_attachment(frame.width, frame.height, &frame.rgba))
-        } else {
-            Err("截图窗口尚未从屏幕合成中移除，请重试".into())
-        };
+        if hidden {
+            settle_hidden_window(proof.as_ref());
+        }
+        let result = screen_capture::capture_screen()
+            .and_then(|frame| save_attachment(frame.width, frame.height, &frame.rgba));
         let _ = slint::invoke_from_event_loop(move || {
             if hidden {
                 if let Some(state) = proof.as_ref() {

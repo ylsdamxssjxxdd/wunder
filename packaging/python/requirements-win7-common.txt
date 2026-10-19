@@ -27,7 +27,13 @@ openpyxl==3.1.5
 packaging==26.0
 pandas==2.0.3
 pillow==10.4.0
-playwright==1.40.0
+# Playwright 1.16+ puts an x64 driver/node.exe in its win32 wheel. 1.15.2
+# instead ships a native i386 Node 12.20.1 driver, which the packer validates.
+playwright==1.15.2
+# Playwright 1.15 imports AsyncIOEventEmitter, which pyee 13 removed.
+# Its loose >=8 declaration otherwise lets a new pip resolver choose that
+# incompatible release.
+pyee==8.2.2
 plotly==5.24.1
 pymysql==1.1.1
 pyparsing==3.1.4

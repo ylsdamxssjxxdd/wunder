@@ -984,7 +984,7 @@ fn render_template(template: &str, mapping: &HashMap<String, String>) -> String 
     rendered
 }
 
-fn localize_tool_specs_for_local_runtime(
+pub(crate) fn localize_tool_specs_for_local_runtime(
     specs: Vec<ToolSpec>,
     workspace: &WorkspaceManager,
     workspace_id: &str,

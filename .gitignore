@@ -101,3 +101,9 @@ supplement-build/
 .temp/
 docs/性能基线/assets
 test-results
+tests/preview
+scripts/blender
+!scripts/blender/build_eva_rig.py
+!scripts/blender/verify_eva_rig.py
+.codex-target-slint
+.codex-target-popover

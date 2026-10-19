@@ -151,6 +151,7 @@ export default defineConfig(({ mode }) => {
         allow: [path.resolve(__dirname, '..')]
       },
       proxy: {
+        '/bridge': makeProxyRule(),
         '/docs': makeProxyRule(),
         '/third': makeProxyRule(),
         '/wunder': makeProxyRule(),
