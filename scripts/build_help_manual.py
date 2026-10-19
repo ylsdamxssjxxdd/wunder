@@ -26,31 +26,37 @@ DOCS_TOPICS = [
     ("install", "开始", "Getting Started", "start/desktop.md",
      ["安装", "启动", "下载", "桌面端"],
      ["install", "launch", "download", "desktop"]),
-    ("core-goal", "核心", "Core", "concepts/core-goal.md",
+    ("core-overview", "核心", "Core", "concepts/index.md",
+     ["多快好省", "多平台", "多形态", "启动速度", "响应速度", "稳定性", "智能程度",
+      "CPU 占用", "内存占用", "上下文消耗"],
+     ["Diverse", "Fast", "Superior", "Efficient", "multi-platform", "multi-form",
+      "startup speed", "response speed", "stability", "intelligence",
+      "CPU usage", "memory usage", "context consumption"]),
+    ("core-goal", "核心能力", "Core Capabilities", "concepts/core-goal.md",
      ["目标", "目标态", "相位", "轮上限"],
      ["goal", "goal state", "phase", "round cap"]),
-    ("core-compatibility", "核心", "Core", "concepts/core-compatibility.md",
+    ("core-compatibility", "核心能力", "Core Capabilities", "concepts/core-compatibility.md",
      ["兼容性", "Win7", "Ubuntu", "离线"],
      ["compatibility", "Windows 7", "Ubuntu", "offline"]),
-    ("core-context-compression", "核心", "Core", "concepts/core-context-compression.md",
+    ("core-context-compression", "核心能力", "Core Capabilities", "concepts/core-context-compression.md",
      ["上下文压缩", "压缩", "上下文"],
      ["context compaction", "compaction", "context"]),
-    ("core-subagent", "核心", "Core", "concepts/core-subagent.md",
+    ("core-subagent", "核心能力", "Core Capabilities", "concepts/core-subagent.md",
      ["子智能体", "派生", "协作"],
      ["subagent", "spawn", "collaboration"]),
-    ("core-scheduled-tasks", "核心", "Core", "concepts/core-scheduled-tasks.md",
+    ("core-scheduled-tasks", "核心能力", "Core Capabilities", "concepts/core-scheduled-tasks.md",
      ["定时任务", "计划", "cron"],
      ["scheduled task", "schedule", "cron"]),
-    ("core-channels", "核心", "Core", "concepts/core-channels.md",
+    ("core-channels", "核心能力", "Core Capabilities", "concepts/core-channels.md",
      ["渠道", "飞书", "QQ", "微信", "IM"],
      ["channel", "Feishu", "QQ", "WeChat", "IM"]),
-    ("core-memory", "核心", "Core", "concepts/core-memory.md",
+    ("core-memory", "核心能力", "Core Capabilities", "concepts/core-memory.md",
      ["记忆", "长期记忆", "知识库"],
      ["memory", "long-term memory", "knowledge base"]),
-    ("core-multithreading", "核心", "Core", "concepts/core-multithreading.md",
+    ("core-multithreading", "核心能力", "Core Capabilities", "concepts/core-multithreading.md",
      ["多线程", "并发", "线程", "队列"],
      ["multi-threading", "concurrency", "thread", "queue"]),
-    ("core-multi-user-management", "核心", "Core", "concepts/core-multi-user-management.md",
+    ("core-multi-user-management", "核心能力", "Core Capabilities", "concepts/core-multi-user-management.md",
      ["多租户", "账号", "配额", "权限"],
      ["multi-tenancy", "account", "quota", "permission"]),
     ("tools-overview", "工具", "Tools", "tools/index.md",
@@ -67,6 +73,7 @@ DOCS_TOPICS = [
 # 最终顺序：先按分组，组内按下表。local 主题来自 manual.local.{lang}.json。
 ORDER = [
     "welcome", "quickstart", "forms", "install",
+    "core-overview",
     "core-goal", "core-compatibility", "core-context-compression", "core-subagent",
     "core-scheduled-tasks", "core-channels", "core-memory", "core-multithreading",
     "core-multi-user-management",
@@ -84,6 +91,11 @@ CARD_RE = re.compile(
     r'<a class="docs-card"\s+href="([^"]+)"[^>]*>\s*<strong>(.*?)</strong>\s*<span>(.*?)</span>',
     re.S,
 )
+
+# 部分手册主题只抽取总览章节，避免把仅属于文档站的深入阅读表带进蛹内嵌手册。
+TOPIC_SECTIONS = {
+    "core-overview": {"多快好省", "Diverse, Fast, Superior, Efficient"},
+}
 
 
 def span(text, bold=False, code=False, kbd=False, href=""):
@@ -230,6 +242,24 @@ def parse_markdown(text, links):
     return title, blocks
 
 
+def filter_sections(blocks, headings):
+    """只保留指定 H2 章节（含章节前的导语），找不到章节直接失败。"""
+    out = []
+    keep = True
+    matched = False
+    for block in blocks:
+        if block["kind"] == "h2":
+            heading = "".join(s["text"] for s in block["spans"]).strip()
+            keep = heading in headings
+            matched = matched or keep
+        if keep:
+            out.append(block)
+    if not matched:
+        print("[缺失章节] %s" % " / ".join(sorted(headings)))
+        sys.exit(1)
+    return out
+
+
 def build_links():
     """文档站内链 URL -> 手册主题 id（中英两种前缀都映射）。"""
     links = {}
@@ -258,6 +288,9 @@ def main():
                 print("[缺失] %s" % path)
                 sys.exit(1)
             title, blocks = parse_markdown(read(path), links)
+            allowed = TOPIC_SECTIONS.get(tid)
+            if allowed:
+                blocks = filter_sections(blocks, allowed)
             head = read(path).split("\n")
             fm_title = None
             if head and head[0].strip() == "---":

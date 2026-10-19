@@ -15,6 +15,46 @@ bridge = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(bridge)
 
 
+class CdpLaunchTests(unittest.TestCase):
+    """CDP fallback shaping needs no live browser: argv, polling parse, ports."""
+
+    def test_command_carries_debugging_port_profile_and_legacy_headless(self):
+        command = bridge.build_cdp_command(
+            "browser/chrome.exe", 9222, "profile-dir", True, ["--disable-gpu"]
+        )
+        self.assertEqual(command[0], "browser/chrome.exe")
+        self.assertIn("--remote-debugging-port=9222", command)
+        self.assertIn("--user-data-dir=profile-dir", command)
+        self.assertIn("--no-first-run", command)
+        self.assertIn("--no-default-browser-check", command)
+        # Chrome 109 predates --headless=new: only the legacy switch is emitted.
+        self.assertIn("--headless", command)
+        self.assertNotIn("--headless=new", command)
+        self.assertEqual(command[-1], "--disable-gpu")
+
+    def test_command_omits_headless_for_visible_mode(self):
+        command = bridge.build_cdp_command("browser/chrome.exe", 9222, "profile-dir", False)
+        self.assertNotIn("--headless", command)
+
+    def test_version_payload_parse_waits_for_the_websocket_url(self):
+        self.assertEqual(
+            bridge.parse_cdp_version_payload('{"Browser":"Chrome/109.0.0.0","webSocketDebuggerUrl":"ws://127.0.0.1:9222/devtools/browser/abc"}'),
+            "ws://127.0.0.1:9222/devtools/browser/abc",
+        )
+        self.assertIsNone(bridge.parse_cdp_version_payload("not json"))
+        self.assertIsNone(bridge.parse_cdp_version_payload('{"Browser":"Chrome/109.0.0.0"}'))
+        self.assertIsNone(bridge.parse_cdp_version_payload("[]"))
+
+    def test_free_port_is_actually_bindable(self):
+        port = bridge.pick_free_port()
+        self.assertGreater(port, 0)
+        probe = bridge.socket.socket(bridge.socket.AF_INET, bridge.socket.SOCK_STREAM)
+        try:
+            probe.bind(("127.0.0.1", port))
+        finally:
+            probe.close()
+
+
 class LaunchUserAgentTests(unittest.TestCase):
     """UA shaping needs no live browser: it only reads browser.version."""
 

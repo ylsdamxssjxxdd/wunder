@@ -81,6 +81,27 @@
               ]
             },
             {
+              "target": "core-overview",
+              "title": [
+                {
+                  "text": "多快好省",
+                  "bold": false,
+                  "code": false,
+                  "kbd": false,
+                  "href": ""
+                }
+              ],
+              "summary": [
+                {
+                  "text": "四个核心：多平台多形态、启动与响应快、稳定且智能、CPU 内存与上下文消耗低。",
+                  "bold": false,
+                  "code": false,
+                  "kbd": false,
+                  "href": ""
+                }
+              ]
+            },
+            {
               "target": "core-goal",
               "title": [
                 {
@@ -2304,9 +2325,250 @@
       ]
     },
     {
+      "id": "core-overview",
+      "title": "核心概览",
+      "group": "核心",
+      "keywords": [
+        "多快好省",
+        "多平台",
+        "多形态",
+        "启动速度",
+        "响应速度",
+        "稳定性",
+        "智能程度",
+        "CPU 占用",
+        "内存占用",
+        "上下文消耗"
+      ],
+      "blocks": [
+        {
+          "kind": "h1",
+          "spans": [
+            {
+              "text": "核心概览",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "lead",
+          "spans": [
+            {
+              "text": "wunder（心舰）是智能体调度平台：把目标交给智能体，由它拆解任务、调用工具、交付结果。功能清单见",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": "工具",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": "与",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": "能力速查",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": "。",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "h2",
+          "spans": [
+            {
+              "text": "多快好省",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "paragraph",
+          "spans": [
+            {
+              "text": "多与好决定能力面，快与省约束实现方式：接入层保持薄、执行路径保持短，队列、缓存、视图与上下文一律有界。",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "table",
+          "rows": [
+            {
+              "header": true,
+              "cells": [
+                [
+                  {
+                    "text": "核心",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "含义",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ]
+              ]
+            },
+            {
+              "header": false,
+              "cells": [
+                [
+                  {
+                    "text": "多",
+                    "bold": true,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "多平台，多形态。一套核心与引擎支撑蛹、蜂巢、舵机、舰体，覆盖 Windows 7 x86 起、Linux（ubuntu18.04 基线）x64 / arm64、Docker 与浏览器；模型、渠道与工作区按同一接入面扩展",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ]
+              ]
+            },
+            {
+              "header": false,
+              "cells": [
+                [
+                  {
+                    "text": "快",
+                    "bold": true,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "启动速度快，响应速度快。本地形态同进程直调引擎，不经本机 HTTP；线程与历史从本地存储直接恢复；流式事件按帧合并、增量投影，工具在允许范围内并行",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ]
+              ]
+            },
+            {
+              "header": false,
+              "cells": [
+                [
+                  {
+                    "text": "好",
+                    "bold": true,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "稳定性强，智能程度高。队列、缓存、视图与上下文都有界，配合会话锁、轮次上限、配额与重试熔断支持长时间运行；目标态、子智能体、工具链、长期记忆与知识库支撑复杂任务从拆解到交付",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ]
+              ]
+            },
+            {
+              "header": false,
+              "cells": [
+                [
+                  {
+                    "text": "省",
+                    "bold": true,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "CPU 内存占用低，上下文消耗低。Rust 原生进程与本地 SQLite，不依赖浏览器运行时；工具结果裁剪、提示词冻结复用缓存、记忆索引只注入一次，并用上下文微压缩与历史压缩控制 token 消耗",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "paragraph",
+          "spans": [
+            {
+              "text": "目标、兼容性、上下文压缩、子智能体、定时任务、渠道通信、记忆、多线程、多租户 9 项逐页展开的核心能力见",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": "能力 › 核心能力",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": "。",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        }
+      ]
+    },
+    {
       "id": "core-goal",
       "title": "目标",
-      "group": "核心",
+      "group": "核心能力",
       "keywords": [
         "目标",
         "目标态",
@@ -2822,7 +3084,7 @@
     {
       "id": "core-compatibility",
       "title": "兼容性",
-      "group": "核心",
+      "group": "核心能力",
       "keywords": [
         "兼容性",
         "Win7",
@@ -3103,7 +3365,7 @@
     {
       "id": "core-context-compression",
       "title": "上下文压缩",
-      "group": "核心",
+      "group": "核心能力",
       "keywords": [
         "上下文压缩",
         "压缩",
@@ -3534,7 +3796,7 @@
     {
       "id": "core-subagent",
       "title": "子智能体",
-      "group": "核心",
+      "group": "核心能力",
       "keywords": [
         "子智能体",
         "派生",
@@ -3850,7 +4112,7 @@
     {
       "id": "core-scheduled-tasks",
       "title": "定时任务",
-      "group": "核心",
+      "group": "核心能力",
       "keywords": [
         "定时任务",
         "计划",
@@ -4952,7 +5214,7 @@
     {
       "id": "core-channels",
       "title": "渠道",
-      "group": "核心",
+      "group": "核心能力",
       "keywords": [
         "渠道",
         "飞书",
@@ -5781,7 +6043,7 @@
     {
       "id": "core-memory",
       "title": "记忆",
-      "group": "核心",
+      "group": "核心能力",
       "keywords": [
         "记忆",
         "长期记忆",
@@ -6154,7 +6416,7 @@
     {
       "id": "core-multithreading",
       "title": "多线程",
-      "group": "核心",
+      "group": "核心能力",
       "keywords": [
         "多线程",
         "并发",
@@ -6458,7 +6720,7 @@
     {
       "id": "core-multi-user-management",
       "title": "多用户管理",
-      "group": "核心",
+      "group": "核心能力",
       "keywords": [
         "多租户",
         "账号",
@@ -14553,344 +14815,384 @@
       "topic": 3
     },
     {
-      "keyword": "目标",
+      "keyword": "多快好省",
       "topic": 4
+    },
+    {
+      "keyword": "多平台",
+      "topic": 4
+    },
+    {
+      "keyword": "多形态",
+      "topic": 4
+    },
+    {
+      "keyword": "启动速度",
+      "topic": 4
+    },
+    {
+      "keyword": "响应速度",
+      "topic": 4
+    },
+    {
+      "keyword": "稳定性",
+      "topic": 4
+    },
+    {
+      "keyword": "智能程度",
+      "topic": 4
+    },
+    {
+      "keyword": "CPU 占用",
+      "topic": 4
+    },
+    {
+      "keyword": "内存占用",
+      "topic": 4
+    },
+    {
+      "keyword": "上下文消耗",
+      "topic": 4
+    },
+    {
+      "keyword": "目标",
+      "topic": 5
     },
     {
       "keyword": "目标态",
-      "topic": 4
+      "topic": 5
     },
     {
       "keyword": "相位",
-      "topic": 4
+      "topic": 5
     },
     {
       "keyword": "轮上限",
-      "topic": 4
+      "topic": 5
     },
     {
       "keyword": "兼容性",
-      "topic": 5
+      "topic": 6
     },
     {
       "keyword": "Win7",
-      "topic": 5
+      "topic": 6
     },
     {
       "keyword": "Ubuntu",
-      "topic": 5
+      "topic": 6
     },
     {
       "keyword": "离线",
-      "topic": 5
+      "topic": 6
     },
     {
       "keyword": "上下文压缩",
-      "topic": 6
+      "topic": 7
     },
     {
       "keyword": "压缩",
-      "topic": 6
+      "topic": 7
     },
     {
       "keyword": "上下文",
-      "topic": 6
+      "topic": 7
     },
     {
       "keyword": "子智能体",
-      "topic": 7
+      "topic": 8
     },
     {
       "keyword": "派生",
-      "topic": 7
+      "topic": 8
     },
     {
       "keyword": "协作",
-      "topic": 7
+      "topic": 8
     },
     {
       "keyword": "定时任务",
-      "topic": 8
+      "topic": 9
     },
     {
       "keyword": "计划",
-      "topic": 8
+      "topic": 9
     },
     {
       "keyword": "cron",
-      "topic": 8
+      "topic": 9
     },
     {
       "keyword": "渠道",
-      "topic": 9
+      "topic": 10
     },
     {
       "keyword": "飞书",
-      "topic": 9
+      "topic": 10
     },
     {
       "keyword": "QQ",
-      "topic": 9
+      "topic": 10
     },
     {
       "keyword": "微信",
-      "topic": 9
+      "topic": 10
     },
     {
       "keyword": "IM",
-      "topic": 9
+      "topic": 10
     },
     {
       "keyword": "记忆",
-      "topic": 10
+      "topic": 11
     },
     {
       "keyword": "长期记忆",
-      "topic": 10
+      "topic": 11
     },
     {
       "keyword": "知识库",
-      "topic": 10
+      "topic": 11
     },
     {
       "keyword": "多线程",
-      "topic": 11
+      "topic": 12
     },
     {
       "keyword": "并发",
-      "topic": 11
+      "topic": 12
     },
     {
       "keyword": "线程",
-      "topic": 11
+      "topic": 12
     },
     {
       "keyword": "队列",
-      "topic": 11
+      "topic": 12
     },
     {
       "keyword": "多租户",
-      "topic": 12
+      "topic": 13
     },
     {
       "keyword": "账号",
-      "topic": 12
+      "topic": 13
     },
     {
       "keyword": "配额",
-      "topic": 12
+      "topic": 13
     },
     {
       "keyword": "权限",
-      "topic": 12
+      "topic": 13
     },
     {
       "keyword": "工具",
-      "topic": 13
+      "topic": 14
     },
     {
       "keyword": "工具矩阵",
-      "topic": 13
+      "topic": 14
     },
     {
       "keyword": "MCP",
-      "topic": 13
+      "topic": 14
     },
     {
       "keyword": "别名",
-      "topic": 13
+      "topic": 14
     },
     {
       "keyword": "技能",
-      "topic": 14
+      "topic": 15
     },
     {
       "keyword": "服务器",
-      "topic": 14
+      "topic": 15
     },
     {
       "keyword": "界面",
-      "topic": 15
+      "topic": 16
     },
     {
       "keyword": "侧栏",
-      "topic": 15
+      "topic": 16
     },
     {
       "keyword": "工作过程",
-      "topic": 15
+      "topic": 16
     },
     {
       "keyword": "轨迹",
-      "topic": 15
+      "topic": 16
     },
     {
       "keyword": "布局",
-      "topic": 15
+      "topic": 16
     },
     {
       "keyword": "三端互通",
-      "topic": 17
+      "topic": 18
     },
     {
       "keyword": "设备互通",
-      "topic": 17
+      "topic": 18
     },
     {
       "keyword": "隧道",
-      "topic": 17
+      "topic": 18
     },
     {
       "keyword": "远程",
-      "topic": 17
+      "topic": 18
     },
     {
       "keyword": "设置",
-      "topic": 18
+      "topic": 19
     },
     {
       "keyword": "语言",
-      "topic": 18
+      "topic": 19
     },
     {
       "keyword": "主题",
-      "topic": 18
+      "topic": 19
     },
     {
       "keyword": "云账号",
-      "topic": 18
+      "topic": 19
     },
     {
       "keyword": "偏好",
-      "topic": 18
+      "topic": 19
     },
     {
       "keyword": "模型",
-      "topic": 19
+      "topic": 20
     },
     {
       "keyword": "参数",
-      "topic": 19
+      "topic": 20
     },
     {
       "keyword": "默认模型",
-      "topic": 19
+      "topic": 20
     },
     {
       "keyword": "多模态参数",
-      "topic": 19
+      "topic": 20
     },
     {
       "keyword": "温度",
-      "topic": 19
+      "topic": 20
     },
     {
       "keyword": "轮次",
-      "topic": 20
+      "topic": 21
     },
     {
       "keyword": "工具调用",
-      "topic": 20
+      "topic": 21
     },
     {
       "keyword": "文件",
-      "topic": 21
+      "topic": 22
     },
     {
       "keyword": "工作区",
-      "topic": 21
+      "topic": 22
     },
     {
       "keyword": "本地",
-      "topic": 21
+      "topic": 22
     },
     {
       "keyword": "存储",
-      "topic": 21
+      "topic": 22
     },
     {
       "keyword": "导出",
-      "topic": 21
+      "topic": 22
     },
     {
       "keyword": "截图",
-      "topic": 22
+      "topic": 23
     },
     {
       "keyword": "录音",
-      "topic": 22
+      "topic": 23
     },
     {
       "keyword": "语音识别",
-      "topic": 22
+      "topic": 23
     },
     {
       "keyword": "语音合成",
-      "topic": 22
+      "topic": 23
     },
     {
       "keyword": "图像生成",
-      "topic": 22
+      "topic": 23
     },
     {
       "keyword": "视频生成",
-      "topic": 22
+      "topic": 23
     },
     {
       "keyword": "数据",
-      "topic": 23
+      "topic": 24
     },
     {
       "keyword": "隐私",
-      "topic": 23
+      "topic": 24
     },
     {
       "keyword": "SQLite",
-      "topic": 23
+      "topic": 24
     },
     {
       "keyword": "备份",
-      "topic": 23
+      "topic": 24
     },
     {
       "keyword": "存储位置",
-      "topic": 23
+      "topic": 24
     },
     {
       "keyword": "诊断",
-      "topic": 24
+      "topic": 25
     },
     {
       "keyword": "排查",
-      "topic": 24
+      "topic": 25
     },
     {
       "keyword": "常见问题",
-      "topic": 24
+      "topic": 25
     },
     {
       "keyword": "故障",
-      "topic": 24
+      "topic": 25
     },
     {
       "keyword": "FAQ",
-      "topic": 24
+      "topic": 25
     },
     {
       "keyword": "术语",
-      "topic": 25
+      "topic": 26
     },
     {
       "keyword": "名词",
-      "topic": 25
+      "topic": 26
     },
     {
       "keyword": "定义",
-      "topic": 25
+      "topic": 26
     },
     {
       "keyword": "概念",
-      "topic": 25
+      "topic": 26
     }
   ]
 }

@@ -10,6 +10,7 @@ pub const BROWSER_DEPLOYMENT_SANDBOX: &str = "sandbox";
 pub const DEFAULT_BROWSER_PROFILE: &str = "managed";
 pub const BROWSER_LAUNCH_MODE: &str = "launch";
 pub const BROWSER_LAUNCH_MODE_ATTACH: &str = "attach";
+pub const BROWSER_LAUNCH_MODE_CDP: &str = "cdp";
 
 #[derive(Debug, Clone)]
 pub struct EffectiveBrowserConfig {
@@ -38,6 +39,8 @@ pub struct EffectiveBrowserConfig {
     pub channel: Option<String>,
     pub executable_path: Option<String>,
     pub attach_endpoint: Option<String>,
+    pub cdp_fallback: bool,
+    pub cdp_port: u16,
     pub allow_private_network: bool,
     pub hostname_allowlist: Vec<String>,
     pub deny_file_scheme: bool,
@@ -179,6 +182,17 @@ pub fn effective_browser_config(config: &Config) -> EffectiveBrowserConfig {
         } else {
             trim_option(config.browser.playwright.attach_endpoint.clone())
         },
+        // legacy desktop 配置面没有 CDP 字段，与默认值保持一致：回退开启、端口自动。
+        cdp_fallback: if legacy_runtime {
+            true
+        } else {
+            config.browser.playwright.cdp_fallback
+        },
+        cdp_port: if legacy_runtime {
+            0
+        } else {
+            config.browser.playwright.cdp_port
+        },
         allow_private_network,
         hostname_allowlist: config
             .browser
@@ -247,6 +261,8 @@ fn normalize_browser_launch_mode(value: &str) -> String {
     let trimmed = value.trim();
     if trimmed.eq_ignore_ascii_case(BROWSER_LAUNCH_MODE_ATTACH) {
         BROWSER_LAUNCH_MODE_ATTACH.to_string()
+    } else if trimmed.eq_ignore_ascii_case(BROWSER_LAUNCH_MODE_CDP) {
+        BROWSER_LAUNCH_MODE_CDP.to_string()
     } else {
         BROWSER_LAUNCH_MODE.to_string()
     }

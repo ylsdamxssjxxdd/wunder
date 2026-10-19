@@ -7,6 +7,7 @@ use wunder_server::stable_core::thread_view::ChatViewRow;
 #[derive(Debug, Clone)]
 pub struct NativeProcessItem {
     pub id: String,
+    pub item_index: i64,
     pub state: String,
     pub reasoning: String,
     pub text: String,
@@ -125,6 +126,7 @@ pub(super) fn project_page(page: &Value, final_id: &str) -> NativeProcessPage {
                 let data = &row["payload"];
                 let mut item = NativeProcessItem {
                     id: id.into(),
+                    item_index: row["item_index"].as_i64().unwrap_or_default(),
                     state: state.into(),
                     reasoning: String::new(),
                     text: String::new(),

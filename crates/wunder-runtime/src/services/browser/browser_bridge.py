@@ -24,10 +24,14 @@ import ipaddress
 import json
 import os
 import re
+import shutil
 import socket
+import subprocess
 import sys
+import tempfile
 import time
 import traceback
+import urllib.request
 from collections import OrderedDict
 from pathlib import Path
 from urllib.parse import urlparse
@@ -518,6 +522,126 @@ def _elapsed_ms(since):
     return int((time.monotonic() - since) * 1000)
 
 
+CDP_PROFILE_PREFIX = "wunder-cdp-profile-"
+
+
+def build_cdp_command(executable_path, port, profile_dir, headless, extra_args=None):
+    """Argv for the CDP fallback browser.
+
+    Chrome 109 only understands the legacy --headless switch, so the
+    --headless=new form is deliberately never emitted here.
+    """
+    command = [
+        executable_path,
+        "--remote-debugging-port=%d" % port,
+        "--user-data-dir=%s" % profile_dir,
+        "--no-first-run",
+        "--no-default-browser-check",
+    ]
+    if headless:
+        command.append("--headless")
+    command.extend(extra_args or [])
+    return command
+
+
+def parse_cdp_version_payload(text):
+    """webSocketDebuggerUrl from /json/version; None while the endpoint is not up."""
+    try:
+        payload = json.loads(text)
+    except Exception:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    return payload.get("webSocketDebuggerUrl") or None
+
+
+def pick_free_port():
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+    finally:
+        sock.close()
+
+
+def pin_to_kill_on_close_job(proc):
+    """Windows: tie the spawned browser tree to this bridge's lifetime.
+
+    taskkill in _stop_spawned_browser covers the graceful exits, but a bridge
+    that is itself force-killed runs no cleanup at all; a KILL_ON_JOB_CLOSE
+    job makes the OS reap the browser tree when the bridge process dies and
+    its last job handle disappears. Returns the job handle to keep alive, or
+    None on any failure (cleanup then relies on taskkill alone).
+    """
+    if os.name != "nt":
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
+        JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
+        PROCESS_SET_QUOTA_TERMINATE = 0x0100 | 0x0001
+
+        class JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
+            _fields_ = [
+                ("PerProcessUserTimeLimit", wintypes.LARGE_INTEGER),
+                ("PerJobUserTimeLimit", wintypes.LARGE_INTEGER),
+                ("LimitFlags", wintypes.DWORD),
+                ("MinimumWorkingSetSize", ctypes.c_size_t),
+                ("MaximumWorkingSetSize", ctypes.c_size_t),
+                ("ActiveProcessLimit", wintypes.DWORD),
+                ("Affinity", ctypes.c_size_t),
+                ("PriorityClass", wintypes.DWORD),
+                ("SchedulingClass", wintypes.DWORD),
+            ]
+
+        class IO_COUNTERS(ctypes.Structure):
+            _fields_ = [
+                (name, ctypes.c_ulonglong)
+                for name in (
+                    "ReadOperationCount",
+                    "WriteOperationCount",
+                    "OtherOperationCount",
+                    "ReadTransferCount",
+                    "WriteTransferCount",
+                    "OtherTransferCount",
+                )
+            ]
+
+        class JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
+            _fields_ = [
+                ("BasicLimitInformation", JOBOBJECT_BASIC_LIMIT_INFORMATION),
+                ("IoInfo", IO_COUNTERS),
+                ("ProcessMemoryLimit", ctypes.c_size_t),
+                ("JobMemoryLimit", ctypes.c_size_t),
+                ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                ("PeakJobMemoryUsed", ctypes.c_size_t),
+            ]
+
+        kernel32 = ctypes.windll.kernel32
+        job = kernel32.CreateJobObjectW(None, None)
+        if not job:
+            return None
+        info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        if not kernel32.SetInformationJobObject(
+            job, JOB_OBJECT_EXTENDED_LIMIT_INFORMATION, ctypes.byref(info), ctypes.sizeof(info)
+        ):
+            kernel32.CloseHandle(job)
+            return None
+        handle = kernel32.OpenProcess(PROCESS_SET_QUOTA_TERMINATE, False, proc.pid)
+        if not handle or not kernel32.AssignProcessToJobObject(job, handle):
+            if handle:
+                kernel32.CloseHandle(handle)
+            kernel32.CloseHandle(job)
+            return None
+        kernel32.CloseHandle(handle)
+        return job
+    except Exception:
+        return None
+
+
 def respond(data):
     sys.stdout.write(json.dumps(data, ensure_ascii=False) + "\n")
     sys.stdout.flush()
@@ -552,7 +676,10 @@ class BridgeSession:
         # Launch strategy mirrors deepseek-harness `browser-use`: either launch a
         # managed browser (optionally on a user-supplied channel / executable) or
         # attach to an already-running browser over CDP so existing tabs, logins
-        # and the user's own Chromium build are preserved.
+        # and the user's own Chromium build are preserved. The "cdp" mode sits
+        # between the two: the bridge spawns the probed executable itself with a
+        # remote-debugging port, then drives it over CDP — the offline fallback
+        # when Playwright's own launch path cannot start the browser.
         self.mode = str(getattr(args, "mode", None) or "launch").strip().lower()
         channel = (getattr(args, "channel", None) or "").strip() or None
         executable_path = (getattr(args, "executable_path", None) or "").strip() or None
@@ -571,6 +698,23 @@ class BridgeSession:
             else:
                 self.context = self._new_context(args)
                 self._owns_context = True
+        elif self.mode == "cdp":
+            if not executable_path:
+                raise RuntimeError(
+                    "cdp mode requires --executable-path pointing at a local browser executable"
+                )
+            self.browser = self._launch_via_cdp(args, launch_args)
+            try:
+                # A fresh context keeps the UA override and viewport identical
+                # to the managed launch path; the spawned default tab is unused.
+                self.context = self._new_context(args)
+            except Exception:
+                self._stop_spawned_browser()
+                raise
+            self._owns_context = True
+            # Driven over CDP, so close() must not browser.close() the
+            # connection away; the spawned process tree is stopped explicitly.
+            self._attached = True
         else:
             launch_kwargs = {
                 "headless": args.headless,
@@ -613,6 +757,98 @@ class BridgeSession:
         if user_agent:
             options["user_agent"] = user_agent
         return self.browser.new_context(**options)
+
+    def _launch_via_cdp(self, args, launch_args):
+        port = int(getattr(args, "cdp_port", 0) or 0)
+        if port <= 0:
+            port = pick_free_port()
+        profile_dir = tempfile.mkdtemp(prefix=CDP_PROFILE_PREFIX)
+        command = build_cdp_command(
+            self.executable_path, port, profile_dir, args.headless, launch_args
+        )
+        popen_kwargs = {
+            "stdin": subprocess.DEVNULL,
+            "stdout": subprocess.DEVNULL,
+            "stderr": subprocess.DEVNULL,
+        }
+        if os.name != "nt":
+            # Own process group so the cleanup can signal the whole tree.
+            popen_kwargs["start_new_session"] = True
+        try:
+            proc = subprocess.Popen(command, **popen_kwargs)
+        except Exception:
+            shutil.rmtree(profile_dir, ignore_errors=True)
+            raise
+        self._spawned_browser = proc
+        self._spawned_profile = profile_dir
+        self._spawned_job = pin_to_kill_on_close_job(proc)
+        try:
+            self._wait_cdp_ready(proc, port)
+            return self.pw.chromium.connect_over_cdp("http://127.0.0.1:%d" % port)
+        except Exception:
+            self._stop_spawned_browser()
+            raise
+
+    def _wait_cdp_ready(self, proc, port):
+        deadline = time.monotonic() + self.timeout_ms / 1000.0
+        url = "http://127.0.0.1:%d/json/version" % port
+        while time.monotonic() < deadline:
+            if proc.poll() is not None:
+                raise RuntimeError(
+                    "browser exited during CDP startup (exit code %s)" % proc.returncode
+                )
+            try:
+                with urllib.request.urlopen(url, timeout=1) as response:
+                    if parse_cdp_version_payload(response.read().decode("utf-8", "replace")):
+                        return
+            except Exception:
+                pass
+            time.sleep(0.1)
+        raise RuntimeError(
+            "browser CDP endpoint did not become ready within %ds" % (self.timeout_ms // 1000)
+        )
+
+    def _stop_spawned_browser(self):
+        proc = getattr(self, "_spawned_browser", None)
+        self._spawned_browser = None
+        job = getattr(self, "_spawned_job", None)
+        self._spawned_job = None
+        profile_dir = getattr(self, "_spawned_profile", None)
+        self._spawned_profile = None
+        if proc is not None and proc.poll() is None:
+            try:
+                if os.name == "nt":
+                    # /T takes the whole tree: renderer children would outlive
+                    # a killed main process.
+                    subprocess.run(
+                        ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        timeout=15,
+                    )
+                else:
+                    import signal
+
+                    os.killpg(proc.pid, signal.SIGTERM)
+                    try:
+                        proc.wait(timeout=5)
+                    except Exception:
+                        os.killpg(proc.pid, signal.SIGKILL)
+            except Exception:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+        if job:
+            # Closing a KILL_ON_JOB_CLOSE handle reaps whatever survived above.
+            try:
+                import ctypes
+
+                ctypes.windll.kernel32.CloseHandle(job)
+            except Exception:
+                pass
+        if profile_dir:
+            shutil.rmtree(profile_dir, ignore_errors=True)
 
     def _launch_user_agent(self):
         # The UA must name the browser actually being driven (an older bundled
@@ -715,6 +951,7 @@ class BridgeSession:
             self.pw.stop()
         except Exception:
             pass
+        self._stop_spawned_browser()
 
     def handle(self, raw):
         result = self._handle(raw)
@@ -1418,6 +1655,7 @@ def main():
     parser.add_argument("--channel", default=None)
     parser.add_argument("--executable-path", dest="executable_path", default=None)
     parser.add_argument("--attach-endpoint", dest="attach_endpoint", default=None)
+    parser.add_argument("--cdp-port", dest="cdp_port", type=int, default=0)
     parser.add_argument(
         "--allow-private-network", dest="allow_private_network", action="store_true", default=False
     )

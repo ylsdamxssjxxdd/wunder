@@ -1018,7 +1018,9 @@ pub struct BrowserRuntimePlaywrightConfig {
     #[serde(default)]
     pub launch_args: Vec<String>,
     /// Launch strategy aligned with deepseek-harness: "launch" starts a managed
-    /// browser, "attach" connects to a user-provided CDP endpoint.
+    /// browser, "attach" connects to a user-provided CDP endpoint, "cdp" spawns
+    /// `executable_path` with a remote-debugging port and drives it over CDP
+    /// (normally entered through the automatic launch failure fallback).
     #[serde(default = "default_browser_launch_mode")]
     pub mode: String,
     /// Playwright channel name (e.g. "chrome", "msedge") to drive a system
@@ -1031,6 +1033,16 @@ pub struct BrowserRuntimePlaywrightConfig {
     /// CDP endpoint (http(s):// or ws://) used when `mode = "attach"`.
     #[serde(default)]
     pub attach_endpoint: Option<String>,
+    /// After a failed direct launch, retry once by spawning the probed browser
+    /// with a remote-debugging port and driving it over CDP. Offline-safe: the
+    /// fallback never downloads anything.
+    #[serde(default = "default_browser_cdp_fallback")]
+    #[serde(deserialize_with = "crate::config::deserialize_bool_from_any")]
+    pub cdp_fallback: bool,
+    /// Preferred remote-debugging port for the CDP fallback; 0 picks a free
+    /// port at spawn time.
+    #[serde(default)]
+    pub cdp_port: u16,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1345,6 +1357,8 @@ impl Default for BrowserRuntimePlaywrightConfig {
             channel: None,
             executable_path: None,
             attach_endpoint: None,
+            cdp_fallback: default_browser_cdp_fallback(),
+            cdp_port: 0,
         }
     }
 }
@@ -1501,6 +1515,10 @@ impl Default for DesktopControlConfig {
 
 fn default_browser_launch_mode() -> String {
     "launch".to_string()
+}
+
+fn default_browser_cdp_fallback() -> bool {
+    true
 }
 
 fn default_browser_headless() -> bool {

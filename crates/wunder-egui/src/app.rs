@@ -1023,6 +1023,18 @@ impl EguiApp {
                 }
             };
         response.context_menu(|ui| draw_thread_context_menu(ui, &mut context_action));
+        // The icon controls below take precedence because they are registered
+        // later, while the thin gaps in their fixed action band still retain
+        // the same right-click menu as the rest of the thread row.
+        if !selecting {
+            let action_band_response = ui.interact(
+                action_band,
+                Id::new(("thread-action-band", &session.id)),
+                Sense::click(),
+            );
+            action_band_response
+                .context_menu(|ui| draw_thread_context_menu(ui, &mut context_action));
+        }
         let title_rect = egui::Rect::from_min_max(
             egui::pos2(
                 rect.left() + if selecting { 62.0 } else { 45.0 },

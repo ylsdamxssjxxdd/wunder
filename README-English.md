@@ -2,7 +2,7 @@
 
 wunder is an **agent orchestration platform**:
 
-The core tenets are speed, stability, light weight, and universality. Actual tests show it can easily handle scenarios with 1,000 user message rounds, where each user message round contains 1,000 model inference turns.
+Diverse (multi-platform, multi-form factor), Fast (fast startup, rapid response), Superior (robust stability, high intelligence), Efficient (low CPU & memory footprint, low context overhead)
 
 ## Form Matrix
 

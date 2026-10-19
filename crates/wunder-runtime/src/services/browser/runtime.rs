@@ -606,7 +606,7 @@ fn browser_failure_details(action: &str, error: &str) -> serde_json::Map<String,
 
 /// Launch-phase failures carry no Playwright `net::` code, so they are
 /// recognized by the bridge's own startup wording.
-fn is_browser_launch_error(text: &str) -> bool {
+pub(crate) fn is_browser_launch_error(text: &str) -> bool {
     const MARKERS: &[&str] = &[
         "Browser bridge failed to start",
         "Executable doesn't exist",

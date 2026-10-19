@@ -1,10 +1,23 @@
 ---
 title: Core Concepts
-summary: The four design principles, the four forms, the four cores, deeper pages by topic, and capabilities that are removed or restricted.
-updated_at: 2026-10-16
+summary: The Diverse, Fast, Superior, and Efficient cores, four design principles, four forms, deeper pages by topic, and capabilities that are removed or restricted.
+updated_at: 2026-10-19
 ---
 
 wunder is an agent-scheduling platform: hand it a goal and the agent breaks the task down, calls tools, and delivers results. The feature list lives in [Tools](/docs/en/tools/) and the [Capability Quick Reference](/docs/en/capabilities/api-index/).
+
+## Diverse, Fast, Superior, Efficient
+
+Diversity and strength set the capability surface; speed and efficiency constrain how it is built: a thin access layer, a short execution path, and bounded queues, caches, views, and context.
+
+| Core | Meaning |
+| --- | --- |
+| **Diverse** | Multi-platform, multi-form. One core and engine support the Pupa, Beehive, Helm, and Hull across Windows 7 x86 and up, Linux (ubuntu18.04 baseline) x64 / arm64, Docker, and browsers; models, channels, and workspaces extend through the same access layer |
+| **Fast** | Fast startup, fast response. Local forms call the engine in-process without local HTTP; threads and history restore directly from local storage; streaming events are frame-coalesced and projected incrementally, and tools run in parallel where allowed |
+| **Superior** | Strong stability, high intelligence. Queues, caches, views, and context are bounded, with session locks, round caps, quotas, and retry circuit breaking for long runs; goal mode, subagents, the tool chain, long-term memory, and knowledge bases carry complex tasks from decomposition to delivery |
+| **Efficient** | Low CPU and memory use, low context consumption. A native Rust process with local SQLite needs no browser runtime; tool-result trimming, frozen prompts that reuse cache, one-time memory-index injection, and micro-compaction and history compaction keep token consumption down |
+
+The nine capabilities expanded page by page — goal, compatibility, context compression, subagents, scheduled tasks, channels, memory, multithreading, and multi-tenancy — live under [Capabilities › Core Capabilities](/docs/en/capabilities/).
 
 ## Design Principles
 
@@ -25,17 +38,6 @@ wunder is an agent-scheduling platform: hand it a goal and the agent breaks the 
 | **Hull** (server) | The user- and agent-management platform: multi-tenancy, units, app build-and-release, and gateway access; a service process plus the engine, with the Bridge built in |
 
 The Pupa and the Helm do not depend on the Hull and can run and ship on their own. The Electron / Tauri front-end shells are no longer maintained day to day and are no longer described as a capability.
-
-## Cores
-
-| Core | Meaning |
-| --- | --- |
-| **Fast** | Starts up quickly and responds quickly |
-| **Stable** | The agent can work for long stretches without stalling or leaking memory, the program runs normally, and CPU usage stays low |
-| **General** | Deployable on any operating-system platform, connectable to any mainstream model, able to complete all kinds of complex tasks |
-| **Lightweight** | A small program body, light prompt and tool design, and low token consumption |
-
-The per-item detail pages for the 9 capabilities — goal, compatibility, context compression, subagent, scheduled tasks, channels, memory, multithreading, and multi-tenancy — live under [Capabilities › Core Capabilities](/docs/en/capabilities/).
 
 ## Deeper Pages by Topic
 

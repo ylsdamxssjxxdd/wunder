@@ -1,4 +1,4 @@
-use super::config::EffectiveBrowserConfig;
+use super::config::{EffectiveBrowserConfig, BROWSER_LAUNCH_MODE, BROWSER_LAUNCH_MODE_CDP};
 use crate::core::command_utils;
 use dashmap::DashMap;
 use serde::Deserialize;
@@ -188,6 +188,14 @@ fn elapsed_millis() -> u64 {
 struct LaunchSpec {
     config: EffectiveBrowserConfig,
     bridge_path: PathBuf,
+    cdp: Option<CdpOverride>,
+}
+
+/// One CDP-fallback launch: spawn this executable with a remote-debugging port
+/// and drive it over CDP instead of letting Playwright launch it directly.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CdpOverride {
+    pub executable_path: String,
 }
 
 /// Longest a failed warm launch stops the pool from retrying. A host without
@@ -447,7 +455,7 @@ impl BrowserBridge {
         if self.warm_target() == 0 {
             return None;
         }
-        let spec = match self.launch_spec() {
+        let spec = match self.launch_spec(None) {
             Ok(spec) => spec,
             Err(err) => {
                 warn!(error = %err, "Warm browser pool unavailable");
@@ -486,11 +494,12 @@ impl BrowserBridge {
         None
     }
 
-    fn launch_spec(&self) -> Result<LaunchSpec, String> {
+    fn launch_spec(&self, cdp: Option<CdpOverride>) -> Result<LaunchSpec, String> {
         let bridge_path = self.ensure_bridge_script()?.to_path_buf();
         Ok(LaunchSpec {
             config: self.config.clone(),
             bridge_path,
+            cdp,
         })
     }
 
@@ -610,10 +619,50 @@ impl BrowserBridge {
             return Ok(warm);
         }
 
-        let session = match self.launch(session_key)? {
+        let session = match self.launch(session_key, None)? {
             LaunchOutcome::Owned(session) => session,
             LaunchOutcome::Adopted(existing) => return self.attach(&existing, deadline).await,
         };
+        match self.await_ready(&session, deadline).await {
+            Ok(()) => Ok(session),
+            Err(err) => {
+                self.retire(&session, "launch failed");
+                let Some(cdp) = self.cdp_fallback_override(&err) else {
+                    return Err(err);
+                };
+                // 直连 launch 失败（缺浏览器、启动崩溃）时，用探测到的浏览器
+                // 以「spawn + remote-debugging-port + CDP 直连」重试一次。
+                // 回退只在这一步内联发生一次，之后 launch_mode=cdp 的判定使
+                // 流程不会再次进入本分支，天然无循环。
+                info!(
+                    session_key,
+                    executable = %cdp.executable_path,
+                    "Direct browser launch failed; retrying with the CDP fallback"
+                );
+                let session = match self.launch(session_key, Some(cdp))? {
+                    LaunchOutcome::Owned(session) => session,
+                    LaunchOutcome::Adopted(existing) => {
+                        return self.attach(&existing, deadline).await;
+                    }
+                };
+                let cdp_deadline = launch_deadline(self.config.timeout_secs);
+                match self.await_ready(&session, cdp_deadline).await {
+                    Ok(()) => Ok(session),
+                    Err(cdp_err) => {
+                        self.retire(&session, "cdp fallback launch failed");
+                        Err(format!("{err}\nCDP 回退启动同样失败：{cdp_err}"))
+                    }
+                }
+            }
+        }
+    }
+
+    /// Wait out one cold start's readiness signal and mark the session ready.
+    async fn await_ready(
+        &self,
+        session: &Arc<BridgeSession>,
+        deadline: Duration,
+    ) -> Result<(), String> {
         let startup = session
             .startup_rx
             .lock()
@@ -632,17 +681,28 @@ impl BrowserBridge {
                 )),
             },
         };
-        match outcome {
-            Ok(()) => {
-                session.state.store(STATE_READY, Ordering::Release);
-                session.touch();
-                Ok(session)
-            }
-            Err(err) => {
-                self.retire(&session, "launch failed");
-                Err(err)
-            }
+        outcome.map(|()| {
+            session.state.store(STATE_READY, Ordering::Release);
+            session.touch();
+        })
+    }
+
+    /// Decide whether a failed cold start earns one CDP retry, and with which
+    /// executable: the configured (possibly probe-injected) path first, then a
+    /// fresh probe so a browser installed after startup is still picked up.
+    fn cdp_fallback_override(&self, error: &str) -> Option<CdpOverride> {
+        if !cdp_fallback_eligible(&self.config, error) {
+            return None;
         }
+        let executable_path = self
+            .config
+            .executable_path
+            .clone()
+            .or_else(|| {
+                super::probe::probe_launch_executable(self.config.browsers_path.as_deref())
+                    .map(|path| path.to_string_lossy().into_owned())
+            })?;
+        Some(CdpOverride { executable_path })
     }
 
     /// Reuse a ready session, wait out a launch started by a concurrent caller,
@@ -680,8 +740,8 @@ impl BrowserBridge {
 
     /// Start a browser for `session_key` and register it, or attach to the
     /// session a concurrent caller already registered under that key.
-    fn launch(&self, session_key: &str) -> Result<LaunchOutcome, String> {
-        let spec = self.launch_spec()?;
+    fn launch(&self, session_key: &str, cdp: Option<CdpOverride>) -> Result<LaunchOutcome, String> {
+        let spec = self.launch_spec(cdp)?;
         let session = start_session(session_key, &spec)?;
         let displaced = match self.sessions.entry(session_key.to_string()) {
             dashmap::mapref::entry::Entry::Occupied(entry) => Some(Arc::clone(entry.get())),
@@ -740,7 +800,7 @@ fn start_session(session_key: &str, spec: &LaunchSpec) -> Result<Arc<BridgeSessi
                 )
             }
             None => {
-                let spawned = spawn_bridge(&spec.config, &spec.bridge_path)?;
+                let spawned = spawn_bridge(&spec.config, &spec.bridge_path, spec.cdp.as_ref())?;
                 (
                     Box::new(LocalExchange::new(spawned.stdin, spawned.stdout)),
                     Some(spawned.child),
@@ -771,8 +831,9 @@ fn start_session(session_key: &str, spec: &LaunchSpec) -> Result<Arc<BridgeSessi
 fn spawn_bridge(
     config: &EffectiveBrowserConfig,
     bridge_path: &Path,
+    cdp: Option<&CdpOverride>,
 ) -> Result<SpawnedBridge, String> {
-    let mut child = build_spawn_command(config, bridge_path)
+    let mut child = build_spawn_command(config, bridge_path, cdp)
         .spawn()
         .map_err(|err| {
             format!(
@@ -1043,6 +1104,7 @@ pub(crate) fn write_bridge_script() -> Result<PathBuf, String> {
 fn build_spawn_command(
     config: &EffectiveBrowserConfig,
     bridge_path: &Path,
+    cdp: Option<&CdpOverride>,
 ) -> std::process::Command {
     let mut command = std::process::Command::new(python_program(config));
     command.arg(bridge_path.to_string_lossy().as_ref());
@@ -1060,15 +1122,24 @@ fn build_spawn_command(
         .arg(config.max_tabs_per_session.to_string())
         .arg("--timeout")
         .arg(config.timeout_secs.to_string());
-    let launch_mode = config.launch_mode.trim();
+    let launch_mode = match cdp {
+        Some(_) => BROWSER_LAUNCH_MODE_CDP,
+        None => config.launch_mode.trim(),
+    };
     if !launch_mode.is_empty() {
         command.arg("--mode").arg(launch_mode);
     }
     if let Some(channel) = &config.channel {
         command.arg("--channel").arg(channel);
     }
-    if let Some(path) = &config.executable_path {
+    let executable_path = cdp
+        .map(|over| over.executable_path.as_str())
+        .or(config.executable_path.as_deref());
+    if let Some(path) = executable_path {
         command.arg("--executable-path").arg(path);
+    }
+    if cdp.is_some() {
+        command.arg("--cdp-port").arg(config.cdp_port.to_string());
     }
     if let Some(endpoint) = &config.attach_endpoint {
         command.arg("--attach-endpoint").arg(endpoint);
@@ -1100,6 +1171,17 @@ fn python_program(config: &EffectiveBrowserConfig) -> String {
         .python_path
         .clone()
         .unwrap_or_else(|| if cfg!(windows) { "python" } else { "python3" }.to_string())
+}
+
+/// A failed cold start earns one CDP retry only when the direct launch itself
+/// is broken: attach/explicit-cdp modes never re-enter, sandbox bridges launch
+/// remotely (local executables mean nothing there), and a non-launch error
+/// (queue timeout, wedged page) would not be fixed by another launch.
+fn cdp_fallback_eligible(config: &EffectiveBrowserConfig, error: &str) -> bool {
+    config.cdp_fallback
+        && config.launch_mode == BROWSER_LAUNCH_MODE
+        && config.sandbox_endpoint.is_none()
+        && super::runtime::is_browser_launch_error(error)
 }
 
 fn launch_args(config: &EffectiveBrowserConfig) -> Vec<String> {
@@ -1504,14 +1586,15 @@ pub(crate) fn apply_bridge_environment(
 #[cfg(test)]
 mod tests {
     use super::{
-        bridge_spec, elapsed_millis, is_pipeline_unready, launch_deadline, parse_ready_line,
-        pick_evict_candidate, short_slot, sweep_at, BridgeResponse, BridgeSession, BrowserBridge,
-        Command, ACTIVE_PROTECT, LAUNCH_GRACE, STATE_LAUNCHING, STATE_READY, WARM_PIPELINE_RETRY,
-        WARM_RETRY_CEILING,
+        bridge_spec, build_spawn_command, elapsed_millis, is_pipeline_unready, launch_deadline,
+        parse_ready_line, pick_evict_candidate, short_slot, sweep_at, BridgeResponse,
+        BridgeSession, BrowserBridge, CdpOverride, Command, ACTIVE_PROTECT, LAUNCH_GRACE,
+        STATE_LAUNCHING, STATE_READY, WARM_PIPELINE_RETRY, WARM_RETRY_CEILING,
     };
     use crate::config::Config;
-    use crate::services::browser::config::effective_browser_config;
+    use crate::services::browser::config::{effective_browser_config, EffectiveBrowserConfig};
     use serde_json::json;
+    use std::path::Path;
     use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
     use std::sync::{Arc, Mutex, RwLock};
     use std::time::Duration;
@@ -1876,5 +1959,85 @@ mod tests {
         assert!(args.iter().any(|arg| arg == "--no-sandbox"));
         // The server's downloads root points at a path the sandbox lacks.
         assert!(spec["download_root"].is_null());
+    }
+
+    fn spawn_args(config: &EffectiveBrowserConfig, cdp: Option<&CdpOverride>) -> Vec<String> {
+        build_spawn_command(config, Path::new("bridge.py"), cdp)
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    #[test]
+    fn cdp_fallback_only_applies_to_broken_direct_launches() {
+        let config = effective_browser_config(&Config::default());
+        assert!(super::cdp_fallback_eligible(
+            &config,
+            "Browser bridge failed to start: Error: Executable doesn't exist at browsers/chromium-1091/chrome-win/chrome.exe"
+        ));
+        assert!(!super::cdp_fallback_eligible(
+            &config,
+            "Browser bridge closed unexpectedly"
+        ));
+        let mut disabled = config.clone();
+        disabled.cdp_fallback = false;
+        assert!(!super::cdp_fallback_eligible(
+            &disabled,
+            "Browser bridge failed to start"
+        ));
+        for mode in ["attach", "cdp"] {
+            let mut other_mode = config.clone();
+            other_mode.launch_mode = mode.to_string();
+            assert!(!super::cdp_fallback_eligible(
+                &other_mode,
+                "Browser bridge failed to start"
+            ));
+        }
+        let mut sandbox = config.clone();
+        sandbox.sandbox_endpoint = Some("http://sandbox.internal:9001".to_string());
+        assert!(!super::cdp_fallback_eligible(
+            &sandbox,
+            "Browser bridge failed to start"
+        ));
+    }
+
+    #[test]
+    fn cdp_override_prefers_the_configured_executable() {
+        let mut effective = effective_browser_config(&Config::default());
+        effective.executable_path = Some("configured/browser.exe".to_string());
+        let bridge = BrowserBridge::new(effective);
+        let over = bridge
+            .cdp_fallback_override("Browser bridge failed to start: boom")
+            .expect("fallback applies");
+        assert_eq!(over.executable_path, "configured/browser.exe");
+        assert!(bridge
+            .cdp_fallback_override("Browser bridge closed unexpectedly")
+            .is_none());
+    }
+
+    #[test]
+    fn cdp_spawn_command_switches_mode_executable_and_port() {
+        let mut config = effective_browser_config(&Config::default());
+        config.executable_path = Some("direct/browser.exe".to_string());
+        config.cdp_port = 9333;
+        let over = CdpOverride {
+            executable_path: "fallback/browser.exe".to_string(),
+        };
+        let args = spawn_args(&config, Some(&over));
+        let mode = args.iter().position(|arg| arg == "--mode").unwrap();
+        assert_eq!(args[mode + 1], "cdp");
+        let exe = args.iter().position(|arg| arg == "--executable-path").unwrap();
+        assert_eq!(args[exe + 1], "fallback/browser.exe");
+        let port = args.iter().position(|arg| arg == "--cdp-port").unwrap();
+        assert_eq!(args[port + 1], "9333");
+    }
+
+    #[test]
+    fn direct_spawn_command_carries_no_cdp_flags() {
+        let config = effective_browser_config(&Config::default());
+        let args = spawn_args(&config, None);
+        assert!(!args.iter().any(|arg| arg == "--cdp-port"));
+        let mode = args.iter().position(|arg| arg == "--mode").unwrap();
+        assert_eq!(args[mode + 1], "launch");
     }
 }

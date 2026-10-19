@@ -59,11 +59,15 @@ fn selected_workspace_id(app: &MainWindow) -> Option<String> {
 
 fn refreshed_workspace_selection(
     selected_id: Option<&str>,
-    workspace_ids: &[&str],
+    workspace_ids: &[String],
     cloud_target: bool,
 ) -> i32 {
     selected_id
-        .and_then(|id| workspace_ids.iter().position(|candidate| *candidate == id))
+        .and_then(|id| {
+            workspace_ids
+                .iter()
+                .position(|candidate| candidate.as_str() == id)
+        })
         .map(|index| index as i32)
         .unwrap_or_else(|| {
             if cloud_target || workspace_ids.is_empty() {
@@ -308,10 +312,10 @@ pub(crate) fn project_sidebar(app: &MainWindow, desktop: Option<Arc<NativeDeskto
                             })
                             .collect();
                         app.set_workspaces(ModelRc::new(VecModel::from(cards)));
-                        let workspace_ids: Vec<&str> = app
+                        let workspace_ids: Vec<String> = app
                             .get_workspaces()
                             .iter()
-                            .map(|card| card.workspace_id.as_str())
+                            .map(|card| card.workspace_id.to_string())
                             .collect();
                         app.set_selected_workspace(refreshed_workspace_selection(
                             selected_id.as_deref(),
@@ -330,6 +334,11 @@ pub(crate) fn project_sidebar(app: &MainWindow, desktop: Option<Arc<NativeDeskto
         rebuild_rows(app);
         return;
     }
+    // A direct UI projection (workspace click, archive completion, target
+    // switch) is newer than every outstanding catalogue read. Invalidate the
+    // worker before applying the new rows so a slow HDD response cannot jump
+    // the selection back afterwards.
+    next_workspace_refresh_generation();
     rebuild_rows(app);
 }
 
@@ -1028,7 +1037,7 @@ mod tests {
 
     #[test]
     fn refreshed_workspace_selection_keeps_the_stable_id() {
-        let ids = ["workspace-a", "workspace-b", "workspace-c"];
+        let ids = ["workspace-a", "workspace-b", "workspace-c"].map(str::to_string);
         assert_eq!(
             refreshed_workspace_selection(Some("workspace-b"), &ids, false),
             1
@@ -1037,7 +1046,7 @@ mod tests {
 
     #[test]
     fn refreshed_workspace_selection_never_maps_an_invalid_choice_to_the_tail() {
-        let ids = ["workspace-a", "workspace-b", "workspace-c"];
+        let ids = ["workspace-a", "workspace-b", "workspace-c"].map(str::to_string);
         assert_eq!(refreshed_workspace_selection(Some("gone"), &ids, false), 0);
         assert_eq!(refreshed_workspace_selection(None, &ids, true), -1);
         assert_eq!(refreshed_workspace_selection(None, &[], false), -1);

@@ -456,6 +456,7 @@ fn native_worker(command_rx: Receiver<BackendCommand>, event_tx: SyncSender<Back
     let _ = event_tx.send(BackendEvent::Ready);
     let mut active_session: Option<String> = None;
     let mut active_root = String::new();
+    let mut active_execution = String::new();
     let mut stream: Option<NativeStream> = None;
     let mut watch: Option<wunder_desktop::NativeThreadWatch> = None;
     let mut pending_delta: Option<PendingDelta> = None;
@@ -481,6 +482,7 @@ fn native_worker(command_rx: Receiver<BackendCommand>, event_tx: SyncSender<Back
                             &event_tx,
                             active_session.as_deref(),
                             &mut active_root,
+                            &mut active_execution,
                             &mut pending_delta,
                             value,
                         );
@@ -652,6 +654,7 @@ fn native_worker(command_rx: Receiver<BackendCommand>, event_tx: SyncSender<Back
                 }
                 active_session = Some(session_id.clone());
                 active_root.clear();
+                active_execution.clear();
                 stream = None;
                 match desktop.open_chat_snapshot(&session_id) {
                     Ok(snapshot) => {
@@ -732,6 +735,7 @@ fn native_worker(command_rx: Receiver<BackendCommand>, event_tx: SyncSender<Back
                 }) {
                     Ok(next) => {
                         active_root.clear();
+                        active_execution.clear();
                         stream = Some(next);
                     }
                     Err(error) => {
@@ -968,6 +972,7 @@ fn handle_native_event(
     event_tx: &SyncSender<BackendEvent>,
     session_id: Option<&str>,
     active_root: &mut String,
+    active_execution: &mut String,
     pending_delta: &mut Option<PendingDelta>,
     value: Value,
 ) {
@@ -980,6 +985,9 @@ fn handle_native_event(
     if event == "native_turn_identity" {
         if let Some(root) = data.get("root_turn_id").and_then(Value::as_str) {
             *active_root = root.to_string();
+            if active_execution.is_empty() {
+                *active_execution = root.to_owned();
+            }
         }
         return;
     }
@@ -991,23 +999,39 @@ fn handle_native_event(
             .or_else(|| payload.get("content").and_then(Value::as_str))
             .unwrap_or_default();
         if !text.is_empty() {
-            let round = payload
-                .get("model_round")
-                .and_then(Value::as_i64)
-                .unwrap_or(1);
-            let item_id = format!("{}:text-{}", active_root, round);
-            let _ = flush_pending_delta(event_tx, pending_delta);
-            let _ = event_tx.send(BackendEvent::ReasoningDelta {
-                session_id: session_id.to_string(),
-                turn_id: active_root.to_string(),
-                item_id,
-                text: text.to_owned(),
-            });
+            emit_reasoning_delta(
+                event_tx,
+                session_id,
+                active_root,
+                active_execution,
+                payload,
+                text,
+                pending_delta,
+            );
         }
         return;
     }
     if matches!(event, "llm_output" | "llm_output_delta") {
         let payload = data.get("data").unwrap_or(data);
+        // The runtime streams visible answer and hidden reasoning together in
+        // `llm_output_delta`.  Project the latter into the work-process tail
+        // before coalescing the visible answer, otherwise a reasoning-only
+        // chunk is silently discarded by the chat projection.
+        let reasoning = payload
+            .get("reasoning_delta")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if !reasoning.is_empty() {
+            emit_reasoning_delta(
+                event_tx,
+                session_id,
+                active_root,
+                active_execution,
+                payload,
+                reasoning,
+                pending_delta,
+            );
+        }
         let text = payload
             .get("content")
             .and_then(Value::as_str)
@@ -1023,6 +1047,11 @@ fn handle_native_event(
         "native_execution_started" | "native_execution_status" | "turn_terminal"
     ) {
         let payload = data.get("data").unwrap_or(data);
+        if event == "native_execution_started" {
+            if let Some(execution) = payload.get("turn_id").and_then(Value::as_str) {
+                *active_execution = execution.to_owned();
+            }
+        }
         let root = payload
             .get("root_turn_id")
             .and_then(Value::as_str)
@@ -1096,6 +1125,46 @@ fn handle_native_event(
             item,
         });
     }
+}
+
+/// Build the same durable identity used by `NativeProcessItem`: an assistant
+/// message stores one model round as `{root}:text-{round}`, and the egui
+/// process projection prefixes its reasoning entry with `reason-`.  Using it
+/// for live deltas makes a subsequently loaded process page update the active
+/// entry instead of rendering a duplicate thought.
+#[cfg(not(target_arch = "wasm32"))]
+fn reasoning_item_id(root: &str, round: i64) -> String {
+    format!("reason-{root}:text-{round}")
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn emit_reasoning_delta(
+    event_tx: &SyncSender<BackendEvent>,
+    session_id: &str,
+    active_root: &str,
+    active_execution: &str,
+    payload: &Value,
+    text: &str,
+    pending_delta: &mut Option<PendingDelta>,
+) {
+    let round = payload
+        .get("model_round")
+        .and_then(Value::as_i64)
+        .unwrap_or(1);
+    let _ = flush_pending_delta(event_tx, pending_delta);
+    let _ = event_tx.send(BackendEvent::ReasoningDelta {
+        session_id: session_id.to_owned(),
+        turn_id: active_root.to_owned(),
+        item_id: reasoning_item_id(
+            if active_execution.is_empty() {
+                active_root
+            } else {
+                active_execution
+            },
+            round,
+        ),
+        text: text.to_owned(),
+    });
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -1384,11 +1453,20 @@ fn turn_view(turn: wunder_desktop::NativeChatTurn) -> TurnView {
             .into_iter()
             .flat_map(|round| {
                 let mut rows = Vec::with_capacity(round.items.len().saturating_add(2));
-                let identity = format!("{}:{}", round.execution, round.round);
+                // Keep live/history/process-page identities interchangeable.
+                // NativeProcessItem uses the durable assistant item id
+                // (`{root}:text-{round}`), so prefixing that same id avoids a
+                // duplicate reasoning row when a disclosure is opened after
+                // the lightweight history snapshot has already rendered it.
+                let identity = if round.item_id.is_empty() {
+                    format!("{}:text-{}", round.execution, round.round)
+                } else {
+                    round.item_id.clone()
+                };
                 if !round.reasoning.is_empty() {
                     let (detail, detail_truncated) = bounded_detail(&round.reasoning);
                     rows.push(WorkflowView {
-                        id: format!("{identity}:reasoning"),
+                        id: format!("reason-{identity}"),
                         kind: WorkflowKind::Reasoning,
                         title: "已思考".into(),
                         preview: bounded_preview(&round.reasoning),
@@ -1401,7 +1479,7 @@ fn turn_view(turn: wunder_desktop::NativeChatTurn) -> TurnView {
                 if !round.is_answer && !round.text.is_empty() {
                     let (detail, detail_truncated) = bounded_detail(&round.text);
                     rows.push(WorkflowView {
-                        id: format!("{identity}:text"),
+                        id: format!("print-{identity}"),
                         kind: WorkflowKind::Text,
                         title: "中间输出".into(),
                         preview: bounded_preview(&round.text),
@@ -1428,6 +1506,7 @@ fn process_page_view(page: wunder_desktop::NativeProcessPage) -> ProcessPageView
             let (detail, detail_truncated) = bounded_detail(&item.reasoning);
             items.push(WorkflowView {
                 id: format!("reason-{}", item.id),
+                storage_index: Some(item.item_index),
                 kind: WorkflowKind::Reasoning,
                 title: if matches!(item.state.as_str(), "running" | "streaming" | "queued") {
                     "正在思考…"
@@ -1446,6 +1525,7 @@ fn process_page_view(page: wunder_desktop::NativeProcessPage) -> ProcessPageView
             let (detail, detail_truncated) = bounded_detail(&item.text);
             items.push(WorkflowView {
                 id: format!("print-{}", item.id),
+                storage_index: Some(item.item_index),
                 kind: WorkflowKind::Text,
                 title: "中间输出".to_owned(),
                 preview: bounded_preview(&item.text),
@@ -1456,7 +1536,9 @@ fn process_page_view(page: wunder_desktop::NativeProcessPage) -> ProcessPageView
             });
         }
         if let Some(tool) = item.tool {
-            items.push(native_workflow_view(tool));
+            let mut view = native_workflow_view(tool);
+            view.storage_index = Some(item.item_index);
+            items.push(view);
         }
     }
     ProcessPageView {
@@ -1571,6 +1653,7 @@ fn native_workflow_view(item: wunder_desktop::NativeWorkflowEntry) -> WorkflowVi
     }
     WorkflowView {
         id: item.id,
+        storage_index: None,
         kind: WorkflowKind::Tool,
         tool_name: item.title.clone(),
         title: item.title,
@@ -1799,30 +1882,37 @@ pub fn apply_event(state: &mut AppState, event: BackendEvent) {
                                 deduped.push(item);
                             }
                         }
-                        if deduped.len() > PROCESS_ITEM_LIMIT {
+                        let over_limit = deduped.len() > PROCESS_ITEM_LIMIT;
+                        if over_limit {
                             if before.is_some() {
+                                // Older pages are prepended. Keep the oldest
+                                // visible window so the newly read page is
+                                // useful immediately; the discarded newer
+                                // tail remains reachable through `after`.
                                 deduped.truncate(PROCESS_ITEM_LIMIT);
                             } else {
+                                // Newer pages are appended. Keep the newest
+                                // window and expose an older-page affordance
+                                // for rows evicted from the front.
                                 let start = deduped.len() - PROCESS_ITEM_LIMIT;
                                 deduped = deduped.split_off(start);
                             }
                         }
+                        // A durable page is indexed by storage item, while a
+                        // single item can expand into reasoning, text and a
+                        // tool row. Derive cursors from the rows that survive
+                        // the presentation cap; retaining a page cursor for
+                        // a trimmed-away row would make the next/previous
+                        // page action skip an unreachable interval.
+                        let (retained_first, retained_last) = workflow_storage_bounds(&deduped);
                         turn.workflow = deduped;
                         if turn.process_steps == 0 {
                             turn.process_steps = turn.workflow.len();
                         }
-                        if before.is_some() {
-                            turn.process_first = page.first.or(turn.process_first);
-                            turn.process_has_older = page.has_older;
-                        } else if after.is_some() {
-                            turn.process_last = page.last.or(turn.process_last);
-                            turn.process_has_newer = page.has_newer;
-                        } else {
-                            turn.process_first = page.first;
-                            turn.process_last = page.last;
-                            turn.process_has_older = page.has_older;
-                            turn.process_has_newer = page.has_newer;
-                        }
+                        turn.process_first = retained_first.or(page.first).or(turn.process_first);
+                        turn.process_last = retained_last.or(page.last).or(turn.process_last);
+                        turn.process_has_older = page.has_older || (over_limit && after.is_some());
+                        turn.process_has_newer = page.has_newer || (over_limit && before.is_some());
                         turn.process_loaded = true;
                         turn.process_error.clear();
                     }
@@ -1996,6 +2086,21 @@ fn retain_process_projection(next: &mut TurnView, previous: &TurnView) {
         next.process_has_older = previous.process_has_older;
         next.process_has_newer = previous.process_has_newer;
     }
+}
+
+/// Return the durable keyset bounds represented by a capped UI projection.
+/// Several visible rows can share one storage item, so row count must never
+/// be used as a cursor. Live-only tail rows intentionally carry no index.
+fn workflow_storage_bounds(items: &[WorkflowView]) -> (Option<i64>, Option<i64>) {
+    items
+        .iter()
+        .filter_map(|item| item.storage_index)
+        .fold((None, None), |(first, last), index| {
+            (
+                Some(first.map_or(index, |current: i64| current.min(index))),
+                Some(last.map_or(index, |current: i64| current.max(index))),
+            )
+        })
 }
 
 #[cfg(test)]
@@ -2184,6 +2289,41 @@ mod tests {
         let item = &state.turns[0].workflow[0];
         assert!(item.detail.len() <= PROCESS_DETAIL_BYTES);
         assert!(item.detail_truncated);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn streamed_reasoning_identity_matches_durable_execution_item() {
+        assert_eq!(
+            reasoning_item_id("continuation-execution", 3),
+            "reason-continuation-execution:text-3"
+        );
+    }
+
+    #[test]
+    fn workflow_storage_bounds_ignore_live_rows_and_keep_item_cursors() {
+        let rows = vec![
+            WorkflowView {
+                id: "live".to_owned(),
+                ..Default::default()
+            },
+            WorkflowView {
+                id: "reason-11".to_owned(),
+                storage_index: Some(11),
+                ..Default::default()
+            },
+            WorkflowView {
+                id: "tool-12".to_owned(),
+                storage_index: Some(12),
+                ..Default::default()
+            },
+            WorkflowView {
+                id: "text-12".to_owned(),
+                storage_index: Some(12),
+                ..Default::default()
+            },
+        ];
+        assert_eq!(workflow_storage_bounds(&rows), (Some(11), Some(12)));
     }
 
     #[test]

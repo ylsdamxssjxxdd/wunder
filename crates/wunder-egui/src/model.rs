@@ -69,6 +69,11 @@ pub enum WorkflowKind {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct WorkflowView {
     pub id: String,
+    /// Durable process item cursor when this row came from a paged native
+    /// read. Live-only rows leave it unset; the reducer uses it to keep
+    /// pagination reachable after the presentation cap trims expanded rows.
+    #[serde(default)]
+    pub storage_index: Option<i64>,
     #[serde(default)]
     pub kind: WorkflowKind,
     /// Runtime tool identifier, separate from the human-readable title.

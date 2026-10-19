@@ -81,6 +81,27 @@
               ]
             },
             {
+              "target": "core-overview",
+              "title": [
+                {
+                  "text": "Diverse, Fast, Superior, Efficient",
+                  "bold": false,
+                  "code": false,
+                  "kbd": false,
+                  "href": ""
+                }
+              ],
+              "summary": [
+                {
+                  "text": "The four cores: multi-platform and multi-form, fast startup and response, strong stability and intelligence, low CPU, memory, and context cost.",
+                  "bold": false,
+                  "code": false,
+                  "kbd": false,
+                  "href": ""
+                }
+              ]
+            },
+            {
               "target": "core-goal",
               "title": [
                 {

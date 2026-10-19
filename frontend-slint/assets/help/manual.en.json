@@ -81,6 +81,27 @@
               ]
             },
             {
+              "target": "core-overview",
+              "title": [
+                {
+                  "text": "Diverse, Fast, Superior, Efficient",
+                  "bold": false,
+                  "code": false,
+                  "kbd": false,
+                  "href": ""
+                }
+              ],
+              "summary": [
+                {
+                  "text": "The four cores: multi-platform and multi-form, fast startup and response, strong stability and intelligence, low CPU, memory, and context cost.",
+                  "bold": false,
+                  "code": false,
+                  "kbd": false,
+                  "href": ""
+                }
+              ]
+            },
+            {
               "target": "core-goal",
               "title": [
                 {
@@ -2318,9 +2339,253 @@
       ]
     },
     {
+      "id": "core-overview",
+      "title": "Core Concepts",
+      "group": "Core",
+      "keywords": [
+        "Diverse",
+        "Fast",
+        "Superior",
+        "Efficient",
+        "multi-platform",
+        "multi-form",
+        "startup speed",
+        "response speed",
+        "stability",
+        "intelligence",
+        "CPU usage",
+        "memory usage",
+        "context consumption"
+      ],
+      "blocks": [
+        {
+          "kind": "h1",
+          "spans": [
+            {
+              "text": "Core Concepts",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "lead",
+          "spans": [
+            {
+              "text": "wunder is an agent-scheduling platform: hand it a goal and the agent breaks the task down, calls tools, and delivers results. The feature list lives in ",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": "Tools",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": " and the ",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": "Capability Quick Reference",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": ".",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "h2",
+          "spans": [
+            {
+              "text": "Diverse, Fast, Superior, Efficient",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "paragraph",
+          "spans": [
+            {
+              "text": "Diversity and strength set the capability surface; speed and efficiency constrain how it is built: a thin access layer, a short execution path, and bounded queues, caches, views, and context.",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "table",
+          "rows": [
+            {
+              "header": true,
+              "cells": [
+                [
+                  {
+                    "text": "Core",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "Meaning",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ]
+              ]
+            },
+            {
+              "header": false,
+              "cells": [
+                [
+                  {
+                    "text": "Diverse",
+                    "bold": true,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "Multi-platform, multi-form. One core and engine support the Pupa, Beehive, Helm, and Hull across Windows 7 x86 and up, Linux (ubuntu18.04 baseline) x64 / arm64, Docker, and browsers; models, channels, and workspaces extend through the same access layer",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ]
+              ]
+            },
+            {
+              "header": false,
+              "cells": [
+                [
+                  {
+                    "text": "Fast",
+                    "bold": true,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "Fast startup, fast response. Local forms call the engine in-process without local HTTP; threads and history restore directly from local storage; streaming events are frame-coalesced and projected incrementally, and tools run in parallel where allowed",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ]
+              ]
+            },
+            {
+              "header": false,
+              "cells": [
+                [
+                  {
+                    "text": "Superior",
+                    "bold": true,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "Strong stability, high intelligence. Queues, caches, views, and context are bounded, with session locks, round caps, quotas, and retry circuit breaking for long runs; goal mode, subagents, the tool chain, long-term memory, and knowledge bases carry complex tasks from decomposition to delivery",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ]
+              ]
+            },
+            {
+              "header": false,
+              "cells": [
+                [
+                  {
+                    "text": "Efficient",
+                    "bold": true,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "Low CPU and memory use, low context consumption. A native Rust process with local SQLite needs no browser runtime; tool-result trimming, frozen prompts that reuse cache, one-time memory-index injection, and micro-compaction and history compaction keep token consumption down",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "paragraph",
+          "spans": [
+            {
+              "text": "The nine capabilities expanded page by page — goal, compatibility, context compression, subagents, scheduled tasks, channels, memory, multithreading, and multi-tenancy — live under ",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": "Capabilities › Core Capabilities",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": ".",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        }
+      ]
+    },
+    {
       "id": "core-goal",
       "title": "Goal",
-      "group": "Core",
+      "group": "Core Capabilities",
       "keywords": [
         "goal",
         "goal state",
@@ -2850,7 +3115,7 @@
     {
       "id": "core-compatibility",
       "title": "Compatibility",
-      "group": "Core",
+      "group": "Core Capabilities",
       "keywords": [
         "compatibility",
         "Windows 7",
@@ -3131,7 +3396,7 @@
     {
       "id": "core-context-compression",
       "title": "Context Compression",
-      "group": "Core",
+      "group": "Core Capabilities",
       "keywords": [
         "context compaction",
         "compaction",
@@ -3562,7 +3827,7 @@
     {
       "id": "core-subagent",
       "title": "Subagents",
-      "group": "Core",
+      "group": "Core Capabilities",
       "keywords": [
         "subagent",
         "spawn",
@@ -3878,7 +4143,7 @@
     {
       "id": "core-scheduled-tasks",
       "title": "Scheduled Tasks",
-      "group": "Core",
+      "group": "Core Capabilities",
       "keywords": [
         "scheduled task",
         "schedule",
@@ -4991,7 +5256,7 @@
     {
       "id": "core-channels",
       "title": "Channels",
-      "group": "Core",
+      "group": "Core Capabilities",
       "keywords": [
         "channel",
         "Feishu",
@@ -5820,7 +6085,7 @@
     {
       "id": "core-memory",
       "title": "Memory",
-      "group": "Core",
+      "group": "Core Capabilities",
       "keywords": [
         "memory",
         "long-term memory",
@@ -6193,7 +6458,7 @@
     {
       "id": "core-multithreading",
       "title": "Multi-threading",
-      "group": "Core",
+      "group": "Core Capabilities",
       "keywords": [
         "multi-threading",
         "concurrency",
@@ -6511,7 +6776,7 @@
     {
       "id": "core-multi-user-management",
       "title": "Multi-user Management",
-      "group": "Core",
+      "group": "Core Capabilities",
       "keywords": [
         "multi-tenancy",
         "account",
@@ -14921,340 +15186,392 @@
       "topic": 3
     },
     {
-      "keyword": "goal",
+      "keyword": "Diverse",
       "topic": 4
+    },
+    {
+      "keyword": "Fast",
+      "topic": 4
+    },
+    {
+      "keyword": "Superior",
+      "topic": 4
+    },
+    {
+      "keyword": "Efficient",
+      "topic": 4
+    },
+    {
+      "keyword": "multi-platform",
+      "topic": 4
+    },
+    {
+      "keyword": "multi-form",
+      "topic": 4
+    },
+    {
+      "keyword": "startup speed",
+      "topic": 4
+    },
+    {
+      "keyword": "response speed",
+      "topic": 4
+    },
+    {
+      "keyword": "stability",
+      "topic": 4
+    },
+    {
+      "keyword": "intelligence",
+      "topic": 4
+    },
+    {
+      "keyword": "CPU usage",
+      "topic": 4
+    },
+    {
+      "keyword": "memory usage",
+      "topic": 4
+    },
+    {
+      "keyword": "context consumption",
+      "topic": 4
+    },
+    {
+      "keyword": "goal",
+      "topic": 5
     },
     {
       "keyword": "goal state",
-      "topic": 4
+      "topic": 5
     },
     {
       "keyword": "phase",
-      "topic": 4
+      "topic": 5
     },
     {
       "keyword": "round cap",
-      "topic": 4
+      "topic": 5
     },
     {
       "keyword": "compatibility",
-      "topic": 5
+      "topic": 6
     },
     {
       "keyword": "Windows 7",
-      "topic": 5
+      "topic": 6
     },
     {
       "keyword": "Ubuntu",
-      "topic": 5
+      "topic": 6
     },
     {
       "keyword": "offline",
-      "topic": 5
+      "topic": 6
     },
     {
       "keyword": "context compaction",
-      "topic": 6
+      "topic": 7
     },
     {
       "keyword": "compaction",
-      "topic": 6
+      "topic": 7
     },
     {
       "keyword": "context",
-      "topic": 6
+      "topic": 7
     },
     {
       "keyword": "subagent",
-      "topic": 7
+      "topic": 8
     },
     {
       "keyword": "spawn",
-      "topic": 7
+      "topic": 8
     },
     {
       "keyword": "collaboration",
-      "topic": 7
+      "topic": 8
     },
     {
       "keyword": "scheduled task",
-      "topic": 8
+      "topic": 9
     },
     {
       "keyword": "schedule",
-      "topic": 8
+      "topic": 9
     },
     {
       "keyword": "cron",
-      "topic": 8
+      "topic": 9
     },
     {
       "keyword": "channel",
-      "topic": 9
+      "topic": 10
     },
     {
       "keyword": "Feishu",
-      "topic": 9
+      "topic": 10
     },
     {
       "keyword": "QQ",
-      "topic": 9
+      "topic": 10
     },
     {
       "keyword": "WeChat",
-      "topic": 9
+      "topic": 10
     },
     {
       "keyword": "IM",
-      "topic": 9
+      "topic": 10
     },
     {
       "keyword": "memory",
-      "topic": 10
+      "topic": 11
     },
     {
       "keyword": "long-term memory",
-      "topic": 10
+      "topic": 11
     },
     {
       "keyword": "knowledge base",
-      "topic": 10
+      "topic": 11
     },
     {
       "keyword": "multi-threading",
-      "topic": 11
+      "topic": 12
     },
     {
       "keyword": "concurrency",
-      "topic": 11
+      "topic": 12
     },
     {
       "keyword": "thread",
-      "topic": 11
+      "topic": 12
     },
     {
       "keyword": "queue",
-      "topic": 11
+      "topic": 12
     },
     {
       "keyword": "multi-tenancy",
-      "topic": 12
+      "topic": 13
     },
     {
       "keyword": "account",
-      "topic": 12
+      "topic": 13
     },
     {
       "keyword": "quota",
-      "topic": 12
+      "topic": 13
     },
     {
       "keyword": "permission",
-      "topic": 12
+      "topic": 13
     },
     {
       "keyword": "tools",
-      "topic": 13
+      "topic": 14
     },
     {
       "keyword": "tool matrix",
-      "topic": 13
+      "topic": 14
     },
     {
       "keyword": "MCP",
-      "topic": 13
+      "topic": 14
     },
     {
       "keyword": "alias",
-      "topic": 13
+      "topic": 14
     },
     {
       "keyword": "skills",
-      "topic": 14
+      "topic": 15
     },
     {
       "keyword": "server",
-      "topic": 14
+      "topic": 15
     },
     {
       "keyword": "interface",
-      "topic": 15
+      "topic": 16
     },
     {
       "keyword": "sidebar",
-      "topic": 15
+      "topic": 16
     },
     {
       "keyword": "working process",
-      "topic": 15
+      "topic": 16
     },
     {
       "keyword": "trajectory",
-      "topic": 15
+      "topic": 16
     },
     {
       "keyword": "layout",
-      "topic": 15
+      "topic": 16
     },
     {
       "keyword": "interlink",
-      "topic": 17
+      "topic": 18
     },
     {
       "keyword": "devices",
-      "topic": 17
+      "topic": 18
     },
     {
       "keyword": "tunnel",
-      "topic": 17
+      "topic": 18
     },
     {
       "keyword": "remote",
-      "topic": 17
+      "topic": 18
     },
     {
       "keyword": "settings",
-      "topic": 18
+      "topic": 19
     },
     {
       "keyword": "language",
-      "topic": 18
+      "topic": 19
     },
     {
       "keyword": "theme",
-      "topic": 18
+      "topic": 19
     },
     {
       "keyword": "cloud account",
-      "topic": 18
+      "topic": 19
     },
     {
       "keyword": "preferences",
-      "topic": 18
+      "topic": 19
     },
     {
       "keyword": "models",
-      "topic": 19
+      "topic": 20
     },
     {
       "keyword": "parameters",
-      "topic": 19
+      "topic": 20
     },
     {
       "keyword": "default model",
-      "topic": 19
+      "topic": 20
     },
     {
       "keyword": "multimodal parameters",
-      "topic": 19
+      "topic": 20
     },
     {
       "keyword": "temperature",
-      "topic": 19
+      "topic": 20
     },
     {
       "keyword": "rounds",
-      "topic": 20
+      "topic": 21
     },
     {
       "keyword": "tool calls",
-      "topic": 20
+      "topic": 21
     },
     {
       "keyword": "files",
-      "topic": 21
+      "topic": 22
     },
     {
       "keyword": "workspace",
-      "topic": 21
+      "topic": 22
     },
     {
       "keyword": "local",
-      "topic": 21
+      "topic": 22
     },
     {
       "keyword": "storage",
-      "topic": 21
+      "topic": 22
     },
     {
       "keyword": "export",
-      "topic": 21
+      "topic": 22
     },
     {
       "keyword": "screenshot",
-      "topic": 22
+      "topic": 23
     },
     {
       "keyword": "recording",
-      "topic": 22
+      "topic": 23
     },
     {
       "keyword": "speech recognition",
-      "topic": 22
+      "topic": 23
     },
     {
       "keyword": "speech synthesis",
-      "topic": 22
+      "topic": 23
     },
     {
       "keyword": "image generation",
-      "topic": 22
+      "topic": 23
     },
     {
       "keyword": "video generation",
-      "topic": 22
+      "topic": 23
     },
     {
       "keyword": "data",
-      "topic": 23
+      "topic": 24
     },
     {
       "keyword": "privacy",
-      "topic": 23
+      "topic": 24
     },
     {
       "keyword": "SQLite",
-      "topic": 23
+      "topic": 24
     },
     {
       "keyword": "backup",
-      "topic": 23
+      "topic": 24
     },
     {
       "keyword": "storage location",
-      "topic": 23
+      "topic": 24
     },
     {
       "keyword": "diagnostics",
-      "topic": 24
+      "topic": 25
     },
     {
       "keyword": "troubleshooting",
-      "topic": 24
+      "topic": 25
     },
     {
       "keyword": "FAQ",
-      "topic": 24
+      "topic": 25
     },
     {
       "keyword": "failure",
-      "topic": 24
+      "topic": 25
     },
     {
       "keyword": "terminology",
-      "topic": 25
+      "topic": 26
     },
     {
       "keyword": "terms",
-      "topic": 25
+      "topic": 26
     },
     {
       "keyword": "definitions",
-      "topic": 25
+      "topic": 26
     },
     {
       "keyword": "concepts",
-      "topic": 25
+      "topic": 26
     }
   ]
 }

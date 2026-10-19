@@ -111,7 +111,7 @@ pub struct Card {
 pub struct Topic {
     pub id: String,
     pub title: String,
-    /// 侧栏分组名（开始 / 核心 / 工具 / 界面 / 参考），目录按此渲染分组标题。
+    /// 侧栏分组名（开始 / 核心 / 核心能力 / 工具 / 界面 / 能力 / 参考），目录按此渲染分组标题。
     #[serde(default)]
     pub group: String,
     pub keywords: Vec<String>,

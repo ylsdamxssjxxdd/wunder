@@ -245,10 +245,12 @@ browser:
     max_tabs_per_session: 8
     prewarm_sessions: ${WUNDER_BROWSER_PREWARM_SESSIONS:-1} # 启动后后台预热的浏览器数，0 = 关闭
   playwright:
-    mode: launch # launch=另起受控浏览器；attach=接管已在运行的浏览器
+    mode: launch # launch=另起受控浏览器；attach=接管已在运行的浏览器；cdp=bridge 自行 spawn executable_path 并以 CDP 直连（通常由回退链自动进入，无需手配）
     channel: null # 复用本机浏览器：chrome / msedge / chromium ...
-    executable_path: null # 直接指定浏览器可执行文件（优先于 channel）
+    executable_path: null # 直接指定浏览器可执行文件（优先于 channel）；留空时自动探测补充包 opt/browser 与系统 Edge/Chrome
     attach_endpoint: null # mode=attach 时的 CDP 端点（http(s)://host:port 或 ws://...）
+    cdp_fallback: true # 直连 launch 冷启动失败（缺浏览器/启动崩溃）时，自动用探测到的浏览器改走「spawn + remote-debugging-port + CDP 直连」重试一次；全程离线，不触发任何下载
+    cdp_port: 0 # CDP 回退的 remote-debugging 端口；0 = 自动挑选空闲端口
     browsers_path: null # 留空时自动探测并默认使用补充包内置的 Chromium（<python_root>/ms-playwright）
   docker:
     enabled: ${WUNDER_BROWSER_DOCKER_ENABLED:-false}

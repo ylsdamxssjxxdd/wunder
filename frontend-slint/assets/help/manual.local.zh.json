@@ -81,6 +81,27 @@
               ]
             },
             {
+              "target": "core-overview",
+              "title": [
+                {
+                  "text": "多快好省",
+                  "bold": false,
+                  "code": false,
+                  "kbd": false,
+                  "href": ""
+                }
+              ],
+              "summary": [
+                {
+                  "text": "四个核心：多平台多形态、启动与响应快、稳定且智能、CPU 内存与上下文消耗低。",
+                  "bold": false,
+                  "code": false,
+                  "kbd": false,
+                  "href": ""
+                }
+              ]
+            },
+            {
               "target": "core-goal",
               "title": [
                 {
