@@ -67,6 +67,7 @@ pub(crate) async fn execute_thread_control_tool(
     if action.is_empty() {
         return Err(anyhow!(i18n::t("error.content_required")));
     }
+    validate_action_fields(args, &action)?;
     match action.as_str() {
         "list" => list_threads(context, payload).await,
         "info" => info_thread(context, payload).await,
@@ -78,6 +79,88 @@ pub(crate) async fn execute_thread_control_tool(
         "restore" => restore_thread(context, payload).await,
         _ => Err(anyhow!("unknown thread_control action: {}", payload.action)),
     }
+}
+
+fn validate_action_fields(args: &Value, action: &str) -> Result<()> {
+    let object = args
+        .as_object()
+        .ok_or_else(|| anyhow!("thread_control arguments must be an object"))?;
+    let allowed: &[&str] = match action {
+        "list" => &[
+            "action",
+            "session_id",
+            "sessionId",
+            "targetSessionId",
+            "target_session_id",
+            "sessionKey",
+            "session_key",
+            "scope",
+            "status",
+            "limit",
+        ],
+        "info" | "back" => &[
+            "action",
+            "session_id",
+            "sessionId",
+            "targetSessionId",
+            "target_session_id",
+            "sessionKey",
+            "session_key",
+        ],
+        "create" => &[
+            "action",
+            "parent_session_id",
+            "parentSessionId",
+            "parentId",
+            "parent_id",
+            "agent_id",
+            "agentId",
+            "title",
+            "label",
+            "switch",
+            "switchTo",
+            "switch_to",
+        ],
+        "switch" => &[
+            "action",
+            "session_id",
+            "sessionId",
+            "targetSessionId",
+            "target_session_id",
+            "sessionKey",
+            "session_key",
+        ],
+        "update_title" => &[
+            "action",
+            "session_id",
+            "sessionId",
+            "targetSessionId",
+            "target_session_id",
+            "sessionKey",
+            "session_key",
+            "title",
+        ],
+        "archive" | "restore" => &[
+            "action",
+            "session_id",
+            "sessionId",
+            "targetSessionId",
+            "target_session_id",
+            "sessionKey",
+            "session_key",
+            "switch",
+            "switchTo",
+            "switch_to",
+        ],
+        _ => &[],
+    };
+    let allowed: HashSet<&str> = allowed.iter().copied().collect();
+    if let Some(key) = object.keys().find(|key| !allowed.contains(key.as_str())) {
+        return Err(anyhow!(
+            "thread_control action={action} does not accept field `{key}`"
+        ));
+    }
+    Ok(())
 }
 
 fn normalize_action(raw: &str) -> String {
@@ -246,15 +329,9 @@ fn session_payload(
         "id": record.session_id,
         "title": record.title,
         "status": record.status,
-        "created_at": format_ts(record.created_at),
         "updated_at": format_ts(record.updated_at),
-        "last_message_at": format_ts(record.last_message_at),
-        "agent_id": record.agent_id,
-        "tool_overrides": record.tool_overrides,
         "parent_session_id": record.parent_session_id,
-        "parent_message_id": record.parent_message_id,
         "spawn_label": record.spawn_label,
-        "spawned_by": record.spawned_by,
         "runtime_status": resolve_runtime_status(context, &record.session_id),
     });
     if let Some(relation) = relation.filter(|value| !value.trim().is_empty()) {

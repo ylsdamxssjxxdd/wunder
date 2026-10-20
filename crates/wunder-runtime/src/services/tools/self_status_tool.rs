@@ -7,42 +7,34 @@ use std::collections::BTreeMap;
 pub(crate) const TOOL_SELF_STATUS: &str = "\u{81ea}\u{6211}\u{72b6}\u{6001}";
 pub(crate) const TOOL_SELF_STATUS_ALIAS: &str = "self_status";
 
-const DEFAULT_EVENTS_LIMIT: usize = 20;
-const MAX_EVENTS_LIMIT: usize = 200;
+const FULL_EVENTS_LIMIT: usize = 20;
 
 #[derive(Debug, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 struct SelfStatusArgs {
-    #[serde(default, alias = "detailLevel")]
+    #[serde(default)]
     detail_level: Option<String>,
-    #[serde(default, alias = "includeEvents")]
-    include_events: Option<bool>,
-    #[serde(default, alias = "eventsLimit")]
-    events_limit: Option<usize>,
-    #[serde(default, alias = "includeSystemMetrics")]
-    include_system_metrics: Option<bool>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DetailLevel {
     Basic,
-    Standard,
     Full,
 }
 
 impl DetailLevel {
-    fn from_raw(raw: Option<&str>) -> Self {
-        let normalized = raw.unwrap_or("standard").trim().to_ascii_lowercase();
+    fn from_raw(raw: Option<&str>) -> Result<Self> {
+        let normalized = raw.unwrap_or("basic").trim().to_ascii_lowercase();
         match normalized.as_str() {
-            "basic" | "lite" | "summary" => Self::Basic,
-            "full" | "detail" | "detailed" | "verbose" => Self::Full,
-            _ => Self::Standard,
+            "basic" => Ok(Self::Basic),
+            "full" => Ok(Self::Full),
+            _ => Err(anyhow!("detail_level must be basic or full")),
         }
     }
 
     fn as_str(self) -> &'static str {
         match self {
             Self::Basic => "basic",
-            Self::Standard => "standard",
             Self::Full => "full",
         }
     }
@@ -71,14 +63,24 @@ pub(crate) async fn execute_self_status_tool(
     } else {
         serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?
     };
-    let detail_level = DetailLevel::from_raw(payload.detail_level.as_deref());
-    let include_events = payload
-        .include_events
-        .unwrap_or(matches!(detail_level, DetailLevel::Full));
-    let include_system_metrics = payload
-        .include_system_metrics
-        .unwrap_or(matches!(detail_level, DetailLevel::Full));
-    let events_limit = clamp_events_limit(payload.events_limit);
+    let parsed_level = DetailLevel::from_raw(payload.detail_level.as_deref())?;
+    let requested_full = parsed_level == DetailLevel::Full;
+    // Full event and system-metric payloads are diagnostic data. Keep them out
+    // of ordinary agent calls: `detail_level=full` is an explicit admin-only
+    // request; the model observation is still projected to the basic view.
+    if requested_full && !context.is_admin {
+        return Err(anyhow!(
+            "self_status full diagnostics require administrator access"
+        ));
+    }
+    let detail_level = if requested_full {
+        DetailLevel::Full
+    } else {
+        DetailLevel::Basic
+    };
+    let include_events = matches!(detail_level, DetailLevel::Full);
+    let include_system_metrics = matches!(detail_level, DetailLevel::Full);
+    let events_limit = FULL_EVENTS_LIMIT;
 
     let monitor_record = context
         .monitor
@@ -206,11 +208,6 @@ pub(crate) async fn execute_self_status_tool(
     }
 
     Ok(response)
-}
-
-fn clamp_events_limit(raw: Option<usize>) -> usize {
-    raw.unwrap_or(DEFAULT_EVENTS_LIMIT)
-        .clamp(1, MAX_EVENTS_LIMIT)
 }
 
 fn configured_model_info(context: &ToolContext<'_>) -> Value {
@@ -369,14 +366,42 @@ fn update_round_peak(target: &mut Option<i64>, incoming: Option<i64>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{collect_event_stats, DetailLevel, TOOL_SELF_STATUS_ALIAS};
+    use super::{collect_event_stats, DetailLevel, SelfStatusArgs, TOOL_SELF_STATUS_ALIAS};
     use serde_json::json;
 
     #[test]
-    fn detail_level_defaults_to_standard() {
-        assert_eq!(DetailLevel::from_raw(None).as_str(), "standard");
-        assert_eq!(DetailLevel::from_raw(Some("basic")).as_str(), "basic");
-        assert_eq!(DetailLevel::from_raw(Some("full")).as_str(), "full");
+    fn detail_level_defaults_to_basic() {
+        assert_eq!(DetailLevel::from_raw(None).unwrap().as_str(), "basic");
+        assert_eq!(
+            DetailLevel::from_raw(Some("basic")).unwrap().as_str(),
+            "basic"
+        );
+        assert_eq!(
+            DetailLevel::from_raw(Some("full")).unwrap().as_str(),
+            "full"
+        );
+        assert!(DetailLevel::from_raw(Some("standard")).is_err());
+    }
+
+    #[test]
+    fn diagnostics_require_an_explicit_full_request() {
+        let basic = SelfStatusArgs { detail_level: None };
+        assert_ne!(
+            DetailLevel::from_raw(basic.detail_level.as_deref()).unwrap(),
+            DetailLevel::Full
+        );
+        assert_eq!(
+            DetailLevel::from_raw(Some("full")).unwrap(),
+            DetailLevel::Full
+        );
+    }
+
+    #[test]
+    fn unknown_diagnostic_fields_are_rejected() {
+        let parsed = serde_json::from_value::<SelfStatusArgs>(json!({
+            "include_events": true
+        }));
+        assert!(parsed.is_err());
     }
 
     #[test]

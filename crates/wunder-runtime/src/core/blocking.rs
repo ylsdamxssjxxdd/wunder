@@ -1,6 +1,6 @@
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use std::fmt;
-use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 use tokio::sync::Semaphore;
@@ -388,11 +388,11 @@ where
 #[cfg(test)]
 mod tests {
     use super::{
-        BlockingKind, run_cpu, run_db, run_to_completion, run_with_exec_timeout, stalled_permits,
+        run_cpu, run_db, run_to_completion, run_with_exec_timeout, stalled_permits, BlockingKind,
     };
-    use anyhow::{Result, anyhow};
-    use std::sync::Arc;
+    use anyhow::{anyhow, Result};
     use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
     use std::time::{Duration, Instant};
 
     #[test]

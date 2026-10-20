@@ -1,7 +1,7 @@
 //! Durable user-turn projection. Execution turns never allocate page rows.
 use super::{
-    attachment_from_value, message_from_value, NativeDesktop, NativeMessage,
-    NativeSubagentCard, NativeWorkflowEntry,
+    attachment_from_value, message_from_value, NativeDesktop, NativeMessage, NativeSubagentCard,
+    NativeWorkflowEntry,
 };
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};

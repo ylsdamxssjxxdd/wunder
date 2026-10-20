@@ -1,6 +1,7 @@
 use super::{build_model_tool_success, ToolContext};
 use crate::config::{Config, DesktopControlConfig};
 use crate::core::blocking;
+use crate::schemas::ToolSpec;
 use crate::storage::USER_PRIVATE_CONTAINER_ID;
 use anyhow::{anyhow, Result};
 use base64::engine::general_purpose::STANDARD;
@@ -21,13 +22,128 @@ pub const TOOL_DESKTOP_CONTROL_ALIAS: &str = "desktop_control";
 pub const TOOL_DESKTOP_CONTROL_ALIAS_SHORT: &str = "desktop";
 
 const MAX_WAIT_MS: u64 = 30_000;
+const MAX_MOVE_DURATION_MS: u64 = 30_000;
+const MAX_SCROLL_STEPS: i32 = 100;
+const MAX_INPUT_TEXT_CHARS: usize = 16 * 1024;
+const MAX_KEY_CHARS: usize = 128;
+const MAX_NORMALIZED_COORD: i32 = 10_000;
 const MAX_SCREENSHOT_BYTES: u64 = 8 * 1024 * 1024;
-// Give native menus and window state a frame to settle before the observation
-// screenshot. This is action stabilization, not a user-facing animation.
-const ACTION_SETTLE_MS: u64 = 80;
+// Give native menus and window state time to settle before the observation
+// screenshot. The first delay is deliberately bounded; we then compare a
+// small number of consecutive frames and stop as soon as the pixels settle.
+// This avoids returning a stale frame while avoiding an unconditional long
+// sleep for every action.
+const MIN_OBSERVATION_SETTLE_MS: u64 = 240;
+const OBSERVATION_PROBE_INTERVAL_MS: u64 = 80;
+const MAX_OBSERVATION_PROBES: usize = 3;
 const MAX_SESSION_FRAME_CACHE: usize = 2048;
 
 static LAST_SESSION_SCREENSHOTS: OnceLock<Mutex<HashMap<String, PathBuf>>> = OnceLock::new();
+
+fn strict_desktop_action_schema(properties: Value, required: &[&str]) -> Value {
+    json!({
+        "type": "object",
+        "properties": properties,
+        "required": required,
+        "additionalProperties": false,
+    })
+}
+
+/// One strict action surface for model calls. Each `oneOf` branch exposes only
+/// the fields meaningful to its action group; direct callers are checked again
+/// by [`parse_desktop_control_args`] before native input is sent.
+pub fn desktop_control_tool_spec(language: &str) -> ToolSpec {
+    let t = |key: &str| crate::i18n::t_in_language(key, language);
+    let bbox = json!({
+        "type": "array",
+        "items": {"type": "integer", "minimum": 0, "maximum": MAX_NORMALIZED_COORD},
+        "anyOf": [
+            {"type": "array", "items": {"type": "integer", "minimum": 0, "maximum": MAX_NORMALIZED_COORD}, "minItems": 2, "maxItems": 2},
+            {"type": "array", "items": {"type": "integer", "minimum": 0, "maximum": MAX_NORMALIZED_COORD}, "minItems": 4, "maxItems": 4}
+        ],
+        "description": t("tool.spec.desktop_control.args.bbox")
+    });
+    let pointer_actions = json!([
+        "left_click",
+        "left_double_click",
+        "right_click",
+        "middle_click",
+        "left_hold",
+        "right_hold",
+        "middle_hold",
+        "left_release",
+        "right_release",
+        "middle_release"
+    ]);
+    let input_branch =
+        |action: Value, mut fields: serde_json::Map<String, Value>, required: &[&str]| {
+            fields.insert("action".to_string(), action);
+            strict_desktop_action_schema(Value::Object(fields), required)
+        };
+    let base = || {
+        let mut fields = serde_json::Map::new();
+        fields.insert("bbox".to_string(), bbox.clone());
+        fields
+    };
+    let mut scroll = base();
+    scroll.insert(
+        "scroll_steps".to_string(),
+        json!({
+            "type": "integer", "minimum": 1, "maximum": MAX_SCROLL_STEPS,
+            "description": t("tool.spec.desktop_control.args.scroll_steps")
+        }),
+    );
+    let mut press = base();
+    press.insert(
+        "key".to_string(),
+        json!({
+            "type": "string", "minLength": 1, "maxLength": MAX_KEY_CHARS,
+            "description": t("tool.spec.desktop_control.args.key")
+        }),
+    );
+    let mut typing = base();
+    typing.insert(
+        "text".to_string(),
+        json!({
+            "type": "string", "minLength": 1, "maxLength": MAX_INPUT_TEXT_CHARS,
+            "description": t("tool.spec.desktop_control.args.text")
+        }),
+    );
+    let mut wait = base();
+    wait.insert(
+        "delay_ms".to_string(),
+        json!({
+            "type": "integer", "minimum": 0, "maximum": MAX_WAIT_MS,
+            "description": t("tool.spec.desktop_control.args.delay_ms")
+        }),
+    );
+    let duration = || {
+        json!({
+            "type": "integer", "minimum": 0, "maximum": MAX_MOVE_DURATION_MS,
+            "description": t("tool.spec.desktop_control.args.duration_ms")
+        })
+    };
+    let mut move_mouse = base();
+    move_mouse.insert("duration_ms".to_string(), duration());
+    let mut drag = base();
+    drag.insert("to_bbox".to_string(), bbox.clone());
+    drag.insert("duration_ms".to_string(), duration());
+
+    ToolSpec {
+        name: TOOL_DESKTOP_CONTROL.to_string(),
+        title: None,
+        description: t("tool.spec.desktop_control.description"),
+        input_schema: json!({"oneOf": [
+            input_branch(json!({"enum": pointer_actions}), base(), &["action", "bbox"]),
+            input_branch(json!({"enum": ["scroll_down", "scroll_up"]}), scroll, &["action", "bbox"]),
+            input_branch(json!({"const": "press_key"}), press, &["action", "bbox", "key"]),
+            input_branch(json!({"const": "type_text"}), typing, &["action", "bbox", "text"]),
+            input_branch(json!({"const": "wait"}), wait, &["action", "bbox"]),
+            input_branch(json!({"const": "move_mouse"}), move_mouse, &["action", "bbox"]),
+            input_branch(json!({"const": "drag_drop"}), drag, &["action", "bbox", "to_bbox"])
+        ]}),
+    }
+}
 
 #[derive(Clone, Copy, Debug)]
 struct BBox {
@@ -76,10 +192,7 @@ enum DesktopAction {
 
 impl DesktopAction {
     fn from_raw(raw: &str) -> Option<Self> {
-        let mut cleaned = raw.trim().to_lowercase();
-        cleaned = cleaned.replace('-', "_");
-        cleaned.retain(|ch| !ch.is_whitespace());
-        match cleaned.as_str() {
+        match raw.trim() {
             "left_click" => Some(Self::LeftClick),
             "left_double_click" => Some(Self::LeftDoubleClick),
             "right_click" => Some(Self::RightClick),
@@ -92,11 +205,11 @@ impl DesktopAction {
             "middle_release" => Some(Self::MiddleRelease),
             "scroll_down" => Some(Self::ScrollDown),
             "scroll_up" => Some(Self::ScrollUp),
-            "press_key" | "keyboard" => Some(Self::PressKey),
-            "type_text" | "send_text" => Some(Self::TypeText),
-            "wait" | "delay" | "sleep" | "observe" | "screenshot" => Some(Self::Wait),
-            "move_mouse" | "move" => Some(Self::MoveMouse),
-            "drag_drop" | "drag" => Some(Self::DragDrop),
+            "press_key" => Some(Self::PressKey),
+            "type_text" => Some(Self::TypeText),
+            "wait" => Some(Self::Wait),
+            "move_mouse" => Some(Self::MoveMouse),
+            "drag_drop" => Some(Self::DragDrop),
             _ => None,
         }
     }
@@ -106,14 +219,12 @@ struct DesktopControlArgs {
     bbox: BBox,
     action: DesktopAction,
     action_raw: String,
-    description: String,
     key: Option<String>,
     text: Option<String>,
     delay_ms: u64,
     duration_ms: u64,
     scroll_steps: i32,
     to_bbox: Option<BBox>,
-    note: Option<String>,
 }
 
 struct DesktopScreenshot {
@@ -124,6 +235,12 @@ struct DesktopScreenshot {
     screen_width: i32,
     screen_height: i32,
     size_bytes: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FrameStability {
+    Stable,
+    Changing,
 }
 
 fn session_frame_cache() -> &'static Mutex<HashMap<String, PathBuf>> {
@@ -198,13 +315,11 @@ pub async fn tool_desktop_control(context: &ToolContext<'_>, args: &Value) -> Re
     let (screen_width, screen_height) = screen_size()?;
     let screen_max_x = (screen_width - 1).max(0);
     let screen_max_y = (screen_height - 1).max(0);
-
     let (cx_norm_raw, cy_norm_raw) = payload.bbox.center();
     let cx_norm = cx_norm_raw.clamp(0, norm_width);
     let cy_norm = cy_norm_raw.clamp(0, norm_height);
     let cx = map_coord(cx_norm, norm_width, screen_max_x);
     let cy = map_coord(cy_norm, norm_height, screen_max_y);
-    let description = payload.description.clone();
     let wait_action = matches!(payload.action, DesktopAction::Wait);
     let wait_ms = payload.delay_ms.min(MAX_WAIT_MS);
     if wait_action {
@@ -293,12 +408,20 @@ pub async fn tool_desktop_control(context: &ToolContext<'_>, args: &Value) -> Re
         }
     }
 
-    if !wait_action && ACTION_SETTLE_MS > 0 {
-        sleep(Duration::from_millis(ACTION_SETTLE_MS)).await;
-    }
-    let screenshot = capture_screenshot(&config).await?;
+    let (screenshot, observation_settled_ms) = if wait_action {
+        // An explicit wait already expresses the caller's desired delay; do
+        // not add the action-settling delay a second time.
+        (capture_screenshot(&config).await?, wait_ms)
+    } else {
+        capture_stable_screenshot(&config).await?
+    };
     let previous_screenshot_path =
         remember_previous_screenshot_for_session(context.session_id, &screenshot.path);
+    // Intermediate stability probes have already been discarded. Retention is
+    // applied only after the session cache records the final screenshot, so a
+    // probe never evicts the prior action frame before it can be attached to
+    // the follow-up message.
+    cleanup_old_frames(&screenshot.path, config.max_frames.max(2));
     persist_screenshot_to_user_container(context, &screenshot).await;
     let elapsed_ms = started_at.elapsed().as_millis() as u64;
     let (summary, prompt_key) = if wait_action {
@@ -323,11 +446,10 @@ pub async fn tool_desktop_control(context: &ToolContext<'_>, args: &Value) -> Re
         summary,
         json!({
             "action": payload.action_raw,
-            "description": description,
             "center_norm": [cx_norm, cy_norm],
             "center_screen": [cx, cy],
             "wait_ms": wait_ms,
-            "note": payload.note,
+            "observation_settled_ms": observation_settled_ms,
             "normalized_width": screenshot.norm_width,
             "normalized_height": screenshot.norm_height,
             "screen_width": screenshot.screen_width,
@@ -337,6 +459,11 @@ pub async fn tool_desktop_control(context: &ToolContext<'_>, args: &Value) -> Re
                 .as_ref()
                 .map(|path| path.to_string_lossy().to_string()),
             "screenshot_download_url": screenshot.download_url,
+            "screenshot_artifact": {
+                "id": screenshot.download_url,
+                "mime": "image/png",
+                "bytes": screenshot.size_bytes,
+            },
             "screenshot_bytes": screenshot.size_bytes,
             "elapsed_ms": elapsed_ms,
             "action_applied": true,
@@ -437,48 +564,69 @@ fn parse_desktop_control_args(args: &Value) -> Result<DesktopControlArgs> {
     let obj = args
         .as_object()
         .ok_or_else(|| anyhow!(crate::i18n::t("tool.desktop_control.invalid_args")))?;
-    let bbox_value = obj
-        .get("bbox")
-        .ok_or_else(|| anyhow!(crate::i18n::t("tool.desktop_control.bbox_required")))?;
-    let bbox = parse_bbox(bbox_value)?;
     let action_raw = obj
         .get("action")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .ok_or_else(|| anyhow!(crate::i18n::t("tool.desktop_control.action_required")))?;
-    let description = obj
-        .get("description")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToString::to_string)
-        .unwrap_or_else(|| action_raw.to_string());
     let action = DesktopAction::from_raw(action_raw)
         .ok_or_else(|| anyhow!(crate::i18n::t("tool.desktop_control.unknown_action")))?;
-    // 等待时长接受 `delay_ms` 与原监视器的 `wait_ms` / `wait` 写法。
-    let delay_ms = parse_u64(obj.get("delay_ms"))
-        .or_else(|| parse_u64(obj.get("wait_ms")))
-        .or_else(|| parse_u64(obj.get("wait")))
-        .unwrap_or(0);
-    let duration_ms = parse_u64(obj.get("duration_ms")).unwrap_or(0);
-    let scroll_steps = parse_i32(obj.get("scroll_steps")).unwrap_or(1).max(1);
-    let to_bbox = obj.get("to_bbox").and_then(|value| parse_bbox(value).ok());
-    let note = obj
-        .get("note")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToString::to_string);
+    let allowed: &[&str] = match action {
+        DesktopAction::PressKey => &["bbox", "action", "key"],
+        DesktopAction::TypeText => &["bbox", "action", "text"],
+        DesktopAction::Wait => &["bbox", "action", "delay_ms"],
+        DesktopAction::MoveMouse => &["bbox", "action", "duration_ms"],
+        DesktopAction::DragDrop => &["bbox", "action", "to_bbox", "duration_ms"],
+        DesktopAction::ScrollDown | DesktopAction::ScrollUp => &["bbox", "action", "scroll_steps"],
+        _ => &["bbox", "action"],
+    };
+    if let Some(extra) = obj.keys().find(|key| !allowed.contains(&key.as_str())) {
+        return Err(anyhow!(
+            "field '{extra}' is not valid for desktop action '{action_raw}'"
+        ));
+    }
+    let bbox_value = obj
+        .get("bbox")
+        .ok_or_else(|| anyhow!(crate::i18n::t("tool.desktop_control.bbox_required")))?;
+    let bbox = parse_bbox(bbox_value)?;
+    let delay_ms = optional_u64_field(obj, "delay_ms")?.unwrap_or(0);
+    let duration_ms = optional_u64_field(obj, "duration_ms")?.unwrap_or(0);
+    let scroll_steps = optional_i32_field(obj, "scroll_steps")?.unwrap_or(1);
+    if delay_ms > MAX_WAIT_MS {
+        return Err(anyhow!("delay_ms is outside its allowed range"));
+    }
+    if duration_ms > MAX_MOVE_DURATION_MS {
+        return Err(anyhow!("duration_ms is outside its allowed range"));
+    }
+    if !(1..=MAX_SCROLL_STEPS).contains(&scroll_steps) {
+        return Err(anyhow!("scroll_steps is outside its allowed range"));
+    }
+    let to_bbox = obj.get("to_bbox").map(parse_bbox).transpose()?;
+    match action {
+        DesktopAction::PressKey if required_text(obj, "key").is_none() => {
+            return Err(anyhow!(crate::i18n::t("tool.desktop_control.key_required")));
+        }
+        DesktopAction::TypeText if required_text(obj, "text").is_none() => {
+            return Err(anyhow!(crate::i18n::t(
+                "tool.desktop_control.text_required"
+            )));
+        }
+        DesktopAction::DragDrop if to_bbox.is_none() => {
+            return Err(anyhow!(crate::i18n::t(
+                "tool.desktop_control.to_bbox_required"
+            )));
+        }
+        _ => {}
+    }
     Ok(DesktopControlArgs {
         bbox,
         action,
         action_raw: action_raw.to_string(),
-        description,
         key: obj
             .get("key")
             .and_then(Value::as_str)
-            .map(ToString::to_string),
+            .map(|value| value.trim().to_string()),
         text: obj
             .get("text")
             .and_then(Value::as_str)
@@ -487,51 +635,79 @@ fn parse_desktop_control_args(args: &Value) -> Result<DesktopControlArgs> {
         duration_ms,
         scroll_steps,
         to_bbox,
-        note,
     })
+}
+
+fn required_text<'a>(obj: &'a serde_json::Map<String, Value>, key: &str) -> Option<&'a str> {
+    let value = obj
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    if key == "key" && value.chars().count() > MAX_KEY_CHARS {
+        return None;
+    }
+    if key == "text" && value.chars().count() > MAX_INPUT_TEXT_CHARS {
+        return None;
+    }
+    Some(value)
+}
+
+fn optional_u64_field(obj: &serde_json::Map<String, Value>, key: &str) -> Result<Option<u64>> {
+    let Some(value) = obj.get(key) else {
+        return Ok(None);
+    };
+    value
+        .as_u64()
+        .map(Some)
+        .ok_or_else(|| anyhow!("{key} must be a non-negative integer"))
+}
+
+fn optional_i32_field(obj: &serde_json::Map<String, Value>, key: &str) -> Result<Option<i32>> {
+    let Some(value) = obj.get(key) else {
+        return Ok(None);
+    };
+    value
+        .as_i64()
+        .and_then(|number| i32::try_from(number).ok())
+        .map(Some)
+        .ok_or_else(|| anyhow!("{key} must be an integer"))
 }
 
 fn parse_bbox(value: &Value) -> Result<BBox> {
     let arr = match value {
-        Value::Array(arr) => arr.clone(),
-        Value::String(raw) => {
-            let raw = raw.trim();
-            if raw.is_empty() {
-                return Err(anyhow!(crate::i18n::t("tool.desktop_control.invalid_bbox")));
-            }
-            let parsed = serde_json::from_str::<Value>(raw)
-                .map_err(|_| anyhow!(crate::i18n::t("tool.desktop_control.invalid_bbox")))?;
-            parsed
-                .as_array()
-                .cloned()
-                .ok_or_else(|| anyhow!(crate::i18n::t("tool.desktop_control.invalid_bbox")))?
-        }
+        Value::Array(arr) => arr,
         _ => return Err(anyhow!(crate::i18n::t("tool.desktop_control.invalid_bbox"))),
     };
     if arr.len() == 4 {
-        let x1 = parse_i32(Some(&arr[0]))
+        let x1 = parse_i32(arr.first())
             .ok_or_else(|| anyhow!(crate::i18n::t("tool.desktop_control.invalid_bbox")))?;
-        let y1 = parse_i32(Some(&arr[1]))
+        let y1 = parse_i32(arr.get(1))
             .ok_or_else(|| anyhow!(crate::i18n::t("tool.desktop_control.invalid_bbox")))?;
-        let x2 = parse_i32(Some(&arr[2]))
+        let x2 = parse_i32(arr.get(2))
             .ok_or_else(|| anyhow!(crate::i18n::t("tool.desktop_control.invalid_bbox")))?;
-        let y2 = parse_i32(Some(&arr[3]))
+        let y2 = parse_i32(arr.get(3))
             .ok_or_else(|| anyhow!(crate::i18n::t("tool.desktop_control.invalid_bbox")))?;
-        return Ok(BBox { x1, y1, x2, y2 });
+        return bounded_bbox(x1, y1, x2, y2);
     }
     if arr.len() == 2 {
-        let cx = parse_i32(Some(&arr[0]))
+        let cx = parse_i32(arr.first())
             .ok_or_else(|| anyhow!(crate::i18n::t("tool.desktop_control.invalid_bbox")))?;
-        let cy = parse_i32(Some(&arr[1]))
+        let cy = parse_i32(arr.get(1))
             .ok_or_else(|| anyhow!(crate::i18n::t("tool.desktop_control.invalid_bbox")))?;
-        return Ok(BBox {
-            x1: cx,
-            y1: cy,
-            x2: cx,
-            y2: cy,
-        });
+        return bounded_bbox(cx, cy, cx, cy);
     }
     Err(anyhow!(crate::i18n::t("tool.desktop_control.invalid_bbox")))
+}
+
+fn bounded_bbox(x1: i32, y1: i32, x2: i32, y2: i32) -> Result<BBox> {
+    if [x1, y1, x2, y2]
+        .into_iter()
+        .any(|value| !(0..=MAX_NORMALIZED_COORD).contains(&value))
+    {
+        return Err(anyhow!(crate::i18n::t("tool.desktop_control.invalid_bbox")));
+    }
+    Ok(BBox { x1, y1, x2, y2 })
 }
 
 fn parse_i32(value: Option<&Value>) -> Option<i32> {
@@ -539,34 +715,7 @@ fn parse_i32(value: Option<&Value>) -> Option<i32> {
     if let Some(num) = value.as_i64() {
         return Some(num as i32);
     }
-    if let Some(num) = value.as_f64() {
-        return Some(num.round() as i32);
-    }
-    value
-        .as_str()
-        .map(str::trim)
-        .filter(|text| !text.is_empty())
-        .and_then(|text| text.parse::<f64>().ok())
-        .map(|num| num.round() as i32)
-}
-
-fn parse_u64(value: Option<&Value>) -> Option<u64> {
-    let value = value?;
-    if let Some(num) = value.as_u64() {
-        return Some(num);
-    }
-    if let Some(num) = value.as_i64() {
-        if num >= 0 {
-            return Some(num as u64);
-        }
-    }
-    value
-        .as_str()
-        .map(str::trim)
-        .filter(|text| !text.is_empty())
-        .and_then(|text| text.parse::<f64>().ok())
-        .filter(|num| num.is_finite() && *num >= 0.0)
-        .map(|num| num.round() as u64)
+    value.as_i64().and_then(|num| i32::try_from(num).ok())
 }
 
 fn ensure_desktop_enabled(config: &Config) -> Result<()> {
@@ -601,7 +750,6 @@ async fn capture_screenshot(config: &DesktopControlConfig) -> Result<DesktopScre
     let norm_width = config.norm_width.max(1);
     let norm_height = config.norm_height.max(1);
     let timeout_ms = config.capture_timeout_ms.max(100);
-    let max_frames = config.max_frames.max(1);
     let screenshot = match blocking::run_external_with_timeout(
         "tools.desktop_control.capture_screenshot",
         Duration::from_millis(timeout_ms),
@@ -617,8 +765,47 @@ async fn capture_screenshot(config: &DesktopControlConfig) -> Result<DesktopScre
         }
         Err(err) => return Err(err),
     };
-    cleanup_old_frames(&screenshot.path, max_frames);
     Ok(screenshot)
+}
+
+/// Capture an action result only after a bounded settling window. Two equal
+/// consecutive frames are sufficient evidence that a native menu/window has
+/// stopped changing; if the UI remains animated we stop after three probes and
+/// return the newest frame rather than blocking the agent indefinitely.
+async fn capture_stable_screenshot(
+    config: &DesktopControlConfig,
+) -> Result<(DesktopScreenshot, u64)> {
+    let started = Instant::now();
+    sleep(Duration::from_millis(MIN_OBSERVATION_SETTLE_MS)).await;
+    let mut previous = capture_screenshot(config).await?;
+    for _ in 0..MAX_OBSERVATION_PROBES {
+        sleep(Duration::from_millis(OBSERVATION_PROBE_INTERVAL_MS)).await;
+        let current = capture_screenshot(config).await?;
+        let stable = screenshot_stability(&previous.path, &current.path).await;
+        // Probe images are only used for settling detection; retaining them
+        // would consume the configured frame budget and evict real action
+        // observations. Keep the newest image, which is the one returned.
+        let obsolete_probe = previous.path.clone();
+        previous = current;
+        if obsolete_probe != previous.path {
+            let _ = fs::remove_file(obsolete_probe).await;
+        }
+        if stable == FrameStability::Stable {
+            break;
+        }
+    }
+    Ok((previous, started.elapsed().as_millis() as u64))
+}
+
+async fn screenshot_stability(previous: &Path, current: &Path) -> FrameStability {
+    let (Ok(previous), Ok(current)) = (fs::read(previous).await, fs::read(current).await) else {
+        return FrameStability::Changing;
+    };
+    if previous == current {
+        FrameStability::Stable
+    } else {
+        FrameStability::Changing
+    }
 }
 
 async fn persist_screenshot_to_user_container(
@@ -1859,13 +2046,33 @@ mod tests {
     }
 
     #[test]
-    fn parse_desktop_control_args_falls_back_description_to_action() {
+    fn parse_desktop_control_args_rejects_cross_action_fields() {
         let payload = parse_desktop_control_args(&json!({
             "bbox": [10, 20, 30, 40],
-            "action": "left_click"
+            "action": "left_click",
+            "text": "unexpected"
+        }));
+        assert!(payload.is_err());
+    }
+
+    #[test]
+    fn parse_desktop_control_args_accepts_action_specific_fields() {
+        let payload = parse_desktop_control_args(&json!({
+            "bbox": [10, 20, 30, 40],
+            "action": "type_text",
+            "text": "hello"
         }))
         .expect("parse desktop controller args");
-        assert_eq!(payload.action_raw, "left_click");
-        assert_eq!(payload.description, "left_click");
+        assert_eq!(payload.action_raw, "type_text");
+        assert_eq!(payload.text.as_deref(), Some("hello"));
+    }
+
+    #[test]
+    fn desktop_schema_uses_action_variants() {
+        let spec = desktop_control_tool_spec("en-US");
+        assert!(spec.input_schema["oneOf"]
+            .as_array()
+            .is_some_and(|items| items.len() >= 7));
+        assert!(spec.input_schema["oneOf"][0]["additionalProperties"] == false);
     }
 }

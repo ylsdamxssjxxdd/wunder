@@ -5,7 +5,7 @@ use egui::{
     Align, CentralPanel, Color32, Context, Frame, Id, Layout, Margin, Order, RichText, ScrollArea,
     Sense, SidePanel, Stroke, TextEdit, Ui, UiBuilder, Vec2,
 };
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::BTreeSet;
 use std::time::Duration;
 
 const SIDEBAR_WIDTH: f32 = 240.0;
@@ -22,6 +22,44 @@ const WORKSPACE_MENU_MIN_WIDTH: f32 = 148.0;
 const THREAD_MENU_MIN_WIDTH: f32 = 148.0;
 /// Height of the account row pinned to the bottom of the sidebar.
 const SIDEBAR_FOOTER_HEIGHT: f32 = 33.0;
+
+/// Attachment chip geometry, mirrored from the Slint composer: one 220×28 chip
+/// plus the 6px gap. Chips wrap instead of overflowing, because eight chips at
+/// the minimum window width do not fit on one row.
+const COMPOSER_CHIP_WIDTH: f32 = 220.0;
+const COMPOSER_CHIP_HEIGHT: f32 = 28.0;
+const COMPOSER_CHIP_GAP: f32 = 6.0;
+const COMPOSER_CHIP_ROW_HEIGHT: f32 = 34.0;
+/// One queued prompt row: a badge, one elided line and a remove button.
+const COMPOSER_QUEUE_ROW_HEIGHT: f32 = 26.0;
+/// How long a composer notice ("已加入待发送队列") stays on screen. Long enough
+/// to read once, short enough that it never looks like persistent state.
+const COMPOSER_NOTICE_SECONDS: f64 = 4.0;
+
+/// How many chip rows fit in `width`.
+///
+/// The composer asks this twice per frame (once to reserve height, once to
+/// lay the chips out), so it stays a pure function of the count and width.
+fn composer_chip_rows(count: usize, width: f32) -> usize {
+    if count == 0 {
+        return 0;
+    }
+    let per_row = ((width + COMPOSER_CHIP_GAP) / (COMPOSER_CHIP_WIDTH + COMPOSER_CHIP_GAP))
+        .floor()
+        .max(1.0) as usize;
+    count.div_ceil(per_row)
+}
+
+/// Height the strip above the input card needs for chips and queued prompts.
+fn composer_strip_height(attachments: usize, queued: usize, width: f32) -> f32 {
+    let chips = composer_chip_rows(attachments, width) as f32 * COMPOSER_CHIP_ROW_HEIGHT;
+    let queue = queued as f32 * COMPOSER_QUEUE_ROW_HEIGHT;
+    if chips + queue > 0.0 {
+        chips + queue + COMPOSER_CHIP_GAP
+    } else {
+        0.0
+    }
+}
 
 fn uses_compact_sidebar(screen_width: f32) -> bool {
     screen_width < COMPACT_SIDEBAR_BREAKPOINT
@@ -84,17 +122,6 @@ fn valid_workspace_entry_name(name: &str) -> bool {
 
 /// Parent directory of a workspace-relative path. The workspace root itself
 /// has no parent, so the caller can disable "up" without guessing.
-fn workspace_parent_path(path: &str) -> Option<String> {
-    let path = path.trim_matches('/');
-    if path.is_empty() {
-        return None;
-    }
-    Some(match path.rsplit_once('/') {
-        Some((parent, _)) => parent.to_owned(),
-        None => String::new(),
-    })
-}
-
 enum ThreadRowAction {
     Select(String),
     Rename { id: String, title: String },
@@ -102,6 +129,32 @@ enum ThreadRowAction {
     Archive(String),
     BeginMultiSelect,
     ToggleSelection(String),
+}
+
+/// Deferred intent from the device → workspace → thread tree. Returning an
+/// intent keeps the scroll closure free of `&mut self` calls, so painting the
+/// rail cannot re-enter the state it is reading.
+enum SidebarRowAction {
+    Thread(ThreadRowAction),
+    ToggleWorkspace(String),
+    NewThread(Option<String>),
+    RenameWorkspace { workspace_id: String, name: String },
+}
+
+/// Map a stored workspace icon name to a bundled glyph. The native editor
+/// offers more names than the icon font ships, so unknown values fall back to
+/// the generic folder instead of blanking the row.
+fn workspace_icon(name: &str) -> crate::icons::Icon {
+    match name {
+        "monitor" | "desktop" => crate::icons::Icon::Desktop,
+        "cloud" => crate::icons::Icon::Cloud,
+        "camera" => crate::icons::Icon::Camera,
+        "robot" | "agent" => crate::icons::Icon::Agent,
+        "gear" => crate::icons::Icon::Settings,
+        "flask" | "tool" => crate::icons::Icon::Tool,
+        "database" => crate::icons::Icon::Database,
+        _ => crate::icons::Icon::Folder,
+    }
 }
 
 struct RenameThreadDialog {
@@ -136,7 +189,14 @@ enum WorkspacePromptKind {
     File,
     /// Rename one entry in place; `path` stays the old path so the reply can
     /// refresh the same directory even if the name changed.
-    Rename { path: String },
+    Rename {
+        path: String,
+    },
+    /// Rename a workspace row. The rail's middle level owns the label, so it
+    /// must not be spelled through a file path validator.
+    RenameWorkspace {
+        workspace_id: String,
+    },
 }
 
 /// Deferred intent from the working-directory panel. Returning intents keeps
@@ -144,10 +204,13 @@ enum WorkspacePromptKind {
 enum FilesAction {
     Select(String),
     Open(String),
-    /// Enter a subdirectory and list it.
-    Enter(String),
-    Parent,
+    /// Expand or collapse a directory. Expanding an unloaded directory also
+    /// requests its children.
+    Toggle(String),
     Refresh,
+    /// Drop every expansion and re-read the root. Refreshing a tree in place
+    /// would leave cached subdirectories pointing at deleted paths.
+    CollapseAll,
     CreateDirectory,
     CreateFile,
     Rename {
@@ -159,17 +222,40 @@ enum FilesAction {
         name: String,
         is_directory: bool,
     },
+    /// Batch delete for multi-select; always confirmed first.
+    DeleteSelected,
     Reference(String),
     OpenRootWorkspace,
-    Unavailable(&'static str),
+    EnterMultiSelect,
+    ExitMultiSelect,
+    ToggleSelection(String),
+    SelectAllVisible,
 }
 
 /// Destructive entries always pass through this dialog; the backend delete
 /// command itself never asks, so the confirmation must live above it.
+/// Destructive entries always pass through this dialog; the backend delete
+/// command itself never asks. Multi-select reuses it with several items, so the
+/// wording and the confirmation rule cannot diverge between the two paths.
 struct DeleteEntryConfirm {
+    items: Vec<DeleteEntryItem>,
+}
+
+struct DeleteEntryItem {
     path: String,
     name: String,
     is_directory: bool,
+}
+
+/// What the composer strip asked for this frame.
+///
+/// The strip is drawn with `&self` because it sits inside the composer's
+/// borrowed `ui`; collection still has to wait until that borrow ends.
+#[derive(Default)]
+struct ComposerStripAction {
+    remove_attachment: Option<String>,
+    remove_queued: Option<usize>,
+    recall_queued: Option<usize>,
 }
 
 enum PendingModelChange {
@@ -208,6 +294,17 @@ pub struct EguiApp {
     styled: bool,
     last_selected: Option<String>,
     follow_tail: bool,
+    /// Turn the right-edge ruler asked to reveal. Consumed by the next message
+    /// body pass, because the scroll area owns the offsets.
+    scroll_to_turn: Option<usize>,
+    /// When the current composer notice was raised, in egui seconds. The notice
+    /// is transient feedback, not model state, so the expiry lives with the
+    /// view instead of `AppState`.
+    composer_notice_at: f64,
+    /// The notice text the timer above belongs to. Notices are set from a dozen
+    /// call sites; watching for a change here keeps each of them from having to
+    /// know about timing.
+    composer_notice_seen: String,
     composer_menu_open: bool,
     composer_submenu: Option<ComposerSubmenu>,
     approval_mode: &'static str,
@@ -218,13 +315,9 @@ pub struct EguiApp {
     rename_thread_needs_focus: bool,
     trajectory_dialog: Option<ThreadTrajectoryDialog>,
     pending_thread_renames: Vec<PendingThreadRename>,
-    thread_selection_mode: bool,
-    selected_thread_ids: BTreeSet<String>,
-    pending_thread_archives: VecDeque<String>,
-    archive_in_flight: Option<String>,
-    archive_batch_total: usize,
-    archive_batch_succeeded: usize,
-    archive_batch_failed: usize,
+    /// Multi-select state for the thread list. The rules live in
+    /// `thread_list` so the pointer and keyboard paths share one tested model.
+    thread_selection: crate::thread_list::ThreadSelection,
     workspace_prompt: Option<WorkspacePromptDialog>,
     workspace_prompt_needs_focus: bool,
     delete_entry_confirm: Option<DeleteEntryConfirm>,
@@ -239,44 +332,50 @@ pub struct EguiApp {
 /// and the hover "more" button use it, so the two pointer paths cannot drift.
 fn file_menu_items(
     ui: &mut Ui,
-    file: &crate::model::WorkspaceFileView,
+    path: &str,
+    name: &str,
+    is_directory: bool,
     tokens: Tokens,
 ) -> Option<FilesAction> {
     ui.set_min_width(WORKSPACE_MENU_MIN_WIDTH);
     let mut action = None;
-    let open_label = if file.is_directory {
-        "打开目录"
-    } else {
-        "打开 / 预览"
-    };
-    if ui.button(open_label).clicked() {
-        action = Some(if file.is_directory {
-            FilesAction::Enter(file.path.clone())
+    if ui
+        .button(if is_directory {
+            "展开 / 收起"
         } else {
-            FilesAction::Open(file.path.clone())
+            "打开 / 预览"
+        })
+        .clicked()
+    {
+        action = Some(if is_directory {
+            FilesAction::Toggle(path.to_owned())
+        } else {
+            FilesAction::Open(path.to_owned())
         });
         ui.close();
     }
     if ui.button("引用到输入框").clicked() {
-        action = Some(FilesAction::Reference(file.path.clone()));
+        action = Some(FilesAction::Reference(path.to_owned()));
         ui.close();
     }
     ui.separator();
     if ui.button("重命名").on_hover_text("F2").clicked() {
         action = Some(FilesAction::Rename {
-            path: file.path.clone(),
-            name: file.name.clone(),
+            path: path.to_owned(),
+            name: name.to_owned(),
         });
         ui.close();
     }
     let delete = ui
-        .add(egui::Button::new(RichText::new("删除").color(tokens.danger)))
+        .add(egui::Button::new(
+            RichText::new("删除").color(tokens.danger),
+        ))
         .on_hover_text("Delete");
     if delete.clicked() {
         action = Some(FilesAction::Delete {
-            path: file.path.clone(),
-            name: file.name.clone(),
-            is_directory: file.is_directory,
+            path: path.to_owned(),
+            name: name.to_owned(),
+            is_directory,
         });
         ui.close();
     }
@@ -290,9 +389,11 @@ fn file_menu_items(
         ui.close();
     }
     ui.separator();
-    // Download and directory archiving still need a native save dialog and an
-    // archive action the façade does not expose. They stay visible but
-    // disabled so the menu documents the gap instead of pretending to work.
+    // Upload, download and directory archiving still need a native dialog or a
+    // façade call that does not exist. They stay visible but disabled so the
+    // menu documents the gap instead of pretending to work.
+    ui.add_enabled(false, egui::Button::new("上传文件"))
+        .on_disabled_hover_text("需要原生文件选择对话框，暂未接入");
     ui.add_enabled(false, egui::Button::new("下载"))
         .on_disabled_hover_text("需要原生另存对话框，暂未接入");
     ui.add_enabled(false, egui::Button::new("归档目录"))
@@ -305,7 +406,8 @@ fn file_menu_items(
     action
 }
 
-fn format_tokens(value: u32) -> String {    if value >= 1_000_000 {
+fn format_tokens(value: u32) -> String {
+    if value >= 1_000_000 {
         format!("{:.1}M", value as f32 / 1_000_000.0)
     } else if value >= 1_000 {
         format!("{:.1}k", value as f32 / 1_000.0)
@@ -323,6 +425,9 @@ impl EguiApp {
             styled: false,
             last_selected: None,
             follow_tail: true,
+            scroll_to_turn: None,
+            composer_notice_at: 0.0,
+            composer_notice_seen: String::new(),
             composer_menu_open: false,
             composer_submenu: None,
             approval_mode: "执行前确认",
@@ -333,13 +438,7 @@ impl EguiApp {
             rename_thread_needs_focus: false,
             trajectory_dialog: None,
             pending_thread_renames: Vec::new(),
-            thread_selection_mode: false,
-            selected_thread_ids: BTreeSet::new(),
-            pending_thread_archives: VecDeque::new(),
-            archive_in_flight: None,
-            archive_batch_total: 0,
-            archive_batch_succeeded: 0,
-            archive_batch_failed: 0,
+            thread_selection: crate::thread_list::ThreadSelection::default(),
             workspace_prompt: None,
             workspace_prompt_needs_focus: false,
             delete_entry_confirm: None,
@@ -358,6 +457,9 @@ impl EguiApp {
         Self {
             backend: Box::new(crate::backend::DemoBackend::default()),
             follow_tail: state.should_follow_tail,
+            scroll_to_turn: None,
+            composer_notice_at: 0.0,
+            composer_notice_seen: String::new(),
             state,
             styled: false,
             // The fixed session is already materialized in `demo_state`; do not
@@ -373,13 +475,7 @@ impl EguiApp {
             rename_thread_needs_focus: false,
             trajectory_dialog: None,
             pending_thread_renames: Vec::new(),
-            thread_selection_mode: false,
-            selected_thread_ids: BTreeSet::new(),
-            pending_thread_archives: VecDeque::new(),
-            archive_in_flight: None,
-            archive_batch_total: 0,
-            archive_batch_succeeded: 0,
-            archive_batch_failed: 0,
+            thread_selection: crate::thread_list::ThreadSelection::default(),
             workspace_prompt: None,
             workspace_prompt_needs_focus: false,
             delete_entry_confirm: None,
@@ -396,6 +492,9 @@ impl EguiApp {
             styled: false,
             last_selected: None,
             follow_tail: true,
+            scroll_to_turn: None,
+            composer_notice_at: 0.0,
+            composer_notice_seen: String::new(),
             composer_menu_open: false,
             composer_submenu: None,
             approval_mode: "执行前确认",
@@ -406,13 +505,7 @@ impl EguiApp {
             rename_thread_needs_focus: false,
             trajectory_dialog: None,
             pending_thread_renames: Vec::new(),
-            thread_selection_mode: false,
-            selected_thread_ids: BTreeSet::new(),
-            pending_thread_archives: VecDeque::new(),
-            archive_in_flight: None,
-            archive_batch_total: 0,
-            archive_batch_succeeded: 0,
-            archive_batch_failed: 0,
+            thread_selection: crate::thread_list::ThreadSelection::default(),
             workspace_prompt: None,
             workspace_prompt_needs_focus: false,
             delete_entry_confirm: None,
@@ -483,23 +576,56 @@ impl EguiApp {
                         let id = session.id.clone();
                         self.state.sessions.insert(0, session);
                         self.select_session(id);
+                        // The new row changes its workspace's thread count, so
+                        // the rail's middle level has to be re-read.
+                        self.submit(BackendCommand::RefreshWorkspaces);
                     }
                     Err(error) => self.state.status = format!("无法新建线程：{error}"),
                 },
-                crate::backend::BackendEvent::SessionArchived { session_id, result } => {
-                    self.finish_thread_archive(session_id, result);
+                crate::backend::BackendEvent::Ready => {
+                    apply_event(&mut self.state, crate::backend::BackendEvent::Ready);
+                    // The rail cannot draw a thread until it knows its
+                    // workspace, and readiness is the first moment the
+                    // catalogue is readable.
+                    self.submit(BackendCommand::RefreshWorkspaces);
                 }
                 crate::backend::BackendEvent::WorkspaceAction { label, result } => match result {
                     Ok(()) => {
                         self.state.status = label;
                         self.refresh_workspace_files();
+                        // A workspace rename and a file write share this
+                        // channel; re-reading the catalogue is cheap and keeps
+                        // the middle level truthful after either.
+                        self.submit(BackendCommand::RefreshWorkspaces);
                     }
                     Err(error) => self.state.status = error,
                 },
+                crate::backend::BackendEvent::SessionsArchived { archived, failed } => {
+                    let counts_changed = !archived.is_empty();
+                    apply_event(
+                        &mut self.state,
+                        crate::backend::BackendEvent::SessionsArchived { archived, failed },
+                    );
+                    if counts_changed {
+                        // The workspace rows print a thread count, so an
+                        // archive has to refresh the middle level as well.
+                        self.submit(BackendCommand::RefreshWorkspaces);
+                    }
+                }
                 event => apply_event(&mut self.state, event),
             }
             count + 1
         });
+        // A queued prompt starts the moment the running turn lets go. The
+        // reducer owns `busy`, so this is the single place that decides when
+        // the queue may advance.
+        if !self.state.busy
+            && !self.state.prompt_queue.is_empty()
+            && self.state.selected_session.is_some()
+            && self.state.connection == ConnectionState::Ready
+        {
+            self.drain_prompt_queue();
+        }
         if self.state.connection == ConnectionState::Starting
             || self.state.busy
             || self.state.prompt_preview.loading
@@ -639,7 +765,7 @@ impl EguiApp {
         self.last_selected = Some(id.clone());
         self.follow_tail = true;
         self.submit(BackendCommand::OpenSession(id));
-        self.refresh_workspace_root();
+        self.refresh_workspace_files();
     }
 
     fn draw_sidebar(&mut self, ctx: &Context) {
@@ -818,142 +944,405 @@ impl EguiApp {
         ui.allocate_rect(full, Sense::hover());
     }
 
-    fn draw_workspace_region(&mut self, ui: &mut Ui, tokens: Tokens) {
-        ui.add_space(4.0);
-        let (heading, _) =
-            ui.allocate_exact_size(Vec2::new(ui.available_width(), 24.0), Sense::hover());
-        ui.painter().text(
-            heading.left_center() + Vec2::new(12.0, 0.0),
-            egui::Align2::LEFT_CENTER,
-            "工作区",
-            egui::FontId::proportional(12.0),
-            tokens.text_muted,
+    /// Device header: which device owns the tree below it (蛹's top rail row).
+    ///
+    /// The egui shell only has a local device today, so the row renders the
+    /// signed-out shape: monitor glyph, `本地`, host `蛹`, and no chevron. A
+    /// cloud target would add the menu; offering an empty device would let a
+    /// click land on a tree the backend cannot serve.
+    fn draw_device_header(&mut self, ui: &mut Ui, tokens: Tokens) {
+        let (full, _) = ui.allocate_exact_size(
+            Vec2::new(ui.available_width(), crate::sidebar_tree::DEVICE_ROW_HEIGHT),
+            Sense::hover(),
         );
-        let (row, _) =
-            ui.allocate_exact_size(Vec2::new(ui.available_width(), 34.0), Sense::hover());
-        let row = row.shrink2(Vec2::new(6.0, 0.0));
-        ui.painter().rect_filled(row, 8.0, tokens.primary_tint);
+        let rect = egui::Rect::from_min_max(
+            egui::pos2(full.left() + 8.0, full.top()),
+            egui::pos2(full.right() - 10.0, full.bottom()),
+        );
+        let device = self.state.sidebar.device();
+        let switchable = self.state.sidebar.can_switch_device();
+        let pointer_in_row = ui.rect_contains_pointer(rect);
+        let response = ui.interact(
+            rect,
+            Id::new("sidebar-device"),
+            if switchable {
+                Sense::click()
+            } else {
+                Sense::hover()
+            },
+        );
+        if switchable {
+            response
+                .clone()
+                .on_hover_cursor(egui::CursorIcon::PointingHand);
+        }
+        if pointer_in_row && switchable {
+            ui.painter().rect_filled(rect, 7.0, tokens.hover);
+        }
+        let icon = if device.is_cloud() {
+            crate::icons::Icon::Cloud
+        } else {
+            crate::icons::Icon::Desktop
+        };
         crate::icons::paint(
             ui.painter(),
             egui::Rect::from_center_size(
-                row.left_center() + Vec2::new(14.0, 0.0),
-                Vec2::splat(14.0),
+                rect.left_center() + Vec2::new(13.0, 0.0),
+                Vec2::splat(15.0),
             ),
-            crate::icons::Icon::Folder,
-            tokens.primary,
+            icon,
+            if device.is_cloud() {
+                tokens.primary
+            } else {
+                tokens.text_muted
+            },
         );
         ui.painter().text(
-            row.left_center() + Vec2::new(28.0, 0.0),
+            rect.left_center() + Vec2::new(28.0, 0.0),
             egui::Align2::LEFT_CENTER,
-            "本地工作区",
-            egui::FontId::proportional(14.0),
+            device.label(),
+            egui::FontId::proportional(15.0),
             tokens.text,
         );
-        let plus = egui::Rect::from_center_size(
-            egui::pos2(row.right() - 17.0, row.center().y),
-            Vec2::splat(22.0),
-        );
-        let response = ui
-            .interact(plus, Id::new("new-thread"), Sense::click())
-            .on_hover_text("新建线程");
-        if response.hovered() {
-            ui.painter().rect_filled(plus, 6.0, tokens.surface);
-        }
-        crate::icons::paint(
-            ui.painter(),
-            plus.shrink(5.0),
-            crate::icons::Icon::Plus,
-            tokens.text_muted,
-        );
-        ui.painter().text(
-            egui::pos2(plus.left() - 6.0, row.center().y),
-            egui::Align2::RIGHT_CENTER,
-            format!("{} 个线程", self.state.sessions.len()),
+        let host = ui.painter().layout_no_wrap(
+            device.host().to_owned(),
             egui::FontId::proportional(11.0),
             tokens.text_muted,
         );
-        if response.clicked() {
-            self.submit(BackendCommand::CreateSession);
+        let host_pos = rect.left_center() + Vec2::new(28.0 + 34.0, 0.0);
+        ui.painter().galley(
+            host_pos - Vec2::new(0.0, host.size().y / 2.0),
+            host,
+            tokens.text_muted,
+        );
+        if switchable {
+            crate::icons::paint(
+                ui.painter(),
+                egui::Rect::from_center_size(
+                    egui::pos2(rect.right() - 8.0, rect.center().y),
+                    Vec2::splat(12.0),
+                ),
+                crate::icons::Icon::ChevronDown,
+                tokens.text_muted,
+            );
         }
+        if response.clicked() && switchable {
+            // Two devices, one tree each: clicking the header flips to the
+            // other device, which is what the 蛹 menu's only entries do.
+            let next = if device.is_cloud() {
+                crate::sidebar_tree::Device::Local
+            } else {
+                crate::sidebar_tree::Device::Cloud
+            };
+            self.state.sidebar.set_device(next);
+        }
+        let tooltip = format!("{} · {}", device.label(), device.host());
+        response.on_hover_text(tooltip);
+    }
+
+    /// One workspace row: 34px, washed glyph, name, live thread count and a
+    /// hover-only "new thread" affordance, as in 蛹.
+    fn draw_workspace_row(
+        ui: &mut Ui,
+        workspace: &crate::model::WorkspaceView,
+        expanded: bool,
+        thread_count: usize,
+        tokens: Tokens,
+    ) -> Option<SidebarRowAction> {
+        let (full, _) = ui.allocate_exact_size(
+            Vec2::new(
+                ui.available_width(),
+                crate::sidebar_tree::WORKSPACE_ROW_HEIGHT,
+            ),
+            Sense::hover(),
+        );
+        let rect = full.shrink2(Vec2::new(6.0, 0.0));
+        let response = ui
+            .interact(
+                rect,
+                Id::new(("workspace-row", &workspace.id)),
+                Sense::click(),
+            )
+            .on_hover_cursor(egui::CursorIcon::PointingHand);
+        let pointer_in_row = ui.rect_contains_pointer(rect);
+        // Expanded groups read as "open": a wash of the workspace colour behind
+        // the glyph. Collapsed groups fall back to the neutral hover fill, the
+        // same fold cue the Slint row uses (no separate chevron).
+        let tint = theme::workspace_color(&workspace.color);
+        ui.painter().rect_filled(
+            rect,
+            if pointer_in_row { 7.0 } else { 0.0 },
+            if pointer_in_row && !expanded {
+                tokens.hover
+            } else {
+                Color32::TRANSPARENT
+            },
+        );
+        let glyph = egui::Rect::from_center_size(
+            rect.left_center() + Vec2::new(23.0, 0.0),
+            Vec2::splat(22.0),
+        );
+        ui.painter().rect_filled(
+            glyph,
+            6.0,
+            if expanded {
+                theme::workspace_wash(tint)
+            } else {
+                tokens.hover
+            },
+        );
+        crate::icons::paint(
+            ui.painter(),
+            glyph.shrink(4.0),
+            workspace_icon(&workspace.icon),
+            if expanded { tint } else { tokens.text_muted },
+        );
+        let plus = egui::Rect::from_center_size(
+            egui::pos2(rect.right() - 18.0, rect.center().y),
+            Vec2::splat(22.0),
+        );
+        // The rename affordance rides left of the new-thread button and only
+        // exists while the pointer is on the row, so the name never reflows.
+        let pen = egui::Rect::from_center_size(
+            egui::pos2(plus.left() - 15.0, rect.center().y),
+            Vec2::splat(22.0),
+        );
+        let count_text = format!("{thread_count}");
+        let count = ui.painter().layout_no_wrap(
+            count_text,
+            egui::FontId::proportional(11.0),
+            tokens.text_muted,
+        );
+        // The count yields to the hover affordance instead of shifting it.
+        if !pointer_in_row {
+            ui.painter().galley(
+                egui::pos2(
+                    plus.left() - 8.0 - count.size().x,
+                    rect.center().y - count.size().y / 2.0,
+                ),
+                count,
+                tokens.text_muted,
+            );
+        }
+        let title = ui.painter().layout_no_wrap(
+            workspace.name.clone(),
+            egui::FontId::proportional(15.0),
+            tokens.text,
+        );
+        let title_rect = egui::Rect::from_min_max(
+            egui::pos2(glyph.right() + 8.0, rect.top()),
+            egui::pos2(pen.left() - 4.0, rect.bottom()),
+        );
+        ui.painter().with_clip_rect(title_rect).galley(
+            egui::pos2(title_rect.left(), rect.center().y - title.size().y / 2.0),
+            title,
+            tokens.text,
+        );
         let mut action = None;
-        if self.state.sessions.is_empty() {
+        let plus_response = ui
+            .interact(
+                plus,
+                Id::new(("workspace-new-thread", &workspace.id)),
+                Sense::click(),
+            )
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .on_hover_text("在工作区中新建线程");
+        let pen_response = ui
+            .interact(
+                pen,
+                Id::new(("workspace-rename", &workspace.id)),
+                Sense::click(),
+            )
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .on_hover_text("重命名工作区");
+        if pointer_in_row {
+            if pen_response.hovered() {
+                ui.painter().rect_filled(pen, 6.0, tokens.selected);
+            }
+            crate::icons::paint(
+                ui.painter(),
+                pen.shrink(5.0),
+                crate::icons::Icon::Pen,
+                if pen_response.hovered() {
+                    tokens.text
+                } else {
+                    tokens.text_muted
+                },
+            );
+            if plus_response.hovered() {
+                ui.painter().rect_filled(plus, 6.0, tokens.surface);
+            }
+            crate::icons::paint(
+                ui.painter(),
+                plus.shrink(5.0),
+                crate::icons::Icon::Plus,
+                if plus_response.hovered() {
+                    tokens.primary
+                } else {
+                    tokens.text_muted
+                },
+            );
+        }
+        if plus_response.clicked() {
+            action = Some(SidebarRowAction::NewThread(Some(workspace.id.clone())));
+        } else if pen_response.clicked() {
+            action = Some(SidebarRowAction::RenameWorkspace {
+                workspace_id: workspace.id.clone(),
+                name: workspace.name.clone(),
+            });
+        } else if response.clicked() {
+            action = Some(SidebarRowAction::ToggleWorkspace(workspace.id.clone()));
+        }
+        action
+    }
+
+    /// Draw the rail's middle and lowest levels.
+    fn draw_workspace_region(&mut self, ui: &mut Ui, tokens: Tokens) {
+        ui.add_space(8.0);
+        self.draw_device_header(ui, tokens);
+        let selection_bar_height = if self.thread_selection.is_active() {
+            38.0
+        } else {
+            0.0
+        };
+        let available = (ui.available_height() - selection_bar_height).max(0.0);
+        if self.state.sidebar.device().is_cloud() {
             ui.add_space(14.0);
             ui.vertical_centered(|ui| {
                 ui.label(
-                    RichText::new("暂无线程")
+                    RichText::new("云端工作区尚未接入")
                         .size(12.0)
                         .color(tokens.text_muted),
                 );
             });
-        } else {
-            let selection_bar_height = if self.thread_selection_mode {
-                38.0
-            } else {
-                0.0
-            };
-            ScrollArea::vertical()
-                .id_salt("thread-tree")
-                .auto_shrink([false, false])
-                .max_height((ui.available_height() - selection_bar_height).max(0.0))
-                .show_rows(ui, 28.0, self.state.sessions.len(), |ui, range| {
-                    ui.spacing_mut().item_spacing.y = 0.0;
-                    for index in range {
-                        if let Some(next_action) = Self::draw_thread_row(
-                            ui,
-                            &self.state.sessions[index],
-                            self.state.selected_session.as_deref(),
-                            self.thread_selection_mode,
-                            self.selected_thread_ids
-                                .contains(&self.state.sessions[index].id),
-                            tokens,
-                        ) {
-                            action = Some(next_action);
+            return;
+        }
+        if self.state.workspaces_loaded && self.state.workspaces.is_empty() {
+            ui.add_space(14.0);
+            ui.vertical_centered(|ui| {
+                ui.label(
+                    RichText::new("暂无工作区")
+                        .size(12.0)
+                        .color(tokens.text_muted),
+                );
+            });
+            return;
+        }
+        let rows = self
+            .state
+            .sidebar
+            .rows(&self.state.workspaces, &self.state.sessions);
+        let selected = self.state.selected_session.clone();
+        let selecting = self.thread_selection.is_active();
+        let mut action: Option<SidebarRowAction> = None;
+        ScrollArea::vertical()
+            .id_salt("sidebar-tree")
+            .auto_shrink([false, false])
+            .max_height(available)
+            .show(ui, |ui| {
+                ui.spacing_mut().item_spacing.y = 0.0;
+                for row in &rows {
+                    match row {
+                        crate::sidebar_tree::Row::Workspace {
+                            workspace,
+                            expanded,
+                        } => {
+                            let count = crate::sidebar_tree::thread_count(
+                                &self.state.sessions,
+                                &workspace.id,
+                            );
+                            if let Some(next) =
+                                Self::draw_workspace_row(ui, workspace, *expanded, count, tokens)
+                            {
+                                action = Some(next);
+                            }
+                        }
+                        crate::sidebar_tree::Row::Thread { index, session } => {
+                            // The connector line links the thread to the group
+                            // above it, as the Slint row does at x = 20px.
+                            let top = ui.cursor().top();
+                            let line_x = ui.cursor().left() + 20.0;
+                            ui.painter().line_segment(
+                                [
+                                    egui::pos2(line_x, top),
+                                    egui::pos2(
+                                        line_x,
+                                        top + crate::sidebar_tree::THREAD_ROW_HEIGHT,
+                                    ),
+                                ],
+                                Stroke::new(1.0, tokens.border),
+                            );
+                            let checked = selecting && self.thread_selection.contains(&session.id);
+                            if let Some(next) = Self::draw_thread_row(
+                                ui,
+                                &self.state.sessions[*index],
+                                selected.as_deref(),
+                                selecting,
+                                checked,
+                                tokens,
+                            ) {
+                                action = Some(SidebarRowAction::Thread(next));
+                            }
                         }
                     }
-                });
-            if self.thread_selection_mode {
-                self.draw_thread_selection_bar(ui, tokens);
-            }
+                }
+            });
+        if self.thread_selection.is_active() {
+            self.draw_thread_selection_bar(ui, tokens);
         }
         if let Some(action) = action {
-            self.handle_thread_row_action(action);
+            self.handle_sidebar_row_action(action);
+        }
+    }
+
+    fn handle_sidebar_row_action(&mut self, action: SidebarRowAction) {
+        match action {
+            SidebarRowAction::Thread(action) => self.handle_thread_row_action(action),
+            SidebarRowAction::ToggleWorkspace(workspace_id) => {
+                self.state.sidebar.toggle(&workspace_id);
+            }
+            SidebarRowAction::NewThread(workspace_id) => {
+                self.submit(BackendCommand::CreateSession { workspace_id });
+            }
+            SidebarRowAction::RenameWorkspace { workspace_id, name } => {
+                self.workspace_prompt = Some(WorkspacePromptDialog {
+                    kind: WorkspacePromptKind::RenameWorkspace { workspace_id },
+                    draft: name,
+                });
+                self.workspace_prompt_needs_focus = true;
+            }
         }
     }
 
     fn draw_files_region(&mut self, ui: &mut Ui, tokens: Tokens) {
         let full = ui.max_rect();
-        // Register the directory background before the file rows. egui gives
-        // later widgets precedence, so a row keeps its click/selection input
-        // instead of the panel's context-menu hitbox consuming it.
+        // Register the directory background before the rows. egui gives later
+        // widgets precedence, so a row keeps its click/selection input instead
+        // of the panel's context-menu hitbox consuming it.
         let directory_response = ui
             .interact(full, Id::new("working-directory-menu"), Sense::click())
             .on_hover_text("右键打开工作目录菜单")
             .on_hover_cursor(egui::CursorIcon::ContextMenu);
         let mut action: Option<FilesAction> = None;
-        let current_path = self.state.workspace_file_path.clone();
 
         let head = egui::Rect::from_min_size(full.min, Vec2::new(full.width(), 24.0));
         let refresh_rect = egui::Rect::from_center_size(
             egui::pos2(full.right() - 14.0, head.center().y),
             Vec2::splat(18.0),
         );
-        let back_rect = (!current_path.is_empty()).then(|| {
-            egui::Rect::from_center_size(
-                egui::pos2(refresh_rect.left() - 12.0, head.center().y),
-                Vec2::splat(18.0),
-            )
-        });
-        let title_left = head.left() + 12.0;
-        let title_right = back_rect
-            .map(|rect| rect.left())
-            .unwrap_or(refresh_rect.left())
-            - 4.0;
-        let title_rect =
-            egui::Rect::from_min_max(egui::pos2(title_left, head.top()), egui::pos2(title_right, head.bottom()));
-        let title = if current_path.is_empty() {
-            "工作目录".to_owned()
+        let select_rect = egui::Rect::from_center_size(
+            egui::pos2(refresh_rect.left() - 6.0, head.center().y),
+            Vec2::splat(18.0),
+        );
+        let title_rect = egui::Rect::from_min_max(
+            egui::pos2(head.left() + 12.0, head.top()),
+            egui::pos2(select_rect.left() - 4.0, head.bottom()),
+        );
+        let multi = self.state.workspace_selection.is_active();
+        let title = if multi {
+            format!("已选 {} 项", self.state.workspace_selection.len())
         } else {
-            format!("/{current_path}")
+            "工作目录".to_owned()
         };
         // A fully clipped title produces an empty mesh, which some glow
         // backends reject; skip degenerate rects instead of painting nothing.
@@ -963,30 +1352,12 @@ impl EguiApp {
                 egui::Align2::LEFT_CENTER,
                 title,
                 egui::FontId::proportional(12.0),
-                if current_path.is_empty() {
-                    tokens.text_muted
-                } else {
+                if multi {
                     tokens.text_secondary
+                } else {
+                    tokens.text_muted
                 },
             );
-        }
-        if let Some(back) = back_rect {
-            let response = ui
-                .interact(back, Id::new("workspace-nav-parent"), Sense::click())
-                .on_hover_text("返回上一级（←）")
-                .on_hover_cursor(egui::CursorIcon::PointingHand);
-            if response.hovered() {
-                ui.painter().rect_filled(back, 4.0, tokens.hover);
-            }
-            crate::icons::paint(
-                ui.painter(),
-                back.shrink(4.0),
-                crate::icons::Icon::ChevronLeft,
-                tokens.text_muted,
-            );
-            if response.clicked() {
-                action = Some(FilesAction::Parent);
-            }
         }
         let refresh = ui
             .interact(refresh_rect, Id::new("workspace-refresh"), Sense::click())
@@ -1004,8 +1375,52 @@ impl EguiApp {
         if refresh.clicked() {
             action = Some(FilesAction::Refresh);
         }
+        let select = ui
+            .interact(
+                select_rect,
+                Id::new("workspace-multi-select"),
+                Sense::click(),
+            )
+            .on_hover_text(if multi {
+                "退出多选（Esc）"
+            } else {
+                "多选"
+            })
+            .on_hover_cursor(egui::CursorIcon::PointingHand);
+        if select.hovered() || multi {
+            ui.painter().rect_filled(
+                select_rect,
+                4.0,
+                if multi { tokens.selected } else { tokens.hover },
+            );
+        }
+        crate::icons::paint(
+            ui.painter(),
+            select_rect.shrink(4.0),
+            crate::icons::Icon::CircleCheck,
+            if multi {
+                tokens.primary
+            } else {
+                tokens.text_muted
+            },
+        );
+        if select.clicked() {
+            action = Some(if multi {
+                FilesAction::ExitMultiSelect
+            } else {
+                FilesAction::EnterMultiSelect
+            });
+        }
 
-        let body = egui::Rect::from_min_max(head.left_bottom(), full.max);
+        // The selection bar is a fixed strip: rows must not scroll behind it.
+        let bar_height = if multi { 30.0 } else { 0.0 };
+        let body = egui::Rect::from_min_max(
+            head.left_bottom(),
+            egui::pos2(
+                full.right(),
+                (full.bottom() - bar_height).max(head.bottom()),
+            ),
+        );
         ui.painter().rect_filled(body, 0.0, tokens.surface);
         ui.painter().rect_stroke(
             body,
@@ -1061,9 +1476,15 @@ impl EguiApp {
                 tokens.text_muted,
             );
         } else if let Some(next) =
-            self.draw_file_rows(ui, body.shrink2(Vec2::new(6.0, 3.0)), tokens)
+            self.draw_tree_rows(ui, body.shrink2(Vec2::new(6.0, 3.0)), tokens)
         {
             action = Some(next);
+        }
+
+        if bar_height > 0.0 {
+            if let Some(next) = self.draw_selection_bar(ui, full, bar_height, tokens) {
+                action = Some(next);
+            }
         }
 
         directory_response.context_menu(|ui| {
@@ -1081,12 +1502,19 @@ impl EguiApp {
                 action = Some(FilesAction::OpenRootWorkspace);
                 ui.close();
             }
-            if !current_path.is_empty() && ui.button("返回上一级").clicked() {
-                action = Some(FilesAction::Parent);
+            ui.separator();
+            // Upload and download need a native file dialog the façade does not
+            // have; they stay visible but disabled instead of pretending.
+            ui.add_enabled(false, egui::Button::new("上传文件"))
+                .on_disabled_hover_text("需要原生文件选择对话框，暂未接入");
+            ui.add_enabled(false, egui::Button::new("下载"))
+                .on_disabled_hover_text("需要原生另存对话框，暂未接入");
+            ui.separator();
+            if ui.button("全部收起").clicked() {
+                action = Some(FilesAction::CollapseAll);
                 ui.close();
             }
-            ui.separator();
-            if ui.button("刷新").clicked() {
+            if ui.button("刷新").on_hover_text("F5").clicked() {
                 action = Some(FilesAction::Refresh);
                 ui.close();
             }
@@ -1097,224 +1525,429 @@ impl EguiApp {
         }
     }
 
-    /// Draw the bounded directory page. Rows are painted from the model slice
-    /// without cloning, and every mutating intent is returned instead of being
-    /// executed inside the scroll closure.
-    fn draw_file_rows(
+    /// Multi-select bar: count on the left, destructive action on the right.
+    fn draw_selection_bar(
+        &mut self,
+        ui: &mut Ui,
+        full: egui::Rect,
+        bar_height: f32,
+        tokens: Tokens,
+    ) -> Option<FilesAction> {
+        let bar = egui::Rect::from_min_max(
+            egui::pos2(full.left(), full.bottom() - bar_height),
+            full.max,
+        );
+        ui.painter().rect_filled(bar, 0.0, tokens.sidebar);
+        ui.painter().line_segment(
+            [bar.left_top(), bar.right_top()],
+            Stroke::new(1.0, tokens.border),
+        );
+        let mut action = None;
+        let count = self.state.workspace_selection.len();
+        ui.scope_builder(
+            UiBuilder::new()
+                .max_rect(bar.shrink2(Vec2::new(6.0, 4.0)))
+                .layout(Layout::left_to_right(Align::Center)),
+            |ui| {
+                ui.label(
+                    RichText::new(if count == 0 {
+                        "选择要操作的文件".to_owned()
+                    } else {
+                        format!("已选 {count} 项")
+                    })
+                    .size(11.0)
+                    .color(tokens.text_muted),
+                );
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    let delete = ui.add_enabled(
+                        count > 0,
+                        egui::Button::new(RichText::new("删除").color(tokens.danger)),
+                    );
+                    if delete.clicked() {
+                        action = Some(FilesAction::DeleteSelected);
+                    }
+                    if ui.button("全选").clicked() {
+                        action = Some(FilesAction::SelectAllVisible);
+                    }
+                });
+            },
+        );
+        action
+    }
+
+    /// Draw the tree. Rows come from `workspace_tree::flatten`, so the pointer
+    /// and keyboard paths walk the exact same sequence the painter used.
+    fn draw_tree_rows(
         &mut self,
         ui: &mut Ui,
         area: egui::Rect,
         tokens: Tokens,
     ) -> Option<FilesAction> {
         let mut action: Option<FilesAction> = None;
-        let files = &self.state.workspace_files;
-        let selected = self.state.selected_workspace_file.clone();
-        let list = ui.interact(area, Id::new("workspace-file-list"), Sense::click());
-        // Keyboard ownership is tracked on the app, not through egui focus:
-        // a scroll area re-targets focus on arrow keys, and a text editor must
-        // always keep the keys it owns. Clicking the list claims the keys,
-        // clicking anywhere else releases them.
-        let clicked_elsewhere =
-            ui.ctx().input(|input| input.pointer.any_click()) && !ui.rect_contains_pointer(area);
-        if clicked_elsewhere {
-            self.files_keyboard_active = false;
-        }
-        if list.clicked() {
-            self.files_keyboard_active = true;
-        }
-        if self.files_keyboard_active {
-            ui.painter().rect_stroke(
-                area,
-                5.0,
-                Stroke::new(1.0, tokens.primary_soft),
-                egui::StrokeKind::Inside,
-            );
-        }
-        ui.scope_builder(UiBuilder::new().max_rect(area), |ui| {
-            ScrollArea::vertical()
-                .id_salt("workspace-file-list")
-                .auto_shrink([false, false])
-                .show_rows(ui, 26.0, files.len(), |ui, range| {
-                    for index in range {
-                        let Some(file) = files.get(index) else {
-                            continue;
-                        };
-                        let (row, response) = ui.allocate_exact_size(
-                            Vec2::new(ui.available_width(), 26.0),
-                            Sense::click(),
-                        );
-                        let is_selected = selected.as_deref() == Some(file.path.as_str());
-                        let pointer_in_row = ui.rect_contains_pointer(row);
-                        if is_selected || pointer_in_row {
-                            ui.painter().rect_filled(
-                                row,
-                                5.0,
-                                if is_selected {
-                                    tokens.selected
-                                } else {
-                                    tokens.hover
-                                },
-                            );
-                        }
-                        crate::icons::paint(
-                            ui.painter(),
-                            egui::Rect::from_center_size(
-                                row.left_center() + Vec2::new(10.0, 0.0),
-                                Vec2::splat(14.0),
-                            ),
-                            if file.is_directory {
-                                crate::icons::Icon::Folder
-                            } else {
-                                crate::icons::Icon::File
-                            },
-                            if file.is_directory {
-                                tokens.warning
-                            } else {
-                                tokens.text_muted
-                            },
-                        );
-                        // The hover action button owns a fixed 20px slot, so
-                        // revealing it never shifts the name or the size text.
-                        let more = egui::Rect::from_center_size(
-                            egui::pos2(row.right() - 13.0, row.center().y),
-                            Vec2::splat(20.0),
-                        );
-                        let name_rect = egui::Rect::from_min_max(
-                            egui::pos2(row.left() + 21.0, row.top()),
-                            egui::pos2(more.left() - 4.0, row.bottom()),
-                        );
-                        if name_rect.width() > 1.0 {
-                            let galley = ui.painter().layout(
-                                file.name.clone(),
-                                egui::FontId::proportional(12.0),
-                                tokens.text_secondary,
-                                name_rect.width(),
-                            );
-                            ui.painter().with_clip_rect(name_rect).galley(
-                                name_rect.left_center() - Vec2::new(0.0, galley.size().y / 2.0),
-                                galley,
-                                tokens.text_secondary,
-                            );
-                        }
-                        if !file.is_directory && file.size > 0 && !pointer_in_row {
-                            ui.painter().text(
-                                more.left_center() - Vec2::new(2.0, 0.0),
-                                egui::Align2::RIGHT_CENTER,
-                                format!("{} B", file.size),
-                                egui::FontId::proportional(10.0),
-                                tokens.text_muted,
-                            );
-                        }
-                        // The "more" button keeps its hit region every frame:
-                        // a popup is closed as soon as its owner stops being
-                        // shown, so hiding the button on pointer-out would
-                        // dismiss the menu the pointer is moving into.
-                        let more_response = ui
-                            .interact(
-                                more,
-                                Id::new(("workspace-more", &file.path)),
-                                Sense::click(),
-                            )
-                            .on_hover_text("更多操作")
-                            .on_hover_cursor(egui::CursorIcon::PointingHand);
-                        if pointer_in_row || more_response.hovered() {
-                            ui.painter().rect_filled(more, 4.0, tokens.card_border);
-                            crate::icons::paint(
-                                ui.painter(),
-                                more.shrink(5.0),
-                                crate::icons::Icon::More,
-                                tokens.text_muted,
-                            );
-                        }
-                        egui::Popup::menu(&more_response)
-                            .id(Id::new(("workspace-more-menu", &file.path)))
-                            .show(|ui| {
-                                if let Some(chosen) = file_menu_items(ui, file, tokens) {
-                                    action = Some(chosen);
+        let mut claim_keys = false;
+        {
+            let rows = self
+                .state
+                .workspace_tree
+                .flatten(&self.state.workspace_files);
+            let selected = self.state.selected_workspace_file.clone();
+            let multi = self.state.workspace_selection.is_active();
+            let list = ui.interact(area, Id::new("workspace-file-list"), Sense::click());
+            // Keyboard ownership is tracked on the app, not through egui focus:
+            // a scroll area re-targets focus on arrow keys, and a text editor
+            // must always keep the keys it owns. Clicking the list claims them,
+            // clicking anywhere else releases them.
+            let clicked_elsewhere = ui.ctx().input(|input| input.pointer.any_click())
+                && !ui.rect_contains_pointer(area);
+            if clicked_elsewhere {
+                self.files_keyboard_active = false;
+            } else if list.clicked() {
+                claim_keys = true;
+            }
+            if self.files_keyboard_active {
+                ui.painter().rect_stroke(
+                    area,
+                    5.0,
+                    Stroke::new(1.0, tokens.primary_soft),
+                    egui::StrokeKind::Inside,
+                );
+            }
+            ui.scope_builder(UiBuilder::new().max_rect(area), |ui| {
+                ScrollArea::vertical()
+                    .id_salt("workspace-file-list")
+                    .auto_shrink([false, false])
+                    .show_rows(
+                        ui,
+                        crate::workspace_tree::ROW_HEIGHT,
+                        rows.len(),
+                        |ui, range| {
+                            for index in range {
+                                let Some(row) = rows.get(index) else {
+                                    continue;
+                                };
+                                let (row_rect, response) = ui.allocate_exact_size(
+                                    Vec2::new(
+                                        ui.available_width(),
+                                        crate::workspace_tree::ROW_HEIGHT,
+                                    ),
+                                    Sense::click(),
+                                );
+                                let pointer_in_row = ui.rect_contains_pointer(row_rect);
+                                let is_selected = selected.as_deref() == Some(row.path);
+                                let is_checked = self.state.workspace_selection.contains(row.path);
+                                if is_selected || is_checked || pointer_in_row {
+                                    ui.painter().rect_filled(
+                                        row_rect,
+                                        5.0,
+                                        if is_checked || is_selected {
+                                            tokens.selected
+                                        } else {
+                                            tokens.hover
+                                        },
+                                    );
                                 }
-                            });
-                        if response.double_clicked() {
-                            action = Some(if file.is_directory {
-                                FilesAction::Enter(file.path.clone())
-                            } else {
-                                FilesAction::Open(file.path.clone())
-                            });
-                        } else if response.clicked() {
-                            self.files_keyboard_active = true;
-                            action = Some(FilesAction::Select(file.path.clone()));
-                        }
-                        response.context_menu(|ui| {
-                            if let Some(chosen) = file_menu_items(ui, file, tokens) {
-                                action = Some(chosen);
+                                let center_y = row_rect.center().y;
+                                let mut x =
+                                    row_rect.left() + crate::workspace_tree::indent(row.depth);
+                                if multi {
+                                    let check = egui::Rect::from_center_size(
+                                        egui::pos2(x + 6.0, center_y),
+                                        Vec2::splat(13.0),
+                                    );
+                                    ui.painter().rect_filled(check, 3.0, tokens.surface);
+                                    ui.painter().rect_stroke(
+                                        check,
+                                        3.0,
+                                        Stroke::new(
+                                            1.0,
+                                            if is_checked {
+                                                tokens.primary
+                                            } else {
+                                                tokens.border_strong
+                                            },
+                                        ),
+                                        egui::StrokeKind::Inside,
+                                    );
+                                    if is_checked {
+                                        crate::icons::paint(
+                                            ui.painter(),
+                                            check.shrink(2.5),
+                                            crate::icons::Icon::Check,
+                                            tokens.primary,
+                                        );
+                                    }
+                                    x += 18.0;
+                                }
+                                // Directories get a twisty; files keep the same slot
+                                // empty so names line up column-wise.
+                                if row.is_directory {
+                                    let twisty = egui::Rect::from_center_size(
+                                        egui::pos2(x + 6.0, center_y),
+                                        Vec2::splat(12.0),
+                                    );
+                                    let twisty_response = ui.interact(
+                                        twisty,
+                                        Id::new(("workspace-twisty", row.path)),
+                                        Sense::click(),
+                                    );
+                                    if twisty_response.hovered() {
+                                        ui.painter().rect_filled(twisty, 3.0, tokens.hover);
+                                    }
+                                    crate::icons::paint(
+                                        ui.painter(),
+                                        twisty.shrink(1.0),
+                                        if row.expanded {
+                                            crate::icons::Icon::ChevronDown
+                                        } else {
+                                            crate::icons::Icon::ChevronRight
+                                        },
+                                        tokens.text_muted,
+                                    );
+                                    if twisty_response.clicked() {
+                                        action = Some(FilesAction::Toggle(row.path.to_owned()));
+                                    }
+                                }
+                                x += crate::workspace_tree::INDENT_STEP.min(14.0);
+                                crate::icons::paint(
+                                    ui.painter(),
+                                    egui::Rect::from_center_size(
+                                        egui::pos2(x + 7.0, center_y),
+                                        Vec2::splat(crate::workspace_tree::ICON_SIZE),
+                                    ),
+                                    if row.is_directory {
+                                        if row.expanded {
+                                            crate::icons::Icon::FolderOpen
+                                        } else {
+                                            crate::icons::Icon::Folder
+                                        }
+                                    } else {
+                                        crate::icons::Icon::File
+                                    },
+                                    if row.is_directory {
+                                        tokens.warning
+                                    } else {
+                                        tokens.text_muted
+                                    },
+                                );
+                                x += 18.0;
+                                // The hover action button owns a fixed 20px slot, so
+                                // revealing it never shifts the name or the size.
+                                let more = egui::Rect::from_center_size(
+                                    egui::pos2(row_rect.right() - 13.0, center_y),
+                                    Vec2::splat(20.0),
+                                );
+                                let trailing_width =
+                                    if row.loading || row.failed { 52.0 } else { 0.0 };
+                                let name_rect = egui::Rect::from_min_max(
+                                    egui::pos2(x, row_rect.top()),
+                                    egui::pos2(
+                                        more.left() - 4.0 - trailing_width,
+                                        row_rect.bottom(),
+                                    ),
+                                );
+                                if name_rect.width() > 1.0 {
+                                    let galley = ui.painter().layout(
+                                        row.name.to_owned(),
+                                        egui::FontId::proportional(12.0),
+                                        tokens.text_secondary,
+                                        name_rect.width(),
+                                    );
+                                    ui.painter().with_clip_rect(name_rect).galley(
+                                        name_rect.left_center()
+                                            - Vec2::new(0.0, galley.size().y / 2.0),
+                                        galley,
+                                        tokens.text_secondary,
+                                    );
+                                }
+                                if row.loading {
+                                    ui.painter().text(
+                                        egui::pos2(more.left() - 4.0, center_y),
+                                        egui::Align2::RIGHT_CENTER,
+                                        "读取中",
+                                        egui::FontId::proportional(10.0),
+                                        tokens.text_muted,
+                                    );
+                                } else if row.failed {
+                                    ui.painter().text(
+                                        egui::pos2(more.left() - 4.0, center_y),
+                                        egui::Align2::RIGHT_CENTER,
+                                        "读取失败",
+                                        egui::FontId::proportional(10.0),
+                                        tokens.danger,
+                                    );
+                                } else if !row.is_directory && row.size > 0 && !pointer_in_row {
+                                    ui.painter().text(
+                                        egui::Rect::from_center_size(
+                                            egui::pos2(more.left() - 4.0, center_y),
+                                            Vec2::splat(1.0),
+                                        )
+                                        .left_center(),
+                                        egui::Align2::RIGHT_CENTER,
+                                        format!("{} B", row.size),
+                                        egui::FontId::proportional(10.0),
+                                        tokens.text_muted,
+                                    );
+                                }
+                                // The "more" button keeps its hit region every frame:
+                                // a popup closes as soon as its owner stops being
+                                // shown, so hiding it on pointer-out would dismiss
+                                // the menu the pointer is moving into.
+                                let more_response = ui
+                                    .interact(
+                                        more,
+                                        Id::new(("workspace-more", row.path)),
+                                        Sense::click(),
+                                    )
+                                    .on_hover_text("更多操作")
+                                    .on_hover_cursor(egui::CursorIcon::PointingHand);
+                                if pointer_in_row || more_response.hovered() {
+                                    ui.painter().rect_filled(more, 4.0, tokens.card_border);
+                                    crate::icons::paint(
+                                        ui.painter(),
+                                        more.shrink(5.0),
+                                        crate::icons::Icon::More,
+                                        tokens.text_muted,
+                                    );
+                                }
+                                egui::Popup::menu(&more_response)
+                                    .id(Id::new(("workspace-more-menu", row.path)))
+                                    .show(|ui| {
+                                        if let Some(chosen) = file_menu_items(
+                                            ui,
+                                            row.path,
+                                            row.name,
+                                            row.is_directory,
+                                            tokens,
+                                        ) {
+                                            action = Some(chosen);
+                                        }
+                                    });
+                                if response.double_clicked() {
+                                    action = Some(if row.is_directory {
+                                        FilesAction::Toggle(row.path.to_owned())
+                                    } else {
+                                        FilesAction::Open(row.path.to_owned())
+                                    });
+                                } else if response.clicked() {
+                                    if multi {
+                                        action =
+                                            Some(FilesAction::ToggleSelection(row.path.to_owned()));
+                                    } else {
+                                        action = Some(FilesAction::Select(row.path.to_owned()));
+                                    }
+                                }
+                                response.context_menu(|ui| {
+                                    if let Some(chosen) = file_menu_items(
+                                        ui,
+                                        row.path,
+                                        row.name,
+                                        row.is_directory,
+                                        tokens,
+                                    ) {
+                                        action = Some(chosen);
+                                    }
+                                });
                             }
+                        },
+                    );
+            });
+
+            // Keyboard follows the same intent enum as the menus, so pointer and
+            // keyboard paths cannot drift apart.
+            if self.files_keyboard_active && !ui.ctx().wants_keyboard_input() {
+                let keys = ui.input(|input| {
+                    (
+                        input.key_pressed(egui::Key::ArrowUp),
+                        input.key_pressed(egui::Key::ArrowDown),
+                        input.key_pressed(egui::Key::Home),
+                        input.key_pressed(egui::Key::End),
+                        input.key_pressed(egui::Key::Enter),
+                        input.key_pressed(egui::Key::F2),
+                        input.key_pressed(egui::Key::Delete),
+                        input.key_pressed(egui::Key::F5),
+                        input.key_pressed(egui::Key::ArrowLeft),
+                        input.key_pressed(egui::Key::ArrowRight),
+                        input.key_pressed(egui::Key::Escape),
+                        input.key_pressed(egui::Key::Space),
+                    )
+                });
+                let (
+                    up,
+                    down,
+                    home,
+                    end,
+                    enter,
+                    rename,
+                    delete,
+                    refresh,
+                    left,
+                    right,
+                    escape,
+                    space,
+                ) = keys;
+                let current = rows
+                    .iter()
+                    .position(|row| selected.as_deref() == Some(row.path));
+                let step = |delta: isize| -> Option<&crate::workspace_tree::TreeRow<'_>> {
+                    if rows.is_empty() {
+                        return None;
+                    }
+                    let len = rows.len() as isize;
+                    let base = current.map_or(-1, |index| index as isize);
+                    rows.get((base + delta).clamp(0, len - 1) as usize)
+                };
+                if escape && multi {
+                    action = Some(FilesAction::ExitMultiSelect);
+                } else if up {
+                    action = step(-1).map(|row| FilesAction::Select(row.path.to_owned()));
+                } else if down {
+                    action = step(1).map(|row| FilesAction::Select(row.path.to_owned()));
+                } else if home {
+                    action = rows
+                        .first()
+                        .map(|row| FilesAction::Select(row.path.to_owned()));
+                } else if end {
+                    action = rows
+                        .last()
+                        .map(|row| FilesAction::Select(row.path.to_owned()));
+                } else if refresh {
+                    action = Some(FilesAction::Refresh);
+                } else if let Some(row) = current.and_then(|index| rows.get(index)) {
+                    if left {
+                        action = Some(if row.is_directory && row.expanded {
+                            FilesAction::Toggle(row.path.to_owned())
+                        } else {
+                            // Collapsed row: move up to the parent instead of
+                            // doing nothing, which is what the web tree does.
+                            FilesAction::Select(row.path.to_owned())
+                        });
+                    } else if right && row.is_directory {
+                        action = Some(FilesAction::Toggle(row.path.to_owned()));
+                    } else if space && multi {
+                        action = Some(FilesAction::ToggleSelection(row.path.to_owned()));
+                    } else if enter {
+                        action = Some(if row.is_directory {
+                            FilesAction::Toggle(row.path.to_owned())
+                        } else {
+                            FilesAction::Open(row.path.to_owned())
+                        });
+                    } else if rename {
+                        action = Some(FilesAction::Rename {
+                            path: row.path.to_owned(),
+                            name: row.name.to_owned(),
+                        });
+                    } else if delete {
+                        action = Some(FilesAction::Delete {
+                            path: row.path.to_owned(),
+                            name: row.name.to_owned(),
+                            is_directory: row.is_directory,
                         });
                     }
-                });
-        });
-
-        // Keyboard follows the same intent enum as the menus, so pointer and
-        // keyboard paths cannot drift apart. Ownership is tracked explicitly:
-        // egui may move widget focus between frames, while a text editor with
-        // focus must always keep its own keys.
-        let owns_keys = self.files_keyboard_active && !ui.ctx().wants_keyboard_input();
-        if owns_keys {
-            let keys = ui.input(|input| {
-                (
-                    input.key_pressed(egui::Key::ArrowUp),
-                    input.key_pressed(egui::Key::ArrowDown),
-                    input.key_pressed(egui::Key::Home),
-                    input.key_pressed(egui::Key::End),
-                    input.key_pressed(egui::Key::Enter),
-                    input.key_pressed(egui::Key::F2),
-                    input.key_pressed(egui::Key::Delete),
-                    input.key_pressed(egui::Key::F5),
-                    input.key_pressed(egui::Key::ArrowLeft),
-                    input.key_pressed(egui::Key::ArrowRight),
-                )
-            });
-            let (up, down, home, end, enter, rename, delete, refresh, left, right) = keys;
-            let current_index = files
-                .iter()
-                .position(|file| selected.as_deref() == Some(file.path.as_str()));
-            let step = |delta: isize| -> Option<String> {
-                if files.is_empty() {
-                    return None;
-                }
-                let len = files.len() as isize;
-                let base = current_index.map(|index| index as isize).unwrap_or(-1);
-                let next = (base + delta).clamp(0, len - 1);
-                files.get(next as usize).map(|file| file.path.clone())
-            };
-            if up {
-                action = step(-1).map(FilesAction::Select);
-            } else if down {
-                action = step(1).map(FilesAction::Select);
-            } else if home {
-                action = files.first().map(|file| FilesAction::Select(file.path.clone()));
-            } else if end {
-                action = files.last().map(|file| FilesAction::Select(file.path.clone()));
-            } else if refresh {
-                action = Some(FilesAction::Refresh);
-            } else if left {
-                action = Some(FilesAction::Parent);
-            } else if let Some(file) = current_index.and_then(|index| files.get(index)) {
-                if (enter || right) && file.is_directory {
-                    action = Some(FilesAction::Enter(file.path.clone()));
-                } else if enter {
-                    action = Some(FilesAction::Open(file.path.clone()));
-                } else if rename {
-                    action = Some(FilesAction::Rename {
-                        path: file.path.clone(),
-                        name: file.name.clone(),
-                    });
-                } else if delete {
-                    action = Some(FilesAction::Delete {
-                        path: file.path.clone(),
-                        name: file.name.clone(),
-                        is_directory: file.is_directory,
-                    });
                 }
             }
+        }
+        if claim_keys {
+            self.files_keyboard_active = true;
         }
         action
     }
@@ -1323,13 +1956,26 @@ impl EguiApp {
         match action {
             FilesAction::Select(path) => self.state.select_workspace_file(path),
             FilesAction::Open(path) => self.open_workspace_file(path),
-            FilesAction::Enter(path) => self.refresh_workspace_path(path),
-            FilesAction::Parent => {
-                if let Some(parent) = workspace_parent_path(&self.state.workspace_file_path) {
-                    self.refresh_workspace_path(parent);
+            FilesAction::Toggle(path) => {
+                // `toggle` answers "do the children still need loading", so a
+                // second expand of a cached folder costs no round trip.
+                let needs_load = self.state.workspace_tree.toggle(&path);
+                if needs_load {
+                    self.state.workspace_tree.set_loading(&path);
+                    if let Some(session_id) = self.state.selected_session.clone() {
+                        self.submit(BackendCommand::ListWorkspaceChildren { session_id, path });
+                    }
                 }
             }
-            FilesAction::Refresh => self.refresh_workspace_files(),
+            FilesAction::Refresh => {
+                self.state.workspace_tree.collapse_all();
+                self.state.workspace_selection.exit();
+                self.refresh_workspace_files();
+            }
+            FilesAction::CollapseAll => {
+                self.state.workspace_tree.collapse_all();
+                self.state.status = "已收起全部目录".to_owned();
+            }
             FilesAction::CreateDirectory => {
                 self.workspace_prompt = Some(WorkspacePromptDialog {
                     kind: WorkspacePromptKind::Directory,
@@ -1357,10 +2003,38 @@ impl EguiApp {
                 is_directory,
             } => {
                 self.delete_entry_confirm = Some(DeleteEntryConfirm {
-                    path,
-                    name,
-                    is_directory,
+                    items: vec![DeleteEntryItem {
+                        path,
+                        name,
+                        is_directory,
+                    }],
                 });
+            }
+            FilesAction::DeleteSelected => {
+                let items: Vec<DeleteEntryItem> = self
+                    .state
+                    .workspace_selection
+                    .ids()
+                    .into_iter()
+                    .filter_map(|path| {
+                        let row = self
+                            .state
+                            .workspace_tree
+                            .flatten(&self.state.workspace_files)
+                            .into_iter()
+                            .find(|row| row.path == path)?;
+                        Some(DeleteEntryItem {
+                            path: row.path.to_owned(),
+                            name: row.name.to_owned(),
+                            is_directory: row.is_directory,
+                        })
+                    })
+                    .collect();
+                if items.is_empty() {
+                    self.state.status = "请选择要删除的项".to_owned();
+                } else {
+                    self.delete_entry_confirm = Some(DeleteEntryConfirm { items });
+                }
             }
             FilesAction::Reference(path) => {
                 let draft = &mut self.state.composer;
@@ -1380,7 +2054,28 @@ impl EguiApp {
                     self.state.status = "请先选择一个线程".to_owned();
                 }
             }
-            FilesAction::Unavailable(reason) => self.state.status = reason.to_owned(),
+            FilesAction::EnterMultiSelect => self.state.workspace_selection.enter(),
+            FilesAction::ExitMultiSelect => self.state.workspace_selection.exit(),
+            FilesAction::ToggleSelection(path) => {
+                self.state.workspace_selection.toggle(&path);
+            }
+            FilesAction::SelectAllVisible => {
+                let paths: Vec<String> = self
+                    .state
+                    .workspace_tree
+                    .flatten(&self.state.workspace_files)
+                    .into_iter()
+                    .map(|row| row.path.to_owned())
+                    .collect();
+                if self.state.workspace_selection.len() == paths.len() {
+                    // Second press on "全选" clears, matching the thread list.
+                    self.state.workspace_selection.clear();
+                } else {
+                    self.state
+                        .workspace_selection
+                        .select_all(paths.iter().map(String::as_str));
+                }
+            }
         }
     }
 
@@ -1725,18 +2420,23 @@ impl EguiApp {
             ThreadRowAction::Archive(id) => {
                 self.archive_threads(vec![id]);
             }
-            ThreadRowAction::BeginMultiSelect => {
-                self.thread_selection_mode = true;
-                self.selected_thread_ids.clear();
-            }
+            ThreadRowAction::BeginMultiSelect => self.thread_selection.enter(),
             ThreadRowAction::ToggleSelection(id) => {
-                let archivable = self
-                    .state
-                    .sessions
-                    .iter()
-                    .any(|session| session.id == id && !session.locked);
-                if archivable && !self.selected_thread_ids.remove(&id) {
-                    self.selected_thread_ids.insert(id);
+                // Locked and live threads stay out of the batch: the native
+                // facade cancels an active thread before archiving it, and a
+                // locked thread cannot be archived at all.
+                let eligible = self.state.sessions.iter().any(|session| {
+                    session.id == id
+                        && !session.locked
+                        && crate::thread_list::archivable(&session.status)
+                });
+                if !eligible {
+                    return;
+                }
+                if self.thread_selection.is_active() {
+                    self.thread_selection.toggle(&id);
+                } else {
+                    self.thread_selection.activate(&id);
                 }
             }
         }
@@ -1749,21 +2449,38 @@ impl EguiApp {
             [rect.left_top(), rect.right_top()],
             Stroke::new(1.0, tokens.border),
         );
+        // Eligibility is decided once, from the same rule the rows use.
+        let eligible: Vec<String> = self
+            .state
+            .sessions
+            .iter()
+            .filter(|session| !session.locked && crate::thread_list::archivable(&session.status))
+            .map(|session| session.id.clone())
+            .collect();
+        let all_selected =
+            !eligible.is_empty() && eligible.iter().all(|id| self.thread_selection.contains(id));
+        let entries: Vec<(String, String)> = self
+            .state
+            .sessions
+            .iter()
+            .filter(|session| !session.locked)
+            .map(|session| (session.id.clone(), session.status.clone()))
+            .collect();
+        let targets = self.thread_selection.archive_targets(
+            entries
+                .iter()
+                .map(|(id, status)| (id.as_str(), status.as_str())),
+        );
+        let skipped = self.thread_selection.skipped(
+            entries
+                .iter()
+                .map(|(id, status)| (id.as_str(), status.as_str())),
+        );
+        let mut archive_request = None;
         ui.scope_builder(
             UiBuilder::new().max_rect(rect.shrink2(Vec2::new(6.0, 5.0))),
             |ui| {
                 ui.horizontal(|ui| {
-                    let archivable: Vec<&str> = self
-                        .state
-                        .sessions
-                        .iter()
-                        .filter(|session| !session.locked)
-                        .map(|session| session.id.as_str())
-                        .collect();
-                    let all_selected = !archivable.is_empty()
-                        && archivable
-                            .iter()
-                            .all(|id| self.selected_thread_ids.contains(*id));
                     if ui
                         .small_button(if all_selected {
                             "取消全选"
@@ -1773,29 +2490,32 @@ impl EguiApp {
                         .clicked()
                     {
                         if all_selected {
-                            self.selected_thread_ids.clear();
+                            self.thread_selection.clear();
                         } else {
-                            self.selected_thread_ids =
-                                archivable.into_iter().map(str::to_owned).collect();
+                            self.thread_selection
+                                .select_all(eligible.iter().map(String::as_str));
                         }
                     }
                     if ui.small_button("退出").clicked() {
-                        self.thread_selection_mode = false;
-                        self.selected_thread_ids.clear();
+                        self.thread_selection.exit();
                     }
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        let can_archive = !self.selected_thread_ids.is_empty()
-                            && self.archive_in_flight.is_none()
-                            && self.pending_thread_archives.is_empty();
+                        let hint = if skipped.is_empty() {
+                            "归档选中线程".to_owned()
+                        } else {
+                            // Say what is being left out instead of silently
+                            // dropping the running rows from the batch.
+                            format!("已跳过 {} 个运行中的线程", skipped.len())
+                        };
                         if ui
-                            .add_enabled(can_archive, egui::Button::new("归档"))
+                            .add_enabled(!targets.is_empty(), egui::Button::new("归档"))
+                            .on_hover_text(hint)
                             .clicked()
                         {
-                            let ids = self.selected_thread_ids.iter().cloned().collect();
-                            self.archive_threads(ids);
+                            archive_request = Some(targets.clone());
                         }
                         ui.label(
-                            RichText::new(format!("已选 {} 项", self.selected_thread_ids.len()))
+                            RichText::new(format!("已选 {} 项", self.thread_selection.len()))
                                 .size(11.0)
                                 .color(tokens.text_muted),
                         );
@@ -1803,130 +2523,72 @@ impl EguiApp {
                 });
             },
         );
+        if let Some(ids) = archive_request {
+            self.archive_threads(ids);
+        }
     }
 
-    /// Archive in a bounded, sequential flow. The native facade cancels an
-    /// active thread before archiving it, so launching every checked row at
-    /// once would waste runtime capacity and make result ordering unstable.
+    /// Archive every selected thread in one backend command. The reducer owns
+    /// the removal and the result text, so the panel does not have to sequence
+    /// N requests or track partial progress itself.
     fn archive_threads(&mut self, ids: Vec<String>) {
-        if self.archive_in_flight.is_some() || !self.pending_thread_archives.is_empty() {
-            self.state.status = "归档操作正在进行".to_owned();
-            return;
-        }
-        let ids: Vec<String> = ids
+        let targets: Vec<String> = ids
             .into_iter()
             .filter(|id| {
-                self.state
-                    .sessions
-                    .iter()
-                    .any(|session| session.id == *id && !session.locked)
+                self.state.sessions.iter().any(|session| {
+                    session.id == *id
+                        && !session.locked
+                        && crate::thread_list::archivable(&session.status)
+                })
             })
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect();
-        if ids.is_empty() {
+        if targets.is_empty() {
             self.state.status = "没有可归档的线程".to_owned();
             return;
         }
-        self.archive_batch_total = ids.len();
-        self.archive_batch_succeeded = 0;
-        self.archive_batch_failed = 0;
-        self.pending_thread_archives = ids.into();
-        self.state.status = "正在归档线程".to_owned();
-        self.submit_next_thread_archive();
-    }
-
-    fn submit_next_thread_archive(&mut self) {
-        if self.archive_in_flight.is_some() {
-            return;
+        // Keep an active thread: archiving the open one would otherwise leave
+        // the chat pane pointing at a transcript that is about to be cleared.
+        if targets
+            .iter()
+            .any(|id| self.state.selected_session.as_deref() == Some(id.as_str()))
+        {
+            self.state.selected_session = self
+                .state
+                .sessions
+                .iter()
+                .find(|session| !targets.contains(&session.id))
+                .map(|session| session.id.clone());
+            self.last_selected = None;
+            self.state.selected_workspace_file = None;
         }
-        let Some(session_id) = self.pending_thread_archives.pop_front() else {
-            self.finish_thread_archive_batch();
-            return;
-        };
-        self.archive_in_flight = Some(session_id.clone());
+        self.thread_selection.exit();
+        self.state.status = format!("正在归档 {} 个线程", targets.len());
         if let Err(error) = self
             .backend
-            .submit(BackendCommand::ArchiveSession(session_id.clone()))
+            .submit(BackendCommand::ArchiveSessions { ids: targets })
         {
-            self.finish_thread_archive(session_id, Err(error));
+            self.state.status = format!("无法归档线程：{error}");
         }
     }
 
-    fn finish_thread_archive(&mut self, session_id: String, result: Result<(), String>) {
-        if self.archive_in_flight.as_deref() != Some(session_id.as_str()) {
-            return;
-        }
-        self.archive_in_flight = None;
-        match result {
-            Ok(()) => {
-                self.archive_batch_succeeded += 1;
-                self.selected_thread_ids.remove(&session_id);
-                self.state
-                    .sessions
-                    .retain(|session| session.id != session_id);
-                if self.state.selected_session.as_deref() == Some(session_id.as_str()) {
-                    self.state.selected_session = self.state.sessions.first().map(|s| s.id.clone());
-                    self.last_selected = None;
-                    self.state.selected_workspace_file = None;
-                }
-            }
-            Err(error) => {
-                self.archive_batch_failed += 1;
-                self.state.status = format!("无法归档线程：{error}");
-            }
-        }
-        self.submit_next_thread_archive();
-    }
-
-    fn finish_thread_archive_batch(&mut self) {
-        if self.archive_batch_total == 0 {
-            return;
-        }
-        let total = self.archive_batch_total;
-        let succeeded = self.archive_batch_succeeded;
-        let failed = self.archive_batch_failed;
-        self.archive_batch_total = 0;
-        self.archive_batch_succeeded = 0;
-        self.archive_batch_failed = 0;
-        if total == 1 && succeeded == 1 {
-            self.state.status = "线程已归档".to_owned();
-        } else if failed == 0 {
-            self.state.status = format!("已归档 {succeeded} 个线程");
-        } else {
-            self.state.status = format!("已归档 {succeeded} 个线程，{failed} 个失败");
-        }
-        self.thread_selection_mode = false;
-        self.selected_thread_ids.clear();
-    }
-
+    /// Re-read the workspace root. The tree owns everything below it, so this
+    /// is the only listing the panel ever requests directly.
     fn refresh_workspace_files(&mut self) {
-        let path = self.state.workspace_file_path.clone();
-        self.refresh_workspace_path(path);
-    }
-
-    /// List one workspace-relative directory. The state id is bumped before
-    /// the command leaves, so a reply for a directory the user already left is
-    /// rejected by the reducer instead of replacing the current listing.
-    fn refresh_workspace_path(&mut self, path: String) {
         let Some(session_id) = self.state.selected_session.clone() else {
             return;
         };
+        // Bumped before the command leaves, so a reply for a thread the user
+        // already left is rejected by the reducer instead of replacing the
+        // current listing.
         let request_id = self.state.begin_workspace_refresh();
-        self.state.workspace_file_path = path.clone();
         self.state.selected_workspace_file = None;
         self.submit(BackendCommand::RefreshWorkspaceFiles {
             session_id,
-            path,
+            path: String::new(),
             request_id,
         });
-    }
-
-    /// Switching threads starts at the workspace root: a directory from the
-    /// previous thread has no meaning in the new one.
-    fn refresh_workspace_root(&mut self) {
-        self.state.workspace_file_path.clear();
-        self.refresh_workspace_files();
     }
 
     fn open_workspace_file(&mut self, path: String) {
@@ -2146,7 +2808,10 @@ impl EguiApp {
         let mut open = true;
         let mut close_requested = false;
         let mut accepted = false;
-        let renaming = matches!(dialog.kind, WorkspacePromptKind::Rename { .. });
+        let renaming = matches!(
+            dialog.kind,
+            WorkspacePromptKind::Rename { .. } | WorkspacePromptKind::RenameWorkspace { .. }
+        );
         let (title, hint, field_label, dialog_id) = match &dialog.kind {
             WorkspacePromptKind::Directory => (
                 "新建目录",
@@ -2165,6 +2830,12 @@ impl EguiApp {
                 "新名称",
                 "只改名称，不改变所在目录：",
                 "workspace-rename-dialog",
+            ),
+            WorkspacePromptKind::RenameWorkspace { .. } => (
+                "重命名工作区",
+                "新的工作区名称",
+                "只改显示名称，不改变绑定的目录：",
+                "workspace-rename-workspace-dialog",
             ),
         };
         egui::Window::new(title)
@@ -2225,29 +2896,44 @@ impl EguiApp {
             open = false;
         }
         if accepted {
-            if let Some(session_id) = self.state.selected_session.clone() {
-                let draft = dialog.draft.trim().to_owned();
-                match &dialog.kind {
-                    WorkspacePromptKind::Directory => self.submit(
-                        BackendCommand::CreateWorkspaceDirectory {
-                            session_id,
-                            path: draft,
-                        },
-                    ),
-                    WorkspacePromptKind::File => self.submit(BackendCommand::CreateWorkspaceFile {
-                        session_id,
-                        path: draft,
-                    }),
-                    WorkspacePromptKind::Rename { path } => {
-                        self.submit(BackendCommand::RenameWorkspaceEntry {
-                            session_id,
-                            path: path.clone(),
-                            new_name: draft,
-                        })
+            let draft = dialog.draft.trim().to_owned();
+            match &dialog.kind {
+                // The workspace label is independent from the working
+                // directory, so it never needs a selected thread.
+                WorkspacePromptKind::RenameWorkspace { workspace_id } => {
+                    self.submit(BackendCommand::RenameWorkspace {
+                        workspace_id: workspace_id.clone(),
+                        name: draft,
+                    });
+                }
+                _ => {
+                    if let Some(session_id) = self.state.selected_session.clone() {
+                        match &dialog.kind {
+                            WorkspacePromptKind::Directory => {
+                                self.submit(BackendCommand::CreateWorkspaceDirectory {
+                                    session_id,
+                                    path: draft,
+                                })
+                            }
+                            WorkspacePromptKind::File => {
+                                self.submit(BackendCommand::CreateWorkspaceFile {
+                                    session_id,
+                                    path: draft,
+                                })
+                            }
+                            WorkspacePromptKind::Rename { path } => {
+                                self.submit(BackendCommand::RenameWorkspaceEntry {
+                                    session_id,
+                                    path: path.clone(),
+                                    new_name: draft,
+                                })
+                            }
+                            WorkspacePromptKind::RenameWorkspace { .. } => {}
+                        }
+                    } else {
+                        self.state.status = "请先选择一个线程".to_owned();
                     }
                 }
-            } else {
-                self.state.status = "请先选择一个线程".to_owned();
             }
         } else if open {
             self.workspace_prompt = Some(dialog);
@@ -2263,6 +2949,36 @@ impl EguiApp {
         let mut open = true;
         let mut close_requested = false;
         let mut accepted = false;
+        // The wording has to name what disappears: one entry for a row menu, a
+        // count plus the first few names for a multi-select batch.
+        let headline = match confirm.items.as_slice() {
+            [] => "没有可删除的项".to_owned(),
+            [item] => {
+                if item.is_directory {
+                    format!("确定删除目录「{}」及其全部内容？", item.name)
+                } else {
+                    format!("确定删除「{}」？", item.name)
+                }
+            }
+            items => {
+                let preview: Vec<&str> = items
+                    .iter()
+                    .take(3)
+                    .map(|item| item.name.as_str())
+                    .collect();
+                let more = items.len().saturating_sub(preview.len());
+                if more > 0 {
+                    format!(
+                        "确定删除 {} 项（{} 等 {} 项）？",
+                        items.len(),
+                        preview.join("、"),
+                        more
+                    )
+                } else {
+                    format!("确定删除 {} 项（{}）？", items.len(), preview.join("、"))
+                }
+            }
+        };
         egui::Window::new("删除确认")
             .id(Id::new("workspace-delete-dialog"))
             .collapsible(false)
@@ -2271,14 +2987,7 @@ impl EguiApp {
             .open(&mut open)
             .show(ctx, |ui| {
                 ui.set_min_width(360.0);
-                ui.label(
-                    RichText::new(if confirm.is_directory {
-                        format!("确定删除目录「{}」及其全部内容？", confirm.name)
-                    } else {
-                        format!("确定删除「{}」？", confirm.name)
-                    })
-                    .size(13.0),
-                );
+                ui.label(RichText::new(headline).size(13.0));
                 ui.add_space(6.0);
                 ui.label(
                     RichText::new("删除后无法从蛹恢复。")
@@ -2288,10 +2997,8 @@ impl EguiApp {
                 ui.add_space(12.0);
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     let delete = ui.add(
-                        egui::Button::new(
-                            RichText::new("删除").color(tokens.on_accent),
-                        )
-                        .fill(tokens.danger),
+                        egui::Button::new(RichText::new("删除").color(tokens.on_accent))
+                            .fill(tokens.danger),
                     );
                     if delete.clicked() {
                         accepted = true;
@@ -2309,11 +3016,30 @@ impl EguiApp {
         }
         if accepted {
             if let Some(session_id) = self.state.selected_session.clone() {
-                self.state.selected_workspace_file = None;
-                self.submit(BackendCommand::DeleteWorkspaceEntry {
-                    session_id,
-                    path: confirm.path,
-                });
+                // One submit per entry: the façade deletes a single path, and a
+                // partial failure must leave the rest of the batch intact.
+                let count = confirm.items.len();
+                for item in &confirm.items {
+                    if self
+                        .state
+                        .selected_workspace_file
+                        .as_deref()
+                        .is_some_and(|selected| selected == item.path)
+                    {
+                        self.state.selected_workspace_file = None;
+                    }
+                    self.state.workspace_selection.toggle(&item.path);
+                    self.submit(BackendCommand::DeleteWorkspaceEntry {
+                        session_id: session_id.clone(),
+                        path: item.path.clone(),
+                    });
+                }
+                self.state.workspace_selection.exit();
+                self.state.status = if count == 1 {
+                    "正在删除".to_owned()
+                } else {
+                    format!("正在删除 {count} 项")
+                };
             } else {
                 self.state.status = "请先选择一个线程".to_owned();
             }
@@ -2411,10 +3137,8 @@ impl EguiApp {
                 } else {
                     0.0
                 };
-                let text_width = (full.width() - 32.0 - ruler_width)
-                    .min(CHAT_COLUMN_WIDTH)
-                    .max(80.0)
-                    - 30.0;
+                let text_width =
+                    (full.width() - 32.0 - ruler_width).clamp(80.0, CHAT_COLUMN_WIDTH) - 30.0;
                 let mut job = egui::text::LayoutJob::single_section(
                     self.state.composer.clone(),
                     egui::TextFormat {
@@ -2428,7 +3152,15 @@ impl EguiApp {
                 let input_height = ui
                     .fonts(|fonts| fonts.layout_job(job).size().y)
                     .clamp(44.0, 168.0);
-                let composer_height = input_height + 84.0;
+                // Chips and queued prompts sit above the input card, so the
+                // composer reserves their height instead of overlapping the
+                // transcript when they appear.
+                let strip = composer_strip_height(
+                    self.state.attachments.len(),
+                    self.state.prompt_queue.len(),
+                    text_width + 30.0,
+                );
+                let composer_height = input_height + 84.0 + strip;
                 let split = (full.bottom() - composer_height).max(full.top());
                 ui.scope_builder(
                     UiBuilder::new().max_rect(egui::Rect::from_min_max(
@@ -2490,8 +3222,24 @@ impl EguiApp {
                                         if !turn.user.text.is_empty() {
                                             number += 1;
                                         }
+                                        let top_before = ui.cursor().top();
                                         open_prompt_preview |=
                                             self.draw_turn(ui, &turn, number, tokens);
+                                        if self.scroll_to_turn == Some(index) {
+                                            // The ruler asked for this turn: put
+                                            // its first row under the reader's eye,
+                                            // then stop asking on later frames.
+                                            let rect = egui::Rect::from_min_max(
+                                                egui::pos2(ui.min_rect().left(), top_before),
+                                                egui::pos2(
+                                                    ui.min_rect().right(),
+                                                    ui.cursor().top(),
+                                                ),
+                                            );
+                                            ui.scroll_to_rect(rect, Some(Align::TOP));
+                                            self.follow_tail = false;
+                                            self.scroll_to_turn = None;
+                                        }
                                     }
                                 }
                             },
@@ -2513,54 +3261,65 @@ impl EguiApp {
         self.follow_tail = distance_to_tail <= 120.0;
     }
 
-    fn draw_turn_ruler(&self, ui: &mut Ui, viewport: egui::Rect, tokens: Tokens) {
-        let count = self
-            .state
-            .turns
-            .iter()
-            .filter(|turn| !turn.user.text.is_empty())
-            .count();
-        // 与蜂巢 MessengerTurnRuler 的行为一致：单轮时不显示可点刻度，
-        // 避免给空白聊天区增加无意义的视觉噪声。
-        if count < 2 || viewport.height() < 48.0 {
-            return;
-        }
-
-        let ruler_width = 18.0;
-        let right = viewport.right() - 2.0;
-        let top = viewport.top() + 10.0;
-        let height = (viewport.height() - 20.0).max(1.0);
-        let slot = height / count as f32;
-        let mut hovered = None;
-        for (index, (turn_index, turn)) in self
+    fn draw_turn_ruler(&mut self, ui: &mut Ui, viewport: egui::Rect, tokens: Tokens) {
+        // Turns without user text (the opening system-prompt turn) have no
+        // round of their own, so the ruler indexes the remaining rows and maps
+        // back to their position in the transcript.
+        let rounds: Vec<usize> = self
             .state
             .turns
             .iter()
             .enumerate()
             .filter(|(_, turn)| !turn.user.text.is_empty())
-            .enumerate()
-        {
-            let center_y = top + slot * (index as f32 + 0.5);
+            .map(|(index, _)| index)
+            .collect();
+        // The web workbench only shows clickable ticks once a thread has more
+        // than one round; a single tick would just be noise.
+        if !crate::timeline_ruler::visible(rounds.len()) || viewport.height() < 48.0 {
+            return;
+        }
+        let right = viewport.right() - 2.0;
+        let top = viewport.top() + 10.0;
+        let height = (viewport.height() - 20.0).max(1.0);
+        // The projection has no per-round heights, so ticks tile the lane
+        // evenly; the content guard only rejects degenerate frames.
+        let ticks = crate::timeline_ruler::ticks(rounds.len(), height, top, height, top, height);
+        let mut jump = None;
+        let mut hovered = None;
+        for (order, tick) in ticks.iter().enumerate() {
+            let Some(&turn_index) = rounds.get(tick.turn_index) else {
+                continue;
+            };
+            let center_y = top + tick.y + tick.height * 0.5;
             let hit = egui::Rect::from_center_size(
-                egui::pos2(right - ruler_width * 0.5, center_y),
-                egui::vec2(ruler_width, slot.max(12.0)),
+                egui::pos2(right - crate::timeline_ruler::WIDTH * 0.5, center_y),
+                egui::vec2(crate::timeline_ruler::WIDTH, tick.height.max(12.0)),
             );
-            let response = ui.interact(hit, Id::new(("turn-ruler", index)), Sense::hover());
+            let response = ui.interact(hit, Id::new(("turn-ruler", order)), Sense::click());
             let is_hovered = response.hovered();
+            // Read the click before the response moves into the hover tuple.
+            let clicked = response.clicked();
             if is_hovered {
-                hovered = Some((turn_index, index + 1, response));
+                hovered = Some((turn_index, order + 1, response));
             }
-
-            // 用用户输入长度模拟蜂巢的波感宽度：短消息为细刻度，
-            // 长消息略宽，仍保持 2px 高和右侧 3px 内缩。
-            let user_len = turn.user.text.chars().count().min(160) as f32;
+            if clicked {
+                jump = Some(turn_index);
+            }
+            // A longer user message gets a slightly wider tick, which keeps the
+            // lane readable without inventing per-round heights.
+            let user_len = self.state.turns[turn_index]
+                .user
+                .text
+                .chars()
+                .count()
+                .min(160) as f32;
             let width = (4.0 + user_len.sqrt() * 0.9).clamp(4.0, 11.0);
-            let tick = egui::Rect::from_center_size(
+            let tick_rect = egui::Rect::from_center_size(
                 egui::pos2(right - 3.0 - width * 0.5, center_y),
                 egui::vec2(width, if is_hovered { 3.0 } else { 2.0 }),
             );
             ui.painter().rect_filled(
-                tick,
+                tick_rect,
                 1.0,
                 if is_hovered {
                     tokens.primary
@@ -2568,26 +3327,28 @@ impl EguiApp {
                     tokens.border_strong
                 },
             );
+            if is_hovered {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            }
         }
-
+        if let Some(index) = jump {
+            self.scroll_to_turn = Some(index);
+        }
         if let Some((index, number, response)) = hovered {
             let turn = &self.state.turns[index];
-            let title = if turn.user.text.trim().is_empty() {
-                format!("第 {} 轮", number)
-            } else {
-                format!("第 {} 轮  {}", number, turn.user.text.trim())
-            };
+            let first_line = turn.user.text.lines().next().unwrap_or_default().trim();
+            let title = crate::timeline_ruler::summary_text(number, first_line);
             let answer = turn.assistant.text.trim();
             let preview = if answer.is_empty() {
                 "正在生成…".to_owned()
             } else {
                 answer.chars().take(120).collect::<String>()
             };
-            // Tooltip 使用 egui 原生浮层，避免在消息滚动区内创建额外布局，
-            // 视觉上对应蜂巢刻度左侧 264px 的悬停预览卡。
+            // Tooltip uses the native popup so the tick lane stays outside the
+            // scrolling message layout, like the web preview card.
             response.on_hover_ui(|ui| {
                 ui.set_max_width(264.0);
-                ui.label(RichText::new(title).size(13.0).strong().color(tokens.text));
+                ui.label(RichText::new(title).size(13.0).color(tokens.text));
                 ui.label(
                     RichText::new(preview)
                         .size(12.0)
@@ -2719,7 +3480,12 @@ impl EguiApp {
                 })
                 .show(ui, |ui| {
                     ui.set_width(ui.available_width());
-                    crate::markdown::show(ui, &turn.assistant.text, tokens.text);
+                    crate::markdown::show(
+                        ui,
+                        &turn.assistant.text,
+                        tokens.text,
+                        crate::model::assistant_streaming(&turn.assistant),
+                    );
                 });
             if ui.rect_contains_pointer(body.response.rect) {
                 ui.painter().set(
@@ -3245,45 +4011,76 @@ impl EguiApp {
         let rect = ui
             .allocate_exact_size(Vec2::new(ui.available_width(), 22.0), Sense::hover())
             .0;
-        let label = format!("#  第 {number} 个用户轮次");
-        let galley =
-            ui.painter()
-                .layout_no_wrap(label, egui::FontId::proportional(11.0), tokens.text_muted);
-        let chip = egui::Rect::from_min_size(
-            rect.min + Vec2::new(24.0, 1.0),
-            Vec2::new(galley.size().x + 16.0, 20.0),
-        );
-        ui.painter()
-            .rect_filled(chip, 9.0, tokens.success_tint);
-        ui.painter().rect_stroke(
-            chip,
-            9.0,
-            Stroke::new(1.0, tokens.success_border),
-            egui::StrokeKind::Inside,
-        );
-        ui.painter().galley(
-            egui::pos2(chip.left() + 8.0, chip.center().y - galley.size().y / 2.0),
-            galley,
-            tokens.text_muted,
-        );
-        let status = match turn.assistant.state.as_str() {
-            "streaming" | "running" => Some(("生成中", tokens.text_muted)),
-            "error" | "failed" => Some(("生成失败", tokens.danger)),
-            _ => None,
-        };
-        if let Some((label, color)) = status {
-            ui.painter().text(
-                egui::pos2(chip.right() + 12.0, rect.center().y),
-                egui::Align2::LEFT_CENTER,
-                label,
-                egui::FontId::proportional(11.0),
-                color,
-            );
-        }
         let copy_rect = egui::Rect::from_min_size(
             egui::pos2(rect.right() - 46.0, rect.top()),
             Vec2::splat(22.0),
         );
+        let session =
+            self.state.sessions.iter().find(|session| {
+                Some(session.id.as_str()) == self.state.selected_session.as_deref()
+            });
+        // The footer is a projection: `timeline_footer` decides which facts are
+        // known well enough to print, this function only lays them out.
+        let facts =
+            crate::timeline_footer::facts_from_turn(turn, number.saturating_sub(1), session);
+        let segments = crate::timeline_footer::segments(&facts);
+        let limit = copy_rect.left() - 12.0;
+        let mut x = rect.left() + 24.0;
+        for (index, segment) in segments.iter().enumerate() {
+            let galley = ui.painter().layout_no_wrap(
+                segment.text.clone(),
+                egui::FontId::proportional(11.0),
+                tokens.text_muted,
+            );
+            // The first segment carries the tinted chip, the rest stay plain so
+            // a long footer does not turn into a row of buttons.
+            let padded = index == 0;
+            let chip_width = galley.size().x + if padded { 16.0 } else { 0.0 };
+            if x + chip_width > limit {
+                break;
+            }
+            let chip = egui::Rect::from_min_size(
+                egui::pos2(x, rect.top() + 1.0),
+                Vec2::new(chip_width, 20.0),
+            );
+            if padded {
+                ui.painter().rect_filled(chip, 9.0, tokens.success_tint);
+                ui.painter().rect_stroke(
+                    chip,
+                    9.0,
+                    Stroke::new(1.0, tokens.success_border),
+                    egui::StrokeKind::Inside,
+                );
+            }
+            ui.painter().galley(
+                egui::pos2(
+                    chip.left() + if padded { 8.0 } else { 0.0 },
+                    chip.center().y - galley.size().y / 2.0,
+                ),
+                galley,
+                tokens.text_muted,
+            );
+            let hit = ui.interact(
+                chip,
+                Id::new(("turn-footer", &turn.id, index)),
+                Sense::hover(),
+            );
+            if !segment.tooltip.is_empty() {
+                hit.on_hover_text(&segment.tooltip);
+            }
+            x = chip.right();
+            if index + 1 < segments.len() {
+                x += 4.0;
+                ui.painter().text(
+                    egui::pos2(x, rect.center().y),
+                    egui::Align2::LEFT_CENTER,
+                    "·",
+                    egui::FontId::proportional(11.0),
+                    tokens.text_muted,
+                );
+                x += 8.0;
+            }
+        }
         let copy = ui.interact(
             copy_rect,
             Id::new(("copy-assistant", &turn.id)),
@@ -3305,8 +4102,258 @@ impl EguiApp {
         }
     }
 
+    /// Claim files dropped on the window as composer attachments.
+    ///
+    /// The drop is a window-level event, not a widget one, so this runs once
+    /// per frame from the composer and empties the raw list afterwards; leaving
+    /// it in `raw` would add the same file again on the next frame.
+    fn accept_dropped_files(&mut self, ui: &mut Ui) {
+        let dropped = ui
+            .ctx()
+            .input_mut(|input| std::mem::take(&mut input.raw.dropped_files));
+        if dropped.is_empty() {
+            return;
+        }
+        if self.state.selected_session.is_none() {
+            self.state.composer_notice = "请先选择一个线程再添加附件".to_owned();
+            return;
+        }
+        let mut added = 0usize;
+        for file in dropped {
+            let Some(path) = file.path else {
+                self.state.composer_notice = "只能添加本地文件".to_owned();
+                continue;
+            };
+            let path = path.to_string_lossy().into_owned();
+            let name = if file.name.trim().is_empty() {
+                std::path::Path::new(&path)
+                    .file_name()
+                    .map(|value| value.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| path.clone())
+            } else {
+                file.name.clone()
+            };
+            // A dropped entry may be a directory; `metadata` is the only way to
+            // tell without reading the whole file into memory.
+            let attachment = match std::fs::metadata(&path) {
+                Ok(metadata) if metadata.is_dir() => {
+                    crate::composer_attachments::Attachment::directory(path, name)
+                }
+                Ok(metadata) => {
+                    crate::composer_attachments::Attachment::new(path, name, metadata.len())
+                }
+                Err(_) => crate::composer_attachments::Attachment::new(
+                    path,
+                    name,
+                    file.bytes
+                        .as_ref()
+                        .map(|bytes| bytes.len() as u64)
+                        .unwrap_or(0),
+                ),
+            };
+            match self.state.attachments.add(attachment) {
+                Ok(()) => added += 1,
+                Err(error) => self.state.composer_notice = error.message().to_owned(),
+            }
+        }
+        if added > 0 {
+            self.state.composer_notice = format!("已添加 {added} 个附件");
+        }
+    }
+
+    /// Chips and queued prompts above the input card.
+    ///
+    /// Returns intents instead of mutating: the caller owns the draft, the
+    /// queue and the attachment set, and this runs inside a borrowed `ui`.
+    fn draw_composer_strip(
+        &self,
+        ui: &mut Ui,
+        strip: egui::Rect,
+        tokens: Tokens,
+    ) -> ComposerStripAction {
+        let mut action = ComposerStripAction::default();
+        let queued = self.state.prompt_queue.items();
+        for (index, text) in queued.iter().enumerate() {
+            let row = egui::Rect::from_min_size(
+                egui::pos2(
+                    strip.left(),
+                    strip.top() + index as f32 * COMPOSER_QUEUE_ROW_HEIGHT,
+                ),
+                Vec2::new(strip.width(), COMPOSER_QUEUE_ROW_HEIGHT - 4.0),
+            );
+            let response = ui.interact(row, Id::new(("composer-queue-row", index)), Sense::click());
+            if response.hovered() {
+                ui.painter().rect_filled(row, 6.0, tokens.hover);
+            }
+            let badge = egui::Rect::from_center_size(
+                egui::pos2(row.left() + 10.0, row.center().y),
+                Vec2::new(18.0, 16.0),
+            );
+            ui.painter().rect_filled(badge, 5.0, tokens.chip);
+            ui.painter().text(
+                badge.center(),
+                egui::Align2::CENTER_CENTER,
+                format!("{}", index + 1),
+                egui::FontId::proportional(10.0),
+                tokens.text_muted,
+            );
+            let remove = egui::Rect::from_center_size(
+                egui::pos2(row.right() - 10.0, row.center().y),
+                Vec2::splat(16.0),
+            );
+            let hint_width = if index == 0 { 42.0 } else { 0.0 };
+            let text_rect = egui::Rect::from_min_max(
+                egui::pos2(badge.right() + 6.0, row.top()),
+                egui::pos2(remove.left() - 4.0 - hint_width, row.bottom()),
+            );
+            if text_rect.width() > 4.0 {
+                let galley = ui.painter().layout(
+                    text.clone(),
+                    egui::FontId::proportional(12.0),
+                    tokens.text_secondary,
+                    text_rect.width(),
+                );
+                ui.painter().with_clip_rect(text_rect).galley(
+                    text_rect.left_center() - Vec2::new(0.0, galley.size().y / 2.0),
+                    galley,
+                    tokens.text_secondary,
+                );
+            }
+            if index == 0 {
+                ui.painter().text(
+                    egui::pos2(remove.left() - 6.0, row.center().y),
+                    egui::Align2::RIGHT_CENTER,
+                    "待发送",
+                    egui::FontId::proportional(10.0),
+                    tokens.text_muted,
+                );
+            }
+            let remove_response = ui.interact(
+                remove,
+                Id::new(("composer-queue-remove", index)),
+                Sense::click(),
+            );
+            if remove_response.hovered() {
+                ui.painter().rect_filled(remove, 4.0, tokens.chip);
+            }
+            crate::icons::paint(
+                ui.painter(),
+                remove.shrink(4.0),
+                crate::icons::Icon::Close,
+                tokens.text_muted,
+            );
+            if remove_response.clicked() {
+                action.remove_queued = Some(index);
+            } else if response.clicked() {
+                // Clicking the row takes it back into the draft for editing
+                // instead of forcing the user to retype it.
+                action.recall_queued = Some(index);
+            }
+        }
+
+        let per_row = ((strip.width() + COMPOSER_CHIP_GAP)
+            / (COMPOSER_CHIP_WIDTH + COMPOSER_CHIP_GAP))
+            .floor()
+            .max(1.0) as usize;
+        let chip_top = strip.top() + queued.len() as f32 * COMPOSER_QUEUE_ROW_HEIGHT;
+        let chip_width = COMPOSER_CHIP_WIDTH.min(strip.width());
+        for (index, chip) in self.state.attachments.chips().iter().enumerate() {
+            let row_index = index / per_row;
+            let column = index % per_row;
+            let rect = egui::Rect::from_min_size(
+                egui::pos2(
+                    strip.left() + column as f32 * (COMPOSER_CHIP_WIDTH + COMPOSER_CHIP_GAP),
+                    chip_top + row_index as f32 * COMPOSER_CHIP_ROW_HEIGHT,
+                ),
+                Vec2::new(chip_width, COMPOSER_CHIP_HEIGHT),
+            );
+            if rect.right() > strip.right() + 0.5 {
+                break;
+            }
+            ui.painter().rect_filled(rect, 8.0, tokens.primary_tint);
+            ui.painter().rect_stroke(
+                rect,
+                8.0,
+                Stroke::new(1.0, tokens.border),
+                egui::StrokeKind::Inside,
+            );
+            crate::icons::paint(
+                ui.painter(),
+                egui::Rect::from_center_size(
+                    egui::pos2(rect.left() + 13.0, rect.center().y),
+                    Vec2::splat(12.0),
+                ),
+                crate::icons::Icon::Paperclip,
+                tokens.text_muted,
+            );
+            let remove = egui::Rect::from_center_size(
+                egui::pos2(rect.right() - 12.0, rect.center().y),
+                Vec2::splat(18.0),
+            );
+            let size_galley = ui.painter().layout_no_wrap(
+                chip.size_text.clone(),
+                egui::FontId::proportional(10.0),
+                tokens.text_muted,
+            );
+            let size_width = size_galley.size().x.min(56.0);
+            let name_rect = egui::Rect::from_min_max(
+                egui::pos2(rect.left() + 24.0, rect.top()),
+                egui::pos2(remove.left() - 4.0 - size_width - 4.0, rect.bottom()),
+            );
+            if name_rect.width() > 4.0 {
+                let galley = ui.painter().layout(
+                    chip.name.clone(),
+                    egui::FontId::proportional(12.0),
+                    tokens.text,
+                    name_rect.width(),
+                );
+                ui.painter().with_clip_rect(name_rect).galley(
+                    name_rect.left_center() - Vec2::new(0.0, galley.size().y / 2.0),
+                    galley,
+                    tokens.text,
+                );
+            }
+            ui.painter()
+                .with_clip_rect(egui::Rect::from_min_max(
+                    egui::pos2(remove.left() - size_width - 2.0, rect.top()),
+                    egui::pos2(remove.left() - 2.0, rect.bottom()),
+                ))
+                .galley(
+                    egui::pos2(
+                        remove.left() - size_width - 2.0,
+                        rect.center().y - size_galley.size().y / 2.0,
+                    ),
+                    size_galley,
+                    tokens.text_muted,
+                );
+            let remove_response = ui.interact(
+                remove,
+                Id::new(("composer-chip-remove", &chip.path)),
+                Sense::click(),
+            );
+            if remove_response.hovered() {
+                ui.painter().rect_filled(remove, 4.0, tokens.card_border);
+            }
+            crate::icons::paint(
+                ui.painter(),
+                remove.shrink(5.0),
+                crate::icons::Icon::Close,
+                tokens.text_secondary,
+            );
+            let clicked = remove_response.clicked();
+            remove_response
+                .on_hover_text("移除附件")
+                .on_hover_cursor(egui::CursorIcon::PointingHand);
+            if clicked {
+                action.remove_attachment = Some(chip.path.clone());
+            }
+        }
+        action
+    }
+
     fn draw_composer(&mut self, ui: &mut Ui, tokens: Tokens) {
         use crate::icons::{self, Icon};
+        self.accept_dropped_files(ui);
         let full = ui.max_rect();
         let ruler_width = if self.state.selected_session.is_some() {
             18.0
@@ -3316,9 +4363,18 @@ impl EguiApp {
         let available_width = (full.width() - 32.0 - ruler_width).max(120.0);
         let width = available_width.min(CHAT_COLUMN_WIDTH);
         let left = full.left() + 16.0 + (available_width - width) / 2.0;
-        let card = egui::Rect::from_min_size(
+        let strip_height = composer_strip_height(
+            self.state.attachments.len(),
+            self.state.prompt_queue.len(),
+            width,
+        );
+        let strip = egui::Rect::from_min_size(
             egui::pos2(left, full.top() + 8.0),
-            Vec2::new(width, (full.height() - 58.0).max(70.0)),
+            Vec2::new(width, strip_height.max(0.0)),
+        );
+        let card = egui::Rect::from_min_size(
+            egui::pos2(left, strip.bottom()),
+            Vec2::new(width, (full.height() - 58.0 - strip_height).max(70.0)),
         );
         ui.painter().rect_filled(
             card.translate(Vec2::new(0.0, 1.0)),
@@ -3332,6 +4388,68 @@ impl EguiApp {
             Stroke::new(1.0, tokens.border),
             egui::StrokeKind::Inside,
         );
+        // Notices are transient: the clock restarts whenever the text changes,
+        // so a repeat of the same message still refreshes it.
+        let now = ui.ctx().input(|input| input.time);
+        if self.state.composer_notice != self.composer_notice_seen {
+            self.composer_notice_seen
+                .clone_from(&self.state.composer_notice);
+            self.composer_notice_at = now;
+        }
+        let notice = (!self.state.composer_notice.is_empty()
+            && now - self.composer_notice_at < COMPOSER_NOTICE_SECONDS)
+            .then(|| self.state.composer_notice.clone());
+        if notice.is_some() {
+            ui.ctx().request_repaint_after(Duration::from_millis(400));
+        }
+        if strip_height > 0.0 {
+            let strip_action = self.draw_composer_strip(ui, strip, tokens);
+            if let Some(path) = strip_action.remove_attachment {
+                if self.state.attachments.remove(&path) {
+                    self.state.composer_notice = format!("已移除 {path}");
+                }
+            }
+            if let Some(index) = strip_action.remove_queued {
+                if self.state.prompt_queue.remove(index) {
+                    self.state.composer_notice = "已移除待发送消息".to_owned();
+                }
+            }
+            if let Some(index) = strip_action.recall_queued {
+                // Recall puts the text back in the draft and drops it from the
+                // queue; leaving both copies would send it twice.
+                if let Some(text) = self.state.prompt_queue.items().get(index).cloned() {
+                    if self.state.prompt_queue.remove(index) {
+                        if self.state.composer.is_empty() {
+                            self.state.composer = text;
+                        } else {
+                            self.state.composer.push('\n');
+                            self.state.composer.push_str(&text);
+                        }
+                        self.state.composer_notice = "已取回待发送消息".to_owned();
+                    }
+                }
+            }
+        }
+        // Hovering files over the window is the only affordance that tells the
+        // user a drop will attach rather than navigate.
+        let hovering_files = ui.ctx().input(|input| !input.raw.hovered_files.is_empty());
+        if hovering_files {
+            ui.painter().rect_stroke(
+                card.shrink(1.0),
+                16.0,
+                Stroke::new(1.0, tokens.primary),
+                egui::StrokeKind::Inside,
+            );
+            let hint = egui::Rect::from_center_size(card.center(), Vec2::new(240.0, 26.0));
+            ui.painter().rect_filled(hint, 8.0, tokens.primary_tint);
+            ui.painter().text(
+                hint.center(),
+                egui::Align2::CENTER_CENTER,
+                "松开以添加附件",
+                egui::FontId::proportional(12.0),
+                tokens.primary,
+            );
+        }
         let mut send_now = false;
         let mut stop_now = false;
         let editor_id = Id::new("chat-composer-input");
@@ -3381,6 +4499,54 @@ impl EguiApp {
                     send_now |= matches;
                     !matches
                 }));
+            }
+        }
+        // Up/Down recall earlier prompts. Only while the draft is a single
+        // line: inside a multi-line draft the arrows must move the caret, not
+        // replace the text the user is editing.
+        let mut recall_up = false;
+        let mut recall_down = false;
+        if ui.memory(|memory| memory.has_focus(editor_id))
+            && !self.state.settings_open
+            && !composition_event
+            && !self.state.composer.contains('\n')
+        {
+            ui.input_mut(|input| {
+                input.events.retain(|event| match event {
+                    egui::Event::Key {
+                        key: egui::Key::ArrowUp,
+                        pressed: true,
+                        modifiers,
+                        ..
+                    } if modifiers.matches_exact(egui::Modifiers::NONE) => {
+                        recall_up = true;
+                        false
+                    }
+                    egui::Event::Key {
+                        key: egui::Key::ArrowDown,
+                        pressed: true,
+                        modifiers,
+                        ..
+                    } if modifiers.matches_exact(egui::Modifiers::NONE) => {
+                        recall_down = true;
+                        false
+                    }
+                    _ => true,
+                });
+            });
+        }
+        if recall_up {
+            let current = self.state.composer.clone();
+            if let Some(text) = self.state.prompt_history.previous(&current) {
+                self.state.composer = text;
+            }
+        }
+        if recall_down {
+            // `None` means "past the newest entry": restore the draft the user
+            // had before browsing started.
+            match self.state.prompt_history.next() {
+                Some(text) => self.state.composer = text,
+                None => self.state.composer = self.state.prompt_history.draft().to_owned(),
             }
         }
         let hint = match self.state.settings_send_key.as_str() {
@@ -3493,9 +4659,11 @@ impl EguiApp {
             egui::pos2(actions.right() - 14.0, actions.center().y),
             Vec2::splat(28.0),
         );
-        let can_send = self.state.selected_session.is_some()
-            && !self.state.composer.trim().is_empty()
-            && !self.state.busy;
+        // An attachment-only prompt is a real send: the desktop flow lets a
+        // dropped document speak for itself, so the draft may be empty.
+        let has_payload =
+            !self.state.composer.trim().is_empty() || !self.state.attachments.is_empty();
+        let can_send = self.state.selected_session.is_some() && has_payload && !self.state.busy;
         let action_enabled = self.state.busy || can_send;
         let action = ui.interact(
             action_rect,
@@ -3543,6 +4711,28 @@ impl EguiApp {
             egui::pos2(action_rect.left() - 120.0, actions.top()),
             egui::pos2(action_rect.left() - 6.0, actions.bottom()),
         );
+        // The notice shares the action row: between the workspace label and the
+        // model picker there is room for one elided line, and it is the only
+        // place that never moves the send button.
+        if let Some(notice) = &notice {
+            let region = egui::Rect::from_min_max(
+                egui::pos2(directory_rect.right() + 8.0, actions.top()),
+                egui::pos2(model_rect.left() - 8.0, actions.bottom()),
+            );
+            if region.width() > 60.0 {
+                let galley = ui.painter().layout(
+                    notice.clone(),
+                    egui::FontId::proportional(11.0),
+                    tokens.text_muted,
+                    region.width(),
+                );
+                ui.painter().with_clip_rect(region).galley(
+                    region.left_center() - Vec2::new(0.0, galley.size().y / 2.0),
+                    galley,
+                    tokens.text_muted,
+                );
+            }
+        }
         let model = ui.interact(model_rect, Id::new("composer-model"), Sense::click());
         if model.hovered() {
             ui.painter().rect_filled(model_rect, 8.0, tokens.hover);
@@ -3659,7 +4849,11 @@ impl EguiApp {
             ui.interact(card, Id::new("composer-error"), Sense::hover())
                 .on_hover_text(&self.state.status);
         }
-        if send_now && can_send {
+        // The send button is the stop button while a turn runs, so the
+        // shortcut is the only way to line the next prompt up. Losing it
+        // silently would look like a broken Enter key; `send_current_message`
+        // turns a busy send into a queue entry.
+        if send_now && has_payload && self.state.selected_session.is_some() {
             self.send_current_message();
         }
         if stop_now {
@@ -4381,14 +5575,99 @@ impl EguiApp {
             return;
         };
         let content = std::mem::take(&mut self.state.composer);
-        if content.trim().is_empty() {
+        if content.trim().is_empty() && self.state.attachments.is_empty() {
             return;
         }
+        // Queueing lives here, not at the click site: the send button, the
+        // Enter shortcut and any future caller must not race the backend while
+        // a turn is running.
+        if self.state.busy {
+            self.enqueue_prompt(content);
+            return;
+        }
+        let attachments = self.take_prompt_attachments();
+        self.dispatch_prompt(session_id, content, attachments);
+    }
+
+    /// Move the pending attachment set into the command shape.
+    ///
+    /// Only paths travel: the worker reads the bytes, so a large document never
+    /// stalls a frame. The set is cleared because the chips belonged to the
+    /// message that is now on its way.
+    fn take_prompt_attachments(&mut self) -> Vec<crate::backend::PromptAttachment> {
+        let attachments = self
+            .state
+            .attachments
+            .items()
+            .iter()
+            .map(|item| crate::backend::PromptAttachment {
+                name: item.name.clone(),
+                path: item.path.clone(),
+            })
+            .collect();
+        self.state.attachments.clear();
+        attachments
+    }
+
+    /// Put the draft behind the running turn instead of racing the backend.
+    ///
+    /// The queue holds text only, so pending attachments are folded in as path
+    /// lines. Downstream that reads exactly like a user pasting a file list,
+    /// which is what a queued run should see; a live send keeps the real
+    /// attachment payload.
+    fn enqueue_prompt(&mut self, content: String) {
+        let mut queued = content.clone();
+        for item in self.state.attachments.items() {
+            if !queued.is_empty() {
+                queued.push('\n');
+            }
+            queued.push_str("- 附件：");
+            queued.push_str(&item.path);
+        }
+        match self.state.prompt_queue.push(queued) {
+            Ok(()) => {
+                self.state.attachments.clear();
+                self.state.composer_notice =
+                    format!("已加入待发送队列（{} 条）", self.state.prompt_queue.len());
+            }
+            Err(error) => {
+                // Put the draft back so a full queue never eats a message.
+                self.state.composer = content;
+                self.state.composer_notice = error.message().to_owned();
+            }
+        }
+    }
+
+    /// One place that actually sends, shared by the shortcut and the queue.
+    fn dispatch_prompt(
+        &mut self,
+        session_id: String,
+        content: String,
+        attachments: Vec<crate::backend::PromptAttachment>,
+    ) {
+        if !content.trim().is_empty() {
+            self.state.prompt_history.push(&content);
+        }
+        self.state.composer_notice.clear();
         self.follow_tail = true;
-        self.submit(BackendCommand::SendMessage {
+        if let Err(error) = self.backend.submit(BackendCommand::SendMessage {
             session_id,
             content,
-        });
+            attachments,
+        }) {
+            self.state.status = format!("无法发送消息：{error}");
+        }
+    }
+
+    /// Send the oldest queued prompt once the running turn has finished.
+    fn drain_prompt_queue(&mut self) {
+        let Some(session_id) = self.state.selected_session.clone() else {
+            return;
+        };
+        let Some(next) = self.state.prompt_queue.pop() else {
+            return;
+        };
+        self.dispatch_prompt(session_id, next, Vec::new());
     }
 
     fn cancel_current_message(&mut self) {
@@ -4408,7 +5687,7 @@ impl eframe::App for EguiApp {
         if self.last_selected != self.state.selected_session {
             if let Some(session_id) = self.state.selected_session.clone() {
                 self.submit(BackendCommand::OpenSession(session_id));
-                self.refresh_workspace_root();
+                self.refresh_workspace_files();
             }
             self.last_selected = self.state.selected_session.clone();
         }
@@ -4472,12 +5751,7 @@ mod sidebar_tests {
         assert!(split_from_pointer(429.0, 100.0, track) < 0.50);
     }
 
-    fn sidebar_frame(
-        ctx: &Context,
-        app: &mut EguiApp,
-        size: Vec2,
-        events: Vec<egui::Event>,
-    ) {
+    fn sidebar_frame(ctx: &Context, app: &mut EguiApp, size: Vec2, events: Vec<egui::Event>) {
         let _ = ctx.run(
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
@@ -4738,6 +6012,11 @@ mod files_tests {
         let commands = Rc::new(RefCell::new(Vec::new()));
         app.backend = Box::new(RecordingBackend(commands.clone()));
         app.state.selected_session = Some("fixture-thread".to_owned());
+        // The demo fixture ships a pre-expanded tree; these tests own their own
+        // listing so expansion and selection can be asserted exactly.
+        app.state.workspace_tree = Default::default();
+        app.state.workspace_selection = Default::default();
+        app.state.selected_workspace_file = None;
         app.state.workspace_files = vec![
             entry("notes", "notes", true),
             entry("plan.md", "plan.md", false),
@@ -4785,17 +6064,6 @@ mod files_tests {
     }
 
     #[test]
-    fn parent_path_stops_at_the_workspace_root() {
-        assert_eq!(workspace_parent_path(""), None);
-        assert_eq!(workspace_parent_path("/"), None);
-        assert_eq!(workspace_parent_path("notes"), Some(String::new()));
-        assert_eq!(
-            workspace_parent_path("notes/archive/2026"),
-            Some("notes/archive".to_owned())
-        );
-    }
-
-    #[test]
     fn keyboard_moves_the_directory_selection_and_opens_entries() {
         let ctx = Context::default();
         theme::apply(&ctx);
@@ -4826,7 +6094,10 @@ mod files_tests {
         frame(&ctx, &mut app, key(egui::Key::ArrowDown));
         assert_eq!(app.state.selected_workspace_file.as_deref(), Some("notes"));
         frame(&ctx, &mut app, key(egui::Key::ArrowDown));
-        assert_eq!(app.state.selected_workspace_file.as_deref(), Some("plan.md"));
+        assert_eq!(
+            app.state.selected_workspace_file.as_deref(),
+            Some("plan.md")
+        );
         frame(&ctx, &mut app, key(egui::Key::End));
         assert_eq!(
             app.state.selected_workspace_file.as_deref(),
@@ -4838,16 +6109,20 @@ mod files_tests {
         frame(&ctx, &mut app, key(egui::Key::ArrowUp));
         assert_eq!(app.state.selected_workspace_file.as_deref(), Some("notes"));
 
-        // Enter on a directory navigates into it rather than opening the
-        // system handler.
+        // Enter on a directory expands it and asks for its children rather
+        // than opening the system handler or replacing the root listing.
         frame(&ctx, &mut app, key(egui::Key::Enter));
-        let submitted = commands.borrow();
-        assert!(matches!(
-            submitted.last(),
-            Some(BackendCommand::RefreshWorkspaceFiles { path, .. }) if path == "notes"
-        ));
-        assert_eq!(app.state.workspace_file_path, "notes");
-        assert_eq!(app.state.selected_workspace_file, None);
+        {
+            let submitted = commands.borrow();
+            assert!(matches!(
+                submitted.last(),
+                Some(BackendCommand::ListWorkspaceChildren { path, .. }) if path == "notes"
+            ));
+        }
+        assert!(app.state.workspace_tree.is_expanded("notes"));
+        // Nothing about the root projection may change on expand.
+        assert_eq!(app.state.workspace_files.len(), 3);
+        assert_eq!(app.state.selected_workspace_file.as_deref(), Some("notes"));
     }
 
     #[test]
@@ -4855,7 +6130,6 @@ mod files_tests {
         let ctx = Context::default();
         theme::apply(&ctx);
         let (mut app, commands) = app_with_files();
-        app.state.workspace_file_path = "notes".to_owned();
 
         app.apply_files_action(FilesAction::Delete {
             path: "notes/archive".to_owned(),
@@ -4863,9 +6137,13 @@ mod files_tests {
             is_directory: true,
         });
         assert!(commands.borrow().is_empty(), "未确认前不得提交删除");
-        let confirm = app.delete_entry_confirm.as_ref().expect("应弹出删除确认");
-        assert_eq!(confirm.name, "archive");
-        assert!(confirm.is_directory);
+        assert!(app.delete_entry_confirm.is_some(), "应弹出删除确认");
+        let Some(confirm) = app.delete_entry_confirm.as_ref() else {
+            return;
+        };
+        assert_eq!(confirm.items.len(), 1);
+        assert_eq!(confirm.items[0].name, "archive");
+        assert!(confirm.items[0].is_directory);
 
         app.delete_entry_confirm = None;
         app.state.selected_workspace_file = Some("notes/archive".to_owned());
@@ -4876,14 +6154,18 @@ mod files_tests {
         });
         // Confirming the same intent submits once and drops the stale row
         // selection so the panel cannot point at a deleted path.
-        let dialog = app.delete_entry_confirm.take().expect("确认框仍在");
+        assert!(app.delete_entry_confirm.is_some(), "确认框仍在");
+        let Some(dialog) = app.delete_entry_confirm.take() else {
+            return;
+        };
         app.state.selected_workspace_file = None;
-        app.backend
-            .submit(BackendCommand::DeleteWorkspaceEntry {
-                session_id: "fixture-thread".to_owned(),
-                path: dialog.path,
-            })
-            .expect("recording backend accepts");
+        let Some(item) = dialog.items.first() else {
+            return;
+        };
+        let _ = app.backend.submit(BackendCommand::DeleteWorkspaceEntry {
+            session_id: "fixture-thread".to_owned(),
+            path: item.path.clone(),
+        });
         let submitted = commands.borrow();
         assert!(matches!(
             submitted.last(),
@@ -4893,18 +6175,128 @@ mod files_tests {
     }
 
     #[test]
+    fn expanding_a_directory_requests_children_only_once() {
+        let (mut app, commands) = app_with_files();
+        app.apply_files_action(FilesAction::Toggle("notes".to_owned()));
+        {
+            let submitted = commands.borrow();
+            assert!(matches!(
+                submitted.last(),
+                Some(BackendCommand::ListWorkspaceChildren { path, .. }) if path == "notes"
+            ));
+        }
+        // The reply lands in the tree, not in the root projection.
+        app.state
+            .workspace_tree
+            .set_children("notes", vec![entry("plan.md", "notes/plan.md", false)]);
+        assert!(app.state.workspace_tree.is_expanded("notes"));
+
+        let before = commands.borrow().len();
+        app.apply_files_action(FilesAction::Toggle("notes".to_owned()));
+        assert!(!app.state.workspace_tree.is_expanded("notes"));
+        assert_eq!(commands.borrow().len(), before, "收起不应再发请求");
+
+        // Re-expanding a cached directory must not hit the backend again.
+        app.apply_files_action(FilesAction::Toggle("notes".to_owned()));
+        assert!(app.state.workspace_tree.is_expanded("notes"));
+        assert_eq!(commands.borrow().len(), before, "已缓存的目录不应重复请求");
+    }
+
+    #[test]
+    fn refreshing_the_tree_collapses_it_before_relisting() {
+        let (mut app, commands) = app_with_files();
+        app.state
+            .workspace_tree
+            .set_children("notes", vec![entry("plan.md", "notes/plan.md", false)]);
+        // `expand` reports whether a request is needed; cached children mean it
+        // is not, but the directory must still be marked open.
+        let _ = app.state.workspace_tree.expand("notes");
+        assert!(app.state.workspace_tree.is_expanded("notes"));
+
+        app.apply_files_action(FilesAction::Refresh);
+
+        // Cached children point at paths that may be gone; the tree starts
+        // collapsed so the next frame cannot show stale rows.
+        assert!(!app.state.workspace_tree.is_expanded("notes"));
+        let submitted = commands.borrow();
+        assert!(matches!(
+            submitted.last(),
+            Some(BackendCommand::RefreshWorkspaceFiles { path, .. }) if path.is_empty()
+        ));
+    }
+
+    #[test]
+    fn multi_select_collects_a_batch_behind_one_confirmation() {
+        let (mut app, commands) = app_with_files();
+        app.apply_files_action(FilesAction::EnterMultiSelect);
+        app.apply_files_action(FilesAction::ToggleSelection("plan.md".to_owned()));
+        app.apply_files_action(FilesAction::ToggleSelection("readme.md".to_owned()));
+        assert_eq!(app.state.workspace_selection.len(), 2);
+        assert!(commands.borrow().is_empty());
+
+        app.apply_files_action(FilesAction::DeleteSelected);
+        {
+            let confirm = app.delete_entry_confirm.as_ref();
+            assert!(confirm.is_some(), "批量删除必须确认");
+            let Some(confirm) = confirm else {
+                return;
+            };
+            assert_eq!(confirm.items.len(), 2);
+            assert!(confirm.items.iter().any(|item| item.path == "plan.md"));
+        }
+        assert!(commands.borrow().is_empty(), "确认前不得提交删除");
+
+        // Leaving multi-select drops the selection so a stale path cannot be
+        // acted on later.
+        app.delete_entry_confirm = None;
+        app.apply_files_action(FilesAction::ExitMultiSelect);
+        assert!(app.state.workspace_selection.is_empty());
+        assert!(!app.state.workspace_selection.is_active());
+    }
+
+    #[test]
+    fn select_all_covers_exactly_the_visible_rows() {
+        let (mut app, _commands) = app_with_files();
+        app.state
+            .workspace_tree
+            .set_children("notes", vec![entry("plan.md", "notes/plan.md", false)]);
+        app.apply_files_action(FilesAction::EnterMultiSelect);
+        app.apply_files_action(FilesAction::SelectAllVisible);
+        assert_eq!(
+            app.state.workspace_selection.len(),
+            3,
+            "折叠状态下只应选中根级三行"
+        );
+
+        app.state.workspace_tree.expand("notes");
+        app.apply_files_action(FilesAction::SelectAllVisible);
+        assert_eq!(
+            app.state.workspace_selection.len(),
+            4,
+            "展开后全选应包含子项"
+        );
+        // A folder with no children forms its own node only; expanding the
+        // tree must not resurrect a batch from a previous frame.
+        app.apply_files_action(FilesAction::SelectAllVisible);
+        assert!(app.state.workspace_selection.is_empty(), "再次全选应清空");
+    }
+
+    #[test]
     fn rename_intent_prefills_the_current_name_and_parent() {
         let (mut app, _commands) = app_with_files();
         app.apply_files_action(FilesAction::Rename {
             path: "notes/plan.md".to_owned(),
             name: "plan.md".to_owned(),
         });
-        let prompt = app.workspace_prompt.as_ref().expect("应打开重命名输入框");
+        assert!(app.workspace_prompt.is_some(), "应打开重命名输入框");
+        let Some(prompt) = app.workspace_prompt.as_ref() else {
+            return;
+        };
         assert_eq!(prompt.draft, "plan.md");
-        match &prompt.kind {
-            WorkspacePromptKind::Rename { path } => assert_eq!(path, "notes/plan.md"),
-            _ => panic!("重命名意图不得创建新条目"),
-        }
+        assert!(
+            matches!(&prompt.kind, WorkspacePromptKind::Rename { path } if path == "notes/plan.md"),
+            "重命名意图不得创建新条目"
+        );
     }
 
     #[test]
@@ -4912,15 +6304,157 @@ mod files_tests {
         let (mut app, _commands) = app_with_files();
         app.state.composer = "看一下这个文件".to_owned();
         app.apply_files_action(FilesAction::Reference("notes/plan.md".to_owned()));
-        assert_eq!(
-            app.state.composer,
-            "看一下这个文件\n@\"notes/plan.md\" "
-        );
+        assert_eq!(app.state.composer, "看一下这个文件\n@\"notes/plan.md\" ");
 
         app.apply_files_action(FilesAction::Reference("notes/plan.md".to_owned()));
         assert_eq!(
             app.state.composer,
             "看一下这个文件\n@\"notes/plan.md\" @\"notes/plan.md\" "
         );
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod composer_attachment_tests {
+    use super::*;
+    use crate::composer_attachments::Attachment;
+    use std::{cell::RefCell, rc::Rc};
+
+    struct RecordingBackend(Rc<RefCell<Vec<BackendCommand>>>);
+
+    impl BackendPort for RecordingBackend {
+        fn submit(&mut self, command: BackendCommand) -> Result<(), String> {
+            self.0.borrow_mut().push(command);
+            Ok(())
+        }
+        fn poll(&mut self, _budget: usize) -> Vec<crate::backend::BackendEvent> {
+            Vec::new()
+        }
+    }
+
+    fn app() -> (EguiApp, Rc<RefCell<Vec<BackendCommand>>>) {
+        let mut app = EguiApp::demo();
+        let commands = Rc::new(RefCell::new(Vec::new()));
+        app.backend = Box::new(RecordingBackend(commands.clone()));
+        app.state.selected_session = Some("fixture-thread".to_owned());
+        app.state.connection = ConnectionState::Ready;
+        // The demo fixture ships attachments so the screenshot exercises the
+        // chip strip; each test below starts from an empty draft instead.
+        app.state.attachments.clear();
+        app.state.composer.clear();
+        (app, commands)
+    }
+
+    #[test]
+    fn chip_rows_wrap_instead_of_overflowing() {
+        // Zero chips reserve nothing; eight chips do not fit a 1000px card, and
+        // the strip has to grow a second row rather than clip them.
+        assert_eq!(composer_chip_rows(0, 1000.0), 0);
+        assert_eq!(composer_chip_rows(4, 1000.0), 1);
+        assert_eq!(composer_chip_rows(8, 1000.0), 2);
+        assert_eq!(composer_strip_height(0, 0, 1000.0), 0.0);
+        assert!(composer_strip_height(0, 1, 1000.0) > 0.0);
+        assert!(composer_strip_height(8, 0, 1000.0) > composer_strip_height(4, 0, 1000.0));
+        // A card narrower than one chip still gets a single column.
+        assert_eq!(composer_chip_rows(2, 120.0), 2);
+    }
+
+    #[test]
+    fn attachment_only_prompt_is_sent_with_its_payload() {
+        let (mut app, commands) = app();
+        assert!(app
+            .state
+            .attachments
+            .add(Attachment::new("C:/tmp/notes.md", "notes.md", 2048))
+            .is_ok());
+        app.send_current_message();
+
+        {
+            let submitted = commands.borrow();
+            assert_eq!(submitted.len(), 1);
+            assert!(
+                matches!(
+                    &submitted[0],
+                    BackendCommand::SendMessage { content, attachments, .. }
+                        if content.is_empty() && attachments.len() == 1
+                            && attachments[0].name == "notes.md"
+                ),
+                "空草稿加附件必须带上附件载荷发出"
+            );
+        }
+        assert!(app.state.attachments.is_empty(), "发送后附件应清空");
+    }
+
+    #[test]
+    fn busy_composer_queues_and_drains_after_the_turn() {
+        let (mut app, commands) = app();
+        app.state.busy = true;
+        app.state.composer = "先跑一遍测试".to_owned();
+        app.send_current_message();
+        assert!(commands.borrow().is_empty(), "忙时不得直接发送");
+        assert_eq!(app.state.prompt_queue.len(), 1);
+        assert!(app.state.composer.is_empty(), "入队后草稿应清空");
+
+        app.state.busy = false;
+        app.drain_prompt_queue();
+        let submitted = commands.borrow();
+        assert!(
+            matches!(
+                submitted.last(),
+                Some(BackendCommand::SendMessage { content, .. }) if content == "先跑一遍测试"
+            ),
+            "回合结束后应自动发出队首"
+        );
+    }
+
+    #[test]
+    fn a_full_queue_keeps_the_draft_instead_of_eating_it() {
+        let (mut app, _commands) = app();
+        for index in 0..crate::composer_attachments::MAX_QUEUED {
+            assert!(app.state.prompt_queue.push(format!("排队 {index}")).is_ok());
+        }
+        app.state.busy = true;
+        app.state.composer = "第五条".to_owned();
+        app.send_current_message();
+
+        assert_eq!(
+            app.state.prompt_queue.len(),
+            crate::composer_attachments::MAX_QUEUED
+        );
+        assert_eq!(app.state.composer, "第五条", "队列满时草稿必须留在输入框");
+        assert!(app.state.composer_notice.contains("已满"));
+    }
+
+    #[test]
+    fn sent_prompts_feed_the_up_arrow_history() {
+        let (mut app, _commands) = app();
+        app.state.composer = "第一条".to_owned();
+        app.send_current_message();
+        app.state.composer = "第二条".to_owned();
+        app.send_current_message();
+
+        let first = app.state.prompt_history.previous("");
+        assert_eq!(first.as_deref(), Some("第二条"));
+        let second = app.state.prompt_history.previous("");
+        assert_eq!(second.as_deref(), Some("第一条"));
+    }
+
+    #[test]
+    fn queued_prompt_keeps_its_attachment_paths_as_text() {
+        let (mut app, _commands) = app();
+        app.state.busy = true;
+        app.state.composer = "看看这个".to_owned();
+        assert!(app
+            .state
+            .attachments
+            .add(Attachment::new("C:/tmp/plan.md", "plan.md", 64))
+            .is_ok());
+        app.send_current_message();
+
+        let queued = app.state.prompt_queue.items();
+        assert_eq!(queued.len(), 1);
+        assert!(queued[0].contains("看看这个"));
+        assert!(queued[0].contains("C:/tmp/plan.md"));
+        assert!(app.state.attachments.is_empty());
     }
 }

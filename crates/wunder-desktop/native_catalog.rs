@@ -164,8 +164,8 @@ impl NativeDesktop {
                     }
                 })
                 .collect::<Vec<_>>();
-            // provider 的 browser_* 成员只供模型调用；本地清单与网页版同口径，
-            // 整组浏览器能力只保留一条聚合条目。
+            // provider 只向模型提供 browser action 工具；本地清单与网页版同口径，
+            // 浏览器能力只保留一条聚合条目。
             if records
                 .iter()
                 .any(|record| tools::is_browser_tool_name(&record.name))

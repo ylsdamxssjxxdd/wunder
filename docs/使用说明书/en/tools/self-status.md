@@ -1,36 +1,31 @@
 ---
 title: Self Status
-summary: The detail levels and event-list arguments of `self_status`, the fields of the returned status object, and the differences in what the numbers measure.
+summary: The basic summary, administrator diagnostic mode, compact model result, and data sources of `self_status`.
 updated_at: 2026-10-16
 ---
 
-The canonical name is `自我状态` and the alias is `self_status`. It is read-only: it performs no business action, triggers no approval, and does not run in the sandbox. It reports the current session's model, context usage, round progress, and event counts (model requests, tool calls, approvals), for deciding whether to compress context or wrap up. It is not in the tool set by default; an administrator must tick it on the capability panel for it to appear.
+The canonical name is `自我状态` and the alias is `self_status`. It is read-only: it performs no business action, triggers no approval, and does not run in the sandbox. By default it reports the current session's stage, status, model round, and context use, for deciding whether to compress context or wrap up. It is not in the tool set by default; an administrator must tick it on the capability panel for it to appear.
 
 ## Arguments
 
-The level of detail is selectable as needed:
+The model call accepts one optional `detail_level` argument:
 
-- `standard` by default, enough for everyday checks; `basic` is terser, and `full` is the most complete.
-- Besides those three, `lite`, `summary`, `detail`, `detailed`, and `verbose` are also accepted and are normalized to roughly the matching level; an unrecognized value falls back to `standard`.
-- To see a recent event list, turn on `include_events` (the `full` level turns it on by default); `events_limit` controls how many come back, in the range 1–200, 20 by default.
+- `basic` is the default and supports next-step decisions.
+- `full` is only available to an administrator for an explicit diagnostic request; it includes a bounded set of recent events and system resource metrics.
+- Other levels and event or system-metric switches are rejected.
 
 ## Return fields
 
-It returns a status object directly, rather than the shared success shell:
+The execution layer retains the authorized diagnostic object; the model context always receives only a compact next-step summary:
 
-- Session identity: user, session, workspace, agent, and whether the user is an administrator.
-- The model in use: inferred from the most recent model-request event, and empty when there is no event.
-- The configured default model: empty when no default is configured.
-- Several groups of context-usage and peak values.
-- Monitor status, stage, and summary.
-- Counts related to user rounds and model rounds.
-- Total event count, the most recent event id, and counts by type; with the event list on, it also carries the most recent few entries.
-- The orchestrator's session runtime snapshot, empty when there is no orchestrator.
+- `stage`, `status`, `round`, and `context_tokens`.
+- `context_ratio` or `last_error` when runtime data supplies them.
+- It does not echo session identity, model endpoints, a full runtime snapshot, raw events, or system metrics; those remain in execution audit and administrator full diagnostics.
 
 A few points worth noting:
 
 - The data comes from the in-memory runtime state, not a database ledger. For the full history, go to the thread trace; do not expect the event count here to cover the whole lifecycle.
-- The event cap only trims the recent-event list; the total event count is still the full count in the buffer.
+- Full diagnostics cap recent events at 20 so diagnostic data stays bounded.
 - The "model in use" comes from the event stream and may not match the configured default.
 - The context values use several different measures, returned side by side without converting between them; do not mix numbers from different measures.
 

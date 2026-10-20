@@ -6,6 +6,23 @@ param(
     [string[]]$Crate = @()
 )
 
+function Get-Sha256Hex {
+  param([string]$Path)
+  # Get-FileHash needs PowerShell 4+ plus a resolvable module path; the .NET
+  # provider works on every host these build scripts run on.
+  $stream = [IO.File]::OpenRead($Path)
+  try {
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try {
+      ($sha.ComputeHash($stream) | ForEach-Object { $_.ToString('X2') }) -join ''
+    } finally {
+      $sha.Dispose()
+    }
+  } finally {
+    $stream.Dispose()
+  }
+}
+
 $ErrorActionPreference = "Stop"
 $VendorRoot = [IO.Path]::GetFullPath($VendorRoot)
 if (!(Test-Path -LiteralPath $VendorRoot)) { throw "Vendor root not found: $VendorRoot" }
@@ -32,7 +49,7 @@ foreach ($crateDir in $crates) {
         $relative = $entry.Name
         $path = Join-Path $crateDir ($relative -replace '/', [IO.Path]::DirectorySeparatorChar)
         if (!(Test-Path -LiteralPath $path -PathType Leaf)) { $missing += $relative; continue }
-        $actual = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+        $actual = (Get-Sha256Hex -Path $path).ToLowerInvariant()
         if ($actual -ne $entry.Value) { $mismatch += $relative }
     }
     if ($missing.Count -gt 0 -or $mismatch.Count -gt 0) {

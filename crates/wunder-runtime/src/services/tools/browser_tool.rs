@@ -1,8 +1,7 @@
 //! Browser tool surface (provider driven, dsh parity).
 //!
-//! wunder exposes the provider's compact browser surface (`browser_navigate`,
-//! `browser_observe`, `browser_interact`, ...). Legacy fine-grained calls stay
-//! executable for compatibility but are never registered for the model.
+//! wunder exposes one model-facing browser action tool. The provider retains
+//! internal bridge operations, but old browser_* model names are unknown.
 //!
 //! The runtime keeps its own safety defaults (URL allow-list, private-network and
 //! `file://` blocking, timeout / download limits) because calls still go through
@@ -13,7 +12,6 @@ use crate::config::Config;
 use crate::schemas::ToolSpec;
 use crate::services::browser::browser_tools_enabled as browser_tools_enabled_impl;
 use crate::services::browser::provider::{active_provider, browser_registry};
-use crate::services::browser::providers::playwright::is_legacy_tool_name;
 use anyhow::{anyhow, Result};
 use base64::Engine;
 use serde_json::{json, Value};
@@ -43,16 +41,6 @@ pub fn browser_tool_names() -> Vec<String> {
         .collect()
 }
 
-/// Migration-only names accepted by execution and authorization checks. They
-/// are intentionally separate from `browser_tool_names()`, which is the model
-/// surface and contains only the compact six canonical tools.
-pub fn browser_legacy_tool_names() -> Vec<String> {
-    crate::services::browser::providers::playwright::LEGACY_TOOL_NAMES
-        .iter()
-        .map(|name| (*name).to_string())
-        .collect()
-}
-
 fn browser_tool_name_set() -> &'static HashSet<String> {
     static NAMES: OnceLock<HashSet<String>> = OnceLock::new();
     NAMES.get_or_init(|| browser_tool_names().into_iter().collect())
@@ -61,12 +49,11 @@ fn browser_tool_name_set() -> &'static HashSet<String> {
 /// Whether `name` is one of the provider's native browser tools.
 pub fn is_browser_tool_name(name: &str) -> bool {
     let trimmed = name.trim();
-    !trimmed.is_empty()
-        && (browser_tool_name_set().contains(trimmed) || is_legacy_tool_name(trimmed))
+    !trimmed.is_empty() && browser_tool_name_set().contains(trimmed)
 }
 
-/// 用户可见清单里代表整组浏览器工具的聚合名。它不是可调用工具：模型侧为六个
-/// canonical browser_* 工具，运行时在把选择结果交给模型前展开该聚合条目。
+/// 用户可见清单里代表浏览器能力的聚合名。模型侧只有 `browser` 工具；
+/// 聚合名用于授权展示，不是额外可调用工具。
 pub const BROWSER_GROUP_NAME: &str = "浏览器";
 pub const BROWSER_GROUP_NAME_ALIAS: &str = "browser";
 
@@ -85,9 +72,9 @@ pub fn browser_tool_summary_spec(language: &str) -> ToolSpec {
     if description.is_empty() || description == DESCRIPTION_KEY {
         // 文案缺失时保底，不能让聚合条目显示成键名。
         description = if english {
-            "Browser automation as one user-facing capability: it stands for the whole native browser_* tool family and is bounded by the session, the allowed domains and the timeout limits.".to_string()
+            "Browser automation as one action tool, bounded by the session, allowed domains and timeout limits.".to_string()
         } else {
-            "浏览器自动化能力的整组条目：代表 browser_* 一组原生工具（打开页面、读取内容、点击输入、等待、截图），受会话、允许域名与超时限制。".to_string()
+            "浏览器自动化能力的整组条目：代表 browser action 工具（打开页面、读取内容、点击输入、等待、截图），受会话、允许域名与超时限制。".to_string()
         };
     }
     ToolSpec {
@@ -120,11 +107,6 @@ pub async fn tool_browser(
     if let Some(map) = value.as_object_mut() {
         map.insert("provider".to_string(), json!(provider.id()));
     }
-    if tool_name.trim() == crate::services::browser::providers::playwright::TOOL_STATUS {
-        if let Some(data) = value.get_mut("data") {
-            sanitize_browser_status_for_model(data);
-        }
-    }
     persist_image_blocks(context, args, &mut value)?;
     Ok(value)
 }
@@ -136,13 +118,6 @@ fn ensure_browser_available(config: &Config) -> Result<()> {
     Err(anyhow!(
         "Browser tools are disabled. Enable tools.browser.enabled together with browser.enabled (or legacy desktop mode)."
     ))
-}
-
-fn sanitize_browser_status_for_model(result: &mut Value) {
-    let Value::Object(map) = result else {
-        return;
-    };
-    map.remove("control");
 }
 
 /// Persist every inline image block into the workspace and rewrite it as an
@@ -252,28 +227,9 @@ fn ensure_png_extension(path: String) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        browser_legacy_tool_names, browser_tool_names, ensure_png_extension, is_browser_group_name,
-        is_browser_tool_name, sanitize_browser_status_for_model, BROWSER_GROUP_NAME,
+        browser_tool_names, ensure_png_extension, is_browser_group_name, is_browser_tool_name,
+        BROWSER_GROUP_NAME,
     };
-    use serde_json::json;
-
-    #[test]
-    fn sanitize_browser_status_removes_control_endpoint() {
-        let mut status = json!({
-            "ok": true,
-            "control": {
-                "host": "127.0.0.1",
-                "port": 18791,
-                "public_base_url": null,
-                "auth_token_configured": false
-            },
-            "sessions": []
-        });
-        sanitize_browser_status_for_model(&mut status);
-        assert!(status.get("control").is_none());
-        assert_eq!(status["ok"].as_bool(), Some(true));
-    }
-
     #[test]
     fn ensure_png_extension_adds_default_only_when_missing() {
         assert_eq!(
@@ -291,19 +247,14 @@ mod tests {
     }
 
     #[test]
-    fn compact_surface_hides_legacy_members_but_keeps_them_callable() {
+    fn compact_surface_exposes_only_browser() {
         let names = browser_tool_names();
-        assert_eq!(names.len(), 6);
-        assert!(names.iter().any(|name| name == "browser_navigate"));
-        assert!(names.iter().any(|name| name == "browser_observe"));
-        assert!(!names.iter().any(|name| name == "browser_take_screenshot"));
-        assert!(is_browser_tool_name("browser_navigate"));
-        assert!(is_browser_tool_name("browser_status"));
-        assert!(browser_legacy_tool_names().contains(&"browser_status".to_string()));
-        // The legacy opaque surface is gone.
+        assert_eq!(names, vec!["browser".to_string()]);
+        assert!(is_browser_tool_name("browser"));
+        for old_name in ["browser_navigate", "browser_observe", "browser_status"] {
+            assert!(!is_browser_tool_name(old_name));
+        }
         assert!(!is_browser_tool_name("浏览器"));
-        assert!(!is_browser_tool_name("browser"));
-        assert!(!is_browser_tool_name("浏览器导航"));
     }
 
     #[test]
@@ -313,6 +264,7 @@ mod tests {
         assert!(is_browser_group_name("Browser"));
         assert!(!is_browser_group_name("browser_navigate"));
         assert!(!is_browser_group_name(""));
+        assert!(is_browser_tool_name("browser"));
         assert!(!is_browser_tool_name(BROWSER_GROUP_NAME));
     }
 

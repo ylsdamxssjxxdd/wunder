@@ -8,12 +8,12 @@ fn browser_attachment_is_compact_for_model_and_complete_in_events() {
         {"type":"image","attachment":{"path":"browser/screenshots/sample.png","bytes":64}}
     ]);
     let result = ToolResultPayload::from_value(json!({
-        "ok":true,"data":{"format":"png","target_id":"tab-1"},"content":content
+        "ok":true,"data":{"action":"screenshot","format":"png","target_id":"tab-1"},"content":content
     }));
-    let event = result.to_event_payload("browser_take_screenshot");
+    let event = result.to_event_payload("browser");
     assert_eq!(event["data"]["content"], content);
     assert_eq!(event["data"]["format"], "png");
-    let observation = result.to_compact_payload("browser_take_screenshot");
+    let observation = result.to_compact_payload("browser");
     assert_eq!(
         observation["data"]["artifact"],
         json!({"id":"browser/screenshots/sample.png","bytes":64})
@@ -28,12 +28,12 @@ fn browser_attachment_is_compact_for_model_and_complete_in_events() {
 }
 
 #[test]
-fn browser_batch_failure_keeps_partial_progress_in_model_observation() {
+fn browser_failure_keeps_partial_progress_in_model_observation() {
     let result = ToolResultPayload::from_value(json!({
         "ok":false,"error":"Step failed", "content":[],
-        "data":{"completed_steps":2,"failed_step":3,"results":[{"kind":"click"}]}
+        "data":{"action":"batch","completed_steps":2,"failed_step":3,"results":[{"kind":"click"}]}
     }));
-    let observation = result.to_compact_payload("browser_batch");
+    let observation = result.to_compact_payload("browser");
     assert_eq!(observation["ok"], false);
     assert_eq!(observation["data"]["completed_steps"], 2);
     assert_eq!(observation["data"]["failed_step"], 3);
@@ -43,20 +43,80 @@ fn browser_batch_failure_keeps_partial_progress_in_model_observation() {
 fn browser_canonical_actions_are_projected_to_next_step_fields() {
     let navigate = ToolResultPayload::from_value(json!({
         "ok": true,
-        "data": {"url": "https://example.invalid/next", "title": "Next", "tabs": [{"target_id":"tab-1"}]}
+        "data": {"action":"navigate", "url": "https://example.invalid/next", "title": "Next", "tabs": [{"target_id":"tab-1"}]}
     }));
     assert_eq!(
-        navigate.to_compact_payload("browser_navigate")["data"],
+        navigate.to_compact_payload("browser")["data"],
         json!({"url":"https://example.invalid/next", "title":"Next"})
     );
 
     let action = ToolResultPayload::from_value(json!({
         "ok": true,
-        "data": {"kind": "click", "target_id": "tab-1", "ref": "e1", "url": "https://example.invalid/done", "snapshot": "large"}
+        "data": {"action": "click", "kind": "click", "target_id": "tab-1", "ref": "e1", "url": "https://example.invalid/done", "snapshot": "large"}
     }));
     assert_eq!(
-        action.to_compact_payload("browser_interact")["data"],
+        action.to_compact_payload("browser")["data"],
         json!({"action":"click", "target_ref":"e1", "url":"https://example.invalid/done"})
+    );
+}
+
+#[test]
+fn packaged_mcp_call_projects_remote_content_without_raw_blobs() {
+    let oversized = "x".repeat(6_000);
+    let result = ToolResultPayload::from_value(json!({
+        "ok": true,
+        "action": "mcp_package",
+        "package_action": "call",
+        "data": {
+            "server": "remote",
+            "tool": "inspect",
+            "result": {
+                "is_error": false,
+                "content": [
+                    {"type":"text", "text": oversized},
+                    {"type":"image", "data":"aGVsbG8=", "mimeType":"image/png"},
+                    {"type":"resource_link", "uri":"mcp://remote/report", "name":"report"}
+                ],
+                "structured_content": {
+                    "visible": "ok",
+                    "blob": "must-not-reach-model",
+                    "rows": (0..20).collect::<Vec<_>>(),
+                    "nested": {"a":{"b":{"c":{"d":{"leak":"hidden"}}}}}
+                },
+                "meta": {"provider_secret": "audit-only"}
+            }
+        }
+    }));
+
+    let event = result.to_event_payload("remote@__mcp_pack__");
+    assert_eq!(
+        event["data"]["result"]["meta"]["provider_secret"],
+        "audit-only"
+    );
+    assert_eq!(event["data"]["result"]["content"][1]["data"], "aGVsbG8=");
+
+    let observation = result.to_compact_payload("remote@__mcp_pack__");
+    assert_eq!(observation["data"]["server"], "remote");
+    assert_eq!(observation["data"]["tool"], "inspect");
+    assert_eq!(observation["data"]["remote_error"], false);
+    assert!(observation["data"]["content"][0]["text"]
+        .as_str()
+        .is_some_and(|text| text.len() < oversized.len()));
+    assert!(observation["data"]["content"][1].get("data").is_none());
+    assert_eq!(observation["data"]["content"][1]["mimeType"], "image/png");
+    assert!(observation["data"]["structured_content"]
+        .get("blob")
+        .is_none());
+    assert_eq!(
+        observation["data"]["structured_content"]["rows"]
+            .as_array()
+            .unwrap()
+            .len(),
+        13
+    );
+    assert_eq!(
+        observation["data"]["structured_content"]["nested"]["a"]["b"]["c"],
+        json!({"__truncated":true})
     );
 }
 
@@ -119,10 +179,10 @@ fn browser_content_only_failure_is_not_treated_as_success() {
 #[test]
 fn browser_page_observation_keeps_text_and_truncation_without_page_noise() {
     let result = ToolResultPayload::from_value(json!({
-        "ok":true, "data":{"target_id":"tab-1","truncated":true},
+        "ok":true, "data":{"action":"observe_text","target_id":"tab-1","truncated":true},
         "content":[{"type":"text","text":"{\"sample\":1}"}]
     }));
-    let observation = result.to_compact_payload("browser_read_page");
+    let observation = result.to_compact_payload("browser");
     assert!(observation["data"].get("target_id").is_none());
     assert_eq!(observation["data"]["truncated"], true);
     assert_eq!(observation["data"]["text"], "{\"sample\":1}");
@@ -1017,9 +1077,9 @@ fn test_compact_observation_payload_bounds_large_browser_observation() {
     let text = "x".repeat(OBSERVATION_MAX_CHARS + 500);
     let result = ToolResultPayload::from_value(json!({
         "ok": true,
-        "data": {"text": text, "next_cursor": "cursor-2", "has_more": true}
+        "data": {"action":"observe_text", "text": text, "next_cursor": "cursor-2", "has_more": true}
     }));
-    let observation = result.to_compact_payload("browser_observe");
+    let observation = result.to_compact_payload("browser");
     assert_eq!(
         observation.get("truncated").and_then(Value::as_bool),
         Some(true)
@@ -1032,7 +1092,7 @@ fn test_compact_observation_payload_bounds_large_browser_observation() {
     );
     let data = observation.get("data").cloned().unwrap_or(Value::Null);
     assert!(estimate_tool_result_chars(&data) <= OBSERVATION_MAX_CHARS);
-    assert!(result.to_event_payload("browser_observe")["data"]["text"]
+    assert!(result.to_event_payload("browser")["data"]["text"]
         .as_str()
         .is_some_and(|value| value.chars().count() > OBSERVATION_MAX_CHARS));
 }
@@ -1043,27 +1103,10 @@ fn test_compact_observation_payload_keeps_small_browser_projection_unmarked() {
         "ok": true,
         "data": {"action": "click", "ref": "e1", "url": "https://example.invalid/next"}
     }));
-    let observation = result.to_compact_payload("browser_interact");
+    let observation = result.to_compact_payload("browser");
     assert!(observation.get("truncated").is_none());
     assert!(observation.get("observation_output_chars").is_none());
     assert_eq!(observation["data"]["action"], "click");
-}
-
-#[test]
-fn browser_evaluate_projection_keeps_value_and_generation() {
-    let result = ToolResultPayload::from_value(json!({
-        "ok": true,
-        "data": {
-            "kind": "evaluate",
-            "result": {"ready": true, "count": 2},
-            "page_generation": 7,
-            "url": "https://example.invalid/next"
-        }
-    }));
-    let observation = result.to_compact_payload("browser_evaluate");
-    assert_eq!(observation["data"]["action"], "evaluate");
-    assert_eq!(observation["data"]["result"]["count"], 2);
-    assert_eq!(observation["data"]["page_generation"], 7);
 }
 
 #[test]
@@ -1216,7 +1259,7 @@ fn observation_token_budget_bounds_full_serialized_envelope_and_keeps_cursor() {
     }));
 
     let budget = 512;
-    let observation = result.to_compact_payload_with_token_budget("browser_observe", Some(budget));
+    let observation = result.to_compact_payload_with_token_budget("browser", Some(budget));
     assert!(observation_token_count(&observation) <= budget);
     assert_eq!(observation["truncated"], true);
     assert_eq!(observation["data"]["truncated"], true);
@@ -1237,10 +1280,10 @@ fn observation_token_budget_bounds_full_serialized_envelope_and_keeps_cursor() {
 fn observation_token_budget_does_not_change_event_payload() {
     let text = "x".repeat(32_000);
     let result = ToolResultPayload::from_value(json!({"ok": true, "data": {"text": text}}));
-    let observation = result.to_compact_payload_with_token_budget("browser_observe", Some(256));
+    let observation = result.to_compact_payload_with_token_budget("browser", Some(256));
 
     assert!(observation_token_count(&observation) <= 256);
-    assert!(result.to_event_payload("browser_observe")["data"]["text"]
+    assert!(result.to_event_payload("browser")["data"]["text"]
         .as_str()
         .is_some_and(|value| value.len() == 32_000));
 }
@@ -1288,7 +1331,7 @@ fn observation_budget_keeps_failure_status_and_error_ends() {
 
 #[test]
 fn observation_budget_retains_transport_loss_state() {
-    for tool in ["browser_observe", "execute_command", "external"] {
+    for tool in ["browser", "execute_command", "external"] {
         let result = ToolResultPayload::from_value(json!({"ok": true, "data": {
             "truncated": true, "truncation_scope": "transport_safety", "recoverable": false,
             "preview": "value".repeat(8_000), "original_bytes": 2_000_000,

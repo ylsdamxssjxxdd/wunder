@@ -34,7 +34,7 @@ fn parallel_safe_builtin_names() -> &'static HashSet<String> {
         .filter(|name| !name.trim().is_empty())
         .collect();
         // Browser operations can update refs or race navigation, so they stay
-        // exclusive. `browser_status` remains a legacy diagnostic call only.
+        // exclusive.
         // 合并工具注册表里声明的并行安全工具，保持单一事实来源。
         for canonical in crate::tools::registry::parallel_safe_canonicals() {
             let resolved = resolve_tool_name(canonical);

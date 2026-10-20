@@ -11,6 +11,7 @@ mod disabled {
     use super::super::context::ToolContext;
     use super::super::tool_error::{build_failed_tool_result, ToolErrorMeta};
     use crate::config::Config;
+    use crate::schemas::ToolSpec;
     use anyhow::Result;
     use serde_json::{json, Value};
 
@@ -34,6 +35,75 @@ mod disabled {
 
     pub fn desktop_tools_enabled(_config: &Config) -> bool {
         false
+    }
+
+    pub fn desktop_control_tool_spec(language: &str) -> ToolSpec {
+        let description =
+            crate::i18n::t_in_language("tool.spec.desktop_control.description", language);
+        let bbox = json!({
+            "type": "array",
+            "items": {"type": "integer", "minimum": 0, "maximum": 10000},
+            "anyOf": [
+                {"type": "array", "items": {"type": "integer", "minimum": 0, "maximum": 10000}, "minItems": 2, "maxItems": 2},
+                {"type": "array", "items": {"type": "integer", "minimum": 0, "maximum": 10000}, "minItems": 4, "maxItems": 4}
+            ]
+        });
+        let branch = |action: Value,
+                      mut properties: serde_json::Map<String, Value>,
+                      required: &[&str]| {
+            properties.insert("action".to_string(), action);
+            json!({"type":"object","properties":properties,"required":required,"additionalProperties":false})
+        };
+        let base = || {
+            let mut properties = serde_json::Map::new();
+            properties.insert("bbox".to_string(), bbox.clone());
+            properties
+        };
+        let mut scroll = base();
+        scroll.insert(
+            "scroll_steps".to_string(),
+            json!({"type":"integer","minimum":1,"maximum":100}),
+        );
+        let mut press = base();
+        press.insert(
+            "key".to_string(),
+            json!({"type":"string","minLength":1,"maxLength":128}),
+        );
+        let mut typing = base();
+        typing.insert(
+            "text".to_string(),
+            json!({"type":"string","minLength":1,"maxLength":16384}),
+        );
+        let mut wait = base();
+        wait.insert(
+            "delay_ms".to_string(),
+            json!({"type":"integer","minimum":0,"maximum":30000}),
+        );
+        let mut move_mouse = base();
+        move_mouse.insert(
+            "duration_ms".to_string(),
+            json!({"type":"integer","minimum":0,"maximum":30000}),
+        );
+        let mut drag = base();
+        drag.insert("to_bbox".to_string(), bbox.clone());
+        drag.insert(
+            "duration_ms".to_string(),
+            json!({"type":"integer","minimum":0,"maximum":30000}),
+        );
+        ToolSpec {
+            name: TOOL_DESKTOP_CONTROL.to_string(),
+            title: None,
+            description,
+            input_schema: json!({"oneOf":[
+                branch(json!({"enum":["left_click","left_double_click","right_click","middle_click","left_hold","right_hold","middle_hold","left_release","right_release","middle_release"]}), base(), &["action","bbox"]),
+                branch(json!({"enum":["scroll_down","scroll_up"]}), scroll, &["action","bbox"]),
+                branch(json!({"const":"press_key"}), press, &["action","bbox","key"]),
+                branch(json!({"const":"type_text"}), typing, &["action","bbox","text"]),
+                branch(json!({"const":"wait"}), wait, &["action","bbox"]),
+                branch(json!({"const":"move_mouse"}), move_mouse, &["action","bbox"]),
+                branch(json!({"const":"drag_drop"}), drag, &["action","bbox","to_bbox"])
+            ]}),
+        }
     }
 
     pub async fn tool_desktop_control(_context: &ToolContext<'_>, args: &Value) -> Result<Value> {

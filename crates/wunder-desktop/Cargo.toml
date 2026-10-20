@@ -16,7 +16,6 @@ host-metrics = ["wunder-runtime/host-metrics"]
 mcp = ["wunder-runtime/mcp"]
 postgres-storage = ["wunder-runtime/postgres-storage"]
 sqlite-storage = ["wunder-runtime/sqlite-storage"]
-terminal-pty = ["wunder-runtime/terminal-pty"]
 web-fetch = ["wunder-runtime/web-fetch"]
 xmpp = ["wunder-runtime/xmpp"]
 

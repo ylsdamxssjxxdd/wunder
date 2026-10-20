@@ -771,14 +771,15 @@ async fn slash_commands_have_durable_turns_and_compaction_result() {
     .await;
     assert_eq!(status, StatusCode::OK, "{cancelled}");
     assert_eq!(cancelled["data"]["goal_cleared"], true);
-    assert!(wunder_server::goal::get_goal(
-        context.state.storage.clone(),
-        &context.user_id,
-        &session_id
-    )
-    .await
-    .unwrap()
-    .is_none());
+    assert!(context
+        .state
+        .kernel
+        .orchestrator
+        .goal_handle()
+        .get_view(&context.state.storage, &context.user_id, &session_id)
+        .await
+        .unwrap()
+        .is_none());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

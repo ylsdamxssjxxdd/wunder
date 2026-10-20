@@ -12,9 +12,10 @@ use super::prompt::{
     render_wrapup_context,
 };
 use super::service::{
-    goal_payload, goal_tool_value, goal_tool_value_none, validate_objective, GoalService,
+    goal_payload, goal_tool_value, goal_tool_value_none, validate_blocked_reason,
+    validate_objective, GoalService,
 };
-use super::tools::{goal_tool_specs, is_goal_tool_name, read_wrapup};
+use super::tools::{goal_tool_specs, is_goal_tool_name, read_wrapup, TOOL_GOAL};
 use super::types::*;
 use crate::storage::{SessionGoalRecord, SqliteStorage, StorageBackend, StorageLifecycle};
 use serde_json::json;
@@ -744,6 +745,80 @@ fn objective_validation_trims_and_bounds_length() {
 }
 
 #[test]
+fn blocked_reason_validation_trims_and_bounds_length() {
+    assert_eq!(
+        validate_blocked_reason("  waiting on input ").unwrap(),
+        "waiting on input"
+    );
+    assert_code(
+        validate_blocked_reason("   ").unwrap_err(),
+        ERR_GOAL_INVALID_BLOCK_REASON,
+    );
+    let max = "x".repeat(MAX_BLOCK_REASON_CHARS);
+    assert!(validate_blocked_reason(&max).is_ok());
+    assert_code(
+        validate_blocked_reason(format!("{max}x")).unwrap_err(),
+        ERR_GOAL_INVALID_BLOCK_REASON,
+    );
+}
+
+#[tokio::test]
+async fn block_cleans_and_validates_reason_at_service_boundary() {
+    let (service, storage, _dir) = setup().await;
+    let created = service
+        .create(storage.clone(), USER, SESSION, "ship", None)
+        .await
+        .unwrap();
+    let reference = GoalRef {
+        goal_id: created.record.goal_id,
+        revision: created.record.revision,
+    };
+
+    let blocked = service
+        .block(
+            storage.clone(),
+            USER,
+            SESSION,
+            &reference,
+            GoalBlockReason {
+                code: "model-reported".into(),
+                message: "  waiting on input  ".into(),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        blocked.record.blocked_message.as_deref(),
+        Some("waiting on input")
+    );
+
+    let (service, storage, _dir) = setup().await;
+    let created = service
+        .create(storage.clone(), USER, SESSION, "ship", None)
+        .await
+        .unwrap();
+    assert_code(
+        service
+            .block(
+                storage,
+                USER,
+                SESSION,
+                &GoalRef {
+                    goal_id: created.record.goal_id,
+                    revision: created.record.revision,
+                },
+                GoalBlockReason {
+                    code: "model-reported".into(),
+                    message: " ".into(),
+                },
+            )
+            .await
+            .unwrap_err(),
+        ERR_GOAL_INVALID_BLOCK_REASON,
+    );
+}
+
+#[test]
 fn payload_and_tool_projections_have_stable_shapes() {
     let mut goal = view(PHASE_BLOCKED, 2, 1, GoalActivation::Armed);
     goal.record.blocked_code = Some("queue-failed".into());
@@ -759,16 +834,20 @@ fn payload_and_tool_projections_have_stable_shapes() {
     let tool_value = goal_tool_value(&goal);
     assert_eq!(tool_value["goal"]["id"], "goal-1");
     assert_eq!(tool_value["goal"]["revision"], 2);
-    assert_eq!(tool_value["goal"]["roundsStarted"], 1);
-    assert_eq!(tool_value["goal"]["maxGoalRounds"], 8);
-    assert_eq!(tool_value["goal"]["blockedReason"]["code"], "queue-failed");
-    assert_eq!(tool_value["activation"], "armed");
-
-    // Only blocked goals carry blockedReason.
-    let active = view(PHASE_ACTIVE, 1, 0, GoalActivation::Armed);
-    assert!(goal_tool_value(&active)["goal"]
-        .get("blockedReason")
-        .is_none());
+    assert_eq!(tool_value["goal"]["phase"], "blocked");
+    assert_eq!(tool_value["goal"]["remainingRounds"], 7);
+    for omitted in [
+        "objective",
+        "roundsStarted",
+        "maxGoalRounds",
+        "blockedReason",
+        "activation",
+    ] {
+        assert!(
+            tool_value["goal"].get(omitted).is_none() && tool_value.get(omitted).is_none(),
+            "model result must omit {omitted}"
+        );
+    }
     assert_eq!(goal_tool_value_none(), json!({ "goal": null }));
 }
 
@@ -1004,27 +1083,58 @@ async fn execute_goal_command_edit_replaces_completed_goal() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn goal_tool_specs_cover_three_tools() {
+fn goal_tool_spec_is_one_strict_action_union() {
     let specs = goal_tool_specs();
-    let names = specs
+    assert_eq!(specs.len(), 1);
+    let spec = &specs[0];
+    assert_eq!(spec.name, TOOL_GOAL);
+    let branches = spec.input_schema["oneOf"]
+        .as_array()
+        .expect("goal schema has action branches");
+    assert_eq!(branches.len(), 7);
+    for (action, required) in [
+        ("get", json!(["action"])),
+        ("create", json!(["action", "objective"])),
+        (
+            "edit",
+            json!(["action", "goal_id", "revision", "objective"]),
+        ),
+        ("pause", json!(["action", "goal_id", "revision"])),
+        ("resume", json!(["action", "goal_id", "revision"])),
+        ("complete", json!(["action", "goal_id", "revision"])),
+        (
+            "blocked",
+            json!(["action", "goal_id", "revision", "blocked_reason"]),
+        ),
+    ] {
+        let branch = branches
+            .iter()
+            .find(|branch| branch["properties"]["action"]["const"] == action)
+            .unwrap_or_else(|| panic!("missing {action} branch"));
+        assert_eq!(branch["type"], "object");
+        assert_eq!(branch["required"], required);
+        assert_eq!(branch["additionalProperties"], false);
+    }
+    let blocked = branches
         .iter()
-        .map(|spec| spec.name.as_str())
-        .collect::<Vec<_>>();
-    assert_eq!(names, ["get_goal", "create_goal", "update_goal"]);
-    assert_eq!(specs[1].input_schema["required"], json!(["objective"]));
+        .find(|branch| branch["properties"]["action"]["const"] == "blocked")
+        .expect("missing blocked branch");
     assert_eq!(
-        specs[2].input_schema["required"],
-        json!(["goal_id", "revision", "action"])
+        blocked["properties"]["blocked_reason"]["maxLength"],
+        json!(MAX_BLOCK_REASON_CHARS)
     );
 }
 
 #[test]
-fn goal_tool_name_matching_trims() {
-    assert!(is_goal_tool_name("get_goal"));
-    assert!(is_goal_tool_name(" get_goal "));
-    assert!(is_goal_tool_name("update_goal"));
-    assert!(!is_goal_tool_name("get_goalx"));
-    assert!(!is_goal_tool_name(""));
+fn goal_tool_name_matching_trims_without_legacy_aliases() {
+    assert!(is_goal_tool_name("goal"));
+    assert!(is_goal_tool_name(" goal "));
+    for legacy in ["get_goal", "create_goal", "update_goal", "goalx", ""] {
+        assert!(
+            !is_goal_tool_name(legacy),
+            "legacy name {legacy} must not resolve"
+        );
+    }
 }
 
 #[test]

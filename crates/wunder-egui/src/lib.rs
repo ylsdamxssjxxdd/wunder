@@ -17,11 +17,18 @@ pub mod app;
 pub mod backend;
 #[cfg(all(feature = "fixtures", not(target_arch = "wasm32")))]
 mod capture;
+pub mod code_highlight;
+pub mod composer_attachments;
 pub mod icons;
 pub mod markdown;
 pub mod model;
 pub mod settings;
+pub mod sidebar_tree;
 pub mod theme;
+pub mod thread_list;
+pub mod timeline_footer;
+pub mod timeline_ruler;
+pub mod workspace_tree;
 
 /// Stable presentation data for screenshot and visual regression review.
 pub mod fixtures;
@@ -138,7 +145,8 @@ fn capture_viewport() -> Option<[f32; 2]> {
 }
 
 #[cfg(all(target_arch = "wasm32", feature = "web"))]
-pub async fn run_web(canvas: web_sys::HtmlCanvasElement) -> Result<(), String> {    let options = eframe::WebOptions::default();
+pub async fn run_web(canvas: web_sys::HtmlCanvasElement) -> Result<(), String> {
+    let options = eframe::WebOptions::default();
     eframe::WebRunner::new()
         .start(
             canvas,

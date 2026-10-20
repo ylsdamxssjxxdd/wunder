@@ -20,6 +20,23 @@ $commonScript = Join-Path $repoRoot 'crates\wunder-cli\scripts\win7-gnu.common.p
 if (-not (Test-Path $commonScript)) {
   throw "Win7 GNU common script missing: $commonScript"
 }
+function Get-Sha256Hex {
+  param([string]$Path)
+  # Get-FileHash needs PowerShell 4+ plus a resolvable module path; the .NET
+  # provider works on every host these build scripts run on.
+  $stream = [IO.File]::OpenRead($Path)
+  try {
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try {
+      ($sha.ComputeHash($stream) | ForEach-Object { $_.ToString('X2') }) -join ''
+    } finally {
+      $sha.Dispose()
+    }
+  } finally {
+    $stream.Dispose()
+  }
+}
+
 . $commonScript
 
 function Resolve-Win7CliDistRoot {
@@ -156,9 +173,9 @@ $distExe = Join-Path $distRoot 'wunder-cli.exe'
 Copy-Item -Path $builtExe -Destination $distExe -Force
 
 $artifact = Get-Item $distExe
-$hash = Get-FileHash -Algorithm SHA256 $distExe
+$hash = Get-Sha256Hex -Path $distExe
 Write-Win7GnuStep "CLI artifact: $distExe"
 Write-Win7GnuStep "size: $($artifact.Length) bytes"
-Write-Win7GnuStep "sha256: $($hash.Hash)"
+Write-Win7GnuStep "sha256: $hash"
 Write-Win7GnuStep "toolchain manifest: $($context.ToolchainManifestPath)"
 Write-Win7GnuStep "isolated lockfile: $resolvedLockfilePath"

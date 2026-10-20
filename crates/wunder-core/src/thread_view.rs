@@ -276,7 +276,6 @@ pub fn preview(text: &str, budget: usize) -> String {
     text[..end].to_string()
 }
 
-
 /// Extracts the plain text of a stored chat message content value.
 ///
 /// Plain messages store `content` as a string. Multipart messages (for example
@@ -287,9 +286,7 @@ pub fn message_content_text(content: &Value) -> Option<String> {
     match content {
         Value::String(text) => Some(text.clone()),
         Value::Array(parts) => {
-            if parts.is_empty()
-                || !parts.iter().all(|part| part.get("type").is_some())
-            {
+            if parts.is_empty() || !parts.iter().all(|part| part.get("type").is_some()) {
                 return None;
             }
             let text = parts
@@ -297,8 +294,10 @@ pub fn message_content_text(content: &Value) -> Option<String> {
                 .filter(|part| part.get("type").and_then(Value::as_str) == Some("text"))
                 .filter_map(|part| part.get("text").and_then(Value::as_str))
                 .collect::<Vec<_>>()
-                .join("
-");
+                .join(
+                    "
+",
+                );
             Some(text)
         }
         _ => None,
@@ -334,7 +333,6 @@ pub struct ThreadSearchPage {
     pub has_more: bool,
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -354,8 +352,10 @@ mod tests {
         ]);
         assert_eq!(
             message_content_text(&content).as_deref(),
-            Some("看看这张图
-第二段")
+            Some(
+                "看看这张图
+第二段"
+            )
         );
     }
 

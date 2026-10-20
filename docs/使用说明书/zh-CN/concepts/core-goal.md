@@ -12,9 +12,7 @@ updated_at: 2026-10-16
 
 | 工具 | 作用 |
 | --- | --- |
-| `get_goal` | 读出当前目标及其版本号 |
-| `create_goal` | 创建目标 |
-| `update_goal` | 编辑、暂停、恢复、完成、报告受阻 |
+| `goal` | 通过 `action=get|create|edit|pause|resume|complete|blocked` 读取、创建、编辑、暂停、恢复、完成或报告受阻 |
 
 ## 相位
 
@@ -39,6 +37,6 @@ updated_at: 2026-10-16
 ## 限制
 
 - 目标没有 token 预算，轮次之间也没有冷却。是否停下只看轮次预算、相位与是否 armed。
-- armed 状态**不持久**：进程重启或会话 resume 之后，即使相位仍是 `active`，也需要显式 `update_goal action=resume` 重新 arm。目标不动了先查它有没有被 arm。
+- armed 状态**不持久**：进程重启或会话 resume 之后，即使相位仍是 `active`，也需要显式 `goal action=resume` 重新 arm。目标不动了先查它有没有被 arm。
 - 桌面端不开放目标选择，运行时按会话注入。
 - 舰桥没有 goal 界面，目标操作在蜂巢、蛹、舵机里做。

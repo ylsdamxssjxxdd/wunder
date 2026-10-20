@@ -45,7 +45,7 @@ x11-dl = "=2.21.0"
 [target.'cfg(windows)'.dependencies]
 # Real console for the terminal panel. The winpty library is loaded at run
 # time from the git supplement, so a host without it keeps using pipes.
-wunder-desktop = { path = "../crates/wunder-desktop", default-features = false, features = ["terminal-pty"] }
+wunder-desktop = { path = "../crates/wunder-desktop", default-features = false }
 windows-sys = { version = "0.52", features = [
   "Win32_Foundation",
   "Win32_Graphics_Dwm",

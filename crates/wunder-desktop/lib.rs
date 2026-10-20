@@ -15,14 +15,12 @@ pub use native::{
     ModelRecord, NativeChannelAccountEdit, NativeChannelBindingEdit, NativeChatAttachment,
     NativeChatEvent, NativeChatInput, NativeChatRound, NativeChatTurn, NativeContextUsage,
     NativeCronJobEdit, NativeDesktop, NativeMessage, NativeMessageAttachment,
-    NativeNavigationOrder, NativePatchFile,
-    NativePatchLine, NativePlanStep, NativePlanView, NativeProcessItem, NativeProcessPage,
-    NativeProfile, NativeQueueTurn,
-    NativeSession, NativeStream, NativeSubagentCard, NativeTerminalFrame, NativeTerminalSignal,
-    NativeTerminalSpec, NativeTerminalWatch, NativeThreadUpdate, NativeThreadWatch,
-    NativeWorkflowEntry, NativeWorkflowLine, NativeWorkflowSection, NativeWorkspace,
-    PromptPackInfo, PromptSegmentContent, RuntimeToolStatus, ToolRecord, WorkspaceDeleteSummary,
-    WorkspaceEdit, WorkspacePathReport, DEFAULT_AGENT_ID, WORKSPACE_COLORS, WORKSPACE_ICONS,
+    NativeNavigationOrder, NativePatchFile, NativePatchLine, NativePlanStep, NativePlanView,
+    NativeProcessItem, NativeProcessPage, NativeProfile, NativeQueueTurn, NativeSession,
+    NativeStream, NativeSubagentCard, NativeThreadUpdate, NativeThreadWatch, NativeWorkflowEntry,
+    NativeWorkflowLine, NativeWorkflowSection, NativeWorkspace, PromptPackInfo,
+    PromptSegmentContent, RuntimeToolStatus, ToolRecord, WorkspaceDeleteSummary, WorkspaceEdit,
+    WorkspacePathReport, DEFAULT_AGENT_ID, WORKSPACE_COLORS, WORKSPACE_ICONS,
 };
 pub use runtime::DesktopRuntime;
 

@@ -681,8 +681,11 @@ mod tests {
             vec!["-c", "set -o pipefail; echo ok | head"]
         );
 
-        let prefixed =
-            build_shell_command_with_shell("set -o pipefail; echo ok | head", Path::new("."), &shell);
+        let prefixed = build_shell_command_with_shell(
+            "set -o pipefail; echo ok | head",
+            Path::new("."),
+            &shell,
+        );
         assert_eq!(
             command_args(&prefixed),
             vec!["-c", "set -o pipefail; echo ok | head"]

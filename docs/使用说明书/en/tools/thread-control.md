@@ -1,6 +1,6 @@
 ---
 title: Thread Control
-summary: The seven actions and available fields of `thread_control`, the four listing scopes, persistence behavior of writes and switches, ownership checks and list caps, and how it is exposed per form.
+summary: The eight actions and available fields of `thread_control`, the four listing scopes, persistence behavior of writes and switches, ownership checks and list caps, and how it is exposed per form.
 updated_at: 2026-10-16
 ---
 
@@ -10,7 +10,7 @@ The tool is `thread_control`, also known as `session_thread`. A single agent can
 
 When the user raises a separate, independent matter, carry it with a new thread rather than continuing in the current one. Switching between threads, going back to a parent thread, renaming, archiving, and restoring all go through this tool too.
 
-Each call specifies one action:
+Each call specifies one action. Model calls use closed, action-specific field branches; each action accepts only relevant fields, runtime validation rejects unknown fields again, and list/lifecycle actions return only the necessary thread summary:
 
 - `list`: list threads by scope.
 - `info`: view a single thread's details, together with its parent thread and direct child threads.

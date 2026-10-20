@@ -6,11 +6,14 @@
 - `opt/git`：给 `git clone`、`git status`、补丁应用与仓库操作使用的内置 Git
 - `opt/rg`：给 `search_content` 与命令行检索使用的内置 ripgrep
 - `opt/ffmpeg`：给音视频抽帧、抽音轨与转码使用的内置静态 ffmpeg
+- `opt/r2`：（可选）radare2 反汇编工具集；构建时通过 `WUNDER_SUPPLEMENT_R2_ARCHIVE` 投喂预编译包才会包含
+
+`WUNDER_SUPPLEMENT_R2_ARCHIVE` 接受两种投喂物：静态单文件 r2 二进制（或仅含该文件的 tar.gz/zip，落到 `opt/r2/bin/radare2` 并自动建立 `r2` 符号链接），或带 `bin/radare2` 布局的压缩包（顶层目录拍平进 `opt/r2`）。发行版 deb 与官方 6.x 发布物要求的 glibc 高于 Ubuntu 18.04，不要直接投喂； amd64 可用 radare2 6.2.4 静态单文件（在 ubuntu:18.04 容器内 `sys/static.sh` 构建产物），arm64 可在 ARM64 构建机上以同样方式源码编译。
 
 补充包设计目标与 Win7 版一致：**统一安装到 `WUNDER_HOME/opt`，蛹与舵机共用一份运行环境**。
 
 - 推荐在蛹设置中选择“导入补充包”，默认写入 `~/.wunder/opt/`，导入后蛹新启动的工具立即生效。
-- 手动安装时，关闭使用该补充包的进程，将压缩包解压到 `${WUNDER_HOME:-$HOME/.wunder}`，使其下直接出现 `opt/python`、`opt/git`、`opt/rg`、`opt/ffmpeg`，再启动蛹或舵机。
+- 手动安装时，关闭使用该补充包的进程，将压缩包解压到 `${WUNDER_HOME:-$HOME/.wunder}`，使其下直接出现 `opt/python`、`opt/git`、`opt/rg`、`opt/ffmpeg`（以及可选的 `opt/r2`），再启动蛹或舵机。
 - AppImage 同样使用这个可写用户目录；安装目录与 AppImage 同级旧 `opt/` 仅保留读取回退，新导入始终写入共享 home，不自动搬迁旧文件。
 
 ## 安装器打包

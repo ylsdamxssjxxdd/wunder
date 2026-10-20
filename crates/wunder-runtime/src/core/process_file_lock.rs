@@ -100,11 +100,9 @@ mod tests {
         let first = ProcessFileLock::acquire(&path, Duration::ZERO)
             .await
             .unwrap();
-        assert!(
-            ProcessFileLock::acquire(&path, Duration::from_millis(40))
-                .await
-                .is_err()
-        );
+        assert!(ProcessFileLock::acquire(&path, Duration::from_millis(40))
+            .await
+            .is_err());
         assert!(path.is_file());
         drop(first);
         let _next = ProcessFileLock::acquire(&path, Duration::ZERO)

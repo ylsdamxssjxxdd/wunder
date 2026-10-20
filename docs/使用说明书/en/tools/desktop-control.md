@@ -26,21 +26,18 @@ One call needs both a **position** and an **action**:
 
 - Position uses normalized coordinates: either an `[x1,y1,x2,y2]` tuple or a two-value center point. Coordinates are based on a default `1000×1000` normalized grid; at run time the center is taken and mapped linearly onto real screen pixels.
 - There are 17 actions: `left_click`, `left_double_click`, `right_click`, `middle_click`; `left_hold` / `right_hold` / `middle_hold` and their matching `left_release` / `right_release` / `middle_release`; `scroll_down` / `scroll_up`; `press_key`, `type_text`, `wait`, `move_mouse`, `drag_drop`.
-- Related arguments: a key uses `key`, typed text uses `text`, a wait uses `delay_ms`, drag duration uses `duration_ms` (about 400 ms when omitted), scroll steps use `scroll_steps`, a drag destination uses `to_bbox`, and an observation note uses `note`.
-
-Loose aliases are accepted too: `keyboard`→`press_key`, `send_text`→`type_text`, `sleep` / `observe` / `screenshot`→`wait`, `move`→`move_mouse`, `drag`→`drag_drop`, and hyphens and spaces are normalized automatically. An unknown action reports "unknown action".
-
-The action description is echoed in the action result, and defaults to the action name itself.
+- Related arguments: a key uses `key`, typed text uses `text`, a wait uses `delay_ms`, drag duration uses `duration_ms` (about 400 ms when omitted), scroll steps use `scroll_steps`, and a drag destination uses `to_bbox`.
+- Every action accepts only its own fields; extra or cross-action fields are rejected. Coordinates are bounded to `0..10000`, and text and key lengths are bounded too.
 
 ## Waiting and observing
 
-The `wait` action reads desktop windows and screen state. Give a wait duration (`delay_ms`, 0–30000 ms; anything larger is clamped to 30000), optionally with a one-line observation note (`note`) that is echoed back verbatim. The wait argument also accepts forms such as `wait_ms` and `wait`; a screenshot follows when the wait completes. This wait is the observation semantics, not a UI animation.
+The `wait` action reads desktop windows and screen state. Give a wait duration (`delay_ms`, 0–30000 ms; anything larger is clamped to 30000); a screenshot follows when the wait completes. This wait is the observation semantics, not a UI animation.
 
 ## Automatic behavior
 
-- **It takes a screenshot after every action.** It does not return the screen state from before the action; the outcome is delivered by the visual input that follows.
+- **It takes a screenshot after every action.** A non-`wait` action first gets at least 240 ms to settle, then frames are compared every 80 ms and capture stops as soon as the screen is stable, after at most three probes. This lets window changes, menus, and input echoes appear without blocking indefinitely. `wait` uses only its explicit `delay_ms`.
 - After a successful return, the orchestrator assembles the screenshots into a **user-role multimodal message** appended to the model: a text hint plus the screenshot from before the action (if any) and the current screenshot, so the tool result the model sees contains no image itself and the picture arrives through that appended message. Budget a task as "one action = one call + one look". A single screenshot entering context is capped at 8 MiB, and exceeding that fails.
-- No action hint animation is shown, and no animation delay is added before or after an action. A screenshot is captured immediately after the action and returned as the observation receipt.
+- No action hint animation is shown. A screenshot is captured with the bounded stabilization policy above and returned as the observation receipt.
 - The result fields `action_applied`, `screenshot_after_action`, and `observation_ready` indicate that the action was issued and the current screenshot is ready for verification. Check the screenshot first and retry the same action only when the state is confirmed unchanged.
 
 ## Errors

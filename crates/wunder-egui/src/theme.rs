@@ -113,6 +113,15 @@ pub struct Tokens {
     /// Fenced Markdown code background.
     pub code_background: Color32,
     pub code_inline: Color32,
+    /// Syntax colours for fenced code blocks. They are deliberately
+    /// low-saturation so they sit beside the warm accent instead of competing
+    /// with body copy; `syntax_comment` doubles as `text_muted` in weight.
+    pub syntax_keyword: Color32,
+    pub syntax_string: Color32,
+    pub syntax_comment: Color32,
+    pub syntax_number: Color32,
+    /// Called identifiers and names declared after `fn`/`def`.
+    pub syntax_function: Color32,
     /// Secondary workflow-step text, distinct from general muted copy.
     pub process: Color32,
     /// Success chip colors used by completed user turns.
@@ -194,6 +203,13 @@ impl Tokens {
             disabled: Color32::from_rgb(0xb7, 0xb9, 0xbd),
             code_background: Color32::from_rgb(0xf5, 0xf4, 0xf2),
             code_inline: Color32::from_rgb(0xf3, 0xf2, 0xf0),
+            // Muted plum, green, grey, amber and blue: enough separation to
+            // read the token classes, quiet enough for a warm light canvas.
+            syntax_keyword: Color32::from_rgb(0x9a, 0x3e, 0x5c),
+            syntax_string: Color32::from_rgb(0x2f, 0x6f, 0x4f),
+            syntax_comment: Color32::from_rgb(0x8a, 0x8f, 0x99),
+            syntax_number: Color32::from_rgb(0xa8, 0x5a, 0x1e),
+            syntax_function: Color32::from_rgb(0x2f, 0x5f, 0xa8),
             process: Color32::from_rgb(0x9b, 0xa0, 0xa8),
             success_tint: Color32::from_rgb(0xf1, 0xfd, 0xf5),
             success_border: Color32::from_rgb(0xbe, 0xe6, 0xcc),
@@ -266,6 +282,38 @@ pub const ACCENT_CHOICES: &[AccentChoice] = &[
 
 pub fn accent_choices() -> &'static [AccentChoice] {
     ACCENT_CHOICES
+}
+
+/// Workspace palette offered by the native workspace editor (`WORKSPACE_COLORS`
+/// in `wunder-desktop`). Unknown names fall back to grey: a stored value from a
+/// newer build must never blank a rail row.
+///
+/// The names are content, not shell tokens, so they still live in this file —
+/// the one module allowed to write colour literals.
+pub fn workspace_color(name: &str) -> Color32 {
+    match name {
+        "red" => Color32::from_rgb(0xCD, 0x48, 0x4F),
+        "green" => Color32::from_rgb(0x4C, 0xAF, 0x50),
+        "blue" => Color32::from_rgb(0x1F, 0x76, 0xAF),
+        "brown" => Color32::from_rgb(0x8D, 0x6E, 0x3C),
+        "crimson" => Color32::from_rgb(0xA9, 0x32, 0x26),
+        "pink" => Color32::from_rgb(0xE4, 0x5B, 0x9C),
+        "purple" => Color32::from_rgb(0x6F, 0x6A, 0xED),
+        "yellow" => Color32::from_rgb(0xF5, 0xC5, 0x18),
+        "orange" => Color32::from_rgb(0xFA, 0x8C, 0x38),
+        "teal" => Color32::from_rgb(0x17, 0xB8, 0xA6),
+        "bright-blue" => Color32::from_rgb(0x17, 0x99, 0xFE),
+        "black" => Color32::from_rgb(0x1F, 0x23, 0x29),
+        "light-purple" => Color32::from_rgb(0xB3, 0x9D, 0xDB),
+        "light-green" => Color32::from_rgb(0x81, 0xC7, 0x84),
+        _ => Color32::from_rgb(0x9A, 0xA0, 0xA6),
+    }
+}
+
+/// 13% wash of a workspace colour, painted behind an expanded workspace glyph.
+/// Matches the Slint row's `transparentize(0.87)` so both shells read the same.
+pub fn workspace_wash(color: Color32) -> Color32 {
+    Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 33)
 }
 
 pub fn apply(ctx: &Context) {

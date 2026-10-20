@@ -85,9 +85,9 @@ pub fn restore_agent(app: &MainWindow, id: &str) {
     }
 }
 
-/// A fresh model starts from the runtime's effective defaults instead of
-/// empty strings: the editor is usable immediately and saving without
-/// touching a field does not silently clear it.
+/// The complete template for a new model. The catalogue card and its editor
+/// draft are both projected from this value, so an earlier model selection
+/// cannot leak its provider or parameters into a new card.
 pub(crate) fn new_model_card(key: String) -> ModelCard {
     ModelCard {
         key: key.into(),
@@ -110,8 +110,39 @@ pub(crate) fn new_model_card(key: String) -> ModelCard {
         support_hearing: false,
         stream_include_usage: true,
         tool_call_mode: "function_call".into(),
+        tts_voice: "".into(),
+        tts_response_format: "".into(),
+        tts_speed: "1".into(),
+        tts_instructions: "".into(),
+        asr_language: "".into(),
+        asr_response_format: "".into(),
+        asr_temperature: "0".into(),
+        asr_prompt: "".into(),
+        image_size: "".into(),
+        image_output_format: "".into(),
+        image_steps: "30".into(),
+        image_guidance_scale: "7.5".into(),
+        image_negative_prompt: "".into(),
+        video_size: "".into(),
+        video_seconds: "4".into(),
+        video_fps: "24".into(),
+        video_num_frames: "".into(),
+        video_negative_prompt: "".into(),
+        video_steps: "".into(),
+        video_guidance_scale: "".into(),
+        video_guidance_scale_2: "".into(),
+        video_boundary_ratio: "".into(),
+        video_flow_shift: "".into(),
+        video_frame_interpolation: false,
+        video_sync_mode: false,
         ..Default::default()
     }
+}
+
+/// Project a freshly-created card without losing its creation state. Both
+/// production and demo creation paths use this after inserting the card.
+pub(crate) fn apply_new_model_draft(app: &MainWindow, model: ModelCard) {
+    apply_model_with_creation_state(app, model, true);
 }
 
 pub fn restore_model(app: &MainWindow, key: &str) {
@@ -161,6 +192,10 @@ pub(crate) fn sync_tool_selection(app: &MainWindow) {
 }
 
 fn apply_model(app: &MainWindow, model: ModelCard) {
+    apply_model_with_creation_state(app, model, false);
+}
+
+fn apply_model_with_creation_state(app: &MainWindow, model: ModelCard, creating: bool) {
     app.set_selected_model_card(model.clone());
     app.set_settings_model_key(model.key.clone());
     app.set_settings_model_provider(model.provider.clone());
@@ -171,7 +206,7 @@ fn apply_model(app: &MainWindow, model: ModelCard) {
     // The settings page edits the selected model in place, so every selection
     // projects straight into the editor drafts (secrets stay empty: an empty
     // key field means "keep the stored secret" on save).
-    app.set_model_creating(false);
+    app.set_model_creating(creating);
     app.set_model_key_draft(model.key.clone());
     app.set_model_provider_draft(model.provider.clone());
     app.set_model_name_draft(model.model.clone());
@@ -239,6 +274,12 @@ mod tests {
         assert_eq!(card.max_context.as_str(), "128000");
         assert_eq!(card.history_compaction_ratio.as_str(), "0.9");
         assert_eq!(card.simulation_speed.as_str(), "fast");
+        assert_eq!(card.tts_speed.as_str(), "1");
+        assert_eq!(card.asr_temperature.as_str(), "0");
+        assert_eq!(card.image_steps.as_str(), "30");
+        assert_eq!(card.image_guidance_scale.as_str(), "7.5");
+        assert_eq!(card.video_seconds.as_str(), "4");
+        assert_eq!(card.video_fps.as_str(), "24");
         assert!(card.stream_include_usage);
         assert!(!card.support_vision);
         assert!(!card.support_hearing);

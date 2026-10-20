@@ -14,7 +14,7 @@ use crate::services::admin_skills::{
     resolve_admin_uploaded_skills_root, resolve_builtin_skills_root,
 };
 use crate::services::skill_archive::{import_skill_archive, is_supported_skill_archive_filename};
-use crate::services::tools::{browser_tool_names, is_browser_tool_name};
+use crate::services::tools::is_browser_tool_name;
 use crate::skills::{load_skills, SkillSpec};
 use crate::state::AppState;
 use crate::tools::{builtin_aliases, builtin_tool_specs, resolve_tool_name};
@@ -1342,7 +1342,7 @@ fn admin_browser_tool_name() -> String {
     resolve_tool_name("browser")
 }
 
-/// 判断某个工具名是否代表浏览器工具组（含历史遗留的组名与当前 provider 原生工具名）。
+/// 判断某个工具名是否代表浏览器能力条目（聚合展示名或唯一模型工具）。
 fn is_admin_browser_entry(name: &str) -> bool {
     is_browser_tool_name(name) || name == admin_browser_tool_name()
 }
@@ -1367,15 +1367,15 @@ fn admin_enabled_builtin_names(config: &Config) -> HashSet<String> {
     enabled
 }
 
-/// 管理员侧“浏览器”分组条目：代表整组 browser_* 原生工具，开关映射到 `tools.browser.enabled`。
+/// 管理员侧“浏览器”条目：代表唯一 `browser` 模型工具，开关映射到 `tools.browser.enabled`。
 fn admin_browser_group_entry(name: &str, english: bool, enabled: bool) -> Value {
     let label = if english { "Browser" } else { "浏览器" };
     let mut description = i18n::t("tool.spec.browser_group.description");
     if description.is_empty() || description == "tool.spec.browser_group.description" {
         description = if english {
-            "Browser automation tool group (browser_* native tools).".to_string()
+            "Browser automation through one strict action tool.".to_string()
         } else {
-            "浏览器自动化工具组：包含 browser_navigate、browser_click、browser_take_screenshot 等原生工具。"
+            "浏览器自动化工具组：包含一个 browser action 工具，用于导航、观察、交互、等待与截图。"
                 .to_string()
         };
     }
@@ -1383,17 +1383,7 @@ fn admin_browser_group_entry(name: &str, english: bool, enabled: bool) -> Value 
         "name": name,
         "label": label,
         "description": description,
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "tools": {
-                    "type": "array",
-                    "items": { "type": "string", "enum": browser_tool_names() },
-                    "description": "Included browser_* tools.",
-                }
-            },
-            "additionalProperties": false,
-        },
+        "input_schema": {},
         "enabled": enabled,
     })
 }
@@ -1425,7 +1415,7 @@ fn build_builtin_tools_payload(config: &Config) -> (Vec<String>, Vec<Value>) {
         if crate::services::goal::is_goal_tool_name(&spec.name) {
             continue;
         }
-        // 浏览器工具面已是一组 browser_* 原生工具；管理员侧收敛成单个“浏览器”条目。
+        // 浏览器工具面只有一个 browser action 工具；管理员侧显示聚合条目。
         if is_browser_tool_name(&spec.name) {
             if !browser_group_emitted {
                 browser_group_emitted = true;
@@ -1524,15 +1514,10 @@ mod tests {
     fn build_builtin_tools_payload_hides_goal_tools() {
         let mut config = Config::default();
         let read_tool = resolve_tool_name("read_file");
-        config.tools.builtin.enabled = vec![
-            "get_goal".to_string(),
-            "create_goal".to_string(),
-            "update_goal".to_string(),
-            read_tool.clone(),
-        ];
+        config.tools.builtin.enabled = vec!["goal".to_string(), read_tool.clone()];
 
         let (enabled, tools) = build_builtin_tools_payload(&config);
-        for goal_tool in ["get_goal", "create_goal", "update_goal"] {
+        for goal_tool in ["goal"] {
             assert!(
                 !tools
                     .iter()
@@ -1554,23 +1539,14 @@ mod tests {
     fn apply_builtin_tools_update_strips_goal_tools() {
         let mut config = Config::default();
         let read_tool = resolve_tool_name("read_file");
-        apply_builtin_tools_update(
-            &mut config,
-            &[
-                "get_goal".to_string(),
-                "create_goal".to_string(),
-                "update_goal".to_string(),
-                "goal".to_string(),
-                read_tool.clone(),
-            ],
-        );
+        apply_builtin_tools_update(&mut config, &["goal".to_string(), read_tool.clone()]);
 
         assert!(!config
             .tools
             .builtin
             .enabled
             .iter()
-            .any(|name| { name == "get_goal" || name == "create_goal" || name == "update_goal" }));
+            .any(|name| name == "goal"));
         assert_eq!(config.tools.builtin.enabled, vec![read_tool]);
     }
 }

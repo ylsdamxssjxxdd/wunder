@@ -11,6 +11,7 @@ pub(crate) async fn execute_schedule_task_tool(
     context: &ToolContext<'_>,
     args: &Value,
 ) -> Result<Value> {
+    validate_schedule_tool_args(args)?;
     let normalized = normalize_cron_action_args(args);
     let payload: CronActionRequest = serde_json::from_value(normalized.clone()).map_err(|err| {
         if normalized.get("raw").is_some() {
@@ -42,6 +43,146 @@ pub(crate) async fn execute_schedule_task_tool(
     )
     .await
     .map(compact_cron_tool_result)
+}
+
+/// Validate the compact model-facing schedule surface before deserializing it
+/// into the wider cron service request. This keeps action-specific fields from
+/// silently crossing actions and turns typos into an immediate, actionable
+/// tool error instead of a partially applied job patch.
+fn validate_schedule_tool_args(args: &Value) -> Result<()> {
+    let object = args
+        .as_object()
+        .ok_or_else(|| anyhow!("schedule_task arguments must be a JSON object"))?;
+    let action = object
+        .get("action")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| anyhow!("schedule_task action is required"))?;
+    let allowed = match action {
+        "add" => &[
+            "action",
+            "job",
+            "job_id",
+            "name",
+            "schedule",
+            "schedule_text",
+            "session",
+            "message",
+            "payload",
+            "deliver",
+            "enabled",
+            "delete_after_run",
+            "dedupe_key",
+            "session_id",
+            "agent_id",
+        ][..],
+        "update" => &[
+            "action",
+            "job",
+            "job_id",
+            "name",
+            "schedule",
+            "schedule_text",
+            "session",
+            "message",
+            "payload",
+            "deliver",
+            "enabled",
+            "delete_after_run",
+            "dedupe_key",
+            "session_id",
+            "agent_id",
+        ][..],
+        "get" | "remove" | "enable" | "disable" | "run" => &["action", "job", "job_id"][..],
+        "list" | "status" => &["action"][..],
+        _ => return Err(anyhow!("unsupported schedule action: {action}")),
+    };
+    if let Some(key) = object.keys().find(|key| !allowed.contains(&key.as_str())) {
+        return Err(anyhow!(
+            "schedule_task field '{key}' is not valid for action '{action}'"
+        ));
+    }
+    if matches!(action, "get" | "remove" | "enable" | "disable" | "run")
+        && !object
+            .get("job_id")
+            .and_then(Value::as_str)
+            .is_some_and(|value| !value.trim().is_empty())
+        && !object
+            .get("job")
+            .and_then(|job| job.get("job_id"))
+            .and_then(Value::as_str)
+            .is_some_and(|value| !value.trim().is_empty())
+    {
+        return Err(anyhow!("schedule_task {action} requires job_id"));
+    }
+    if let Some(job) = object.get("job") {
+        if !job.is_object() {
+            return Err(anyhow!("schedule_task job must be an object"));
+        }
+        // The nested shape is an internal/API compatibility carrier. The
+        // model-facing schema is flat, but reject unknown nested fields here
+        // so the carrier cannot bypass the action boundary.
+        let allowed_job = [
+            "job_id",
+            "name",
+            "schedule",
+            "schedule_text",
+            "session",
+            "payload",
+            "deliver",
+            "enabled",
+            "delete_after_run",
+            "dedupe_key",
+            "session_id",
+            "agent_id",
+        ];
+        let job_object = job.as_object().expect("object checked above");
+        if let Some(key) = job_object
+            .keys()
+            .find(|key| !allowed_job.contains(&key.as_str()))
+        {
+            return Err(anyhow!("schedule_task job field '{key}' is not recognized"));
+        }
+    }
+    if matches!(action, "add" | "update") {
+        let has_message = object
+            .get("message")
+            .and_then(Value::as_str)
+            .is_some_and(|value| !value.trim().is_empty());
+        let has_payload_message = object
+            .get("payload")
+            .and_then(|value| value.get("message"))
+            .and_then(Value::as_str)
+            .is_some_and(|value| !value.trim().is_empty());
+        let has_nested_payload = object
+            .get("job")
+            .and_then(|job| job.get("payload"))
+            .and_then(|payload| payload.get("message"))
+            .and_then(Value::as_str)
+            .is_some_and(|value| !value.trim().is_empty());
+        if action == "add" && !(has_message || has_payload_message || has_nested_payload) {
+            return Err(anyhow!(
+                "schedule_task add requires message or payload.message"
+            ));
+        }
+        if action == "add"
+            && object.get("schedule").is_none()
+            && object
+                .get("schedule_text")
+                .and_then(Value::as_str)
+                .is_none()
+            && object
+                .get("job")
+                .and_then(|job| job.get("schedule").or_else(|| job.get("schedule_text")))
+                .is_none()
+        {
+            return Err(anyhow!(
+                "schedule_task add requires schedule or schedule_text"
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn normalize_cron_action_args(args: &Value) -> Value {
@@ -223,5 +364,17 @@ mod tests {
         });
         let normalized = normalize_cron_action_args(&original);
         assert_eq!(normalized, original);
+    }
+
+    #[test]
+    fn validate_schedule_actions_reject_cross_action_fields() {
+        assert!(
+            super::validate_schedule_tool_args(&json!({"action":"list","job_id":"x"})).is_err()
+        );
+        assert!(super::validate_schedule_tool_args(&json!({"action":"get"})).is_err());
+        assert!(super::validate_schedule_tool_args(
+            &json!({"action":"add","message":"m","schedule_text":"every 1 minute"})
+        )
+        .is_ok());
     }
 }

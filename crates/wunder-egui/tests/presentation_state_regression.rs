@@ -17,10 +17,7 @@ fn workspace_refresh_keeps_the_selection_until_the_listing_proves_it_gone() {
 
     // Starting a refresh only arms the loading state: deselecting here makes
     // the file row flash on every poll even when the file still exists.
-    assert_eq!(
-        state.selected_workspace_file.as_deref(),
-        Some("notes.txt")
-    );
+    assert_eq!(state.selected_workspace_file.as_deref(), Some("notes.txt"));
     assert!(state.workspace_file_loading);
     assert!(state.workspace_file_error.is_empty());
     assert_eq!(state.workspace_files.len(), 1);

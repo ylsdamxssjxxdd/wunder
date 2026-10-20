@@ -58,6 +58,8 @@ param(
 
   [string]$FfmpegArchivePath = '',
 
+  [string]$R2ArchivePath = '',
+
   [string]$BrowserArchivePath = '',
 
   [switch]$SkipFfmpeg,
@@ -187,10 +189,27 @@ function Expand-ZipInto {
   Expand-Archive -LiteralPath $Archive -DestinationPath $Destination -Force
 }
 
+function Get-Sha256Hex {
+  param([string]$Path)
+  # Get-FileHash needs PowerShell 4+ plus a resolvable module path; the .NET
+  # provider works on every host these build scripts run on.
+  $stream = [IO.File]::OpenRead($Path)
+  try {
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try {
+      ($sha.ComputeHash($stream) | ForEach-Object { $_.ToString('X2') }) -join ''
+    } finally {
+      $sha.Dispose()
+    }
+  } finally {
+    $stream.Dispose()
+  }
+}
+
 function Assert-FileSha256 {
   param([string]$Path, [string]$Expected)
   if ([string]::IsNullOrWhiteSpace($Expected)) { return }
-  $actual = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash
+  $actual = Get-Sha256Hex -Path $Path
   if ($actual.ToUpperInvariant() -ne $Expected.ToUpperInvariant()) {
     Fail "SHA256 mismatch for ${Path}: got $actual, expected $Expected"
   }
@@ -393,6 +412,7 @@ $pythonRoot = Join-Path $packRoot ([string](Get-PropertyValue -Object $layout -N
 $gitRoot    = Join-Path $packRoot ([string](Get-PropertyValue -Object $layout -Name 'gitRoot' -Default 'opt\git'))
 $rgRoot     = Join-Path $packRoot ([string](Get-PropertyValue -Object $layout -Name 'rgRoot' -Default 'opt\rg'))
 $ffmpegRoot = Join-Path $packRoot ([string](Get-PropertyValue -Object $layout -Name 'ffmpegRoot' -Default 'opt\ffmpeg'))
+$r2Root     = Join-Path $packRoot ([string](Get-PropertyValue -Object $layout -Name 'r2Root' -Default 'opt\r2'))
 
 Write-Step "repo root : $repoRoot"
 Write-Step "build root: $buildRootEffective"
@@ -474,6 +494,23 @@ if (-not [string]::IsNullOrWhiteSpace($requirementsRel)) {
   }
 }
 
+# Wheels ship each package's test suite too (pandas alone is ~26 MB of tests).
+# The frozen supplement never runs them, so prune them before packaging; the
+# dist-info RECORD may then reference deleted paths, which is fine for runtime.
+Write-Step 'pruning package test suites'
+$sitePackages = Join-Path $pythonRoot 'Lib\site-packages'
+$prunedTests = 0
+foreach ($pkgDir in @(Get-ChildItem -LiteralPath $sitePackages -Directory -ErrorAction SilentlyContinue)) {
+  foreach ($name in @('tests', 'testdata')) {
+    $target = Join-Path $pkgDir.FullName $name
+    if (Test-Path -LiteralPath $target -PathType Container) {
+      Remove-Item -LiteralPath $target -Recurse -Force
+      $prunedTests++
+    }
+  }
+}
+Write-Step ("pruned {0} test directories" -f $prunedTests)
+
 # Playwright 1.40 supports Node >=16, but its win32 wheel still carries an x64
 # driver/node.exe. The ia32 supplement replaces that file with a pinned 32-bit
 # Node runtime; the PE check below remains a release gate so a future package
@@ -536,6 +573,64 @@ if ($null -ne $gitArchiveMeta) {
   } elseif (-not (Test-Path -LiteralPath $gitArchive)) { Fail "git archive not found: $gitArchive" }
   Write-Step "staging Git $gitVersion into $gitRoot"
   Expand-SevenZipSelfExtractor -Archive $gitArchive -Destination $gitRoot
+
+  # Slim the payload to what agents and Git Bash need: Git itself, Git Bash,
+  # git-lfs and Git Credential Manager stay; vim, the Perl runtime (only used
+  # by interactive helpers like `git add -p`), the Tcl/Tk GUI stack (gitk and
+  # git gui), scalar and all documentation trees go. Pruning here keeps the
+  # supplement and every installer built from it small; the same tree is what
+  # `opt/git` ships to users.
+  Write-Step 'pruning Git payload (vim/perl/tcl-tk/scalar/docs)'
+  $gitPruneDirs = @(
+    'usr\share\vim',
+    'usr\share\doc',
+    'usr\share\man',
+    'usr\share\gtk-doc',
+    'usr\lib\perl5',
+    'usr\share\perl5',
+    'mingw32\share\doc',
+    'mingw32\share\perl5',
+    'mingw32\share\git-gui',
+    'mingw32\lib\tcl8.6',
+    'mingw32\lib\tk8.6'
+  )
+  foreach ($rel in $gitPruneDirs) {
+    $target = Join-Path $gitRoot $rel
+    if (Test-Path -LiteralPath $target -PathType Container) {
+      Remove-Item -LiteralPath $target -Recurse -Force
+    }
+  }
+  $gitPruneFiles = @(
+    'usr\bin\vim.exe',
+    'usr\bin\vimdiff.exe',
+    'usr\bin\view.exe',
+    'usr\bin\rvim.exe',
+    'usr\bin\rview.exe',
+    'usr\bin\ex.exe',
+    'usr\bin\perl.exe',
+    'usr\bin\perl5.38.2.exe',
+    'usr\bin\msys-perl5_38.dll',
+    'usr\bin\msys-svn_swig_perl-1-0.dll',
+    'mingw32\bin\scalar.exe',
+    'mingw32\bin\gitk',
+    'mingw32\libexec\git-core\scalar.exe',
+    'mingw32\libexec\git-core\git-gui.exe',
+    'mingw32\libexec\git-core\git-gui--askpass.exe',
+    'mingw32\libexec\git-core\gitk.exe',
+    'mingw32\libexec\git-core\tcl86.dll',
+    'mingw32\libexec\git-core\tk86.dll'
+  )
+  $prunedGitFiles = 0
+  foreach ($rel in $gitPruneFiles) {
+    $target = Join-Path $gitRoot $rel
+    if (Test-Path -LiteralPath $target -PathType Leaf) {
+      Remove-Item -LiteralPath $target -Force
+      $prunedGitFiles++
+    }
+  }
+  $gitSmoke = & (Join-Path $gitRoot 'cmd\git.exe') '--version' 2>&1
+  if (-not ("$gitSmoke" -match '^git version')) { Fail "git smoke failed after prune: $gitSmoke" }
+  Write-Step ("git smoke ok: $gitSmoke (pruned {0} files)" -f $prunedGitFiles)
 }
 
 # ---------------------------------------------------------------------------
@@ -571,6 +666,51 @@ if (-not $SkipFfmpeg) {
     Write-Step "staging ffmpeg $ffVersion into $ffmpegRoot\bin"
     Expand-GzipFile -Archive $ffArchive -DestinationFile (Join-Path $ffmpegRoot 'bin\ffmpeg.exe')
     $ffmpegBundled = $true
+  }
+}
+
+# ---------------------------------------------------------------------------
+# r2 (radare2): console disassembler toolkit staged from the pinned release
+# zip. The zip keeps one top-level directory, which is flattened into opt
+# r2, so opt/r2/bin/radare2.exe matches the runtime PATH layout.
+# ---------------------------------------------------------------------------
+$r2Meta = Get-PropertyValue -Object $manifest -Name 'r2'
+$r2Version = [string](Get-PropertyValue -Object $r2Meta -Name 'version' -Default '')
+$r2Bundled = $false
+if ($null -ne $r2Meta) {
+  $r2ArchiveMeta = Get-PropertyValue -Object (Get-PropertyValue -Object $r2Meta -Name 'archives') -Name $Arch
+  if ($null -ne $r2ArchiveMeta) {
+    $r2Archive = $R2ArchivePath
+    if ([string]::IsNullOrWhiteSpace($r2Archive)) {
+      $r2Archive = Join-Path $downDir ([string](Get-PropertyValue -Object $r2ArchiveMeta -Name 'fileName' -Default 'radare2.zip'))
+      Get-DownloadedFile -Url ([string](Get-PropertyValue -Object $r2ArchiveMeta -Name 'url')) -Destination $r2Archive -Force:$RefreshDownloads | Out-Null
+    } elseif (-not (Test-Path -LiteralPath $r2Archive)) { Fail "r2 archive not found: $r2Archive" }
+    $r2Sha = [string](Get-PropertyValue -Object $r2ArchiveMeta -Name 'sha256' -Default '')
+    if (-not [string]::IsNullOrWhiteSpace($r2Sha)) { Assert-FileSha256 -Path $r2Archive -Expected $r2Sha }
+    $r2Layout = Get-PropertyValue -Object $r2Meta -Name 'layout'
+    $r2DestRel = [string](Get-PropertyValue -Object $r2Layout -Name 'dest' -Default 'opt\r2')
+    $r2ExpectedExe = [string](Get-PropertyValue -Object $r2Layout -Name 'expectedExe' -Default 'bin/radare2.exe')
+    $r2Target = Join-Path $packRoot $r2DestRel
+    New-Item -ItemType Directory -Force -Path $r2Target | Out-Null
+    Write-Step "staging r2 $r2Version into $r2Target"
+    $r2Tmp = Join-Path $stageDir ('r2-unpack-' + [IO.Path]::GetRandomFileName())
+    Expand-ZipInto -Archive $r2Archive -Destination $r2Tmp
+    $r2Inner = @(Get-ChildItem -LiteralPath $r2Tmp -Directory | Select-Object -First 1)
+    if ($r2Inner.Count -eq 1) {
+      Copy-Item -Path (Join-Path $r2Inner[0].FullName '*') -Destination $r2Target -Recurse -Force
+    } else {
+      Copy-Item -Path (Join-Path $r2Tmp '*') -Destination $r2Target -Recurse -Force
+    }
+    Remove-Item -LiteralPath $r2Tmp -Recurse -Force -ErrorAction SilentlyContinue
+    $r2Exe = Join-Path $r2Target ($r2ExpectedExe.Replace('/', '\'))
+    if (-not (Test-Path -LiteralPath $r2Exe -PathType Leaf)) { Fail "radare2 executable missing after staging: $r2Exe" }
+    Assert-PeMachine -Path $r2Exe -Arch $Arch
+    $r2Smoke = & $r2Exe '-v' 2>&1
+    if (-not ("$r2Smoke" -match 'radare2')) { Fail "r2 smoke failed: $r2Smoke" }
+    Write-Step "r2 smoke ok: $r2Smoke"
+    $r2Bundled = $true
+  } else {
+    Write-Step "r2 archive not defined for arch $Arch; supplement ships without r2"
   }
 }
 
@@ -629,6 +769,7 @@ Contents:
   opt/git      PortableGit __GITVER__
   opt/rg       ripgrep __RGVER__
   opt/ffmpeg   ffmpeg __FFVER__ (when bundled)
+  opt/r2       radare2 __R2VER__ (when bundled)
   opt/browser  Chrome __BROWSERVER__ win32 at __BROWSEREXE__ (when bundled)
 
 Use Import supplement in the Pupa settings to install into WUNDER_HOME.
@@ -638,7 +779,7 @@ opt/python, opt/git, opt/rg and opt/ffmpeg, and prepend their bins to PATH.
 
 Browsers: __BROWSER__
 '@
-$readmeText = $readmeText.Replace('__ARCH__', $archLabel).Replace('__PROFILE__', $PythonProfile).Replace('__PYVER__', $pyVer).Replace('__GITVER__', $gitVersion).Replace('__RGVER__', $rgVersion).Replace('__FFVER__', $ffVersion).Replace('__BROWSERVER__', $browserVersion).Replace('__BROWSEREXE__', $browserExeRel).Replace('__BROWSER__', $browserNote)
+$readmeText = $readmeText.Replace('__ARCH__', $archLabel).Replace('__PROFILE__', $PythonProfile).Replace('__PYVER__', $pyVer).Replace('__GITVER__', $gitVersion).Replace('__RGVER__', $rgVersion).Replace('__FFVER__', $ffVersion).Replace('__R2VER__', $r2Version).Replace('__BROWSERVER__', $browserVersion).Replace('__BROWSEREXE__', $browserExeRel).Replace('__BROWSER__', $browserNote)
 Write-Utf8NoBom -Path (Join-Path $packRoot 'README-win7-supplement.txt') -Content $readmeText
 
 $metaObj = [ordered]@{
@@ -657,6 +798,7 @@ $metaObj = [ordered]@{
   git           = [ordered]@{ version = $gitVersion }
   rg            = [ordered]@{ version = $rgVersion }
   ffmpeg        = [ordered]@{ version = $ffVersion; bundled = $ffmpegBundled }
+  r2            = [ordered]@{ version = $r2Version; bundled = $r2Bundled }
   browser       = [ordered]@{
     installBrowser = $installBrowser
     installed = $browserInstalled

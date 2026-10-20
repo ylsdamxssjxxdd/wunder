@@ -583,7 +583,10 @@ fn selected_local_workspace_index(app: &MainWindow) -> Option<usize> {
     let cards = app.get_workspaces();
     let last = LAST_LOCAL_WORKSPACE.with(|slot| slot.borrow().clone());
     if let Some(id) = last {
-        if let Some(index) = cards.iter().position(|card| card.workspace_id == id.as_str()) {
+        if let Some(index) = cards
+            .iter()
+            .position(|card| card.workspace_id == id.as_str())
+        {
             return Some(index);
         }
     }

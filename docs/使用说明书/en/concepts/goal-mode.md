@@ -55,7 +55,7 @@ Whether the next round starts depends on a single gate: **the phase is `active`,
 
 ## Arming Is Not Persisted
 
-Whether a goal is armed is an in-process flag and **is not stored in the database**. After a process restart, a session restore, or a fork, the driver will not pick up automatically even if the phase is still `active` — it has to be armed again with an explicit `update_goal` carrying `action=resume`. When asking why a goal stopped moving, first check whether it is still armed.
+Whether a goal is armed is an in-process flag and **is not stored in the database**. After a process restart, a session restore, or a fork, the driver will not pick up automatically even if the phase is still `active` — it has to be armed again with an explicit `goal` carrying `action=resume`. When asking why a goal stopped moving, first check whether it is still armed.
 
 ## Model-Side Operations
 
@@ -63,13 +63,11 @@ The model side operates on a goal through three built-in tools.
 
 | Tool | Effect |
 | --- | --- |
-| `get_goal` | Reads the current goal, including the id and revision that `update_goal` requires; the authoritative value must be fetched before an update |
-| `create_goal` | Infers and creates a goal from a person's direct request; the objective is required and the round budget is optional |
-| `update_goal` | Edit / pause / resume / complete / report blocked (`action=blocked`); needs the goal id plus the current revision, and reporting blocked is rejected before the minimum round count is reached |
+| `goal` | Uses `action=get` to read the current goal, including the id and revision required for later operations; uses `create` to create a goal; and uses `edit`, `pause`, `resume`, `complete`, or `blocked` to update one. Creation requires an objective; updates need the goal id and current revision, and reporting blocked is rejected before the minimum round count is reached |
 
 Authority does not come from anything the model writes: human entry points stamp `__source = "human"` onto the turn and the goal-round driver stamps `__goal_round`. Edit, pause, and resume are allowed only in a person's round; complete and report-blocked are additionally allowed in the goal's **own automatic continuation rounds**.
 
-The Pupa (desktop) **does not expose these three tools for users to pick** (they are hidden built-in capabilities); the runtime injects them per session, and the Beehive (web) and the Helm (cli) reuse the same injection.
+The Pupa (desktop) **does not expose the `goal` tool for users to pick** (it is a hidden built-in capability); the runtime injects it per session, and the Beehive (web) and the Helm (cli) reuse the same injection.
 
 ## Entry Points
 
@@ -87,6 +85,6 @@ The Pupa (desktop) **does not expose these three tools for users to pick** (they
 - A goal does not stop on a token limit; it looks only at the round budget, the phase, and arming.
 - After a service restart an active goal does not resume on its own; a resume action is needed to arm it again.
 - The model cannot mark a goal blocked at will: the same blocking condition must persist across at least 3 continuation rounds.
-- A goal is not "a tool named goal" but three tools — `get_goal`, `create_goal`, `update_goal`; the old single tool and the old injection marker no longer exist.
+- A goal is managed through one `goal` tool. Its actions are strictly `get`, `create`, `edit`, `pause`, `resume`, `complete`, and `blocked`.
 - The Bridge has no goal panel; use the Beehive, the Pupa, or the Helm.
 - Clearing a goal does not undo work already done: messages, tool results, and file changes already stored are kept.

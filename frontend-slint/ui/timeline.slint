@@ -222,7 +222,7 @@ component UserBubble inherits HorizontalLayout {
             x: 12px; y: 8px; width: parent.width - 24px;
             spacing: 6px;
             if root.data.blocks.length == 0 && root.data.text != "" : TextInput {
-                text: root.data.text; color: Theme.text; font-size: Theme.font-lg;
+                text: root.data.text; color: Theme.text; font-size: Theme.font-lg; line-height-factor: 1.5;
                 read-only: true; wrap: word-wrap;
             }
             for block in root.data.blocks : MarkdownBlock {
@@ -301,7 +301,7 @@ component BodyBlock inherits Rectangle {
         padding-left: Theme.timeline-padding; padding-right: Theme.timeline-padding;
         padding-top: 6px; padding-bottom: 6px; spacing: 6px;
         if root.data.blocks.length == 0 && root.data.text != "" : TextInput {
-            text: root.data.text; color: Theme.text; font-size: Theme.font-lg;
+            text: root.data.text; color: Theme.text; font-size: Theme.font-lg; line-height-factor: 1.5;
             read-only: true; wrap: word-wrap;
         }
         for block in root.data.blocks : MarkdownBlock {

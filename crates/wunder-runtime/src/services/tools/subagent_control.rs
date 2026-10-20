@@ -3,6 +3,7 @@ use super::*;
 use anyhow::{anyhow, Result};
 use serde::Deserialize;
 use serde_json::{json, Value};
+use std::collections::HashSet;
 use uuid::Uuid;
 
 mod flow;
@@ -215,61 +216,302 @@ pub(super) async fn execute(context: &ToolContext<'_>, args: &Value) -> Result<V
     if action.is_empty() {
         return Err(anyhow!("subagent_control action is required"));
     }
-    match action.to_ascii_lowercase().as_str() {
-        "list" | "sessions_list" | "session_list" | "会话列表" | "列表" => {
-            list(context, args).await
-        }
-        "history" | "sessions_history" | "session_history" | "会话历史" | "历史" => {
-            history(context, args).await
-        }
-        "send" | "sessions_send" | "session_send" | "会话发送" | "发送" => {
-            send(context, args).await
-        }
+    let canonical = match action.to_ascii_lowercase().as_str() {
+        "list" | "sessions_list" | "session_list" | "会话列表" | "列表" => "list",
+        "history" | "sessions_history" | "session_history" | "会话历史" | "历史" => "history",
+        "send" | "sessions_send" | "session_send" | "会话发送" | "发送" => "send",
+        "report" => "report",
+        "spawn" | "sessions_spawn" | "session_spawn" | "会话派生" | "派生" => "spawn",
+        "batch_spawn" | "batchspawn" | "dispatch" | "批量派生" | "调度" => "batch_spawn",
+        "status" | "inspect" | "状态" => "status",
+        "wait" | "join" | "collect" | "等待" => "wait",
+        "interrupt" | "cancel" | "stop" | "中断" | "取消" => "interrupt",
+        "close" | "关闭" => "close",
+        "resume" | "reopen" | "恢复" => "resume",
+        _ => return Err(anyhow!("unknown subagent_control action: {action}")),
+    };
+    validate_action_fields(args, canonical)?;
+    match canonical {
+        "list" => list(context, args).await,
+        "history" => history(context, args).await,
+        "send" => send(context, args).await,
         "report" => messaging::report(context, args).await,
-        "spawn" | "sessions_spawn" | "session_spawn" | "会话派生" | "派生" => {
-            super::sessions_spawn(context, args).await
-        }
-        "batch_spawn" | "batchspawn" | "dispatch" | "批量派生" | "调度" => {
-            batch_spawn(context, args).await
-        }
-        "status" | "inspect" | "状态" => status(context, args).await,
-        "wait" | "join" | "collect" | "等待" => wait(context, args).await,
-        "interrupt" | "cancel" | "stop" | "中断" | "取消" => interrupt(context, args).await,
-        "close" | "关闭" => close(context, args).await,
-        "resume" | "reopen" | "恢复" => resume(context, args).await,
-        _ => Err(anyhow!("unknown subagent_control action: {action}")),
+        "spawn" => super::sessions_spawn(context, args).await,
+        "batch_spawn" => batch_spawn(context, args).await,
+        "status" => status(context, args).await,
+        "wait" => wait(context, args).await,
+        "interrupt" => interrupt(context, args).await,
+        "close" => close(context, args).await,
+        "resume" => resume(context, args).await,
+        _ => Err(anyhow!("unknown subagent_control action: {canonical}")),
+    }
+}
+
+/// Schema validation is repeated at the execution boundary because tool calls
+/// can arrive from non-LLM clients that do not validate JSON Schema. This
+/// prevents fields from another action silently changing the operation.
+fn validate_action_fields(args: &Value, action: &str) -> Result<()> {
+    let object = args
+        .as_object()
+        .ok_or_else(|| anyhow!("subagent_control arguments must be an object"))?;
+    let allowed: &[&str] = match action {
+        "list" => &[
+            "action",
+            "parent_id",
+            "parentId",
+            "parentSessionId",
+            "limit",
+        ],
+        "history" => &[
+            "action",
+            "session_id",
+            "sessionId",
+            "sessionKey",
+            "session_key",
+            "limit",
+            "include_tools",
+            "includeTools",
+        ],
+        "send" => &[
+            "action",
+            "session_id",
+            "sessionId",
+            "sessionKey",
+            "session_key",
+            "session_ids",
+            "sessionIds",
+            "run_id",
+            "runId",
+            "run_ids",
+            "runIds",
+            "dispatch_id",
+            "dispatchId",
+            "parent_id",
+            "parentId",
+            "parentSessionId",
+            "message",
+            "message_id",
+            "timeout_seconds",
+            "timeoutSeconds",
+            "announce_parent_session_id",
+            "announceParentSessionId",
+            "label",
+            "announce_persist_history",
+            "announcePersistHistory",
+            "announce_emit_parent_events",
+            "announceEmitParentEvents",
+        ],
+        "report" => &["action", "message", "message_id"],
+        "spawn" => &[
+            "action",
+            "task",
+            "message",
+            "prompt",
+            "label",
+            "agent_id",
+            "agentId",
+            "agent_name",
+            "agentName",
+            "name",
+            "model",
+            "run_timeout_seconds",
+            "runTimeoutSeconds",
+            "cleanup",
+            "thread_strategy",
+            "threadStrategy",
+            "reuse_thread",
+            "reuseThread",
+            "fork_turns",
+            "context_summary",
+        ],
+        "batch_spawn" => &[
+            "action",
+            "tasks",
+            "task",
+            "message",
+            "prompt",
+            "label",
+            "agent_id",
+            "agentId",
+            "model",
+            "run_timeout_seconds",
+            "runTimeoutSeconds",
+            "cleanup",
+            "fork_turns",
+            "context_summary",
+            "dispatch_label",
+            "dispatchLabel",
+            "wait_seconds",
+            "waitSeconds",
+            "poll_interval_seconds",
+            "pollIntervalSeconds",
+            "strategy",
+            "remaining_action",
+            "remainingAction",
+            "loserAction",
+            "loser_action",
+        ],
+        "status" => &[
+            "action",
+            "session_id",
+            "sessionId",
+            "sessionKey",
+            "session_key",
+            "session_ids",
+            "sessionIds",
+            "run_id",
+            "runId",
+            "run_ids",
+            "runIds",
+            "dispatch_id",
+            "dispatchId",
+            "parent_id",
+            "parentId",
+            "parentSessionId",
+            "limit",
+        ],
+        "wait" => &[
+            "action",
+            "session_id",
+            "sessionId",
+            "sessionKey",
+            "session_key",
+            "session_ids",
+            "sessionIds",
+            "run_id",
+            "runId",
+            "run_ids",
+            "runIds",
+            "dispatch_id",
+            "dispatchId",
+            "parent_id",
+            "parentId",
+            "parentSessionId",
+            "limit",
+            "wait_seconds",
+            "waitSeconds",
+            "timeout_seconds",
+            "timeoutSeconds",
+            "poll_interval_seconds",
+            "pollIntervalSeconds",
+            "wait_mode",
+            "waitMode",
+            "completion_mode",
+            "completionMode",
+            "remaining_action",
+            "remainingAction",
+            "loserAction",
+            "loser_action",
+        ],
+        "interrupt" | "close" => &[
+            "action",
+            "session_id",
+            "sessionId",
+            "sessionKey",
+            "session_key",
+            "session_ids",
+            "sessionIds",
+            "run_id",
+            "runId",
+            "run_ids",
+            "runIds",
+            "dispatch_id",
+            "dispatchId",
+            "parent_id",
+            "parentId",
+            "parentSessionId",
+            "limit",
+            "cascade",
+        ],
+        "resume" => &[
+            "action",
+            "session_id",
+            "sessionId",
+            "sessionKey",
+            "session_key",
+            "session_ids",
+            "sessionIds",
+            "run_id",
+            "runId",
+            "run_ids",
+            "runIds",
+            "dispatch_id",
+            "dispatchId",
+            "parent_id",
+            "parentId",
+            "parentSessionId",
+            "limit",
+            "cascade",
+            "message",
+            "message_id",
+            "timeout_seconds",
+            "timeoutSeconds",
+        ],
+        _ => &[],
+    };
+    let allowed: HashSet<&str> = allowed.iter().copied().collect();
+    if let Some(key) = object.keys().find(|key| !allowed.contains(key.as_str())) {
+        return Err(anyhow!(
+            "subagent_control action={action} does not accept field `{key}`"
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod action_validation_tests {
+    use super::validate_action_fields;
+    use serde_json::json;
+
+    #[test]
+    fn rejects_fields_from_another_action() {
+        let error = validate_action_fields(
+            &json!({"action":"list", "task":"must belong to spawn"}),
+            "list",
+        )
+        .expect_err("list must reject spawn fields");
+        assert!(error.to_string().contains("task"));
+    }
+
+    #[test]
+    fn accepts_canonical_wait_fields() {
+        validate_action_fields(
+            &json!({"action":"wait", "run_id":"run-1", "wait_seconds":2}),
+            "wait",
+        )
+        .expect("wait selector and timing fields are valid");
     }
 }
 
 fn compact_subagent_item_for_model(item: &Value) -> Value {
-    let label = item
-        .get("label")
-        .or_else(|| item.get("spawn_label"))
-        .or_else(|| item.get("title"))
-        .cloned()
-        .unwrap_or(Value::Null);
-    let result_preview = item
+    // Keep the model-facing card deliberately small. Full runtime snapshots
+    // remain available to the UI/audit stream; the model only needs stable
+    // identifiers, state and a short explanation for its next decision.
+    let summary = item
         .get("result_preview")
-        .cloned()
-        .or_else(|| item.get("result").cloned())
-        .or_else(|| item.pointer("/agent_state/message").cloned())
-        .unwrap_or(Value::Null);
+        .or_else(|| item.get("result"))
+        .or_else(|| item.pointer("/agent_state/message"))
+        .or_else(|| item.get("error"));
+    let summary = summary
+        .and_then(Value::as_str)
+        .map(|value| {
+            let value = value.trim();
+            if value.chars().count() <= SUBAGENT_SUMMARY_MAX_CHARS {
+                value.to_string()
+            } else {
+                let mut text: String = value.chars().take(SUBAGENT_SUMMARY_MAX_CHARS).collect();
+                text.push('…');
+                text
+            }
+        })
+        .filter(|value| !value.is_empty());
     json!({
-        "root_session_id": item.get("root_session_id").cloned().unwrap_or(Value::Null),
-        "task_path": item.get("task_path").cloned().unwrap_or(Value::Null),
-        "index": item.get("index").cloned().unwrap_or(Value::Null),
-        "dispatch_id": item.get("dispatch_id").cloned().unwrap_or(Value::Null),
-        "run_id": item.get("run_id").cloned().unwrap_or(Value::Null),
         "session_id": item.get("session_id").cloned().unwrap_or(Value::Null),
+        "run_id": item.get("run_id").cloned().unwrap_or(Value::Null),
+        "dispatch_id": item.get("dispatch_id").cloned().unwrap_or(Value::Null),
+        "task_path": item.get("task_path").cloned().unwrap_or(Value::Null),
         "status": item.get("status").cloned().unwrap_or(Value::Null),
-        "terminal": item.get("terminal").cloned().unwrap_or(Value::Null),
-        "failed": item.get("failed").cloned().unwrap_or(Value::Null),
-        "updated": item.get("updated").cloned().unwrap_or(Value::Null),
-        "agent_id": item.get("agent_id").cloned().unwrap_or(Value::Null),
-        "label": label,
-        "elapsed_s": item.get("elapsed_s").cloned().unwrap_or(Value::Null),
-        "result_preview": result_preview,
-        "error": item.get("error").cloned().unwrap_or(Value::Null),
+        "summary": summary.unwrap_or_default(),
     })
 }
 
@@ -307,6 +549,15 @@ fn build_subagent_history_result(value: Value) -> Value {
         .cloned()
         .unwrap_or_else(|| json!([]));
     let total = messages.as_array().map(Vec::len).unwrap_or(0);
+    let messages = messages
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .map(compact_history_message)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
     super::build_model_tool_success(
         "history",
         "completed",
@@ -316,6 +567,53 @@ fn build_subagent_history_result(value: Value) -> Value {
             "messages": messages,
         }),
     )
+}
+
+fn compact_history_message(message: &Value) -> Value {
+    let Some(object) = message.as_object() else {
+        return json!({"content": "[unsupported message]"});
+    };
+    let mut result = serde_json::Map::new();
+    for key in ["id", "role", "type", "created_at", "status"] {
+        if let Some(value) = object.get(key) {
+            result.insert(key.to_string(), value.clone());
+        }
+    }
+    let content = object
+        .get("content")
+        .or_else(|| object.get("text"))
+        .map(|value| match value {
+            Value::String(text) => {
+                let text = text.trim();
+                if text.chars().count() <= SUBAGENT_SUMMARY_MAX_CHARS {
+                    Value::String(text.to_string())
+                } else {
+                    let mut short: String = text.chars().take(SUBAGENT_SUMMARY_MAX_CHARS).collect();
+                    short.push('…');
+                    Value::String(short)
+                }
+            }
+            Value::Array(parts) => {
+                let text = parts
+                    .iter()
+                    .filter_map(|part| part.get("text").and_then(Value::as_str))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                if text.is_empty() {
+                    json!("[structured message]")
+                } else if text.chars().count() <= SUBAGENT_SUMMARY_MAX_CHARS {
+                    Value::String(text)
+                } else {
+                    let mut short: String = text.chars().take(SUBAGENT_SUMMARY_MAX_CHARS).collect();
+                    short.push('…');
+                    Value::String(short)
+                }
+            }
+            _ => json!("[structured message]"),
+        })
+        .unwrap_or_else(|| json!(""));
+    result.insert("content".to_string(), content);
+    Value::Object(result)
 }
 
 fn build_subagent_update_result(action: &str, value: Value) -> Value {

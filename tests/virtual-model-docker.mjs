@@ -50,7 +50,7 @@ const uploadedLogs = [];
 try {
   assert.equal((await api("/admin/tools",{enabled:[...originalTools,"self_status"]})).response.status,200);
   for (const textual of [false, true]) {
-    const call = {id:"call_1",name:"self_status",arguments:{detail_level:"basic",include_events:false,include_system_metrics:false}};
+    const call = {id:"call_1",name:"self_status",arguments:{detail_level:"basic"}};
     const first = textual ? {content:`<tool_call>${JSON.stringify(call)}</tool_call>`} : {tool_calls:[{id:call.id,type:"function",function:{name:call.name,arguments:JSON.stringify(call.arguments)}}]};
     const log = [{role:"user",content:"test"},{role:"assistant",...first},{role:"assistant",content:"Recorded final reply."}].map(item=>JSON.stringify(item)).join("\n");
     const form = new FormData();

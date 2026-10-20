@@ -225,7 +225,7 @@ wunder 是一个**智能体调度平台**：蛹（desktop）是本地 AI 工作�
 
 ## 4.x 子智能体控制补充（2026-03-26）
 
-- `subagent_control` 现支持 `action=batch_spawn|status|wait|interrupt|close|resume`，与既有 `list|history|send|spawn` 共用同一入口。
+- `subagent_control` 现支持 `action=batch_spawn|status|wait|interrupt|close|resume`，与既有 `list|history|send|spawn` 共用同一入口；模型 schema 与运行时均按 action 关闭字段，列表、状态、等待和历史只投影有界摘要。
 - `batch_spawn` 支持一次派发多个子智能体任务，返回稳定 `dispatch_id`；支持 `strategy=parallel_all|first_success|review_then_merge`，其中 `first_success` 用于对齐 Codex 式的“首个成功即先返回”协作收敛语义，并会在同次等待收敛时默认对未完成兄弟分支执行 `remainingAction=interrupt`。
 - `wait` 现支持 `waitMode=all|any|first_success`：`all` 等待全部目标结束，`any` 在首个目标进入终态后返回，`first_success` 在首个成功出现后返回，否则继续等到全部结束或超时。
 - `batch_spawn/wait` 现支持 `remainingAction=keep|interrupt|close`：用于在 `first_success/any` 这类提前收敛场景下处理尚未结束的兄弟分支；`wait` 默认 `keep`，`batch_spawn.strategy=first_success` 默认 `interrupt`。
@@ -379,10 +379,10 @@ wunder 是一个**智能体调度平台**：蛹（desktop）是本地 AI 工作�
 - `渠道工具.send_message` 参数已简化：不再强制 `channel/account_id/to` 同时必填；可直接传 `text`（或 `content`/`attachments`）并由系统从会话/默认账号自动补全。`list_contacts` 返回 `contact` 对象，可直接回传给 `send_message`。
 - `渠道工具.send_message` 附件投递能力（2026-03-18）：Feishu/XMPP/QQBot 优先走渠道原生附件链路；若目标渠道不支持对应类型则自动回退为文本链接，不阻断投递。
 - 测试开放态（2026-03-11）：`channel_tool` 默认放开账号归属限制，`list_contacts` 可读取当前系统内所有已配置渠道账号；渠道请求默认覆盖 `security.approval_mode=full_auto` 与 `security.exec_policy_mode=allow`，不再进入渠道审批提示链路。
-- 浏览器工具面（2026-10-16 更新）：模型侧使用 provider 注册的 17 个 browser_* 原生工具，用户侧“浏览器”（别名 browser）仅作为选择与授权的聚合条目，不能直接调用。工具可见性由 tools.browser.enabled 控制，运行时由顶层 browser.* 配置控制；桌面模式保留运行时回退。模型截图返回工作区附件引用，控制接口截图仍可返回临时下载链接；模型 status 移除 control 控制面信息。
+- 浏览器工具面（2026-10-20 更新）：模型侧使用 provider 注册的单一严格 `browser(action=...)` 工具；用户侧“浏览器”是同一能力的选择与授权聚合条目。工具可见性由 tools.browser.enabled 控制，运行时由顶层 browser.* 配置控制；桌面模式保留运行时回退。模型截图返回工作区附件引用，控制接口截图仍可返回临时下载链接；模型 status 移除 control 控制面信息。
 - 新增浏览器控制接口（2026-03-27）：`/wunder/browser/health`、`/wunder/browser/status`、`/wunder/browser/profiles`、`/wunder/browser/session/start`、`/wunder/browser/session/stop`、`/wunder/browser/tabs`、`/wunder/browser/tabs/open`、`/wunder/browser/tabs/focus`、`/wunder/browser/tabs/close`、`/wunder/browser/navigate`、`/wunder/browser/snapshot`、`/wunder/browser/act`、`/wunder/browser/screenshot`、`/wunder/browser/read_page`。
-- 浏览器交互契约（2026-10-16）：模型使用 provider 注册的 17 个 browser_* 工具；导航、点击、输入、等待和批处理支持 include_snapshot/max_chars，控制接口 navigate/act 接受相同参数。批处理为 1–10 个显式 kind 步骤，等待支持 selector/text/url/load_state；失败通过 HTTP 与工具观察保留 completed_steps、从 1 开始的 failed_step 和已完成摘要。截图附件与结构化元数据在事件、历史和模型上下文中共同保留。会话按用户、任务线程、智能体和可选自定义标识隔离，session_id 必填。
-- 浏览器观察与等待补充：模型工具 browser_navigate 默认附带 4000 字符快照，可显式 include_snapshot=false；控制接口保持显式开关。navigate/snapshot/act 及快捷动作支持 snapshot_timeout_ms（0–5000，默认 1500），只对空快照或观察期间上下文切换做有界重试。附带快照同步 url/title/tabs；等待 URL 模式在 expected_url 返回，url 保留实际地址。selector/text 支持 state=visible/hidden/attached/detached，多条件顺序检查共用 timeout_ms，有条件时忽略 wait_ms。
+- 浏览器交互契约（2026-10-20）：`browser` 的 action 分支覆盖导航、点击、输入、等待、截图和批处理；导航、点击、输入、等待和批处理支持各自严格字段，控制接口 navigate/act 接受相同内部参数。批处理为 1–10 个显式 kind 步骤，等待支持 selector/text/url/load_state；失败通过 HTTP 与工具观察保留 completed_steps、从 1 开始的 failed_step 和已完成摘要。截图附件与结构化元数据在事件、历史和模型上下文中共同保留。会话按用户、任务线程、智能体和可选自定义标识隔离，session_id 必填。
+- 浏览器观察与等待补充：模型工具使用单一 `browser` 与严格 `action` 分支：`navigate` 默认不附快照；`observe_refs` 获取可操作引用，`observe_text` 使用签名 cursor 分页，`wait` 支持 selector/text/url/load_state 和有界等待，`batch` 最多十步且不能嵌套。控制接口保持独立的显式 REST action。
 - 内置工具 `网页抓取`（英文别名 `web_fetch`）支持 `extract_mode=markdown|text` 与 `max_chars`；直接通过 HTTP 抓取网页并输出低噪声正文，不用于本地文件或关键词搜索，并会对明显的前端壳页/验证页返回结构化失败或自动切换浏览器兜底。
 - `网页抓取` 默认执行正文清洗与去噪，移除导航、页脚、广告、评论等低价值片段；同时内置重定向复校验、响应体大小限制与短 TTL 缓存。私网/内网目标默认拦截，但现可通过 `tools.web.fetch.allow_private_network=true` 全量放开，或用 `tools.web.fetch.hostname_allowlist` 按主机名/IP 精确放行。
 - `网页抓取` 运行时支持 `tools.web.fetch.provider=direct|auto|firecrawl`：`direct` 使用 Wunder 内置 HTTP 抓取，`firecrawl` 调用外部 Firecrawl `/v2/scrape`，`auto` 在配置 Firecrawl API Key 或自定义 `base_url` 时优先使用 Firecrawl、失败后回退 direct。Firecrawl 配置位于 `tools.web.fetch.firecrawl.*`，也可通过 `WUNDER_WEB_FETCH_PROVIDER`、`FIRECRAWL_BASE_URL`、`FIRECRAWL_API_KEY` 覆盖；官方云端 `https://api.firecrawl.dev` 需要 API Key。
@@ -1032,7 +1032,7 @@ wunder 是一个**智能体调度平台**：蛹（desktop）是本地 AI 工作�
 - `GET /wunder/cron/runs?job_id=...&limit=...&agent_id=...`：查询任务运行记录（传入 `agent_id` 时校验任务归属）
   - 返回：`data.runs`
 - `POST /wunder/cron/add|update|remove|enable|disable|get|run|action`：新增/更新/删除/启停/查询/立即执行（`action=status` 与 `GET /wunder/cron/status` 等价）
-  - 入参：与内置工具 `schedule_task` schema 一致（`action` + `job`）
+  - 入参：与内置工具 `schedule_task` schema 一致；模型调用使用按 action 闭合的字段分支（`add/update` 为扁平任务字段，查询/控制动作只收所需 id，`list/status` 无额外字段），服务端仍可接受内部 `job` 载体并执行同样的字段校验。
   - 说明：
     - `job.schedule.kind=every` 时支持可选 `schedule.at` 作为首次触发时间锚点；若未提供则默认以任务创建时间为起点，首次触发为“下一个间隔点”（严格晚于当前时刻，避免创建即触发）。
     - 可选 `job.schedule_text` 支持自然语言或 cron（如 `every 5 minutes`、`daily at 9am`、`0 */6 * * *`）；若同时传 `schedule` 与 `schedule_text`，以 `schedule` 为准。
@@ -2660,6 +2660,7 @@ wunder 是一个**智能体调度平台**：蛹（desktop）是本地 AI 工作�
 - 记忆碎片当前用户侧主结构收敛为 `memory_id / title_l0 / content_l2 / tag / supersedes_memory_id / valid_from`；列表与详情接口默认不再对外暴露 `summary_l1 / tags / entities / pinned / invalidated_at` 等旧字段。服务端仍兼容旧入参别名 `category`，但新的前端与模型协议应统一使用 `tag`。
 - `status` 当前主要用于标识 `active / superseded` 等版本关系；蜂巢已移除置顶、作废、已失效等交互入口。
 - `memory_manager` 的 `list/search/get/add/update/remove/clear` 已与结构化 `memory_fragments` 共用同一条主存储链路；模型经工具写入的新记忆会直接出现在用户侧“记忆碎片”卡片页，无需再等待旧摘要表懒迁移。兼容别名 `recall -> search`、`delete -> remove` 会在工具层统一规范化。
+- 模型侧 `memory_manager` 使用 action 专属闭合字段：`list/search` 只返回索引或短片段，`get` 才读取正文，`add/update/remove/clear` 只返回 id、计数或状态；未知字段和跨 action 字段由运行时拒绝。
 - 用户侧记忆面板支持“记忆复刻”：`POST /wunder/agents/{agent_id}/memories/replicate` 会先清空目标智能体记忆，再复制当前智能体全部记忆到目标智能体；源智能体记忆保持不变。旧路由 `/memories/migrate` 仅作兼容别名保留。
 - `confirmed_by_user` 字段当前仅作为兼容旧数据保留，不再作为用户侧记忆碎片页面的交互入口，也不再参与 `search` 排序和提示词快照构建。
 - 自动记忆提炼能力仍可通过独立设置接口控制，但“记忆碎片”面板已不再展示最近提炼任务、召回说明等附属视图，列表接口也不再捆绑返回这些附属数据。

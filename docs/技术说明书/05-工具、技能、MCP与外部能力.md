@@ -44,10 +44,10 @@
 | `网页搜索` | `web_search` | 关键词搜索公开网页（当前临时下架，见 §4.1） |
 | `桌面控制` | `desktop_control` | 桌面点击、输入、快捷键，以及 `wait` 等待观察 |
 | `自我状态` | `self_status` | 当前线程与工具链状态摘要 |
-| `get_goal` / `create_goal` / `update_goal` | `goal` → `update_goal` | 常驻目标三件套，由运行时按会话注入 |
+| `goal` | `action=get|create|edit|pause|resume|complete|blocked` | 常驻目标工具，由运行时按会话注入 |
 | `语音生成` / `声转文` / `图像生成` / `视频生成` | 见 catalog 多模态 spec | 多模态四件套，需对应模型可用 |
 
-浏览器**不是单一工具**：`services/browser/playwright.rs:23-49` 注册 17 个 `browser_*` 原生面工具（导航、点击、输入、截图、读页、关闭等），浏览器能力启用即自动注册；「浏览器」只是文档聚合口径（`services/tools/browser_tool.rs:56-60`）。
+浏览器是单一严格工具：`services/browser/providers/playwright.rs` 注册 `browser(action=...)`，以互斥的 action 分支覆盖导航、标签、观察、交互、等待、截图和有界批处理；用户侧「浏览器」是同一能力的聚合展示名（`services/tools/browser_tool.rs`）。
 
 ## 2. 注册与分发
 
@@ -95,7 +95,7 @@ services/tools/dispatch.rs:27  真正分发到实现
 | 常量 | 位置 | 内容 | 语义 |
 | --- | --- | --- | --- |
 | `DEFAULT_BUILTIN_TOOL_NAMES` | `:4-18` | `定时任务`、`记忆管理`、`执行命令`、`命令会话`、`ptc`、`列出文件`、`glob`、`搜索内容`、`读取文件`、`网页抓取`、`技能调用`、`写入文件`、`文本编辑` | 新建智能体的初始勾选集合；另带默认技能 `技能创建器` |
-| `DESKTOP_HIDDEN_TOOL_NAMES` | `:23-29` | `get_goal` / `create_goal` / `update_goal`、`会话线程控制`、`会话让出` | 桌面端不可选也不默认启用；goal 三件套由运行时按会话自动注入 |
+| `DESKTOP_HIDDEN_TOOL_NAMES` | `:23-29` | `goal`、`会话线程控制`、`会话让出` | 桌面端不可选也不默认启用；goal 工具由运行时按会话自动注入 |
 | `DESKTOP_EXTRA_TOOL_NAMES` | `:32-34` | `读图工具`、`桌面控制`、`子智能体控制` | 桌面端额外默认启用 |
 | `TEMPORARILY_HIDDEN_TOOL_NAMES` | `:75` 附近 | `网页搜索`、`ptc` | **临时下架，不是已移除** |
 
@@ -115,7 +115,7 @@ services/tools/dispatch.rs:27  真正分发到实现
 | 对应多模态模型可用 | `语音生成`、`声转文`、`图像生成`、`视频生成` | `catalog.rs:1362-1381`、`services/multimodal_models.rs` |
 | 启用网页抓取配置 | `网页抓取`（provider 与开关） | `services/tools/web_fetch_provider.rs`、`wunder-core/src/config.rs` |
 | desktop 运行模式 + 显式开关 | 桌面类工具 | `crates/wunder-desktop/`、`capabilities.rs` |
-| 浏览器能力启用 | 17 个 `browser_*` | `services/browser/playwright.rs:23-49` |
+| 浏览器能力启用 | `browser(action=...)` | `services/browser/providers/playwright.rs` |
 
 `自我状态` 不在任何默认名单，按需勾选。
 

@@ -69,6 +69,7 @@ pub fn path_entries(roots: &[PathBuf]) -> Vec<PathBuf> {
         "opt/ripgrep/bin",
         "opt/ffmpeg",
         "opt/ffmpeg/bin",
+        "opt/r2/bin",
     ];
     roots
         .iter()

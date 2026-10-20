@@ -270,9 +270,7 @@ async fn tools_catalog_hides_unavailable_tools_and_resolves_enabled_aliases() {
                 "web_search",
                 "网页抓取",
                 "read_file",
-                "get_goal",
-                "create_goal",
-                "update_goal",
+                "goal",
             ]
             .into_iter()
             .map(str::to_string)

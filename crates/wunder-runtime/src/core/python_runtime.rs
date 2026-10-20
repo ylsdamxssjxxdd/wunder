@@ -414,7 +414,7 @@ fn resolve_desktop_settings_python_preference() -> DesktopPythonPreference {
 fn resolve_desktop_command_overrides() -> DesktopCommandOverrides {
     let settings = read_desktop_python_settings();
     let roots = [super::local_bootstrap::resolve_home_from_env_or_user()];
-    use super::local_bootstrap::supplement::{Tool, find_tool};
+    use super::local_bootstrap::supplement::{find_tool, Tool};
     DesktopCommandOverrides {
         pip_bin: settings
             .as_ref()
@@ -604,8 +604,8 @@ fn find_site_packages(home: &Path) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::{
-        DESKTOP_APP_DIR_ENV, DESKTOP_SETTINGS_PATH_ENV, DesktopPythonPreference,
         find_site_packages, resolve_desktop_settings_python_preference, resolve_python_lib_dir,
+        DesktopPythonPreference, DESKTOP_APP_DIR_ENV, DESKTOP_SETTINGS_PATH_ENV,
     };
     use std::env;
     use std::sync::Mutex;

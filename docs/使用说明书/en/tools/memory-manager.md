@@ -4,7 +4,7 @@ summary: The seven actions of `memory_manager`, the short-index-injection plus f
 updated_at: 2026-10-16
 ---
 
-`memory_manager` manages the current agent's long-term memory within the current user scope, with seven supported actions: `list`, `search`, `get`, `add`, `update`, `remove`, `clear`.
+`memory_manager` manages the current agent's long-term memory within the current user scope, with seven supported actions: `list`, `search`, `get`, `add`, `update`, `remove`, `clear`. Each action has a closed field branch: list/search reject write fields, `get` is the only full-content read, and writes/deletes return only an id and status.
 
 ## Injection and retrieval
 

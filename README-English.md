@@ -49,7 +49,7 @@ Canonical tool names are mostly Chinese (what the model sees), each with English
 | 命令会话 | `command_session` | Manage long-lived background command sessions with foreground/background switching | Workspace & code |
 | 技能调用 | `skill_call` | Read a skill's body and run its scripts | Workspace & code |
 | 网页抓取 | `web_fetch` | Fetch and parse web page content (requires enabling) | Web |
-| 浏览器 | `browser` | Aggregate display name; backed by 17 native `browser_*` tools (click, type, wait, screenshot, …) | Web |
+| 浏览器 | `browser` | One strict action tool for navigation, observation, interaction, waits, and screenshots | Web |
 | 读图工具 | `read_image` | Read image content for the model to understand (requires vision) | Multimodal |
 | 图像生成 | `generate_image` | Generate an image from a prompt | Multimodal |
 | 视频生成 | `generate_video` | Generate a video from a prompt | Multimodal |
@@ -61,7 +61,7 @@ Canonical tool names are mostly Chinese (what the model sees), each with English
 | 自我状态 | `self_status` | Query the agent's own runtime status | System & memory |
 | 记忆管理 | `memory_manager` | Read and write long-term memory | System & memory |
 | 定时任务 | `schedule_task` | Create and manage scheduled / periodic tasks | System & memory |
-| get_goal / create_goal / update_goal | — | Goal-state trio, auto-injected per session by the runtime; not selectable on desktop | Goal state |
+| `goal` | `get / create / edit / pause / resume / complete / blocked` | Goal-state tool, auto-injected per session by the runtime; not selectable on desktop | Goal state |
 
 
 ## Absorbed Matrix

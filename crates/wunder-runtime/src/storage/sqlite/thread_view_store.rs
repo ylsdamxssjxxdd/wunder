@@ -1007,13 +1007,21 @@ mod tests {
     fn answer_tail_preview_matches_its_utf16_end_offset() {
         let dir = tempfile::tempdir().unwrap();
         let storage = SqliteStorage::new(dir.path().join("fixture.db").to_string_lossy().into());
-        let turn = storage.accept_thread_turn("fixture-user", "fixture-thread", &serde_json::json!({"content":"fixture input"})).unwrap();
+        let turn = storage
+            .accept_thread_turn(
+                "fixture-user",
+                "fixture-thread",
+                &serde_json::json!({"content":"fixture input"}),
+            )
+            .unwrap();
         let root = turn["turn_id"].as_str().unwrap();
         let id = format!("{root}:text-1");
         storage.append_thread_item("fixture-user", &serde_json::json!({"session_id":"fixture-thread","turn_id":root,"item_id":id,"kind":"assistant_message","content":"","status":"running"})).unwrap();
         let content = format!("{}fixture newest line", "示例😀\n".repeat(1200));
         storage.upsert_thread_text_block("fixture-user", "fixture-thread", &serde_json::json!({"item_id":id,"field":"content","block_index":0,"event_id":1,"data":{"content":content,"content_offset":0}})).unwrap();
-        let page = storage.thread_view_page("fixture-user", "fixture-thread", "chat", None, 12).unwrap();
+        let page = storage
+            .thread_view_page("fixture-user", "fixture-thread", "chat", None, 12)
+            .unwrap();
         let message = &page.chat[0].assistant;
         assert!(message.tail.len() <= 2048);
         assert!(content.ends_with(&message.tail));
@@ -2178,7 +2186,13 @@ mod tests {
             assert_eq!(row.assistant.content, "fixture answer", "state {state}");
             let body = row.user.body.clone().expect("user body");
             let page = storage
-                .thread_body_page("fixture-user", "fixture-thread", &body.body_id, body.revision, 0)
+                .thread_body_page(
+                    "fixture-user",
+                    "fixture-thread",
+                    &body.body_id,
+                    body.revision,
+                    0,
+                )
                 .unwrap();
             assert_eq!(page.chunks.join(""), "fixture question", "state {state}");
         }

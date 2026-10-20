@@ -1556,11 +1556,11 @@ class BridgeSession:
             try:
                 state = self._decode_page_cursor(cursor)
             except (TypeError, ValueError, json.JSONDecodeError):
-                return {"success": False, "error": "Invalid browser page cursor; call browser_observe mode=text again."}
+                return {"success": False, "error": "Invalid browser page cursor; call browser(action=observe_text) again."}
             if state.get("target_id") != target_id or int(state.get("page_generation", -1)) != generation:
                 return {
                     "success": False,
-                    "error": "Stale browser page cursor; call browser_observe mode=text again.",
+                    "error": "Stale browser page cursor; call browser(action=observe_text) again.",
                     "data": {"error_code": "BROWSER_PAGE_CURSOR_STALE", "target_id": target_id,
                              "page_generation": generation},
                 }
@@ -1728,7 +1728,7 @@ class BridgeSession:
             ref = self.refs.get(target_id, {}).get(str(ref_id))
             if ref is None or ref.get("page_generation") != generation:
                 raise ValueError(
-                    "Stale or unknown browser ref: %s (page_generation=%s). Call browser_observe mode=refs and use its new refs." % (ref_id, generation)
+                    "Stale or unknown browser ref: %s (page_generation=%s). Call browser(action=observe_refs) and use its new refs." % (ref_id, generation)
                 )
             selector = ref.get("selector")
             if not selector:

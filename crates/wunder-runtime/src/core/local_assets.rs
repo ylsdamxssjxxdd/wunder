@@ -1,6 +1,6 @@
 //! Embedded immutable assets shared by 蛹 and 舵机.
 
-use super::local_bootstrap::{LocalHomeLayout, release_file_if_missing};
+use super::local_bootstrap::{release_file_if_missing, LocalHomeLayout};
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 
@@ -52,11 +52,9 @@ mod tests {
 
     #[test]
     fn packaged_manifest_contains_shared_config() {
-        assert!(
-            EMBEDDED_LOCAL_ASSETS
-                .iter()
-                .any(|(path, _)| *path == "config/wunder.yaml")
-        );
+        assert!(EMBEDDED_LOCAL_ASSETS
+            .iter()
+            .any(|(path, _)| *path == "config/wunder.yaml"));
     }
 
     #[test]
@@ -65,11 +63,9 @@ mod tests {
         for (name, bytes) in EMBEDDED_LOCAL_ASSETS {
             assert!(seen.insert(*name), "duplicate asset: {name}");
             assert!(!bytes.is_empty(), "empty asset: {name}");
-            assert!(
-                Path::new(name)
-                    .components()
-                    .all(|part| matches!(part, std::path::Component::Normal(_)))
-            );
+            assert!(Path::new(name)
+                .components()
+                .all(|part| matches!(part, std::path::Component::Normal(_))));
             assert!(
                 *name == "config/wunder.yaml"
                     || *name == "config/i18n.messages.json"

@@ -43,7 +43,7 @@ SolidCompression=yes
 LZMANumBlockThreads=4
 WizardStyle=modern
 MinVersion=6.1sp1
-ArchitecturesAllowed=x86 x64
+ArchitecturesAllowed=x86compatible
 CloseApplications=yes
 RestartApplications=no
 SetupLogging=yes
@@ -85,12 +85,12 @@ Type: files; Name: "{app}\.wunder-home"
 
 [Code]
 const
-  ComponentCount = 5;
+  ComponentCount = 6;
   CComponentsShown = {#ComponentsShown};
 
 var
-  ComponentTasks: array[0..4] of String;
-  ComponentLabels: array[0..4] of String;
+  ComponentTasks: array[0..5] of String;
+  ComponentLabels: array[0..5] of String;
   SelectAllCheckBox: TNewCheckBox;
   UpdatingSelectAll: Boolean;
 
@@ -101,11 +101,13 @@ begin
   ComponentTasks[2] := 'rg';
   ComponentTasks[3] := 'ffmpeg';
   ComponentTasks[4] := 'browser';
+  ComponentTasks[5] := 'r2';
   ComponentLabels[0] := 'Python';
   ComponentLabels[1] := 'Git';
   ComponentLabels[2] := 'ripgrep';
   ComponentLabels[3] := 'FFmpeg';
   ComponentLabels[4] := '内置浏览器';
+  ComponentLabels[5] := 'radare2';
   Result := True;
 end;
 

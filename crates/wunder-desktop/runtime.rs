@@ -1020,28 +1020,6 @@ fn search_path_for(program: &str) -> Option<PathBuf> {
     })
 }
 
-/// Where a winpty console may live. Git for Windows keeps `winpty.dll` and its
-/// agent in `usr/bin`, one level above the `cmd`/`bin` directory holding
-/// `git.exe`, whether git came from the supplement package or a system install.
-/// `None` means shells keep running on pipes.
-pub fn resolve_winpty_library(app_dir: &Path, settings: &DesktopSettings) -> Option<PathBuf> {
-    let mut dirs: Vec<PathBuf> = embedded_supplement_roots_for_env(app_dir)
-        .into_iter()
-        .map(|root| root.join("opt/git/usr/bin"))
-        .collect();
-    let git = resolve_desktop_tool_bin(&settings.git_path, app_dir)
-        .or_else(|| resolve_embedded_git_bin(app_dir))
-        .or_else(|| search_path_for("git"));
-    if let Some(git_root) = git
-        .as_ref()
-        .and_then(|bin| bin.parent())
-        .and_then(Path::parent)
-    {
-        dirs.push(git_root.join("usr/bin"));
-    }
-    wunder_server::find_winpty_library(&dirs)
-}
-
 fn resolve_embedded_git_bin(app_dir: &Path) -> Option<PathBuf> {
     wunder_server::local_bootstrap::supplement::find_tool(
         &embedded_supplement_roots_for_env(app_dir),

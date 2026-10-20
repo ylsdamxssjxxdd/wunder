@@ -151,6 +151,13 @@ async fn observe(
             watch_thread_changes(state.clone(), session.clone(), cursor, Some(feed_cancel)).await?;
         let mut reset = false;
         let mut goal_clock = tokio::time::interval(Duration::from_secs(1));
+        // Context occupancy is persisted as soon as a model request is
+        // accounted. It does not necessarily create a new thread-log frame,
+        // so keep a small independent clock for the selected thread. This
+        // makes the composer meter follow long tool runs without forcing a
+        // history reload or waiting for the next durable turn burst.
+        let mut context_clock = tokio::time::interval(Duration::from_millis(250));
+        context_clock.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             let first = tokio::select! {
                 frame = feed.recv() => match frame { Some(frame) => frame, None => break },
@@ -159,6 +166,21 @@ async fn observe(
                     if next != goal {
                         goal = next;
                         if output.send(NativeThreadUpdate::Goal(goal.clone())).await.is_err() { return Ok(()); }
+                    }
+                    continue;
+                }
+                _ = context_clock.tick() => {
+                    let db = state.clone();
+                    let owner = user.clone();
+                    let target = session.clone();
+                    let used = blocking::run_db("native.observe.context_tick", move || {
+                        Ok(db.workspace.load_session_context_tokens(&owner, &target).max(0) as f64)
+                    }).await?;
+                    if context.used != Some(used) {
+                        context.used = Some(used);
+                        if output.send(NativeThreadUpdate::Context(context)).await.is_err() {
+                            return Ok(());
+                        }
                     }
                     continue;
                 }

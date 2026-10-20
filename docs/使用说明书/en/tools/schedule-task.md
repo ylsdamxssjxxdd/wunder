@@ -8,7 +8,7 @@ Use it when something should not be done only once but repeated on a fixed caden
 
 ## Actions and fields
 
-A call specifies the action and the job's content. The flat form uses top-level fields:
+A call specifies the action and the job's content. The model schema is action-specific: `add`/`update` expose job fields, `get`/`remove`/`enable`/`disable`/`run` require only `job_id`, and `list`/`status` reject job fields. The flat form uses top-level fields:
 
 ```json
 {
@@ -22,7 +22,7 @@ A call specifies the action and the job's content. The flat form uses top-level 
 }
 ```
 
-For precise control over timing, use a nested time rule, which takes a cron expression and a time zone:
+For precise control over timing, use a nested time rule, which takes a cron expression and a time zone. Use `schedule` or `schedule_text` only for actions that accept scheduling fields; query and control actions reject them:
 
 ```json
 {

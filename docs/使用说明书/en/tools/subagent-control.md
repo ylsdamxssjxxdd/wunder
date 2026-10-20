@@ -8,7 +8,7 @@ The tool is `subagent_control`. A subagent is a unit of work the main agent crea
 
 ## Actions
 
-Each call specifies one action:
+Each call specifies one action. Actions use closed, action-specific field branches; cross-action fields are rejected (for example, `list` cannot receive `message`, and `spawn` cannot receive `wait_seconds`).
 
 - `list`: list the child threads under a parent thread.
 - `history`: read the message history of a child thread.

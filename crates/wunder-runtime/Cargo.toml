@@ -12,9 +12,6 @@ path = "src/lib.rs"
 [features]
 default = []
 desktop-control = ["dep:windows-sys", "dep:x11-dl"]
-# Real console (winpty) for the desktop terminal. Loaded at run time from the
-# supplement package, so nothing here links against it.
-terminal-pty = ["dep:windows-sys"]
 doc2md = ["dep:cfb", "dep:pdf-extract", "dep:rlsx"]
 host-metrics = ["dep:sysinfo"]
 mcp = ["dep:rmcp"]

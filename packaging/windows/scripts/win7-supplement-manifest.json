@@ -42,7 +42,7 @@
     },
     "profiles": {
       "common": {
-        "description": "Slim Win7-friendly common package set with networking, office/video document IO, fonts, map/weather tooling, database access, and plotting.",
+        "description": "Slim Win7-friendly common package set with networking, office document IO, image IO, database access, and plotting.",
         "requirementsPath": "packaging/python/requirements-win7-common.txt",
         "validateImports": [
           "requests",
@@ -63,17 +63,9 @@
           "lxml.etree",
           "ffmpeg",
           "imageio",
-          "imageio_ffmpeg",
           "cv2",
-          "folium",
-          "pyproj",
-          "shapely",
-          "netCDF4",
-          "cftime",
           "h5py",
-          "metpy",
           "seaborn",
-          "plotly",
           "pyecharts",
           "playwright"
         ],
@@ -157,6 +149,26 @@
       "ia32": {
         "fileName": "win32-ia32.gz",
         "url": "https://github.com/eugeneware/ffmpeg-static/releases/download/b4.4.1/win32-ia32.gz"
+      }
+    }
+  },
+  "r2": {
+    "version": "6.2.4",
+    "flavor": "radare2 release zip",
+    "source": "radareorg/radare2",
+    "notes": [
+      "radare2 console disassembler toolkit (r2, rabin2, radiff2, rafind2, rahash2 and friends).",
+      "The release zip has one top-level directory; staging flattens it into opt\\r2 so opt\\r2\\bin\\radare2.exe exists and the runtime can prepend it to PATH."
+    ],
+    "layout": {
+      "dest": "opt\\r2",
+      "expectedExe": "bin/radare2.exe"
+    },
+    "archives": {
+      "ia32": {
+        "fileName": "radare2-6.2.4-w32.zip",
+        "url": "https://github.com/radareorg/radare2/releases/download/6.2.4/radare2-6.2.4-w32.zip",
+        "sha256": "30a65b7ad8b37292345da185a708a4079158a1a5d94e434ad139e9a116a87518"
       }
     }
   }

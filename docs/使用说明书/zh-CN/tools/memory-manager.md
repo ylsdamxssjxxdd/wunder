@@ -6,7 +6,7 @@ updated_at: 2026-10-16
 
 # 记忆管理
 
-`memory_manager` 管理当前智能体在当前用户作用域下的长期记忆，支持 `list`、`search`、`get`、`add`、`update`、`remove`、`clear` 七个动作。
+`memory_manager` 管理当前智能体在当前用户作用域下的长期记忆，支持 `list`、`search`、`get`、`add`、`update`、`remove`、`clear` 七个动作。模型目录按动作提供严格字段分支：列表/搜索不接受写入字段，`get` 才返回正文，写入与删除只返回 id 和状态。
 
 ## 注入与检索
 

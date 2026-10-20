@@ -18,6 +18,65 @@ const TITLEBAR_HEIGHT: f32 = 44.0;
 const COMPACT_VIEWPORT_WIDTH: f32 = 1024.0;
 const NAV_REVEALED_ID: &str = "settings-nav-last-revealed";
 
+/// Shared height of passive action buttons and inline text fields, so the
+/// general page's new controls line up with the ones above them.
+const CONTROL_HEIGHT: f32 = 34.0;
+/// Row height for one editable entry in a card list (tool paths).
+const LIST_ROW_HEIGHT: f32 = 38.0;
+
+/// Chat font size bounds shared by the stepper, the slider and the live
+/// preview, so the three controls cannot drift apart.
+const FONT_SIZE_MIN: f32 = 12.0;
+const FONT_SIZE_MAX: f32 = 20.0;
+/// `settings_font_scale` is a multiplier over this baseline: 1.0 means 14px.
+const FONT_SIZE_BASE: f32 = 14.0;
+
+/// Supplement capabilities offered on the general page. The runtime has no
+/// real bundle registry yet, so this table is the single source of the labels
+/// and their one-line descriptions; `AppState` only stores names plus flags.
+const SUPPLEMENT_CATALOGUE: &[(&str, &str)] = &[
+    ("扩展语法高亮", "为代码块补充更多语言的着色规则"),
+    ("离线文档索引", "在本机缓存常用文档，断网时也能检索"),
+    ("实验性工具栏", "在输入区展示额外的快捷操作按钮"),
+];
+
+/// Administrator-enabled tool groups mirrored from `settings_page.slint`
+/// ("管理员开放工具"). The runtime has no tool registry plumbed into this
+/// crate, so the catalogue is the only source of group titles, tool names and
+/// their one-line descriptions; `AppState` stores only the flattened flags.
+const AGENT_TOOL_GROUPS: &[(&str, &[(&str, &str)])] = &[
+    (
+        "内置工具",
+        &[
+            ("文件读写", "在工作区内读取、创建与修改文件"),
+            ("终端执行", "在工作目录中运行命令并回传输出"),
+            ("网页搜索", "检索公开网页并返回摘要"),
+        ],
+    ),
+    (
+        "MCP 工具",
+        &[("MCP 服务器", "通过 MCP 协议连接的外部工具服务")],
+    ),
+    ("A2A 工具", &[("A2A 智能体", "把子任务转交给另一个智能体")]),
+    ("技能工具", &[("技能检索", "按关键词检索已安装的技能")]),
+    (
+        "知识库工具",
+        &[("知识库检索", "在内置知识库中检索相关片段")],
+    ),
+    ("自定义工具", &[("用户脚本", "由用户自建并注册的本地脚本")]),
+];
+
+/// Preset-question cap, matching `stc_agent_questions_note`（"最多 12 条"）。
+const AGENT_QUESTION_LIMIT: usize = 12;
+
+/// Schedule kinds use exactly the `cr_kind_*` labels. `AppState::cron_kind`
+/// stores the label itself, so the selector and the pure helpers can never
+/// disagree about which kind is active.
+const CRON_KIND_ONCE: &str = "一次性";
+const CRON_KIND_INTERVAL: &str = "固定间隔";
+const CRON_KIND_CRON: &str = "Cron 表达式";
+const CRON_KINDS: [&str; 3] = [CRON_KIND_ONCE, CRON_KIND_INTERVAL, CRON_KIND_CRON];
+
 #[derive(Clone, Copy)]
 struct Category {
     id: &'static str,
@@ -445,12 +504,12 @@ fn draw_content_column(ui: &mut Ui, state: &mut AppState, tokens: Tokens, compac
                         "general" => page_general(ui, state, tokens),
                         "account" => page_account(ui, state, tokens),
                         "tools" => page_tools(ui, state, tokens),
-                        "agent" => page_agent(ui, tokens),
+                        "agent" => page_agent(ui, state, tokens),
                         "companion" => page_companion(ui, state, tokens),
-                        "cron" => page_cron(ui, tokens),
+                        "cron" => page_cron(ui, state, tokens),
                         "memory" => page_memory(ui, tokens),
                         "channels" => page_channels(ui, tokens),
-                        "devices" => page_devices(ui, tokens),
+                        "devices" => page_devices(ui, state, tokens),
                         "prompts" => page_prompts(ui, tokens),
                         "archived" => page_archived(ui, state, tokens),
                         _ => page_general(ui, state, tokens),
@@ -628,8 +687,7 @@ fn range_control(
         }
     }
     let track = Rect::from_center_size(rect.center(), Vec2::new(rect.width(), 5.0));
-    ui.painter()
-        .rect_filled(track, 3.0, tokens.track);
+    ui.painter().rect_filled(track, 3.0, tokens.track);
     ui.painter().rect_stroke(
         track,
         3.0,
@@ -652,6 +710,566 @@ fn select_label(value: &str) -> &str {
         "Ctrl+Enter 发送" => "Ctrl + Enter",
         value => value,
     }
+}
+
+/// A tool path is accepted only when it is non-empty after trimming and does
+/// not already exist. Comparison ignores ASCII case because Windows paths are
+/// case-insensitive, so "D:/Tools" and "d:/tools" are the same directory.
+fn valid_tool_path(value: &str, existing: &[String]) -> bool {
+    let candidate = value.trim();
+    !candidate.is_empty()
+        && !existing
+            .iter()
+            .any(|item| item.trim().eq_ignore_ascii_case(candidate))
+}
+
+/// Keep the stepper, slider and preview on one range. `f32::clamp` propagates
+/// NaN, which would poison the preview font and the stored scale, so NaN falls
+/// back to the documented minimum while infinities clamp like any other value.
+fn clamp_font_size(value: f32) -> f32 {
+    if value.is_nan() {
+        FONT_SIZE_MIN
+    } else {
+        value.clamp(FONT_SIZE_MIN, FONT_SIZE_MAX)
+    }
+}
+
+fn supplement_description(name: &str) -> &'static str {
+    SUPPLEMENT_CATALOGUE
+        .iter()
+        .find(|(label, _)| *label == name)
+        .map(|(_, description)| *description)
+        .unwrap_or("")
+}
+
+/// The self check is deliberately local: it only reads fields already in
+/// `AppState`, so it can never write user data or reach the network.
+fn self_check_summary(state: &AppState) -> String {
+    let mut issues = Vec::new();
+    if state.runtime_path.trim().is_empty() {
+        issues.push("运行时路径未设置");
+    }
+    if state.workspace_root.trim().is_empty() {
+        issues.push("工作目录未设置");
+    }
+    let enabled = state
+        .supplement_bundles
+        .iter()
+        .filter(|(_, enabled)| *enabled)
+        .count();
+    let base = format!(
+        "工具路径 {} 项，补充包 {enabled}/{} 启用",
+        state.tool_paths.len(),
+        state.supplement_bundles.len()
+    );
+    // A missing path is a warning, not a failure: the page still works with
+    // the placeholder values, so the wording must not imply broken state.
+    if issues.is_empty() {
+        format!("自检通过：运行时与工作目录已设置，{base}。")
+    } else {
+        format!("自检完成（有提醒）：{}，{base}。", issues.join("、"))
+    }
+}
+
+fn run_self_check(state: &mut AppState, now: f64) {
+    let summary = self_check_summary(state);
+    state.self_check_state = summary;
+    state.self_check_at = Some(now);
+}
+
+fn self_check_age_text(now: f64, at: f64) -> String {
+    let seconds = (now - at).max(0.0);
+    if seconds < 1.0 {
+        "刚刚".to_owned()
+    } else if seconds < 60.0 {
+        format!("{seconds:.0} 秒前")
+    } else {
+        format!("{:.0} 分钟前", seconds / 60.0)
+    }
+}
+
+/// Flattened `(start, end)` index ranges of `AGENT_TOOL_GROUPS`, so the group
+/// "select all" buttons and `AppState::agent_tool_enabled` address the same
+/// slots even when a group is filtered out by the search box.
+fn agent_tool_ranges() -> Vec<(usize, usize)> {
+    let mut ranges = Vec::with_capacity(AGENT_TOOL_GROUPS.len());
+    let mut start = 0;
+    for (_, tools) in AGENT_TOOL_GROUPS {
+        ranges.push((start, start + tools.len()));
+        start += tools.len();
+    }
+    ranges
+}
+
+/// Search runs over the name *and* the description because the Slint picker
+/// does the same; an empty keyword keeps every tool so the list is never
+/// hidden by a stale query.
+fn agent_tool_matches(name: &str, description: &str, keyword: &str) -> bool {
+    let needle = keyword.trim().to_lowercase();
+    needle.is_empty()
+        || name.to_lowercase().contains(&needle)
+        || description.to_lowercase().contains(&needle)
+}
+
+/// A preset question must carry text (the Slint draft row disables "添加" on an
+/// empty buffer) and must stay inside the documented 12-entry cap.
+fn agent_question_can_add(draft: &str, count: usize) -> bool {
+    !draft.trim().is_empty() && count < AGENT_QUESTION_LIMIT
+}
+
+/// Header count on the devices page. `total` is the adapter's device count;
+/// `online` is the subset whose tunnel reports a live heartbeat.
+fn device_presence_summary(online: usize, total: usize) -> String {
+    format!("{online} 台在线 · 共 {total} 台")
+}
+
+/// Sharing the workspace catalogue widens what a remote peer may read, so the
+/// switch is only offered once interlink itself is on. The page still renders
+/// the current value, it just cannot be changed.
+fn share_switch_available(allow_remote: bool) -> bool {
+    allow_remote
+}
+
+fn interlink_state_label(enabled: bool) -> &'static str {
+    if enabled {
+        "已开启"
+    } else {
+        "已关闭"
+    }
+}
+
+/// `YYYY-MM-DD HH:MM`, the format the Slint editor's "执行时间" fields expect.
+/// Only digits and separators are accepted, then the numeric ranges are
+/// checked; the page has no calendar widget, so a malformed string has to be
+/// rejected here rather than silently stored.
+fn valid_cron_moment(text: &str) -> bool {
+    let value = text.trim();
+    if value.len() != 16 {
+        return false;
+    }
+    let shaped = value.bytes().enumerate().all(|(index, byte)| match index {
+        4 | 7 => byte == b'-',
+        10 => byte == b' ',
+        13 => byte == b':',
+        _ => byte.is_ascii_digit(),
+    });
+    if !shaped {
+        return false;
+    }
+    let number =
+        |range: std::ops::Range<usize>| value.get(range).and_then(|part| part.parse::<u32>().ok());
+    let (Some(month), Some(day), Some(hour), Some(minute)) =
+        (number(5..7), number(8..10), number(11..13), number(14..16))
+    else {
+        return false;
+    };
+    (1..=12).contains(&month) && (1..=31).contains(&day) && hour < 24 && minute < 60
+}
+
+/// Cron fields are numeric with the usual operators; names such as `MON` are
+/// deliberately rejected because the runtime's parser is not wired in yet and
+/// accepting them here would promise behaviour nothing can verify.
+fn valid_cron_field(field: &str) -> bool {
+    !field.is_empty()
+        && field
+            .chars()
+            .all(|value| value.is_ascii_digit() || matches!(value, '*' | ',' | '-' | '/' | '?'))
+}
+
+/// Returns the first problem with the schedule, or `None` when the draft can be
+/// submitted. Errors are user-facing strings so the editor never has to map an
+/// enum back to prose.
+fn cron_schedule_error(kind: &str, at: &str, every: &str, expression: &str) -> Option<String> {
+    match kind {
+        CRON_KIND_ONCE => {
+            if at.trim().is_empty() {
+                Some("请填写执行时间，格式如 2026-10-20 09:00。".to_owned())
+            } else if !valid_cron_moment(at) {
+                Some("执行时间格式应为 YYYY-MM-DD HH:MM。".to_owned())
+            } else {
+                None
+            }
+        }
+        CRON_KIND_INTERVAL => {
+            let seconds = every.trim().parse::<u32>();
+            if !matches!(seconds, Ok(value) if value > 0) {
+                return Some("间隔需为正整数秒，例如 300。".to_owned());
+            }
+            if !at.trim().is_empty() && !valid_cron_moment(at) {
+                return Some("首次时间格式应为 YYYY-MM-DD HH:MM。".to_owned());
+            }
+            None
+        }
+        CRON_KIND_CRON => {
+            let fields: Vec<&str> = expression.split_whitespace().collect();
+            if !matches!(fields.len(), 5 | 6) {
+                return Some("Cron 表达式需要 5 或 6 个以空格分隔的字段。".to_owned());
+            }
+            if !fields.iter().all(|field| valid_cron_field(field)) {
+                return Some("Cron 字段只能包含数字与 * , - / ? 字符。".to_owned());
+            }
+            None
+        }
+        other => Some(format!("未知的调度类型：{other}。")),
+    }
+}
+
+/// One-line schedule summary for the job list, mirroring
+/// `CronCard.schedule + " · 下次 " + next-run` from the Slint list. A missing
+/// value is spelled out instead of leaving the row blank.
+fn cron_schedule_summary(kind: &str, at: &str, every: &str, expression: &str) -> String {
+    match kind {
+        CRON_KIND_ONCE => {
+            if at.trim().is_empty() {
+                "一次性 · 未设置执行时间".to_owned()
+            } else {
+                format!("一次性 · {}", at.trim())
+            }
+        }
+        CRON_KIND_INTERVAL => match every.trim().parse::<u32>() {
+            Ok(seconds) if seconds > 0 => format!("固定间隔 · 每 {seconds} 秒"),
+            _ => "固定间隔 · 未设置间隔".to_owned(),
+        },
+        CRON_KIND_CRON => {
+            if expression.trim().is_empty() {
+                "Cron 表达式 · 未填写".to_owned()
+            } else {
+                format!("Cron 表达式 · {}", expression.trim())
+            }
+        }
+        other => other.to_owned(),
+    }
+}
+
+/// Read-only "label — value" row. The value is right anchored and clipped so
+/// a long absolute path cannot widen the card or overlap the label.
+fn path_row(ui: &mut Ui, tokens: Tokens, label: &str, value: &str) {
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 42.0), Sense::hover());
+    ui.painter().text(
+        rect.left_center(),
+        Align2::LEFT_CENTER,
+        label,
+        FontId::proportional(14.0),
+        tokens.text_secondary,
+    );
+    let empty = value.trim().is_empty();
+    let text = if empty { "未设置" } else { value.trim() };
+    let bounds = Rect::from_min_max(Pos2::new(rect.left() + 112.0, rect.top()), rect.max);
+    ui.painter()
+        .with_clip_rect(bounds.intersect(ui.clip_rect()))
+        .text(
+            bounds.right_center(),
+            Align2::RIGHT_CENTER,
+            text,
+            FontId::proportional(13.0),
+            if empty {
+                tokens.text_muted
+            } else {
+                tokens.text
+            },
+        );
+    ui.painter().line_segment(
+        [rect.left_bottom(), rect.right_bottom()],
+        Stroke::new(1.0, tokens.divider),
+    );
+}
+
+/// Row-scoped button. `fixed_button` keys its interaction by label, which
+/// would collide across repeated "移除" rows, so the caller supplies an id.
+fn row_button(
+    ui: &mut Ui,
+    rect: Rect,
+    id: impl std::hash::Hash,
+    label: &str,
+    tokens: Tokens,
+) -> bool {
+    let response = ui.interact(rect, Id::new(id), Sense::click());
+    ui.painter().rect_filled(
+        rect,
+        9.0,
+        if response.hovered() {
+            tokens.hover
+        } else {
+            tokens.surface_sunken
+        },
+    );
+    ui.painter().rect_stroke(
+        rect,
+        9.0,
+        Stroke::new(1.0, tokens.border_strong),
+        StrokeKind::Inside,
+    );
+    ui.painter().text(
+        rect.center(),
+        Align2::CENTER_CENTER,
+        label,
+        FontId::proportional(12.0),
+        tokens.text_secondary,
+    );
+    response.clicked()
+}
+
+/// Bordered single-line editor used by the tool path add row. Returns `true`
+/// when Enter submitted the buffer, matching the explicit "添加路径" button.
+fn path_input(
+    ui: &mut Ui,
+    tokens: Tokens,
+    id: &str,
+    value: &mut String,
+    hint: &str,
+    width: f32,
+) -> bool {
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(width, CONTROL_HEIGHT), Sense::hover());
+    ui.painter().rect_filled(rect, 9.0, tokens.surface);
+    ui.painter().rect_stroke(
+        rect,
+        9.0,
+        Stroke::new(1.0, tokens.field_border),
+        StrokeKind::Inside,
+    );
+    let mut submitted = false;
+    child(ui, rect.shrink2(Vec2::new(10.0, 7.0)), id, |ui| {
+        let edit = ui.add_sized(
+            ui.available_size(),
+            TextEdit::singleline(value)
+                .char_limit(260)
+                .frame(false)
+                .margin(Margin::ZERO)
+                .font(FontId::proportional(13.0))
+                .hint_text(hint),
+        );
+        submitted = edit.lost_focus() && ui.input(|input| input.key_pressed(Key::Enter));
+    });
+    submitted
+}
+
+fn general_runtime_card(ui: &mut Ui, state: &mut AppState, tokens: Tokens) {
+    card(
+        ui,
+        tokens,
+        "运行时与工作目录",
+        "当前运行时的位置与进程工作目录，仅作展示",
+        |ui| {
+            path_row(ui, tokens, "运行时路径", &state.runtime_path);
+            path_row(ui, tokens, "工作目录", &state.workspace_root);
+            ui.add_space(10.0);
+            let root = state.workspace_root.trim().to_owned();
+            let mut note = None;
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                if action_button(ui, tokens, "打开工作目录", Some("external")).clicked() {
+                    note = Some(if root.is_empty() {
+                        "工作目录未设置，无法打开。请先在桌面端选择工作目录。".to_owned()
+                    } else {
+                        // The desktop shell owns process launching. Until that
+                        // command exists the page must not pretend it ran.
+                        "桌面端外壳尚未接入打开目录命令，可先复制路径后手动打开。".to_owned()
+                    });
+                }
+                if action_button(ui, tokens, "复制路径", Some("copy")).clicked() {
+                    note = Some(if root.is_empty() {
+                        "工作目录未设置，没有可复制的路径。".to_owned()
+                    } else {
+                        ui.ctx().copy_text(root.clone());
+                        "已复制工作目录路径。".to_owned()
+                    });
+                }
+            });
+            if let Some(note) = note {
+                state.workspace_action_note = note;
+            }
+            if !state.workspace_action_note.is_empty() {
+                ui.add_space(6.0);
+                ui.label(
+                    RichText::new(state.workspace_action_note.as_str())
+                        .size(12.0)
+                        .color(tokens.text_muted),
+                );
+            }
+        },
+    );
+}
+
+fn general_tool_paths_card(ui: &mut Ui, state: &mut AppState, tokens: Tokens) {
+    card(
+        ui,
+        tokens,
+        "工具路径",
+        "为工具检索追加本地目录，重复或空路径不会添加",
+        |ui| {
+            if state.tool_paths.is_empty() {
+                empty_text(
+                    ui,
+                    tokens,
+                    "暂未添加工具路径，添加后工具会从这些目录检索可执行文件。",
+                );
+            } else {
+                let paths = state.tool_paths.clone();
+                let mut remove = None;
+                for (index, path) in paths.iter().enumerate() {
+                    let (row, _) = ui.allocate_exact_size(
+                        Vec2::new(ui.available_width(), LIST_ROW_HEIGHT),
+                        Sense::hover(),
+                    );
+                    ui.painter().rect_filled(row, 9.0, tokens.surface_sunken);
+                    ui.painter().rect_stroke(
+                        row,
+                        9.0,
+                        Stroke::new(1.0, tokens.border),
+                        StrokeKind::Inside,
+                    );
+                    draw_icon(
+                        ui.painter(),
+                        row.left_center() + Vec2::new(16.0, 0.0),
+                        "folder",
+                        12.0,
+                        tokens.text_muted,
+                    );
+                    let text_bounds = Rect::from_min_max(
+                        Pos2::new(row.left() + 32.0, row.top()),
+                        Pos2::new(row.right() - 68.0, row.bottom()),
+                    );
+                    ui.painter()
+                        .with_clip_rect(text_bounds.intersect(ui.clip_rect()))
+                        .text(
+                            text_bounds.left_center(),
+                            Align2::LEFT_CENTER,
+                            path,
+                            FontId::proportional(12.0),
+                            tokens.text_secondary,
+                        );
+                    let button = Rect::from_center_size(
+                        Pos2::new(row.right() - 40.0, row.center().y),
+                        Vec2::new(56.0, 28.0),
+                    );
+                    if row_button(ui, button, ("tool-path-remove", index), "移除", tokens) {
+                        remove = Some(index);
+                    }
+                    ui.add_space(6.0);
+                }
+                if let Some(index) = remove {
+                    state.tool_paths.remove(index);
+                    state.tool_path_error.clear();
+                }
+            }
+            ui.add_space(8.0);
+            let mut submitted = false;
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                // Leave room for the "添加路径" button on the compact layout;
+                // a fixed 304px field would otherwise push it out of the card.
+                let field_width = 304.0_f32.min((ui.available_width() - 120.0).max(120.0));
+                submitted = path_input(
+                    ui,
+                    tokens,
+                    "tool-path-input",
+                    &mut state.tool_path_input,
+                    "例如 D:/tools/bin",
+                    field_width,
+                );
+                if action_button(ui, tokens, "添加路径", Some("plus")).clicked() {
+                    submitted = true;
+                }
+            });
+            if submitted {
+                let value = state.tool_path_input.trim().to_owned();
+                if valid_tool_path(&value, &state.tool_paths) {
+                    state.tool_paths.push(value);
+                    state.tool_path_input.clear();
+                    state.tool_path_error.clear();
+                } else {
+                    state.tool_path_error = if value.is_empty() {
+                        "路径不能为空。".to_owned()
+                    } else {
+                        "该路径已在列表中，无需重复添加。".to_owned()
+                    };
+                }
+            }
+            if !state.tool_path_error.is_empty() {
+                ui.add_space(6.0);
+                ui.label(
+                    RichText::new(state.tool_path_error.as_str())
+                        .size(12.0)
+                        .color(tokens.danger_soft),
+                );
+            }
+        },
+    );
+}
+
+fn general_supplements_card(ui: &mut Ui, state: &mut AppState, tokens: Tokens) {
+    card(
+        ui,
+        tokens,
+        "补充包",
+        "可选能力开关，关闭的补充包不参与本地能力加载",
+        |ui| {
+            let total = state.supplement_bundles.len();
+            for index in 0..total {
+                let (name, mut enabled) = state.supplement_bundles[index].clone();
+                let description = supplement_description(&name);
+                detail_row(
+                    ui,
+                    tokens,
+                    "prompts",
+                    &name,
+                    description,
+                    index + 1 == total,
+                    |ui| {
+                        // The text label carries the state; colour alone would
+                        // be unreadable for colour-blind users and screenshots.
+                        ui.label(
+                            RichText::new(if enabled { "已启用" } else { "已关闭" })
+                                .size(12.0)
+                                .color(if enabled {
+                                    tokens.primary
+                                } else {
+                                    tokens.text_muted
+                                }),
+                        );
+                        toggle(ui, &mut enabled, tokens);
+                    },
+                );
+                state.supplement_bundles[index].1 = enabled;
+            }
+        },
+    );
+}
+
+fn general_diagnostics_card(ui: &mut Ui, state: &mut AppState, tokens: Tokens) {
+    card(
+        ui,
+        tokens,
+        "压测与诊断",
+        "自检只读取本地设置，不写入数据、不发起网络请求",
+        |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                if action_button(ui, tokens, "运行自检", Some("shield")).clicked() {
+                    run_self_check(state, ui.input(|input| input.time));
+                }
+            });
+            ui.add_space(8.0);
+            if let Some(at) = state.self_check_at {
+                let age = self_check_age_text(ui.input(|input| input.time), at);
+                ui.label(
+                    RichText::new(format!("上次自检：{age}"))
+                        .size(12.0)
+                        .color(tokens.text_muted),
+                );
+                if !state.self_check_state.is_empty() {
+                    ui.add_space(4.0);
+                    notice(ui, tokens, state.self_check_state.as_str());
+                }
+            } else {
+                ui.label(
+                    RichText::new("尚未运行自检")
+                        .size(12.0)
+                        .color(tokens.text_muted),
+                );
+            }
+        },
+    );
 }
 
 fn page_general(ui: &mut Ui, state: &mut AppState, tokens: Tokens) {
@@ -709,15 +1327,14 @@ fn page_general(ui: &mut Ui, state: &mut AppState, tokens: Tokens) {
                 true,
                 |ui| {
                     let mut font_size =
-                        (14.0 * state.settings_font_scale).round().clamp(12.0, 20.0);
+                        clamp_font_size((FONT_SIZE_BASE * state.settings_font_scale).round());
                     let (controls, _) =
                         ui.allocate_exact_size(Vec2::new(336.0, 38.0), Sense::hover());
                     let pill = Rect::from_center_size(
                         Pos2::new(controls.left() + 50.0, controls.center().y),
                         Vec2::new(100.0, 34.0),
                     );
-                    ui.painter()
-                        .rect_filled(pill, 17.0, tokens.control_fill);
+                    ui.painter().rect_filled(pill, 17.0, tokens.control_fill);
                     ui.painter().rect_stroke(
                         pill,
                         17.0,
@@ -733,7 +1350,7 @@ fn page_general(ui: &mut Ui, state: &mut AppState, tokens: Tokens) {
                             .interact(button, Id::new(("font-step", label)), Sense::click())
                             .clicked()
                         {
-                            font_size = (font_size + delta).clamp(12.0, 20.0);
+                            font_size = clamp_font_size(font_size + delta);
                         }
                         ui.painter().text(
                             button.center(),
@@ -758,16 +1375,45 @@ fn page_general(ui: &mut Ui, state: &mut AppState, tokens: Tokens) {
                         ui,
                         slider,
                         &mut font_size,
-                        12.0..=20.0,
+                        FONT_SIZE_MIN..=FONT_SIZE_MAX,
                         1.0,
                         "font-size-range",
                         tokens,
                     );
-                    state.settings_font_scale = font_size / 14.0;
+                    state.settings_font_scale = font_size / FONT_SIZE_BASE;
                 },
             );
+            // The preview sits inside the same card so the slider and the
+            // rendered sample stay visually adjacent at every window size.
+            ui.add_space(10.0);
+            let preview_size =
+                clamp_font_size((FONT_SIZE_BASE * state.settings_font_scale).round());
+            Frame::NONE
+                .fill(tokens.surface_sunken)
+                .stroke(Stroke::new(1.0, tokens.border))
+                .corner_radius(10.0)
+                .inner_margin(Margin::symmetric(12, 10))
+                .show(ui, |ui| {
+                    ui.set_width((ui.available_width() - 2.0).max(120.0));
+                    ui.spacing_mut().item_spacing.y = 4.0;
+                    ui.label(
+                        RichText::new(format!("实时预览 · {preview_size:.0}px"))
+                            .size(11.0)
+                            .color(tokens.text_muted),
+                    );
+                    ui.label(
+                        RichText::new("工作目录与工具路径会以这个字号显示。")
+                            .size(preview_size)
+                            .color(tokens.text),
+                    );
+                });
+            ui.add_space(4.0);
         },
     );
+    general_runtime_card(ui, state, tokens);
+    general_tool_paths_card(ui, state, tokens);
+    general_supplements_card(ui, state, tokens);
+    general_diagnostics_card(ui, state, tokens);
     card(
         ui,
         tokens,
@@ -847,11 +1493,7 @@ fn draw_theme_tiles(ui: &mut Ui, state: &mut AppState, tokens: Tokens) {
                     if active { 5.5 } else { 7.0 },
                     Stroke::new(
                         if active { 4.0 } else { 1.0 },
-                        if active {
-                            choice.accent
-                        } else {
-                            tokens.border
-                        },
+                        if active { choice.accent } else { tokens.border },
                     ),
                 );
                 let body = Rect::from_min_max(
@@ -904,7 +1546,10 @@ fn action_button(ui: &mut Ui, tokens: Tokens, label: &str, icon: Option<&str>) -
         .size()
         .x;
     let (rect, response) = ui.allocate_exact_size(
-        Vec2::new(text_width + if icon.is_some() { 46.0 } else { 24.0 }, 34.0),
+        Vec2::new(
+            text_width + if icon.is_some() { 46.0 } else { 24.0 },
+            CONTROL_HEIGHT,
+        ),
         Sense::click(),
     );
     ui.painter().rect_filled(
@@ -941,7 +1586,7 @@ fn action_button(ui: &mut Ui, tokens: Tokens, label: &str, icon: Option<&str>) -
     response
 }
 
-fn accent_button(ui: &mut Ui, rect: Rect, label: &str, solid: bool, tokens: Tokens) {
+fn accent_button(ui: &mut Ui, rect: Rect, label: &str, solid: bool, tokens: Tokens) -> bool {
     let response = ui.interact(rect, Id::new(("settings-accent", label)), Sense::click());
     let radius = if solid { 10.0 } else { 16.0 };
     ui.painter().rect_filled(
@@ -974,6 +1619,9 @@ fn accent_button(ui: &mut Ui, rect: Rect, label: &str, solid: bool, tokens: Toke
             tokens.primary
         },
     );
+    // Returning the click lets the cron editor share one "primary action"
+    // style with the memory page without duplicating the painting code.
+    response.clicked()
 }
 
 fn panel(ui: &mut Ui, tokens: Tokens, min_height: f32, body: impl FnOnce(&mut Ui)) {
@@ -1423,100 +2071,374 @@ fn page_tools(ui: &mut Ui, state: &mut AppState, tokens: Tokens) {
     }
 }
 
-fn page_agent(ui: &mut Ui, tokens: Tokens) {
-    panel(ui, tokens, 484.0, |ui| {
-        input_field(
-            ui,
-            tokens,
-            "智能体名称",
-            "默认智能体",
-            "",
-            36.0,
-            "agent-name",
-        );
-        input_field(
-            ui,
-            tokens,
-            "问候语",
-            "",
-            "用于会话中的首次问候",
-            36.0,
-            "agent-greeting",
-        );
-        input_field(
-            ui,
-            tokens,
-            "额外提示词",
-            "",
-            "输入需要追加到基础系统提示词后的内容",
-            136.0,
-            "agent-prompt",
-        );
-        ui.add_space(18.0);
-        empty_text(ui, tokens, "工具列表尚未连接");
-        ui.add_space(12.0);
-        ui.horizontal(|ui| {
-            ui.label(
-                RichText::new("预设问题")
-                    .size(12.0)
-                    .strong()
-                    .color(tokens.text),
-            );
-            let _ = icons::button(ui, Icon::Plus, 25.0, tokens.text_muted);
-        });
-        notice(ui, tokens, "暂未配置预设问题，可按需添加多个。");
-    });
-}
-
-fn input_field(
-    ui: &mut Ui,
-    tokens: Tokens,
-    label: &str,
-    initial: &str,
-    hint: &str,
-    height: f32,
-    id: &str,
-) {
-    // CSS form labels use 16px line height, a 6px field gap, and 12px
-    // between fields. Reserve them together so egui's default spacing does
-    // not accumulate after each label and editor.
-    let (field, _) = ui.allocate_exact_size(
-        Vec2::new(ui.available_width(), height + 26.0),
-        Sense::hover(),
-    );
-    paint_heading(ui.painter(), field.min, label, 12.0, tokens.text);
-    let editor = Rect::from_min_size(
-        field.min + Vec2::new(0.0, 22.0),
-        Vec2::new(field.width(), height),
-    );
-    ui.painter().rect_filled(editor, 10.0, tokens.surface);
-    ui.painter().rect_stroke(
-        editor,
+/// One administrator-enabled tool. The whole tile is the hit target, matching
+/// the Slint `ToolTile`, and the state is also written out as text so the
+/// switch position is never the only cue.
+fn agent_tool_row(ui: &mut Ui, tokens: Tokens, name: &str, description: &str, enabled: &mut bool) {
+    let (row, response) =
+        ui.allocate_exact_size(Vec2::new(ui.available_width(), 52.0), Sense::click());
+    ui.painter().rect_filled(
+        row,
         10.0,
-        Stroke::new(1.0, tokens.field_border),
+        if *enabled {
+            tokens.primary_tint
+        } else {
+            tokens.surface_sunken
+        },
+    );
+    ui.painter().rect_stroke(
+        row,
+        10.0,
+        Stroke::new(
+            1.0,
+            if *enabled {
+                tokens.primary_soft
+            } else {
+                tokens.border
+            },
+        ),
         StrokeKind::Inside,
     );
-    let key = Id::new(("settings-field", id));
-    let mut value = ui.ctx().data_mut(|data| {
-        data.get_temp::<String>(key)
-            .unwrap_or_else(|| initial.to_owned())
-    });
-    let edit = if height > 50.0 {
-        TextEdit::multiline(&mut value)
-    } else {
-        TextEdit::singleline(&mut value)
-    };
-    child(ui, editor.shrink2(Vec2::new(10.0, 8.0)), id, |ui| {
-        let _ = ui.add_sized(
-            ui.available_size(),
-            edit.char_limit(if height > 50.0 { 8192 } else { 256 })
-                .font(FontId::proportional(13.0))
-                .hint_text(hint)
-                .frame(false)
-                .margin(Margin::ZERO),
-        );
-    });
-    ui.ctx().data_mut(|data| data.insert_temp(key, value));
+    draw_icon(
+        ui.painter(),
+        row.left_center() + Vec2::new(18.0, 0.0),
+        "tools",
+        13.0,
+        tokens.text_muted,
+    );
+    let text_bounds = Rect::from_min_max(
+        Pos2::new(row.left() + 34.0, row.top() + 7.0),
+        Pos2::new(row.right() - 148.0, row.bottom() - 4.0),
+    );
+    let painter = ui
+        .painter()
+        .with_clip_rect(text_bounds.intersect(ui.clip_rect()));
+    painter.text(
+        text_bounds.left_top(),
+        Align2::LEFT_TOP,
+        name,
+        FontId::proportional(13.0),
+        tokens.text,
+    );
+    painter.text(
+        text_bounds.left_top() + Vec2::new(0.0, 19.0),
+        Align2::LEFT_TOP,
+        if description.is_empty() {
+            "无说明"
+        } else {
+            description
+        },
+        FontId::proportional(11.0),
+        tokens.text_muted,
+    );
+    ui.painter().text(
+        Pos2::new(row.right() - 68.0, row.center().y),
+        Align2::RIGHT_CENTER,
+        if *enabled { "已启用" } else { "已关闭" },
+        FontId::proportional(12.0),
+        if *enabled {
+            tokens.primary
+        } else {
+            tokens.text_muted
+        },
+    );
+    let switch = Rect::from_center_size(
+        Pos2::new(row.right() - 34.0, row.center().y),
+        Vec2::new(44.0, 24.0),
+    );
+    ui.painter().rect_filled(
+        switch,
+        12.0,
+        if *enabled {
+            tokens.primary
+        } else {
+            tokens.border_strong
+        },
+    );
+    ui.painter().circle_filled(
+        Pos2::new(
+            if *enabled {
+                switch.right() - 12.0
+            } else {
+                switch.left() + 12.0
+            },
+            switch.center().y,
+        ),
+        9.0,
+        tokens.surface,
+    );
+    if response.clicked() {
+        *enabled = !*enabled;
+    }
+}
+
+fn page_agent(ui: &mut Ui, state: &mut AppState, tokens: Tokens) {
+    // §9.3: the personal build ships one built-in agent, so this category is a
+    // single stacked form. The name is preset-owned and read-only; the extra
+    // prompt edits the agent record, while every thread keeps the prompt it
+    // froze on first use.
+    let name = state.agent_name.clone();
+    card(
+        ui,
+        tokens,
+        "智能体",
+        "内置智能体只有一条记录；名称由预设决定，其余字段由桌面端保存",
+        |ui| {
+            detail_row(
+                ui,
+                tokens,
+                "agent",
+                "智能体名称",
+                "名称由内置预设决定，不能在这里修改",
+                false,
+                |ui| {
+                    ui.label(RichText::new("只读").size(12.0).color(tokens.text_muted));
+                    ui.label(RichText::new(name.as_str()).size(13.0).color(tokens.text));
+                },
+            );
+            form_row(
+                ui,
+                tokens,
+                "问候语",
+                "用于会话中的首次问候",
+                true,
+                |ui| {
+                    let _ = path_input(
+                        ui,
+                        tokens,
+                        "agent-greeting",
+                        &mut state.agent_greeting,
+                        "用于会话中的首次问候",
+                        336.0,
+                    );
+                },
+            );
+            ui.add_space(10.0);
+            ui.label(
+                RichText::new("额外提示词")
+                    .size(14.0)
+                    .color(tokens.text_secondary),
+            );
+            ui.add_space(2.0);
+            ui.label(
+                RichText::new("追加在基础系统提示词之后，保存后对新线程生效。")
+                    .size(12.0)
+                    .color(tokens.text_muted),
+            );
+            ui.add_space(6.0);
+            text_area(
+                ui,
+                tokens,
+                "agent-extra-prompt",
+                &mut state.agent_extra_prompt,
+                "输入需要追加到基础系统提示词后的内容",
+                176.0,
+            );
+        },
+    );
+    card(
+        ui,
+        tokens,
+        "管理员开放工具",
+        "勾选即写入内置智能体的工具启用集合；搜索只过滤当前列表。",
+        |ui| {
+            let field_width = 270.0_f32.min((ui.available_width() - 8.0).max(120.0));
+            let _ = path_input(
+                ui,
+                tokens,
+                "agent-tool-search",
+                &mut state.agent_tool_search,
+                "搜索工具",
+                field_width,
+            );
+            ui.add_space(10.0);
+            let keyword = state.agent_tool_search.trim().to_lowercase();
+            let ranges = agent_tool_ranges();
+            let mut any_visible = false;
+            for (group_index, (title, tools)) in AGENT_TOOL_GROUPS.iter().enumerate() {
+                let Some((start, _)) = ranges.get(group_index).copied() else {
+                    continue;
+                };
+                let visible: Vec<(usize, &str, &str)> = tools
+                    .iter()
+                    .enumerate()
+                    .map(|(offset, (name, description))| (start + offset, *name, *description))
+                    .filter(|(_, name, description)| {
+                        agent_tool_matches(name, description, &keyword)
+                    })
+                    .collect();
+                if visible.is_empty() {
+                    continue;
+                }
+                any_visible = true;
+                let all_selected = visible.iter().all(|(index, ..)| {
+                    state
+                        .agent_tool_enabled
+                        .get(*index)
+                        .copied()
+                        .unwrap_or(false)
+                });
+                let (head, _) =
+                    ui.allocate_exact_size(Vec2::new(ui.available_width(), 28.0), Sense::hover());
+                ui.painter().text(
+                    head.left_center(),
+                    Align2::LEFT_CENTER,
+                    format!("{title} · {} 项", visible.len()),
+                    FontId::proportional(13.0),
+                    tokens.text,
+                );
+                let toggle_all = Rect::from_min_size(
+                    Pos2::new(head.right() - 84.0, head.top() + 2.0),
+                    Vec2::new(84.0, 24.0),
+                );
+                if row_button(
+                    ui,
+                    toggle_all,
+                    ("agent-tool-group", group_index),
+                    if all_selected {
+                        "取消全选"
+                    } else {
+                        "全选"
+                    },
+                    tokens,
+                ) {
+                    for (index, ..) in &visible {
+                        if let Some(flag) = state.agent_tool_enabled.get_mut(*index) {
+                            *flag = !all_selected;
+                        }
+                    }
+                }
+                ui.add_space(4.0);
+                for (index, name, description) in visible {
+                    let mut enabled = state
+                        .agent_tool_enabled
+                        .get(index)
+                        .copied()
+                        .unwrap_or(false);
+                    agent_tool_row(ui, tokens, name, description, &mut enabled);
+                    if let Some(flag) = state.agent_tool_enabled.get_mut(index) {
+                        *flag = enabled;
+                    }
+                    ui.add_space(6.0);
+                }
+                ui.add_space(8.0);
+            }
+            if !any_visible {
+                empty_text(
+                    ui,
+                    tokens,
+                    if keyword.is_empty() {
+                        // The runtime has no registry plumbed in yet, so an
+                        // empty list must say where tools come from.
+                        "工具清单由桌面端提供，当前没有可显示的工具。"
+                    } else {
+                        "没有匹配的工具，换个关键词试试。"
+                    },
+                );
+            }
+        },
+    );
+    card(
+        ui,
+        tokens,
+        "预设问题",
+        "最多 12 条，随配置保存；回车或点「添加预设问题」加入。",
+        |ui| {
+            if state.agent_preset_questions.is_empty() {
+                empty_text(ui, tokens, "暂未配置预设问题，可按需添加多个。");
+            } else {
+                let questions = state.agent_preset_questions.clone();
+                let mut remove = None;
+                for (index, question) in questions.iter().enumerate() {
+                    let (row, _) = ui.allocate_exact_size(
+                        Vec2::new(ui.available_width(), LIST_ROW_HEIGHT),
+                        Sense::hover(),
+                    );
+                    ui.painter().rect_filled(row, 9.0, tokens.surface_sunken);
+                    ui.painter().rect_stroke(
+                        row,
+                        9.0,
+                        Stroke::new(1.0, tokens.border),
+                        StrokeKind::Inside,
+                    );
+                    let text_bounds = Rect::from_min_max(
+                        Pos2::new(row.left() + 12.0, row.top()),
+                        Pos2::new(row.right() - 76.0, row.bottom()),
+                    );
+                    ui.painter()
+                        .with_clip_rect(text_bounds.intersect(ui.clip_rect()))
+                        .text(
+                            text_bounds.left_center(),
+                            Align2::LEFT_CENTER,
+                            question,
+                            FontId::proportional(12.0),
+                            tokens.text_secondary,
+                        );
+                    let button = Rect::from_center_size(
+                        Pos2::new(row.right() - 42.0, row.center().y),
+                        Vec2::new(56.0, 28.0),
+                    );
+                    if row_button(ui, button, ("agent-question-remove", index), "删除", tokens) {
+                        remove = Some(index);
+                    }
+                    ui.add_space(6.0);
+                }
+                if let Some(index) = remove {
+                    if index < state.agent_preset_questions.len() {
+                        state.agent_preset_questions.remove(index);
+                        state.agent_note =
+                            format!("已删除第 {} 条预设问题（仅本地草稿）。", index + 1);
+                        state.agent_note_error = false;
+                    }
+                }
+            }
+            ui.add_space(8.0);
+            let mut submitted = false;
+            let mut add = false;
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                // Leave room for the add button; a fixed 320px field would
+                // otherwise push it out of the card on the compact layout.
+                let field_width = 320.0_f32.min((ui.available_width() - 140.0).max(120.0));
+                submitted = path_input(
+                    ui,
+                    tokens,
+                    "agent-question-input",
+                    &mut state.agent_question_draft,
+                    "输入一条预设问题…",
+                    field_width,
+                );
+                add = action_button(ui, tokens, "添加预设问题", Some("plus")).clicked();
+            });
+            if submitted || add {
+                let draft = state.agent_question_draft.trim().to_owned();
+                if agent_question_can_add(&draft, state.agent_preset_questions.len()) {
+                    state.agent_preset_questions.push(draft);
+                    state.agent_question_draft.clear();
+                    state.agent_note = format!(
+                        "已添加第 {} 条预设问题（仅本地草稿；桌面端保存命令接入后才会写入配置）。",
+                        state.agent_preset_questions.len()
+                    );
+                    state.agent_note_error = false;
+                } else {
+                    state.agent_note = if draft.is_empty() {
+                        "预设问题不能为空。".to_owned()
+                    } else {
+                        format!("最多 {AGENT_QUESTION_LIMIT} 条，请先删除一条再添加。")
+                    };
+                    state.agent_note_error = true;
+                }
+            }
+            if !state.agent_note.is_empty() {
+                note_line(
+                    ui,
+                    tokens,
+                    state.agent_note.as_str(),
+                    state.agent_note_error,
+                );
+            }
+        },
+    );
 }
 
 fn page_companion(ui: &mut Ui, state: &mut AppState, tokens: Tokens) {
@@ -1687,7 +2609,7 @@ fn split_empty(ui: &mut Ui, tokens: Tokens, height: f32, ratio: f32, left: &str,
     });
 }
 
-fn page_cron(ui: &mut Ui, tokens: Tokens) {
+fn page_cron(ui: &mut Ui, state: &mut AppState, tokens: Tokens) {
     let height = page_height(ui);
     panel(ui, tokens, height, |ui| {
         panel_header(
@@ -1697,6 +2619,8 @@ fn page_cron(ui: &mut Ui, tokens: Tokens) {
             "定时任务按智能体隔离，支持创建、编辑与启停",
             |_| {},
         );
+        // Toolbar geometry follows `cron_page.slint`: a muted caption on the
+        // left, "刷新" and the primary "新建定时任务" anchored to the right.
         let (toolbar, _) =
             ui.allocate_exact_size(Vec2::new(ui.available_width(), 34.0), Sense::hover());
         ui.painter().text(
@@ -1710,21 +2634,341 @@ fn page_cron(ui: &mut Ui, tokens: Tokens) {
             Pos2::new(toolbar.right() - 49.0, toolbar.center().y),
             Vec2::new(98.0, 30.0),
         );
-        accent_button(ui, create, "新建定时任务", false, tokens);
+        if accent_button(ui, create, "新建定时任务", false, tokens) {
+            state.cron_editor_open = !state.cron_editor_open;
+            state.cron_note.clear();
+            state.cron_note_error = false;
+        }
         let refresh = Rect::from_center_size(
-            Pos2::new(create.left() - 33.0, toolbar.center().y),
+            Pos2::new(create.left() - 32.0, toolbar.center().y),
             Vec2::new(50.0, 30.0),
         );
-        fixed_button(ui, refresh, "刷新", true, false, tokens);
-        split_empty(
-            ui,
-            tokens,
-            (height - 132.0).max(200.0),
-            0.46,
-            "暂无定时任务",
-            "请选择任务查看详情",
+        if fixed_button(ui, refresh, "刷新", true, false, tokens) {
+            // The desktop adapter owns the job list. Refresh must not leave the
+            // page pretending a request is in flight, so it reports why the
+            // list did not change instead of clearing the empty state.
+            state.cron_note = if state.cron_loading {
+                "正在刷新定时任务…".to_owned()
+            } else {
+                "桌面端尚未接入定时任务列表命令，列表没有变化。".to_owned()
+            };
+            state.cron_note_error = false;
+        }
+        let runs = Rect::from_center_size(
+            Pos2::new(refresh.left() - 33.0, toolbar.center().y),
+            Vec2::new(58.0, 30.0),
         );
+        if fixed_button(ui, runs, "运行记录", true, false, tokens) {
+            state.cron_runs_open = !state.cron_runs_open;
+        }
+
+        let width = ui.available_width();
+        let body = (height - 132.0).max(240.0);
+        let (columns, _) = ui.allocate_exact_size(Vec2::new(width, body), Sense::hover());
+        let left_width = (width * 0.25).clamp(150.0, (width * 0.45).max(150.0));
+        let left = Rect::from_min_max(
+            columns.min,
+            Pos2::new(
+                (columns.left() + left_width).min(columns.right()),
+                columns.bottom(),
+            ),
+        );
+        let right = Rect::from_min_max(Pos2::new(left.right() + 10.0, columns.top()), columns.max);
+        for rect in [left, right] {
+            ui.painter().rect_filled(rect, 12.0, tokens.surface_sunken);
+            ui.painter().rect_stroke(
+                rect,
+                12.0,
+                Stroke::new(1.0, tokens.border),
+                StrokeKind::Inside,
+            );
+        }
+        child(ui, left.shrink(12.0), "cron-job-list", |ui| {
+            ui.spacing_mut().item_spacing = Vec2::new(0.0, 6.0);
+            ui.label(RichText::new("任务列表").size(13.0).color(tokens.text));
+            ui.add_space(6.0);
+            if state.cron_loading {
+                ui.label(
+                    RichText::new("正在加载…")
+                        .size(12.0)
+                        .color(tokens.text_muted),
+                );
+            } else {
+                empty_text(ui, tokens, "暂无定时任务");
+                ui.label(
+                    RichText::new("列表由桌面端提供，在桌面端创建后会显示在这里。")
+                        .size(11.0)
+                        .color(tokens.text_muted),
+                );
+            }
+        });
+        child(ui, right.shrink(14.0), "cron-job-detail", |ui| {
+            // The pane scrolls on its own so the detail rows and the adapter
+            // notice stay reachable when the modal shrinks to its minimum.
+            ScrollArea::vertical()
+                .id_salt("cron-detail")
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.spacing_mut().item_spacing = Vec2::new(0.0, 4.0);
+                    ui.label(
+                        RichText::new("定时任务")
+                            .size(18.0)
+                            .strong()
+                            .color(tokens.text),
+                    );
+                    ui.add_space(4.0);
+                    ui.label(
+                        RichText::new("在左侧选择任务查看详情")
+                            .size(12.0)
+                            .color(tokens.text_muted),
+                    );
+                    ui.add_space(10.0);
+                    dashed_rule(ui, tokens.divider);
+                    ui.add_space(6.0);
+                    // The read-only rows mirror `cron_page.slint`'s detail
+                    // block. With no adapter data they stay visible and spelled
+                    // out rather than collapsing into a blank pane.
+                    for (label, value) in [
+                        ("调度", "—"),
+                        ("下次执行", "—"),
+                        ("上次状态", "尚未运行"),
+                        ("上次错误", "无"),
+                    ] {
+                        ui.horizontal(|ui| {
+                            let _ = ui.add_sized(
+                                Vec2::new(96.0, 28.0),
+                                egui::Label::new(
+                                    RichText::new(label).size(12.0).color(tokens.text_muted),
+                                ),
+                            );
+                            ui.label(
+                                RichText::new(value)
+                                    .size(13.0)
+                                    .color(tokens.text_secondary),
+                            );
+                        });
+                    }
+                    ui.add_space(10.0);
+                    notice(
+                        ui,
+                        tokens,
+                        "任务详情、启停、立即运行与运行记录都由桌面端提供；当前尚未接入，因此这些操作在此页不可用。",
+                    );
+                });
+        });
+
+        if state.cron_editor_open {
+            cron_editor_card(ui, state, tokens);
+        }
+        if state.cron_runs_open {
+            card(
+                ui,
+                tokens,
+                "运行记录",
+                "最近 0 次（最多 200 条），由桌面端按任务返回",
+                |ui| {
+                    if state.cron_loading {
+                        ui.label(RichText::new("加载中…").size(12.0).color(tokens.text_muted));
+                    } else {
+                        empty_text(ui, tokens, "暂无运行记录");
+                    }
+                    if action_button(ui, tokens, "关闭", Some("close")).clicked() {
+                        state.cron_runs_open = false;
+                    }
+                },
+            );
+        }
+        if !state.cron_note.is_empty() && !state.cron_editor_open {
+            note_line(ui, tokens, state.cron_note.as_str(), state.cron_note_error);
+        }
     });
+}
+
+/// The cron editor mirrors the Slint modal field-for-field. It is rendered as a
+/// card inside the page instead of an overlay so the settings modal keeps its
+/// single foreground layer; the field set and validation are unchanged.
+fn cron_editor_card(ui: &mut Ui, state: &mut AppState, tokens: Tokens) {
+    card(
+        ui,
+        tokens,
+        "新建定时任务",
+        "保存前会检查调度格式；桌面端保存命令接入前不会写入配置",
+        |ui| {
+            field_label(ui, tokens, "名称", "");
+            let _ = path_input(
+                ui,
+                tokens,
+                "cron-name",
+                &mut state.cron_name,
+                "例如 每日晨报",
+                ui.available_width(),
+            );
+            ui.add_space(6.0);
+            form_row(
+                ui,
+                tokens,
+                "调度",
+                "一次性、固定间隔或 Cron 表达式",
+                false,
+                |ui| {
+                    select(ui, "cron-kind", &mut state.cron_kind, &CRON_KINDS, tokens);
+                },
+            );
+            if state.cron_kind == CRON_KIND_ONCE {
+                field_label(ui, tokens, "执行时间", "格式 YYYY-MM-DD HH:MM");
+                let _ = path_input(
+                    ui,
+                    tokens,
+                    "cron-at",
+                    &mut state.cron_at,
+                    "2026-10-20 09:00",
+                    ui.available_width(),
+                );
+            } else if state.cron_kind == CRON_KIND_INTERVAL {
+                field_label(ui, tokens, "间隔（秒）", "");
+                let _ = path_input(
+                    ui,
+                    tokens,
+                    "cron-every",
+                    &mut state.cron_every,
+                    "300",
+                    ui.available_width(),
+                );
+                ui.add_space(6.0);
+                field_label(ui, tokens, "首次时间", "留空表示创建后立即开始");
+                let _ = path_input(
+                    ui,
+                    tokens,
+                    "cron-first-at",
+                    &mut state.cron_at,
+                    "2026-10-20 09:00",
+                    ui.available_width(),
+                );
+            } else {
+                field_label(ui, tokens, "表达式", "5 或 6 个以空格分隔的字段");
+                let _ = path_input(
+                    ui,
+                    tokens,
+                    "cron-expression",
+                    &mut state.cron_expression,
+                    "0 9 * * *",
+                    ui.available_width(),
+                );
+                ui.add_space(6.0);
+                field_label(ui, tokens, "时区", "留空使用系统时区");
+                let _ = path_input(
+                    ui,
+                    tokens,
+                    "cron-timezone",
+                    &mut state.cron_timezone,
+                    "Asia/Shanghai",
+                    ui.available_width(),
+                );
+            }
+            ui.add_space(8.0);
+            field_label(ui, tokens, "执行消息", "");
+            text_area(
+                ui,
+                tokens,
+                "cron-message",
+                &mut state.cron_message,
+                "任务触发时发送给智能体的消息",
+                52.0,
+            );
+            ui.add_space(6.0);
+            form_row(
+                ui,
+                tokens,
+                "目标智能体",
+                "个人版只有一个内置智能体",
+                false,
+                |ui| {
+                    select(
+                        ui,
+                        "cron-agent",
+                        &mut state.cron_target_agent,
+                        &["默认智能体"],
+                        tokens,
+                    );
+                },
+            );
+            for (label, hint, value) in [
+                (
+                    "运行一次后删除",
+                    "任务成功执行一次后自动移除",
+                    &mut state.cron_delete_after,
+                ),
+                ("启用任务", "保存后立即参与调度", &mut state.cron_enabled),
+            ] {
+                form_row(ui, tokens, label, hint, false, |ui| {
+                    ui.label(
+                        RichText::new(if *value { "已开启" } else { "已关闭" })
+                            .size(12.0)
+                            .color(if *value {
+                                tokens.primary
+                            } else {
+                                tokens.text_muted
+                            }),
+                    );
+                    toggle(ui, value, tokens);
+                });
+            }
+            let (footer, _) =
+                ui.allocate_exact_size(Vec2::new(ui.available_width(), 34.0), Sense::hover());
+            let cancel_rect = Rect::from_min_size(
+                Pos2::new(footer.right() - 84.0, footer.top()),
+                Vec2::new(84.0, 34.0),
+            );
+            let save_rect = Rect::from_min_size(
+                Pos2::new(cancel_rect.left() - 92.0, footer.top()),
+                Vec2::new(84.0, 34.0),
+            );
+            let save = accent_button(ui, save_rect, "保存", true, tokens);
+            let cancel = fixed_button(ui, cancel_rect, "取消", true, false, tokens);
+            if cancel {
+                state.cron_editor_open = false;
+                state.cron_note.clear();
+                state.cron_note_error = false;
+            }
+            if save {
+                let kind = state.cron_kind.clone();
+                match cron_schedule_error(
+                    &kind,
+                    &state.cron_at,
+                    &state.cron_every,
+                    &state.cron_expression,
+                ) {
+                    Some(error) => {
+                        state.cron_note = format!("无法保存：{error}");
+                        state.cron_note_error = true;
+                    }
+                    None if state.cron_name.trim().is_empty() => {
+                        state.cron_note = "无法保存：请填写任务名称。".to_owned();
+                        state.cron_note_error = true;
+                    }
+                    None => {
+                        // No adapter command exists, so report the validation
+                        // result and say the draft was not submitted. Claiming
+                        // success here would be a lie the user could not undo.
+                        state.cron_note = format!(
+                            "{} 校验通过；桌面端尚未接入定时任务保存命令，本次草稿未提交。",
+                            cron_schedule_summary(
+                                &kind,
+                                &state.cron_at,
+                                &state.cron_every,
+                                &state.cron_expression
+                            )
+                        );
+                        state.cron_note_error = false;
+                    }
+                }
+            }
+            if !state.cron_note.is_empty() {
+                note_line(ui, tokens, state.cron_note.as_str(), state.cron_note_error);
+            }
+        },
+    );
 }
 
 fn notice(ui: &mut Ui, tokens: Tokens, message: &str) {
@@ -1737,6 +2981,93 @@ fn notice(ui: &mut Ui, tokens: Tokens, message: &str) {
             ui.set_width((ui.available_width() - 2.0).max(30.0));
             ui.label(RichText::new(message).size(13.0).color(tokens.text_muted));
         });
+}
+
+/// One-line feedback under a control group. Errors use `danger_soft` *and* the
+/// caller's wording, so the reason survives a colour-blind reader or a
+/// greyscale screenshot instead of hiding behind a red border.
+fn note_line(ui: &mut Ui, tokens: Tokens, message: &str, error: bool) {
+    ui.add_space(6.0);
+    ui.label(RichText::new(message).size(12.0).color(if error {
+        tokens.danger_soft
+    } else {
+        tokens.text_muted
+    }));
+}
+
+/// Label (and optional hint) above an editor field, matching the Slint
+/// `FormField` metrics (18px label, 7px gap). `path_input` only paints the box,
+/// so the two helpers are always used together.
+fn field_label(ui: &mut Ui, tokens: Tokens, label: &str, hint: &str) {
+    let height = if hint.is_empty() { 20.0 } else { 36.0 };
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::hover());
+    ui.painter().text(
+        rect.left_top() + Vec2::new(0.0, 2.0),
+        Align2::LEFT_TOP,
+        label,
+        FontId::proportional(12.0),
+        tokens.text_secondary,
+    );
+    if !hint.is_empty() {
+        ui.painter().text(
+            rect.left_top() + Vec2::new(0.0, 20.0),
+            Align2::LEFT_TOP,
+            hint,
+            FontId::proportional(11.0),
+            tokens.text_muted,
+        );
+    }
+}
+
+/// Multiline editor used by the agent prompt and the cron message. Both are a
+/// fixed height in the Slint form, so the buttons below them do not jump when
+/// the text grows.
+fn text_area(ui: &mut Ui, tokens: Tokens, id: &str, value: &mut String, hint: &str, height: f32) {
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::hover());
+    ui.painter().rect_filled(rect, 10.0, tokens.surface);
+    ui.painter().rect_stroke(
+        rect,
+        10.0,
+        Stroke::new(1.0, tokens.field_border),
+        StrokeKind::Inside,
+    );
+    child(ui, rect.shrink2(Vec2::new(10.0, 8.0)), id, |ui| {
+        let _ = ui.add_sized(
+            ui.available_size(),
+            TextEdit::multiline(value)
+                .char_limit(2048)
+                .frame(false)
+                .margin(Margin::ZERO)
+                .font(FontId::proportional(13.0))
+                .hint_text(hint),
+        );
+    });
+}
+
+/// A switch the page cannot operate. It keeps `toggle`'s footprint so the row
+/// stays comparable, but the accompanying text explains what unlocks it; a
+/// dimmed colour alone would not say why.
+fn disabled_toggle(ui: &mut Ui, value: bool, tokens: Tokens) {
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(50.0, 28.0), Sense::hover());
+    ui.painter().rect_filled(rect, 14.0, tokens.control_fill);
+    ui.painter().rect_stroke(
+        rect,
+        14.0,
+        Stroke::new(1.0, tokens.control_border),
+        StrokeKind::Inside,
+    );
+    ui.painter().circle_filled(
+        Pos2::new(
+            if value {
+                rect.right() - 14.0
+            } else {
+                rect.left() + 14.0
+            },
+            rect.center().y,
+        ),
+        10.0,
+        tokens.border_strong,
+    );
 }
 
 fn page_memory(ui: &mut Ui, tokens: Tokens) {
@@ -1921,8 +3252,7 @@ fn page_channels(ui: &mut Ui, tokens: Tokens) {
                 bounds.min + Vec2::new(0.0, 137.0),
                 Vec2::new(bounds.width(), 114.0),
             );
-            ui.painter()
-                .rect_filled(log, 10.0, tokens.surface_sunken);
+            ui.painter().rect_filled(log, 10.0, tokens.surface_sunken);
             ui.painter().rect_stroke(
                 log,
                 10.0,
@@ -1971,7 +3301,14 @@ fn page_channels(ui: &mut Ui, tokens: Tokens) {
 
 /// A bounded native projection of a compact web settings action. The caller
 /// owns its rectangle, so labels cannot enlarge a surrounding column.
-fn fixed_button(ui: &mut Ui, rect: Rect, label: &str, enabled: bool, danger: bool, tokens: Tokens) {
+fn fixed_button(
+    ui: &mut Ui,
+    rect: Rect,
+    label: &str,
+    enabled: bool,
+    danger: bool,
+    tokens: Tokens,
+) -> bool {
     // This affects min_rect rather than clipping, allowing the layout smoke
     // test to see actual controls escaping their assigned column.
     ui.expand_to_include_rect(rect);
@@ -2017,9 +3354,12 @@ fn fixed_button(ui: &mut Ui, rect: Rect, label: &str, enabled: bool, danger: boo
     ui.painter()
         .with_clip_rect(rect.intersect(ui.clip_rect()))
         .galley(rect.center() - galley.size() / 2.0, galley, color);
+    // Callers that need the click (the cron toolbar) get it; the pages that
+    // only project a disabled control keep calling this as a statement.
+    response.clicked()
 }
 
-fn page_devices(ui: &mut Ui, tokens: Tokens) {
+fn page_devices(ui: &mut Ui, state: &mut AppState, tokens: Tokens) {
     let height = page_height(ui);
     panel(ui, tokens, height, |ui| {
         panel_header(
@@ -2028,15 +3368,175 @@ fn page_devices(ui: &mut Ui, tokens: Tokens) {
             "我的设备",
             "管理各设备的云端互联开关与云影子投影",
             |ui| {
-                let _ = action_button(ui, tokens, "刷新", Some("refresh"));
+                if action_button(ui, tokens, "刷新", Some("refresh")).clicked() {
+                    // The tunnel list belongs to the desktop adapter. Saying so
+                    // keeps an unchanged list from reading as "no devices".
+                    state.devices_note =
+                        "桌面端尚未接入设备列表命令，刷新没有取到新的隧道信息。".to_owned();
+                }
                 ui.label(
-                    RichText::new("0 台设备在线 · 共 0 台")
+                    RichText::new(device_presence_summary(0, 0))
                         .size(12.0)
                         .color(tokens.text_secondary),
                 );
             },
         );
-        empty_text(ui, tokens, "暂无设备，登录蛹或舵机后会自动出现在这里");
+        card(
+            ui,
+            tokens,
+            "本机设备",
+            "设备标识与系统版本由桌面端读取，这里只读展示",
+            |ui| {
+                path_row(ui, tokens, "设备名称", "由桌面端提供");
+                path_row(ui, tokens, "系统与版本", "由桌面端提供");
+                ui.add_space(8.0);
+                ui.label(
+                    RichText::new("本机名称与系统版本尚未从桌面端读取；接入后会在上面两行显示。")
+                        .size(12.0)
+                        .color(tokens.text_muted),
+                );
+            },
+        );
+        card(
+            ui,
+            tokens,
+            "设备互通",
+            "开关保存在本机配置；共享目录还需要舰桥授权",
+            |ui| {
+                detail_row(
+                    ui,
+                    tokens,
+                    "devices",
+                    "允许远程访问本地",
+                    "启用设备互通；写入和线程操作仍需本地审批",
+                    false,
+                    |ui| {
+                        // Text, not just the switch position: the same wording
+                        // is what a screen reader or a greyscale screenshot
+                        // can still resolve.
+                        ui.label(
+                            RichText::new(interlink_state_label(state.devices_allow_remote))
+                                .size(12.0)
+                                .color(if state.devices_allow_remote {
+                                    tokens.primary
+                                } else {
+                                    tokens.text_muted
+                                }),
+                        );
+                        toggle(ui, &mut state.devices_allow_remote, tokens);
+                    },
+                );
+                detail_row(
+                    ui,
+                    tokens,
+                    "folder",
+                    "共享工作区与线程目录",
+                    "需同时获得舰桥授权；关闭时只共享设备摘要",
+                    false,
+                    |ui| {
+                        if share_switch_available(state.devices_allow_remote) {
+                            ui.label(
+                                RichText::new(interlink_state_label(state.devices_share_catalog))
+                                    .size(12.0)
+                                    .color(if state.devices_share_catalog {
+                                        tokens.primary
+                                    } else {
+                                        tokens.text_muted
+                                    }),
+                            );
+                            toggle(ui, &mut state.devices_share_catalog, tokens);
+                        } else {
+                            ui.label(
+                                RichText::new("需先开启互通")
+                                    .size(12.0)
+                                    .color(tokens.text_muted),
+                            );
+                            disabled_toggle(ui, state.devices_share_catalog, tokens);
+                        }
+                    },
+                );
+                detail_row(
+                    ui,
+                    tokens,
+                    "expand",
+                    "云影子投影",
+                    "把本机设备摘要投影到云端，供蛹与舵机查看",
+                    true,
+                    |ui| {
+                        ui.label(
+                            RichText::new(interlink_state_label(state.devices_cloud_shadow))
+                                .size(12.0)
+                                .color(if state.devices_cloud_shadow {
+                                    tokens.primary
+                                } else {
+                                    tokens.text_muted
+                                }),
+                        );
+                        toggle(ui, &mut state.devices_cloud_shadow, tokens);
+                    },
+                );
+                if !state.devices_allow_remote && state.devices_share_catalog {
+                    note_line(
+                        ui,
+                        tokens,
+                        "互通已关闭，共享工作区的设置已保留但当前不生效。",
+                        false,
+                    );
+                }
+            },
+        );
+        card(
+            ui,
+            tokens,
+            "互通隧道",
+            "隧道与连接状态由桌面端心跳上报；在线表示最近一次心跳成功",
+            |ui| {
+                // Column labels come from the Slint interlink strings
+                // (`il_col_*`) so the table headers match the desktop shell.
+                let (head, _) =
+                    ui.allocate_exact_size(Vec2::new(ui.available_width(), 24.0), Sense::hover());
+                let columns = [
+                    ("名称", Align2::LEFT_CENTER, head.left()),
+                    (
+                        "类型",
+                        Align2::LEFT_CENTER,
+                        head.left() + head.width() * 0.42,
+                    ),
+                    (
+                        "状态",
+                        Align2::LEFT_CENTER,
+                        head.left() + head.width() * 0.62,
+                    ),
+                    ("连接", Align2::RIGHT_CENTER, head.right()),
+                ];
+                for (label, align, x) in columns {
+                    ui.painter().text(
+                        Pos2::new(x, head.center().y),
+                        align,
+                        label,
+                        FontId::proportional(11.0),
+                        tokens.text_muted,
+                    );
+                }
+                dashed_rule(ui, tokens.divider);
+                if state.devices_loading {
+                    ui.add_space(10.0);
+                    ui.label(RichText::new("加载中…").size(12.0).color(tokens.text_muted));
+                    ui.add_space(10.0);
+                } else if !state.devices_error.is_empty() {
+                    note_line(ui, tokens, state.devices_error.as_str(), true);
+                } else {
+                    empty_text(
+                        ui,
+                        tokens,
+                        "暂无互通隧道，开启互通并登录蛹或舵机后会自动出现在这里。",
+                    );
+                }
+            },
+        );
+        if !state.devices_note.is_empty() {
+            note_line(ui, tokens, state.devices_note.as_str(), false);
+        }
     });
 }
 
@@ -2134,8 +3634,7 @@ fn page_prompts(ui: &mut Ui, tokens: Tokens) {
                         Pos2::new(x, bounds.top() + 73.0),
                         Vec2::new(text.size().x + 12.0, 17.0),
                     );
-                    ui.painter()
-                        .rect_filled(tag, 99.0, tokens.chip);
+                    ui.painter().rect_filled(tag, 99.0, tokens.chip);
                     ui.painter()
                         .galley(tag.center() - text.size() / 2.0, text, tokens.text_muted);
                     x = tag.right() + 6.0;
@@ -2243,8 +3742,7 @@ fn page_prompts(ui: &mut Ui, tokens: Tokens) {
                 bounds.min + Vec2::new(0.0, 42.0),
                 Vec2::new(bounds.width(), 297.0),
             );
-            ui.painter()
-                .rect_filled(body, 10.0, tokens.primary_wash);
+            ui.painter().rect_filled(body, 10.0, tokens.primary_wash);
             ui.painter().rect_stroke(
                 body,
                 10.0,
@@ -2327,6 +3825,9 @@ fn draw_icon(p: &Painter, center: Pos2, name: &str, size: f32, color: Color32) {
         "upload" => Icon::Upload,
         "message" => Icon::More,
         "expand" => Icon::Desktop,
+        "folder" => Icon::Folder,
+        "copy" => Icon::Copy,
+        "shield" => Icon::Shield,
         _ => Icon::Settings,
     };
     icons::paint(
@@ -2339,10 +3840,193 @@ fn draw_icon(p: &Painter, center: Pos2, name: &str, size: f32, color: Color32) {
 
 #[cfg(test)]
 mod tests {
-    use super::{draw, CATEGORIES};
+    use super::{
+        agent_question_can_add, agent_tool_matches, agent_tool_ranges, clamp_font_size,
+        cron_schedule_error, cron_schedule_summary, device_presence_summary, draw,
+        interlink_state_label, self_check_summary, share_switch_available, valid_tool_path,
+        AGENT_QUESTION_LIMIT, AGENT_TOOL_GROUPS, CATEGORIES, CRON_KIND_CRON, CRON_KIND_INTERVAL,
+        CRON_KIND_ONCE, FONT_SIZE_MAX, FONT_SIZE_MIN, SUPPLEMENT_CATALOGUE,
+    };
     use crate::model::AppState;
     use crate::theme;
     use egui::{Context, Id, Pos2, RawInput, Rect, Vec2};
+
+    #[test]
+    fn tool_path_validation_rejects_empty_and_duplicate_entries() {
+        let existing = vec!["D:/tools".to_owned(), "  E:/bin  ".to_owned()];
+        assert!(!valid_tool_path("", &existing));
+        assert!(!valid_tool_path("   ", &existing));
+        assert!(!valid_tool_path("D:/tools", &existing));
+        // Windows paths are case-insensitive, so casing must not bypass the
+        // duplicate check; the stored entry is also trimmed before compare.
+        assert!(!valid_tool_path(" d:/TOOLS ", &existing));
+        assert!(!valid_tool_path("E:/bin", &existing));
+        assert!(valid_tool_path(" D:/tools/bin ", &existing));
+        assert!(valid_tool_path("D:/tools", &[]));
+    }
+
+    #[test]
+    fn font_size_clamps_to_the_settings_range() {
+        assert_eq!(clamp_font_size(8.0), FONT_SIZE_MIN);
+        assert_eq!(clamp_font_size(30.0), FONT_SIZE_MAX);
+        assert_eq!(clamp_font_size(FONT_SIZE_MIN), FONT_SIZE_MIN);
+        assert_eq!(clamp_font_size(FONT_SIZE_MAX), FONT_SIZE_MAX);
+        assert_eq!(clamp_font_size(16.0), 16.0);
+        // A non-finite scale must not leak NaN into the preview or the stored
+        // multiplier; it degrades to the documented minimum instead.
+        assert_eq!(clamp_font_size(f32::NAN), FONT_SIZE_MIN);
+        assert_eq!(clamp_font_size(f32::INFINITY), FONT_SIZE_MAX);
+    }
+
+    #[test]
+    fn cron_schedule_validation_covers_every_kind() {
+        // 一次性 needs a real moment, not just any non-empty string.
+        assert!(cron_schedule_error(CRON_KIND_ONCE, "", "", "").is_some());
+        assert!(cron_schedule_error(CRON_KIND_ONCE, "2026-10-20 09:00", "", "").is_none());
+        assert!(cron_schedule_error(CRON_KIND_ONCE, "2026-13-20 09:00", "", "").is_some());
+        assert!(cron_schedule_error(CRON_KIND_ONCE, "2026-10-20 24:00", "", "").is_some());
+        assert!(cron_schedule_error(CRON_KIND_ONCE, "明天九点", "", "").is_some());
+        // 固定间隔 parses positive seconds; the first run stays optional.
+        assert!(cron_schedule_error(CRON_KIND_INTERVAL, "", "0", "").is_some());
+        assert!(cron_schedule_error(CRON_KIND_INTERVAL, "", "abc", "").is_some());
+        assert!(cron_schedule_error(CRON_KIND_INTERVAL, "", "300", "").is_none());
+        assert!(cron_schedule_error(CRON_KIND_INTERVAL, "2026-10-20 09:00", "300", "").is_none());
+        assert!(cron_schedule_error(CRON_KIND_INTERVAL, "明天", "300", "").is_some());
+        // Cron needs 5 or 6 fields drawn from the numeric operator set.
+        assert!(cron_schedule_error(CRON_KIND_CRON, "", "", "0 9 * * *").is_none());
+        assert!(cron_schedule_error(CRON_KIND_CRON, "", "", "0 9 * * * *").is_none());
+        assert!(cron_schedule_error(CRON_KIND_CRON, "", "", "0 9 * *").is_some());
+        assert!(cron_schedule_error(CRON_KIND_CRON, "", "", "0 9 * * MON").is_some());
+        assert!(cron_schedule_error("未知调度", "", "", "").is_some());
+    }
+
+    #[test]
+    fn cron_schedule_summary_spells_out_missing_fields() {
+        assert_eq!(
+            cron_schedule_summary(CRON_KIND_ONCE, "", "", ""),
+            "一次性 · 未设置执行时间"
+        );
+        assert_eq!(
+            cron_schedule_summary(CRON_KIND_ONCE, " 2026-10-20 09:00 ", "", ""),
+            "一次性 · 2026-10-20 09:00"
+        );
+        assert_eq!(
+            cron_schedule_summary(CRON_KIND_INTERVAL, "", "300", ""),
+            "固定间隔 · 每 300 秒"
+        );
+        assert_eq!(
+            cron_schedule_summary(CRON_KIND_INTERVAL, "", "0", ""),
+            "固定间隔 · 未设置间隔"
+        );
+        assert_eq!(
+            cron_schedule_summary(CRON_KIND_CRON, "", "", " 0 9 * * * "),
+            "Cron 表达式 · 0 9 * * *"
+        );
+        assert_eq!(
+            cron_schedule_summary(CRON_KIND_CRON, "", "", ""),
+            "Cron 表达式 · 未填写"
+        );
+    }
+
+    #[test]
+    fn agent_tool_search_matches_name_and_description() {
+        assert!(agent_tool_matches(
+            "文件读写",
+            "在工作区内读取与修改文件",
+            ""
+        ));
+        assert!(agent_tool_matches(
+            "文件读写",
+            "在工作区内读取与修改文件",
+            "读写"
+        ));
+        assert!(agent_tool_matches("MCP 服务器", "通过 MCP 协议连接", "mcp"));
+        assert!(agent_tool_matches(
+            "文件读写",
+            "在工作区内读取与修改文件",
+            "工作区"
+        ));
+        assert!(!agent_tool_matches(
+            "文件读写",
+            "在工作区内读取与修改文件",
+            "知识库"
+        ));
+        // A whitespace-only query must behave like an empty one, otherwise the
+        // list would vanish while the search box looks untouched.
+        assert!(agent_tool_matches("文件读写", "", "   "));
+    }
+
+    #[test]
+    fn agent_tool_ranges_cover_the_whole_catalogue() {
+        let ranges = agent_tool_ranges();
+        assert_eq!(ranges.len(), AGENT_TOOL_GROUPS.len());
+        let mut expected = 0;
+        for (group, (start, end)) in ranges.iter().enumerate() {
+            assert_eq!(*start, expected);
+            assert!(end > start, "empty group at {group}");
+            assert_eq!(*end - *start, AGENT_TOOL_GROUPS[group].1.len());
+            expected = *end;
+        }
+        let total = AGENT_TOOL_GROUPS
+            .iter()
+            .map(|(_, tools)| tools.len())
+            .sum::<usize>();
+        assert_eq!(expected, total);
+        // The model cannot import the catalogue, so the default flags must
+        // still line up with it or the rows would show the wrong state.
+        assert_eq!(AppState::default().agent_tool_enabled.len(), total);
+    }
+
+    #[test]
+    fn agent_preset_questions_respect_the_cap() {
+        assert!(!agent_question_can_add("", 0));
+        assert!(!agent_question_can_add("   ", 0));
+        assert!(agent_question_can_add("帮我总结今天的改动", 0));
+        assert!(agent_question_can_add("第 12 条", AGENT_QUESTION_LIMIT - 1));
+        assert!(!agent_question_can_add("第 13 条", AGENT_QUESTION_LIMIT));
+        assert_eq!(AGENT_QUESTION_LIMIT, 12);
+    }
+
+    #[test]
+    fn device_page_gates_catalogue_sharing_on_interlink() {
+        assert_eq!(device_presence_summary(0, 0), "0 台在线 · 共 0 台");
+        assert_eq!(device_presence_summary(2, 3), "2 台在线 · 共 3 台");
+        assert!(!share_switch_available(false));
+        assert!(share_switch_available(true));
+        assert_eq!(interlink_state_label(true), "已开启");
+        assert_eq!(interlink_state_label(false), "已关闭");
+        let state = AppState::default();
+        assert!(!state.devices_allow_remote && !state.devices_share_catalog);
+        assert!(!state.devices_loading && state.devices_error.is_empty());
+        assert!(!state.cron_editor_open && state.cron_note.is_empty());
+    }
+
+    #[test]
+    fn general_page_defaults_are_renderable() {
+        let state = AppState::default();
+        assert!(state.runtime_path.is_empty() && state.workspace_root.is_empty());
+        assert!(state.workspace_action_note.is_empty());
+        assert!(state.tool_paths.is_empty());
+        assert!(state.tool_path_input.is_empty() && state.tool_path_error.is_empty());
+        assert!(state.self_check_state.is_empty());
+        assert!(state.self_check_at.is_none());
+        // The model cannot import the catalogue, so both lists must stay in
+        // sync by name and order; drift would leave rows without a hint.
+        assert_eq!(state.supplement_bundles.len(), SUPPLEMENT_CATALOGUE.len());
+        for (bundle, (name, _)) in state.supplement_bundles.iter().zip(SUPPLEMENT_CATALOGUE) {
+            assert_eq!(bundle.0, *name);
+        }
+        assert!(
+            state
+                .supplement_bundles
+                .iter()
+                .any(|(_, enabled)| !*enabled),
+            "at least one sample bundle should show the disabled state"
+        );
+        let summary = self_check_summary(&state);
+        assert!(summary.contains("运行时路径未设置"));
+        assert!(summary.contains("工具路径 0 项"));
+    }
 
     #[test]
     fn all_settings_categories_render_inside_the_desktop_viewport() {

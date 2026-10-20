@@ -12,6 +12,12 @@ pub(super) struct Observation {
     /// Durable rows of the history, rebuilt only when a turn actually changes.
     rows: Vec<TimelineRow>,
     list_refreshed: Option<Instant>,
+    /// Backoff for a feed that closes immediately. Without this guard a
+    /// broken/closing subscription would spawn one replacement per 33ms UI
+    /// frame and turn a transient transport error into an unbounded task
+    /// storm.
+    watch_retry_at: Option<Instant>,
+    history_dirty: bool,
     ready: bool,
 }
 
@@ -22,6 +28,8 @@ impl Observation {
         self.session.clear();
         self.turns.clear();
         self.rows.clear();
+        self.watch_retry_at = None;
+        self.history_dirty = false;
     }
 
     pub(super) fn is_ready(&self) -> bool {
@@ -86,20 +94,29 @@ pub(super) fn install(app: &MainWindow, state: Rc<RefCell<State>>) {
             // discovery covers a new channel route. A live turn must not
             // starve that poll, or every other entry's status marker freezes
             // until the run finishes.
+            // A running local turn changes the sidebar status several times
+            // per second. Keep the catalogue as a bounded backstop at a
+            // faster cadence while work is active; the direct event
+            // projection remains the primary path for the selected row.
+            let refresh_interval = if current.active.is_some() || !current.parked.is_empty() {
+                Duration::from_millis(500)
+            } else {
+                Duration::from_secs(3)
+            };
             let refresh = current
                 .observation
                 .list_refreshed
-                .is_none_or(|time| time.elapsed() >= Duration::from_secs(3));
+                .is_none_or(|time| time.elapsed() >= refresh_interval);
             if refresh {
                 current.observation.list_refreshed = Some(Instant::now());
             }
-            if current.active.is_some() || !current.parked.is_empty() || app.get_creating_session()
-            {
-                drop(current);
-                if refresh {
-                    refresh_chat(&app, state.clone(), true);
-                }
-                return;
+            // Queue rows are a live admission projection too. Keep polling
+            // them while a foreground or parked turn exists so an interject
+            // and its successor are reflected even when the durable turn
+            // watcher has not emitted a new history row yet.
+            let queue_active = current.active.is_some() || !current.parked.is_empty();
+            if queue_active {
+                queue::schedule_due(&mut current.queue_due, Duration::from_millis(500));
             }
             let desktop = current.desktop.clone();
             // Cloned before the observation borrow: the history rows and a live
@@ -151,7 +168,23 @@ pub(super) fn install(app: &MainWindow, state: Rc<RefCell<State>>) {
                     current.observation.watch =
                         Some(desktop.watch_chat_with_initial_cursor(&session, turns, cursor));
                 }
+            } else if current.observation.watch.is_none()
+                && !session.is_empty()
+                && current
+                    .observation
+                    .watch_retry_at
+                    .is_none_or(|retry| retry <= Instant::now())
+            {
+                // A feed can close transiently while the runtime continues
+                // committing the turn (for example during an interject). Do
+                // not leave the selected thread permanently detached; attach
+                // a fresh bounded watcher on the next UI frame.
+                current.observation.watch =
+                    Some(desktop.watch_chat_with_initial_cursor(&session, None, None));
+                current.observation.watch_retry_at = None;
             }
+            let local_busy = current.active.is_some() || !current.parked.is_empty();
+            let mut reconciled_history = false;
             let observation = &mut current.observation;
             let mut dirty = false;
             let mut reset = false;
@@ -167,6 +200,7 @@ pub(super) fn install(app: &MainWindow, state: Rc<RefCell<State>>) {
                 match update {
                     NativeThreadUpdate::Reset(turns) => {
                         observation.ready = true;
+                        observation.watch_retry_at = None;
                         observation.turns = turns;
                         reset = true;
                         dirty = true;
@@ -227,6 +261,13 @@ pub(super) fn install(app: &MainWindow, state: Rc<RefCell<State>>) {
                     }
                     NativeThreadUpdate::Failed(error) => {
                         observation.watch = None;
+                        observation.watch_retry_at =
+                            Some(Instant::now() + Duration::from_millis(250));
+                        // Keep the existing projection visible and let the
+                        // next frame reconnect the watcher. A transient feed
+                        // close must not require navigation to restore live
+                        // status, queue and context updates.
+                        observation.ready = true;
                         app.set_session_loading(false);
                         app.set_status(error.into());
                     }
@@ -235,19 +276,44 @@ pub(super) fn install(app: &MainWindow, state: Rc<RefCell<State>>) {
                     break;
                 }
             }
-            if dirty || reset {
+            // While the foreground reducer owns a temporary tail, durable
+            // rows are accumulated but never installed into the shared model:
+            // their real root id differs from the client request id and would
+            // otherwise replace the live bubble mid-stream. Reconcile once
+            // the foreground owner has settled.
+            let publish_history = !local_busy;
+            if (dirty || reset || observation.history_dirty) && publish_history {
                 // The durable rows are rebuilt only when a turn changed, and
                 // only for the turns the observer actually holds.
                 observation.rows = project_history(&observation.turns);
                 observation.publish(&app, &timeline);
-                let busy = observation.turns.iter().any(|turn| {
+                reconciled_history = true;
+                let durable_busy = observation.turns.iter().any(|turn| {
                     matches!(
                         turn.assistant.stats_status.as_str(),
                         "正在生成…" | "正在排队"
                     ) || turn.assistant.stats_status.starts_with("正在排队 ·")
                 });
-                let finished = app.get_busy() && !busy;
+                // A durable snapshot can lag the foreground stream by one
+                // commit. Never let that lag clear the local busy indicator or
+                // stop the composer while the stream/parked hand-off is live.
+                let busy = durable_busy || local_busy;
+                let finished = app.get_busy() && !busy && !local_busy;
                 app.set_busy(busy);
+                // The activity capsule is a separate projection from the
+                // composer busy flag. Keep its spinner aligned with durable
+                // execution too, including runs resumed after an interject or
+                // while the foreground stream is temporarily unavailable.
+                app.set_activity_running(busy);
+                if !local_busy {
+                    if let Some(latest) = observation.turns.last() {
+                        crate::native_chat::set_session_status(
+                            &app,
+                            &session,
+                            latest.assistant.stats_status.as_str(),
+                        );
+                    }
+                }
                 if finished {
                     crate::workspace_files::execution_finished(&app, desktop.clone());
                 }
@@ -257,9 +323,19 @@ pub(super) fn install(app: &MainWindow, state: Rc<RefCell<State>>) {
             }
             // The poll cadence was resolved before the watcher drained, so a
             // live turn and an idle tick share one refresh schedule.
+            if reconciled_history {
+                observation.history_dirty = false;
+            } else if (dirty || reset) && local_busy {
+                observation.history_dirty = true;
+            }
+            let queue_due = queue_active && queue::due_arrived(&mut current.queue_due);
             drop(current);
             if refresh {
                 refresh_chat(&app, state.clone(), true);
+            }
+            if queue_due {
+                let session = app.get_active_session_id().to_string();
+                refresh_queue_async(&app, &state, &session);
             }
         },
     );

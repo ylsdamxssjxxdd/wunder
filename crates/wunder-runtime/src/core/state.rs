@@ -20,17 +20,17 @@ use crate::services::presence::PresenceService;
 use crate::services::runtime::thread::ThreadRuntime;
 use crate::services::tools::command_sessions::CommandSessionBroker;
 use crate::services::user_world::UserWorldService;
-use crate::skills::{SkillRegistry, load_skills};
+use crate::skills::{load_skills, SkillRegistry};
 #[cfg(any(feature = "sqlite-storage", test))]
 use crate::storage::SqliteStorage;
 #[cfg(any(feature = "sqlite-storage", test))]
 use crate::storage::StorageLifecycle;
-use crate::storage::{StorageBackend, build_storage};
+use crate::storage::{build_storage, StorageBackend};
 use crate::throughput::ThroughputManager;
 use crate::user_store::UserStore;
 use crate::user_tools::{UserToolManager, UserToolStore};
 use crate::workspace::WorkspaceManager;
-use anyhow::{Context, Result, anyhow};
+use anyhow::{anyhow, Context, Result};
 use serde::Serialize;
 use std::sync::Arc;
 use std::time::Instant;

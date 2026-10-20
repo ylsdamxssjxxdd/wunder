@@ -1324,13 +1324,12 @@ export component Composer inherits Rectangle {
     callback send();
     callback remove-attachment(int);
     callback record-voice();
-    callback command();
+    callback launch-terminal();
     // Terminal mode: Ctrl+C becomes an interrupt instead of copy.
     callback interrupt();
     // Terminal mode: the input routes to the local shell. The composer keeps
     // its visual language (and the send button), only the placeholder and
     // send semantics change; the backend decides where the text goes.
-    in property <bool> terminal-mode: false;
     callback screenshot(bool, bool);
     // ---- 发送队列 (§发送队列) ----
     // Parked turns come straight from the engine's queue projection; the strip
@@ -1346,6 +1345,15 @@ export component Composer inherits Rectangle {
     // caret's byte offsets, which only Rust can compare against the draft's byte
     // length, so the editor forwards them and takes back what Rust returns.
     callback recall-history(int, int, int, string) -> DraftRecall;
+    // Editor focus, surfaced so the platform layer can raise the Windows touch
+    // keyboard when the activation came from a finger (see touch_keyboard.rs).
+    out property <bool> editor-has-focus: editor.has-focus;
+    callback editor-focus-gained();
+    changed editor-has-focus => {
+        if root.editor-has-focus {
+            root.editor-focus-gained();
+        }
+    }
     private property <bool> queue-open: root.queue-turns.length > 0;
     // A running turn no longer swallows the send: the engine parks the turn and
     // the strip above the input shows it. What still blocks is a slash command
@@ -1370,11 +1378,9 @@ export component Composer inherits Rectangle {
     private property <bool> command-open: false;
     private property <bool> screenshot-open: false;
     private property <bool> permission-open: false;
-    // 蜂巢同款发送门禁: terminal mode only sends typed text; the chat modes
-    // also allow attachment-only and answered-inquiry sends.
-    private property <bool> send-enabled: root.terminal-mode
-        ? (root.draft != "" && !root.send-blocked)
-        : ((root.draft != "" || root.attachments.length > 0 || root.inquiry-ready) && !root.send-blocked);
+    // 蜂巢同款发送门禁: allow attachment-only and answered-inquiry sends.
+    private property <bool> send-enabled:
+        ((root.draft != "" || root.attachments.length > 0 || root.inquiry-ready) && !root.send-blocked);
     // Keep Stop only when there is no user payload to submit. While a reply is
     // streaming, a draft, attachment, or answered inquiry must keep Send
     // visible so the next turn can enter the queue.
@@ -1422,6 +1428,13 @@ export component Composer inherits Rectangle {
     out property <length> screenshot-menu-y: root.screenshot-open ? screenshot_flyout.absolute-position.y : -1px;
     out property <length> screenshot-menu-width: root.screenshot-open ? screenshot_flyout.width : 0px;
     out property <length> screenshot-menu-height: root.screenshot-open ? screenshot_flyout.height : 0px;
+    // Actual editor bounds for the Winit touch filter. This lets the native
+    // layer handle a second touch after the editor already has focus without
+    // adding an input-catching layer over TextInput.
+    out property <length> editor-x: editor.absolute-position.x;
+    out property <length> editor-y: editor.absolute-position.y;
+    out property <length> editor-width: editor.width;
+    out property <length> editor-height: editor.height;
     public function dismiss-popovers() {
         root.model-open = false;
         root.plus-open = false;
@@ -1436,8 +1449,10 @@ export component Composer inherits Rectangle {
         root.permission-open = false;
         root.screenshot-open = false;
     }
-    background: Theme.composer;
-    Rectangle { y: 0px; height: 1px; background: Theme.border; }
+    // 对齐蜂巢 chat-footer (background: transparent; border-top: 0): the band
+    // itself paints nothing, so the white rounded input card is the only
+    // surface — no white rectangular frame around it.
+    background: transparent;
     VerticalLayout {
         padding: 14px; padding-top: 8px; padding-bottom: 10px; spacing: 6px;
         if root.queue-open : QueueStrip {
@@ -1476,20 +1491,13 @@ export component Composer inherits Rectangle {
                 accessible-placeholder-text: self.placeholder-text;
                 accessible-action-set-value(value) => { self.text = value; }
                 foreground: Theme.text;
-                placeholder-text: root.terminal-mode ? I18n.cp_terminal_placeholder
-                    : (root.workspace-name != "" ? I18n.cp_input_placeholder_workspace(root.workspace-name) : I18n.cp_input_placeholder);
+                placeholder-text: root.workspace-name != "" ? I18n.cp_input_placeholder_workspace(root.workspace-name) : I18n.cp_input_placeholder;
                 placeholder-color: Theme.muted;
                 selection-background-color: Theme.accent-soft;
                 selection-foreground-color: Theme.text;
                 font-size: 14px; font-family: "SimSun";
                 wrap: word-wrap;
                 key-pressed(event) => {
-                // Terminal mode: Ctrl+C interrupts the running shell instead
-                // of copying the selection.
-                if event.text == "c" && event.modifiers.control && root.terminal-mode {
-                    root.interrupt();
-                    return accept;
-                }
                 // ArrowUp / ArrowDown recall the messages this thread already
                 // sent (Slint's key code points: U+F700 up, U+F701 down). The
                 // caret test needs byte offsets, so Rust owns the decision, the
@@ -1584,7 +1592,7 @@ export component Composer inherits Rectangle {
                 }
                 // Typed "/" still expands the command list in place whenever
                 // the menu itself is closed.
-                if !root.plus-open && !root.terminal-mode && root.draft == "/" : CommandFlyout {
+                if !root.plus-open && root.draft == "/" : CommandFlyout {
                     x: 0px; y: -self.height - 8px; z: 30;
                     pick(value) => { root.draft = value; editor.focus(); }
                 }
@@ -1744,20 +1752,16 @@ export component Composer inherits Rectangle {
                                     pick(hide, region) => { root.plus-open = false; root.screenshot(hide, region); }
                                 }
                             }
-                            // 终端模式: direct toggle; the check marks the live mode.
+                            // 终端: opens the supplement's Git Bash console.
                             Rectangle {
                                 height: 34px; border-radius: Theme.radius-sm;
                                 background: term-row-touch.has-hover ? Theme.hover : transparent;
                                 accessible-role: list-item; accessible-label: I18n.cp_terminal_mode;
-                                Image { x: 8px; y: 9px; width: 16px; height: 16px; source: @image-url("../assets/icons/fa-display.svg"); colorize: root.terminal-mode ? Theme.accent : Theme.text-secondary; image-fit: contain; }
+                                Image { x: 8px; y: 9px; width: 16px; height: 16px; source: @image-url("../assets/icons/fa-display.svg"); colorize: Theme.text-secondary; image-fit: contain; }
                                 Text { x: 32px; width: parent.width - 44px; height: parent.height; text: I18n.cp_terminal_mode; color: Theme.text; font-size: Theme.font-md; vertical-alignment: center; overflow: elide; }
-                                if root.terminal-mode : Image {
-                                    x: parent.width - 21px; y: 9px; width: 16px; height: 16px;
-                                    source: @image-url("../assets/icons/check.svg"); colorize: Theme.accent; image-fit: contain;
-                                }
                                 term-row-touch := TouchArea {
                                     mouse-cursor: pointer;
-                                    clicked => { root.plus-open = false; root.command(); }
+                                    clicked => { root.plus-open = false; root.launch-terminal(); }
                                 }
                             }
                         }

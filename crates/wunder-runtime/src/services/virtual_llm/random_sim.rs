@@ -109,14 +109,9 @@ const FIXED_ARGS: &[(&str, &str)] = &[
         r#"{"prompt":"a plain gray square on a white background","path":".temp/__virtual_sim__.mp4"}"#,
     ),
     // 目标工具：普通调用给一份可忽略的目标（轮次上限=1，不会持续驱动）。
-    ("get_goal", r#"{}"#),
     (
-        "create_goal",
-        r#"{"objective":"（模拟）示例目标，可忽略。","max_goal_rounds":1}"#,
-    ),
-    (
-        "update_goal",
-        r#"{"goal_id":"__virtual_sim__","revision":1,"action":"complete"}"#,
+        "goal",
+        r#"{"action":"create","objective":"（模拟）示例目标，可忽略。","max_goal_rounds":1}"#,
     ),
     // 子智能体：普通调用固定为只读 list；真实派生仍走专用入口。
     ("子智能体控制", r#"{"action":"list","limit":5}"#),
@@ -216,9 +211,9 @@ fn fixed_arguments(canonical: &str, raw: &str) -> Option<Value> {
         .and_then(|(_, args)| serde_json::from_str(args).ok())
 }
 
-/// 请求中提供的 `create_goal` 工具（若运行时暴露了它）。
+/// 请求中提供的 `goal` 工具（若运行时暴露了它）。
 ///
-/// `create_goal` 虽已进入普通随机池（其普通调用走 [`FIXED_ARGS`] 的固定参数），但目标
+/// `goal` 虽已进入普通随机池（其普通调用走 [`FIXED_ARGS`] 的固定参数），但目标
 /// 编排是运行时级能力，需要携带完整 schema 与可控轮次上限（见 [`goal_create_arguments`]），
 /// 故这里单独取出来供目标入口使用，并沿用模型实际看到的工具名（可能是本地化别名），
 /// 确保 tool_call 能通过在册校验。
@@ -230,9 +225,9 @@ pub(super) fn goal_entry_candidate(tools: Option<&[Value]>) -> Option<(String, V
             .or_else(|| tool.get("name"))
             .and_then(Value::as_str)?;
         let canonical = crate::tools::resolve_tool_name(name);
-        let is_create_goal = canonical.trim() == crate::services::goal::TOOL_CREATE_GOAL
-            || name.trim() == crate::services::goal::TOOL_CREATE_GOAL;
-        if !is_create_goal {
+        let is_goal = canonical.trim() == crate::services::goal::TOOL_GOAL
+            || name.trim() == crate::services::goal::TOOL_GOAL;
+        if !is_goal {
             return None;
         }
         let schema = tool
@@ -411,19 +406,18 @@ pub(super) fn rounds_with_forced_subagent(planned: usize) -> usize {
     planned.max(MIN_ROUNDS_WITH_FORCED_SUBAGENT)
 }
 
-/// 构造 `create_goal` 的合法参数：必需 objective + 一个把轮次上限顶到天花板的
+/// 构造 `goal action=create` 的合法参数：必需 objective + 一个把轮次上限顶到天花板的
 /// `max_goal_rounds`，从而实现“被目标持续驱动直到人工停止”。
-fn goal_create_arguments(schema: &Value, rng: &mut u64) -> Value {
-    let mut arguments = Map::new();
-    arguments.insert("objective".to_string(), json!(pick(GOAL_OBJECTIVES, rng)));
-    let declares_limit = schema
-        .get("properties")
-        .and_then(|properties| properties.get("max_goal_rounds"))
-        .is_some();
-    if declares_limit {
-        arguments.insert("max_goal_rounds".to_string(), json!(GOAL_MAX_ROUNDS));
-    }
-    Value::Object(arguments)
+fn goal_create_arguments(_schema: &Value, rng: &mut u64) -> Value {
+    // `goal` uses a strict action union, so the create fields live in its create
+    // branch instead of root-level properties. This simulator only reaches this
+    // function after selecting the runtime-owned goal tool; always emit its
+    // valid create payload rather than attempting a lossy generic schema walk.
+    json!({
+        "action": "create",
+        "objective": pick(GOAL_OBJECTIVES, rng),
+        "max_goal_rounds": GOAL_MAX_ROUNDS,
+    })
 }
 
 /// 同一 (session, user_round) 的计划轮次数：1-100 均匀分布，跨模型轮次稳定。
@@ -984,18 +978,18 @@ mod tests {
     }
 
     #[test]
-    fn goal_candidate_matches_localized_create_goal() {
+    fn goal_candidate_matches_goal_tool() {
         let tools = vec![
             json!({"type":"function","function":{"name":"读取文件","parameters":json!({"type":"object"})}}),
-            json!({"type":"function","function":{"name":"create_goal","parameters":json!({"type":"object","required":["objective"],"properties":{"objective":{"type":"string"}}})}}),
+            json!({"type":"function","function":{"name":"goal","parameters":json!({"type":"object","oneOf":[{"required":["action","objective"],"properties":{"action":{"const":"create"},"objective":{"type":"string"}}}]})}}),
         ];
-        let candidate = goal_entry_candidate(Some(&tools)).expect("create_goal is offered");
-        assert_eq!(candidate.0, "create_goal");
+        let candidate = goal_entry_candidate(Some(&tools)).expect("goal is offered");
+        assert_eq!(candidate.0, "goal");
         assert!(goal_entry_candidate(None).is_none());
-        // create_goal 已进入随机池（其普通调用由 FIXED_ARGS 固定），入口仍单独提供完整 schema。
+        // goal 已进入随机池（其普通调用由 FIXED_ARGS 固定），入口仍单独提供完整 schema。
         assert!(tool_summaries(Some(&tools))
             .iter()
-            .any(|(name, _)| name == "create_goal"));
+            .any(|(name, _)| name == "goal"));
     }
 
     #[test]
@@ -1005,11 +999,12 @@ mod tests {
             json!({"type":"object","required":["path"],"properties":{"path":{"type":"string"}}}),
         )];
         let goal = (
-            "create_goal".to_string(),
-            json!({"type":"object","required":["objective"],"properties":{
+            "goal".to_string(),
+            json!({"type":"object","oneOf":[{"required":["action","objective"],"properties":{
+                "action":{"const":"create"},
                 "objective":{"type":"string"},
                 "max_goal_rounds":{"type":"integer"}
-            }}),
+            }}]}),
         );
         let mut opened = 0;
         for round in 1..=24 {
@@ -1020,10 +1015,11 @@ mod tests {
                 .as_ref()
                 .and_then(Value::as_array)
                 .expect("calls");
-            assert!(later_calls.iter().all(|call| call
-                .pointer("/function/name")
-                .and_then(Value::as_str)
-                != Some("create_goal")));
+            assert!(later_calls
+                .iter()
+                .all(
+                    |call| call.pointer("/function/name").and_then(Value::as_str) != Some("goal")
+                ));
             // The first model round may open a goal, and only deterministically.
             let first = build_turn("session-a", round, 1, 40, &candidates, Some(&goal), None);
             let again = build_turn("session-a", round, 1, 40, &candidates, Some(&goal), None);
@@ -1037,9 +1033,10 @@ mod tests {
                 .and_then(Value::as_array)
                 .expect("calls");
             assert!(calls.len() <= MAX_CALLS_PER_ROUND);
-            if let Some(call) = calls.iter().find(|call| {
-                call.pointer("/function/name").and_then(Value::as_str) == Some("create_goal")
-            }) {
+            if let Some(call) = calls
+                .iter()
+                .find(|call| call.pointer("/function/name").and_then(Value::as_str) == Some("goal"))
+            {
                 opened += 1;
                 let args: Value = serde_json::from_str(
                     call.pointer("/function/arguments")
@@ -1047,6 +1044,7 @@ mod tests {
                         .expect("args"),
                 )
                 .expect("goal arguments are json");
+                assert_eq!(args.get("action").and_then(Value::as_str), Some("create"));
                 assert!(args.get("objective").and_then(Value::as_str).is_some());
                 assert_eq!(
                     args.get("max_goal_rounds").and_then(Value::as_i64),
@@ -1066,10 +1064,9 @@ mod tests {
             .as_ref()
             .and_then(Value::as_array)
             .expect("calls");
-        assert!(blocked_calls.iter().all(|call| call
-            .pointer("/function/name")
-            .and_then(Value::as_str)
-            != Some("create_goal")));
+        assert!(blocked_calls
+            .iter()
+            .all(|call| call.pointer("/function/name").and_then(Value::as_str) != Some("goal")));
     }
 
     #[test]

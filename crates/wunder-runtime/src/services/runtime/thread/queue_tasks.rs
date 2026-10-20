@@ -588,20 +588,16 @@ mod tests {
             queue_ids(&list_items(&state, "user-a", "session-a").await),
             vec!["task-b", "task-a"]
         );
-        assert!(
-            runtime
-                .try_acquire_start_lease("session-a", "fixture-execution")
-                .await
-                .is_none()
-        );
+        assert!(runtime
+            .try_acquire_start_lease("session-a", "fixture-execution")
+            .await
+            .is_none());
         drop(lease);
         assert!(!runtime.execution_interrupted("session-a"));
-        assert!(
-            runtime
-                .try_acquire_start_lease("session-a", "fixture-execution")
-                .await
-                .is_some()
-        );
+        assert!(runtime
+            .try_acquire_start_lease("session-a", "fixture-execution")
+            .await
+            .is_some());
     }
 
     #[tokio::test]
@@ -640,22 +636,18 @@ mod tests {
             100.0,
             json!({}),
         );
-        assert!(
-            state
-                .kernel
-                .thread_runtime
-                .prioritize_queued_task("user-a", "session-a", "task-a")
-                .await
-                .is_err()
-        );
-        assert!(
-            state
-                .kernel
-                .thread_runtime
-                .cancel_queued_task("user-a", "session-a", "task-a")
-                .await
-                .is_err()
-        );
+        assert!(state
+            .kernel
+            .thread_runtime
+            .prioritize_queued_task("user-a", "session-a", "task-a")
+            .await
+            .is_err());
+        assert!(state
+            .kernel
+            .thread_runtime
+            .cancel_queued_task("user-a", "session-a", "task-a")
+            .await
+            .is_err());
         assert!(list_items(&state, "user-a", "session-a").await.is_empty());
     }
 

@@ -553,6 +553,16 @@ const OBSERVATION_LIST_TOKEN_BUDGET: i64 = 2_000;
 const OBSERVATION_COMMAND_TOKEN_BUDGET: i64 = 4_000;
 const OBSERVATION_DOCUMENT_TOKEN_BUDGET: i64 = 6_000;
 const OBSERVATION_DEFAULT_TOKEN_BUDGET: i64 = 4_000;
+// Packaged MCP calls are provider-owned and may contain arbitrary JSON or
+// base64 content blocks. Keep their model projection small before the generic
+// observation budget runs; audit/event payloads still retain the raw result.
+const MCP_RESULT_MAX_CHARS: usize = 12_000;
+const MCP_RESULT_MAX_STRING_CHARS: usize = 1_200;
+const MCP_RESULT_MAX_OBJECT_FIELDS: usize = 24;
+const MCP_RESULT_MAX_ARRAY_ITEMS: usize = 12;
+const MCP_RESULT_MAX_DEPTH: usize = 4;
+const MCP_RESULT_MAX_CONTENT_BLOCKS: usize = 8;
+const MCP_RESULT_MAX_TEXT_CHARS: usize = 4_000;
 pub(super) const OBSERVATION_TURN_TARGET_TOKENS: i64 = 8_000;
 pub(super) const OBSERVATION_TURN_MAX_TOKENS: i64 = 12_000;
 const OBSERVATION_READ_FILE_LIMIT: usize = 8;
@@ -585,32 +595,18 @@ const CONTINUATION_NESTED_KEYS: [&str; 7] = [
 pub(super) fn default_observation_token_budget(tool_name: &str) -> i64 {
     let canonical = crate::services::tools::resolve_tool_name(tool_name);
     match canonical.as_str() {
-        "自身状态"
-        | "自我状态"
-        | "self_status"
-        | "browser_interact"
-        | "browser_wait"
-        | "browser_navigate"
-        | "browser_navigate_back"
-        | "写入文件"
-        | "write_file"
-        | "apply_patch"
-        | "应用补丁"
-        | "编辑"
-        | "文本编辑" => OBSERVATION_STATUS_TOKEN_BUDGET,
-        "列出文件" | "list_files" | "文件名匹配" | "glob" | "搜索内容" | "search_content"
-        | "browser_tabs" => OBSERVATION_LIST_TOKEN_BUDGET,
+        // Browser action is selected at runtime from the structured response.
+        // Use the document cap as the safe default before that response exists.
+        "browser" => OBSERVATION_DOCUMENT_TOKEN_BUDGET,
+        "自身状态" | "自我状态" | "self_status" | "写入文件" | "write_file" | "apply_patch"
+        | "应用补丁" | "编辑" | "文本编辑" => OBSERVATION_STATUS_TOKEN_BUDGET,
+        "列出文件" | "list_files" | "文件名匹配" | "glob" | "搜索内容" | "search_content" => {
+            OBSERVATION_LIST_TOKEN_BUDGET
+        }
         "执行命令" | "execute_command" => OBSERVATION_COMMAND_TOKEN_BUDGET,
-        "读取文件"
-        | "read_file"
-        | "技能调用"
-        | "skill_call"
-        | "skill_get"
-        | "browser_observe"
-        | "browser_snapshot"
-        | "browser_read_page"
-        | "browser_take_screenshot"
-        | "browser_batch" => OBSERVATION_DOCUMENT_TOKEN_BUDGET,
+        "读取文件" | "read_file" | "技能调用" | "skill_call" | "skill_get" => {
+            OBSERVATION_DOCUMENT_TOKEN_BUDGET
+        }
         _ => OBSERVATION_DEFAULT_TOKEN_BUDGET,
     }
 }
@@ -989,6 +985,14 @@ fn compact_observation_payload(payload: &mut Value, tool_name: &str) {
     }
     let canonical = crate::services::tools::resolve_tool_name(tool_name);
     let projected_success = compact_success_observation_payload(map, canonical.as_str());
+    // The MCP projection deliberately keeps a small identity envelope around
+    // the remote result. Generic structured-content extraction would replace
+    // that envelope with `structured_content` and drop the server/tool
+    // identity needed for the next call, so leave the bounded projection in
+    // place and let the later token-budget pass trim it if necessary.
+    if projected_success && canonical.ends_with("@__mcp_pack__") {
+        return;
+    }
     let keep_path_in_data = matches!(canonical.as_str(), "写入文件" | "write_file");
     if !projected_success
         && matches!(
@@ -1148,22 +1152,10 @@ fn compact_success_observation_payload(map: &mut Map<String, Value>, tool_name: 
 
 fn project_success_observation_data(tool_name: &str, data: &Value) -> Option<Value> {
     match tool_name {
-        "browser_navigate" | "browser_navigate_back" => project_browser_navigation(data),
-        "browser_tabs" => project_browser_tabs(data),
-        "browser_observe"
-        | "browser_snapshot"
-        | "browser_read_page"
-        | "browser_take_screenshot" => project_browser_observation(data),
-        "browser_interact"
-        | "browser_click"
-        | "browser_type"
-        | "browser_select_option"
-        | "browser_hover"
-        | "browser_press_key"
-        | "browser_drag"
-        | "browser_evaluate" => project_browser_interaction(data, tool_name),
-        "browser_wait" | "browser_wait_for" => project_browser_wait(data),
-        "browser_batch" => project_browser_batch(data),
+        "browser" => project_browser_action(data),
+        name if name.ends_with("@__mcp_pack__") => project_mcp_pack_success(data),
+        "定时任务" | "schedule_task" => project_schedule_task_success(data),
+        "记忆管理" | "memory_manager" | "memory_manage" => project_memory_manager_success(data),
         "自身状态" | "自我状态" | "self_status" => project_self_status(data),
         "桌面控制" | "desktop_control" => project_desktop_control(data),
         "执行命令" | "execute_command" => project_command_success(data),
@@ -1172,6 +1164,297 @@ fn project_success_observation_data(tool_name: &str, data: &Value) -> Option<Val
         }
         "列出文件" | "list_files" => project_list_files_success(data),
         "文件名匹配" | "glob" => project_glob_success(data),
+        _ => None,
+    }
+}
+
+fn project_schedule_task_success(data: &Value) -> Option<Value> {
+    let map = data.as_object()?;
+    let mut output = pick_non_empty_fields(
+        map,
+        &[
+            "action",
+            "removed",
+            "queued",
+            "deduped",
+            "running",
+            "resolved_session_id",
+            "delivery_session_id",
+            "last_status",
+            "last_error",
+            "reason",
+        ],
+    );
+    if let Some(job) = map.get("job") {
+        output.insert("job".to_string(), compact_schedule_job(job));
+    }
+    if let Some(jobs) = map.get("jobs").and_then(Value::as_array) {
+        output.insert(
+            "jobs".to_string(),
+            Value::Array(jobs.iter().map(compact_schedule_job).collect()),
+        );
+    }
+    if let Some(counts) = map.get("user_jobs").and_then(Value::as_object) {
+        output.insert(
+            "user_jobs".to_string(),
+            Value::Object(pick_non_empty_fields(
+                counts,
+                &["total", "enabled", "running", "next_run_at_text"],
+            )),
+        );
+    }
+    Some(Value::Object(output))
+}
+
+fn compact_schedule_job(job: &Value) -> Value {
+    let map = job.as_object();
+    json!({
+        "job_id": map.and_then(|m| m.get("job_id")).cloned().unwrap_or(Value::Null),
+        "name": map.and_then(|m| m.get("name")).cloned().unwrap_or(Value::Null),
+        "enabled": map.and_then(|m| m.get("enabled")).cloned().unwrap_or(Value::Null),
+        "running": map.and_then(|m| m.get("running")).cloned().unwrap_or(Value::Null),
+        "schedule": map.and_then(|m| m.get("schedule")).cloned().unwrap_or(Value::Null),
+        "next_run_at": map.and_then(|m| m.get("next_run_at_text").or_else(|| m.get("next_run_at"))).cloned().unwrap_or(Value::Null),
+        "last_status": map.and_then(|m| m.get("last_status")).cloned().unwrap_or(Value::Null),
+        "last_error": map.and_then(|m| m.get("last_error")).cloned().unwrap_or(Value::Null)
+    })
+}
+
+fn project_memory_manager_success(data: &Value) -> Option<Value> {
+    let map = data.as_object()?;
+    let mut output = pick_non_empty_fields(
+        map,
+        &[
+            "action",
+            "memory_id",
+            "saved",
+            "updated",
+            "deleted",
+            "query",
+            "count",
+        ],
+    );
+    if let Some(item) = map.get("item") {
+        output.insert("item".to_string(), item.clone());
+    }
+    if let Some(items) = map.get("items").and_then(Value::as_array) {
+        output.insert(
+            "items".to_string(),
+            Value::Array(items.iter().take(30).cloned().collect()),
+        );
+    }
+    Some(Value::Object(output))
+}
+
+/// Reduce a packaged MCP call to a bounded, content-only model result.
+///
+/// MCP providers are allowed to return arbitrary structured JSON and content
+/// blocks (including base64 blobs). Those values remain available in the
+/// event/audit payload, while the model receives only stable identity,
+/// status, short text, safe resource metadata and a bounded structured
+/// preview.
+fn project_mcp_pack_success(data: &Value) -> Option<Value> {
+    let map = data.as_object()?;
+    // `ToolResultPayload::from_value` unwraps the outer `{ok,data}` envelope,
+    // so packaged MCP's call payload is already the `{server,tool,result}`
+    // object here. List/get payloads do not contain `result` and are left to
+    // their existing bounded package projection.
+    let payload = map.get("data").and_then(Value::as_object).unwrap_or(map);
+    let result = payload.get("result")?;
+    let mut projected = Map::new();
+    copy_field_value(&mut projected, "server", payload.get("server"));
+    copy_field_value(&mut projected, "tool", payload.get("tool"));
+    if let Some(result_map) = result.as_object() {
+        if let Some(is_error) = result_map.get("is_error").and_then(Value::as_bool) {
+            projected.insert("remote_error".to_string(), Value::Bool(is_error));
+        }
+        if let Some(content) = result_map.get("content").and_then(Value::as_array) {
+            let mut blocks = content
+                .iter()
+                .take(MCP_RESULT_MAX_CONTENT_BLOCKS)
+                .filter_map(project_mcp_content_block)
+                .collect::<Vec<_>>();
+            if content.len() > MCP_RESULT_MAX_CONTENT_BLOCKS {
+                blocks.push(json!({
+                    "__truncated": true,
+                    "omitted_items": content.len() - MCP_RESULT_MAX_CONTENT_BLOCKS
+                }));
+            }
+            if !blocks.is_empty() {
+                projected.insert("content".to_string(), Value::Array(blocks));
+            }
+        }
+        if let Some(structured) = result_map
+            .get("structured_content")
+            .filter(|value| !value.is_null())
+        {
+            projected.insert(
+                "structured_content".to_string(),
+                bound_mcp_value(structured, 0),
+            );
+        }
+    } else if !result.is_null() {
+        projected.insert("result".to_string(), bound_mcp_value(result, 0));
+    }
+    if projected.is_empty() {
+        return Some(Value::Object(projected));
+    }
+    let output = Value::Object(projected);
+    if estimate_tool_result_chars(&output) <= MCP_RESULT_MAX_CHARS {
+        Some(output)
+    } else {
+        let serialized = serde_json::to_string(&output).unwrap_or_default();
+        Some(json!({
+            "server": output.get("server").cloned().unwrap_or(Value::Null),
+            "tool": output.get("tool").cloned().unwrap_or(Value::Null),
+            "truncated": true,
+            "original_chars": serialized.chars().count(),
+            "preview": truncate_tool_result_string_to_budget(
+                &serialized,
+                MCP_RESULT_MAX_CHARS.saturating_sub(96),
+                TOOL_RESULT_TRUNCATION_MARKER,
+            )
+        }))
+    }
+}
+
+fn copy_field_value(target: &mut Map<String, Value>, key: &str, value: Option<&Value>) {
+    if let Some(value) = value.filter(|value| !value.is_null() && !is_empty_string(value)) {
+        target.insert(key.to_string(), value.clone());
+    }
+}
+
+fn project_mcp_content_block(value: &Value) -> Option<Value> {
+    let map = value.as_object()?;
+    let block_type = map.get("type").and_then(Value::as_str).unwrap_or("unknown");
+    let mut projected = Map::new();
+    projected.insert("type".to_string(), Value::String(block_type.to_string()));
+    match block_type {
+        "text" => {
+            let text = map.get("text").and_then(Value::as_str).unwrap_or("");
+            if !text.is_empty() {
+                projected.insert(
+                    "text".to_string(),
+                    Value::String(truncate_tool_result_string(
+                        text,
+                        MCP_RESULT_MAX_TEXT_CHARS / 2,
+                        MCP_RESULT_MAX_TEXT_CHARS / 2,
+                        TOOL_RESULT_TRUNCATION_MARKER,
+                    )),
+                );
+            }
+        }
+        "image" | "audio" | "resource" | "resource_link" => {
+            // Never pass provider data/blob/base64 fields through to the model.
+            for key in ["uri", "mimeType", "mime_type", "name", "title", "size"] {
+                copy_field_value(&mut projected, key, map.get(key));
+            }
+            if let Some(resource) = map.get("resource").and_then(Value::as_object) {
+                for key in ["uri", "mimeType", "mime_type", "name"] {
+                    copy_field_value(&mut projected, key, resource.get(key));
+                }
+            }
+        }
+        _ => {
+            // Preserve a short diagnostic for an extension block without
+            // copying arbitrary provider fields.
+            if let Some(text) = map.get("text").and_then(Value::as_str) {
+                projected.insert(
+                    "text".to_string(),
+                    Value::String(truncate_tool_result_string(
+                        text,
+                        MCP_RESULT_MAX_STRING_CHARS,
+                        0,
+                        TOOL_RESULT_TRUNCATION_MARKER,
+                    )),
+                );
+            }
+        }
+    }
+    Some(Value::Object(projected))
+}
+
+fn bound_mcp_value(value: &Value, depth: usize) -> Value {
+    if depth >= MCP_RESULT_MAX_DEPTH {
+        return if value.is_object() || value.is_array() {
+            json!({"__truncated": true})
+        } else {
+            value.clone()
+        };
+    }
+    match value {
+        Value::String(text) => Value::String(truncate_tool_result_string(
+            text,
+            MCP_RESULT_MAX_STRING_CHARS,
+            0,
+            TOOL_RESULT_TRUNCATION_MARKER,
+        )),
+        Value::Array(items) => {
+            let mut bounded = items
+                .iter()
+                .take(MCP_RESULT_MAX_ARRAY_ITEMS)
+                .map(|item| bound_mcp_value(item, depth + 1))
+                .collect::<Vec<_>>();
+            if items.len() > MCP_RESULT_MAX_ARRAY_ITEMS {
+                bounded.push(json!({
+                    "__truncated": true,
+                    "omitted_items": items.len() - MCP_RESULT_MAX_ARRAY_ITEMS
+                }));
+            }
+            Value::Array(bounded)
+        }
+        Value::Object(map) => {
+            let mut bounded = Map::new();
+            for (key, child) in map.iter().take(MCP_RESULT_MAX_OBJECT_FIELDS) {
+                if is_mcp_raw_or_sensitive_key(key) {
+                    continue;
+                }
+                bounded.insert(key.clone(), bound_mcp_value(child, depth + 1));
+            }
+            if map.len() > MCP_RESULT_MAX_OBJECT_FIELDS {
+                bounded.insert("__truncated".to_string(), Value::Bool(true));
+                bounded.insert(
+                    "omitted_fields".to_string(),
+                    json!(map.len() - MCP_RESULT_MAX_OBJECT_FIELDS),
+                );
+            }
+            Value::Object(bounded)
+        }
+        _ => value.clone(),
+    }
+}
+
+fn is_mcp_raw_or_sensitive_key(key: &str) -> bool {
+    matches!(
+        key.to_ascii_lowercase().as_str(),
+        "data"
+            | "blob"
+            | "base64"
+            | "bytes_data"
+            | "authorization"
+            | "token"
+            | "access_token"
+            | "api_key"
+            | "secret"
+            | "password"
+            | "cookie"
+            | "set_cookie"
+    )
+}
+
+fn project_browser_action(data: &Value) -> Option<Value> {
+    match data.get("action").and_then(Value::as_str) {
+        Some("navigate") | Some("back") => project_browser_navigation(data),
+        Some("tabs_list") | Some("tabs_new") | Some("tabs_select") | Some("tabs_close") => {
+            project_browser_tabs(data)
+        }
+        Some("observe_refs") | Some("observe_text") | Some("screenshot") => {
+            project_browser_observation(data)
+        }
+        Some("click") | Some("type") | Some("hover") | Some("select") | Some("drag")
+        | Some("press") => project_browser_interaction(data),
+        Some("wait") => project_browser_wait(data),
+        Some("batch") => project_browser_batch(data),
         _ => None,
     }
 }
@@ -1248,7 +1531,7 @@ fn project_browser_observation(data: &Value) -> Option<Value> {
     Some(Value::Object(projected))
 }
 
-fn project_browser_interaction(data: &Value, tool_name: &str) -> Option<Value> {
+fn project_browser_interaction(data: &Value) -> Option<Value> {
     let map = data.as_object()?;
     let mut projected = pick_non_empty_fields(
         map,
@@ -1269,33 +1552,15 @@ fn project_browser_interaction(data: &Value, tool_name: &str) -> Option<Value> {
             .entry("target_ref".to_string())
             .or_insert(target_ref);
     }
-    if !projected.contains_key("action") {
-        if let Some(action) = legacy_browser_action(tool_name) {
-            projected.insert("action".to_string(), Value::String(action.to_string()));
-        }
-    }
     if let Some(url) = map.get("url").filter(|value| !value.is_null()) {
         projected.insert("url".to_string(), url.clone());
     }
-    if legacy_browser_action(tool_name) == Some("evaluate") {
+    if projected.get("action").and_then(Value::as_str) == Some("evaluate") {
         if let Some(result) = map.get("result").filter(|value| !value.is_null()) {
             projected.insert("result".to_string(), result.clone());
         }
     }
     Some(Value::Object(projected))
-}
-
-fn legacy_browser_action(tool_name: &str) -> Option<&'static str> {
-    match tool_name {
-        "browser_click" => Some("click"),
-        "browser_type" => Some("type"),
-        "browser_select_option" => Some("select"),
-        "browser_hover" => Some("hover"),
-        "browser_press_key" => Some("press"),
-        "browser_drag" => Some("drag"),
-        "browser_evaluate" => Some("evaluate"),
-        _ => None,
-    }
 }
 
 fn project_browser_wait(data: &Value) -> Option<Value> {
@@ -1344,7 +1609,12 @@ fn project_desktop_control(data: &Value) -> Option<Value> {
     let map = data.as_object()?;
     let mut projected = pick_non_empty_fields(map, &["action"]);
     projected.insert("action_applied".to_string(), Value::Bool(true));
-    if let Some(artifact) = project_artifact(data) {
+    if let Some(artifact) = map
+        .get("screenshot_artifact")
+        .filter(|value| !value.is_null())
+        .cloned()
+        .or_else(|| project_artifact(data))
+    {
         projected.insert("screenshot_artifact".to_string(), artifact);
     }
     if projected.is_empty() {

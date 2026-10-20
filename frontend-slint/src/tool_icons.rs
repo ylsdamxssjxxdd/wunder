@@ -34,18 +34,7 @@ const TOOL_RULES: &[(&[&str], &str)] = &[
         "circle-question",
     ),
     (&["目标态", "目标工具", "goal", "goal mode"], "bullseye"),
-    (
-        &[
-            "浏览器",
-            "browser",
-            "browser_navigate",
-            "browser_click",
-            "browser_type",
-            "browser_screenshot",
-            "browser_read_page",
-        ],
-        "window-maximize",
-    ),
+    (&["浏览器", "browser"], "window-maximize"),
     (&["技能调用", "skill_call", "skill_get"], "book-open"),
     (&["智能体蜂群", "agent_swarm", "swarm_control"], "bee"),
     (&["子智能体控制", "subagent_control"], "diagram-project"),
@@ -273,17 +262,6 @@ const ABILITY_RULES: &[(&[&str], &str, &str)] = &[
         &["question_panel", "ask_panel", "question panel", "问询面板"],
         "circle-question",
         "general",
-    ),
-    (
-        &[
-            "browser_navigate",
-            "browser_click",
-            "browser_type",
-            "browser_screenshot",
-            "browser_read_page",
-        ],
-        "window-maximize",
-        "search",
     ),
     (&["browser", "浏览器"], "window-maximize", "search"),
     (

@@ -398,8 +398,9 @@ impl GoalService {
         user_id: &str,
         session_id: &str,
         reference: &GoalRef,
-        reason: GoalBlockReason,
+        mut reason: GoalBlockReason,
     ) -> Result<GoalView> {
+        reason.message = validate_blocked_reason(&reason.message)?;
         let mut record = self
             .require_current(&storage, user_id, session_id, reference)
             .await?;
@@ -520,14 +521,14 @@ impl GoalService {
         };
         if record.goal_id != reference.goal_id {
             return Err(goal_error(
-                "goal id does not match the current session goal; read get_goal again",
+                "goal id does not match the current session goal; call goal with action=get again",
                 ERR_GOAL_NOT_FOUND,
             )
             .into());
         }
         if record.revision != reference.revision {
             return Err(goal_error(
-                "goal revision changed since it was read; read get_goal and retry",
+                "goal revision changed since it was read; call goal with action=get and retry",
                 ERR_GOAL_STALE_REVISION,
             )
             .into());
@@ -546,7 +547,7 @@ impl GoalService {
             .await?
         {
             return Err(goal_error(
-                "goal changed concurrently; read get_goal and retry",
+                "goal changed concurrently; call goal with action=get and retry",
                 ERR_GOAL_STALE_REVISION,
             )
             .into());
@@ -581,6 +582,19 @@ pub fn validate_objective(objective: impl AsRef<str>) -> Result<String> {
     Ok(cleaned.to_string())
 }
 
+/// Validate a model- or runtime-reported concrete blocker before it is
+/// persisted or rendered back into model context.
+pub(super) fn validate_blocked_reason(reason: impl AsRef<str>) -> Result<String> {
+    let cleaned = reason.as_ref().trim();
+    if cleaned.is_empty() {
+        return Err(goal_error("blocked reason is required", ERR_GOAL_INVALID_BLOCK_REASON).into());
+    }
+    if cleaned.chars().count() > MAX_BLOCK_REASON_CHARS {
+        return Err(goal_error("blocked reason is too long", ERR_GOAL_INVALID_BLOCK_REASON).into());
+    }
+    Ok(cleaned.to_string())
+}
+
 fn resolve_max_goal_rounds(max_goal_rounds: Option<i64>) -> Result<i64> {
     let resolved = max_goal_rounds.unwrap_or(DEFAULT_MAX_GOAL_ROUNDS);
     if resolved < 1 || resolved > 10_000 {
@@ -610,25 +624,21 @@ pub fn goal_payload(view: &GoalView) -> Value {
     })
 }
 
-/// Exact deepseek-style compact tool output: `{goal: null}` or the goal value
-/// plus the activation string.
+/// Compact model-facing goal result. Durable details stay in the API/event
+/// projection and the goal-round prompt; the model only needs a CAS reference
+/// and the continuation state for its next tool action.
 pub fn goal_tool_value(view: &GoalView) -> Value {
-    let mut goal = json!({
-        "id": view.record.goal_id,
-        "revision": view.record.revision,
-        "objective": view.record.objective,
-        "phase": view.record.phase,
-        "roundsStarted": view.record.rounds_started,
-        "maxGoalRounds": view.record.max_goal_rounds,
-    });
-    if view.phase() == GoalPhase::Blocked {
-        if let Some(reason) = view.blocked_reason() {
-            goal["blockedReason"] = json!({"code": reason.code, "message": reason.message});
-        }
-    }
+    let remaining_rounds = view
+        .record
+        .max_goal_rounds
+        .saturating_sub(view.record.rounds_started);
     json!({
-        "goal": goal,
-        "activation": view.activation.as_str(),
+        "goal": {
+            "id": view.record.goal_id,
+            "revision": view.record.revision,
+            "phase": view.record.phase,
+            "remainingRounds": remaining_rounds,
+        }
     })
 }
 

@@ -18,16 +18,10 @@ pub fn authorized_profile_revision(allowed: &HashSet<String>) -> String {
 
 const DEFAULT_SKILL_NAMES: &[&str] = &["技能创建器"];
 
-/// 桌面端不对智能体开放选择的内置工具：goal 三件套由运行时按会话自动注入，
+/// 桌面端不对智能体开放选择的内置工具：goal 由运行时按会话自动注入，
 /// 其余为会话调度等系统级内部工具。桌面模式的
 /// 内置工具集合以此过滤，保持与网页版"管理员未开放即不展示"的语义一致。
-const DESKTOP_HIDDEN_TOOL_NAMES: &[&str] = &[
-    "get_goal",
-    "create_goal",
-    "update_goal",
-    "会话线程控制",
-    "会话让出",
-];
+const DESKTOP_HIDDEN_TOOL_NAMES: &[&str] = &["goal", "会话线程控制", "会话让出"];
 
 /// 默认选择直接来自内置工具目录；浏览器成员统一投影为可选择的聚合项。
 pub fn default_tool_candidates() -> Vec<String> {
@@ -201,7 +195,7 @@ mod tests {
                 "sample_skill",
                 "sample_knowledge",
                 "ptc",
-                "get_goal",
+                "goal",
             ]
             .into_iter()
             .map(str::to_string),
@@ -224,7 +218,7 @@ mod tests {
             "sample_skill",
             "sample_knowledge",
             "ptc",
-            "get_goal",
+            "goal",
         ] {
             assert!(!selected.iter().any(|selected| selected == name));
         }
@@ -232,14 +226,14 @@ mod tests {
 
     #[test]
     fn defaults_resolve_aliases_and_preserve_partial_browser_permissions() {
-        let allowed = ["edit", "update_plan", "question_panel", "browser_navigate"]
+        let allowed = ["edit", "update_plan", "question_panel", "browser"]
             .into_iter()
             .map(str::to_string)
             .collect();
         let selected = default_tool_names(&allowed);
         assert_eq!(
             selected.into_iter().collect::<HashSet<_>>(),
-            ["文本编辑", "计划面板", "问询面板", "browser_navigate"]
+            ["文本编辑", "计划面板", "问询面板", "browser"]
                 .into_iter()
                 .map(str::to_string)
                 .collect()
@@ -263,7 +257,7 @@ mod tests {
                     "{mode}: missing {name}"
                 );
             }
-            assert!(selected.iter().all(|name| !name.starts_with("browser_")));
+            assert!(!selected.iter().any(|name| name == "browser_navigate"));
             config.tools.browser.enabled = false;
             let allowed = crate::tools::collect_available_tool_names(&config, &skills, None);
             assert!(!default_tool_names(&allowed)

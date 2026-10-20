@@ -1,7 +1,7 @@
 //! Same-session goal domain, a full replication of the deepseek goal
 //! subsystem: durable snapshots with CAS-on-revision, phase lifecycle
-//! `active|paused|blocked|complete`, process-local activation, three
-//! model-facing tools with execution-time authority, an idle-driven
+//! `active|paused|blocked|complete`, process-local activation, one action-based
+//! model-facing tool with execution-time authority, an idle-driven
 //! round driver with per-session round caps, and the `/goal` command face.
 
 pub mod authority;
@@ -23,10 +23,7 @@ pub use driver::{GoalDriverHost, TurnEndOutcome};
 pub use service::{
     goal_payload, goal_tool_value, goal_tool_value_none, validate_objective, GoalService,
 };
-pub use tools::{
-    execute_goal_tool, goal_tool_specs, is_goal_tool_name, read_wrapup, TOOL_CREATE_GOAL,
-    TOOL_GET_GOAL, TOOL_UPDATE_GOAL,
-};
+pub use tools::{execute_goal_tool, goal_tool_specs, is_goal_tool_name, read_wrapup, TOOL_GOAL};
 pub use types::{
     GoalActivation, GoalBlockReason, GoalPhase, GoalRef, GoalRoundTag, GoalView,
     BLOCKED_AFTER_CONSECUTIVE_ROUNDS, DEFAULT_MAX_GOAL_ROUNDS, ERR_GOAL_ALREADY_EXISTS,

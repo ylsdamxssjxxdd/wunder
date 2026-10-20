@@ -23,7 +23,7 @@ Canonical tool names the model sees are mostly Chinese, each paired with an Engl
 | 命令会话 | `command_session` | 管理后台长驻命令会话，支持前后台切换 | 工作区与代码 |
 | 技能调用 | `skill_call` | 读取技能正文并执行技能脚本 | 工作区与代码 |
 | 网页抓取 | `web_fetch` | 抓取并解析网页正文（需启用配置） | Web |
-| 浏览器 | `browser` | 聚合展示名；底层为 17 个 `browser_*` 原生工具（点击、输入、等待、截图等） | Web |
+| 浏览器 | `browser` | 单一严格 action 工具，覆盖导航、观察、交互、等待与截图 | Web |
 | 读图工具 | `read_image` | 读取图片内容供模型理解（需 vision 能力） | 多模态 |
 | 图像生成 | `generate_image` | 按提示词生成图片 | 多模态 |
 | 视频生成 | `generate_video` | 按提示词生成视频 | 多模态 |
@@ -35,7 +35,7 @@ Canonical tool names the model sees are mostly Chinese, each paired with an Engl
 | 自我状态 | `self_status` | 查询智能体自身的运行状态 | 系统与记忆 |
 | 记忆管理 | `memory_manager` | 读写长期记忆 | 系统与记忆 |
 | 定时任务 | `schedule_task` | 创建与管理定时 / 周期任务 | 系统与记忆 |
-| get_goal / create_goal / update_goal | — | 目标态三件套，由运行时按会话自动注入，不对桌面端开放选择 | 目标态 |
+| `goal` | `action=get|create|edit|pause|resume|complete|blocked` | Goal-state tool, auto-injected per session by the runtime; not selectable on desktop | 目标态 |
 
 `网页搜索` and `ptc` are retained in code but currently **temporarily delisted** — invisible to the model and to the user (see `default_tool_profile.rs`); they are not removed. Removed entirely: channel tools, user-world tools, `a2a_*` tools, `final_response`, `a2ui`, LSP query tools.
 
@@ -66,7 +66,7 @@ Canonical tool names the model sees are mostly Chinese, each paired with an Engl
 | Desktop | Desktop control: [Desktop Control](/docs/en/tools/desktop-control/) |
 | Threads and subagents | Subagent control: [Subagent Control](/docs/en/tools/subagent-control/); thread control: [Thread Control](/docs/en/tools/thread-control/) |
 | System and memory | Self status: [Self Status](/docs/en/tools/self-status/); memory manager: [Memory Manager](/docs/en/tools/memory-manager/); schedule task: [Schedule Task](/docs/en/tools/schedule-task/) |
-| Goal state | `get_goal` / `create_goal` / `update_goal` are injected by the runtime per session, and not offered for selection on the desktop endpoint |
+| Goal state | `goal` (`action=get|create|edit|pause|resume|complete|blocked`) is injected by the runtime per session and is not offered for selection on the desktop endpoint |
 
 ## Result shell
 

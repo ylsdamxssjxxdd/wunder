@@ -33,6 +33,22 @@ function Require-Path([string]$Path, [string]$Label) {
   if (-not (Test-Path -LiteralPath $Path)) { throw "$Label is missing: $Path" }
 }
 
+function Get-Sha256Hex([string]$Path) {
+  # Get-FileHash is a module cmdlet and disappears on hosts with a trimmed
+  # PSModulePath; the .NET provider is always available.
+  $stream = [IO.File]::OpenRead($Path)
+  try {
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try {
+      ($sha.ComputeHash($stream) | ForEach-Object { $_.ToString('X2') }) -join ''
+    } finally {
+      $sha.Dispose()
+    }
+  } finally {
+    $stream.Dispose()
+  }
+}
+
 function Resolve-RepoPath([string]$Path) {
   if (-not $Path) { return "" }
   if ([IO.Path]::IsPathRooted($Path)) { return [IO.Path]::GetFullPath($Path) }
@@ -91,7 +107,7 @@ function Find-Supplement([string]$Root) {
 
 function Get-ZipSupplementInfo([string]$Path) {
   Add-Type -AssemblyName System.IO.Compression.FileSystem
-  $known = @("python", "git", "rg", "ffmpeg", "browser")
+  $known = @("python", "git", "rg", "ffmpeg", "browser", "r2")
   $bytes = @{}
   $files = @{}
   foreach ($name in $known) { $bytes[$name] = [int64]0; $files[$name] = 0 }
@@ -121,7 +137,7 @@ function Get-ZipSupplementInfo([string]$Path) {
 }
 
 function Get-DirectorySupplementInfo([string]$Path) {
-  $known = @("python", "git", "rg", "ffmpeg", "browser")
+  $known = @("python", "git", "rg", "ffmpeg", "browser", "r2")
   $bytes = @{}
   $files = @{}
   foreach ($name in $known) {
@@ -151,7 +167,7 @@ function Get-MetadataVersion($Metadata, [string]$Name) {
 }
 
 function Install-SupplementStage([string]$Archive, [string]$Destination) {
-  $hash = (Get-FileHash -LiteralPath $Archive -Algorithm SHA256).Hash.ToLowerInvariant()
+  $hash = (Get-Sha256Hex $Archive).ToLowerInvariant()
   $marker = Join-Path $Destination ".wunder-pack.json"
   if (Test-Path -LiteralPath $marker -PathType Leaf) {
     try {
@@ -235,13 +251,13 @@ function Ensure-Iscc([string]$Explicit, [bool]$AllowDownload) {
   New-Item -ItemType Directory -Force -Path $toolRoot | Out-Null
   $valid = $false
   if (Test-Path -LiteralPath $archive -PathType Leaf) {
-    $valid = ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -eq $innoSha256)
+    $valid = ((Get-Sha256Hex $archive) -eq $innoSha256)
     if (-not $valid) { Remove-Item -LiteralPath $archive -Force }
   }
   if (-not $valid) {
     Write-Host "[wunder-pack] downloading $innoUrl"
     Download-File $innoUrl $archive
-    $actual = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash
+    $actual = Get-Sha256Hex $archive
     if ($actual -ne $innoSha256) { throw "Inno Setup SHA256 mismatch: expected $innoSha256, got $actual" }
   }
   $installDir = Join-Path $toolRoot "app"
@@ -317,12 +333,12 @@ if (-not $CoreOnly) {
   if ($supplementItem.PSIsContainer) {
     $supplementRoot = $supplementItem.FullName
     $info = Get-DirectorySupplementInfo $supplementRoot
-    foreach ($name in @("python", "git", "rg", "ffmpeg", "browser")) {
+    foreach ($name in @("python", "git", "rg", "ffmpeg", "browser", "r2")) {
       if (Test-Path -LiteralPath (Join-Path $supplementRoot "opt\$name") -PathType Container) { $available += $name }
     }
   } else {
     $info = Get-ZipSupplementInfo $supplementItem.FullName
-    foreach ($name in @("python", "git", "rg", "ffmpeg", "browser")) {
+    foreach ($name in @("python", "git", "rg", "ffmpeg", "browser", "r2")) {
       if ($info.Files[$name] -gt 0) { $available += $name }
     }
     if ($available.Count -eq 0) { throw "Supplement archive has no opt/<component> files: $supplementPath" }
@@ -398,7 +414,7 @@ if (-not (Test-Path -LiteralPath $installerPath -PathType Leaf)) {
   throw "Installer was not produced: $installerPath"
 }
 $installer = Get-Item -LiteralPath $installerPath
-$installerHash = (Get-FileHash -LiteralPath $installerPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$installerHash = (Get-Sha256Hex $installerPath).ToLowerInvariant()
 
 $componentManifest = @()
 foreach ($name in $available) {
@@ -432,7 +448,7 @@ foreach ($input in @(
       role = $input.Role
       file = $item.Name
       bytes = $item.Length
-      sha256 = (Get-FileHash -LiteralPath $input.Path -Algorithm SHA256).Hash.ToLowerInvariant()
+      sha256 = (Get-Sha256Hex $input.Path).ToLowerInvariant()
     }
   }
 }

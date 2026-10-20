@@ -231,6 +231,178 @@ fn localized_tool_title(name: &str, language: &str) -> Option<String> {
 
 pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> {
     let t = |key: &str| i18n::t_in_language(key, language);
+    let schedule_task_schema = || {
+        let action = |name: &str, properties: serde_json::Map<String, Value>, required: &[&str]| {
+            let mut fields = serde_json::Map::new();
+            fields.insert("action".to_string(), json!({"const": name}));
+            fields.extend(properties);
+            json!({
+                "type":"object",
+                "properties": fields,
+                "required": required.iter().map(|key| json!(key)).collect::<Vec<_>>(),
+                "additionalProperties": false
+            })
+        };
+        let string = |description: String| json!({"type":"string", "description": description});
+        let boolean = |description: String| json!({"type":"boolean", "description": description});
+        let mut id = serde_json::Map::new();
+        id.insert(
+            "job_id".to_string(),
+            string(t("tool.spec.schedule_task.args.job.job_id")),
+        );
+        let mut add = id.clone();
+        add.insert(
+            "name".to_string(),
+            string(t("tool.spec.schedule_task.args.job.name")),
+        );
+        add.insert(
+            "schedule_text".to_string(),
+            string(t("tool.spec.schedule_task.args.job.schedule_text")),
+        );
+        add.insert(
+            "message".to_string(),
+            string(t("tool.spec.schedule_task.args.job.payload.message")),
+        );
+        add.insert(
+            "session".to_string(),
+            json!({"type":"string", "enum":["main","isolated"], "description": t("tool.spec.schedule_task.args.job.session")}),
+        );
+        add.insert(
+            "enabled".to_string(),
+            boolean(t("tool.spec.schedule_task.args.job.enabled")),
+        );
+        let mut add_with_schedule = add.clone();
+        add_with_schedule.insert(
+            "schedule".to_string(),
+            json!({
+                "type":"object", "additionalProperties":false,
+                "properties": {
+                    "kind":{"type":"string","enum":["at","every","cron"]},
+                    "at":{"type":"string"}, "every_ms":{"type":"integer","minimum":1000},
+                    "cron":{"type":"string"}, "tz":{"type":"string"}
+                }, "required":["kind"]
+            }),
+        );
+        let mut update = add.clone();
+        update.insert(
+            "schedule".to_string(),
+            json!({
+                "type":"object", "additionalProperties":false,
+                "properties": {
+                    "kind":{"type":"string","enum":["at","every","cron"]},
+                    "at":{"type":"string"}, "every_ms":{"type":"integer","minimum":1000},
+                    "cron":{"type":"string"}, "tz":{"type":"string"}
+                }, "required":["kind"]
+            }),
+        );
+        let mut only_id = serde_json::Map::new();
+        only_id.insert(
+            "job_id".to_string(),
+            string(t("tool.spec.schedule_task.args.job.job_id")),
+        );
+        let mut branches = vec![
+            action("add", add, &["action", "message", "schedule_text"]),
+            action("add", add_with_schedule, &["action", "message", "schedule"]),
+            action("update", update, &["action", "job_id"]),
+        ]
+        .into_iter()
+        .collect::<Vec<_>>();
+        for name in ["get", "remove", "enable", "disable", "run"] {
+            branches.push(action(name, only_id.clone(), &["action", "job_id"]));
+        }
+        branches.push(action("list", serde_json::Map::new(), &["action"]));
+        branches.push(action("status", serde_json::Map::new(), &["action"]));
+        json!({"oneOf": branches})
+    };
+    let memory_manager_schema = || {
+        let action =
+            |name: &str, mut properties: serde_json::Map<String, Value>, required: &[&str]| {
+                properties.insert("action".to_string(), json!({"const": name}));
+                let mut branch = serde_json::Map::new();
+                branch.insert("type".to_string(), json!("object"));
+                branch.insert("properties".to_string(), Value::Object(properties));
+                branch.insert(
+                    "required".to_string(),
+                    Value::Array(required.iter().map(|key| json!(key)).collect()),
+                );
+                branch.insert("additionalProperties".to_string(), json!(false));
+                Value::Object(branch)
+            };
+        let string = |description: String| json!({"type":"string", "description": description});
+        let integer = |description: String| json!({"type":"integer", "minimum":1, "maximum":200, "description": description});
+        let mut list = serde_json::Map::new();
+        list.insert(
+            "query".to_string(),
+            string(t("tool.spec.memory_manager.args.query")),
+        );
+        list.insert(
+            "limit".to_string(),
+            integer(t("tool.spec.memory_manager.args.limit")),
+        );
+        list.insert(
+            "order".to_string(),
+            json!({
+                "type":"string", "enum":["desc","asc"],
+                "description": t("tool.spec.memory_manager.args.order")
+            }),
+        );
+
+        let mut search = serde_json::Map::new();
+        search.insert(
+            "query".to_string(),
+            string(t("tool.spec.memory_manager.args.query")),
+        );
+        search.insert(
+            "limit".to_string(),
+            integer(t("tool.spec.memory_manager.args.limit")),
+        );
+
+        let mut get = serde_json::Map::new();
+        get.insert(
+            "memory_id".to_string(),
+            string(t("tool.spec.memory_manager.args.memory_id")),
+        );
+
+        let mut add = get.clone();
+        add.insert(
+            "title".to_string(),
+            string(t("tool.spec.memory_manager.args.title")),
+        );
+        add.insert(
+            "content".to_string(),
+            string(t("tool.spec.memory_manager.args.content")),
+        );
+        add.insert(
+            "tag".to_string(),
+            string(t("tool.spec.memory_manager.args.tag")),
+        );
+        add.insert(
+            "related_memory_id".to_string(),
+            string(t("tool.spec.memory_manager.args.related_memory_id")),
+        );
+        add.insert(
+            "memory_time".to_string(),
+            string(t("tool.spec.memory_manager.args.memory_time")),
+        );
+
+        let update = add.clone();
+        let mut remove = serde_json::Map::new();
+        remove.insert(
+            "memory_id".to_string(),
+            string(t("tool.spec.memory_manager.args.memory_id")),
+        );
+        json!({
+            "oneOf": [
+                action("list", list, &["action"]),
+                action("search", search, &["action"]),
+                action("get", get, &["action", "memory_id"]),
+                action("add", add, &["action", "content"]),
+                action("update", update, &["action", "memory_id", "content"]),
+                action("remove", remove, &["action", "memory_id"]),
+                action("clear", serde_json::Map::new(), &["action"])
+            ]
+        })
+    };
     let mut specs = vec![
         ToolSpec {
             name: "计划面板".to_string(),
@@ -314,91 +486,13 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
             name: "定时任务".to_string(),
             title: None,
             description: t("tool.spec.schedule_task.description"),
-            input_schema: super::schema::object(vec![
-                super::schema::string("action")
-                    .desc(t("tool.spec.schedule_task.args.action"))
-                    .enums(vec!["add", "update", "remove", "enable", "disable", "get", "list", "run", "status"]),
-                super::schema::string("job_id")
-                    .desc(t("tool.spec.schedule_task.args.job.job_id"))
-                    .optional(),
-                super::schema::string("name")
-                    .desc(t("tool.spec.schedule_task.args.job.name"))
-                    .optional(),
-                super::schema::object_param("schedule")
-                    .props(vec![
-                        super::schema::string("kind")
-                            .desc(t("tool.spec.schedule_task.args.job.schedule.kind"))
-                            .enums(vec!["at", "every", "cron"]),
-                        super::schema::string("at")
-                            .desc(t("tool.spec.schedule_task.args.job.schedule.at"))
-                            .optional(),
-                        super::schema::integer("every_ms")
-                            .desc(t("tool.spec.schedule_task.args.job.schedule.every_ms"))
-                            .min(1000)
-                            .optional(),
-                        super::schema::string("cron")
-                            .desc(t("tool.spec.schedule_task.args.job.schedule.cron"))
-                            .optional(),
-                        super::schema::string("tz")
-                            .desc(t("tool.spec.schedule_task.args.job.schedule.tz"))
-                            .optional(),
-                    ])
-                    .closed()
-                    .optional(),
-                super::schema::string("schedule_text")
-                    .desc(t("tool.spec.schedule_task.args.job.schedule_text"))
-                    .optional(),
-                super::schema::string("session")
-                    .desc(t("tool.spec.schedule_task.args.job.session"))
-                    .enums(vec!["main", "isolated"])
-                    .optional(),
-                super::schema::string("message")
-                    .desc(t("tool.spec.schedule_task.args.job.payload.message"))
-                    .optional(),
-                super::schema::boolean("enabled")
-                    .desc(t("tool.spec.schedule_task.args.job.enabled"))
-                    .optional(),
-            ]),
+            input_schema: schedule_task_schema(),
         },
         ToolSpec {
             name: "记忆管理".to_string(),
             title: None,
             description: t("tool.spec.memory_manager.description"),
-            input_schema: super::schema::object(vec![
-                super::schema::string("action")
-                    .desc(t("tool.spec.memory_manager.args.action"))
-                    .enums(vec!["list", "search", "get", "add", "update", "remove", "clear"]),
-                super::schema::string("memory_id")
-                    .desc(t("tool.spec.memory_manager.args.memory_id"))
-                    .optional(),
-                super::schema::string("title")
-                    .desc(t("tool.spec.memory_manager.args.title"))
-                    .optional(),
-                super::schema::string("content")
-                    .desc(t("tool.spec.memory_manager.args.content"))
-                    .optional(),
-                super::schema::string("tag")
-                    .desc(t("tool.spec.memory_manager.args.tag"))
-                    .optional(),
-                super::schema::string("related_memory_id")
-                    .desc(t("tool.spec.memory_manager.args.related_memory_id"))
-                    .optional(),
-                super::schema::string("memory_time")
-                    .desc(t("tool.spec.memory_manager.args.memory_time"))
-                    .optional(),
-                super::schema::string("query")
-                    .desc(t("tool.spec.memory_manager.args.query"))
-                    .optional(),
-                super::schema::integer("limit")
-                    .desc(t("tool.spec.memory_manager.args.limit"))
-                    .min(1)
-                    .max(200)
-                    .optional(),
-                super::schema::string("order")
-                    .desc(t("tool.spec.memory_manager.args.order"))
-                    .enums(vec!["desc", "asc"])
-                    .optional(),
-            ]),
+            input_schema: memory_manager_schema(),
         },
         ToolSpec {
             name: "执行命令".to_string(),
@@ -892,174 +986,144 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
             name: "子智能体控制".to_string(),
             title: None,
             description: t("tool.spec.subagent_control.description"),
-            input_schema: super::schema::object(vec![
-                super::schema::string("action")
-                    .desc(t("tool.spec.subagent_control.args.action"))
-                    .enums(vec!["list", "history", "send", "report", "spawn", "batch_spawn", "status", "wait", "interrupt", "close", "resume"]),
-                super::schema::integer("limit")
-                    .desc(t("tool.spec.sessions_list.args.limit"))
-                    .min(1)
-                    .optional(),
-                super::schema::string("parent_id")
-                    .desc(t("tool.spec.subagent_control.args.parent_id"))
-                    .optional(),
-                super::schema::string("session_id")
-                    .desc(t("tool.spec.subagent_control.args.session_id"))
-                    .optional(),
-                super::schema::array("session_ids")
-                    .desc(t("tool.spec.subagent_control.args.session_ids"))
-                    .items(super::schema::string("_"))
-                    .optional(),
-                super::schema::string("run_id")
-                    .desc(t("tool.spec.subagent_control.args.run_id"))
-                    .optional(),
-                super::schema::array("run_ids")
-                    .desc(t("tool.spec.subagent_control.args.run_ids"))
-                    .items(super::schema::string("_"))
-                    .optional(),
-                super::schema::string("dispatch_id")
-                    .desc(t("tool.spec.subagent_control.args.dispatch_id"))
-                    .optional(),
-                super::schema::string("strategy")
-                    .desc(t("tool.spec.subagent_control.args.strategy"))
-                    .enums(vec!["parallel_all", "first_success", "review_then_merge"])
-                    .optional(),
-                super::schema::string("remaining_action")
-                    .desc(t("tool.spec.subagent_control.args.remaining_action"))
-                    .enums(vec!["keep", "interrupt", "close"])
-                    .optional(),
-                super::schema::boolean("include_tools")
-                    .desc(t("tool.spec.sessions_history.args.include_tools"))
-                    .optional(),
-                super::schema::string("message")
-                    .desc(t("tool.spec.subagent_control.args.message"))
-                    .min_len(1)
-                    .max_len(20000)
-                    .optional(),
-                super::schema::string("message_id")
-                    .desc("Optional retry id for running-turn messages or reports. Reuse the same id only for the same message.")
-                    .max_len(128)
-                    .optional(),
-                super::schema::number("timeout_seconds")
-                    .desc(t("tool.spec.sessions_send.args.timeout"))
-                    .optional(),
-                super::schema::integer("fork_turns")
-                    .desc("For spawn/batch_spawn: copy up to N recent user turns as quoted background, default 0. At most 256 history items and 64 KiB; truncation is recorded. Does not alter the system prompt.")
-                    .min(0)
-                    .max(16)
-                    .optional(),
-                super::schema::string("context_summary")
-                    .desc("Optional selected background for spawn/batch_spawn, at most 16384 UTF-8 bytes. Reference data, not system instructions; persists with the first task only.")
-                    .max_len(16384)
-                    .optional(),
-                super::schema::string("task")
-                    .desc(t("tool.spec.subagent_control.args.task"))
-                    .optional(),
-                super::schema::array("tasks")
-                    .desc(t("tool.spec.subagent_control.args.tasks"))
-                    .max_items(64)
-                    .items(
-                        super::schema::object_param("_")
-                            .props(vec![
-                                super::schema::integer("fork_turns")
-                                    .desc("Override the batch context turn count for this worker.")
-                                    .min(0)
-                                    .max(16)
-                                    .optional(),
-                                super::schema::string("context_summary")
-                                    .desc("Override the batch background summary for this worker.")
-                                    .max_len(16384)
-                                    .optional(),
-                                super::schema::string("task")
-                                    .desc(t("tool.spec.sessions_spawn.args.task")),
-                                super::schema::string("label")
-                                    .desc(t("tool.spec.sessions_spawn.args.label"))
-                                    .optional(),
-                                super::schema::string("agent_id")
-                                    .desc(t("tool.spec.sessions_spawn.args.agent_id"))
-                                    .optional(),
-                                super::schema::string("model")
-                                    .desc(t("tool.spec.sessions_spawn.args.model"))
-                                    .optional(),
-                                super::schema::number("run_timeout_seconds")
-                                    .desc(t("tool.spec.sessions_spawn.args.timeout"))
-                                    .optional(),
-                                super::schema::string("cleanup")
-                                    .desc(t("tool.spec.sessions_spawn.args.cleanup"))
-                                    .enums(vec!["keep", "delete"])
-                                    .optional(),
-                            ])
-                            .closed(),
-                    )
-                    .optional(),
-                super::schema::string("label")
-                    .desc(t("tool.spec.sessions_spawn.args.label"))
-                    .optional(),
-                super::schema::string("agent_id")
-                    .desc(t("tool.spec.sessions_spawn.args.agent_id"))
-                    .optional(),
-                super::schema::string("model")
-                    .desc(t("tool.spec.sessions_spawn.args.model"))
-                    .optional(),
-                super::schema::number("run_timeout_seconds")
-                    .desc(t("tool.spec.sessions_spawn.args.timeout"))
-                    .optional(),
-                super::schema::string("cleanup")
-                    .desc(t("tool.spec.sessions_spawn.args.cleanup"))
-                    .enums(vec!["keep", "delete"])
-                    .optional(),
-                super::schema::number("wait_seconds")
-                    .desc(t("tool.spec.subagent_control.args.wait_seconds"))
-                    .optional(),
-                super::schema::number("poll_interval_seconds")
-                    .desc(t("tool.spec.subagent_control.args.poll_interval_seconds"))
-                    .optional(),
-                super::schema::string("wait_mode")
-                    .desc(t("tool.spec.subagent_control.args.wait_mode"))
-                    .enums(vec!["all", "any", "first_success"])
-                    .optional(),
-            ]),
+            input_schema: {
+                // Each action receives only the fields it can consume. Keeping
+                // this as a discriminated oneOf materially reduces schema
+                // tokens and prevents a model from combining spawn fields
+                // with wait/list fields.
+                let branch = |action: Value,
+                              mut properties: serde_json::Map<String, Value>,
+                              required: &[&str]| {
+                    properties.insert("action".to_string(), action);
+                    json!({
+                        "type": "object",
+                        "properties": properties,
+                        "required": required.iter().map(|key| json!(key)).collect::<Vec<_>>(),
+                        "additionalProperties": false
+                    })
+                };
+                let text = |name: &'static str, description: String| {
+                    super::schema::string(name).desc(description).optional().to_schema()
+                };
+                let required_text = |name: &'static str, description: String| {
+                    super::schema::string(name).desc(description).to_schema()
+                };
+                let id = |name: &'static str, description: String| text(name, description);
+                let selector_fields = || {
+                    let mut fields = serde_json::Map::new();
+                    fields.insert("session_id".to_string(), id("session_id", t("tool.spec.subagent_control.args.session_id")));
+                    fields.insert("session_ids".to_string(), super::schema::array("session_ids").desc(t("tool.spec.subagent_control.args.session_ids")).items(super::schema::string("_")).max_items(64).optional().to_schema());
+                    fields.insert("run_id".to_string(), id("run_id", t("tool.spec.subagent_control.args.run_id")));
+                    fields.insert("run_ids".to_string(), super::schema::array("run_ids").desc(t("tool.spec.subagent_control.args.run_ids")).items(super::schema::string("_")).max_items(64).optional().to_schema());
+                    fields.insert("dispatch_id".to_string(), id("dispatch_id", t("tool.spec.subagent_control.args.dispatch_id")));
+                    fields.insert("parent_id".to_string(), id("parent_id", t("tool.spec.subagent_control.args.parent_id")));
+                    fields
+                };
+                let mut list = serde_json::Map::new();
+                list.insert("parent_id".to_string(), id("parent_id", t("tool.spec.subagent_control.args.parent_id")));
+                list.insert("limit".to_string(), super::schema::integer("limit").desc(t("tool.spec.sessions_list.args.limit")).min(1).max(200).optional().to_schema());
+                let mut history = serde_json::Map::new();
+                history.insert("session_id".to_string(), required_text("session_id", t("tool.spec.subagent_control.args.session_id")));
+                history.insert("limit".to_string(), super::schema::integer("limit").desc(t("tool.spec.sessions_history.args.limit")).min(1).max(200).optional().to_schema());
+                history.insert("include_tools".to_string(), super::schema::boolean("include_tools").desc(t("tool.spec.sessions_history.args.include_tools")).optional().to_schema());
+                let mut send = selector_fields();
+                send.insert("message".to_string(), super::schema::string("message").desc(t("tool.spec.subagent_control.args.message")).min_len(1).max_len(20000).to_schema());
+                send.insert("message_id".to_string(), text("message_id", "Optional id used to retry the same message.".to_string()));
+                send.insert("timeout_seconds".to_string(), super::schema::number("timeout_seconds").desc(t("tool.spec.sessions_send.args.timeout")).optional().to_schema());
+                send.insert("label".to_string(), text("label", t("tool.spec.sessions_spawn.args.label")));
+                send.insert("announce_parent_session_id".to_string(), text("announce_parent_session_id", "Parent session for the completion notice.".to_string()));
+                send.insert("announce_persist_history".to_string(), super::schema::boolean("announce_persist_history").optional().to_schema());
+                send.insert("announce_emit_parent_events".to_string(), super::schema::boolean("announce_emit_parent_events").optional().to_schema());
+                let mut report = serde_json::Map::new();
+                report.insert("message".to_string(), required_text("message", t("tool.spec.subagent_control.args.message")));
+                report.insert("message_id".to_string(), text("message_id", "Optional id used to retry the same report.".to_string()));
+                let mut spawn = serde_json::Map::new();
+                spawn.insert("task".to_string(), required_text("task", t("tool.spec.subagent_control.args.task")));
+                spawn.insert("label".to_string(), text("label", t("tool.spec.sessions_spawn.args.label")));
+                spawn.insert("agent_id".to_string(), text("agent_id", t("tool.spec.sessions_spawn.args.agent_id")));
+                spawn.insert("model".to_string(), text("model", "Optional model override.".to_string()));
+                spawn.insert("run_timeout_seconds".to_string(), super::schema::number("run_timeout_seconds").desc(t("tool.spec.sessions_spawn.args.timeout")).optional().to_schema());
+                spawn.insert("cleanup".to_string(), super::schema::string("cleanup").desc(t("tool.spec.sessions_spawn.args.cleanup")).enums(vec!["keep", "delete"]).optional().to_schema());
+                spawn.insert("fork_turns".to_string(), super::schema::integer("fork_turns").desc("Recent user turns to quote as background.").min(0).max(16).optional().to_schema());
+                spawn.insert("context_summary".to_string(), super::schema::string("context_summary").desc("Optional background summary.").max_len(16384).optional().to_schema());
+                let mut batch = spawn.clone();
+                batch.remove("task");
+                batch.insert("task".to_string(), text("task", t("tool.spec.subagent_control.args.task")));
+                batch.insert("tasks".to_string(), super::schema::array("tasks").desc(t("tool.spec.subagent_control.args.tasks")).min_items(1).max_items(64).items(super::schema::object_param("_").props(vec![
+                    super::schema::string("task").desc(t("tool.spec.sessions_spawn.args.task")),
+                    super::schema::string("label").desc(t("tool.spec.sessions_spawn.args.label")).optional(),
+                    super::schema::string("agent_id").desc(t("tool.spec.sessions_spawn.args.agent_id")).optional(),
+                    super::schema::string("model").desc("Optional model override.").optional(),
+                    super::schema::number("run_timeout_seconds").desc(t("tool.spec.sessions_spawn.args.timeout")).optional(),
+                    super::schema::string("cleanup").desc(t("tool.spec.sessions_spawn.args.cleanup")).enums(vec!["keep", "delete"]).optional(),
+                    super::schema::integer("fork_turns").min(0).max(16).optional(),
+                    super::schema::string("context_summary").max_len(16384).optional(),
+                ]).closed()).optional().to_schema());
+                batch.insert("dispatch_label".to_string(), text("dispatch_label", "Optional dispatch label.".to_string()));
+                batch.insert("wait_seconds".to_string(), super::schema::number("wait_seconds").optional().to_schema());
+                batch.insert("poll_interval_seconds".to_string(), super::schema::number("poll_interval_seconds").optional().to_schema());
+                batch.insert("strategy".to_string(), super::schema::string("strategy").enums(vec!["parallel_all", "first_success", "review_then_merge"]).optional().to_schema());
+                batch.insert("remaining_action".to_string(), super::schema::string("remaining_action").enums(vec!["keep", "interrupt", "close"]).optional().to_schema());
+                let mut status = selector_fields();
+                status.insert("limit".to_string(), super::schema::integer("limit").min(1).max(200).optional().to_schema());
+                let mut wait = selector_fields();
+                wait.insert("wait_seconds".to_string(), super::schema::number("wait_seconds").optional().to_schema());
+                wait.insert("poll_interval_seconds".to_string(), super::schema::number("poll_interval_seconds").optional().to_schema());
+                wait.insert("wait_mode".to_string(), super::schema::string("wait_mode").enums(vec!["all", "any", "first_success"]).optional().to_schema());
+                wait.insert("remaining_action".to_string(), super::schema::string("remaining_action").enums(vec!["keep", "interrupt", "close"]).optional().to_schema());
+                let mut lifecycle = selector_fields();
+                lifecycle.insert("cascade".to_string(), super::schema::boolean("cascade").optional().to_schema());
+                let mut resume = lifecycle.clone();
+                resume.insert("message".to_string(), text("message", t("tool.spec.subagent_control.args.message")));
+                resume.insert("message_id".to_string(), text("message_id", "Optional retry id.".to_string()));
+                resume.insert("timeout_seconds".to_string(), super::schema::number("timeout_seconds").optional().to_schema());
+                let variants = vec![
+                    branch(json!({"const":"list"}), list, &["action"]),
+                    branch(json!({"const":"history"}), history, &["action"]),
+                    branch(json!({"const":"send"}), send, &["action", "message"]),
+                    branch(json!({"const":"report"}), report, &["action", "message"]),
+                    branch(json!({"const":"spawn"}), spawn, &["action", "task"]),
+                    branch(json!({"const":"batch_spawn"}), batch, &["action"]),
+                    branch(json!({"const":"status"}), status, &["action"]),
+                    branch(json!({"const":"wait"}), wait, &["action"]),
+                    branch(json!({"const":"interrupt"}), lifecycle.clone(), &["action"]),
+                    branch(json!({"const":"close"}), lifecycle.clone(), &["action"]),
+                    branch(json!({"const":"resume"}), resume, &["action"]),
+                ];
+                json!({"oneOf": variants})
+            },
         },
         ToolSpec {
             name: thread_control_tool::TOOL_THREAD_CONTROL.to_string(),
             title: None,
             description: t("tool.spec.thread_control.description"),
-            input_schema: super::schema::object(vec![
-                super::schema::string("action")
-                    .desc(t("tool.spec.thread_control.args.action"))
-                    .enums(vec![
-                        "list",
-                        "info",
-                        "create",
-                        "switch",
-                        "back",
-                        "update_title",
-                        "archive",
-                        "restore",
-                    ]),
-                super::schema::string("session_id")
-                    .desc(t("tool.spec.thread_control.args.session_id"))
-                    .optional(),
-                super::schema::string("parent_session_id")
-                    .desc(t("tool.spec.thread_control.args.parent_session_id"))
-                    .optional(),
-                super::schema::string("title")
-                    .desc(t("tool.spec.thread_control.args.title"))
-                    .optional(),
-                super::schema::string("scope")
-                    .desc(t("tool.spec.thread_control.args.scope"))
-                    .enums(vec!["branch", "children", "roots", "all"])
-                    .optional(),
-                super::schema::string("status")
-                    .desc(t("tool.spec.thread_control.args.status"))
-                    .enums(vec!["active", "archived", "all"])
-                    .optional(),
-                super::schema::integer("limit")
-                    .desc(t("tool.spec.thread_control.args.limit"))
-                    .min(1)
-                    .max(200)
-                    .optional(),
-            ]),
+            input_schema: {
+                let branch = |name: &str, mut properties: serde_json::Map<String, Value>, required: &[&str]| {
+                    properties.insert("action".to_string(), json!({"const": name}));
+                    json!({"type":"object","properties":properties,"required":required.iter().map(|v| json!(v)).collect::<Vec<_>>(),"additionalProperties":false})
+                };
+                let id = || super::schema::string("session_id").desc(t("tool.spec.thread_control.args.session_id")).optional().to_schema();
+                let mut list = serde_json::Map::new();
+                list.insert("session_id".into(), id());
+                list.insert("scope".into(), super::schema::string("scope").desc(t("tool.spec.thread_control.args.scope")).enums(vec!["branch","children","roots","all"]).optional().to_schema());
+                list.insert("status".into(), super::schema::string("status").desc(t("tool.spec.thread_control.args.status")).enums(vec!["active","archived","all"]).optional().to_schema());
+                list.insert("limit".into(), super::schema::integer("limit").desc(t("tool.spec.thread_control.args.limit")).min(1).max(200).optional().to_schema());
+                let mut target = serde_json::Map::new(); target.insert("session_id".into(), id());
+                let mut create = serde_json::Map::new();
+                create.insert("parent_session_id".into(), super::schema::string("parent_session_id").desc(t("tool.spec.thread_control.args.parent_session_id")).optional().to_schema());
+                create.insert("title".into(), super::schema::string("title").desc(t("tool.spec.thread_control.args.title")).max_len(512).optional().to_schema());
+                create.insert("label".into(), super::schema::string("label").optional().to_schema());
+                create.insert("agent_id".into(), super::schema::string("agent_id").optional().to_schema());
+                create.insert("switch".into(), super::schema::boolean("switch").optional().to_schema());
+                let mut rename = target.clone(); rename.insert("title".into(), super::schema::string("title").desc(t("tool.spec.thread_control.args.title")).max_len(512).to_schema());
+                let mut transition = target.clone(); transition.insert("switch".into(), super::schema::boolean("switch").optional().to_schema());
+                let variants = vec![
+                    branch("list", list, &["action"]), branch("info", target.clone(), &["action"]), branch("create", create, &["action"]),
+                    branch("switch", target.clone(), &["action","session_id"]), branch("back", target.clone(), &["action"]),
+                    branch("update_title", rename, &["action","title"]), branch("archive", transition.clone(), &["action"]), branch("restore", transition, &["action"])
+                ];
+                json!({"oneOf": variants})
+            },
         },
         ToolSpec {
             name: web_search_tool::TOOL_WEB_SEARCH.to_string(),
@@ -1121,71 +1185,7 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     .optional(),
             ]),
         },
-        ToolSpec {
-            name: desktop_control::TOOL_DESKTOP_CONTROL.to_string(),
-            title: None,
-            description: t("tool.spec.desktop_control.description"),
-            input_schema: super::schema::object(vec![
-                super::schema::array("bbox")
-                    .desc(t("tool.spec.desktop_control.args.bbox"))
-                    .items(super::schema::integer("_"))
-                    .any_of(vec![
-                        json!({"type": "array", "items": {"type": "integer"}, "minItems": 4, "maxItems": 4}),
-                        json!({"type": "array", "items": {"type": "integer"}, "minItems": 2, "maxItems": 2}),
-                    ]),
-                super::schema::string("action")
-                    .desc(t("tool.spec.desktop_control.args.action"))
-                    .enums(vec![
-                        "left_click",
-                        "left_double_click",
-                        "right_click",
-                        "middle_click",
-                        "left_hold",
-                        "right_hold",
-                        "middle_hold",
-                        "left_release",
-                        "right_release",
-                        "middle_release",
-                        "scroll_down",
-                        "scroll_up",
-                        "press_key",
-                        "type_text",
-                        "wait",
-                        "move_mouse",
-                        "drag_drop",
-                    ]),
-                super::schema::string("key")
-                    .desc(t("tool.spec.desktop_control.args.key"))
-                    .optional(),
-                super::schema::string("text")
-                    .desc(t("tool.spec.desktop_control.args.text"))
-                    .optional(),
-                super::schema::string("note")
-                    .desc(t("tool.spec.desktop_control.args.note"))
-                    .optional(),
-                super::schema::integer("delay_ms")
-                    .desc(t("tool.spec.desktop_control.args.delay_ms"))
-                    .min(0)
-                    .max(30000)
-                    .optional(),
-                super::schema::integer("duration_ms")
-                    .desc(t("tool.spec.desktop_control.args.duration_ms"))
-                    .min(0)
-                    .optional(),
-                super::schema::integer("scroll_steps")
-                    .desc(t("tool.spec.desktop_control.args.scroll_steps"))
-                    .min(1)
-                    .optional(),
-                super::schema::array("to_bbox")
-                    .desc(t("tool.spec.desktop_control.args.to_bbox"))
-                    .items(super::schema::integer("_"))
-                    .any_of(vec![
-                        json!({"type": "array", "items": {"type": "integer"}, "minItems": 4, "maxItems": 4}),
-                        json!({"type": "array", "items": {"type": "integer"}, "minItems": 2, "maxItems": 2}),
-                    ])
-                    .optional(),
-            ]),
-        },
+        desktop_control::desktop_control_tool_spec(language),
         ToolSpec {
             name: self_status_tool::TOOL_SELF_STATUS.to_string(),
             title: None,
@@ -1193,15 +1193,7 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
             input_schema: super::schema::object(vec![
                 super::schema::string("detail_level")
                     .desc(t("tool.spec.self_status.args.detail_level"))
-                    .enums(vec!["basic", "standard", "full"])
-                    .optional(),
-                super::schema::boolean("include_events")
-                    .desc(t("tool.spec.self_status.args.include_events"))
-                    .optional(),
-                super::schema::integer("events_limit")
-                    .desc(t("tool.spec.self_status.args.events_limit"))
-                    .min(1)
-                    .max(200)
+                    .enums(vec!["basic", "full"])
                     .optional(),
             ]),
         },
@@ -1228,10 +1220,6 @@ pub fn builtin_aliases() -> HashMap<String, String> {
     let mut map = HashMap::new();
     // 浏览器整组工具在用户侧是一条聚合条目，英文名与管理员侧的组条目同名。
     map.insert(
-        browser_tool::BROWSER_GROUP_NAME_ALIAS.to_string(),
-        browser_tool::BROWSER_GROUP_NAME.to_string(),
-    );
-    map.insert(
         self_status_tool::TOOL_SELF_STATUS_ALIAS.to_string(),
         self_status_tool::TOOL_SELF_STATUS.to_string(),
     );
@@ -1249,7 +1237,6 @@ pub fn builtin_aliases() -> HashMap<String, String> {
     map.insert("schedule_task".to_string(), "定时任务".to_string());
     map.insert("memory_manager".to_string(), "记忆管理".to_string());
     map.insert("memory_manage".to_string(), "记忆管理".to_string());
-    map.insert("goal".to_string(), goal::TOOL_UPDATE_GOAL.to_string());
     map.insert("execute_command".to_string(), "执行命令".to_string());
     map.insert("command_session".to_string(), "命令会话".to_string());
     map.insert("write_command_stdin".to_string(), "命令会话".to_string());
@@ -1935,12 +1922,6 @@ pub fn collect_available_tool_names(
             enabled_builtin.insert(name.clone());
             names.insert(name);
         }
-        // Kept executable for persisted sessions and older clients. They are
-        // not backed by specs, so the model catalog still contains six tools.
-        for name in browser_tool::browser_legacy_tool_names() {
-            enabled_builtin.insert(name.clone());
-            names.insert(name);
-        }
         // 聚合条目名可被选择与授权，实际调用前再展开为成员工具。
         enabled_builtin.insert(browser_tool::BROWSER_GROUP_NAME.to_string());
         names.insert(browser_tool::BROWSER_GROUP_NAME.to_string());
@@ -2025,10 +2006,6 @@ pub fn collect_enabled_tool_names_for_catalog(
     }
     if browser_tool::browser_tools_enabled(config) {
         for name in browser_tool::browser_tool_names() {
-            enabled_builtin.insert(name.clone());
-            names.insert(name);
-        }
-        for name in browser_tool::browser_legacy_tool_names() {
             enabled_builtin.insert(name.clone());
             names.insert(name);
         }
@@ -2902,24 +2879,41 @@ mod tests {
         assert!(spec
             .description
             .contains("spawn(task) -> wait/status -> history"));
-        assert!(spec.input_schema["properties"]["parent_id"]["description"]
+        let variants = spec.input_schema["oneOf"]
+            .as_array()
+            .expect("action variants");
+        assert!(variants
+            .iter()
+            .all(|variant| { variant["additionalProperties"].as_bool() == Some(false) }));
+        let list = variants
+            .iter()
+            .find(|variant| variant["properties"]["action"]["const"] == "list")
+            .expect("list branch");
+        assert!(list["properties"]["parent_id"]["description"]
             .as_str()
             .is_some_and(|value| value.contains("当前会话")));
-        assert!(spec.input_schema["properties"]["session_id"]["description"]
+        let send = variants
+            .iter()
+            .find(|variant| variant["properties"]["action"]["const"] == "send")
+            .expect("send branch");
+        assert!(send["properties"]["session_id"]["description"]
             .as_str()
             .is_some_and(|value| value.contains("子会话")));
-        assert!(spec.input_schema["properties"]["active_minutes"].is_null());
-        assert!(spec.input_schema["properties"]["message_limit"].is_null());
-        assert!(spec.input_schema["properties"]["dispatch_label"].is_null());
-        assert!(spec.input_schema["properties"]["cascade"].is_null());
-        assert!(spec.input_schema["properties"]["sessionId"].is_null());
-        assert!(spec.input_schema["properties"]["runId"].is_null());
+        assert!(variants
+            .iter()
+            .all(|variant| variant["properties"]["active_minutes"].is_null()));
+        assert!(variants
+            .iter()
+            .all(|variant| variant["properties"]["message_limit"].is_null()));
+        assert!(variants
+            .iter()
+            .all(|variant| variant["properties"]["sessionId"].is_null()));
+        let batch = variants
+            .iter()
+            .find(|variant| variant["properties"]["action"]["const"] == "batch_spawn")
+            .expect("batch branch");
         assert_eq!(
-            spec.input_schema["additionalProperties"].as_bool(),
-            Some(false)
-        );
-        assert_eq!(
-            spec.input_schema["properties"]["tasks"]["items"]["additionalProperties"].as_bool(),
+            batch["properties"]["tasks"]["items"]["additionalProperties"].as_bool(),
             Some(false)
         );
     }
@@ -2931,13 +2925,19 @@ mod tests {
             .find(|spec| spec.name == "定时任务")
             .expect("schedule_task spec");
         assert!(spec.description.contains("优先使用扁平字段"));
-        assert!(spec.input_schema["properties"]["job_id"].is_object());
-        assert!(spec.input_schema["properties"]["schedule_text"].is_object());
-        assert!(spec.input_schema["properties"]["message"].is_object());
-        assert!(spec.input_schema["properties"]["enabled"].is_object());
-        assert!(spec.input_schema["properties"]["delete_after_run"].is_null());
-        assert!(spec.input_schema["properties"]["dedupe_key"].is_null());
-        assert!(spec.input_schema["properties"]["job"].is_null());
+        let variants = spec.input_schema["oneOf"]
+            .as_array()
+            .expect("action variants");
+        let add = variants
+            .iter()
+            .find(|variant| variant["properties"]["action"]["const"] == "add")
+            .expect("add branch");
+        assert!(add["properties"]["job_id"].is_object());
+        assert!(add["properties"]["schedule_text"].is_object());
+        assert!(add["properties"]["message"].is_object());
+        assert!(add["properties"]["enabled"].is_object());
+        assert!(add["properties"]["delete_after_run"].is_null());
+        assert!(add["properties"]["job"].is_null());
     }
 
     #[test]
@@ -2977,61 +2977,58 @@ mod tests {
             .find(|spec| spec.name == "会话线程控制")
             .expect("thread control spec");
         assert!(spec.description.contains("list/info"));
-        assert!(spec.input_schema["properties"]["session_id"].is_object());
-        assert!(spec.input_schema["properties"]["parent_session_id"].is_object());
-        assert!(spec.input_schema["properties"]["agentId"].is_null());
-        assert!(spec.input_schema["properties"]["label"].is_null());
-        assert!(spec.input_schema["properties"]["setMain"].is_null());
-        assert_eq!(
-            spec.input_schema["additionalProperties"].as_bool(),
-            Some(false)
-        );
+        let variants = spec.input_schema["oneOf"]
+            .as_array()
+            .expect("action variants");
+        assert!(variants
+            .iter()
+            .all(|variant| variant["additionalProperties"].as_bool() == Some(false)));
+        let list = variants
+            .iter()
+            .find(|variant| variant["properties"]["action"]["const"] == "list")
+            .expect("list branch");
+        assert!(list["properties"]["session_id"].is_object());
+        let create = variants
+            .iter()
+            .find(|variant| variant["properties"]["action"]["const"] == "create")
+            .expect("create branch");
+        assert!(create["properties"]["parent_session_id"].is_object());
+        assert!(variants
+            .iter()
+            .all(|variant| variant["properties"]["agentId"].is_null()));
+        assert!(variants
+            .iter()
+            .all(|variant| variant["properties"]["setMain"].is_null()));
     }
 
     #[test]
-    fn browser_provider_exposes_only_the_compact_model_surface() {
+    fn browser_provider_exposes_one_strict_action_tool() {
         let specs = builtin_tool_specs_with_language("zh-CN");
-        assert!(
-            specs
-                .iter()
-                .all(|spec| spec.name != "浏览器" && spec.name != "浏览器导航"),
-            "legacy browser tool names must be gone"
-        );
-        let browser_specs: Vec<_> = specs
-            .iter()
-            .filter(|spec| spec.name.starts_with("browser_"))
-            .collect();
-        assert_eq!(browser_specs.len(), 6);
-        let navigate = specs
-            .iter()
-            .find(|spec| spec.name == "browser_navigate")
-            .expect("provider browser_navigate spec must be exposed");
-        assert!(navigate.input_schema["properties"]["action"].is_object());
-        assert!(specs.iter().any(|spec| spec.name == "browser_observe"));
-        assert!(specs
-            .iter()
-            .all(|spec| spec.name != "browser_take_screenshot"));
-        assert!(specs.iter().all(|spec| spec.name != "browser_status"));
+        let browser_specs: Vec<_> = specs.iter().filter(|spec| spec.name == "browser").collect();
+        assert_eq!(browser_specs.len(), 1);
+        let browser = browser_specs[0];
+        assert!(browser.input_schema["oneOf"].is_array());
+        assert!(specs.iter().all(|spec| !spec.name.starts_with("browser_")));
+        assert!(specs.iter().all(|spec| spec.name != "浏览器"));
     }
 
     #[test]
-    fn desktop_control_schema_no_longer_requires_description_for_model_side() {
+    fn desktop_control_schema_uses_strict_action_variants() {
         let spec = builtin_tool_specs_with_language("zh-CN")
             .into_iter()
             .find(|spec| spec.name == "桌面控制")
             .expect("desktop control spec");
-        assert!(spec.description.contains("bbox"));
-        assert!(spec.description.contains("scroll_steps"));
-        assert!(spec.description.contains("to_bbox"));
-        assert!(spec.input_schema["properties"]["bbox"].is_object());
-        assert!(spec.input_schema["properties"]["action"].is_object());
-        assert!(spec.input_schema["properties"]["description"].is_null());
-        let required = spec.input_schema["required"]
+        let variants = spec.input_schema["oneOf"]
             .as_array()
-            .expect("required array");
-        assert!(required.iter().any(|item| item == "bbox"));
-        assert!(required.iter().any(|item| item == "action"));
-        assert!(required.iter().all(|item| item != "description"));
+            .expect("action variants");
+        assert_eq!(variants.len(), 7);
+        let type_text = variants
+            .iter()
+            .find(|item| item["properties"]["action"]["const"] == "type_text")
+            .expect("type text variant");
+        assert_eq!(type_text["additionalProperties"], false);
+        assert!(type_text["properties"]["text"].is_object());
+        assert!(type_text["properties"]["to_bbox"].is_null());
     }
 
     #[test]
@@ -3160,12 +3157,12 @@ mod tests {
         config.tools.browser.enabled = true;
 
         let available = collect_available_tool_names(&config, &SkillRegistry::default(), None);
-        assert!(available.contains("browser_navigate"));
-        assert!(available.contains("browser_status"));
-        // 「浏览器」是用户侧的聚合条目名：可选、可授权，英文别名同源。
-        assert!(available.contains("浏览器"));
         assert!(available.contains("browser"));
-        assert_eq!(resolve_tool_name("browser"), "浏览器");
+        assert!(!available.contains("browser_navigate"));
+        assert!(!available.contains("browser_status"));
+        // 「浏览器」是用户侧的聚合条目名，可选、可授权。
+        assert!(available.contains("浏览器"));
+        assert_eq!(resolve_tool_name("browser"), "browser");
     }
 
     #[test]
@@ -3182,10 +3179,10 @@ mod tests {
             .collect();
         let expanded = expand_browser_group_selection(selected, &available);
         assert!(
-            expanded.contains("browser_navigate"),
-            "the aggregate entry must grant the whole browser family"
+            expanded.contains("browser"),
+            "the aggregate entry must grant the browser tool"
         );
-        assert!(!expanded.contains("browser_status"));
+        assert!(!expanded.contains("browser_navigate"));
         assert!(expanded.contains("执行命令"));
         assert!(
             !expanded.contains("浏览器"),
@@ -3233,12 +3230,18 @@ mod tests {
             .iter()
             .find(|spec| spec.name == resolve_tool_name("schedule_task"))
             .expect("schedule task spec");
+        let schedule_variants = schedule_spec.input_schema["oneOf"]
+            .as_array()
+            .expect("schedule action variants");
+        assert!(schedule_variants
+            .iter()
+            .all(|variant| variant["additionalProperties"].as_bool() == Some(false)));
+        let update = schedule_variants
+            .iter()
+            .find(|variant| variant["properties"]["action"]["const"] == "update")
+            .expect("update branch");
         assert_eq!(
-            schedule_spec.input_schema["additionalProperties"].as_bool(),
-            Some(false)
-        );
-        assert_eq!(
-            schedule_spec.input_schema["properties"]["schedule"]["additionalProperties"].as_bool(),
+            update["properties"]["schedule"]["additionalProperties"].as_bool(),
             Some(false)
         );
 
@@ -3251,19 +3254,27 @@ mod tests {
         assert!(memory_spec.description.contains("长期记忆"));
         assert!(memory_spec.description.contains("memory_id"));
         assert!(memory_spec.description.contains("list/search"));
-        assert_eq!(
-            memory_spec.input_schema["additionalProperties"].as_bool(),
-            Some(false)
-        );
-        assert!(memory_spec.input_schema["properties"]["title"].is_object());
-        assert!(memory_spec.input_schema["properties"]["content"].is_object());
-        assert!(memory_spec.input_schema["properties"]["tag"].is_object());
-        assert!(memory_spec.input_schema["properties"]["related_memory_id"].is_object());
-        assert!(memory_spec.input_schema["properties"]["memory_time"].is_object());
-        assert!(memory_spec.input_schema["properties"]["category"].is_null());
-        assert!(memory_spec.input_schema["properties"]["summary"].is_null());
-        assert!(memory_spec.input_schema["properties"]["tags"].is_null());
-        assert!(memory_spec.input_schema["properties"]["entities"].is_null());
+        let memory_variants = memory_spec.input_schema["oneOf"]
+            .as_array()
+            .expect("memory action variants");
+        assert!(memory_variants
+            .iter()
+            .all(|variant| variant["additionalProperties"].as_bool() == Some(false)));
+        let add_memory = memory_variants
+            .iter()
+            .find(|variant| variant["properties"]["action"]["const"] == "add")
+            .expect("memory add branch");
+        assert!(add_memory["properties"]["title"].is_object());
+        assert!(add_memory["properties"]["content"].is_object());
+        assert!(add_memory["properties"]["tag"].is_object());
+        assert!(add_memory["properties"]["related_memory_id"].is_object());
+        assert!(add_memory["properties"]["memory_time"].is_object());
+        assert!(memory_variants
+            .iter()
+            .all(|variant| variant["properties"]["summary"].is_null()));
+        assert!(memory_variants
+            .iter()
+            .all(|variant| variant["properties"]["entities"].is_null()));
 
         let self_status_spec = specs
             .iter()
@@ -3271,6 +3282,12 @@ mod tests {
             .expect("self status spec");
         assert!(self_status_spec.description.contains("不要高频调用"));
         assert!(self_status_spec.input_schema["properties"]["include_system_metrics"].is_null());
+        assert!(self_status_spec.input_schema["properties"]["include_events"].is_null());
+        assert!(self_status_spec.input_schema["properties"]["events_limit"].is_null());
+        assert_eq!(
+            self_status_spec.input_schema["properties"]["detail_level"]["enum"],
+            serde_json::json!(["basic", "full"])
+        );
         assert_eq!(
             self_status_spec.input_schema["additionalProperties"].as_bool(),
             Some(false)

@@ -184,7 +184,7 @@ impl Param {
         self
     }
 
-    fn to_schema(&self) -> Value {
+    pub(crate) fn to_schema(&self) -> Value {
         let mut map = self.schema.clone();
         if !self.description.is_empty() {
             map.insert("description".to_string(), json!(self.description));

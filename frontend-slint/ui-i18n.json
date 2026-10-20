@@ -1606,8 +1606,8 @@
  },
  {
   "key": "cp_terminal_mode",
-  "zh": "终端模式",
-  "en": "Terminal mode"
+  "zh": "Git 终端",
+  "en": "Git terminal"
  },
  {
   "key": "cp_model_search",
@@ -1874,46 +1874,6 @@
   "key": "composer_stop_hint",
   "zh": "/stop  停止并退出目标态",
   "en": "/stop  stop and leave goal mode"
- },
- {
-  "key": "cp_terminal_placeholder",
-  "zh": "输入本地命令…",
-  "en": "Type a local command…"
- },
- {
-  "key": "cp_terminal_exit",
-  "zh": "退出终端",
-  "en": "Exit terminal"
- },
- {
-  "key": "cp_terminal_panel_title",
-  "zh": "终端",
-  "en": "Terminal"
- },
- {
-  "key": "cp_terminal_idle",
-  "zh": "空闲",
-  "en": "Idle"
- },
- {
-  "key": "cp_terminal_clear",
-  "zh": "清屏",
-  "en": "Clear"
- },
- {
-  "key": "cp_terminal_interrupt",
-  "zh": "中断",
-  "en": "Interrupt"
- },
- {
-  "key": "cp_terminal_paste",
-  "zh": "粘贴命令",
-  "en": "Paste command"
- },
- {
-  "key": "cp_terminal_empty",
-  "zh": "在下方输入命令，按 Enter 运行",
-  "en": "Type a command below and press Enter"
  },
  {
   "key": "tl_next_events",

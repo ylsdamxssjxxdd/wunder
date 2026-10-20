@@ -81,7 +81,7 @@ impl Orchestrator {
             )
         };
         // Goal tools are runtime-level capabilities, not per-agent tools:
-        // keep all three available even when a session or agent card
+        // keep it available even when a session or agent card
         // restricts its tool list, otherwise an armed goal could never
         // report completion.
         let mut allowed = allowed;

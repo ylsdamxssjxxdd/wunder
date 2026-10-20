@@ -9,8 +9,8 @@ use windows_sys::Win32::Foundation::HWND;
 use windows_sys::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
 #[cfg(windows)]
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    BringWindowToTop, GetForegroundWindow, GetWindowThreadProcessId, IsIconic,
-    IsZoomed, SetForegroundWindow, ShowWindow, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE,
+    BringWindowToTop, GetForegroundWindow, GetWindowThreadProcessId, IsIconic, IsZoomed,
+    SetForegroundWindow, ShowWindow, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE,
 };
 
 /// Starts the platform caption-drag for the custom title bar. Winit turns this
@@ -46,7 +46,14 @@ pub fn minimize(window: &slint::Window) -> bool {
 #[cfg(windows)]
 pub fn toggle_maximize(window: &slint::Window) -> bool {
     native_hwnd(window).is_some_and(|hwnd| unsafe {
-        ShowWindow(hwnd, if IsZoomed(hwnd) != 0 { SW_RESTORE } else { SW_MAXIMIZE });
+        ShowWindow(
+            hwnd,
+            if IsZoomed(hwnd) != 0 {
+                SW_RESTORE
+            } else {
+                SW_MAXIMIZE
+            },
+        );
         true
     })
 }

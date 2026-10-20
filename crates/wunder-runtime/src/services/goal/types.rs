@@ -33,6 +33,8 @@ pub const BLOCKED_AFTER_CONSECUTIVE_ROUNDS: i64 = 3;
 pub const DEFAULT_MAX_GOAL_ROUNDS: i64 = 256;
 /// Objective length bound shared by every entry point.
 pub const MAX_OBJECTIVE_CHARS: usize = 4000;
+/// Blocker explanation length bound shared by model and service entry points.
+pub const MAX_BLOCK_REASON_CHARS: usize = 4000;
 
 /// Durable continuation phase.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

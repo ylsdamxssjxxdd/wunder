@@ -389,6 +389,7 @@ pub(crate) async fn execute_memory_manager_tool(
     context: &ToolContext<'_>,
     args: &Value,
 ) -> Result<Value> {
+    validate_memory_manager_args(args)?;
     let payload: MemoryManagerArgs =
         serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?;
     let action = normalize_memory_manager_action(&payload.action);
@@ -665,6 +666,76 @@ pub(crate) async fn execute_memory_manager_tool(
     };
 
     Ok(response)
+}
+
+fn validate_memory_manager_args(args: &Value) -> Result<()> {
+    let object = args
+        .as_object()
+        .ok_or_else(|| anyhow!("memory_manager arguments must be a JSON object"))?;
+    let raw_action = object
+        .get("action")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| anyhow!("memory_manager action is required"))?;
+    let action = normalize_memory_manager_action(raw_action);
+    if action.is_empty() {
+        return Err(anyhow!(i18n::t("tool.memory_manager.invalid_action")));
+    }
+    let allowed = match action.as_str() {
+        "list" => &["action", "query", "limit", "order"][..],
+        "search" => &["action", "query", "content", "limit"][..],
+        "get" | "remove" => &["action", "memory_id", "id", "session_id"][..],
+        "add" => &[
+            "action",
+            "memory_id",
+            "id",
+            "title",
+            "content",
+            "tag",
+            "category",
+            "related_memory_id",
+            "memory_time",
+            "session_id",
+        ][..],
+        "update" => &[
+            "action",
+            "memory_id",
+            "id",
+            "title",
+            "content",
+            "tag",
+            "category",
+            "related_memory_id",
+            "memory_time",
+            "session_id",
+        ][..],
+        "clear" => &["action"][..],
+        _ => &[][..],
+    };
+    if let Some(key) = object.keys().find(|key| !allowed.contains(&key.as_str())) {
+        return Err(anyhow!(
+            "memory_manager field '{key}' is not valid for action '{raw_action}'"
+        ));
+    }
+    let has_id = ["memory_id", "id", "session_id"].iter().any(|key| {
+        object
+            .get(*key)
+            .and_then(Value::as_str)
+            .is_some_and(|value| !value.trim().is_empty())
+    });
+    if matches!(action.as_str(), "get" | "update" | "remove") && !has_id {
+        return Err(anyhow!(i18n::t("tool.memory_manager.memory_id_required")));
+    }
+    if matches!(action.as_str(), "add" | "update")
+        && !object
+            .get("content")
+            .and_then(Value::as_str)
+            .is_some_and(|value| !value.trim().is_empty())
+    {
+        return Err(anyhow!(i18n::t("error.content_required")));
+    }
+    Ok(())
 }
 
 fn cleanup_legacy_memory_record(

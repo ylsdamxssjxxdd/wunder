@@ -40,13 +40,12 @@ mod settings_search;
 mod shutdown;
 mod smoke;
 mod subagent_detail;
-mod terminal_grid;
-mod terminal_session;
 mod thread_trajectory;
 mod timeline;
 mod timeline_text;
 mod tool_icons;
 mod tools_ui;
+mod touch_keyboard;
 mod tray;
 mod turn_stats;
 mod workspace_files;
@@ -78,6 +77,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         crate::shutdown::request_exit();
         slint::CloseRequestResponse::KeepWindowShown
+    });
+    let weak = app.as_weak();
+    app.on_composer_focus_gained(move || {
+        if let Some(app) = weak.upgrade() {
+            touch_keyboard::on_text_field_activated(app.window());
+        }
     });
     install_window_chrome(&app);
     if first_argument.as_deref() == Some(std::ffi::OsStr::new("--smoke-check")) {
@@ -177,6 +182,14 @@ fn install_composer_popover_dismissal(app: &MainWindow) {
     let last_physical_pointer = Rc::new(Cell::new(None::<(f64, f64)>));
     let pointer_for_filter = Rc::clone(&last_physical_pointer);
     app.window().on_winit_window_event(move |window, event| {
+        // The touch-keyboard gate reads this before Slint dispatches the
+        // press that may move focus into a text field.
+        touch_keyboard::note_winit_event(event);
+        let touch_started = matches!(
+            event,
+            winit::event::WindowEvent::Touch(touch)
+                if touch.phase == winit::event::TouchPhase::Started
+        );
         let scale = f64::from(window.scale_factor()).max(0.001);
         match event {
             winit::event::WindowEvent::CursorMoved { position, .. } => {
@@ -204,6 +217,17 @@ fn install_composer_popover_dismissal(app: &MainWindow) {
         let Some(app) = weak.upgrade() else {
             return EventResult::Propagate;
         };
+        // A focused editor does not emit another focus-change callback. Handle
+        // its direct finger press here as well, so dismissing TabTip and
+        // tapping the same input area raises it again. This runs before Slint
+        // consumes the touch and never intercepts the edit gesture.
+        let in_editor = point >= app.get_composer_editor_x()
+            && point < app.get_composer_editor_x() + app.get_composer_editor_width()
+            && point_y >= app.get_composer_editor_y()
+            && point_y < app.get_composer_editor_y() + app.get_composer_editor_height();
+        if touch_started && in_editor && app.get_composer_editor_has_focus() {
+            touch_keyboard::on_text_field_activated(window);
+        }
         if !app.get_composer_popover_open() {
             return EventResult::Propagate;
         }
@@ -441,6 +465,37 @@ mod bundled_font {
                     .expect("内嵌 Microsoft YaHei 解压失败")
             })
             .as_slice()
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod test_support {
+    //! Headless UI tests share one MinimalSoftwareWindow platform and one
+    //! global lock: Slint installs the platform once per process and window
+    //! construction must not race across test threads.
+    use std::sync::{Mutex, MutexGuard, Once};
+
+    static LOCK: Mutex<()> = Mutex::new(());
+    static PLATFORM: Once = Once::new();
+
+    pub(crate) fn lock() -> MutexGuard<'static, ()> {
+        PLATFORM.call_once(|| {
+            struct TestPlatform;
+            impl slint::platform::Platform for TestPlatform {
+                fn create_window_adapter(
+                    &self,
+                ) -> Result<std::rc::Rc<dyn slint::platform::WindowAdapter>, slint::PlatformError>
+                {
+                    Ok(
+                        slint::platform::software_renderer::MinimalSoftwareWindow::new(
+                            slint::platform::software_renderer::RepaintBufferType::NewBuffer,
+                        ),
+                    )
+                }
+            }
+            let _ = slint::platform::set_platform(Box::new(TestPlatform));
+        });
+        LOCK.lock().unwrap_or_else(|poison| poison.into_inner())
     }
 }
 

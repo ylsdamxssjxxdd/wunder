@@ -367,24 +367,22 @@ fn tool_profile(name: &str) -> ToolProfile {
             ToolProfile::Media
         }
         "桌面控制" => ToolProfile::Desktop,
-        "get_goal" | "create_goal" | "update_goal" | "self_status" | "会话线程控制"
-        | "会话让出" | "定时任务" => ToolProfile::Runtime,
-        n if n.starts_with("browser_") => ToolProfile::Research,
+        "goal" | "self_status" | "会话线程控制" | "会话让出" | "定时任务" => {
+            ToolProfile::Runtime
+        }
+        "browser" => ToolProfile::Research,
         _ => ToolProfile::Dynamic,
     }
 }
 fn tool_effect(name: &str) -> ToolEffect {
     match name {
         "列出文件" | "文件名匹配" | "搜索内容" | "读取文件" | "读取图片" | "读图工具"
-        | "技能调用" | "网页抓取" | "网页搜索" | "get_goal" | "self_status" => {
-            ToolEffect::Read
-        }
-        "写入文件" | "文本编辑" | "create_goal" | "update_goal" | "计划面板" => {
-            ToolEffect::Write
-        }
+        | "技能调用" | "网页抓取" | "网页搜索" | "self_status" => ToolEffect::Read,
+        "goal" => ToolEffect::Mixed,
+        "写入文件" | "文本编辑" | "计划面板" => ToolEffect::Write,
         "执行命令" | "命令会话" | "ptc" => ToolEffect::Execute,
         "桌面控制" | "问询面板" => ToolEffect::Interactive,
-        n if n.starts_with("browser_") => ToolEffect::Interactive,
+        "browser" => ToolEffect::Interactive,
         _ => ToolEffect::Mixed,
     }
 }
@@ -625,7 +623,7 @@ mod tests {
     }
     #[test]
     fn authorized_snapshot_is_stable() {
-        let a = vec![spec("read_file"), spec("browser_observe")];
+        let a = vec![spec("read_file"), spec("browser")];
         let b = a.iter().rev().cloned().collect::<Vec<_>>();
         assert_eq!(
             tool_profile_snapshot(&a).revision,

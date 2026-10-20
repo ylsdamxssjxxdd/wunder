@@ -389,7 +389,7 @@ class BrowserBridgeTests(unittest.TestCase):
         old_ref = self.observed_ref()
         before = self.session.page_generations[self.target]
         self.page.evaluate("document.querySelector('#status').textContent = 'Changed'")
-        with self.assertRaisesRegex(ValueError, "Call browser_observe mode=refs"):
+        with self.assertRaisesRegex(ValueError, r"Call browser\(action=observe_refs\)"):
             self.act({"kind": "click", "ref": old_ref})
         self.assertGreater(self.session.page_generations[self.target], before)
         fresh = self.observed_ref()

@@ -2,11 +2,11 @@
 
 use crate::model::{
     AppState, MessageView, ModelOption, ProcessPageView, SessionView, TurnView, WorkflowKind,
-    WorkflowView, WorkspaceFileView,
+    WorkflowView, WorkspaceFileView, WorkspaceView,
 };
 #[cfg(not(target_arch = "wasm32"))]
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError};
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::{Duration, Instant};
@@ -22,6 +22,16 @@ const MODEL_TEXT_LIMIT: usize = 256;
 const PROCESS_ITEM_LIMIT: usize = 300;
 const PROCESS_DETAIL_BYTES: usize = 16 * 1024;
 const PROCESS_DETAIL_LINES: usize = 120;
+
+/// One file travelling with a prompt.
+///
+/// `path` is the absolute path the composer was given; `name` is what the
+/// transcript should call it. The bytes are read by the worker, never here.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PromptAttachment {
+    pub name: String,
+    pub path: String,
+}
 
 #[derive(Clone, Debug)]
 pub enum BackendCommand {
@@ -39,6 +49,11 @@ pub enum BackendCommand {
     SendMessage {
         session_id: String,
         content: String,
+        /// Files picked, dropped or referenced in the composer. Only paths
+        /// cross the channel: the worker reads the bytes off the UI thread and
+        /// builds the data URL the façade expects, so a 20 MB document never
+        /// blocks a frame.
+        attachments: Vec<PromptAttachment>,
     },
     Cancel {
         session_id: String,
@@ -47,8 +62,31 @@ pub enum BackendCommand {
         session_id: String,
         title: String,
     },
-    CreateSession,
+    CreateSession {
+        /// Workspace that owns the new thread. `None` asks the backend for its
+        /// default workspace, which is what the composer's global shortcut
+        /// uses; a workspace row's own `+` passes its id.
+        workspace_id: Option<String>,
+    },
     ArchiveSession(String),
+    /// Archive several threads in one worker turn. The batch is deliberately
+    /// one command instead of N `ArchiveSession` submissions so the UI inbox
+    /// receives a single authoritative result and partial failures cannot be
+    /// mistaken for separate user actions.
+    ArchiveSessions {
+        ids: Vec<String>,
+    },
+    /// Read the workspace catalogue for the rail's middle level. Separated
+    /// from `RefreshSessions` because the rail groups threads by workspace and
+    /// the two reads can fail independently.
+    RefreshWorkspaces,
+    /// Rename one workspace. Only the display name changes; the directory
+    /// binding, icon and colour are read back from the backend so the UI never
+    /// has to round-trip a whole edit it does not own.
+    RenameWorkspace {
+        workspace_id: String,
+        name: String,
+    },
     RefreshWorkspaceFiles {
         session_id: String,
         /// Workspace-relative directory to list; empty means the root.
@@ -56,6 +94,15 @@ pub enum BackendCommand {
         /// Monotonic client request id. The reply echoes it so a listing for
         /// a directory the user already left cannot replace the current one.
         request_id: u64,
+    },
+    /// Read the children of one workspace subdirectory for a lazily expanded
+    /// tree node. This is deliberately separate from `RefreshWorkspaceFiles`:
+    /// expanding a folder must not replace the root (or any other visible)
+    /// listing projection.
+    ListWorkspaceChildren {
+        session_id: String,
+        /// Workspace-relative directory; empty means the root.
+        path: String,
     },
     CreateWorkspaceDirectory {
         session_id: String,
@@ -102,10 +149,49 @@ pub enum BackendCommand {
     },
 }
 
+impl BackendCommand {
+    /// Short Chinese name of the user action this command performs. It is
+    /// kept next to the command definitions so a new variant cannot be added
+    /// without also naming it for the shell's failure messages.
+    pub fn label(&self) -> &'static str {
+        match self {
+            BackendCommand::RefreshSessions => "刷新线程列表",
+            BackendCommand::OpenSession(_) => "打开线程",
+            BackendCommand::LoadProcessPage { .. } => "读取工作过程",
+            BackendCommand::SendMessage { .. } => "发送消息",
+            BackendCommand::Cancel { .. } => "停止生成",
+            BackendCommand::RenameSession { .. } => "重命名线程",
+            BackendCommand::CreateSession { .. } => "新建线程",
+            BackendCommand::ArchiveSession(_) => "归档线程",
+            BackendCommand::ArchiveSessions { .. } => "批量归档",
+            BackendCommand::RefreshWorkspaces => "刷新工作区",
+            BackendCommand::RenameWorkspace { .. } => "重命名工作区",
+            BackendCommand::RefreshWorkspaceFiles { .. } => "刷新工作目录",
+            BackendCommand::ListWorkspaceChildren { .. } => "读取子目录",
+            BackendCommand::CreateWorkspaceDirectory { .. } => "新建目录",
+            BackendCommand::CreateWorkspaceFile { .. } => "新建文件",
+            BackendCommand::RenameWorkspaceEntry { .. } => "重命名工作目录条目",
+            BackendCommand::DeleteWorkspaceEntry { .. } => "删除工作目录条目",
+            BackendCommand::OpenWorkspaceFile { .. } => "打开工作目录条目",
+            BackendCommand::OpenLocalWorkspace(_) => "打开本地工作区",
+            BackendCommand::PreviewSystemPrompt { .. } => "读取系统提示词",
+            BackendCommand::LoadModels => "读取模型目录",
+            BackendCommand::SetSessionModel { .. } => "切换线程模型",
+            BackendCommand::SaveSessionReasoningEffort { .. } => "保存思考力度",
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum BackendEvent {
     Ready,
     Sessions(Vec<SessionView>),
+    /// Workspace catalogue for the rail. A failed read keeps the previous
+    /// tree: the rail must not collapse to "no workspaces" because one read
+    /// timed out.
+    Workspaces {
+        result: Result<Vec<WorkspaceView>, String>,
+    },
     History {
         session_id: String,
         turns: Vec<TurnView>,
@@ -176,6 +262,12 @@ pub enum BackendEvent {
         session_id: String,
         result: Result<(), String>,
     },
+    /// One batch-archive outcome. `archived` may be empty when every request
+    /// failed, so the reducer must treat both lists as data, not as success.
+    SessionsArchived {
+        archived: Vec<String>,
+        failed: Vec<(String, String)>,
+    },
     WorkspaceFiles {
         /// The request owner is carried back with the response. A directory
         /// listing can finish after the user selected another thread, and it
@@ -189,6 +281,19 @@ pub enum BackendEvent {
     WorkspaceAction {
         label: String,
         result: Result<(), String>,
+    },
+    /// Children of one tree node, keyed by the directory they belong to.
+    ///
+    /// The tree is a separate projection from the current-directory listing,
+    /// so this event must never go through `WorkspaceFiles`: two open folders
+    /// would otherwise overwrite each other's contents.
+    WorkspaceChildren {
+        /// Echo of the request owner; a reply for a thread the user left must not
+        /// touch the current tree.
+        session_id: String,
+        /// The directory these children belong to (empty = root).
+        path: String,
+        children: Result<Vec<WorkspaceFileView>, String>,
     },
     /// A catalogue read can fail independently from the active chat runtime.
     Models {
@@ -232,16 +337,9 @@ pub trait BackendPort {
 ///
 /// Keeping this behind the same UI boundary makes `--demo` deterministic: it
 /// never starts the local runtime, opens SQLite, or reacts to host state.
+#[derive(Default)]
 pub struct DemoBackend {
     pending: std::collections::VecDeque<BackendEvent>,
-}
-
-impl Default for DemoBackend {
-    fn default() -> Self {
-        Self {
-            pending: std::collections::VecDeque::new(),
-        }
-    }
 }
 
 impl BackendPort for DemoBackend {
@@ -297,14 +395,33 @@ impl BackendPort for DemoBackend {
                     files: Ok(Vec::new()),
                 });
             }
-            BackendCommand::CreateSession
+            BackendCommand::ListWorkspaceChildren { session_id, path } => {
+                // Mirror the demo listing behaviour (an empty root) so the
+                // fixture UI can expand a folder without an error banner.
+                self.pending
+                    .push_back(BackendEvent::WorkspaceChildren {
+                        session_id,
+                        path,
+                        children: Ok(Vec::new()),
+                    });
+            }
+            BackendCommand::CreateSession { .. }
             | BackendCommand::ArchiveSession(_)
+            | BackendCommand::ArchiveSessions { .. }
             | BackendCommand::CreateWorkspaceDirectory { .. }
             | BackendCommand::CreateWorkspaceFile { .. }
             | BackendCommand::RenameWorkspaceEntry { .. }
             | BackendCommand::DeleteWorkspaceEntry { .. }
             | BackendCommand::OpenWorkspaceFile { .. }
             | BackendCommand::OpenLocalWorkspace(_) => {
+                return Err("演示模式使用固定数据，不能执行本地任务".to_owned());
+            }
+            // The fixture already carries its workspaces; echoing them back
+            // keeps the rail stable when a test asks for a refresh.
+            BackendCommand::RefreshWorkspaces => self.pending.push_back(BackendEvent::Workspaces {
+                result: Ok(crate::fixtures::demo_workspaces()),
+            }),
+            BackendCommand::RenameWorkspace { .. } => {
                 return Err("演示模式使用固定数据，不能执行本地任务".to_owned());
             }
             BackendCommand::LoadModels => self.pending.push_back(BackendEvent::Models {
@@ -445,9 +562,13 @@ impl BackendPort for RemoteBackend {
             BackendCommand::LoadModels => Some("读取模型目录"),
             BackendCommand::SetSessionModel { .. } => Some("切换线程模型"),
             BackendCommand::SaveSessionReasoningEffort { .. } => Some("保存思考力度"),
-            BackendCommand::CreateSession => Some("新建线程"),
+            BackendCommand::CreateSession { .. } => Some("新建线程"),
             BackendCommand::ArchiveSession(_) => Some("归档线程"),
+            BackendCommand::ArchiveSessions { .. } => Some("批量归档线程"),
+            BackendCommand::RefreshWorkspaces => Some("刷新工作区"),
+            BackendCommand::RenameWorkspace { .. } => Some("重命名工作区"),
             BackendCommand::RefreshWorkspaceFiles { .. } => Some("刷新工作目录"),
+            BackendCommand::ListWorkspaceChildren { .. } => Some("读取子目录"),
             BackendCommand::CreateWorkspaceDirectory { .. } => Some("新建目录"),
             BackendCommand::CreateWorkspaceFile { .. } => Some("新建文件"),
             BackendCommand::RenameWorkspaceEntry { .. } => Some("重命名工作目录条目"),
@@ -744,6 +865,7 @@ fn native_worker(command_rx: Receiver<BackendCommand>, event_tx: SyncSender<Back
             Ok(BackendCommand::SendMessage {
                 session_id,
                 content,
+                attachments,
             }) => {
                 if active_session.as_deref() != Some(session_id.as_str()) {
                     if event_tx
@@ -757,12 +879,33 @@ fn native_worker(command_rx: Receiver<BackendCommand>, event_tx: SyncSender<Back
                     }
                     continue;
                 }
+                // Reading happens here, on the worker thread. A file that
+                // vanished or is unreadable is reported instead of being
+                // silently dropped from the message.
+                let mut payloads = Vec::with_capacity(attachments.len());
+                let mut skipped = 0usize;
+                for item in &attachments {
+                    match read_prompt_attachment(item) {
+                        Ok(payload) => payloads.push(payload),
+                        Err(_) => skipped += 1,
+                    }
+                }
+                if skipped > 0
+                    && event_tx
+                        .send(BackendEvent::WorkspaceAction {
+                            label: format!("已跳过 {skipped} 个无法读取的附件"),
+                            result: Ok(()),
+                        })
+                        .is_err()
+                {
+                    return;
+                }
                 match desktop.send_chat(NativeChatInput {
                     session_id,
                     content,
                     client_message_id: None,
                     reasoning_effort: None,
-                    attachments: Vec::new(),
+                    attachments: payloads,
                 }) {
                     Ok(next) => {
                         active_root.clear();
@@ -841,9 +984,9 @@ fn native_worker(command_rx: Receiver<BackendCommand>, event_tx: SyncSender<Back
                     }
                 }
             }
-            Ok(BackendCommand::CreateSession) => {
+            Ok(BackendCommand::CreateSession { workspace_id }) => {
                 let result = desktop
-                    .create_session(None)
+                    .create_session(workspace_id.as_deref())
                     .map(session_view)
                     .map_err(display_error);
                 if event_tx
@@ -853,10 +996,71 @@ fn native_worker(command_rx: Receiver<BackendCommand>, event_tx: SyncSender<Back
                     return;
                 }
             }
+            Ok(BackendCommand::RefreshWorkspaces) => {
+                let result = desktop
+                    .list_workspaces()
+                    .map(|workspaces| workspaces.into_iter().map(workspace_view).collect())
+                    .map_err(display_error);
+                if event_tx.send(BackendEvent::Workspaces { result }).is_err() {
+                    return;
+                }
+            }
+            Ok(BackendCommand::RenameWorkspace { workspace_id, name }) => {
+                let label = format!("已重命名工作区「{}」", name.trim());
+                // Read the record first: the edit needs the directory binding,
+                // icon and colour the rail never carries.
+                let result = if name.trim().is_empty() {
+                    Err("工作区名称不能为空".to_owned())
+                } else {
+                    desktop
+                        .get_workspace(&workspace_id)
+                        .and_then(|workspace| {
+                            desktop.update_workspace(&wunder_desktop::WorkspaceEdit {
+                                workspace_id: workspace.workspace_id,
+                                name: name.trim().to_owned(),
+                                root_path: workspace.root_path,
+                                icon: workspace.icon,
+                                color: workspace.color,
+                            })
+                        })
+                        .map(|_| ())
+                        .map_err(display_error)
+                };
+                if event_tx
+                    .send(BackendEvent::WorkspaceAction { label, result })
+                    .is_err()
+                {
+                    return;
+                }
+            }
             Ok(BackendCommand::ArchiveSession(session_id)) => {
                 let result = desktop.archive_session(&session_id).map_err(display_error);
                 if event_tx
                     .send(BackendEvent::SessionArchived { session_id, result })
+                    .is_err()
+                {
+                    return;
+                }
+            }
+            Ok(BackendCommand::ArchiveSessions { ids }) => {
+                let targets = archive_targets(&ids);
+                if targets.is_empty() {
+                    // Nothing was asked for, so reporting an empty result would
+                    // replace a meaningful status line with a no-op message.
+                    continue;
+                }
+                let mut archived = Vec::with_capacity(targets.len());
+                let mut failed = Vec::new();
+                for session_id in targets {
+                    // Each archive is independent: one failure must not leave
+                    // the remaining selected threads unarchived.
+                    match desktop.archive_session(&session_id) {
+                        Ok(()) => archived.push(session_id),
+                        Err(error) => failed.push((session_id, display_error(error))),
+                    }
+                }
+                if event_tx
+                    .send(BackendEvent::SessionsArchived { archived, failed })
                     .is_err()
                 {
                     return;
@@ -874,6 +1078,22 @@ fn native_worker(command_rx: Receiver<BackendCommand>, event_tx: SyncSender<Back
                         path,
                         request_id,
                         files,
+                    })
+                    .is_err()
+                {
+                    return;
+                }
+            }
+            Ok(BackendCommand::ListWorkspaceChildren { session_id, path }) => {
+                // Read-only: unlike a directory change this must not reset the
+                // active stream or root, because the user is only unfolding a
+                // node inside the thread they already opened.
+                let children = workspace_files_for_session(&desktop, &session_id, &path);
+                if event_tx
+                    .send(BackendEvent::WorkspaceChildren {
+                        session_id,
+                        path,
+                        children,
                     })
                     .is_err()
                 {
@@ -1215,7 +1435,11 @@ fn reasoning_item_id(root: &str, round: i64) -> String {
     format!("reason-{root}:text-{round}")
 }
 
+// The stream state this reads is owned by the worker loop and passed one
+// parameter per piece on purpose: bundling them into a struct would mean
+// re-borrowing the whole loop state for a single event projection.
 #[cfg(not(target_arch = "wasm32"))]
+#[allow(clippy::too_many_arguments)]
 fn emit_reasoning_delta(
     event_tx: &SyncSender<BackendEvent>,
     session_id: &str,
@@ -1306,6 +1530,7 @@ fn session_view(session: wunder_desktop::NativeSession) -> SessionView {
         id: session.id,
         title: session.title,
         workspace: session.workspace_name,
+        workspace_id: session.workspace_id.filter(|id| !id.trim().is_empty()),
         status: session.runtime_status,
         updated_at: session.updated_at,
         locked: session.locked,
@@ -1315,6 +1540,19 @@ fn session_view(session: wunder_desktop::NativeSession) -> SessionView {
         // as live context occupancy. The watcher supplies that separately.
         context_tokens: None,
         context_capacity_tokens: None,
+    }
+}
+
+/// Project one workspace record for the rail. The backend keeps owning paths,
+/// timestamps and ordering; the rail only needs what it paints.
+#[cfg(not(target_arch = "wasm32"))]
+fn workspace_view(workspace: wunder_desktop::NativeWorkspace) -> WorkspaceView {
+    WorkspaceView {
+        id: workspace.workspace_id,
+        name: workspace.name,
+        icon: workspace.icon,
+        color: workspace.color,
+        thread_count: i32::try_from(workspace.thread_count).unwrap_or(i32::MAX),
     }
 }
 
@@ -1441,6 +1679,70 @@ fn context_token_count(value: Option<f64>) -> Option<u32> {
 #[cfg(not(target_arch = "wasm32"))]
 fn display_error(error: impl std::fmt::Display) -> String {
     error.to_string().chars().take(1024).collect()
+}
+
+/// Content type for the data URL prefix. Matched by extension only: the
+/// attachment store re-sniffs nothing, and a wrong-but-harmless label beats a
+/// blocking magic-number read for every file the user drops.
+fn attachment_content_type(path: &str) -> &'static str {
+    let extension = std::path::Path::new(path)
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    match extension.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "pdf" => "application/pdf",
+        "json" => "application/json",
+        "md" | "txt" | "csv" | "log" | "rs" | "py" | "js" | "ts" | "html" | "css" => "text/plain",
+        _ => "application/octet-stream",
+    }
+}
+
+/// Read one composer attachment into the shape the façade persists.
+///
+/// The composer already enforces the byte budget, so this only guards against
+/// a file that grew or disappeared between the drop and the send.
+#[cfg(not(target_arch = "wasm32"))]
+fn read_prompt_attachment(
+    item: &PromptAttachment,
+) -> Result<wunder_desktop::NativeChatAttachment, String> {
+    use base64::Engine as _;
+    let metadata = std::fs::metadata(&item.path).map_err(|error| error.to_string())?;
+    if metadata.is_dir() {
+        return Err("目录不能作为附件发送".to_owned());
+    }
+    if metadata.len() > crate::composer_attachments::MAX_TOTAL_BYTES {
+        return Err("附件超过大小上限".to_owned());
+    }
+    let bytes = std::fs::read(&item.path).map_err(|error| error.to_string())?;
+    let content_type = attachment_content_type(&item.path);
+    let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    Ok(wunder_desktop::NativeChatAttachment {
+        name: item.name.clone(),
+        content: format!("data:{content_type};base64,{encoded}"),
+        content_type: content_type.to_owned(),
+    })
+}
+
+/// Normalize a batch-archive request into the exact calls the worker makes.
+///
+/// Duplicates are dropped while keeping the caller's order: archiving the
+/// same thread twice would produce a spurious failure on the second attempt
+/// and make the summarizing status line count threads twice.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+fn archive_targets(ids: &[String]) -> Vec<String> {
+    let mut seen = HashSet::with_capacity(ids.len());
+    let mut targets = Vec::with_capacity(ids.len());
+    for id in ids {
+        if seen.insert(id.as_str()) {
+            targets.push(id.clone());
+        }
+    }
+    targets
 }
 
 fn normalize_reasoning_effort(value: &str) -> Option<String> {
@@ -1840,14 +2142,15 @@ pub fn apply_event(state: &mut AppState, event: BackendEvent) {
         }
         BackendEvent::WorkspaceFiles {
             session_id,
-            path,
             request_id,
             files,
+            // The echoed path is kept for adapters that still browse a single
+            // directory; the tree projection does not need it.
+            ..
         } if state.selected_session.as_deref() == Some(session_id.as_str())
             && request_id == state.workspace_request_id =>
         {
             state.workspace_file_loading = false;
-            state.workspace_file_path = path;
             match files {
                 Ok(files) => {
                     state.replace_workspace_files(files);
@@ -1855,6 +2158,47 @@ pub fn apply_event(state: &mut AppState, event: BackendEvent) {
                 }
                 Err(error) => state.workspace_file_error = error,
             }
+        }
+        BackendEvent::WorkspaceChildren {
+            session_id,
+            path,
+            children,
+        } if state.selected_session.as_deref() == Some(session_id.as_str()) => {
+            // The guard above is the whole ownership check: a reply for a
+            // thread the user already left falls through to `_` untouched, so
+            // it can neither paint another thread's tree nor overwrite the
+            // current status line.
+            match children {
+                Ok(children) => state.workspace_tree.set_children(&path, children),
+                Err(_) => state.workspace_tree.set_error(&path),
+            }
+        }
+        BackendEvent::SessionsArchived { archived, failed } => {
+            if archived.is_empty() && failed.is_empty() {
+                // An empty outcome carries no user-visible fact; keeping the
+                // previous status avoids overwriting an unrelated message.
+                return;
+            }
+            // Only successful ids leave the list. A failed thread is still a
+            // durable thread and must stay selectable.
+            state
+                .sessions
+                .retain(|session| !archived.contains(&session.id));
+            let selected_archived = archived
+                .iter()
+                .any(|id| Some(id.as_str()) == state.selected_session.as_deref());
+            if selected_archived {
+                // The selection no longer refers to a listed thread, so the
+                // transcript and composer must not outlive it.
+                state.selected_session = None;
+                state.turns.clear();
+                state.busy = false;
+            }
+            state.status = if failed.is_empty() {
+                format!("已归档 {} 个线程", archived.len())
+            } else {
+                format!("已归档 {} 个线程，{} 个失败", archived.len(), failed.len())
+            };
         }
         BackendEvent::Ready => {
             state.connection = crate::model::ConnectionState::Ready;
@@ -1866,6 +2210,12 @@ pub fn apply_event(state: &mut AppState, event: BackendEvent) {
             }
             state.sessions = sessions;
         }
+        BackendEvent::Workspaces { result } => match result {
+            Ok(workspaces) => state.replace_workspaces(workspaces),
+            // A failed catalogue read is not an empty catalogue: dropping the
+            // rows would make every thread look orphaned.
+            Err(error) => state.status = format!("无法读取工作区：{error}"),
+        },
         BackendEvent::Models { result } => {
             state.model_picker_loading = false;
             match result {
@@ -2425,7 +2775,6 @@ mod tests {
         };
         let first = state.begin_workspace_refresh();
         let second = state.begin_workspace_refresh();
-        state.workspace_file_path = "notes".to_owned();
 
         apply_event(
             &mut state,
@@ -2440,7 +2789,6 @@ mod tests {
             },
         );
         assert!(state.workspace_files.is_empty(), "过期页不应写入文件列表");
-        assert_eq!(state.workspace_file_path, "notes");
         assert!(state.workspace_file_loading, "仍在等待最新一页");
 
         apply_event(
@@ -2456,7 +2804,6 @@ mod tests {
             },
         );
         assert_eq!(state.workspace_files[0].path, "notes/plan.md");
-        assert_eq!(state.workspace_file_path, "notes");
         assert!(!state.workspace_file_loading);
     }
 
@@ -2798,5 +3145,319 @@ mod tests {
         assert!(is_llm_model("LLM"));
         assert!(is_llm_model(""));
         assert!(!is_llm_model("asr"));
+    }
+
+    fn archived_state(ids: &[&str], selected: &str) -> AppState {
+        AppState {
+            sessions: ids
+                .iter()
+                .map(|id| SessionView {
+                    id: (*id).to_owned(),
+                    ..Default::default()
+                })
+                .collect(),
+            selected_session: Some(selected.to_owned()),
+            turns: vec![TurnView {
+                id: "turn".into(),
+                ..Default::default()
+            }],
+            busy: true,
+            ..Default::default()
+        }
+    }
+
+    fn listed_ids(state: &AppState) -> Vec<&str> {
+        state
+            .sessions
+            .iter()
+            .map(|session| session.id.as_str())
+            .collect()
+    }
+
+    #[test]
+    fn batch_archive_removes_every_archived_thread() {
+        let mut state = archived_state(&["thread-a", "thread-b", "thread-c"], "thread-a");
+        apply_event(
+            &mut state,
+            BackendEvent::SessionsArchived {
+                archived: vec!["thread-b".into(), "thread-c".into()],
+                failed: Vec::new(),
+            },
+        );
+        assert_eq!(listed_ids(&state), vec!["thread-a"]);
+        assert_eq!(state.selected_session.as_deref(), Some("thread-a"));
+        assert_eq!(state.turns.len(), 1);
+        assert_eq!(state.status, "已归档 2 个线程");
+    }
+
+    #[test]
+    fn batch_archive_clears_selection_and_transcript_of_the_selected_thread() {
+        let mut state = archived_state(&["thread-a", "thread-b"], "thread-a");
+        apply_event(
+            &mut state,
+            BackendEvent::SessionsArchived {
+                archived: vec!["thread-a".into()],
+                failed: Vec::new(),
+            },
+        );
+        assert_eq!(listed_ids(&state), vec!["thread-b"]);
+        assert_eq!(state.selected_session, None);
+        assert!(state.turns.is_empty(), "被归档线程的对话应被清空");
+        assert!(!state.busy);
+    }
+
+    #[test]
+    fn batch_archive_keeps_an_unrelated_selection_intact() {
+        let mut state = archived_state(&["thread-a", "thread-b"], "thread-b");
+        apply_event(
+            &mut state,
+            BackendEvent::SessionsArchived {
+                archived: vec!["thread-a".into()],
+                failed: Vec::new(),
+            },
+        );
+        assert_eq!(state.selected_session.as_deref(), Some("thread-b"));
+        assert_eq!(state.turns.len(), 1);
+        assert!(state.busy);
+    }
+
+    #[test]
+    fn batch_archive_keeps_failed_threads_listed() {
+        let mut state = archived_state(&["thread-a", "thread-b"], "thread-a");
+        apply_event(
+            &mut state,
+            BackendEvent::SessionsArchived {
+                archived: vec!["thread-a".into()],
+                failed: vec![("thread-b".into(), "存档目录不可写".into())],
+            },
+        );
+        assert_eq!(listed_ids(&state), vec!["thread-b"]);
+        assert_eq!(state.status, "已归档 1 个线程，1 个失败");
+    }
+
+    #[test]
+    fn workspace_children_land_in_the_tree_of_the_selected_thread() {
+        let mut state = AppState {
+            selected_session: Some("selected".into()),
+            ..Default::default()
+        };
+        let root = vec![WorkspaceFileView {
+            name: "notes".into(),
+            path: "notes".into(),
+            is_directory: true,
+            ..Default::default()
+        }];
+        assert!(state.workspace_tree.expand("notes"));
+        apply_event(
+            &mut state,
+            BackendEvent::WorkspaceChildren {
+                session_id: "selected".into(),
+                path: "notes".into(),
+                children: Ok(vec![WorkspaceFileView {
+                    name: "plan.md".into(),
+                    path: "notes/plan.md".into(),
+                    ..Default::default()
+                }]),
+            },
+        );
+        let rows = state.workspace_tree.flatten(&root);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[1].path, "notes/plan.md");
+        assert_eq!(rows[1].depth, 1);
+        // Expanding a folder must stay out of the current-directory listing.
+        assert!(state.workspace_files.is_empty());
+    }
+
+    #[test]
+    fn workspace_children_for_another_thread_are_discarded() {
+        let mut state = AppState {
+            selected_session: Some("selected".into()),
+            status: "正在读取子目录".into(),
+            ..Default::default()
+        };
+        let root = vec![WorkspaceFileView {
+            name: "notes".into(),
+            path: "notes".into(),
+            is_directory: true,
+            ..Default::default()
+        }];
+        assert!(state.workspace_tree.expand("notes"));
+        apply_event(
+            &mut state,
+            BackendEvent::WorkspaceChildren {
+                session_id: "other".into(),
+                path: "notes".into(),
+                children: Ok(vec![WorkspaceFileView {
+                    name: "stale.md".into(),
+                    path: "notes/stale.md".into(),
+                    ..Default::default()
+                }]),
+            },
+        );
+        assert_eq!(state.workspace_tree.flatten(&root).len(), 1);
+        assert!(!state.workspace_tree.has_failed("notes"));
+        // A late reply for a left thread must not disturb the live one.
+        assert_eq!(state.status, "正在读取子目录");
+    }
+
+    #[test]
+    fn failed_subdirectory_listing_only_marks_that_directory() {
+        let mut state = AppState {
+            selected_session: Some("selected".into()),
+            ..Default::default()
+        };
+        let root = vec![
+            WorkspaceFileView {
+                name: "notes".into(),
+                path: "notes".into(),
+                is_directory: true,
+                ..Default::default()
+            },
+            WorkspaceFileView {
+                name: "docs".into(),
+                path: "docs".into(),
+                is_directory: true,
+                ..Default::default()
+            },
+        ];
+        assert!(state.workspace_tree.expand("notes"));
+        assert!(state.workspace_tree.expand("docs"));
+        state.workspace_tree.set_children(
+            "docs",
+            vec![WorkspaceFileView {
+                name: "readme.md".into(),
+                path: "docs/readme.md".into(),
+                ..Default::default()
+            }],
+        );
+        apply_event(
+            &mut state,
+            BackendEvent::WorkspaceChildren {
+                session_id: "selected".into(),
+                path: "notes".into(),
+                children: Err("目录不可读".into()),
+            },
+        );
+        assert!(state.workspace_tree.has_failed("notes"));
+        assert!(!state.workspace_tree.has_failed("docs"));
+        // docs keeps its loaded child; notes yields only its own error row.
+        let rows = state.workspace_tree.flatten(&root);
+        assert_eq!(rows.len(), 3);
+        assert!(rows.iter().any(|row| row.path == "docs/readme.md"));
+        let failed = rows
+            .iter()
+            .find(|row| row.path == "notes")
+            .map(|row| row.failed);
+        assert_eq!(failed, Some(true));
+    }
+
+    #[test]
+    fn list_workspace_children_command_is_labelled() {
+        let command = BackendCommand::ListWorkspaceChildren {
+            session_id: "thread-a".to_owned(),
+            path: String::new(),
+        };
+        assert_eq!(command.label(), "读取子目录");
+    }
+
+    #[test]
+    fn archive_targets_dedupes_and_preserves_input_order() {
+        assert!(archive_targets(&[]).is_empty());
+        let ids = vec![
+            "thread-b".to_owned(),
+            "thread-a".to_owned(),
+            "thread-b".to_owned(),
+        ];
+        assert_eq!(archive_targets(&ids), vec!["thread-b", "thread-a"]);
+    }
+
+    #[test]
+    fn batch_archive_command_is_labelled() {
+        let command = BackendCommand::ArchiveSessions { ids: Vec::new() };
+        assert_eq!(command.label(), "批量归档");
+        assert_eq!(
+            BackendCommand::ArchiveSession("thread-a".to_owned()).label(),
+            "归档线程"
+        );
+    }
+
+    #[test]
+    fn empty_batch_outcome_leaves_the_status_untouched() {
+        let mut state = AppState {
+            status: "正在归档线程".into(),
+            sessions: vec![SessionView {
+                id: "thread-a".into(),
+                ..Default::default()
+            }],
+            selected_session: Some("thread-a".into()),
+            ..Default::default()
+        };
+        apply_event(
+            &mut state,
+            BackendEvent::SessionsArchived {
+                archived: Vec::new(),
+                failed: Vec::new(),
+            },
+        );
+        assert_eq!(state.status, "正在归档线程");
+        assert_eq!(listed_ids(&state), vec!["thread-a"]);
+        assert_eq!(state.selected_session.as_deref(), Some("thread-a"));
+    }
+
+    #[test]
+    fn workspace_catalogue_replaces_rows_and_drops_a_stale_expansion() {
+        let mut state = AppState::default();
+        assert!(!state.workspaces_loaded);
+        apply_event(
+            &mut state,
+            BackendEvent::Workspaces {
+                result: Ok(vec![WorkspaceView {
+                    id: "ws-a".into(),
+                    name: "甲".into(),
+                    ..Default::default()
+                }]),
+            },
+        );
+        assert!(state.workspaces_loaded);
+        assert!(state.sidebar.toggle("ws-a"));
+        apply_event(
+            &mut state,
+            BackendEvent::Workspaces {
+                result: Ok(vec![WorkspaceView {
+                    id: "ws-b".into(),
+                    name: "乙".into(),
+                    ..Default::default()
+                }]),
+            },
+        );
+        // The open id no longer exists, so the group must not stay marked open
+        // with no rows beneath it.
+        assert_eq!(state.sidebar.expanded(), None);
+        assert_eq!(state.workspaces.len(), 1);
+    }
+
+    #[test]
+    fn failed_workspace_read_keeps_the_previous_tree() {
+        let mut state = AppState::default();
+        apply_event(
+            &mut state,
+            BackendEvent::Workspaces {
+                result: Ok(vec![WorkspaceView {
+                    id: "ws-a".into(),
+                    name: "甲".into(),
+                    ..Default::default()
+                }]),
+            },
+        );
+        apply_event(
+            &mut state,
+            BackendEvent::Workspaces {
+                result: Err("数据库忙".into()),
+            },
+        );
+        // A failed read is not an empty catalogue: the rail keeps its rows and
+        // reports the failure instead of orphaning every thread.
+        assert_eq!(state.workspaces.len(), 1);
+        assert!(state.status.contains("数据库忙"));
     }
 }

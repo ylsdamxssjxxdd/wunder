@@ -223,6 +223,11 @@ fi
 site_packages="$("$python_bin" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
 log "site-packages: $site_packages"
 
+# Match the Win7 supplement: wheels ship each package's test suite (pandas
+# alone is ~26 MB of tests) and the frozen supplement never runs them.
+log "pruning package test suites"
+find "$site_packages" -mindepth 2 -maxdepth 2 -type d \( -name tests -o -name testdata \) -exec rm -rf {} +
+
 # Match the Win7 supplement and the desktop runtime contract: the custom rc
 # lives at <python_root>/etc/matplotlibrc and the runtime activates it via
 # MATPLOTLIBRC (crates/wunder-runtime/src/core/python_runtime.rs). It must
@@ -302,6 +307,61 @@ obtain_file "$ffmpeg_archive_url" "$downloads_dir/$ffmpeg_archive_file" "$ffmpeg
 ffmpeg_bin="$ffmpeg_root/bin/ffmpeg"
 mkdir -p "$ffmpeg_root/bin"
 gzip -dc "$downloads_dir/$ffmpeg_archive_file" > "$ffmpeg_bin"
+
+# ---------------------------------------------------------------------------
+# r2 (radare2): optional console disassembler toolkit. Distro debs target
+# newer glibc than Ubuntu 18.04, so no prebuilt archive ships in the manifest;
+# feed a hand-prepared payload via WUNDER_SUPPLEMENT_R2_ARCHIVE:
+#   - a static single-file r2 binary (staged as opt/r2/bin/radare2), or
+#   - a tarball/zip whose top-level dir is flattened into opt/r2 and must
+#     provide bin/radare2.
+# ---------------------------------------------------------------------------
+r2_archive="${WUNDER_SUPPLEMENT_R2_ARCHIVE:-}"
+if [[ -n "$r2_archive" ]]; then
+  require_file "$r2_archive"
+  r2_root="$package_root/opt/r2"
+  mkdir -p "$r2_root"
+  log "staging r2 from $r2_archive into $r2_root"
+  case "$r2_archive" in
+    *.tar.gz|*.tgz|*.zip)
+      r2_tmp="$build_root/r2-unpack-$$"
+      mkdir -p "$r2_tmp"
+      case "$r2_archive" in
+        *.tar.gz|*.tgz) tar -xzf "$r2_archive" -C "$r2_tmp" ;;
+        *.zip) "$python_bin" - "$r2_archive" "$r2_tmp" <<'R2ZIP'
+import sys, zipfile
+zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])
+R2ZIP
+      ;;
+      esac
+      r2_entries=("$r2_tmp"/*)
+      if [[ ${#r2_entries[@]} -eq 1 && -d "${r2_entries[0]}" ]]; then
+        cp -a "${r2_entries[0]}/." "$r2_root/"
+      else
+        cp -a "$r2_tmp/." "$r2_root/"
+      fi
+      if [[ ! -x "$r2_root/bin/radare2" ]]; then
+        # archive with no directory layout: accept a lone executable r2 binary
+        r2_lone=("$r2_tmp"/*)
+        [[ ${#r2_lone[@]} -eq 1 && -f "${r2_lone[0]}" ]] || fail "radare2 binary missing after staging: $r2_root/bin/radare2"
+        mkdir -p "$r2_root/bin"
+        cp -a "${r2_lone[0]}" "$r2_root/bin/radare2"
+        rm -f "$r2_root/radare2"
+      fi
+      rm -rf "$r2_tmp"
+      ;;
+    *)
+      # bare static binary: stage it directly under bin/
+      mkdir -p "$r2_root/bin"
+      cp -a "$r2_archive" "$r2_root/bin/radare2"
+      ;;
+  esac
+  chmod 0755 "$r2_root/bin/radare2"
+  [[ -f "$r2_root/bin/r2" ]] || ln -s radare2 "$r2_root/bin/r2"
+  log "r2 smoke: $("$r2_root/bin/radare2" -v 2>&1 | head -n 1)"
+else
+  log "WUNDER_SUPPLEMENT_R2_ARCHIVE not set; supplement ships without r2"
+fi
 chmod 0755 "$ffmpeg_bin"
 
 requirements_entries="$("$python_bin" - "$requirements_path" <<'PYEOF'
@@ -332,13 +392,14 @@ Usage:
 1. Use Import supplement in the Pupa settings, or close processes using this runtime.
 2. For manual installation, extract into WUNDER_HOME (default: ~/.wunder),
    including when the Pupa is distributed as an AppImage.
-3. Ensure the target now contains opt/python, opt/git, opt/rg, and opt/ffmpeg.
+3. Ensure the target now contains opt/python, opt/git, opt/rg, and opt/ffmpeg
+   (plus opt/r2 when WUNDER_SUPPLEMENT_R2_ARCHIVE was provided).
 4. Start the Pupa or Helm; both prepend the shared opt/python,
    opt/git, opt/rg, and opt/ffmpeg to PATH automatically.
 EOF
 
 python3 - "$manifest_json" "$arch" "$build_root" "$python_archive_url" "$git_tarball_url" "$rg_archive_url" "$ffmpeg_archive_url" "$requirements_path" "$package_root/wunder-linux-supplement.json" <<'PYEOF'
-import json, sys
+import json, os, sys
 from datetime import datetime, timezone
 
 payload, arch, build_root, python_url, git_url, rg_url, ffmpeg_url, requirements_path, destination = sys.argv[1:10]
@@ -384,6 +445,10 @@ output = {
         "flavor": manifest["ffmpeg"]["flavor"],
         "source": manifest["ffmpeg"]["source"],
         "url": ffmpeg_url,
+    },
+    "r2": {
+        "version": manifest.get("r2", {}).get("version", ""),
+        "installed": bool(os.environ.get("WUNDER_SUPPLEMENT_R2_ARCHIVE")),
     },
     "install": manifest["install"],
 }

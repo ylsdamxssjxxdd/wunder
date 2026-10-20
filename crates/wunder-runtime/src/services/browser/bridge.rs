@@ -694,14 +694,10 @@ impl BrowserBridge {
         if !cdp_fallback_eligible(&self.config, error) {
             return None;
         }
-        let executable_path = self
-            .config
-            .executable_path
-            .clone()
-            .or_else(|| {
-                super::probe::probe_launch_executable(self.config.browsers_path.as_deref())
-                    .map(|path| path.to_string_lossy().into_owned())
-            })?;
+        let executable_path = self.config.executable_path.clone().or_else(|| {
+            super::probe::probe_launch_executable(self.config.browsers_path.as_deref())
+                .map(|path| path.to_string_lossy().into_owned())
+        })?;
         Some(CdpOverride { executable_path })
     }
 
@@ -2026,7 +2022,10 @@ mod tests {
         let args = spawn_args(&config, Some(&over));
         let mode = args.iter().position(|arg| arg == "--mode").unwrap();
         assert_eq!(args[mode + 1], "cdp");
-        let exe = args.iter().position(|arg| arg == "--executable-path").unwrap();
+        let exe = args
+            .iter()
+            .position(|arg| arg == "--executable-path")
+            .unwrap();
         assert_eq!(args[exe + 1], "fallback/browser.exe");
         let port = args.iter().position(|arg| arg == "--cdp-port").unwrap();
         assert_eq!(args[port + 1], "9333");

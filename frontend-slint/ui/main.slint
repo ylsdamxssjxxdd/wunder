@@ -9,7 +9,6 @@ import { Action, EdgeToggle, RailButton, Avatar, FormField, MiddleHeader, Middle
 export { ToastState }
 import { ProcessEntry } from "theme.slint";
 import { Composer, GoalBanner, InquiryPanel, StatusDock } from "composer.slint";
-import { TermSpan } from "terminal_view.slint";
 import { TimelineView } from "timeline.slint";
 import { ActivityMonth, ActivityWeek } from "activity_card.slint";
 export { ActivityMonth, ActivityWeek }
@@ -42,7 +41,6 @@ export { Theme, DesktopPage, Conversation, WorkspaceCard, SidebarRow, CloudThrea
 export { AppTray } from "tray.slint";
 export { TrayNotice } from "tray-notice.slint";
 export { HelpWindow } from "help_window.slint";
-export { TerminalWindow } from "terminal_window.slint";
 export { ScreenshotOverlay } from "screenshot_overlay.slint";
 
 export component MainWindow inherits Window {
@@ -111,6 +109,11 @@ export component MainWindow inherits Window {
     out property <length> composer-screenshot-menu-y: composer.screenshot-menu-y;
     out property <length> composer-screenshot-menu-width: composer.screenshot-menu-width;
     out property <length> composer-screenshot-menu-height: composer.screenshot-menu-height;
+    out property <length> composer-editor-x: composer.editor-x;
+    out property <length> composer-editor-y: composer.editor-y;
+    out property <length> composer-editor-width: composer.editor-width;
+    out property <length> composer-editor-height: composer.editor-height;
+    out property <bool> composer-editor-has-focus: composer.editor-has-focus;
     public function dismiss-composer-popovers() { composer.dismiss-popovers(); }
     callback sidebar-begin-selection();
     callback sidebar-exit-selection();
@@ -189,29 +192,9 @@ export component MainWindow inherits Window {
     in-out property <string> cloud-greeting;
     in-out property <bool> busy: false;
     in-out property <bool> command-pending: false;
-    // The terminal button opens a separate terminal window; chat remains in
-    // the main transcript and composer.
-    in-out property <bool> terminal-mode: false;
-    callback terminal-toggled(bool);
-    callback terminal-interrupt();
-    callback terminal-clear();
-    callback terminal-scrolled(int);
-    callback terminal-scroll-to(int);
-    callback terminal-geometry-changed();
-    in-out property <int> terminal-measured-cols: 0;
-    in-out property <int> terminal-measured-rows: 0;
-    changed terminal-measured-cols => { root.terminal-geometry-changed(); }
-    changed terminal-measured-rows => { root.terminal-geometry-changed(); }
-    in-out property <[TermSpan]> terminal-spans;
-    in-out property <string> terminal-status;
-    in-out property <bool> terminal-error: false;
-    in-out property <int> terminal-rows: 24;
-    in-out property <int> terminal-cols: 80;
-    in-out property <int> terminal-view-offset: 0;
-    in-out property <int> terminal-history-depth: 0;
-    in-out property <bool> terminal-caret-visible: false;
-    in-out property <int> terminal-caret-row: 0;
-    in-out property <int> terminal-caret-col: 0;
+    // The composer's terminal entry opens the supplement's Git Bash console;
+    // chat itself stays in the main transcript and composer.
+    callback launch-terminal();
     in-out property <string> command-feedback;
     changed command-feedback => {
         if root.command-feedback.starts-with("命令执行失败") {
@@ -758,6 +741,9 @@ export component MainWindow inherits Window {
     // ArrowUp/ArrowDown recall: (direction, cursor byte offset, anchor byte
     // offset, draft) in, the draft to show (or the unchanged one) back.
     callback recall-history(int, int, int, string) -> DraftRecall;
+    // Fires when the composer editor gains focus; Rust decides whether the
+    // activation was touch and asks Windows for the on-screen keyboard.
+    callback composer-focus-gained();
     callback capture-screenshot(bool, bool);
     callback record-voice();
     callback remove-attachment(int);
@@ -917,37 +903,6 @@ export component MainWindow inherits Window {
     function open-info(title: string, text: string) {
         root.dialog-title = title; root.dialog-text = text; root.dialog-open = true;
     }
-    function apply-new-model-param-defaults() {
-        root.model-temperature-draft = "0.7";
-        root.model-timeout-draft = "120";
-        root.model-max-output-draft = "8192";
-        root.model-thinking-budget-draft = "2048";
-        root.model-max-rounds-draft = "1000";
-        root.model-max-context-draft = "128000";
-        root.model-history-compaction-ratio-draft = "0.9";
-        root.model-reasoning-effort-draft = "";
-        root.model-simulation-speed-draft = "fast";
-        root.model-support-vision-draft = false;
-        root.model-support-hearing-draft = false;
-        root.model-stream-include-usage-draft = true;
-        root.model-tts-voice-draft = ""; root.model-tts-format-draft = ""; root.model-tts-speed-draft = "1"; root.model-tts-instructions-draft = "";
-        root.model-asr-language-draft = ""; root.model-asr-format-draft = ""; root.model-asr-temperature-draft = "0"; root.model-asr-prompt-draft = "";
-        root.model-image-size-draft = ""; root.model-image-format-draft = ""; root.model-image-steps-draft = "30"; root.model-image-guidance-draft = "7.5"; root.model-image-negative-draft = "";
-        root.model-video-size-draft = ""; root.model-video-seconds-draft = "4"; root.model-video-fps-draft = "24"; root.model-video-negative-draft = "";
-    }
-    function open-new-model() {
-        root.model-creating = true;
-        // The native side inserts the draft into the shared catalogue in the
-        // same callback turn.  Keeping the defaults here makes the right-hand
-        // form useful immediately, even before the catalogue projection lands.
-        root.model-key-draft = "新模型";
-        root.model-provider-draft = "openai_compatible";
-        root.model-name-draft = "";
-        root.model-base-url-draft = ""; root.model-token-draft = ""; root.model-type-draft = "llm";
-        root.model-tool-call-mode-draft = "function_call";
-        root.apply-new-model-param-defaults();
-    }
-
     Rectangle {
         y: Theme.titlebar-height;
         width: parent.width; height: max(0px, parent.height - Theme.titlebar-height);
@@ -1161,8 +1116,7 @@ export component MainWindow inherits Window {
                             }
                             composer := Composer {
                                 draft <=> root.draft; busy: root.command-pending || root.session-loading || root.creating-session || (root.chat-loading && !root.busy) || (root.cloud-chat-active && root.cloud-thread-busy);
-                            terminal-mode: false;
-                            command => { root.terminal-mode = !root.terminal-mode; root.terminal-toggled(root.terminal-mode); }
+                            launch-terminal => { root.launch-terminal(); }
                             send-key: root.runtime-send-key;
                             interrupt => { }
                             context-usage: root.context-usage; context-known: root.context-known; context-counts: root.context-counts; reasoning-effort <=> root.reasoning-effort;
@@ -1192,6 +1146,7 @@ export component MainWindow inherits Window {
                             recall-history(direction, cursor-offset, anchor-offset, draft) => {
                                 return root.recall-history(direction, cursor-offset, anchor-offset, draft);
                             }
+                            editor-focus-gained => { root.composer-focus-gained(); }
                             generating: root.busy || root.goal-active; stopping: root.stopping; stop => { root.stop-generation(); }
                             recording: root.recording; transcribing: root.transcribing; recording-elapsed: root.recording-elapsed; recording-pulse: root.recording-pulse;
                             send => { root.send-message(); }
@@ -1295,7 +1250,7 @@ export component MainWindow inherits Window {
         model-editor-is-default: root.selected-model-is-default;
         delete-model(key) => { root.delete-model(key); }
         select-model(index) => { root.select-model(index); }
-        create-model => { root.open-new-model(); root.create-model(); }
+        create-model => { root.create-model(); }
         discard-model-draft => { root.discard-model-draft(); }
         move-model(from, delta) => { root.move-model(from, delta); }
         save-model => { root.save-model(); }

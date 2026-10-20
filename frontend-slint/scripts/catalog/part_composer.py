@@ -63,7 +63,7 @@ ENTRIES = [
     ("cp_model_pick", "切换模型", "Switch model"),
     ("cp_model_context", "上下文 Token", "Context tokens"),
     ("cp_voice_input", "语音输入", "Voice input"),
-    ("cp_terminal_mode", "终端模式", "Terminal mode"),
+    ("cp_terminal_mode", "Git 终端", "Git terminal"),
     ("cp_model_search", "搜索模型", "Search models"),
     ("cp_model_empty", "还没有可用模型。请到「设置 → 模型设置」添加。", "No models yet. Add one in Settings → Models."),
     ("cp_model_no_match", "没有匹配的模型", "No matching model"),

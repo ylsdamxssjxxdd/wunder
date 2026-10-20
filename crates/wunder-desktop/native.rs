@@ -4,10 +4,7 @@
 //! Orchestrator as the server. It only translates typed UI requests to runtime
 //! calls; it does not duplicate scheduling or permission rules.
 
-use crate::{
-    args::DesktopArgs,
-    runtime::{load_desktop_settings, resolve_winpty_library, DesktopRuntime},
-};
+use crate::{args::DesktopArgs, runtime::DesktopRuntime};
 use anyhow::{anyhow, Result};
 use bytes::Bytes;
 use serde_json::{json, Value};
@@ -17,7 +14,6 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::runtime::Runtime;
-use wunder_server::DesktopTerminalSnapshot;
 #[path = "native_trajectory.rs"]
 mod trajectory;
 
@@ -35,13 +31,6 @@ pub use commands::{NativeChatCommand, NativeGoal};
 #[path = "native_context.rs"]
 mod context;
 pub use context::NativeContextUsage;
-
-#[path = "native_terminal.rs"]
-mod terminal;
-pub use terminal::{
-    NativeTerminal, NativeTerminalFrame, NativeTerminalSignal, NativeTerminalSnapshot,
-    NativeTerminalSpec, NativeTerminalWatch,
-};
 
 #[path = "native_chat_process.rs"]
 mod chat_process;
@@ -411,7 +400,6 @@ pub struct NativeDesktop {
     runtime: Arc<Runtime>,
     desktop: DesktopRuntime,
     settings_lock: std::sync::Mutex<()>,
-    terminal: NativeTerminal,
     instance_id: String,
     open_threads: Arc<Mutex<HashMap<String, u64>>>,
     /// Recent thread headers are reused when the user switches away and back.
@@ -491,13 +479,6 @@ impl NativeDesktop {
                 .await;
             });
         }
-        // A console for the shell, when the host ships winpty next to its git.
-        let settings = load_desktop_settings(&desktop.settings_path).unwrap_or_default();
-        let terminal = NativeTerminal::new(
-            Arc::clone(&runtime),
-            Arc::clone(&desktop.state.storage),
-            resolve_winpty_library(&desktop.app_dir, &settings),
-        );
         let instance_id = uuid::Uuid::new_v4().simple().to_string();
         let open_threads: Arc<Mutex<HashMap<String, u64>>> = Arc::new(Mutex::new(HashMap::new()));
         let chat_snapshot_cache = Arc::new(Mutex::new(HashMap::new()));
@@ -562,7 +543,6 @@ impl NativeDesktop {
             runtime,
             desktop,
             settings_lock: std::sync::Mutex::new(()),
-            terminal,
             instance_id,
             open_threads,
             chat_snapshot_cache,
@@ -1341,93 +1321,52 @@ impl NativeDesktop {
         ))
     }
 
-    /// Start (or reuse) a terminal session bound to the desktop user.
-    pub fn terminal_start(&self, spec: &NativeTerminalSpec) -> Result<DesktopTerminalSnapshot> {
-        self.terminal.start(self.user_id(), spec)
+    /// Open the supplement's Git Bash console (`opt/git/git-bash.exe`). The
+    /// window is owned by mintty, so this only spawns the launcher and returns.
+    /// The active workspace is the shell's starting directory, and the
+    /// supplement's tool directories are prepended to the child PATH so `git`,
+    /// `python` and friends resolve to the bundled runtimes.
+    pub fn launch_git_bash(&self, workspace_root: &str) -> Result<(), String> {
+        let roots = wunder_server::local_bootstrap::supplement::roots(
+            &self.desktop.wunder_home,
+            &self.desktop.app_dir,
+            None,
+        );
+        let git_bash = roots
+            .iter()
+            .map(|root| root.join("opt/git/git-bash.exe"))
+            .find(|path| path.is_file())
+            .ok_or_else(|| "补充包未安装 Git：opt/git/git-bash.exe 不存在".to_string())?;
+        let workdir = {
+            let requested = std::path::PathBuf::from(workspace_root.trim());
+            if workspace_root.trim().is_empty() || !requested.is_dir() {
+                self.desktop.workspace_root.clone()
+            } else {
+                requested
+            }
+        };
+        let supplement_path = wunder_server::local_bootstrap::supplement::path_entries(&roots);
+        let child_path = if supplement_path.is_empty() {
+            std::env::var_os("PATH").unwrap_or_default()
+        } else {
+            let mut value = std::env::join_paths(supplement_path.iter().map(|p| p.as_path()))
+                .map_err(|e| format!("构造 PATH 失败: {e}"))?
+                .into_string()
+                .map_err(|_| "PATH 编码错误".to_string())?;
+            if let Some(existing) = std::env::var_os("PATH") {
+                value.push(';');
+                value.push_str(&existing.to_string_lossy());
+            }
+            std::ffi::OsString::from(value)
+        };
+        std::process::Command::new(&git_bash)
+            .current_dir(&workdir)
+            .env("PATH", child_path)
+            .spawn()
+            .map_err(|e| format!("启动 Git Bash 失败: {e}"))?;
+        Ok(())
     }
 
-    pub fn terminal_watch(
-        &self,
-        session_id: &str,
-        terminal_id: &str,
-    ) -> Result<NativeTerminalWatch> {
-        self.terminal.watch(self.user_id(), session_id, terminal_id)
-    }
-
-    /// Fetch the incremental output frame since `last_seq` for `terminal_id`.
-    pub fn terminal_poll(
-        &self,
-        session_id: &str,
-        terminal_id: &str,
-        last_seq: u64,
-    ) -> Result<NativeTerminalFrame> {
-        self.terminal
-            .poll(self.user_id(), session_id, terminal_id, last_seq)
-    }
-
-    /// Send raw bytes (already encoded) to the terminal stdin.
-    pub fn terminal_send(&self, session_id: &str, terminal_id: &str, input: &[u8]) -> Result<()> {
-        self.terminal
-            .send(self.user_id(), session_id, terminal_id, input)
-    }
-
-    /// Submit a complete command line; the terminal service owns line endings
-    /// and echo for the selected shell/backend.
-    pub fn terminal_send_command(
-        &self,
-        session_id: &str,
-        terminal_id: &str,
-        command: &str,
-    ) -> Result<()> {
-        self.terminal
-            .send_command(self.user_id(), session_id, terminal_id, command)
-    }
-
-    /// Interrupt the running command: Ctrl-C on a console, otherwise the shell
-    /// process is killed because piped stdin carries no signal path.
-    pub fn terminal_cancel(&self, session_id: &str, terminal_id: &str) -> Result<()> {
-        self.terminal
-            .cancel(self.user_id(), session_id, terminal_id)
-    }
-
-    /// Drop the terminal record (also kills the process).
-    pub fn terminal_close(&self, session_id: &str, terminal_id: &str) -> Result<()> {
-        self.terminal.close(self.user_id(), session_id, terminal_id)
-    }
-
-    /// List live terminal snapshots for `session_id`.
-    pub fn terminal_list(&self, session_id: &str) -> Vec<DesktopTerminalSnapshot> {
-        self.terminal.list(self.user_id(), session_id)
-    }
-
-    /// Report the panel's cell grid to the shell so a console backend can
-    /// reflow its lines; piped shells ignore it.
-    pub fn terminal_resize(
-        &self,
-        session_id: &str,
-        terminal_id: &str,
-        cols: i32,
-        rows: i32,
-    ) -> Result<()> {
-        self.terminal.resize(
-            self.user_id(),
-            session_id,
-            terminal_id,
-            cols.max(1) as u16,
-            rows.max(1) as u16,
-        )
-    }
-
-    /// Durable transcript of the session scope, raw shell output oldest first.
-    /// The native UI replays it through its ANSI renderer on (re)entry so the
-    /// panel shows the same history after a restart.
-    pub fn terminal_transcript(&self, session_id: &str) -> String {
-        self.terminal.transcript(self.user_id(), session_id)
-    }
-
-    /// Returns whether the desktop runtime has a configured default ASR model.
-    /// The check is deliberately synchronous at this façade boundary so UI code
-    /// can reject an empty recording before starting device capture.
     pub fn has_asr_model(&self) -> bool {
         let config = self.runtime.block_on(self.state().config_store.get());
         wunder_server::multimodal_models::resolve_asr_model(&config, None).is_some()

@@ -31,6 +31,7 @@
     "validateImports": [
       "requests",
       "numpy",
+      "capstone",
       "pandas",
       "openpyxl",
       "matplotlib",
@@ -47,21 +48,12 @@
       "lxml.etree",
       "ffmpeg",
       "imageio",
-      "imageio_ffmpeg",
       "cv2",
-      "folium",
-      "pyproj",
-      "shapely",
-      "netCDF4",
-      "cftime",
       "h5py",
-      "metpy",
       "seaborn",
-      "plotly",
       "pyecharts",
       "playwright"
     ],
-    "plotProbe": true,
     "archives": {
       "amd64": {
         "fileName": "cpython-3.8.18+20240107-x86_64-unknown-linux-gnu-install_only.tar.gz",
@@ -73,7 +65,8 @@
         "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20240107/cpython-3.8.18+20240107-aarch64-unknown-linux-gnu-install_only.tar.gz",
         "elfMachine": "AArch64"
       }
-    }
+    },
+    "plotProbe": true
   },
   "git": {
     "version": "2.46.2",
@@ -147,5 +140,22 @@
     "gitRoot": "opt/git",
     "rgRoot": "opt/rg",
     "ffmpegRoot": "opt/ffmpeg"
+  },
+  "r2": {
+    "version": "6.2.4",
+    "flavor": "radare2 hand-prepared archive",
+    "source": "radareorg/radare2",
+    "notes": [
+      "radare2 console disassembler toolkit, staged into opt/r2 so the runtime prepends opt/r2/bin to PATH.",
+      "No prebuilt Linux archive ships in the manifest: distro debs target newer glibc than Ubuntu 18.04 (official 6.x needs glibc 2.35). Feed a hand-prepared payload via WUNDER_SUPPLEMENT_R2_ARCHIVE: a static single-file r2 binary (staged as opt/r2/bin/radare2 with an r2 symlink) or a tarball/zip flattened into opt/r2 providing bin/radare2; without it the supplement ships without r2."
+    ],
+    "layout": {
+      "dest": "opt/r2",
+      "expectedExe": "bin/radare2"
+    },
+    "archives": {
+      "amd64": null,
+      "arm64": null
+    }
   }
 }

@@ -12,9 +12,7 @@ A goal is attached to a session; the agent keeps working on it until the goal co
 
 | Tool | Role |
 | --- | --- |
-| `get_goal` | Reads the current goal and its revision |
-| `create_goal` | Creates a goal |
-| `update_goal` | Edits, pauses, resumes, completes, or reports blocked |
+| `goal` | Uses `action=get|create|edit|pause|resume|complete|blocked` to read, create, edit, pause, resume, complete, or report blocked |
 
 ## Phases
 
@@ -39,6 +37,6 @@ Updates use CAS-on-revision: an update must carry the goal's current revision, a
 ## Limits
 
 - There is no token budget and no cooldown between rounds. Whether a goal stops depends on three things only: the round budget, the phase, and whether it is armed.
-- The **armed** state is **not persisted**: after a process restart or a session resume, even if the phase is still `active`, an explicit `update_goal action=resume` is needed to arm it again. When a goal stops moving, check armed first.
+- The **armed** state is **not persisted**: after a process restart or a session resume, even if the phase is still `active`, an explicit `goal action=resume` is needed to arm it again. When a goal stops moving, check armed first.
 - The desktop form does not expose goal selection; the runtime injects it per session.
 - The Bridge has no goal UI; goal operations happen in the Beehive, the Pupa, and the Helm.

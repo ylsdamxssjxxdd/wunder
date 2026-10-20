@@ -62,7 +62,7 @@ pub fn filter_tool_visibility(
             )
         })
         .collect::<Vec<_>>();
-    // 管理员侧把浏览器工具收敛为单个「浏览器」条目：组名规则应覆盖整组 browser_* 工具。
+    // 管理员侧把浏览器工具显示为单个「浏览器」条目；组名规则覆盖唯一 browser action 工具。
     let browser_group_name = crate::tools::resolve_tool_name("browser");
     let mut filtered = HashSet::new();
     for tool_name in allowed {

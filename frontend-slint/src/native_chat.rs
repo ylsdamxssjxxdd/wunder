@@ -2,8 +2,7 @@
 use wunder_desktop::native::NativeWorkflowEntry;
 
 use crate::{
-    Conversation, DraftRecall, InquiryOption, InquiryQuestion, MainWindow, PlanStep, TermSpan,
-    TerminalWindow, TimelineRow,
+    Conversation, DraftRecall, InquiryOption, InquiryQuestion, MainWindow, PlanStep, TimelineRow,
 };
 use serde_json::Value;
 use slint::{ComponentHandle, Model, ModelRc, Timer, TimerMode, VecModel};
@@ -31,10 +30,6 @@ pub(crate) use observer::project_cloud_history;
 pub(crate) use observer::project_history;
 #[path = "native_chat_queue.rs"]
 mod queue;
-#[path = "native_chat_terminal.rs"]
-mod terminal;
-use terminal::bind_terminal;
-
 use queue::{drain_entry, EntrySignal, ParkedTurn, Recall};
 
 struct Active {
@@ -355,7 +350,11 @@ fn inquiry_from_payload(data: &Value) -> Option<InquiryState> {
         })
         .take(4)
         .collect();
-    (!questions.is_empty()).then_some(InquiryState { questions, page: 0, expanded: false })
+    (!questions.is_empty()).then_some(InquiryState {
+        questions,
+        page: 0,
+        expanded: false,
+    })
 }
 
 struct State {
@@ -373,12 +372,6 @@ struct State {
     /// Ordinary refreshes (including archive completion) must leave the user's
     /// current workspace and empty state untouched.
     initial_auto_open: bool,
-    /// Each local workspace owns an independent shell, screen and transcript.
-    terminals: std::collections::HashMap<String, WorkspaceTerminal>,
-    terminal_window: Option<Rc<TerminalWindow>>,
-    terminal_model: Rc<VecModel<TermSpan>>,
-    /// Workspace currently projected in the auxiliary window.
-    terminal_workspace: Option<String>,
     /// Session-scoped plan state (explanation + steps) so the plan card
     /// survives turn boundaries within a thread.
     plans: std::collections::HashMap<String, (String, Vec<(String, String)>)>,
@@ -403,6 +396,11 @@ struct State {
     /// Counter behind the per-send `client_message_id`: the only key that ties
     /// an engine queue row back to the parked subscriber this window owns.
     send_seq: u64,
+    /// A foreground stream renders under its client request id while durable
+    /// history uses the committed root-turn id. Keep a single dirty bit while
+    /// that foreground tail is protected, then let the observer reconcile it
+    /// in one frame after the stream settles.
+    durable_history_dirty: bool,
 }
 
 thread_local! {
@@ -480,7 +478,6 @@ pub(crate) fn prepare_external_timeline(app: &MainWindow) {
         app.set_inquiry_visible(false);
         app.set_queue_turns(ModelRc::default());
         app.set_queue_overflow(0);
-        app.set_terminal_mode(false);
         app.set_pending_attachments(ModelRc::default());
         reset_activity(app);
     });
@@ -537,20 +534,6 @@ pub(crate) fn replace_external_timeline(app: &MainWindow, mut rows: Vec<Timeline
     });
 }
 
-struct TerminalSession {
-    io: crate::terminal_session::Session,
-}
-
-struct WorkspaceTerminal {
-    session: Option<TerminalSession>,
-    /// True while the session worker is still starting the shell; the entry
-    /// reserves the workspace so a second toggle never spawns a duplicate.
-    starting: bool,
-    workspace_name: String,
-    workspace_root: String,
-    projection: Option<crate::terminal_session::Projection>,
-}
-
 struct Recording {
     stop: Arc<AtomicBool>,
     worker: Option<std::thread::JoinHandle<Result<crate::audio_recording::RecordedAudio, String>>>,
@@ -584,10 +567,6 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
     app.set_tools(ModelRc::default());
     app.set_models(ModelRc::default());
     let desktop_preview = desktop.clone();
-    let terminal_window = TerminalWindow::new().ok().map(Rc::new);
-    if let Some(window) = terminal_window.as_ref() {
-        let _ = window.hide();
-    }
     let state = Rc::new(RefCell::new(State {
         timer: Timer::default(),
         observation: observer::Observation::default(),
@@ -599,12 +578,6 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
         recording: None,
         list_inflight: Arc::new(AtomicBool::new(false)),
         initial_auto_open: true,
-        terminals: std::collections::HashMap::new(),
-        terminal_window,
-        terminal_model: Rc::new(VecModel::default()),
-        // Starts at the size the panel declares before it knows its own
-        // geometry; the first layout reports the real one.
-        terminal_workspace: None,
         plans: std::collections::HashMap::new(),
         plan_sig: String::new(),
         inquiries: std::collections::HashMap::new(),
@@ -614,6 +587,7 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
         queue_due: None,
         recall: Recall::default(),
         send_seq: 0,
+        durable_history_dirty: false,
     }));
     observer::install(app, state.clone());
     CHAT_STATE.with(|slot| *slot.borrow_mut() = Rc::downgrade(&state));
@@ -621,7 +595,17 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
     bind_selection(app, state.clone());
     bind_new_thread(app, state.clone());
     bind_send(app, state.clone());
-    bind_terminal(app, state.clone());
+    // 加号菜单「终端」：直接呼出补充包里的 Git Bash。
+    let launch_weak = app.as_weak();
+    let launch_desktop = state.borrow().desktop.clone();
+    app.on_launch_terminal(move || {
+        if let Some(app) = launch_weak.upgrade() {
+            let workspace = app.get_active_workspace_root().to_string();
+            if let Err(message) = launch_desktop.launch_git_bash(&workspace) {
+                app.set_status(message.into());
+            }
+        }
+    });
     bind_reasoning_effort(app, state.clone());
     bind_thread_model(app, state.clone());
     bind_attachments(app);
@@ -899,7 +883,8 @@ fn publish_activity(app: &MainWindow, active: &TurnOutput, last_sig: &str) -> St
 /// Project a thread's cached plan into the dock while no turn is live, so a
 /// thread switch (or a reopened thread) still shows the plan it last published,
 /// exactly like the web client's composer dock.
-fn publish_idle_plan(app: &MainWindow, state: &State, session: &str) {    let Some((explanation, steps)) = state.plans.get(session) else {
+fn publish_idle_plan(app: &MainWindow, state: &State, session: &str) {
+    let Some((explanation, steps)) = state.plans.get(session) else {
         reset_activity(app);
         return;
     };
@@ -996,10 +981,7 @@ fn publish_inquiry(app: &MainWindow, session: &str, state: &State) {
             .collect()
     } else {
         let index = panel.current_index();
-        vec![inquiry_row(
-            index,
-            &panel.questions[index],
-        )]
+        vec![inquiry_row(index, &panel.questions[index])]
     };
     app.set_inquiry_visible(true);
     app.set_inquiry_session(session.into());
@@ -1683,17 +1665,6 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
             }
             return;
         }
-        if app.get_terminal_mode() {
-            // Terminal mode: the input belongs to the local shell, never the
-            // model. "//" escapes a literal slash prefix; everything else is
-            // passed through verbatim so "/"-prefixed binaries still work.
-            if content.is_empty() {
-                return;
-            }
-            app.set_status("终端输入请在独立终端窗口中进行".into());
-            app.set_draft("".into());
-            return;
-        }
         if commands::dispatch(&app, &state, &content) {
             return;
         }
@@ -1881,6 +1852,7 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
                     // this thread's history; nothing is rebuilt from the
                     // conversation list.
                     let timeline = state.borrow().timeline.clone();
+                    state.borrow_mut().durable_history_dirty = false;
                     {
                         let mut live = timeline.borrow_mut();
                         live.set_highlight(true);
@@ -1898,7 +1870,11 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
                     app.set_stream_updates(0);
                     app.set_stream_max_ui_ms(0.0);
                     app.set_stream_max_backlog(0);
-                    state.borrow_mut().observation.detach();
+                    // Keep the passive thread watcher attached while the
+                    // foreground stream is running. It is the authoritative
+                    // source for queue admission, context occupancy and
+                    // sibling thread status; detaching it here made an
+                    // interjected turn invisible until the next navigation.
                     // Plan state is session-scoped: a new turn resumes the
                     // thread's last published checklist; file counters always
                     // start from zero.
@@ -2714,6 +2690,7 @@ fn start_timer(app: &MainWindow, state: Rc<RefCell<State>>) {
                     output,
                     client_message_id: entry.client_message_id,
                 });
+                state.durable_history_dirty = false;
                 app.set_busy(true);
                 app.set_stopping(false);
                 app.set_follow_output(true);
@@ -3306,8 +3283,12 @@ fn apply_event(
                 None => return Ok(false),
             }
         }
-        "subagent_dispatch_item_update" | "subagent_status" | "subagent_dispatch_finish"
-        | "subagent_close" | "subagent_interrupt" | "subagent_resume" => {
+        "subagent_dispatch_item_update"
+        | "subagent_status"
+        | "subagent_dispatch_finish"
+        | "subagent_close"
+        | "subagent_interrupt"
+        | "subagent_resume" => {
             // Child cards must show up the moment the parent spawns them, not
             // when the durable `subagent_run` item replays at turn end. The
             // control events carry the same identity either flat (dispatch,

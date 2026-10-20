@@ -394,7 +394,7 @@ fn classify(name: &str) -> Option<ToolPresentation> {
         CANONICAL_COMMAND => call(ToolAccess::Execute, "运行", "Ran"),
         CANONICAL_COMMAND_SESSION => call(ToolAccess::Execute, "命令会话", "Command session"),
         "ptc" => call(ToolAccess::Execute, "脚本调用", "Scripted call"),
-        // Browser: the aggregate entry plus the provider's native `browser_*` names.
+        // Browser: the aggregate entry and its one model-facing `browser` action tool.
         other if is_browser_group_name(other) || is_browser_tool_name(other) => {
             call(ToolAccess::Execute, "浏览网页", "Browse")
         }
@@ -414,9 +414,7 @@ fn classify(name: &str) -> Option<ToolPresentation> {
         "定时任务" => call(ToolAccess::Other, "定时任务", "Schedule task"),
         "记忆管理" => call(ToolAccess::Other, "记忆管理", "Memory"),
         "自我状态" => call(ToolAccess::Explore, "读取状态", "Status"),
-        "get_goal" => call(ToolAccess::Other, "读取目标", "Read goal"),
-        "create_goal" => call(ToolAccess::Other, "创建目标", "Create goal"),
-        "update_goal" | "goal" => call(ToolAccess::Other, "更新目标", "Update goal"),
+        "goal" => call(ToolAccess::Other, "管理目标", "Manage goal"),
         // Generated artefacts: the result is a file the reader picks up, not a diff.
         "语音生成" => call(ToolAccess::Other, "生成语音", "Generate speech"),
         "声转文" => call(ToolAccess::Other, "语音转写", "Transcribe"),
@@ -555,27 +553,7 @@ mod tests {
         ),
         ("记忆管理", ToolAccess::Other, "记忆管理", "Memory", false),
         ("自我状态", ToolAccess::Explore, "读取状态", "Status", false),
-        (
-            "get_goal",
-            ToolAccess::Other,
-            "读取目标",
-            "Read goal",
-            false,
-        ),
-        (
-            "create_goal",
-            ToolAccess::Other,
-            "创建目标",
-            "Create goal",
-            false,
-        ),
-        (
-            "update_goal",
-            ToolAccess::Other,
-            "更新目标",
-            "Update goal",
-            false,
-        ),
+        ("goal", ToolAccess::Other, "管理目标", "Manage goal", false),
         (
             "语音生成",
             ToolAccess::Other,
@@ -691,7 +669,7 @@ mod tests {
             ("generate_image", "图像生成"),
             ("generate_video", "视频生成"),
             ("browser", "浏览器"),
-            ("goal", "update_goal"),
+            ("goal", "goal"),
         ] {
             assert_eq!(canonical_tool_name(alias), canonical, "{alias}");
             assert_eq!(
@@ -813,7 +791,7 @@ mod tests {
     #[test]
     fn browser_and_desktop_names_classify_whichever_side_arrives() {
         // The aggregate entry is display-side; the native names are what gets emitted.
-        for name in ["浏览器", "browser", "browser_navigate"] {
+        for name in ["浏览器", "browser"] {
             assert_eq!(present(name).access, ToolAccess::Execute, "{name}");
             assert_eq!(present(name).verb(false), "Browse", "{name}");
         }

@@ -65,7 +65,7 @@ export component MarkdownBlock inherits Rectangle {
     quote-content := TextInput {
         visible: root.block.kind == 4;
         x: 10px; y: 8px; width: parent.width - 20px; height: self.preferred-height;
-        text: root.block.text; color: Theme.muted; font-size: Theme.font-md; read-only: true; wrap: word-wrap;
+        text: root.block.text; color: Theme.muted; font-size: Theme.font-md; read-only: true; wrap: word-wrap; line-height-factor: 1.5;
     }
     if root.block.kind == 6 : Rectangle {
         width: root.image-width; height: root.image-height + 44px;
@@ -118,7 +118,7 @@ export component MarkdownBlock inherits Rectangle {
         visible: root.block.kind != 1 && root.block.kind != 4 && root.block.kind != 5 && root.block.kind != 6 && root.block.kind != 7;
         x: 0px; y: 0px; width: parent.width; height: self.preferred-height;
         text: root.block.text; color: Theme.text;
-        font-size: root.block.kind == 10 ? 22px : root.block.kind == 11 ? 19px : root.block.kind == 12 ? 17px : Theme.font-md;
+        font-size: root.block.kind == 10 ? 22px : root.block.kind == 11 ? 19px : root.block.kind == 12 ? 17px : Theme.font-md; line-height-factor: 1.5;
         read-only: true; wrap: word-wrap;
     }
 }

@@ -1910,19 +1910,7 @@ mod tests {
 
     #[test]
     fn listing_projection_preserves_collapse_selection_and_rejects_old_results() {
-        struct TestPlatform;
-        impl slint::platform::Platform for TestPlatform {
-            fn create_window_adapter(
-                &self,
-            ) -> Result<Rc<dyn slint::platform::WindowAdapter>, slint::PlatformError> {
-                Ok(
-                    slint::platform::software_renderer::MinimalSoftwareWindow::new(
-                        slint::platform::software_renderer::RepaintBufferType::NewBuffer,
-                    ),
-                )
-            }
-        }
-        slint::platform::set_platform(Box::new(TestPlatform)).unwrap();
+        let _ui = crate::test_support::lock();
         crate::register_bundled_font().expect("register fixture font");
         let app = MainWindow::new().unwrap();
         PANEL.with(|slot| *slot.borrow_mut() = None);

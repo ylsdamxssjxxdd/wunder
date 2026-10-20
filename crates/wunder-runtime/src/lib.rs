@@ -38,11 +38,6 @@ pub use services::thread_catalog::{
     ThreadSnapshot, ThreadStatus, ThreadWriteAccess,
 };
 pub use services::thread_change_feeder::{watch_thread_changes, ThreadChangeFrame};
-pub use services::tools::command_sessions::{
-    find_winpty_library, DesktopTerminalBackend, DesktopTerminalFrame, DesktopTerminalService,
-    DesktopTerminalSnapshot, DesktopTerminalStartSpec, DesktopTerminalStatus,
-    DesktopTerminalSubscription,
-};
 pub use services::user_world::UserWorldRealtimeEvent;
 pub use services::work_state_reset::{
     reset_user_work_state, ResetWorkStateSession, ResetWorkStateSummary,

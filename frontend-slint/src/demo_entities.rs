@@ -228,29 +228,11 @@ pub fn install(app: &MainWindow) {
             key = format!("新模型{suffix}");
             suffix += 1;
         }
-        models.insert(0, crate::entity_state::new_model_card(key.clone()));
+        let entry = crate::entity_state::new_model_card(key);
+        models.insert(0, entry.clone());
         store_models(&app, models);
-        crate::entity_state::restore_model(&app, &key);
-        app.set_model_creating(true);
-        app.set_model_key_draft(key.into());
-        app.set_model_provider_draft("openai_compatible".into());
-        app.set_model_name_draft("".into());
-        app.set_model_base_url_draft("".into());
-        app.set_model_token_draft("".into());
-        app.set_model_type_draft("llm".into());
-        app.set_model_temperature_draft("0.7".into());
-        app.set_model_timeout_draft("120".into());
-        app.set_model_max_output_draft("8192".into());
-        app.set_model_thinking_budget_draft("2048".into());
-        app.set_model_max_rounds_draft("1000".into());
-        app.set_model_max_context_draft("128000".into());
-        app.set_model_history_compaction_ratio_draft("0.9".into());
-        app.set_model_reasoning_effort_draft("".into());
-        app.set_model_simulation_speed_draft("fast".into());
-        app.set_model_support_vision_draft(false);
-        app.set_model_support_hearing_draft(false);
-        app.set_model_stream_include_usage_draft(true);
-        app.set_model_tool_call_mode_draft("function_call".into());
+        app.set_selected_model(0);
+        crate::entity_state::apply_new_model_draft(&app, entry);
         app.set_status("已创建新的模型草稿 · 仅本次演示有效".into());
     });
     let weak = app.as_weak();
@@ -388,4 +370,50 @@ pub fn install(app: &MainWindow) {
             app.set_status("本地演示 · 未连接后端".into());
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use slint::Model;
+
+    /// 回归：查看既有模型后再点「添加模型」，新卡片的编辑草稿必须是默认模板，
+    /// 不得沿用上一个打开/查看过的模型的配置（提供方、工具调用方式、参数）。
+    #[test]
+    fn created_model_draft_does_not_inherit_the_viewed_model() {
+        let _ui = crate::test_support::lock();
+        crate::register_bundled_font().expect("注册内嵌字体");
+        let app = crate::MainWindow::new().expect("创建主窗口");
+        super::install(&app);
+        // 打开既有模型查看：编辑器草稿投影为该模型的配置。
+        let viewed = app
+            .get_models()
+            .iter()
+            .position(|entry| entry.key == "demo-voice")
+            .expect("演示目录缺少 asr 模型");
+        app.invoke_select_model(viewed as i32);
+        assert_eq!(app.get_model_type_draft().as_str(), "asr");
+        assert_eq!(app.get_model_provider_draft().as_str(), "本地");
+
+        app.invoke_create_model();
+
+        assert!(app.get_model_creating(), "新建后应处于创建态");
+        assert_eq!(app.get_model_key_draft().as_str(), "新模型");
+        assert_eq!(app.get_model_provider_draft().as_str(), "openai_compatible");
+        assert_eq!(app.get_model_type_draft().as_str(), "llm");
+        assert_eq!(
+            app.get_model_tool_call_mode_draft().as_str(),
+            "function_call"
+        );
+        assert_eq!(app.get_model_name_draft().as_str(), "");
+        assert_eq!(app.get_model_temperature_draft().as_str(), "0.7");
+        assert_eq!(app.get_model_tts_speed_draft().as_str(), "1");
+        assert_eq!(app.get_model_asr_temperature_draft().as_str(), "0");
+        assert_eq!(app.get_model_image_steps_draft().as_str(), "30");
+        assert_eq!(app.get_model_video_seconds_draft().as_str(), "4");
+        let first = app.get_models().row_data(0).expect("新卡片缺席");
+        assert_eq!(first.key.as_str(), "新模型");
+        assert_eq!(first.provider.as_str(), "openai_compatible");
+        assert_eq!(first.model_type.as_str(), "llm");
+        assert_eq!(first.tool_call_mode.as_str(), "function_call");
+    }
 }

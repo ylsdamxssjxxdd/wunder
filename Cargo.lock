@@ -7434,10 +7434,12 @@ dependencies = [
 name = "wunder-egui"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "eframe",
  "egui",
  "image",
  "js-sys",
+ "pulldown-cmark",
  "serde",
  "serde_json",
  "wasm-bindgen",
