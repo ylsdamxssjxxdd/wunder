@@ -12,6 +12,7 @@ use std::process::Command;
 use tracing_subscriber::EnvFilter;
 
 fn main() -> Result<()> {
+    wunder_server::local_bootstrap::install_local_home_env();
     wunder_server::rustls_provider::install_process_default_provider();
     init_tracing();
     let args = DesktopArgs::parse();

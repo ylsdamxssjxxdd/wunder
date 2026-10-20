@@ -247,7 +247,14 @@ export global I18n {
     out property <string> preview_edit_toggle: zh ? "取消编辑" : "Cancel editing";
     out property <string> preview_copy: zh ? "复制" : "Copy";
     out property <string> preview_close: zh ? "关闭预览" : "Close preview";
-    out property <string> sidebar_workspaces: zh ? "工作区" : "Workspaces";
+    out property <string> sb_device_local: zh ? "本地" : "Local";
+    out property <string> sb_device_cloud: zh ? "云端" : "Cloud";
+    out property <string> sb_device_local_host: zh ? "蛹" : "Pupa";
+    out property <string> sb_device_cloud_host: zh ? "蜂巢" : "Hive";
+    out property <string> sb_device_select: zh ? "切换设备" : "Switch device";
+    public pure function sb_device_workspaces(count: string) -> string { return zh ? "" + count + " 个工作区" : "" + count + " workspaces"; }
+    out property <string> sb_device_no_workspaces: zh ? "暂无工作区" : "No workspaces";
+    out property <string> sb_device_empty: zh ? "暂无工作区，点击右上角 + 新建" : "No workspaces yet. Use + to create one.";
     out property <string> sidebar_settings: zh ? "设置" : "Settings";
     out property <string> ws_menu_new_thread: zh ? "新建线程" : "New thread";
     out property <string> ws_expand_threads: zh ? "展开工作区线程" : "Expand workspace threads";
@@ -735,6 +742,12 @@ export global I18n {
     out property <string> tn_notice_ack: zh ? "知道了" : "Got it";
     out property <string> tn_notice_quit: zh ? "退出程序" : "Quit";
     out property <string> app_window_title: zh ? "蛹" : "Pupa";
+    out property <string> wm_minimize: zh ? "最小化" : "Minimize";
+    out property <string> wm_maximize: zh ? "最大化" : "Maximize";
+    out property <string> wm_restore: zh ? "还原" : "Restore";
+    public pure function wm_status_running(count: string) -> string { return zh ? "运行中 " + count + " 线程" : "" + count + " running"; }
+    public pure function wm_status_inquiry(count: string) -> string { return zh ? "问询 " + count + "" : "Inquiry " + count + ""; }
+    out property <string> wm_status_idle: zh ? "空闲" : "Idle";
     out property <string> err_cannot: zh ? "无法{0}：{1}" : "Unable to {0}: {1}";
     out property <string> err_failed: zh ? "{0}失败：{1}" : "{0} failed: {1}";
     out property <string> st_error_prefix: zh ? "错误：{0}" : "Error: {0}";
@@ -996,7 +1009,7 @@ export global I18n {
     out property <string> st_theme_forest: zh ? "森林" : "Forest";
     out property <string> st_theme_mint: zh ? "薄荷" : "Mint";
     out property <string> st_theme_honey: zh ? "蜜蜂" : "Honey";
-    out property <string> st_theme_parchment: zh ? "羊皮纸" : "Parchment";
+    out property <string> st_theme_parchment: zh ? "橙汁" : "Orange Juice";
     out property <string> st_font_size: zh ? "字体大小" : "Font size";
     out property <string> st_font_size_note: zh ? "聊天内容的字体大小" : "Font size for chat content";
     out property <string> st_workspace_root: zh ? "工作区根目录" : "Workspace root";
@@ -1183,6 +1196,7 @@ export global I18n {
     out property <string> st_cl_queue_prefix: zh ? "云端排队中，前方 " : "Cloud queue — ";
     out property <string> st_cl_queue_suffix: zh ? " 人" : " ahead";
     out property <string> dock_steps: zh ? "步骤" : "Steps";
+    out property <string> dock_plan_title: zh ? "计划" : "Plan";
     out property <string> runtime_status_await: zh ? "模型响应中" : "Waiting for the model";
     out property <string> runtime_status_queue: zh ? "模型请求正在排队" : "Model request queued";
     out property <string> dock_demo_explain: zh ? "已根据目标拆解为以下步骤，将逐项执行并汇报。" : "The goal is broken into the steps below; they run one by one and report back.";
@@ -1193,6 +1207,11 @@ export global I18n {
     out property <string> inquiry_other_placeholder: zh ? "输入其他答案" : "Type another answer";
     out property <string> inquiry_no_preference: zh ? "无偏好" : "No preference";
     out property <string> inquiry_send_hint: zh ? "选好答案后按发送键提交" : "Send to submit your choices";
+    out property <string> inquiry_all_questions: zh ? "全部问题" : "All questions";
+    out property <string> inquiry_expand: zh ? "展开全部" : "Expand all";
+    out property <string> inquiry_collapse: zh ? "收起" : "Collapse";
+    out property <string> inquiry_use_recommended: zh ? "使用推荐" : "Use the recommended";
+    public pure function inquiry_question_progress(position: string) -> string { return zh ? "第 " + position + " 题" : "Question " + position + ""; }
     out property <string> sub_card_title: zh ? "子智能体" : "Subagent";
     out property <string> sub_status_running: zh ? "运行中" : "Running";
     out property <string> sub_status_done: zh ? "已完成" : "Completed";

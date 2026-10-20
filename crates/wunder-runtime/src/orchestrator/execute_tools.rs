@@ -717,7 +717,7 @@ impl Orchestrator {
                     }
                 }
                 result = orchestrator.normalize_tool_result_payload(&name, result);
-                result = orchestrator.finalize_tool_result(&name, result, started_at);
+                result = orchestrator.finalize_tool_result(result, started_at);
                 Ok(ToolExecutionOutcome { call, name, result })
                 }.await;
                 if let Err(err) = &outcome {

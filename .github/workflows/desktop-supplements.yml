@@ -38,7 +38,9 @@ jobs:
         run: |
           win7_hash="${{ hashFiles('packaging/windows/scripts/build_win7_desktop_supplement.ps1', 'packaging/windows/scripts/win7-supplement-manifest.json', 'packaging/python/requirements-win7-common.txt', 'config/matplotlibrc', 'fonts/*') }}"
           linux_hash="${{ hashFiles('packaging/linux/scripts/build_linux_supplement.sh', 'packaging/linux/scripts/linux-supplement-manifest.json', 'packaging/python/requirements-linux-common.txt', 'packaging/docker/Dockerfile.ubuntu18-supplement', 'config/matplotlibrc', 'fonts/*') }}"
-          echo "win7_key=wunder-supplement-win7-ia32-v1-${win7_hash}" >> "$GITHUB_OUTPUT"
+          # 浏览器 pin（版本+SHA256 字面量）参与 win7 缓存键：来源变更即触发重建
+          browser_pin='chromium-109.0.5414.120-r1070088-hibbiki-mini_installer.sync.exe-sha256-C1AABD6EEF38D759BBD92CA9516353D88C463A1E8389A875B4D12D53DB467F98'
+          echo "win7_key=wunder-supplement-win7-ia32-v1-${win7_hash}-${browser_pin}" >> "$GITHUB_OUTPUT"
           echo "linux_amd64_key=wunder-supplement-linux-amd64-v1-${linux_hash}" >> "$GITHUB_OUTPUT"
           echo "linux_arm64_key=wunder-supplement-linux-arm64-v1-${linux_hash}" >> "$GITHUB_OUTPUT"
 
@@ -63,6 +65,37 @@ jobs:
           $cached = ($null -ne $zip) -and ('true' -eq '${{ steps.cache.outputs.cache-hit }}')
           if ($zip) { Write-Host "cached pack: $($zip.Name)" } else { Write-Host 'no cached pack' }
           "cached=$cached" >> $env:GITHUB_OUTPUT
+      - name: Fetch Chromium 109 win32
+        if: steps.pack.outputs.cached != 'true' || github.event.inputs.force_rebuild == 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Hibbiki/chromium-win32 v109.0.5414.120-r1070088（Chromium 5414 分支最后快照，末代支持 Win7 的 32 位构建）
+          $url = 'https://github.com/Hibbiki/chromium-win32/releases/download/v109.0.5414.120-r1070088/mini_installer.sync.exe'
+          $expectedHash = 'C1AABD6EEF38D759BBD92CA9516353D88C463A1E8389A875B4D12D53DB467F98'
+          New-Item -ItemType Directory -Force -Path browser-src | Out-Null
+          $installer = Join-Path (Get-Location) 'browser-src\mini_installer.sync.exe'
+          $downloaded = $false
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            try {
+              Invoke-WebRequest -Uri $url -OutFile $installer -UseBasicParsing
+              $downloaded = $true
+              break
+            } catch {
+              Write-Warning "browser download attempt $attempt failed: $($_.Exception.Message)"
+              Start-Sleep -Seconds 5
+            }
+          }
+          if (-not $downloaded) { throw "failed to download $url" }
+          $actualHash = (Get-FileHash -Path $installer -Algorithm SHA256).Hash
+          if ($actualHash -ne $expectedHash) { throw "browser SHA256 mismatch: got $actualHash, expected $expectedHash" }
+          # mini_installer 内嵌两层 7z（外层需 -t7z 强制按 7z 解析，内层为 BCJ2 压缩，7-Zip 原生支持）
+          $7z = 'C:\Program Files\7-Zip\7z.exe'
+          & $7z x -t7z $installer '-obrowser-src\installer' -y
+          if ($LASTEXITCODE -ne 0) { throw "7z outer extract failed ($LASTEXITCODE)" }
+          & $7z x (Join-Path (Get-Location) 'browser-src\installer\chrome.7z') '-obrowser-src\unpacked' -y
+          if ($LASTEXITCODE -ne 0) { throw "7z inner extract failed ($LASTEXITCODE)" }
+          if (-not (Test-Path -LiteralPath 'browser-src\unpacked\Chrome-bin\chrome.exe')) { throw 'chrome.exe missing after extraction' }
       - name: Build Win7 ia32 supplement
         if: steps.pack.outputs.cached != 'true' || github.event.inputs.force_rebuild == 'true'
         shell: pwsh
@@ -72,6 +105,7 @@ jobs:
             -Arch ia32 `
             -PythonProfile common `
             -BuildRoot (Join-Path (Get-Location) 'supplement-build') `
+            -BrowserArchivePath (Join-Path (Get-Location) 'browser-src\unpacked\Chrome-bin') `
             -PythonPackageIndexUrl https://pypi.org/simple
           # The build script reports failure by throwing, and the next step
           # asserts the pack exists; $LASTEXITCODE is never populated here

@@ -691,6 +691,15 @@ pub struct TuiApp {
     open_instance_id: String,
     open_lease_token: u64,
     last_open_lease_touch: Instant,
+    /// In-flight background lease touch/validation; the outcome is polled on a
+    /// later frame so the key path never waits on storage. The session id and
+    /// token ride along so a stale probe (taken before a switch) is dropped.
+    lease_validation_rx: Option<tokio::sync::oneshot::Receiver<(String, u64, Result<bool>)>>,
+    /// In-flight system clipboard reads (Ctrl+V) and writes (Ctrl+O).
+    clipboard_paste_rx: Option<tokio::sync::oneshot::Receiver<Result<ClipboardSnapshot>>>,
+    clipboard_write_rx: Option<tokio::sync::oneshot::Receiver<(usize, Result<()>)>>,
+    /// `!cmd` runs detached; each finished command lands here for the drain.
+    pending_shell_results: Vec<tokio::sync::oneshot::Receiver<Result<Value>>>,
 }
 
 /// One copy result in the composer gap. `expires_at: None` is the shape a pending
@@ -862,8 +871,12 @@ impl TuiApp {
             open_instance_id: uuid::Uuid::new_v4().simple().to_string(),
             open_lease_token: 0,
             last_open_lease_touch: Instant::now(),
+            lease_validation_rx: None,
+            clipboard_paste_rx: None,
+            clipboard_write_rx: None,
+            pending_shell_results: Vec::new(),
         };
-        app.acquire_thread_lease(&session_id)?;
+        app.acquire_thread_lease(&session_id).await?;
         app.load_persisted_history();
         app.load_popup_recents();
         app.refresh_workspace_context();
@@ -946,16 +959,26 @@ impl TuiApp {
         Ok(app)
     }
 
-    fn acquire_thread_lease(&mut self, session_id: &str) -> Result<()> {
-        let session_id = session_id.trim();
+    /// Lease acquires gate a thread switch, so the caller awaits the result;
+    /// the disk work itself runs on the engine's bounded blocking pool.
+    async fn acquire_thread_lease(&mut self, session_id: &str) -> Result<()> {
+        let session_id = session_id.trim().to_string();
         anyhow::ensure!(!session_id.is_empty(), "线程不存在");
-        match self.runtime.state.storage.try_acquire_thread_open_lease(
-            session_id,
-            &self.runtime.user_id,
-            &self.open_instance_id,
-            "cli",
-            30.0,
-        )? {
+        let storage = self.runtime.state.storage.clone();
+        let user_id = self.runtime.user_id.clone();
+        let instance_id = self.open_instance_id.clone();
+        let lease_session = session_id.clone();
+        let status = wunder_server::blocking::run_db("cli.lease.acquire", move || {
+            storage.try_acquire_thread_open_lease(
+                &lease_session,
+                &user_id,
+                &instance_id,
+                "cli",
+                30.0,
+            )
+        })
+        .await?;
+        match status {
             ThreadOpenLeaseStatus::Acquired { fencing_token } => {
                 self.open_lease_token = fencing_token;
                 self.last_open_lease_touch = Instant::now();
@@ -967,6 +990,19 @@ impl TuiApp {
         }
     }
 
+    /// Switch-path release, awaited so the previous thread is freed in order.
+    async fn release_thread_lease_async(&self, session_id: &str, fencing_token: u64) {
+        let storage = self.runtime.state.storage.clone();
+        let session_id = session_id.to_string();
+        let instance_id = self.open_instance_id.clone();
+        let _ = wunder_server::blocking::run_db("cli.lease.release", move || {
+            storage.release_thread_open_lease(&session_id, &instance_id, fencing_token)
+        })
+        .await;
+    }
+
+    /// Shutdown release. Drop cannot await, and quitting must free the lease
+    /// before the runtime stops, so this one stays synchronous.
     fn release_thread_lease(&self, session_id: &str, fencing_token: u64) {
         let _ = self.runtime.state.storage.release_thread_open_lease(
             session_id,
@@ -975,6 +1011,7 @@ impl TuiApp {
         );
     }
 
+    #[cfg(test)]
     fn validate_thread_lease(&self) -> Result<()> {
         anyhow::ensure!(
             self.runtime.state.storage.touch_thread_open_lease(
@@ -988,15 +1025,83 @@ impl TuiApp {
         Ok(())
     }
 
+    /// Submit-path validation: the result gates the turn, so it is awaited,
+    /// but the storage call runs on the blocking pool instead of in place.
+    async fn validate_thread_lease_async(&self) -> Result<()> {
+        let storage = self.runtime.state.storage.clone();
+        let session_id = self.session_id.clone();
+        let instance_id = self.open_instance_id.clone();
+        let token = self.open_lease_token;
+        let touched = wunder_server::blocking::run_db("cli.lease.validate", move || {
+            storage.touch_thread_open_lease(&session_id, &instance_id, token, 30.0)
+        })
+        .await?;
+        anyhow::ensure!(
+            touched,
+            "THREAD_IN_USE: thread lease expired; reopen the thread"
+        );
+        Ok(())
+    }
+
+    /// Fire-and-poll lease touch: the storage call runs on the blocking pool
+    /// and the outcome lands on a later frame, so keys and renders never wait
+    /// on disk. A touch doubles as validation, which is why Ctrl+C/Esc reuse it.
+    fn request_lease_validation(&mut self) {
+        if self.lease_validation_rx.is_some() {
+            return;
+        }
+        self.last_open_lease_touch = Instant::now();
+        let storage = self.runtime.state.storage.clone();
+        let session_id = self.session_id.clone();
+        let instance_id = self.open_instance_id.clone();
+        let token = self.open_lease_token;
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let frames = self.frame_requester.clone();
+        tokio::spawn(async move {
+            let probe_session = session_id.clone();
+            let result = wunder_server::blocking::run_db("cli.lease.touch", move || {
+                storage.touch_thread_open_lease(&probe_session, &instance_id, token, 30.0)
+            })
+            .await;
+            let _ = tx.send((session_id, token, result));
+            frames.schedule_frame();
+        });
+        self.lease_validation_rx = Some(rx);
+    }
+
+    fn poll_lease_validation(&mut self) {
+        let Some(rx) = self.lease_validation_rx.as_mut() else {
+            return;
+        };
+        let outcome = match rx.try_recv() {
+            Ok(outcome) => outcome,
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty) => return,
+            Err(tokio::sync::oneshot::error::TryRecvError::Closed) => {
+                self.lease_validation_rx = None;
+                return;
+            }
+        };
+        self.lease_validation_rx = None;
+        let (session_id, token, result) = outcome;
+        // A switch released the lease this probe touched; its verdict belongs
+        // to the previous thread and must not quit the current one.
+        if session_id != self.session_id || token != self.open_lease_token {
+            return;
+        }
+        let error = match result {
+            Ok(true) => return,
+            Ok(false) => anyhow!("THREAD_IN_USE: thread lease expired; reopen the thread"),
+            Err(error) => error,
+        };
+        self.push_log(LogKind::Error, error.to_string());
+        self.should_quit = true;
+    }
+
     fn touch_thread_lease_if_due(&mut self) {
         if self.last_open_lease_touch.elapsed() < Duration::from_secs(10) {
             return;
         }
-        self.last_open_lease_touch = Instant::now();
-        if let Err(error) = self.validate_thread_lease() {
-            self.push_log(LogKind::Error, error.to_string());
-            self.should_quit = true;
-        }
+        self.request_lease_validation();
     }
 
     pub fn should_quit(&self) -> bool {
@@ -4195,6 +4300,10 @@ impl TuiApp {
     pub async fn drain_stream_events(&mut self) {
         self.poll_trajectory_results();
         self.touch_thread_lease_if_due();
+        self.poll_lease_validation();
+        self.poll_clipboard_paste();
+        self.poll_clipboard_write();
+        self.poll_direct_shell_results().await;
         self.flush_key_paste_burst_if_due(false);
         self.flush_pending_paste();
         self.drain_pending_attachment_paths().await;
@@ -4724,28 +4833,37 @@ impl TuiApp {
         self.pending_paste.push_back(normalized);
     }
 
+    /// Ctrl+V: the system clipboard probe (one PowerShell process for image
+    /// and text together) runs off the event loop; the result lands on a
+    /// later frame and is applied exactly where the sync read used to apply it.
     fn paste_from_system_clipboard(&mut self) {
-        let mut image_error = None;
-        match read_system_clipboard_image_path() {
-            Ok(Some(path)) => {
-                self.pending_attachment_paths.push_back(path);
+        if self.clipboard_paste_rx.is_some() {
+            return;
+        }
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let frames = self.frame_requester.clone();
+        tokio::task::spawn_blocking(move || {
+            let _ = tx.send(read_system_clipboard_snapshot());
+            frames.schedule_frame();
+        });
+        self.clipboard_paste_rx = Some(rx);
+    }
+
+    fn poll_clipboard_paste(&mut self) {
+        let Some(rx) = self.clipboard_paste_rx.as_mut() else {
+            return;
+        };
+        let outcome = match rx.try_recv() {
+            Ok(outcome) => outcome,
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty) => return,
+            Err(tokio::sync::oneshot::error::TryRecvError::Closed) => {
+                self.clipboard_paste_rx = None;
                 return;
             }
-            Ok(None) => {}
-            Err(error) => image_error = Some(error),
-        }
-
-        match read_system_clipboard_text() {
-            Ok(Some(text)) => {
-                let normalized = normalize_clipboard_text(text.clone());
-                self.on_paste(text);
-                self.flush_pending_paste();
-                if let Some(normalized) = normalized {
-                    self.suppressed_clipboard_paste = normalized;
-                    self.suppressed_clipboard_paste_last_at = Some(Instant::now());
-                }
-            }
-            Ok(None) => {}
+        };
+        self.clipboard_paste_rx = None;
+        match outcome {
+            Ok(snapshot) => self.apply_clipboard_snapshot(snapshot),
             Err(error) => {
                 let hint = crate::locale::tr(
                     self.display_language.as_str(),
@@ -4753,11 +4871,26 @@ impl TuiApp {
                     "failed to read text from system clipboard; ensure terminal paste is allowed and clipboard has text",
                 );
                 self.push_log(LogKind::Info, format!("{hint}: {error}"));
-                return;
             }
         }
+        self.request_redraw();
+    }
 
-        if let Some(error) = image_error {
+    fn apply_clipboard_snapshot(&mut self, snapshot: ClipboardSnapshot) {
+        if let Some(path) = snapshot.image_path {
+            self.pending_attachment_paths.push_back(path);
+            return;
+        }
+        if let Some(text) = snapshot.text {
+            let normalized = normalize_clipboard_text(text.clone());
+            self.on_paste(text);
+            self.flush_pending_paste();
+            if let Some(normalized) = normalized {
+                self.suppressed_clipboard_paste = normalized;
+                self.suppressed_clipboard_paste_last_at = Some(Instant::now());
+            }
+        }
+        if let Some(error) = snapshot.image_error {
             let hint = crate::locale::tr(
                 self.display_language.as_str(),
                 "读取系统剪贴板图片失败，请确认剪贴板中包含图片且 PowerShell 可访问系统剪贴板",
@@ -5264,11 +5397,9 @@ impl TuiApp {
     }
 
     fn handle_ctrl_c(&mut self) {
-        if let Err(error) = self.validate_thread_lease() {
-            self.push_log(LogKind::Error, error.to_string());
-            self.should_quit = true;
-            return;
-        }
+        // A stolen lease still quits, but the interrupt keys never wait on
+        // storage: validation runs detached and lands on a later frame.
+        self.request_lease_validation();
         if self.model_wizard.is_some() {
             self.cancel_model_wizard();
             return;
@@ -5322,11 +5453,7 @@ impl TuiApp {
     /// Esc asks the running round to stop. It never quits the app and never arms the
     /// exit window: both belong to Ctrl+C, and a user reaching for Esc expects neither.
     fn request_esc_interrupt(&mut self) {
-        if let Err(error) = self.validate_thread_lease() {
-            self.push_log(LogKind::Error, error.to_string());
-            self.should_quit = true;
-            return;
-        }
+        self.request_lease_validation();
         if self.runtime.state.monitor.cancel(&self.session_id) {
             self.turn_was_interrupted = true;
             self.push_log(
@@ -5607,7 +5734,8 @@ impl TuiApp {
     }
 
     /// Ctrl+O: copy the last assistant reply. The transcript is the source, so
-    /// what is copied is exactly what the user sees.
+    /// what is copied is exactly what the user sees. The write itself runs off
+    /// the event loop; its result log lands on a later frame.
     pub(super) fn copy_last_reply(&mut self) {
         let Some(text) = self
             .logs
@@ -5627,10 +5755,36 @@ impl TuiApp {
             );
             return;
         };
+        if self.clipboard_write_rx.is_some() {
+            return;
+        }
 
-        match write_system_clipboard_text(text.as_str()) {
+        let chars = text.chars().count();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let frames = self.frame_requester.clone();
+        tokio::task::spawn_blocking(move || {
+            let _ = tx.send((chars, write_system_clipboard_text(text.as_str())));
+            frames.schedule_frame();
+        });
+        self.clipboard_write_rx = Some(rx);
+    }
+
+    fn poll_clipboard_write(&mut self) {
+        let Some(rx) = self.clipboard_write_rx.as_mut() else {
+            return;
+        };
+        let outcome = match rx.try_recv() {
+            Ok(outcome) => outcome,
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty) => return,
+            Err(tokio::sync::oneshot::error::TryRecvError::Closed) => {
+                self.clipboard_write_rx = None;
+                return;
+            }
+        };
+        self.clipboard_write_rx = None;
+        let (chars, result) = outcome;
+        match result {
             Ok(()) => {
-                let chars = text.chars().count();
                 self.push_log(
                     LogKind::Info,
                     crate::locale::tr(
@@ -5651,6 +5805,7 @@ impl TuiApp {
                 );
             }
         }
+        self.request_redraw();
     }
 
     /// Ctrl+G: the same external-editor round trip `/edit` performs.
@@ -5795,12 +5950,13 @@ impl TuiApp {
         // checks have completed. If another instance owns it, the current
         // thread remains untouched and no lease is leaked on a read error.
         let previous_lease_token = self.open_lease_token;
-        self.acquire_thread_lease(session_id)?;
+        self.acquire_thread_lease(session_id).await?;
         let history = if cached_index.is_none() {
             match crate::load_session_history_entries(&self.runtime, session_id, 0).await {
                 Ok(history) => Some(history),
                 Err(error) => {
-                    self.release_thread_lease(session_id, self.open_lease_token);
+                    self.release_thread_lease_async(session_id, self.open_lease_token)
+                        .await;
                     self.open_lease_token = previous_lease_token;
                     return Err(error);
                 }
@@ -5827,7 +5983,8 @@ impl TuiApp {
                 .queue_approval(previous_session_id.as_str(), request);
         }
         self.session_id = session_id.to_string();
-        self.release_thread_lease(&previous_session_id, previous_lease_token);
+        self.release_thread_lease_async(&previous_session_id, previous_lease_token)
+            .await;
         self.thread_registry.activate(session_id);
         self.busy = self.thread_has_live_work(session_id);
         let (draft, saved_scroll) = self.thread_registry.view_state(session_id);
@@ -6566,7 +6723,7 @@ impl TuiApp {
     }
 
     pub async fn submit_line(&mut self, line: String) -> Result<()> {
-        self.validate_thread_lease()?;
+        self.validate_thread_lease_async().await?;
         self.flush_pending_paste();
         self.sync_attachment_placeholders();
         let visible_line = line.trim_end().to_string();

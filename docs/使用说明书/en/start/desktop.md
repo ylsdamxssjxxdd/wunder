@@ -35,9 +35,9 @@ The Pupa covers single-user local scenarios; sharing among several people runs t
 
 ## Install and launch
 
-Download the installer for your system from Releases.
+Download and run the installer for your system. It installs the Pupa and Helm (CLI) by default; optional Python/Git/rg/ffmpeg/browser components are opt-in. The install directory defaults to `~/.wunder` and can be changed to any writable directory. The installer writes `.wunder-home` at the install root, and both local forms use that root as `WUNDER_HOME`; an explicit non-empty `WUNDER_HOME` still wins.
 
-- **Executable**: `wunder-frontend-slint`
+- **Executable**: `bin/wunder-desktop.exe` (Windows) or `bin/wunder-desktop` (Linux) after installation; development builds use `wunder-frontend-slint`
 - **Development launch**: on Windows, use the project's bundled `run.bat`
 - **Platforms**: primarily targets 32-bit Win7 and Ubuntu 18.04; modern Windows / Linux also run
 - **No port, no required arguments**: it calls the engine in-process right after launch
@@ -48,13 +48,13 @@ Download the installer for your system from Releases.
 
 | Content | Location |
 | --- | --- |
-| Root directory | `WUNDER_HOME` → `~/.wunder` by default |
-| Workspace | `~/.wunder/workspace` |
+| Root directory | The directory chosen at install time (`WUNDER_HOME`; defaults to `~/.wunder`, recorded by `.wunder-home`) |
+| Workspace | `<root>/workspace` |
 | Temporary directory | `WUNDER_DESKTOP_TEMP_ROOT` |
 | Desktop settings | `<temp>/config/desktop.settings.json` |
 | Sessions and tool logs | local SQLite |
 
-To move to a new machine, copy `~/.wunder` across. "Local first" means data stays on your machine; it doesn't affect reaching remote models or web pages.
+To move to a new machine, copy the whole install root (default `~/.wunder`) across. "Local first" means data stays on your machine; it doesn't affect reaching remote models or web pages.
 
 On startup it scans the work tree (up to 4096 items), restores the state of unfinished tasks from last time, and clears session locks and leftover tasks.
 

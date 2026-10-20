@@ -1,7 +1,7 @@
 import { I18n } from "i18n.slint";
 import { Theme, ChatAttachment, ModelCard, PlanStep, InquiryQuestion, QueueTurn, DraftRecall } from "theme.slint";
 import { Action } from "components.slint";
-import { ListView } from "std-widgets.slint";
+import { ListView, ScrollView } from "std-widgets.slint";
 import { TextEditBase } from "textedit-base.slint";
 import { DragPreview } from "drag_row.slint";
 
@@ -353,347 +353,504 @@ component GoalTool inherits Rectangle {
 // §StatusDock: the plan capsule above the goal banner. It exists only while the
 // 计划面板 tool has published steps — the turn's phase text (thinking / tools /
 // generating) already reads on the timeline rows, so repeating it here would
-// just duplicate what the user sees above. The checklist card sits over the
-// timeline via negative y, the same layering trick the composer popovers use,
-// and stays up for as long as the plan does.
+// duplicate what the user sees above. Collapsed it is one centred pill (title,
+// the step being worked on, the progress counter, a chevron); clicking opens the
+// checklist card above the pill, exactly like the web client's composer status
+// dock. Expanding is pure view state: closing the card never drops the plan,
+// which stays in the turn and the per-thread plan cache.
 export component StatusDock inherits Rectangle {
     in property <bool> running: false;
     in property <int> steps-done: 0;
     in property <int> steps-total: 0;
     in property <string> plan-explanation: "";
     in property <[PlanStep]> plan-steps: [];
-    callback plan-dismiss();
-    // The plan tool bounds a plan at 12 steps, so the card never needs a
-    // collapse budget: every row is shown and the height is exact.
-    out property <length> card-height: 30px
-        + (root.plan-explanation != "" ? 34px : 0px)
-        + root.plan-steps.length * 24px;
-    height: 28px;
+    // Resolved by the Rust projection: the first running step, else the first
+    // unfinished one, and its 1-based position (0 when every step is done).
+    in property <string> current-step: "";
+    in property <int> current-position: 0;
+    in-out property <bool> expanded: false;
+    // Closing the card only collapses it.
+    callback dismiss();
+    height: 30px;
+    // The plan tool bounds a plan at 12 steps; the card scrolls past 360px the
+    // way the web popover does.
+    out property <length> card-height: min(
+        28px + (root.plan-explanation != "" ? 46px : 0px) + root.plan-steps.length * 30px,
+        360px);
+    // ---- the pill ----
     HorizontalLayout {
         alignment: center;
         Rectangle {
-            // Sized by the centering layout from its own content.
             height: 26px;
             border-radius: 13px;
             background: Theme.surface;
-            border-width: 1px; border-color: Theme.border;
-            drop-shadow-color: #00000018; drop-shadow-blur: 8px; drop-shadow-offset-y: 2px;
+            border-width: 1px; border-color: #0F172A1A;
+            drop-shadow-color: #0F172A10; drop-shadow-blur: 8px; drop-shadow-offset-y: 1px;
             HorizontalLayout {
-                padding-left: 12px; padding-right: 12px; spacing: 6px;
+                padding-left: 14px; padding-right: 12px; spacing: 6px;
                 if root.running : DockSpinner { y: (parent.height - self.height) / 2; }
                 Text {
                     height: parent.height;
-                    text: I18n.dock_steps + " " + root.steps-done + " / " + root.steps-total;
-                    color: Theme.text-secondary; font-size: Theme.font-xs;
+                    text: I18n.dock_plan_title;
+                    color: #4B5563; font-size: Theme.font-sm;
                     vertical-alignment: center;
                 }
+                Text {
+                    height: parent.height;
+                    width: min(self.preferred-width, 260px);
+                    text: root.current-step;
+                    color: #4B5563; font-size: Theme.font-sm;
+                    vertical-alignment: center; overflow: elide;
+                }
+                Text {
+                    height: parent.height;
+                    text: root.current-position > 0
+                        ? root.current-position + " / " + root.steps-total
+                        : root.steps-done + " / " + root.steps-total;
+                    color: #4B5563; font-size: Theme.font-sm;
+                    vertical-alignment: center;
+                }
+                Image {
+                    width: 10px; height: 10px;
+                    y: (parent.height - self.height) / 2;
+                    source: root.expanded
+                        ? @image-url("../assets/icons/chevron-down.svg")
+                        : @image-url("../assets/icons/chevron-up.svg");
+                    colorize: #6B7280; image-fit: contain;
+                }
             }
+            pill-touch := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.expanded = !root.expanded; }
+            }
+            accessible-role: button;
+            accessible-label: I18n.dock_plan_title;
+            accessible-action-default => { root.expanded = !root.expanded; }
         }
     }
-    Rectangle {
-        width: 420px; height: root.card-height;
+    // ---- the checklist card, floating above the pill ----
+    if root.expanded : Rectangle {
+        width: min(560px, parent.width);
+        height: root.card-height;
         x: (parent.width - self.width) / 2;
         y: -self.height - 8px;
         z: 30;
-        border-radius: Theme.radius-lg; background: Theme.surface;
-        border-width: 1px; border-color: Theme.border;
-        drop-shadow-color: #00000024; drop-shadow-blur: 16px; drop-shadow-offset-y: 3px;
+        border-radius: 14px; background: Theme.surface;
+        border-width: 1px; border-color: #0F172A14;
+        drop-shadow-color: #0F172A29; drop-shadow-blur: 22px; drop-shadow-offset-y: 8px;
         clip: true;
         VerticalLayout {
-            padding: 8px; spacing: 4px;
-            if root.plan-explanation != "" : Text {
-                height: 32px;
-                text: root.plan-explanation;
-                color: Theme.muted; font-size: Theme.font-xs;
-                wrap: word-wrap; overflow: elide; vertical-alignment: top;
+            padding-left: 16px; padding-right: 16px;
+            padding-top: 12px; padding-bottom: 12px;
+            spacing: 2px;
+            // The close affordance floats in this row's corner, so the
+            // explanation keeps a right inset instead of running under it.
+            if root.plan-explanation != "" : Rectangle {
+                height: 42px;
+                Text {
+                    width: parent.width - 26px;
+                    height: parent.height;
+                    text: root.plan-explanation;
+                    color: #6B7280; font-size: Theme.font-sm;
+                    // Word wrap with `overflow: elide` renders only the tail of
+                    // a wrapped paragraph in the soft renderer, so the two-line
+                    // cap comes from max-lines alone.
+                    wrap: word-wrap; max-lines: 2; vertical-alignment: top;
+                }
             }
-            VerticalLayout {
-                alignment: start; spacing: 0px;
-                for step in root.plan-steps : Rectangle {
-                    height: 24px;
-                    border-radius: Theme.radius-sm;
-                    background: step-touch.has-hover ? Theme.hover : transparent;
-                    HorizontalLayout {
-                        padding-left: 4px; padding-right: 4px; spacing: 10px;
-                        // Thin-ring tri-state: the ring carries the status color
-                        // and only the active states get a glyph, matching the
-                        // web client's inline-svg markers.
-                        Rectangle {
-                            y: 4px; width: 16px; height: 16px; border-radius: 8px;
-                            border-width: 1.5px;
-                            border-color: step.status == "completed" ? Theme.success
-                                : step.status == "in_progress" ? Theme.warning
-                                : Theme.border-strong;
-                            if step.status == "completed" : Image {
-                                x: 3px; y: 5px; width: 10px; height: 6px;
-                                source: @image-url("../assets/icons/status-check.svg");
-                                colorize: Theme.success; image-fit: contain;
+            ScrollView {
+                vertical-stretch: 1;
+                horizontal-scrollbar-policy: always-off;
+                VerticalLayout {
+                    alignment: start; spacing: 0px;
+                    for step in root.plan-steps : Rectangle {
+                        height: 30px;
+                        border-radius: Theme.radius-sm;
+                        background: step-touch.has-hover ? #0F172A0A : transparent;
+                        HorizontalLayout {
+                            padding-left: 2px; padding-right: 4px; spacing: 10px;
+                            // Thin-ring tri-state: the ring carries the status
+                            // color and only the active states get a glyph,
+                            // matching the web client's inline-svg markers.
+                            Rectangle {
+                                width: 18px;
+                                Rectangle {
+                                    y: (parent.height - self.height) / 2;
+                                    width: 18px; height: 18px; border-radius: 9px;
+                                    border-width: 1.6px;
+                                    border-color: step.status == "completed" ? Theme.success
+                                        : step.status == "in_progress" ? Theme.warning
+                                        : #B6BCC6;
+                                    if step.status == "completed" : Image {
+                                        x: 3.5px; y: 5.5px; width: 10px; height: 7px;
+                                        source: @image-url("../assets/icons/status-check.svg");
+                                        colorize: Theme.success; image-fit: contain;
+                                    }
+                                    if step.status == "in_progress" : Image {
+                                        x: 5px; y: 4px; width: 7px; height: 9px;
+                                        source: @image-url("../assets/icons/status-pause.svg");
+                                        colorize: Theme.warning; image-fit: contain;
+                                    }
+                                }
                             }
-                            if step.status == "in_progress" : Image {
-                                x: 4px; y: 3px; width: 8px; height: 10px;
-                                source: @image-url("../assets/icons/status-pause.svg");
-                                colorize: Theme.warning; image-fit: contain;
+                            Text {
+                                height: parent.height; horizontal-stretch: 1;
+                                text: step.step;
+                                color: step.status == "in_progress" ? Theme.text : #3F3F46;
+                                font-size: Theme.font-lg;
+                                vertical-alignment: center; overflow: elide;
                             }
                         }
-                        Text {
-                            height: parent.height;
-                            text: step.step;
-                            color: step.status == "in_progress" ? Theme.text : Theme.text-secondary;
-                            font-size: Theme.font-sm;
-                            vertical-alignment: center; overflow: elide;
+                        step-touch := TouchArea {
+                            x: 0px; y: 0px; width: parent.width; height: parent.height;
                         }
-                    }
-                    step-touch := TouchArea {
-                        x: 0px; y: 0px; width: parent.width; height: parent.height;
                     }
                 }
             }
         }
-        // Dismiss stays reachable but quiet: the card has no header row, so the
-        // close affordance floats in its corner and only answers the pointer.
+        // Closing collapses the card; the plan itself stays published.
         Rectangle {
             width: 22px; height: 22px;
-            x: parent.width - self.width - 6px; y: 6px;
+            x: parent.width - self.width - 8px; y: 8px;
             z: 2;
             border-radius: 6px;
-            background: close-touch.has-hover ? Theme.hover : transparent;
+            background: close-touch.has-hover ? #0F172A0F : transparent;
             Image {
                 x: 4px; y: 4px; width: 14px; height: 14px;
                 source: @image-url("../assets/icons/xmark.svg");
-                colorize: close-touch.has-hover ? Theme.danger : Theme.muted;
+                colorize: close-touch.has-hover ? Theme.danger : #6B7280;
                 image-fit: contain;
             }
             close-touch := TouchArea {
                 mouse-cursor: pointer;
-                clicked => { root.plan-dismiss(); }
+                clicked => { root.expanded = false; root.dismiss(); }
             }
         }
     }
 }
 
-// §InquiryPanel: the 问询面板 card above the composer. One question per page
-// with a ‹ N/M › pager, option rows (square marks for multi-select, round for
-// single), a 推荐 badge, the option's own description on the same line, and a
-// free-text row with a 无偏好 shortcut. Selection state lives in Rust: every
-// click republishes the page, and the answer goes out with the composer's send
-// button (same gesture as the web client) rather than a second submit control.
+// §InquiryPanel: the 问询面板 card above the composer, laid out like the web
+// client's inquiry panel: a white card whose heading is the question, ‹ n/m ›
+// paging with an expand-all toggle, option rows (square marks for multi-select,
+// round for single) carrying a 推荐 badge and the option's own description, and
+// a free-text row with a split 无偏好 / 使用推荐 quick answer. Selection state
+// lives in Rust: every interaction republishes these rows, and the answer goes
+// out with the composer's send button (the same gesture as the web client).
+// `questions` holds one row per page, or every question once expanded.
 export component InquiryPanel inherits Rectangle {
-    in property <InquiryQuestion> question;
+    in property <[InquiryQuestion]> questions: [];
     in property <int> page: 0;
     in property <int> total: 1;
-    in-out property <string> other;
-    callback option-clicked(int);
-    callback no-preference();
+    in property <bool> expanded: false;
+    // Row whose quick-answer menu is open; -1 keeps it closed.
+    in-out property <int> menu-row: -1;
+    callback option-clicked(int, int);
+    callback other-edited(int, string);
+    callback no-preference(int);
+    callback use-recommended(int);
     callback page-move(int);
-    callback dismiss();
-    // Full width comes from the mounting layout; a component root cannot read
-    // `parent`.
-    height: card.height;
+    callback expanded-toggle();
+
+    height: 10px + card.height + 12px;
     card := Rectangle {
-        width: min(560px, parent.width);
-        height: card-body.preferred-height;
-        x: (parent.width - self.width) / 2;
-        y: parent.height - self.height;
-        border-radius: Theme.radius-lg; background: Theme.surface;
-        border-width: 1px; border-color: Theme.border;
-        drop-shadow-color: #0000001f; drop-shadow-blur: 14px; drop-shadow-offset-y: 3px;
+        width: parent.width;
+        x: 0; y: 10px;
+        height: body.preferred-height + 26px;
+        border-radius: 14px; background: Theme.surface;
+        border-width: 1px; border-color: #0F172A1A;
+        drop-shadow-color: #0F172A12; drop-shadow-blur: 18px; drop-shadow-offset-y: 6px;
         clip: true;
-        card-body := VerticalLayout {
-            padding-left: 16px; padding-right: 12px; padding-top: 12px; padding-bottom: 10px;
+        body := VerticalLayout {
+            padding-left: 18px; padding-right: 14px;
+            padding-top: 14px; padding-bottom: 12px;
             spacing: 2px;
+            // ---- heading: the question, then the panel tools ----
             HorizontalLayout {
                 height: max(24px, head-text.preferred-height);
-                spacing: 8px;
+                spacing: 12px;
                 head-text := Text {
                     horizontal-stretch: 1;
-                    text: root.question.question;
-                    color: Theme.text; font-size: Theme.font-md; font-weight: 700;
+                    text: root.expanded ? I18n.inquiry_all_questions : root.questions[0].question;
+                    color: Theme.text; font-size: 15px; font-weight: 700;
                     wrap: word-wrap; vertical-alignment: top;
                 }
-                if root.total > 1 : Rectangle {
+                if root.total > 1 && !root.expanded : Rectangle {
                     width: 24px; height: 24px;
                     y: (parent.height - self.height) / 2;
                     border-radius: 6px;
-                    background: prev-touch.has-hover && root.page > 0 ? Theme.hover : transparent;
+                    background: prev-touch.has-hover && root.page > 0 ? #0F172A0F : transparent;
                     Image {
                         x: 6px; y: 6px; width: 12px; height: 12px;
                         source: @image-url("../assets/icons/chevron-left.svg");
-                        colorize: root.page > 0 ? Theme.text-secondary : Theme.border-strong;
+                        colorize: root.page > 0 ? #6B7280 : #D1D5DB;
                         image-fit: contain;
                     }
                     prev-touch := TouchArea {
                         mouse-cursor: root.page > 0 ? MouseCursor.pointer : MouseCursor.default;
                         enabled: root.page > 0;
-                        clicked => { root.page-move(-1); }
+                        clicked => { root.menu-row = -1; root.page-move(-1); }
                     }
                 }
-                if root.total > 1 : Text {
-                    width: 40px; height: max(24px, self.preferred-height);
-                    text: (root.page + 1) + " / " + root.total;
-                    color: Theme.text-secondary; font-size: Theme.font-xs;
+                if root.total > 1 && !root.expanded : Text {
+                    width: 34px; height: max(24px, self.preferred-height);
+                    text: (root.page + 1) + "/" + root.total;
+                    color: #4B5563; font-size: Theme.font-sm;
                     horizontal-alignment: center; vertical-alignment: center;
+                }
+                if root.total > 1 && !root.expanded : Rectangle {
+                    width: 24px; height: 24px;
+                    y: (parent.height - self.height) / 2;
+                    border-radius: 6px;
+                    background: next-touch.has-hover && root.page < root.total - 1 ? #0F172A0F : transparent;
+                    Image {
+                        x: 6px; y: 6px; width: 12px; height: 12px;
+                        source: @image-url("../assets/icons/chevron-right.svg");
+                        colorize: root.page < root.total - 1 ? #6B7280 : #D1D5DB;
+                        image-fit: contain;
+                    }
+                    next-touch := TouchArea {
+                        mouse-cursor: root.page < root.total - 1 ? MouseCursor.pointer : MouseCursor.default;
+                        enabled: root.page < root.total - 1;
+                        clicked => { root.menu-row = -1; root.page-move(1); }
+                    }
                 }
                 if root.total > 1 : Rectangle {
                     width: 24px; height: 24px;
                     y: (parent.height - self.height) / 2;
                     border-radius: 6px;
-                    background: next-touch.has-hover ? Theme.hover : transparent;
-                    Image {
-                        x: 6px; y: 6px; width: 12px; height: 12px;
-                        source: @image-url("../assets/icons/chevron-right.svg");
-                        colorize: root.page < root.total - 1 ? Theme.text-secondary : Theme.border-strong;
-                        image-fit: contain;
-                    }
-                    next-touch := TouchArea {
-                        mouse-cursor: pointer;
-                        enabled: root.page < root.total - 1;
-                        clicked => { root.page-move(1); }
-                    }
-                }
-                Rectangle {
-                    width: 24px; height: 24px;
-                    y: (parent.height - self.height) / 2;
-                    border-radius: 6px;
-                    background: dismiss-touch.has-hover ? Theme.hover : transparent;
+                    background: expand-touch.has-hover ? #0F172A0F : transparent;
                     Image {
                         x: 5px; y: 5px; width: 14px; height: 14px;
-                        source: @image-url("../assets/icons/xmark.svg");
-                        colorize: dismiss-touch.has-hover ? Theme.danger : Theme.muted;
-                        image-fit: contain;
+                        source: root.expanded
+                            ? @image-url("../assets/icons/fa-compress.svg")
+                            : @image-url("../assets/icons/fa-window-maximize.svg");
+                        colorize: #6B7280; image-fit: contain;
                     }
-                    dismiss-touch := TouchArea {
+                    expand-touch := TouchArea {
                         mouse-cursor: pointer;
-                        clicked => { root.dismiss(); }
+                        clicked => { root.menu-row = -1; root.expanded-toggle(); }
                     }
+                    accessible-role: button;
+                    accessible-label: root.expanded ? I18n.inquiry_collapse : I18n.inquiry_expand;
                 }
             }
-            VerticalLayout {
-                spacing: 0px;
-                for option[index] in root.question.options : Rectangle {
-                    height: 30px;
-                    border-radius: Theme.radius-sm;
-                    background: option-touch.has-hover ? Theme.hover : transparent;
-                    HorizontalLayout {
-                        padding-left: 4px; padding-right: 4px; spacing: 10px;
-                        Rectangle {
-                            width: 18px;
+            // ---- one block per visible question ----
+            for question[index] in root.questions : Rectangle {
+                height: block.preferred-height;
+                block := VerticalLayout {
+                    spacing: 0px;
+                    if index > 0 : Rectangle {
+                        height: 1px;
+                        background: #0F172A12;
+                    }
+                    if root.expanded && root.total > 1 : Text {
+                        height: 24px;
+                        text: I18n.inquiry_question_progress((index + 1) + "/" + root.total)
+                            + " · " + question.question;
+                        color: #6B7280; font-size: Theme.font-sm;
+                        vertical-alignment: center; overflow: elide;
+                    }
+                    for option[option-index] in question.options : Rectangle {
+                        height: 34px;
+                        border-radius: Theme.radius-sm;
+                        background: option-touch.has-hover ? #0F172A0A : transparent;
+                        HorizontalLayout {
+                            padding-left: 6px; padding-right: 6px; spacing: 10px;
                             Rectangle {
-                                x: 0px; y: (parent.height - self.height) / 2;
-                                width: 18px; height: 18px;
-                                border-radius: root.question.multiple ? 5px : 9px;
-                                border-width: 1.5px;
-                                border-color: option.selected ? Theme.accent : Theme.border-strong;
-                                background: option.selected ? Theme.accent : Theme.surface;
-                                Image {
-                                    x: 4px; y: 6px; width: 10px; height: 7px;
-                                    source: @image-url("../assets/icons/status-check.svg");
-                                    colorize: Theme.surface; image-fit: contain;
-                                    visible: option.selected;
+                                width: 18px;
+                                Rectangle {
+                                    y: (parent.height - self.height) / 2;
+                                    width: 18px; height: 18px;
+                                    border-radius: question.multiple ? 5px : 9px;
+                                    border-width: 1.5px;
+                                    border-color: option.selected ? Theme.accent : #D1D5DB;
+                                    background: option.selected ? Theme.accent : Theme.surface;
+                                    Image {
+                                        x: 3.5px; y: 5.5px; width: 10px; height: 7px;
+                                        source: @image-url("../assets/icons/status-check.svg");
+                                        colorize: Theme.surface; image-fit: contain;
+                                        visible: option.selected;
+                                    }
+                                }
+                            }
+                            Text {
+                                height: parent.height;
+                                width: min(self.preferred-width, 220px);
+                                text: option.label;
+                                color: option.selected ? Theme.accent-deep : Theme.text;
+                                font-size: Theme.font-lg; font-weight: 600;
+                                vertical-alignment: center; overflow: elide;
+                            }
+                            if option.recommended : Rectangle {
+                                width: badge-text.preferred-width + 16px;
+                                height: 18px; y: (parent.height - self.height) / 2;
+                                border-radius: 9px; background: #0F172A12;
+                                badge-text := Text {
+                                    x: 8px; width: self.preferred-width; height: parent.height;
+                                    text: I18n.inquiry_recommended;
+                                    color: #6B7280; font-size: Theme.font-xs; font-weight: 500;
+                                    vertical-alignment: center;
+                                }
+                            }
+                            Text {
+                                height: parent.height; horizontal-stretch: 1;
+                                text: option.description;
+                                color: #6B7280; font-size: 13px;
+                                vertical-alignment: center; overflow: elide;
+                            }
+                        }
+                        // The row itself is the hit area; the mark is decoration.
+                        option-touch := TouchArea {
+                            x: 0px; y: 0px; width: parent.width; height: parent.height;
+                            mouse-cursor: pointer;
+                            clicked => { root.menu-row = -1; root.option-clicked(question.index, option-index); }
+                        }
+                    }
+                    // ---- free text row + quick answer ----
+                    Rectangle {
+                        height: 34px;
+                        border-radius: Theme.radius-sm;
+                        HorizontalLayout {
+                            padding-left: 6px; padding-right: 6px; spacing: 10px;
+                            Rectangle {
+                                width: 18px;
+                                Rectangle {
+                                    y: (parent.height - self.height) / 2;
+                                    width: 18px; height: 18px;
+                                    border-radius: question.multiple ? 5px : 9px;
+                                    border-width: 1.5px;
+                                    border-color: question.other != "" ? Theme.accent : #D1D5DB;
+                                    background: question.other != "" ? Theme.accent : Theme.surface;
+                                    Image {
+                                        x: 3.5px; y: 5.5px; width: 10px; height: 7px;
+                                        source: @image-url("../assets/icons/status-check.svg");
+                                        colorize: Theme.surface; image-fit: contain;
+                                        visible: question.other != "";
+                                    }
+                                }
+                            }
+                            // Raw Slint TextInput has no placeholder of its own,
+                            // and the std LineEdit would restyle the row; the
+                            // hint is a plain Text overlay (Text has no input
+                            // path, so typing stays unaffected).
+                            Rectangle {
+                                horizontal-stretch: 1;
+                                height: parent.height;
+                                TextInput {
+                                    x: 0px; y: 0px; width: parent.width; height: parent.height - 2px;
+                                    text: question.other;
+                                    color: Theme.text; font-size: 13px;
+                                    vertical-alignment: center;
+                                    edited => { root.other-edited(question.index, self.text); }
+                                }
+                                Text {
+                                    x: 1px; y: 0px; width: parent.width; height: parent.height;
+                                    text: I18n.inquiry_other_placeholder;
+                                    color: #9CA3AF; font-size: 13px;
+                                    vertical-alignment: center;
+                                    visible: question.other == "";
+                                }
+                                // The web row underlines the field with a
+                                // dashed border; the soft renderer draws it solid.
+                                Rectangle {
+                                    y: parent.height - 2px; width: parent.width; height: 1px;
+                                    background: #D1D5DB;
+                                }
+                            }
+                            // Split control: the label marks 无偏好, the caret
+                            // opens the quick-answer menu. A Rectangle reports
+                            // no intrinsic width of its own, so the pill is
+                            // sized from the label plus its paddings, the
+                            // divider, both gaps and the caret.
+                            Rectangle {
+                                width: pref-label.preferred-width + 42px;
+                                height: 26px;
+                                border-radius: 9px;
+                                background: question.no_preference ? Theme.accent-soft
+                                    : pref-touch.has-hover || caret-touch.has-hover
+                                        ? #0F172A12 : #0F172A0D;
+                                HorizontalLayout {
+                                    padding-left: 12px; padding-right: 8px; spacing: 6px;
+                                    pref-label := Text {
+                                        height: parent.height;
+                                        text: I18n.inquiry_no_preference;
+                                        color: question.no_preference ? Theme.accent-deep : #374151;
+                                        font-size: 13px; font-weight: 600;
+                                        vertical-alignment: center;
+                                    }
+                                    Rectangle {
+                                        width: 1px;
+                                        background: #0F172A14;
+                                    }
+                                    Image {
+                                        width: 9px; height: 9px;
+                                        y: (parent.height - self.height) / 2;
+                                        source: @image-url("../assets/icons/chevron-down.svg");
+                                        colorize: #6B7280; image-fit: contain;
+                                    }
+                                }
+                                pref-touch := TouchArea {
+                                    x: 0px; y: 0px;
+                                    width: parent.width - 24px; height: parent.height;
+                                    mouse-cursor: pointer;
+                                    clicked => { root.menu-row = -1; root.no-preference(question.index); }
+                                }
+                                caret-touch := TouchArea {
+                                    x: parent.width - 24px; y: 0px;
+                                    width: 24px; height: parent.height;
+                                    mouse-cursor: pointer;
+                                    clicked => {
+                                        root.menu-row = root.menu-row == question.index ? -1 : question.index;
+                                    }
                                 }
                             }
                         }
-                        Text {
-                            height: parent.height;
-                            text: option.label;
-                            color: option.selected ? Theme.accent-deep : Theme.text;
-                            font-size: Theme.font-sm; font-weight: 600;
-                            vertical-alignment: center; overflow: elide;
-                        }
-                        if option.recommended : Rectangle {
-                            width: badge-text.preferred-width + 16px;
-                            height: 18px; y: (parent.height - self.height) / 2;
-                            border-radius: 9px; background: Theme.hover;
-                            badge-text := Text {
-                                x: 8px; width: self.preferred-width; height: parent.height;
-                                text: I18n.inquiry_recommended;
-                                color: Theme.muted; font-size: Theme.font-2xs;
-                                vertical-alignment: center;
+                        // The quick-answer menu floats above the caret.
+                        if root.menu-row == question.index : Rectangle {
+                            width: 132px;
+                            height: menu-box.preferred-height + 8px;
+                            x: parent.width - self.width - 6px;
+                            y: -self.height - 6px;
+                            z: 6;
+                            border-radius: 10px; background: Theme.surface;
+                            border-width: 1px; border-color: #0F172A1A;
+                            drop-shadow-color: #0F172A24; drop-shadow-blur: 16px; drop-shadow-offset-y: 4px;
+                            menu-box := VerticalLayout {
+                                padding: 4px; spacing: 0px;
+                                Rectangle {
+                                    height: 30px;
+                                    border-radius: 7px;
+                                    background: menu-a.has-hover ? #0F172A0D : transparent;
+                                    Text {
+                                        x: 10px; width: parent.width - 20px; height: parent.height;
+                                        text: I18n.inquiry_no_preference;
+                                        color: #374151; font-size: 13px;
+                                        vertical-alignment: center;
+                                    }
+                                    menu-a := TouchArea {
+                                        mouse-cursor: pointer;
+                                        clicked => { root.menu-row = -1; root.no-preference(question.index); }
+                                    }
+                                }
+                                Rectangle {
+                                    height: 30px;
+                                    border-radius: 7px;
+                                    background: menu-b.has-hover ? #0F172A0D : transparent;
+                                    Text {
+                                        x: 10px; width: parent.width - 20px; height: parent.height;
+                                        text: I18n.inquiry_use_recommended;
+                                        color: #374151; font-size: 13px;
+                                        vertical-alignment: center;
+                                    }
+                                    menu-b := TouchArea {
+                                        mouse-cursor: pointer;
+                                        clicked => { root.menu-row = -1; root.use-recommended(question.index); }
+                                    }
+                                }
                             }
                         }
-                        Text {
-                            height: parent.height; horizontal-stretch: 1;
-                            text: option.description;
-                            color: Theme.muted; font-size: Theme.font-xs;
-                            vertical-alignment: center; overflow: elide;
-                        }
-                    }
-                    // The row itself is the hit area; the mark is decoration.
-                    option-touch := TouchArea {
-                        x: 0px; y: 0px; width: parent.width; height: parent.height;
-                        mouse-cursor: pointer;
-                        clicked => { root.option-clicked(index); }
                     }
                 }
-            }
-            HorizontalLayout {
-                height: 32px;
-                spacing: 10px;
-                Rectangle {
-                    width: 18px;
-                    Rectangle {
-                        x: 0px; y: (parent.height - self.height) / 2;
-                        width: 18px; height: 18px;
-                        border-radius: root.question.multiple ? 5px : 9px;
-                        border-width: 1.5px;
-                        border-color: root.other != "" ? Theme.accent : Theme.border-strong;
-                        background: root.other != "" ? Theme.accent : Theme.surface;
-                        Image {
-                            x: 4px; y: 6px; width: 10px; height: 7px;
-                            source: @image-url("../assets/icons/status-check.svg");
-                            colorize: Theme.surface; image-fit: contain;
-                            visible: root.other != "";
-                        }
-                    }
-                }
-                // Raw Slint TextInput has no placeholder of its own, and the
-                // std LineEdit would restyle the row; the hint is a plain Text
-                // overlay (Text has no input path, so typing stays unaffected).
-                Rectangle {
-                    horizontal-stretch: 1;
-                    height: parent.height;
-                    TextInput {
-                        x: 0px; y: 0px; width: parent.width; height: parent.height;
-                        text <=> root.other;
-                        color: Theme.text; font-size: Theme.font-sm;
-                        vertical-alignment: center;
-                    }
-                    Text {
-                        x: 1px; y: 0px; width: parent.width; height: parent.height;
-                        text: I18n.inquiry_other_placeholder;
-                        color: Theme.muted; font-size: Theme.font-sm;
-                        vertical-alignment: center;
-                        visible: root.other == "";
-                    }
-                    Rectangle {
-                        y: parent.height - 1px; width: parent.width; height: 1px;
-                        background: Theme.border-strong;
-                    }
-                }
-                Rectangle {
-                    width: pref-text.preferred-width + 24px;
-                    height: 26px; y: (parent.height - self.height) / 2;
-                    border-radius: Theme.radius-sm;
-                    background: root.question.no_preference ? Theme.accent-soft
-                        : pref-touch.has-hover ? Theme.hover : Theme.panel;
-                    pref-text := Text {
-                        width: self.preferred-width; height: parent.height;
-                        x: 12px;
-                        text: I18n.inquiry_no_preference;
-                        color: root.question.no_preference ? Theme.accent-deep : Theme.text-secondary;
-                        font-size: Theme.font-sm; font-weight: 600;
-                        vertical-alignment: center;
-                    }
-                    pref-touch := TouchArea {
-                        mouse-cursor: pointer;
-                        clicked => { root.no-preference(); }
-                    }
-                }
-            }
-            Text {
-                height: 18px;
-                text: I18n.inquiry_send_hint;
-                color: Theme.muted; font-size: Theme.font-2xs;
-                vertical-alignment: center;
             }
         }
     }

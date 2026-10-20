@@ -55,7 +55,7 @@ mod queue;
 #[path = "native_stream.rs"]
 mod stream;
 pub use crate::runtime::RuntimeToolStatus;
-pub use chat_turns::{NativeChatRound, NativeChatTurn};
+pub use chat_turns::{NativeChatRound, NativeChatTurn, NativePlanStep, NativePlanView};
 pub use observer::{NativeThreadUpdate, NativeThreadWatch};
 pub use queue::{NativeQueueTurn, NATIVE_QUEUE_LIMIT};
 pub use stream::{NativeChatEvent, NativeStream};
@@ -297,6 +297,70 @@ impl NativeSubagentCard {
     pub fn is_running(&self) -> bool {
         !self.terminal && !matches!(self.status.as_str(), "closed" | "cancelled" | "canceled")
     }
+
+    /// Project one card out of a live `subagent_dispatch_item_update` payload.
+    /// The dispatch item is flat (the durable card nests the same fields under
+    /// `runtime`), so it uses its own mapping but degrades the same way: an
+    /// item without a child session is not renderable.
+    pub fn from_dispatch_item(payload: &Value) -> Option<Self> {
+        let session_id = payload["session_id"]
+            .as_str()
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        if session_id.is_empty() {
+            return None;
+        }
+        let state = &payload["agent_state"];
+        let status = payload["status"]
+            .as_str()
+            .or_else(|| state["status"].as_str())
+            .unwrap_or_default()
+            .to_string();
+        let failed = payload["failed"].as_bool().unwrap_or(false)
+            || matches!(status.as_str(), "failed" | "error");
+        let error_message = payload["error_message"]
+            .as_str()
+            .or_else(|| payload["error"].as_str())
+            .unwrap_or_default()
+            .to_string();
+        let latest_message = payload["latest_message"]
+            .as_str()
+            .or_else(|| payload["result_preview"].as_str())
+            .or_else(|| state["message"].as_str())
+            .unwrap_or_default()
+            .to_string();
+        let metrics = &payload["metrics"];
+        Some(Self {
+            item_id: payload["item_id"].as_str().unwrap_or_default().to_string(),
+            session_id,
+            run_id: payload["run_id"].as_str().unwrap_or_default().to_string(),
+            title: payload["label"]
+                .as_str()
+                .or_else(|| payload["spawn_label"].as_str())
+                .or_else(|| payload["title"].as_str())
+                .filter(|title| !title.trim().is_empty())
+                .unwrap_or("子智能体")
+                .trim()
+                .to_string(),
+            status,
+            terminal: payload["terminal"].as_bool().unwrap_or(false),
+            failed,
+            latest_message,
+            error_message,
+            can_terminate: payload["can_terminate"].as_bool().unwrap_or(false),
+            tool_calls: metrics["tool_calls"]
+                .as_i64()
+                .or_else(|| payload["tool_calls"].as_i64())
+                .unwrap_or(0),
+            model_requests: metrics["model_request_count"]
+                .as_i64()
+                .or_else(|| payload["model_request_count"].as_i64())
+                .unwrap_or(0),
+            context_tokens: metrics["context_tokens"].as_i64().unwrap_or(0),
+            credits: metrics["account_credits_consumed"].as_i64().unwrap_or(0),
+        })
+    }
 }
 
 /// One file of a bounded patch projection (§7.4). Line numbers stay as strings
@@ -456,19 +520,29 @@ impl NativeDesktop {
                         })
                         .unwrap_or_default();
                     for (session, token) in sessions {
-                        // Keep a heartbeat from repopulating confirmation
-                        // after a close/reopen transition has retired this
-                        // snapshot's token.
-                        let Ok(_operation) = heartbeat_operations.lock() else {
-                            continue;
-                        };
-                        if heartbeat_storage
+                        // The SQLite write runs outside the operation lock so a
+                        // slow disk never stalls a UI-side lease transition.
+                        // Confirmation is published under the lock only if the
+                        // fencing token is still current, so a close/reopen
+                        // transition still retires this snapshot.
+                        if !heartbeat_storage
                             .touch_thread_open_lease(&session, &heartbeat_instance, token, 30.0)
                             .unwrap_or(false)
                         {
-                            if let Ok(mut confirmed) = heartbeat_confirmed.lock() {
-                                confirmed.insert(session, Instant::now());
-                            }
+                            continue;
+                        }
+                        let Ok(_operation) = heartbeat_operations.lock() else {
+                            continue;
+                        };
+                        let current = heartbeat_threads
+                            .lock()
+                            .map(|set| set.get(&session).copied())
+                            .unwrap_or(None);
+                        if current != Some(token) {
+                            continue;
+                        }
+                        if let Ok(mut confirmed) = heartbeat_confirmed.lock() {
+                            confirmed.insert(session, Instant::now());
                         }
                     }
                 }

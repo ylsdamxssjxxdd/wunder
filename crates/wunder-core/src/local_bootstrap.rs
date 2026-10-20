@@ -13,6 +13,11 @@ use std::path::{Path, PathBuf};
 pub mod supplement;
 
 pub const HOME_ENV: &str = "WUNDER_HOME";
+/// Sentinel written by the installers at the installation root. Its presence
+/// makes a local form portable: the installation root also becomes WUNDER_HOME
+/// (unless the user explicitly set WUNDER_HOME), so binaries, config, sessions,
+/// workspaces and bundled tools never silently fall back to the user profile.
+pub const HOME_MARKER: &str = ".wunder-home";
 pub const CONFIG_FILE: &str = "config/wunder.yaml";
 pub const DATABASE_FILE: &str = "data/wunder.db";
 
@@ -77,11 +82,64 @@ impl LocalHomeLayout {
     }
 }
 
-pub fn resolve_home_from_env_or_user() -> PathBuf {
-    if let Some(value) = std::env::var_os(HOME_ENV)
+fn home_env() -> Option<PathBuf> {
+    std::env::var_os(HOME_ENV)
         .map(PathBuf::from)
         .filter(|path| !path.as_os_str().is_empty())
-    {
+}
+
+/// Resolve a portable installation root from an application directory. The
+/// installers place the binaries in `<root>/bin` and the marker at `<root>`, so
+/// both `<app_dir>/.wunder-home` (flat layout) and the parent are accepted.
+pub fn portable_home_from_app_dir(app_dir: &Path) -> Option<PathBuf> {
+    if app_dir.join(HOME_MARKER).is_file() {
+        return Some(app_dir.to_path_buf());
+    }
+    app_dir
+        .parent()
+        .filter(|parent| parent.join(HOME_MARKER).is_file())
+        .map(Path::to_path_buf)
+}
+
+fn portable_home_from_exe() -> Option<PathBuf> {
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(app_dir) = exe.parent() {
+            if let Some(home) = portable_home_from_app_dir(app_dir) {
+                return Some(home);
+            }
+        }
+    }
+    // An AppImage runs from a temporary squashfs mount, so current_exe is not
+    // the installed file. APPIMAGE points at the real AppImage path.
+    if let Some(appimage) = std::env::var_os("APPIMAGE") {
+        let path = PathBuf::from(appimage);
+        if path.is_absolute() {
+            if let Some(app_dir) = path.parent() {
+                if let Some(home) = portable_home_from_app_dir(app_dir) {
+                    return Some(home);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Adopt the portable installation root as WUNDER_HOME before any runtime path
+/// is resolved. An explicit non-empty WUNDER_HOME always wins.
+pub fn install_local_home_env() {
+    if home_env().is_some() {
+        return;
+    }
+    if let Some(home) = portable_home_from_exe() {
+        std::env::set_var(HOME_ENV, home);
+    }
+}
+
+pub fn resolve_home_from_env_or_user() -> PathBuf {
+    if let Some(value) = home_env() {
+        return value;
+    }
+    if let Some(value) = portable_home_from_exe() {
         return value;
     }
     #[cfg(windows)]
@@ -160,6 +218,26 @@ mod tests {
         assert_eq!(layout.skills, home.join("skills"));
         assert_eq!(layout.user_tools, home.join("user_tools"));
         assert_eq!(layout.vector_knowledge, home.join("vector_knowledge"));
+    }
+
+    #[test]
+    fn portable_home_marker_uses_installation_root() {
+        let dir = tempdir().unwrap();
+        let root = dir.path().join("wunder");
+        let bin = root.join("bin");
+        fs::create_dir_all(&bin).unwrap();
+        assert_eq!(portable_home_from_app_dir(&bin), None);
+        fs::write(root.join(HOME_MARKER), b"portable\n").unwrap();
+        assert_eq!(portable_home_from_app_dir(&bin), Some(root));
+    }
+
+    #[test]
+    fn portable_home_marker_accepts_flat_layout() {
+        let dir = tempdir().unwrap();
+        let app_dir = dir.path().join("flat");
+        fs::create_dir_all(&app_dir).unwrap();
+        fs::write(app_dir.join(HOME_MARKER), b"").unwrap();
+        assert_eq!(portable_home_from_app_dir(&app_dir), Some(app_dir));
     }
 
     #[test]

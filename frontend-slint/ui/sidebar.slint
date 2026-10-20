@@ -280,6 +280,12 @@ export component Sidebar inherits Rectangle {
     in property <string> user-initial;
     in property <color> user-color;
     in property <bool> busy;
+    // Device selector: this 蛹 is the local device; the signed-in account is
+    // the cloud device. Only the selected device's workspace tree is shown.
+    in property <bool> cloud-available: false;
+    in property <int> local-workspace-count: 0;
+    private property <bool> device-menu-open: false;
+    changed cloud-available => { if !self.cloud-available { self.device-menu-open = false; } }
     // Cloud quota badge (§6.1): plain balance text projected natively; an
     // empty string hides the pill, `warn` switches it to the danger tint,
     // `expired` replaces the number with an expired warning and
@@ -290,6 +296,7 @@ export component Sidebar inherits Rectangle {
     in property <bool> cloud-quota-reconnecting: false;
 
     callback select-row(int);
+    callback select-device(int);
     callback new-cloud-thread();
     callback workspace-menu(int, int);
     callback new-workspace();
@@ -329,6 +336,9 @@ export component Sidebar inherits Rectangle {
     // Which folder the working-directory region browses: false = the cloud
     // workspace, true = a local workspace folder (no cloud-only actions).
     in property <bool> file-local;
+    // The effective device follows the directory target; a signed-out cloud
+    // target cannot be a workspace host, so the tree falls back to local.
+    private property <bool> cloud-active: root.cloud-available && !root.file-local;
     in property <string> file-active-path;
     in property <int> file-active-index: -1;
     callback file-key(int);
@@ -347,22 +357,82 @@ export component Sidebar inherits Rectangle {
 
     VerticalLayout {
         spacing: 0px;
-        Rectangle { height: 12px; }
+        // 8 + 28 keeps the old 36px header block, so the splitter's fixed
+        // chrome accounting (height - 85px) stays correct.
+        Rectangle { height: 8px; }
         HorizontalLayout {
-            padding-left: 14px; padding-right: 10px;
-            Text { height: 24px; text: I18n.sidebar_workspaces; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; horizontal-stretch: 1; }
+            height: 28px;
+            padding-left: 8px; padding-right: 10px;
+            spacing: 2px;
+            // Device selector: the current device owns every workspace row below.
+            Rectangle {
+                height: 28px;
+                horizontal-stretch: 1;
+                border-radius: 7px;
+                background: device-toggle.has-hover && root.cloud-available ? Theme.hover : transparent;
+                HorizontalLayout {
+                    padding-left: 4px; padding-right: 6px; spacing: 6px;
+                    Rectangle {
+                        y: (parent.height - 18px) / 2;
+                        width: 18px; height: 18px;
+                        Image {
+                            width: 100%; height: 100%;
+                            source: WorkspaceVisual.icon(root.cloud-active ? "cloud" : "monitor");
+                            colorize: root.cloud-active ? Theme.accent : Theme.muted;
+                        }
+                    }
+                    Text {
+                        height: parent.height;
+                        text: root.cloud-active ? I18n.sb_device_cloud : I18n.sb_device_local;
+                        color: Theme.text;
+                        font-size: Theme.font-lg;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                    Text {
+                        height: parent.height;
+                        text: root.cloud-active ? I18n.sb_device_cloud_host : I18n.sb_device_local_host;
+                        color: Theme.muted;
+                        font-size: Theme.font-xs;
+                        vertical-alignment: center;
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                    if root.cloud-available : Image {
+                        y: (parent.height - 12px) / 2;
+                        width: 12px; height: 12px;
+                        source: root.device-menu-open ? @image-url("../assets/icons/chevron-up.svg") : @image-url("../assets/icons/chevron-down.svg");
+                        colorize: Theme.muted;
+                    }
+                }
+                device-toggle := TouchArea {
+                    mouse-cursor: root.cloud-available ? pointer : default;
+                    enabled: root.cloud-available;
+                    accessible-role: button; accessible-label: I18n.sb_device_select;
+                    Tooltip { text: @markdown("\{I18n.sb_device_select}"); }
+                    clicked => { root.device-menu-open = !root.device-menu-open; }
+                }
+            }
             // Creates a workspace bound to a local directory.
             Rectangle {
-                width: 22px; height: 22px;
+                width: 22px; height: 28px;
                 Text { width: parent.width; height: parent.height; text: "+"; color: ws-add-touch.has-hover ? Theme.accent : Theme.muted; font-size: 20px; font-weight: 400; horizontal-alignment: center; vertical-alignment: center; }
                 ws-add-touch := TouchArea {
                     mouse-cursor: pointer;
                     enabled: !root.busy;
                     accessible-role: button; accessible-label: I18n.ws_dlg_new;
                     Tooltip { text: @markdown("\{I18n.ws_dlg_new}"); }
-                    clicked => { root.new-workspace(); }
+                    clicked => { root.device-menu-open = false; root.new-workspace(); }
                 }
             }
+        }
+        if root.rows.length == 0 && !root.cloud-active : Text {
+            height: 48px;
+            text: I18n.sb_device_empty;
+            color: Theme.muted;
+            font-size: Theme.font-sm;
+            horizontal-alignment: center; vertical-alignment: center;
+            wrap: word-wrap;
         }
         // Workspace/thread tree. Rows drag-reorder among neighbours of the
         // same kind via `move-row`, which reports pointer travel in pixels;
@@ -814,6 +884,116 @@ export component Sidebar inherits Rectangle {
                             horizontal-alignment: center; vertical-alignment: center; overflow: elide;
                         }
                     }
+                }
+            }
+        }
+    }
+    // Device menu overlay: the outside touch closes it; the two rows switch
+    // between this local 蛹 and the signed-in cloud workspace.
+    if root.device-menu-open && root.cloud-available : TouchArea {
+        y: 36px;
+        width: parent.width;
+        height: parent.height - 36px;
+        z: 140;
+        clicked => { root.device-menu-open = false; }
+    }
+    if root.device-menu-open && root.cloud-available : Rectangle {
+        x: 8px;
+        y: 38px;
+        width: parent.width - 16px;
+        height: 76px;
+        z: 150;
+        border-width: 1px;
+        border-color: Theme.border;
+        border-radius: 10px;
+        background: Theme.surface;
+        clip: true;
+        VerticalLayout {
+            padding: 4px;
+            spacing: 0px;
+            Rectangle {
+                height: 34px;
+                border-radius: 6px;
+                background: local-device-option.has-hover && root.local-workspace-count > 0
+                    ? Theme.hover : !root.cloud-active ? Theme.selected : transparent;
+                HorizontalLayout {
+                    padding-left: 8px; padding-right: 8px; spacing: 8px;
+                    Image {
+                        y: (parent.height - 16px) / 2;
+                        width: 16px; height: 16px;
+                        source: WorkspaceVisual.icon("monitor");
+                        colorize: root.local-workspace-count > 0 ? Theme.muted : Theme.border-strong;
+                    }
+                    Text {
+                        height: parent.height;
+                        text: I18n.sb_device_local;
+                        color: root.local-workspace-count > 0 ? Theme.text : Theme.muted;
+                        font-size: Theme.font-md;
+                        vertical-alignment: center;
+                    }
+                    Text {
+                        height: parent.height;
+                        text: I18n.sb_device_local_host;
+                        color: Theme.muted; font-size: Theme.font-xs;
+                        vertical-alignment: center;
+                    }
+                    Text {
+                        height: parent.height;
+                        horizontal-stretch: 1; horizontal-alignment: right;
+                        text: root.local-workspace-count > 0
+                            ? I18n.sb_device_workspaces(root.local-workspace-count)
+                            : I18n.sb_device_no_workspaces;
+                        color: Theme.muted; font-size: Theme.font-xs;
+                        vertical-alignment: center;
+                    }
+                    if !root.cloud-active && root.local-workspace-count > 0 : Image {
+                        y: (parent.height - 12px) / 2;
+                        width: 12px; height: 12px;
+                        source: @image-url("../assets/icons/check.svg");
+                        colorize: Theme.accent;
+                    }
+                }
+                local-device-option := TouchArea {
+                    mouse-cursor: root.local-workspace-count > 0 ? pointer : default;
+                    enabled: root.local-workspace-count > 0;
+                    clicked => { root.device-menu-open = false; root.select-device(0); }
+                }
+            }
+            Rectangle {
+                height: 34px;
+                border-radius: 6px;
+                background: cloud-device-option.has-hover ? Theme.hover : root.cloud-active ? Theme.selected : transparent;
+                HorizontalLayout {
+                    padding-left: 8px; padding-right: 8px; spacing: 8px;
+                    Image {
+                        y: (parent.height - 16px) / 2;
+                        width: 16px; height: 16px;
+                        source: WorkspaceVisual.icon("cloud");
+                        colorize: Theme.accent;
+                    }
+                    Text {
+                        height: parent.height;
+                        text: I18n.sb_device_cloud;
+                        color: Theme.text; font-size: Theme.font-md;
+                        vertical-alignment: center;
+                    }
+                    Text {
+                        height: parent.height;
+                        text: I18n.sb_device_cloud_host;
+                        color: Theme.muted; font-size: Theme.font-xs;
+                        vertical-alignment: center;
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                    if root.cloud-active : Image {
+                        y: (parent.height - 12px) / 2;
+                        width: 12px; height: 12px;
+                        source: @image-url("../assets/icons/check.svg");
+                        colorize: Theme.accent;
+                    }
+                }
+                cloud-device-option := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { root.device-menu-open = false; root.select-device(1); }
                 }
             }
         }

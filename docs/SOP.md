@@ -1,7 +1,7 @@
 ---
 topics: [sop, workflow]
 doc_kind: note
-created: 2026-10-16
+created: 2026-10-20
 ---
 
 # Standard Operating Procedure

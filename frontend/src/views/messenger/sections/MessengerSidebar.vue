@@ -3,34 +3,98 @@
     ref="sidebarEl"
     class="messenger-sidebar"
     data-testid="messenger-sidebar"
-    :aria-label="t('messenger.sidebar.workspaceGroup')"
+    :aria-label="t('messenger.sidebar.deviceGroup')"
   >
     <div ref="workspaceRegionEl" class="messenger-sidebar-workspace-region" :style="workspaceRegionStyle">
-      <div class="messenger-sidebar-group-title">{{ t('messenger.sidebar.workspaceGroup') }}</div>
+      <!-- 设备选择器：蜂巢自身是「云端」，互通设备（蛹/舵机）各自成项。
+           切换设备即切换下面显示的工作区集合，设备之间不再混在同一棵树里。 -->
+      <div class="messenger-sidebar-device-bar">
+        <button
+          ref="deviceButtonEl"
+          class="messenger-sidebar-device"
+          type="button"
+          data-testid="messenger-device-selector"
+          :title="deviceSelectLabel"
+          :aria-label="deviceSelectLabel"
+          :aria-expanded="deviceMenuOpen"
+          aria-haspopup="listbox"
+          @click="toggleDeviceMenu"
+          @keydown.esc.prevent="closeDeviceMenu"
+        >
+          <i class="messenger-sidebar-device-icon" :class="selectedDevice.icon" aria-hidden="true"></i>
+          <span class="messenger-sidebar-device-label">{{ selectedDevice.label }}</span>
+          <span class="messenger-sidebar-device-kind">{{ selectedDeviceKindLabel }}</span>
+          <i
+            class="fa-solid fa-chevron-down messenger-sidebar-device-chevron"
+            :class="{ 'is-open': deviceMenuOpen }"
+            aria-hidden="true"
+          ></i>
+        </button>
+      </div>
 
-      <!-- §6.3 工作区即行：云端工作区与本地工作区是同一份可拖拽条目列表（真正的同级，
-           云端行也能拖）。线程树是云端工作区的子级，紧跟云端行渲染——云端行被拖到哪，
-           它的线程就跟到哪（蛹同构的工作区/线程树）。
-           最小投影设备保留明确的默认本地工作区；具名目录各占一个条目；
-           点击行把文件区切到对应目录（URL `?node=&ws=`），行顺序是蜂巢账号级偏好
-           （云端存储），不回写本地设备。 -->
-      <template v-for="entry in orderedWorkspaceEntries" :key="entry.key">
-        <template v-if="entry.kind === 'cloud'">
+      <!-- 当前设备的云端工作区：线程树是它的子级。打开线程同时把目录目标切回云端。 -->
+      <template v-if="!interlinkRemoteSelected">
+        <div
+          class="messenger-sidebar-workspace-row"
+          :class="{ 'is-selected': cloudRowSelected }"
+          role="button"
+          tabindex="0"
+          :aria-label="cloudWorkspaceName"
+          :aria-expanded="expandedWorkspaceKey === CLOUD_ENTRY_KEY"
+          @click="handleWorkspaceRowClick"
+          @keydown.enter.self.prevent="handleWorkspaceRowClick"
+          @keydown.space.self.prevent="handleWorkspaceRowClick"
+        >
+          <i class="messenger-sidebar-workspace-icon fa-solid fa-cloud" aria-hidden="true"></i>
+          <span class="messenger-sidebar-workspace-name" :title="cloudWorkspaceName">{{ cloudWorkspaceName }}</span>
+          <span class="messenger-sidebar-workspace-meta">{{ workspaceMetaLabel }}</span>
+          <!-- 唯一的「新建线程」入口（左栏顶部的「新任务」按钮已移除），所以常驻可见、不再悬停才出现。 -->
+          <button
+            class="messenger-sidebar-workspace-menu"
+            type="button"
+            :disabled="newTaskDisabled"
+            :title="t('chat.newSession')"
+            :aria-label="t('chat.newSession')"
+            @click.stop="handleNewTask"
+          >
+            <i class="fa-solid fa-plus" aria-hidden="true"></i>
+          </button>
+        </div>
+
+        <!-- 展开与目录选中独立：收起线程树仍保留当前会话和文件目录。 -->
+        <MessengerThreadTree
+          v-if="cloudRowSelected && expandedWorkspaceKey === CLOUD_ENTRY_KEY"
+          :items="threads"
+          :active-session-id="activeSessionId"
+          :agent-id="agentIdForApi"
+          @open="handleThreadOpen"
+          @trajectory="emit('thread-trajectory', $event)"
+          @rename="emit('rename-thread', $event)"
+          @archive="emit('archive-thread', $event)"
+          @archive-threads="emit('archive-threads', $event)"
+        />
+      </template>
+
+      <!-- 当前设备的工作区行。行只属于一台设备，标签不再重复设备名；
+           最小投影设备保留明确的默认本地工作区；具名目录各占一个条目。
+           点击行把文件区切到对应目录（URL `?node=&ws=`），行顺序是蜂巢账号级偏好。 -->
+      <template v-else>
+        <template v-for="entry in visibleWorkspaceEntries" :key="entry.key">
           <div
             class="messenger-sidebar-workspace-row"
             :class="{
-              'is-selected': !interlinkRemoteSelected,
+              'is-selected': isRowSelected(entry),
               'is-dragging': dragKey === entry.key,
               'is-drop-target': dropTargetKey === entry.key
             }"
             role="button"
             tabindex="0"
             draggable="true"
-            :aria-label="workspaceName"
-            :aria-expanded="expandedWorkspaceKey === entry.key"
-            @click="handleWorkspaceRowClick"
-            @keydown.enter.self.prevent="handleWorkspaceRowClick"
-            @keydown.space.self.prevent="handleWorkspaceRowClick"
+            :aria-label="t('interlink.workspace.rowAria', { name: workspaceRowLabel(entry) })"
+            :aria-expanded="isSelectedLocalEntry(entry) && expandedWorkspaceKey === entry.key"
+            @click="selectWorkspaceRow(entry)"
+            @keydown.enter.self.prevent="selectWorkspaceRow(entry)"
+            @keydown.space.self.prevent="selectWorkspaceRow(entry)"
             @dragstart="handleRowDragStart(entry, $event)"
             @dragend="handleRowDragEnd"
             @dragover.prevent="handleRowDragOver(entry)"
@@ -38,95 +102,81 @@
             @drop.prevent="handleRowDrop(entry)"
           >
             <i
-              class="messenger-sidebar-workspace-icon fa-solid fa-cloud"
-              :class="{ 'is-muted': !cloudRowSelected }"
+              class="messenger-sidebar-workspace-icon"
+              :class="isRowSelected(entry) ? 'fa-solid fa-folder' : 'fa-regular fa-folder'"
               aria-hidden="true"
             ></i>
-            <span class="messenger-sidebar-workspace-name" :title="workspaceName">{{ workspaceName }}</span>
-            <span class="messenger-sidebar-workspace-meta">{{ workspaceMetaLabel }}</span>
-            <!-- 唯一的「新建线程」入口（左栏顶部的「新任务」按钮已移除），所以常驻可见、不再悬停才出现。 -->
+            <span class="messenger-sidebar-workspace-name" :title="workspaceRowLabel(entry)">
+              {{ workspaceRowLabel(entry) }}
+            </span>
             <button
               class="messenger-sidebar-workspace-menu"
               type="button"
-              :disabled="newTaskDisabled"
+              :disabled="newRemoteThreadKey === entry.key || Boolean(resolveDisabledReason(entry.node, 'thread.create'))"
               :title="t('chat.newSession')"
               :aria-label="t('chat.newSession')"
-              @click.stop="handleNewTask"
+              @click.stop="createRemoteThread(entry)"
             >
-              <i class="fa-solid fa-plus" aria-hidden="true"></i>
+              <i v-if="newRemoteThreadKey === entry.key" class="fa-solid fa-spinner fa-spin" aria-hidden="true"></i>
+              <i v-else class="fa-solid fa-plus" aria-hidden="true"></i>
             </button>
           </div>
-
-          <!-- 云端线程树：云端工作区的子级。打开线程同时把目录目标切回云端。 -->
-          <!-- 展开与目录选中独立：收起线程树仍保留当前会话和文件目录。 -->
-          <MessengerThreadTree
-            v-if="cloudRowSelected && expandedWorkspaceKey === entry.key"
-            :items="threads"
-            :active-session-id="activeSessionId"
-            :agent-id="agentIdForApi"
-            @open="handleThreadOpen"
-            @trajectory="emit('thread-trajectory', $event)"
-            @rename="emit('rename-thread', $event)"
-            @archive="emit('archive-thread', $event)"
-            @archive-threads="emit('archive-threads', $event)"
+          <InterlinkThreadTree
+            v-if="isSelectedLocalEntry(entry) && expandedWorkspaceKey === entry.key"
+            :items="selectedRemoteThreads"
+            :loading="remoteThreadsLoading"
+            :error="remoteThreadsError"
+            :has-more="remoteThreadsHasMore"
+            :truncated="remoteThreadsTruncated"
+            :active-id="remoteThreadToOpen"
+            @open="openRemoteThread"
+            @refresh="loadSelectedRemoteShadow"
+            @load-more="loadSelectedRemoteShadow(true)"
           />
         </template>
-
-        <div
-          v-else
-          class="messenger-sidebar-workspace-row"
-          :class="{
-            'is-selected': isRowSelected(entry),
-            'is-dragging': dragKey === entry.key,
-            'is-drop-target': dropTargetKey === entry.key
-          }"
-          role="button"
-          tabindex="0"
-          draggable="true"
-          :aria-label="t('interlink.workspace.rowAria', { name: workspaceRowLabel(entry) })"
-          :aria-expanded="isSelectedLocalEntry(entry) && expandedWorkspaceKey === entry.key"
-          @click="selectWorkspaceRow(entry)"
-          @keydown.enter.self.prevent="selectWorkspaceRow(entry)"
-          @keydown.space.self.prevent="selectWorkspaceRow(entry)"
-          @dragstart="handleRowDragStart(entry, $event)"
-          @dragend="handleRowDragEnd"
-          @dragover.prevent="handleRowDragOver(entry)"
-          @dragleave="handleRowDragLeave(entry)"
-          @drop.prevent="handleRowDrop(entry)"
-        >
-          <i
-            class="messenger-sidebar-workspace-icon"
-            :class="isRowSelected(entry) ? 'fa-solid fa-folder' : 'fa-regular fa-folder'"
-            aria-hidden="true"
-          ></i>
-          <span class="messenger-sidebar-workspace-name" :title="workspaceRowLabel(entry)">
-            {{ workspaceRowLabel(entry) }}
-          </span>
-          <button
-            class="messenger-sidebar-workspace-menu"
-            type="button"
-            :disabled="newRemoteThreadKey === entry.key || Boolean(resolveDisabledReason(entry.node, 'thread.create'))"
-            :title="t('chat.newSession')"
-            :aria-label="t('chat.newSession')"
-            @click.stop="createRemoteThread(entry)"
-          >
-            <i v-if="newRemoteThreadKey === entry.key" class="fa-solid fa-spinner fa-spin" aria-hidden="true"></i>
-            <i v-else class="fa-solid fa-plus" aria-hidden="true"></i>
-          </button>
-        </div>
-        <InterlinkThreadTree
-          v-if="isSelectedLocalEntry(entry) && expandedWorkspaceKey === entry.key"
-          :items="selectedRemoteThreads"
-          :loading="remoteThreadsLoading"
-          :error="remoteThreadsError"
-          :has-more="remoteThreadsHasMore"
-          :truncated="remoteThreadsTruncated"
-          :active-id="remoteThreadToOpen"
-          @open="openRemoteThread"
-          @refresh="loadSelectedRemoteShadow"
-          @load-more="loadSelectedRemoteShadow(true)"
-        />
       </template>
+
+      <Teleport to="body">
+        <div
+          v-if="deviceMenuOpen"
+          ref="deviceMenuEl"
+          class="messenger-sidebar-device-menu"
+          :style="deviceMenuStyle"
+          role="listbox"
+          :aria-label="t('messenger.sidebar.deviceGroup')"
+          data-testid="messenger-device-menu"
+        >
+          <button
+            v-for="device in deviceOptions"
+            :key="device.key"
+            class="messenger-sidebar-device-option"
+            :class="{ 'is-selected': isDeviceSelected(device) }"
+            type="button"
+            role="option"
+            :aria-selected="isDeviceSelected(device)"
+            :data-device-key="device.key"
+            data-testid="messenger-device-option"
+            @click="selectDevice(device)"
+          >
+            <i class="messenger-sidebar-device-option-icon" :class="device.icon" aria-hidden="true"></i>
+            <span class="messenger-sidebar-device-option-name" :title="device.label">{{ device.label }}</span>
+            <span class="messenger-sidebar-device-option-kind">{{ deviceKindLabel(device) }}</span>
+            <span
+              v-if="device.node"
+              class="interlink-status-dot"
+              :class="statusDotClass(device.node.status)"
+              :title="t(statusLabelKey(device.node.status))"
+              :aria-label="t(statusLabelKey(device.node.status))"
+            ></span>
+            <i
+              v-if="isDeviceSelected(device)"
+              class="fa-solid fa-check messenger-sidebar-device-option-check"
+              aria-hidden="true"
+            ></i>
+          </button>
+          <div v-if="deviceMenuHint" class="messenger-sidebar-device-empty">{{ deviceMenuHint }}</div>
+        </div>
+      </Teleport>
     </div>
 
     <div
@@ -185,11 +235,16 @@ import {
   interlinkDeviceTarget,
   saveInterlinkWorkspaceOrder
 } from '@/api/interlink';
-import type { InterlinkShadow, InterlinkShadowThread } from '@/api/interlink';
+import type { InterlinkNode, InterlinkShadow, InterlinkShadowThread } from '@/api/interlink';
 import {
   DISABLED_REASON_KEY,
   interlinkWorkspaceRows,
+  isDeviceNode,
+  nodeTypeIcon,
+  nodeTypeLabelKey,
   resolveDisabledReason,
+  statusDotClass,
+  statusLabelKey,
   type InterlinkWorkspaceRow
 } from '@/views/messenger/interlink/interlinkNodeModel';
 import { runInterlinkCommand } from '@/views/messenger/interlink/interlinkCommandRunner';
@@ -235,7 +290,7 @@ const MIN_SPLIT = 0.3;
 const MAX_SPLIT = 0.8;
 const DEFAULT_SPLIT = 0.6;
 
-const workspaceName = computed(() => t('messenger.workspace.defaultName'));
+const cloudWorkspaceName = computed(() => t('messenger.workspace.defaultName'));
 
 // 搜索栏已移除（对齐桌面）：线程树恢复为不过滤。
 // 注意：`controller.keywordInput` 仍是 sessionHub 搜索（中间栏 sections 过滤）的唯一输入源，
@@ -249,7 +304,7 @@ const workspaceMetaLabel = computed(() => {
   return t('messenger.sidebar.threadCount', { count: total });
 });
 
-// ------------------------------------------------- 本地工作区行（§6.3）
+// ------------------------------------------------- 设备与本地工作区（§6.3）
 
 const interlink = useInterlinkNodes({});
 const {
@@ -264,32 +319,152 @@ const {
 /** 节点 → 工作区行的映射是纯函数；上限在模型里统一收敛，不一次铺开。 */
 const workspaceRows = computed(() => interlinkWorkspaceRows(interlink.nodes.value || []));
 
-/** Empty workspace id is a valid default local root, not a missing row. */
+/** 设备已经在顶部标明，行内只显示工作区自身的名字。 */
 const workspaceRowLabel = (row: InterlinkWorkspaceRow): string =>
-  row.workspaceId || !row.label.endsWith('-local')
-    ? row.label
-    : `${row.label.slice(0, -'-local'.length)}-${t('interlink.workspace.localDefault')}`;
+  row.name || t('interlink.workspace.localDefault');
 
-// ---------------------------------------------- 工作区条目排序（云端偏好，§6.3）
+// ------------------------------------------------------------ 设备选择器
 
-/** 云端工作区与本地工作区在侧栏是同一份条目列表：同级、同一套拖拽排序。 */
-type WorkspaceSidebarEntry =
-  | { kind: 'cloud'; key: string }
-  | ({ kind: 'local' } & InterlinkWorkspaceRow);
+type DeviceOption = {
+  key: string;
+  kind: 'cloud' | 'device';
+  label: string;
+  icon: string;
+  node?: InterlinkNode;
+};
 
 const CLOUD_ENTRY_KEY = 'cloud';
+
+/** 蜂巢自身是云端；互通设备（蛹/舵机）按节点目录各成一项。 */
+const deviceOptions = computed<DeviceOption[]>(() => {
+  const options: DeviceOption[] = [
+    { key: CLOUD_ENTRY_KEY, kind: 'cloud', label: t('messenger.sidebar.deviceCloud'), icon: 'fa-solid fa-cloud' }
+  ];
+  const seen = new Set<string>();
+  for (const node of interlink.nodes.value || []) {
+    if (!isDeviceNode(node)) continue;
+    const id = String(node.node_id || '').trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    options.push({
+      key: id,
+      kind: 'device',
+      label: String(node.label || id).trim(),
+      icon: nodeTypeIcon(node.node_type),
+      node
+    });
+  }
+  return options;
+});
+
+const selectedDevice = computed<DeviceOption>(() => {
+  if (!interlinkRemoteSelected.value) return deviceOptions.value[0];
+  const deviceId = interlinkDeviceId.value;
+  return deviceOptions.value.find((device) => device.kind === 'device' && device.key === deviceId) || {
+    key: deviceId || 'device',
+    kind: 'device',
+    label: deviceId || t('interlink.nodeType.unknown'),
+    icon: 'fa-solid fa-display'
+  };
+});
+
+const deviceKindLabel = (device: DeviceOption): string =>
+  device.kind === 'cloud'
+    ? t('messenger.sidebar.deviceHostCloud')
+    : t(nodeTypeLabelKey(device.node?.node_type));
+
+const selectedDeviceKindLabel = computed(() => deviceKindLabel(selectedDevice.value));
+const deviceSelectLabel = computed(
+  () => `${t('messenger.sidebar.deviceSelect')}: ${selectedDevice.value.label}`
+);
+
+const isDeviceSelected = (device: DeviceOption): boolean =>
+  device.kind === 'cloud'
+    ? !interlinkRemoteSelected.value
+    : interlinkRemoteSelected.value && interlinkDeviceId.value === device.key;
+
+const deviceMenuHint = computed(() => {
+  if (deviceOptions.value.length > 1) return '';
+  return interlink.loading.value
+    ? t('messenger.sidebar.deviceLoading')
+    : t('messenger.sidebar.deviceEmpty');
+});
+
+const deviceButtonEl = ref<HTMLButtonElement | null>(null);
+const deviceMenuEl = ref<HTMLElement | null>(null);
+const deviceMenuOpen = ref(false);
+const deviceMenuStyle = ref<Record<string, string>>({});
+
+const positionDeviceMenu = (): void => {
+  const rect = deviceButtonEl.value?.getBoundingClientRect();
+  if (!rect) return;
+  const width = Math.max(210, rect.width);
+  deviceMenuStyle.value = {
+    top: `${rect.bottom + 4}px`,
+    left: `${Math.max(8, Math.min(rect.left, window.innerWidth - width - 8))}px`,
+    width: `${width}px`
+  };
+};
+
+const closeDeviceMenu = (): void => {
+  deviceMenuOpen.value = false;
+};
+
+const toggleDeviceMenu = (): void => {
+  if (deviceMenuOpen.value) {
+    closeDeviceMenu();
+    return;
+  }
+  positionDeviceMenu();
+  deviceMenuOpen.value = true;
+};
+
+const selectDevice = async (device: DeviceOption): Promise<void> => {
+  closeDeviceMenu();
+  if (device.kind === 'cloud') {
+    if (!interlinkRemoteSelected.value) return;
+    await backToCloudWorkspace();
+    if (interlinkRemoteSelected.value) return;
+    expandedWorkspaceKey.value = CLOUD_ENTRY_KEY;
+    emit('select-workspace');
+  } else if (!interlinkRemoteSelected.value || interlinkDeviceId.value !== device.key) {
+    await writeInterlinkTarget(interlinkDeviceTarget(device.key), '');
+  }
+  await nextTick();
+  deviceButtonEl.value?.focus();
+};
+
+const handleOutsideDeviceMenu = (event: Event): void => {
+  if (!deviceMenuOpen.value) return;
+  const path = event.composedPath();
+  if (deviceButtonEl.value && path.includes(deviceButtonEl.value)) return;
+  if (deviceMenuEl.value && path.includes(deviceMenuEl.value)) return;
+  closeDeviceMenu();
+};
+
+const handleDeviceMenuKeydown = (event: KeyboardEvent): void => {
+  if (event.key === 'Escape') closeDeviceMenu();
+};
+
+watch(interlinkTarget, closeDeviceMenu);
+
 // One disclosure, matching the desktop workspace tree. Selection remains in
 // the route; collapsing never clears it or opens another conversation.
 const expandedWorkspaceKey = ref(CLOUD_ENTRY_KEY);
-const cloudSidebarEntry: WorkspaceSidebarEntry = { kind: 'cloud', key: CLOUD_ENTRY_KEY };
 
+// ------------------------------------- 工作区条目排序（当前设备，云端偏好，§6.3）
+
+/** 行顺序仍是账号级偏好；过滤只决定展示哪台设备的行，不重写其它设备的顺序。 */
 const workspaceOrder = ref<string[]>([]);
-const workspaceEntries = computed<WorkspaceSidebarEntry[]>(() => [
-  cloudSidebarEntry,
-  ...workspaceRows.value.map((row): WorkspaceSidebarEntry => ({ kind: 'local', ...row }))
-]);
-const orderedWorkspaceEntries = computed<WorkspaceSidebarEntry[]>(() =>
-  applyWorkspaceOrder(workspaceEntries.value, workspaceOrder.value)
+const orderedWorkspaceRows = computed(() =>
+  applyWorkspaceOrder(workspaceRows.value, workspaceOrder.value)
+);
+const visibleWorkspaceEntries = computed<InterlinkWorkspaceRow[]>(() =>
+  interlinkRemoteSelected.value
+    ? orderedWorkspaceRows.value.filter(
+        (row) => interlinkDeviceTarget(row.deviceId) === interlinkTarget.value
+      )
+    : []
 );
 const dragKey = ref('');
 const dropTargetKey = ref('');
@@ -302,6 +477,13 @@ onMounted(() => {
       workspaceOrder.value = keys;
     })
     .catch(() => undefined);
+  // 菜单是 Teleport 出去的浮层；捕获阶段判断点击是否落在按钮/菜单之外。
+  document.addEventListener('pointerdown', handleOutsideDeviceMenu, true);
+  document.addEventListener('click', handleOutsideDeviceMenu, true);
+  document.addEventListener('keydown', handleDeviceMenuKeydown, true);
+  window.addEventListener('resize', closeDeviceMenu);
+  window.addEventListener('blur', closeDeviceMenu);
+  window.addEventListener('scroll', closeDeviceMenu, true);
 });
 
 const handleRowDragStart = (entry: { key: string }, event: DragEvent): void => {
@@ -335,8 +517,9 @@ const handleRowDrop = (entry: { key: string }): void => {
   const dragged = dragKey.value;
   handleRowDragEnd();
   if (!dragged || dragged === entry.key) return;
+  // Move inside the account-wide key list so other devices keep their order.
   const next = moveWorkspaceRow(
-    orderedWorkspaceEntries.value.map((item) => item.key),
+    orderedWorkspaceRows.value.map((item) => item.key),
     dragged,
     entry.key
   );
@@ -426,8 +609,8 @@ const selectedRemoteThreads = computed(() => {
     .slice(0, 200);
 });
 
-const isSelectedLocalEntry = (entry: WorkspaceSidebarEntry): boolean =>
-  entry.kind === 'local' && selectedLocalRow.value?.key === entry.key;
+const isSelectedLocalEntry = (entry: InterlinkWorkspaceRow): boolean =>
+  selectedLocalRow.value?.key === entry.key;
 
 const normalizeRemoteThread = (value: unknown): InterlinkShadowThread | null => {
   const row = value && typeof value === 'object' ? value as Record<string, unknown> : null;
@@ -732,6 +915,12 @@ onBeforeUnmount(() => {
   remoteThreadsAbort = null;
   window.removeEventListener('pointermove', handleResizeMove);
   window.removeEventListener('pointerup', stopResize);
+  document.removeEventListener('pointerdown', handleOutsideDeviceMenu, true);
+  document.removeEventListener('click', handleOutsideDeviceMenu, true);
+  document.removeEventListener('keydown', handleDeviceMenuKeydown, true);
+  window.removeEventListener('resize', closeDeviceMenu);
+  window.removeEventListener('blur', closeDeviceMenu);
+  window.removeEventListener('scroll', closeDeviceMenu, true);
   if (orderSaveTimer) window.clearTimeout(orderSaveTimer);
   orderSaveTimer = null;
 });

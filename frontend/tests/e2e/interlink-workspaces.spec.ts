@@ -6,7 +6,12 @@ const workspaces = [
   { workspace_id: 'fixture_one', name: 'Project one', file: 'one.txt', thread: 'Thread one' },
   { workspace_id: 'fixture_two', name: 'Project two', file: 'two.txt', thread: 'Thread two' }
 ];
-const threads = workspaces.map((workspace, index) => ({
+/** Owned by the second device: selecting that device must hide device one's rows. */
+const otherDeviceWorkspace = {
+  workspace_id: 'fixture_three', name: 'Project three', file: 'three.txt', thread: 'Thread three'
+};
+const allWorkspaces = [...workspaces, otherDeviceWorkspace];
+const threads = allWorkspaces.map((workspace, index) => ({
   local_thread_id: `fixture_thread_${index}`, workspace_id: workspace.workspace_id,
   title: workspace.thread, status: 'ready'
 }));
@@ -20,14 +25,21 @@ async function prepare(page: Page) {
     const path = new URL(request.url()).pathname;
     let data: any = { data: { items: [] } };
     if (path === '/wunder/interlink/nodes') {
-      data = { data: { nodes: [{
-        node_id: 'device:fixture_device', node_type: 'desktop', label: 'Fixture device',
-        status: 'online', connected: true, capabilities: ['query.basic', 'workspace.write'],
-        meta: { workspaces }
-      }], total: 1 } };
+      data = { data: { nodes: [
+        {
+          node_id: 'device:fixture_device', node_type: 'desktop', label: 'Fixture device',
+          status: 'online', connected: true, capabilities: ['query.basic', 'workspace.write'],
+          meta: { workspaces }
+        },
+        {
+          node_id: 'device:fixture_device_two', node_type: 'cli', label: 'Fixture terminal',
+          status: 'offline', connected: false, capabilities: ['query.basic'],
+          meta: { workspaces: [otherDeviceWorkspace] }
+        }
+      ], total: 2 } };
     } else if (path.endsWith('/shadow')) {
       data = { data: { device_id: 'fixture_device', revision: 1, threads,
-        workspace: { workspaces: workspaces.map(workspace => ({ ...workspace,
+        workspace: { workspaces: allWorkspaces.map(workspace => ({ ...workspace,
           tree: [{ path: workspace.file, kind: 'file', size: 13 }]
         })) } } };
     } else if (path === '/wunder/interlink/commands' && request.method() === 'POST') {
@@ -37,11 +49,21 @@ async function prepare(page: Page) {
     } else if (path.startsWith('/wunder/interlink/commands/')) {
       const command = commands.get(path.split('/').at(-1)!);
       if (command) {
-        const workspace = workspaces.find(item => item.workspace_id === (command.args.workspace_id || ''))!;
+        const workspace = allWorkspaces.find(item => item.workspace_id === (command.args.workspace_id || ''))!;
         const result = command.kind === 'threads.list' ? { threads: threads.filter(thread => thread.workspace_id === command.args.workspace_id) }
           : command.kind === 'workspace.list' ? { entries: [{ path: workspace.file, name: workspace.file, kind: 'file', size: 13 }], total: 1 }
           : command.kind === 'workspace.read' ? { inline: Buffer.from('Fixture bytes').toString('base64'), size: 13, truncated: false }
-          : { items: [{ role: 'assistant', content: 'Fixture history' }] };
+          // Production threads.get returns the atomic snapshot; the panel renders
+          // that projection rather than the legacy flattened items.
+          : { items: [{ role: 'assistant', content: 'Fixture history' }], snapshot: {
+              cursor: 1, turns: [{
+                turn_id: 'fixture_turn', root_turn_id: 'fixture_turn', user_round: 1,
+                status: 'completed', content: 'Fixture prompt'
+              }], blocks: [], items: [{
+                item_id: 'fixture_turn:text-0', turn_id: 'fixture_turn', model_round: 0, kind: 'assistant_message',
+                status: 'completed', revision: 1, payload: { role: 'assistant', content: 'Fixture history' }
+              }]
+            } };
         data = { data: { command_id: command.command_id, kind: command.kind, status: 'succeeded', result } };
       }
     } else if (path === '/wunder/workspace') {
@@ -64,29 +86,56 @@ async function prepare(page: Page) {
   return commands;
 }
 
-test('local workspace rows own their threads and files, and cloud remains expandable', async ({ page }) => {
+async function selectDevice(page: Page, name: string | RegExp) {
+  await page.getByTestId('messenger-device-selector').click();
+  await page.getByTestId('messenger-device-option').filter({ hasText: name }).click();
+  await expect(page.getByTestId('messenger-device-menu')).toHaveCount(0);
+}
+
+const workspaceRows = (page: Page) => page.locator('.messenger-sidebar-workspace-row');
+const cloudRow = (page: Page) => workspaceRows(page).filter({ has: page.locator('.fa-cloud') });
+
+test('device selector shows one device tree at a time and cloud remains expandable', async ({ page }) => {
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
   await prepare(page);
-  const rows = page.locator('.messenger-sidebar-workspace-row');
-  const cloud = rows.filter({ has: page.locator('.fa-cloud') });
-  await expect(rows).toHaveCount(4);
+  const rows = workspaceRows(page);
+  await expect(rows).toHaveCount(1);
+  await expect(cloudRow(page)).toHaveCount(1);
   await expect(page.locator('.workspace-file-name')).toHaveText(['cloud.txt']);
   await expect(page.locator('.mz-thread-select')).toHaveCount(2);
-  for (let pass = 0; pass < 2; pass += 1) {
-    for (const workspace of workspaces) {
-      const label = workspace.name || /本地工作区|Local workspace/;
-      await rows.filter({ hasText: label }).click();
-      await expect(page.locator('.interlink-thread-row')).toHaveText([workspace.thread]);
-      await expect(page.locator('.workspace-file-name')).toHaveText([workspace.file]);
-      await expect(page.locator('.remote-thread-controls')).toHaveCount(0);
-      await expect(cloud.locator('.fa-cloud')).toHaveCount(1);
-      await cloud.click();
-      await expect(page).not.toHaveURL(/[?&](node|ws)=/);
-      await expect(page.locator('.mz-thread-select')).toHaveCount(2);
-      await expect(page.locator('.workspace-file-name')).toHaveText(['cloud.txt']);
-    }
+
+  // The selector owns the device list: cloud + the two interlinked devices.
+  await page.getByTestId('messenger-device-selector').click();
+  await expect(page.getByTestId('messenger-device-option')).toHaveCount(3);
+  await page.getByTestId('messenger-device-menu').press('Escape');
+  await expect(page.getByTestId('messenger-device-menu')).toHaveCount(0);
+
+  await selectDevice(page, 'Fixture device');
+  await expect.poll(() => new URL(page.url()).searchParams.get('node')).toBe('device:fixture_device');
+  await expect(rows).toHaveCount(workspaces.length);
+  await expect(cloudRow(page)).toHaveCount(0);
+  await expect(page.locator('.interlink-thread-row')).toHaveText([workspaces[0].thread]);
+  for (const workspace of [...workspaces].reverse()) {
+    const label = workspace.name || /本地工作区|Local workspace/;
+    await rows.filter({ hasText: label }).click();
+    await expect(page.locator('.interlink-thread-row')).toHaveText([workspace.thread]);
+    await expect(page.locator('.workspace-file-name')).toHaveText([workspace.file]);
+    await expect(page.locator('.remote-thread-controls')).toHaveCount(0);
   }
+
+  // Switching devices replaces the whole workspace set instead of mixing them.
+  await selectDevice(page, 'Fixture terminal');
+  await expect(rows).toHaveCount(1);
+  await expect(rows).toHaveText([otherDeviceWorkspace.name]);
+  await expect(rows.filter({ hasText: 'Project one' })).toHaveCount(0);
+  await expect(page.locator('.interlink-thread-row')).toHaveText([otherDeviceWorkspace.thread]);
+
+  await selectDevice(page, /云端|Cloud/);
+  await expect(page).not.toHaveURL(/[?&](node|ws)=/);
+  await expect(rows).toHaveCount(1);
+  await expect(page.locator('.mz-thread-select')).toHaveCount(2);
+  await expect(page.locator('.workspace-file-name')).toHaveText(['cloud.txt']);
   expect(errors).toEqual([]);
 });
 
@@ -107,6 +156,7 @@ test('workspace disclosure toggles without changing the conversation or files', 
   await cloud.press('Enter');
   await expect(page.locator('.mz-thread-select')).toHaveCount(0);
 
+  await selectDevice(page, 'Fixture device');
   const local = rows.filter({ hasText: 'Project one' });
   await local.click();
   await expect(local).toHaveAttribute('aria-expanded', 'true');
@@ -126,6 +176,7 @@ test('workspace disclosure toggles without changing the conversation or files', 
 
 test('local file menu downloads exact bytes within the selected workspace', async ({ page }) => {
   const commands = await prepare(page);
+  await selectDevice(page, 'Fixture device');
   await page.locator('.messenger-sidebar-workspace-row').filter({ hasText: 'Project two' }).click();
   const file = page.locator('.workspace-file-name', { hasText: 'two.txt' });
   await expect(file).toBeVisible();
@@ -161,9 +212,10 @@ test('late local listing cannot overwrite cloud files after a workspace switch',
     } finally { finish(); }
   });
   try {
+    await selectDevice(page, 'Fixture device');
     await page.locator('.messenger-sidebar-workspace-row').filter({ hasText: 'Project one' }).click();
     await expect.poll(() => [...commands.values()].some(command => command.kind === 'workspace.list')).toBe(true);
-    await page.locator('.messenger-sidebar-workspace-row').filter({ has: page.locator('.fa-cloud') }).click();
+    await selectDevice(page, /云端|Cloud/);
     await expect(page.locator('.workspace-file-name')).toHaveText(['cloud.txt']);
     release();
     await finished;
@@ -181,13 +233,13 @@ test('local threads load bounded pages in the selected workspace', async ({ page
   }));
   await page.route('**/wunder/interlink/commands/*', route => {
     const command = commands.get(new URL(route.request().url()).pathname.split('/').at(-1)!);
-    if (command?.kind !== 'threads.list') return route.fallback();
-    expect(command.args.workspace_id).toBe('fixture_one');
+    if (command?.kind !== 'threads.list' || command.args.workspace_id !== 'fixture_one') return route.fallback();
     expect(command.args.limit).toBe(100);
     return route.fulfill({ json: { data: { command_id: command.command_id, status: 'succeeded', result: {
       threads: catalog.slice(command.args.offset, command.args.offset + command.args.limit), total: catalog.length
     } } } });
   });
+  await selectDevice(page, 'Fixture device');
   await page.locator('.messenger-sidebar-workspace-row').filter({ hasText: 'Project one' }).click();
   await expect(page.locator('.interlink-thread-row')).toHaveCount(100);
   await page.locator('.interlink-thread-tree').getByRole('button', { name: /加载更多|Load more/ }).click();
@@ -197,6 +249,7 @@ test('local threads load bounded pages in the selected workspace', async ({ page
 
 test('opening a local thread uses the main chat area', async ({ page }) => {
   const commands = await prepare(page);
+  await selectDevice(page, 'Fixture device');
   await page.locator('.messenger-sidebar-workspace-row').filter({ hasText: 'Project one' }).click();
   await page.locator('.interlink-thread-row', { hasText: 'Thread one' }).click();
   const panel = page.locator('.remote-thread-panel');
@@ -214,6 +267,7 @@ test('opening a local thread uses the main chat area', async ({ page }) => {
 
 test('a pending rename cannot mutate the workspace selected after the prompt opened', async ({ page }) => {
   const commands = await prepare(page);
+  await selectDevice(page, 'Fixture device');
   await page.locator('.messenger-sidebar-workspace-row').filter({ hasText: 'Project one' }).click();
   const file = page.locator('.workspace-file-name', { hasText: 'one.txt' });
   await expect(file).toBeVisible();

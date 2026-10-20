@@ -15,7 +15,8 @@ pub use native::{
     ModelRecord, NativeChannelAccountEdit, NativeChannelBindingEdit, NativeChatAttachment,
     NativeChatEvent, NativeChatInput, NativeChatRound, NativeChatTurn, NativeContextUsage,
     NativeCronJobEdit, NativeDesktop, NativeMessage, NativeNavigationOrder, NativePatchFile,
-    NativePatchLine, NativeProcessItem, NativeProcessPage, NativeProfile, NativeQueueTurn,
+    NativePatchLine, NativePlanStep, NativePlanView, NativeProcessItem, NativeProcessPage,
+    NativeProfile, NativeQueueTurn,
     NativeSession, NativeStream, NativeSubagentCard, NativeTerminalFrame, NativeTerminalSignal,
     NativeTerminalSpec, NativeTerminalWatch, NativeThreadUpdate, NativeThreadWatch,
     NativeWorkflowEntry, NativeWorkflowLine, NativeWorkflowSection, NativeWorkspace,
@@ -23,3 +24,10 @@ pub use native::{
     WorkspaceEdit, WorkspacePathReport, DEFAULT_AGENT_ID, WORKSPACE_COLORS, WORKSPACE_ICONS,
 };
 pub use runtime::DesktopRuntime;
+
+/// Adopt a portable installation root as WUNDER_HOME before any path is
+/// resolved. Call this at the very start of a local-form process; an explicit
+/// WUNDER_HOME still wins.
+pub fn install_local_home_env() {
+    wunder_server::local_bootstrap::install_local_home_env();
+}

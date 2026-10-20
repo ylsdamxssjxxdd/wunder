@@ -30,12 +30,16 @@ fn selected_workspace(app: &MainWindow) -> Result<(String, String, String), Stri
     ))
 }
 
+/// Ensure the selected workspace owns a shell. `terminal_transcript` and
+/// `terminal_start` are SQLite and process-spawn calls, so the cold path runs
+/// on a worker; the entry holds a `starting` placeholder until the session
+/// lands through the event loop.
 fn ensure(host: &mut State, app: &MainWindow) -> Result<(), String> {
     let (id, name, root) = selected_workspace(app)?;
     if host
         .terminals
         .get(&id)
-        .is_some_and(|w| w.workspace_root == root && w.session.is_some())
+        .is_some_and(|w| w.workspace_root == root && (w.session.is_some() || w.starting))
     {
         host.terminal_workspace = Some(id);
         return Ok(());
@@ -56,12 +60,86 @@ fn ensure(host: &mut State, app: &MainWindow) -> Result<(), String> {
         cwd: root.clone(),
         shell: String::new(),
     };
-    // Read the old run before starting the new one, so replay never includes
-    // bytes that the live subscription will also deliver.
-    let raw = host.desktop.terminal_transcript(&session_id);
-    let snapshot = host
-        .desktop
-        .terminal_start(&spec)
+    host.terminals.insert(
+        id.clone(),
+        WorkspaceTerminal {
+            session: None,
+            starting: true,
+            workspace_name: name,
+            workspace_root: root,
+            projection: None,
+        },
+    );
+    host.terminal_workspace = Some(id.clone());
+    let desktop = host.desktop.clone();
+    let window = window.as_weak();
+    let weak = app.as_weak();
+    std::thread::spawn(move || {
+        let outcome = open_session_worker(&desktop, &session_id, &spec, window);
+        let _ = weak.upgrade_in_event_loop(move |app| {
+            CHAT_STATE.with(|slot| {
+                let Some(state) = slot.borrow().upgrade() else {
+                    return;
+                };
+                let mut host = state.borrow_mut();
+                match outcome {
+                    Ok(io) => {
+                        let Some(w) = host.terminals.get_mut(&id) else {
+                            return;
+                        };
+                        if !w.starting || w.session.is_some() {
+                            // A newer open replaced the placeholder; dropping
+                            // the session stops this duplicate shell.
+                            return;
+                        }
+                        w.starting = false;
+                        w.session = Some(TerminalSession { io });
+                        paint(&mut host);
+                        if let Some(window) = host.terminal_window.as_ref() {
+                            if window.window().is_visible() {
+                                focus_after_show(window);
+                            }
+                        }
+                        geometry(&host);
+                    }
+                    Err(error) => {
+                        // Mirror the old synchronous failure: no window, no
+                        // entry, only the status line carries the cause.
+                        if host
+                            .terminals
+                            .get(&id)
+                            .is_some_and(|w| w.starting && w.session.is_none())
+                        {
+                            host.terminals.remove(&id);
+                        }
+                        if host.terminal_workspace.as_deref() == Some(id.as_str()) {
+                            host.terminal_workspace = None;
+                            if let Some(window) = host.terminal_window.as_ref() {
+                                let _ = window.hide();
+                            }
+                            app.set_terminal_mode(false);
+                        }
+                        app.set_status(error.into());
+                    }
+                }
+            });
+        });
+    });
+    Ok(())
+}
+
+/// The blocking half of `ensure`: read the old run before starting the new
+/// one, so replay never includes bytes that the live subscription will also
+/// deliver.
+fn open_session_worker(
+    desktop: &Arc<NativeDesktop>,
+    session_id: &str,
+    spec: &NativeTerminalSpec,
+    window: slint::Weak<TerminalWindow>,
+) -> Result<Session, String> {
+    let raw = desktop.terminal_transcript(session_id);
+    let snapshot = desktop
+        .terminal_start(spec)
         .map_err(|e| e.to_string())?;
     let mut from = raw.len().saturating_sub(128 * 1024);
     while from < raw.len() && !raw.is_char_boundary(from) {
@@ -70,24 +148,13 @@ fn ensure(host: &mut State, app: &MainWindow) -> Result<(), String> {
     if from > 0 {
         from += raw[from..].find('\n').map_or(0, |n| n + 1);
     }
-    let io = Session::start(
-        host.desktop.clone(),
-        session_id.clone(),
+    Session::start(
+        desktop.clone(),
+        session_id.to_string(),
         snapshot.terminal_id.clone(),
-        window.as_weak(),
+        window,
         raw[from..].to_string(),
-    )?;
-    host.terminals.insert(
-        id.clone(),
-        WorkspaceTerminal {
-            session: Some(TerminalSession { io }),
-            workspace_name: name,
-            workspace_root: root,
-            projection: None,
-        },
-    );
-    host.terminal_workspace = Some(id);
-    Ok(())
+    )
 }
 
 fn active(host: &State) -> Option<&WorkspaceTerminal> {

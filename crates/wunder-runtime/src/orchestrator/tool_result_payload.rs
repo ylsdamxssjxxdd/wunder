@@ -1,4 +1,6 @@
 use super::*;
+#[cfg(test)]
+use crate::token_utils::approx_token_count;
 
 pub(super) struct ToolResultPayload {
     pub(super) ok: bool,
@@ -128,7 +130,16 @@ impl ToolResultPayload {
         payload
     }
 
+    #[cfg(test)]
     pub(super) fn to_compact_payload(&self, tool_name: &str) -> Value {
+        self.to_compact_payload_with_token_budget(tool_name, None)
+    }
+
+    pub(super) fn to_compact_payload_with_token_budget(
+        &self,
+        tool_name: &str,
+        token_budget: Option<i64>,
+    ) -> Value {
         let mut payload = self.to_observation_payload(tool_name);
         // Preserve pagination metadata before reducing the envelope.
         copy_continuation_fields(&mut payload, &self.data);
@@ -136,7 +147,17 @@ impl ToolResultPayload {
             copy_continuation_fields(&mut payload, meta);
         }
         compact_observation_payload(&mut payload, tool_name);
+        if payload.get("truncated").and_then(Value::as_bool) == Some(true) {
+            if let Some(map) = payload.as_object_mut() {
+                map.insert("recovery_hint".to_string(), json!(
+                    "reread_current_range_with_smaller_limit_or_narrower_query; next_page_skips_omitted_content"
+                ));
+            }
+        }
         strip_compact_payload_noise(&mut payload, tool_name);
+        if let Some(token_budget) = token_budget {
+            fit_observation_payload_to_token_budget(&mut payload, tool_name, token_budget);
+        }
         payload
     }
 
@@ -416,9 +437,11 @@ fn extract_execute_command_failure_detail(map: &Map<String, Value>) -> Option<St
     Some(format!("{stream}: {detail}"))
 }
 
-const OBSERVATION_MAX_CHARS: usize = 20_000;
-const OBSERVATION_HEAD_CHARS: usize = 10_000;
-const OBSERVATION_TAIL_CHARS: usize = 10_000;
+// Character limits are only a last-resort circuit breaker for malformed or
+// provider-owned payloads. Model input is governed by token budgets below.
+const OBSERVATION_MAX_CHARS: usize = 262_144;
+const OBSERVATION_HEAD_CHARS: usize = 131_072;
+const OBSERVATION_TAIL_CHARS: usize = 131_072;
 const OBSERVATION_MAX_ARRAY_ITEMS: usize = 32;
 const OBSERVATION_ARRAY_HEAD_ITEMS: usize = 20;
 const OBSERVATION_ARRAY_TAIL_ITEMS: usize = 8;
@@ -430,6 +453,14 @@ const OBSERVATION_SEARCH_HIT_LIMIT: usize = 12;
 const OBSERVATION_SEARCH_CONTENT_HEAD_CHARS: usize = 360;
 const OBSERVATION_SEARCH_CONTEXT_LINE_LIMIT: usize = 2;
 const OBSERVATION_SEARCH_CONTEXT_LINE_CHARS: usize = 220;
+pub(super) const OBSERVATION_MIN_TOKEN_BUDGET: i64 = 256;
+const OBSERVATION_STATUS_TOKEN_BUDGET: i64 = 512;
+const OBSERVATION_LIST_TOKEN_BUDGET: i64 = 2_000;
+const OBSERVATION_COMMAND_TOKEN_BUDGET: i64 = 4_000;
+const OBSERVATION_DOCUMENT_TOKEN_BUDGET: i64 = 6_000;
+const OBSERVATION_DEFAULT_TOKEN_BUDGET: i64 = 4_000;
+pub(super) const OBSERVATION_TURN_TARGET_TOKENS: i64 = 8_000;
+pub(super) const OBSERVATION_TURN_MAX_TOKENS: i64 = 12_000;
 const OBSERVATION_READ_FILE_LIMIT: usize = 8;
 const READ_OUTPUT_TRUNCATION_PREFIX: &str = "...(truncated read output, omitted ";
 const READ_OUTPUT_TRUNCATION_SUFFIX: &str = " bytes)...";
@@ -456,6 +487,305 @@ const CONTINUATION_NESTED_KEYS: [&str; 7] = [
     "structured_content",
     "pagination",
 ];
+
+pub(super) fn default_observation_token_budget(tool_name: &str) -> i64 {
+    let canonical = crate::services::tools::resolve_tool_name(tool_name);
+    match canonical.as_str() {
+        "自身状态"
+        | "自我状态"
+        | "self_status"
+        | "browser_interact"
+        | "browser_wait"
+        | "browser_navigate"
+        | "browser_navigate_back"
+        | "写入文件"
+        | "write_file"
+        | "apply_patch"
+        | "应用补丁"
+        | "编辑"
+        | "文本编辑" => OBSERVATION_STATUS_TOKEN_BUDGET,
+        "列出文件" | "list_files" | "文件名匹配" | "glob" | "搜索内容" | "search_content"
+        | "browser_tabs" => OBSERVATION_LIST_TOKEN_BUDGET,
+        "执行命令" | "execute_command" => OBSERVATION_COMMAND_TOKEN_BUDGET,
+        "读取文件"
+        | "read_file"
+        | "技能调用"
+        | "skill_call"
+        | "skill_get"
+        | "browser_observe"
+        | "browser_snapshot"
+        | "browser_read_page"
+        | "browser_take_screenshot"
+        | "browser_batch" => OBSERVATION_DOCUMENT_TOKEN_BUDGET,
+        _ => OBSERVATION_DEFAULT_TOKEN_BUDGET,
+    }
+}
+
+pub(super) fn observation_token_count(value: &Value) -> i64 {
+    serialized_token_count(value)
+}
+
+// Match approx_token_count (UTF-8 bytes / 4), counting JSON escaping and keys
+// without allocating another copy of the serialized envelope.
+fn serialized_token_count(value: &impl serde::Serialize) -> i64 {
+    #[derive(Default)]
+    struct ByteCounter(usize);
+    impl std::io::Write for ByteCounter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0 = self.0.saturating_add(bytes.len());
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut counter = ByteCounter::default();
+    let _ = serde_json::to_writer(&mut counter, value);
+    i64::try_from(counter.0.saturating_add(3) / 4).unwrap_or(i64::MAX)
+}
+
+/// Keep a complete model-observation envelope inside its allotted token
+/// estimate. A preview is not a persisted result: recovering omitted content
+/// requires rereading the same range with a smaller limit, or a narrower query.
+/// Native next-page cursors never recover omitted entries from the current page.
+fn fit_observation_payload_to_token_budget(
+    payload: &mut Value,
+    tool_name: &str,
+    token_budget: i64,
+) {
+    let token_budget = token_budget.max(OBSERVATION_MIN_TOKEN_BUDGET);
+    let original_tokens = observation_token_count(payload);
+    if original_tokens <= token_budget {
+        return;
+    }
+    let Some(map) = payload.as_object_mut() else {
+        return;
+    };
+
+    let raw_data = map.remove("data").unwrap_or(Value::Null);
+    let serialized_data = serde_json::to_string(&raw_data).unwrap_or_else(|_| raw_data.to_string());
+    // Preserve opaque continuation values and their original field names.
+    // They describe the producer's next page, not recovery of this preview.
+    let controls = raw_data.as_object();
+    for key in CONTINUATION_SIGNAL_KEYS.iter().copied().chain([
+        "exit_code",
+        "returncode",
+        "session_id",
+        "command_session_id",
+        "path",
+        "truncation_scope",
+        "recoverable",
+    ]) {
+        if let Some(value) = controls.and_then(|data| data.get(key)) {
+            map.entry(key.to_string()).or_insert_with(|| value.clone());
+        }
+    }
+    map.remove("continuation_required");
+    map.remove("continuation_hint");
+    map.remove("observation_output_chars");
+    map.insert("truncated".to_string(), Value::Bool(true));
+    map.insert("observation_token_budget".to_string(), json!(token_budget));
+    map.insert(
+        "original_observation_tokens".to_string(),
+        json!(original_tokens),
+    );
+    let reasons = map.entry("truncation_reasons").or_insert_with(|| json!([]));
+    if let Some(reasons) = reasons.as_array_mut() {
+        if !reasons.iter().any(|value| value == "token_budget") {
+            reasons.push(json!("token_budget"));
+        }
+    }
+    map.insert(
+        "recovery_hint".to_string(),
+        json!(
+        "reread_current_range_with_smaller_limit_or_narrower_query; next_page_skips_omitted_content"
+    ),
+    );
+
+    let mut wrapper = Map::new();
+    wrapper.insert("truncated".to_string(), Value::Bool(true));
+    wrapper.insert("original_bytes".to_string(), json!(serialized_data.len()));
+    wrapper.insert("omitted_bytes".to_string(), json!(serialized_data.len()));
+    wrapper.insert("preview".to_string(), Value::String(String::new()));
+    map.insert("data".to_string(), Value::Object(wrapper));
+
+    // Untrusted error text and optional metadata also consume the envelope.
+    // Do not let an oversized opaque cursor force us to corrupt it or lose the
+    // error status: omit the cursor as a whole and explicitly report that fact.
+    if serialized_token_count(map) > token_budget {
+        let mut continuation_omitted = false;
+        for key in CONTINUATION_SIGNAL_KEYS
+            .iter()
+            .copied()
+            .chain(["pagination"])
+        {
+            continuation_omitted |= map.remove(key).is_some();
+        }
+        for key in [
+            "preflight",
+            "path",
+            "sandbox",
+            "session_id",
+            "command_session_id",
+        ] {
+            map.remove(key);
+        }
+        if continuation_omitted {
+            map.insert("continuation_omitted".to_string(), Value::Bool(true));
+        }
+    }
+    if serialized_token_count(map) > token_budget {
+        // Keep status and an error preview even for malformed provider fields.
+        let ok = map.get("ok").and_then(Value::as_bool).unwrap_or(false);
+        let error = map
+            .remove("error")
+            .and_then(|value| value.as_str().map(str::to_owned));
+        let continuation_omitted = map.contains_key("continuation_omitted");
+        let transport_truncated = map.get("recoverable") == Some(&Value::Bool(false));
+        let error_code = map
+            .remove("error_code")
+            .filter(|value| value.is_string() && serialized_token_count(value) <= 32);
+        let retryable = map.get("retryable").and_then(Value::as_bool);
+        let (tool, _) = truncate_utf8_head_tail_to_bytes(tool_name, 64, "...");
+        *map = Map::from_iter([
+            ("tool".to_string(), Value::String(tool)),
+            ("ok".to_string(), Value::Bool(ok)),
+            ("truncated".to_string(), Value::Bool(true)),
+            (
+                "data".to_string(),
+                json!({"preview": "", "omitted_bytes": serialized_data.len()}),
+            ),
+            (
+                "recovery_hint".to_string(),
+                json!("reread_with_smaller_limit"),
+            ),
+        ]);
+        if continuation_omitted {
+            map.insert("continuation_omitted".to_string(), Value::Bool(true));
+        }
+        if transport_truncated {
+            map.insert("recoverable".to_string(), Value::Bool(false));
+        }
+        if let Some(code) = error_code {
+            map.insert("error_code".to_string(), code);
+        }
+        if let Some(retryable) = retryable {
+            map.insert("retryable".to_string(), Value::Bool(retryable));
+        }
+        if !ok {
+            let source = error.as_deref().unwrap_or("tool_failed");
+            fit_error_preview(map, source, token_budget);
+        }
+    }
+
+    // JSON escaping means a raw-byte allowance is not itself a token
+    // allowance. Find the largest preview whose *serialised envelope* fits.
+    let mut low = 0_usize;
+    let mut high = serialized_data.len().min(
+        usize::try_from(token_budget)
+            .unwrap_or(usize::MAX)
+            .saturating_mul(4),
+    );
+    while low < high {
+        let middle = low + (high - low + 1) / 2;
+        set_observation_preview(map, &serialized_data, middle);
+        if serialized_token_count(map) <= token_budget {
+            low = middle;
+        } else {
+            high = middle.saturating_sub(1);
+        }
+    }
+    set_observation_preview(map, &serialized_data, low);
+
+    // The envelope metadata itself is deliberately small. If a malformed tool
+    // name or provider field still makes it exceed the budget, drop optional
+    // detail before falling back to a minimal actionable result.
+    if serialized_token_count(map) > token_budget {
+        let ok = map.get("ok").cloned().unwrap_or(Value::Bool(false));
+        let recoverable = map.get("recoverable").and_then(Value::as_bool);
+        let continuation_omitted = map.get("continuation_omitted").and_then(Value::as_bool);
+        *map = Map::from_iter([
+            ("ok".to_string(), ok),
+            ("truncated".to_string(), Value::Bool(true)),
+        ]);
+        if let Some(recoverable) = recoverable {
+            map.insert("recoverable".to_string(), Value::Bool(recoverable));
+        }
+        if let Some(omitted) = continuation_omitted {
+            map.insert("continuation_omitted".to_string(), Value::Bool(omitted));
+        }
+        if map.get("ok") == Some(&Value::Bool(false)) {
+            map.insert("error".to_string(), json!("tool_failed; details_omitted"));
+        }
+    }
+}
+
+fn fit_error_preview(map: &mut Map<String, Value>, source: &str, token_budget: i64) {
+    let mut low = 0;
+    let mut high = source.len().min(token_budget.max(0) as usize * 4);
+    while low < high {
+        let middle = low + (high - low + 1) / 2;
+        let (preview, _) = truncate_utf8_head_tail_to_bytes(source, middle, "...");
+        map.insert("error".to_string(), Value::String(preview));
+        if serialized_token_count(map) <= token_budget {
+            low = middle;
+        } else {
+            high = middle - 1;
+        }
+    }
+    let (preview, _) = truncate_utf8_head_tail_to_bytes(source, low, "...");
+    map.insert("error".to_string(), Value::String(preview));
+}
+
+fn set_observation_preview(map: &mut Map<String, Value>, source: &str, preview_bytes: usize) {
+    let (preview, omitted_bytes) =
+        truncate_utf8_head_tail_to_bytes(source, preview_bytes, TOOL_RESULT_TRUNCATION_MARKER);
+    let Some(wrapper) = map.get_mut("data").and_then(Value::as_object_mut) else {
+        return;
+    };
+    wrapper.insert("preview".to_string(), Value::String(preview));
+    wrapper.insert("omitted_bytes".to_string(), json!(omitted_bytes));
+}
+
+fn truncate_utf8_head_tail_to_bytes(
+    value: &str,
+    max_preview_bytes: usize,
+    marker: &str,
+) -> (String, usize) {
+    if value.len() <= max_preview_bytes {
+        return (value.to_string(), 0);
+    }
+    if max_preview_bytes <= marker.len() {
+        return (String::new(), value.len());
+    }
+    let visible = max_preview_bytes.saturating_sub(marker.len());
+    let target_head = visible / 2;
+    let target_tail = visible.saturating_sub(target_head);
+    let head_end = floor_char_boundary(value, target_head);
+    let tail_start = ceil_tail_char_boundary(value, target_tail);
+    let omitted_bytes = tail_start.saturating_sub(head_end);
+    let mut preview = String::with_capacity(head_end + marker.len() + value.len() - tail_start);
+    preview.push_str(&value[..head_end]);
+    preview.push_str(marker);
+    preview.push_str(&value[tail_start..]);
+    (preview, omitted_bytes)
+}
+
+fn floor_char_boundary(value: &str, target: usize) -> usize {
+    let mut index = target.min(value.len());
+    while index > 0 && !value.is_char_boundary(index) {
+        index -= 1;
+    }
+    index
+}
+
+fn ceil_tail_char_boundary(value: &str, target_tail: usize) -> usize {
+    let mut index = value.len().saturating_sub(target_tail.min(value.len()));
+    while index < value.len() && !value.is_char_boundary(index) {
+        index += 1;
+    }
+    index
+}
 
 fn value_has_continuation_signal(value: &Value, depth: usize) -> bool {
     if depth > 4 {
@@ -524,30 +854,30 @@ pub(super) fn supports_tool_result_continuation(data: &Value, meta: Option<&Valu
         || looks_like_read_file_payload(data)
 }
 
-fn should_skip_tool_truncation(tool_name: &str) -> bool {
-    let canonical = crate::services::tools::resolve_tool_name(tool_name);
-    matches!(canonical.as_str(), "技能调用" | "skill_call" | "skill_get")
-}
-
-pub(super) fn should_skip_event_payload_truncation(tool_name: &str) -> bool {
-    let canonical = crate::services::tools::resolve_tool_name(tool_name);
-    should_skip_tool_truncation(canonical.as_str())
-        || matches!(
-            canonical.as_str(),
-            "apply_patch" | "应用补丁" | "编辑" | "文本编辑" | "写入文件" | "write_file"
-        )
-}
-
 fn compact_observation_payload(payload: &mut Value, tool_name: &str) {
     let Some(map) = payload.as_object_mut() else {
         return;
     };
+    // A transport preview describes information already lost upstream; normal
+    // success projections must not erase that state or its remaining preview.
+    if map
+        .get("data")
+        .and_then(|data| data.get("truncation_scope"))
+        .and_then(Value::as_str)
+        == Some("transport_safety")
+    {
+        map.insert("truncated".to_string(), Value::Bool(true));
+        return;
+    }
     let canonical = crate::services::tools::resolve_tool_name(tool_name);
+    let projected_success = compact_success_observation_payload(map, canonical.as_str());
     let keep_path_in_data = matches!(canonical.as_str(), "写入文件" | "write_file");
-    if matches!(
-        canonical.as_str(),
-        "apply_patch" | "应用补丁" | "编辑" | "文本编辑" | "写入文件" | "write_file"
-    ) {
+    if !projected_success
+        && matches!(
+            canonical.as_str(),
+            "apply_patch" | "应用补丁" | "编辑" | "文本编辑" | "写入文件" | "write_file"
+        )
+    {
         let maybe_compacted = map
             .get("data")
             .and_then(Value::as_object)
@@ -572,16 +902,21 @@ fn compact_observation_payload(payload: &mut Value, tool_name: &str) {
             return;
         }
     }
-    if should_skip_tool_truncation(tool_name) {
-        return;
-    }
     if compact_failure_observation_payload(map) {
         return;
     }
     let Some(raw_data) = map.remove("data") else {
         return;
     };
-    let continuation_supported = supports_tool_result_continuation(&raw_data, None);
+    // Projection may intentionally drop provider-specific fields. Preserve a
+    // continuation signal copied onto the envelope before projection so a
+    // large browser/skill result still tells the model how to continue.
+    let skill_read_truncated =
+        matches!(canonical.as_str(), "技能调用" | "skill_call" | "skill_get")
+            && raw_data.get("truncated").and_then(Value::as_bool) == Some(true);
+    let continuation_supported = supports_tool_result_continuation(&raw_data, None)
+        || map_has_continuation_signal(map)
+        || skill_read_truncated;
     let mut compacted_data = extract_observation_data(&raw_data, canonical.as_str());
     compact_tabular_observation_data(&mut compacted_data);
     compact_command_observation_rows(&mut compacted_data, canonical.as_str());
@@ -665,6 +1000,441 @@ fn compact_observation_payload(payload: &mut Value, tool_name: &str) {
     if keep_path_in_data {
         restore_compact_observation_path(map, &raw_data);
     }
+}
+
+/// Project successful built-in results into the smallest shape needed for the
+/// next model action. `to_event_payload` deliberately bypasses this function,
+/// so the audit/event stream keeps the provider result intact.
+///
+/// This runs before generic extraction and truncation. Semantic projection is
+/// both less expensive and safer than serialising an implementation envelope
+/// and then slicing it by character count.
+fn compact_success_observation_payload(map: &mut Map<String, Value>, tool_name: &str) -> bool {
+    if map.get("ok").and_then(Value::as_bool) != Some(true) {
+        return false;
+    }
+    let Some(data) = map.get("data") else {
+        return false;
+    };
+    let Some(compacted_data) = project_success_observation_data(tool_name, data) else {
+        return false;
+    };
+    map.insert("data".to_string(), compacted_data);
+    map.remove("error");
+    map.remove("sandbox");
+    map.remove("retryable");
+    map.remove("preflight");
+    map.remove("meta");
+    true
+}
+
+fn project_success_observation_data(tool_name: &str, data: &Value) -> Option<Value> {
+    match tool_name {
+        "browser_navigate" | "browser_navigate_back" => project_browser_navigation(data),
+        "browser_tabs" => project_browser_tabs(data),
+        "browser_observe"
+        | "browser_snapshot"
+        | "browser_read_page"
+        | "browser_take_screenshot" => project_browser_observation(data),
+        "browser_interact"
+        | "browser_click"
+        | "browser_type"
+        | "browser_select_option"
+        | "browser_hover"
+        | "browser_press_key"
+        | "browser_drag"
+        | "browser_evaluate" => project_browser_interaction(data, tool_name),
+        "browser_wait" | "browser_wait_for" => project_browser_wait(data),
+        "browser_batch" => project_browser_batch(data),
+        "自身状态" | "自我状态" | "self_status" => project_self_status(data),
+        "桌面控制" | "desktop_control" => project_desktop_control(data),
+        "执行命令" | "execute_command" => project_command_success(data),
+        "写入文件" | "write_file" | "apply_patch" | "应用补丁" | "编辑" | "文本编辑" => {
+            project_file_write_success(data)
+        }
+        "列出文件" | "list_files" => project_list_files_success(data),
+        "文件名匹配" | "glob" => project_glob_success(data),
+        _ => None,
+    }
+}
+
+fn project_browser_navigation(data: &Value) -> Option<Value> {
+    let map = data.as_object()?;
+    let mut projected = pick_non_empty_fields(map, &["url", "title"]);
+    if projected.is_empty() {
+        projected.insert("navigated".to_string(), Value::Bool(true));
+    }
+    Some(Value::Object(projected))
+}
+
+fn project_browser_tabs(data: &Value) -> Option<Value> {
+    let map = data.as_object()?;
+    let mut projected = Map::new();
+    if let Some(tabs) = map.get("tabs").and_then(Value::as_array) {
+        let tabs = tabs
+            .iter()
+            .filter_map(Value::as_object)
+            .map(|tab| {
+                let mut item = pick_non_empty_fields(tab, &["id", "target_id", "title", "url"]);
+                if let Some(id) = item.remove("target_id") {
+                    item.entry("id".to_string()).or_insert(id);
+                }
+                Value::Object(item)
+            })
+            .collect::<Vec<_>>();
+        projected.insert("tabs".to_string(), Value::Array(tabs));
+    }
+    if let Some(active_id) = map
+        .get("active_id")
+        .or_else(|| map.get("active_target_id"))
+        .filter(|value| !value.is_null())
+    {
+        projected.insert("active_id".to_string(), active_id.clone());
+    }
+    Some(Value::Object(projected))
+}
+
+fn project_browser_observation(data: &Value) -> Option<Value> {
+    let map = data.as_object()?;
+    let mut projected = Map::new();
+    if let Some(content) = map
+        .get("text")
+        .or_else(|| map.get("content"))
+        .or_else(|| map.get("snapshot"))
+        .and_then(Value::as_str)
+    {
+        projected.insert("text".to_string(), Value::String(content.to_string()));
+    } else if let Some(content) = browser_content_text(data) {
+        projected.insert("text".to_string(), Value::String(content));
+    }
+    for key in ["refs", "truncated", "next_cursor", "has_more"] {
+        if let Some(value) = map.get(key).filter(|value| !value.is_null()) {
+            projected.insert(key.to_string(), value.clone());
+        }
+    }
+    if let Some(artifact) = project_artifact(data) {
+        projected.insert("artifact".to_string(), artifact);
+    }
+    Some(Value::Object(projected))
+}
+
+fn project_browser_interaction(data: &Value, tool_name: &str) -> Option<Value> {
+    let map = data.as_object()?;
+    let mut projected = pick_non_empty_fields(map, &["action", "kind", "target_ref", "ref"]);
+    if let Some(action) = projected.remove("kind") {
+        projected.entry("action".to_string()).or_insert(action);
+    }
+    if let Some(target_ref) = projected.remove("ref") {
+        projected
+            .entry("target_ref".to_string())
+            .or_insert(target_ref);
+    }
+    if !projected.contains_key("action") {
+        if let Some(action) = legacy_browser_action(tool_name) {
+            projected.insert("action".to_string(), Value::String(action.to_string()));
+        }
+    }
+    if let Some(url) = map.get("url").filter(|value| !value.is_null()) {
+        projected.insert("url".to_string(), url.clone());
+    }
+    Some(Value::Object(projected))
+}
+
+fn legacy_browser_action(tool_name: &str) -> Option<&'static str> {
+    match tool_name {
+        "browser_click" => Some("click"),
+        "browser_type" => Some("type"),
+        "browser_select_option" => Some("select"),
+        "browser_hover" => Some("hover"),
+        "browser_press_key" => Some("press"),
+        "browser_drag" => Some("drag"),
+        "browser_evaluate" => Some("evaluate"),
+        _ => None,
+    }
+}
+
+fn project_browser_wait(data: &Value) -> Option<Value> {
+    let map = data.as_object()?;
+    let mut projected = pick_non_empty_fields(map, &["matched", "elapsed_ms", "url"]);
+    if projected.is_empty() {
+        projected.insert("matched".to_string(), Value::Bool(true));
+    }
+    Some(Value::Object(projected))
+}
+
+fn project_browser_batch(data: &Value) -> Option<Value> {
+    let map = data.as_object()?;
+    let mut projected = pick_non_empty_fields(map, &["completed_steps", "failed_step", "url"]);
+    if let Some(snapshot) = map.get("snapshot").and_then(Value::as_str) {
+        projected.insert("snapshot".to_string(), Value::String(snapshot.to_string()));
+    }
+    Some(Value::Object(projected))
+}
+
+fn project_self_status(data: &Value) -> Option<Value> {
+    let map = data.as_object()?;
+    let monitor = map.get("monitor").and_then(Value::as_object);
+    let rounds = map.get("rounds").and_then(Value::as_object);
+    let context = map.get("context").and_then(Value::as_object);
+    let mut projected = Map::new();
+    copy_field(&mut projected, "stage", monitor, "stage");
+    copy_field(&mut projected, "status", monitor, "status");
+    copy_field(&mut projected, "round", rounds, "model_rounds_peak");
+    copy_field(
+        &mut projected,
+        "context_tokens",
+        context,
+        "context_occupancy_tokens",
+    );
+    copy_field(&mut projected, "context_ratio", context, "context_ratio");
+    copy_field(&mut projected, "last_error", monitor, "last_error");
+    if projected.is_empty() {
+        None
+    } else {
+        Some(Value::Object(projected))
+    }
+}
+
+fn project_desktop_control(data: &Value) -> Option<Value> {
+    let map = data.as_object()?;
+    let mut projected = pick_non_empty_fields(map, &["action"]);
+    projected.insert("action_applied".to_string(), Value::Bool(true));
+    if let Some(artifact) = project_artifact(data) {
+        projected.insert("screenshot_artifact".to_string(), artifact);
+    }
+    if projected.is_empty() {
+        None
+    } else {
+        Some(Value::Object(projected))
+    }
+}
+
+fn project_command_success(data: &Value) -> Option<Value> {
+    let map = data.as_object()?;
+    let mut projected = Map::new();
+    if let Some(session_id) = map
+        .get("session_id")
+        .or_else(|| map.get("command_session_id"))
+        .filter(|value| !value.is_null())
+    {
+        projected.insert("session_id".to_string(), session_id.clone());
+    }
+    if let Some(status) = map.get("status").filter(|value| !value.is_null()) {
+        projected.insert("status".to_string(), status.clone());
+    }
+    if let Some(results) = map.get("results").and_then(Value::as_array) {
+        let rows = results
+            .iter()
+            .filter_map(Value::as_object)
+            .map(project_command_row)
+            .collect::<Vec<_>>();
+        if rows.len() == 1 {
+            if let Some(row) = rows
+                .into_iter()
+                .next()
+                .and_then(|row| row.as_object().cloned())
+            {
+                for key in ["exit_code", "stdout", "stderr", "session_id", "truncated"] {
+                    if let Some(value) = row.get(key) {
+                        projected.insert(key.to_string(), value.clone());
+                    }
+                }
+            }
+        } else if !rows.is_empty() {
+            projected.insert("results".to_string(), Value::Array(rows));
+        }
+    } else {
+        let row = project_command_row(map);
+        if let Some(row) = row.as_object() {
+            projected.extend(row.clone());
+        }
+    }
+    if projected.is_empty() {
+        None
+    } else {
+        Some(Value::Object(projected))
+    }
+}
+
+fn project_command_row(row: &Map<String, Value>) -> Value {
+    let mut projected = Map::new();
+    copy_first_present(
+        &mut projected,
+        "exit_code",
+        row,
+        &["exit_code", "returncode"],
+    );
+    copy_first_present(
+        &mut projected,
+        "session_id",
+        row,
+        &["session_id", "command_session_id"],
+    );
+    for key in ["stdout", "stderr", "truncated", "status"] {
+        if let Some(value) = row
+            .get(key)
+            .filter(|value| !value.is_null() && !is_empty_string(value))
+        {
+            projected.insert(key.to_string(), value.clone());
+        }
+    }
+    Value::Object(projected)
+}
+
+fn project_file_write_success(data: &Value) -> Option<Value> {
+    let map = data.as_object()?;
+    let mut projected = pick_non_empty_fields(
+        map,
+        &[
+            "path",
+            "changed",
+            "dry_run",
+            "added_lines",
+            "deleted_lines",
+            "changed_files",
+            "hunks_applied",
+        ],
+    );
+    if !projected.contains_key("changed") {
+        let changed = map
+            .get("changed_files")
+            .and_then(Value::as_u64)
+            .map(|count| count > 0)
+            .unwrap_or(true);
+        projected.insert("changed".to_string(), Value::Bool(changed));
+    }
+    Some(Value::Object(projected))
+}
+
+fn project_list_files_success(data: &Value) -> Option<Value> {
+    let map = data.as_object()?;
+    let mut projected = Map::new();
+    if let Some(items) = map.get("items").filter(|value| !value.is_null()) {
+        projected.insert("items".to_string(), items.clone());
+    }
+    copy_pagination_fields(&mut projected, map);
+    Some(Value::Object(projected))
+}
+
+fn project_glob_success(data: &Value) -> Option<Value> {
+    let map = data.as_object()?;
+    let mut projected = Map::new();
+    if let Some(paths) = map.get("paths").filter(|value| !value.is_null()) {
+        projected.insert("paths".to_string(), paths.clone());
+    }
+    copy_pagination_fields(&mut projected, map);
+    Some(Value::Object(projected))
+}
+
+fn project_artifact(data: &Value) -> Option<Value> {
+    let map = data.as_object()?;
+    if let Some(artifact) = map.get("artifact").filter(|value| !value.is_null()) {
+        return Some(artifact.clone());
+    }
+    let block = ["content", "content_blocks"]
+        .into_iter()
+        .find_map(|key| data.get(key).and_then(Value::as_array))?
+        .iter()
+        .find_map(|block| {
+            let attachment = block.get("attachment")?.as_object()?;
+            let mut artifact = pick_non_empty_fields(
+                attachment,
+                &[
+                    "id",
+                    "artifact_id",
+                    "mime",
+                    "mime_type",
+                    "width",
+                    "height",
+                    "bytes",
+                ],
+            );
+            if let Some(id) = artifact.remove("artifact_id") {
+                artifact.entry("id".to_string()).or_insert(id);
+            }
+            if !artifact.contains_key("id") {
+                if let Some(id) = attachment
+                    .get("workspace_relative_path")
+                    .or_else(|| attachment.get("path"))
+                    .or_else(|| attachment.get("filename"))
+                    .filter(|value| !value.is_null() && !is_empty_string(value))
+                {
+                    artifact.insert("id".to_string(), id.clone());
+                }
+            }
+            if let Some(mime) = artifact.remove("mime_type") {
+                artifact.entry("mime".to_string()).or_insert(mime);
+            }
+            (!artifact.is_empty()).then_some(Value::Object(artifact))
+        });
+    block
+}
+
+fn browser_content_text(data: &Value) -> Option<String> {
+    ["content", "content_blocks"]
+        .into_iter()
+        .find_map(|key| data.get(key).and_then(Value::as_array))?
+        .iter()
+        .find_map(|block| {
+            (block.get("type").and_then(Value::as_str) == Some("text"))
+                .then(|| block.get("text").and_then(Value::as_str))
+                .flatten()
+                .map(ToString::to_string)
+        })
+}
+
+fn pick_non_empty_fields(map: &Map<String, Value>, keys: &[&str]) -> Map<String, Value> {
+    let mut projected = Map::new();
+    for key in keys {
+        if let Some(value) = map
+            .get(*key)
+            .filter(|value| !value.is_null() && !is_empty_string(value))
+        {
+            projected.insert((*key).to_string(), value.clone());
+        }
+    }
+    projected
+}
+
+fn copy_field(
+    target: &mut Map<String, Value>,
+    target_key: &str,
+    source: Option<&Map<String, Value>>,
+    source_key: &str,
+) {
+    if let Some(value) = source
+        .and_then(|source| source.get(source_key))
+        .filter(|value| !value.is_null() && !is_empty_string(value))
+    {
+        target.insert(target_key.to_string(), value.clone());
+    }
+}
+
+fn copy_first_present(
+    target: &mut Map<String, Value>,
+    target_key: &str,
+    source: &Map<String, Value>,
+    source_keys: &[&str],
+) {
+    if let Some(value) = source_keys
+        .iter()
+        .find_map(|key| source.get(*key))
+        .filter(|value| !value.is_null())
+    {
+        target.insert(target_key.to_string(), value.clone());
+    }
+}
+
+fn copy_pagination_fields(target: &mut Map<String, Value>, source: &Map<String, Value>) {
+    for key in ["next_cursor", "next_offset", "has_more", "truncated"] {
+        if let Some(value) = source.get(key).filter(|value| !value.is_null()) {
+            target.insert(key.to_string(), value.clone());
+        }
+    }
+}
+
+fn is_empty_string(value: &Value) -> bool {
+    value.as_str().is_some_and(|value| value.trim().is_empty())
 }
 
 fn compact_command_observation_rows(value: &mut Value, tool_name: &str) {
@@ -1206,6 +1976,11 @@ fn compact_truncated_observation_wrapper(map: &Map<String, Value>) -> Value {
         "continuation_required",
         "continuation_hint",
         "exit_code",
+        "truncation_scope",
+        "recoverable",
+        "recovery_hint",
+        "original_bytes",
+        "omitted_bytes",
     ] {
         if let Some(value) = map.get(key) {
             compacted.insert(key.to_string(), value.clone());
@@ -1291,103 +2066,6 @@ fn truncate_text_head(value: &str, max_chars: usize) -> (String, usize) {
     (head, chars.len().saturating_sub(max_chars))
 }
 
-pub(super) fn truncate_tool_result_data(
-    value: &mut Value,
-    head_chars: usize,
-    tail_chars: usize,
-    marker: &str,
-) -> bool {
-    truncate_tool_result_data_with_array_limits(
-        value,
-        head_chars,
-        tail_chars,
-        marker,
-        TOOL_RESULT_MAX_ARRAY_ITEMS,
-        TOOL_RESULT_ARRAY_HEAD_ITEMS,
-        TOOL_RESULT_ARRAY_TAIL_ITEMS,
-    )
-}
-
-fn truncate_tool_result_data_with_array_limits(
-    value: &mut Value,
-    head_chars: usize,
-    tail_chars: usize,
-    marker: &str,
-    max_array_items: usize,
-    head_array_items: usize,
-    tail_array_items: usize,
-) -> bool {
-    match value {
-        Value::String(text) => {
-            if text.chars().count() > head_chars + tail_chars {
-                *text = truncate_tool_result_string(text, head_chars, tail_chars, marker);
-                true
-            } else {
-                false
-            }
-        }
-        Value::Array(items) => {
-            let mut truncated = false;
-            if items.len() > max_array_items {
-                let original_len = items.len();
-                let head_items = head_array_items.min(original_len);
-                let tail_items = tail_array_items.min(original_len - head_items);
-                let omitted = original_len.saturating_sub(head_items + tail_items);
-                let mut compacted = Vec::with_capacity(head_items + tail_items + 1);
-                compacted.extend(items.iter().take(head_items).cloned());
-                compacted.push(build_omitted_items_marker(omitted));
-                if tail_items > 0 {
-                    compacted.extend(items.iter().skip(original_len - tail_items).cloned());
-                }
-                *items = compacted;
-                truncated = true;
-            }
-            for item in items.iter_mut() {
-                if truncate_tool_result_data_with_array_limits(
-                    item,
-                    head_chars,
-                    tail_chars,
-                    marker,
-                    max_array_items,
-                    head_array_items,
-                    tail_array_items,
-                ) {
-                    truncated = true;
-                }
-            }
-            truncated
-        }
-        Value::Object(map) => {
-            let mut truncated = false;
-            let (next_max_items, next_head_items, next_tail_items) =
-                if map_has_continuation_signal(map) {
-                    (
-                        TOOL_RESULT_PAGINATED_MAX_ARRAY_ITEMS,
-                        TOOL_RESULT_PAGINATED_ARRAY_HEAD_ITEMS,
-                        TOOL_RESULT_PAGINATED_ARRAY_TAIL_ITEMS,
-                    )
-                } else {
-                    (max_array_items, head_array_items, tail_array_items)
-                };
-            for value in map.values_mut() {
-                if truncate_tool_result_data_with_array_limits(
-                    value,
-                    head_chars,
-                    tail_chars,
-                    marker,
-                    next_max_items,
-                    next_head_items,
-                    next_tail_items,
-                ) {
-                    truncated = true;
-                }
-            }
-            truncated
-        }
-        _ => false,
-    }
-}
-
 fn truncate_observation_data(
     value: &mut Value,
     head_chars: usize,
@@ -1428,7 +2106,12 @@ fn truncate_observation_data(
         }
         Value::Object(map) => {
             let mut truncated = false;
-            for inner in map.values_mut() {
+            for (key, inner) in map.iter_mut() {
+                // Opaque tokens must stay byte-for-byte intact. The final
+                // envelope budget may omit a whole field, never mutate it.
+                if CONTINUATION_SIGNAL_KEYS.contains(&key.as_str()) {
+                    continue;
+                }
                 if truncate_observation_data(inner, head_chars, tail_chars, marker) {
                     truncated = true;
                 }
@@ -1449,41 +2132,38 @@ pub(super) fn compact_large_tool_result_data(
     truncation_reasons: &[String],
 ) -> Value {
     let serialized = serde_json::to_string(value).unwrap_or_else(|_| value.to_string());
-    let preview = truncate_tool_result_string(&serialized, head_chars, tail_chars, marker);
-    let mut payload = json!({
-        "truncated": true,
-        "original_chars": original_chars,
-        "preview": preview,
-    });
+    let mut payload = Map::new();
+    payload.insert("truncated".to_string(), Value::Bool(true));
+    payload.insert("original_chars".to_string(), json!(original_chars));
     if !truncation_reasons.is_empty() {
-        if let Value::Object(ref mut map) = payload {
-            map.insert(
-                "truncation_reasons".to_string(),
-                Value::Array(
-                    truncation_reasons
-                        .iter()
-                        .cloned()
-                        .map(Value::String)
-                        .collect(),
-                ),
-            );
-        }
+        payload.insert(
+            "truncation_reasons".to_string(),
+            Value::Array(
+                truncation_reasons
+                    .iter()
+                    .cloned()
+                    .map(Value::String)
+                    .collect(),
+            ),
+        );
     }
     if continuation_supported {
-        if let Value::Object(ref mut map) = payload {
-            map.insert("continuation_required".to_string(), Value::Bool(true));
-            map.insert(
-                "continuation_hint".to_string(),
-                Value::String(TRUNCATION_CONTINUATION_HINT.to_string()),
-            );
-        }
+        payload.insert("continuation_required".to_string(), Value::Bool(true));
+        payload.insert(
+            "continuation_hint".to_string(),
+            Value::String(TRUNCATION_CONTINUATION_HINT.to_string()),
+        );
     }
     if let Some(exit_code) = extract_exit_code(value) {
-        if let Value::Object(ref mut map) = payload {
-            map.insert("exit_code".to_string(), json!(exit_code));
-        }
+        payload.insert("exit_code".to_string(), json!(exit_code));
     }
-    payload
+    let max_chars = head_chars.saturating_add(tail_chars);
+    let preview_budget = max_chars
+        .saturating_sub(estimate_tool_result_chars(&Value::Object(payload.clone())))
+        .saturating_sub("preview".chars().count());
+    let preview = truncate_tool_result_string_to_budget(&serialized, preview_budget, marker);
+    payload.insert("preview".to_string(), Value::String(preview));
+    Value::Object(payload)
 }
 
 pub(super) fn append_truncation_reason(reasons: &mut Vec<String>, reason: &str) {

@@ -14,7 +14,6 @@ pub(crate) mod command_options;
 pub(crate) mod command_output_guard;
 pub mod command_sessions;
 mod command_tool;
-pub(crate) mod compact;
 mod context;
 mod desktop_control;
 #[cfg(feature = "desktop-control")]
@@ -79,7 +78,6 @@ pub use catalog::{
     resolve_runtime_tool_display_name, resolve_tool_name, runtime_tool_schema,
     with_browser_group_members,
 };
-pub(crate) use compact::{compact_tool_spec_for_model, compact_tool_specs_for_model};
 pub use context::{
     build_tool_roots, DetachedToolContext, ToolContext, ToolEventEmitter, ToolRoots,
 };

@@ -1,8 +1,14 @@
-//! Model-facing tool descriptions.
+//! Model-facing tool specs.
 //!
-//! Admin pages and execution diagnostics keep the full tool catalog.  The
-//! model request only needs a short action description and the JSON shape, so
-//! this module removes prose and schema metadata that do not affect dispatch.
+//! Admin pages and execution diagnostics keep the full tool catalog. This
+//! module bounds only what a model request needs: it drops the admin-only
+//! `title` and prunes schema metadata that does not affect dispatch.
+//!
+//! Descriptions are passed through unchanged. An earlier
+//! `compact_tool_description` layer rewrote them into short fixed summaries,
+//! which silently drifted from the catalog (a stale summary once dropped the
+//! execute-command shell hint). Description quality now lives in the tool
+//! definitions themselves instead of a lossy duplicate.
 
 use crate::schemas::ToolSpec;
 use serde_json::{Map, Value};
@@ -12,7 +18,7 @@ pub(crate) fn compact_tool_spec_for_model(spec: &ToolSpec) -> ToolSpec {
     ToolSpec {
         name: spec.name.clone(),
         title: None,
-        description: compact_tool_description(&spec.name, &spec.description),
+        description: spec.description.clone(),
         // Editing modes, scheduling, routing and browser wait semantics cannot
         // be inferred from JSON types alone.
         input_schema: if matches!(
@@ -39,84 +45,6 @@ pub(crate) fn compact_tool_spec_for_model(spec: &ToolSpec) -> ToolSpec {
 /// Compact all model-facing specs while preserving names and validation keys.
 pub(crate) fn compact_tool_specs_for_model(specs: &[ToolSpec]) -> Vec<ToolSpec> {
     specs.iter().map(compact_tool_spec_for_model).collect()
-}
-
-fn compact_tool_description(name: &str, original: &str) -> String {
-    let canonical = name
-        .trim()
-        .rsplit('@')
-        .next()
-        .unwrap_or(name)
-        .to_ascii_lowercase();
-    let fixed = match canonical.as_str() {
-        "定时任务" | "schedule_task" => Some(
-            "管理定时任务；action 必填。add/update/remove/enable/disable/get/list/status 是同步管理操作，run 只会排队触发并立即返回，不代表任务已完成。时间 at 必须是 ISO 8601。session=main 使用创建任务时绑定的任务线程；session=isolated 在独立子线程执行，完成后发布独立结果轮次到绑定线程，不再调用模型。不要轮询 status 等待完成，使用 get/list 查看 last_status/last_error。仅在用户明确要求时创建、修改、立即运行或删除任务。",
-        ),
-        "记忆管理" | "memory_manager" => {
-            Some("管理长期记忆；系统提示词只放索引，详情按需读取。")
-        }
-        "执行命令" | "execute_command" => Some(
-            "执行命令；默认阻塞等待结束并返回完整输出；长任务设 run_in_background=true 转后台后用命令会话轮询；不要用 sleep 空等。",
-        ),
-        "命令会话" | "command_session" | "write_command_stdin" => Some(
-            "等待后台命令或写入 stdin；输出由运行时持续推送。poll 默认 wait_for=exit、yield_time_ms=60000，避免按输出反复轮询；需要中间结果时用 wait_for=output。仅返回游标后的新增输出，省略 after_seq 自动续读；确认退出后再报告完成。",
-        ),
-        "ptc" => Some("执行 PTC 脚本；受权限、工作区和超时限制。"),
-        "列出文件" | "list_files" => Some("列出允许范围内的文件；结果限量。"),
-        "搜索内容" | "search_content" => Some("搜索允许路径中的文本；结果限量，优先缩小范围。"),
-        "读取文件" | "read_file" => Some("读取允许路径的纯文本；支持行范围，结果会裁剪。"),
-        "读图工具" | "read_image" => Some("读取允许范围内的图片；大结果会裁剪。"),
-        "语音生成" | "generate_speech" => Some("生成语音；输入和输出受配置限制。"),
-        "声转文" | "transcribe_speech" => Some("将语音转为文字；输入受大小和格式限制。"),
-        "图像生成" | "generate_image" => Some("生成图像；prompt 必填，输出路径受限。"),
-        "视频生成" | "generate_video" => Some("生成视频；prompt 必填，输出路径受限。"),
-        "技能调用" | "skill_call" => Some("加载指定已挂载技能的完整 SKILL.md 与目录结构；用户点名技能或请求命中技能 Frontmatter 时，此工具必须作为第一条工具调用，不要先列目录、搜索、读写文件或执行命令；成功加载后严格按 SKILL.md 流程执行。参数 name 填技能名称。"),
-        "写入文件" | "write_file" => Some("写入文件；路径受允许范围限制，支持 dry_run。"),
-        "文本编辑" | "编辑" | "edit" | "str_replace_editor" => {
-            return original.split_whitespace().collect::<Vec<_>>().join(" ");
-        }
-        "子智能体控制" | "subagent_control" => Some(
-            "管理当前根任务树的子智能体；list 默认直属子线程，parent_id=/root 查根的子线程。只能操作同一用户同一树的工作线程，独立会话不可接管。send 在运行中追加指导、空闲时派发新任务；resume 带消息等同 send，无消息只开放；report 汇报直属父线程。spawn/batch_spawn 可用 fork_turns=0..16、context_summary 提供有界背景。wait/status/history 检查结果，accepted 不等于完成。父线程中断取消后代；过期运行按中断恢复，显式 send 继续，不重放工具。",
-        ),
-        "网页搜索" | "web_search" => Some("搜索网页；query 必填，结果限量。"),
-        "网页抓取" | "web_fetch" => Some("抓取已确认 URL 的正文；不是搜索，不猜测 URL。登录、注册、填表或点击等交互任务直接使用 browser_navigate，不先抓取页面。"),
-        // Browser descriptions carry the workflow contract (batch ordering,
-        // readiness, conditional waits, and credential handling). A generic
-        // replacement used to erase those instructions from every model call.
-        other if other.starts_with("browser_") => {
-            return original.split_whitespace().collect::<Vec<_>>().join(" ");
-        }
-        _ if canonical.contains("数据库导出")
-            || canonical.starts_with("db_export")
-            || (original.contains("导出") && original.contains("SQL")) =>
-        {
-            Some("导出绑定范围内的只读 SQL 结果；路径受限。")
-        }
-        _ if canonical.contains("数据库查询") || original.contains("只读 SQL") => {
-            Some("执行绑定范围内的只读 SQL；结果限量，超出需分页。")
-        }
-        _ if canonical.contains("ppt") || canonical.contains("演示文稿") => {
-            Some("创建、读取、修改或删除 PPTX；内容和路径受限。")
-        }
-        _ if canonical.starts_with("db_query") => {
-            Some("执行绑定范围内的只读 SQL；结果限量，超出需分页。")
-        }
-        _ if canonical.starts_with("kb_query") || canonical.starts_with("knowledge") => {
-            Some("检索知识库并返回紧凑片段；query 或 keywords 必填。")
-        }
-        _ if canonical.starts_with("ppt_") => {
-            Some("创建、读取、修改或删除 PPTX；内容和路径受限。")
-        }
-        _ if canonical.contains("drawing") || canonical.contains("chart") => {
-            Some("绘图工具包；按 action=list_tools、get_tool_schema、call_tool 使用。")
-        }
-        _ if canonical.contains("geo") => Some("地理编码或地点搜索；输入需完整，结果限量。"),
-        _ => None,
-    };
-    fixed.map(str::to_string).unwrap_or_else(|| {
-        let normalized = original.split_whitespace().collect::<Vec<_>>().join(" ");
-        truncate_text(&normalized, 240)
-    })
 }
 
 const SCHEMA_KEYS: &[&str] = &[
@@ -231,19 +159,6 @@ fn is_literal_schema_keyword(key: &str) -> bool {
     )
 }
 
-fn truncate_text(text: &str, max_chars: usize) -> String {
-    let text = text.trim();
-    if text.chars().count() <= max_chars {
-        return text.to_string();
-    }
-    let mut result = text
-        .chars()
-        .take(max_chars.saturating_sub(1))
-        .collect::<String>();
-    result.push('…');
-    result
-}
-
 #[cfg(test)]
 mod tests {
     use super::compact_tool_spec_for_model;
@@ -251,7 +166,7 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn compact_tool_keeps_required_enum_and_limits() {
+    fn compact_schema_keeps_required_enum_and_limits() {
         let spec = ToolSpec {
             name: "db_export".to_string(),
             title: Some("long title".to_string()),
@@ -263,7 +178,7 @@ mod tests {
             }),
         };
         let compact = compact_tool_spec_for_model(&spec);
-        assert!(compact.description.contains("只读 SQL"));
+        assert_eq!(compact.description, "a very long description with examples");
         assert!(compact.input_schema.get("title").is_none());
         assert!(compact.input_schema.get("examples").is_none());
         assert_eq!(compact.input_schema["required"], json!(["sql"]));
@@ -275,20 +190,7 @@ mod tests {
     }
 
     #[test]
-    fn compact_skill_tool_requires_loading_the_named_skill_first() {
-        let compact = compact_tool_spec_for_model(&ToolSpec {
-            name: "技能调用".to_string(),
-            title: None,
-            description: "short description".to_string(),
-            input_schema: json!({"type":"object","properties":{"name":{"type":"string"}}}),
-        });
-        assert!(compact.description.contains("第一条工具调用"));
-        assert!(compact.description.contains("不要先列目录"));
-        assert_eq!(compact.input_schema["properties"]["name"]["type"], "string");
-    }
-
-    #[test]
-    fn scheduled_tool_keeps_model_facing_routing_and_async_contract() {
+    fn scheduled_tool_keeps_schema_metadata() {
         let spec = ToolSpec {
             name: "schedule_task".into(),
             title: None,
@@ -300,25 +202,19 @@ mod tests {
             compact.input_schema["properties"]["session"]["description"],
             "bound task thread"
         );
-        assert!(compact.description.contains("ISO 8601"));
-        assert!(compact.description.contains("不要轮询"));
-        assert!(compact.description.contains("绑定"));
     }
 
     #[test]
-    fn compact_unknown_tool_has_bounded_description() {
+    fn unknown_tool_description_is_preserved_verbatim() {
         let spec = ToolSpec {
             name: "custom".to_string(),
             title: None,
             description: "x ".repeat(500),
             input_schema: json!({"type": "object", "properties": {}}),
         };
-        assert!(
-            compact_tool_spec_for_model(&spec)
-                .description
-                .chars()
-                .count()
-                <= 240
+        assert_eq!(
+            compact_tool_spec_for_model(&spec).description,
+            spec.description
         );
     }
 
@@ -358,7 +254,7 @@ mod tests {
     }
 
     #[test]
-    fn compact_browser_tools_preserve_workflow_and_parameter_semantics() {
+    fn compact_browser_tools_preserve_compact_canonical_surface() {
         use crate::services::browser::provider::BrowserProvider;
         use crate::services::browser::providers::playwright::PlaywrightProvider;
 
@@ -374,47 +270,20 @@ mod tests {
             .unwrap();
         assert!(compact_tool_spec_for_model(navigate)
             .description
-            .contains("instead of web_fetch"));
+            .contains("interactive"));
         let batch = specs
             .iter()
             .find(|spec| spec.name == "browser_batch")
             .unwrap();
         let compact = compact_tool_spec_for_model(batch);
         assert!(compact.description.contains("success condition"));
-        assert!(compact.description.contains("passwords"));
+        assert!(compact.description.contains("dependent actions"));
         assert!(
             compact.input_schema["properties"]["steps"]["items"]["properties"]["state"]["enum"]
                 .as_array()
                 .unwrap()
                 .contains(&json!("hidden"))
         );
-        let fetch = compact_tool_spec_for_model(&ToolSpec {
-            name: "web_fetch".to_string(),
-            title: None,
-            description: String::new(),
-            input_schema: json!({}),
-        });
-        assert!(fetch.description.contains("browser_navigate"));
-    }
-
-    #[test]
-    fn compact_command_tools_describe_blocking_default_and_polling() {
-        let exec = compact_tool_spec_for_model(&ToolSpec {
-            name: "执行命令".to_string(),
-            title: None,
-            description: String::new(),
-            input_schema: json!({"type": "object"}),
-        });
-        let session = compact_tool_spec_for_model(&ToolSpec {
-            name: "命令会话".to_string(),
-            title: None,
-            description: String::new(),
-            input_schema: json!({"type": "object"}),
-        });
-        assert!(exec.description.contains("run_in_background"));
-        assert!(exec.description.contains("阻塞"));
-        assert!(session.description.contains("wait_for=exit"));
-        assert!(session.description.contains("60000"));
     }
 
     #[test]
@@ -435,7 +304,6 @@ mod tests {
             }),
         };
         let compact = compact_tool_spec_for_model(&spec);
-        assert!(compact.description.contains("send"));
         assert_eq!(compact.title, None);
         assert_eq!(compact.input_schema["required"], json!(["action"]));
         assert_eq!(

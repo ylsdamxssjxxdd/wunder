@@ -1,0 +1,176 @@
+// Frameless chrome for the workbench window: title strip with drag, minimize,
+// maximize/restore and close, plus the client-area border a borderless Win32
+// window needs to stay distinct on a light desktop. Mirrors the rcho
+// workbench's window-chrome, recolored to the honeycomb Theme tokens.
+import { Theme } from "theme.slint";
+import { I18n } from "i18n.slint";
+
+export component WindowChrome inherits Rectangle {
+    in property <string> title;
+    in property <image> icon;
+    in property <bool> maximized: false;
+    callback drag-requested();
+    callback maximize-requested();
+    callback minimize-requested();
+    callback close-requested();
+
+    x: 0px;
+    y: 0px;
+    z: 1000;
+    height: Theme.titlebar-height;
+    background: Theme.sidebar;
+    Rectangle {
+        y: parent.height - 1px;
+        width: parent.width;
+        height: 1px;
+        background: Theme.border;
+    }
+
+    Image {
+        x: 10px;
+        y: (parent.height - 16px) / 2;
+        width: 16px;
+        height: 16px;
+        source: root.icon;
+        image-fit: contain;
+        accessible-role: none;
+    }
+    Text {
+        x: 34px;
+        width: max(0px, parent.width - 152px);
+        height: parent.height;
+        text: root.title;
+        color: Theme.text;
+        font-size: Theme.font-sm;
+        font-weight: 600;
+        vertical-alignment: center;
+        overflow: elide;
+        accessible-role: none;
+    }
+
+    // The native system move must start while the mouse button is down. Only
+    // an actual drag may start it: a modal move grab sent for a plain click
+    // can swallow clicks across the whole window until the next click.
+    title-drag-area := TouchArea {
+        width: max(0px, parent.width - 114px);
+        height: parent.height;
+        mouse-cursor: default;
+        property <bool> drag-armed: false;
+        pointer-event(event) => {
+            if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
+                self.drag-armed = true;
+            } else if event.kind == PointerEventKind.up {
+                self.drag-armed = false;
+            } else if event.kind == PointerEventKind.move && self.drag-armed
+                && (Math.abs((self.mouse-x - self.pressed-x) / 1px) > 4 || Math.abs((self.mouse-y - self.pressed-y) / 1px) > 4) {
+                self.drag-armed = false;
+                root.drag-requested();
+            }
+        }
+        double-clicked => { root.maximize-requested(); }
+    }
+
+    Rectangle {
+        x: max(0px, parent.width - 114px);
+        width: 38px;
+        height: parent.height;
+        background: minimize-touch.has-hover ? Theme.selected : transparent;
+        Path {
+            x: (parent.width - 14px) / 2;
+            y: (parent.height - 14px) / 2;
+            width: 14px;
+            height: 14px;
+            viewbox-x: 0; viewbox-y: 0; viewbox-width: 24; viewbox-height: 24;
+            commands: "M 5 12 L 19 12";
+            fill: transparent;
+            stroke: Theme.text-secondary;
+            stroke-width: 1.8px;
+            accessible-role: none;
+        }
+        minimize-touch := TouchArea {
+            accessible-role: button;
+            accessible-label: I18n.wm_minimize;
+            mouse-cursor: pointer;
+            clicked => { root.minimize-requested(); }
+        }
+    }
+
+    Rectangle {
+        x: max(0px, parent.width - 76px);
+        width: 38px;
+        height: parent.height;
+        background: maximize-touch.has-hover ? Theme.selected : transparent;
+        if !root.maximized : Path {
+            x: (parent.width - 14px) / 2;
+            y: (parent.height - 14px) / 2;
+            width: 14px;
+            height: 14px;
+            viewbox-x: 0; viewbox-y: 0; viewbox-width: 24; viewbox-height: 24;
+            commands: "M 5 5 L 19 5 L 19 19 L 5 19 Z";
+            fill: transparent;
+            stroke: Theme.text-secondary;
+            stroke-width: 1.8px;
+            accessible-role: none;
+        }
+        if root.maximized : Path {
+            x: (parent.width - 14px) / 2;
+            y: (parent.height - 14px) / 2;
+            width: 14px;
+            height: 14px;
+            viewbox-x: 0; viewbox-y: 0; viewbox-width: 24; viewbox-height: 24;
+            commands: "M 8 8 L 8 4 L 20 4 L 20 16 L 16 16 M 16 8 L 4 8 L 4 20 L 16 20 Z";
+            fill: transparent;
+            stroke: Theme.text-secondary;
+            stroke-width: 1.8px;
+            accessible-role: none;
+        }
+        maximize-touch := TouchArea {
+            accessible-role: button;
+            accessible-label: root.maximized ? I18n.wm_restore : I18n.wm_maximize;
+            mouse-cursor: pointer;
+            clicked => { root.maximize-requested(); }
+        }
+    }
+
+    Rectangle {
+        x: max(0px, parent.width - 38px);
+        width: 38px;
+        height: parent.height;
+        property <bool> hovered: close-touch.has-hover;
+        background: self.hovered ? Theme.danger : transparent;
+        Path {
+            x: (parent.width - 14px) / 2;
+            y: (parent.height - 14px) / 2;
+            width: 14px;
+            height: 14px;
+            viewbox-x: 0; viewbox-y: 0; viewbox-width: 24; viewbox-height: 24;
+            commands: "M 6 6 L 18 18 M 18 6 L 6 18";
+            fill: transparent;
+            stroke: parent.hovered ? #ffffff : Theme.text-secondary;
+            stroke-width: 1.8px;
+            accessible-role: none;
+        }
+        close-touch := TouchArea {
+            accessible-role: button;
+            accessible-label: I18n.common_close;
+            mouse-cursor: pointer;
+            clicked => { root.close-requested(); }
+        }
+    }
+}
+
+// A borderless window has no non-client frame. Reproduce the visible part
+// inside the client area: a firm outer rule and a stronger bottom edge. The
+// frame paints above content; the native resize hit-test region (the window's
+// resize-border-width) stays untouched.
+export component WindowFrame inherits Rectangle {
+    x: 0px;
+    y: 0px;
+    width: 100%;
+    height: 100%;
+    z: 1001;
+    background: transparent;
+    border-color: Theme.border-strong;
+    border-width: 1px;
+    accessible-role: none;
+}

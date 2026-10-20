@@ -115,6 +115,9 @@ pub enum BackendEvent {
         turn_id: String,
         item_id: String,
         text: String,
+        /// A final `llm_output.reasoning` snapshot replaces the accumulated
+        /// stream tail instead of appending the same prefix once more.
+        replace: bool,
     },
     /// Runtime status for a durable user turn. It lets a process tail appear
     /// before the next lightweight history projection reaches the UI.
@@ -1006,6 +1009,7 @@ fn handle_native_event(
                 active_execution,
                 payload,
                 text,
+                false,
                 pending_delta,
             );
         }
@@ -1018,7 +1022,11 @@ fn handle_native_event(
         // before coalescing the visible answer, otherwise a reasoning-only
         // chunk is silently discarded by the chat projection.
         let reasoning = payload
-            .get("reasoning_delta")
+            .get(if event == "llm_output" {
+                "reasoning"
+            } else {
+                "reasoning_delta"
+            })
             .and_then(Value::as_str)
             .unwrap_or_default();
         if !reasoning.is_empty() {
@@ -1029,6 +1037,7 @@ fn handle_native_event(
                 active_execution,
                 payload,
                 reasoning,
+                event == "llm_output",
                 pending_delta,
             );
         }
@@ -1145,6 +1154,7 @@ fn emit_reasoning_delta(
     active_execution: &str,
     payload: &Value,
     text: &str,
+    replace: bool,
     pending_delta: &mut Option<PendingDelta>,
 ) {
     let round = payload
@@ -1164,6 +1174,7 @@ fn emit_reasoning_delta(
             round,
         ),
         text: text.to_owned(),
+        replace,
     });
 }
 
@@ -1375,12 +1386,12 @@ fn normalize_reasoning_effort(value: &str) -> Option<String> {
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 fn normalize_turn_state(state: &str) -> String {
     match state.trim().to_ascii_lowercase().as_str() {
-        "failed" | "rejected" | "error" => "failed",
-        "cancelled" | "interrupted" | "stopped" => "stopped",
-        "completed" | "complete" | "done" => "completed",
-        "queued" => "queued",
-        "waiting_input" | "waiting_user_input" => "waiting_input",
-        "waiting_approval" => "waiting_approval",
+        "failed" | "rejected" | "error" | "执行失败" => "failed",
+        "cancelled" | "canceled" | "interrupted" | "stopped" | "已停止" => "stopped",
+        "completed" | "complete" | "done" | "任务完成" => "completed",
+        "queued" | "正在排队" => "queued",
+        "waiting_input" | "waiting_user_input" | "等待用户输入" => "waiting_input",
+        "waiting_approval" | "等待确认" => "waiting_approval",
         _ => "running",
     }
     .to_owned()
@@ -1843,8 +1854,27 @@ pub fn apply_event(state: &mut AppState, event: BackendEvent) {
             turns,
             replace,
         } if state.selected_session.as_deref() == Some(session_id.as_str()) => {
+            // A watcher patch can race the native stream. It is not a lifecycle
+            // acknowledgement, so a committed running root must keep the
+            // composer in its stop state. Only a terminal history update for a
+            // root we already know is active may settle that state; `Finished`,
+            // `Failed`, and `TurnStatus` remain the normal lifecycle owners.
+            let settles_active_turn = state.busy
+                && turns.iter().any(|next| {
+                    is_terminal_turn_state(&next.assistant.state)
+                        && state.turns.iter().any(|current| {
+                            current.id == next.id && is_active_turn_state(&current.assistant.state)
+                        })
+                });
             merge_history(&mut state.turns, turns, replace);
-            state.busy = false;
+            if settles_active_turn
+                && !state
+                    .turns
+                    .iter()
+                    .any(|turn| is_active_turn_state(&turn.assistant.state))
+            {
+                state.busy = false;
+            }
         }
         BackendEvent::ProcessPage {
             session_id,
@@ -1909,8 +1939,30 @@ pub fn apply_event(state: &mut AppState, event: BackendEvent) {
                         if turn.process_steps == 0 {
                             turn.process_steps = turn.workflow.len();
                         }
-                        turn.process_first = retained_first.or(page.first).or(turn.process_first);
-                        turn.process_last = retained_last.or(page.last).or(turn.process_last);
+                        // `page.first`/`page.last` are raw storage cursors and
+                        // must remain authoritative for the direction that
+                        // was just read. A page can contain only rows that the
+                        // presentation projection filters (for example an
+                        // empty assistant snapshot), leaving `retained_first`
+                        // and `retained_last` anchored to the already visible
+                        // rows. Preferring those bounds in that case causes a
+                        // repeated request with the same exclusive cursor.
+                        // Keep the raw side cursor even when the projected page
+                        // contributes no UI rows; use retained bounds only for
+                        // the opposite side of a bidirectional window.
+                        if before.is_some() {
+                            turn.process_first =
+                                page.first.or(retained_first).or(turn.process_first);
+                            turn.process_last = retained_last.or(page.last).or(turn.process_last);
+                        } else if after.is_some() {
+                            turn.process_first =
+                                retained_first.or(page.first).or(turn.process_first);
+                            turn.process_last = page.last.or(retained_last).or(turn.process_last);
+                        } else {
+                            turn.process_first =
+                                retained_first.or(page.first).or(turn.process_first);
+                            turn.process_last = retained_last.or(page.last).or(turn.process_last);
+                        }
                         turn.process_has_older = page.has_older || (over_limit && after.is_some());
                         turn.process_has_newer = page.has_newer || (over_limit && before.is_some());
                         turn.process_loaded = true;
@@ -1925,12 +1977,22 @@ pub fn apply_event(state: &mut AppState, event: BackendEvent) {
             turn_id,
             item_id,
             text,
+            replace,
         } if state.selected_session.as_deref() == Some(session_id.as_str()) => {
             if let Some(turn) = state.turns.iter_mut().find(|turn| turn.id == turn_id) {
                 let mut added = false;
                 if let Some(item) = turn.workflow.iter_mut().find(|item| item.id == item_id) {
-                    append_bounded_detail(item, &text);
-                    item.state = "running".to_owned();
+                    if replace {
+                        let (detail, detail_truncated) =
+                            bounded_process_text(&text, PROCESS_DETAIL_BYTES, PROCESS_DETAIL_LINES);
+                        item.detail = detail;
+                        item.detail_truncated = detail_truncated;
+                        item.preview = bounded_preview_text(&item.detail, 640);
+                        item.state = "completed".to_owned();
+                    } else {
+                        append_bounded_detail(item, &text);
+                        item.state = "running".to_owned();
+                    }
                 } else if turn.workflow.len() < PROCESS_ITEM_LIMIT {
                     let (detail, detail_truncated) =
                         bounded_process_text(&text, PROCESS_DETAIL_BYTES, PROCESS_DETAIL_LINES);
@@ -1941,7 +2003,7 @@ pub fn apply_event(state: &mut AppState, event: BackendEvent) {
                         preview: bounded_preview_text(&detail, 640),
                         detail,
                         detail_truncated,
-                        state: "running".to_owned(),
+                        state: if replace { "completed" } else { "running" }.to_owned(),
                         ..Default::default()
                     });
                     added = true;
@@ -2043,6 +2105,35 @@ pub fn apply_event(state: &mut AppState, event: BackendEvent) {
     }
 }
 
+/// A history projection has no separate stream identity, so only concrete
+/// assistant lifecycle states can affect the composer action.
+fn is_active_turn_state(state: &str) -> bool {
+    matches!(
+        state.trim().to_ascii_lowercase().as_str(),
+        "running" | "streaming" | "queued"
+    )
+}
+
+/// The durable header can confirm a completed, failed, or stopped root. States
+/// waiting for user input or approval are deliberately not terminal here.
+fn is_terminal_turn_state(state: &str) -> bool {
+    matches!(
+        state.trim().to_ascii_lowercase().as_str(),
+        "completed"
+            | "complete"
+            | "done"
+            | "failed"
+            | "rejected"
+            | "error"
+            | "stopped"
+            | "cancelled"
+            | "canceled"
+            | "interrupted"
+            | "任务完成"
+            | "执行失败"
+            | "已停止"
+    )
+}
 /// Merge a compact history projection without throwing away local process
 /// pages that were explicitly opened by the reader. The observer emits only
 /// changed roots after its initial snapshot, so a patch must never delete
@@ -2051,6 +2142,7 @@ fn merge_history(current: &mut Vec<TurnView>, incoming: Vec<TurnView>, replace: 
     if replace {
         let mut merged = Vec::with_capacity(incoming.len());
         for mut next in incoming {
+            normalize_history_turn_state(&mut next);
             if let Some(previous) = current.iter().find(|turn| turn.id == next.id) {
                 retain_process_projection(&mut next, previous);
             }
@@ -2060,6 +2152,7 @@ fn merge_history(current: &mut Vec<TurnView>, incoming: Vec<TurnView>, replace: 
         return;
     }
     for mut next in incoming {
+        normalize_history_turn_state(&mut next);
         if let Some(index) = current.iter().position(|turn| turn.id == next.id) {
             let previous = &current[index];
             retain_process_projection(&mut next, previous);
@@ -2067,6 +2160,12 @@ fn merge_history(current: &mut Vec<TurnView>, incoming: Vec<TurnView>, replace: 
         } else {
             current.push(next);
         }
+    }
+}
+
+fn normalize_history_turn_state(turn: &mut TurnView) {
+    if !turn.assistant.state.trim().is_empty() {
+        turn.assistant.state = normalize_turn_state(&turn.assistant.state);
     }
 }
 
@@ -2227,6 +2326,75 @@ mod tests {
     }
 
     #[test]
+    fn history_patch_keeps_busy_while_the_same_turn_is_streaming() {
+        let mut state = AppState {
+            selected_session: Some("selected".into()),
+            busy: true,
+            turns: vec![TurnView {
+                id: "turn".into(),
+                assistant: MessageView {
+                    state: "running".into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        apply_event(
+            &mut state,
+            BackendEvent::History {
+                session_id: "selected".into(),
+                turns: vec![TurnView {
+                    id: "turn".into(),
+                    assistant: MessageView {
+                        text: "已提交的流式片段".into(),
+                        state: "running".into(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }],
+                replace: false,
+            },
+        );
+        assert!(state.busy);
+        assert_eq!(state.turns[0].assistant.state, "running");
+        assert_eq!(state.turns[0].assistant.text, "已提交的流式片段");
+    }
+
+    #[test]
+    fn terminal_history_patch_settles_its_active_turn() {
+        let mut state = AppState {
+            selected_session: Some("selected".into()),
+            busy: true,
+            turns: vec![TurnView {
+                id: "turn".into(),
+                assistant: MessageView {
+                    state: "running".into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        apply_event(
+            &mut state,
+            BackendEvent::History {
+                session_id: "selected".into(),
+                turns: vec![TurnView {
+                    id: "turn".into(),
+                    assistant: MessageView {
+                        state: "任务完成".into(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }],
+                replace: false,
+            },
+        );
+        assert!(!state.busy);
+        assert_eq!(state.turns[0].assistant.state, "completed");
+    }
+    #[test]
     fn history_patch_retains_open_process_page() {
         let mut state = AppState {
             selected_session: Some("selected".into()),
@@ -2284,6 +2452,7 @@ mod tests {
                 turn_id: "turn".into(),
                 item_id: "thought".into(),
                 text: "甲".repeat(PROCESS_DETAIL_BYTES),
+                replace: false,
             },
         );
         let item = &state.turns[0].workflow[0];
@@ -2324,6 +2493,59 @@ mod tests {
             },
         ];
         assert_eq!(workflow_storage_bounds(&rows), (Some(11), Some(12)));
+    }
+
+    #[test]
+    fn filtered_process_pages_advance_the_older_cursor() {
+        let mut state = AppState {
+            selected_session: Some("selected".into()),
+            turns: vec![TurnView {
+                id: "turn".into(),
+                // A visible tail was already loaded. The following pages
+                // contain storage items that `process_page_view` legitimately
+                // filters, so their raw cursor is the only progress signal.
+                workflow: vec![WorkflowView {
+                    id: "visible-tail".into(),
+                    storage_index: Some(401),
+                    ..Default::default()
+                }],
+                process_loaded: true,
+                process_first: Some(401),
+                process_last: Some(401),
+                process_has_older: true,
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        for (before, first, last, has_older) in [
+            (401, 301, 400, true),
+            (301, 201, 300, true),
+            (201, 101, 200, false),
+        ] {
+            apply_event(
+                &mut state,
+                BackendEvent::ProcessPage {
+                    session_id: "selected".into(),
+                    turn_id: "turn".into(),
+                    before: Some(before),
+                    after: None,
+                    result: Ok(ProcessPageView {
+                        // The raw page is non-empty in durable storage, but
+                        // no record is presentable in the work-process view.
+                        items: Vec::new(),
+                        first: Some(first),
+                        last: Some(last),
+                        has_older,
+                        has_newer: true,
+                    }),
+                },
+            );
+            let turn = &state.turns[0];
+            assert_eq!(turn.process_first, Some(first));
+            assert_eq!(turn.process_last, Some(401));
+            assert_eq!(turn.process_has_older, has_older);
+        }
     }
 
     #[test]

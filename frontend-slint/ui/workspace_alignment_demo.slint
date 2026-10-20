@@ -21,20 +21,29 @@ export component WorkspaceAlignmentDemo inherits Window {
     // viewer fixture makes the real hover and native context-menu actions
     // observable without adding any production-only state to Sidebar.
     out property <string> last-thread-action: "";
-    in property <bool> cloud: false;
+    in-out property <bool> cloud: false;
     accessible-role: groupbox;
     accessible-description: "command=" + root.last-command + ";workspace=" + root.last-workspace
         + ";thread=" + root.last-thread-action + ";opens=" + root.opened-count
         + ";clicks=" + root.clicked-count + ";split=" + root.split + ";saves=" + root.layout-saves;
     Sidebar {
-        rows: [
-            {kind: root.cloud ? 2 : 0, workspace-id: "fixture-a", name: "示例工作区", icon: "folder", color: "blue", selected: true, expanded: true, thread-count: 2, payload: 0},
-            {kind: root.cloud ? 3 : 1, workspace-id: "fixture-a", thread-id: "fixture-thread-a", title: "示例线程", status: "done", active: true, archivable: true, payload: 0},
-            {kind: root.cloud ? 3 : 1, workspace-id: "fixture-a", thread-id: "fixture-thread-b", title: "另一个线程", status: "running", payload: 1},
+        // Only the active device's tree is present, matching the production
+        // projection: cloud is one pinned workspace, local has named folders.
+        rows: root.cloud ? [
+            {kind: 2, name: "云端工作区", icon: "cloud", selected: true, expanded: true, thread-count: 2, payload: -1},
+            {kind: 3, thread-id: "fixture-cloud-a", title: "示例线程", status: "done", active: true, archivable: true, payload: 0},
+            {kind: 3, thread-id: "fixture-cloud-b", title: "另一个线程", status: "running", payload: 1}
+        ] : [
+            {kind: 0, workspace-id: "fixture-a", name: "示例工作区", icon: "folder", color: "blue", selected: true, expanded: true, thread-count: 2, payload: 0},
+            {kind: 1, workspace-id: "fixture-a", thread-id: "fixture-thread-a", title: "示例线程", status: "done", active: true, archivable: true, payload: 0},
+            {kind: 1, workspace-id: "fixture-a", thread-id: "fixture-thread-b", title: "另一个线程", status: "running", payload: 1},
             {kind: 0, workspace-id: "fixture-b", name: "第二工作区", icon: "coffee", color: "orange", payload: 1}
         ];
         user-initial: "U"; user-color: Theme.accent;
-        file-local: true;
+        cloud-available: true;
+        local-workspace-count: 2;
+        select-device(device) => { root.cloud = device == 1; }
+        file-local: !root.cloud;
         file-loading: root.loading;
         file-busy: root.loading;
         file-active-path: root.active-path;

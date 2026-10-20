@@ -1,0 +1,9 @@
+{
+  "python": "Python {version} + 常用库",
+  "git": "Git {version}",
+  "rg": "ripgrep {version}",
+  "ffmpeg": "FFmpeg {version}",
+  "browser": "内置浏览器 Chrome {version}",
+  "desktopicon": "创建桌面快捷方式",
+  "approxSize": "（约 {size} MB）"
+}

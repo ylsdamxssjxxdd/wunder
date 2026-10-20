@@ -354,25 +354,11 @@ fn restrict_permissions(path: &Path) {
 }
 
 /// Resolve the wunder home directory the same way desktop/cli launchers do:
-/// `WUNDER_HOME` when set, otherwise `<user home>/.wunder`.
+/// an explicit `WUNDER_HOME`, then a portable install marker, then the user
+/// profile. Keeping this delegated avoids a second fallback that would ignore
+/// custom installation roots.
 pub fn wunder_home_dir() -> PathBuf {
-    if let Some(path) = std::env::var_os("WUNDER_HOME")
-        .map(PathBuf::from)
-        .filter(|path| !path.as_os_str().is_empty())
-    {
-        return path;
-    }
-    #[cfg(windows)]
-    let home = std::env::var_os("USERPROFILE")
-        .map(PathBuf::from)
-        .or_else(|| {
-            let drive = std::env::var_os("HOMEDRIVE")?;
-            let path = std::env::var_os("HOMEPATH")?;
-            Some(PathBuf::from(drive).join(path))
-        });
-    #[cfg(not(windows))]
-    let home = std::env::var_os("HOME").map(PathBuf::from);
-    home.unwrap_or_else(|| std::env::temp_dir()).join(".wunder")
+    crate::core::local_bootstrap::resolve_home_from_env_or_user()
 }
 
 #[cfg(test)]

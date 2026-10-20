@@ -45,7 +45,6 @@ export struct TrajSpan {
     index: int,           // logical record index to focus on click
     ttft: float,          // 0..1 first-token fraction inside the span, -1 = none
     selected: bool,
-    outside: bool,
     overview: bool,       // global overview uses 1px minimum and fine dividers
     aggregate: bool,      // bucket without one stable source record
     error: bool,
@@ -150,11 +149,12 @@ export struct TimelineCounts { rows: int, answers: int }
 // runtime's own vocabulary: "pending" | "in_progress" | "completed".
 export struct PlanStep { step: string, status: string }
 
-// 问询面板 (§InquiryPanel): one published page. Rust owns the selection state
-// and republishes the page after every interaction, so the panel stays a pure
-// projection. `selected` is derived from that state, never edited here. The
-// page's free text lives on the panel property, not in the struct: a struct
-// field cannot carry a two-way TextInput binding.
+// 问询面板 (§InquiryPanel): one row per visible question — a single page, or
+// every question once the panel is expanded. Rust owns the selection state and
+// republishes these rows after every interaction, so the panel stays a pure
+// projection. `selected` and `other` are derived from that state, never edited
+// here. `index` is the question's ordinal in the published panel (not the row
+// index), which is what the callbacks address.
 export struct InquiryOption {
     label: string,
     description: string,
@@ -163,9 +163,11 @@ export struct InquiryOption {
 }
 
 export struct InquiryQuestion {
+    index: int,
     question: string,
     multiple: bool,
     no_preference: bool,
+    other: string,
     options: [InquiryOption],
 }
 

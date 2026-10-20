@@ -24,6 +24,43 @@ pub struct NativeChatTurn {
     pub subagents: Vec<NativeSubagentCard>,
     /// Authoritative total, independent of the retained process page.
     pub process_steps: i64,
+    /// The turn's latest durable plan, so the input-dock capsule survives a
+    /// thread switch instead of living only in the live turn.
+    pub plan: Option<NativePlanView>,
+    /// A pending 问询面板 the turn stopped on. The panel is interactive
+    /// metadata, independent of the reply body, so reopening a thread restores
+    /// it exactly as it was published.
+    pub question_panel: Option<Value>,
+}
+
+/// Bounded plan projection of one user turn: the same explanation and tri-state
+/// steps the 计划面板 tool publishes.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct NativePlanView {
+    pub explanation: String,
+    pub steps: Vec<NativePlanStep>,
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct NativePlanStep {
+    pub step: String,
+    pub status: String,
+}
+
+impl NativePlanView {
+    fn from_payload(plan: &wunder_server::stable_core::thread_view::ThreadPlanView) -> Self {
+        Self {
+            explanation: plan.explanation.clone(),
+            steps: plan
+                .steps
+                .iter()
+                .map(|step| NativePlanStep {
+                    step: step.step.clone(),
+                    status: step.status.clone(),
+                })
+                .collect(),
+        }
+    }
 }
 
 /// Compact thread-open projection. It intentionally contains no process
@@ -155,6 +192,8 @@ pub(super) fn load_turn(
                 .collect();
             turn.subagents.reverse();
         }
+        turn.plan = chat.plan.as_ref().map(NativePlanView::from_payload);
+        turn.question_panel = pending_question_panel(&chat);
     }
     Ok(projected)
 }
@@ -213,7 +252,36 @@ fn load_turn_header(chat: &ChatViewRow) -> Option<NativeChatTurn> {
         rounds: Vec::new(),
         subagents,
         process_steps: chat.workflow_count + chat.reasoning_count,
+        plan: chat.plan.as_ref().map(NativePlanView::from_payload),
+        question_panel: pending_question_panel(chat),
     })
+}
+
+/// The panel an assistant row is still waiting on. The runtime keeps the panel
+/// on the message meta; a resolved (`answered`) panel is history, not an input
+/// affordance, so only the pending form is projected.
+fn pending_question_panel(chat: &ChatViewRow) -> Option<Value> {
+    let panel = chat.assistant.question_panel.as_ref()?;
+    if panel.questions.is_empty() {
+        return None;
+    }
+    let status = panel.status.trim();
+    if !status.is_empty() && status != "pending" {
+        return None;
+    }
+    Some(json!({
+        "questions": panel.questions.iter().map(|question| json!({
+            "question": question.question,
+            "multiple": question.multiple,
+            "options": question.options.iter().map(|option| json!({
+                "label": option.label,
+                "description": option.description,
+                "recommended": option.recommended,
+            })).collect::<Vec<_>>(),
+        })).collect::<Vec<_>>(),
+        "keep_open": panel.keep_open,
+        "status": if status.is_empty() { "pending" } else { status },
+    }))
 }
 
 pub(super) fn recover_fields(
@@ -485,6 +553,8 @@ fn project_turn(root: &Value, items: &[Value]) -> Option<NativeChatTurn> {
         rounds,
         subagents,
         process_steps: 0,
+        plan: None,
+        question_panel: None,
     })
 }
 

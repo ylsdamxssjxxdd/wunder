@@ -1,15 +1,343 @@
-use super::context::{normalize_model_context_message, MODEL_CONTEXT_INTERNAL_META_TYPE};
+use super::context::{MODEL_CONTEXT_INTERNAL_META_TYPE, normalize_model_context_message};
 use super::*;
 
 pub(super) const TOOL_TIMEOUT_ERROR: &str = "tool_timeout";
 
 use super::tool_result_payload::{
-    append_truncation_reason, collect_truncation_reasons_from_value,
-    compact_large_tool_result_data, dedupe_truncation_reasons, estimate_tool_result_chars,
-    extract_exit_code, merge_tool_result_meta, should_skip_event_payload_truncation,
-    supports_tool_result_continuation, truncate_tool_result_data, truncate_tool_result_string,
-    TRUNCATION_CONTINUATION_HINT,
+    estimate_tool_result_chars, extract_exit_code, merge_tool_result_meta,
 };
+
+const TOOL_RESULT_TRANSPORT_MAX_BYTES: usize = 1_048_576;
+const TOOL_RESULT_TRANSPORT_PREVIEW_BYTES: usize = 32_768;
+const TOOL_RESULT_TRANSPORT_ERROR_BYTES: usize = 8_192;
+const TOOL_RESULT_TRANSPORT_CONTROL_BYTES: usize = 65_536;
+const TOOL_RESULT_TRANSPORT_CONTROL_FIELD_BYTES: usize = 4_096;
+
+/// Counts the entire serialized result while retaining fixed-size UTF-8 ends.
+/// The provider value already exists, but this guard never allocates a second
+/// full serialization of it.
+struct ToolResultTransportWriter {
+    total_bytes: usize,
+    head: Vec<u8>,
+    head_limit: usize,
+    tail: Vec<u8>,
+    tail_next: usize,
+    tail_len: usize,
+}
+
+impl ToolResultTransportWriter {
+    fn new() -> Self {
+        let visible =
+            TOOL_RESULT_TRANSPORT_PREVIEW_BYTES.saturating_sub(TOOL_RESULT_TRUNCATION_MARKER.len());
+        Self {
+            total_bytes: 0,
+            head: Vec::with_capacity(visible / 2),
+            head_limit: visible / 2,
+            tail: vec![0; visible - visible / 2],
+            tail_next: 0,
+            tail_len: 0,
+        }
+    }
+
+    fn into_preview(self) -> (String, usize) {
+        let head_end = std::str::from_utf8(&self.head)
+            .map(str::len)
+            .unwrap_or_else(|err| err.valid_up_to());
+        let mut tail = Vec::with_capacity(self.tail_len);
+        if self.tail_len == self.tail.len() {
+            tail.extend_from_slice(&self.tail[self.tail_next..]);
+            tail.extend_from_slice(&self.tail[..self.tail_next]);
+        } else {
+            tail.extend_from_slice(&self.tail[..self.tail_len]);
+        }
+        // A retained end can start inside a UTF-8 scalar, never more than
+        // three bytes from its next valid boundary.
+        let tail_start = (0..=tail.len().min(3))
+            .find(|start| std::str::from_utf8(&tail[*start..]).is_ok())
+            .unwrap_or(tail.len());
+        let retained_bytes = head_end + tail.len().saturating_sub(tail_start);
+        let mut preview =
+            String::with_capacity(retained_bytes + TOOL_RESULT_TRUNCATION_MARKER.len());
+        preview.push_str(std::str::from_utf8(&self.head[..head_end]).unwrap_or(""));
+        preview.push_str(TOOL_RESULT_TRUNCATION_MARKER);
+        preview.push_str(std::str::from_utf8(&tail[tail_start..]).unwrap_or(""));
+        (preview, self.total_bytes.saturating_sub(retained_bytes))
+    }
+}
+
+impl std::io::Write for ToolResultTransportWriter {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.total_bytes = self.total_bytes.saturating_add(bytes.len());
+        let head_remaining = self.head_limit.saturating_sub(self.head.len());
+        self.head
+            .extend_from_slice(&bytes[..head_remaining.min(bytes.len())]);
+        let capacity = self.tail.len();
+        if bytes.len() >= capacity {
+            self.tail.copy_from_slice(&bytes[bytes.len() - capacity..]);
+            self.tail_next = 0;
+            self.tail_len = capacity;
+        } else if !bytes.is_empty() {
+            let first = bytes.len().min(capacity - self.tail_next);
+            self.tail[self.tail_next..self.tail_next + first].copy_from_slice(&bytes[..first]);
+            self.tail[..bytes.len() - first].copy_from_slice(&bytes[first..]);
+            self.tail_next = (self.tail_next + bytes.len()) % capacity;
+            self.tail_len = self.tail_len.saturating_add(bytes.len()).min(capacity);
+        }
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// Stop measuring optional control fields once their small copy budget is
+/// exceeded; opaque tokens are either copied exactly or omitted entirely.
+struct ToolResultControlCounter {
+    bytes: usize,
+    limit: usize,
+}
+
+impl std::io::Write for ToolResultControlCounter {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        if bytes.len() > self.limit.saturating_sub(self.bytes) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "control field limit",
+            ));
+        }
+        self.bytes += bytes.len();
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+fn copy_transport_control_fields(
+    source: &Value,
+    target: &mut Map<String, Value>,
+    keys: &[&str],
+    remaining: &mut usize,
+) {
+    for key in keys {
+        let Some(value) = source.get(*key) else {
+            continue;
+        };
+        let overhead = key.len().saturating_add(4);
+        let limit =
+            TOOL_RESULT_TRANSPORT_CONTROL_FIELD_BYTES.min(remaining.saturating_sub(overhead));
+        let mut counter = ToolResultControlCounter { bytes: 0, limit };
+        if serde_json::to_writer(&mut counter, value).is_ok() {
+            *remaining = remaining.saturating_sub(counter.bytes.saturating_add(overhead));
+            target.insert((*key).to_string(), value.clone());
+        }
+    }
+}
+
+/// Provider results normally stay intact for events/audit and are compacted
+/// only in the model observation. This guard bounds the whole data/error/meta
+/// envelope before it is cloned into events. Oversized content is discarded,
+/// not spilled: neither the preview nor a next-page cursor can recover it.
+fn enforce_tool_result_transport_guard(result: &mut ToolResultPayload) -> Option<usize> {
+    #[derive(serde::Serialize)]
+    struct TransportEnvelope<'a> {
+        ok: bool,
+        sandbox: bool,
+        data: &'a Value,
+        error: &'a str,
+        meta: Option<&'a Value>,
+    }
+    let envelope = TransportEnvelope {
+        ok: result.ok,
+        sandbox: result.sandbox,
+        data: &result.data,
+        error: &result.error,
+        meta: result.meta.as_ref(),
+    };
+    // Normal results need no preview buffers. Stop the allocation-free probe
+    // at the limit, then retain ends only for an oversized envelope.
+    let mut probe = ToolResultControlCounter {
+        bytes: 0,
+        limit: TOOL_RESULT_TRANSPORT_MAX_BYTES,
+    };
+    if serde_json::to_writer(&mut probe, &envelope).is_ok() {
+        return None;
+    }
+    let mut writer = ToolResultTransportWriter::new();
+    serde_json::to_writer(&mut writer, &envelope).ok()?;
+    let original_bytes = writer.total_bytes;
+    let (preview, omitted_bytes) = writer.into_preview();
+    let exit_code = extract_exit_code(&result.data);
+    let mut remaining = TOOL_RESULT_TRANSPORT_CONTROL_BYTES * 3 / 4;
+    let mut data = Map::new();
+    copy_transport_control_fields(
+        &result.data,
+        &mut data,
+        &[
+            "exit_code",
+            "returncode",
+            "session_id",
+            "command_session_id",
+            "status",
+            "running",
+            "completed_steps",
+            "failed_step",
+            "action",
+            "kind",
+            "target_id",
+            "path",
+            "bytes",
+            "changed",
+            "changed_files",
+            "hunks_applied",
+            "changed_paths",
+            "workspace_changed_paths",
+            "artifact",
+            "screenshot_artifact",
+            "artifact_id",
+            "query_handle",
+            "next_cursor",
+            "cursor",
+            "next_offset",
+            "next_page_token",
+            "page_token",
+            "continuation_token",
+            "next_token",
+            "next_url",
+            "resume_token",
+            "has_more",
+            "__wrapup",
+        ],
+        &mut remaining,
+    );
+    if let Some(exit_code) = exit_code {
+        data.insert("exit_code".to_string(), json!(exit_code));
+    }
+    // Command result rows carry session identity and completion state separately
+    // from their large stdout/stderr. Preserve a bounded ordered control list.
+    if let Some(rows) = result.data.get("results").and_then(Value::as_array) {
+        let mut controls = Vec::new();
+        for row in rows.iter().take(32) {
+            let mut control = Map::new();
+            copy_transport_control_fields(
+                row,
+                &mut control,
+                &[
+                    "command",
+                    "exit_code",
+                    "returncode",
+                    "session_id",
+                    "command_session_id",
+                    "status",
+                    "running",
+                    "next_offset",
+                ],
+                &mut remaining,
+            );
+            if !control.is_empty() {
+                controls.push(Value::Object(control));
+            }
+        }
+        if !controls.is_empty() {
+            data.insert("results".to_string(), Value::Array(controls));
+        }
+    }
+    for key in ["content", "content_blocks"] {
+        let Some(blocks) = result.data.get(key).and_then(Value::as_array) else {
+            continue;
+        };
+        let mut attachments = Vec::new();
+        for block in blocks
+            .iter()
+            .take(8)
+            .filter(|block| block.get("attachment").is_some())
+        {
+            let mut control = Map::new();
+            copy_transport_control_fields(
+                block,
+                &mut control,
+                &["type", "attachment"],
+                &mut remaining,
+            );
+            if control.contains_key("attachment") {
+                attachments.push(Value::Object(control));
+            }
+        }
+        if !attachments.is_empty() {
+            data.insert(key.to_string(), Value::Array(attachments));
+        }
+    }
+    data.insert("truncated".to_string(), Value::Bool(true));
+    data.insert("truncation_scope".to_string(), json!("transport_safety"));
+    data.insert("recoverable".to_string(), Value::Bool(false));
+    data.insert("original_bytes".to_string(), json!(original_bytes));
+    data.insert("omitted_bytes".to_string(), json!(omitted_bytes));
+    data.insert("preview".to_string(), Value::String(preview));
+    data.insert("recovery_hint".to_string(), json!(
+        "Full result was not stored. Repeat a smaller range or narrower query; existing continuation tokens only address later producer pages."
+    ));
+    result.data = Value::Object(data);
+    result.error = truncate_utf8_preview(&result.error, TOOL_RESULT_TRANSPORT_ERROR_BYTES);
+    let mut meta = Map::new();
+    let mut remaining = TOOL_RESULT_TRANSPORT_CONTROL_BYTES / 4;
+    if let Some(source) = &result.meta {
+        copy_transport_control_fields(
+            source,
+            &mut meta,
+            &[
+                "duration_ms",
+                "output_chars",
+                "exit_code",
+                "error_code",
+                "error_retryable",
+                "error_detail_head",
+                "normalized_transport_ok",
+                "normalized_business_ok",
+                "normalized_final_ok",
+                "business_error_source",
+                "workspace_version",
+                "workspace_changed",
+                "workspace_changed_paths",
+                "turn_control",
+                "parallel_execution",
+            ],
+            &mut remaining,
+        );
+    }
+    if let Some(exit_code) = exit_code {
+        meta.insert("exit_code".to_string(), json!(exit_code));
+    }
+    meta.insert("transport_truncated".to_string(), Value::Bool(true));
+    meta.insert("transport_recoverable".to_string(), Value::Bool(false));
+    meta.insert("original_output_bytes".to_string(), json!(original_bytes));
+    result.meta = Some(Value::Object(meta));
+    Some(original_bytes)
+}
+
+fn truncate_utf8_preview(value: &str, max_bytes: usize) -> String {
+    if value.len() <= max_bytes {
+        return value.to_string();
+    }
+    let marker = TOOL_RESULT_TRUNCATION_MARKER;
+    if max_bytes <= marker.len() {
+        return String::new();
+    }
+    let visible_bytes = max_bytes.saturating_sub(marker.len());
+    let mut head_end = (visible_bytes / 2).min(value.len());
+    while head_end > 0 && !value.is_char_boundary(head_end) {
+        head_end -= 1;
+    }
+    let mut tail_start = value
+        .len()
+        .saturating_sub(visible_bytes.saturating_sub(head_end));
+    while tail_start < value.len() && !value.is_char_boundary(tail_start) {
+        tail_start += 1;
+    }
+    format!("{}{}{}", &value[..head_end], marker, &value[tail_start..])
+}
+
 impl Orchestrator {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn append_chat(
@@ -261,8 +589,9 @@ impl Orchestrator {
         &self,
         tool_name: &str,
         result: &ToolResultPayload,
+        token_budget: i64,
     ) -> String {
-        let payload = result.to_compact_payload(tool_name);
+        let payload = result.to_compact_payload_with_token_budget(tool_name, Some(token_budget));
         serde_json::to_string(&payload).unwrap_or_else(|_| "{}".to_string())
     }
 
@@ -338,79 +667,21 @@ impl Orchestrator {
 
     pub(super) fn finalize_tool_result(
         &self,
-        tool_name: &str,
         mut result: ToolResultPayload,
         started_at: Instant,
     ) -> ToolResultPayload {
-        let skip_truncation = should_skip_event_payload_truncation(tool_name);
         let duration_ms = started_at.elapsed().as_millis() as i64;
-        let continuation_supported =
-            supports_tool_result_continuation(&result.data, result.meta.as_ref());
-        let mut truncated = false;
-        let mut truncation_reasons: Vec<String> = Vec::new();
-        if !skip_truncation {
-            truncated = truncate_tool_result_data(
-                &mut result.data,
-                TOOL_RESULT_HEAD_CHARS,
-                TOOL_RESULT_TAIL_CHARS,
-                TOOL_RESULT_TRUNCATION_MARKER,
-            );
-            if result.error.len() > TOOL_RESULT_MAX_CHARS {
-                result.error = truncate_tool_result_string(
-                    &result.error,
-                    TOOL_RESULT_HEAD_CHARS,
-                    TOOL_RESULT_TAIL_CHARS,
-                    TOOL_RESULT_TRUNCATION_MARKER,
-                );
-                truncated = true;
-                append_truncation_reason(&mut truncation_reasons, "string_chars");
-            }
-            if truncated {
-                truncation_reasons.extend(collect_truncation_reasons_from_value(
-                    &result.data,
-                    TOOL_RESULT_TRUNCATION_MARKER,
-                ));
-                dedupe_truncation_reasons(&mut truncation_reasons);
-            }
-        }
-        let mut output_chars = estimate_tool_result_chars(&result.data);
-        if !skip_truncation && output_chars > TOOL_RESULT_MAX_CHARS {
-            append_truncation_reason(&mut truncation_reasons, "char_budget");
-            result.data = compact_large_tool_result_data(
-                &result.data,
-                output_chars,
-                TOOL_RESULT_HEAD_CHARS,
-                TOOL_RESULT_TAIL_CHARS,
-                TOOL_RESULT_TRUNCATION_MARKER,
-                continuation_supported,
-                &truncation_reasons,
-            );
-            truncated = true;
-            output_chars = estimate_tool_result_chars(&result.data);
-        }
+        let transport_truncated = enforce_tool_result_transport_guard(&mut result);
         let exit_code = extract_exit_code(&result.data);
         let mut meta = merge_tool_result_meta(result.meta.take());
         meta.insert("duration_ms".to_string(), json!(duration_ms));
-        meta.insert("truncated".to_string(), json!(truncated));
-        meta.insert("output_chars".to_string(), json!(output_chars));
-        if truncated && !truncation_reasons.is_empty() {
-            meta.insert(
-                "truncation_reasons".to_string(),
-                Value::Array(
-                    truncation_reasons
-                        .iter()
-                        .cloned()
-                        .map(Value::String)
-                        .collect(),
-                ),
-            );
-        }
-        if truncated && continuation_supported {
-            meta.insert("continuation_required".to_string(), Value::Bool(true));
-            meta.insert(
-                "continuation_hint".to_string(),
-                Value::String(TRUNCATION_CONTINUATION_HINT.to_string()),
-            );
+        meta.insert(
+            "output_chars".to_string(),
+            json!(estimate_tool_result_chars(&result.data)),
+        );
+        if let Some(original_bytes) = transport_truncated {
+            meta.insert("transport_truncated".to_string(), Value::Bool(true));
+            meta.insert("original_output_bytes".to_string(), json!(original_bytes));
         }
         if let Some(exit_code) = exit_code {
             meta.insert("exit_code".to_string(), json!(exit_code));
@@ -1303,6 +1574,138 @@ fn parse_timeout_secs(value: Option<&Value>) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn transport_envelope_bytes(result: &ToolResultPayload) -> usize {
+        serde_json::to_vec(&json!({
+            "ok": result.ok, "sandbox": result.sandbox,
+            "data": result.data, "error": result.error, "meta": result.meta,
+        }))
+        .unwrap()
+        .len()
+    }
+
+    #[test]
+    fn transport_guard_keeps_small_results_unchanged() {
+        let mut result = ToolResultPayload::from_value(json!({
+            "ok": true,
+            "data": {"exit_code": 0, "stdout": "done"},
+            "meta": {"workspace_version": 3},
+        }));
+        let original_data = result.data.clone();
+        let original_meta = result.meta.clone();
+        assert_eq!(enforce_tool_result_transport_guard(&mut result), None);
+        assert_eq!(result.data, original_data);
+        assert_eq!(result.meta, original_meta);
+    }
+
+    #[test]
+    fn transport_guard_bounds_large_data_error_and_meta() {
+        for large_field in ["data", "error", "meta"] {
+            let large = "中🙂\\\"\n".repeat(TOOL_RESULT_TRANSPORT_MAX_BYTES / 4);
+            let mut value = json!({
+                "ok": false,
+                "data": {"exit_code": 7, "session_id": "command-1"},
+                "error": "Execution failed",
+                "meta": {"error_code": "EXECUTION_FAILED", "workspace_version": 4},
+            });
+            match large_field {
+                "data" => value["data"]["stdout"] = Value::String(large),
+                "error" => value["error"] = Value::String(large),
+                _ => value["meta"]["provider_detail"] = Value::String(large),
+            }
+            let mut result = ToolResultPayload::from_value(value);
+            let original_bytes = transport_envelope_bytes(&result);
+            assert_eq!(
+                enforce_tool_result_transport_guard(&mut result),
+                Some(original_bytes)
+            );
+            assert!(transport_envelope_bytes(&result) <= TOOL_RESULT_TRANSPORT_MAX_BYTES);
+            assert_eq!(result.data["exit_code"], 7);
+            assert_eq!(result.data["session_id"], "command-1");
+            assert_eq!(result.data["recoverable"], false);
+            assert_eq!(result.data["truncation_scope"], "transport_safety");
+            assert_eq!(result.meta.as_ref().unwrap()["workspace_version"], 4);
+            assert!(result.error.len() <= TOOL_RESULT_TRANSPORT_ERROR_BYTES);
+            assert!(
+                result.data["preview"].as_str().unwrap().len()
+                    <= TOOL_RESULT_TRANSPORT_PREVIEW_BYTES
+            );
+            assert!(result.data["omitted_bytes"].as_u64().unwrap() > 0);
+            assert!(result.data.get("result_handle").is_none());
+        }
+    }
+
+    #[test]
+    fn transport_guard_preserves_bounded_controls_and_exact_cursor() {
+        let cursor = "opaque-token/中🙂".repeat(80);
+        let mut result = ToolResultPayload::from_value(json!({
+            "ok": true,
+            "data": {
+                "stdout": "x".repeat(TOOL_RESULT_TRANSPORT_MAX_BYTES + 1),
+                "next_cursor": cursor,
+                "session_id": "command-1",
+                "results": [{"returncode": 9, "command_session_id": "command-1", "status": "completed", "stdout": "large"}],
+                "content": [{"type":"image", "attachment":{"path":"artifacts/frame.png", "bytes":64}}],
+            },
+            "meta": {"turn_control":{"kind":"yield", "message":"Waiting"}, "workspace_version":8},
+        }));
+        assert!(enforce_tool_result_transport_guard(&mut result).is_some());
+        assert_eq!(result.data["next_cursor"], cursor);
+        assert_eq!(result.data["exit_code"], 9);
+        assert_eq!(result.data["results"][0]["returncode"], 9);
+        assert_eq!(result.data["results"][0]["command_session_id"], "command-1");
+        assert_eq!(
+            result.data["content"][0]["attachment"]["path"],
+            "artifacts/frame.png"
+        );
+        assert_eq!(result.meta.as_ref().unwrap()["exit_code"], 9);
+        assert_eq!(
+            result.meta.as_ref().unwrap()["turn_control"]["kind"],
+            "yield"
+        );
+        assert!(
+            result.data["recovery_hint"]
+                .as_str()
+                .unwrap()
+                .contains("not stored")
+        );
+    }
+
+    #[test]
+    fn transport_guard_omits_oversized_opaque_controls_without_corruption() {
+        let mut result = ToolResultPayload::from_value(json!({
+            "ok": true,
+            "data": {
+                "stdout": "x".repeat(TOOL_RESULT_TRANSPORT_MAX_BYTES + 1),
+                "next_cursor": "opaque".repeat(TOOL_RESULT_TRANSPORT_CONTROL_FIELD_BYTES),
+            },
+        }));
+        assert!(enforce_tool_result_transport_guard(&mut result).is_some());
+        assert!(result.data.get("next_cursor").is_none());
+        assert_eq!(result.data["recoverable"], false);
+    }
+
+    #[test]
+    fn transport_writer_uses_fixed_retention_and_counts_omission_exactly() {
+        use std::io::Write;
+        let value = format!("{}{}", "中🙂".repeat(30_000), "tail");
+        let mut writer = ToolResultTransportWriter::new();
+        // Split inside scalars to exercise arbitrary IO write boundaries.
+        for chunk in value.as_bytes().chunks(7) {
+            writer.write_all(chunk).unwrap();
+            assert!(writer.head.len() <= writer.head_limit);
+            assert!(writer.tail_len <= writer.tail.len());
+        }
+        assert_eq!(writer.total_bytes, value.len());
+        let (preview, omitted_bytes) = writer.into_preview();
+        assert!(preview.len() <= TOOL_RESULT_TRANSPORT_PREVIEW_BYTES);
+        assert!(preview.starts_with("中🙂"));
+        assert!(preview.ends_with("tail"));
+        assert_eq!(
+            omitted_bytes,
+            value.len() - (preview.len() - TOOL_RESULT_TRUNCATION_MARKER.len())
+        );
+    }
 
     #[cfg(feature = "sqlite-storage")]
     #[tokio::test]

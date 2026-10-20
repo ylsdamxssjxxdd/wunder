@@ -34,6 +34,7 @@ import { TextEditBase } from "textedit-base.slint";
 import { ListView, ScrollView, ComboBox } from "std-widgets.slint";
 import { ModelPresets } from "model_presets.slint";
 export { ModelPresets }
+import { WindowChrome, WindowFrame } from "window_chrome.slint";
 // `TimelineView` is deliberately absent: nothing in Rust names it, and an
 // exported component that does not inherit Window only earns a build warning.
 export { Theme, DesktopPage, Conversation, WorkspaceCard, SidebarRow, CloudThreadCard, TextBlock, WorkflowLine, WorkflowSection, ToolWorkflowEntry, ProcessEntry, TimelineRow, TimelineCounts, TurnStatMetric, PatchCard, PatchLine, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, TrajRow, TrajSpan, TrajTick, TrajBoundary, TrajTiming, TrajSection, TrajTab, CronCard, CronRunCard, PromptPackCard, ChannelCatalogCard, ChannelBindingCard, ChannelLogCard, AvatarOption, AvatarColorChip, CompanionCard, PlanStep, InterlinkApproval, WorkspaceFileRow }
@@ -51,6 +52,7 @@ export component MainWindow inherits Window {
     in-out property <[WorkspaceCard]> workspaces: [];
     in-out property <int> selected-workspace: -1;
     callback select-row(int);
+    callback select-device(int);
     callback workspace-menu(int, int);
     callback new-workspace();
     // Sidebar drag reorder: the row that was grabbed and how far the pointer
@@ -155,10 +157,25 @@ export component MainWindow inherits Window {
     callback search-expert-tools();
     callback toggle-expert-tool-group(string);
     callback edit-agent-question(int, string);
-    title: I18n.app_window_title;
+    // Aggregate thread status projected by native_chat: a pending inquiry
+    // outranks running threads, which outrank the idle shell.
+    in property <int> title-running-count: 0;
+    in property <int> title-inquiry-count: 0;
+    // Frameless custom chrome: the strip below replaces the system caption.
+    callback window-drag-requested();
+    callback window-minimize-requested();
+    callback window-maximize-requested();
+    callback window-close-requested();
+    title: root.title-inquiry-count > 0
+        ? I18n.app_window_title + " · " + I18n.wm_status_inquiry("" + root.title-inquiry-count)
+        : root.title-running-count > 0
+        ? I18n.app_window_title + " · " + I18n.wm_status_running("" + root.title-running-count)
+        : I18n.app_window_title + " · " + I18n.wm_status_idle;
     // Open the desktop workbench maximized. The native bootstrap repeats this
     // after mapping on window managers that defer the initial request.
     maximized: true;
+    no-frame: true;
+    resize-border-width: 6px;
     preferred-width: 1280px; preferred-height: 860px;
     min-width: Theme.min-window-width; min-height: Theme.min-window-height;
     default-font-family: "Microsoft YaHei"; default-font-size: Theme.font-md;
@@ -242,8 +259,13 @@ export component MainWindow inherits Window {
     in-out property <int> activity-steps-total: 0;
     in-out property <string> activity-plan-explanation;
     in-out property <[PlanStep]> activity-plan-steps: [];
-    // Dismissal clears through the Rust side (plan cache + turn state) so the
-    // next flush frame cannot silently restore the checklist.
+    // Which step the capsule names: the running one, else the first unfinished
+    // one, with its 1-based position (0 once every step is done).
+    in-out property <string> activity-plan-current;
+    in-out property <int> activity-plan-position: 0;
+    // The checklist card is a popover: expanded is view state only, so closing
+    // it collapses the card and leaves the plan published.
+    in-out property <bool> activity-plan-expanded: false;
     callback activity-plan-dismiss();
     // ---- inquiry panel (问询面板 card above the composer) ----
     // Rust owns the questions, the selection state and the page; the card is a
@@ -253,17 +275,21 @@ export component MainWindow inherits Window {
     // Thread the projection belongs to: archiving or leaving the active thread
     // must drop the card even when nothing republishes it.
     in-out property <string> inquiry-session;
-    in-out property <InquiryQuestion> inquiry-question;
-    in-out property <string> inquiry-other;
+    // One row per visible question: the current page, or every question while
+    // the panel is expanded.
+    in-out property <[InquiryQuestion]> inquiry-questions: [];
     in-out property <int> inquiry-page: 0;
     in-out property <int> inquiry-total: 1;
+    in-out property <bool> inquiry-expanded: false;
     // The composer's send button unlocks with an answer in hand, even with an
     // empty draft, because the choices themselves are the message.
     in-out property <bool> inquiry-ready: false;
-    callback inquiry-option-clicked(int);
-    callback inquiry-no-preference();
+    callback inquiry-option-clicked(int, int);
+    callback inquiry-other-edited(int, string);
+    callback inquiry-no-preference(int);
+    callback inquiry-use-recommended(int);
     callback inquiry-page-move(int);
-    callback inquiry-dismiss();
+    callback inquiry-expanded-toggle();
     // Fractional offset of every user turn for the right-edge ruler.
     in-out property <[float]> turn-marks: [];
     in-out property <bool> connected: false;
@@ -339,6 +365,8 @@ export component MainWindow inherits Window {
     in-out property <[TrajTiming]> traj-timing;
     in-out property <string> traj-raw;
     in-out property <int> traj-selected: -1;
+    in-out property <length> traj-ledger-scroll: -1px;
+    in-out property <int> traj-ledger-scroll-seq: 0;
     in-out property <int> traj-hover: -1;
     in-out property <string> traj-tooltip;
     in-out property <bool> traj-show-duration: true;
@@ -910,7 +938,8 @@ export component MainWindow inherits Window {
     }
 
     Rectangle {
-        width: parent.width; height: parent.height;
+        y: Theme.titlebar-height;
+        width: parent.width; height: max(0px, parent.height - Theme.titlebar-height);
         HorizontalLayout {
             spacing: 0px;
             sidebar_view := Sidebar {
@@ -927,8 +956,13 @@ export component MainWindow inherits Window {
                 cloud-quota-warn: root.cloud-quota-warn;
                 cloud-quota-expired: root.cloud-connection == "expired";
                 cloud-quota-reconnecting: root.cloud-connection == "reconnecting";
+                // The sidebar hosts the device selector: local (this 蛹) is
+                // always present, cloud appears once an account is signed in.
+                cloud-available: root.cloud-logged-in;
+                local-workspace-count: root.workspaces.length;
                 busy: root.creating-session || root.session-loading || root.chat-loading;
                 select-row(index) => { root.select-row(index); }
+                select-device(device) => { root.select-device(device); }
                 new-cloud-thread => { root.cloud-new-thread(); }
                 workspace-menu(workspace, action) => { root.workspace-menu(workspace, action); }
                 new-workspace => { root.new-workspace(); }
@@ -1084,7 +1118,10 @@ export component MainWindow inherits Window {
                                 steps-total: root.activity-steps-total;
                                 plan-explanation: root.activity-plan-explanation;
                                 plan-steps: root.activity-plan-steps;
-                                plan-dismiss => { root.activity-plan-dismiss(); }
+                                current-step: root.activity-plan-current;
+                                current-position: root.activity-plan-position;
+                                expanded <=> root.activity-plan-expanded;
+                                dismiss => { root.activity-plan-dismiss(); }
                             }
                             if root.goal-visible && root.goal-objective != "" : GoalBanner {
                                 objective: root.goal-objective;
@@ -1100,14 +1137,16 @@ export component MainWindow inherits Window {
                                 clear => { root.goal-clear(); }
                             }
                             if root.inquiry-visible && root.inquiry-session == root.active-session-id : InquiryPanel {
-                                question: root.inquiry-question;
+                                questions: root.inquiry-questions;
                                 page: root.inquiry-page;
                                 total: root.inquiry-total;
-                                other <=> root.inquiry-other;
-                                option-clicked(index) => { root.inquiry-option-clicked(index); }
-                                no-preference => { root.inquiry-no-preference(); }
+                                expanded: root.inquiry-expanded;
+                                option-clicked(row, option) => { root.inquiry-option-clicked(row, option); }
+                                other-edited(row, text) => { root.inquiry-other-edited(row, text); }
+                                no-preference(row) => { root.inquiry-no-preference(row); }
+                                use-recommended(row) => { root.inquiry-use-recommended(row); }
                                 page-move(delta) => { root.inquiry-page-move(delta); }
-                                dismiss => { root.inquiry-dismiss(); }
+                                expanded-toggle => { root.inquiry-expanded-toggle(); }
                             }
                             composer := Composer {
                                 draft <=> root.draft; busy: root.command-pending || root.session-loading || root.creating-session || (root.chat-loading && !root.busy) || (root.cloud-chat-active && root.cloud-thread-busy);
@@ -1156,6 +1195,20 @@ export component MainWindow inherits Window {
             }
         }
     }
+
+    // Frameless chrome. Its z sits above the in-window overlays so the window
+    // can always be dragged, minimized or closed, even with a dialog open.
+    WindowChrome {
+        width: root.width;
+        title: root.title;
+        icon: @image-url("../assets/app-icon.png");
+        maximized: root.maximized;
+        drag-requested => { root.window-drag-requested(); }
+        minimize-requested => { root.window-minimize-requested(); }
+        maximize-requested => { root.window-maximize-requested(); }
+        close-requested => { root.window-close-requested(); }
+    }
+    WindowFrame { }
 
     // Settings live in an internal overlay window instead of replacing the
     // chat area: the shield closes it on click-away, the card swallows stray
@@ -1482,6 +1535,7 @@ export component MainWindow inherits Window {
         detail-tabs: root.traj-detail-tabs; detail-tab: root.traj-detail-tab;
         overview-rows: root.traj-overview; sections: root.traj-sections; timing-rows: root.traj-timing;
         raw-text: root.traj-raw; selected-index: root.traj-selected; hover-index: root.traj-hover;
+        ledger-scroll: root.traj-ledger-scroll; ledger-scroll-seq: root.traj-ledger-scroll-seq;
         tooltip-text: root.traj-tooltip;
         show-duration: root.traj-show-duration; show-turns <=> root.traj-show-turns; show-calls <=> root.traj-show-calls;
         query <=> root.traj-query;

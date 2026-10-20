@@ -6,10 +6,15 @@ use crate::skills::SkillSpec;
 use anyhow::{anyhow, Result};
 use serde::Deserialize;
 use serde_json::{json, Value};
+use serde_yaml::Value as YamlValue;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 pub(crate) const SKILL_ROOT_PLACEHOLDER: &str = "{{SKILL_ROOT}}";
+const DEFAULT_READ_LINE_LIMIT: usize = 160;
+const MAX_READ_LINE_LIMIT: usize = 400;
+const MAX_READ_BYTES: usize = 64 * 1024;
+const MAX_MANIFEST_ITEMS: usize = 64;
 
 pub(crate) fn render_skill_markdown_for_model(raw: &str, skill_root: &str) -> String {
     if raw.contains(SKILL_ROOT_PLACEHOLDER) {
@@ -40,6 +45,18 @@ struct SkillCallArgs {
     name: Option<String>,
     #[serde(default)]
     skill_name: Option<String>,
+    #[serde(default)]
+    action: Option<String>,
+    #[serde(default)]
+    path: Option<String>,
+    #[serde(default)]
+    section: Option<String>,
+    #[serde(default)]
+    start_line: Option<usize>,
+    #[serde(default)]
+    line_limit: Option<usize>,
+    #[serde(default)]
+    full: bool,
 }
 
 pub(crate) async fn execute_skill_call(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
@@ -47,7 +64,8 @@ pub(crate) async fn execute_skill_call(context: &ToolContext<'_>, args: &Value) 
         serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?;
     let raw_name = payload
         .name
-        .or(payload.skill_name)
+        .as_deref()
+        .or(payload.skill_name.as_deref())
         .unwrap_or_default()
         .trim()
         .to_string();
@@ -103,29 +121,207 @@ pub(crate) async fn execute_skill_call(context: &ToolContext<'_>, args: &Value) 
         )));
     };
 
-    let content = std::fs::read_to_string(&spec.path).map_err(|err| {
+    let action = if payload.full {
+        "full".to_string()
+    } else {
+        payload
+            .action
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("manifest")
+            .to_ascii_lowercase()
+    };
+    match action.as_str() {
+        "manifest" => Ok(build_model_tool_success(
+            "skill_manifest",
+            "completed",
+            format!("Skill {} manifest loaded.", spec.name),
+            build_skill_manifest(&spec),
+        )),
+        "read" => read_skill_resource(&spec, &payload),
+        // Explicit compatibility path for callers that still request full.
+        "full" => {
+            let mut read_payload = payload;
+            read_payload.path = Some("SKILL.md".to_string());
+            read_payload.line_limit = Some(MAX_READ_LINE_LIMIT);
+            read_skill_resource(&spec, &read_payload)
+        }
+        other => Err(anyhow!(format!(
+            "unsupported skill action `{other}`; use manifest or read"
+        ))),
+    }
+}
+
+fn build_skill_manifest(spec: &SkillSpec) -> Value {
+    let version = parse_frontmatter_value(&spec.frontmatter, "version");
+    let entrypoints = ["run.py", "skill.py", "main.py"]
+        .iter()
+        .filter(|name| spec.root.join(name).is_file())
+        .map(|name| (*name).to_string())
+        .collect::<Vec<_>>();
+    let resource_index = build_skill_tree(&spec.root)
+        .into_iter()
+        .take(MAX_MANIFEST_ITEMS)
+        .collect::<Vec<_>>();
+    let mut manifest = json!({
+        "name": spec.name,
+        "summary": truncate_skill_text(&spec.description, 320),
+        "entrypoints": entrypoints,
+        "resource_index": resource_index,
+        "read": "action=read; path or section selects a bounded resource",
+    });
+    if let Some(version) = version {
+        manifest["version"] = Value::String(version);
+    }
+    manifest
+}
+
+fn read_skill_resource(spec: &SkillSpec, payload: &SkillCallArgs) -> Result<Value> {
+    let requested = payload
+        .path
+        .as_deref()
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .unwrap_or("SKILL.md");
+    let path = resolve_skill_resource_path(&spec.root, requested)?;
+    let raw = std::fs::read_to_string(&path).map_err(|err| {
         anyhow!(i18n::t_with_params(
             "tool.skill_call.read_failed",
             &HashMap::from([("detail".to_string(), err.to_string())]),
         ))
     })?;
-    let tree = build_skill_tree(&spec.root);
-    let path = absolute_path_string_from_text(&spec.path);
+    let selected = if let Some(section) = payload
+        .section
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        select_skill_section(&raw, section)
+            .ok_or_else(|| anyhow!(format!("skill section `{section}` was not found")))?
+    } else {
+        raw
+    };
     let root = absolute_path_string(&spec.root);
-    let content = render_skill_markdown_for_model(&content, &root);
+    let rendered = render_skill_markdown_for_model(&selected, &root);
+    let start_line = payload.start_line.unwrap_or(1).max(1);
+    let line_limit = payload
+        .line_limit
+        .unwrap_or(DEFAULT_READ_LINE_LIMIT)
+        .clamp(1, MAX_READ_LINE_LIMIT);
+    let (content, end_line, truncated) = take_skill_lines(&rendered, start_line, line_limit);
     Ok(build_model_tool_success(
-        "skill_call",
+        "skill_read",
         "completed",
-        format!("Loaded skill {}.", spec.name),
+        format!("Read {} from skill {}.", requested, spec.name),
         json!({
             "name": spec.name,
-            "description": spec.description,
-            "path": path,
-            "root": root,
+            "path": relative_skill_path(&spec.root, &path),
             "content": content,
-            "tree": tree
+            "start_line": start_line,
+            "end_line": end_line,
+            "truncated": truncated,
         }),
     ))
+}
+
+fn resolve_skill_resource_path(root: &Path, requested: &str) -> Result<PathBuf> {
+    let relative = requested.replace('\\', "/");
+    let relative = relative.strip_prefix("./").unwrap_or(&relative);
+    let relative_path = Path::new(relative);
+    if relative.is_empty()
+        || relative_path.is_absolute()
+        || relative_path
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        return Err(anyhow!(
+            "skill resource path must stay inside the skill root"
+        ));
+    }
+    let candidate = root.join(relative_path);
+    let canonical_root = root
+        .canonicalize()
+        .map_err(|err| anyhow!(format!("skill root unavailable: {err}")))?;
+    let canonical = candidate
+        .canonicalize()
+        .map_err(|err| anyhow!(format!("skill resource not found: {err}")))?;
+    if !canonical.starts_with(&canonical_root) {
+        return Err(anyhow!(
+            "skill resource path must stay inside the skill root"
+        ));
+    }
+    Ok(canonical)
+}
+
+fn relative_skill_path(root: &Path, path: &Path) -> String {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
+fn parse_frontmatter_value(frontmatter: &str, key: &str) -> Option<String> {
+    let value: YamlValue = serde_yaml::from_str(frontmatter).ok()?;
+    value
+        .get(key)
+        .and_then(YamlValue::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn truncate_skill_text(value: &str, max_chars: usize) -> String {
+    let value = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    if value.chars().count() <= max_chars {
+        return value;
+    }
+    let mut result = value
+        .chars()
+        .take(max_chars.saturating_sub(1))
+        .collect::<String>();
+    result.push('…');
+    result
+}
+
+fn select_skill_section(raw: &str, section: &str) -> Option<String> {
+    let wanted = section.trim().trim_start_matches('#').trim();
+    if wanted.is_empty() {
+        return None;
+    }
+    let lines = raw.lines().collect::<Vec<_>>();
+    let start = lines.iter().position(|line| {
+        let heading = line.trim().trim_start_matches('#').trim();
+        !heading.is_empty() && heading.eq_ignore_ascii_case(wanted)
+    })?;
+    let level = lines[start].chars().take_while(|ch| *ch == '#').count();
+    let end = lines
+        .iter()
+        .enumerate()
+        .skip(start + 1)
+        .find(|(_, line)| {
+            let trimmed = line.trim();
+            let next_level = trimmed.chars().take_while(|ch| *ch == '#').count();
+            next_level > 0 && next_level <= level
+        })
+        .map(|(index, _)| index)
+        .unwrap_or(lines.len());
+    Some(lines[start..end].join("\n"))
+}
+
+fn take_skill_lines(raw: &str, start_line: usize, line_limit: usize) -> (String, usize, bool) {
+    let lines = raw.lines().collect::<Vec<_>>();
+    let start = start_line.saturating_sub(1).min(lines.len());
+    let end = (start + line_limit).min(lines.len());
+    let mut content = lines[start..end].join("\n");
+    let mut truncated = end < lines.len();
+    if content.len() > MAX_READ_BYTES {
+        let mut bytes = content.into_bytes();
+        bytes.truncate(MAX_READ_BYTES);
+        content = String::from_utf8_lossy(&bytes).into_owned();
+        truncated = true;
+    }
+    (content, end, truncated)
 }
 
 fn resolve_skill_call_spec_from_roots(
@@ -241,13 +437,6 @@ fn absolute_path_string(path: &Path) -> String {
         }
     }
     text.replace('\\', "/")
-}
-
-fn absolute_path_string_from_text(raw: &str) -> String {
-    if raw.trim().is_empty() {
-        return String::new();
-    }
-    absolute_path_string(&PathBuf::from(raw))
 }
 
 #[cfg(test)]
@@ -383,13 +572,11 @@ mod tests {
             .expect("skill call should succeed");
 
         assert_eq!(result["ok"], true);
+        assert_eq!(result["action"], "skill_manifest");
         assert_eq!(result["data"]["name"], "draft_skill");
-        assert_eq!(result["data"]["description"], "draft description");
-        assert_eq!(result["data"]["tree"], json!(["SKILL.md"]));
-        assert!(result["data"]["content"]
-            .as_str()
-            .expect("content string")
-            .contains("/draft-skill"));
+        assert_eq!(result["data"]["summary"], "draft description");
+        assert_eq!(result["data"]["resource_index"], json!(["SKILL.md"]));
+        assert!(result["data"].get("content").is_none());
     }
 
     #[test]

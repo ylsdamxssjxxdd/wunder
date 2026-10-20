@@ -1,8 +1,8 @@
 //! Browser tool surface (provider driven, dsh parity).
 //!
-//! wunder no longer exposes a single opaque `浏览器` tool. Instead the active
-//! [`BrowserProvider`] contributes its native tool surface (`browser_navigate`,
-//! `browser_click`, ...) and every call returns MCP-style content blocks.
+//! wunder exposes the provider's compact browser surface (`browser_navigate`,
+//! `browser_observe`, `browser_interact`, ...). Legacy fine-grained calls stay
+//! executable for compatibility but are never registered for the model.
 //!
 //! The runtime keeps its own safety defaults (URL allow-list, private-network and
 //! `file://` blocking, timeout / download limits) because calls still go through
@@ -13,6 +13,7 @@ use crate::config::Config;
 use crate::schemas::ToolSpec;
 use crate::services::browser::browser_tools_enabled as browser_tools_enabled_impl;
 use crate::services::browser::provider::{active_provider, browser_registry};
+use crate::services::browser::providers::playwright::is_legacy_tool_name;
 use anyhow::{anyhow, Result};
 use base64::Engine;
 use serde_json::{json, Value};
@@ -42,6 +43,16 @@ pub fn browser_tool_names() -> Vec<String> {
         .collect()
 }
 
+/// Migration-only names accepted by execution and authorization checks. They
+/// are intentionally separate from `browser_tool_names()`, which is the model
+/// surface and contains only the compact six canonical tools.
+pub fn browser_legacy_tool_names() -> Vec<String> {
+    crate::services::browser::providers::playwright::LEGACY_TOOL_NAMES
+        .iter()
+        .map(|name| (*name).to_string())
+        .collect()
+}
+
 fn browser_tool_name_set() -> &'static HashSet<String> {
     static NAMES: OnceLock<HashSet<String>> = OnceLock::new();
     NAMES.get_or_init(|| browser_tool_names().into_iter().collect())
@@ -50,12 +61,12 @@ fn browser_tool_name_set() -> &'static HashSet<String> {
 /// Whether `name` is one of the provider's native browser tools.
 pub fn is_browser_tool_name(name: &str) -> bool {
     let trimmed = name.trim();
-    !trimmed.is_empty() && browser_tool_name_set().contains(trimmed)
+    !trimmed.is_empty()
+        && (browser_tool_name_set().contains(trimmed) || is_legacy_tool_name(trimmed))
 }
 
-/// 用户可见清单里代表整组浏览器工具的聚合名。它不是可调用工具：模型侧仍是
-/// provider 的细粒度工具面（`browser_navigate` / `browser_click` / ...），
-/// 运行时在把选择结果交给模型前会把聚合名展开为这些成员名。
+/// 用户可见清单里代表整组浏览器工具的聚合名。它不是可调用工具：模型侧为六个
+/// canonical browser_* 工具，运行时在把选择结果交给模型前展开该聚合条目。
 pub const BROWSER_GROUP_NAME: &str = "浏览器";
 pub const BROWSER_GROUP_NAME_ALIAS: &str = "browser";
 
@@ -241,8 +252,8 @@ fn ensure_png_extension(path: String) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        browser_tool_names, ensure_png_extension, is_browser_group_name, is_browser_tool_name,
-        sanitize_browser_status_for_model, BROWSER_GROUP_NAME,
+        browser_legacy_tool_names, browser_tool_names, ensure_png_extension, is_browser_group_name,
+        is_browser_tool_name, sanitize_browser_status_for_model, BROWSER_GROUP_NAME,
     };
     use serde_json::json;
 
@@ -280,12 +291,15 @@ mod tests {
     }
 
     #[test]
-    fn native_surface_replaces_the_legacy_single_tool() {
+    fn compact_surface_hides_legacy_members_but_keeps_them_callable() {
         let names = browser_tool_names();
+        assert_eq!(names.len(), 6);
         assert!(names.iter().any(|name| name == "browser_navigate"));
-        assert!(names.iter().any(|name| name == "browser_take_screenshot"));
+        assert!(names.iter().any(|name| name == "browser_observe"));
+        assert!(!names.iter().any(|name| name == "browser_take_screenshot"));
         assert!(is_browser_tool_name("browser_navigate"));
         assert!(is_browser_tool_name("browser_status"));
+        assert!(browser_legacy_tool_names().contains(&"browser_status".to_string()));
         // The legacy opaque surface is gone.
         assert!(!is_browser_tool_name("浏览器"));
         assert!(!is_browser_tool_name("browser"));

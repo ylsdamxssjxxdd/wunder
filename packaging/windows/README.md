@@ -12,9 +12,26 @@
 
 当前约定：
 
-- Win7 `setup.exe` 安装包默认不再内置 Python、Git 与 ripgrep。
-- 如需 Python/Git/ripgrep，请在蛹设置中导入 `wunder-supplement-win7-*.zip`，或手动解压到 `WUNDER_HOME`（默认用户主目录下的 `.wunder`）。
-- 两端自动识别共享 home 中的 `opt/python`、`opt/git`、`opt/rg` 与 `opt/ffmpeg`；蛹对安装目录旧 `opt/` 保留读取回退，新导入不再写入安装目录。
+- `build.bat pack -a win7-x86` 生成单文件 `wunder-<版本>-win7-x86-setup.exe`；默认只安装蛹和舵机，Python/Git/ripgrep/ffmpeg/内置浏览器在安装向导中按需勾选，默认全部不勾选。组件页提供“全选组件”，只勾选补充组件，不自动勾选桌面快捷方式。
+- 安装向导允许改安装目录，默认 `%USERPROFILE%\.wunder`。安装根会写入 `.wunder-home`，蛹和舵机启动时以该根作为 `WUNDER_HOME`；显式设置的非空 `WUNDER_HOME` 优先。
+- 安装目录同时保存配置、会话、工作区、日志和 `opt/` 补充组件；迁移时复制整个安装根。
+- 选中已存在的组件时，安装器先清空对应 `opt/<component>`，再写入新版本；`config`、`data`、`workspace`、`logs` 等用户数据不会删除。
+- 卸载器只移除 `bin`、`.wunder-home` 和安装时选择的组件目录，保留用户数据。
+- 补充包仍可单独导入：在蛹设置中选择“导入补充包”，或手动解压到 `WUNDER_HOME`。两端自动识别共享 home 中的 `opt/python`、`opt/git`、`opt/rg`、`opt/ffmpeg` 与 `opt/browser`。
+
+## 安装器打包
+
+先构建蛹和舵机，再准备补充包 zip，然后在仓库根目录执行：
+
+```bat
+build.bat pack -a win7-x86
+```
+
+输入默认从 `target/frontend-slint/dist/win7-x86`、`target/cli/dist/win7-x86`、`dist/win7-x86`、`target/installer/payload/win7-x86` 和补充包构建目录查找；也可以用 `-Desktop`、`-Cli`、`-Supplement` 显式指定。产物在 `target/installer/dist/win7-x86/`，同时生成 `.sha256` 和 `.manifest.json`。`-CoreOnly` 用于快速验证核心安装器。
+
+Windows 安装包优先使用离线 SDK 的 `Rust-builder/win7/offline/tools/inno-setup/app/ISCC.exe`（Inno Setup 6.7.3，版本与 SHA256 见同目录 `VERSION.txt`）。也可以用 `-Iscc` 或 `WUNDER_ISCC` 指定已有编译器，`-NoDownload` 禁止联网；只有离线编译器缺失且允许下载时才会准备到 `temp_dir/tools/inno-setup`。SDK 根目录可用 `WUNDER_WIN7_BUILDER_ROOT` 或 `WUNDER_BUILDER_ROOT` 覆盖。
+
+补充包的版本与下载说明见下文。
 
 ## 版本选择
 
@@ -94,6 +111,7 @@ Win7 最高只支持到 Chrome 109（`109.0.5414.x`，最后一个支持 Windows
   - 或在 `packaging/windows/scripts/win7-supplement-manifest.json` 的顶层 `browser.archivePath` 填入压缩包路径。
   - `-BrowserArchivePath` 既接受 `.zip` 压缩包，也接受已解开的浏览器目录。不提供任何路径时行为与之前一致：包内不含浏览器，不报错。
 - 获取途径：Chrome 官方旧版离线安装包（win32 的 109.0.5414.x）或可信镜像；解出安装包内的 `chrome.7z`/`chrome-win` 目录即可投喂。浏览器二进制是否允许再分发由投喂者自行确认，本仓库不替使用者做合规结论。
+- CI 构建：`.github/workflows/desktop-supplements.yml` 的 build-win7-ia32 已默认投喂 Chromium 109.0.5414.120 win32（Hibbiki/chromium-win32 发布页 `v109.0.5414.120-r1070088` 的 `mini_installer.sync.exe`，pin 死 URL 并强制 SHA256 校验，浏览器 pin 以字面量并入 win7 缓存键，变更即触发重建）；本地手工构建仍走上面的 `-BrowserArchivePath`。
 - 运行时如何被发现：在蛹设置中导入补充包后，运行时会自动探测 `WUNDER_HOME/opt/browser/chrome-win/chrome.exe`（回退 `opt/browser/chrome.exe`），`browser_*` 工具直接使用，无需手工修改 `wunder.yaml`。
 
 ## 使用方式

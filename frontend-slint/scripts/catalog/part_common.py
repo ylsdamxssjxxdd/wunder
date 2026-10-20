@@ -188,7 +188,14 @@ ENTRIES = [
     ("preview_close", "关闭预览", "Close preview"),
 
     # ---- workspace sidebar (two-column layout) ----
-    ("sidebar_workspaces", "工作区", "Workspaces"),
+    ("sb_device_local", "本地", "Local"),
+    ("sb_device_cloud", "云端", "Cloud"),
+    ("sb_device_local_host", "蛹", "Pupa"),
+    ("sb_device_cloud_host", "蜂巢", "Hive"),
+    ("sb_device_select", "切换设备", "Switch device"),
+    ("sb_device_workspaces", "{} 个工作区", "{} workspaces", ["count"]),
+    ("sb_device_no_workspaces", "暂无工作区", "No workspaces"),
+    ("sb_device_empty", "暂无工作区，点击右上角 + 新建", "No workspaces yet. Use + to create one."),
     ("sidebar_settings", "设置", "Settings"),
     ("ws_menu_new_thread", "新建线程", "New thread"),
     ("ws_menu_edit", "编辑工作区", "Edit workspace"),

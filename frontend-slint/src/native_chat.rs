@@ -189,21 +189,18 @@ struct InquiryQuestionState {
 
 /// The live panel of one thread. The tool bounds a payload at four questions of
 /// four options, so the whole panel is small enough to keep verbatim and the UI
-/// only ever sees the current page.
+/// only ever sees the current page — or every question once expanded, the same
+/// toggle the web client's panel carries.
 #[derive(Clone, Default)]
 struct InquiryState {
     questions: Vec<InquiryQuestionState>,
     page: usize,
+    expanded: bool,
 }
 
 impl InquiryState {
     fn current_index(&self) -> usize {
         self.page.min(self.questions.len().saturating_sub(1))
-    }
-
-    fn current_mut(&mut self) -> Option<&mut InquiryQuestionState> {
-        let index = self.current_index();
-        self.questions.get_mut(index)
     }
 
     /// A question counts as answered by a tick, the free text or the 无偏好
@@ -222,8 +219,7 @@ impl InquiryState {
                 .all(|question| Self::is_answered(question))
     }
 
-    fn toggle_option(&mut self, option: usize) {
-        let index = self.current_index();
+    fn toggle_option(&mut self, index: usize, option: usize) {
         let Some(question) = self.questions.get_mut(index) else {
             return;
         };
@@ -244,8 +240,7 @@ impl InquiryState {
         question.options[option].selected = next;
     }
 
-    fn toggle_no_preference(&mut self) {
-        let index = self.current_index();
+    fn toggle_no_preference(&mut self, index: usize) {
         let Some(question) = self.questions.get_mut(index) else {
             return;
         };
@@ -257,6 +252,32 @@ impl InquiryState {
         question.other.clear();
         for option in question.options.iter_mut() {
             option.selected = false;
+        }
+    }
+
+    /// 使用推荐 ticks every recommended option of the question — the quick
+    /// answer the web client's caret menu offers next to 无偏好.
+    fn use_recommended(&mut self, index: usize) {
+        let Some(question) = self.questions.get_mut(index) else {
+            return;
+        };
+        let recommended: Vec<usize> = question
+            .options
+            .iter()
+            .enumerate()
+            .filter_map(|(position, option)| option.recommended.then_some(position))
+            .collect();
+        if recommended.is_empty() {
+            return;
+        }
+        question.no_preference = false;
+        question.other.clear();
+        for (position, option) in question.options.iter_mut().enumerate() {
+            option.selected = if question.multiple {
+                recommended.contains(&position)
+            } else {
+                position == recommended[0]
+            };
         }
     }
 
@@ -334,7 +355,7 @@ fn inquiry_from_payload(data: &Value) -> Option<InquiryState> {
         })
         .take(4)
         .collect();
-    (!questions.is_empty()).then_some(InquiryState { questions, page: 0 })
+    (!questions.is_empty()).then_some(InquiryState { questions, page: 0, expanded: false })
 }
 
 struct State {
@@ -522,6 +543,9 @@ struct TerminalSession {
 
 struct WorkspaceTerminal {
     session: Option<TerminalSession>,
+    /// True while the session worker is still starting the shell; the entry
+    /// reserves the workspace so a second toggle never spawns a duplicate.
+    starting: bool,
     workspace_name: String,
     workspace_root: String,
     projection: Option<crate::terminal_session::Projection>,
@@ -604,7 +628,7 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
     bind_voice_recording(app, state.clone());
     bind_stop(app, state.clone());
     bind_goal(app, state.clone());
-    bind_activity(app, state.clone());
+    bind_activity(app);
     bind_inquiry(app, state.clone());
     bind_queue(app, state.clone());
     start_goal_clock(app.as_weak());
@@ -793,7 +817,10 @@ fn reset_activity(app: &MainWindow) {
     app.set_activity_steps_done(0);
     app.set_activity_steps_total(0);
     app.set_activity_plan_explanation("".into());
+    app.set_activity_plan_current("".into());
+    app.set_activity_plan_position(0);
     app.set_activity_plan_steps(ModelRc::default());
+    app.set_activity_plan_expanded(false);
 }
 
 /// Change key of the plan projection: a streaming flush runs per frame, so
@@ -812,6 +839,19 @@ fn plan_signature(explanation: &str, steps: &[(String, String)]) -> String {
         sig.push_str(step);
     }
     sig
+}
+
+/// The step the capsule names: the running one, else the first unfinished one;
+/// `(empty, 0)` once every step is done (the counter then reads done/total).
+fn plan_current(steps: &[(String, String)]) -> (String, i32) {
+    let index = steps
+        .iter()
+        .position(|(_, status)| status == "in_progress")
+        .or_else(|| steps.iter().position(|(_, status)| status != "completed"));
+    match index {
+        Some(index) => (steps[index].0.clone(), index as i32 + 1),
+        None => (String::new(), 0),
+    }
 }
 
 /// Publish the status-dock projection from the live turn: the plan capsule and
@@ -833,6 +873,14 @@ fn publish_activity(app: &MainWindow, active: &TurnOutput, last_sig: &str) -> St
     app.set_activity_steps_done(done);
     app.set_activity_steps_total(total);
     app.set_activity_plan_explanation(active.plan_explanation.as_str().into());
+    let (current, position) = plan_current(&active.plan_steps);
+    app.set_activity_plan_current(current.into());
+    app.set_activity_plan_position(position);
+    // A plan that went away must also fold the card back in, the way the web
+    // client resets its popover when the plan disappears.
+    if total == 0 {
+        app.set_activity_plan_expanded(false);
+    }
     let sig = plan_signature(&active.plan_explanation, &active.plan_steps);
     if sig != last_sig {
         let rows: Vec<PlanStep> = active
@@ -848,31 +896,87 @@ fn publish_activity(app: &MainWindow, active: &TurnOutput, last_sig: &str) -> St
     sig
 }
 
-fn bind_activity(app: &MainWindow, state: Rc<RefCell<State>>) {
+/// Project a thread's cached plan into the dock while no turn is live, so a
+/// thread switch (or a reopened thread) still shows the plan it last published,
+/// exactly like the web client's composer dock.
+fn publish_idle_plan(app: &MainWindow, state: &State, session: &str) {    let Some((explanation, steps)) = state.plans.get(session) else {
+        reset_activity(app);
+        return;
+    };
+    app.set_activity_running(false);
+    let total = steps.len() as i32;
+    let done = steps
+        .iter()
+        .filter(|(_, status)| status == "completed")
+        .count() as i32;
+    app.set_activity_steps_done(done);
+    app.set_activity_steps_total(total);
+    app.set_activity_plan_explanation(explanation.as_str().into());
+    let (current, position) = plan_current(steps);
+    app.set_activity_plan_current(current.into());
+    app.set_activity_plan_position(position);
+    let rows: Vec<PlanStep> = steps
+        .iter()
+        .map(|(step, status)| PlanStep {
+            step: step.as_str().into(),
+            status: status.as_str().into(),
+        })
+        .collect();
+    app.set_activity_plan_steps(ModelRc::new(VecModel::from(rows)));
+}
+
+/// Restore a reopened thread's interactive metadata from its durable rows: the
+/// last published plan feeds the dock cache and a still-pending 问询面板 comes
+/// back as the card above the composer. The observer calls this once per open,
+/// right after it seeds the compact history.
+pub(crate) fn restore_thread_extras(
+    app: &MainWindow,
+    state: &mut State,
+    session: &str,
+    turns: &[wunder_desktop::NativeChatTurn],
+) {
+    if let Some(plan) = turns.iter().rev().find_map(|turn| turn.plan.clone()) {
+        state.plans.insert(
+            session.to_string(),
+            (
+                plan.explanation,
+                plan.steps
+                    .into_iter()
+                    .map(|step| (step.step, step.status))
+                    .collect(),
+            ),
+        );
+    }
+    if let Some(panel) = turns
+        .iter()
+        .rev()
+        .find_map(|turn| turn.question_panel.clone())
+    {
+        if let Some(inquiry) = inquiry_from_payload(&panel) {
+            state.inquiries.insert(session.to_string(), inquiry);
+        }
+    }
+    publish_idle_plan(app, state, session);
+    publish_inquiry(app, session, state);
+}
+
+fn bind_activity(app: &MainWindow) {
     let weak = app.as_weak();
     app.on_activity_plan_dismiss(move || {
         let Some(app) = weak.upgrade() else { return };
-        // Dismissal clears the UI projection and the turn/cache state, so the
-        // next flush frame cannot silently restore the checklist; a later
-        // plan_update republishes it.
-        app.set_activity_plan_steps(ModelRc::default());
-        app.set_activity_plan_explanation("".into());
-        app.set_activity_steps_done(0);
-        app.set_activity_steps_total(0);
-        let session = app.get_active_session_id().to_string();
-        let mut state = state.borrow_mut();
-        state.plans.remove(&session);
-        state.plan_sig.clear();
-        if let Some(turn) = state.active.as_mut() {
-            turn.output.plan_steps.clear();
-            turn.output.plan_explanation.clear();
-        }
+        // Closing the checklist card is a view action: it folds the popover
+        // back into the capsule and leaves the plan itself published, exactly
+        // like the web client's dock. The plan only goes away when the 计划
+        //面板 publishes an empty one.
+        app.set_activity_plan_expanded(false);
     });
 }
 
-/// Publish one thread's 问询面板: the card is a pure projection of the current
-/// page, and an absent panel always means "hidden".
+/// Publish one thread's 问询面板: the card is a pure projection of the visible
+/// rows (the current page, or every question once expanded), and an absent
+/// panel always means "hidden".
 fn publish_inquiry(app: &MainWindow, session: &str, state: &State) {
+    app.set_title_inquiry_count(state.inquiries.len() as i32);
     let Some(panel) = state
         .inquiries
         .get(session)
@@ -883,17 +987,38 @@ fn publish_inquiry(app: &MainWindow, session: &str, state: &State) {
         app.set_inquiry_session(session.into());
         return;
     };
-    let question = &panel.questions[panel.current_index()];
+    let rows: Vec<InquiryQuestion> = if panel.expanded {
+        panel
+            .questions
+            .iter()
+            .enumerate()
+            .map(|(index, question)| inquiry_row(index, question))
+            .collect()
+    } else {
+        let index = panel.current_index();
+        vec![inquiry_row(
+            index,
+            &panel.questions[index],
+        )]
+    };
     app.set_inquiry_visible(true);
     app.set_inquiry_session(session.into());
     app.set_inquiry_page(panel.current_index() as i32);
     app.set_inquiry_total(panel.questions.len() as i32);
+    app.set_inquiry_expanded(panel.expanded);
     app.set_inquiry_ready(panel.ready());
-    app.set_inquiry_other(question.other.as_str().into());
-    app.set_inquiry_question(InquiryQuestion {
+    app.set_inquiry_questions(ModelRc::new(VecModel::from(rows)));
+}
+
+/// One visible question row. `index` is the question's ordinal in the published
+/// panel (not the row position), which is what every callback addresses.
+fn inquiry_row(index: usize, question: &InquiryQuestionState) -> InquiryQuestion {
+    InquiryQuestion {
+        index: index as i32,
         question: question.question.as_str().into(),
         multiple: question.multiple,
         no_preference: question.no_preference,
+        other: question.other.as_str().into(),
         options: ModelRc::new(VecModel::from(
             question
                 .options
@@ -906,25 +1031,27 @@ fn publish_inquiry(app: &MainWindow, session: &str, state: &State) {
                 })
                 .collect::<Vec<_>>(),
         )),
-    });
-}
-
-/// Take the live free-text row back into state before the card is republished:
-/// the UI owns the caret, Rust owns the answer.
-fn sync_inquiry_other(app: &MainWindow, panel: &mut InquiryState) {
-    let text = app.get_inquiry_other().to_string();
-    if let Some(question) = panel.current_mut() {
-        question.other = text;
     }
 }
 
-/// One panel interaction: pull the live free text in, apply `change`, then
-/// republish the page. The card owns nothing, so a republish is the whole
-/// update path.
+/// Map a row (page position while paged, question ordinal while expanded) back
+/// to the question it edits.
+fn inquiry_question_index(panel: &InquiryState, row: i32) -> usize {
+    if panel.expanded {
+        (row.max(0) as usize).min(panel.questions.len().saturating_sub(1))
+    } else {
+        panel.current_index()
+    }
+}
+
+/// One panel interaction: apply `change` to the addressed question, then
+/// republish the rows. The card owns nothing, so a republish is the whole
+/// update path; free text reaches here on every keystroke and never republishes.
 fn inquiry_interaction(
     weak: &slint::Weak<MainWindow>,
     state: &RefCell<State>,
-    change: &dyn Fn(&mut InquiryState),
+    row: i32,
+    change: &dyn Fn(&mut InquiryState, usize),
 ) {
     let Some(app) = weak.upgrade() else { return };
     let session = app.get_active_session_id().to_string();
@@ -932,8 +1059,8 @@ fn inquiry_interaction(
     let Some(panel) = current.inquiries.get_mut(&session) else {
         return;
     };
-    sync_inquiry_other(&app, panel);
-    change(panel);
+    let index = inquiry_question_index(panel, row);
+    change(panel, index);
     publish_inquiry(&app, &session, &current);
 }
 
@@ -942,29 +1069,71 @@ fn bind_inquiry(app: &MainWindow, state: Rc<RefCell<State>>) {
     app.on_inquiry_option_clicked({
         let weak = weak.clone();
         let state = state.clone();
-        move |option| {
-            inquiry_interaction(&weak, &state, &move |panel| {
-                panel.toggle_option(option.max(0) as usize)
+        move |row, option| {
+            inquiry_interaction(&weak, &state, row, &move |panel, index| {
+                panel.toggle_option(index, option.max(0) as usize)
             });
         }
     });
     app.on_inquiry_no_preference({
         let weak = weak.clone();
         let state = state.clone();
-        move || inquiry_interaction(&weak, &state, &|panel| panel.toggle_no_preference())
+        move |row| {
+            inquiry_interaction(&weak, &state, row, &|panel, index| {
+                panel.toggle_no_preference(index)
+            });
+        }
+    });
+    app.on_inquiry_use_recommended({
+        let weak = weak.clone();
+        let state = state.clone();
+        move |row| {
+            inquiry_interaction(&weak, &state, row, &|panel, index| {
+                panel.use_recommended(index)
+            });
+        }
+    });
+    app.on_inquiry_other_edited({
+        let weak = weak.clone();
+        let state = state.clone();
+        move |row, text| {
+            // Free text lands without a republish: the TextInput keeps the
+            // caret, Rust keeps the answer, and the next republish carries it.
+            let Some(app) = weak.upgrade() else { return };
+            let session = app.get_active_session_id().to_string();
+            let mut current = state.borrow_mut();
+            let Some(panel) = current.inquiries.get_mut(&session) else {
+                return;
+            };
+            let index = inquiry_question_index(panel, row);
+            if let Some(question) = panel.questions.get_mut(index) {
+                question.other = text.to_string();
+                if !question.other.trim().is_empty() {
+                    question.no_preference = false;
+                }
+                // Ready state moves with every keystroke, but the rows model is
+                // left alone so the caret and the input method never reset.
+                app.set_inquiry_ready(panel.ready());
+            }
+        }
     });
     app.on_inquiry_page_move({
         let weak = weak.clone();
         let state = state.clone();
         move |delta| {
-            inquiry_interaction(&weak, &state, &move |panel| panel.move_page(delta));
+            inquiry_interaction(&weak, &state, -1, &move |panel, _| {
+                panel.move_page(delta);
+            });
         }
     });
-    app.on_inquiry_dismiss(move || {
-        let Some(app) = weak.upgrade() else { return };
-        let session = app.get_active_session_id().to_string();
-        state.borrow_mut().inquiries.remove(&session);
-        publish_inquiry(&app, &session, &state.borrow());
+    app.on_inquiry_expanded_toggle({
+        let weak = weak.clone();
+        let state = state.clone();
+        move || {
+            inquiry_interaction(&weak, &state, -1, &move |panel, _| {
+                panel.expanded = !panel.expanded;
+            });
+        }
     });
 }
 
@@ -1493,6 +1662,11 @@ fn bind_reasoning_effort(app: &MainWindow, state: Rc<RefCell<State>>) {
 
 fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
     let weak = app.as_weak();
+    // Serializes the worker half of a send: the engine parks a busy thread in
+    // arrival order, so the completion of an earlier click must be posted
+    // before the next send_chat starts, or the live slot could go to a turn
+    // the engine actually queued behind another one.
+    let send_lock = Arc::new(std::sync::Mutex::new(()));
     app.on_send_message(move || {
         let Some(app) = weak.upgrade() else { return };
         if app.get_command_pending() {
@@ -1559,7 +1733,7 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
             .get(&session)
             .filter(|panel| panel.ready())
             .cloned();
-        let content = match answered {
+        let content = match answered.as_ref() {
             Some(panel) => {
                 let reply = panel.reply();
                 if content.is_empty() {
@@ -1570,8 +1744,8 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
             }
             None => content,
         };
-        let attachments = app
-            .get_pending_attachments()
+        let pending_attachments = app.get_pending_attachments().iter().collect::<Vec<_>>();
+        let attachments = pending_attachments
             .iter()
             .map(|attachment| NativeChatAttachment {
                 name: attachment.name.to_string(),
@@ -1607,80 +1781,141 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
             st.send_seq += 1;
             format!("native-send-{}-{}", std::process::id(), st.send_seq)
         };
-        let stream = match state.borrow().desktop.send_chat(NativeChatInput {
-            session_id: session.clone(),
-            content: content.clone(),
-            client_message_id: Some(client_message_id.clone()),
-            reasoning_effort,
-            attachments,
-        }) {
-            Ok(stream) => stream,
-            Err(error) => {
-                app.set_status(format!("无法发送：{error}").into());
-                return;
-            }
-        };
-        if state.borrow().active.is_some() {
-            // A turn already owns the live slot, so this one waits on its own
-            // subscriber: the pump promotes whichever parked stream starts, and
-            // the strip shows the engine's queue until then.
-            state.borrow_mut().parked.push_back(ParkedTurn::new(
-                stream,
-                session.clone(),
-                display_content.clone(),
-                client_message_id,
-            ));
-            app.set_draft("".into());
-            app.set_pending_attachments(ModelRc::default());
-            state.borrow_mut().inquiries.remove(&session);
-            publish_inquiry(&app, &session, &state.borrow());
-            refresh_queue_async(&app, &state, &session);
-            queue::schedule_due(
-                &mut state.borrow_mut().queue_due,
-                Duration::from_millis(220),
-            );
-            app.set_status("已加入等待发送".into());
-            return;
-        }
-        // The live turn appends to the timeline that already holds this
-        // thread's history; nothing is rebuilt from the conversation list.
-        let timeline = state.borrow().timeline.clone();
-        {
-            let mut live = timeline.borrow_mut();
-            live.set_highlight(true);
-            live.begin_turn(&client_message_id, &display_content);
-            live.set_turn_status("请求中", 0);
-            publish_timeline(&app, &live);
-        }
+        // send_chat walks the thread-lease SQLite path, far too slow for the
+        // click handler on a cold disk. The composer acknowledges the send at
+        // once — draft, chips and the answered panel clear exactly as before —
+        // and the worker wires the returned stream into the live slot or the
+        // parked list through the event loop. A failure restores the composer,
+        // so nothing the user typed is lost.
         app.set_draft("".into());
         app.set_pending_attachments(ModelRc::default());
         // The answered panel has been carried out by this turn.
         state.borrow_mut().inquiries.remove(&session);
         publish_inquiry(&app, &session, &state.borrow());
-        app.set_busy(true);
-        // A fresh turn starts without a stale queue banner.
-        app.set_cloud_queue_position(-1);
-        set_session_status(&app, &session, "running");
-        app.set_follow_output(true);
-        app.set_stopping(false);
-        app.set_stream_bytes(0);
-        app.set_stream_updates(0);
-        app.set_stream_max_ui_ms(0.0);
-        app.set_stream_max_backlog(0);
-        state.borrow_mut().observation.detach();
-        // Plan state is session-scoped: a new turn resumes the thread's last
-        // published checklist; file counters always start from zero.
-        let mut output = TurnOutput::new(session.clone(), timeline);
-        if let Some((explanation, steps)) = state.borrow().plans.get(&session) {
-            output.plan_explanation = explanation.clone();
-            output.plan_steps = steps.clone();
-        }
-        state.borrow_mut().active = Some(Active {
-            stream,
-            output,
-            client_message_id,
+        let desktop = state.borrow().desktop.clone();
+        let send_order = Arc::clone(&send_lock);
+        let weak = weak.clone();
+        std::thread::spawn(move || {
+            let _order = send_order.lock().ok();
+            let result = desktop.send_chat(NativeChatInput {
+                session_id: session.clone(),
+                content: content.clone(),
+                client_message_id: Some(client_message_id.clone()),
+                reasoning_effort,
+                attachments,
+            });
+            let _ = weak.upgrade_in_event_loop(move |app| {
+                CHAT_STATE.with(|slot| {
+                    let Some(state) = slot.borrow().upgrade() else {
+                        return;
+                    };
+                    let same_thread = app.get_active_session_id() == session;
+                    let stream = match result {
+                        Ok(stream) => stream,
+                        Err(error) => {
+                            // Give the composer back what the failed send
+                            // consumed, unless the user already typed on.
+                            if same_thread {
+                                if app.get_draft().trim().is_empty() {
+                                    app.set_draft(content.as_str().into());
+                                }
+                                if app.get_pending_attachments().row_count() == 0
+                                    && !pending_attachments.is_empty()
+                                {
+                                    app.set_pending_attachments(ModelRc::new(VecModel::from(
+                                        pending_attachments,
+                                    )));
+                                }
+                            } else {
+                                let mut st = state.borrow_mut();
+                                let untouched = st
+                                    .drafts
+                                    .get(&session)
+                                    .is_none_or(|draft| draft.trim().is_empty());
+                                if untouched {
+                                    st.drafts.insert(session.clone(), content.clone());
+                                }
+                            }
+                            if let Some(panel) = answered {
+                                let mut st = state.borrow_mut();
+                                st.inquiries.entry(session.clone()).or_insert(panel);
+                                if same_thread {
+                                    publish_inquiry(&app, &session, &st);
+                                }
+                            }
+                            app.set_status(format!("无法发送：{error}").into());
+                            return;
+                        }
+                    };
+                    if !same_thread {
+                        // The view moved to another thread while the request was
+                        // in flight. The engine owns the submitted turn; dropping
+                        // the subscriber releases only this window's channel.
+                        return;
+                    }
+                    if state.borrow().active.is_some() {
+                        // A turn already owns the live slot, so this one waits on
+                        // its own subscriber: the pump promotes whichever parked
+                        // stream starts, and the strip shows the engine's queue
+                        // until then.
+                        if queue::parked_is_full(&state.borrow().parked) {
+                            app.set_status("等待发送的轮次已满，请先撤下几条或稍候".into());
+                            refresh_queue_async(&app, &state, &session);
+                            return;
+                        }
+                        state.borrow_mut().parked.push_back(ParkedTurn::new(
+                            stream,
+                            session.clone(),
+                            display_content.clone(),
+                            client_message_id,
+                        ));
+                        refresh_queue_async(&app, &state, &session);
+                        queue::schedule_due(
+                            &mut state.borrow_mut().queue_due,
+                            Duration::from_millis(220),
+                        );
+                        app.set_status("已加入等待发送".into());
+                        return;
+                    }
+                    // The live turn appends to the timeline that already holds
+                    // this thread's history; nothing is rebuilt from the
+                    // conversation list.
+                    let timeline = state.borrow().timeline.clone();
+                    {
+                        let mut live = timeline.borrow_mut();
+                        live.set_highlight(true);
+                        live.begin_turn(&client_message_id, &display_content);
+                        live.set_turn_status("请求中", 0);
+                        publish_timeline(&app, &live);
+                    }
+                    app.set_busy(true);
+                    // A fresh turn starts without a stale queue banner.
+                    app.set_cloud_queue_position(-1);
+                    set_session_status(&app, &session, "running");
+                    app.set_follow_output(true);
+                    app.set_stopping(false);
+                    app.set_stream_bytes(0);
+                    app.set_stream_updates(0);
+                    app.set_stream_max_ui_ms(0.0);
+                    app.set_stream_max_backlog(0);
+                    state.borrow_mut().observation.detach();
+                    // Plan state is session-scoped: a new turn resumes the
+                    // thread's last published checklist; file counters always
+                    // start from zero.
+                    let mut output = TurnOutput::new(session.clone(), timeline);
+                    if let Some((explanation, steps)) = state.borrow().plans.get(&session) {
+                        output.plan_explanation = explanation.clone();
+                        output.plan_steps = steps.clone();
+                    }
+                    state.borrow_mut().active = Some(Active {
+                        stream,
+                        output,
+                        client_message_id,
+                    });
+                    start_timer(&app, state.clone());
+                });
+            });
         });
-        start_timer(&app, state.clone());
     });
 }
 
@@ -1940,6 +2175,8 @@ fn request_queue_refresh(
 
 /// 撤下一轮：取消引擎里那条还没开跑的轮次，并丢弃本窗口为它持有的订阅。
 /// `refill` puts the text back into the input (编辑), otherwise it is gone.
+/// The engine call is a SQLite write, so it runs on a worker; the click
+/// returns immediately and the outcome lands through the event loop.
 fn withdraw_queue_turn(
     app: &MainWindow,
     state: &Rc<RefCell<State>>,
@@ -1947,58 +2184,68 @@ fn withdraw_queue_turn(
     queue_id: &str,
     refill: bool,
 ) {
-    let client_id = state
-        .borrow()
-        .queue_cache
-        .iter()
-        .find(|row| row.queue_id == queue_id)
-        .map(|row| row.client_message_id.clone())
-        .unwrap_or_default();
-    let root_turn_id = state
-        .borrow()
-        .queue_cache
-        .iter()
-        .find(|row| row.queue_id == queue_id)
-        .map(|row| row.root_turn_id.clone())
-        .unwrap_or_default();
-    let desktop = state.borrow().desktop.clone();
-    let content = match desktop.withdraw_queue_turn(session, queue_id) {
-        Ok(content) => Some(content),
-        Err(error) => {
-            app.set_status(format!("撤下失败：{error}").into());
-            None
-        }
+    let (client_id, root_turn_id, desktop) = {
+        let st = state.borrow();
+        let row = st.queue_cache.iter().find(|row| row.queue_id == queue_id);
+        (
+            row.map(|row| row.client_message_id.clone())
+                .unwrap_or_default(),
+            row.map(|row| row.root_turn_id.clone()).unwrap_or_default(),
+            st.desktop.clone(),
+        )
     };
-    if content.is_some() && !root_turn_id.is_empty() {
-        let mut st = state.borrow_mut();
-        if st.observation.remove_turn(&root_turn_id) {
-            let timeline = st.timeline.clone();
-            st.observation.publish(app, &timeline);
-        }
-    }
-    if content.is_some() && !client_id.is_empty() {
-        let mut st = state.borrow_mut();
-        if let Some(index) = st
-            .parked
-            .iter()
-            .position(|entry| entry.client_message_id == client_id)
-        {
-            st.parked.remove(index);
-        }
-    }
-    refresh_queue_async(app, state, session);
-    if refill {
-        if let Some(text) = content.filter(|text| !text.trim().is_empty()) {
-            let draft = app.get_draft().to_string();
-            let merged = if draft.trim().is_empty() {
-                text
-            } else {
-                format!("{draft}\n{text}")
-            };
-            app.set_draft(merged.into());
-            queue::reset_recall(&mut state.borrow_mut().recall);
-        }
-    }
+    let session = session.to_string();
+    let queue_id = queue_id.to_string();
+    let weak = app.as_weak();
+    std::thread::spawn(move || {
+        let result = desktop.withdraw_queue_turn(&session, &queue_id);
+        let _ = weak.upgrade_in_event_loop(move |app| {
+            CHAT_STATE.with(|slot| {
+                let Some(state) = slot.borrow().upgrade() else {
+                    return;
+                };
+                let content = match result {
+                    Ok(content) => Some(content),
+                    Err(error) => {
+                        app.set_status(format!("撤下失败：{error}").into());
+                        None
+                    }
+                };
+                if content.is_some() && !root_turn_id.is_empty() {
+                    let mut st = state.borrow_mut();
+                    if st.observation.remove_turn(&root_turn_id) {
+                        let timeline = st.timeline.clone();
+                        st.observation.publish(&app, &timeline);
+                    }
+                }
+                if content.is_some() && !client_id.is_empty() {
+                    let mut st = state.borrow_mut();
+                    if let Some(index) = st
+                        .parked
+                        .iter()
+                        .position(|entry| entry.client_message_id == client_id)
+                    {
+                        st.parked.remove(index);
+                    }
+                }
+                refresh_queue_async(&app, &state, &session);
+                // The draft belongs to the thread on screen; another selection
+                // since the click means the text stays gone from the composer.
+                if refill && app.get_active_session_id() == session {
+                    if let Some(text) = content.filter(|text| !text.trim().is_empty()) {
+                        let draft = app.get_draft().to_string();
+                        let merged = if draft.trim().is_empty() {
+                            text
+                        } else {
+                            format!("{draft}\n{text}")
+                        };
+                        app.set_draft(merged.into());
+                        queue::reset_recall(&mut state.borrow_mut().recall);
+                    }
+                }
+            });
+        });
+    });
 }
 
 /// The composer's queue strip and the ArrowUp/ArrowDown walk over the messages
@@ -2012,12 +2259,22 @@ fn bind_queue(app: &MainWindow, state: Rc<RefCell<State>>) {
         if session.is_empty() {
             return;
         }
-        let desktop = state_interject.borrow().desktop.clone();
-        match desktop.interject_queue_turn(&session, queue_id.as_str()) {
-            Ok(()) => app.set_status("已插话，将在当前动作边界优先执行".into()),
-            Err(error) => app.set_status(format!("插话失败：{error}").into()),
-        }
-        refresh_queue_async(&app, &state_interject, &session);
+        // 插话 is a SQLite write; run it on a worker and post the outcome back.
+        let (desktop, generation) = {
+            let st = state_interject.borrow();
+            (st.desktop.clone(), st.queue_generation.clone())
+        };
+        let weak = app.as_weak();
+        std::thread::spawn(move || {
+            let result = desktop.interject_queue_turn(&session, queue_id.as_str());
+            let _ = weak.upgrade_in_event_loop(move |app| {
+                match result {
+                    Ok(()) => app.set_status("已插话，将在当前动作边界优先执行".into()),
+                    Err(error) => app.set_status(format!("插话失败：{error}").into()),
+                }
+                request_queue_refresh(&app, desktop, session, generation);
+            });
+        });
     });
 
     let weak = app.as_weak();
@@ -2065,11 +2322,22 @@ fn bind_queue(app: &MainWindow, state: Rc<RefCell<State>>) {
         if next.is_empty() {
             return;
         }
-        let desktop = state_reorder.borrow().desktop.clone();
-        if let Err(error) = desktop.reorder_queue_turns(&session, &next) {
-            app.set_status(format!("顺序未保存：{error}").into());
-        }
-        refresh_queue_async(&app, &state_reorder, &session);
+        // 拖拽排序 writes the whole order back through SQLite; run it on a
+        // worker and refresh the strip once the write lands.
+        let (desktop, generation) = {
+            let st = state_reorder.borrow();
+            (st.desktop.clone(), st.queue_generation.clone())
+        };
+        let weak = app.as_weak();
+        std::thread::spawn(move || {
+            let result = desktop.reorder_queue_turns(&session, &next);
+            let _ = weak.upgrade_in_event_loop(move |app| {
+                if let Err(error) = result {
+                    app.set_status(format!("顺序未保存：{error}").into());
+                }
+                request_queue_refresh(&app, desktop, session, generation);
+            });
+        });
     });
 
     // The walk is a pure read over this thread's timeline, so it needs neither
@@ -2108,6 +2376,10 @@ fn set_session_status(app: &MainWindow, session: &str, status: &str) {
             }
         }
     }
+    // The sidebar tree snapshots the conversation list, so it needs its own
+    // point update; the periodic catalogue poll is only a backstop, not the
+    // path a live transition should wait for.
+    crate::navigation_ui::update_thread_status(app, session, status);
 }
 
 // Keep the work-dock activity control in sync without inspecting message text.
@@ -2115,17 +2387,20 @@ fn set_session_status(app: &MainWindow, session: &str, status: &str) {
 // or pending threads contribute to the count and optional list filter.
 fn update_active_thread_filter(app: &MainWindow, rows: impl IntoIterator<Item = Conversation>) {
     let mut count = 0;
+    let mut running_count = 0;
     let mut running = false;
     for row in rows {
         let status = runtime_status_kind(row.runtime_status.as_str());
         if status == "running" {
             running = true;
+            running_count += 1;
             count += 1;
         } else if status == "pending" {
             count += 1;
         }
     }
     app.set_active_thread_count(count);
+    app.set_title_running_count(running_count);
     app.set_active_thread_status(
         if running {
             "running"
@@ -2537,8 +2812,11 @@ fn start_timer(app: &MainWindow, state: Rc<RefCell<State>>) {
                         // The 问询面板 tool publishes its questions once and the
                         // turn ends right after, so the card is driven straight
                         // from this event rather than from the per-frame flush.
+                        // The stream wraps every payload as
+                        // `{session_id, timestamp, data}`, so the questions sit
+                        // one level deeper than the raw emit.
                         if event["event"].as_str() == Some("question_panel") {
-                            if let Some(panel) = inquiry_from_payload(&event["data"]) {
+                            if let Some(panel) = inquiry_from_payload(event_data(&event)) {
                                 let session = active.session.clone();
                                 // One live panel per thread, and threads are
                                 // bounded by the conversation list; drop the
@@ -2547,6 +2825,7 @@ fn start_timer(app: &MainWindow, state: Rc<RefCell<State>>) {
                                     state.inquiries.clear();
                                 }
                                 state.inquiries.insert(session.clone(), panel);
+                                app.set_title_inquiry_count(state.inquiries.len() as i32);
                                 if app.get_active_session_id() == session.as_str() {
                                     publish_inquiry(&app, &session, &state);
                                 }
@@ -2665,7 +2944,26 @@ fn apply_event(
     } else {
         raw_kind
     };
-    if data["session_id"]
+    // Subagent control events carry the child's session_id, so the plain
+    // session filter below would drop them; they belong to the parent turn and
+    // say so through parent_session_id when one is present.
+    let subagent_control = matches!(
+        raw_kind,
+        "subagent_dispatch_item_update"
+            | "subagent_status"
+            | "subagent_dispatch_finish"
+            | "subagent_close"
+            | "subagent_interrupt"
+            | "subagent_resume"
+    );
+    if subagent_control {
+        if data["parent_session_id"]
+            .as_str()
+            .is_some_and(|id| id != active.session)
+        {
+            return Ok(false);
+        }
+    } else if data["session_id"]
         .as_str()
         .is_some_and(|id| id != active.session)
     {
@@ -3006,6 +3304,32 @@ fn apply_event(
                     timeline.upsert_subagent(&card);
                 }
                 None => return Ok(false),
+            }
+        }
+        "subagent_dispatch_item_update" | "subagent_status" | "subagent_dispatch_finish"
+        | "subagent_close" | "subagent_interrupt" | "subagent_resume" => {
+            // Child cards must show up the moment the parent spawns them, not
+            // when the durable `subagent_run` item replays at turn end. The
+            // control events carry the same identity either flat (dispatch,
+            // interrupt, close) or under `items` (status / wait summaries);
+            // both project into the same session-keyed card.
+            let items: Vec<Value> = match data["items"].as_array() {
+                Some(list) => list
+                    .iter()
+                    .filter(|item| item.get("session_id").is_some())
+                    .cloned()
+                    .collect(),
+                None => vec![data.clone()],
+            };
+            let mut changed = false;
+            for item in &items {
+                if let Some(card) = wunder_desktop::NativeSubagentCard::from_dispatch_item(item) {
+                    timeline.upsert_subagent(&card);
+                    changed = true;
+                }
+            }
+            if !changed {
+                return Ok(false);
             }
         }
         "error" | "queue_fail" => {
@@ -3587,13 +3911,13 @@ mod turn_tests {
         assert!(!panel.ready(), "an untouched panel is not an answer");
 
         panel.move_page(1);
-        panel.toggle_option(1);
+        panel.toggle_option(1, 1);
         assert!(!panel.questions[0].options.iter().any(|o| o.selected));
         assert!(!panel.ready(), "the first question is still unanswered");
 
         panel.move_page(-1);
-        panel.toggle_option(0);
-        panel.toggle_option(1);
+        panel.toggle_option(0, 0);
+        panel.toggle_option(0, 1);
         assert!(
             panel.questions[0].options.iter().all(|o| o.selected),
             "a multi choice keeps both ticks"
@@ -3606,11 +3930,36 @@ mod turn_tests {
 
         // Re-picking the only single choice takes the answer back off.
         panel.move_page(1);
-        panel.toggle_option(1);
+        panel.toggle_option(1, 1);
         assert!(!panel.ready());
-        panel.toggle_option(0);
+        panel.toggle_option(1, 0);
         assert!(panel.questions[1].options[0].selected);
         assert!(!panel.questions[1].options[1].selected);
+    }
+
+    /// The expanded stack answers by question ordinal, not by page position,
+    /// and 使用推荐 ticks the recommended option the way the quick menu does.
+    #[test]
+    fn inquiry_expanded_and_recommended_address_their_own_question() {
+        let mut panel = fixture_panel();
+        panel.expanded = true;
+        panel.toggle_option(1, 1);
+        assert!(panel.questions[1].options[1].selected);
+        assert!(
+            !panel.questions[0].options.iter().any(|o| o.selected),
+            "the second question's tick never lands on the first"
+        );
+
+        panel.use_recommended(0);
+        assert!(panel.questions[0].options[0].selected);
+        assert!(
+            !panel.questions[0].options[1].selected,
+            "a single-choice quick answer keeps one tick"
+        );
+        panel.questions[0].multiple = true;
+        panel.questions[0].options[0].selected = false;
+        panel.use_recommended(0);
+        assert!(panel.questions[0].options[0].selected);
     }
 
     /// 无偏好 is a full answer for its own question and nothing else, and the
@@ -3618,16 +3967,16 @@ mod turn_tests {
     #[test]
     fn inquiry_no_preference_and_free_text_answer_one_question() {
         let mut panel = fixture_panel();
-        panel.toggle_option(0);
+        panel.toggle_option(0, 0);
         assert!(!InquiryState::is_answered(&panel.questions[1]));
-        panel.current_mut().unwrap().other = "  Fixture extra  ".into();
+        panel.questions[0].other = "  Fixture extra  ".into();
         assert!(
             InquiryState::is_answered(&panel.questions[0]),
             "free text alone answers a question"
         );
         assert!(panel.reply().contains("答案：First、Fixture extra"));
 
-        panel.toggle_no_preference();
+        panel.toggle_no_preference(0);
         assert!(panel.questions[0].no_preference);
         assert!(
             panel.questions[0]
@@ -3638,14 +3987,14 @@ mod turn_tests {
         );
         assert!(panel.questions[0].other.is_empty());
         panel.move_page(1);
-        panel.toggle_option(0);
+        panel.toggle_option(1, 0);
         assert!(panel.ready());
         assert_eq!(
             panel.reply(),
             "【问询面板选择】\n问题 1/2：Fixture question one\n答案：无偏好\n问题 2/2：Fixture question two\n答案：Alpha"
         );
         panel.move_page(-1);
-        panel.toggle_no_preference();
+        panel.toggle_no_preference(0);
         assert!(!panel.questions[0].no_preference);
         assert!(!panel.ready());
     }
@@ -3655,14 +4004,29 @@ mod turn_tests {
     #[test]
     fn inquiry_paging_keeps_answers_and_stays_in_range() {
         let mut panel = fixture_panel();
-        panel.toggle_option(1);
+        panel.toggle_option(0, 1);
         panel.move_page(4);
         assert_eq!(panel.page, 1, "the cursor clamps at the last question");
-        panel.current_mut().unwrap().other = "fixture note".into();
+        panel.questions[1].other = "fixture note".into();
         panel.move_page(-3);
         assert_eq!(panel.page, 0);
         assert!(panel.questions[0].options[1].selected);
         assert_eq!(panel.questions[1].other, "fixture note");
         assert_eq!(panel.current_index(), 0);
+    }
+
+    /// The runtime wraps every payload as `{session_id, timestamp, data}`, so
+    /// the panel reads the questions one level below the stream envelope.
+    #[test]
+    fn inquiry_event_unwraps_the_stream_envelope() {
+        let panel = inquiry_from_payload(event_data(&json!({
+            "event": "question_panel",
+            "data": {"session_id": "fixture", "timestamp": "0",
+                     "data": {"questions": [
+                        {"question": "Wrapped?", "options": [{"label": "Yes"}]}]}}
+        })))
+        .expect("the wrapped payload still projects a panel");
+        assert_eq!(panel.questions.len(), 1);
+        assert_eq!(panel.questions[0].question, "Wrapped?");
     }
 }

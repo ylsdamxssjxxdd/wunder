@@ -25,9 +25,9 @@ updated_at: 2026-10-16
 
 ## 安装与启动
 
-从 Releases 下载对应系统的安装包。
+从 Releases 下载对应系统的安装包并运行。安装向导默认只安装蛹和舵机，Python/Git/rg/ffmpeg 等补充组件按需勾选；安装目录默认 `~/.wunder`，也可以改成任意可写目录。安装根会写入 `.wunder-home`，蛹和舵机启动时以该根作为 `WUNDER_HOME`；显式设置的非空 `WUNDER_HOME` 优先。
 
-- **可执行文件**：`wunder-frontend-slint`
+- **可执行文件**：安装后的 `bin/wunder-desktop.exe`（Windows）或 `bin/wunder-desktop`（Linux）；开发构建为 `wunder-frontend-slint`
 - **开发启动**：Windows 下用项目自带的 `run.bat`
 - **平台**：主要面向 32 位 Win7 与 Ubuntu 18.04；现代 Windows / Linux 均可运行
 - **无端口、无必需参数**：启动后直接同进程调用引擎
@@ -38,13 +38,13 @@ updated_at: 2026-10-16
 
 | 内容 | 位置 |
 | --- | --- |
-| 根目录 | `WUNDER_HOME` → 默认 `~/.wunder` |
-| 工作区 | `~/.wunder/workspace` |
+| 根目录 | 安装时选择的目录（`WUNDER_HOME`；默认 `~/.wunder`，由 `.wunder-home` 标记） |
+| 工作区 | `<根目录>/workspace` |
 | 临时目录 | `WUNDER_DESKTOP_TEMP_ROOT` |
 | 桌面设置 | `<temp>/config/desktop.settings.json` |
 | 会话与工具日志 | 本地 SQLite |
 
-迁到新机器：复制 `~/.wunder` 到新机器即可。「本地优先」指数据留在本机，不影响访问远程模型或网页。
+迁到新机器：复制整个安装根（默认 `~/.wunder`）到新机器即可。「本地优先」指数据留在本机，不影响访问远程模型或网页。
 
 启动时扫描工作树（最多 4096 项），恢复上次没跑完的任务状态，并清理会话锁与残留任务。
 

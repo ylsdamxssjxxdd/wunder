@@ -76,6 +76,7 @@ const CLI_WORKER_STACK_BYTES: usize = 16 * 1024 * 1024;
 const CLI_WORKER_THREADS: usize = 4;
 
 fn main() -> Result<()> {
+    wunder_server::local_bootstrap::install_local_home_env();
     wunder_server::rustls_provider::install_process_default_provider();
     init_tracing();
     let worker = std::thread::Builder::new()
@@ -1913,7 +1914,10 @@ pub(crate) async fn run_tool_outside_turn(
             .user_tool_manager
             .build_bindings(&config, &skills_snapshot, &runtime.user_id);
     let roots = build_tool_roots(&config, &skills_snapshot, Some(&bindings), &[]);
-    let http = reqwest::Client::new();
+    // A Client holds a connection pool and rustls state; building one per
+    // command pays that setup on every `tool run` / `!cmd`.
+    static TOOL_HTTP_CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+    let http = TOOL_HTTP_CLIENT.get_or_init(reqwest::Client::new);
 
     let tool_context = ToolContext {
         user_id: &runtime.user_id,
@@ -1941,7 +1945,7 @@ pub(crate) async fn run_tool_outside_turn(
         read_roots: Some(roots.read_roots.clone()),
         command_sessions: Some(runtime.state.control.command_sessions.clone()),
         event_emitter: None,
-        http: &http,
+        http,
     };
 
     execute_tool(&tool_context, tool_name, &args).await

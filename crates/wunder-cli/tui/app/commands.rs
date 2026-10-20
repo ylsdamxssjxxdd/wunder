@@ -115,7 +115,9 @@ pub(super) fn next_reasoning_effort(current: &str, delta: isize) -> Option<&'sta
 impl TuiApp {
     /// `!<command>`: run one shell command without a model turn. The engine's
     /// `execute_command` tool does the work, so the workspace boundary, the
-    /// approval policy and the command log are exactly a tool call's.
+    /// approval policy and the command log are exactly a tool call's. The tool
+    /// run is detached: the loop returns immediately and the result is folded
+    /// into the transcript when it lands (`poll_direct_shell_results`).
     pub(super) async fn run_direct_shell_command(&mut self, command: String, echo: String) {
         let config = self.runtime.state.config_store.get().await;
         if !crate::direct_shell_is_allowed(config.security.approval_mode.as_deref()) {
@@ -140,49 +142,85 @@ impl TuiApp {
         }
         self.push_log(LogKind::Tool, format!("$ {command}"));
         let args = serde_json::json!({ "content": command });
-        let result = crate::run_tool_outside_turn(
-            &self.runtime,
-            self.session_id.as_str(),
-            "execute_command",
-            args,
-        )
-        .await;
+        let runtime = self.runtime.clone();
+        let session_id = self.session_id.clone();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let frames = self.frame_requester.clone();
+        tokio::spawn(async move {
+            let result = crate::run_tool_outside_turn(
+                &runtime,
+                session_id.as_str(),
+                "execute_command",
+                args,
+            )
+            .await;
+            let _ = tx.send(result);
+            frames.schedule_frame();
+        });
+        self.pending_shell_results.push(rx);
+    }
 
-        match result {
-            Ok(payload) => {
-                let is_zh = self.is_zh_language();
-                match crate::tool_display::summarize_tool_result(&payload, is_zh) {
-                    Some(summary) => {
-                        if let Some(text) = summary.summary.filter(|text| !text.trim().is_empty()) {
-                            self.push_log(LogKind::Tool, text);
-                        }
-                        for line in summary.details {
-                            let text = match line.label {
-                                Some(label) => format!("{label}: {}", line.text),
-                                None => line.text,
-                            };
-                            self.push_log(LogKind::Tool, text);
-                        }
-                    }
-                    None => {
-                        let text = payload
-                            .get("detail")
-                            .or_else(|| payload.get("content"))
-                            .and_then(|value| value.as_str())
-                            .unwrap_or("")
-                            .trim()
-                            .to_string();
-                        if !text.is_empty() {
-                            self.push_log(LogKind::Tool, text);
-                        }
-                    }
-                }
+    /// Fold finished `!cmd` runs into the transcript, in submission order.
+    pub(super) async fn poll_direct_shell_results(&mut self) {
+        if self.pending_shell_results.is_empty() {
+            return;
+        }
+        let mut completed = Vec::new();
+        let mut pending = Vec::new();
+        for mut rx in self.pending_shell_results.drain(..) {
+            match rx.try_recv() {
+                Ok(result) => completed.push(Some(result)),
+                Err(tokio::sync::oneshot::error::TryRecvError::Empty) => pending.push(rx),
+                Err(tokio::sync::oneshot::error::TryRecvError::Closed) => completed.push(None),
             }
-            Err(err) => {
-                self.push_log(LogKind::Error, err.to_string());
+        }
+        self.pending_shell_results = pending;
+        if completed.is_empty() {
+            return;
+        }
+        for result in completed {
+            match result {
+                Some(Ok(payload)) => self.push_direct_shell_payload(payload),
+                Some(Err(err)) => {
+                    self.push_log(LogKind::Error, err.to_string());
+                }
+                None => {
+                    self.push_log(LogKind::Error, "shell command task stopped".to_string());
+                }
             }
         }
         self.reload_session_stats().await;
+        self.request_redraw();
+    }
+
+    fn push_direct_shell_payload(&mut self, payload: Value) {
+        let is_zh = self.is_zh_language();
+        match crate::tool_display::summarize_tool_result(&payload, is_zh) {
+            Some(summary) => {
+                if let Some(text) = summary.summary.filter(|text| !text.trim().is_empty()) {
+                    self.push_log(LogKind::Tool, text);
+                }
+                for line in summary.details {
+                    let text = match line.label {
+                        Some(label) => format!("{label}: {}", line.text),
+                        None => line.text,
+                    };
+                    self.push_log(LogKind::Tool, text);
+                }
+            }
+            None => {
+                let text = payload
+                    .get("detail")
+                    .or_else(|| payload.get("content"))
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+                if !text.is_empty() {
+                    self.push_log(LogKind::Tool, text);
+                }
+            }
+        }
     }
 
     pub(super) async fn handle_slash_command(&mut self, line: String) -> Result<()> {
@@ -2189,7 +2227,7 @@ impl TuiApp {
         // leaks the previous lease until its TTL expires.
         let next_session_id = uuid::Uuid::new_v4().simple().to_string();
         let previous_lease_token = self.open_lease_token;
-        if let Err(error) = self.acquire_thread_lease(&next_session_id) {
+        if let Err(error) = self.acquire_thread_lease(&next_session_id).await {
             self.push_log(LogKind::Error, error.to_string());
             return;
         }
@@ -2212,7 +2250,8 @@ impl TuiApp {
         }
 
         self.session_id = next_session_id;
-        self.release_thread_lease(&previous_session_id, previous_lease_token);
+        self.release_thread_lease_async(&previous_session_id, previous_lease_token)
+            .await;
         // A thread this process just created is writable by definition.
         self.watch_only_reason = None;
         self.thread_registry.activate(self.session_id.as_str());

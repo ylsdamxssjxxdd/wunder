@@ -2425,30 +2425,6 @@ fn visible_span(start: f64, end: f64, window_lo: f64, window_total: f64) -> Opti
     Some((left as f32, (right - left).max(0.0) as f32))
 }
 
-/// Return the records which belong to the selected, stable trajectory step.
-///
-/// Timeline coordinates are deliberately not part of this decision. Adjacent
-/// requests often overlap in wall-clock time (and legacy rows may have a zero
-/// duration), so interval intersection makes unrelated entries look selected.
-/// The record's turn plus normalized group identity is the durable link shared
-/// by an assistant entry, its thinking/body, and the tools issued for that
-/// model step.
-fn focused_record_indexes(model: &SnapshotModel, selected: i32) -> Option<HashSet<usize>> {
-    let selected = usize::try_from(selected).ok()?;
-    let selected_record = model.records.get(selected)?;
-    let selected_key = State::identity_key(selected_record.turn, &selected_record.group);
-    Some(
-        model
-            .records
-            .iter()
-            .enumerate()
-            .filter_map(|(index, record)| {
-                (State::identity_key(record.turn, &record.group) == selected_key).then_some(index)
-            })
-            .collect(),
-    )
-}
-
 fn project_timeline(app: &MainWindow, state: &State, model: &SnapshotModel, texts: &Texts) {
     let view_start = state.view_start.clamp(0.0, 1.0);
     let view_width = state.view_width.clamp(0.02, 1.0);
@@ -2459,7 +2435,6 @@ fn project_timeline(app: &MainWindow, state: &State, model: &SnapshotModel, text
     let window_lo = total_lo + view_start * total;
     let window_total = view_width * total;
     let clamp_pos = |value: f64| ((value - window_lo) / window_total).clamp(0.0, 1.0) as f32;
-    let focused_records = focused_record_indexes(model, state.selected);
     let needle = state.query.trim().to_lowercase();
     let overview_bucket_width = state
         .page
@@ -2505,12 +2480,6 @@ fn project_timeline(app: &MainWindow, state: &State, model: &SnapshotModel, text
         } else {
             (base.record as f64, base.record as f64 + 1.0)
         };
-        // Aggregate overview tiles have no stable source record. Keep them at
-        // their normal overview opacity while a concrete record is focused;
-        // only spans tied to a real record participate in focus dimming.
-        let outside = focused_records
-            .as_ref()
-            .is_some_and(|focused| base.record != usize::MAX && !focused.contains(&base.record));
         if aggregate && !model.overview_exact {
             let overlaps = visible_detail_ranges.iter().any(
                 |(detail_start, detail_end, sequence_start, sequence_end)| {
@@ -2558,7 +2527,6 @@ fn project_timeline(app: &MainWindow, state: &State, model: &SnapshotModel, text
             selected: base.record != usize::MAX
                 && state.selected >= 0
                 && base.record == state.selected as usize,
-            outside,
             overview: aggregate,
             aggregate: aggregate && !model.overview_exact,
             error,
@@ -3507,6 +3475,18 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
             drop(s);
             app.invoke_traj_select_row(index);
             apply_model(&app, &current.borrow());
+            // Reveal the ledger entry behind the clicked span. The list may
+            // sit far away from the record, so hand Slint the row's content
+            // offset and let it scroll only when the row is out of view.
+            let mut offset = 0.0_f32;
+            for row in app.get_traj_rows().iter() {
+                if row.index == index {
+                    app.set_traj_ledger_scroll(offset);
+                    app.set_traj_ledger_scroll_seq(app.get_traj_ledger_scroll_seq() + 1);
+                    break;
+                }
+                offset += row.row_height;
+            }
         }
     });
 
@@ -4246,46 +4226,7 @@ mod tests {
     }
 
     #[test]
-    fn focus_uses_turn_and_model_step_instead_of_overlapping_time() {
-        // Two model steps deliberately overlap in wall-clock time. Timeline
-        // selection must retain only the selected step and its tool, rather
-        // than every interval that intersects the assistant's duration.
-        let model = parse_view_page(&json!({ "trajectory": [
-            {"item_id":"fixture-user","turn_id":"fixture-turn","root_turn_id":"fixture-turn",
-             "user_round":1,"created_seq":1,"kind":"user_message","summary":"input",
-             "started_at":100.0,"completed_at":100.0},
-            {"item_id":"fixture-a1","turn_id":"fixture-turn","root_turn_id":"fixture-turn",
-             "user_round":1,"created_seq":2,"kind":"assistant_message","model_round":1,"summary":"first",
-             "started_at":101.0,"completed_at":120.0},
-            {"item_id":"fixture-t1","turn_id":"fixture-turn","root_turn_id":"fixture-turn",
-             "user_round":1,"created_seq":3,"kind":"tool_call","model_round":1,"tool_name":"inspect",
-             "started_at":105.0,"completed_at":110.0},
-            {"item_id":"fixture-a2","turn_id":"fixture-turn","root_turn_id":"fixture-turn",
-             "user_round":1,"created_seq":4,"kind":"assistant_message","model_round":2,"summary":"second",
-             "started_at":108.0,"completed_at":125.0},
-            {"item_id":"fixture-t2","turn_id":"fixture-turn","root_turn_id":"fixture-turn",
-             "user_round":1,"created_seq":5,"kind":"tool_call","model_round":2,"tool_name":"write",
-             "started_at":110.0,"completed_at":121.0}
-        ]}));
-        let selected = model
-            .records
-            .iter()
-            .position(|record| model.cells[record.cell].record_id == "fixture-a1")
-            .expect("first assistant record");
-        let focused = focused_record_indexes(&model, selected as i32).expect("focus set");
-        let record_id = |index: usize| model.cells[model.records[index].cell].record_id.as_str();
-        assert!(focused
-            .iter()
-            .any(|&index| record_id(index) == "fixture-a1"));
-        assert!(focused
-            .iter()
-            .any(|&index| record_id(index) == "fixture-t1"));
-        assert!(!focused
-            .iter()
-            .any(|&index| record_id(index) == "fixture-a2"));
-        assert!(!focused
-            .iter()
-            .any(|&index| record_id(index) == "fixture-t2"));
+    fn kind_labels_are_localized() {
         let texts = Texts::new(true);
         assert_eq!(texts.kind(KIND_SYSTEM), "系统");
         assert_eq!(texts.kind(KIND_USER), "用户");

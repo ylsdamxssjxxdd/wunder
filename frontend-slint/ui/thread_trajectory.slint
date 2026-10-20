@@ -137,6 +137,11 @@ export component ThreadTrajectoryDialog inherits Rectangle {
     in property <[TrajTiming]> timing-rows;
     in property <string> raw-text;
     in property <int> selected-index: -1;
+    // Ledger scroll request from a span click: Rust hands over the
+    // content offset of the selected record and bumps the sequence;
+    // the list scrolls only when that row sits outside the viewport.
+    in property <length> ledger-scroll: -1px;
+    in property <int> ledger-scroll-seq: 0;
     // Toolbar state.
     in property <bool> show-duration: true;
     in-out property <bool> show-turns: false;
@@ -483,16 +488,17 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                     // trajectory. Aggregate is only a data-source marker; it
                     // must not make an otherwise unselected bar look washed
                     // out compared with the other overview segments.
-                    opacity: span.aggregate ? 0.94 : span.outside ? 0.2 : span.dimmed ? 0.14 : span.overview ? 0.94 : 1.0;
+                    opacity: span.aggregate ? 0.94 : span.dimmed ? 0.14 : span.overview ? 0.94 : 1.0;
                     if span.overview : Rectangle {
                         x: max(0px, parent.width - 1px);
                         width: 1px;
                         height: parent.height;
                         background: #FFFFFF6B;
                     }
-                    // The browser shows these rings on hover.
-                    // The ring does not change bar geometry or click bounds.
-                    if span-touch.has-hover : Rectangle {
+                    // The browser shows these rings on hover. The selected
+                    // span keeps the ring so the focused entry stays visible
+                    // without washing out its neighbours.
+                    if span-touch.has-hover || span.selected : Rectangle {
                         x: -2px; y: -2px;
                         width: parent.width + 4px; height: parent.height + 4px;
                         border-radius: 3px;
@@ -551,9 +557,20 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                     color: root.failed ? TrajTokens.red : TrajTokens.text-3;
                     font-size: 12px;
                 }
-                if root.rows.length > 0 : ListView {
+                if root.rows.length > 0 : ledger-list := ListView {
                     y: 26px;
                     width: parent.width; height: parent.height - 26px;
+                    // Span clicks bump ledger-scroll-seq with the target
+                    // row's content offset; scroll only when that row is
+                    // outside the visible window.
+                    property <int> scroll-seq: root.ledger-scroll-seq;
+                    changed scroll-seq => {
+                        if root.ledger-scroll >= 0px
+                            && (root.ledger-scroll < -self.content-y
+                                || root.ledger-scroll > -self.content-y + self.visible-height - 32px) {
+                            self.content-y = -(root.ledger-scroll < self.content-height - self.visible-height ? root.ledger-scroll : (self.content-height > self.visible-height ? self.content-height - self.visible-height : 0px));
+                        }
+                    }
                     scrolled => {
                         if self.content-y > -80px {
                             root.edge-reached(true);

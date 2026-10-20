@@ -22,7 +22,10 @@ use std::rc::Rc;
 use std::sync::mpsc::Receiver;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use wunder_desktop::{CompanionOverlayState, NativeDesktop};
+use wunder_desktop::{
+    native::clamp_companion_scale, CompanionAgentOverride, CompanionOverlayState,
+    CompanionPlacement, NativeDesktop,
+};
 use wunder_server::worker_card_settings::parse_agent_icon_config;
 
 /// Web sprite box and screen inset.
@@ -394,12 +397,11 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
     let Some((service, receiver)) = pet_window::PetService::start() else {
         return;
     };
-    let state = api.companion_overlay_state();
     let overlay = Rc::new(RefCell::new(Overlay {
-        api,
+        api: Arc::clone(&api),
         weak: app.as_weak(),
         service,
-        state,
+        state: CompanionOverlayState::default(),
         pets: HashMap::new(),
         missing: HashMap::new(),
         last_chat_open: None,
@@ -408,6 +410,22 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
     OVERLAY.with(|slot| *slot.borrow_mut() = Some(Rc::clone(&overlay)));
     RECEIVER.with(|slot| *slot.borrow_mut() = Some(receiver));
     reproject(&overlay, app);
+    // The persisted overlay state is a JSON read; load it off the UI thread
+    // and re-project once it lands. A save that already ran wins, because its
+    // timestamp is newer than anything the file held when the read started.
+    let weak = app.as_weak();
+    std::thread::spawn(move || {
+        let state = api.companion_overlay_state();
+        let _ = weak.upgrade_in_event_loop(move |app| {
+            if let Some(overlay) = current() {
+                let mut guard = overlay.borrow_mut();
+                if state.updated_at >= guard.state.updated_at {
+                    guard.state = state;
+                }
+            }
+            sync(&app);
+        });
+    });
 }
 
 /// Re-project every pet. Called from the agent/session hooks; it is a no-op
@@ -823,9 +841,19 @@ fn handle_event(overlay: &mut Overlay, event: PetEvent) -> Option<String> {
             pet.transient = Some((Sprite::Waiting, Instant::now() + DRAG_SETTLE));
             pet.settled = true;
             // One write per drag release; the overlay owns the live position.
-            if let Ok(state) = overlay.api.save_companion_position(&id, x as i32, y as i32) {
-                overlay.state = state;
-            }
+            // The in-memory copy moves at once so a slow disk never snaps the
+            // pet back while the JSON write is still in flight.
+            overlay.state.positions.insert(
+                id.clone(),
+                CompanionPlacement {
+                    x: (x as i32).max(0),
+                    y: (y as i32).max(0),
+                },
+            );
+            let key = id.clone();
+            save_overlay(overlay, move |api| {
+                api.save_companion_position(&key, x as i32, y as i32)
+            });
             None
         }
         PetEvent::RightClicked { id, x, y } => {
@@ -902,6 +930,7 @@ fn menu_items(pet: &Pet) -> Vec<PetMenuItem> {
 }
 
 /// Hide this pet through the local override only, never the agent record.
+/// The menu effect is immediate; the JSON write follows on a worker.
 fn toggle(overlay: &mut Overlay, key: &str, agent_id: &str) {
     let show = overlay
         .state
@@ -914,9 +943,18 @@ fn toggle(overlay: &mut Overlay, key: &str, agent_id: &str) {
         .get(key)
         .map(|pet| pet.spec.scale)
         .unwrap_or(1.0);
-    if let Ok(state) = overlay.api.save_companion_override(agent_id, !show, scale) {
-        overlay.state = state;
-    }
+    let next_show = !show;
+    overlay.state.overrides.insert(
+        agent_id.to_string(),
+        CompanionAgentOverride {
+            show: Some(next_show),
+            scale: Some(clamp_companion_scale(scale)),
+        },
+    );
+    let agent = agent_id.to_string();
+    save_overlay(overlay, move |api| {
+        api.save_companion_override(&agent, next_show, scale)
+    });
     if !show {
         return;
     }
@@ -928,9 +966,43 @@ fn toggle(overlay: &mut Overlay, key: &str, agent_id: &str) {
 
 /// Resize through the same local override, keeping the current visibility.
 fn set_scale(overlay: &mut Overlay, agent_id: &str, scale: f32) {
-    if let Ok(state) = overlay.api.save_companion_override(agent_id, true, scale) {
-        overlay.state = state;
-    }
+    overlay.state.overrides.insert(
+        agent_id.to_string(),
+        CompanionAgentOverride {
+            show: Some(true),
+            scale: Some(clamp_companion_scale(scale)),
+        },
+    );
+    let agent = agent_id.to_string();
+    save_overlay(overlay, move |api| {
+        api.save_companion_override(&agent, true, scale)
+    });
+}
+
+/// Persist one overlay mutation off the UI thread. The caller has already
+/// applied the change to the in-memory copy, so the UI never waits on the
+/// JSON file; the worker's fresh state replaces it when the write lands, and
+/// a reply older than the in-memory state is dropped.
+fn save_overlay(
+    overlay: &Overlay,
+    save: impl FnOnce(&NativeDesktop) -> anyhow::Result<CompanionOverlayState> + Send + 'static,
+) {
+    let api = Arc::clone(&overlay.api);
+    let weak = overlay.weak.clone();
+    std::thread::spawn(move || {
+        let Ok(state) = save(&api) else {
+            return;
+        };
+        let _ = weak.upgrade_in_event_loop(move |app| {
+            if let Some(overlay) = current() {
+                let mut guard = overlay.borrow_mut();
+                if state.updated_at >= guard.state.updated_at {
+                    guard.state = state;
+                }
+            }
+            sync(&app);
+        });
+    });
 }
 
 #[cfg(test)]

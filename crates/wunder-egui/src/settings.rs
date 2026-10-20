@@ -801,9 +801,9 @@ fn draw_theme_tiles(ui: &mut Ui, state: &mut AppState, tokens: Tokens) {
         ),
         (
             "eva-orange",
-            "羊皮纸",
-            Color32::from_rgb(201, 100, 67),
-            Color32::from_rgb(251, 244, 241),
+            "橙汁",
+            Color32::from_rgb(245, 138, 36),
+            Color32::from_rgb(253, 240, 222),
         ),
     ];
     let width = ui.available_width();

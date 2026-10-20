@@ -465,7 +465,7 @@ tar -C "$package_root" \
   --sort=name \
   --owner=0 --group=0 --numeric-owner \
   --format=gnu \
-  -cf - . | gzip -n > "$output_path"
+  -cf - opt README-linux-supplement.txt wunder-linux-supplement.json | gzip -n > "$output_path"
 
 [[ -s "$output_path" ]] || fail "produced supplement archive is empty"
 output_sha256="$(sha256sum "$output_path" | awk '{print $1}')"

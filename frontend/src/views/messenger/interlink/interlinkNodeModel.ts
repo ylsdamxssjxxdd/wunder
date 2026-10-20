@@ -90,6 +90,9 @@ export type InterlinkWorkspaceRow = {
   key: string;
   deviceId: string;
   workspaceId: string;
+  /** Workspace name inside the device; the sidebar shows this without the device prefix. */
+  name: string;
+  /** Device-qualified fallback label used by older consumers and diagnostics. */
   label: string;
   node: InterlinkNode;
 };
@@ -118,6 +121,7 @@ export const interlinkWorkspaceRows = (nodes: InterlinkNode[]): InterlinkWorkspa
         key: `device:${deviceId}@`,
         deviceId,
         workspaceId: '',
+        name: '',
         label: workspaceRowLabel(node, ''),
         node
       });
@@ -128,6 +132,7 @@ export const interlinkWorkspaceRows = (nodes: InterlinkNode[]): InterlinkWorkspa
         key: `device:${deviceId}@${item.workspace_id}`,
         deviceId,
         workspaceId: item.workspace_id,
+        name: item.name,
         label: workspaceRowLabel(node, item.name),
         node
       });

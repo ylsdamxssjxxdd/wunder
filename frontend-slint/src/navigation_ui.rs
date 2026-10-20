@@ -33,6 +33,9 @@ thread_local! {
     /// selection mode; every projection re-derives each row's `checked` from
     /// it so status refreshes and reorders never drop a tick.
     static THREAD_SELECTION: RefCell<HashSet<String>> = RefCell::new(HashSet::new());
+    /// Last selected local workspace id, remembered while the cloud device is
+    /// active so switching back lands on the same workspace instead of index 0.
+    static LAST_LOCAL_WORKSPACE: RefCell<Option<String>> = const { RefCell::new(None) };
     /// Monotonic guard for asynchronous workspace catalogue reads. A stale
     /// SQLite result must never replace a newer catalogue result.
     static WORKSPACE_REFRESH_GENERATION: Cell<u64> = const { Cell::new(0) };
@@ -344,9 +347,12 @@ pub(crate) fn project_sidebar(app: &MainWindow, desktop: Option<Arc<NativeDeskto
 
 fn rebuild_rows(app: &MainWindow) {
     let cards_model = app.get_workspaces();
-    // The cloud workspace is a fixed sentinel row pinned above the local
-    // workspaces while the account is signed in.
-    let cloud = app.get_cloud_logged_in().then(|| cloud_row(app));
+    // The device selector shows exactly one device tree. Cloud is a device of
+    // its own with a single pinned workspace row; a signed-out cloud target
+    // cannot host a tree, so it falls back to the local device.
+    let cloud_available = app.get_cloud_logged_in();
+    let cloud_active = cloud_available && crate::workspace_files::is_cloud_target();
+    let cloud = cloud_active.then(|| cloud_row(app));
     let selected = if crate::workspace_files::is_cloud_target() {
         None
     } else {
@@ -354,6 +360,9 @@ fn rebuild_rows(app: &MainWindow) {
             .ok()
             .filter(|&index| index < cards_model.row_count())
     };
+    if let Some(card) = selected.and_then(|index| cards_model.row_data(index)) {
+        LAST_LOCAL_WORKSPACE.with(|slot| *slot.borrow_mut() = Some(card.workspace_id.to_string()));
+    }
     let conversations = app.get_conversations();
     let active = app.get_active_session_id().to_string();
     // Multi-select bookkeeping: drop ticks for conversations that no longer
@@ -369,12 +378,12 @@ fn rebuild_rows(app: &MainWindow) {
     let mut rows: Vec<SidebarRow> = Vec::with_capacity(cards_model.row_count() * 4 + 1);
     let cloud_threads = app.get_cloud_thread_rows();
     // Persisted manual order; un-ordered ids keep their facade position. The
-    // cloud sentinel is part of this same sequence so it can be dragged with
-    // local workspace rows.
+    // order list still carries both devices so switching back keeps the local
+    // ordering, but only the active device's rows are emitted.
     let cards: Vec<(usize, WorkspaceCard)> = cards_model.iter().enumerate().collect();
     let mut ordered_keys = Vec::with_capacity(cards.len() + 1);
     let cloud_expanded = EXPANDED.with(|slot| slot.borrow().contains("cloud"));
-    if app.get_cloud_logged_in() {
+    if cloud_available {
         ordered_keys.push("cloud".to_string());
     }
     ordered_keys.extend(cards.iter().map(|(_, card)| card.workspace_id.to_string()));
@@ -386,13 +395,16 @@ fn rebuild_rows(app: &MainWindow) {
         let expanded = slot.borrow();
         for key in ordered_keys {
             if key == "cloud" {
+                if !cloud_active {
+                    continue;
+                }
                 let Some(mut cloud) = cloud.clone() else {
                     continue;
                 };
                 cloud.thread_count = cloud_threads.row_count() as i32;
                 cloud.expanded = cloud_expanded;
                 rows.push(cloud);
-                if crate::workspace_files::is_cloud_target() && cloud_expanded {
+                if cloud_expanded {
                     for (index, thread) in cloud_threads
                         .iter()
                         .take(MAX_TREE_ROWS.saturating_sub(rows.len()))
@@ -419,6 +431,9 @@ fn rebuild_rows(app: &MainWindow) {
                         });
                     }
                 }
+                continue;
+            }
+            if cloud_active {
                 continue;
             }
             let Some((wi, card)) = cards
@@ -508,6 +523,32 @@ fn rebuild_rows(app: &MainWindow) {
     app.set_sidebar_selected_count(THREAD_SELECTION.with(|slot| slot.borrow().len()) as i32);
 }
 
+/// Point update for one local thread's runtime status. The tree rows are a
+/// snapshot of the conversation list, so a live transition (running, waiting,
+/// done) must be patched into the matching row here; waiting for the next
+/// catalogue rebuild is what left entries stale until a thread switch.
+pub(crate) fn update_thread_status(app: &MainWindow, session: &str, status: &str) {
+    patch_thread_status(&app.get_sidebar_rows(), session, status);
+}
+
+fn patch_thread_status(rows: &ModelRc<SidebarRow>, session: &str, status: &str) -> bool {
+    let Some(index) = rows
+        .iter()
+        .position(|row| row.kind == 1 && row.thread_id.as_str() == session)
+    else {
+        return false;
+    };
+    let Some(mut row) = rows.row_data(index) else {
+        return false;
+    };
+    if row.status.as_str() == status {
+        return false;
+    }
+    row.status = status.into();
+    rows.set_row_data(index, row);
+    true
+}
+
 /// The pinned "cloud workspace" row: a sentinel (kind 2) whose click points
 /// the working-directory panel back at the cloud account workspace.
 fn cloud_row(app: &MainWindow) -> SidebarRow {
@@ -534,6 +575,84 @@ fn cloud_row(app: &MainWindow) -> SidebarRow {
         archivable: false,
         checked: false,
     }
+}
+
+/// Resolve the local workspace a device switch should land on: the last local
+/// selection (by id, so catalogue refreshes cannot shift it), else the first.
+fn selected_local_workspace_index(app: &MainWindow) -> Option<usize> {
+    let cards = app.get_workspaces();
+    let last = LAST_LOCAL_WORKSPACE.with(|slot| slot.borrow().clone());
+    if let Some(id) = last {
+        if let Some(index) = cards.iter().position(|card| card.workspace_id == id.as_str()) {
+            return Some(index);
+        }
+    }
+    (cards.row_count() > 0).then_some(0)
+}
+
+/// Enter the cloud device: pin the cloud workspace row, drop the local
+/// selection and point the working-directory panel at the cloud root.
+fn activate_cloud_device(app: &MainWindow, api: Arc<NativeDesktop>, force_expand: bool) {
+    let should_expand = EXPANDED.with(|slot| {
+        let mut expanded = slot.borrow_mut();
+        let was_expanded = expanded.contains("cloud");
+        expanded.clear();
+        if force_expand || !was_expanded {
+            expanded.insert("cloud".to_string());
+        }
+        force_expand || !was_expanded
+    });
+    app.set_selected_workspace(-1);
+    let was_cloud = app.get_cloud_chat_active();
+    if !was_cloud {
+        crate::cloud_threads::leave(app);
+    }
+    THREAD_SELECTION.with(|slot| slot.borrow_mut().clear());
+    app.set_sidebar_selection_mode(false);
+    crate::workspace_files::set_target(app, api, crate::workspace_files::Target::Cloud);
+    project_sidebar(app, None);
+    if should_expand && !was_cloud {
+        app.invoke_cloud_open_threads();
+    }
+}
+
+/// Enter a local workspace: mirror its folder in the working-directory panel,
+/// expand its thread tree and leave the cloud conversation view.
+fn activate_local_workspace(
+    app: &MainWindow,
+    api: Arc<NativeDesktop>,
+    workspace: usize,
+    force_expand: bool,
+) {
+    let Some(card) = app.get_workspaces().row_data(workspace) else {
+        return;
+    };
+    let id = card.workspace_id.to_string();
+    let was_cloud = app.get_cloud_chat_active();
+    EXPANDED.with(|slot| {
+        let mut expanded = slot.borrow_mut();
+        let was_expanded = expanded.contains(id.as_str());
+        expanded.clear();
+        if force_expand || !was_expanded {
+            expanded.insert(id.clone());
+        }
+    });
+    THREAD_SELECTION.with(|slot| slot.borrow_mut().clear());
+    app.set_sidebar_selection_mode(false);
+    crate::cloud_threads::leave(app);
+    if was_cloud {
+        crate::native_chat::prepare_external_timeline(app);
+        app.set_selected_model_key("".into());
+        app.set_reasoning_effort("default".into());
+        crate::entity_state::restore_agent(app, app.get_active_agent_id().as_str());
+    }
+    app.set_selected_workspace(workspace as i32);
+    LAST_LOCAL_WORKSPACE.with(|slot| *slot.borrow_mut() = Some(id));
+    let root = card.root_path.to_string();
+    if !root.is_empty() {
+        crate::workspace_files::set_target(app, api, crate::workspace_files::Target::Local(root));
+    }
+    project_sidebar(app, None);
 }
 
 /// Highlight the workspace an opened thread belongs to, so a later new-task
@@ -618,76 +737,16 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
             return;
         };
         if row.kind == 2 {
-            // Pinned cloud row: point the file panel back at the cloud
-            // workspace and drop the local selection.
-            let id = "cloud".to_string();
-            let should_expand = EXPANDED.with(|slot| {
-                let mut expanded = slot.borrow_mut();
-                let was_expanded = expanded.contains(id.as_str());
-                expanded.clear();
-                if !was_expanded {
-                    expanded.insert(id);
-                }
-                !was_expanded
-            });
-            app.set_selected_workspace(-1);
-            let was_cloud = app.get_cloud_chat_active();
-            if !was_cloud {
-                crate::cloud_threads::leave(&app);
-            }
-            THREAD_SELECTION.with(|slot| slot.borrow_mut().clear());
-            app.set_sidebar_selection_mode(false);
-            crate::workspace_files::set_target(
-                &app,
-                api.clone(),
-                crate::workspace_files::Target::Cloud,
-            );
-            crate::navigation_ui::project_sidebar(&app, None);
-            if should_expand && !was_cloud {
-                app.invoke_cloud_open_threads();
-            }
+            // Cloud workspace row: toggles its thread tree without leaving
+            // the cloud device.
+            activate_cloud_device(&app, api.clone(), false);
         } else if row.kind == 0 {
-            let workspace = row.payload;
-            let id = row.workspace_id.to_string();
-            let was_cloud = app.get_cloud_chat_active();
-            // A workspace header is also its tree disclosure: activating it
-            // toggles its children. The selected workspace remains the active
-            // directory while collapsed, so the icon can return to its hollow
-            // state without changing the current conversation.
-            EXPANDED.with(|slot| {
-                let mut expanded = slot.borrow_mut();
-                let was_expanded = expanded.contains(id.as_str());
-                expanded.clear();
-                if !was_expanded {
-                    expanded.insert(id.clone());
-                }
-            });
-            THREAD_SELECTION.with(|slot| slot.borrow_mut().clear());
-            app.set_sidebar_selection_mode(false);
-            crate::cloud_threads::leave(&app);
-            if was_cloud {
-                crate::native_chat::prepare_external_timeline(&app);
-                app.set_selected_model_key("".into());
-                app.set_reasoning_effort("default".into());
-                crate::entity_state::restore_agent(&app, app.get_active_agent_id().as_str());
+            // A workspace header is also its tree disclosure. Do not open its
+            // first thread: on Win7/HDD that would start a lease and history
+            // read while the user is only trying to reveal the tree.
+            if let Ok(workspace) = usize::try_from(row.payload) {
+                activate_local_workspace(&app, api.clone(), workspace, false);
             }
-            app.set_selected_workspace(workspace);
-            // Mirror this workspace's folder in the working-directory panel.
-            if let Some(card) = app.get_workspaces().row_data(workspace as usize) {
-                let root = card.root_path.to_string();
-                if !root.is_empty() {
-                    crate::workspace_files::set_target(
-                        &app,
-                        api.clone(),
-                        crate::workspace_files::Target::Local(root),
-                    );
-                }
-            }
-            crate::navigation_ui::project_sidebar(&app, None);
-            // Expanding a workspace is a lightweight navigation action. Do not
-            // implicitly open its first thread: on Win7/HDD that would start a
-            // lease and history read while the user is only trying to reveal
-            // the tree. A thread is opened only by an explicit row click.
         } else if row.kind == 3 {
             app.set_cloud_thread_index(row.payload + 1);
             app.set_cloud_chat_active(true);
@@ -698,6 +757,28 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
             app.invoke_cloud_select_thread(row.payload + 1);
         } else {
             app.invoke_select_conversation(row.payload);
+        }
+    });
+    let weak = app.as_weak();
+    let device_api = desktop.clone();
+    app.on_select_device(move |device| {
+        let Some(app) = weak.upgrade() else { return };
+        match device {
+            1 if app.get_cloud_logged_in() => {
+                if crate::workspace_files::is_cloud_target() {
+                    return;
+                }
+                activate_cloud_device(&app, device_api.clone(), true);
+            }
+            0 => {
+                if !crate::workspace_files::is_cloud_target() {
+                    return;
+                }
+                if let Some(workspace) = selected_local_workspace_index(&app) {
+                    activate_local_workspace(&app, device_api.clone(), workspace, true);
+                }
+            }
+            _ => {}
         }
     });
     let weak = app.as_weak();
@@ -1034,6 +1115,50 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn thread_row(id: &str, status: &str) -> SidebarRow {
+        SidebarRow {
+            kind: 1,
+            workspace_id: "w1".into(),
+            name: "".into(),
+            icon: "".into(),
+            color: "".into(),
+            thread_count: 0,
+            expanded: false,
+            selected: false,
+            thread_id: id.into(),
+            title: id.into(),
+            status: status.into(),
+            active: false,
+            payload: 0,
+            origin: "".into(),
+            archivable: true,
+            checked: false,
+        }
+    }
+
+    /// The sidebar tree snapshots the conversation list, so a live status
+    /// transition is patched into the one matching tree row: the marker moves
+    /// immediately instead of waiting for the next catalogue rebuild.
+    #[test]
+    fn status_patch_rewrites_only_the_matching_thread_row() {
+        let rows = ModelRc::new(VecModel::from(vec![
+            thread_row("a", "idle"),
+            thread_row("b", "任务完成"),
+            SidebarRow {
+                kind: 3,
+                ..thread_row("a", "idle")
+            },
+        ]));
+        assert!(patch_thread_status(&rows, "a", "正在生成…"));
+        assert_eq!(rows.row_data(0).unwrap().status, "正在生成…");
+        assert_eq!(rows.row_data(1).unwrap().status, "任务完成");
+        // Cloud rows carry their own status pipeline and stay untouched.
+        assert_eq!(rows.row_data(2).unwrap().status, "idle");
+        // A repeated or unknown update changes nothing and reports so.
+        assert!(!patch_thread_status(&rows, "a", "正在生成…"));
+        assert!(!patch_thread_status(&rows, "gone", "正在生成…"));
+    }
 
     #[test]
     fn refreshed_workspace_selection_keeps_the_stable_id() {

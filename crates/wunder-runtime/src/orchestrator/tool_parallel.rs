@@ -33,9 +33,8 @@ fn parallel_safe_builtin_names() -> &'static HashSet<String> {
         .map(resolve_tool_name)
         .filter(|name| !name.trim().is_empty())
         .collect();
-        // Browser reads can update refs or race navigation too. Only runtime
-        // status is independent of page state; page operations stay exclusive.
-        names.insert(crate::services::browser::providers::playwright::TOOL_STATUS.to_string());
+        // Browser operations can update refs or race navigation, so they stay
+        // exclusive. `browser_status` remains a legacy diagnostic call only.
         // 合并工具注册表里声明的并行安全工具，保持单一事实来源。
         for canonical in crate::tools::registry::parallel_safe_canonicals() {
             let resolved = resolve_tool_name(canonical);
@@ -95,7 +94,7 @@ mod tests {
         for name in crate::services::browser::providers::playwright::TOOL_NAMES {
             assert_eq!(
                 tool_call_supports_parallel(name, &json!({})),
-                *name == "browser_status",
+                false,
                 "{name}"
             );
         }

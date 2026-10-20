@@ -98,18 +98,18 @@ test('local workspace rows retain the default root and never fall back to a devi
 
   const rows = interlinkWorkspaceRows([node]);
   assert.deepEqual(
-    rows.map((item) => [item.key, item.workspaceId, item.label]),
+    rows.map((item) => [item.key, item.workspaceId, item.name, item.label]),
     [
-      ['device:device-a@', '', 'Local device-local'],
-      ['device:device-a@workspace-one', 'workspace-one', 'Local device-Project one'],
-      ['device:device-a@workspace-two', 'workspace-two', 'Local device-Project two']
+      ['device:device-a@', '', '', 'Local device-local'],
+      ['device:device-a@workspace-one', 'workspace-one', 'Project one', 'Local device-Project one'],
+      ['device:device-a@workspace-two', 'workspace-two', 'Project two', 'Local device-Project two']
     ]
   );
 
   const noProjection = asNode('device-b');
   noProjection.label = 'Second device';
   assert.deepEqual(
-    interlinkWorkspaceRows([noProjection]).map((item) => [item.key, item.workspaceId, item.label]),
-    [['device:device-b@', '', 'Second device-local']]
+    interlinkWorkspaceRows([noProjection]).map((item) => [item.key, item.workspaceId, item.name, item.label]),
+    [['device:device-b@', '', '', 'Second device-local']]
   );
 });

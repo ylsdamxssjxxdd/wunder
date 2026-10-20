@@ -17,6 +17,10 @@ fn should_backpressure_online_stream_event(event_type: &str) -> bool {
             | "command_session_status"
             | "command_session_exit"
             | "command_session_summary"
+            // The question panel is the turn's only hand-off to the user: the
+            // turn stops waiting for it, so dropping it under a full queue
+            // leaves the client with an answer nobody can submit.
+            | "question_panel"
     )
 }
 

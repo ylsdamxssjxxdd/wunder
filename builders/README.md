@@ -32,6 +32,35 @@ build.bat -t cli -a linux-amd64
 build.bat -All -AppImageRuntimeArm64 X:\runtime-arm64.AppImage -AppImageRuntimeAmd64 X:\runtime-amd64.AppImage
 ```
 
+## 打包安装器（pack）
+
+`pack` 只组合已经构建好的产物，不会重新编译：
+
+```bat
+build.bat pack -a win7-x86
+build.bat pack -a linux-amd64
+build.bat pack -a linux-arm64
+```
+
+```bash
+bash build.sh pack -a linux-amd64
+bash build.sh pack -a linux-arm64
+```
+
+Windows 安装包优先使用离线 SDK 中的 `Rust-builder/win7/offline/tools/inno-setup/app/ISCC.exe`（Inno Setup 6.7.3，随 SDK 分发，版本与 SHA256 见同目录 `VERSION.txt`）；也可以用 `-Iscc` 或 `WUNDER_ISCC` 覆盖，`-NoDownload` 禁止联网。只有离线编译器缺失且允许下载时，才会准备到 `temp_dir/tools/inno-setup`。SDK 根目录可用 `WUNDER_WIN7_BUILDER_ROOT` 或 `WUNDER_BUILDER_ROOT` 覆盖。
+
+Linux 安装包是单文件自解压 `.run`，由 Python 3.6+ 组装，不需要 Docker 或 Rust 工具链，也不访问网络。Windows 上组包时优先复用 SDK 的 `Rust-builder/win7/offline/tools/python/python.exe`（Python 3.8.10 embeddable），因此宿主机未安装 Python 也能离线生成 `.run`；Linux 宿主使用系统 `python3`。
+
+输入默认从构建产物目录查找：
+
+- 蛹：`target/frontend-slint/dist/win7-x86/wunder-frontend-slint-<ver>-win7-x86.exe`，或 `target/slint/dist/linux-<arch>/wunder-slint-<ver>-linux-<arch>.AppImage`
+- 舵机：`target/cli/dist/<target>/wunder-cli-<ver>-<target>[.exe]`
+- 补充包：`dist/<target>/`、`target/installer/payload/<target>/`、`temp_dir/win7-gnu-lab/win7-supplement/dist/`、`temp_dir/linux-supplement/dist/`。找不到或匹配到多个时用 `-Supplement`/`--supplement` 指定。Windows 的 `-Supplement` 也接受已解开的目录（其下直接有 `opt/<component>` 和 `wunder-win7-supplement.json`），可复用补充包构建产物并跳过首次 zip 解压。
+
+`pack` 会校验版本、PE/ELF 架构和补充包的 `opt/<component>` 结构，输出到 `target/installer/dist/<target>/`，并生成 `.sha256` 与 `.manifest.json`。`-CoreOnly` 只生成不含补充组件的安装器，便于快速验证。
+
+安装器默认目录为 `%USERPROFILE%\.wunder`（Windows）或 `~/.wunder`（Linux）；Windows 安装向导和 Linux 交互菜单都允许改到任意可写目录。安装根会写入 `.wunder-home` 标记，蛹和舵机在启动最早期把 `WUNDER_HOME` 指向该根，因此配置、会话、工作区、日志、数据库和 `opt/` 补充组件都会跟着迁移；显式设置的非空 `WUNDER_HOME` 仍然优先。补充组件默认全部不勾选；Windows 组件页提供“全选组件”，只勾选补充组件，不自动勾选桌面快捷方式；选中已存在的组件会先清空对应 `opt/<component>`，用户数据不会删除。
+
 egui 版本提供独立的本机快速构建入口，不改变默认 Slint Desktop 发布矩阵：
 
 ```bat
@@ -85,16 +114,26 @@ ARM64 开发 sysroot 首次准备使用 `bash builders/prepare-linux-arm64-devel
 
 ## Cargo vendor 树维护
 
-`Rust-builder/win7/offline/cargo-vendor-slint`、`Rust-builder/kylin-arm/offline/cargo-vendor-slint` 与 `Rust-builder/kylin-x86/offline/cargo-vendor-slint` 是锁文件之外的独立快照：`frontend-slint` 新增依赖后，只改 `Cargo.toml` 并更新 `Cargo.lock` 不会让离线构建可用，解析会在 vendor 树里以 `no matching package named ...` 终止，desktop 与 cli 一起失败。判断方法是一句目录名匹配（目录名为 `名字-版本`），不需要构建。
+`Rust-builder/win7/offline/cargo-vendor-slint`、`Rust-builder/kylin-arm/offline/cargo-vendor-slint` 与 `Rust-builder/kylin-x86/offline/cargo-vendor-slint` 是锁文件之外的独立快照：`Cargo.toml` 或 `Cargo.lock` 变化后，只改工作区不会让离线构建可用，解析会在 vendor 树里以 `no matching package named ...` 或 `failed to select a version ...` 终止，desktop 与 cli 一起失败。
 
-补齐时按锁定闭包成组处理：先用一个临时 crate 声明该依赖与需要固定版本的传递依赖，联网执行 `cargo vendor --versioned-dirs` 生成带 `.cargo-checksum.json` 的目录，再把锁定版本缺失的目录复制进三棵树。注意 vendor 的“最新解析结果”与锁定的次版本可能不同（例如某依赖声明 `^0.11`，锁住的是 `0.11.1`），只补最新版仍会报 `failed to select a version`，必须回读 `frontend-slint/Cargo.lock` 确认实际版本；三棵树要保持同一组版本。复制后用 `builders/check-vendor-crate.ps1` 逐文件核对校验和，避免半份拷贝静默通过：
+Cargo 解析的是**完整锁文件闭包**，不是当前目标的编译闭包。即使只构建 Win7 CLI，vendor 里也必须同时存在 macOS/Android 的 `objc2`、`calloop`、`wayland-backend`、wasm 的 `wgpu-core-deps-wasm` 等永远不参与本次编译的 crate，否则解析阶段就会失败。判断是否完整不能只看目录名：vendor 目录既有 `objc2` 这种不带版本的名字，也有 `objc2-0.5.3`，必须读取每个目录 `Cargo.toml` 的 `package.name/version` 后与 `Cargo.lock` 比对。Win7 egui 使用的 `cargo-vendor-egui` 也要单独检查。
+
+补齐的可靠做法是生成一份完整快照再增量复制，而不是猜单个依赖：
+
+```bash
+cargo vendor --offline --locked temp_dir/vendor-full
+```
+
+该命令从本机已填充的 registry 缓存生成全部锁定包（缺失时联网一次），再按上面的元数据映射把目标 vendor 缺少的 `名字-版本` 目录复制进去。复制后用 `builders/check-vendor-crate.ps1` 逐文件核对校验和，避免半份拷贝静默通过：
 
 ```powershell
 ./builders/check-vendor-crate.ps1 -VendorRoot /path/to/cargo-vendor-slint `
   -Crate vt100-0.15.2, vte-0.11.1, vte_generate_state_changes-0.1.2
 ```
 
-最后必须验证解析与真实编译两件事：`cargo metadata --locked --offline`（Linux 侧在容器内用 kylin-arm 的 vendor 树）确认解析，`build.bat -t desktop -a win7-x86` 或 `build.sh -t desktop -a linux-amd64` 确认新 crate 能编过并进入 PE/ELF 门禁。只做 `-Check` 会跳过 codegen 与链接，不能作为最终验收。
+最后必须验证解析与真实编译两件事：为每棵 vendor 树临时生成只含 `source.crates-io -> vendored-sources` 的 `CARGO_HOME/config.toml`，执行 `cargo metadata --locked --offline` 确认解析；再跑 `build.bat -t desktop -a win7-x86`、`build.bat -t cli -a win7-x86` 或对应的 Linux 构建，确认新 crate 能编过并进入 PE/ELF 门禁。只做 `-Check` 会跳过 codegen 与链接，不能作为最终验收。
+
+2026-10-20 按此方法补齐：win7-slint 增加 9 个（`objc2 0.5.3/0.6.5`、`objc`、`calloop` 等），kylin-arm 与 kylin-x86 各增加 42 个（egui/wgpu 闭包等）；`cargo-vendor-egui` 经元数据审计原本完整。
 
 ## Linux amd64 离线 SDK 维护
 

@@ -187,20 +187,33 @@ pub fn build_mcp_tool_alias_entries(config: &Config) -> Vec<McpToolAliasEntry> {
     build_mcp_tool_alias_entries_from_raw(raw_entries)
 }
 
+/// Localized note describing the shell `执行命令` will actually run in, so the
+/// model emits the correct syntax on the first try. Returns `None` when the
+/// active shell needs no hint (plain cmd on a Windows host).
+fn exec_shell_note(language: &str) -> Option<String> {
+    use crate::core::command_utils::ShellKind;
+    let env = crate::core::python_runtime::resolve_desktop_command_env();
+    let key = match env.shell.kind {
+        ShellKind::Bash => "tool.spec.exec.shell_bash",
+        ShellKind::PowerShell => "tool.spec.exec.shell_powershell",
+        ShellKind::Cmd => return None,
+    };
+    let note = i18n::t_in_language(key, language);
+    let note = note.trim().to_string();
+    if note.is_empty() || note == key {
+        None
+    } else {
+        Some(note)
+    }
+}
+
 /// Build the execute_command tool description, appending a note describing the
 /// active shell so the model emits the correct command syntax.
-fn exec_tool_description(t: &impl Fn(&str) -> String) -> String {
-    let mut desc = t("tool.spec.exec.description");
-    let env = crate::core::python_runtime::resolve_desktop_command_env();
-    use crate::core::command_utils::ShellKind;
-    let note_key = match env.shell.kind {
-        ShellKind::Bash => Some("tool.spec.exec.shell_bash"),
-        ShellKind::PowerShell => Some("tool.spec.exec.shell_powershell"),
-        ShellKind::Cmd => None,
-    };
-    if let Some(key) = note_key {
+fn exec_tool_description(language: &str) -> String {
+    let mut desc = i18n::t_in_language("tool.spec.exec.description", language);
+    if let Some(note) = exec_shell_note(language) {
         desc.push('\n');
-        desc.push_str(&t(key));
+        desc.push_str(note.as_str());
     }
     desc
 }
@@ -390,7 +403,7 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
         ToolSpec {
             name: "执行命令".to_string(),
             title: None,
-            description: exec_tool_description(&t),
+            description: exec_tool_description(language),
             input_schema: super::schema::object(vec![
                 super::schema::string("description").desc(t("tool.spec.exec.args.description")),
                 super::schema::string("content").desc(t("tool.spec.exec.args.content")),
@@ -748,6 +761,25 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
             input_schema: super::schema::object(vec![
                 super::schema::string("name")
                     .desc(t("tool.spec.skill_call.args.name")),
+                super::schema::string("action")
+                    .desc("manifest returns compact metadata; read fetches one bounded resource")
+                    .enums(vec!["manifest", "read"])
+                    .optional(),
+                super::schema::string("path")
+                    .desc("Skill-relative resource path, default SKILL.md")
+                    .optional(),
+                super::schema::string("section")
+                    .desc("Optional Markdown heading to read")
+                    .optional(),
+                super::schema::integer("start_line")
+                    .desc("1-based line offset for bounded reads")
+                    .min(1)
+                    .optional(),
+                super::schema::integer("line_limit")
+                    .desc("Maximum lines to return (capped by runtime)")
+                    .min(1)
+                    .max(400)
+                    .optional(),
             ]),
         },
         ToolSpec {
@@ -1203,6 +1235,8 @@ pub fn builtin_aliases() -> HashMap<String, String> {
     );
     map.insert("skill_call".to_string(), "技能调用".to_string());
     map.insert("skill_get".to_string(), "技能调用".to_string());
+    map.insert("skill_manifest".to_string(), "技能调用".to_string());
+    map.insert("skill_read".to_string(), "技能调用".to_string());
     map.insert("write_file".to_string(), "写入文件".to_string());
     map.insert("apply_patch".to_string(), "文本编辑".to_string());
     map.insert("应用补丁".to_string(), "文本编辑".to_string());
@@ -1589,6 +1623,12 @@ pub fn collect_available_tool_names(
             enabled_builtin.insert(name.clone());
             names.insert(name);
         }
+        // Kept executable for persisted sessions and older clients. They are
+        // not backed by specs, so the model catalog still contains six tools.
+        for name in browser_tool::browser_legacy_tool_names() {
+            enabled_builtin.insert(name.clone());
+            names.insert(name);
+        }
         // 聚合条目名可被选择与授权，实际调用前再展开为成员工具。
         enabled_builtin.insert(browser_tool::BROWSER_GROUP_NAME.to_string());
         names.insert(browser_tool::BROWSER_GROUP_NAME.to_string());
@@ -1673,6 +1713,10 @@ pub fn collect_enabled_tool_names_for_catalog(
     }
     if browser_tool::browser_tools_enabled(config) {
         for name in browser_tool::browser_tool_names() {
+            enabled_builtin.insert(name.clone());
+            names.insert(name);
+        }
+        for name in browser_tool::browser_legacy_tool_names() {
             enabled_builtin.insert(name.clone());
             names.insert(name);
         }
@@ -2422,7 +2466,7 @@ mod tests {
     }
 
     #[test]
-    fn browser_provider_tools_replace_the_legacy_single_surface() {
+    fn browser_provider_exposes_only_the_compact_model_surface() {
         let specs = builtin_tool_specs_with_language("zh-CN");
         assert!(
             specs
@@ -2430,18 +2474,21 @@ mod tests {
                 .all(|spec| spec.name != "浏览器" && spec.name != "浏览器导航"),
             "legacy browser tool names must be gone"
         );
+        let browser_specs: Vec<_> = specs
+            .iter()
+            .filter(|spec| spec.name.starts_with("browser_"))
+            .collect();
+        assert_eq!(browser_specs.len(), 6);
         let navigate = specs
             .iter()
             .find(|spec| spec.name == "browser_navigate")
             .expect("provider browser_navigate spec must be exposed");
-        let required = navigate.input_schema["required"]
-            .as_array()
-            .expect("required array");
-        assert!(required.iter().any(|item| item == "url"));
+        assert!(navigate.input_schema["properties"]["action"].is_object());
+        assert!(specs.iter().any(|spec| spec.name == "browser_observe"));
         assert!(specs
             .iter()
-            .any(|spec| spec.name == "browser_take_screenshot"));
-        assert!(specs.iter().any(|spec| spec.name == "browser_status"));
+            .all(|spec| spec.name != "browser_take_screenshot"));
+        assert!(specs.iter().all(|spec| spec.name != "browser_status"));
     }
 
     #[test]
@@ -2615,7 +2662,7 @@ mod tests {
             expanded.contains("browser_navigate"),
             "the aggregate entry must grant the whole browser family"
         );
-        assert!(expanded.contains("browser_status"));
+        assert!(!expanded.contains("browser_status"));
         assert!(expanded.contains("执行命令"));
         assert!(
             !expanded.contains("浏览器"),

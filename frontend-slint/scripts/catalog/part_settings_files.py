@@ -139,7 +139,7 @@ ENTRIES = [
     ("st_theme_forest", "森林", "Forest"),
     ("st_theme_mint", "薄荷", "Mint"),
     ("st_theme_honey", "蜜蜂", "Honey"),
-    ("st_theme_parchment", "羊皮纸", "Parchment"),
+    ("st_theme_parchment", "橙汁", "Orange Juice"),
     ("st_font_size", "字体大小", "Font size"),
     ("st_font_size_note", "聊天内容的字体大小", "Font size for chat content"),
 
@@ -347,6 +347,7 @@ ENTRIES = [
     ("st_cl_queue_suffix", " 人", " ahead"),
     # ---- status dock (plan capsule above the goal banner) ----
     ("dock_steps", "步骤", "Steps"),
+    ("dock_plan_title", "计划", "Plan"),
     # runtime_status.slint classifies the runtime's Chinese phrases by prefix,
     # so those phrases need a catalog entry even though no widget labels with
     # them any more (the plan capsule is the only dock left).
@@ -362,4 +363,9 @@ ENTRIES = [
     ("inquiry_other_placeholder", "输入其他答案", "Type another answer"),
     ("inquiry_no_preference", "无偏好", "No preference"),
     ("inquiry_send_hint", "选好答案后按发送键提交", "Send to submit your choices"),
+    ("inquiry_all_questions", "全部问题", "All questions"),
+    ("inquiry_expand", "展开全部", "Expand all"),
+    ("inquiry_collapse", "收起", "Collapse"),
+    ("inquiry_use_recommended", "使用推荐", "Use the recommended"),
+    ("inquiry_question_progress", "第 {} 题", "Question {}", ["position"]),
 ]

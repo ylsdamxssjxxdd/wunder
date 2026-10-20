@@ -1,7 +1,8 @@
 use super::*;
+use crate::orchestrator_constants::{TOOL_RESULT_HEAD_CHARS, TOOL_RESULT_TAIL_CHARS};
 
 #[test]
-fn browser_attachment_survives_events_and_model_observations() {
+fn browser_attachment_is_compact_for_model_and_complete_in_events() {
     let content = json!([
         {"type":"text","text":"Captured screenshot."},
         {"type":"image","attachment":{"path":"browser/screenshots/sample.png","bytes":64}}
@@ -9,13 +10,16 @@ fn browser_attachment_survives_events_and_model_observations() {
     let result = ToolResultPayload::from_value(json!({
         "ok":true,"data":{"format":"png","target_id":"tab-1"},"content":content
     }));
-    for observation in [
-        result.to_event_payload("browser_take_screenshot"),
-        result.to_compact_payload("browser_take_screenshot"),
-    ] {
-        assert_eq!(observation["data"]["content"], content);
-        assert_eq!(observation["data"]["format"], "png");
-    }
+    let event = result.to_event_payload("browser_take_screenshot");
+    assert_eq!(event["data"]["content"], content);
+    assert_eq!(event["data"]["format"], "png");
+    let observation = result.to_compact_payload("browser_take_screenshot");
+    assert_eq!(
+        observation["data"]["artifact"],
+        json!({"id":"browser/screenshots/sample.png","bytes":64})
+    );
+    assert!(observation["data"].get("content").is_none());
+    assert!(observation["data"].get("format").is_none());
     let result = ToolResultPayload::from_value(json!({
         "ok":true,"data":{"content":"page text"},"content":content
     }));
@@ -36,6 +40,73 @@ fn browser_batch_failure_keeps_partial_progress_in_model_observation() {
 }
 
 #[test]
+fn browser_canonical_actions_are_projected_to_next_step_fields() {
+    let navigate = ToolResultPayload::from_value(json!({
+        "ok": true,
+        "data": {"url": "https://example.invalid/next", "title": "Next", "tabs": [{"target_id":"tab-1"}]}
+    }));
+    assert_eq!(
+        navigate.to_compact_payload("browser_navigate")["data"],
+        json!({"url":"https://example.invalid/next", "title":"Next"})
+    );
+
+    let action = ToolResultPayload::from_value(json!({
+        "ok": true,
+        "data": {"kind": "click", "target_id": "tab-1", "ref": "e1", "url": "https://example.invalid/done", "snapshot": "large"}
+    }));
+    assert_eq!(
+        action.to_compact_payload("browser_interact")["data"],
+        json!({"action":"click", "target_ref":"e1", "url":"https://example.invalid/done"})
+    );
+}
+
+#[test]
+fn self_status_and_command_success_drop_runtime_details() {
+    let status = ToolResultPayload::from_value(json!({
+        "ok": true,
+        "data": {
+            "session": {"user_id":"user", "session_id":"session"},
+            "model": {"provider":"provider", "base_url":"https://llm.invalid"},
+            "monitor": {"status":"running", "stage":"tools", "updated_time":"now"},
+            "context": {"context_occupancy_tokens": 1234, "context_overflow": false},
+            "rounds": {"model_rounds_peak": 4},
+            "events": {"by_type": {"tool_result": 20}}
+        }
+    }));
+    let status = status.to_compact_payload("self_status");
+    assert_eq!(
+        status["data"],
+        json!({"stage":"tools", "status":"running", "round":4, "context_tokens":1234})
+    );
+
+    let command = ToolResultPayload::from_value(json!({
+        "ok": true,
+        "data": {"results":[{"command":"echo ok", "returncode":0, "stdout":"ok", "stderr":"", "output_meta":{"total_bytes":2}}], "budget":{"max":1000}, "output_guard":{"truncated":false}}
+    }));
+    let command = command.to_compact_payload("execute_command");
+    assert_eq!(command["data"]["exit_code"], 0);
+    assert_eq!(command["data"]["stdout"], "ok");
+    assert!(command["data"].get("budget").is_none());
+    assert!(command["data"].get("output_guard").is_none());
+}
+
+#[test]
+fn event_payload_keeps_projection_source_for_audit() {
+    let result = ToolResultPayload::from_value(json!({
+        "ok": true,
+        "data": {"path":"notes.txt", "bytes":9, "existed":true, "previous_bytes":4, "lsp":{"state":"ok"}},
+        "meta": {"duration_ms": 3, "trace_id":"trace"}
+    }));
+    let event = result.to_event_payload("write_file");
+    assert_eq!(event["data"]["bytes"], 9);
+    assert_eq!(event["data"]["previous_bytes"], 4);
+    assert_eq!(event["meta"]["trace_id"], "trace");
+    let model = result.to_compact_payload("write_file");
+    assert!(model["data"].get("bytes").is_none());
+    assert!(model.get("meta").is_none());
+}
+
+#[test]
 fn browser_content_only_failure_is_not_treated_as_success() {
     let result = ToolResultPayload::from_value(json!({
         "ok":false,"error":"Browser failed", "content":[{"type":"text","text":"Browser failed"}]
@@ -46,15 +117,15 @@ fn browser_content_only_failure_is_not_treated_as_success() {
 }
 
 #[test]
-fn browser_json_page_text_keeps_page_and_truncation_metadata() {
+fn browser_page_observation_keeps_text_and_truncation_without_page_noise() {
     let result = ToolResultPayload::from_value(json!({
         "ok":true, "data":{"target_id":"tab-1","truncated":true},
         "content":[{"type":"text","text":"{\"sample\":1}"}]
     }));
     let observation = result.to_compact_payload("browser_read_page");
-    assert_eq!(observation["data"]["target_id"], "tab-1");
+    assert!(observation["data"].get("target_id").is_none());
     assert_eq!(observation["data"]["truncated"], true);
-    assert_eq!(observation["data"]["content"][0]["text"], "{\"sample\":1}");
+    assert_eq!(observation["data"]["text"], "{\"sample\":1}");
 }
 
 #[test]
@@ -71,119 +142,6 @@ fn test_truncate_tool_result_string() {
         value.chars().count(),
         head_chars + tail_chars + TOOL_RESULT_TRUNCATION_MARKER.chars().count()
     );
-}
-
-#[test]
-fn test_truncate_tool_result_data() {
-    let head_chars = 1;
-    let tail_chars = 2;
-    let stdout = "0123456789";
-    let mut value = json!({ "stdout": stdout });
-    let truncated = truncate_tool_result_data(
-        &mut value,
-        head_chars,
-        tail_chars,
-        TOOL_RESULT_TRUNCATION_MARKER,
-    );
-    assert!(truncated);
-    let stdout = value.get("stdout").and_then(Value::as_str).unwrap_or("");
-    assert!(stdout.starts_with("0"));
-    assert!(stdout.ends_with("89"));
-    assert!(stdout.contains(TOOL_RESULT_TRUNCATION_MARKER));
-}
-
-#[test]
-fn test_truncate_tool_result_data_limits_large_arrays() {
-    let mut rows = Vec::new();
-    for idx in 0..200 {
-        rows.push(json!({ "id": idx }));
-    }
-    let mut value = json!({ "rows": rows });
-    let truncated = truncate_tool_result_data(
-        &mut value,
-        TOOL_RESULT_HEAD_CHARS,
-        TOOL_RESULT_TAIL_CHARS,
-        TOOL_RESULT_TRUNCATION_MARKER,
-    );
-    assert!(truncated);
-    let rows = value
-        .get("rows")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    assert!(rows.len() <= TOOL_RESULT_MAX_ARRAY_ITEMS + 1);
-    let has_marker = rows.iter().any(|item| {
-        item.get("omitted_items")
-            .and_then(Value::as_u64)
-            .unwrap_or(0)
-            > 0
-            && item.get("__truncated").and_then(Value::as_bool) == Some(true)
-    });
-    assert!(has_marker);
-}
-
-#[test]
-fn test_truncate_tool_result_data_keeps_paginated_arrays_under_500() {
-    let mut items = Vec::new();
-    for idx in 0..200 {
-        items.push(json!(format!("file-{idx}.md")));
-    }
-    let mut value = json!({
-        "items": items,
-        "cursor": "0",
-        "limit": 200,
-        "next_cursor": "200",
-        "has_more": true
-    });
-    let truncated = truncate_tool_result_data(
-        &mut value,
-        TOOL_RESULT_HEAD_CHARS,
-        TOOL_RESULT_TAIL_CHARS,
-        TOOL_RESULT_TRUNCATION_MARKER,
-    );
-    assert!(!truncated);
-    let rows = value
-        .get("items")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    assert_eq!(rows.len(), 200);
-    let has_marker = rows
-        .iter()
-        .any(|item| item.get("__truncated").and_then(Value::as_bool) == Some(true));
-    assert!(!has_marker);
-}
-
-#[test]
-fn test_truncate_tool_result_data_keeps_final_paginated_page_under_500() {
-    let mut items = Vec::new();
-    for idx in 0..74 {
-        items.push(json!(format!("file-{idx}.md")));
-    }
-    let mut value = json!({
-        "items": items,
-        "cursor": "0",
-        "limit": 200,
-        "has_more": false,
-        "next_cursor": null
-    });
-    let truncated = truncate_tool_result_data(
-        &mut value,
-        TOOL_RESULT_HEAD_CHARS,
-        TOOL_RESULT_TAIL_CHARS,
-        TOOL_RESULT_TRUNCATION_MARKER,
-    );
-    assert!(!truncated);
-    let rows = value
-        .get("items")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    assert_eq!(rows.len(), 74);
-    let has_marker = rows
-        .iter()
-        .any(|item| item.get("__truncated").and_then(Value::as_bool) == Some(true));
-    assert!(!has_marker);
 }
 
 #[test]
@@ -550,22 +508,12 @@ fn test_compact_large_tool_result_data_includes_preview() {
 
 #[test]
 fn test_compact_large_tool_result_data_keeps_combined_truncation_reasons() {
-    let items = (0..900)
-        .map(|idx| json!(format!("file-{idx}.md")))
-        .collect::<Vec<_>>();
-    let mut value = json!({
-        "items": items,
+    let value = json!({
+        "items": ["file-0.md", {"__truncated": true, "omitted_items": 898}, "file-899.md"],
         "cursor": "0",
         "next_cursor": "900",
         "has_more": true
     });
-    let truncated = truncate_tool_result_data(
-        &mut value,
-        TOOL_RESULT_HEAD_CHARS,
-        TOOL_RESULT_TAIL_CHARS,
-        TOOL_RESULT_TRUNCATION_MARKER,
-    );
-    assert!(truncated);
 
     let mut reasons = collect_truncation_reasons_from_value(&value, TOOL_RESULT_TRUNCATION_MARKER);
     append_truncation_reason(&mut reasons, "char_budget");
@@ -1040,34 +988,73 @@ fn test_compact_observation_payload_preserves_truncated_wrapper_preview_budget()
 }
 
 #[test]
-fn test_compact_observation_payload_skips_skill_call_truncation() {
+fn test_compact_observation_payload_bounds_skill_call_truncation() {
     let text = "x".repeat(OBSERVATION_MAX_CHARS + 500);
-    let mut payload = json!({
+    let result = ToolResultPayload::from_value(json!({
         "tool": "技能调用",
         "ok": true,
         "data": {
             "skill_md": text,
+            "truncated": true,
         }
-    });
+    }));
+    let payload = result.to_compact_payload("skill_read");
 
-    compact_observation_payload(&mut payload, "技能调用");
-
-    assert!(payload.get("meta").is_none());
-    assert!(payload.get("truncated").is_none());
+    assert_eq!(
+        payload.get("truncated").and_then(Value::as_bool),
+        Some(true)
+    );
+    assert!(payload.get("continuation_required").is_some());
+    let data = payload.get("data").cloned().unwrap_or(Value::Null);
+    assert!(estimate_tool_result_chars(&data) <= OBSERVATION_MAX_CHARS);
     assert!(
-        payload
-            .get("data")
-            .and_then(|value| value.get("skill_md"))
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .chars()
-            .count()
-            > OBSERVATION_MAX_CHARS
+        result.to_event_payload("skill_read")["data"]["skill_md"]
+            .as_str()
+            .is_some_and(|value| value.chars().count() > OBSERVATION_MAX_CHARS)
     );
 }
 
 #[test]
-fn test_compact_observation_payload_write_file_keeps_precise_path() {
+fn test_compact_observation_payload_bounds_large_browser_observation() {
+    let text = "x".repeat(OBSERVATION_MAX_CHARS + 500);
+    let result = ToolResultPayload::from_value(json!({
+        "ok": true,
+        "data": {"text": text, "next_cursor": "cursor-2", "has_more": true}
+    }));
+    let observation = result.to_compact_payload("browser_observe");
+    assert_eq!(
+        observation.get("truncated").and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        observation
+            .get("continuation_required")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    let data = observation.get("data").cloned().unwrap_or(Value::Null);
+    assert!(estimate_tool_result_chars(&data) <= OBSERVATION_MAX_CHARS);
+    assert!(
+        result.to_event_payload("browser_observe")["data"]["text"]
+            .as_str()
+            .is_some_and(|value| value.chars().count() > OBSERVATION_MAX_CHARS)
+    );
+}
+
+#[test]
+fn test_compact_observation_payload_keeps_small_browser_projection_unmarked() {
+    let result = ToolResultPayload::from_value(json!({
+        "ok": true,
+        "data": {"action": "click", "ref": "e1", "url": "https://example.invalid/next"}
+    }));
+    let observation = result.to_compact_payload("browser_interact");
+    assert!(observation.get("truncated").is_none());
+    assert!(observation.get("observation_output_chars").is_none());
+    assert_eq!(observation["data"]["action"], "click");
+}
+
+#[test]
+fn test_compact_observation_payload_write_file_keeps_change_summary_only() {
     let mut payload = json!({
         "tool": "写入文件",
         "ok": true,
@@ -1095,11 +1082,15 @@ fn test_compact_observation_payload_write_file_keeps_precise_path() {
         data.get("path").and_then(Value::as_str),
         Some("nai_long2.py")
     );
-    assert_eq!(data.get("bytes").and_then(Value::as_u64), Some(9297));
+    assert_eq!(data.get("changed"), Some(&json!(true)));
+    assert_eq!(data.get("dry_run"), Some(&json!(false)));
+    assert!(data.get("bytes").is_none());
+    assert!(data.get("existed").is_none());
+    assert!(data.get("previous_bytes").is_none());
 }
 
 #[test]
-fn test_compact_observation_payload_compacts_apply_patch_files_without_diff_blocks() {
+fn test_compact_observation_payload_projects_apply_patch_to_change_counts() {
     let mut payload = json!({
         "tool": "apply_patch",
         "ok": true,
@@ -1137,22 +1128,10 @@ fn test_compact_observation_payload_compacts_apply_patch_files_without_diff_bloc
         .and_then(Value::as_object)
         .cloned()
         .unwrap_or_default();
-    let files = data
-        .get("files")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    let first = files
-        .first()
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default();
-    assert_eq!(
-        first.get("path").and_then(Value::as_str),
-        Some("src/main.rs")
-    );
-    assert_eq!(first.get("hunks").and_then(Value::as_u64), Some(1));
-    assert!(first.get("diff_blocks").is_none());
+    assert_eq!(data.get("changed"), Some(&json!(true)));
+    assert_eq!(data.get("changed_files"), Some(&json!(1)));
+    assert_eq!(data.get("hunks_applied"), Some(&json!(1)));
+    assert!(data.get("files").is_none());
 }
 
 #[test]
@@ -1210,4 +1189,130 @@ fn scalar_structured_content_keeps_outer_cursor() {
     assert_eq!(result["data"], json!("value"));
     assert_eq!(result["next_cursor"], json!("cursor"));
     assert_eq!(result["has_more"], json!(true));
+}
+
+#[test]
+fn observation_token_budget_bounds_full_serialized_envelope_and_keeps_cursor() {
+    let result = ToolResultPayload::from_value(json!({
+        "ok": true,
+        "data": {
+            "text": "中🙂".repeat(20_000),
+            "next_cursor": "page-2",
+            "has_more": true
+        }
+    }));
+
+    let budget = 512;
+    let observation = result.to_compact_payload_with_token_budget("browser_observe", Some(budget));
+    assert!(observation_token_count(&observation) <= budget);
+    assert_eq!(observation["truncated"], true);
+    assert_eq!(observation["data"]["truncated"], true);
+    assert_eq!(observation["next_cursor"], "page-2");
+    assert!(
+        observation["recovery_hint"]
+            .as_str()
+            .unwrap()
+            .contains("next_page_skips")
+    );
+    assert!(
+        observation["data"]["omitted_bytes"]
+            .as_u64()
+            .unwrap_or_default()
+            > 0
+    );
+}
+
+#[test]
+fn observation_token_budget_does_not_change_event_payload() {
+    let text = "x".repeat(32_000);
+    let result = ToolResultPayload::from_value(json!({"ok": true, "data": {"text": text}}));
+    let observation = result.to_compact_payload_with_token_budget("browser_observe", Some(256));
+
+    assert!(observation_token_count(&observation) <= 256);
+    assert!(
+        result.to_event_payload("browser_observe")["data"]["text"]
+            .as_str()
+            .is_some_and(|value| value.len() == 32_000)
+    );
+}
+
+#[test]
+fn observation_preserves_opaque_cursor_exactly_or_omits_it_explicitly() {
+    for (cursor, expected) in [
+        ("opaque/".repeat(60), true),
+        ("opaque/".repeat(2_000), false),
+    ] {
+        let result = ToolResultPayload::from_value(json!({"ok": true, "data": {
+            "text": "value".repeat(8_000), "next_cursor": cursor, "has_more": true
+        }}));
+        let observation = result.to_compact_payload_with_token_budget("external", Some(512));
+        assert!(observation_token_count(&observation) <= 512);
+        if expected {
+            assert_eq!(observation["next_cursor"], cursor);
+        } else {
+            assert!(observation.get("next_cursor").is_none());
+            assert_eq!(observation["continuation_omitted"], true);
+        }
+        assert!(
+            observation["recovery_hint"]
+                .as_str()
+                .unwrap()
+                .contains("reread")
+        );
+    }
+}
+
+#[test]
+fn observation_budget_keeps_failure_status_and_error_ends() {
+    let error = format!("reason-start {} reason-end", "\"\\\n中🙂".repeat(10_000));
+    let result = ToolResultPayload::from_value(json!({
+        "ok": false, "error": error, "data": {},
+        "meta": {"error_code": "TOOL_FAILED", "error_retryable": false}
+    }));
+    let observation = result.to_compact_payload_with_token_budget("external", Some(256));
+    assert!(observation_token_count(&observation) <= 256);
+    assert_eq!(observation["ok"], false);
+    assert_eq!(observation["error_code"], "TOOL_FAILED");
+    assert_eq!(observation["retryable"], false);
+    let error = observation["error"].as_str().unwrap();
+    assert!(error.starts_with("reason-start"));
+    assert!(error.ends_with("reason-end"));
+}
+
+#[test]
+fn observation_budget_retains_transport_loss_state() {
+    for tool in ["browser_observe", "execute_command", "external"] {
+        let result = ToolResultPayload::from_value(json!({"ok": true, "data": {
+            "truncated": true, "truncation_scope": "transport_safety", "recoverable": false,
+            "preview": "value".repeat(8_000), "original_bytes": 2_000_000,
+            "recovery_hint": "Full result was not stored."
+        }}));
+        let observation = result.to_compact_payload_with_token_budget(tool, Some(256));
+        assert!(observation_token_count(&observation) <= 256);
+        assert_eq!(observation["ok"], true);
+        assert_eq!(observation["recoverable"], false);
+        assert_eq!(observation["truncation_scope"], "transport_safety");
+        assert!(
+            observation["data"]["preview"]
+                .as_str()
+                .unwrap()
+                .contains("value")
+        );
+    }
+}
+
+#[test]
+fn observation_array_preview_requires_rereading_the_current_page() {
+    let result = ToolResultPayload::from_value(json!({"ok": true, "data": {
+        "items": (0..40).collect::<Vec<_>>(), "next_cursor": "page-2"
+    }}));
+    let observation = result.to_compact_payload_with_token_budget("external", Some(512));
+    assert_eq!(observation["truncated"], true);
+    assert_eq!(observation["next_cursor"], "page-2");
+    assert!(
+        observation["recovery_hint"]
+            .as_str()
+            .unwrap()
+            .contains("next_page_skips")
+    );
 }

@@ -1226,9 +1226,47 @@
   "en": "Close preview"
  },
  {
-  "key": "sidebar_workspaces",
-  "zh": "工作区",
-  "en": "Workspaces"
+  "key": "sb_device_local",
+  "zh": "本地",
+  "en": "Local"
+ },
+ {
+  "key": "sb_device_cloud",
+  "zh": "云端",
+  "en": "Cloud"
+ },
+ {
+  "key": "sb_device_local_host",
+  "zh": "蛹",
+  "en": "Pupa"
+ },
+ {
+  "key": "sb_device_cloud_host",
+  "zh": "蜂巢",
+  "en": "Hive"
+ },
+ {
+  "key": "sb_device_select",
+  "zh": "切换设备",
+  "en": "Switch device"
+ },
+ {
+  "key": "sb_device_workspaces",
+  "zh": "{} 个工作区",
+  "en": "{} workspaces",
+  "params": [
+   "count"
+  ]
+ },
+ {
+  "key": "sb_device_no_workspaces",
+  "zh": "暂无工作区",
+  "en": "No workspaces"
+ },
+ {
+  "key": "sb_device_empty",
+  "zh": "暂无工作区，点击右上角 + 新建",
+  "en": "No workspaces yet. Use + to create one."
  },
  {
   "key": "sidebar_settings",
@@ -3706,6 +3744,42 @@
   "en": "Pupa"
  },
  {
+  "key": "wm_minimize",
+  "zh": "最小化",
+  "en": "Minimize"
+ },
+ {
+  "key": "wm_maximize",
+  "zh": "最大化",
+  "en": "Maximize"
+ },
+ {
+  "key": "wm_restore",
+  "zh": "还原",
+  "en": "Restore"
+ },
+ {
+  "key": "wm_status_running",
+  "zh": "运行中 {} 线程",
+  "en": "{} running",
+  "params": [
+   "count"
+  ]
+ },
+ {
+  "key": "wm_status_inquiry",
+  "zh": "问询 {}",
+  "en": "Inquiry {}",
+  "params": [
+   "count"
+  ]
+ },
+ {
+  "key": "wm_status_idle",
+  "zh": "空闲",
+  "en": "Idle"
+ },
+ {
   "key": "err_cannot",
   "zh": "无法{0}：{1}",
   "en": "Unable to {0}: {1}"
@@ -5012,8 +5086,8 @@
  },
  {
   "key": "st_theme_parchment",
-  "zh": "羊皮纸",
-  "en": "Parchment"
+  "zh": "橙汁",
+  "en": "Orange Juice"
  },
  {
   "key": "st_font_size",
@@ -5919,6 +5993,11 @@
   "en": "Steps"
  },
  {
+  "key": "dock_plan_title",
+  "zh": "计划",
+  "en": "Plan"
+ },
+ {
   "key": "runtime_status_await",
   "zh": "模型响应中",
   "en": "Waiting for the model"
@@ -5967,6 +6046,34 @@
   "key": "inquiry_send_hint",
   "zh": "选好答案后按发送键提交",
   "en": "Send to submit your choices"
+ },
+ {
+  "key": "inquiry_all_questions",
+  "zh": "全部问题",
+  "en": "All questions"
+ },
+ {
+  "key": "inquiry_expand",
+  "zh": "展开全部",
+  "en": "Expand all"
+ },
+ {
+  "key": "inquiry_collapse",
+  "zh": "收起",
+  "en": "Collapse"
+ },
+ {
+  "key": "inquiry_use_recommended",
+  "zh": "使用推荐",
+  "en": "Use the recommended"
+ },
+ {
+  "key": "inquiry_question_progress",
+  "zh": "第 {} 题",
+  "en": "Question {}",
+  "params": [
+   "position"
+  ]
  },
  {
   "key": "sub_card_title",

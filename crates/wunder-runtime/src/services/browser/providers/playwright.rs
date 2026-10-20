@@ -1,7 +1,9 @@
 //! Playwright browser provider.
 //!
-//! Exposes a dsh-style, upstream-native tool surface (`browser_*`) and maps every
-//! call onto the existing Playwright bridge commands. The bridge
+//! Exposes a compact six-tool model surface and maps every call onto the existing
+//! Playwright bridge commands. Legacy `browser_*` member names remain accepted by
+//! the dispatcher, but are deliberately omitted from `tool_specs()` so they do
+//! not consume model context. The bridge
 //! (`browser_bridge.py`) stays the driving engine; this provider only owns the
 //! tool surface, the argument mapping and the content-block shaping.
 
@@ -21,8 +23,15 @@ pub const PROVIDER_ID: &str = "playwright";
 const DEFAULT_MAX_CHARS: usize = 20000;
 
 pub const TOOL_NAVIGATE: &str = "browser_navigate";
-pub const TOOL_NAVIGATE_BACK: &str = "browser_navigate_back";
 pub const TOOL_TABS: &str = "browser_tabs";
+pub const TOOL_OBSERVE: &str = "browser_observe";
+pub const TOOL_INTERACT: &str = "browser_interact";
+pub const TOOL_WAIT: &str = "browser_wait";
+pub const TOOL_BATCH: &str = "browser_batch";
+
+// Migration-only names. They are callable for persisted sessions and old
+// clients, but never returned from tool_specs()/browser_tool_names().
+pub const TOOL_NAVIGATE_BACK: &str = "browser_navigate_back";
 pub const TOOL_SNAPSHOT: &str = "browser_snapshot";
 pub const TOOL_CLICK: &str = "browser_click";
 pub const TOOL_TYPE: &str = "browser_type";
@@ -34,30 +43,29 @@ pub const TOOL_EVALUATE: &str = "browser_evaluate";
 pub const TOOL_WAIT_FOR: &str = "browser_wait_for";
 pub const TOOL_SCREENSHOT: &str = "browser_take_screenshot";
 pub const TOOL_READ_PAGE: &str = "browser_read_page";
-pub const TOOL_BATCH: &str = "browser_batch";
 pub const TOOL_CLOSE: &str = "browser_close";
 pub const TOOL_STATUS: &str = "browser_status";
 
 /// Native tool names, in a stable order.
 pub const TOOL_NAMES: &[&str] = &[
     TOOL_NAVIGATE,
-    TOOL_NAVIGATE_BACK,
     TOOL_TABS,
-    TOOL_SNAPSHOT,
-    TOOL_CLICK,
-    TOOL_TYPE,
-    TOOL_HOVER,
-    TOOL_SELECT_OPTION,
-    TOOL_DRAG,
-    TOOL_PRESS_KEY,
-    TOOL_EVALUATE,
-    TOOL_WAIT_FOR,
-    TOOL_SCREENSHOT,
-    TOOL_READ_PAGE,
+    TOOL_OBSERVE,
+    TOOL_INTERACT,
+    TOOL_WAIT,
     TOOL_BATCH,
-    TOOL_CLOSE,
-    TOOL_STATUS,
 ];
+
+pub const LEGACY_TOOL_NAMES: &[&str] = &[
+    TOOL_NAVIGATE_BACK, TOOL_SNAPSHOT, TOOL_CLICK, TOOL_TYPE, TOOL_HOVER,
+    TOOL_SELECT_OPTION, TOOL_DRAG, TOOL_PRESS_KEY, TOOL_EVALUATE, TOOL_WAIT_FOR,
+    TOOL_SCREENSHOT, TOOL_READ_PAGE, TOOL_CLOSE, TOOL_STATUS,
+];
+
+/// True for migration-only browser member names accepted from persisted calls.
+pub fn is_legacy_tool_name(name: &str) -> bool {
+    LEGACY_TOOL_NAMES.contains(&name.trim())
+}
 
 /// Playwright provider implementation.
 pub struct PlaywrightProvider;
@@ -76,7 +84,7 @@ impl Default for PlaywrightProvider {
 
 impl BrowserProvider for PlaywrightProvider {
     fn owns_tool(&self, name: &str) -> bool {
-        TOOL_NAMES.contains(&name.trim())
+        TOOL_NAMES.contains(&name.trim()) || LEGACY_TOOL_NAMES.contains(&name.trim())
     }
     fn id(&self) -> &'static str {
         PROVIDER_ID
@@ -124,209 +132,92 @@ fn raw_spec(name: &str, description: &str, properties: Value, required: &[&str])
 }
 
 fn playwright_tool_specs() -> Vec<ToolSpec> {
-    let mut specs = vec![
+    let mut interact = raw_spec(
+        TOOL_INTERACT,
+        "Act on the active page. Prefer refs from observe; use select for a native select control. Known dependent actions belong in batch.",
+        json!({
+            "action": {"type": "string", "enum": ["click", "type", "hover", "select", "drag", "press"]},
+            "ref": {"type": "string", "description": "Element ref from browser_observe."},
+            "selector": {"type": "string", "description": "CSS selector."},
+            "double_click": {"type": "boolean"}, "text": {"type": "string"},
+            "submit": {"type": "boolean", "description": "Press Enter after type."},
+            "value": {"anyOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}]},
+            "key": {"type": "string"}, "from_ref": {"type": "string"},
+            "from_selector": {"type": "string"}, "to_ref": {"type": "string"},
+            "to_selector": {"type": "string"}
+        }),
+        &["action"],
+    );
+    interact.input_schema["oneOf"] = json!([
+        {"properties":{"action":{"const":"click"}},"anyOf":[{"required":["ref"]},{"required":["selector"]}]},
+        {"properties":{"action":{"const":"type"}},"required":["text"],"anyOf":[{"required":["ref"]},{"required":["selector"]}]},
+        {"properties":{"action":{"const":"hover"}},"anyOf":[{"required":["ref"]},{"required":["selector"]}]},
+        {"properties":{"action":{"const":"select"}},"required":["value"],"anyOf":[{"required":["ref"]},{"required":["selector"]}]},
+        {"properties":{"action":{"const":"drag"}},"anyOf":[{"required":["from_ref","to_ref"]},{"required":["from_selector","to_selector"]}]},
+        {"properties":{"action":{"const":"press"}},"required":["key"]}
+    ]);
+    vec![
         raw_spec(
             TOOL_NAVIGATE,
-            "Open an absolute URL for browser interaction, including login, registration, and form submission; use this directly instead of web_fetch for interactive tasks. Returns an element snapshot by default, briefly waiting if client rendering is initially empty. include_snapshot=false skips it. A loopback address is relative to the browser runtime, which may be in a container.",
+            "Open a URL or go back. Use for interactive pages; then observe refs before interaction.",
             json!({
-                "url": {"type": "string", "description": "Absolute http(s) URL to open."},
-                "target_id": {"type": "string", "description": "Tab id; defaults to the active tab."},
-                "timeout_ms": {"type": "integer", "minimum": 1, "maximum": 120000},
-            }),
-            &["url"],
-        ),
-        raw_spec(
-            TOOL_NAVIGATE_BACK,
-            "Go back in the current tab's session history.",
-            json!({
-                "target_id": {"type": "string", "description": "Tab id; defaults to the active tab."},
+                "action": {"type": "string", "enum": ["navigate", "back"], "default": "navigate"},
+                "url": {"type": "string", "description": "Absolute http(s) URL; required for navigate."},
+                "timeout_ms": {"type": "integer", "minimum": 1, "maximum": 120000}
             }),
             &[],
         ),
         raw_spec(
             TOOL_TABS,
-            "List, open, select or close browser tabs.",
+            "List, open, select, or close tabs. Later calls use the selected tab.",
             json!({
                 "action": {"type": "string", "enum": ["list", "new", "select", "close"]},
                 "index": {"type": "integer", "minimum": 0, "description": "Tab index for select/close."},
-                "url": {"type": "string", "description": "URL for action=new."},
-                "target_id": {"type": "string", "description": "Tab id for select/close."},
+                "url": {"type": "string", "description": "URL for new."},
+                "target_id": {"type": "string", "description": "Id returned by list."}
             }),
             &["action"],
         ),
         raw_spec(
-            TOOL_SNAPSHOT,
-            "Capture an accessibility snapshot of the current page with element refs usable by browser_click/browser_type.",
+            TOOL_OBSERVE,
+            "Read the active page. refs returns actionable element refs; text returns readable content; screenshot returns an attachment.",
             json!({
-                "target_id": {"type": "string"},
-                "max_chars": {"type": "integer", "minimum": 1},
+                "mode": {"type": "string", "enum": ["refs", "text", "screenshot"], "default": "refs"},
+                "max_chars": {"type": "integer", "minimum": 1, "maximum": 40000},
+                "path": {"type": "string", "description": "Workspace-relative screenshot path."},
+                "full_page": {"type": "boolean"}
             }),
             &[],
         ),
+        interact,
         raw_spec(
-            TOOL_CLICK,
-            "Click an element identified by a snapshot ref or a CSS selector.",
+            TOOL_WAIT,
+            "Wait for a known selector, text, URL, or load state after an action. A fixed wait alone does not prove success.",
             json!({
-                "ref": {"type": "string", "description": "Element ref from browser_snapshot."},
-                "selector": {"type": "string", "description": "CSS selector."},
-                "element": {"type": "string", "description": "Human readable element description."},
-                "double_click": {"type": "boolean"},
-                "target_id": {"type": "string"},
-            }),
-            &[],
-        ),
-        raw_spec(
-            TOOL_TYPE,
-            "Replace an element's text using a current snapshot ref or CSS selector. submit=true presses Enter after filling. Input values are not echoed; do not repeat user-provided passwords or tokens in progress or final replies unless explicitly asked. Prefer browser_batch for known fields, submission and a success condition; never run dependent page actions in parallel.",
-            json!({
-                "ref": {"type": "string"},
-                "selector": {"type": "string"},
-                "text": {"type": "string"},
-                "submit": {"type": "boolean", "description": "Press Enter after typing."},
-                "target_id": {"type": "string"},
-            }),
-            &["text"],
-        ),
-        raw_spec(
-            TOOL_HOVER,
-            "Hover the mouse over an element.",
-            json!({
-                "ref": {"type": "string"},
-                "selector": {"type": "string"},
-                "target_id": {"type": "string"},
-            }),
-            &[],
-        ),
-        raw_spec(
-            TOOL_SELECT_OPTION,
-            "Select one or more options in a <select> element.",
-            json!({
-                "ref": {"type": "string"},
-                "selector": {"type": "string"},
-                "value": {
-                    "description": "Option value(s) to select.",
-                    "anyOf": [
-                        {"type": "string"},
-                        {"type": "array", "items": {"type": "string"}}
-                    ]
-                },
-                "target_id": {"type": "string"},
-            }),
-            &[],
-        ),
-        raw_spec(
-            TOOL_DRAG,
-            "Drag one element onto another.",
-            json!({
-                "from_ref": {"type": "string"},
-                "from_selector": {"type": "string"},
-                "to_ref": {"type": "string"},
-                "to_selector": {"type": "string"},
-                "target_id": {"type": "string"},
-            }),
-            &[],
-        ),
-        raw_spec(
-            TOOL_PRESS_KEY,
-            "Press a keyboard key, e.g. Enter, Tab, ArrowDown.",
-            json!({
-                "key": {"type": "string"},
-                "target_id": {"type": "string"},
-            }),
-            &["key"],
-        ),
-        raw_spec(
-            TOOL_EVALUATE,
-            "Evaluate a JavaScript expression in the page context and return its value.",
-            json!({
-                "expression": {"type": "string"},
-                "target_id": {"type": "string"},
-            }),
-            &["expression"],
-        ),
-        raw_spec(
-            TOOL_WAIT_FOR,
-            "Verify a page condition after an action: selector/text state, URL glob, or load state. Use a known success condition after submission, or state=hidden for an observed loading indicator, instead of guessing a fixed delay. Conditions share timeout_ms and take precedence over wait_ms; wait_ms alone is only a pause, not evidence of success. include_snapshot=true observes the resulting page.",
-            json!({
-                "wait_ms": {"type": "integer", "minimum": 0, "maximum":120000, "description":"Fallback pause only when no condition is provided; cannot verify completion."},
+                "wait_ms": {"type": "integer", "minimum": 0, "maximum":120000},
                 "load_state": {"type": "string", "enum": ["load", "domcontentloaded", "networkidle"]},
                 "text": {"type": "string"},
-                "selector": {"type": "string", "description": "CSS selector to wait for."},
-                "state": {"type":"string", "enum":["visible","hidden","attached","detached"], "description":"Selector/text state; defaults to visible. Use hidden for an observed loading indicator."},
-                "url": {"type": "string", "description": "Expected absolute URL or Playwright URL glob, e.g. **/complete."},
-                "timeout_ms": {"type": "integer", "minimum": 1, "maximum": 120000},
-                "target_id": {"type": "string"},
-            }),
-            &[],
-        ),
-        raw_spec(
-            TOOL_SCREENSHOT,
-            "Capture the current page and persist an image attachment in the workspace. The result includes its path and metadata; use the image-reading tool if visual inspection is needed. Confirm the attachment reference before reporting successful delivery.",
-            json!({
-                "path": {"type": "string", "description": "Optional workspace-relative output path."},
-                "full_page": {"type": "boolean"},
-                "target_id": {"type": "string"},
-            }),
-            &[],
-        ),
-        raw_spec(
-            TOOL_READ_PAGE,
-            "Read the current page as Markdown or text.",
-            json!({
-                "target_id": {"type": "string"},
-                "max_chars": {"type": "integer", "minimum": 1},
+                "selector": {"type": "string"},
+                "state": {"type":"string", "enum":["visible","hidden","attached","detached"]},
+                "url": {"type": "string", "description": "Expected URL or Playwright glob."},
+                "timeout_ms": {"type": "integer", "minimum": 1, "maximum": 120000}
             }),
             &[],
         ),
         raw_spec(
             TOOL_BATCH,
-            "Execute 1 to 10 dependent actions sequentially: combine known field inputs, submission, and a known success condition in one call. Use current refs; navigation may invalidate them. Example: steps=[{kind:'type',ref:'e1',text:'sample'},{kind:'click',ref:'e2'},{kind:'wait',url:'**/complete'}], include_snapshot=true. Wait for success or an observed loading indicator to disappear; do not guess routes. Stops on failure with completed_steps and 1-based failed_step; inspect progress before retrying. Never repeat user-provided passwords in the final reply unless explicitly asked. No nested batches.",
+            "Execute 1–10 dependent actions in order. Combine known form input, submission, and a success condition; stops at the failed step.",
             json!({
                 "steps": {
                     "type": "array",
                     "items": batch_step_schema(),
                     "minItems": 1,
                     "maxItems": 10
-                },
-                "target_id": {"type": "string"},
+                }
             }),
             &["steps"],
         ),
-        raw_spec(
-            TOOL_CLOSE,
-            "Close the browser session for this conversation.",
-            json!({}),
-            &[],
-        ),
-        raw_spec(
-            TOOL_STATUS,
-            "Report browser runtime status and open sessions.",
-            json!({}),
-            &[],
-        ),
-    ];
-    for spec in &mut specs {
-        if matches!(
-            spec.name.as_str(),
-            TOOL_NAVIGATE | TOOL_CLICK | TOOL_TYPE | TOOL_WAIT_FOR | TOOL_BATCH
-        ) {
-            let properties = spec.input_schema["properties"]
-                .as_object_mut()
-                .expect("properties");
-            properties.insert("include_snapshot".to_string(), json!({"type":"boolean", "default":spec.name == TOOL_NAVIGATE, "description":"Return a fresh bounded element snapshot after success; enabled by default for navigation. Initially empty snapshots briefly wait for client rendering."}));
-            properties.insert("max_chars".to_string(), json!({"type":"integer", "minimum":1, "maximum":40000, "description":"Character budget for the optional snapshot."}));
-        }
-        if matches!(
-            spec.name.as_str(),
-            TOOL_NAVIGATE | TOOL_SNAPSHOT | TOOL_CLICK | TOOL_TYPE | TOOL_WAIT_FOR | TOOL_BATCH
-        ) {
-            spec.input_schema["properties"].as_object_mut().expect("properties").insert(
-                "snapshot_timeout_ms".to_string(),
-                json!({"type":"integer", "minimum":0, "maximum":5000, "description":"Maximum wait for an initially empty snapshot; default 1500 ms, 0 returns immediately. Populated snapshots return immediately."}),
-            );
-        }
-    }
-    specs
+    ]
 }
 
 fn batch_step_schema() -> Value {
@@ -348,7 +239,54 @@ fn batch_step_schema() -> Value {
     })
 }
 
+/// Normalize the compact model surface into the legacy action handlers. Keeping
+/// this translation at the provider boundary lets old clients and persisted
+/// calls continue to use every former browser_* member without exposing them in
+/// the model catalog.
 async fn dispatch(context: &ToolContext<'_>, tool: &str, args: &Value) -> Result<ProviderOutcome> {
+    match tool {
+        TOOL_NAVIGATE => {
+            if opt_str(args, "action").as_deref() == Some("back") {
+                dispatch_legacy(context, TOOL_NAVIGATE_BACK, args).await
+            } else {
+                // Navigation no longer implicitly observes the page. Observation
+                // is an explicit browser_observe call, which prevents a full
+                // accessibility snapshot from being appended to every URL hop.
+                let mut normalized = args.clone();
+                if let Some(map) = normalized.as_object_mut() {
+                    map.entry("include_snapshot".to_string())
+                        .or_insert(Value::Bool(false));
+                }
+                dispatch_legacy(context, TOOL_NAVIGATE, &normalized).await
+            }
+        }
+        TOOL_OBSERVE => {
+            match opt_str(args, "mode").as_deref().unwrap_or("refs") {
+                "text" => dispatch_legacy(context, TOOL_READ_PAGE, args).await,
+                "screenshot" => dispatch_legacy(context, TOOL_SCREENSHOT, args).await,
+                _ => dispatch_legacy(context, TOOL_SNAPSHOT, args).await,
+            }
+        }
+        TOOL_INTERACT => {
+            let action = required_str(args, "action")?;
+            let legacy = match action.as_str() {
+                "click" => TOOL_CLICK,
+                "type" => TOOL_TYPE,
+                "hover" => TOOL_HOVER,
+                "select" => TOOL_SELECT_OPTION,
+                "drag" => TOOL_DRAG,
+                "press" => TOOL_PRESS_KEY,
+                "evaluate" => TOOL_EVALUATE,
+                other => return Err(anyhow!("browser_interact action unsupported: {other}")),
+            };
+            dispatch_legacy(context, legacy, args).await
+        }
+        TOOL_WAIT => dispatch_legacy(context, TOOL_WAIT_FOR, args).await,
+        _ => dispatch_legacy(context, tool, args).await,
+    }
+}
+
+async fn dispatch_legacy(context: &ToolContext<'_>, tool: &str, args: &Value) -> Result<ProviderOutcome> {
     let service = browser_service(context.config);
     let scope = scope_from_context(context, args);
     let target = opt_str(args, "target_id");
@@ -748,7 +686,8 @@ fn normalize_image_mime(format: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        copy_snapshot_args, normalize_image_mime, truncate_chars, PlaywrightProvider, TOOL_NAMES,
+        copy_snapshot_args, normalize_image_mime, truncate_chars, LEGACY_TOOL_NAMES,
+        PlaywrightProvider, TOOL_NAMES,
     };
     use crate::services::browser::provider::BrowserProvider;
     use serde_json::json;
@@ -765,6 +704,13 @@ mod tests {
         }
         assert!(!provider.owns_tool("浏览器"));
         assert!(!provider.owns_tool("browser"));
+        for name in LEGACY_TOOL_NAMES {
+            assert!(provider.owns_tool(name), "legacy tool {name} must remain callable");
+            assert!(
+                !names.iter().any(|item| item == name),
+                "legacy tool {name} must not be exposed"
+            );
+        }
     }
 
     #[test]
@@ -778,13 +724,15 @@ mod tests {
         let required = navigate.input_schema["required"]
             .as_array()
             .expect("required array");
-        assert!(required.iter().any(|item| item == "url"));
+        assert!(required.is_empty());
+        assert!(navigate.input_schema["properties"]["action"].is_object());
         assert_eq!(navigate.input_schema["type"], json!("object"));
     }
 
     #[test]
     fn browser_specs_describe_batch_steps_and_observation_options() {
         let specs = PlaywrightProvider::new().tool_specs();
+        assert_eq!(specs.len(), 6);
         let batch = specs
             .iter()
             .find(|spec| spec.name == "browser_batch")
@@ -798,22 +746,18 @@ mod tests {
             .unwrap()
             .iter()
             .any(|kind| kind == "wait"));
-        for name in [
-            "browser_navigate",
-            "browser_click",
-            "browser_type",
-            "browser_wait_for",
-            "browser_batch",
-        ] {
-            let spec = specs.iter().find(|spec| spec.name == name).unwrap();
-            assert_eq!(
-                spec.input_schema["properties"]["include_snapshot"]["type"],
-                "boolean"
-            );
-        }
+        let interact = specs
+            .iter()
+            .find(|spec| spec.name == "browser_interact")
+            .unwrap();
+        assert!(interact.input_schema["properties"]["action"]
+            ["enum"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("click")));
         let wait = specs
             .iter()
-            .find(|spec| spec.name == "browser_wait_for")
+            .find(|spec| spec.name == "browser_wait")
             .unwrap();
         for key in ["selector", "url", "timeout_ms"] {
             assert!(wait.input_schema["properties"].get(key).is_some());
@@ -822,18 +766,10 @@ mod tests {
             wait.input_schema["properties"]["state"]["enum"],
             json!(["visible", "hidden", "attached", "detached"])
         );
-        assert_eq!(
-            specs
-                .iter()
-                .find(|spec| spec.name == "browser_navigate")
-                .unwrap()
-                .input_schema["properties"]["include_snapshot"]["default"],
-            true
-        );
     }
 
     #[test]
-    fn navigation_defaults_to_observation_and_respects_opt_out() {
+    fn legacy_navigation_snapshot_default_can_be_explicitly_disabled() {
         let mut call_args = serde_json::Map::new();
         copy_snapshot_args(&json!({}), &mut call_args, true);
         assert_eq!(call_args["include_snapshot"], true);
@@ -847,6 +783,17 @@ mod tests {
         assert_eq!(call_args["include_snapshot"], false);
         assert_eq!(call_args["snapshot_timeout_ms"], 0);
         assert!(!call_args.contains_key("max_chars"));
+    }
+
+    #[test]
+    fn compact_surface_has_no_implicit_snapshot_parameter() {
+        let navigate = PlaywrightProvider::new()
+            .tool_specs()
+            .into_iter()
+            .find(|spec| spec.name == "browser_navigate")
+            .unwrap();
+        assert!(navigate.input_schema["properties"]["include_snapshot"].is_null());
+        assert!(navigate.input_schema["properties"]["max_chars"].is_null());
     }
 
     #[test]

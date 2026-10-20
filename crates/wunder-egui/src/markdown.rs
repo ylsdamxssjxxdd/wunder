@@ -37,7 +37,7 @@ fn inline_job(text: &str, size: f32, color: Color32) -> InlineText {
             let start = job.text.chars().count();
             emphasis.push(start..start + tail[..end].chars().count());
         } else {
-            text_format.background = Color32::from_rgb(243, 242, 240);
+            text_format.background = crate::theme::tokens().code_inline;
         }
         job.append(&tail[..end], 0.0, text_format);
         rest = &tail[end + marker.len()..];
@@ -150,7 +150,7 @@ pub fn show(ui: &mut Ui, text: &str, color: Color32) {
                     code.push_str(next);
                 }
                 Frame::NONE
-                    .fill(Color32::from_rgb(245, 244, 242))
+                    .fill(crate::theme::tokens().code_background)
                     .corner_radius(8.0)
                     .inner_margin(Margin::same(12))
                     .show(ui, |ui| {

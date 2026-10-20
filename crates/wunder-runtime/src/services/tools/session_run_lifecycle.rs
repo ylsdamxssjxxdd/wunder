@@ -261,7 +261,7 @@ pub(crate) fn prepare_child_session(
             workspace_id: None,
             model_name: resolved_model_name,
             language: Some(i18n::get_language()),
-            config_overrides: context.request_config_overrides.cloned(),
+            config_overrides: child_config_overrides(context),
             agent_prompt,
             preview_skill,
             attachments: None,
@@ -288,6 +288,32 @@ pub(crate) fn prepare_child_session(
         },
         run_metadata,
     })
+}
+
+/// Per-turn overrides the parent request carries are scoped to the parent
+/// session: the open lease proves custody of *that* thread, and the turn and
+/// resume cursors address *its* durable log. Handing them to a fresh child
+/// session fails the child's turn acceptance with a stale-lease error, so a
+/// child request starts from the same configuration without the parent's
+/// turn identity.
+fn child_config_overrides(context: &ToolContext<'_>) -> Option<Value> {
+    let mut overrides = context.request_config_overrides.cloned()?;
+    if let Some(map) = overrides.as_object_mut() {
+        for key in [
+            "__local_open_lease",
+            "__thread_log_turn_id",
+            "__thread_log_user_round",
+            "__thread_log_resume_from_seq",
+            "__queue_task_id",
+            "__queue_priority",
+        ] {
+            map.remove(key);
+        }
+        if map.is_empty() {
+            return None;
+        }
+    }
+    Some(overrides)
 }
 
 pub(crate) fn resolve_effective_agent_model_name(

@@ -80,8 +80,25 @@ pub(super) fn install(app: &MainWindow, state: Rc<RefCell<State>>) {
                 current.observation.detach();
                 return;
             }
+            // The catalogue is bounded to 100 rows and is the only status
+            // source for threads the selected-thread watcher cannot see:
+            // background runs settle while this window pumps a live turn, and
+            // discovery covers a new channel route. A live turn must not
+            // starve that poll, or every other entry's status marker freezes
+            // until the run finishes.
+            let refresh = current
+                .observation
+                .list_refreshed
+                .is_none_or(|time| time.elapsed() >= Duration::from_secs(3));
+            if refresh {
+                current.observation.list_refreshed = Some(Instant::now());
+            }
             if current.active.is_some() || !current.parked.is_empty() || app.get_creating_session()
             {
+                drop(current);
+                if refresh {
+                    refresh_chat(&app, state.clone(), true);
+                }
                 return;
             }
             let desktop = current.desktop.clone();
@@ -93,9 +110,8 @@ pub(super) fn install(app: &MainWindow, state: Rc<RefCell<State>>) {
                 .set_markdown_root(crate::native_chat::markdown_root(&app));
             let session = app.get_active_session_id().to_string();
             let initial = crate::native_chat::take_initial_history(&session);
-            let observation = &mut current.observation;
-            if observation.session != session {
-                observation.detach();
+            if current.observation.session != session {
+                current.observation.detach();
                 if !session.is_empty() {
                     // Thread selection acquires its lease and reads the compact
                     // history on a worker. Do not attach a cold watcher while
@@ -107,23 +123,36 @@ pub(super) fn install(app: &MainWindow, state: Rc<RefCell<State>>) {
                     if initial.is_none() && app.get_session_loading() {
                         return;
                     }
-                    observation.session = session.clone();
+                    current.observation.session = session.clone();
                     if let Some((turns, _)) = initial.as_ref() {
                         // Project the background snapshot immediately. The
                         // watch still verifies and follows durable changes,
                         // but the loading overlay can now leave without a
                         // blank welcome screen between threads.
-                        observation.seed(&session, turns.clone());
-                        observation.publish(&app, &timeline);
+                        current.observation.seed(&session, turns.clone());
+                        current.observation.publish(&app, &timeline);
                         app.set_session_loading(false);
+                    }
+                    // The thread's last published plan and a pending 问询面板
+                    // are durable presentation metadata; both come back with
+                    // the history instead of living only in a live turn. This
+                    // runs once per open, before the watcher is attached.
+                    if let Some((turns, _)) = initial.as_ref() {
+                        crate::native_chat::restore_thread_extras(
+                            &app,
+                            &mut current,
+                            &session,
+                            turns,
+                        );
                     }
                     let (turns, cursor) = initial
                         .map(|(turns, cursor)| (Some(turns), Some(cursor)))
                         .unwrap_or((None, None));
-                    observation.watch =
+                    current.observation.watch =
                         Some(desktop.watch_chat_with_initial_cursor(&session, turns, cursor));
                 }
             }
+            let observation = &mut current.observation;
             let mut dirty = false;
             let mut reset = false;
             let started = Instant::now();
@@ -226,14 +255,8 @@ pub(super) fn install(app: &MainWindow, state: Rc<RefCell<State>>) {
                     app.set_stopping(false);
                 }
             }
-            // The catalogue is bounded to 100 rows; discovery also covers a new
-            // channel route, for which no selected-thread subscription exists yet.
-            let refresh = observation
-                .list_refreshed
-                .is_none_or(|time| time.elapsed() >= Duration::from_secs(3));
-            if refresh {
-                observation.list_refreshed = Some(Instant::now());
-            }
+            // The poll cadence was resolved before the watcher drained, so a
+            // live turn and an idle tick share one refresh schedule.
             drop(current);
             if refresh {
                 refresh_chat(&app, state.clone(), true);
@@ -827,6 +850,8 @@ mod tests {
             }],
             subagents: Vec::new(),
             process_steps: 0,
+            plan: None,
+            question_panel: None,
         }
     }
 

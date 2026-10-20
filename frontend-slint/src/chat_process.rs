@@ -347,6 +347,7 @@ mod tests {
         };
         let page = || NativeProcessPage {
             items: vec![NativeProcessItem {
+                item_index: 0,
                 id: "fixture-item".into(),
                 state: "completed".into(),
                 reasoning: "Fixture thought".into(),
@@ -416,6 +417,7 @@ mod tests {
             &mut row,
             NativeProcessPage {
                 items: vec![NativeProcessItem {
+                    item_index: 0,
                     id: "fixture-item".into(),
                     state: "running".into(),
                     reasoning: "Fixture thought".into(),

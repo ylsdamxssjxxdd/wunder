@@ -32,6 +32,9 @@ pub fn install(app: &MainWindow) {
     tray.on_show_main_requested(move || {
         if let Some(app) = weak.upgrade() {
             let _ = app.show();
+            // show() alone re-maps the HWND but leaves it behind the current
+            // foreground window; raise and focus it through Win32 directly.
+            crate::native_window::restore_and_focus(app.window());
             app.window().request_redraw();
             hide_notice();
         }

@@ -153,4 +153,10 @@ ENTRIES = [
 
     # ---- window ----
     ("app_window_title", "蛹", "Pupa"),
+    ("wm_minimize", "最小化", "Minimize"),
+    ("wm_maximize", "最大化", "Maximize"),
+    ("wm_restore", "还原", "Restore"),
+    ("wm_status_running", "运行中 {} 线程", "{} running", ["count"]),
+    ("wm_status_inquiry", "问询 {}", "Inquiry {}", ["count"]),
+    ("wm_status_idle", "空闲", "Idle"),
 ]

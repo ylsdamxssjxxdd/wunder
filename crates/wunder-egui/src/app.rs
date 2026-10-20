@@ -9,7 +9,27 @@ use std::collections::{BTreeSet, VecDeque};
 use std::time::Duration;
 
 const SIDEBAR_WIDTH: f32 = 240.0;
+const SIDEBAR_MIN_WIDTH: f32 = 170.0;
+const SIDEBAR_MAX_WIDTH: f32 = 420.0;
+const COMPACT_SIDEBAR_BREAKPOINT: f32 = 1024.0;
+const DEFAULT_SIDEBAR_SPLIT: f32 = 0.60;
 const CHAT_COLUMN_WIDTH: f32 = 1000.0;
+
+fn uses_compact_sidebar(screen_width: f32) -> bool {
+    screen_width < COMPACT_SIDEBAR_BREAKPOINT
+}
+
+fn drawer_sidebar_width(screen_width: f32) -> f32 {
+    // Keep a visible part of the chat canvas as the dismissal target. On an
+    // exceptionally small viewport the drawer must still stay inside it.
+    (screen_width - 30.0)
+        .clamp(SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH)
+        .min(screen_width.max(1.0))
+}
+
+fn clamp_sidebar_split(value: f32) -> f32 {
+    value.clamp(0.30, 0.80)
+}
 
 fn valid_thread_title(title: &str) -> bool {
     let title = title.trim();
@@ -108,6 +128,8 @@ pub struct EguiApp {
     composer_submenu: Option<ComposerSubmenu>,
     approval_mode: &'static str,
     terminal_mode: bool,
+    sidebar_open: bool,
+    sidebar_split: f32,
     rename_thread_dialog: Option<RenameThreadDialog>,
     rename_thread_needs_focus: bool,
     trajectory_dialog: Option<ThreadTrajectoryDialog>,
@@ -147,6 +169,8 @@ impl EguiApp {
             composer_submenu: None,
             approval_mode: "执行前确认",
             terminal_mode: false,
+            sidebar_open: false,
+            sidebar_split: DEFAULT_SIDEBAR_SPLIT,
             rename_thread_dialog: None,
             rename_thread_needs_focus: false,
             trajectory_dialog: None,
@@ -183,6 +207,8 @@ impl EguiApp {
             composer_submenu: None,
             approval_mode: "执行前确认",
             terminal_mode: false,
+            sidebar_open: false,
+            sidebar_split: DEFAULT_SIDEBAR_SPLIT,
             rename_thread_dialog: None,
             rename_thread_needs_focus: false,
             trajectory_dialog: None,
@@ -212,6 +238,8 @@ impl EguiApp {
             composer_submenu: None,
             approval_mode: "执行前确认",
             terminal_mode: false,
+            sidebar_open: false,
+            sidebar_split: DEFAULT_SIDEBAR_SPLIT,
             rename_thread_dialog: None,
             rename_thread_needs_focus: false,
             trajectory_dialog: None,
@@ -467,24 +495,109 @@ impl EguiApp {
 
     fn draw_sidebar(&mut self, ctx: &Context) {
         let tokens = theme::tokens();
-        SidePanel::left("messenger-sidebar")
-            .exact_width(SIDEBAR_WIDTH)
-            .resizable(false)
-            .frame(Frame::NONE.fill(tokens.sidebar))
-            .show(ctx, |ui| {
-                ui.set_width(SIDEBAR_WIDTH);
-                ui.spacing_mut().item_spacing.y = 0.0;
-                self.draw_sidebar_contents(ui, tokens);
-            });
+        let screen = ctx.screen_rect();
+        let compact = uses_compact_sidebar(screen.width());
+        if compact {
+            self.draw_compact_sidebar(ctx, screen, tokens);
+        } else {
+            SidePanel::left("messenger-sidebar")
+                .default_width(SIDEBAR_WIDTH)
+                .width_range(SIDEBAR_MIN_WIDTH..=SIDEBAR_MAX_WIDTH)
+                .resizable(true)
+                .show_separator_line(false)
+                .frame(Frame::NONE.fill(tokens.sidebar))
+                .show(ctx, |ui| {
+                    ui.spacing_mut().item_spacing.y = 0.0;
+                    self.draw_sidebar_contents(ui, tokens);
+                });
+        }
         self.draw_thread_rename_dialog(ctx, tokens);
         self.draw_thread_trajectory_dialog(ctx, tokens);
         self.draw_workspace_prompt(ctx, tokens);
     }
 
+    fn draw_compact_sidebar(&mut self, ctx: &Context, screen: egui::Rect, tokens: Tokens) {
+        if !self.sidebar_open {
+            let trigger = egui::Rect::from_min_size(
+                screen.left_top() + Vec2::new(8.0, 8.0),
+                Vec2::splat(30.0),
+            );
+            let response = egui::Area::new(Id::new("messenger-sidebar-trigger"))
+                .order(Order::Foreground)
+                .fixed_pos(trigger.min)
+                .show(ctx, |ui| {
+                    let (rect, response) = ui.allocate_exact_size(trigger.size(), Sense::click());
+                    let fill = if response.hovered() {
+                        tokens.hover
+                    } else {
+                        tokens.surface
+                    };
+                    ui.painter().rect_filled(rect, 8.0, fill);
+                    ui.painter().rect_stroke(
+                        rect,
+                        8.0,
+                        Stroke::new(1.0, tokens.border),
+                        egui::StrokeKind::Inside,
+                    );
+                    let line = Stroke::new(1.5, tokens.text_secondary);
+                    for y in [rect.top() + 9.0, rect.center().y, rect.bottom() - 9.0] {
+                        ui.painter().line_segment(
+                            [
+                                egui::pos2(rect.left() + 8.0, y),
+                                egui::pos2(rect.right() - 8.0, y),
+                            ],
+                            line,
+                        );
+                    }
+                    response
+                })
+                .inner;
+            if response.clicked() {
+                self.sidebar_open = true;
+            }
+            return;
+        }
+
+        let drawer_width = drawer_sidebar_width(screen.width());
+        let scrim = egui::Area::new(Id::new("messenger-sidebar-scrim"))
+            .order(Order::Foreground)
+            .fixed_pos(screen.min)
+            .show(ctx, |ui| {
+                let (rect, response) = ui.allocate_exact_size(screen.size(), Sense::click());
+                ui.painter().rect_filled(rect, 0.0, theme::tokens().scrim);
+                response
+            })
+            .inner;
+        if scrim.clicked() || ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
+            self.sidebar_open = false;
+            return;
+        }
+
+        egui::Area::new(Id::new("messenger-sidebar-drawer"))
+            .order(Order::Foreground)
+            .fixed_pos(screen.min)
+            .show(ctx, |ui| {
+                Frame::NONE.fill(tokens.sidebar).show(ui, |ui| {
+                    let (drawer, _) = ui.allocate_exact_size(
+                        Vec2::new(drawer_width, screen.height()),
+                        Sense::hover(),
+                    );
+                    ui.painter().line_segment(
+                        [drawer.right_top(), drawer.right_bottom()],
+                        Stroke::new(1.0, tokens.border),
+                    );
+                    ui.scope_builder(UiBuilder::new().max_rect(drawer), |ui| {
+                        ui.spacing_mut().item_spacing.y = 0.0;
+                        self.draw_sidebar_contents(ui, tokens);
+                    });
+                });
+            });
+    }
+
     fn draw_sidebar_contents(&mut self, ui: &mut Ui, tokens: Tokens) {
         let full = ui.available_rect_before_wrap();
         let track_h = (full.height() - 33.0).max(80.0);
-        let workspace_h = ((track_h - 9.0) * 0.60).max(48.0);
+        let workspace_h = ((track_h - 9.0) * self.sidebar_split).max(48.0);
         let workspace = egui::Rect::from_min_size(full.min, Vec2::new(full.width(), workspace_h));
         let splitter =
             egui::Rect::from_min_size(workspace.left_bottom(), Vec2::new(full.width(), 9.0));
@@ -517,6 +630,22 @@ impl EguiApp {
             ],
             Stroke::new(2.0, tokens.border_strong),
         );
+        let splitter_response = ui.interact(
+            splitter,
+            Id::new("sidebar-workspace-files-splitter"),
+            Sense::click_and_drag(),
+        );
+        if splitter_response.double_clicked() {
+            self.sidebar_split = DEFAULT_SIDEBAR_SPLIT;
+        } else if splitter_response.dragged() {
+            if let Some(pointer) = splitter_response.interact_pointer_pos() {
+                self.sidebar_split =
+                    clamp_sidebar_split((pointer.y - full.top()) / (track_h - 9.0).max(1.0));
+            }
+        }
+        if splitter_response.hovered() || splitter_response.dragged() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
+        }
         ui.scope_builder(
             UiBuilder::new().id_salt("files-region").max_rect(files),
             |ui| {
@@ -3763,6 +3892,17 @@ mod sidebar_tests {
         assert!(!valid_workspace_entry_path("../outside"));
         assert!(!valid_workspace_entry_path("C:\\outside"));
         assert!(!valid_workspace_entry_path("notes/../outside"));
+    }
+
+    #[test]
+    fn sidebar_breakpoint_and_split_stay_within_hive_bounds() {
+        assert!(!uses_compact_sidebar(1024.0));
+        assert!(uses_compact_sidebar(1023.0));
+        assert_eq!(clamp_sidebar_split(0.1), 0.30);
+        assert_eq!(clamp_sidebar_split(0.60), 0.60);
+        assert_eq!(clamp_sidebar_split(1.2), 0.80);
+        assert_eq!(drawer_sidebar_width(900.0), 420.0);
+        assert_eq!(drawer_sidebar_width(180.0), 180.0);
     }
 
     #[test]

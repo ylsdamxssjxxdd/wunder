@@ -101,7 +101,14 @@ pub fn subagent_row(card: &NativeSubagentCard) -> TimelineRow {
             };
         }
     }
-    let mut row = blank(KIND_SUBAGENT, format!("sub-{}", card.item_id));
+    // The child session is the card's identity: a live card starts from the
+    // dispatch event (which has no durable item yet) and the same row must be
+    // patched, not duplicated, when the durable `subagent_run` item replays.
+    let mut row = if card.session_id.is_empty() {
+        blank(KIND_SUBAGENT, format!("sub-{}", card.item_id))
+    } else {
+        blank(KIND_SUBAGENT, format!("sub-{}", card.session_id))
+    };
     row.text = card.title.as_str().into();
     row.summary = summary.as_str().into();
     row.tool_icon = crate::tool_icons::workflow_icon("subagent_control").into();
@@ -812,6 +819,10 @@ impl Timeline {
         );
         row.blocks = ModelRc::from(blocks.model.clone());
         let index = self.push(row);
+        // The process child list orders entries by payload, so the body row
+        // must carry its own index like every other structural row; the blank
+        // default 0 would insert it at the top of the fold.
+        self.patch(index, |row| row.payload = index as i32);
         let protected = self.protect_next_body;
         self.protect_next_body = false;
         self.protected_body = if protected { index } else { usize::MAX };
@@ -1357,10 +1368,11 @@ impl Timeline {
                 continue;
             };
             // Fold handles address their row by index, so the tail keeps
-            // toggling itself after the prefix moved.
+            // toggling itself after the prefix moved. Body rows are foldable
+            // too and their payload orders the process child list.
             if matches!(
                 row.kind,
-                KIND_GROUP | KIND_REASON | KIND_TOOL | KIND_PROCESS
+                KIND_GROUP | KIND_REASON | KIND_TOOL | KIND_PROCESS | KIND_BODY
             ) {
                 row.payload = (index as isize + delta) as i32;
             }
@@ -2069,6 +2081,115 @@ mod tests {
                 .unwrap()
                 .process_idx,
             bar.process_idx
+        );
+    }
+
+    /// The process child list orders entries by payload, so an admitted body
+    /// row must carry its own row index. The blank default 0 inserted every
+    /// intermediate print at the top of the fold, ahead of the thinking and
+    /// tool entries that preceded it, until settlement or the rolling trim
+    /// restamped every payload.
+    #[test]
+    fn intermediate_bodies_keep_chronological_order_inside_the_process() {
+        let mut timeline = Timeline::new();
+        timeline.begin_turn("fixture-order", "Fixture input");
+        timeline.append_reasoning("First thought").unwrap();
+        timeline.flush();
+
+        timeline.start_body(1);
+        timeline.append_body("First intermediate note").unwrap();
+        timeline.flush();
+        timeline.upsert_tool(&NativeWorkflowEntry::from_payload(
+            "fixture-call-1",
+            "read_file",
+            "Fixture result".into(),
+            "running",
+            &serde_json::json!({"args":{"path":"sample.txt"}}),
+        ));
+
+        timeline.close_segments();
+        timeline.start_body(2);
+        timeline.append_body("Second intermediate note").unwrap();
+        timeline.flush();
+        timeline.upsert_tool(&NativeWorkflowEntry::from_payload(
+            "fixture-call-2",
+            "read_file",
+            "Fixture result".into(),
+            "running",
+            &serde_json::json!({"args":{"path":"sample.txt"}}),
+        ));
+
+        let children = timeline
+            .model
+            .row_data(timeline.process_bar)
+            .unwrap()
+            .process_entries;
+        assert_eq!(
+            children.iter().map(|entry| entry.kind).collect::<Vec<_>>(),
+            vec![KIND_REASON, KIND_BODY, KIND_TOOL, KIND_BODY, KIND_TOOL],
+            "admitted prints stay where the turn produced them, not at the top"
+        );
+        assert_eq!(
+            children.row_data(1).unwrap().text,
+            "First intermediate note"
+        );
+        assert_eq!(
+            children.row_data(3).unwrap().text,
+            "Second intermediate note"
+        );
+
+        // A child toggle addresses its own row through the stamped payload.
+        let body_entry = children.row_data(1).unwrap();
+        let body_index = timeline
+            .model
+            .iter()
+            .position(|row| row.id == body_entry.id)
+            .unwrap();
+        assert_eq!(body_entry.payload, body_index as i32);
+        timeline.toggle(body_entry.payload);
+        assert!(timeline.model.row_data(body_index).unwrap().open);
+    }
+
+    /// The durable prefix growing under a live turn shifts every kept row; the
+    /// body rows must be restamped together with the fold handles, or their
+    /// stale payload again orders the process child list wrong.
+    #[test]
+    fn history_prefix_move_restamps_live_body_payload() {
+        let mut timeline = Timeline::new();
+        timeline.set_history(durable_rows(1));
+        timeline.begin_turn("fixture-live", "Fixture input");
+        timeline.append_reasoning("Fixture thought").unwrap();
+        timeline.start_body(1);
+        timeline.append_body("Intermediate note").unwrap();
+        timeline.flush();
+        timeline.upsert_tool(&NativeWorkflowEntry::from_payload(
+            "fixture-call",
+            "read_file",
+            "Fixture result".into(),
+            "running",
+            &serde_json::json!({"args":{"path":"sample.txt"}}),
+        ));
+
+        timeline.publish_history(durable_rows(3));
+        let model = timeline.model();
+        for row in model.iter() {
+            if row.foldable || row.kind == KIND_PROCESS {
+                assert_eq!(
+                    model.row_data(row.payload as usize).unwrap().id,
+                    row.id,
+                    "a foldable row must point at itself after the prefix moved"
+                );
+            }
+        }
+        drop(model);
+        let children = timeline
+            .model
+            .row_data(timeline.process_bar)
+            .unwrap()
+            .process_entries;
+        assert_eq!(
+            children.iter().map(|entry| entry.kind).collect::<Vec<_>>(),
+            vec![KIND_REASON, KIND_BODY, KIND_TOOL]
         );
     }
 

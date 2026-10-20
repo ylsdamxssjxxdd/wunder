@@ -1456,7 +1456,7 @@ fn to_model_card(model: wunder_desktop::ModelRecord) -> crate::ModelCard {
 }
 
 /// Map a persisted theme value onto a `Theme.palette` name. Only the accent
-/// family is selectable: the settings card offers terracotta (羊皮纸),
+/// family is selectable: the settings card offers terracotta (橙汁),
 /// hula-green (薄荷), forest (森林) and honey (蜜蜂); the legacy "light"/
 /// "eva-orange" values, and anything unrecognised, resolve to the 蜂巢
 /// terracotta default.

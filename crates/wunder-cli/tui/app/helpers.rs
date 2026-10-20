@@ -515,19 +515,40 @@ fn attachment_path_exists(base_dir: &Path, value: &str) -> bool {
     base_dir.join(candidate).is_file()
 }
 
-pub(super) fn read_system_clipboard_image_path() -> Result<Option<String>> {
+/// One clipboard read: which image (saved to a temp file) and which text the
+/// clipboard held at probe time. `image_error` keeps a failed image probe from
+/// masking the text result, matching the old two-probe behavior.
+#[derive(Debug, Default)]
+pub(super) struct ClipboardSnapshot {
+    pub(super) image_path: Option<String>,
+    pub(super) image_error: Option<String>,
+    pub(super) text: Option<String>,
+}
+
+/// Probe image and text in a single PowerShell process: a second cold start
+/// costs up to seconds on legacy Windows, and Ctrl+V used to pay it twice.
+pub(super) fn read_system_clipboard_snapshot() -> Result<ClipboardSnapshot> {
     #[cfg(target_os = "windows")]
     {
         let script = concat!(
             "$ErrorActionPreference='Stop'; ",
             "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ",
+            "$path=''; $imgError=''; ",
+            "try { ",
             "Add-Type -AssemblyName System.Drawing | Out-Null; ",
             "$img = Get-Clipboard -Format Image; ",
-            "if ($null -eq $img) { exit 0 }; ",
+            "if ($null -ne $img) { ",
             "$path = Join-Path ([System.IO.Path]::GetTempPath()) ('wunder-clipboard-' + [Guid]::NewGuid().ToString('N') + '.png'); ",
             "$img.Save($path, [System.Drawing.Imaging.ImageFormat]::Png); ",
             "if ($img -is [System.IDisposable]) { $img.Dispose() }; ",
-            "[Console]::Out.Write($path);"
+            "} ",
+            "} catch { $imgError = ($_.Exception.Message -replace \"`r`n|`n\", ' ') }; ",
+            "[Console]::Out.Write($path); ",
+            "[Console]::Out.Write(\"`nWUNDER-CLIPBOARD-SEP-7f3a9c1e`n\"); ",
+            "[Console]::Out.Write($imgError); ",
+            "[Console]::Out.Write(\"`nWUNDER-CLIPBOARD-SEP-7f3a9c1e`n\"); ",
+            "$value = Get-Clipboard -Raw; ",
+            "if ($null -ne $value) { [Console]::Out.Write($value) }"
         );
 
         let output = Command::new("powershell")
@@ -540,33 +561,39 @@ pub(super) fn read_system_clipboard_image_path() -> Result<Option<String>> {
                 script,
             ])
             .output()
-            .map_err(|error| {
-                anyhow!("failed to invoke powershell clipboard image reader: {error}")
-            })?;
+            .map_err(|error| anyhow!("failed to invoke powershell clipboard reader: {error}"))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
             if stderr.is_empty() {
-                return Ok(None);
+                return Ok(ClipboardSnapshot::default());
             }
-            return Err(anyhow!(
-                "powershell clipboard image reader failed: {stderr}"
-            ));
+            return Err(anyhow!("powershell clipboard reader failed: {stderr}"));
         }
 
-        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if path.is_empty() {
-            return Ok(None);
-        }
-        Ok(Some(path))
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let mut parts = stdout.splitn(3, "\nWUNDER-CLIPBOARD-SEP-7f3a9c1e\n");
+        let image_path = parts.next().unwrap_or("").trim().to_string();
+        let image_error = parts.next().unwrap_or("").trim().to_string();
+        let text_raw = parts.next().unwrap_or("").to_string();
+        return Ok(ClipboardSnapshot {
+            image_path: (!image_path.is_empty()).then_some(image_path),
+            image_error: (!image_error.is_empty()).then_some(image_error),
+            text: normalize_clipboard_text(text_raw),
+        });
     }
 
     #[cfg(not(target_os = "windows"))]
     {
-        Ok(None)
+        return Ok(ClipboardSnapshot {
+            image_path: None,
+            image_error: None,
+            text: read_system_clipboard_text()?,
+        });
     }
 }
 
+#[cfg_attr(target_os = "windows", allow(dead_code))]
 pub(super) fn read_system_clipboard_text() -> Result<Option<String>> {
     #[cfg(target_os = "windows")]
     {

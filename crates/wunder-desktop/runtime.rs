@@ -110,6 +110,7 @@ impl Default for DesktopSettings {
 
 impl DesktopRuntime {
     pub async fn init(args: &DesktopArgs) -> Result<Self> {
+        wunder_server::local_bootstrap::install_local_home_env();
         let startup_enabled = startup_timing_enabled();
         let startup_boot = Instant::now();
         log_startup_point(

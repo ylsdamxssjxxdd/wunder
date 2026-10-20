@@ -50,10 +50,14 @@ fn bundled_fonts() -> FontDefinitions {
 
 #[derive(Clone, Copy)]
 pub struct Tokens {
+    /// Application canvas behind the workbench panes.
     pub canvas: Color32,
+    /// Raised cards, menus, popovers and text input backgrounds.
     pub surface: Color32,
     pub sidebar: Color32,
+    /// Pointer-over fill for rows and passive icon buttons.
     pub hover: Color32,
+    /// Persistently selected rows and open menu entries.
     pub selected: Color32,
     pub border: Color32,
     pub border_strong: Color32,
@@ -63,6 +67,27 @@ pub struct Tokens {
     pub primary: Color32,
     pub primary_soft: Color32,
     pub primary_tint: Color32,
+    /// Keyboard focus ring and the text caret.
+    pub focus: Color32,
+    /// Muted text and icons for unavailable actions. Disabled controls also
+    /// receive `Visuals::disabled_alpha` so they remain distinguishable when
+    /// color alone is unavailable.
+    pub disabled: Color32,
+    /// Fenced Markdown code background.
+    pub code_background: Color32,
+    pub code_inline: Color32,
+    /// Secondary workflow-step text, distinct from general muted copy.
+    pub process: Color32,
+    /// Success chip colors used by completed user turns.
+    pub success_tint: Color32,
+    pub success_border: Color32,
+    /// Overlay and elevation are premultiplied because `Color32` stores alpha
+    /// that way. `scrim` is equivalent to rgba(31, 35, 41, .32).
+    pub scrim: Color32,
+    pub shadow: Color32,
+    /// The two-pixel vertical user-message gradient.
+    pub user_bubble_top: Color32,
+    pub user_bubble_bottom: Color32,
     pub timeline_line: Color32,
     pub success: Color32,
     pub warning: Color32,
@@ -71,7 +96,7 @@ pub struct Tokens {
 
 impl Tokens {
     /// 蜂巢默认的 terracotta 浅色主题（`--mz-*` tokens）。
-    pub const fn light() -> Self {
+    pub fn light() -> Self {
         Self {
             canvas: Color32::from_rgb(0xfb, 0xfa, 0xf8),
             surface: Color32::from_rgb(0xff, 0xff, 0xff),
@@ -88,6 +113,17 @@ impl Tokens {
             primary: Color32::from_rgb(0xc9, 0x64, 0x43),
             primary_soft: Color32::from_rgb(0xdf, 0xac, 0x9a),
             primary_tint: Color32::from_rgb(0xf6, 0xe9, 0xe3),
+            focus: Color32::from_rgb(0xc9, 0x64, 0x43),
+            disabled: Color32::from_rgb(0xb7, 0xb9, 0xbd),
+            code_background: Color32::from_rgb(0xf5, 0xf4, 0xf2),
+            code_inline: Color32::from_rgb(0xf3, 0xf2, 0xf0),
+            process: Color32::from_rgb(0x9b, 0xa0, 0xa8),
+            success_tint: Color32::from_rgb(0xf1, 0xfd, 0xf5),
+            success_border: Color32::from_rgb(0xbe, 0xe6, 0xcc),
+            scrim: Color32::from_rgba_unmultiplied(0x1f, 0x23, 0x29, 82),
+            shadow: Color32::from_black_alpha(24),
+            user_bubble_top: Color32::from_rgb(246, 236, 231),
+            user_bubble_bottom: Color32::from_rgb(249, 244, 240),
             timeline_line: Color32::from_rgb(0xe2, 0xdf, 0xda),
             success: Color32::from_rgb(0x1a, 0x8a, 0x5c),
             warning: Color32::from_rgb(0xc9, 0x8a, 0x2b),
@@ -104,27 +140,54 @@ pub fn apply(ctx: &Context) {
     let mut visuals = Visuals::light();
 
     visuals.override_text_color = Some(tokens.text);
+    visuals.weak_text_color = Some(tokens.text_muted);
+    visuals.hyperlink_color = tokens.primary;
     visuals.panel_fill = tokens.canvas;
     visuals.window_fill = tokens.surface;
+    visuals.window_stroke = Stroke::new(1.0, tokens.border);
     visuals.faint_bg_color = tokens.hover;
     visuals.extreme_bg_color = tokens.canvas;
+    visuals.text_edit_bg_color = Some(tokens.surface);
+    visuals.code_bg_color = tokens.code_background;
+    visuals.warn_fg_color = tokens.warning;
+    visuals.error_fg_color = tokens.danger;
+    visuals.window_shadow.color = tokens.shadow;
+    visuals.popup_shadow.color = tokens.shadow;
+    visuals.text_cursor.stroke = Stroke::new(1.5, tokens.focus);
+    visuals.disabled_alpha = 0.55;
     visuals.window_corner_radius = CornerRadius::same(12);
     visuals.menu_corner_radius = CornerRadius::same(10);
     visuals.widgets.noninteractive.bg_fill = tokens.surface;
+    visuals.widgets.noninteractive.weak_bg_fill = tokens.surface;
     visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, tokens.border);
+    visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0, tokens.text_secondary);
     visuals.widgets.noninteractive.corner_radius = CornerRadius::same(8);
     visuals.widgets.inactive.bg_fill = tokens.surface;
+    visuals.widgets.inactive.weak_bg_fill = tokens.surface;
     visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, tokens.border);
+    visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, tokens.text_secondary);
     visuals.widgets.inactive.corner_radius = CornerRadius::same(8);
     visuals.widgets.hovered.bg_fill = tokens.hover;
+    visuals.widgets.hovered.weak_bg_fill = tokens.hover;
     visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, tokens.primary_soft);
+    visuals.widgets.hovered.fg_stroke = Stroke::new(1.0, tokens.text);
     visuals.widgets.hovered.corner_radius = CornerRadius::same(8);
-    visuals.widgets.active.bg_fill = tokens.primary;
-    visuals.widgets.active.bg_stroke = Stroke::new(1.0, tokens.primary);
-    visuals.widgets.active.fg_stroke = Stroke::new(1.0, Color32::WHITE);
+    // egui maps keyboard focus to `active`; keep its fill quiet so receiving
+    // focus never reflows text or makes a focused input look disabled. The
+    // accent stroke, cursor, and selection make focus visible without relying
+    // on color alone.
+    visuals.widgets.active.bg_fill = tokens.primary_tint;
+    visuals.widgets.active.weak_bg_fill = tokens.primary_tint;
+    visuals.widgets.active.bg_stroke = Stroke::new(1.0, tokens.focus);
+    visuals.widgets.active.fg_stroke = Stroke::new(1.0, tokens.text);
     visuals.widgets.active.corner_radius = CornerRadius::same(8);
+    visuals.widgets.open.bg_fill = tokens.selected;
+    visuals.widgets.open.weak_bg_fill = tokens.selected;
+    visuals.widgets.open.bg_stroke = Stroke::new(1.0, tokens.focus);
+    visuals.widgets.open.fg_stroke = Stroke::new(1.0, tokens.text);
+    visuals.widgets.open.corner_radius = CornerRadius::same(8);
     visuals.selection.bg_fill = tokens.primary_tint;
-    visuals.selection.stroke = Stroke::new(1.0, tokens.primary);
+    visuals.selection.stroke = Stroke::new(1.0, tokens.focus);
 
     let mut style = (*ctx.style()).clone();
     style.spacing.item_spacing = Vec2::new(8.0, 6.0);
@@ -167,10 +230,7 @@ pub fn paint_user_bubble(ui: &egui::Ui, rect: egui::Rect) {
         None => {
             let image = egui::ColorImage::new(
                 [1, 2],
-                vec![
-                    Color32::from_rgb(246, 236, 231),
-                    Color32::from_rgb(249, 244, 240),
-                ],
+                vec![tokens().user_bubble_top, tokens().user_bubble_bottom],
             );
             let texture = ui
                 .ctx()
@@ -181,9 +241,43 @@ pub fn paint_user_bubble(ui: &egui::Ui, rect: egui::Rect) {
         }
     };
     ui.painter().add(
-        egui::epaint::RectShape::filled(rect, 12.0, Color32::WHITE).with_texture(
+        egui::epaint::RectShape::filled(rect, 12.0, tokens().surface).with_texture(
             texture.id(),
             egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
         ),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn light_tokens_define_distinct_interaction_and_content_roles() {
+        let tokens = Tokens::light();
+
+        assert_eq!(tokens.canvas, Color32::from_rgb(0xfb, 0xfa, 0xf8));
+        assert_eq!(tokens.sidebar, Color32::from_rgb(0xf6, 0xf5, 0xf3));
+        assert_eq!(tokens.focus, tokens.primary);
+        assert_ne!(tokens.hover, tokens.selected);
+        assert_ne!(tokens.code_background, tokens.code_inline);
+        assert_ne!(tokens.success_tint, tokens.surface);
+        assert!(tokens.scrim.a() > 0);
+        assert!(tokens.shadow.a() > 0);
+    }
+
+    #[test]
+    fn apply_maps_open_focus_and_disabled_states_to_tokens() {
+        let ctx = Context::default();
+        apply(&ctx);
+        let visuals = &ctx.style().visuals;
+        let tokens = Tokens::light();
+
+        assert_eq!(visuals.widgets.hovered.bg_fill, tokens.hover);
+        assert_eq!(visuals.widgets.active.bg_stroke.color, tokens.focus);
+        assert_eq!(visuals.widgets.open.bg_fill, tokens.selected);
+        assert_eq!(visuals.text_cursor.stroke.color, tokens.focus);
+        assert_eq!(visuals.disabled_alpha, 0.55);
+        assert_eq!(visuals.code_bg_color, tokens.code_background);
+    }
 }

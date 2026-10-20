@@ -57,6 +57,7 @@
   --mz-settings-btn-height: 32px;
 
   /* §11.2 typography / §11.3 radii */
+  --mz-font-2xs: 10px;
   --mz-font-xs: 11px;
   --mz-font-sm: 12px;
   --mz-font-md: 13px;
@@ -134,17 +135,149 @@
   overflow: hidden;
 }
 
-.messenger-sidebar-group-title {
+/* 设备选择区：取代原「工作区」组标题，明确 设备 → 工作区 → 线程 的层级。 */
+.messenger-sidebar-device-bar {
   display: flex;
   flex-shrink: 0;
   align-items: center;
-  gap: 6px;
   box-sizing: border-box;
   height: var(--mz-group-title-height);
-  padding: 0 var(--mz-sidebar-padding);
-  color: var(--mz-text-muted);
+  padding: 0 6px 0 var(--mz-sidebar-padding);
+}
+
+.messenger-sidebar-device {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  height: 22px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--mz-text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.messenger-sidebar-device:hover,
+.messenger-sidebar-device[aria-expanded='true'] {
+  background: var(--mz-hover);
+}
+
+.messenger-sidebar-device-icon {
+  flex-shrink: 0;
+  width: 15px;
+  color: var(--mz-primary);
+  font-size: var(--mz-font-md);
+  text-align: center;
+}
+
+.messenger-sidebar-device-label {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--mz-text);
   font-size: var(--mz-font-sm);
+  font-weight: 600;
   letter-spacing: 0.02em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.messenger-sidebar-device-kind {
+  flex-shrink: 0;
+  color: var(--mz-text-muted);
+  font-size: var(--mz-font-2xs);
+}
+
+.messenger-sidebar-device-chevron {
+  flex-shrink: 0;
+  color: var(--mz-text-muted);
+  font-size: 9px;
+  transition: transform 120ms ease;
+}
+
+.messenger-sidebar-device-chevron.is-open {
+  transform: rotate(180deg);
+}
+
+/* Teleported to body (outside .messenger-view's token scope), so every token
+   carries a literal fallback — same rule as .workspace-files-menu. */
+.messenger-sidebar-device-menu {
+  position: fixed;
+  z-index: 90;
+  box-sizing: border-box;
+  max-height: min(320px, calc(100vh - 96px));
+  padding: 4px;
+  overflow-y: auto;
+  border: 1px solid var(--mz-border, #e8e6e3);
+  border-radius: 10px;
+  background: var(--mz-surface, #ffffff);
+  box-shadow: 0 10px 28px rgb(15 23 42 / 16%);
+}
+
+.messenger-sidebar-device-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 32px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--mz-text, #1f2329);
+  font: inherit;
+  font-size: var(--mz-font-sm, 12px);
+  text-align: left;
+  cursor: pointer;
+}
+
+.messenger-sidebar-device-option:hover,
+.messenger-sidebar-device-option:focus-visible {
+  background: var(--mz-hover, #f1efec);
+  outline: none;
+}
+
+.messenger-sidebar-device-option.is-selected {
+  background: var(--mz-primary-tint, #f6e9e3);
+}
+
+.messenger-sidebar-device-option-icon {
+  flex-shrink: 0;
+  width: 15px;
+  color: var(--mz-primary, #c96443);
+  font-size: var(--mz-font-sm, 12px);
+  text-align: center;
+}
+
+.messenger-sidebar-device-option-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--mz-font-sm, 12px);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.messenger-sidebar-device-option-kind {
+  flex-shrink: 0;
+  color: var(--mz-text-muted, #8a8f99);
+  font-size: var(--mz-font-2xs, 10px);
+}
+
+.messenger-sidebar-device-option-check {
+  flex-shrink: 0;
+  width: 10px;
+  color: var(--mz-primary, #c96443);
+  font-size: 10px;
+}
+
+.messenger-sidebar-device-empty {
+  padding: 8px;
+  color: var(--mz-text-muted, #8a8f99);
+  font-size: var(--mz-font-xs, 11px);
+  text-align: center;
 }
 
 .messenger-sidebar-workspace-row {

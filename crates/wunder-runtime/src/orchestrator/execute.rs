@@ -2,15 +2,105 @@ use super::context::normalize_model_context_message;
 use super::empty_output_guard::EmptyOutputGuard;
 use super::retry_governor::{RetryGovernor, SuccessProgressGovernor};
 use super::tool_calls::ToolCall;
+use super::tool_result_payload::{
+    default_observation_token_budget, OBSERVATION_MIN_TOKEN_BUDGET, OBSERVATION_TURN_MAX_TOKENS,
+    OBSERVATION_TURN_TARGET_TOKENS,
+};
 use super::*;
 use crate::core::llm_speed::TurnDecodeSpeedAccumulator;
 use crate::core::long_task;
+use crate::orchestrator_constants::{COMPACTION_SAFETY_MARGIN, DEFAULT_MAX_OUTPUT_TOKENS};
 use crate::services::chat_attachments::persist_user_chat_attachments;
 use crate::services::goal;
 use crate::services::subagents;
 use crate::services::tools::sessions_yield_tool;
 
 use super::execute_support::*;
+
+struct ObservationTokenBudgets {
+    per_result: Vec<i64>,
+    total_tokens: i64,
+    protocol_reserve_tokens: i64,
+    available_context_tokens: i64,
+}
+
+fn resolve_observation_token_budgets<'a>(
+    tool_names: impl IntoIterator<Item = &'a str>,
+    max_context: i64,
+    observed_context: i64,
+    configured_max_output: Option<i64>,
+) -> ObservationTokenBudgets {
+    // Keep only small scalar caps, never copies of the tool results. Allocate
+    // the whole batch before rendering so earlier results cannot consume the
+    // envelopes that later tool-call/result pairs must retain.
+    let mut per_result: Vec<i64> = tool_names
+        .into_iter()
+        .map(default_observation_token_budget)
+        .map(|cap| cap.max(OBSERVATION_MIN_TOKEN_BUDGET))
+        .collect();
+    let result_count = i64::try_from(per_result.len()).unwrap_or(i64::MAX);
+    let protocol_reserve_tokens = result_count.saturating_mul(OBSERVATION_MIN_TOKEN_BUDGET);
+    let max_context = max_context.max(0);
+    // Preserve room for the next completion and request framing. Provider
+    // usage is authoritative when present; this only controls new tool
+    // observations before the next model request.
+    let output_reserve = configured_max_output
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_MAX_OUTPUT_TOKENS)
+        .min(max_context.saturating_div(2));
+    let safety_reserve = (max_context / 16).clamp(COMPACTION_SAFETY_MARGIN, 8_192);
+    let available_context_tokens = max_context
+        .saturating_sub(observed_context.max(0))
+        .saturating_sub(output_reserve)
+        .saturating_sub(safety_reserve)
+        .max(0);
+    let content_target = available_context_tokens
+        .min(OBSERVATION_TURN_TARGET_TOKENS)
+        .min(OBSERVATION_TURN_MAX_TOKENS);
+    let cap_sum = per_result.iter().copied().fold(0_i64, i64::saturating_add);
+    // 8k is the content target and 12k is a soft content ceiling. A very
+    // large batch or a full context still needs one minimal protocol
+    // envelope per result; this reserve may exceed either soft limit. This
+    // allocation is not an admission guarantee for the complete next request.
+    let total_tokens = content_target.max(protocol_reserve_tokens).min(cap_sum);
+
+    // Max-min fair allocation: smaller tool caps settle first; the remaining
+    // results share a common water level. Binary search bounds work by the
+    // largest per-tool cap, with no sorting or second result-sized vector.
+    let mut low = 0_i64;
+    let mut high = per_result.iter().copied().max().unwrap_or(0);
+    while low < high {
+        let middle = low + (high - low + 1) / 2;
+        let required = per_result
+            .iter()
+            .map(|cap| (*cap).min(middle))
+            .fold(0_i64, i64::saturating_add);
+        if required <= total_tokens {
+            low = middle;
+        } else {
+            high = middle - 1;
+        }
+    }
+    let assigned = per_result
+        .iter()
+        .map(|cap| (*cap).min(low))
+        .fold(0_i64, i64::saturating_add);
+    let mut remainder = total_tokens.saturating_sub(assigned);
+    for budget in &mut per_result {
+        let cap = *budget;
+        *budget = cap.min(low);
+        if remainder > 0 && cap > low {
+            *budget += 1;
+            remainder -= 1;
+        }
+    }
+    ObservationTokenBudgets {
+        per_result,
+        total_tokens,
+        protocol_reserve_tokens,
+        available_context_tokens,
+    }
+}
 
 enum ToolEventForward {
     Event { event_type: String, data: Value },
@@ -1197,7 +1287,31 @@ impl Orchestrator {
                         outcomes?
                     };
                     outcomes.extend(cached_recall_outcomes);
+                    let observation_budgets = resolve_observation_token_budgets(
+                        outcomes.iter().map(|outcome| outcome.name.as_str()),
+                        compaction_llm_config.effective_max_context() as i64,
+                        persisted_context_tokens,
+                        compaction_llm_config.max_output.map(i64::from),
+                    );
+                    if observation_budgets.protocol_reserve_tokens
+                        > observation_budgets.available_context_tokens
+                        || observation_budgets.protocol_reserve_tokens > OBSERVATION_TURN_MAX_TOKENS
+                    {
+                        warn!(
+                            %session_id,
+                            result_count = outcomes.len(),
+                            protocol_reserve_tokens = observation_budgets.protocol_reserve_tokens,
+                            available_context_tokens = observation_budgets.available_context_tokens,
+                            allocated_observation_tokens = observation_budgets.total_tokens,
+                            soft_content_limit_tokens = OBSERVATION_TURN_MAX_TOKENS,
+                            "tool-result protocol reserve exceeds the content budget; preserving every tool-call/result pair"
+                        );
+                    }
                     for (index, outcome) in outcomes.into_iter().enumerate() {
+                        // Indexing deliberately fails on an allocator invariant
+                        // violation instead of silently dropping a result as
+                        // a zip over mismatched lengths would.
+                        let observation_budget = observation_budgets.per_result[index];
                         let ToolExecutionOutcome {
                             call,
                             name,
@@ -1273,7 +1387,11 @@ impl Orchestrator {
                             should_finish = true;
                         }
 
-                        let observation = self.build_tool_observation(&name, &result);
+                        let observation = self.build_tool_observation(
+                            &name,
+                            &result,
+                            observation_budget,
+                        );
                         let observation_value = Value::String(observation.clone());
                         let read_image_followup = if result.ok && is_read_image_tool_name(&name) {
                             match build_read_image_followup_user_message(&tool_context, &result.data)
@@ -2050,6 +2168,137 @@ impl Orchestrator {
                 );
                 Err(err)
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod observation_budget_tests {
+    use super::*;
+
+    fn document_budgets(count: usize) -> ObservationTokenBudgets {
+        resolve_observation_token_budgets(
+            std::iter::repeat("read_file").take(count),
+            128_000,
+            1_000,
+            Some(8_192),
+        )
+    }
+
+    #[test]
+    fn observation_budgets_allocate_the_whole_batch_before_rendering() {
+        for (count, expected_each, expected_total) in [
+            (1, 6_000, 6_000),
+            (2, 4_000, 8_000),
+            (20, 400, 8_000),
+            // Protocol envelopes are mandatory, even beyond the soft content
+            // ceiling. Do not omit a result to make this count appear bounded.
+            (100, OBSERVATION_MIN_TOKEN_BUDGET, 25_600),
+        ] {
+            let budgets = document_budgets(count);
+            assert_eq!(budgets.per_result.len(), count);
+            assert!(budgets
+                .per_result
+                .iter()
+                .all(|budget| *budget == expected_each));
+            assert_eq!(budgets.per_result.iter().sum::<i64>(), expected_total);
+            assert_eq!(budgets.total_tokens, expected_total);
+            assert_eq!(
+                budgets.protocol_reserve_tokens,
+                count as i64 * OBSERVATION_MIN_TOKEN_BUDGET
+            );
+            assert!(
+                budgets.total_tokens <= OBSERVATION_TURN_MAX_TOKENS
+                    || budgets.total_tokens == budgets.protocol_reserve_tokens
+            );
+        }
+    }
+
+    #[test]
+    fn observation_budgets_share_capacity_without_exceeding_tool_caps() {
+        let budgets = resolve_observation_token_budgets(
+            ["self_status", "read_file", "execute_command"],
+            128_000,
+            1_000,
+            Some(8_192),
+        );
+        assert_eq!(budgets.per_result, [512, 3_744, 3_744]);
+        assert_eq!(budgets.total_tokens, OBSERVATION_TURN_TARGET_TOKENS);
+
+        let uneven = document_budgets(3);
+        assert_eq!(uneven.per_result, [2_667, 2_667, 2_666]);
+        let empty = document_budgets(0);
+        assert!(empty.per_result.is_empty());
+        assert_eq!(empty.total_tokens, 0);
+        assert_eq!(empty.protocol_reserve_tokens, 0);
+    }
+
+    #[test]
+    fn observation_budgets_respect_tighter_context_or_keep_only_protocol_reserve() {
+        let tightened = resolve_observation_token_budgets(
+            ["read_file", "read_file"],
+            64_000,
+            55_000,
+            Some(1_024),
+        );
+        assert_eq!(tightened.available_context_tokens, 3_976);
+        assert_eq!(tightened.per_result, [1_988, 1_988]);
+        assert_eq!(tightened.total_tokens, 3_976);
+
+        let below_protocol_reserve = resolve_observation_token_budgets(
+            std::iter::repeat("read_file").take(20),
+            64_000,
+            58_000,
+            Some(1_024),
+        );
+        assert_eq!(below_protocol_reserve.available_context_tokens, 976);
+        assert_eq!(below_protocol_reserve.total_tokens, 5_120);
+        assert_eq!(
+            below_protocol_reserve.total_tokens,
+            below_protocol_reserve.protocol_reserve_tokens
+        );
+        assert!(below_protocol_reserve
+            .per_result
+            .iter()
+            .all(|budget| *budget == OBSERVATION_MIN_TOKEN_BUDGET));
+
+        for observed_context in [63_000, 128_000, i64::MAX] {
+            let exhausted = resolve_observation_token_budgets(
+                std::iter::repeat("read_file").take(20),
+                64_000,
+                observed_context,
+                Some(8_192),
+            );
+            assert_eq!(exhausted.available_context_tokens, 0);
+            assert_eq!(exhausted.per_result.len(), 20);
+            assert!(exhausted
+                .per_result
+                .iter()
+                .all(|budget| *budget == OBSERVATION_MIN_TOKEN_BUDGET));
+            assert_eq!(exhausted.total_tokens, exhausted.protocol_reserve_tokens);
+        }
+    }
+
+    #[test]
+    fn observation_budgets_fit_every_rendered_result_in_large_batches() {
+        let result = ToolResultPayload::from_value(json!({
+            "ok": true,
+            "data": { "content": "\n\"\\界".repeat(4_096) },
+        }));
+        for count in [1, 2, 20, 100] {
+            let budgets = document_budgets(count);
+            let mut rendered_tokens = 0;
+            for budget in budgets.per_result {
+                let payload =
+                    result.to_compact_payload_with_token_budget("read_file", Some(budget));
+                let rendered = serde_json::to_string(&payload).expect("JSON observation");
+                let tokens = approx_token_count(&rendered);
+                assert!(tokens <= budget, "{tokens} tokens exceed budget {budget}");
+                assert_eq!(payload["ok"], true);
+                assert_eq!(payload["tool"], "read_file");
+                rendered_tokens += tokens;
+            }
+            assert!(rendered_tokens <= budgets.total_tokens);
         }
     }
 }

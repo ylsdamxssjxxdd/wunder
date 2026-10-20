@@ -13,6 +13,27 @@
 - 手动安装时，关闭使用该补充包的进程，将压缩包解压到 `${WUNDER_HOME:-$HOME/.wunder}`，使其下直接出现 `opt/python`、`opt/git`、`opt/rg`、`opt/ffmpeg`，再启动蛹或舵机。
 - AppImage 同样使用这个可写用户目录；安装目录与 AppImage 同级旧 `opt/` 仅保留读取回退，新导入始终写入共享 home，不自动搬迁旧文件。
 
+## 安装器打包
+
+先构建蛹（AppImage）和舵机（ELF），再准备补充包 `.tar.gz`，然后执行：
+
+```bash
+bash build.sh pack -a linux-amd64
+bash build.sh pack -a linux-arm64
+```
+
+Windows 上也可以执行 `build.bat pack -a linux-amd64`；组包器是 Python 3.6+ 脚本，不需要 Docker、Rust 工具链或网络。Windows 上优先复用离线 SDK 的 `Rust-builder/win7/offline/tools/python/python.exe`（Python 3.8.10 embeddable），宿主未安装 Python 也能离线组包；Linux 宿主使用系统 `python3`。输入默认从 `target/slint/dist/linux-<arch>`、`target/cli/dist/linux-<arch>`、`dist/linux-<arch>`、`target/installer/payload/linux-<arch>` 和 `temp_dir/linux-supplement/dist` 查找，可用 `--desktop`、`--cli`、`--supplement` 覆盖。产物是单文件 `target/installer/dist/linux-<arch>/wunder-<版本>-linux-<arch>.run`，同时生成 `.sha256` 与 `.manifest.json`。
+
+运行 `.run` 后：
+
+- 默认安装到 `~/.wunder`，安装前的交互提示可以直接输入其他绝对路径；非交互场景使用 `--home=PATH`。
+- 补充组件默认全部不勾选；`--components=python,git` 或 `--all` 可指定，`--yes` 跳过确认。
+- 安装根会写入 `.wunder-home`。`bin/wunder-desktop` 启动器会导出 `WUNDER_HOME=<安装根>`；直接运行 AppImage 或 `bin/wunder` 时，运行时也会通过标记文件识别安装根。显式设置的非空 `WUNDER_HOME` 优先。
+- 配置、会话、工作区、日志和 `opt/` 都在安装根下。选中已存在的组件会先清空对应 `opt/<component>`，用户数据不删除。
+- 卸载执行 `<安装根>/uninstall.sh`，保留用户数据；`--no-desktop-entry` 可在安装时跳过应用菜单项。
+
+补充包在组包时会从旧归档的 `./opt/...` 规范化为 `opt/...`，保留权限、相对符号链接和同组件内的硬链接；新构建的补充包也已经直接使用 `opt/...`。
+
 ## 版本选择
 
 - Python：`3.8.18`（python-build-standalone `20240107` install_only）

@@ -29,6 +29,7 @@ mod native_pages;
 mod native_restore;
 mod native_runtime;
 mod native_smoke;
+mod native_window;
 mod navigation_ui;
 mod os_drag;
 mod pet_window;
@@ -54,6 +55,7 @@ mod workspace_ui;
 static STARTUP_BOOT: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    wunder_desktop::install_local_home_env();
     let startup_boot = *STARTUP_BOOT.get_or_init(std::time::Instant::now);
     startup_log("process_begin", startup_boot);
     install_slint_platform()?;
@@ -77,6 +79,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         crate::shutdown::request_exit();
         slint::CloseRequestResponse::KeepWindowShown
     });
+    install_window_chrome(&app);
     if first_argument.as_deref() == Some(std::ffi::OsStr::new("--smoke-check")) {
         demo::install(&app);
         let directory = arguments
@@ -274,6 +277,38 @@ fn install_composer_popover_dismissal(app: &MainWindow) {
     });
 }
 
+/// Custom-chrome gestures for the frameless workbench window. The close
+/// button shares the window-X path: hide to the tray when one is available.
+fn install_window_chrome(app: &MainWindow) {
+    let weak = app.as_weak();
+    app.on_window_drag_requested(move || {
+        if let Some(app) = weak.upgrade() {
+            native_window::begin_system_move(app.window());
+        }
+    });
+    let weak = app.as_weak();
+    app.on_window_minimize_requested(move || {
+        if let Some(app) = weak.upgrade() {
+            native_window::minimize(app.window());
+        }
+    });
+    let weak = app.as_weak();
+    app.on_window_maximize_requested(move || {
+        if let Some(app) = weak.upgrade() {
+            native_window::toggle_maximize(app.window());
+        }
+    });
+    let weak = app.as_weak();
+    app.on_window_close_requested(move || {
+        if let Some(app) = weak.upgrade() {
+            if crate::tray::hide(&app) {
+                return;
+            }
+        }
+        crate::shutdown::request_exit();
+    });
+}
+
 fn startup_timing_enabled() -> bool {
     matches!(
         std::env::var("WUNDER_STARTUP_TIMING").ok().as_deref(),
@@ -411,21 +446,36 @@ mod bundled_font {
 
 fn install_slint_platform() -> Result<(), Box<dyn std::error::Error>> {
     let maximize_first_window = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    // The workbench draws its own WindowChrome; auxiliary top-levels (tray
+    // notice, screenshot selector, help, terminal) keep the system frame.
+    let frameless_first_window = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
     let backend = i_slint_backend_winit::Backend::builder()
         .with_renderer_name("software")
         .with_window_attributes_hook({
             let maximize_first_window = std::sync::Arc::clone(&maximize_first_window);
+            let frameless_first_window = std::sync::Arc::clone(&frameless_first_window);
             move |attributes| {
-                attributes
+                let frameless =
+                    frameless_first_window.swap(false, std::sync::atomic::Ordering::AcqRel);
+                let attributes = attributes
                     .with_min_inner_size(winit::dpi::LogicalSize::new(1024.0, 700.0))
                     .with_title("蛹")
-                    .with_decorations(true)
+                    .with_decorations(!frameless)
+                    // A frameless window owns its caption buttons in client
+                    // content; a latent system button can surface after the
+                    // first minimize/maximize transition on Win7 otherwise.
+                    .with_enabled_buttons(if frameless {
+                        winit::window::WindowButtons::empty()
+                    } else {
+                        winit::window::WindowButtons::all()
+                    })
                     // Only the first top-level is the workbench. Auxiliary
                     // windows (screenshot selector and tray notice) keep
                     // their authored sizes.
                     .with_maximized(
                         maximize_first_window.swap(false, std::sync::atomic::Ordering::AcqRel),
-                    )
+                    );
+                attributes
             }
         })
         .build()?;
