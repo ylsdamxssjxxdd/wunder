@@ -1,13 +1,16 @@
 use super::{build_model_tool_success, context::ToolContext};
-use crate::config::Config;
 use crate::i18n;
 use crate::path_utils::{normalize_existing_path, normalize_path_for_compare};
 use crate::skills::SkillSpec;
 use anyhow::{anyhow, Result};
-use serde::Deserialize;
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use serde_yaml::Value as YamlValue;
-use std::collections::{HashMap, HashSet};
+use sha2::{Digest, Sha256};
+use std::collections::{BTreeSet, HashMap, HashSet};
+use std::fs::File;
+use std::io::{BufRead, BufReader, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 pub(crate) const SKILL_ROOT_PLACEHOLDER: &str = "{{SKILL_ROOT}}";
@@ -15,6 +18,12 @@ const DEFAULT_READ_LINE_LIMIT: usize = 160;
 const MAX_READ_LINE_LIMIT: usize = 400;
 const MAX_READ_BYTES: usize = 64 * 1024;
 const MAX_MANIFEST_ITEMS: usize = 64;
+const DEFAULT_READ_BYTES: usize = 16 * 1024;
+const MAX_SECTION_SCAN_BYTES: usize = 256 * 1024;
+const MAX_MANIFEST_SCAN_ITEMS: usize = 4096;
+const MAX_MANIFEST_CHARS: usize = 1600;
+const MAX_FRAGMENT_BYTES: usize = 4096;
+const MAX_CURSOR_BYTES: usize = 4096;
 
 pub(crate) fn render_skill_markdown_for_model(raw: &str, skill_root: &str) -> String {
     if raw.contains(SKILL_ROOT_PLACEHOLDER) {
@@ -55,6 +64,12 @@ struct SkillCallArgs {
     start_line: Option<usize>,
     #[serde(default)]
     line_limit: Option<usize>,
+    #[serde(default)]
+    bytes_limit: Option<usize>,
+    #[serde(default)]
+    cursor: Option<String>,
+    #[serde(default)]
+    manifest_cursor: Option<String>,
     #[serde(default)]
     full: bool,
 }
@@ -137,7 +152,7 @@ pub(crate) async fn execute_skill_call(context: &ToolContext<'_>, args: &Value) 
             "skill_manifest",
             "completed",
             format!("Skill {} manifest loaded.", spec.name),
-            build_skill_manifest(&spec),
+            build_skill_manifest(&spec, payload.manifest_cursor.as_deref())?,
         )),
         "read" => read_skill_resource(&spec, &payload),
         // Explicit compatibility path for callers that still request full.
@@ -145,6 +160,7 @@ pub(crate) async fn execute_skill_call(context: &ToolContext<'_>, args: &Value) 
             let mut read_payload = payload;
             read_payload.path = Some("SKILL.md".to_string());
             read_payload.line_limit = Some(MAX_READ_LINE_LIMIT);
+            read_payload.full = false;
             read_skill_resource(&spec, &read_payload)
         }
         other => Err(anyhow!(format!(
@@ -153,76 +169,390 @@ pub(crate) async fn execute_skill_call(context: &ToolContext<'_>, args: &Value) 
     }
 }
 
-fn build_skill_manifest(spec: &SkillSpec) -> Value {
+fn build_skill_manifest(spec: &SkillSpec, cursor: Option<&str>) -> Result<Value> {
     let version = parse_frontmatter_value(&spec.frontmatter, "version");
     let entrypoints = ["run.py", "skill.py", "main.py"]
         .iter()
         .filter(|name| spec.root.join(name).is_file())
         .map(|name| (*name).to_string())
         .collect::<Vec<_>>();
-    let resource_index = build_skill_tree(&spec.root)
-        .into_iter()
-        .take(MAX_MANIFEST_ITEMS)
-        .collect::<Vec<_>>();
+    let decoded_cursor = match cursor {
+        Some(value) if value.len() <= 2048 => String::from_utf8(
+            URL_SAFE_NO_PAD
+                .decode(value)
+                .map_err(|_| anyhow!("invalid manifest cursor"))?,
+        )
+        .map_err(|_| anyhow!("invalid manifest cursor"))
+        .map(Some)?,
+        Some(_) => return Err(anyhow!("manifest cursor is too long")),
+        None => None,
+    };
+    let (mut items, more, scan_limited) =
+        build_skill_tree_page(&spec.root, decoded_cursor.as_deref());
     let mut manifest = json!({
-        "name": spec.name,
-        "summary": truncate_skill_text(&spec.description, 320),
+        "name": truncate_skill_text(&spec.name, 96),
+        "summary": truncate_skill_text(&spec.description, 200),
         "entrypoints": entrypoints,
-        "resource_index": resource_index,
-        "read": "action=read; path or section selects a bounded resource",
+        "resource_index": [],
+        "index_scan_limited": scan_limited,
+        "read": "action=read; path/section, then cursor",
     });
     if let Some(version) = version {
-        manifest["version"] = Value::String(version);
+        manifest["version"] = Value::String(truncate_skill_text(&version, 32));
     }
-    manifest
+    let mut shortened = more;
+    loop {
+        manifest["resource_index"] = json!(items);
+        if shortened {
+            if let Some(last) = items.last() {
+                manifest["next_cursor"] = Value::String(URL_SAFE_NO_PAD.encode(last.as_bytes()));
+            }
+        } else if !scan_limited {
+            if let Some(object) = manifest.as_object_mut() {
+                object.remove("next_cursor");
+            }
+        }
+        let length = serde_json::to_string(&manifest)
+            .map(|text| text.chars().count())
+            .unwrap_or(0);
+        if length <= MAX_MANIFEST_CHARS || items.is_empty() {
+            break;
+        }
+        items.pop();
+        shortened = true;
+    }
+    while serde_json::to_string(&manifest)
+        .map(|text| text.chars().count())
+        .unwrap_or(0)
+        > MAX_MANIFEST_CHARS
+    {
+        if let Some(summary) = manifest["summary"].as_str() {
+            let next = truncate_skill_text(summary, summary.chars().count().saturating_sub(32));
+            if next != summary {
+                manifest["summary"] = Value::String(next);
+                continue;
+            }
+        }
+        if let Some(name) = manifest["name"].as_str() {
+            let next = truncate_skill_text(name, name.chars().count().saturating_sub(16));
+            if next != name {
+                manifest["name"] = Value::String(next);
+                continue;
+            }
+        }
+        if manifest
+            .as_object_mut()
+            .is_some_and(|value| value.remove("version").is_some())
+        {
+            continue;
+        }
+        break;
+    }
+    Ok(manifest)
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct SkillReadCursor {
+    path: String,
+    binding: String,
+    offset: u64,
+    line: usize,
+    line_start: bool,
+    skip_lines: usize,
+    section: Option<String>,
+    found: bool,
+    level: usize,
 }
 
 fn read_skill_resource(spec: &SkillSpec, payload: &SkillCallArgs) -> Result<Value> {
-    let requested = payload
-        .path
-        .as_deref()
-        .map(str::trim)
-        .filter(|path| !path.is_empty())
-        .unwrap_or("SKILL.md");
-    let path = resolve_skill_resource_path(&spec.root, requested)?;
-    let raw = std::fs::read_to_string(&path).map_err(|err| {
-        anyhow!(i18n::t_with_params(
-            "tool.skill_call.read_failed",
-            &HashMap::from([("detail".to_string(), err.to_string())]),
-        ))
-    })?;
-    let selected = if let Some(section) = payload
-        .section
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
+    if payload.cursor.is_some()
+        && (payload.start_line.is_some() || payload.section.is_some() || payload.full)
     {
-        select_skill_section(&raw, section)
-            .ok_or_else(|| anyhow!(format!("skill section `{section}` was not found")))?
+        return Err(anyhow!(
+            "cursor cannot be combined with start_line, section or full"
+        ));
+    }
+    let mut state = if let Some(encoded) = payload.cursor.as_deref() {
+        if encoded.len() > MAX_CURSOR_BYTES {
+            return Err(anyhow!("skill read cursor is too long"));
+        }
+        let bytes = URL_SAFE_NO_PAD
+            .decode(encoded)
+            .map_err(|_| anyhow!("invalid skill read cursor"))?;
+        let state: SkillReadCursor =
+            serde_json::from_slice(&bytes).map_err(|_| anyhow!("invalid skill read cursor"))?;
+        if state.path.len() > 1024
+            || state
+                .section
+                .as_ref()
+                .is_some_and(|value| value.len() > 512)
+            || state.level > 6
+            || state.line == 0
+            || state.binding.len() != 64
+        {
+            return Err(anyhow!("invalid skill read cursor"));
+        }
+        state
     } else {
-        raw
+        let section = payload
+            .section
+            .as_deref()
+            .map(str::trim)
+            .map(|value| value.trim_start_matches('#').trim())
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned);
+        if section.as_ref().is_some_and(|value| value.len() > 512) {
+            return Err(anyhow!("section must not exceed 512 UTF-8 bytes"));
+        }
+        SkillReadCursor {
+            path: payload
+                .path
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or("SKILL.md")
+                .to_string(),
+            binding: String::new(),
+            offset: 0,
+            line: 1,
+            line_start: true,
+            skip_lines: payload.start_line.unwrap_or(1).max(1).saturating_sub(1),
+            found: section.is_none(),
+            section,
+            level: 0,
+        }
     };
-    let root = absolute_path_string(&spec.root);
-    let rendered = render_skill_markdown_for_model(&selected, &root);
-    let start_line = payload.start_line.unwrap_or(1).max(1);
+    if state.path.len() > 1024 {
+        return Err(anyhow!("skill resource path is too long"));
+    }
+    if payload.cursor.is_some()
+        && payload
+            .path
+            .as_ref()
+            .is_some_and(|path| path.trim() != state.path)
+    {
+        return Err(anyhow!(
+            "cursor belongs to a different resource; reuse its path"
+        ));
+    }
+    let path = resolve_skill_resource_path(&spec.root, &state.path)?;
+    let file = File::open(&path).map_err(|_| anyhow!("skill resource could not be opened"))?;
+    let metadata = file.metadata()?;
+    if !metadata.is_file() {
+        return Err(anyhow!("skill resource must be a regular file"));
+    }
+    let mut hasher = Sha256::new();
+    hasher.update(path.as_os_str().to_string_lossy().as_bytes());
+    hasher.update(metadata.len().to_le_bytes());
+    if let Some(modified) = metadata
+        .modified()
+        .ok()
+        .and_then(|value| value.duration_since(std::time::UNIX_EPOCH).ok())
+    {
+        hasher.update(modified.as_nanos().to_le_bytes());
+    }
+    let binding = format!("{:x}", hasher.finalize());
+    if !state.binding.is_empty() && state.binding != binding {
+        return Err(anyhow!(
+            "skill resource changed; restart the read without cursor"
+        ));
+    }
+    state.binding = binding;
+    if state.offset > metadata.len() {
+        return Err(anyhow!("skill read cursor is past the resource end"));
+    }
+    let bytes_limit = payload
+        .bytes_limit
+        .unwrap_or(DEFAULT_READ_BYTES)
+        .clamp(4, MAX_READ_BYTES);
     let line_limit = payload
         .line_limit
         .unwrap_or(DEFAULT_READ_LINE_LIMIT)
         .clamp(1, MAX_READ_LINE_LIMIT);
-    let (content, end_line, truncated) = take_skill_lines(&rendered, start_line, line_limit);
+    let mut reader = BufReader::with_capacity(8192, file);
+    reader.seek(SeekFrom::Start(state.offset))?;
+    let root = ".";
+    let mut content = String::with_capacity(bytes_limit.min(8192));
+    let mut scanned = 0usize;
+    let mut returned_lines = 0usize;
+    let mut first_line = None;
+    let mut section_ended = false;
+    while state.offset < metadata.len() && scanned < MAX_SECTION_SCAN_BYTES {
+        if content.len() >= bytes_limit || returned_lines >= line_limit {
+            break;
+        }
+        let cap = MAX_FRAGMENT_BYTES.min(MAX_SECTION_SCAN_BYTES - scanned);
+        let raw = read_skill_fragment(&mut reader, cap.max(4))?;
+        if raw.is_empty() {
+            break;
+        }
+        scanned = scanned.saturating_add(raw.len());
+        let ends_line = raw.ends_with('\n');
+        if state.line_start {
+            if let Some((level, title)) = markdown_heading(&raw) {
+                if !state.found
+                    && state
+                        .section
+                        .as_ref()
+                        .is_some_and(|wanted| title.eq_ignore_ascii_case(wanted))
+                {
+                    state.found = true;
+                    state.level = level;
+                    state.line = 1;
+                } else if state.found && state.section.is_some() && level <= state.level {
+                    section_ended = true;
+                    break;
+                }
+            }
+        }
+        if !state.found || state.skip_lines > 0 {
+            state.offset = state.offset.saturating_add(raw.len() as u64);
+            state.line_start = ends_line;
+            if ends_line && state.found {
+                state.skip_lines = state.skip_lines.saturating_sub(1);
+                state.line = state.line.saturating_add(1);
+            }
+            continue;
+        }
+        let (rendered, consumed) = render_skill_fragment(
+            &raw,
+            &root,
+            bytes_limit - content.len(),
+            state.offset.saturating_add(raw.len() as u64) < metadata.len() && !ends_line,
+        );
+        if consumed == 0 {
+            if content.is_empty() {
+                return Err(anyhow!(
+                    "bytes_limit is too small for a skill-root expansion; increase bytes_limit"
+                ));
+            }
+            break;
+        }
+        first_line.get_or_insert(state.line);
+        content.push_str(&rendered);
+        state.offset = state.offset.saturating_add(consumed as u64);
+        if consumed < raw.len() {
+            reader.seek_relative(-((raw.len() - consumed) as i64))?;
+            state.line_start = false;
+            break;
+        }
+        state.line_start = ends_line;
+        if ends_line {
+            returned_lines += 1;
+            state.line = state.line.saturating_add(1);
+        }
+    }
+    let pending = !section_ended && state.offset < metadata.len();
+    if !state.found && !pending {
+        return Err(anyhow!("requested skill section was not found"));
+    }
+    let section_scan_pending = !state.found && pending;
+    let next_cursor = if pending {
+        Some(URL_SAFE_NO_PAD.encode(serde_json::to_vec(&state)?))
+    } else {
+        None
+    };
+    let start_line = first_line.unwrap_or(state.line);
+    let end_line = if content.ends_with('\n') {
+        state.line.saturating_sub(1)
+    } else {
+        state.line
+    };
     Ok(build_model_tool_success(
         "skill_read",
         "completed",
-        format!("Read {} from skill {}.", requested, spec.name),
+        "Skill resource window loaded.",
         json!({
-            "name": spec.name,
-            "path": relative_skill_path(&spec.root, &path),
+            "name": truncate_skill_text(&spec.name, 96),
+            "path": state.path,
             "content": content,
             "start_line": start_line,
             "end_line": end_line,
-            "truncated": truncated,
+            "truncated": pending,
+            "section_scan_pending": section_scan_pending,
+            "next_cursor": next_cursor,
         }),
     ))
+}
+
+/// Read one bounded physical-line fragment, without read_line's unbounded allocation.
+fn read_skill_fragment(reader: &mut BufReader<File>, cap: usize) -> Result<String> {
+    let mut bytes = Vec::with_capacity(cap.min(MAX_FRAGMENT_BYTES));
+    while bytes.len() < cap {
+        let buffer = reader.fill_buf()?;
+        if buffer.is_empty() {
+            break;
+        }
+        let remaining = cap - bytes.len();
+        let length = buffer
+            .iter()
+            .take(remaining)
+            .position(|byte| *byte == b'\n')
+            .map(|index| index + 1)
+            .unwrap_or_else(|| remaining.min(buffer.len()));
+        bytes.extend_from_slice(&buffer[..length]);
+        reader.consume(length);
+        if bytes.last() == Some(&b'\n') {
+            break;
+        }
+    }
+    match std::str::from_utf8(&bytes) {
+        Ok(_) => {}
+        Err(error) if error.error_len().is_none() && error.valid_up_to() > 0 => {
+            let tail = bytes.len() - error.valid_up_to();
+            reader.seek_relative(-(tail as i64))?;
+            bytes.truncate(error.valid_up_to());
+        }
+        Err(_) => return Err(anyhow!("skill resource is not valid UTF-8")),
+    }
+    String::from_utf8(bytes).map_err(|_| anyhow!("skill resource is not valid UTF-8"))
+}
+
+fn markdown_heading(raw: &str) -> Option<(usize, &str)> {
+    let line = raw.trim_start_matches(' ');
+    if raw.len() - line.len() > 3 {
+        return None;
+    }
+    let level = line.bytes().take_while(|byte| *byte == b'#').count();
+    if level == 0 || level > 6 {
+        return None;
+    }
+    let title = &line[level..];
+    if !title.chars().next().is_some_and(|ch| ch.is_whitespace()) {
+        return None;
+    }
+    Some((level, title.trim().trim_end_matches('#').trim_end()))
+}
+
+/// Return source bytes consumed as well as rendered bytes, so pagination cannot skip text.
+fn render_skill_fragment(raw: &str, root: &str, limit: usize, has_more: bool) -> (String, usize) {
+    let mut result = String::with_capacity(limit.min(raw.len()));
+    let mut consumed = 0;
+    while consumed < raw.len() {
+        let tail = &raw[consumed..];
+        if has_more
+            && tail.len() < SKILL_ROOT_PLACEHOLDER.len()
+            && SKILL_ROOT_PLACEHOLDER.starts_with(tail)
+        {
+            break;
+        }
+        if tail.starts_with(SKILL_ROOT_PLACEHOLDER) {
+            if result.len().saturating_add(root.len()) > limit {
+                break;
+            }
+            result.push_str(root);
+            consumed += SKILL_ROOT_PLACEHOLDER.len();
+        } else if let Some(ch) = tail.chars().next() {
+            if result.len().saturating_add(ch.len_utf8()) > limit {
+                break;
+            }
+            result.push(ch);
+            consumed += ch.len_utf8();
+        } else {
+            break;
+        }
+    }
+    (result, consumed)
 }
 
 fn resolve_skill_resource_path(root: &Path, requested: &str) -> Result<PathBuf> {
@@ -254,13 +584,6 @@ fn resolve_skill_resource_path(root: &Path, requested: &str) -> Result<PathBuf> 
     Ok(canonical)
 }
 
-fn relative_skill_path(root: &Path, path: &Path) -> String {
-    path.strip_prefix(root)
-        .unwrap_or(path)
-        .to_string_lossy()
-        .replace('\\', "/")
-}
-
 fn parse_frontmatter_value(frontmatter: &str, key: &str) -> Option<String> {
     let value: YamlValue = serde_yaml::from_str(frontmatter).ok()?;
     value
@@ -282,46 +605,6 @@ fn truncate_skill_text(value: &str, max_chars: usize) -> String {
         .collect::<String>();
     result.push('…');
     result
-}
-
-fn select_skill_section(raw: &str, section: &str) -> Option<String> {
-    let wanted = section.trim().trim_start_matches('#').trim();
-    if wanted.is_empty() {
-        return None;
-    }
-    let lines = raw.lines().collect::<Vec<_>>();
-    let start = lines.iter().position(|line| {
-        let heading = line.trim().trim_start_matches('#').trim();
-        !heading.is_empty() && heading.eq_ignore_ascii_case(wanted)
-    })?;
-    let level = lines[start].chars().take_while(|ch| *ch == '#').count();
-    let end = lines
-        .iter()
-        .enumerate()
-        .skip(start + 1)
-        .find(|(_, line)| {
-            let trimmed = line.trim();
-            let next_level = trimmed.chars().take_while(|ch| *ch == '#').count();
-            next_level > 0 && next_level <= level
-        })
-        .map(|(index, _)| index)
-        .unwrap_or(lines.len());
-    Some(lines[start..end].join("\n"))
-}
-
-fn take_skill_lines(raw: &str, start_line: usize, line_limit: usize) -> (String, usize, bool) {
-    let lines = raw.lines().collect::<Vec<_>>();
-    let start = start_line.saturating_sub(1).min(lines.len());
-    let end = (start + line_limit).min(lines.len());
-    let mut content = lines[start..end].join("\n");
-    let mut truncated = end < lines.len();
-    if content.len() > MAX_READ_BYTES {
-        let mut bytes = content.into_bytes();
-        bytes.truncate(MAX_READ_BYTES);
-        content = String::from_utf8_lossy(&bytes).into_owned();
-        truncated = true;
-    }
-    (content, end, truncated)
 }
 
 fn resolve_skill_call_spec_from_roots(
@@ -386,30 +669,25 @@ fn find_skill_spec_in_root_by_name(root: &Path, raw_name: &str) -> Option<SkillS
         return None;
     }
 
-    let mut scan_config = Config::default();
-    scan_config.skills.paths = vec![root.to_string_lossy().to_string()];
-    let registry = crate::skills::load_skills(&scan_config, false, false, false);
-
-    let mut matches = Vec::new();
-    for candidate in candidates {
-        matches.extend(
-            registry
-                .list_specs()
-                .into_iter()
-                .filter(|spec| spec.name == candidate),
-        );
-    }
-    matches.sort_by(|left, right| left.name.cmp(&right.name));
-    matches.dedup_by(|left, right| left.path == right.path);
-    matches.into_iter().next()
+    crate::skills::find_skill_in_root_by_candidates(root, &candidates)
 }
 
-fn build_skill_tree(root: &Path) -> Vec<String> {
-    let mut items = Vec::new();
+fn build_skill_tree_page(root: &Path, cursor: Option<&str>) -> (Vec<String>, bool, bool) {
+    let mut items = BTreeSet::new();
+    let mut scanned = 0;
     let Ok(entries) = std::fs::read_dir(root) else {
-        return items;
+        return (Vec::new(), false, false);
     };
-    for entry in entries.filter_map(|entry| entry.ok()) {
+    let mut scan_limited = false;
+    for entry in entries {
+        if scanned >= MAX_MANIFEST_SCAN_ITEMS {
+            scan_limited = true;
+            break;
+        }
+        scanned += 1;
+        let Ok(entry) = entry else {
+            continue;
+        };
         let name = entry.file_name().to_string_lossy().to_string();
         if name.is_empty() {
             continue;
@@ -422,21 +700,23 @@ fn build_skill_tree(root: &Path) -> Vec<String> {
         {
             display.push('/');
         }
-        items.push(display);
-    }
-    items.sort();
-    items
-}
-
-fn absolute_path_string(path: &Path) -> String {
-    let normalized = normalize_existing_path(path);
-    let mut text = normalized.to_string_lossy().to_string();
-    if cfg!(windows) {
-        if let Some(stripped) = text.strip_prefix(r"\\?\") {
-            text = stripped.to_string();
+        if cursor.is_some_and(|value| display.as_str() <= value) {
+            continue;
         }
+        items.insert(display);
     }
-    text.replace('\\', "/")
+    let mut page = items
+        .into_iter()
+        .take(MAX_MANIFEST_ITEMS + 1)
+        .collect::<Vec<_>>();
+    let more = page.len() > MAX_MANIFEST_ITEMS;
+    if more {
+        page.pop();
+    }
+    // A hard scan cap means this page is only a bounded discovery view.  The
+    // explicit flag prevents callers from treating a final page as a complete
+    // directory listing.
+    (page, more, scan_limited)
 }
 
 #[cfg(test)]
@@ -505,13 +785,62 @@ mod tests {
         std::fs::write(root.join("scripts").join("tool.py"), "print('ok')").expect("write script");
 
         assert_eq!(
-            build_skill_tree(root),
+            build_skill_tree_page(root, None).0,
             vec![
                 "SKILL.md".to_string(),
                 "references/".to_string(),
                 "scripts/".to_string()
             ]
         );
+    }
+
+    #[test]
+    fn manifest_is_paged_and_bounded_for_large_resource_tree() {
+        let dir = tempdir().expect("tempdir");
+        for index in 0..100 {
+            std::fs::write(
+                dir.path()
+                    .join(format!("resource-{index:03}-{}.md", "x".repeat(120))),
+                "ok",
+            )
+            .expect("write resource");
+        }
+        let spec = SkillSpec {
+            name: "demo".to_string(),
+            description: "d".repeat(500),
+            path: String::new(),
+            input_schema: json!({}),
+            frontmatter: String::new(),
+            root: dir.path().to_path_buf(),
+            entrypoint: None,
+        };
+        let first = build_skill_manifest(&spec, None).expect("manifest");
+        assert!(serde_json::to_string(&first).expect("json").chars().count() <= MAX_MANIFEST_CHARS);
+        assert!(first["resource_index"].as_array().expect("index").len() < MAX_MANIFEST_ITEMS);
+        let cursor = first["next_cursor"].as_str().expect("next cursor");
+        let second = build_skill_manifest(&spec, Some(cursor)).expect("second page");
+        assert_ne!(first["resource_index"], second["resource_index"]);
+    }
+
+    #[test]
+    fn bounded_fragment_preserves_utf8_and_rewinds_incomplete_codepoint() {
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("resource.md");
+        let expected = format!("{}中tail", "a".repeat(MAX_FRAGMENT_BYTES - 1));
+        std::fs::write(&path, &expected).expect("write resource");
+        let mut reader = BufReader::with_capacity(64, File::open(path).expect("open resource"));
+        let first = read_skill_fragment(&mut reader, MAX_FRAGMENT_BYTES).expect("first window");
+        let second = read_skill_fragment(&mut reader, MAX_FRAGMENT_BYTES).expect("second window");
+        assert!(first.is_char_boundary(first.len()));
+        assert_eq!(format!("{first}{second}"), expected);
+    }
+
+    #[test]
+    fn cursor_rendering_uses_relative_skill_root() {
+        let (rendered, consumed) =
+            render_skill_fragment("run {{SKILL_ROOT}}/tool.py", ".", MAX_READ_BYTES, false);
+        assert_eq!(rendered, "run ./tool.py");
+        assert_eq!(consumed, "run {{SKILL_ROOT}}/tool.py".len());
     }
 
     #[tokio::test]

@@ -625,6 +625,17 @@ impl Orchestrator {
         });
         let chat_messages =
             sanitize_chat_messages_for_request(&self.build_chat_messages(&request_messages));
+        // This is the final local gate before a provider request. It deliberately
+        // measures the sanitized messages and the exact native tool definitions
+        // that will be serialized below, including image placeholders and tool
+        // call arguments. Provider usage remains authoritative after a response,
+        // but waiting for a provider overflow cannot protect the first request.
+        let request_admission = super::request_budget::RequestBudget::measure(
+            &effective_config,
+            &chat_messages.messages,
+            tools,
+        )
+        .ensure_admitted()?;
         let native_tools_attached = tools.is_some_and(|items| !items.is_empty());
         let stream_disabled_reason = crate::llm::should_disable_streaming_for_native_tools(
             &effective_config,
@@ -712,6 +723,10 @@ impl Orchestrator {
                 "stream_requested": stream,
                 "payload_omitted": true,
                 "context_cache_probe": context_cache_probe,
+                "request_estimated_tokens": request_admission.estimated_tokens,
+                "request_admission_limit_tokens": request_admission.limit_tokens,
+                "request_output_reserve_tokens": request_admission.output_reserve_tokens,
+                "request_safety_reserve_tokens": request_admission.safety_reserve_tokens,
             });
             if let Value::Object(ref mut map) = request_payload {
                 if let Some(repair) = chat_messages.repair.clone() {

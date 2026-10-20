@@ -16,8 +16,21 @@
 - 安装向导允许改安装目录，默认 `%USERPROFILE%\.wunder`。安装根会写入 `.wunder-home`，蛹和舵机启动时以该根作为 `WUNDER_HOME`；显式设置的非空 `WUNDER_HOME` 优先。
 - 安装目录同时保存配置、会话、工作区、日志和 `opt/` 补充组件；迁移时复制整个安装根。
 - 选中已存在的组件时，安装器先清空对应 `opt/<component>`，再写入新版本；`config`、`data`、`workspace`、`logs` 等用户数据不会删除。
-- 卸载器只移除 `bin`、`.wunder-home` 和安装时选择的组件目录，保留用户数据。
+- 安装完成后 `{安装根}\bin` 会加入当前用户 `PATH`（重复安装不重复追加，卸载时只移除这一项）。新开终端可直接运行 `wunder-cli`；`desktop` 启动蛹，`wunder-desktop` 也可直接运行。
+- 卸载器移除 `bin`、`.wunder-home`、安装时选择的组件目录和安装器写入的用户 `PATH` 项，保留用户数据。
 - 补充包仍可单独导入：在蛹设置中选择“导入补充包”，或手动解压到 `WUNDER_HOME`。两端自动识别共享 home 中的 `opt/python`、`opt/git`、`opt/rg`、`opt/ffmpeg` 与 `opt/browser`。
+
+## 安装后的终端命令
+
+```bat
+wunder-cli
+cd D:\work\demo
+wunder-cli
+desktop
+```
+
+- `wunder-cli` 是舵机；`desktop` 是蛹的启动器（`wunder-desktop` 等价）。安装器通过用户级 `PATH` 暴露命令，已经打开的终端需要重开，或从系统属性重新加载环境变量。
+- 舵机把启动它的目录登记为工作区；需要指定其他目录时使用 `wunder-cli -C <目录>`。工作区数据仍保存在安装根下。
 
 ## 安装器打包
 

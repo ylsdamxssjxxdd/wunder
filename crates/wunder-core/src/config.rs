@@ -1055,6 +1055,10 @@ pub struct BrowserSecurityConfig {
     #[serde(default = "default_browser_deny_file_scheme")]
     #[serde(deserialize_with = "crate::config::deserialize_bool_from_any")]
     pub deny_file_scheme: bool,
+    /// Advanced JavaScript execution is independent of ordinary browser use.
+    #[serde(default)]
+    #[serde(deserialize_with = "crate::config::deserialize_bool_from_any")]
+    pub allow_evaluate: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1369,6 +1373,7 @@ impl Default for BrowserSecurityConfig {
             allow_private_network: false,
             hostname_allowlist: Vec::new(),
             deny_file_scheme: default_browser_deny_file_scheme(),
+            allow_evaluate: false,
         }
     }
 }

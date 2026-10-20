@@ -1050,6 +1050,23 @@ fn test_compact_observation_payload_keeps_small_browser_projection_unmarked() {
 }
 
 #[test]
+fn browser_evaluate_projection_keeps_value_and_generation() {
+    let result = ToolResultPayload::from_value(json!({
+        "ok": true,
+        "data": {
+            "kind": "evaluate",
+            "result": {"ready": true, "count": 2},
+            "page_generation": 7,
+            "url": "https://example.invalid/next"
+        }
+    }));
+    let observation = result.to_compact_payload("browser_evaluate");
+    assert_eq!(observation["data"]["action"], "evaluate");
+    assert_eq!(observation["data"]["result"]["count"], 2);
+    assert_eq!(observation["data"]["page_generation"], 7);
+}
+
+#[test]
 fn test_compact_observation_payload_write_file_keeps_change_summary_only() {
     let mut payload = json!({
         "tool": "写入文件",

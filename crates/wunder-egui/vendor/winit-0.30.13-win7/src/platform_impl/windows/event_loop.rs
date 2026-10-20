@@ -94,25 +94,48 @@ use runner::{EventLoopRunner, EventLoopRunnerShared};
 use super::window::set_skip_taskbar;
 use super::SelectedCursor;
 
-/// Tracks the one `WM_CHAR` sequence that a legacy IME may emit after it has
-/// already committed the same text through `WM_IME_COMPOSITION`.
+/// Tracks the result of one IME composition and the brief `WM_CHAR` echo a
+/// legacy IME may emit after that result.
 ///
-/// Some legacy Windows IMEs can send this sequence after
-/// `WM_IME_ENDCOMPOSITION`, when `ime_state` is already disabled. Keeping the
-/// committed text until its matching character messages arrive lets the window
-/// procedure drop only those duplicates. Some IMEs split one displayed word
-/// across several result messages, while winit may combine its `WM_CHAR`
-/// messages, so this is a short sequence rather than just the last commit.
+/// `GCS_RESULTSTR` is the authoritative commit. Some Windows IMEs report a
+/// result together with `GCS_COMPSTR`; winit then enters the preedit state and
+/// its old end-composition fallback could read the same result a second time.
+/// The per-composition state prevents that duplicate commit. Separately, a few
+/// old IMEs also emit matching `WM_CHAR` messages after the commit. The short,
+/// bounded sequence below removes only that echo.
 #[derive(Default)]
 pub(crate) struct ImeCommitDeduplicator {
     pending_text: String,
+    composition_active: bool,
+    composition_had_result: bool,
 }
 
 impl ImeCommitDeduplicator {
-    fn record_commit(&mut self, text: String) {
+    fn begin_composition(&mut self) {
+        self.composition_active = true;
+        self.composition_had_result = false;
+    }
+
+    fn record_composition_result(&mut self, text: &str) {
+        self.composition_had_result = true;
+        self.record_commit_echo(text);
+    }
+
+    /// Returns whether the `WM_IME_ENDCOMPOSITION` compatibility fallback may
+    /// read `GCS_RESULTSTR`. This consumes the session so a repeated END
+    /// cannot commit the same stale IMM result a second time.
+    fn take_end_composition_result(&mut self) -> bool {
+        let needs_result = self.composition_active && !self.composition_had_result;
+        self.composition_active = false;
+        self.composition_had_result = false;
+        needs_result
+    }
+
+    fn record_commit_echo(&mut self, text: &str) {
         const MAX_PENDING_COMMIT_BYTES: usize = 1024;
 
-        if text.is_empty() {
+        if text.is_empty() || text.len() > MAX_PENDING_COMMIT_BYTES {
+            self.pending_text.clear();
             return;
         }
 
@@ -122,7 +145,7 @@ impl ImeCommitDeduplicator {
         if self.pending_text.len() + text.len() > MAX_PENDING_COMMIT_BYTES {
             self.pending_text.clear();
         }
-        self.pending_text.push_str(&text);
+        self.pending_text.push_str(text);
     }
 
     fn suppress_keyboard_text(
@@ -147,8 +170,8 @@ impl ImeCommitDeduplicator {
         // did not arrive. Do not let an old commit affect normal input.
         self.pending_text.clear();
 
-        // IMEs that send WM_CHAR while their composition is still active are
-        // covered as well; the IME commit remains the authoritative text.
+        // This is the original guard for IMEs that send WM_CHAR while their
+        // composition is still active. The commit path remains authoritative.
         ime_composition_active && text.chars().any(|ch| !ch.is_ascii())
     }
 }
@@ -193,6 +216,16 @@ impl WindowData {
         self.window_state.lock().unwrap()
     }
 
+    fn begin_ime_composition(&self) {
+        self.ime_commit_deduplicator.borrow_mut().begin_composition();
+    }
+
+    fn should_read_end_composition_result(&self) -> bool {
+        self.ime_commit_deduplicator
+            .borrow_mut()
+            .take_end_composition_result()
+    }
+
     fn suppress_ime_keyboard_text(
         &self,
         ime_composition_active: bool,
@@ -203,8 +236,17 @@ impl WindowData {
             .suppress_keyboard_text(ime_composition_active, text)
     }
 
+    fn send_ime_composition_result(&self, window: HWND, text: String) {
+        self.send_event(Event::WindowEvent {
+            window_id: RootWindowId(WindowId(window)),
+            event: WindowEvent::Ime(Ime::Commit(text)),
+        });
+    }
+
     fn send_ime_commit(&self, window: HWND, text: String) {
-        self.ime_commit_deduplicator.borrow_mut().record_commit(text.clone());
+        self.ime_commit_deduplicator
+            .borrow_mut()
+            .record_composition_result(&text);
         self.send_event(Event::WindowEvent {
             window_id: RootWindowId(WindowId(window)),
             event: WindowEvent::Ime(Ime::Commit(text)),
@@ -1200,6 +1242,10 @@ unsafe fn public_window_callback_inner(
 ) -> LRESULT {
     let mut result = ProcResult::DefWindowProc(wparam);
 
+    if msg == WM_KILLFOCUS {
+        *userdata.ime_commit_deduplicator.borrow_mut() = ImeCommitDeduplicator::default();
+    }
+
     // Send new modifiers before sending key events.
     let mods_changed_callback = || match msg {
         WM_KEYDOWN | WM_SYSKEYDOWN | WM_KEYUP | WM_SYSKEYUP => {
@@ -1228,7 +1274,7 @@ unsafe fn public_window_callback_inner(
         for event in events {
             if userdata.suppress_ime_keyboard_text(
                 ime_composition_active,
-                event.event.text.as_deref(),
+                event.event.text.as_deref().or_else(|| event.event.logical_key.to_text()),
             ) {
                 continue;
             }
@@ -1605,6 +1651,7 @@ unsafe fn public_window_callback_inner(
         WM_IME_STARTCOMPOSITION => {
             let ime_allowed = userdata.window_state_lock().ime_allowed;
             if ime_allowed {
+                userdata.begin_ime_composition();
                 userdata.window_state_lock().ime_state = ImeState::Enabled;
 
                 userdata.send_event(Event::WindowEvent {
@@ -1638,12 +1685,16 @@ unsafe fn public_window_callback_inner(
                 if (lparam as u32 & GCS_RESULTSTR) != 0 {
                     if let Some(text) = unsafe { ime_context.get_composed_text() } {
                         userdata.window_state_lock().ime_state = ImeState::Enabled;
+                        userdata
+                            .ime_commit_deduplicator
+                            .borrow_mut()
+                            .record_composition_result(&text);
 
                         userdata.send_event(Event::WindowEvent {
                             window_id: RootWindowId(WindowId(window)),
                             event: WindowEvent::Ime(Ime::Preedit(String::new(), None)),
                         });
-                        userdata.send_ime_commit(window, text);
+                        userdata.send_ime_composition_result(window, text);
                     }
                 }
 
@@ -1673,9 +1724,12 @@ unsafe fn public_window_callback_inner(
                 w.ime_allowed || w.ime_state != ImeState::Disabled
             };
             if ime_allowed_or_composing {
-                if userdata.window_state_lock().ime_state == ImeState::Preedit {
-                    // Windows Hangul IME sends WM_IME_COMPOSITION after WM_IME_ENDCOMPOSITION, so
-                    // trying receiving composing result and commit if exists.
+                let had_preedit = userdata.window_state_lock().ime_state == ImeState::Preedit;
+                let should_read_result = userdata.should_read_end_composition_result();
+                if had_preedit && should_read_result {
+                    // Some IMEs deliver their only result at the end of the
+                    // composition. Do not read it again after GCS_RESULTSTR
+                    // already committed the same session.
                     let ime_context = unsafe { ImeContext::current(window) };
                     if let Some(text) = unsafe { ime_context.get_composed_text() } {
                         userdata.send_event(Event::WindowEvent {
@@ -2766,23 +2820,166 @@ mod tests {
     use super::ImeCommitDeduplicator;
 
     #[test]
-    fn legacy_ime_commit_consumes_only_its_matching_keyboard_text() {
-        let mut deduplicator = ImeCommitDeduplicator::default();
-        deduplicator.record_commit("你好".into());
-        assert!(deduplicator.suppress_keyboard_text(false, Some("你好")));
-        assert!(!deduplicator.suppress_keyboard_text(false, Some("你好")));
+    fn ime_result_is_not_read_again_at_end_after_preedit_update() {
+        let mut state = ImeCommitDeduplicator::default();
+        state.begin_composition();
+        state.record_composition_result("sample");
+        // GCS_COMPSTR may set ImeState::Preedit again after GCS_RESULTSTR.
+        assert!(!state.take_end_composition_result());
+        assert!(!state.take_end_composition_result());
 
-        deduplicator.record_commit("你好".into());
-        assert!(deduplicator.suppress_keyboard_text(false, Some("你")));
-        assert!(deduplicator.suppress_keyboard_text(false, Some("好")));
+        state.begin_composition();
+        assert!(state.take_end_composition_result());
+        assert!(!state.take_end_composition_result());
+    }
+
+    #[test]
+    fn legacy_ime_echo_buffer_has_a_hard_limit() {
+        let mut state = ImeCommitDeduplicator::default();
+        for _ in 0..1000 {
+            state.record_composition_result("sample");
+            assert!(state.pending_text.len() <= 1024);
+        }
+        state.record_composition_result(&"x".repeat(2048));
+        assert!(state.pending_text.is_empty());
+        state.begin_composition();
+        assert!(state.take_end_composition_result());
+    }
+
+    #[test]
+    fn legacy_ime_commit_consumes_only_its_matching_keyboard_text() {
+        let mut state = ImeCommitDeduplicator::default();
+        state.record_composition_result("sample");
+        assert!(state.suppress_keyboard_text(false, Some("sample")));
+        assert!(!state.suppress_keyboard_text(false, Some("sample")));
+
+        state.record_composition_result("first");
+        assert!(state.suppress_keyboard_text(false, Some("fir")));
+        assert!(state.suppress_keyboard_text(false, Some("st")));
 
         // Legacy IMEs can split a displayed word into result strings while
         // winit later combines their WM_CHAR messages into one key event.
-        deduplicator.record_commit("你".into());
-        deduplicator.record_commit("好".into());
-        assert!(deduplicator.suppress_keyboard_text(false, Some("你好")));
+        state.record_composition_result("one");
+        state.record_composition_result("two");
+        assert!(state.suppress_keyboard_text(false, Some("onetwo")));
 
-        assert!(deduplicator.suppress_keyboard_text(true, Some("中")));
-        assert!(!deduplicator.suppress_keyboard_text(false, Some("中")));
+        assert!(state.suppress_keyboard_text(true, Some("文")));
+        assert!(!state.suppress_keyboard_text(false, Some("文")));
+    }
+
+    #[test]
+    fn ime_messages_commit_each_result_once_through_a_real_window() {
+        use std::cell::RefCell;
+        use std::rc::Rc;
+
+        use windows_sys::Win32::UI::WindowsAndMessaging::SendMessageW;
+
+        use crate::event::{Event, Ime, WindowEvent};
+        use crate::event_loop::EventLoop;
+        use crate::platform::windows::{EventLoopBuilderExtWindows, WindowAttributesExtWindows};
+        use crate::platform_impl::platform::ime::test_context::{Strings, STRINGS};
+        use crate::window::Window;
+
+        use super::{WindowData, GCS_COMPSTR, GCS_RESULTSTR, GWL_USERDATA};
+        use super::{WM_IME_COMPOSITION, WM_IME_ENDCOMPOSITION, WM_IME_STARTCOMPOSITION};
+
+        let event_loop = EventLoop::builder().with_any_thread(true).build().unwrap();
+        #[allow(deprecated)]
+        let window = event_loop
+            .create_window(
+                Window::default_attributes()
+                    .with_title("IME regression")
+                    .with_visible(false)
+                    .with_drag_and_drop(false),
+            )
+            .unwrap();
+        let hwnd = window.window.hwnd();
+        let userdata =
+            unsafe { &*(super::super::get_window_long(hwnd, GWL_USERDATA) as *const WindowData) };
+        userdata.window_state_lock().ime_allowed = true;
+        let commits = Rc::new(RefCell::new(Vec::new()));
+        let received = Rc::clone(&commits);
+        unsafe {
+            userdata.event_loop_runner.set_event_handler(move |event| {
+                if let Event::WindowEvent {
+                    event: WindowEvent::Ime(Ime::Commit(text)),
+                    ..
+                } = event
+                {
+                    received.borrow_mut().push(text);
+                }
+            });
+        }
+        struct Cleanup<'a>(&'a super::runner::EventLoopRunner<super::UserEventPlaceholder>);
+        impl Drop for Cleanup<'_> {
+            fn drop(&mut self) {
+                self.0.clear_event_handler();
+                STRINGS.with(|slot| *slot.borrow_mut() = None);
+            }
+        }
+        let _cleanup = Cleanup(&userdata.event_loop_runner);
+        let send = |message, flags| unsafe { SendMessageW(hwnd, message, 0, flags) };
+        let set_strings = |result: Option<&str>, preedit: &str| {
+            STRINGS.with(|slot| {
+                *slot.borrow_mut() = Some(Strings {
+                    result: result.map(str::to_owned),
+                    preedit: preedit.to_owned(),
+                    result_reads: 0,
+                });
+            });
+        };
+        let assert_result_reads = |expected| {
+            STRINGS.with(|slot| {
+                assert_eq!(slot.borrow().as_ref().unwrap().result_reads, expected);
+            });
+        };
+
+        // RESULTSTR + COMPSTR sets Preedit again after the result. END must
+        // neither read the stale IMM result nor dispatch a second commit.
+        set_strings(Some("sample"), "");
+        send(WM_IME_STARTCOMPOSITION, 0);
+        send(WM_IME_COMPOSITION, (GCS_RESULTSTR | GCS_COMPSTR) as isize);
+        send(WM_IME_ENDCOMPOSITION, 0);
+        assert_result_reads(1);
+        assert_eq!(&*commits.borrow(), &["sample"]);
+        send(WM_IME_ENDCOMPOSITION, 0);
+        assert_result_reads(1);
+
+        // A fresh composition may legitimately commit the same text again.
+        send(WM_IME_STARTCOMPOSITION, 0);
+        send(WM_IME_COMPOSITION, (GCS_RESULTSTR | GCS_COMPSTR) as isize);
+        send(WM_IME_ENDCOMPOSITION, 0);
+        assert_eq!(&*commits.borrow(), &["sample", "sample"]);
+
+        // Nonempty and separately delivered preedit updates do not reopen
+        // the old result. Multiple authoritative result messages stay valid.
+        commits.borrow_mut().clear();
+        set_strings(Some("one"), "next");
+        send(WM_IME_STARTCOMPOSITION, 0);
+        send(WM_IME_COMPOSITION, (GCS_RESULTSTR | GCS_COMPSTR) as isize);
+        send(WM_IME_COMPOSITION, GCS_COMPSTR as isize);
+        set_strings(Some("two"), "");
+        send(WM_IME_COMPOSITION, (GCS_RESULTSTR | GCS_COMPSTR) as isize);
+        send(WM_IME_ENDCOMPOSITION, 0);
+        assert_result_reads(1);
+        assert_eq!(&*commits.borrow(), &["one", "two"]);
+
+        // Retain the Hangul/legacy fallback when there was no RESULTSTR
+        // message. This exercises the original reason for the END workaround.
+        commits.borrow_mut().clear();
+        set_strings(Some("fallback"), "fixture");
+        send(WM_IME_STARTCOMPOSITION, 0);
+        send(WM_IME_COMPOSITION, GCS_COMPSTR as isize);
+        send(WM_IME_ENDCOMPOSITION, 0);
+        assert_result_reads(1);
+        assert_eq!(&*commits.borrow(), &["fallback"]);
+
+        // Canceled compositions never create committed text.
+        commits.borrow_mut().clear();
+        set_strings(None, "fixture");
+        send(WM_IME_STARTCOMPOSITION, 0);
+        send(WM_IME_COMPOSITION, GCS_COMPSTR as isize);
+        send(WM_IME_ENDCOMPOSITION, 0);
+        assert!(commits.borrow().is_empty());
     }
 }

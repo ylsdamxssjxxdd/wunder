@@ -127,6 +127,8 @@ impl Orchestrator {
         if allowed_tool_names.is_empty() {
             return None;
         }
+        // Function-call and text protocols share the compact catalog surface.
+        // Execution continues to validate against the full backend schemas.
         let specs = collect_prompt_tool_specs_with_language(
             config,
             skills,
@@ -213,6 +215,9 @@ impl Orchestrator {
                 }
             }));
         }
+        // `collect_prompt_tool_specs_with_language` sorts canonical runtime IDs;
+        // preserve that order so equivalent permission sets keep a stable API
+        // prefix and provider prompt-cache key.
         Some(FunctionTooling {
             tools,
             name_map,

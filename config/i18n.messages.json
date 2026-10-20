@@ -2676,8 +2676,8 @@
     "zh-CN": "要加载的已挂载技能准确名称。用户点名技能或请求命中技能时，必须先调用本工具。"
   },
   "tool.spec.skill_call.description": {
-    "en-US": "Load a mounted skill's complete SKILL.md and directory tree. If the user names a skill or the task matches its Frontmatter, this must be the first tool call; do not list/search files or run commands first. Follow the loaded workflow.",
-    "zh-CN": "加载已挂载技能完整 SKILL.md 与目录结构。用户点名技能或任务命中其 Frontmatter 时，本工具必须是第一条工具调用；不要先列目录、搜索文件或执行命令。加载后按技能流程执行。"
+    "en-US": "Load a mounted skill. If the user names a skill or the task matches its Frontmatter, call this first; do not list/search files or run commands first. action=manifest returns compact metadata and one bounded resource-index page. action=read returns one bounded resource page; continue with its cursor, or choose a path/section and line window. Follow the loaded workflow.",
+    "zh-CN": "加载已挂载技能（默认读取 SKILL.md）。用户点名技能或任务命中其 Frontmatter 时，本工具必须是第一条工具调用；不要先列目录、搜索文件或执行命令。action=manifest 只返回精简元数据和一页有界资源索引；action=read 返回一页有界资源内容，可使用返回 cursor 续读，或选择 path/section 与行窗口。加载后按技能流程执行。"
   },
   "tool.spec.search.args.file_pattern": {
     "en-US": "Optional. Glob pattern to filter files, e.g., *.cpp or src/**.ts.",

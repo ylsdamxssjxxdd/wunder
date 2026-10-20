@@ -257,6 +257,7 @@ browser:
   security:
     allow_private_network: true
     hostname_allowlist: []
+    allow_evaluate: false # Advanced JavaScript evaluation requires explicit opt-in.
 
 cron: # 定时任务配置
   enabled: true

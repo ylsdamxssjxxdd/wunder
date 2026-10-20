@@ -1,22 +1,40 @@
 param(
   [string]$BuilderRoot = "",
+  # CI mode: use a rustup toolchain and an MSYS2 MinGW installation instead of
+  # the adjacent offline SDK. Leave both empty for the offline release build.
+  [string]$Toolchain = "",
+  [string]$MingwBin = "",
+  [string]$HostMingwBin = "",
   [string]$CargoCacheRoot = "",
+  [string]$OutputDirectory = "",
   [ValidateRange(1, 8)][int]$Jobs = 8,
   [switch]$Check
 )
 
-# Build the plain Win7-compatible CLI with the same offline Rust/MinGW toolchain
-# as the Slint Desktop release. This stays separate from the desktop builder
-# because the CLI does not need a UI manifest, fonts, or an AppImage stage.
+# Build the plain Win7-compatible CLI with the same Rust/MinGW target as the
+# Slint Desktop release. This stays separate from the desktop builder because
+# the CLI does not need a UI manifest, fonts, or an AppImage stage.
 $ErrorActionPreference = "Stop"
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-if (-not $BuilderRoot) {
-  $BuilderRoot = if ($env:WUNDER_BUILDER_ROOT) { $env:WUNDER_BUILDER_ROOT } else { Join-Path (Split-Path $repoRoot -Parent) "Rust-builder\win7" }
-}
-$offline = Join-Path $BuilderRoot "offline"
-$toolchainBin = Join-Path $offline "rust\toolchains\nightly-2026-03-14-x86_64-pc-windows-gnu\bin"
-$vendor = Join-Path $offline "cargo-vendor-slint"
 $target = "i686-win7-windows-gnu"
+$offlineMode = [string]::IsNullOrWhiteSpace($Toolchain)
+. (Join-Path $PSScriptRoot 'win7_host_tools.ps1')
+
+if ($offlineMode) {
+  if (-not $BuilderRoot) {
+    $BuilderRoot = if ($env:WUNDER_BUILDER_ROOT) { $env:WUNDER_BUILDER_ROOT } else { Join-Path (Split-Path $repoRoot -Parent) "Rust-builder\win7" }
+  }
+  $offline = Join-Path $BuilderRoot "offline"
+  $toolchainBin = Join-Path $offline "rust\toolchains\nightly-2026-03-14-x86_64-pc-windows-gnu\bin"
+  $vendor = Join-Path $offline "cargo-vendor-slint"
+  $hostMingwBin = Join-Path $offline "mingw64\bin"
+  $targetMingwBin = Join-Path $offline "mingw32\bin"
+} else {
+  if (-not $MingwBin) { throw "-MingwBin is required when -Toolchain is set" }
+  if (-not $HostMingwBin) { throw "-HostMingwBin is required when -Toolchain is set" }
+  $hostMingwBin = [IO.Path]::GetFullPath($HostMingwBin)
+  $targetMingwBin = [IO.Path]::GetFullPath($MingwBin)
+}
 
 function Require-Path([string]$Path, [string]$Label) {
   if (-not (Test-Path -LiteralPath $Path)) { throw "$Label is missing: $Path" }
@@ -24,36 +42,43 @@ function Require-Path([string]$Path, [string]$Label) {
 
 foreach ($required in @(
   @{ Path = (Join-Path $repoRoot "Cargo.toml"); Label = "Workspace manifest" },
-  @{ Path = (Join-Path $toolchainBin "cargo.exe"); Label = "Offline Cargo" },
-  @{ Path = (Join-Path $toolchainBin "rustc.exe"); Label = "Offline rustc" },
-  @{ Path = (Join-Path $offline "mingw64\bin\gcc.exe"); Label = "Win7 host GCC" },
-  @{ Path = (Join-Path $offline "mingw32\bin\i686-w64-mingw32-gcc.exe"); Label = "Win7 target GCC" },
-  @{ Path = (Join-Path $offline "mingw32\bin\objdump.exe"); Label = "Win7 PE inspection tool" },
-  @{ Path = (Join-Path $offline "mingw32\bin\strip.exe"); Label = "Win7 PE strip tool" },
-  @{ Path = $vendor; Label = "Offline Cargo vendor" }
+  @{ Path = (Join-Path $hostMingwBin "gcc.exe"); Label = "Win7 host GCC" },
+  @{ Path = (Join-Path $targetMingwBin "i686-w64-mingw32-gcc.exe"); Label = "Win7 target GCC" },
+  @{ Path = (Join-Path $targetMingwBin "objdump.exe"); Label = "Win7 PE inspection tool" },
+  @{ Path = (Join-Path $targetMingwBin "strip.exe"); Label = "Win7 PE strip tool" }
 )) {
   Require-Path $required.Path $required.Label
 }
+Set-Win7HostTools -HostMingwBin $hostMingwBin
 
-# The shared vendor is maintained as the Desktop/CLI dependency union. Check
-# the runtime crates before invoking Cargo so an incomplete offline SDK fails
-# with a direct, actionable error instead of a long resolver trace.
-foreach ($crate in @("axum-*", "reqwest", "tokio-rustls", "syntect")) {
-  if (-not (Get-ChildItem -LiteralPath $vendor -Directory -Filter $crate -ErrorAction SilentlyContinue | Select-Object -First 1)) {
-    throw "Offline Cargo vendor is missing the CLI runtime dependency pattern: $crate"
+if ($offlineMode) {
+  foreach ($required in @(
+    @{ Path = (Join-Path $toolchainBin "cargo.exe"); Label = "Offline Cargo" },
+    @{ Path = (Join-Path $toolchainBin "rustc.exe"); Label = "Offline rustc" },
+    @{ Path = $vendor; Label = "Offline Cargo vendor" }
+  )) {
+    Require-Path $required.Path $required.Label
   }
-}
 
-$cargoHome = if ($CargoCacheRoot) {
-  [IO.Path]::GetFullPath($CargoCacheRoot)
-} else {
-  Join-Path $repoRoot "target\cli-win7-x86\cargo-home"
-}
-if ($CargoCacheRoot) {
-  Require-Path (Join-Path $cargoHome "registry") "Offline Cargo registry cache"
-} else {
-  New-Item -ItemType Directory -Force -Path $cargoHome | Out-Null
-  $vendorPath = [IO.Path]::GetFullPath($vendor).Replace('\', '/')
+  # The shared vendor is maintained as the Desktop/CLI dependency union. Check
+  # the runtime crates before invoking Cargo so an incomplete offline SDK fails
+  # with a direct, actionable error instead of a long resolver trace.
+  foreach ($crate in @("axum-*", "reqwest", "tokio-rustls", "syntect")) {
+    if (-not (Get-ChildItem -LiteralPath $vendor -Directory -Filter $crate -ErrorAction SilentlyContinue | Select-Object -First 1)) {
+      throw "Offline Cargo vendor is missing the CLI runtime dependency pattern: $crate"
+    }
+  }
+
+  $cargoHome = if ($CargoCacheRoot) {
+    [IO.Path]::GetFullPath($CargoCacheRoot)
+  } else {
+    Join-Path $repoRoot "target\cli-win7-x86\cargo-home"
+  }
+  if ($CargoCacheRoot) {
+    Require-Path (Join-Path $cargoHome "registry") "Offline Cargo registry cache"
+  } else {
+    New-Item -ItemType Directory -Force -Path $cargoHome | Out-Null
+    $vendorPath = [IO.Path]::GetFullPath($vendor).Replace('\', '/')
 @"
 [source.crates-io]
 replace-with = "vendored-sources"
@@ -62,48 +87,94 @@ directory = "$vendorPath"
 [net]
 offline = true
 "@ | Set-Content -Encoding UTF8 -LiteralPath (Join-Path $cargoHome "config.toml")
+  }
+  $env:CARGO_HOME = $cargoHome
+  $env:CARGO_NET_OFFLINE = "true"
+  $env:RUSTC = Join-Path $toolchainBin "rustc.exe"
+  $cargo = Join-Path $toolchainBin "cargo.exe"
+} else {
+  $rustcCommand = (& rustup which --toolchain $Toolchain rustc).Trim()
+  if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $rustcCommand)) {
+    throw "rustc not installed for $Toolchain"
+  }
+  $versionDetails = & $rustcCommand -vV
+  if ($LASTEXITCODE -ne 0) { throw 'rustc could not run' }
+  Assert-Win7RustHost -VersionDetails $versionDetails
+  $availableTargets = & rustc "+$Toolchain" --print target-list
+  if ($LASTEXITCODE -ne 0 -or !($availableTargets -contains $target)) {
+    throw "$target is not available in $Toolchain"
+  }
+  $components = & rustup component list --installed --toolchain $Toolchain
+  if ($LASTEXITCODE -ne 0 -or !($components -match '^rust-src')) {
+    throw "rust-src is not installed for $Toolchain"
+  }
+  $env:RUSTC = $rustcCommand
+  $cargo = "cargo"
 }
 
-$hostMingwBin = Join-Path $offline "mingw64\bin"
-$targetMingwBin = Join-Path $offline "mingw32\bin"
 $targetDir = Join-Path $repoRoot "target\cli-win7-x86\cargo"
-$outputDir = Join-Path $repoRoot "target\cli\dist\win7-x86"
+$outputDir = if ($OutputDirectory) {
+  [IO.Path]::GetFullPath($OutputDirectory)
+} else {
+  Join-Path $repoRoot "target\cli\dist\win7-x86"
+}
 New-Item -ItemType Directory -Force -Path $targetDir, $outputDir | Out-Null
 
-$env:CARGO_HOME = $cargoHome
 $env:CARGO_TARGET_DIR = $targetDir
-$env:CARGO_NET_OFFLINE = "true"
-$env:RUSTC = Join-Path $toolchainBin "rustc.exe"
-$env:PATH = "$toolchainBin;$hostMingwBin;$targetMingwBin;$env:PATH"
+$env:PATH = if ($offlineMode) {
+  "$toolchainBin;$hostMingwBin;$targetMingwBin;$env:PATH"
+} else {
+  "$hostMingwBin;$targetMingwBin;$env:PATH"
+}
+$env:WUNDER_WIN7_MINGW_BIN = $targetMingwBin
 $env:CARGO_TARGET_I686_WIN7_WINDOWS_GNU_LINKER = Join-Path $targetMingwBin "i686-w64-mingw32-gcc.exe"
 $env:CC_i686_win7_windows_gnu = $env:CARGO_TARGET_I686_WIN7_WINDOWS_GNU_LINKER
 $env:CXX_i686_win7_windows_gnu = Join-Path $targetMingwBin "i686-w64-mingw32-g++.exe"
 $env:AR_i686_win7_windows_gnu = Join-Path $targetMingwBin "i686-w64-mingw32-gcc-ar.exe"
 $env:RANLIB_i686_win7_windows_gnu = Join-Path $targetMingwBin "i686-w64-mingw32-gcc-ranlib.exe"
-$env:CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER = Join-Path $hostMingwBin "gcc.exe"
-$env:CC_x86_64_pc_windows_gnu = $env:CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER
-$env:CXX_x86_64_pc_windows_gnu = Join-Path $hostMingwBin "g++.exe"
-$env:AR_x86_64_pc_windows_gnu = Join-Path $hostMingwBin "gcc-ar.exe"
-$env:RANLIB_x86_64_pc_windows_gnu = Join-Path $hostMingwBin "gcc-ranlib.exe"
 $env:RAYON_NUM_THREADS = "$Jobs"
 
 # windows-targets does not infer the custom Win7 target vendor. Make the
 # prebuilt GNU import library discoverable, as the Desktop Win7 builder does.
-$windowsImportDirs = @(
-  Get-ChildItem -LiteralPath $vendor -Directory -Filter "windows_i686_gnu-*" -ErrorAction SilentlyContinue |
-    ForEach-Object { Join-Path $_.FullName "lib" } |
-    Where-Object { Test-Path -LiteralPath $_ }
-)
+$windowsImportDirs = @()
+if ($offlineMode) {
+  $windowsImportDirs = @(
+    Get-ChildItem -LiteralPath $vendor -Directory -Filter "windows_i686_gnu-*" -ErrorAction SilentlyContinue |
+      ForEach-Object { Join-Path $_.FullName "lib" } |
+      Where-Object { Test-Path -LiteralPath $_ }
+  )
+} else {
+  $metadataArgs = @(
+    "metadata", "--locked", "--format-version", "1", "--filter-platform", $target,
+    "--manifest-path", (Join-Path $repoRoot "Cargo.toml")
+  )
+  $metadataJson = & cargo "+$Toolchain" @metadataArgs
+  if ($LASTEXITCODE -ne 0) { throw "cargo metadata failed with exit code $LASTEXITCODE" }
+  $metadata = $metadataJson | ConvertFrom-Json
+  $windowsImportPackages = @($metadata.packages | Where-Object { $_.name -eq "windows_i686_gnu" })
+  if ($windowsImportPackages.Count -eq 0) {
+    throw "windows_i686_gnu is missing from the CLI dependency graph"
+  }
+  foreach ($windowsImportPackage in $windowsImportPackages) {
+    $windowsImportDir = Join-Path (Split-Path -Parent $windowsImportPackage.manifest_path) "lib"
+    if (Test-Path -LiteralPath $windowsImportDir) { $windowsImportDirs += $windowsImportDir }
+  }
+}
 if ($windowsImportDirs.Count -gt 0) {
-  $env:CARGO_TARGET_I686_WIN7_WINDOWS_GNU_RUSTFLAGS = (
-    $windowsImportDirs | Select-Object -Unique | ForEach-Object { "-Lnative=$_" }
-  ) -join " "
+  $nativeLinkFlag = ($windowsImportDirs | Select-Object -Unique | ForEach-Object { "-Lnative=$_" }) -join " "
+  $existingRustFlags = $env:CARGO_TARGET_I686_WIN7_WINDOWS_GNU_RUSTFLAGS
+  $env:CARGO_TARGET_I686_WIN7_WINDOWS_GNU_RUSTFLAGS =
+    if ($existingRustFlags) { "$existingRustFlags $nativeLinkFlag" } else { $nativeLinkFlag }
 }
 
-$cargo = Join-Path $toolchainBin "cargo.exe"
-$cargoArgs = @("-Z", "build-std=std,panic_abort", "build", "--locked", "--offline", "--release", "-p", "wunder-cli", "--bin", "wunder-cli", "--target", $target, "-j", "$Jobs")
+$cargoArgs = @("-Z", "build-std=std,panic_abort", "build", "--locked", "--release", "-p", "wunder-cli", "--bin", "wunder-cli", "--target", $target, "-j", "$Jobs")
+if ($offlineMode) { $cargoArgs += "--offline" }
 if ($Check) { $cargoArgs[$cargoArgs.IndexOf("build")] = "check" }
-& $cargo @cargoArgs
+if ($offlineMode) {
+  & $cargo @cargoArgs
+} else {
+  & cargo "+$Toolchain" @cargoArgs
+}
 if ($LASTEXITCODE -ne 0) { throw "Win7 CLI build failed with exit code $LASTEXITCODE" }
 if ($Check) { return }
 
@@ -153,32 +224,13 @@ foreach ($relative in $releaseAssetFiles) {
   Copy-Item -LiteralPath $source -Destination $destination -Force
 }
 
-# The shipped engine template carries this machine's deployment keys. A release
-# folder gets the structure without the credentials, and without a default model
-# pointing at a key nobody owns: the local form is configured by its own user
-# layer, not by inheriting somebody else's access.
-$templateSource = Join-Path $repoRoot "config\wunder.yaml"
+# The local runtime loads config/wunder-example.yaml as its engine template.
+# The deployment config/wunder.yaml is untracked and may carry credentials, so
+# a clean release checkout must seed from the tracked example instead.
+$templateSource = Join-Path $repoRoot "config\wunder-example.yaml"
 Require-Path $templateSource "Engine config template"
-$secretKeyPattern = '^(\s*[A-Za-z_]*(?:api_key|auth_key|jwt_secret|client_secret|access_key|bearer_token|password)\s*:\s*)'
-$engineLines = (Get-Content -LiteralPath $templateSource -Raw -Encoding UTF8) -split "\r?\n"
-$insideLlm = $false
-for ($index = 0; $index -lt $engineLines.Count; $index++) {
-  $line = $engineLines[$index]
-  if ($line -match '^[A-Za-z_]') { $insideLlm = ($line -match '^llm:') }
-  if ($line -match $secretKeyPattern) {
-    $engineLines[$index] = $line -replace "$secretKeyPattern[^\r\n]*$", '${1}null'
-    continue
-  }
-  if ($insideLlm -and $line -match '^  default\s*:') { $engineLines[$index] = '  default: ""' }
-}
 New-Item -ItemType Directory -Force -Path (Join-Path $resourceRoot "config") | Out-Null
-# Set-Content -Encoding UTF8 writes a BOM on Windows PowerShell, so keep the
-# staged YAML plain UTF-8 the same way the source file is stored.
-[IO.File]::WriteAllText(
-  (Join-Path $resourceRoot "config\wunder.yaml"),
-  ($engineLines -join "`r`n"),
-  (New-Object Text.UTF8Encoding $false)
-)
+Copy-Item -LiteralPath $templateSource -Destination (Join-Path $resourceRoot "config\wunder-example.yaml") -Force
 
 Write-Host "Win7 CLI release executable: $release"
 Write-Host "Win7 CLI release assets: $resourceRoot"

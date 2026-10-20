@@ -107,3 +107,4 @@ scripts/blender
 !scripts/blender/verify_eva_rig.py
 .codex-target-slint
 .codex-target-popover
+.codex-target-ime

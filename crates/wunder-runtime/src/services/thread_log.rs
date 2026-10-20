@@ -301,11 +301,13 @@ pub fn event_item(session_id: &str, event_type: &str, data: &Value) -> Option<Va
         item["visibility"] = json!("admin");
     }
     // 工具事件与 append_tool_log 写同一时间线条目，二者最后写入者不定；
-    // 在持久化必经点补 schema，保证调用级 schema 不会因覆盖顺序丢失。
+    // 在持久化必经点补稳定规格引用，避免调用级定义被覆盖或重复保存。
     if kind == "tool_call" {
         if let Some(tool) = item.get("tool").and_then(Value::as_str) {
             if let Some(schema) = crate::tools::runtime_tool_schema(tool) {
-                item["schema"] = schema;
+                item["schema_ref"] =
+                    serde_json::to_value(crate::tools::schema_reference(tool, &schema))
+                        .unwrap_or(Value::Null);
             }
         }
     }
@@ -698,9 +700,7 @@ mod tests {
     }
 
     #[test]
-    fn tool_events_carry_call_schema_regardless_of_writer_order() {
-        // tool_result 事件与 append_tool_log 写同一时间线条目，最后写入者不定；
-        // 事件路径必须在持久化点补 schema，避免调用级 schema 被覆盖丢失。
+    fn tool_events_carry_schema_reference_regardless_of_writer_order() {
         for event_type in ["tool_call", "tool_result"] {
             let item = event_item(
                 "s",
@@ -708,11 +708,16 @@ mod tests {
                 &json!({"turn_id":"turn","model_round":1,"tool":"读取文件","tool_call_id":"call_1","ok":true}),
             )
             .expect("tool events enter the timeline");
-            let schema = item
-                .get("schema")
-                .expect("durable tool items keep the call schema");
-            assert_eq!(schema["name"], "读取文件");
-            assert!(schema["parameters"].is_object());
+            let schema_ref = item
+                .get("schema_ref")
+                .expect("durable tool items keep a call schema reference");
+            assert!(schema_ref["schema_ref"]
+                .as_str()
+                .is_some_and(|value| value.starts_with("tool-schema:")));
+            assert_eq!(
+                schema_ref["catalog_version"],
+                crate::tools::TOOL_CATALOG_VERSION
+            );
         }
     }
 }

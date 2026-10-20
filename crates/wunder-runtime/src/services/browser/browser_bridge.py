@@ -41,6 +41,40 @@ from urllib.parse import urlparse
 # start on Windows 7 unless this platform gate is skipped.
 os.environ.setdefault("NODE_SKIP_PLATFORM_CHECK", "1")
 
+# A constant-time revision check precedes every ref action. Mutation observers
+# cover the document and open shadow roots without rescanning the DOM per click.
+# The document token changes across full navigations; iframe identity/URL is
+# included by Python so a frame replacement invalidates its old selectors too.
+PAGE_STATE_JS = """() => {
+  const key = Symbol.for('wunder.browser.page-state.v1');
+  let state = window[key];
+  if (!state || state.document !== document) {
+    state = { document, token: Date.now().toString(36) + Math.random().toString(36),
+              revision: 0, roots: new WeakSet() };
+    state.observer = new MutationObserver(() => { state.revision += 1; });
+    state.observe = root => {
+      if (!state.roots.has(root)) {
+        state.roots.add(root);
+        state.observer.observe(root, {subtree:true, childList:true,
+                                     attributes:true, characterData:true});
+      }
+    };
+    state.observe(document);
+    window[key] = state;
+    const attach = Element.prototype.attachShadow;
+    if (attach) {
+      Element.prototype.attachShadow = function(options) {
+        const root = attach.call(this, options);
+        state.revision += 1;
+        if (options && options.mode === 'open') state.observe(root);
+        return root;
+      };
+    }
+  }
+  if (state.observer.takeRecords().length) state.revision += 1;
+  return [state.token, state.revision, location.href];
+}"""
+
 # Runs inside one frame: open shadow roots are traversed here because they share
 # the frame's document; nested frames are handled by the caller so each gets its
 # own execution context and selector namespace.
@@ -204,7 +238,7 @@ SNAPSHOT_JS = """(opts) => {
       if (interactive) {
         if (opts.interactive) {
           localCounter += 1;
-          const ref = 'e' + (opts.ref_start + localCounter);
+          const ref = opts.ref_prefix + 'e' + (opts.ref_start + localCounter);
           if (!push(lineFor(opts.fmt, role, name, ref))) return;
           refs.push({
             ref: ref,
@@ -227,6 +261,8 @@ SNAPSHOT_JS = """(opts) => {
       }
 
       if (node.shadowRoot) {
+        const state = window[Symbol.for('wunder.browser.page-state.v1')];
+        if (state) state.observe(node.shadowRoot);
         walkRoot(node.shadowRoot, node.shadowRoot, selector, depth + 1);
       }
     }
@@ -737,6 +773,8 @@ class BridgeSession:
         self.pages = OrderedDict()
         self.pages_by_key = {}
         self.refs = {}
+        self.page_generations = {}
+        self.page_states = {}
         self.target_counter = 0
         self.active_target_id = None
         try:
@@ -902,6 +940,7 @@ class BridgeSession:
         self.pages[target_id] = page
         self.pages_by_key[id(page)] = target_id
         self.refs[target_id] = {}
+        self.page_generations[target_id] = 0
         if self.active_target_id is None:
             self.active_target_id = target_id
         return target_id, page
@@ -936,6 +975,8 @@ class BridgeSession:
                 self.pages_by_key.pop(key, None)
                 self.pages.pop(target_id, None)
                 self.refs.pop(target_id, None)
+                self.page_generations.pop(target_id, None)
+                self.page_states.pop(target_id, None)
         if self.active_target_id not in self.pages:
             self.active_target_id = next(iter(self.pages), None)
 
@@ -968,7 +1009,7 @@ class BridgeSession:
                     max_chars=char_budget(raw.get("max_chars")),
                     ready_timeout_ms=raw.get("snapshot_timeout_ms"),
                 )["data"]
-                for key in ("snapshot", "truncated", "target_id", "url", "title"):
+                for key in ("snapshot", "truncated", "target_id", "url", "title", "page_generation"):
                     data[key] = snapshot[key]
                 if snapshot.get("blocked"):
                     data.setdefault("blocked", []).extend(snapshot["blocked"])
@@ -1101,6 +1142,8 @@ class BridgeSession:
         self.pages.pop(target_id, None)
         self.pages_by_key.pop(id(page), None)
         self.refs.pop(target_id, None)
+        self.page_generations.pop(target_id, None)
+        self.page_states.pop(target_id, None)
         if not self.pages:
             new_target_id, _ = self._new_page()
             self.active_target_id = new_target_id
@@ -1123,6 +1166,9 @@ class BridgeSession:
         if not allowed:
             return {"success": False, "error": "Navigation blocked: %s" % reason}
         page, target_id = self._resolve_page(target_id)
+        # Invalidate before the request: even a failed navigation can replace
+        # the document with an error page.
+        self._invalidate_refs(target_id)
         try:
             page.goto(url, wait_until="domcontentloaded", timeout=self._timeout_ms(timeout_ms))
         except Exception as exc:
@@ -1133,11 +1179,12 @@ class BridgeSession:
         verdict = self._final_url_verdict(page)
         if verdict is not None:
             return verdict
-        self.refs[target_id] = {}
+        generation = self._refresh_page_generation(page, target_id)
         return {
             "success": True,
             "data": {
                 "target_id": target_id,
+                "page_generation": generation,
                 "title": page.title(),
                 "url": page.url,
                 "tabs": self._tabs_state(),
@@ -1168,13 +1215,17 @@ class BridgeSession:
         # Failed standalone observations must not leave a previous page's refs
         # available for a later action.
         self.refs[target_id] = {}
+        # A new observation owns a distinct ref namespace even when the page
+        # did not change. An old e1 must never silently point at a new element.
+        self._invalidate_refs(target_id)
         while True:
             url = safe_page_url(page)
             try:
+                generation = self._refresh_page_generation(page, target_id)
                 lines, refs, truncated = self._collect(page, fmt, interactive, compact, max_chars)
                 title = safe_page_title(page)
                 tabs = self._tabs_state()
-                if url != safe_page_url(page):
+                if url != safe_page_url(page) or generation != self._refresh_page_generation(page, target_id):
                     raise RuntimeError("Page changed while taking snapshot")
             except Exception as exc:
                 transient = any(message in str(exc) for message in (
@@ -1199,6 +1250,7 @@ class BridgeSession:
             "success": True,
             "data": {
                 "target_id": target_id,
+                "page_generation": generation,
                 "title": title,
                 "url": url,
                 "tabs": tabs,
@@ -1223,6 +1275,8 @@ class BridgeSession:
         used = 0
         truncated = False
         main = page.main_frame
+        target_id = self.pages_by_key[id(page)]
+        generation = self.page_generations[target_id]
         frames = self._reachable_frames(page)
         for frame in frames:
             is_main = frame is main or frame.parent_frame is None
@@ -1241,6 +1295,7 @@ class BridgeSession:
                         "interactive": interactive,
                         "compact": compact,
                         "ref_start": ref_start,
+                        "ref_prefix": "g%d-" % generation,
                         "max_chars": remaining,
                     },
                 )
@@ -1258,6 +1313,7 @@ class BridgeSession:
             for item in payload.get("refs") or []:
                 entry = dict(item)
                 entry["frame_path"] = list(frame_path)
+                entry["page_generation"] = generation
                 refs.append(entry)
             lines.extend(payload.get("lines") or [])
             used += len("\n".join(payload.get("lines") or [])) + overhead
@@ -1272,6 +1328,28 @@ class BridgeSession:
             return list(page.frames)
         except Exception:
             return []
+
+    def _invalidate_refs(self, target_id):
+        self.refs[target_id] = {}
+        self.page_generations[target_id] = self.page_generations.get(target_id, 0) + 1
+        return self.page_generations[target_id]
+
+    def _refresh_page_generation(self, page, target_id):
+        states = []
+        for frame in self._reachable_frames(page):
+            try:
+                state = frame.evaluate(PAGE_STATE_JS)
+                # Playwright creates fresh Python Frame wrappers on each
+                # `page.frames` access. Their Python `id()` is not a page
+                # identity and would invalidate every ref action.
+                states.append((frame.url, tuple(state)))
+            except Exception:
+                states.append((id(frame), ("unreadable", frame.url)))
+        signature = tuple(states)
+        if self.page_states.get(target_id) != signature:
+            self.page_states[target_id] = signature
+            self._invalidate_refs(target_id)
+        return self.page_generations.get(target_id, 0)
 
     def _frame_path(self, frame):
         """frame_locator hops from the main page down to `frame`."""
@@ -1305,6 +1383,10 @@ class BridgeSession:
         page, target_id = self._resolve_page(target_id or request.get("target_id"))
         if kind == "wait":
             return self._wait(page, target_id, request)
+        if kind == "back":
+            self._invalidate_refs(target_id)
+            page.go_back(wait_until="domcontentloaded", timeout=self._timeout_ms(request.get("timeout_ms")))
+            return self._action_result(page, target_id, kind)
         if kind == "evaluate":
             expression = request.get("script") or request.get("expression")
             if not expression:
@@ -1313,7 +1395,8 @@ class BridgeSession:
             verdict = self._final_url_verdict(page)
             if verdict is not None:
                 return verdict
-            payload = {"target_id": target_id, "result": result, "url": page.url}
+            payload = {"target_id": target_id, "kind": "evaluate", "result": result,
+                       "url": page.url, "page_generation": self._refresh_page_generation(page, target_id)}
             blocked = self._drain_blocked()
             if blocked:
                 payload["blocked"] = blocked
@@ -1523,10 +1606,11 @@ class BridgeSession:
     def _resolve_locator(self, page, target_id, request):
         ref_id = request.get("ref")
         if ref_id:
+            generation = self._refresh_page_generation(page, target_id)
             ref = self.refs.get(target_id, {}).get(str(ref_id))
-            if ref is None:
+            if ref is None or ref.get("page_generation") != generation:
                 raise ValueError(
-                    "Unknown browser ref: %s. Capture a new snapshot first." % ref_id
+                    "Stale or unknown browser ref: %s (page_generation=%s). Call browser_observe mode=refs and use its new refs." % (ref_id, generation)
                 )
             selector = ref.get("selector")
             if not selector:
@@ -1596,6 +1680,7 @@ class BridgeSession:
             return verdict
         payload = {
             "target_id": target_id,
+            "page_generation": self._refresh_page_generation(page, target_id),
             "kind": kind,
             "title": safe_page_title(page),
             "url": safe_page_url(page),

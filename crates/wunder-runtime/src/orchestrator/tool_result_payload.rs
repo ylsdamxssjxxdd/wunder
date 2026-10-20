@@ -1182,6 +1182,11 @@ fn project_browser_navigation(data: &Value) -> Option<Value> {
     if projected.is_empty() {
         projected.insert("navigated".to_string(), Value::Bool(true));
     }
+    for key in ["page_generation", "generation"] {
+        if let Some(value) = map.get(key).filter(|value| !value.is_null()) {
+            projected.insert(key.to_string(), value.clone());
+        }
+    }
     Some(Value::Object(projected))
 }
 
@@ -1225,7 +1230,14 @@ fn project_browser_observation(data: &Value) -> Option<Value> {
     } else if let Some(content) = browser_content_text(data) {
         projected.insert("text".to_string(), Value::String(content));
     }
-    for key in ["refs", "truncated", "next_cursor", "has_more"] {
+    for key in [
+        "refs",
+        "truncated",
+        "next_cursor",
+        "has_more",
+        "page_generation",
+        "generation",
+    ] {
         if let Some(value) = map.get(key).filter(|value| !value.is_null()) {
             projected.insert(key.to_string(), value.clone());
         }
@@ -1238,7 +1250,17 @@ fn project_browser_observation(data: &Value) -> Option<Value> {
 
 fn project_browser_interaction(data: &Value, tool_name: &str) -> Option<Value> {
     let map = data.as_object()?;
-    let mut projected = pick_non_empty_fields(map, &["action", "kind", "target_ref", "ref"]);
+    let mut projected = pick_non_empty_fields(
+        map,
+        &[
+            "action",
+            "kind",
+            "target_ref",
+            "ref",
+            "page_generation",
+            "generation",
+        ],
+    );
     if let Some(action) = projected.remove("kind") {
         projected.entry("action".to_string()).or_insert(action);
     }
@@ -1254,6 +1276,11 @@ fn project_browser_interaction(data: &Value, tool_name: &str) -> Option<Value> {
     }
     if let Some(url) = map.get("url").filter(|value| !value.is_null()) {
         projected.insert("url".to_string(), url.clone());
+    }
+    if legacy_browser_action(tool_name) == Some("evaluate") {
+        if let Some(result) = map.get("result").filter(|value| !value.is_null()) {
+            projected.insert("result".to_string(), result.clone());
+        }
     }
     Some(Value::Object(projected))
 }

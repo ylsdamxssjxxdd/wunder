@@ -298,6 +298,32 @@ impl UserToolStore {
         user_id: &str,
         servers: Vec<UserMcpServer>,
     ) -> Result<UserToolsPayload> {
+        // Bound user supplied descriptions/schemas before writing them to the
+        // persistent catalog. MCP execution semantics remain provider-owned;
+        // only size/depth/node limits are enforced at this compatibility edge.
+        for server in &servers {
+            for tool in &server.tool_specs {
+                let name = tool
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .trim();
+                if name.is_empty() {
+                    continue;
+                }
+                let spec = ToolSpec {
+                    name: name.to_string(),
+                    title: tool
+                        .get("title")
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
+                    description: resolve_mcp_description(server, tool),
+                    input_schema: normalize_mcp_input_schema(tool),
+                };
+                crate::tools::validate_dynamic_tool_spec(&spec)
+                    .map_err(|err| anyhow!("invalid MCP tool {name}: {err}"))?;
+            }
+        }
         let mut payload = self.load_user_tools(user_id);
         payload.mcp_servers = normalize_mcp_servers(servers);
         self.save_payload(user_id, payload)

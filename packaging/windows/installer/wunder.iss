@@ -47,7 +47,7 @@ ArchitecturesAllowed=x86 x64
 CloseApplications=yes
 RestartApplications=no
 SetupLogging=yes
-ChangesEnvironment=no
+ChangesEnvironment=yes
 VersionInfoVersion={#VersionInfoVersion}
 VersionInfoProductName={#AppName}
 VersionInfoDescription={#AppName} 安装程序
@@ -64,12 +64,15 @@ SelectDirLabel3=安装程序将安装 [name] 到下面的文件夹，并使用�
 
 [Icons]
 Name: "{group}\心舰"; Filename: "{app}\bin\wunder-desktop.exe"; WorkingDir: "{app}"
-Name: "{group}\心舰舵机"; Filename: "{app}\bin\wunder.exe"; WorkingDir: "{app}\workspace"
+Name: "{group}\心舰舵机"; Filename: "{app}\bin\wunder-cli.exe"; WorkingDir: "{app}\workspace"
 Name: "{group}\卸载心舰"; Filename: "{uninstallexe}"
 Name: "{userdesktop}\心舰"; Filename: "{app}\bin\wunder-desktop.exe"; WorkingDir: "{app}"; Tasks: desktopicon
 
 [Dirs]
 Name: "{app}\workspace"
+
+[InstallDelete]
+Type: files; Name: "{app}\bin\wunder.exe"
 
 [Run]
 Filename: "{app}\bin\wunder-desktop.exe"; Description: "启动心舰"; Flags: nowait postinstall skipifsilent
@@ -200,6 +203,71 @@ begin
     end;
 end;
 
+function NormalizedPathEntry(const Value: String): String;
+begin
+  Result := Trim(Value);
+  while (Length(Result) > 1) and (Result[Length(Result)] = '\') do
+    Delete(Result, Length(Result), 1);
+end;
+
+procedure AddAppToUserPath();
+var
+  Current, Entry: String;
+begin
+  Entry := NormalizedPathEntry(ExpandConstant('{app}\bin'));
+  if not RegQueryStringValue(HKCU, 'Environment', 'Path', Current) then
+    Current := '';
+  if Pos(';' + Uppercase(Entry) + ';', ';' + Uppercase(Current) + ';') = 0 then
+  begin
+    if (Current <> '') and (Current[Length(Current)] <> ';') then
+      Current := Current + ';';
+    RegWriteExpandStringValue(HKCU, 'Environment', 'Path', Current + Entry);
+  end;
+end;
+
+procedure RemoveAppFromUserPath();
+var
+  Current, Rest, Item, Entry, Updated: String;
+  P: Integer;
+  Found, First: Boolean;
+begin
+  Entry := NormalizedPathEntry(ExpandConstant('{app}\bin'));
+  if not RegQueryStringValue(HKCU, 'Environment', 'Path', Current) then
+    Exit;
+  Found := False;
+  First := True;
+  Updated := '';
+  Rest := Current;
+  while True do
+  begin
+    P := Pos(';', Rest);
+    if P = 0 then
+    begin
+      Item := Rest;
+      Rest := '';
+    end
+    else
+    begin
+      Item := Copy(Rest, 1, P - 1);
+      Rest := Copy(Rest, P + 1, Length(Rest));
+    end;
+    if CompareText(NormalizedPathEntry(Item), Entry) = 0 then
+      Found := True
+    else
+    begin
+      if First then
+        First := False
+      else
+        Updated := Updated + ';';
+      Updated := Updated + Item;
+    end;
+    if P = 0 then
+      Break;
+  end;
+  if Found then
+    RegWriteExpandStringValue(HKCU, 'Environment', 'Path', Updated);
+end;
+
 function SelectedComponentList: String;
 var
   I: Integer;
@@ -266,6 +334,11 @@ begin
     SaveStringToFile(
       ExpandConstant('{app}\bin\wunder-install-components.txt'),
       SelectedComponentList, False);
+    SaveStringToFile(
+      ExpandConstant('{app}\bin\desktop.cmd'),
+      '@echo off' + #13#10 + 'start "" "%~dp0wunder-desktop.exe" %*' + #13#10,
+      False);
+    AddAppToUserPath();
   end;
 end;
 
@@ -278,6 +351,8 @@ var
 begin
   if CurUninstallStep <> usUninstall then
     Exit;
+
+  RemoveAppFromUserPath();
 
   if not LoadStringFromFile(
     ExpandConstant('{app}\bin\wunder-install-components.txt'), Raw) then

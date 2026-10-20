@@ -1,5 +1,21 @@
 use std::collections::HashSet;
 
+pub const DEFAULT_TOOL_PROFILE_VERSION: &str = "authorized-v1";
+
+/// A stable identity for the default tool surface. Defaults deliberately use
+/// the caller's whole authorized set; named smaller profiles are explicit
+/// routing choices and never silently revoke an existing authorization.
+pub fn authorized_profile_revision(allowed: &HashSet<String>) -> String {
+    let specs = crate::tools::builtin_tool_specs()
+        .into_iter()
+        .filter(|spec| {
+            let canonical = crate::tools::resolve_tool_name(&spec.name);
+            allowed.contains(&spec.name) || allowed.contains(&canonical)
+        })
+        .collect::<Vec<_>>();
+    crate::tools::tool_profile_snapshot(&specs).revision
+}
+
 const DEFAULT_SKILL_NAMES: &[&str] = &["技能创建器"];
 
 /// 桌面端不对智能体开放选择的内置工具：goal 三件套由运行时按会话自动注入，
@@ -74,6 +90,9 @@ pub fn default_tool_names(allowed: &HashSet<String>) -> Vec<String> {
             .filter(|name| allowed.contains(**name))
             .map(|name| name.to_string()),
     );
+    // `allowed` can include dynamic/user capabilities. Default-agent creation
+    // intentionally selects only shipped defaults, but it must be deterministic.
+    selected.sort();
     selected
 }
 
@@ -259,5 +278,16 @@ mod tests {
             assert!(is_temporarily_hidden_tool_name(name));
         }
         assert!(!is_temporarily_hidden_tool_name("读取文件"));
+    }
+
+    #[test]
+    fn authorized_profile_revision_is_stable_for_permission_order() {
+        let first = HashSet::from(["读取文件".to_string(), "执行命令".to_string()]);
+        let second = HashSet::from(["执行命令".to_string(), "读取文件".to_string()]);
+        assert_eq!(
+            authorized_profile_revision(&first),
+            authorized_profile_revision(&second)
+        );
+        assert!(!authorized_profile_revision(&first).is_empty());
     }
 }

@@ -388,7 +388,7 @@ def build_payload(stage, version, arch, desktop, cli, core_only, components, sup
             0o644,
         )
         add_file(target_tar, "payload/wunder-desktop.AppImage", desktop, 0o755)
-        add_file(target_tar, "payload/wunder", cli, 0o755)
+        add_file(target_tar, "payload/wunder-cli", cli, 0o755)
         if image is not None and image.is_file():
             add_file(target_tar, "payload/wunder.png", image, 0o644)
         add_file(target_tar, "payload/install.sh", installer_dir / "install.sh", 0o755)

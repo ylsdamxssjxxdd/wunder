@@ -57,9 +57,20 @@ pub const TOOL_NAMES: &[&str] = &[
 ];
 
 pub const LEGACY_TOOL_NAMES: &[&str] = &[
-    TOOL_NAVIGATE_BACK, TOOL_SNAPSHOT, TOOL_CLICK, TOOL_TYPE, TOOL_HOVER,
-    TOOL_SELECT_OPTION, TOOL_DRAG, TOOL_PRESS_KEY, TOOL_EVALUATE, TOOL_WAIT_FOR,
-    TOOL_SCREENSHOT, TOOL_READ_PAGE, TOOL_CLOSE, TOOL_STATUS,
+    TOOL_NAVIGATE_BACK,
+    TOOL_SNAPSHOT,
+    TOOL_CLICK,
+    TOOL_TYPE,
+    TOOL_HOVER,
+    TOOL_SELECT_OPTION,
+    TOOL_DRAG,
+    TOOL_PRESS_KEY,
+    TOOL_EVALUATE,
+    TOOL_WAIT_FOR,
+    TOOL_SCREENSHOT,
+    TOOL_READ_PAGE,
+    TOOL_CLOSE,
+    TOOL_STATUS,
 ];
 
 /// True for migration-only browser member names accepted from persisted calls.
@@ -260,13 +271,11 @@ async fn dispatch(context: &ToolContext<'_>, tool: &str, args: &Value) -> Result
                 dispatch_legacy(context, TOOL_NAVIGATE, &normalized).await
             }
         }
-        TOOL_OBSERVE => {
-            match opt_str(args, "mode").as_deref().unwrap_or("refs") {
-                "text" => dispatch_legacy(context, TOOL_READ_PAGE, args).await,
-                "screenshot" => dispatch_legacy(context, TOOL_SCREENSHOT, args).await,
-                _ => dispatch_legacy(context, TOOL_SNAPSHOT, args).await,
-            }
-        }
+        TOOL_OBSERVE => match opt_str(args, "mode").as_deref().unwrap_or("refs") {
+            "text" => dispatch_legacy(context, TOOL_READ_PAGE, args).await,
+            "screenshot" => dispatch_legacy(context, TOOL_SCREENSHOT, args).await,
+            _ => dispatch_legacy(context, TOOL_SNAPSHOT, args).await,
+        },
         TOOL_INTERACT => {
             let action = required_str(args, "action")?;
             let legacy = match action.as_str() {
@@ -286,7 +295,11 @@ async fn dispatch(context: &ToolContext<'_>, tool: &str, args: &Value) -> Result
     }
 }
 
-async fn dispatch_legacy(context: &ToolContext<'_>, tool: &str, args: &Value) -> Result<ProviderOutcome> {
+async fn dispatch_legacy(
+    context: &ToolContext<'_>,
+    tool: &str,
+    args: &Value,
+) -> Result<ProviderOutcome> {
     let service = browser_service(context.config);
     let scope = scope_from_context(context, args);
     let target = opt_str(args, "target_id");
@@ -313,7 +326,8 @@ async fn dispatch_legacy(context: &ToolContext<'_>, tool: &str, args: &Value) ->
             Ok(text_outcome(format!("Navigated to {url}."), data))
         }
         TOOL_NAVIGATE_BACK => {
-            let request = json!({"kind": "evaluate", "expression": "history.back()"});
+            // Fixed history navigation does not grant arbitrary JavaScript.
+            let request = json!({"kind": "back"});
             let data = service
                 .execute(&scope, "act", &act_args(request, target.as_deref()))
                 .await?;
@@ -476,7 +490,8 @@ async fn dispatch_legacy(context: &ToolContext<'_>, tool: &str, args: &Value) ->
                 .await?;
             let text =
                 primary_text(&data).unwrap_or_else(|| summarize_data(&data, DEFAULT_MAX_CHARS));
-            Ok(ProviderOutcome::text(text))
+            // The actual value stays available to projection/result storage.
+            Ok(ProviderOutcome::text(text).with_structured(data))
         }
         TOOL_WAIT_FOR => {
             let mut request = Map::new();
@@ -686,8 +701,8 @@ fn normalize_image_mime(format: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        copy_snapshot_args, normalize_image_mime, truncate_chars, LEGACY_TOOL_NAMES,
-        PlaywrightProvider, TOOL_NAMES,
+        copy_snapshot_args, normalize_image_mime, truncate_chars, PlaywrightProvider,
+        LEGACY_TOOL_NAMES, TOOL_NAMES,
     };
     use crate::services::browser::provider::BrowserProvider;
     use serde_json::json;
@@ -705,7 +720,10 @@ mod tests {
         assert!(!provider.owns_tool("浏览器"));
         assert!(!provider.owns_tool("browser"));
         for name in LEGACY_TOOL_NAMES {
-            assert!(provider.owns_tool(name), "legacy tool {name} must remain callable");
+            assert!(
+                provider.owns_tool(name),
+                "legacy tool {name} must remain callable"
+            );
             assert!(
                 !names.iter().any(|item| item == name),
                 "legacy tool {name} must not be exposed"
@@ -750,8 +768,7 @@ mod tests {
             .iter()
             .find(|spec| spec.name == "browser_interact")
             .unwrap();
-        assert!(interact.input_schema["properties"]["action"]
-            ["enum"]
+        assert!(interact.input_schema["properties"]["action"]["enum"]
             .as_array()
             .unwrap()
             .contains(&json!("click")));

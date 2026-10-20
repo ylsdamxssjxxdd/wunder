@@ -93,19 +93,19 @@ impl Orchestrator {
         emitter: &EventEmitter,
         current_question: &str,
         persisted_context_tokens: i64,
-        _request_overhead_tokens: i64,
+        request_overhead_tokens: i64,
         force: bool,
         exclude_current_user: bool,
         run_mode: CompactionRunMode,
     ) -> Result<CompactionResult, OrchestratorError> {
         let compaction_profile = CompactionExecutionProfile::new(run_mode);
         let trigger_mode = Some(compaction_profile.trigger_mode());
-        let request_overhead_tokens = 0_i64;
+        let request_overhead_tokens = request_overhead_tokens.max(0);
         let persisted_context_tokens = persisted_context_tokens.max(0);
         let context_tokens = persisted_context_tokens;
         let projected_request_tokens = resolve_projected_request_tokens(context_tokens);
         let limit = resolve_compaction_limit(llm_config, projected_request_tokens, force);
-        let message_budget = resolve_message_budget(limit);
+        let message_budget = resolve_message_budget(limit.saturating_sub(request_overhead_tokens));
         let max_context = llm_config.effective_max_context() as i64;
         let mut ratio = llm_config
             .history_compaction_ratio

@@ -50,6 +50,7 @@ mod session_tool_args;
 mod session_tool_support;
 pub(crate) mod sessions_yield_tool;
 pub(crate) mod skill_call;
+mod specification;
 mod str_replace_editor_tool;
 mod subagent_control;
 mod thread_control_tool;
@@ -76,7 +77,7 @@ pub use catalog::{
     expand_browser_group_selection, filter_tool_names_by_model_capability, is_browser_group_name,
     is_browser_tool_name, is_desktop_control_tool_name, is_read_image_tool_name,
     resolve_runtime_tool_display_name, resolve_tool_name, runtime_tool_schema,
-    with_browser_group_members,
+    runtime_tool_schema_reference, with_browser_group_members,
 };
 pub use context::{
     build_tool_roots, DetachedToolContext, ToolContext, ToolEventEmitter, ToolRoots,
@@ -116,6 +117,12 @@ pub(crate) use session_tool_support::{
     build_session_tool_result, clamp_limit, dedupe_non_empty_strings, format_ts,
     normalize_optional_string, now_ts, parse_cleanup_mode, session_cleanup_label, truncate_text,
     SessionCleanup,
+};
+pub use specification::{
+    compact_tool_spec, schema_reference, select_tool_profile, tool_profile_snapshot,
+    tool_schema_document, validate_dynamic_tool_spec, validate_tool_spec_size, TinyToolSpec,
+    ToolEffect, ToolProfile, ToolProfileSnapshot, ToolSchemaReference, ToolSpecification,
+    TOOL_CATALOG_VERSION,
 };
 pub(crate) use thread_control_tool::execute_thread_control_tool;
 pub(crate) use user_tool_dispatch::{execute_mcp_tool, execute_user_tool, is_mcp_tool_name};

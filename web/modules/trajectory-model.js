@@ -496,7 +496,7 @@ function buildCell(item, payload, kind, index) {
             defineLazy(cell, 'resultPreviewMarkdown', () => markdownPreviewText(resultRaw));
         else
             cell.resultPreviewMarkdown = undefined;
-        const schema = payload.schema ?? payload.tool_schema;
+        const schema = payload.schema ?? payload.tool_schema ?? payload.schema_ref;
         if (typeof schema === 'string' && schema.trim())
             cell.schemaDetail = schema;
         else if (isRecord(schema))

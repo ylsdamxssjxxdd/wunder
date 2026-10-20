@@ -61,6 +61,15 @@ Linux 安装包是单文件自解压 `.run`，由 Python 3.6+ 组装，不需要
 
 安装器默认目录为 `%USERPROFILE%\.wunder`（Windows）或 `~/.wunder`（Linux）；Windows 安装向导和 Linux 交互菜单都允许改到任意可写目录。安装根会写入 `.wunder-home` 标记，蛹和舵机在启动最早期把 `WUNDER_HOME` 指向该根，因此配置、会话、工作区、日志、数据库和 `opt/` 补充组件都会跟着迁移；显式设置的非空 `WUNDER_HOME` 仍然优先。补充组件默认全部不勾选；Windows 组件页提供“全选组件”，只勾选补充组件，不自动勾选桌面快捷方式；选中已存在的组件会先清空对应 `opt/<component>`，用户数据不会删除。
 
+## CI 发布
+
+`.github/workflows/desktop-nightly.yml` 在每次分支推送时构建三套蛹和舵机，并从固定的 `supplement` release 下载对应补充包，再用 `builders/pack.ps1` / `builders/pack.sh` 组装安装包。`nightly` release 因此同时包含三个桌面程序和三个安装包：Win7 x86、Linux amd64、Linux arm64。打包前会等待同一提交触发的 Desktop Supplements 运行完成，避免旧补充包被打进安装包。
+
+CI 使用的构建入口：
+
+- Windows：`builders/build-win7-cli.ps1 -Toolchain <rustup工具链> -MingwBin <mingw32/bin> -HostMingwBin <mingw64/bin> -OutputDirectory <目录>`；不传 `-Toolchain` 时仍使用相邻离线 SDK。
+- Linux：`builders/build-linux-cli-native.sh`，在 `packaging/docker/Dockerfile.ubuntu18-desktop` 容器内原生构建 amd64 或交叉构建 arm64；输出到 `target/cli/dist/linux-<arch>/`，可用 `WUNDER_CLI_OUTPUT_DIR` 覆盖。
+
 egui 版本提供独立的本机快速构建入口，不改变默认 Slint Desktop 发布矩阵：
 
 ```bat

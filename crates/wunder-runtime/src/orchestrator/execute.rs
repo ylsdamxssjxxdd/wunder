@@ -508,9 +508,10 @@ impl Orchestrator {
             let tools_payload = function_tooling
                 .as_ref()
                 .map(|tooling| tooling.tools.as_slice());
-            // Context occupancy is authoritative only after the model provider reports usage.
-            // Local token estimates are deliberately excluded from compaction decisions.
-            let request_overhead_tokens = 0_i64;
+            // Provider usage drives the persisted occupancy display. Local
+            // estimates additionally guard outgoing requests, without being
+            // recorded as observed or billed usage.
+            let request_overhead_tokens = super::request_budget::tools_tokens(tools_payload);
             // If the previous turn died on context overflow, force a repair compaction before
             // sampling again so the session can self-heal instead of requiring a new thread.
             let mut force_compaction_on_entry = self
@@ -550,6 +551,13 @@ impl Orchestrator {
                         adaptive_recovery_limit_hint,
                     ),
                 );
+                messages = context_manager.normalize_messages(messages);
+                let request_budget = super::request_budget::RequestBudget::measure(
+                    &compaction_llm_config,
+                    &self.build_chat_messages(&messages),
+                    tools_payload,
+                );
+                let admission_compaction_needed = !request_budget.admitted();
                 let compaction_result = self
                     .maybe_compact_messages(
                         &config,
@@ -564,7 +572,7 @@ impl Orchestrator {
                         &question,
                         persisted_context_tokens,
                         request_overhead_tokens,
-                        force_compaction_on_entry,
+                        force_compaction_on_entry || admission_compaction_needed,
                         true,
                         super::memory::CompactionRunMode::AutoLoop,
                     )
@@ -657,7 +665,10 @@ impl Orchestrator {
                 let (content, reasoning, usage, tool_calls_payload, round_speed, output) = loop {
                     match self
                         .call_llm(
-                            &llm_config,
+                            &apply_context_window_limit_hint(
+                                &llm_config,
+                                merge_context_window_limit_hint(context_window_limit_hint, adaptive_recovery_limit_hint),
+                            ),
                             &messages,
                             &user_id,
                             is_admin,
@@ -697,7 +708,8 @@ impl Orchestrator {
                                         )
                                         .await;
                                 }
-                            } else {
+                            } else if err.detail().and_then(|detail| detail.get("source")).and_then(Value::as_str)
+                                != Some("local_request_admission") {
                                 let overflow_projected_tokens = persisted_context_tokens.max(0);
                                 let fallback_limit_hint =
                                     derive_recovery_context_window_limit_hint(
@@ -1234,7 +1246,11 @@ impl Orchestrator {
                             );
                         }
                         if let Some(schema) = crate::tools::runtime_tool_schema(&planned.name) {
-                            map.insert("schema".to_string(), schema);
+                            let reference = crate::tools::schema_reference(&planned.name, &schema);
+                            map.insert(
+                                "schema_ref".to_string(),
+                                serde_json::to_value(reference).unwrap_or(Value::Null),
+                            );
                         }
                         round_info.insert_into(map);
                     }

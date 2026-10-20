@@ -41,9 +41,29 @@ cargo run -p wunder-egui --bin wunder-egui -- --demo-settings=general
 
 共享令牌使用暖白画布、暖灰侧栏和赤陶强调色；图标复用蜂巢既有 Font Awesome 字体。演示窗口以 1440×900 和固定缩放打开，便于与蜂巢截图对照。其他窗口尺寸仍需单独验收。
 
-当前已对照聊天、工作过程和设置截图收敛主要几何，二级标题按实际浏览器的 21px 字号绘制。字体栅格、字重、文本宽度及部分表单细节仍存在差异，尚未通过自动像素差阈值验收。
+当前已对照聊天、工作过程和设置截图收敛主要几何，二级标题按实际浏览器的 21px 字号绘制。字体栅格、字重、文本宽度及部分表单细节仍存在差异；自动像素差门槛已建立（见下节），但尚未做跨机器基线。
 
-## 生成截图
+## 视觉回归门槛
+
+`scripts/check_egui_visual.py` 用固定 fixture、固定视口和固定缩放启动演示窗口，截图后与基线比较，超阈值返回非零退出码。脚本只依赖标准库，PNG 编解码内置，不需要 Pillow。
+
+```powershell
+# 首次或确认视觉改动后生成基线
+cargo build -p wunder-egui --bin wunder-egui --features fixtures
+python scripts/check_egui_visual.py --update
+
+# 日常回归
+python scripts/check_egui_visual.py
+python scripts/check_egui_visual.py --only settings-general
+```
+
+覆盖 16 个 fixture：聊天、工作过程收起态、工具详情展开态、11 类设置页、1024×700 二栏几何和 980×700 窄窗收起态。判定同时看"明显变化的像素占比"（默认 ≤0.4%）和"全图平均通道差"（默认 ≤1.0），单像素容差 12 用于吸收文字抗锯齿。超阈值时输出差异图到 `temp_dir/egui-visual/current/diff/`，并写 `report.json` 记录尺寸、占比、平均差和峰值。
+
+基线与本次截图都按实际 framebuffer 像素保存，受系统缩放影响（本机 175% 缩放下 1440×900 逻辑视口输出 2520×1575 像素），因此基线属于本机产物，存放在 `temp_dir/egui-visual/baseline/`，不进入仓库；换机器前用 `--update` 重建。设置页搜索框有光标闪烁，实测约 0.08% 像素差异、峰值低于 100，属于已知噪声，低于门槛。
+
+需要手工对照时，可用 `WUNDER_EGUI_VIEWPORT`（如 `1024x700`）固定演示窗口逻辑尺寸；不设该变量则使用默认 1440×900。
+
+## 生成单张截图
 
 `fixtures` feature 提供可选的 PNG 截图出口，默认生产构建不启用。以下命令在仓库根目录执行，生成截图后窗口自动关闭；它需要可用的图形桌面和 OpenGL 环境，不是无界面渲染器。
 

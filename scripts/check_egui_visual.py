@@ -21,6 +21,10 @@
 比较口径见 `docs/egui实现清单表格.md` §2：先比几何和状态层次，再接受文字栅格
 差异，因此阈值按"明显变化的像素占比"和"整体平均通道差"双重判定，而不是要求
 逐像素完全一致。
+
+已知噪声：设置页搜索框有光标闪烁，两次截图的该处像素不同（实测约 0.08% 的
+像素、峰值 < 100），低于默认 0.4% 门槛；其余 fixture 在固定环境下逐像素相同。
+基线依赖视口、缩放和系统字体，跨机器比较时把 `--baseline-dir` 指向同环境基线。
 """
 
 from __future__ import annotations
@@ -325,12 +329,27 @@ def main() -> int:
         current = output_dir / f"{name}.png"
         capture(binary, fixture_args, viewport, current)
         baseline = baseline_dir / f"{name}.png"
+        current_image = read_png(current)
+        width, height = current_image[0], current_image[1]
+        requested = tuple(int(part) for part in viewport.split("x"))
+        if (width, height) != requested:
+            print(
+                f"[dpi     ] {name:22} 请求 {viewport} 逻辑像素，"
+                f"实得 {width}x{height}（系统缩放）"
+            )
 
         if args.update:
             baseline.parent.mkdir(parents=True, exist_ok=True)
             baseline.write_bytes(current.read_bytes())
-            results.append({"fixture": name, "viewport": viewport, "action": "baseline"})
-            print(f"[baseline] {name:22} {viewport}")
+            results.append(
+                {
+                    "fixture": name,
+                    "viewport": viewport,
+                    "size": [width, height],
+                    "action": "baseline",
+                }
+            )
+            print(f"[baseline] {name:22} {viewport}  -> {width}x{height}")
             continue
 
         if not baseline.exists():
@@ -341,12 +360,12 @@ def main() -> int:
             print(f"[missing ] {name:22} 没有基线，先运行 --update")
             continue
 
-        report = compare(
-            read_png(baseline), read_png(current), args.pixel_tolerance
-        )
+        baseline_image = read_png(baseline)
+        report = compare(baseline_image, current_image, args.pixel_tolerance)
         entry: dict[str, object] = {
             "fixture": name,
             "viewport": viewport,
+            "size": [width, height],
             "baseline": str(baseline),
             "current": str(current),
         }
@@ -375,8 +394,8 @@ def main() -> int:
                 failures += 1
                 write_png(
                     diff_dir / f"{name}.png",
-                    read_png(baseline)[0],
-                    read_png(baseline)[1],
+                    baseline_image[0],
+                    baseline_image[1],
                     report["diff_pixels"],  # type: ignore[arg-type]
                 )
                 entry["diff"] = str(diff_dir / f"{name}.png")

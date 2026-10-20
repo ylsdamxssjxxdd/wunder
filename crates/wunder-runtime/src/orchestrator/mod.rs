@@ -93,6 +93,7 @@ mod queue_handoff;
 mod queue_handoff_tests;
 mod quota;
 mod request;
+mod request_budget;
 mod result_normalizer;
 mod retry_governor;
 mod runtime_snapshot;

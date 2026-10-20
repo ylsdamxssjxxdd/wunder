@@ -262,8 +262,8 @@ done < "$SELECTED_FILE"
 
 echo "安装蛹和舵机..."
 cp -f -- "$PAYLOAD_DIR/wunder-desktop.AppImage" "$HOME_DIR/bin/wunder-desktop.AppImage"
-cp -f -- "$PAYLOAD_DIR/wunder" "$HOME_DIR/bin/wunder"
-chmod 0755 "$HOME_DIR/bin/wunder-desktop.AppImage" "$HOME_DIR/bin/wunder"
+cp -f -- "$PAYLOAD_DIR/wunder-cli" "$HOME_DIR/bin/wunder-cli"
+chmod 0755 "$HOME_DIR/bin/wunder-desktop.AppImage" "$HOME_DIR/bin/wunder-cli"
 
 cat > "$HOME_DIR/bin/wunder-desktop" <<'LAUNCHER'
 #!/bin/sh
@@ -280,6 +280,60 @@ fi
 exec "$APP" --appimage-extract-and-run "$@"
 LAUNCHER
 chmod 0755 "$HOME_DIR/bin/wunder-desktop"
+ln -sf -- "wunder-cli" "$HOME_DIR/bin/wunder"
+ln -sf -- "wunder-desktop" "$HOME_DIR/bin/desktop"
+
+LOCAL_BIN="$HOME/.local/bin"
+LINKS_READY=1
+link_command() {
+  name=$1
+  target=$2
+  link="$LOCAL_BIN/$name"
+  if [ -L "$link" ]; then
+    current=$(readlink -- "$link" 2>/dev/null || true)
+    if [ "$current" != "$target" ]; then
+      ln -sf -- "$target" "$link" || LINKS_READY=0
+    fi
+  elif [ -e "$link" ]; then
+    echo "提示：$link 已存在且不是符号链接，未覆盖；请自行将 $target 加入 PATH。" >&2
+    LINKS_READY=0
+  else
+    ln -s -- "$target" "$link" || LINKS_READY=0
+  fi
+}
+
+ensure_local_bin_path() {
+  profile="$HOME/.profile"
+  if [ -f "$profile" ] && grep -Fq '.local/bin' "$profile"; then
+    return 0
+  fi
+  if [ ! -e "$profile" ]; then
+    : > "$profile" || return 0
+  fi
+  cat >> "$profile" <<'PROFILE'
+
+# >>> wunder commands >>>
+case ":$PATH:" in
+  *":$HOME/.local/bin:"*) ;;
+  *) PATH="$HOME/.local/bin:$PATH" ;;
+esac
+export PATH
+# <<< wunder commands <<<
+PROFILE
+}
+
+if mkdir -p "$LOCAL_BIN" 2>/dev/null; then
+  link_command wunder-cli "$HOME_DIR/bin/wunder-cli"
+  link_command wunder-desktop "$HOME_DIR/bin/wunder-desktop"
+  link_command desktop "$HOME_DIR/bin/wunder-desktop"
+  if [ "$LINKS_READY" -eq 1 ] && ! ensure_local_bin_path; then
+    LINKS_READY=0
+    echo "提示：请将 $LOCAL_BIN 加入 PATH 后重新打开终端。" >&2
+  fi
+else
+  LINKS_READY=0
+  echo "提示：无法创建 $LOCAL_BIN；请把 $HOME_DIR/bin 加入 PATH。" >&2
+fi
 
 if [ -f "$PAYLOAD_DIR/wunder.png" ]; then
   mkdir -p "$HOME_DIR/images"
@@ -347,7 +401,13 @@ chmod 0755 "$HOME_DIR/uninstall.sh"
 echo
 echo "安装完成：$HOME_DIR"
 echo "蛹：$HOME_DIR/bin/wunder-desktop（应用菜单中的“心舰”）"
-echo "舵机：$HOME_DIR/bin/wunder"
+echo "舵机：$HOME_DIR/bin/wunder-cli"
+if [ "$LINKS_READY" -eq 1 ]; then
+  echo "终端命令：wunder-cli、wunder-desktop、desktop（新开终端或执行 . ~/.profile 后生效）"
+  echo "舵机的工作区默认为启动它的目录。"
+else
+  echo "终端命令尚未加入 PATH；可直接使用上面的完整路径，或把 $HOME_DIR/bin 加入 PATH。"
+fi
 echo "卸载：$HOME_DIR/uninstall.sh"
 if [ "$count" -gt 0 ]; then
   echo "补充组件：$components_csv"

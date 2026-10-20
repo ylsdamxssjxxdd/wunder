@@ -29,6 +29,12 @@ impl ImeContext {
     pub unsafe fn get_composing_text_and_cursor(
         &self,
     ) -> Option<(String, Option<usize>, Option<usize>)> {
+        #[cfg(test)]
+        if let Some(text) = test_context::STRINGS.with(|slot| {
+            slot.borrow().as_ref().map(|strings| strings.preedit.clone())
+        }) {
+            return Some((text, None, None));
+        }
         let text = unsafe { self.get_composition_string(GCS_COMPSTR) }?;
         let attrs = unsafe { self.get_composition_data(GCS_COMPATTR) }.unwrap_or_default();
 
@@ -69,6 +75,15 @@ impl ImeContext {
     }
 
     pub unsafe fn get_composed_text(&self) -> Option<String> {
+        #[cfg(test)]
+        if let Some(result) = test_context::STRINGS.with(|slot| {
+            slot.borrow_mut().as_mut().map(|strings| {
+                strings.result_reads += 1;
+                strings.result.clone()
+            })
+        }) {
+            return result;
+        }
         unsafe { self.get_composition_string(GCS_RESULTSTR) }
     }
 
@@ -158,5 +173,24 @@ impl ImeContext {
 impl Drop for ImeContext {
     fn drop(&mut self) {
         unsafe { ImmReleaseContext(self.hwnd, self.himc) };
+    }
+}
+
+// A thread-local IMM data source for the HWND/message regression tests. Window
+// creation and dispatch remain real; only the third-party IME data is supplied
+// by the fixture, so the tests do not depend on the host's installed layouts.
+#[cfg(test)]
+pub(super) mod test_context {
+    use std::cell::RefCell;
+
+    #[derive(Default)]
+    pub struct Strings {
+        pub result: Option<String>,
+        pub preedit: String,
+        pub result_reads: usize,
+    }
+
+    thread_local! {
+        pub static STRINGS: RefCell<Option<Strings>> = const { RefCell::new(None) };
     }
 }

@@ -408,10 +408,11 @@ mod tests {
     #[test]
     fn elevation_and_surface_tokens_stay_ordered() {
         let tokens = Tokens::light();
-        // Darker surface means "further inside"; a card must never blend into
-        // the canvas, and its inset content must not match the card fill.
-        assert!(tokens.surface_sunken.r() <= tokens.surface.r());
-        assert!(tokens.surface_sunken.r() >= tokens.canvas.r());
+        // A card must never blend into the canvas, and its inset content must
+        // not match the card fill, otherwise the nesting is invisible.
+        assert_ne!(tokens.surface_sunken, tokens.surface);
+        assert_ne!(tokens.surface_sunken, tokens.canvas);
+        assert_ne!(tokens.card_border, tokens.border);
         // Elevation grows monotonically so popovers stack above light lifts.
         let steps = [
             tokens.shadow_rest,

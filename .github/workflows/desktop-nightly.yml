@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: write
+  actions: read
 
 concurrency:
   group: wunder-desktop-release
@@ -21,11 +22,34 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       build_date: ${{ steps.meta.outputs.build_date }}
+      packaging_changed: ${{ steps.scope.outputs.packaging_changed }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - id: meta
         shell: bash
         run: echo "build_date=$(date -u +'%Y%m%d')" >> "$GITHUB_OUTPUT"
+      - id: scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" != "push" ]; then
+            echo "packaging_changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          before="${{ github.event.before }}"
+          after="${{ github.sha }}"
+          if [ -z "$before" ] || ! git cat-file -e "$before^{commit}" 2>/dev/null; then
+            echo "packaging_changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if git diff --name-only "$before" "$after" |
+            grep -E '^(packaging/|\.github/workflows/desktop-supplements\.yml$)' >/dev/null; then
+            echo "packaging_changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "packaging_changed=false" >> "$GITHUB_OUTPUT"
+          fi
 
   build-windows-win7-x86:
     needs: prepare
@@ -72,10 +96,134 @@ jobs:
             -OutputDirectory $out `
             -Jobs 8
           if ($LASTEXITCODE -ne 0) { throw "Win7 build failed: $LASTEXITCODE" }
+      - name: Build Win7 CLI
+        shell: pwsh
+        run: |
+          $msysRoot = "${{ steps.msys2.outputs.msys2-location }}"
+          $out = Join-Path $env:GITHUB_WORKSPACE 'release-assets'
+          & .\builders\build-win7-cli.ps1 `
+            -Toolchain 'nightly-2026-03-14-x86_64-pc-windows-gnu' `
+            -MingwBin (Join-Path $msysRoot 'mingw32\bin') `
+            -HostMingwBin (Join-Path $msysRoot 'mingw64\bin') `
+            -OutputDirectory $out `
+            -Jobs 8
+          if ($LASTEXITCODE -ne 0) { throw "Win7 CLI build failed: $LASTEXITCODE" }
+      - name: Free Win7 build caches
+        shell: pwsh
+        run: |
+          $target = Join-Path $env:GITHUB_WORKSPACE 'target'
+          if (Test-Path -LiteralPath $target) { Remove-Item -LiteralPath $target -Recurse -Force }
+      - name: Wait for the matching supplement rebuild
+        if: needs.prepare.outputs.packaging_changed == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # A packaging push starts Desktop Supplements concurrently. Waiting
+          # here prevents an installer from bundling the previous asset.
+          missing=0
+          for attempt in $(seq 1 420); do
+            state="$(gh run list --repo "${GITHUB_REPOSITORY}" \
+              --workflow desktop-supplements.yml --commit "${GITHUB_SHA}" --limit 1 \
+              --json status,conclusion \
+              --jq '.[0] // {} | "\(.status // "") \(.conclusion // "")"' 2>/dev/null || true)"
+            status="${state%% *}"
+            conclusion="${state#* }"
+            if [ -z "$status" ]; then
+              missing=$((missing + 1))
+              if [ "$missing" -ge 40 ]; then
+                echo "no supplement workflow run appears for this commit; using the current supplement release" >&2
+                exit 0
+              fi
+              sleep 15
+              continue
+            fi
+            missing=0
+            if [ "$status" = "completed" ]; then
+              if [ "$conclusion" != "success" ]; then
+                echo "supplement workflow concluded ${conclusion:-unknown}; refusing to package a stale supplement" >&2
+                exit 1
+              fi
+              echo "supplement workflow completed successfully"
+              exit 0
+            fi
+            sleep 30
+          done
+          echo "timed out waiting for the supplement workflow" >&2
+          exit 1
+      - name: Download Windows supplement
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $dir = Join-Path $env:GITHUB_WORKSPACE 'supplement'
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          gh release download supplement --repo $env:GITHUB_REPOSITORY `
+            --pattern 'wunder-supplement-win7-ia32-common.zip' --dir $dir --clobber
+          if ($LASTEXITCODE -ne 0) { throw 'failed to download the supplement release asset' }
+          Get-ChildItem -LiteralPath $dir | Format-Table Name, Length
+      - name: Verify Windows supplement matches the Playwright pin
+        shell: pwsh
+        run: |
+          $supplement = Get-ChildItem -LiteralPath (Join-Path $env:GITHUB_WORKSPACE 'supplement') -Filter 'wunder-supplement-win7-ia32-common.zip' | Select-Object -First 1
+          if (-not $supplement) { throw 'Windows supplement is missing' }
+          $pinLine = Get-Content -LiteralPath 'packaging/python/requirements-win7-common.txt' |
+            Where-Object { $_ -match '^\s*playwright==' } | Select-Object -First 1
+          if (-not $pinLine) { throw 'playwright pin is missing from requirements-win7-common.txt' }
+          $pin = ($pinLine -split '==', 2)[1].Trim()
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = [IO.Compression.ZipFile]::OpenRead($supplement.FullName)
+          try {
+            $entryPath = "opt/python/Lib/site-packages/playwright-$pin.dist-info/METADATA"
+            $entry = $zip.GetEntry($entryPath)
+            if (-not $entry) { $entry = $zip.GetEntry(($entryPath -replace '/', '\')) }
+            if (-not $entry) {
+              throw "supplement does not contain Playwright $pin; rebuild the Desktop Supplements release"
+            }
+            $metaEntry = $zip.GetEntry('wunder-win7-supplement.json')
+            if (-not $metaEntry) { throw 'supplement metadata is missing' }
+            $reader = New-Object IO.StreamReader($metaEntry.Open(), [Text.Encoding]::UTF8)
+            try { $meta = $reader.ReadToEnd() | ConvertFrom-Json } finally { $reader.Dispose() }
+            if ($meta.python.playwrightDriverNode.machine -ne 'i386') {
+              throw "supplement Playwright driver is not i386: $($meta.python.playwrightDriverNode.machine)"
+            }
+          } finally {
+            $zip.Dispose()
+          }
+          Write-Host "supplement Playwright $pin with i386 driver verified"
+      - name: Build Windows installer
+        shell: pwsh
+        run: |
+          $out = Join-Path $env:GITHUB_WORKSPACE 'release-assets'
+          $desktop = Get-ChildItem -LiteralPath $out -Filter 'wunder-frontend-slint-*-win7-x86.exe' | Select-Object -First 1
+          $cli = Get-ChildItem -LiteralPath $out -Filter 'wunder-cli-*-win7-x86.exe' | Select-Object -First 1
+          $supplement = Get-ChildItem -LiteralPath (Join-Path $env:GITHUB_WORKSPACE 'supplement') -Filter 'wunder-supplement-win7-ia32-common.zip' | Select-Object -First 1
+          if (-not $desktop -or -not $cli -or -not $supplement) {
+            throw 'desktop, CLI, or supplement input is missing'
+          }
+          & .\builders\pack.ps1 `
+            -Arch win7-x86 `
+            -Desktop $desktop.FullName `
+            -Cli $cli.FullName `
+            -CliResources (Join-Path $out 'resources') `
+            -Supplement $supplement.FullName `
+            -OutputDir $out `
+            -Compression lzma2/fast
+          if ($LASTEXITCODE -ne 0) { throw "Windows installer pack failed: $LASTEXITCODE" }
+          $installer = Get-ChildItem -LiteralPath $out -Filter 'wunder-*-win7-x86-setup.exe' | Select-Object -First 1
+          if (-not $installer) { throw 'Windows installer was not produced' }
+          Write-Host "installer: $($installer.Name) ($([math]::Round($installer.Length / 1MB, 1)) MB)"
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-win7-x86
           path: release-assets/wunder-frontend-slint-*-win7-x86.exe
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-win7-x86
+          path: release-assets/wunder-*-win7-x86-setup.exe
           if-no-files-found: error
           retention-days: 7
 
@@ -138,10 +286,103 @@ jobs:
             -w /app \
             "${{ matrix.image }}" \
             bash frontend-slint/scripts/check-linux-arm64-appimage.sh "/app/release-assets/$asset_name"
+      - name: Build Linux CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm --platform linux/amd64 \
+            -v "$GITHUB_WORKSPACE:/app" \
+            -w /app \
+            -e ARCH="${{ matrix.arch }}" \
+            -e WUNDER_CLI_OUTPUT_DIR=/app/release-assets \
+            "${{ matrix.image }}" \
+            bash builders/build-linux-cli-native.sh
+          test -n "$(find release-assets -maxdepth 1 -name "wunder-cli-*-linux-${{ matrix.arch }}" -print -quit)"
+      - name: Free Linux build caches
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Cargo target directories and the build image are large; the release
+          # artifacts are already in release-assets.
+          sudo rm -rf target
+          docker image rm "${{ matrix.image }}" || true
+      - name: Wait for the matching supplement rebuild
+        if: needs.prepare.outputs.packaging_changed == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # A packaging push starts Desktop Supplements concurrently. Waiting
+          # here prevents an installer from bundling the previous asset.
+          missing=0
+          for attempt in $(seq 1 420); do
+            state="$(gh run list --repo "${GITHUB_REPOSITORY}" \
+              --workflow desktop-supplements.yml --commit "${GITHUB_SHA}" --limit 1 \
+              --json status,conclusion \
+              --jq '.[0] // {} | "\(.status // "") \(.conclusion // "")"' 2>/dev/null || true)"
+            status="${state%% *}"
+            conclusion="${state#* }"
+            if [ -z "$status" ]; then
+              missing=$((missing + 1))
+              if [ "$missing" -ge 40 ]; then
+                echo "no supplement workflow run appears for this commit; using the current supplement release" >&2
+                exit 0
+              fi
+              sleep 15
+              continue
+            fi
+            missing=0
+            if [ "$status" = "completed" ]; then
+              if [ "$conclusion" != "success" ]; then
+                echo "supplement workflow concluded ${conclusion:-unknown}; refusing to package a stale supplement" >&2
+                exit 1
+              fi
+              echo "supplement workflow completed successfully"
+              exit 0
+            fi
+            sleep 30
+          done
+          echo "timed out waiting for the supplement workflow" >&2
+          exit 1
+      - name: Download Linux supplement
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p supplement
+          gh release download supplement --repo "${GITHUB_REPOSITORY}" \
+            --pattern "wunder-supplement-linux-${{ matrix.arch }}.tar.gz" \
+            --dir supplement --clobber
+          ls -la supplement
+      - name: Assemble Linux installer
+        shell: bash
+        run: |
+          set -euo pipefail
+          desktop="$(find release-assets -maxdepth 1 -name "wunder-slint-*-linux-${{ matrix.arch }}.AppImage" -print -quit)"
+          cli="$(find release-assets -maxdepth 1 -name "wunder-cli-*-linux-${{ matrix.arch }}" -print -quit)"
+          supplement="$(find supplement -maxdepth 1 -name "wunder-supplement-linux-${{ matrix.arch }}.tar.gz" -print -quit)"
+          test -n "$desktop"
+          test -n "$cli"
+          test -n "$supplement"
+          bash builders/pack.sh -a "linux-${{ matrix.arch }}" \
+            --desktop "$desktop" \
+            --cli "$cli" \
+            --supplement "$supplement" \
+            --output-dir release-assets
+          test -n "$(find release-assets -maxdepth 1 -name "wunder-*-linux-${{ matrix.arch }}.run" -print -quit)"
+          ls -lh release-assets
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-linux-${{ matrix.arch }}
           path: release-assets/wunder-slint-*-linux-${{ matrix.arch }}.AppImage
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-linux-${{ matrix.arch }}
+          path: release-assets/wunder-*-linux-${{ matrix.arch }}.run
           if-no-files-found: error
           retention-days: 7
 
@@ -153,18 +394,30 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - name: Download desktop artifacts
+        uses: actions/download-artifact@v4
         with:
           pattern: desktop-*
-          path: release-assets
+          path: desktop-assets
           merge-multiple: true
-      - name: Verify exactly three desktop programs
+      - name: Download installer artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: installer-*
+          path: installer-assets
+          merge-multiple: true
+      - name: Verify three desktop programs and three installers
         shell: bash
         run: |
           set -euo pipefail
-          mapfile -t files < <(find release-assets -type f -maxdepth 2 | sort)
-          test "${#files[@]}" -eq 3
-          printf '%s\n' "${files[@]}"
+          mapfile -t desktops < <(find desktop-assets -type f -maxdepth 2 | sort)
+          mapfile -t installers < <(find installer-assets -type f -maxdepth 2 | sort)
+          test "${#desktops[@]}" -eq 3
+          test "${#installers[@]}" -eq 3
+          printf 'desktop programs:\n'
+          printf '%s\n' "${desktops[@]}"
+          printf 'installers:\n'
+          printf '%s\n' "${installers[@]}"
       - name: Reset nightly release
         shell: bash
         env:
@@ -178,7 +431,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git tag -fa nightly -m "Desktop build ${GITHUB_SHA}" "${GITHUB_SHA}"
           git push origin refs/tags/nightly --force
-      - name: Publish three desktop programs
+      - name: Publish three desktop programs and three installers
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -186,10 +439,10 @@ jobs:
           set -euo pipefail
           gh release create nightly \
             --repo "${GITHUB_REPOSITORY}" \
-            --title "Wunder Desktop（Win7 x86 / Ubuntu 18.04 x86_64 / Ubuntu 18.04 ARM64）" \
-            --notes "发布包含三个桌面程序：Windows 7 32 位、Ubuntu 18.04 x86_64、Ubuntu 18.04 ARM64。" \
+            --title "Wunder Desktop & Installers（Win7 x86 / Ubuntu 18.04 x86_64 / Ubuntu 18.04 ARM64）" \
+            --notes "发布三个桌面程序与三个安装包：Windows 7 32 位、Ubuntu 18.04 x86_64、Ubuntu 18.04 ARM64。安装包默认安装蛹和舵机到用户目录的 .wunder，补充组件可选。" \
             --prerelease --latest=false --target "${GITHUB_SHA}"
-          find release-assets -type f -maxdepth 2 -print0 | while IFS= read -r -d '' asset; do
+          find desktop-assets installer-assets -type f -maxdepth 2 -print0 | while IFS= read -r -d '' asset; do
             gh release upload nightly "$asset" --repo "${GITHUB_REPOSITORY}" --clobber
           done
 

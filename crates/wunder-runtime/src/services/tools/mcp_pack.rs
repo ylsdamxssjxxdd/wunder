@@ -8,6 +8,8 @@ use std::collections::HashSet;
 pub const MCP_PACK_TOOL_NAME: &str = "__mcp_pack__";
 
 const MAX_LIST_DESCRIPTION_CHARS: usize = 180;
+const DEFAULT_LIST_LIMIT: usize = 32;
+const MAX_LIST_LIMIT: usize = 64;
 
 pub fn runtime_name(server_name: &str) -> String {
     format!("{}@{}", server_name.trim(), MCP_PACK_TOOL_NAME)
@@ -25,6 +27,16 @@ pub fn schema() -> Value {
             "tool": {
                 "type": "string",
                 "description": "Remote MCP tool name. Required for get and call."
+            },
+            "cursor": {
+                "type": "string",
+                "description": "Opaque continuation cursor for action=list."
+            },
+            "limit": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 64,
+                "description": "Maximum compact list items for action=list (default 32)."
             },
             "arguments": {
                 "type": "object",
@@ -77,7 +89,7 @@ pub async fn execute(config: &Config, server: &McpServerConfig, args: &Value) ->
         .map(str::trim)
         .unwrap_or("");
     match action {
-        "list" => list_tools(config, server).await,
+        "list" => list_tools(config, server, args).await,
         "get" => {
             let tool_name = required_tool_name(args)?;
             get_tool(config, server, &tool_name).await
@@ -92,9 +104,46 @@ pub async fn execute(config: &Config, server: &McpServerConfig, args: &Value) ->
     }
 }
 
-async fn list_tools(config: &Config, server: &McpServerConfig) -> Result<Value> {
-    let tools = load_allowed_specs(config, server).await?;
-    let items = tools
+async fn list_tools(config: &Config, server: &McpServerConfig, args: &Value) -> Result<Value> {
+    let mut tools = load_allowed_specs(config, server).await?;
+    tools.sort_by(|left, right| left.name.cmp(&right.name));
+    let cursor = args
+        .get("cursor")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let limit = args
+        .get("limit")
+        .and_then(Value::as_u64)
+        .map(|value| value as usize)
+        .unwrap_or(DEFAULT_LIST_LIMIT)
+        .clamp(1, MAX_LIST_LIMIT);
+    let total_tools = tools.len();
+    let start = cursor
+        .and_then(|cursor| {
+            tools
+                .iter()
+                .position(|tool| tool.name == cursor)
+                .map(|index| index + 1)
+        })
+        .unwrap_or_else(|| if cursor.is_some() { total_tools } else { 0 });
+    if cursor.is_some() && start == total_tools && total_tools > 0 {
+        return Err(anyhow!(
+            "MCP package list cursor is invalid or expired; restart action=list"
+        ));
+    }
+    let has_more = start.saturating_add(limit) < total_tools;
+    let page = tools
+        .into_iter()
+        .skip(start)
+        .take(limit)
+        .collect::<Vec<_>>();
+    let next_cursor = if has_more {
+        page.last().map(|tool| tool.name.clone())
+    } else {
+        None
+    };
+    let items = page
         .into_iter()
         .map(|tool| {
             json!({
@@ -111,19 +160,27 @@ async fn list_tools(config: &Config, server: &McpServerConfig) -> Result<Value> 
         json!({
             "server": server.name,
             "tools": items,
-            "count": count
+            "count": count,
+            "next_cursor": next_cursor
         }),
     ))
 }
 
 async fn get_tool(config: &Config, server: &McpServerConfig, tool_name: &str) -> Result<Value> {
     let tool = find_tool(config, server, tool_name).await?;
+    let reference = crate::tools::schema_reference(
+        &format!("{}@{}", server.name, tool.name),
+        &crate::tools::tool_schema_document(&tool),
+    );
     Ok(package_success(
         "get",
         format!("Fetched schema for MCP tool {tool_name}."),
         json!({
             "server": server.name,
-            "tool": tool
+            "tool": tool,
+            "schema_ref": reference.schema_ref,
+            "catalog_version": reference.catalog_version,
+            "schema_hash": reference.schema_hash
         }),
     ))
 }
@@ -218,4 +275,70 @@ fn truncate_description(value: &str) -> String {
         output.push_str("...");
     }
     output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::McpToolSpec;
+
+    fn server(tool_count: usize) -> McpServerConfig {
+        McpServerConfig {
+            name: "sample".to_string(),
+            enabled: true,
+            tool_specs: (0..tool_count)
+                .map(|index| McpToolSpec {
+                    name: format!("tool-{index:03}"),
+                    description: "A sufficiently compact remote tool.".to_string(),
+                    input_schema: serde_yaml::from_str(
+                        "type: object\nproperties: {}\nadditionalProperties: false",
+                    )
+                    .unwrap(),
+                    ..Default::default()
+                })
+                .collect(),
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn list_is_bounded_and_cursor_continues_in_stable_order() {
+        let config = Config::default();
+        let server = server(3);
+        let first = execute(&config, &server, &json!({"action":"list","limit":2}))
+            .await
+            .unwrap();
+        let items = first["data"]["tools"].as_array().unwrap();
+        assert_eq!(items.len(), 2);
+        let cursor = first["data"]["next_cursor"].as_str().unwrap();
+        assert_eq!(cursor, "tool-001");
+        let second = execute(
+            &config,
+            &server,
+            &json!({"action":"list","cursor":cursor,"limit":2}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(second["data"]["tools"][0]["name"], "tool-002");
+        assert!(second["data"]["next_cursor"].is_null());
+    }
+
+    #[tokio::test]
+    async fn get_returns_stable_schema_reference() {
+        let config = Config::default();
+        let output = execute(
+            &config,
+            &server(1),
+            &json!({"action":"get","tool":"tool-000"}),
+        )
+        .await
+        .unwrap();
+        assert!(output["data"]["schema_ref"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("tool-schema:")));
+        assert_eq!(
+            output["data"]["catalog_version"],
+            crate::tools::TOOL_CATALOG_VERSION
+        );
+    }
 }

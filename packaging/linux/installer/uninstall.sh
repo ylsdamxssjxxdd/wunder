@@ -39,6 +39,26 @@ if [ -f "$HOME_DIR/bin/install-components.txt" ]; then
   done
 fi
 
+LOCAL_BIN="$HOME/.local/bin"
+for name in wunder-cli wunder-desktop desktop; do
+  link="$LOCAL_BIN/$name"
+  if [ -L "$link" ]; then
+    target=$(readlink -- "$link" 2>/dev/null || true)
+    case "$target" in
+      "$HOME_DIR"/*) rm -f -- "$link" ;;
+    esac
+  fi
+done
+
+profile="$HOME/.profile"
+if [ -f "$profile" ] && grep -Fq '# >>> wunder commands >>>' "$profile"; then
+  awk '
+    /^# >>> wunder commands >>>$/ { skip = 1; next }
+    /^# <<< wunder commands <<<$/ { skip = 0; next }
+    !skip { print }
+  ' "$profile" > "$profile.wunder.tmp" && mv -f -- "$profile.wunder.tmp" "$profile"
+fi
+
 rm -rf -- "$HOME_DIR/bin"
 rm -f -- "$HOME_DIR/.wunder-home"
 rm -f -- "$HOME_DIR/images/wunder.png"

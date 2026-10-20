@@ -1,9 +1,5 @@
 # winit 0.30.13 Win7 IME patch
 
-Some legacy Windows IMEs can emit a translated `WM_CHAR` after the same text
-was delivered as `WM_IME_COMPOSITION/GCS_RESULTSTR`. The patched Windows event
-loop records each IME commit and consumes only a matching subsequent character
-sequence. A new physical key press clears stale state, so ordinary Unicode
-keyboard layouts remain unchanged. This keeps the IME commit as the single
-authoritative text event for both the egui and Slint frontends.
+旧式 Windows 输入法可能在同一组合会话同时发送 `GCS_RESULTSTR`、`GCS_COMPSTR` 与结束消息。补丁把 `GCS_RESULTSTR` 作为一次组合会话的唯一权威提交，结束消息只在仍活动且尚未提交结果的会话中回退读取；同时仅过滤紧随其后的匹配 `WM_CHAR` 回显。提交状态有 1024 字节上限，新的组合仍允许提交相同文本。
 
+窗口后端回归覆盖真实 HWND 消息分发、结果与预编辑同时到达、重复结束消息、连续独立组合、仅结束消息结果、取消组合以及字符回显。

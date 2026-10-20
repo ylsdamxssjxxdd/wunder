@@ -822,6 +822,17 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     .min(1)
                     .max(400)
                     .optional(),
+                super::schema::string("cursor")
+                    .desc("Opaque UTF-8 continuation cursor from a prior read; mutually exclusive with section, start_line and full.")
+                    .optional(),
+                super::schema::integer("bytes_limit")
+                    .desc("Maximum UTF-8 bytes for one read page (default 16384, maximum 65536).")
+                    .min(4)
+                    .max(65536)
+                    .optional(),
+                super::schema::string("manifest_cursor")
+                    .desc("Opaque resource-index cursor from a prior manifest page; use only with action=manifest.")
+                    .optional(),
             ]),
         },
         ToolSpec {
@@ -1531,6 +1542,19 @@ pub fn runtime_tool_schema(tool_name: &str) -> Option<Value> {
     }))
 }
 
+/// Stable metadata for audit events. Persist this reference and recover the
+/// actual full definition through the catalog, rather than repeating schema.
+pub fn runtime_tool_schema_reference(tool_name: &str) -> Option<super::ToolSchemaReference> {
+    let canonical = resolve_tool_name(tool_name);
+    let spec = builtin_tool_specs()
+        .into_iter()
+        .find(|spec| spec.name == tool_name || spec.name == canonical)?;
+    Some(super::schema_reference(
+        &canonical,
+        &super::tool_schema_document(&spec),
+    ))
+}
+
 pub fn build_runtime_tool_display_map(config: &Config) -> HashMap<String, String> {
     let language = i18n::get_language();
     let prefer_alias = language.to_lowercase().starts_with("en");
@@ -1974,7 +1998,13 @@ pub fn collect_prompt_tool_specs_with_language(
             output.push(spec.clone());
         }
     }
+    // Stable provider order improves prefix-cache reuse and makes a profile
+    // revision independent of HashMap iteration order.
+    output.sort_by_cached_key(|spec| resolve_tool_name(&spec.name));
     output
+        .into_iter()
+        .map(|spec| super::compact_tool_spec(&spec))
+        .collect()
 }
 
 /// 将 YAML 配置值转换为 JSON，便于统一处理输入 Schema 与鉴权字段。
@@ -1991,6 +2021,45 @@ mod tests {
         collect_prompt_tool_specs_with_language, expand_browser_group_selection, resolve_tool_name,
     };
     use crate::config::Config;
+
+    #[test]
+    fn skill_call_schema_exposes_bounded_paging_protocol() {
+        let spec = builtin_tool_specs_with_language("en-US")
+            .into_iter()
+            .find(|spec| spec.name == "技能调用")
+            .expect("skill spec");
+        let fields = &spec.input_schema["properties"];
+        assert_eq!(fields["cursor"]["type"], "string");
+        assert_eq!(fields["manifest_cursor"]["type"], "string");
+        assert_eq!(fields["bytes_limit"]["maximum"], 65536);
+        assert!(fields["cursor"]["description"]
+            .as_str()
+            .is_some_and(|description| description.contains("mutually exclusive")));
+    }
+
+    #[test]
+    fn prompt_specs_are_stably_sorted_and_compact_annotations() {
+        let config = Config::default();
+        let allowed = HashSet::from(["读取文件".to_string(), "执行命令".to_string()]);
+        let specs = collect_prompt_tool_specs_with_language(
+            &config,
+            &SkillRegistry::default(),
+            &allowed,
+            None,
+            "en-US",
+        );
+        let names = specs
+            .iter()
+            .map(|spec| resolve_tool_name(&spec.name))
+            .collect::<Vec<_>>();
+        let sorted = {
+            let mut values = names.clone();
+            values.sort();
+            values
+        };
+        assert_eq!(names, sorted);
+        assert!(specs.iter().all(|spec| spec.title.is_none()));
+    }
 
     #[test]
     fn text_edit_tool_spec_is_registered() {

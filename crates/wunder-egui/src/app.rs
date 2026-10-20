@@ -24,10 +24,14 @@ fn uses_compact_sidebar(screen_width: f32) -> bool {
 }
 
 fn drawer_sidebar_width(screen_width: f32) -> f32 {
-    // Keep a visible part of the chat canvas as the dismissal target. On an
-    // exceptionally small viewport the drawer must still stay inside it.
-    (screen_width - 30.0)
-        .clamp(SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH)
+    // Always keep a 30px strip of the chat canvas visible as the dismissal
+    // target, even when the viewport is narrower than the minimum sidebar:
+    // covering the whole viewport would leave no way to close the drawer by
+    // pointer. The drawer never exceeds the viewport either.
+    let available = (screen_width - 30.0).max(1.0);
+    available
+        .min(SIDEBAR_MAX_WIDTH)
+        .max(SIDEBAR_MIN_WIDTH.min(available))
         .min(screen_width.max(1.0))
 }
 
@@ -3913,7 +3917,10 @@ mod sidebar_tests {
         assert_eq!(clamp_sidebar_split(0.60), 0.60);
         assert_eq!(clamp_sidebar_split(1.2), 0.80);
         assert_eq!(drawer_sidebar_width(900.0), 420.0);
-        assert_eq!(drawer_sidebar_width(180.0), 180.0);
+        // Below the 170px minimum the 30px dismissal strip wins: the drawer
+        // shrinks instead of covering the viewport edge.
+        assert_eq!(drawer_sidebar_width(180.0), 150.0);
+        assert_eq!(drawer_sidebar_width(200.0), 170.0);
     }
 
     #[test]
@@ -3968,6 +3975,16 @@ mod sidebar_tests {
         ]
     }
 
+    /// egui resolves hover against the *previous* frame's widget rects, and a
+    /// freshly shown drawer reports its full-viewport rect before its content
+    /// settles. Two idle frames are needed before pointer input targets the
+    /// layer the user actually sees.
+    fn settle(ctx: &Context, app: &mut EguiApp, size: Vec2) {
+        for _ in 0..2 {
+            sidebar_frame(ctx, app, size, Vec::new());
+        }
+    }
+
     #[test]
     fn compact_drawer_opens_from_the_trigger_and_closes_on_scrim_or_escape() {
         let ctx = Context::default();
@@ -3975,7 +3992,7 @@ mod sidebar_tests {
         let mut app = EguiApp::demo();
         let narrow = Vec2::new(980.0, 700.0);
 
-        sidebar_frame(&ctx, &mut app, narrow, Vec::new());
+        settle(&ctx, &mut app, narrow);
         assert!(
             !app.sidebar_open,
             "窄窗默认应保持抽屉关闭，只显示 30px 打开按钮"
@@ -4003,10 +4020,12 @@ mod sidebar_tests {
         assert!(!app.sidebar_open, "Escape 应关闭窄窗抽屉");
 
         // Reopen, then dismiss by clicking the scrim outside the drawer.
+        settle(&ctx, &mut app, narrow);
         for events in click_at(egui::pos2(23.0, 23.0)) {
             sidebar_frame(&ctx, &mut app, narrow, events);
         }
         assert!(app.sidebar_open);
+        settle(&ctx, &mut app, narrow);
         let drawer_width = drawer_sidebar_width(narrow.x);
         for events in click_at(egui::pos2(drawer_width + 40.0, 350.0)) {
             sidebar_frame(&ctx, &mut app, narrow, events);
@@ -4021,16 +4040,14 @@ mod sidebar_tests {
         let mut app = EguiApp::demo();
         sidebar_frame(&ctx, &mut app, Vec2::new(1440.0, 900.0), Vec::new());
 
-        let width = ctx
-            .memory(|memory| memory.area_rect(Id::new("messenger-sidebar")))
-            .map(|rect| rect.width());
-        if let Some(width) = width {
-            assert!(
-                (SIDEBAR_MIN_WIDTH..=SIDEBAR_MAX_WIDTH).contains(&width),
-                "侧栏宽度 {width} 超出 {SIDEBAR_MIN_WIDTH}–{SIDEBAR_MAX_WIDTH}"
-            );
-        }
         assert!(!app.sidebar_open, "宽视口不应打开抽屉");
+        // The 30px drawer trigger only exists in the compact layout; at
+        // 1440px the two-column shell must be used instead.
+        assert!(
+            ctx.memory(|memory| memory.area_rect(Id::new("messenger-sidebar-trigger")))
+                .is_none(),
+            "宽视口不应渲染窄窗抽屉按钮"
+        );
     }
 
     #[test]

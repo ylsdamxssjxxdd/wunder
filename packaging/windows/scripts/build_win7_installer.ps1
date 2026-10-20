@@ -292,7 +292,7 @@ $coreStage = Join-Path $stageRoot "core"
 if (Test-Path -LiteralPath $coreStage) { Remove-Item -LiteralPath $coreStage -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $coreStage | Out-Null
 Copy-Item -LiteralPath $desktopPath -Destination (Join-Path $coreStage "wunder-desktop.exe") -Force
-Copy-Item -LiteralPath $cliPath -Destination (Join-Path $coreStage "wunder.exe") -Force
+Copy-Item -LiteralPath $cliPath -Destination (Join-Path $coreStage "wunder-cli.exe") -Force
 $markerPath = Join-Path $coreStage ".wunder-home"
 [IO.File]::WriteAllText($markerPath, "portable`r`n", (New-Object Text.UTF8Encoding $false))
 
@@ -356,7 +356,7 @@ $lines.Add(('Name: "desktopicon"; Description: "{0}"; Flags: unchecked' -f [stri
 $lines.Add("")
 $lines.Add("[Files]")
 $lines.Add(('Source: "{0}"; DestDir: "{{app}}\bin"; DestName: "wunder-desktop.exe"; Flags: ignoreversion' -f (Join-Path $coreStage "wunder-desktop.exe")))
-$lines.Add(('Source: "{0}"; DestDir: "{{app}}\bin"; DestName: "wunder.exe"; Flags: ignoreversion' -f (Join-Path $coreStage "wunder.exe")))
+$lines.Add(('Source: "{0}"; DestDir: "{{app}}\bin"; DestName: "wunder-cli.exe"; Flags: ignoreversion' -f (Join-Path $coreStage "wunder-cli.exe")))
 $lines.Add(('Source: "{0}"; DestDir: "{{app}}"; DestName: ".wunder-home"; Flags: ignoreversion' -f $markerPath))
 if (Test-Path -LiteralPath $coreResources -PathType Container) {
   $lines.Add(('Source: "{0}\*"; DestDir: "{{app}}\bin\resources"; Flags: ignoreversion recursesubdirs createallsubdirs' -f $coreResources))

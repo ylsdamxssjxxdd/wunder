@@ -44,6 +44,7 @@ pub struct EffectiveBrowserConfig {
     pub allow_private_network: bool,
     pub hostname_allowlist: Vec<String>,
     pub deny_file_scheme: bool,
+    pub allow_evaluate: bool,
     pub docker_enabled: bool,
     pub docker_use_no_sandbox: bool,
     pub docker_disable_dev_shm_usage: bool,
@@ -207,6 +208,8 @@ pub fn effective_browser_config(config: &Config) -> EffectiveBrowserConfig {
         } else {
             config.browser.security.deny_file_scheme
         },
+        // Never inferred from provider metadata or legacy browser tool names.
+        allow_evaluate: config.browser.security.allow_evaluate,
         docker_enabled: config.browser.docker.enabled,
         docker_use_no_sandbox: config.browser.docker.use_no_sandbox,
         docker_disable_dev_shm_usage: config.browser.docker.disable_dev_shm_usage,
@@ -329,6 +332,14 @@ mod tests {
         let effective = effective_browser_config(&config);
         assert_eq!(effective.deployment, "auto");
         assert!(!effective.runs_in_sandbox());
+        assert!(!effective.allow_evaluate);
+    }
+
+    #[test]
+    fn evaluate_requires_explicit_security_opt_in() {
+        let mut config = Config::default();
+        config.browser.security.allow_evaluate = true;
+        assert!(effective_browser_config(&config).allow_evaluate);
     }
 
     #[test]
@@ -341,7 +352,10 @@ mod tests {
         config.browser.playwright.executable_path = Some("custom/browser.exe".to_string());
         let effective = effective_browser_config(&config);
         assert_eq!(effective.channel.as_deref(), Some("msedge"));
-        assert_eq!(effective.executable_path.as_deref(), Some("custom/browser.exe"));
+        assert_eq!(
+            effective.executable_path.as_deref(),
+            Some("custom/browser.exe")
+        );
     }
 
     #[test]

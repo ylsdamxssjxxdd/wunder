@@ -6,6 +6,8 @@ use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 use serde_yaml::Value as YamlValue;
 use std::collections::{HashMap, HashSet};
+use std::fs::File;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
@@ -13,6 +15,10 @@ use tokio::process::Command;
 const SKILL_FILE_NAME: &str = "SKILL.md";
 const ENTRY_FILES: [&str; 3] = ["run.py", "skill.py", "main.py"];
 const SKILL_RUNNER_PATH_ENV: &str = "WUNDER_SKILL_RUNNER_PATH";
+const MAX_SKILL_SCAN_PATHS: usize = 128;
+const MAX_SKILL_DIRS_PER_ROOT: usize = 4096;
+const MAX_LOADED_SKILLS: usize = 4096;
+const MAX_SKILL_METADATA_BYTES: usize = 64 * 1024;
 
 #[derive(Clone, Debug)]
 pub struct SkillSpec {
@@ -75,7 +81,7 @@ pub fn load_skills(
     let mut seen_roots: HashSet<String> = HashSet::new();
     let mut seen_dirs: HashSet<String> = HashSet::new();
     let mut seen_names: HashSet<String> = HashSet::new();
-    for raw_path in scan_paths {
+    for raw_path in scan_paths.into_iter().take(MAX_SKILL_SCAN_PATHS) {
         if only_enabled && remaining.is_empty() {
             break;
         }
@@ -89,42 +95,25 @@ pub fn load_skills(
             continue;
         }
         for skill_dir in discover_skill_dirs(&base) {
+            if registry.specs.len() >= MAX_LOADED_SKILLS {
+                return registry;
+            }
             let key = canonical_key(&skill_dir);
             if !seen_dirs.insert(key) {
                 continue;
             }
-            let skill_file = skill_dir.join(SKILL_FILE_NAME);
-            let content = match std::fs::read_to_string(&skill_file) {
-                Ok(content) => content,
-                Err(_) => continue,
-            };
-            let (meta, frontmatter) = parse_frontmatter(&content).unwrap_or_default();
-            let name = extract_skill_name(&meta, &content, &skill_dir);
-            if name.is_empty() {
+            let Some(mut spec) = load_skill_spec_from_dir(&skill_dir, load_entrypoints) else {
                 continue;
-            }
+            };
+            let name = spec.name.clone();
             if only_enabled && !enabled.contains(&name) {
                 continue;
             }
             if !seen_names.insert(name.clone()) {
                 continue;
             }
-            let description = extract_skill_description(&meta, &content);
-            let input_schema = build_input_schema(&meta);
-            let entrypoint = if load_entrypoints {
-                find_entrypoint(&skill_dir)
-            } else {
-                None
-            };
-            registry.specs.push(SkillSpec {
-                name: name.clone(),
-                description,
-                path: skill_file.to_string_lossy().to_string(),
-                input_schema,
-                frontmatter,
-                root: skill_dir.clone(),
-                entrypoint,
-            });
+            spec.name = name.clone();
+            registry.specs.push(spec);
             if only_enabled {
                 remaining.retain(|value| value != &name);
             }
@@ -230,7 +219,7 @@ fn discover_skill_dirs(base: &Path) -> Vec<PathBuf> {
     }
     let mut dirs = Vec::new();
     if let Ok(entries) = std::fs::read_dir(base) {
-        for entry in entries.flatten() {
+        for entry in entries.flatten().take(MAX_SKILL_DIRS_PER_ROOT) {
             let path = entry.path();
             if path.is_dir() && path.join(SKILL_FILE_NAME).exists() {
                 dirs.push(path);
@@ -238,6 +227,65 @@ fn discover_skill_dirs(base: &Path) -> Vec<PathBuf> {
         }
     }
     dirs
+}
+
+/// Lookup used by on-demand `skill_call`.  It does not build a full registry
+/// and therefore cannot turn one miss into an unbounded metadata scan.
+pub(crate) fn find_skill_in_root_by_candidates(
+    root: &Path,
+    candidates: &[String],
+) -> Option<SkillSpec> {
+    if candidates.is_empty() || !root.is_dir() {
+        return None;
+    }
+    for skill_dir in discover_skill_dirs(root) {
+        let Some(spec) = load_skill_spec_from_dir(&skill_dir, false) else {
+            continue;
+        };
+        if candidates.iter().any(|candidate| candidate == &spec.name) {
+            return Some(spec);
+        }
+    }
+    None
+}
+
+fn load_skill_spec_from_dir(skill_dir: &Path, load_entrypoints: bool) -> Option<SkillSpec> {
+    let skill_file = skill_dir.join(SKILL_FILE_NAME);
+    let content = read_skill_metadata_prefix(&skill_file).ok()?;
+    let (meta, frontmatter) = parse_frontmatter(&content).unwrap_or_default();
+    let name = extract_skill_name(&meta, &content, skill_dir);
+    if name.is_empty() {
+        return None;
+    }
+    let description = extract_skill_description(&meta, &content);
+    Some(SkillSpec {
+        name,
+        description,
+        path: skill_file.to_string_lossy().to_string(),
+        input_schema: build_input_schema(&meta),
+        frontmatter,
+        root: skill_dir.to_path_buf(),
+        entrypoint: load_entrypoints
+            .then(|| find_entrypoint(skill_dir))
+            .flatten(),
+    })
+}
+
+fn read_skill_metadata_prefix(path: &Path) -> std::io::Result<String> {
+    let file = File::open(path)?;
+    let mut bytes = Vec::with_capacity(8192);
+    file.take(MAX_SKILL_METADATA_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)?;
+    bytes.truncate(MAX_SKILL_METADATA_BYTES);
+    while std::str::from_utf8(&bytes).is_err() {
+        bytes.pop();
+    }
+    String::from_utf8(bytes).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "skill metadata is not UTF-8",
+        )
+    })
 }
 
 fn canonical_key(path: &Path) -> String {
@@ -399,4 +447,46 @@ fn build_input_schema(meta: &HashMap<String, YamlValue>) -> Value {
         }
     }
     json!({"type": "object", "properties": {}})
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn metadata_prefix_is_utf8_and_capped() {
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join(SKILL_FILE_NAME);
+        std::fs::write(
+            &path,
+            format!(
+                "---\nname: demo\n---\n{}中",
+                "x".repeat(MAX_SKILL_METADATA_BYTES)
+            ),
+        )
+        .expect("write skill");
+        let text = read_skill_metadata_prefix(&path).expect("prefix");
+        assert!(text.len() <= MAX_SKILL_METADATA_BYTES);
+        assert!(text.is_char_boundary(text.len()));
+        assert_eq!(
+            extract_skill_name(&HashMap::new(), &text, dir.path()),
+            "demo"
+        );
+    }
+
+    #[test]
+    fn on_demand_lookup_skips_invalid_before_matching_candidate() {
+        let dir = tempdir().expect("tempdir");
+        let invalid = dir.path().join("broken");
+        let wanted = dir.path().join("wanted");
+        std::fs::create_dir_all(&invalid).expect("invalid directory");
+        std::fs::create_dir_all(&wanted).expect("wanted directory");
+        std::fs::write(invalid.join(SKILL_FILE_NAME), [0xff, 0xfe]).expect("invalid skill");
+        std::fs::write(wanted.join(SKILL_FILE_NAME), "---\nname: desired\n---\n")
+            .expect("wanted skill");
+        let spec = find_skill_in_root_by_candidates(dir.path(), &["desired".to_string()])
+            .expect("candidate skill");
+        assert_eq!(spec.name, "desired");
+    }
 }

@@ -111,6 +111,10 @@ class BrowserBridgeTests(unittest.TestCase):
         return self.session.handle({"action": "act", "target_id": self.target,
                                     "request": request, **options})
 
+    def observed_ref(self, index=0):
+        self.session.snapshot(self.target, max_chars=1000)
+        return list(self.session.refs[self.target])[index]
+
     def test_batch_fills_waits_and_observes_without_echo(self):
         result = self.act({"kind": "batch", "steps": [
             {"kind": "type", "selector": "#field", "text": "sample-value"},
@@ -242,7 +246,7 @@ class BrowserBridgeTests(unittest.TestCase):
             self.assertEqual(data["url"], "https://example.test/ready")
             self.assertEqual(data["title"], "Ready page")
             self.assertEqual(data["tabs"][0]["url"], data["url"])
-            self.assertTrue(self.act({"kind": "type", "ref": "e1", "text": "sample"})["success"])
+            self.assertTrue(self.act({"kind": "type", "ref": self.observed_ref(), "text": "sample"})["success"])
         finally:
             self.page.unroute(url)
 
@@ -306,10 +310,11 @@ class BrowserBridgeTests(unittest.TestCase):
                                               "target_id": self.target, "include_snapshot": True,
                                               "max_chars": 1000})
             self.assertTrue(navigation["success"])
-            self.assertIn("[ref=e1]", navigation["data"]["snapshot"])
+            first_ref = list(self.session.refs[self.target])[0]
+            self.assertIn("[ref=" + first_ref + "]", navigation["data"]["snapshot"])
             result = self.act({"kind": "batch", "steps": [
-                {"kind": "type", "ref": "e1", "text": "sample-value"},
-                {"kind": "click", "ref": "e2"},
+                {"kind": "type", "ref": first_ref, "text": "sample-value"},
+                {"kind": "click", "ref": list(self.session.refs[self.target])[1]},
                 {"kind": "wait", "url": "**/complete", "timeout_ms": 1000},
             ]}, include_snapshot=True, max_chars=1000)
             self.assertTrue(result["success"])
@@ -340,7 +345,17 @@ class BrowserBridgeTests(unittest.TestCase):
         self.assertIn("Shadow sample", data["content"])
         snapshot = self.session.snapshot(self.target, max_chars=300)["data"]["snapshot"]
         self.assertIn("Shadow action", snapshot)
-        self.assertTrue(self.act({"kind": "click", "ref": "e1"})["success"])
+        self.assertTrue(self.act({"kind": "click", "ref": self.observed_ref()})["success"])
+
+    def test_dom_change_invalidates_observed_ref_with_reobserve_hint(self):
+        old_ref = self.observed_ref()
+        before = self.session.page_generations[self.target]
+        self.page.evaluate("document.querySelector('#status').textContent = 'Changed'")
+        with self.assertRaisesRegex(ValueError, "Call browser_observe mode=refs"):
+            self.act({"kind": "click", "ref": old_ref})
+        self.assertGreater(self.session.page_generations[self.target], before)
+        fresh = self.observed_ref()
+        self.assertNotEqual(old_ref, fresh)
 
 
 if __name__ == "__main__":

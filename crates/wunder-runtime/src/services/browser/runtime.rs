@@ -366,6 +366,11 @@ impl BrowserControlService {
         if request.is_null() {
             return Err(anyhow!("Missing browser act request"));
         }
+        if is_evaluate_request(&request) && !self.config.allow_evaluate {
+            return Err(anyhow!(
+                "Browser evaluate is disabled. Enable browser.security.allow_evaluate for an explicitly trusted advanced capability."
+            ));
+        }
         let response = self
             .command(
                 &session_key,
@@ -642,7 +647,11 @@ fn enrich_launch_error(raw: String, config: &EffectiveBrowserConfig) -> anyhow::
             "\n- {}：{}（{}）",
             candidate.source,
             candidate.path.display(),
-            if candidate.exists { "存在" } else { "不存在" }
+            if candidate.exists {
+                "存在"
+            } else {
+                "不存在"
+            }
         ));
     }
     if !any_found {
@@ -674,7 +683,8 @@ fn enrich_launch_error(raw: String, config: &EffectiveBrowserConfig) -> anyhow::
 
 /// `net::ERR_*` codes that name a broken transport: the same URL fails again
 /// until the network changes, but a different host may still answer.
-fn is_retryable_net_error(code: &str) -> bool {    matches!(
+fn is_retryable_net_error(code: &str) -> bool {
+    matches!(
         code,
         "ERR_CONNECTION_CLOSED"
             | "ERR_CONNECTION_REFUSED"
@@ -766,12 +776,20 @@ fn call_deadline(timeout_secs: u64, action: &str, args: &Value) -> Duration {
 }
 
 fn act_kind(args: &Value) -> Option<String> {
-    args.get("request")
-        .and_then(|request| request.get("kind"))
+    args.get("request").and_then(request_kind)
+}
+
+fn request_kind(request: &Value) -> Option<String> {
+    request
+        .get("kind")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .map(ToString::to_string)
+        .map(|value| value.to_ascii_lowercase())
+}
+
+fn is_evaluate_request(request: &Value) -> bool {
+    request_kind(request).as_deref() == Some("evaluate")
 }
 
 fn normalize_action(action: &str) -> String {
@@ -932,13 +950,25 @@ fn is_private_host(host: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        browser_service, call_deadline, is_private_host, optional_timeout_ms,
+        browser_service, call_deadline, is_evaluate_request, is_private_host, optional_timeout_ms,
         BrowserControlService, CALL_GRACE, MAX_CALL_DEADLINE,
     };
     use crate::config::Config;
     use crate::services::browser::config::effective_browser_config;
     use serde_json::json;
     use std::time::Duration;
+
+    #[test]
+    fn evaluate_capability_is_selected_only_by_request_kind() {
+        assert!(is_evaluate_request(&json!({ "kind": "evaluate" })));
+        assert!(is_evaluate_request(&json!({ "kind": " EVALUATE " })));
+        assert!(!is_evaluate_request(
+            &json!({ "kind": "back", "expression": "x" })
+        ));
+        assert!(!is_evaluate_request(
+            &json!({ "metadata": { "kind": "evaluate" } })
+        ));
+    }
 
     #[test]
     fn detects_private_hosts() {
@@ -1170,7 +1200,9 @@ mod tests {
             .expect("launch failures must become structured");
         assert_eq!(failure.data["code"], "TOOL_BROWSER_LAUNCH_FAILED");
         assert_eq!(failure.data["retryable"], false);
-        assert!(failure.message.contains("browser.playwright.executable_path"));
+        assert!(failure
+            .message
+            .contains("browser.playwright.executable_path"));
         assert!(failure.message.contains("browser.playwright.channel"));
         assert!(failure.message.contains("补充包"));
         assert!(failure.message.contains("探测结果"));
@@ -1180,19 +1212,32 @@ mod tests {
     #[test]
     fn non_launch_bridge_errors_keep_the_plain_message() {
         let config = effective_browser_config(&Config::default());
-        let error = super::enrich_launch_error("Browser bridge closed unexpectedly".to_string(), &config);
-        assert!(error.downcast_ref::<super::BrowserCommandFailure>().is_none());
+        let error =
+            super::enrich_launch_error("Browser bridge closed unexpectedly".to_string(), &config);
+        assert!(error
+            .downcast_ref::<super::BrowserCommandFailure>()
+            .is_none());
         assert_eq!(error.to_string(), "Browser bridge closed unexpectedly");
     }
 
     #[test]
     fn launch_error_markers_cover_the_bridge_startup_wording() {
-        assert!(super::is_browser_launch_error("Browser bridge failed to start: boom"));
-        assert!(super::is_browser_launch_error("Executable doesn't exist at x"));
+        assert!(super::is_browser_launch_error(
+            "Browser bridge failed to start: boom"
+        ));
+        assert!(super::is_browser_launch_error(
+            "Executable doesn't exist at x"
+        ));
         assert!(super::is_browser_launch_error("playwright not installed"));
-        assert!(super::is_browser_launch_error("Please run: playwright install"));
-        assert!(!super::is_browser_launch_error("Browser bridge closed unexpectedly"));
-        assert!(!super::is_browser_launch_error("net::ERR_CONNECTION_REFUSED"));
+        assert!(super::is_browser_launch_error(
+            "Please run: playwright install"
+        ));
+        assert!(!super::is_browser_launch_error(
+            "Browser bridge closed unexpectedly"
+        ));
+        assert!(!super::is_browser_launch_error(
+            "net::ERR_CONNECTION_REFUSED"
+        ));
     }
 
     #[test]
