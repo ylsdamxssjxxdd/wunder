@@ -19,23 +19,28 @@ pub struct BrowserCandidate {
     pub exists: bool,
 }
 
-/// Pure selection over pre-expanded candidate lists: an installed Playwright
-/// Chromium wins by absence (the bridge resolves it itself), then the first
-/// existing supplement browser, then the first existing system browser.
+/// Pure selection over pre-expanded candidate lists. A browser installed with
+/// the supplement wins first: a Playwright cache may belong to another
+/// Playwright revision and must not hide the copy shipped with this install.
+/// Without a supplement browser, an installed Playwright Chromium wins by
+/// absence (the bridge resolves it itself), then the first system browser.
 pub fn select_fallback_executable(
     playwright_chromium: &[PathBuf],
     supplement_roots: &[PathBuf],
     system_browsers: &[PathBuf],
     exists: &dyn Fn(&Path) -> bool,
 ) -> Option<PathBuf> {
+    if let Some(bundled) = supplement_roots
+        .iter()
+        .flat_map(|root| supplement_browser_candidates(root))
+        .find(|path| exists(path))
+    {
+        return Some(bundled);
+    }
     if playwright_chromium.iter().any(|path| exists(path)) {
         return None;
     }
-    supplement_roots
-        .iter()
-        .flat_map(|root| supplement_browser_candidates(root))
-        .chain(system_browsers.iter().cloned())
-        .find(|path| exists(path))
+    system_browsers.iter().cloned().find(|path| exists(path))
 }
 
 /// Probe the local machine for a launch executable. Returns `None` when the
@@ -62,25 +67,31 @@ pub fn collect_browser_candidates(browsers_path: Option<&str>) -> Vec<BrowserCan
         })
         .collect();
     candidates.extend(supplement_roots().into_iter().flat_map(|root| {
-        supplement_browser_candidates(&root).into_iter().map(|path| BrowserCandidate {
-            source: "补充包内置浏览器",
-            exists: path.is_file(),
-            path,
-        })
+        supplement_browser_candidates(&root)
+            .into_iter()
+            .map(|path| BrowserCandidate {
+                source: "补充包内置浏览器",
+                exists: path.is_file(),
+                path,
+            })
     }));
-    candidates.extend(system_browsers().into_iter().map(|(name, path)| {
-        BrowserCandidate {
-            source: name,
-            exists: path.is_file(),
-            path,
-        }
-    }));
+    candidates.extend(
+        system_browsers()
+            .into_iter()
+            .map(|(name, path)| BrowserCandidate {
+                source: name,
+                exists: path.is_file(),
+                path,
+            }),
+    );
     candidates
 }
 
 fn supplement_browser_candidates(root: &Path) -> Vec<PathBuf> {
     vec![
         root.join("opt/browser/chrome-win/chrome.exe"),
+        root.join("opt/browser/chrome-win64/chrome.exe"),
+        root.join("opt/browser/chrome-linux/chrome"),
         root.join("opt/browser/chrome.exe"),
     ]
 }
@@ -95,13 +106,10 @@ fn playwright_chromium_executables(browsers_path: Option<&str>) -> Vec<PathBuf> 
     let mut executables = Vec::new();
     if let Ok(entries) = std::fs::read_dir(&root) {
         for entry in entries.flatten() {
-            if entry
-                .file_name()
-                .to_string_lossy()
-                .starts_with("chromium-")
-            {
+            if entry.file_name().to_string_lossy().starts_with("chromium-") {
                 let dir = entry.path();
                 executables.push(dir.join("chrome-win/chrome.exe"));
+                executables.push(dir.join("chrome-win64/chrome.exe"));
                 executables.push(dir.join("chrome-linux/chrome"));
             }
         }
@@ -166,13 +174,19 @@ fn system_browsers() -> Vec<(&'static str, PathBuf)> {
     let local_appdata = std::env::var_os("LOCALAPPDATA").map(PathBuf::from);
     let mut browsers = Vec::new();
     for base in [&program_files_x86, &program_files].into_iter().flatten() {
-        browsers.push(("系统 Edge", base.join("Microsoft/Edge/Application/msedge.exe")));
+        browsers.push((
+            "系统 Edge",
+            base.join("Microsoft/Edge/Application/msedge.exe"),
+        ));
     }
     for base in [&program_files, &program_files_x86, &local_appdata]
         .into_iter()
         .flatten()
     {
-        browsers.push(("系统 Chrome", base.join("Google/Chrome/Application/chrome.exe")));
+        browsers.push((
+            "系统 Chrome",
+            base.join("Google/Chrome/Application/chrome.exe"),
+        ));
     }
     browsers
 }
@@ -191,8 +205,17 @@ fn system_browser_paths() -> Vec<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::{probe_launch_executable, select_fallback_executable};
+    use super::{
+        playwright_chromium_executables, probe_launch_executable, select_fallback_executable,
+    };
     use std::path::{Path, PathBuf};
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn lock_env() -> std::sync::MutexGuard<'static, ()> {
+        ENV_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
 
     fn touch(path: &Path) {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -200,11 +223,13 @@ mod tests {
     }
 
     #[test]
-    fn installed_playwright_chromium_suppresses_any_fallback() {
+    fn installed_playwright_chromium_suppresses_system_fallback() {
         let exists = |path: &Path| path.ends_with("chrome.exe");
         let selected = select_fallback_executable(
-            &[PathBuf::from("browsers/chromium-1091/chrome-win/chrome.exe")],
-            &[PathBuf::from("supplement")],
+            &[PathBuf::from(
+                "browsers/chromium-1091/chrome-win/chrome.exe",
+            )],
+            &[],
             &[PathBuf::from("C:/Edge/msedge.exe")],
             &exists,
         );
@@ -212,16 +237,48 @@ mod tests {
     }
 
     #[test]
-    fn supplement_browser_wins_over_system_browser() {
+    fn supplement_browser_wins_over_playwright_cache() {
         let bundled = PathBuf::from("supplement/opt/browser/chrome-win/chrome.exe");
-        let exists = |path: &Path| path == bundled.as_path();
+        let cached = PathBuf::from("browsers/chromium-1217/chrome-win64/chrome.exe");
+        let exists = |path: &Path| path == bundled.as_path() || path == cached.as_path();
         let selected = select_fallback_executable(
-            &[PathBuf::from("browsers/chromium-1091/chrome-win/chrome.exe")],
+            std::slice::from_ref(&cached),
             &[PathBuf::from("supplement")],
             &[PathBuf::from("C:/Edge/msedge.exe")],
             &exists,
         );
         assert_eq!(selected, Some(bundled));
+    }
+
+    #[test]
+    fn supplement_browser_wins_over_system_browser() {
+        let bundled = PathBuf::from("supplement/opt/browser/chrome-win/chrome.exe");
+        let exists = |path: &Path| path == bundled.as_path();
+        let selected = select_fallback_executable(
+            &[PathBuf::from(
+                "browsers/chromium-1091/chrome-win/chrome.exe",
+            )],
+            &[PathBuf::from("supplement")],
+            &[PathBuf::from("C:/Edge/msedge.exe")],
+            &exists,
+        );
+        assert_eq!(selected, Some(bundled));
+    }
+
+    #[test]
+    fn chrome_win64_supplement_and_cache_are_recognized() {
+        let bundled = PathBuf::from("supplement/opt/browser/chrome-win64/chrome.exe");
+        let exists = |path: &Path| path == bundled.as_path();
+        let selected =
+            select_fallback_executable(&[], &[PathBuf::from("supplement")], &[], &exists);
+        assert_eq!(selected, Some(bundled));
+
+        let root = tempfile::tempdir().unwrap();
+        touch(&root.path().join("chromium-1234/chrome-win64/chrome.exe"));
+        let cached = playwright_chromium_executables(Some(root.path().to_str().unwrap()));
+        assert!(cached
+            .iter()
+            .any(|path| path.ends_with("chromium-1234/chrome-win64/chrome.exe")));
     }
 
     #[test]
@@ -250,6 +307,7 @@ mod tests {
 
     #[test]
     fn real_probe_finds_bundled_supplement_browser() {
+        let _guard = lock_env();
         let home = tempfile::tempdir().unwrap();
         touch(&home.path().join("opt/browser/chrome.exe"));
         let previous = std::env::var_os("WUNDER_HOME");
@@ -264,9 +322,17 @@ mod tests {
 
     #[test]
     fn real_probe_stays_quiet_when_playwright_chromium_is_installed() {
+        let _guard = lock_env();
+        let home = tempfile::tempdir().unwrap();
+        let previous = std::env::var_os("WUNDER_HOME");
+        std::env::set_var("WUNDER_HOME", home.path());
         let root = tempfile::tempdir().unwrap();
         touch(&root.path().join("chromium-1091/chrome-win/chrome.exe"));
         let probed = probe_launch_executable(Some(root.path().to_str().unwrap()));
+        match previous {
+            Some(value) => std::env::set_var("WUNDER_HOME", value),
+            None => std::env::remove_var("WUNDER_HOME"),
+        }
         assert_eq!(probed, None);
     }
 }

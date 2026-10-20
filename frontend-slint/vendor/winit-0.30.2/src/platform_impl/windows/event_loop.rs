@@ -94,20 +94,30 @@ use super::SelectedCursor;
 ///
 /// Some legacy Windows IMEs can send this sequence after
 /// `WM_IME_ENDCOMPOSITION`, when `ime_state` is already disabled. Keeping the
-/// exact commit text until the next key press lets the window procedure drop
-/// only that duplicate and keeps direct Unicode keyboard layouts untouched.
+/// committed text until its matching character messages arrive lets the window
+/// procedure drop only those duplicates. Some IMEs split one displayed word
+/// across several result messages, while winit may combine its `WM_CHAR`
+/// messages, so this is a short sequence rather than just the last commit.
 #[derive(Default)]
 pub(crate) struct ImeCommitDeduplicator {
-    pending_text: Option<String>,
+    pending_text: String,
 }
 
 impl ImeCommitDeduplicator {
     fn record_commit(&mut self, text: String) {
-        self.pending_text = (!text.is_empty()).then_some(text);
-    }
+        const MAX_PENDING_COMMIT_BYTES: usize = 1024;
 
-    fn begin_key_press(&mut self) {
-        self.pending_text = None;
+        if text.is_empty() {
+            return;
+        }
+
+        // Preserve adjacent result strings: the delayed WM_CHAR sequence can
+        // represent all of them as one keyboard event. Bound the buffer so an
+        // IME which never emits that compatibility sequence cannot grow it.
+        if self.pending_text.len() + text.len() > MAX_PENDING_COMMIT_BYTES {
+            self.pending_text.clear();
+        }
+        self.pending_text.push_str(&text);
     }
 
     fn suppress_keyboard_text(
@@ -119,19 +129,18 @@ impl ImeCommitDeduplicator {
             return false;
         };
 
-        if let Some(pending) = self.pending_text.as_deref() {
-            if pending == text {
-                self.pending_text = None;
-                return true;
-            }
-            if let Some(rest) = pending.strip_prefix(text) {
-                self.pending_text = (!rest.is_empty()).then(|| rest.to_owned());
-                return true;
-            }
-            // A different text event belongs to a later key press. Do not let
-            // an unmatched old commit affect any future normal input.
-            self.pending_text = None;
+        if self.pending_text == text {
+            self.pending_text.clear();
+            return true;
         }
+        if self.pending_text.starts_with(text) {
+            self.pending_text.drain(..text.len());
+            return true;
+        }
+
+        // A different text event proves that the queued compatibility echo
+        // did not arrive. Do not let an old commit affect normal input.
+        self.pending_text.clear();
 
         // This is the original guard for IMEs that send WM_CHAR while their
         // composition is still active. The commit path remains authoritative.
@@ -177,10 +186,6 @@ impl WindowData {
 
     fn window_state_lock(&self) -> MutexGuard<'_, WindowState> {
         self.window_state.lock().unwrap()
-    }
-
-    fn begin_key_press(&self) {
-        self.ime_commit_deduplicator.borrow_mut().begin_key_press();
     }
 
     fn suppress_ime_keyboard_text(
@@ -1126,12 +1131,6 @@ unsafe fn public_window_callback_inner(
 
     let keyboard_callback = || {
         use crate::event::WindowEvent::KeyboardInput;
-        if matches!(msg, WM_KEYDOWN | WM_SYSKEYDOWN) {
-            // A new physical press makes any unconsumed commit stale. This
-            // keeps the narrow post-commit window from swallowing a later
-            // character that happens to be the same text.
-            userdata.begin_key_press();
-        }
         let events =
             userdata.key_event_builder.process_message(window, msg, wparam, lparam, &mut result);
         // Some legacy Windows IMEs emit a
@@ -2524,9 +2523,11 @@ mod tests {
         assert!(deduplicator.suppress_keyboard_text(false, Some("你")));
         assert!(deduplicator.suppress_keyboard_text(false, Some("好")));
 
-        deduplicator.record_commit("你好".into());
-        deduplicator.begin_key_press();
-        assert!(!deduplicator.suppress_keyboard_text(false, Some("你好")));
+        // Legacy IMEs can split a displayed word into result strings while
+        // winit later combines their WM_CHAR messages into one key event.
+        deduplicator.record_commit("你".into());
+        deduplicator.record_commit("好".into());
+        assert!(deduplicator.suppress_keyboard_text(false, Some("你好")));
 
         assert!(deduplicator.suppress_keyboard_text(true, Some("中")));
         assert!(!deduplicator.suppress_keyboard_text(false, Some("中")));

@@ -549,14 +549,56 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
         ToolSpec {
             name: "读取文件".to_string(),
             title: None,
-            description: t("tool.spec.read.description"),
+            description: format!(
+                "{} {}",
+                t("tool.spec.read.description"),
+                if language.to_ascii_lowercase().starts_with("zh") {
+                    "也可将工具返回的 result_handle 原值作为 path 读取当前任务线程保存的完整结果（tool-result: 前缀）。普通文件使用从 1 开始的 start_line/end_line；保存结果使用从 0 开始的 UTF-8 字节 offset 和 limit，二者不能混用。保存结果支持 query 字面搜索；按返回的 next_offset 继续读取。"
+                } else {
+                    "To inspect a complete saved tool result, pass its original result_handle as path (tool-result: prefix, current task thread only). Files use 1-based start_line/end_line; saved results use 0-based UTF-8 byte offset and limit; do not combine them. Saved results support literal query search. Continue with the returned next_offset."
+                }
+            ),
             input_schema: super::schema::object(vec![
-                super::schema::string("path").desc(t("tool.spec.read.args.path")),
+                super::schema::string("path").desc(format!(
+                    "{} {}",
+                    t("tool.spec.read.args.path"),
+                    if language.to_ascii_lowercase().starts_with("zh") {
+                        "也接受当前任务线程的 tool-result: 结果句柄；句柄必须完整原样传入。"
+                    } else {
+                        "Also accepts a tool-result: handle from the current task thread; pass the complete original handle unchanged."
+                    }
+                )),
                 super::schema::integer("start_line")
                     .desc(t("tool.spec.read.args.start_line"))
                     .optional(),
                 super::schema::integer("end_line")
                     .desc(t("tool.spec.read.args.end_line"))
+                    .optional(),
+                super::schema::integer("offset")
+                    .desc(if language.to_ascii_lowercase().starts_with("zh") {
+                        "仅用于 tool-result: 句柄：从 0 开始的 UTF-8 字节偏移，默认 0；续读使用返回的 next_offset。"
+                    } else {
+                        "For tool-result: handles only: zero-based UTF-8 byte offset, default 0. Use the returned next_offset to continue."
+                    })
+                    .min(0)
+                    .optional(),
+                super::schema::integer("limit")
+                    .desc(if language.to_ascii_lowercase().starts_with("zh") {
+                        "仅用于 tool-result: 句柄：本次返回内容的字节预算，默认 8192，范围 1..16384。"
+                    } else {
+                        "For tool-result: handles only: byte budget for returned content, default 8192, range 1..16384."
+                    })
+                    .min(1)
+                    .max(16384)
+                    .optional(),
+                super::schema::string("query")
+                    .desc(if language.to_ascii_lowercase().starts_with("zh") {
+                        "仅用于 tool-result: 句柄：非空字面搜索词（不解释为正则），最多 512 个 UTF-8 字节，从 offset 搜索并返回限量匹配片段。"
+                    } else {
+                        "For tool-result: handles only: non-empty literal search text (not a regex), at most 512 UTF-8 bytes. Search from offset and return bounded matching excerpts."
+                    })
+                    .min_len(1)
+                    .max_len(512)
                     .optional(),
             ]),
         },
@@ -2073,6 +2115,23 @@ mod tests {
                 .map(|items| items.len()),
             Some(1)
         );
+    }
+
+    #[test]
+    fn read_file_spec_explains_saved_result_byte_pagination() {
+        for language in ["en-US", "zh-CN"] {
+            let spec = builtin_tool_specs_with_language(language)
+                .into_iter()
+                .find(|spec| spec.name == "读取文件")
+                .expect("read_file spec");
+            assert!(spec.description.contains("tool-result:"));
+            assert!(spec.description.contains("UTF-8"));
+            assert!(spec.description.contains("next_offset"));
+            assert_eq!(spec.input_schema["properties"]["offset"]["minimum"], 0);
+            assert_eq!(spec.input_schema["properties"]["limit"]["maximum"], 16384);
+            assert_eq!(spec.input_schema["properties"]["query"]["minLength"], 1);
+            assert_eq!(spec.input_schema["required"], serde_json::json!(["path"]));
+        }
     }
 
     #[test]

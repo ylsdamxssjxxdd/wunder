@@ -7,12 +7,13 @@
     @dragleave="handleDragLeave"
     @drop="handleDrop"
   >
-    <div v-if="showUploadArea" class="upload-preview">
+    <div v-if="showUploadArea" class="upload-preview" data-testid="chat-composer-attachments">
       <div class="upload-preview-list">
         <div
           v-for="attachment in attachments"
           :key="attachment.id"
           class="upload-preview-item"
+          :title="attachment.workspace_path || attachment.name"
           :class="{
             'upload-preview-item--video': attachment.type === 'video' || attachment.type === 'gif',
             'is-active': (attachment.type === 'video' || attachment.type === 'gif') && isVideoControlOpen(attachment.id),
@@ -103,8 +104,8 @@
           </div>
         </div>
       </div>
-      <div v-if="attachmentBusy > 0" class="upload-preview-status">
-        {{ t('chat.attachments.processing', { count: attachmentBusy }) }}
+      <div v-if="composerBusy > 0" class="upload-preview-status" role="status">
+        {{ workspaceDropBusy > 0 ? t('chat.workspaceDrop.uploading') : t('chat.attachments.processing', { count: attachmentBusy }) }}
       </div>
     </div>
 
@@ -666,7 +667,7 @@ const resolveCurrentSession = (): Record<string, unknown> | null => {
 };
 
 const composerBusy = computed(() => attachmentBusy.value + workspaceDropBusy.value);
-const showUploadArea = computed(() => attachments.value.length > 0 || attachmentBusy.value > 0);
+const showUploadArea = computed(() => attachments.value.length > 0 || composerBusy.value > 0);
 const chatBusyMessage = computed(() =>
   workspaceDropBusy.value > 0 ? t('chat.workspaceDrop.uploading') : t('chat.attachments.busy')
 );
@@ -1015,6 +1016,7 @@ const resolveAttachmentIconClass = (attachment: ComposerDraftAttachment): string
 };
 
 const resolveAttachmentMeta = (attachment: ComposerDraftAttachment): string => {
+  if (attachment.workspace_path) return attachment.workspace_path;
   if (isAttachmentProcessing(attachment.id)) {
     return attachment.type === 'gif'
       ? t('chat.attachments.gif.processingSingle')
@@ -1112,6 +1114,8 @@ const resolveVideoControlSummary = (attachment: ComposerDraftAttachment): string
 };
 
 const collectPayloadAttachments = (attachment: ComposerDraftAttachment): AttachmentPayload[] => {
+  // Workspace references are serialized into the question at send time.
+  if (attachment.workspace_path) return [];
   const derived = Array.isArray(attachment.derived_attachments)
     ? attachment.derived_attachments.flatMap((item) => collectPayloadAttachments(item))
     : [];
@@ -1475,13 +1479,15 @@ const normalizeDraftAttachment = (value: unknown): ComposerDraftAttachment | nul
         .filter(Boolean) as ComposerDraftAttachment[])
     : [];
   if (!id || !type || !name) return null;
-  if (!content.trim() && !publicPath && derivedAttachments.length === 0) return null;
+  const workspacePath = type === 'workspace' ? normalizeWorkspacePath(source.workspace_path) : '';
+  if (!content.trim() && !publicPath && !workspacePath && derivedAttachments.length === 0) return null;
   const attachment: ComposerDraftAttachment = {
     id,
     type,
     name,
     content
   };
+  if (workspacePath) attachment.workspace_path = workspacePath;
   const mimeType = String(source.mime_type ?? source.content_type ?? '').trim();
   if (mimeType) attachment.mime_type = mimeType;
   const converter = String(source.converter || '').trim();
@@ -1723,12 +1729,9 @@ const resolveUploadedWorkspacePaths = (payload: unknown): string[] => {
     : [];
 };
 
-const buildWorkspaceFileNotice = (paths: string[], items: WorkspaceDroppedFile[]): string => {
+const buildWorkspaceFileNotice = (paths: string[]): string => {
   const normalized = paths.map((item) => normalizeWorkspacePath(item)).filter(Boolean);
-  const fileNames = items
-    .map((item) => normalizeWorkspacePath(item.relativePath || item.file?.name || 'upload'))
-    .filter(Boolean);
-  const displayPaths = normalized.length ? normalized : fileNames;
+  const displayPaths = normalized;
   if (!displayPaths.length) return '';
   const lines = [
     t('chat.workspaceDrop.noticeHeader', { count: displayPaths.length })
@@ -1740,10 +1743,20 @@ const buildWorkspaceFileNotice = (paths: string[], items: WorkspaceDroppedFile[]
   return lines.join('\n');
 };
 
-const appendWorkspaceFileNotice = (paths: string[], items: WorkspaceDroppedFile[]) => {
-  const notice = buildWorkspaceFileNotice(paths, items);
-  if (!notice) return;
-  appendTextToComposer(notice);
+const addWorkspaceFileReferences = (paths: string[]) => {
+  const existing = new Set(attachments.value.map(item => item.workspace_path).filter(Boolean));
+  const additions: ComposerDraftAttachment[] = [];
+  for (const rawPath of paths) {
+    const path = normalizeWorkspacePath(rawPath);
+    if (!path || existing.has(path)) continue;
+    existing.add(path);
+    additions.push({ id: buildAttachmentId(), type: 'workspace', name: path.split('/').pop() || path,
+      content: '', workspace_path: path });
+  }
+  if (!additions.length) return;
+  attachments.value = [...attachments.value, ...additions];
+  flushPersistDraftState();
+  focusComposerInputAtEnd();
 };
 
 const readDirectoryEntries = (reader: DirectoryReaderLike): Promise<FileSystemEntryLike[]> =>
@@ -1862,7 +1875,7 @@ const ingestComposerFiles = async (items: WorkspaceDroppedFile[]) => {
   workspaceDropBusy.value += 1;
   try {
     const uploadedPaths = await uploadDroppedFilesToWorkspace(files);
-    appendWorkspaceFileNotice(uploadedPaths, files);
+    addWorkspaceFileReferences(uploadedPaths.length ? uploadedPaths : files.map(item => item.relativePath || item.file.name));
     ElMessage.success(t('chat.workspaceDrop.uploaded', { count: uploadedPaths.length || files.length }));
   } catch (error) {
     ElMessage.error(resolveUploadError(error, t('chat.workspaceDrop.failed')));
@@ -1919,7 +1932,7 @@ const handleDrop = async (event) => {
       return;
     }
     closeComposerPanels();
-    insertTextIntoComposer(workspacePaths.join('\n'), 'cursor');
+    addWorkspaceFileReferences(workspacePaths);
     clearWorkspaceDragPaths();
     ElMessage.success(t('chat.workspaceDrop.pathsInserted', { count: workspacePaths.length }));
     return;
@@ -2364,7 +2377,8 @@ const handleSend = async () => {
     ElMessage.warning(chatBusyMessage.value);
     return;
   }
-  const content = String(inputText.value || '').trim();
+  const workspaceNotice = buildWorkspaceFileNotice(attachments.value.flatMap(item => item.workspace_path ? [item.workspace_path] : []));
+  const content = [String(inputText.value || '').trim(), workspaceNotice].filter(Boolean).join('\n\n');
   const payloadAttachments = buildAttachmentPayload();
   if (!content && payloadAttachments.length === 0 && !hasInquirySelection.value) return;
   chatDebugLog('messenger.send', 'composer-send-emit', {

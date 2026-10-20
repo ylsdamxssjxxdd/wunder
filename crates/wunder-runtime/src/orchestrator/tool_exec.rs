@@ -1,4 +1,4 @@
-use super::context::{MODEL_CONTEXT_INTERNAL_META_TYPE, normalize_model_context_message};
+use super::context::{normalize_model_context_message, MODEL_CONTEXT_INTERNAL_META_TYPE};
 use super::*;
 
 pub(super) const TOOL_TIMEOUT_ERROR: &str = "tool_timeout";
@@ -138,8 +138,18 @@ fn copy_transport_control_fields(
 
 /// Provider results normally stay intact for events/audit and are compacted
 /// only in the model observation. This guard bounds the whole data/error/meta
-/// envelope before it is cloned into events. Oversized content is discarded,
-/// not spilled: neither the preview nor a next-page cursor can recover it.
+/// envelope before it is cloned into events. The execution path preserves
+/// oversized output first; storage failures retain an explicit loss marker.
+pub(super) fn tool_result_exceeds_transport_limit(result: &ToolResultPayload) -> bool {
+    let mut probe = ToolResultControlCounter {
+        bytes: 0,
+        // Finalization appends only bounded scalar metadata. Preserve just
+        // below the transport edge too, before those fields can trigger it.
+        limit: TOOL_RESULT_TRANSPORT_MAX_BYTES.saturating_sub(1024),
+    };
+    serde_json::to_writer(&mut probe, result).is_err()
+}
+
 fn enforce_tool_result_transport_guard(result: &mut ToolResultPayload) -> Option<usize> {
     #[derive(serde::Serialize)]
     struct TransportEnvelope<'a> {
@@ -271,13 +281,23 @@ fn enforce_tool_result_transport_guard(result: &mut ToolResultPayload) -> Option
     }
     data.insert("truncated".to_string(), Value::Bool(true));
     data.insert("truncation_scope".to_string(), json!("transport_safety"));
-    data.insert("recoverable".to_string(), Value::Bool(false));
+    let saved = super::tool_result_payload::saved_result_metadata(result);
+    let recoverable = saved.is_some();
+    data.insert("recoverable".to_string(), Value::Bool(recoverable));
     data.insert("original_bytes".to_string(), json!(original_bytes));
     data.insert("omitted_bytes".to_string(), json!(omitted_bytes));
     data.insert("preview".to_string(), Value::String(preview));
-    data.insert("recovery_hint".to_string(), json!(
-        "Full result was not stored. Repeat a smaller range or narrower query; existing continuation tokens only address later producer pages."
-    ));
+    if let Some(saved) = &saved {
+        data.insert("result_handle".to_string(), saved["handle"].clone());
+        data.insert(
+            "recovery_hint".to_string(),
+            json!("read_file: path=result_handle; offset=0; limit=1024"),
+        );
+    } else {
+        data.insert("recovery_hint".to_string(), json!(
+            "Full result was not stored. Repeat a smaller range or narrower query; existing continuation tokens only address later producer pages."
+        ));
+    }
     result.data = Value::Object(data);
     result.error = truncate_utf8_preview(&result.error, TOOL_RESULT_TRANSPORT_ERROR_BYTES);
     let mut meta = Map::new();
@@ -309,8 +329,22 @@ fn enforce_tool_result_transport_guard(result: &mut ToolResultPayload) -> Option
     if let Some(exit_code) = exit_code {
         meta.insert("exit_code".to_string(), json!(exit_code));
     }
+    if let Some(saved) = saved {
+        meta.insert("saved_result".to_string(), saved);
+    }
+    if result
+        .meta
+        .as_ref()
+        .and_then(|v| v.get("result_store_failed"))
+        == Some(&Value::Bool(true))
+    {
+        meta.insert("result_store_failed".to_string(), Value::Bool(true));
+    }
     meta.insert("transport_truncated".to_string(), Value::Bool(true));
-    meta.insert("transport_recoverable".to_string(), Value::Bool(false));
+    meta.insert(
+        "transport_recoverable".to_string(),
+        Value::Bool(recoverable),
+    );
     meta.insert("original_output_bytes".to_string(), json!(original_bytes));
     result.meta = Some(Value::Object(meta));
     Some(original_bytes)
@@ -585,16 +619,6 @@ impl Orchestrator {
         obj.insert("meta".to_string(), meta);
     }
 
-    pub(super) fn build_tool_observation(
-        &self,
-        tool_name: &str,
-        result: &ToolResultPayload,
-        token_budget: i64,
-    ) -> String {
-        let payload = result.to_compact_payload_with_token_budget(tool_name, Some(token_budget));
-        serde_json::to_string(&payload).unwrap_or_else(|_| "{}".to_string())
-    }
-
     pub(super) fn append_tool_log(
         &self,
         user_id: &str,
@@ -671,7 +695,6 @@ impl Orchestrator {
         started_at: Instant,
     ) -> ToolResultPayload {
         let duration_ms = started_at.elapsed().as_millis() as i64;
-        let transport_truncated = enforce_tool_result_transport_guard(&mut result);
         let exit_code = extract_exit_code(&result.data);
         let mut meta = merge_tool_result_meta(result.meta.take());
         meta.insert("duration_ms".to_string(), json!(duration_ms));
@@ -679,10 +702,6 @@ impl Orchestrator {
             "output_chars".to_string(),
             json!(estimate_tool_result_chars(&result.data)),
         );
-        if let Some(original_bytes) = transport_truncated {
-            meta.insert("transport_truncated".to_string(), Value::Bool(true));
-            meta.insert("original_output_bytes".to_string(), json!(original_bytes));
-        }
         if let Some(exit_code) = exit_code {
             meta.insert("exit_code".to_string(), json!(exit_code));
         }
@@ -691,6 +710,7 @@ impl Orchestrator {
         } else {
             result.meta = Some(Value::Object(meta));
         }
+        enforce_tool_result_transport_guard(&mut result);
         result
     }
 
@@ -1599,6 +1619,27 @@ mod tests {
     }
 
     #[test]
+    fn transport_guard_keeps_saved_result_recovery() {
+        let handle = "tool-result:0123456789abcdef0123456789abcdef";
+        let mut result = ToolResultPayload::from_value(json!({"ok":true,
+            "data":{"text":"x".repeat(TOOL_RESULT_TRANSPORT_MAX_BYTES + 100)},
+            "meta":{"saved_result":{"handle":handle,"bytes":2_000_000,"expires_at":2_000_000_000}}
+        }));
+        assert!(tool_result_exceeds_transport_limit(&result));
+        enforce_tool_result_transport_guard(&mut result);
+        assert_eq!(result.data["result_handle"], handle);
+        assert_eq!(result.data["recoverable"], true);
+        assert_eq!(
+            result.meta.as_ref().unwrap()["saved_result"]["handle"],
+            handle
+        );
+        let observation = result.to_compact_payload_with_token_budget("external", Some(256));
+        assert_eq!(observation["result_handle"], handle);
+        assert_eq!(observation["recoverable"], true);
+        assert!(super::super::tool_result_payload::observation_token_count(&observation) <= 256);
+    }
+
+    #[test]
     fn transport_guard_bounds_large_data_error_and_meta() {
         for large_field in ["data", "error", "meta"] {
             let large = "中🙂\\\"\n".repeat(TOOL_RESULT_TRANSPORT_MAX_BYTES / 4);
@@ -1663,12 +1704,10 @@ mod tests {
             result.meta.as_ref().unwrap()["turn_control"]["kind"],
             "yield"
         );
-        assert!(
-            result.data["recovery_hint"]
-                .as_str()
-                .unwrap()
-                .contains("not stored")
-        );
+        assert!(result.data["recovery_hint"]
+            .as_str()
+            .unwrap()
+            .contains("not stored"));
     }
 
     #[test]

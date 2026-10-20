@@ -140,7 +140,7 @@ pub fn draw(ctx: &Context, state: &mut AppState, tokens: Tokens) {
                 .sense(Sense::hover()),
         )
         .frame(Frame::NONE)
-        .backdrop_color(Color32::from_rgba_unmultiplied(31, 35, 41, 82))
+        .backdrop_color(tokens.scrim)
         .show(ctx, |ui| {
             ui.spacing_mut().item_spacing = Vec2::ZERO;
             Frame::NONE
@@ -153,7 +153,7 @@ pub fn draw(ctx: &Context, state: &mut AppState, tokens: Tokens) {
                     offset: [0, 24],
                     blur: 64,
                     spread: 0,
-                    color: Color32::from_black_alpha(71),
+                    color: tokens.shadow_modal,
                 })
                 .show(ui, |ui| {
                     let (window, _) =
@@ -464,7 +464,7 @@ fn card(ui: &mut Ui, tokens: Tokens, title: &str, subtitle: &str, body: impl FnO
     let width = ui.available_width();
     Frame::NONE
         .fill(tokens.surface)
-        .stroke(Stroke::new(1.0, Color32::from_rgb(223, 223, 223)))
+        .stroke(Stroke::new(1.0, tokens.card_border))
         .corner_radius(12.0)
         .inner_margin(Margin::symmetric(16, 14))
         .show(ui, |ui| {
@@ -477,7 +477,7 @@ fn card(ui: &mut Ui, tokens: Tokens, title: &str, subtitle: &str, body: impl FnO
                 head.min + Vec2::new(0.0, 1.0),
                 title,
                 18.0,
-                Color32::from_rgb(42, 42, 42),
+                tokens.heading,
             );
             ui.painter().text(
                 head.min + Vec2::new(0.0, 25.0),
@@ -571,20 +571,20 @@ fn form_row(
     if !last {
         ui.painter().line_segment(
             [rect.left_bottom(), rect.right_bottom()],
-            Stroke::new(1.0, Color32::from_rgb(236, 236, 236)),
+            Stroke::new(1.0, tokens.divider),
         );
     }
 }
 
-fn select(ui: &mut Ui, id: &str, value: &mut String, choices: &[&str]) {
+fn select(ui: &mut Ui, id: &str, value: &mut String, choices: &[&str], tokens: Tokens) {
     ui.scope(|ui| {
         ui.spacing_mut().interact_size.y = 38.0;
         ui.spacing_mut().button_padding = Vec2::new(12.0, 8.0);
         let widgets = &mut ui.visuals_mut().widgets;
         for visual in [&mut widgets.inactive, &mut widgets.noninteractive] {
-            visual.bg_fill = Color32::from_rgb(248, 248, 248);
-            visual.weak_bg_fill = Color32::from_rgb(248, 248, 248);
-            visual.bg_stroke = Stroke::new(1.0, Color32::from_rgb(217, 217, 217));
+            visual.bg_fill = tokens.control_fill;
+            visual.weak_bg_fill = tokens.control_fill;
+            visual.bg_stroke = Stroke::new(1.0, tokens.control_border);
             visual.corner_radius = egui::CornerRadius::same(10);
         }
         egui::ComboBox::from_id_salt(id)
@@ -629,18 +629,18 @@ fn range_control(
     }
     let track = Rect::from_center_size(rect.center(), Vec2::new(rect.width(), 5.0));
     ui.painter()
-        .rect_filled(track, 3.0, Color32::from_rgb(230, 233, 240));
+        .rect_filled(track, 3.0, tokens.track);
     ui.painter().rect_stroke(
         track,
         3.0,
-        Stroke::new(1.0, Color32::from_rgb(216, 221, 231)),
+        Stroke::new(1.0, tokens.track_stroke),
         StrokeKind::Inside,
     );
     let center = Pos2::new(
         rect.left() + ((*value - min) / (max - min)).clamp(0.0, 1.0) * rect.width(),
         rect.center().y,
     );
-    ui.painter().circle_filled(center, 7.0, Color32::WHITE);
+    ui.painter().circle_filled(center, 7.0, tokens.on_accent);
     ui.painter()
         .circle_stroke(center, 7.0, Stroke::new(1.0, tokens.primary_soft));
     ui.painter().circle_filled(center, 4.5, tokens.primary);
@@ -667,6 +667,7 @@ fn page_general(ui: &mut Ui, state: &mut AppState, tokens: Tokens) {
                     "settings-send-key",
                     &mut state.settings_send_key,
                     &["Enter 发送", "Ctrl+Enter 发送", "不使用快捷键"],
+                    tokens,
                 );
             });
             form_row(ui, tokens, "语言", "", false, |ui| {
@@ -675,6 +676,7 @@ fn page_general(ui: &mut Ui, state: &mut AppState, tokens: Tokens) {
                     "settings-language",
                     &mut state.settings_language,
                     &["跟随系统", "简体中文", "English"],
+                    tokens,
                 );
             });
             ui.add_space(12.0);
@@ -697,7 +699,7 @@ fn page_general(ui: &mut Ui, state: &mut AppState, tokens: Tokens) {
                 ui.allocate_exact_size(Vec2::new(ui.available_width(), 1.0), Sense::hover());
             ui.painter().line_segment(
                 [rule.left_center(), rule.right_center()],
-                Stroke::new(1.0, Color32::from_rgb(236, 236, 236)),
+                Stroke::new(1.0, tokens.divider),
             );
             form_row(
                 ui,
@@ -715,11 +717,11 @@ fn page_general(ui: &mut Ui, state: &mut AppState, tokens: Tokens) {
                         Vec2::new(100.0, 34.0),
                     );
                     ui.painter()
-                        .rect_filled(pill, 17.0, Color32::from_rgb(248, 248, 248));
+                        .rect_filled(pill, 17.0, tokens.control_fill);
                     ui.painter().rect_stroke(
                         pill,
                         17.0,
-                        Stroke::new(1.0, Color32::from_rgb(217, 217, 217)),
+                        Stroke::new(1.0, tokens.control_border),
                         StrokeKind::Inside,
                     );
                     for (offset, label, delta) in [(16.0, "−", -1.0), (84.0, "+", 1.0)] {
@@ -780,41 +782,18 @@ fn page_general(ui: &mut Ui, state: &mut AppState, tokens: Tokens) {
 }
 
 fn draw_theme_tiles(ui: &mut Ui, state: &mut AppState, tokens: Tokens) {
-    let choices = [
-        (
-            "forest",
-            "森林",
-            Color32::from_rgb(47, 122, 92),
-            Color32::from_rgb(243, 248, 245),
-        ),
-        (
-            "hula-green",
-            "薄荷",
-            Color32::from_rgb(22, 173, 141),
-            Color32::from_rgb(239, 251, 247),
-        ),
-        (
-            "honey",
-            "蜜蜂",
-            Color32::from_rgb(192, 138, 42),
-            Color32::from_rgb(251, 246, 234),
-        ),
-        (
-            "eva-orange",
-            "橙汁",
-            Color32::from_rgb(245, 138, 36),
-            Color32::from_rgb(253, 240, 222),
-        ),
-    ];
+    // The palette is content, not shell chrome: it lives in `theme` so this
+    // page only describes layout and interaction.
+    let choices = crate::theme::accent_choices();
     let width = ui.available_width();
     let columns = (((width + 12.0) / 162.0).floor() as usize).clamp(1, 4);
     let tile_width = (width - 12.0 * (columns - 1) as f32) / columns as f32;
     for (row_index, row) in choices.chunks(columns).enumerate() {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 12.0;
-            for &(id, name, accent, tint) in row {
-                let active = state.settings_theme == id
-                    || (state.settings_theme == "浅色" && id == "eva-orange");
+            for choice in row {
+                let active = state.settings_theme == choice.id
+                    || (state.settings_theme == "浅色" && choice.id == "eva-orange");
                 let (rect, response) =
                     ui.allocate_exact_size(Vec2::new(tile_width, 123.0), Sense::click());
                 ui.painter().rect_filled(rect, 12.0, tokens.surface);
@@ -824,11 +803,11 @@ fn draw_theme_tiles(ui: &mut Ui, state: &mut AppState, tokens: Tokens) {
                     Stroke::new(
                         1.0,
                         if active {
-                            Color32::from_rgb(31, 35, 41)
+                            tokens.text
                         } else if response.hovered() {
-                            accent
+                            choice.accent
                         } else {
-                            Color32::from_rgb(226, 224, 220)
+                            tokens.card_border
                         },
                     ),
                     StrokeKind::Inside,
@@ -838,11 +817,11 @@ fn draw_theme_tiles(ui: &mut Ui, state: &mut AppState, tokens: Tokens) {
                     Vec2::new(tile_width - 20.0, 74.0),
                 );
                 let p = ui.painter();
-                p.rect_filled(mock, 9.0, tint);
+                p.rect_filled(mock, 9.0, choice.tint);
                 p.rect_stroke(
                     mock,
                     9.0,
-                    Stroke::new(1.0, Color32::from_rgb(236, 234, 230)),
+                    Stroke::new(1.0, tokens.divider),
                     StrokeKind::Inside,
                 );
                 p.rect_filled(
@@ -851,7 +830,7 @@ fn draw_theme_tiles(ui: &mut Ui, state: &mut AppState, tokens: Tokens) {
                         Vec2::new(mock.width() * 0.46, 7.0),
                     ),
                     4.0,
-                    accent,
+                    choice.accent,
                 );
                 p.rect_filled(
                     Rect::from_min_size(
@@ -859,27 +838,31 @@ fn draw_theme_tiles(ui: &mut Ui, state: &mut AppState, tokens: Tokens) {
                         Vec2::new(mock.width() * 0.30, 5.0),
                     ),
                     3.0,
-                    Color32::from_rgb(220, 216, 210),
+                    tokens.border_strong,
                 );
                 let avatar = Pos2::new(mock.right() - 19.5, mock.top() + 16.5);
-                p.circle_filled(avatar, 7.5, Color32::WHITE);
+                p.circle_filled(avatar, 7.5, tokens.on_accent);
                 p.circle_stroke(
                     avatar,
                     if active { 5.5 } else { 7.0 },
                     Stroke::new(
                         if active { 4.0 } else { 1.0 },
-                        if active { accent } else { tokens.border },
+                        if active {
+                            choice.accent
+                        } else {
+                            tokens.border
+                        },
                     ),
                 );
                 let body = Rect::from_min_max(
                     mock.min + Vec2::new(12.0, 38.0),
                     mock.max - Vec2::new(12.0, 8.0),
                 );
-                p.rect_filled(body, 7.0, Color32::WHITE);
+                p.rect_filled(body, 7.0, tokens.on_accent);
                 p.rect_stroke(
                     body,
                     7.0,
-                    Stroke::new(1.0, Color32::from_rgb(236, 234, 230)),
+                    Stroke::new(1.0, tokens.divider),
                     StrokeKind::Inside,
                 );
                 for (dy, factor) in [(6.0, 0.70), (16.0, 0.42)] {
@@ -889,18 +872,18 @@ fn draw_theme_tiles(ui: &mut Ui, state: &mut AppState, tokens: Tokens) {
                             Vec2::new((body.width() - 20.0) * factor, 5.0),
                         ),
                         3.0,
-                        Color32::from_rgb(216, 212, 206),
+                        tokens.border_strong,
                     );
                 }
                 p.text(
                     Pos2::new(rect.center().x, rect.top() + 104.0),
                     Align2::CENTER_CENTER,
-                    name,
+                    choice.label,
                     FontId::proportional(13.0),
-                    Color32::from_rgb(47, 47, 47),
+                    tokens.heading,
                 );
                 if response.clicked() {
-                    state.settings_theme = id.to_owned();
+                    state.settings_theme = choice.id.to_owned();
                 }
             }
         });
@@ -969,7 +952,7 @@ fn accent_button(ui: &mut Ui, rect: Rect, label: &str, solid: bool, tokens: Toke
         } else if response.hovered() {
             tokens.primary_tint
         } else {
-            Color32::from_rgb(242, 220, 210)
+            tokens.primary_fill
         },
     );
     if !solid {
@@ -986,7 +969,7 @@ fn accent_button(ui: &mut Ui, rect: Rect, label: &str, solid: bool, tokens: Toke
         label,
         FontId::proportional(13.0),
         if solid {
-            Color32::WHITE
+            tokens.on_accent
         } else {
             tokens.primary
         },
@@ -997,7 +980,7 @@ fn panel(ui: &mut Ui, tokens: Tokens, min_height: f32, body: impl FnOnce(&mut Ui
     let width = ui.available_width();
     Frame::NONE
         .fill(tokens.surface)
-        .stroke(Stroke::new(1.0, Color32::from_rgb(223, 223, 223)))
+        .stroke(Stroke::new(1.0, tokens.card_border))
         .corner_radius(12.0)
         .inner_margin(Margin::symmetric(16, 14))
         .show(ui, |ui| {
@@ -1071,13 +1054,13 @@ fn page_account(ui: &mut Ui, state: &AppState, tokens: Tokens) {
     painter.rect_stroke(
         profile,
         12.0,
-        Stroke::new(1.0, Color32::from_rgb(223, 223, 223)),
+        Stroke::new(1.0, tokens.card_border),
         StrokeKind::Inside,
     );
     let origin = profile.min + Vec2::new(17.0, 15.0);
     let avatar = Rect::from_min_size(origin, Vec2::splat(56.0));
-    painter.circle_filled(avatar.center(), 28.0, Color32::from_rgb(59, 130, 246));
-    icons::paint(painter, avatar.shrink(16.0), Icon::User, Color32::WHITE);
+    painter.circle_filled(avatar.center(), 28.0, tokens.avatar);
+    icons::paint(painter, avatar.shrink(16.0), Icon::User, tokens.on_accent);
     paint_heading(
         painter,
         origin + Vec2::new(68.0, 0.0),
@@ -1125,7 +1108,7 @@ fn page_account(ui: &mut Ui, state: &AppState, tokens: Tokens) {
             if response.hovered() {
                 tokens.hover
             } else {
-                Color32::from_rgb(248, 248, 248)
+                tokens.control_fill
             },
         );
         painter.rect_stroke(
@@ -1147,7 +1130,7 @@ fn page_account(ui: &mut Ui, state: &AppState, tokens: Tokens) {
         Pos2::new(origin.x, profile.top() + 119.0),
         Vec2::new(width - 34.0, 10.0),
     );
-    painter.rect_filled(progress, 5.0, Color32::from_rgb(235, 237, 241));
+    painter.rect_filled(progress, 5.0, tokens.track_subtle);
     for (x, align, text) in [
         (origin.x, Align2::LEFT_CENTER, "0 / 0"),
         (
@@ -1171,7 +1154,7 @@ fn page_account(ui: &mut Ui, state: &AppState, tokens: Tokens) {
     painter.rect_stroke(
         stats,
         12.0,
-        Stroke::new(1.0, Color32::from_rgb(223, 223, 223)),
+        Stroke::new(1.0, tokens.card_border),
         StrokeKind::Inside,
     );
     let origin = stats.min + Vec2::new(17.0, 0.0);
@@ -1208,7 +1191,7 @@ fn page_account(ui: &mut Ui, state: &AppState, tokens: Tokens) {
                 ),
             Vec2::new(tile_width, 54.0),
         );
-        painter.rect_filled(rect, 10.0, Color32::from_rgb(250, 250, 251));
+        painter.rect_filled(rect, 10.0, tokens.surface_sunken);
         painter.rect_stroke(
             rect,
             10.0,
@@ -1234,7 +1217,7 @@ fn page_account(ui: &mut Ui, state: &AppState, tokens: Tokens) {
         origin + Vec2::new(0.0, 193.0),
         Vec2::new(inner_width, 146.0),
     );
-    painter.rect_filled(chart, 12.0, Color32::from_rgb(250, 250, 251));
+    painter.rect_filled(chart, 12.0, tokens.surface_sunken);
     painter.rect_stroke(
         chart,
         12.0,
@@ -1316,21 +1299,21 @@ fn page_account(ui: &mut Ui, state: &AppState, tokens: Tokens) {
         quota.min + Vec2::new(11.0, 35.0),
         quota.max - Vec2::new(11.0, 11.0),
     );
-    painter.rect_filled(balance, 18.0, Color32::from_rgb(255, 248, 238));
+    painter.rect_filled(balance, 18.0, tokens.gold_tint);
     painter.rect_stroke(
         balance,
         18.0,
-        Stroke::new(1.0, Color32::from_rgb(255, 224, 187)),
+        Stroke::new(1.0, tokens.gold_border),
         StrokeKind::Inside,
     );
     let coin = Rect::from_min_size(balance.min + Vec2::new(17.0, 17.0), Vec2::splat(42.0));
-    painter.rect_filled(coin, 14.0, Color32::from_rgb(248, 229, 170));
+    painter.rect_filled(coin, 14.0, tokens.gold_fill);
     painter.text(
         coin.center(),
         Align2::CENTER_CENTER,
         "\u{f51e}",
         FontId::new(20.0, egui::FontFamily::Name(icons::FONT_NAME.into())),
-        Color32::from_rgb(184, 123, 19),
+        tokens.gold_text,
     );
     paint_heading(
         painter,
@@ -1510,7 +1493,7 @@ fn input_field(
     ui.painter().rect_stroke(
         editor,
         10.0,
-        Stroke::new(1.0, Color32::from_rgb(217, 225, 232)),
+        Stroke::new(1.0, tokens.field_border),
         StrokeKind::Inside,
     );
     let key = Id::new(("settings-field", id));
@@ -1651,7 +1634,7 @@ fn detail_row(
     if !last {
         ui.painter().line_segment(
             [rect.left_bottom(), rect.right_bottom()],
-            Stroke::new(1.0, Color32::from_rgb(236, 236, 236)),
+            Stroke::new(1.0, tokens.divider),
         );
     }
 }
@@ -1692,7 +1675,7 @@ fn split_empty(ui: &mut Ui, tokens: Tokens, height: f32, ratio: f32, left: &str,
         for (width, text) in [(left_width, left), (width - left_width - 10.0, right)] {
             Frame::NONE
                 .fill(tokens.surface)
-                .stroke(Stroke::new(1.0, Color32::from_rgb(223, 223, 223)))
+                .stroke(Stroke::new(1.0, tokens.card_border))
                 .corner_radius(12.0)
                 .inner_margin(Margin::symmetric(20, 20))
                 .show(ui, |ui| {
@@ -1826,7 +1809,7 @@ fn page_memory(ui: &mut Ui, tokens: Tokens) {
         let tags = Rect::from_min_max(filters.right_top() - Vec2::new(184.0, 0.0), filters.max);
         child(ui, tags, "memory-tag-filter", |ui| {
             let mut tag = "全部标签".to_owned();
-            select(ui, "memory-tag", &mut tag, &["全部标签"]);
+            select(ui, "memory-tag", &mut tag, &["全部标签"], tokens);
         });
         ui.add_space(8.0);
         notice(ui, tokens, "当前智能体还没有记忆碎片。");
@@ -1939,7 +1922,7 @@ fn page_channels(ui: &mut Ui, tokens: Tokens) {
                 Vec2::new(bounds.width(), 114.0),
             );
             ui.painter()
-                .rect_filled(log, 10.0, Color32::from_rgb(250, 250, 251));
+                .rect_filled(log, 10.0, tokens.surface_sunken);
             ui.painter().rect_stroke(
                 log,
                 10.0,
@@ -2002,21 +1985,21 @@ fn fixed_button(ui: &mut Ui, rect: Rect, label: &str, enabled: bool, danger: boo
         },
     );
     let fill = if danger {
-        Color32::from_rgb(255, 247, 248)
+        tokens.danger_tint
     } else if enabled && response.hovered() {
         tokens.hover
     } else {
-        Color32::from_rgb(250, 250, 251)
+        tokens.surface_sunken
     };
     let border = if danger {
-        Color32::from_rgb(255, 224, 227)
+        tokens.danger_border
     } else if enabled {
         tokens.border_strong
     } else {
         tokens.border
     };
     let color = if danger {
-        Color32::from_rgb(235, 154, 165)
+        tokens.danger_soft
     } else if enabled {
         tokens.text_secondary
     } else {
@@ -2096,11 +2079,11 @@ fn page_prompts(ui: &mut Ui, tokens: Tokens) {
                 let selector =
                     Rect::from_min_size(bounds.min + Vec2::new(0.0, 21.0), Vec2::new(180.0, 34.0));
                 ui.painter()
-                    .rect_filled(selector, 10.0, Color32::from_rgb(255, 248, 242));
+                    .rect_filled(selector, 10.0, tokens.primary_wash);
                 ui.painter().rect_stroke(
                     selector,
                     10.0,
-                    Stroke::new(1.0, Color32::from_rgb(255, 215, 190)),
+                    Stroke::new(1.0, tokens.primary_outline),
                     StrokeKind::Inside,
                 );
                 ui.painter().text(
@@ -2152,7 +2135,7 @@ fn page_prompts(ui: &mut Ui, tokens: Tokens) {
                         Vec2::new(text.size().x + 12.0, 17.0),
                     );
                     ui.painter()
-                        .rect_filled(tag, 99.0, Color32::from_rgb(238, 239, 240));
+                        .rect_filled(tag, 99.0, tokens.chip);
                     ui.painter()
                         .galley(tag.center() - text.size() / 2.0, text, tokens.text_muted);
                     x = tag.right() + 6.0;
@@ -2195,7 +2178,7 @@ fn page_prompts(ui: &mut Ui, tokens: Tokens) {
             ui.painter().rect_stroke(
                 rect,
                 12.0,
-                Stroke::new(1.0, Color32::from_rgb(255, 221, 204)),
+                Stroke::new(1.0, tokens.primary_outline_soft),
                 StrokeKind::Inside,
             );
         }
@@ -2211,7 +2194,7 @@ fn page_prompts(ui: &mut Ui, tokens: Tokens) {
                     ui.painter().rect_stroke(
                         selected_rect,
                         10.0,
-                        Stroke::new(1.0, Color32::from_rgb(244, 194, 174)),
+                        Stroke::new(1.0, tokens.primary_outline_strong),
                         StrokeKind::Inside,
                     );
                 }
@@ -2261,11 +2244,11 @@ fn page_prompts(ui: &mut Ui, tokens: Tokens) {
                 Vec2::new(bounds.width(), 297.0),
             );
             ui.painter()
-                .rect_filled(body, 10.0, Color32::from_rgb(255, 248, 242));
+                .rect_filled(body, 10.0, tokens.primary_wash);
             ui.painter().rect_stroke(
                 body,
                 10.0,
-                Stroke::new(1.0, Color32::from_rgb(255, 221, 204)),
+                Stroke::new(1.0, tokens.primary_outline_soft),
                 StrokeKind::Inside,
             );
             ui.painter().text(

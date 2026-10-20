@@ -26,6 +26,13 @@
   color: var(--mz-text-muted, #8a8f99);
 }
 
+.upload-preview-meta {
+  max-width: min(320px, 60vw);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .composer-textarea:focus,
 .composer-textarea:focus-visible {
   border: 0;

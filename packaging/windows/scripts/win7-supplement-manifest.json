@@ -25,6 +25,15 @@
     "defaultPackageIndexUrl": "https://pypi.tuna.tsinghua.edu.cn/simple",
     "installBrowser": false,
     "browsersPath": "",
+    "playwrightNode": {
+      "version": "16.20.2",
+      "source": "nodejs.org Windows x86 zip",
+      "fileName": "node-v16.20.2-win-x86.zip",
+      "url": "https://nodejs.org/dist/v16.20.2/node-v16.20.2-win-x86.zip",
+      "sha256": "c9c0b774328374973d5af5d72c4c6ce3932a1988c7efd32d84c35ba4771df41a",
+      "archiveEntry": "node-v16.20.2-win-x86/node.exe",
+      "note": "Playwright 1.40 supports Node >=16 but its win32 wheel carries an x64 node.exe. The ia32 supplement replaces it with this pinned 32-bit Node 16 runtime and validates the PE machine type."
+    },
     "bootstrap": {
       "getPipUrl": "https://bootstrap.pypa.io/pip/3.8/get-pip.py",
       "pipSpec": "pip<25",
@@ -77,7 +86,8 @@
       "Windows 7 should include KB2533623 and the Universal CRT update for best compatibility.",
       "The default Python package index is the Tsinghua Tuna mirror for more stable Win7 supplement builds in domestic networks; override it with -PythonPackageIndexUrl when needed.",
       "The Playwright Python driver is pinned in requirements-win7-common.txt (a win32 wheel exists for CPython 3.8), but Chromium is NOT bundled: the Playwright Chromium build requires Windows 10+.",
-      "Playwright 1.16 and later bundle an x64 Node runtime even in their win32 wheels. The Win7 ia32 package stays on Playwright 1.15.2, whose win32 wheel has an i386 Node 12.20.1 driver, and validates that PE machine type before packaging.",
+      "Playwright 1.40's win32 wheel bundles an x64 Node runtime. The ia32 supplement installs the pinned Node 16.20.2 win-x86 runtime over driver/node.exe and validates the PE machine type before packaging.",
+      "Node 16 is the minimum runtime supported by the Playwright 1.40 driver and is outside Node's official Windows 7 support matrix; the bridge sets NODE_SKIP_PLATFORM_CHECK=1 and Win7 compatibility must be verified on a real ia32 image.",
       "The build never downloads a browser by itself (Playwright Chromium requires Windows 10+), but a hand-prepared Chrome 109 win32 archive can be staged into opt/browser via the top-level browser section or -BrowserArchivePath; whether the binaries may be redistributed is the feeder's own responsibility to confirm.",
       "On Win7 the browser_* tools must drive a locally installed browser via mode/executable_path/channel; installBrowser stays false so the build never attempts to download Chromium.",
       "To ship a modern browser for Windows out of the box, add a Windows 10+ x64 supplement with installBrowser=true; the Win7 ia32 pack tops out at Chrome 109."

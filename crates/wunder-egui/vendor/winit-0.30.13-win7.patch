@@ -1,7 +1,6 @@
 diff --git a/PATCH.md b/PATCH.md
 new file mode 100644
-index 0000000..e11ea06
---- a/PATCH.md
+--- /dev/null
 +++ b/PATCH.md
 @@ -0,0 +1,8 @@
 +# winit 0.30.13 Win7 IME patch
@@ -13,7 +12,6 @@ index 0000000..e11ea06
 +keyboard layouts remain unchanged. This keeps the IME commit as the single
 +authoritative text event for both the egui and Slint frontends.
 diff --git a/src/platform_impl/windows/event_loop.rs b/src/platform_impl/windows/event_loop.rs
-index 6d60c1c..93d202f 100644
 --- a/src/platform_impl/windows/event_loop.rs
 +++ b/src/platform_impl/windows/event_loop.rs
 @@ -2,7 +2,7 @@
@@ -25,7 +23,7 @@ index 6d60c1c..93d202f 100644
  use std::collections::VecDeque;
  use std::ffi::c_void;
  use std::marker::PhantomData;
-@@ -94,6 +94,56 @@ use runner::{EventLoopRunner, EventLoopRunnerShared};
+@@ -94,6 +94,65 @@
  use super::window::set_skip_taskbar;
  use super::SelectedCursor;
  
@@ -34,20 +32,30 @@ index 6d60c1c..93d202f 100644
 +///
 +/// Some legacy Windows IMEs can send this sequence after
 +/// `WM_IME_ENDCOMPOSITION`, when `ime_state` is already disabled. Keeping the
-+/// exact commit text until the next key press lets the window procedure drop
-+/// only that duplicate and keeps direct Unicode keyboard layouts untouched.
++/// committed text until its matching character messages arrive lets the window
++/// procedure drop only those duplicates. Some IMEs split one displayed word
++/// across several result messages, while winit may combine its `WM_CHAR`
++/// messages, so this is a short sequence rather than just the last commit.
 +#[derive(Default)]
 +pub(crate) struct ImeCommitDeduplicator {
-+    pending_text: Option<String>,
++    pending_text: String,
 +}
 +
 +impl ImeCommitDeduplicator {
 +    fn record_commit(&mut self, text: String) {
-+        self.pending_text = (!text.is_empty()).then_some(text);
-+    }
++        const MAX_PENDING_COMMIT_BYTES: usize = 1024;
 +
-+    fn begin_key_press(&mut self) {
-+        self.pending_text = None;
++        if text.is_empty() {
++            return;
++        }
++
++        // Preserve adjacent result strings: the delayed WM_CHAR sequence can
++        // represent all of them as one keyboard event. Bound the buffer so an
++        // IME which never emits that compatibility sequence cannot grow it.
++        if self.pending_text.len() + text.len() > MAX_PENDING_COMMIT_BYTES {
++            self.pending_text.clear();
++        }
++        self.pending_text.push_str(&text);
 +    }
 +
 +    fn suppress_keyboard_text(
@@ -59,19 +67,18 @@ index 6d60c1c..93d202f 100644
 +            return false;
 +        };
 +
-+        if let Some(pending) = self.pending_text.as_deref() {
-+            if pending == text {
-+                self.pending_text = None;
-+                return true;
-+            }
-+            if let Some(rest) = pending.strip_prefix(text) {
-+                self.pending_text = (!rest.is_empty()).then(|| rest.to_owned());
-+                return true;
-+            }
-+            // A different text event belongs to a later key press. Do not let
-+            // an unmatched old commit affect any future normal input.
-+            self.pending_text = None;
++        if self.pending_text == text {
++            self.pending_text.clear();
++            return true;
 +        }
++        if self.pending_text.starts_with(text) {
++            self.pending_text.drain(..text.len());
++            return true;
++        }
++
++        // A different text event proves that the queued compatibility echo
++        // did not arrive. Do not let an old commit affect normal input.
++        self.pending_text.clear();
 +
 +        // IMEs that send WM_CHAR while their composition is still active are
 +        // covered as well; the IME commit remains the authoritative text.
@@ -82,7 +89,7 @@ index 6d60c1c..93d202f 100644
  /// some backends like macos uses an uninhabited `Never` type,
  /// on windows, `UserEvent`s are also dispatched through the
  /// WNDPROC callback, and due to the re-entrant nature of the
-@@ -119,6 +169,7 @@ pub(crate) struct WindowData {
+@@ -119,6 +178,7 @@
      pub window_state: Arc<Mutex<WindowState>>,
      pub event_loop_runner: EventLoopRunnerShared<UserEventPlaceholder>,
      pub key_event_builder: KeyEventBuilder,
@@ -90,13 +97,10 @@ index 6d60c1c..93d202f 100644
      pub _file_drop_handler: Option<FileDropHandler>,
      pub userdata_removed: Cell<bool>,
      pub recurse_depth: Cell<u32>,
-@@ -132,6 +183,28 @@ impl WindowData {
+@@ -131,6 +191,24 @@
+ 
      fn window_state_lock(&self) -> MutexGuard<'_, WindowState> {
          self.window_state.lock().unwrap()
-     }
-+
-+    fn begin_key_press(&self) {
-+        self.ime_commit_deduplicator.borrow_mut().begin_key_press();
 +    }
 +
 +    fn suppress_ime_keyboard_text(
@@ -115,20 +119,11 @@ index 6d60c1c..93d202f 100644
 +            window_id: RootWindowId(WindowId(window)),
 +            event: WindowEvent::Ime(Ime::Commit(text)),
 +        });
-+    }
+     }
  }
  
- struct ThreadMsgTargetData {
-@@ -1137,9 +1210,29 @@ unsafe fn public_window_callback_inner(
- 
-     let keyboard_callback = || {
+@@ -1139,7 +1217,21 @@
          use crate::event::WindowEvent::KeyboardInput;
-+        if matches!(msg, WM_KEYDOWN | WM_SYSKEYDOWN) {
-+            // A new physical press makes any unconsumed commit stale. This
-+            // keeps the narrow post-commit window from swallowing a later
-+            // character that happens to be the same text.
-+            userdata.begin_key_press();
-+        }
          let events =
              userdata.key_event_builder.process_message(window, msg, wparam, lparam, &mut result);
 +        // Some legacy Windows IMEs emit a
@@ -149,7 +144,7 @@ index 6d60c1c..93d202f 100644
              userdata.send_event(Event::WindowEvent {
                  window_id: RootWindowId(WindowId(window)),
                  event: KeyboardInput {
-@@ -1551,10 +1644,7 @@ unsafe fn public_window_callback_inner(
+@@ -1551,10 +1643,7 @@
                              window_id: RootWindowId(WindowId(window)),
                              event: WindowEvent::Ime(Ime::Preedit(String::new(), None)),
                          });
@@ -161,7 +156,7 @@ index 6d60c1c..93d202f 100644
                      }
                  }
  
-@@ -1593,10 +1683,7 @@ unsafe fn public_window_callback_inner(
+@@ -1593,10 +1682,7 @@
                              window_id: RootWindowId(WindowId(window)),
                              event: WindowEvent::Ime(Ime::Preedit(String::new(), None)),
                          });
@@ -173,7 +168,7 @@ index 6d60c1c..93d202f 100644
                      }
                  }
  
-@@ -2674,3 +2761,27 @@ fn get_pointer_move_kind(
+@@ -2674,3 +2760,29 @@
          PointerMoveKind::None
      }
  }
@@ -193,19 +188,20 @@ index 6d60c1c..93d202f 100644
 +        assert!(deduplicator.suppress_keyboard_text(false, Some("你")));
 +        assert!(deduplicator.suppress_keyboard_text(false, Some("好")));
 +
-+        deduplicator.record_commit("你好".into());
-+        deduplicator.begin_key_press();
-+        assert!(!deduplicator.suppress_keyboard_text(false, Some("你好")));
++        // Legacy IMEs can split a displayed word into result strings while
++        // winit later combines their WM_CHAR messages into one key event.
++        deduplicator.record_commit("你".into());
++        deduplicator.record_commit("好".into());
++        assert!(deduplicator.suppress_keyboard_text(false, Some("你好")));
 +
 +        assert!(deduplicator.suppress_keyboard_text(true, Some("中")));
 +        assert!(!deduplicator.suppress_keyboard_text(false, Some("中")));
 +    }
 +}
 diff --git a/src/platform_impl/windows/window.rs b/src/platform_impl/windows/window.rs
-index 228c6f0..18055f8 100644
 --- a/src/platform_impl/windows/window.rs
 +++ b/src/platform_impl/windows/window.rs
-@@ -1201,6 +1201,7 @@ impl InitData<'_> {
+@@ -1201,6 +1201,7 @@
              window_state: win.window_state.clone(),
              event_loop_runner: self.event_loop.runner_shared.clone(),
              key_event_builder: KeyEventBuilder::default(),

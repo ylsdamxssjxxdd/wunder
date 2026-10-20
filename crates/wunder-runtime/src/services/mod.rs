@@ -59,6 +59,7 @@ pub mod thread_change_feeder;
 pub mod thread_log;
 pub mod thread_view_rebuild;
 pub mod tool_result_display;
+pub(crate) mod tool_result_store;
 pub mod tools;
 pub mod user_access;
 pub mod user_agent_presets;

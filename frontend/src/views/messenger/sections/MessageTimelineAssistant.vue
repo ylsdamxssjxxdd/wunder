@@ -354,35 +354,14 @@ const runtimeContentVersion = computed(() => {
   return `${structureVersion}:${messageScopedVersion}`;
 });
 
-/** 一段线程视图正文：本地连续流 > 持久头 + 尾部窗口 > 持久预览。 */
+/** 预览与连续正文分离：流式期间保留已读前缀，终态等待全文补齐。 */
 const resolveThreadBodyText = (): string => {
   const preview = String(message.value.content || '');
-  // The durable row keeps a 2 KB head plus a rolling 2 KB tail window, so the
-  // middle of a long answer disappears as the stream advances. The local view
-  // is the only contiguous copy; use it whenever it still tracks the offset.
+  if (!message.value.streaming && !message.value.__thread_body) return preview;
+  // A missed window keeps its readable prefix while the body reader heals the
+  // gap. Never concatenate a disconnected rolling tail into that prefix.
   const live = String(message.value.__thread_live || '');
-  if (live && Number(message.value.__thread_live_offset ?? -1) === Number(message.value.__thread_content_offset ?? -2)) {
-    return live;
-  }
-  const tail = String(message.value.__thread_tail || '');
-  if (!tail) return preview;
-  const units = (value: string): number => [...value].reduce((total, char) => total + char.length, 0);
-  const previewUnits = units(preview);
-  const tailEnd = Number(message.value.__thread_tail_offset || tail.length || 0);
-  const tailUnits = units(tail);
-  const tailStart = Math.max(0, tailEnd - tailUnits);
-  if (previewUnits <= tailStart) return `${preview}${tail}`;
-  if (previewUnits >= tailEnd) return preview;
-  // The durable preview already contains the beginning of the active block;
-  // append only the unseen UTF-16 suffix instead of duplicating the block.
-  let consumed = previewUnits - tailStart;
-  let index = 0;
-  for (const char of tail) {
-    if (consumed <= 0) break;
-    consumed -= char.length;
-    index += char.length;
-  }
-  return `${preview}${tail.slice(index)}`;
+  return live.length > preview.length ? live : preview;
 };
 const displayContent = computed(() => {
   void runtimeContentVersion.value;

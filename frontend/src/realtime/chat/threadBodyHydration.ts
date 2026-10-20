@@ -31,12 +31,12 @@ let active = 0;
 function drain(): void {
   while (active < MAX_CONCURRENT && queue.length > 0) {
     const item = queue.shift()!;
-    tokens.delete(item.request.token);
     active += 1;
     void read(item.request)
       .then(item.settle, () => item.settle(null))
       .catch(() => item.settle(null))
       .finally(() => {
+        tokens.delete(item.request.token);
         active -= 1;
         drain();
       });
@@ -51,7 +51,7 @@ export function enqueueThreadBodyHydration(
   // Newer content wins: drop the oldest waiting read rather than the newcomer.
   while (queue.length >= MAX_QUEUED) {
     const dropped = queue.shift();
-    if (dropped) dropped.settle(null);
+    if (dropped) { tokens.delete(dropped.request.token); dropped.settle(null); }
   }
   return new Promise<string | null>((resolve) => {
     tokens.add(request.token);
@@ -73,8 +73,10 @@ export function cancelThreadBodyHydration(sessionId: string): void {
 
 export function resetThreadBodyHydration(): void {
   const waiting = queue.splice(0, queue.length);
-  tokens.clear();
-  for (const item of waiting) item.settle(null);
+  for (const item of waiting) {
+    tokens.delete(item.request.token);
+    item.settle(null);
+  }
 }
 
 async function read(request: ThreadBodyHydrationRequest): Promise<string | null> {

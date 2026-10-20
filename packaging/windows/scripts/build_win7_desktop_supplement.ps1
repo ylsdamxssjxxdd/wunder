@@ -187,6 +187,30 @@ function Expand-ZipInto {
   Expand-Archive -LiteralPath $Archive -DestinationPath $Destination -Force
 }
 
+function Assert-FileSha256 {
+  param([string]$Path, [string]$Expected)
+  if ([string]::IsNullOrWhiteSpace($Expected)) { return }
+  $actual = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash
+  if ($actual.ToUpperInvariant() -ne $Expected.ToUpperInvariant()) {
+    Fail "SHA256 mismatch for ${Path}: got $actual, expected $Expected"
+  }
+  Write-Step "validated SHA256: $Path"
+}
+
+function Expand-ZipEntry {
+  param([string]$Archive, [string]$Entry, [string]$Destination)
+  Add-Type -AssemblyName System.IO.Compression.FileSystem
+  $zip = [System.IO.Compression.ZipFile]::OpenRead($Archive)
+  try {
+    $item = $zip.Entries | Where-Object { $_.FullName -eq $Entry } | Select-Object -First 1
+    if ($null -eq $item) { Fail "archive entry not found: $Entry in $Archive" }
+    Ensure-Directory (Split-Path -Parent $Destination)
+    [System.IO.Compression.ZipFileExtensions]::ExtractToFile($item, $Destination, $true)
+  } finally {
+    $zip.Dispose()
+  }
+}
+
 function Expand-ZipFlatten {
   param([string]$Archive, [string]$Destination)
   $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ('wunder-supp-' + [guid]::NewGuid().ToString('N'))
@@ -450,11 +474,28 @@ if (-not [string]::IsNullOrWhiteSpace($requirementsRel)) {
   }
 }
 
-# Playwright 1.16+ puts an x64 Node runtime in the win32 wheel. The Win7
-# requirements deliberately pin 1.15.2, whose driver/node.exe is native i386.
-# Keep this as a release gate so a future dependency update cannot silently
-# make the Win7 package unloadable on 32-bit Windows.
+# Playwright 1.40 supports Node >=16, but its win32 wheel still carries an x64
+# driver/node.exe. The ia32 supplement replaces that file with a pinned 32-bit
+# Node runtime; the PE check below remains a release gate so a future package
+# update cannot silently make the Win7 package unloadable on 32-bit Windows.
 $playwrightDriverNode = Join-Path $pythonRoot 'Lib\site-packages\playwright\driver\node.exe'
+if ($Arch -eq 'ia32') {
+  $playwrightNodeMeta = Get-PropertyValue -Object $pythonMeta -Name 'playwrightNode'
+  if ($null -eq $playwrightNodeMeta) {
+    Fail "manifest python.playwrightNode is required for ia32"
+  }
+  $nodeVersion = [string](Get-PropertyValue -Object $playwrightNodeMeta -Name 'version' -Default '16.20.2')
+  $nodeFileName = [string](Get-PropertyValue -Object $playwrightNodeMeta -Name 'fileName' -Default "node-v$nodeVersion-win-x86.zip")
+  $nodeUrl = [string](Get-PropertyValue -Object $playwrightNodeMeta -Name 'url')
+  $nodeSha = [string](Get-PropertyValue -Object $playwrightNodeMeta -Name 'sha256')
+  $nodeEntry = [string](Get-PropertyValue -Object $playwrightNodeMeta -Name 'archiveEntry' -Default "node-v$nodeVersion-win-x86/node.exe")
+  if ([string]::IsNullOrWhiteSpace($nodeUrl)) { Fail "manifest python.playwrightNode.url is empty" }
+  $nodeArchive = Join-Path $downDir $nodeFileName
+  Get-DownloadedFile -Url $nodeUrl -Destination $nodeArchive -Force:$RefreshDownloads | Out-Null
+  Assert-FileSha256 -Path $nodeArchive -Expected $nodeSha
+  Expand-ZipEntry -Archive $nodeArchive -Entry $nodeEntry -Destination $playwrightDriverNode
+  Write-Step "replaced Playwright driver node.exe with Node $nodeVersion x86"
+}
 if (-not (Test-Path -LiteralPath $playwrightDriverNode)) {
   Fail "Playwright driver node.exe missing after package installation: $playwrightDriverNode"
 }

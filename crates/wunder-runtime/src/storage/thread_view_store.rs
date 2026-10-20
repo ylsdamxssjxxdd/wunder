@@ -1026,7 +1026,8 @@ pub(crate) fn project_block(
     .map(|r| int(&r[0]))
     .unwrap_or(0);
     if field == "content" {
-        row.assistant.tail = preview(content, 2048);
+        // tail_offset points to the end of the block, so retain its suffix.
+        row.assistant.tail = projection::preview_tail(content, 2048);
         row.assistant.tail_offset = offset.max(0) as usize + content.encode_utf16().count();
     }
     if field == "reasoning" && row.reasoning_item_id != id {

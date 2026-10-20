@@ -288,3 +288,32 @@ clearThreadView(key); generation=beginThreadView(key);
 commitThreadView(key,{...page([{...waiting,status:'completed'}]),runtime_status:'completed',active_turn_id:''},generation);
 assert.equal(threadViewSlots(key)![0].assistant.questionPanel.status,'answered');
 console.log('thread view: durable inquiry metadata and terminal settlement pass');
+
+// Durable rows can reach the display feed before their ephemeral deltas. Once
+// the preview is full, every overlapping suffix must extend the same body.
+clearThreadView(key); generation=beginThreadView(key);
+let accumulated='';
+const initialStream={...row(1,1),status:'running',assistant:{item_id:'fixture-answer-1',content:'',content_offset:0}};
+commitThreadView(key,page([initialStream]),generation);
+for(let index=0;index<100;index++) {
+  const offset=accumulated.length;
+  const delta=`line-${index} 示例😀\n`;
+  accumulated+=delta;
+  applyThreadViewChanges(key,{view_seq:index+2,rows:[{...initialStream,revision:index+2,assistant:{
+    ...initialStream.assistant,content:accumulated.slice(0,80),content_offset:accumulated.length,
+    tail:accumulated.slice(-100),tail_offset:accumulated.length}}]});
+  applyThreadViewTail(key,{item_id:'fixture-answer-1',offset,text:delta});
+  assert.equal(threadViewSlots(key)![0].assistant.__thread_live,accumulated);
+}
+const completeStream=threadViewSlots(key)![0].assistant.__thread_live;
+// A missing suffix window must retain the prefix, never splice distant text.
+applyThreadViewChanges(key,{view_seq:200,rows:[{...initialStream,revision:200,assistant:{
+  ...initialStream.assistant,content:accumulated.slice(0,80),content_offset:accumulated.length+1000,
+  tail:'distant suffix',tail_offset:accumulated.length+1000}}]});
+assert.equal(threadViewSlots(key)![0].assistant.__thread_live,completeStream);
+// Switching model item identity starts a separate answer.
+applyThreadViewChanges(key,{view_seq:201,rows:[{...initialStream,revision:201,assistant:{
+  item_id:'fixture-answer-2',content:'new answer',content_offset:10}}]});
+assert.equal(threadViewSlots(key)![0].assistant.__thread_live,'new answer');
+clearThreadView(key);
+console.log('thread view: overlapping durable suffixes, reordered duplicate tails, gaps and item identity pass');

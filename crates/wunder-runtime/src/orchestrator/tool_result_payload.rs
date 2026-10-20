@@ -2,6 +2,7 @@ use super::*;
 #[cfg(test)]
 use crate::token_utils::approx_token_count;
 
+#[derive(serde::Serialize)]
 pub(super) struct ToolResultPayload {
     pub(super) ok: bool,
     pub(super) data: Value,
@@ -155,6 +156,7 @@ impl ToolResultPayload {
             }
         }
         strip_compact_payload_noise(&mut payload, tool_name);
+        copy_saved_result_reference(&mut payload, self);
         if let Some(token_budget) = token_budget {
             fit_observation_payload_to_token_budget(&mut payload, tool_name, token_budget);
         }
@@ -195,6 +197,98 @@ impl ToolResultPayload {
             }
         }
         payload
+    }
+}
+
+pub(super) fn observation_has_omissions(value: &Value, depth: usize) -> bool {
+    if depth > 16 {
+        return false;
+    }
+    match value {
+        Value::Object(map) => {
+            map.get("truncated").and_then(Value::as_bool) == Some(true)
+                || map.get("__truncated").and_then(Value::as_bool) == Some(true)
+                || ["omitted_items", "rows_omitted", "content_omitted_chars"]
+                    .iter()
+                    .any(|key| map.get(*key).and_then(Value::as_u64).is_some_and(|n| n > 0))
+                || map
+                    .values()
+                    .any(|v| observation_has_omissions(v, depth + 1))
+        }
+        Value::Array(items) => items
+            .iter()
+            .any(|v| observation_has_omissions(v, depth + 1)),
+        _ => false,
+    }
+}
+
+fn valid_result_handle(value: &Value) -> Option<&str> {
+    let handle = value.as_str()?;
+    let id = handle.strip_prefix("tool-result:")?;
+    (id.len() == 32 && id.bytes().all(|b| b.is_ascii_hexdigit())).then_some(handle)
+}
+
+pub(super) fn saved_result_metadata(result: &ToolResultPayload) -> Option<Value> {
+    let saved = result.meta.as_ref()?.get("saved_result")?;
+    let handle = saved.get("handle").and_then(valid_result_handle)?;
+    Some(json!({
+        "handle": handle,
+        "bytes": saved.get("bytes")?.as_u64()?,
+        "expires_at": saved.get("expires_at")?.as_i64()?,
+    }))
+}
+
+fn copy_saved_result_reference(payload: &mut Value, result: &ToolResultPayload) {
+    let saved = result
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.get("saved_result"));
+    let handle = saved
+        .and_then(|v| v.get("handle"))
+        .and_then(valid_result_handle)
+        .or_else(|| {
+            (result.data.get("result_read") == Some(&Value::Bool(true)))
+                .then(|| {
+                    result
+                        .data
+                        .get("result_handle")
+                        .and_then(valid_result_handle)
+                })
+                .flatten()
+        });
+    let Some(handle) = handle else {
+        if result
+            .meta
+            .as_ref()
+            .and_then(|v| v.get("result_store_failed"))
+            == Some(&Value::Bool(true))
+        {
+            payload["result_store_failed"] = json!(true);
+            payload["recoverable"] = json!(false);
+        }
+        return;
+    };
+    let Some(map) = payload.as_object_mut() else {
+        return;
+    };
+    map.insert("result_handle".to_string(), json!(handle));
+    map.insert("recoverable".to_string(), Value::Bool(true));
+    map.insert(
+        "recovery_hint".to_string(),
+        json!("read_file: path=result_handle; offset=0; limit=1024; query optional"),
+    );
+    if let Some(saved) = saved {
+        for (source, target) in [
+            ("bytes", "result_bytes"),
+            ("expires_at", "result_expires_at"),
+        ] {
+            if let Some(value) = saved.get(source).filter(|v| v.is_u64() || v.is_i64()) {
+                map.insert(target.to_string(), value.clone());
+            }
+        }
+    } else if let Some(offset) = result.data.get("offset").and_then(Value::as_u64) {
+        map.insert("offset".to_string(), json!(offset));
+        map.insert("recovery_hint".to_string(), json!("read_file: path=result_handle; reread same offset with smaller limit if preview truncated"));
     }
 }
 
@@ -545,9 +639,9 @@ fn serialized_token_count(value: &impl serde::Serialize) -> i64 {
 }
 
 /// Keep a complete model-observation envelope inside its allotted token
-/// estimate. A preview is not a persisted result: recovering omitted content
-/// requires rereading the same range with a smaller limit, or a narrower query.
-/// Native next-page cursors never recover omitted entries from the current page.
+/// estimate. Preserve a runtime-minted carrier reference when available;
+/// otherwise recovery requires rereading the current range or narrowing the
+/// query. Native next-page cursors never recover omitted current-page entries.
 fn fit_observation_payload_to_token_budget(
     payload: &mut Value,
     tool_name: &str,
@@ -595,12 +689,12 @@ fn fit_observation_payload_to_token_budget(
             reasons.push(json!("token_budget"));
         }
     }
-    map.insert(
-        "recovery_hint".to_string(),
-        json!(
-        "reread_current_range_with_smaller_limit_or_narrower_query; next_page_skips_omitted_content"
-    ),
-    );
+    if !map.contains_key("result_handle") {
+        map.insert(
+            "recovery_hint".to_string(),
+            json!("reread_current_range_with_smaller_limit_or_narrower_query; next_page_skips_omitted_content"),
+        );
+    }
 
     let mut wrapper = Map::new();
     wrapper.insert("truncated".to_string(), Value::Bool(true));
@@ -646,6 +740,7 @@ fn fit_observation_payload_to_token_budget(
             .remove("error_code")
             .filter(|value| value.is_string() && serialized_token_count(value) <= 32);
         let retryable = map.get("retryable").and_then(Value::as_bool);
+        let recovery = take_recovery_fields(map);
         let (tool, _) = truncate_utf8_head_tail_to_bytes(tool_name, 64, "...");
         *map = Map::from_iter([
             ("tool".to_string(), Value::String(tool)),
@@ -660,6 +755,7 @@ fn fit_observation_payload_to_token_budget(
                 json!("reread_with_smaller_limit"),
             ),
         ]);
+        map.extend(recovery);
         if continuation_omitted {
             map.insert("continuation_omitted".to_string(), Value::Bool(true));
         }
@@ -704,10 +800,12 @@ fn fit_observation_payload_to_token_budget(
         let ok = map.get("ok").cloned().unwrap_or(Value::Bool(false));
         let recoverable = map.get("recoverable").and_then(Value::as_bool);
         let continuation_omitted = map.get("continuation_omitted").and_then(Value::as_bool);
+        let recovery = take_recovery_fields(map);
         *map = Map::from_iter([
             ("ok".to_string(), ok),
             ("truncated".to_string(), Value::Bool(true)),
         ]);
+        map.extend(recovery);
         if let Some(recoverable) = recoverable {
             map.insert("recoverable".to_string(), Value::Bool(recoverable));
         }
@@ -718,6 +816,21 @@ fn fit_observation_payload_to_token_budget(
             map.insert("error".to_string(), json!("tool_failed; details_omitted"));
         }
     }
+}
+
+fn take_recovery_fields(map: &mut Map<String, Value>) -> Map<String, Value> {
+    [
+        "result_handle",
+        "recoverable",
+        "recovery_hint",
+        "result_bytes",
+        "result_expires_at",
+        "offset",
+        "result_store_failed",
+    ]
+    .into_iter()
+    .filter_map(|key| map.remove(key).map(|v| (key.to_string(), v)))
+    .collect()
 }
 
 fn fit_error_preview(map: &mut Map<String, Value>, source: &str, token_budget: i64) {
@@ -858,6 +971,11 @@ fn compact_observation_payload(payload: &mut Value, tool_name: &str) {
     let Some(map) = payload.as_object_mut() else {
         return;
     };
+    // Result reads already enforce a byte page. Preserve that page and its
+    // source offset; a smaller observation budget can request the same offset.
+    if map.get("data").and_then(|d| d.get("result_read")) == Some(&Value::Bool(true)) {
+        return;
+    }
     // A transport preview describes information already lost upstream; normal
     // success projections must not erase that state or its remaining preview.
     if map

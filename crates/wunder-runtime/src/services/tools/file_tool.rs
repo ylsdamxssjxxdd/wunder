@@ -19,6 +19,7 @@ use crate::core::atomic_write::atomic_write_text;
 use crate::core::blocking;
 use crate::i18n;
 use crate::path_utils::{is_within_root, normalize_path_for_compare, normalize_target_path};
+use crate::services::tool_result_store;
 use crate::workspace::WorkspaceManager;
 use anyhow::{anyhow, Result};
 use serde_json::{json, Map, Value};
@@ -804,8 +805,164 @@ fn compact_read_file_summary_for_model(summary: &Value) -> Value {
     })
 }
 
+const DEFAULT_RESULT_READ_BYTES: usize = 8 * 1024;
+const MAX_RESULT_READ_BYTES: usize = 16 * 1024;
+const MAX_RESULT_QUERY_BYTES: usize = 512;
+
+#[derive(Debug, PartialEq, Eq)]
+struct SavedResultReadArgs {
+    handle: String,
+    offset: u64,
+    limit: usize,
+    query: Option<String>,
+}
+
+fn saved_result_path(args: &Value) -> Option<&str> {
+    args.as_str()
+        .or_else(|| {
+            args.get("path")
+                .or_else(|| args.get("file_path"))
+                .or_else(|| args.get("file"))
+                .and_then(Value::as_str)
+        })
+        .map(str::trim)
+        .filter(|path| path.starts_with("tool-result:"))
+}
+
+fn parse_saved_result_read_args(args: &Value) -> Result<Option<SavedResultReadArgs>> {
+    let handle = saved_result_path(args);
+    let has_nested_handle = args
+        .get("files")
+        .and_then(Value::as_array)
+        .is_some_and(|files| files.iter().any(|file| saved_result_path(file).is_some()));
+    let Some(handle) = handle else {
+        if has_nested_handle {
+            return Err(anyhow!(
+                "Saved tool results must use a single top-level path; files cannot contain a tool-result: handle."
+            ));
+        }
+        if args.get("query").is_some() {
+            return Err(anyhow!("query requires a tool-result: path."));
+        }
+        return Ok(None);
+    };
+    if handle == "tool-result:" {
+        return Err(anyhow!("The saved tool result handle is empty."));
+    }
+    for field in [
+        "files",
+        "start_line",
+        "end_line",
+        "line_ranges",
+        "mode",
+        "indentation",
+        "dry_run",
+    ] {
+        if args.get(field).is_some() {
+            return Err(anyhow!(
+                "{field} cannot be combined with a tool-result: path; use byte offset/limit instead."
+            ));
+        }
+    }
+    let offset = args
+        .get("offset")
+        .map(|value| {
+            value
+                .as_u64()
+                .ok_or_else(|| anyhow!("offset must be a non-negative integer byte offset."))
+        })
+        .transpose()?
+        .unwrap_or(0);
+    let limit = args
+        .get("limit")
+        .map(|value| {
+            value
+                .as_u64()
+                .filter(|value| (1..=MAX_RESULT_READ_BYTES as u64).contains(value))
+                .map(|value| value as usize)
+                .ok_or_else(|| {
+                    anyhow!("limit must be an integer within 1..{MAX_RESULT_READ_BYTES} bytes.")
+                })
+        })
+        .transpose()?
+        .unwrap_or(DEFAULT_RESULT_READ_BYTES);
+    let query = args
+        .get("query")
+        .map(|value| {
+            value
+                .as_str()
+                .filter(|value| !value.is_empty() && value.len() <= MAX_RESULT_QUERY_BYTES)
+                .map(ToOwned::to_owned)
+                .ok_or_else(|| {
+                    anyhow!("query must be a non-empty literal string of at most {MAX_RESULT_QUERY_BYTES} UTF-8 bytes.")
+                })
+        })
+        .transpose()?;
+    Ok(Some(SavedResultReadArgs {
+        handle: handle.to_string(),
+        offset,
+        limit,
+        query,
+    }))
+}
+
+fn saved_result_read_failure(code: &str, error: impl Into<String>) -> Value {
+    build_failed_tool_result(
+        error,
+        json!({ "result_read": true }),
+        ToolErrorMeta::new(
+            code,
+            Some("Read the original result_handle with path, a zero-based byte offset, limit (1..16384), and optional literal query. Handles belong to the current task thread.".to_string()),
+            false,
+            None,
+        ),
+        false,
+    )
+}
+
+async fn read_saved_result(context: &ToolContext<'_>, args: SavedResultReadArgs) -> Result<Value> {
+    let root = tool_result_store::store_root(context.config);
+    let user_id = context.user_id.to_string();
+    let session_id = context.session_id.to_string();
+    let workspace_id = context.workspace_id.to_string();
+    let result = blocking::run_fs("tools.result.read", move || {
+        let mut data = tool_result_store::read(
+            &root,
+            &user_id,
+            &session_id,
+            &workspace_id,
+            &args.handle,
+            args.offset,
+            args.limit,
+            args.query.as_deref(),
+        )?;
+        let object = data
+            .as_object_mut()
+            .ok_or_else(|| anyhow!("Saved tool result reader returned an invalid response."))?;
+        object.insert("result_read".to_string(), Value::Bool(true));
+        Ok(data)
+    })
+    .await;
+    Ok(match result {
+        Ok(data) => {
+            build_model_tool_success("read_file", "completed", "Read saved tool result.", data)
+        }
+        Err(error) => saved_result_read_failure("TOOL_RESULT_READ_FAILED", error.to_string()),
+    })
+}
+
 pub(crate) async fn read_files(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     let args = recover_tool_args_value(args);
+    match parse_saved_result_read_args(&args) {
+        Ok(Some(saved_args)) => return read_saved_result(context, saved_args).await,
+        Ok(None) => {}
+        Err(error) => {
+            return Ok(saved_result_read_failure(
+                "TOOL_RESULT_READ_INVALID_ARGS",
+                error.to_string(),
+            ));
+        }
+    }
     if let Some(result) = execute_in_sandbox(context, "读取文件", &args).await {
         return Ok(result);
     }
@@ -1613,6 +1770,87 @@ fn build_write_data(
         map.extend(diff_fields);
     }
     data
+}
+
+#[cfg(test)]
+mod saved_result_read_tests {
+    use super::*;
+
+    #[test]
+    fn result_read_defaults_and_byte_offsets_are_distinct_from_file_lines() {
+        let args = parse_saved_result_read_args(&json!({
+            "path": "tool-result:sample"
+        }))
+        .expect("valid default read")
+        .expect("saved result");
+        assert_eq!(args.offset, 0);
+        assert_eq!(args.limit, DEFAULT_RESULT_READ_BYTES);
+        assert!(args.query.is_none());
+
+        let args = parse_saved_result_read_args(&json!({
+            "path": "tool-result:sample",
+            "offset": 4096,
+            "limit": 16384,
+            "query": "sample value"
+        }))
+        .expect("valid paged search")
+        .expect("saved result");
+        assert_eq!(args.offset, 4096);
+        assert_eq!(args.limit, MAX_RESULT_READ_BYTES);
+        assert_eq!(args.query.as_deref(), Some("sample value"));
+        assert!(parse_saved_result_read_args(&json!({
+            "path": "sample.txt", "start_line": 1, "end_line": 5
+        }))
+        .expect("ordinary file read")
+        .is_none());
+    }
+
+    #[test]
+    fn result_read_rejects_invalid_pagination_instead_of_reading_a_file() {
+        for invalid in [
+            json!({ "offset": -1 }),
+            json!({ "offset": 1.5 }),
+            json!({ "offset": "0" }),
+            json!({ "limit": 0 }),
+            json!({ "limit": 16385 }),
+            json!({ "limit": null }),
+            json!({ "query": "" }),
+            json!({ "query": 7 }),
+            json!({ "query": "x".repeat(MAX_RESULT_QUERY_BYTES + 1) }),
+        ] {
+            let mut args = json!({ "path": "tool-result:sample" });
+            args.as_object_mut()
+                .expect("object")
+                .extend(invalid.as_object().expect("object").clone());
+            assert!(parse_saved_result_read_args(&args).is_err(), "{args}");
+        }
+        assert!(parse_saved_result_read_args(&json!({ "path": "tool-result:" })).is_err());
+    }
+
+    #[test]
+    fn result_read_rejects_file_options_and_nested_handles() {
+        for field in [
+            "files",
+            "start_line",
+            "end_line",
+            "line_ranges",
+            "mode",
+            "indentation",
+            "dry_run",
+        ] {
+            let mut args = json!({ "path": "tool-result:sample" });
+            args[field] = Value::Null;
+            assert!(parse_saved_result_read_args(&args).is_err(), "{field}");
+        }
+        assert!(parse_saved_result_read_args(&json!({
+            "files": [{ "path": "tool-result:sample" }]
+        }))
+        .is_err());
+        assert!(parse_saved_result_read_args(&json!({
+            "path": "sample.txt", "query": "sample"
+        }))
+        .is_err());
+    }
 }
 
 #[cfg(test)]

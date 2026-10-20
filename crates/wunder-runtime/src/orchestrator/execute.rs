@@ -1387,11 +1387,24 @@ impl Orchestrator {
                             should_finish = true;
                         }
 
-                        let observation = self.build_tool_observation(
-                            &name,
-                            &result,
-                            observation_budget,
+                        let mut observation_payload = result.to_compact_payload_with_token_budget(
+                            &name, Some(observation_budget),
                         );
+                        if super::tool_result_payload::observation_has_omissions(&observation_payload, 0)
+                            && result.data.get("result_read") != Some(&Value::Bool(true))
+                            && result.meta.as_ref().is_none_or(|meta| {
+                                meta.get("saved_result").is_none() && meta.get("result_store_failed").is_none()
+                            })
+                        {
+                            result = super::tool_result_recovery::preserve_tool_result(
+                                result, &tool_context,
+                            ).await;
+                            observation_payload = result.to_compact_payload_with_token_budget(
+                                &name, Some(observation_budget),
+                            );
+                        }
+                        let observation = serde_json::to_string(&observation_payload)
+                            .unwrap_or_else(|_| "{}".to_string());
                         let observation_value = Value::String(observation.clone());
                         let read_image_followup = if result.ok && is_read_image_tool_name(&name) {
                             match build_read_image_followup_user_message(&tool_context, &result.data)

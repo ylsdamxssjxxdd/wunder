@@ -36,6 +36,11 @@ from collections import OrderedDict
 from pathlib import Path
 from urllib.parse import urlparse
 
+# Playwright 1.40 needs Node >=16. The Win7 supplement replaces Playwright's
+# x64 driver node with a 32-bit Node 16 build; Node 16 otherwise refuses to
+# start on Windows 7 unless this platform gate is skipped.
+os.environ.setdefault("NODE_SKIP_PLATFORM_CHECK", "1")
+
 # Runs inside one frame: open shadow roots are traversed here because they share
 # the frame's document; nested frames are handled by the caller so each gets its
 # own execution context and selector namespace.

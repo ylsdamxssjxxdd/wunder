@@ -6,6 +6,7 @@ import { reconcileChatQueueRows } from '@/stores/chatQueueLiveState';
 import { cancelThreadBodyHydration, enqueueThreadBodyHydration, resetThreadBodyHydration } from './threadBodyHydration';
 import type { ChatPlan } from './chatPlan';
 import { presentChatInquiry, type ChatInquiryPanel } from './chatInquiry';
+import { reconcileThreadStream, LIVE_STREAM_MAX_CHARS } from './threadViewStream';
 
 export interface ThreadBodyRef { body_id: string; revision: number; bytes: number }
 export interface ViewMessage { item_id: string; content: string; reasoning?: string; created_seq?: number; durable_seq?: number; content_offset?: number; reasoning_offset?: number; tail_offset?: number; body?: ThreadBodyRef; feedback?: unknown; stats?: unknown; tail?: string; failure?: string; attachments?: unknown[]; /** Full body text once the lazy read landed, plus the identity it belongs to. */ hydrated_content?: string; hydrated_body?: string; /** Contiguous local view of a stream; the durable row drops its middle. */ live_content?: string; live_offset?: number; question_panel?: ChatInquiryPanel | null }
@@ -132,8 +133,8 @@ function keepLocalBody(previous: ViewMessage | undefined, next: ViewMessage): Vi
       hydrated_content: hydrated, hydrated_body: token };
   }
   // Only the same item continues the same stream; a new item starts empty.
-  if (previous.live_content && previous.item_id === next.item_id) {
-    out = { ...out, live_content: previous.live_content, live_offset: previous.live_offset };
+  if (previous.item_id === next.item_id) {
+    out = { ...out, ...reconcileThreadStream(previous, out) };
   }
   return out;
 }
@@ -144,7 +145,12 @@ function clearLiveStream(message: ViewMessage): ViewMessage {
 function scheduleBodyHydration(e: Entry, id: string, role: BodyRole): void {
   const row = e.rows.get(id);
   const message = row?.[role];
-  if (!row || !message?.body || LIVE_ROW_STATUSES.includes(row.status)) return;
+  if (!row || !message?.body) return;
+  if (LIVE_ROW_STATUSES.includes(row.status)) {
+    const retained = String(message.live_content || message.content || '').length;
+    // Recover missed durable windows once, through the bounded body reader.
+    if (retained >= LIVE_STREAM_MAX_CHARS - 1 || retained >= Number(message.content_offset || 0)) return;
+  }
   if (message.body.bytes <= bodyBytes(String(message.content || ''))) return;
   const token = `${bodyToken(message)}:${role}:${id}`;
   void enqueueThreadBodyHydration({
@@ -163,34 +169,30 @@ function applyBodyHydration(key: string, id: string, role: BodyRole, expected: s
   // A newer revision or another body already replaced the read target.
   if (!message?.body || `${bodyToken(message)}:${role}:${id}` !== expected) return;
   const units = utf16Units(content);
+  if (LIVE_ROW_STATUSES.includes(row.status)) {
+    const retained = String(message.live_content || '');
+    const live = reconcileThreadStream({ content: retained.length > content.length ? retained : content }, message);
+    row[role] = { ...message, ...live };
+    e.slots.set(id, materialize(row));
+    notify();
+    return;
+  }
   row[role] = { ...clearLiveStream(message), content, content_offset: units, tail: '', tail_offset: units,
     hydrated_content: content, hydrated_body: bodyToken(message) };
   e.slots.set(id, materialize(row));
   notify();
 }
-/** Maximum characters retained for the local stream view of one answer. */
-const LIVE_STREAM_MAX_CHARS = 262144;
 /**
  * The durable row keeps a 2 KB head plus a 2 KB tail window, so the middle of a
  * long answer disappears as the stream advances — the body shrinks mid-output
  * and grows again. Accumulating deltas locally restores one contiguous text.
- * A gap in the offset sequence means frames were lost: drop the local view and
- * wait for the next durable block instead of inventing the missing piece.
+ * A gap in the offset sequence keeps the readable prefix until a bounded body
+ * read fills the missing range.
  */
 function accumulateLiveStream(message: ViewMessage, delta: string, expected: number, deltaUnits: number): Partial<ViewMessage> {
-  const append = (prefix: string) => {
-    const next = prefix + delta;
-    return {
-      live_content: next.length > LIVE_STREAM_MAX_CHARS ? next.slice(-LIVE_STREAM_MAX_CHARS) : next,
-      live_offset: expected + deltaUnits
-    };
-  };
-  if (Number(message.live_offset) === expected) return append(String(message.live_content ?? ''));
-  // Joining a stream already in flight: the durable preview is its prefix
-  // whenever it covers exactly the offset the next frame starts from.
-  const preview = String(message.content || '');
-  if (!String(message.live_content ?? '') && utf16Units(preview) === expected) return append(preview);
-  return { live_content: '', live_offset: undefined };
+  return reconcileThreadStream(message, {
+    content: message.content, tail: delta, tail_offset: expected + deltaUnits
+  });
 }
 function carryLocalBody(row: ChatViewRow, previous: ChatViewRow | undefined): ChatViewRow {
   if (!previous) return row;
@@ -232,6 +234,9 @@ function merge(e: Entry, row: ChatViewRow) {
     }
   }
   row = carryLocalBody(row, previous);
+  if (LIVE_ROW_STATUSES.includes(row.status)) {
+    row = { ...row, assistant: { ...row.assistant, ...reconcileThreadStream(row.assistant, row.assistant) } };
+  }
   e.rows.set(row.root_turn_id, markRaw(row)); e.slots.set(row.root_turn_id, materialize(row));
   scheduleBodyHydration(e, row.root_turn_id, 'assistant');
   scheduleBodyHydration(e, row.root_turn_id, 'user');

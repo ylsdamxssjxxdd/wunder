@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readComposerDraftState, writeComposerDraftState, clearComposerDraftState } from '../../src/components/chat/composerDraftCache';
 
 import {
   COMPOSER_MODEL_MAX_ITEMS,
@@ -90,4 +91,17 @@ test('pending path handoffs remain bounded and can repeat after being consumed',
   const paths = takeWorkspaceChatReferences();
   assert.equal(paths.length, WORKSPACE_REFERENCE_MAX_ITEMS);
   assert.equal(paths.at(-1)?.path, `file-${WORKSPACE_REFERENCE_MAX_ITEMS + 3}.md`);
+});
+
+test('file reference drafts preserve the path independently from editable text', () => {
+  const key = 'fixture-file-draft';
+  writeComposerDraftState(key, { content: 'fixture draft', attachments: [{
+    id: 'fixture-reference', type: 'workspace', name: 'notes.txt', content: '', workspace_path: 'fixtures/notes.txt'
+  }] });
+  const restored = readComposerDraftState(key)!;
+  assert.equal(restored.content, 'fixture draft');
+  assert.equal(restored.attachments[0].workspace_path, 'fixtures/notes.txt');
+  restored.attachments.splice(0);
+  assert.equal(readComposerDraftState(key)!.attachments.length, 1);
+  clearComposerDraftState(key);
 });

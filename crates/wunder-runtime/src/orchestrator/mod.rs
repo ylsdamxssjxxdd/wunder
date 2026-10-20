@@ -107,6 +107,7 @@ mod tool_exec;
 mod tool_parallel;
 mod tool_pipeline;
 mod tool_result_payload;
+mod tool_result_recovery;
 mod turn_state;
 mod types;
 mod usage_accounting;

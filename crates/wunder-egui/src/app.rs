@@ -14,6 +14,10 @@ const SIDEBAR_MAX_WIDTH: f32 = 420.0;
 const COMPACT_SIDEBAR_BREAKPOINT: f32 = 1024.0;
 const DEFAULT_SIDEBAR_SPLIT: f32 = 0.60;
 const CHAT_COLUMN_WIDTH: f32 = 1000.0;
+/// Height of the draggable band between the workspace and directory panes.
+const SIDEBAR_SPLITTER_HEIGHT: f32 = 9.0;
+/// Height of the account row pinned to the bottom of the sidebar.
+const SIDEBAR_FOOTER_HEIGHT: f32 = 33.0;
 
 fn uses_compact_sidebar(screen_width: f32) -> bool {
     screen_width < COMPACT_SIDEBAR_BREAKPOINT
@@ -29,6 +33,16 @@ fn drawer_sidebar_width(screen_width: f32) -> f32 {
 
 fn clamp_sidebar_split(value: f32) -> f32 {
     value.clamp(0.30, 0.80)
+}
+
+/// Workspace share of the sidebar scroll track for a pointer at `pointer_y`.
+///
+/// The splitter must be resolved from the screen pointer position rather than
+/// the widget rect: the rect moves as the split changes, and deriving the new
+/// split from it makes the handle chase and jitter under the cursor.
+fn split_from_pointer(pointer_y: f32, track_top: f32, track_height: f32) -> f32 {
+    let usable = (track_height - SIDEBAR_SPLITTER_HEIGHT).max(1.0);
+    clamp_sidebar_split((pointer_y - track_top) / usable)
 }
 
 fn valid_thread_title(title: &str) -> bool {
@@ -596,14 +610,16 @@ impl EguiApp {
 
     fn draw_sidebar_contents(&mut self, ui: &mut Ui, tokens: Tokens) {
         let full = ui.available_rect_before_wrap();
-        let track_h = (full.height() - 33.0).max(80.0);
-        let workspace_h = ((track_h - 9.0) * self.sidebar_split).max(48.0);
+        let track_h = (full.height() - SIDEBAR_FOOTER_HEIGHT).max(80.0);
+        let workspace_h = ((track_h - SIDEBAR_SPLITTER_HEIGHT) * self.sidebar_split).max(48.0);
         let workspace = egui::Rect::from_min_size(full.min, Vec2::new(full.width(), workspace_h));
-        let splitter =
-            egui::Rect::from_min_size(workspace.left_bottom(), Vec2::new(full.width(), 9.0));
+        let splitter = egui::Rect::from_min_size(
+            workspace.left_bottom(),
+            Vec2::new(full.width(), SIDEBAR_SPLITTER_HEIGHT),
+        );
         let files = egui::Rect::from_min_max(
             splitter.left_bottom(),
-            egui::pos2(full.right(), full.bottom() - 33.0),
+            egui::pos2(full.right(), full.bottom() - SIDEBAR_FOOTER_HEIGHT),
         );
         let footer = egui::Rect::from_min_max(files.left_bottom(), full.max);
         // These tracks have fixed bounds: long trees scroll inside their
@@ -639,8 +655,7 @@ impl EguiApp {
             self.sidebar_split = DEFAULT_SIDEBAR_SPLIT;
         } else if splitter_response.dragged() {
             if let Some(pointer) = splitter_response.interact_pointer_pos() {
-                self.sidebar_split =
-                    clamp_sidebar_split((pointer.y - full.top()) / (track_h - 9.0).max(1.0));
+                self.sidebar_split = split_from_pointer(pointer.y, full.top(), track_h);
             }
         }
         if splitter_response.hovered() || splitter_response.dragged() {
@@ -981,14 +996,13 @@ impl EguiApp {
             Stroke::new(1.0, tokens.border),
         );
         let center = rect.left_center() + Vec2::new(20.0, 0.0);
-        ui.painter()
-            .circle_filled(center, 12.0, Color32::from_rgb(59, 130, 246));
+        ui.painter().circle_filled(center, 12.0, tokens.avatar);
         ui.painter().text(
             center,
             egui::Align2::CENTER_CENTER,
             "本",
             egui::FontId::proportional(11.0),
-            Color32::WHITE,
+            tokens.on_accent,
         );
         ui.painter().text(
             rect.left_center() + Vec2::new(40.0, 0.0),
@@ -1047,7 +1061,7 @@ impl EguiApp {
         // the pointer crossed it. Geometry is stable even while a child owns
         // the pointer, so it is the right source for this paint-only state.
         let fill = if selected {
-            Color32::from_rgb(237, 234, 230)
+            tokens.selected
         } else if pointer_in_row {
             tokens.hover
         } else {
@@ -1096,7 +1110,7 @@ impl EguiApp {
                     ui.painter(),
                     check.shrink(3.0),
                     crate::icons::Icon::Check,
-                    Color32::WHITE,
+                    tokens.on_accent,
                 );
             }
         }
@@ -2174,11 +2188,7 @@ impl EguiApp {
             if ui.rect_contains_pointer(body.response.rect) {
                 ui.painter().set(
                     background,
-                    egui::Shape::rect_filled(
-                        body.response.rect,
-                        0.0,
-                        Color32::from_rgba_unmultiplied(246, 245, 243, 115),
-                    ),
+                    egui::Shape::rect_filled(body.response.rect, 0.0, tokens.reader_hover),
                 );
             }
             if number == 0
@@ -2263,7 +2273,7 @@ impl EguiApp {
                     .corner_radius(14.0)
                     .inner_margin(Margin::same(20)),
             )
-            .backdrop_color(Color32::from_rgba_unmultiplied(31, 35, 41, 82))
+            .backdrop_color(tokens.scrim)
             .show(ctx, |ui| {
                 ui.set_width(width - 40.0);
                 ui.set_min_height(height - 40.0);
@@ -2414,7 +2424,7 @@ impl EguiApp {
             ui.painter().rect_filled(
                 disclosure.translate(Vec2::new(0.0, 1.0)),
                 10.0,
-                Color32::from_black_alpha(10),
+                tokens.shadow_lift,
             );
             ui.painter().rect_filled(disclosure, 10.0, tokens.surface);
             ui.painter().rect_stroke(
@@ -2488,7 +2498,6 @@ impl EguiApp {
             if !turn.process_loaded && !turn.process_loading && turn.process_error.is_empty() {
                 self.request_process_page(&turn.id);
             }
-            let entry_soft = Color32::from_rgb(155, 160, 168);
             let max_height = (ui.ctx().screen_rect().height() * 0.48).min(420.0);
             ScrollArea::vertical()
                 .id_salt("process-body")
@@ -2565,7 +2574,7 @@ impl EguiApp {
                         );
                         let failed = matches!(item.state.as_str(), "error" | "failed");
                         let running = matches!(item.state.as_str(), "running" | "streaming");
-                        let color = if failed { tokens.danger } else { entry_soft };
+                        let color = if failed { tokens.danger } else { tokens.process };
                         if running {
                             egui::Spinner::new().color(color).paint_at(
                                 ui,
@@ -2635,7 +2644,9 @@ impl EguiApp {
                                     egui::pos2(summary_x, row.top()), egui::pos2(row.right() - 24.0, row.bottom()),
                                 )).layout(Layout::left_to_right(Align::Center)),
                             );
-                            summary_ui.add(egui::Label::new(RichText::new(summary).size(12.0).color(entry_soft)).truncate());
+                            summary_ui.add(egui::Label::new(RichText::new(summary)
+                                .size(12.0)
+                                .color(tokens.process)).truncate());
                         }
                         response.on_hover_cursor(egui::CursorIcon::PointingHand);
                         if item_open {
@@ -2707,11 +2718,11 @@ impl EguiApp {
             Vec2::new(galley.size().x + 16.0, 20.0),
         );
         ui.painter()
-            .rect_filled(chip, 9.0, Color32::from_rgb(241, 253, 245));
+            .rect_filled(chip, 9.0, tokens.success_tint);
         ui.painter().rect_stroke(
             chip,
             9.0,
-            Stroke::new(1.0, Color32::from_rgb(190, 230, 204)),
+            Stroke::new(1.0, tokens.success_border),
             egui::StrokeKind::Inside,
         );
         ui.painter().galley(
@@ -2776,7 +2787,7 @@ impl EguiApp {
         ui.painter().rect_filled(
             card.translate(Vec2::new(0.0, 1.0)),
             16.0,
-            Color32::from_black_alpha(5),
+            tokens.shadow_rest,
         );
         ui.painter().rect_filled(card, 16.0, tokens.surface);
         ui.painter().rect_stroke(
@@ -2965,7 +2976,7 @@ impl EguiApp {
             if !action_enabled {
                 tokens.border_strong
             } else if action.hovered() {
-                Color32::from_rgb(181, 86, 55)
+                tokens.primary_hover
             } else {
                 tokens.primary
             },
@@ -3192,7 +3203,7 @@ impl EguiApp {
                         offset: [0, 4],
                         blur: 16,
                         spread: 0,
-                        color: Color32::from_black_alpha(24),
+                        color: tokens.shadow_panel,
                     })
                     .show(ui, |ui| {
                         ui.set_width(280.0);
@@ -3551,7 +3562,7 @@ impl EguiApp {
                         offset: [0, 4],
                         blur: 16,
                         spread: 0,
-                        color: Color32::from_black_alpha(20),
+                        color: tokens.shadow_popup,
                     })
                     .show(ui, |ui| {
                         ui.set_width(208.0);
@@ -3703,7 +3714,7 @@ impl EguiApp {
                         offset: [0, 3],
                         blur: 16,
                         spread: 0,
-                        color: Color32::from_black_alpha(20),
+                        color: tokens.shadow_popup,
                     })
                     .show(ui, |ui| {
                         ui.set_width(252.0);
@@ -3903,6 +3914,123 @@ mod sidebar_tests {
         assert_eq!(clamp_sidebar_split(1.2), 0.80);
         assert_eq!(drawer_sidebar_width(900.0), 420.0);
         assert_eq!(drawer_sidebar_width(180.0), 180.0);
+    }
+
+    #[test]
+    fn splitter_maps_screen_pointer_to_a_bounded_workspace_share() {
+        // 900px window: 867px track, so 858px is draggable above the splitter.
+        let track = 900.0 - SIDEBAR_FOOTER_HEIGHT;
+        assert_eq!(split_from_pointer(0.0, 0.0, track), 0.30);
+        assert!((split_from_pointer(429.0, 0.0, track) - 0.50).abs() < 0.001);
+        assert_eq!(split_from_pointer(10_000.0, 0.0, track), 0.80);
+        // A sidebar shorter than the footer must not produce NaN or a
+        // reversed track.
+        let tiny = split_from_pointer(5.0, 0.0, 4.0);
+        assert!(tiny.is_finite());
+        assert_eq!(tiny, 0.80);
+        // The top of the track is the workspace origin: offsetting it moves
+        // the same pointer to a smaller share.
+        assert!(split_from_pointer(429.0, 100.0, track) < 0.50);
+    }
+
+    fn sidebar_frame(
+        ctx: &Context,
+        app: &mut EguiApp,
+        size: Vec2,
+        events: Vec<egui::Event>,
+    ) {
+        let _ = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
+                focused: true,
+                events,
+                ..Default::default()
+            },
+            |ctx| app.draw_sidebar(ctx),
+        );
+    }
+
+    fn click_at(pos: egui::Pos2) -> [Vec<egui::Event>; 3] {
+        [
+            vec![egui::Event::PointerMoved(pos)],
+            vec![egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            }],
+            vec![egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        ]
+    }
+
+    #[test]
+    fn compact_drawer_opens_from_the_trigger_and_closes_on_scrim_or_escape() {
+        let ctx = Context::default();
+        theme::apply(&ctx);
+        let mut app = EguiApp::demo();
+        let narrow = Vec2::new(980.0, 700.0);
+
+        sidebar_frame(&ctx, &mut app, narrow, Vec::new());
+        assert!(
+            !app.sidebar_open,
+            "窄窗默认应保持抽屉关闭，只显示 30px 打开按钮"
+        );
+
+        // The trigger is an 8px inset 30px square in the top-left corner.
+        for events in click_at(egui::pos2(23.0, 23.0)) {
+            sidebar_frame(&ctx, &mut app, narrow, events);
+        }
+        assert!(app.sidebar_open, "点击 30px 打开按钮后抽屉应展开");
+
+        // Escape closes the drawer before it reaches any other layer.
+        sidebar_frame(
+            &ctx,
+            &mut app,
+            narrow,
+            vec![egui::Event::Key {
+                key: egui::Key::Escape,
+                physical_key: Some(egui::Key::Escape),
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        );
+        assert!(!app.sidebar_open, "Escape 应关闭窄窗抽屉");
+
+        // Reopen, then dismiss by clicking the scrim outside the drawer.
+        for events in click_at(egui::pos2(23.0, 23.0)) {
+            sidebar_frame(&ctx, &mut app, narrow, events);
+        }
+        assert!(app.sidebar_open);
+        let drawer_width = drawer_sidebar_width(narrow.x);
+        for events in click_at(egui::pos2(drawer_width + 40.0, 350.0)) {
+            sidebar_frame(&ctx, &mut app, narrow, events);
+        }
+        assert!(!app.sidebar_open, "点击抽屉外的遮罩应关闭抽屉");
+    }
+
+    #[test]
+    fn desktop_sidebar_keeps_its_width_bounds_above_the_breakpoint() {
+        let ctx = Context::default();
+        theme::apply(&ctx);
+        let mut app = EguiApp::demo();
+        sidebar_frame(&ctx, &mut app, Vec2::new(1440.0, 900.0), Vec::new());
+
+        let width = ctx
+            .memory(|memory| memory.area_rect(Id::new("messenger-sidebar")))
+            .map(|rect| rect.width());
+        if let Some(width) = width {
+            assert!(
+                (SIDEBAR_MIN_WIDTH..=SIDEBAR_MAX_WIDTH).contains(&width),
+                "侧栏宽度 {width} 超出 {SIDEBAR_MIN_WIDTH}–{SIDEBAR_MAX_WIDTH}"
+            );
+        }
+        assert!(!app.sidebar_open, "宽视口不应打开抽屉");
     }
 
     #[test]

@@ -6,9 +6,11 @@
 #[cfg(windows)]
 use windows_sys::Win32::Foundation::HWND;
 #[cfg(windows)]
+use windows_sys::Win32::System::Threading::GetCurrentThreadId;
+#[cfg(windows)]
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    BringWindowToTop, IsIconic, IsZoomed, SetForegroundWindow, ShowWindow, SW_MAXIMIZE,
-    SW_MINIMIZE, SW_RESTORE,
+    AttachThreadInput, BringWindowToTop, GetForegroundWindow, GetWindowThreadProcessId, IsIconic,
+    IsZoomed, SetForegroundWindow, ShowWindow, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE,
 };
 
 /// Starts the platform caption-drag for the custom title bar. Winit turns this
@@ -71,7 +73,26 @@ pub fn restore_and_focus(window: &slint::Window) -> bool {
             ShowWindow(hwnd, SW_RESTORE);
         }
         let raised = BringWindowToTop(hwnd) != 0;
+        if SetForegroundWindow(hwnd) != 0 {
+            return true;
+        }
+        // Foreground lock: the tray click arrives as shell input, so a bare
+        // SetForegroundWindow is rejected. Borrow the foreground thread's
+        // input state and retry; without this the restored window stays
+        // behind whatever the user was looking at.
+        let foreground = GetForegroundWindow();
+        if foreground.is_null() || foreground == hwnd {
+            return raised;
+        }
+        let current_thread = GetCurrentThreadId();
+        let foreground_thread = GetWindowThreadProcessId(foreground, std::ptr::null_mut());
+        if foreground_thread == 0 {
+            return raised;
+        }
+        AttachThreadInput(current_thread, foreground_thread, 1);
+        BringWindowToTop(hwnd);
         let focused = SetForegroundWindow(hwnd) != 0;
+        AttachThreadInput(current_thread, foreground_thread, 0);
         raised || focused
     })
 }

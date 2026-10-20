@@ -717,6 +717,12 @@ impl Orchestrator {
                     }
                 }
                 result = orchestrator.normalize_tool_result_payload(&name, result);
+                super::tool_result_recovery::clear_provider_recovery_metadata(&mut result, &name, &args);
+                if super::tool_exec::tool_result_exceeds_transport_limit(&result) {
+                    result = super::tool_result_recovery::preserve_tool_result(
+                        result, &scoped_tool_context,
+                    ).await;
+                }
                 result = orchestrator.finalize_tool_result(result, started_at);
                 Ok(ToolExecutionOutcome { call, name, result })
                 }.await;

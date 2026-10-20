@@ -70,14 +70,15 @@ fn run_native_with_mode(
     } else {
         "蛹 · wunder"
     };
+    let inner_size = capture_viewport().unwrap_or(if demo {
+        [1440.0, 900.0]
+    } else {
+        [1280.0, 820.0]
+    });
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title(title)
-            .with_inner_size(if demo {
-                [1440.0, 900.0]
-            } else {
-                [1280.0, 820.0]
-            })
+            .with_inner_size(inner_size)
             .with_min_inner_size([760.0, 480.0]),
         ..Default::default()
     };
@@ -121,9 +122,23 @@ fn run_native_with_mode(
     )
 }
 
+/// Optional fixed viewport for visual review, from `WUNDER_EGUI_VIEWPORT`
+/// as `1440x900`. Only the demo modes read it, so a normal launch keeps the
+/// default window size; screenshot fixtures use it to pin one logical size.
+#[cfg(not(target_arch = "wasm32"))]
+fn capture_viewport() -> Option<[f32; 2]> {
+    let raw = std::env::var("WUNDER_EGUI_VIEWPORT").ok()?;
+    let (width, height) = raw.split_once(['x', 'X'])?;
+    let width: f32 = width.trim().parse().ok()?;
+    let height: f32 = height.trim().parse().ok()?;
+    if !(320.0..=7680.0).contains(&width) || !(240.0..=4320.0).contains(&height) {
+        return None;
+    }
+    Some([width, height])
+}
+
 #[cfg(all(target_arch = "wasm32", feature = "web"))]
-pub async fn run_web(canvas: web_sys::HtmlCanvasElement) -> Result<(), String> {
-    let options = eframe::WebOptions::default();
+pub async fn run_web(canvas: web_sys::HtmlCanvasElement) -> Result<(), String> {    let options = eframe::WebOptions::default();
     eframe::WebRunner::new()
         .start(
             canvas,

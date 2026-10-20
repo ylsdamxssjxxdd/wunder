@@ -38,7 +38,7 @@ Windows 安装包优先使用离线 SDK 的 `Rust-builder/win7/offline/tools/inn
 - Python：`3.8.10 embeddable package`
   - Python 官方从 `3.9` 开始要求 Windows `8.1+`，因此 Win7 路线固定使用 `3.8`。
   - 当前脚本使用官方可下载的 embeddable 压缩包，便于安装到共享用户目录。
-- Playwright 驱动：`playwright==1.16+` 的官方 `win32` wheel 会带 x64 的 `driver/node.exe`。Win7 包固定使用 `playwright==1.15.2`，它的 `win32` wheel 原生携带 i386 Node 12.20.1；构建时会将该文件的 PE 架构作为硬门禁，防止升级依赖后重新混入 x64 驱动。
+- Playwright 驱动：Win7 包固定使用已验证的 `playwright==1.40.0` 与 Chrome 109 补充包组合。官方 `win32` wheel 内仍带 x64 的 `driver/node.exe`，构建脚本会下载固定 SHA256 的 Node 16.20.2 `win-x86`，替换该文件后再做 i386 PE 门禁。Node 16 不在 Node 官方的 Windows 7 支持矩阵内，桥接会设置 `NODE_SKIP_PLATFORM_CHECK=1`，仍需在真实 ia32 Win7 上验收。
 - Git：`MinGit 2.46.2`
   - Git for Windows FAQ 将 `2.46.2` 标为最后支持 Windows `7 / 8 / 8.1` 的版本。
   - `MinGit` 适合嵌入第三方桌面应用，体积比完整安装包更小。

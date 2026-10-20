@@ -1007,11 +1007,9 @@ fn test_compact_observation_payload_bounds_skill_call_truncation() {
     assert!(payload.get("continuation_required").is_some());
     let data = payload.get("data").cloned().unwrap_or(Value::Null);
     assert!(estimate_tool_result_chars(&data) <= OBSERVATION_MAX_CHARS);
-    assert!(
-        result.to_event_payload("skill_read")["data"]["skill_md"]
-            .as_str()
-            .is_some_and(|value| value.chars().count() > OBSERVATION_MAX_CHARS)
-    );
+    assert!(result.to_event_payload("skill_read")["data"]["skill_md"]
+        .as_str()
+        .is_some_and(|value| value.chars().count() > OBSERVATION_MAX_CHARS));
 }
 
 #[test]
@@ -1034,11 +1032,9 @@ fn test_compact_observation_payload_bounds_large_browser_observation() {
     );
     let data = observation.get("data").cloned().unwrap_or(Value::Null);
     assert!(estimate_tool_result_chars(&data) <= OBSERVATION_MAX_CHARS);
-    assert!(
-        result.to_event_payload("browser_observe")["data"]["text"]
-            .as_str()
-            .is_some_and(|value| value.chars().count() > OBSERVATION_MAX_CHARS)
-    );
+    assert!(result.to_event_payload("browser_observe")["data"]["text"]
+        .as_str()
+        .is_some_and(|value| value.chars().count() > OBSERVATION_MAX_CHARS));
 }
 
 #[test]
@@ -1208,12 +1204,10 @@ fn observation_token_budget_bounds_full_serialized_envelope_and_keeps_cursor() {
     assert_eq!(observation["truncated"], true);
     assert_eq!(observation["data"]["truncated"], true);
     assert_eq!(observation["next_cursor"], "page-2");
-    assert!(
-        observation["recovery_hint"]
-            .as_str()
-            .unwrap()
-            .contains("next_page_skips")
-    );
+    assert!(observation["recovery_hint"]
+        .as_str()
+        .unwrap()
+        .contains("next_page_skips"));
     assert!(
         observation["data"]["omitted_bytes"]
             .as_u64()
@@ -1229,11 +1223,9 @@ fn observation_token_budget_does_not_change_event_payload() {
     let observation = result.to_compact_payload_with_token_budget("browser_observe", Some(256));
 
     assert!(observation_token_count(&observation) <= 256);
-    assert!(
-        result.to_event_payload("browser_observe")["data"]["text"]
-            .as_str()
-            .is_some_and(|value| value.len() == 32_000)
-    );
+    assert!(result.to_event_payload("browser_observe")["data"]["text"]
+        .as_str()
+        .is_some_and(|value| value.len() == 32_000));
 }
 
 #[test]
@@ -1253,12 +1245,10 @@ fn observation_preserves_opaque_cursor_exactly_or_omits_it_explicitly() {
             assert!(observation.get("next_cursor").is_none());
             assert_eq!(observation["continuation_omitted"], true);
         }
-        assert!(
-            observation["recovery_hint"]
-                .as_str()
-                .unwrap()
-                .contains("reread")
-        );
+        assert!(observation["recovery_hint"]
+            .as_str()
+            .unwrap()
+            .contains("reread"));
     }
 }
 
@@ -1292,13 +1282,80 @@ fn observation_budget_retains_transport_loss_state() {
         assert_eq!(observation["ok"], true);
         assert_eq!(observation["recoverable"], false);
         assert_eq!(observation["truncation_scope"], "transport_safety");
-        assert!(
-            observation["data"]["preview"]
+        assert!(observation["data"]["preview"]
+            .as_str()
+            .unwrap()
+            .contains("value"));
+    }
+}
+
+#[test]
+fn saved_result_reference_survives_tight_budgets_for_success_and_failure() {
+    let handle = "tool-result:0123456789abcdef0123456789abcdef";
+    for ok in [true, false] {
+        for budget in [256, 512, 2000] {
+            let result = ToolResultPayload::from_value(json!({
+                "ok": ok, "data": {"text": "中🙂\"\\\n".repeat(10_000)},
+                "error": if ok {String::new()} else {"error-head ".to_string() + &"x".repeat(40_000) + " error-tail"},
+                "meta": {"saved_result": {"handle": handle, "bytes": 200_000, "expires_at": 2_000_000_000}}
+            }));
+            let observation = result.to_compact_payload_with_token_budget("external", Some(budget));
+            assert!(
+                observation_token_count(&observation) <= budget,
+                "{observation}"
+            );
+            assert_eq!(observation["result_handle"], handle);
+            assert_eq!(observation["ok"], ok);
+            assert_eq!(observation["recoverable"], true);
+            assert!(observation["recovery_hint"]
                 .as_str()
                 .unwrap()
-                .contains("value")
-        );
+                .contains("read_file"));
+        }
     }
+}
+
+#[test]
+fn saved_result_read_keeps_same_handle_and_offset_when_page_is_reduced() {
+    let handle = "tool-result:0123456789abcdef0123456789abcdef";
+    let result = ToolResultPayload::from_value(json!({"ok": true, "data": {
+        "result_read": true, "result_handle": handle, "offset": 4096,
+        "content": "中🙂\"\\\n".repeat(1000), "next_offset": 14096, "has_more": true
+    }}));
+    let observation = result.to_compact_payload_with_token_budget("read_file", Some(256));
+    assert!(observation_token_count(&observation) <= 256);
+    assert_eq!(observation["result_handle"], handle);
+    assert_eq!(observation["offset"], 4096);
+    assert!(observation["recovery_hint"]
+        .as_str()
+        .unwrap()
+        .contains("same offset"));
+}
+
+#[test]
+fn omission_detection_includes_table_and_search_samples() {
+    assert!(observation_has_omissions(
+        &json!({"data":{"rows_omitted": 5}}),
+        0
+    ));
+    assert!(observation_has_omissions(
+        &json!({"data":{"hits":[{"__truncated":true}]}}),
+        0
+    ));
+    assert!(!observation_has_omissions(
+        &json!({"data":{"text":"done"}}),
+        0
+    ));
+}
+
+#[test]
+fn failed_result_store_never_claims_recovery() {
+    let result = ToolResultPayload::from_value(json!({"ok":true,
+        "data":{"text":"x".repeat(20_000)}, "meta":{"result_store_failed":true}
+    }));
+    let observation = result.to_compact_payload_with_token_budget("external", Some(256));
+    assert_eq!(observation["recoverable"], false);
+    assert!(observation.get("result_handle").is_none());
 }
 
 #[test]
@@ -1309,10 +1366,8 @@ fn observation_array_preview_requires_rereading_the_current_page() {
     let observation = result.to_compact_payload_with_token_budget("external", Some(512));
     assert_eq!(observation["truncated"], true);
     assert_eq!(observation["next_cursor"], "page-2");
-    assert!(
-        observation["recovery_hint"]
-            .as_str()
-            .unwrap()
-            .contains("next_page_skips")
-    );
+    assert!(observation["recovery_hint"]
+        .as_str()
+        .unwrap()
+        .contains("next_page_skips"));
 }
