@@ -405,9 +405,9 @@ fn markdown_blocks(source: &str) -> Vec<TextBlock> {
             Event::End(TagEnd::List(_)) => {
                 list_depth = list_depth.saturating_sub(1);
                 ordered.pop();
-                if list_depth == 0 {
-                    flush_block(&mut blocks, &mut text, &mut kind);
-                }
+                // The list stays in the surrounding text block: splitting at
+                // the list boundary made drag selection stop there, and item
+                // lines already carry their own newlines.
             }
             Event::Start(Tag::Item) => {
                 if !text.is_empty() {
@@ -589,6 +589,21 @@ mod tests {
         assert_eq!(blocks.len(), 1);
         assert_eq!(blocks[0].kind, KIND_CODE);
         assert_eq!(blocks[0].text, "let value = 1;\n");
+    }
+
+    #[test]
+    fn paragraph_list_paragraph_stays_one_selectable_text_block() {
+        // One block per contiguous prose run keeps drag selection continuous;
+        // splitting at the list boundary created an uncrossable gap.
+        let blocks = markdown_blocks("段落一\n\n- 甲\n- 乙\n\n段落二\n");
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].kind, KIND_TEXT);
+        assert_eq!(blocks[0].text, "段落一\n\n• 甲\n\n• 乙\n段落二");
+        // A list inside a quote no longer splits the quote card either.
+        let quote = markdown_blocks("> 前文\n>\n> - 甲\n> - 乙\n");
+        assert_eq!(quote.len(), 1);
+        assert_eq!(quote[0].kind, KIND_QUOTE);
+        assert!(quote[0].text.contains("• 乙"), "{}", quote[0].text);
     }
 
     #[test]

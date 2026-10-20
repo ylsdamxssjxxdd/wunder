@@ -85,6 +85,35 @@ pub fn restore_agent(app: &MainWindow, id: &str) {
     }
 }
 
+/// A fresh model starts from the runtime's effective defaults instead of
+/// empty strings: the editor is usable immediately and saving without
+/// touching a field does not silently clear it.
+pub(crate) fn new_model_card(key: String) -> ModelCard {
+    ModelCard {
+        key: key.into(),
+        provider: "openai_compatible".into(),
+        model: "".into(),
+        base_url: "".into(),
+        model_type: "llm".into(),
+        is_default: false,
+        is_cloud: false,
+        temperature: "0.7".into(),
+        timeout_s: "120".into(),
+        max_output: "8192".into(),
+        thinking_token_budget: "2048".into(),
+        max_rounds: "1000".into(),
+        max_context: "128000".into(),
+        history_compaction_ratio: "0.9".into(),
+        reasoning_effort: "".into(),
+        simulation_speed: "fast".into(),
+        support_vision: false,
+        support_hearing: false,
+        stream_include_usage: true,
+        tool_call_mode: "function_call".into(),
+        ..Default::default()
+    }
+}
+
 pub fn restore_model(app: &MainWindow, key: &str) {
     let index = app.get_models().iter().position(|model| model.key == key);
     if app.get_models().row_count() > 0 {
@@ -190,4 +219,28 @@ fn apply_model(app: &MainWindow, model: ModelCard) {
     // Settings selection is intentionally separate from the composer's
     // per-thread model override. Opening a model row must not switch the
     // model shown below the composer.
+}
+
+#[cfg(test)]
+mod tests {
+    use super::new_model_card;
+
+    #[test]
+    fn new_model_card_uses_engine_defaults() {
+        let card = new_model_card("新模型".into());
+        assert_eq!(card.provider.as_str(), "openai_compatible");
+        assert_eq!(card.model_type.as_str(), "llm");
+        assert_eq!(card.tool_call_mode.as_str(), "function_call");
+        assert_eq!(card.temperature.as_str(), "0.7");
+        assert_eq!(card.timeout_s.as_str(), "120");
+        assert_eq!(card.max_output.as_str(), "8192");
+        assert_eq!(card.thinking_token_budget.as_str(), "2048");
+        assert_eq!(card.max_rounds.as_str(), "1000");
+        assert_eq!(card.max_context.as_str(), "128000");
+        assert_eq!(card.history_compaction_ratio.as_str(), "0.9");
+        assert_eq!(card.simulation_speed.as_str(), "fast");
+        assert!(card.stream_include_usage);
+        assert!(!card.support_vision);
+        assert!(!card.support_hearing);
+    }
 }

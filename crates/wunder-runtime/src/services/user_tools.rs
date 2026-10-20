@@ -1771,6 +1771,40 @@ mod tests {
     }
 
     #[test]
+    fn update_mcp_servers_rejects_unbounded_dynamic_schemas() {
+        let root = tempdir().expect("tempdir");
+        let storage = Arc::new(SqliteStorage::new(
+            root.path()
+                .join("user-tools.db")
+                .to_string_lossy()
+                .to_string(),
+        ));
+        let workspace = Arc::new(WorkspaceManager::new(
+            root.path().join("workspaces").to_string_lossy().as_ref(),
+            storage,
+            0,
+            &HashMap::new(),
+        ));
+        let store = UserToolStore::new(&Config::default(), workspace).expect("create store");
+        let server = UserMcpServer {
+            name: "demo".to_string(),
+            endpoint: "http://127.0.0.1:9000/mcp".to_string(),
+            tool_specs: vec![json!({
+                "name":"list_records",
+                "inputSchema":{
+                    "type":"object",
+                    "properties":{"records":{"type":"array","items":{"type":"string"}}},
+                    "additionalProperties":false
+                }
+            })],
+            ..UserMcpServer::default()
+        };
+        assert!(store
+            .update_mcp_servers("sample-user", vec![server])
+            .is_err());
+    }
+
+    #[test]
     fn load_user_tools_forces_runtime_user_id() {
         let root = tempdir().expect("tempdir");
         let db_path = root.path().join("user-tools.db");

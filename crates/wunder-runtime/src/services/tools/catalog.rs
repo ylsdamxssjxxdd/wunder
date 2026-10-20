@@ -10,7 +10,7 @@ use crate::schemas::ToolSpec;
 use crate::services::goal;
 use crate::services::tools::context::ToolContext;
 use crate::skills::SkillRegistry;
-use crate::user_tools::UserToolBindings;
+use crate::user_tools::{UserToolBindings, UserToolKind};
 use anyhow::Result;
 use serde_json::{json, Value};
 use serde_yaml::Value as YamlValue;
@@ -1555,6 +1555,252 @@ pub fn runtime_tool_schema_reference(tool_name: &str) -> Option<super::ToolSchem
     ))
 }
 
+/// Return the schema reference for the definition that is executable *now*.
+///
+/// Dynamic tools are deliberately resolved from the request's immutable
+/// configuration, skill registry, and user bindings.  This function is for
+/// writing a reference at invocation time only: it does not attempt to map a
+/// historical call onto a newer MCP, skill, or knowledge definition.
+pub fn current_tool_schema_reference(
+    config: &Config,
+    skills: &SkillRegistry,
+    user_tool_bindings: Option<&UserToolBindings>,
+    tool_name: &str,
+) -> Option<super::ToolSchemaReference> {
+    let spec = current_tool_spec(config, skills, user_tool_bindings, tool_name)?;
+    Some(super::schema_reference(
+        tool_name.trim(),
+        &super::tool_schema_document(&spec),
+    ))
+}
+
+/// Resolve a currently executable tool specification without fabricating a
+/// definition for a tool that is absent from this request's sources.
+fn current_tool_spec(
+    config: &Config,
+    skills: &SkillRegistry,
+    user_tool_bindings: Option<&UserToolBindings>,
+    tool_name: &str,
+) -> Option<ToolSpec> {
+    let tool_name = tool_name.trim();
+    if tool_name.is_empty() {
+        return None;
+    }
+
+    // Keep source precedence aligned with `execute_tool`: an alias may route
+    // an otherwise identical name to a user-owned tool, so never fall through
+    // to a global definition once an alias is known but incomplete.
+    if let Some(bindings) = user_tool_bindings {
+        if let Some(alias) = bindings.alias_map.get(tool_name) {
+            if let Some(spec) = bindings.alias_specs.get(tool_name) {
+                return Some(spec.clone());
+            }
+            if matches!(alias.kind, UserToolKind::Skill) {
+                let source = bindings
+                    .skill_specs
+                    .iter()
+                    .find(|spec| spec.name == tool_name || spec.name == alias.target)?;
+                return Some(skill_tool_spec(tool_name, source));
+            }
+            return None;
+        }
+    }
+
+    if let Some(skill) = skills.get(tool_name) {
+        return Some(skill_tool_spec(tool_name, &skill));
+    }
+    if let Some(spec) = current_mcp_tool_spec(config, tool_name) {
+        return Some(spec);
+    }
+    if let Some(base) = config
+        .knowledge
+        .bases
+        .iter()
+        .find(|base| base.enabled && base.name.trim() == tool_name)
+    {
+        return Some(knowledge_tool_spec(base, tool_name, &i18n::get_language()));
+    }
+
+    let canonical = resolve_tool_name(tool_name);
+    builtin_tool_specs()
+        .into_iter()
+        .find(|spec| spec.name == tool_name || spec.name == canonical)
+}
+
+fn skill_tool_spec(name: &str, skill: &crate::skills::SkillSpec) -> ToolSpec {
+    ToolSpec {
+        name: name.to_string(),
+        title: None,
+        description: skill.description.clone(),
+        input_schema: skill.input_schema.clone(),
+    }
+}
+
+fn current_mcp_tool_spec(config: &Config, runtime_name: &str) -> Option<ToolSpec> {
+    let (server_name, remote_tool_name) = runtime_name.split_once('@')?;
+    let server_name = server_name.trim();
+    let remote_tool_name = remote_tool_name.trim();
+    if server_name.is_empty() || remote_tool_name.is_empty() {
+        return None;
+    }
+    let server = config
+        .mcp
+        .servers
+        .iter()
+        .find(|server| server.enabled && server.name.trim() == server_name)?;
+    if server.packaged {
+        let spec = mcp_pack::spec_for_server(server)?;
+        return (spec.name == runtime_name).then_some(spec);
+    }
+    let allowed: HashSet<&str> = server
+        .allow_tools
+        .iter()
+        .map(|name| name.trim())
+        .filter(|name| !name.is_empty())
+        .collect();
+    let tool = server
+        .tool_specs
+        .iter()
+        .find(|tool| tool.name.trim() == remote_tool_name)?;
+    if !allowed.is_empty() && !allowed.contains(remote_tool_name) {
+        return None;
+    }
+    Some(ToolSpec {
+        name: runtime_name.to_string(),
+        title: tool.title.clone(),
+        description: tool.description.clone(),
+        input_schema: yaml_to_json(&tool.input_schema),
+    })
+}
+
+fn knowledge_tool_spec(
+    base: &crate::config::KnowledgeBaseConfig,
+    name: &str,
+    language: &str,
+) -> ToolSpec {
+    let description = if base.description.trim().is_empty() {
+        i18n::t_with_params_in_language(
+            "knowledge.tool.description",
+            &HashMap::from([("name".to_string(), name.to_string())]),
+            language,
+        )
+    } else {
+        base.description.clone()
+    };
+    ToolSpec {
+        name: name.to_string(),
+        title: None,
+        description,
+        input_schema: knowledge_input_schema(language),
+    }
+}
+
+fn knowledge_input_schema(language: &str) -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": i18n::t_in_language("knowledge.tool.query.description", language)},
+            "keywords": {"type": "array", "items": {"type": "string"}, "minItems": 1, "description": i18n::t_in_language("knowledge.tool.keywords.description", language)},
+            "limit": {"type": "integer", "minimum": 1, "description": i18n::t_in_language("knowledge.tool.limit.description", language)}
+        },
+        "anyOf": [
+            {"required": ["query"]},
+            {"required": ["keywords"]}
+        ]
+    })
+}
+
+/// Resolve a persisted builtin schema reference against the current catalog.
+///
+/// References intentionally identify only native builtin tools. MCP, skill,
+/// knowledge, and per-user tools can change independently and must retain their
+/// own source-specific snapshots instead of being guessed from this catalog.
+/// All three reference fields are checked so a stale catalog version or a
+/// mismatched hash cannot accidentally recover a different schema.
+pub fn resolve_builtin_tool_schema(
+    schema_ref: &str,
+    catalog_version: &str,
+    schema_hash: &str,
+) -> Option<ToolSpec> {
+    // Validate borrowed request parts before allocating a reference object.
+    // This route accepts a path parameter, so this keeps malformed large input
+    // from turning into needless heap copies.
+    if !is_current_builtin_schema_reference(schema_ref, catalog_version, schema_hash) {
+        return None;
+    }
+    let requested = super::ToolSchemaReference {
+        schema_ref: schema_ref.to_string(),
+        catalog_version: catalog_version.to_string(),
+        schema_hash: schema_hash.to_string(),
+    };
+    resolve_builtin_tool_schema_reference(&requested)
+}
+
+/// Variant of [`resolve_builtin_tool_schema`] for callers that already hold
+/// the persisted reference object.
+pub fn resolve_builtin_tool_schema_reference(
+    requested: &super::ToolSchemaReference,
+) -> Option<ToolSpec> {
+    if !is_current_builtin_schema_reference(
+        &requested.schema_ref,
+        &requested.catalog_version,
+        &requested.schema_hash,
+    ) {
+        return None;
+    }
+
+    // A schema reference may have been emitted in a request-scoped language.
+    // Probe the configured catalog languages, while retaining the current
+    // language first for the common case. The list is deduplicated and bounded
+    // because this endpoint is also callable without a prior in-memory cache.
+    const MAX_CATALOG_LANGUAGES: usize = 32;
+    let mut languages = Vec::with_capacity(MAX_CATALOG_LANGUAGES);
+    for language in std::iter::once(i18n::get_language())
+        .chain(std::iter::once(i18n::get_default_language()))
+        // Builtin messages always ship these catalog languages. Keep them as
+        // recovery candidates if a later configuration removes a language
+        // used by an earlier persisted event.
+        .chain(["zh-CN".to_string(), "en-US".to_string()])
+        .chain(i18n::get_supported_languages())
+    {
+        let language = language.trim();
+        if !language.is_empty()
+            && !languages
+                .iter()
+                .any(|existing: &String| existing == language)
+            && languages.len() < MAX_CATALOG_LANGUAGES
+        {
+            languages.push(language.to_string());
+        }
+    }
+
+    for language in languages {
+        for spec in builtin_tool_specs_with_language(&language) {
+            let canonical = resolve_tool_name(&spec.name);
+            let reference =
+                super::schema_reference(&canonical, &super::tool_schema_document(&spec));
+            if reference == *requested {
+                return Some(spec);
+            }
+        }
+    }
+    None
+}
+
+fn is_current_builtin_schema_reference(
+    schema_ref: &str,
+    catalog_version: &str,
+    schema_hash: &str,
+) -> bool {
+    const SCHEMA_REF_PREFIX: &str = "tool-schema:";
+    catalog_version == super::TOOL_CATALOG_VERSION
+        && schema_hash.len() == 64
+        && schema_hash.bytes().all(|byte| byte.is_ascii_hexdigit())
+        && schema_ref.len() == SCHEMA_REF_PREFIX.len() + schema_hash.len()
+        && schema_ref.starts_with(SCHEMA_REF_PREFIX)
+        && schema_ref.get(SCHEMA_REF_PREFIX.len()..) == Some(schema_hash)
+}
+
 pub fn build_runtime_tool_display_map(config: &Config) -> HashMap<String, String> {
     let language = i18n::get_language();
     let prefer_alias = language.to_lowercase().starts_with("en");
@@ -2018,9 +2264,158 @@ mod tests {
     use super::{
         build_mcp_tool_alias_entries, builtin_tool_specs_with_language,
         collect_available_tool_names, collect_enabled_tool_names_for_catalog,
-        collect_prompt_tool_specs_with_language, expand_browser_group_selection, resolve_tool_name,
+        collect_prompt_tool_specs_with_language, current_tool_schema_reference,
+        expand_browser_group_selection, resolve_tool_name,
     };
-    use crate::config::Config;
+    use crate::config::{Config, McpServerConfig, McpToolSpec};
+    use crate::schemas::ToolSpec;
+    use crate::skills::SkillSpec;
+    use crate::user_tools::{UserToolAlias, UserToolBindings, UserToolKind};
+    use serde_json::json;
+    use std::path::PathBuf;
+
+    #[test]
+    fn builtin_schema_reference_resolves_only_the_exact_current_definition() {
+        let spec = builtin_tool_specs_with_language("en-US")
+            .into_iter()
+            .find(|spec| spec.name == "读取文件")
+            .expect("read file spec");
+        let reference = crate::tools::schema_reference(
+            &resolve_tool_name(&spec.name),
+            &crate::tools::tool_schema_document(&spec),
+        );
+
+        let restored = super::resolve_builtin_tool_schema(
+            &reference.schema_ref,
+            &reference.catalog_version,
+            &reference.schema_hash,
+        )
+        .expect("current builtin schema should resolve");
+        assert_eq!(restored.name, spec.name);
+        assert_eq!(restored.description, spec.description);
+        assert_eq!(restored.input_schema, spec.input_schema);
+
+        assert!(super::resolve_builtin_tool_schema(
+            &reference.schema_ref,
+            "tools-v999",
+            &reference.schema_hash,
+        )
+        .is_none());
+        assert!(super::resolve_builtin_tool_schema(
+            &reference.schema_ref,
+            &reference.catalog_version,
+            "0".repeat(64).as_str(),
+        )
+        .is_none());
+        assert!(super::resolve_builtin_tool_schema(
+            "tool-schema:not-a-hash",
+            &reference.catalog_version,
+            &reference.schema_hash,
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn current_schema_reference_covers_direct_mcp_and_dynamic_user_skill() {
+        let mut config = Config::default();
+        config.mcp.servers = vec![McpServerConfig {
+            name: "catalog_mcp".to_string(),
+            endpoint: "http://127.0.0.1:9020/mcp".to_string(),
+            enabled: true,
+            tool_specs: vec![McpToolSpec {
+                name: "query_records".to_string(),
+                title: Some("Query records".to_string()),
+                description: "Query the configured source.".to_string(),
+                input_schema: serde_yaml::to_value(json!({
+                    "type":"object",
+                    "properties":{"query":{"type":"string"}},
+                    "required":["query"],
+                    "additionalProperties":false
+                }))
+                .expect("valid MCP schema"),
+            }],
+            ..Default::default()
+        }];
+        let skills = SkillRegistry::default();
+        let mcp_name = "catalog_mcp@query_records";
+        let mcp_reference = current_tool_schema_reference(&config, &skills, None, mcp_name)
+            .expect("direct MCP tool should receive a current schema reference");
+        let expected_mcp = ToolSpec {
+            name: mcp_name.to_string(),
+            title: Some("Query records".to_string()),
+            description: "Query the configured source.".to_string(),
+            input_schema: json!({
+                "type":"object",
+                "properties":{"query":{"type":"string"}},
+                "required":["query"],
+                "additionalProperties":false
+            }),
+        };
+        assert_eq!(
+            mcp_reference,
+            crate::tools::schema_reference(
+                mcp_name,
+                &crate::tools::tool_schema_document(&expected_mcp),
+            )
+        );
+
+        let skill_name = "user@dynamic_skill";
+        let skill = SkillSpec {
+            name: skill_name.to_string(),
+            description: "Run the user-provided dynamic skill.".to_string(),
+            path: String::new(),
+            input_schema: json!({
+                "type":"object",
+                "properties":{"input":{"type":"string"}},
+                "required":["input"],
+                "additionalProperties":false
+            }),
+            frontmatter: String::new(),
+            root: PathBuf::new(),
+            entrypoint: None,
+        };
+        let mut bindings = UserToolBindings::default();
+        bindings.alias_map.insert(
+            skill_name.to_string(),
+            UserToolAlias {
+                kind: UserToolKind::Skill,
+                owner_id: "user".to_string(),
+                target: "dynamic_skill".to_string(),
+            },
+        );
+        bindings.skill_specs.push(skill.clone());
+        let skill_reference =
+            current_tool_schema_reference(&config, &skills, Some(&bindings), skill_name)
+                .expect("dynamic user skill should receive a current schema reference");
+        let expected_skill = ToolSpec {
+            name: skill_name.to_string(),
+            title: None,
+            description: skill.description,
+            input_schema: skill.input_schema,
+        };
+        assert_eq!(
+            skill_reference,
+            crate::tools::schema_reference(
+                skill_name,
+                &crate::tools::tool_schema_document(&expected_skill),
+            )
+        );
+
+        // A current dynamic reference must never be misclassified as an
+        // independently recoverable builtin schema.
+        assert!(super::resolve_builtin_tool_schema(
+            &mcp_reference.schema_ref,
+            &mcp_reference.catalog_version,
+            &mcp_reference.schema_hash,
+        )
+        .is_none());
+        assert!(super::resolve_builtin_tool_schema(
+            &skill_reference.schema_ref,
+            &skill_reference.catalog_version,
+            &skill_reference.schema_hash,
+        )
+        .is_none());
+    }
 
     #[test]
     fn skill_call_schema_exposes_bounded_paging_protocol() {

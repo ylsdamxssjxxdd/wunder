@@ -1054,14 +1054,10 @@ export component SettingsPage inherits Rectangle {
                                                     label: I18n.model_provider_label;
                                                     enabled: !root.cloud-locked;
                                                     items: root.model-provider-presets;
-                                                    value: root.model-provider-draft == "" ? root.model-provider-presets[0] : (root.model-provider-draft == "openai_compatible" ? "openai compatible" : root.model-provider-draft);
+                                                    value: root.model-provider-draft == "" ? "openai_compatible" : root.model-provider-draft;
                                                     selected(provider) => {
-                                                        if (provider == root.model-provider-presets[0]) {
-                                                            root.model-provider-draft = "";
-                                                        } else {
-                                                            root.model-provider-draft = provider == "openai compatible" ? "openai_compatible" : provider;
-                                                            root.model-base-url-draft = provider == "virtual_replay" ? "" : ModelPresets.base-url(provider == "openai compatible" ? "openai_compatible" : provider);
-                                                        }
+                                                        root.model-provider-draft = provider;
+                                                        root.model-base-url-draft = provider == "virtual_replay" ? "" : ModelPresets.base-url(provider);
                                                     }
                                                 }
                                                 FormField { horizontal-stretch: 1; label: I18n.model_name_label; placeholder: I18n.model_name_placeholder; read-only: root.cloud-locked; text <=> root.model-name-draft; }
@@ -1085,7 +1081,7 @@ export component SettingsPage inherits Rectangle {
                                             FormField { label: I18n.st_param_max_rounds; placeholder: "1000"; read-only: root.cloud-locked; text <=> root.model-max-rounds-draft; }
                                             HorizontalLayout { spacing: 10px;
                                                 FormField { horizontal-stretch: 1; label: I18n.st_param_history_ratio; placeholder: "0.9"; read-only: root.cloud-locked; text <=> root.model-history-compaction-ratio-draft; }
-                                                FormCombo { horizontal-stretch: 1; label: I18n.st_param_reasoning_effort; items: ["", "none", "minimal", "low", "medium", "high", "xhigh"]; value: root.model-reasoning-effort-draft; selected(value) => { root.model-reasoning-effort-draft = value; } }
+                                                FormCombo { horizontal-stretch: 1; label: I18n.st_param_reasoning_effort; items: [I18n.st_param_default_option, "none", "minimal", "low", "medium", "high", "xhigh"]; value: root.model-reasoning-effort-draft == "" ? I18n.st_param_default_option : root.model-reasoning-effort-draft; selected(value) => { root.model-reasoning-effort-draft = value == I18n.st_param_default_option ? "" : value; } }
                                             }
                                             if root.model-provider-draft == "virtual_replay" : FormCombo { label: I18n.st_param_simulation_speed; items: ["fast", "medium", "slow"]; value: root.model-simulation-speed-draft == "" ? "fast" : root.model-simulation-speed-draft; selected(value) => { root.model-simulation-speed-draft = value; } }
                                             HorizontalLayout { spacing: 10px;
@@ -1093,7 +1089,7 @@ export component SettingsPage inherits Rectangle {
                                                 CheckBox { text: "支持听觉"; checked <=> root.model-support-hearing-draft; }
                                                 CheckBox { text: "流式返回 usage"; checked <=> root.model-stream-include-usage-draft; }
                                             }
-                                            FormCombo { label: "工具调用方式"; items: ["tool_call", "functioncall", "freeform_call"]; value: root.model-tool-call-mode-draft == "function_call" ? "functioncall" : root.model-tool-call-mode-draft; selected(value) => { root.model-tool-call-mode-draft = value == "functioncall" ? "function_call" : value; } }
+                                            FormCombo { label: "工具调用方式"; items: ["tool_call", "function_call", "freeform_call"]; value: root.model-tool-call-mode-draft; selected(value) => { root.model-tool-call-mode-draft = value; } }
                                             HorizontalLayout { spacing: 10px;
                                                 FormField { horizontal-stretch: 1; label: I18n.st_param_max_context; placeholder: I18n.st_param_context_hint; read-only: root.cloud-locked; text <=> root.model-max-context-draft; }
                                                 Rectangle { width: 116px; height: 62px;

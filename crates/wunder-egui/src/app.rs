@@ -16,6 +16,10 @@ const DEFAULT_SIDEBAR_SPLIT: f32 = 0.60;
 const CHAT_COLUMN_WIDTH: f32 = 1000.0;
 /// Height of the draggable band between the workspace and directory panes.
 const SIDEBAR_SPLITTER_HEIGHT: f32 = 9.0;
+/// Minimum width of a working-directory context menu, matching the shell.
+const WORKSPACE_MENU_MIN_WIDTH: f32 = 148.0;
+/// Minimum width of the thread context menu (rename/trajectory/archive/multi).
+const THREAD_MENU_MIN_WIDTH: f32 = 148.0;
 /// Height of the account row pinned to the bottom of the sidebar.
 const SIDEBAR_FOOTER_HEIGHT: f32 = 33.0;
 
@@ -65,6 +69,32 @@ fn valid_workspace_entry_path(path: &str) -> bool {
             .all(|part| !part.is_empty() && part != "." && part != "..")
 }
 
+/// A rename target is a single path segment: the façade renames inside the
+/// entry's own parent, so separators must be rejected before submitting.
+fn valid_workspace_entry_name(name: &str) -> bool {
+    let name = name.trim();
+    !name.is_empty()
+        && name.chars().count() <= 120
+        && !name.chars().any(char::is_control)
+        && !name.contains('/')
+        && !name.contains('\\')
+        && name != "."
+        && name != ".."
+}
+
+/// Parent directory of a workspace-relative path. The workspace root itself
+/// has no parent, so the caller can disable "up" without guessing.
+fn workspace_parent_path(path: &str) -> Option<String> {
+    let path = path.trim_matches('/');
+    if path.is_empty() {
+        return None;
+    }
+    Some(match path.rsplit_once('/') {
+        Some((parent, _)) => parent.to_owned(),
+        None => String::new(),
+    })
+}
+
 enum ThreadRowAction {
     Select(String),
     Rename { id: String, title: String },
@@ -100,10 +130,46 @@ struct WorkspacePromptDialog {
     draft: String,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum WorkspacePromptKind {
     Directory,
     File,
+    /// Rename one entry in place; `path` stays the old path so the reply can
+    /// refresh the same directory even if the name changed.
+    Rename { path: String },
+}
+
+/// Deferred intent from the working-directory panel. Returning intents keeps
+/// the scroll closure free of `&mut self` calls and makes each path testable.
+enum FilesAction {
+    Select(String),
+    Open(String),
+    /// Enter a subdirectory and list it.
+    Enter(String),
+    Parent,
+    Refresh,
+    CreateDirectory,
+    CreateFile,
+    Rename {
+        path: String,
+        name: String,
+    },
+    Delete {
+        path: String,
+        name: String,
+        is_directory: bool,
+    },
+    Reference(String),
+    OpenRootWorkspace,
+    Unavailable(&'static str),
+}
+
+/// Destructive entries always pass through this dialog; the backend delete
+/// command itself never asks, so the confirmation must live above it.
+struct DeleteEntryConfirm {
+    path: String,
+    name: String,
+    is_directory: bool,
 }
 
 enum PendingModelChange {
@@ -161,11 +227,85 @@ pub struct EguiApp {
     archive_batch_failed: usize,
     workspace_prompt: Option<WorkspacePromptDialog>,
     workspace_prompt_needs_focus: bool,
+    delete_entry_confirm: Option<DeleteEntryConfirm>,
+    /// The directory list owns Arrow/Enter/F2/Delete/F5 until a text editor
+    /// takes focus back. egui's widget focus alone is not stable enough: the
+    /// list is a scroll area, so arrow keys may re-target focus.
+    files_keyboard_active: bool,
     pending_model_change: Option<PendingModelChange>,
 }
 
-fn format_tokens(value: u32) -> String {
-    if value >= 1_000_000 {
+/// Shared menu body for a directory row. Both the right-click context menu
+/// and the hover "more" button use it, so the two pointer paths cannot drift.
+fn file_menu_items(
+    ui: &mut Ui,
+    file: &crate::model::WorkspaceFileView,
+    tokens: Tokens,
+) -> Option<FilesAction> {
+    ui.set_min_width(WORKSPACE_MENU_MIN_WIDTH);
+    let mut action = None;
+    let open_label = if file.is_directory {
+        "打开目录"
+    } else {
+        "打开 / 预览"
+    };
+    if ui.button(open_label).clicked() {
+        action = Some(if file.is_directory {
+            FilesAction::Enter(file.path.clone())
+        } else {
+            FilesAction::Open(file.path.clone())
+        });
+        ui.close();
+    }
+    if ui.button("引用到输入框").clicked() {
+        action = Some(FilesAction::Reference(file.path.clone()));
+        ui.close();
+    }
+    ui.separator();
+    if ui.button("重命名").on_hover_text("F2").clicked() {
+        action = Some(FilesAction::Rename {
+            path: file.path.clone(),
+            name: file.name.clone(),
+        });
+        ui.close();
+    }
+    let delete = ui
+        .add(egui::Button::new(RichText::new("删除").color(tokens.danger)))
+        .on_hover_text("Delete");
+    if delete.clicked() {
+        action = Some(FilesAction::Delete {
+            path: file.path.clone(),
+            name: file.name.clone(),
+            is_directory: file.is_directory,
+        });
+        ui.close();
+    }
+    ui.separator();
+    if ui.button("新建文件").clicked() {
+        action = Some(FilesAction::CreateFile);
+        ui.close();
+    }
+    if ui.button("新建目录").clicked() {
+        action = Some(FilesAction::CreateDirectory);
+        ui.close();
+    }
+    ui.separator();
+    // Download and directory archiving still need a native save dialog and an
+    // archive action the façade does not expose. They stay visible but
+    // disabled so the menu documents the gap instead of pretending to work.
+    ui.add_enabled(false, egui::Button::new("下载"))
+        .on_disabled_hover_text("需要原生另存对话框，暂未接入");
+    ui.add_enabled(false, egui::Button::new("归档目录"))
+        .on_disabled_hover_text("后端尚未提供目录归档能力");
+    ui.separator();
+    if ui.button("刷新").on_hover_text("F5").clicked() {
+        action = Some(FilesAction::Refresh);
+        ui.close();
+    }
+    action
+}
+
+fn format_tokens(value: u32) -> String {    if value >= 1_000_000 {
         format!("{:.1}M", value as f32 / 1_000_000.0)
     } else if value >= 1_000 {
         format!("{:.1}k", value as f32 / 1_000.0)
@@ -202,6 +342,8 @@ impl EguiApp {
             archive_batch_failed: 0,
             workspace_prompt: None,
             workspace_prompt_needs_focus: false,
+            delete_entry_confirm: None,
+            files_keyboard_active: false,
             pending_model_change: None,
         };
         let _ = app.backend.submit(BackendCommand::RefreshSessions);
@@ -240,6 +382,8 @@ impl EguiApp {
             archive_batch_failed: 0,
             workspace_prompt: None,
             workspace_prompt_needs_focus: false,
+            delete_entry_confirm: None,
+            files_keyboard_active: false,
             pending_model_change: None,
         }
     }
@@ -271,6 +415,8 @@ impl EguiApp {
             archive_batch_failed: 0,
             workspace_prompt: None,
             workspace_prompt_needs_focus: false,
+            delete_entry_confirm: None,
+            files_keyboard_active: false,
             pending_model_change: None,
         };
         ctx.request_repaint_after(Duration::from_millis(120));
@@ -342,21 +488,6 @@ impl EguiApp {
                 },
                 crate::backend::BackendEvent::SessionArchived { session_id, result } => {
                     self.finish_thread_archive(session_id, result);
-                }
-                crate::backend::BackendEvent::WorkspaceFiles {
-                    session_id,
-                    path,
-                    files,
-                } if self.state.selected_session.as_deref() == Some(session_id.as_str()) => {
-                    self.state.workspace_file_loading = false;
-                    self.state.workspace_file_path = path;
-                    match files {
-                        Ok(files) => {
-                            self.state.replace_workspace_files(files);
-                            self.state.workspace_file_error.clear();
-                        }
-                        Err(error) => self.state.workspace_file_error = error,
-                    }
                 }
                 crate::backend::BackendEvent::WorkspaceAction { label, result } => match result {
                     Ok(()) => {
@@ -508,7 +639,7 @@ impl EguiApp {
         self.last_selected = Some(id.clone());
         self.follow_tail = true;
         self.submit(BackendCommand::OpenSession(id));
-        self.refresh_workspace_files();
+        self.refresh_workspace_root();
     }
 
     fn draw_sidebar(&mut self, ctx: &Context) {
@@ -532,6 +663,7 @@ impl EguiApp {
         self.draw_thread_rename_dialog(ctx, tokens);
         self.draw_thread_trajectory_dialog(ctx, tokens);
         self.draw_workspace_prompt(ctx, tokens);
+        self.draw_delete_entry_confirm(ctx, tokens);
     }
 
     fn draw_compact_sidebar(&mut self, ctx: &Context, screen: egui::Rect, tokens: Tokens) {
@@ -797,14 +929,82 @@ impl EguiApp {
             .interact(full, Id::new("working-directory-menu"), Sense::click())
             .on_hover_text("右键打开工作目录菜单")
             .on_hover_cursor(egui::CursorIcon::ContextMenu);
+        let mut action: Option<FilesAction> = None;
+        let current_path = self.state.workspace_file_path.clone();
+
         let head = egui::Rect::from_min_size(full.min, Vec2::new(full.width(), 24.0));
-        ui.painter().text(
-            head.left_center() + Vec2::new(12.0, 0.0),
-            egui::Align2::LEFT_CENTER,
-            "工作目录",
-            egui::FontId::proportional(12.0),
+        let refresh_rect = egui::Rect::from_center_size(
+            egui::pos2(full.right() - 14.0, head.center().y),
+            Vec2::splat(18.0),
+        );
+        let back_rect = (!current_path.is_empty()).then(|| {
+            egui::Rect::from_center_size(
+                egui::pos2(refresh_rect.left() - 12.0, head.center().y),
+                Vec2::splat(18.0),
+            )
+        });
+        let title_left = head.left() + 12.0;
+        let title_right = back_rect
+            .map(|rect| rect.left())
+            .unwrap_or(refresh_rect.left())
+            - 4.0;
+        let title_rect =
+            egui::Rect::from_min_max(egui::pos2(title_left, head.top()), egui::pos2(title_right, head.bottom()));
+        let title = if current_path.is_empty() {
+            "工作目录".to_owned()
+        } else {
+            format!("/{current_path}")
+        };
+        // A fully clipped title produces an empty mesh, which some glow
+        // backends reject; skip degenerate rects instead of painting nothing.
+        if title_rect.width() > 1.0 {
+            ui.painter().with_clip_rect(title_rect).text(
+                title_rect.left_center(),
+                egui::Align2::LEFT_CENTER,
+                title,
+                egui::FontId::proportional(12.0),
+                if current_path.is_empty() {
+                    tokens.text_muted
+                } else {
+                    tokens.text_secondary
+                },
+            );
+        }
+        if let Some(back) = back_rect {
+            let response = ui
+                .interact(back, Id::new("workspace-nav-parent"), Sense::click())
+                .on_hover_text("返回上一级（←）")
+                .on_hover_cursor(egui::CursorIcon::PointingHand);
+            if response.hovered() {
+                ui.painter().rect_filled(back, 4.0, tokens.hover);
+            }
+            crate::icons::paint(
+                ui.painter(),
+                back.shrink(4.0),
+                crate::icons::Icon::ChevronLeft,
+                tokens.text_muted,
+            );
+            if response.clicked() {
+                action = Some(FilesAction::Parent);
+            }
+        }
+        let refresh = ui
+            .interact(refresh_rect, Id::new("workspace-refresh"), Sense::click())
+            .on_hover_text("刷新（F5）")
+            .on_hover_cursor(egui::CursorIcon::PointingHand);
+        if refresh.hovered() {
+            ui.painter().rect_filled(refresh_rect, 4.0, tokens.hover);
+        }
+        crate::icons::paint(
+            ui.painter(),
+            refresh_rect.shrink(4.0),
+            crate::icons::Icon::Refresh,
             tokens.text_muted,
         );
+        if refresh.clicked() {
+            action = Some(FilesAction::Refresh);
+        }
+
         let body = egui::Rect::from_min_max(head.left_bottom(), full.max);
         ui.painter().rect_filled(body, 0.0, tokens.surface);
         ui.painter().rect_stroke(
@@ -860,129 +1060,327 @@ impl EguiApp {
                 egui::FontId::proportional(11.0),
                 tokens.text_muted,
             );
-        } else {
-            ui.scope_builder(
-                UiBuilder::new().max_rect(body.shrink2(Vec2::new(6.0, 3.0))),
-                |ui| {
-                    ScrollArea::vertical()
-                        .id_salt("workspace-file-list")
-                        .auto_shrink([false, false])
-                        .show_rows(ui, 26.0, self.state.workspace_files.len(), |ui, range| {
-                            for index in range {
-                                let file = self.state.workspace_files[index].clone();
-                                let (row, response) = ui.allocate_exact_size(
-                                    Vec2::new(ui.available_width(), 26.0),
-                                    Sense::click(),
-                                );
-                                let selected = self.state.selected_workspace_file.as_deref()
-                                    == Some(file.path.as_str());
-                                if selected || response.hovered() {
-                                    ui.painter().rect_filled(
-                                        row,
-                                        5.0,
-                                        if selected {
-                                            tokens.selected
-                                        } else {
-                                            tokens.hover
-                                        },
-                                    );
-                                }
-                                crate::icons::paint(
-                                    ui.painter(),
-                                    egui::Rect::from_center_size(
-                                        row.left_center() + Vec2::new(10.0, 0.0),
-                                        Vec2::splat(14.0),
-                                    ),
-                                    if file.is_directory {
-                                        crate::icons::Icon::Folder
-                                    } else {
-                                        crate::icons::Icon::File
-                                    },
-                                    if file.is_directory {
-                                        tokens.warning
-                                    } else {
-                                        tokens.text_muted
-                                    },
-                                );
-                                ui.painter().text(
-                                    row.left_center() + Vec2::new(21.0, 0.0),
-                                    egui::Align2::LEFT_CENTER,
-                                    &file.name,
-                                    egui::FontId::proportional(12.0),
-                                    tokens.text_secondary,
-                                );
-                                if !file.is_directory && file.size > 0 {
-                                    ui.painter().text(
-                                        row.right_center() - Vec2::new(3.0, 0.0),
-                                        egui::Align2::RIGHT_CENTER,
-                                        format!("{} B", file.size),
-                                        egui::FontId::proportional(10.0),
-                                        tokens.text_muted,
-                                    );
-                                }
-                                if response.double_clicked() {
-                                    self.open_workspace_file(file.path.clone());
-                                } else if response.clicked() {
-                                    self.state.select_workspace_file(file.path.clone());
-                                }
-                                response.context_menu(|menu| {
-                                    if menu.button("刷新").clicked() {
-                                        self.refresh_workspace_files();
-                                        menu.close();
-                                    }
-                                    if menu
-                                        .button(if file.is_directory {
-                                            "打开目录"
-                                        } else {
-                                            "打开"
-                                        })
-                                        .clicked()
-                                    {
-                                        self.open_workspace_file(file.path.clone());
-                                        menu.close();
-                                    }
-                                    menu.separator();
-                                    if menu.button("重命名").clicked() {
-                                        self.state.status = "工作目录条目重命名暂未接入".to_owned();
-                                        menu.close();
-                                    }
-                                });
-                            }
-                        });
-                },
-            );
+        } else if let Some(next) =
+            self.draw_file_rows(ui, body.shrink2(Vec2::new(6.0, 3.0)), tokens)
+        {
+            action = Some(next);
         }
-        let mut directory_action = None;
+
         directory_response.context_menu(|ui| {
+            ui.set_min_width(WORKSPACE_MENU_MIN_WIDTH);
             if ui.button("新建目录").clicked() {
-                directory_action = Some(WorkspacePromptKind::Directory);
+                action = Some(FilesAction::CreateDirectory);
                 ui.close();
             }
             if ui.button("新建文件").clicked() {
-                directory_action = Some(WorkspacePromptKind::File);
+                action = Some(FilesAction::CreateFile);
                 ui.close();
             }
             ui.separator();
             if ui.button("打开本地工作区").clicked() {
+                action = Some(FilesAction::OpenRootWorkspace);
+                ui.close();
+            }
+            if !current_path.is_empty() && ui.button("返回上一级").clicked() {
+                action = Some(FilesAction::Parent);
+                ui.close();
+            }
+            ui.separator();
+            if ui.button("刷新").clicked() {
+                action = Some(FilesAction::Refresh);
+                ui.close();
+            }
+        });
+
+        if let Some(action) = action {
+            self.apply_files_action(action);
+        }
+    }
+
+    /// Draw the bounded directory page. Rows are painted from the model slice
+    /// without cloning, and every mutating intent is returned instead of being
+    /// executed inside the scroll closure.
+    fn draw_file_rows(
+        &mut self,
+        ui: &mut Ui,
+        area: egui::Rect,
+        tokens: Tokens,
+    ) -> Option<FilesAction> {
+        let mut action: Option<FilesAction> = None;
+        let files = &self.state.workspace_files;
+        let selected = self.state.selected_workspace_file.clone();
+        let list = ui.interact(area, Id::new("workspace-file-list"), Sense::click());
+        // Keyboard ownership is tracked on the app, not through egui focus:
+        // a scroll area re-targets focus on arrow keys, and a text editor must
+        // always keep the keys it owns. Clicking the list claims the keys,
+        // clicking anywhere else releases them.
+        let clicked_elsewhere =
+            ui.ctx().input(|input| input.pointer.any_click()) && !ui.rect_contains_pointer(area);
+        if clicked_elsewhere {
+            self.files_keyboard_active = false;
+        }
+        if list.clicked() {
+            self.files_keyboard_active = true;
+        }
+        if self.files_keyboard_active {
+            ui.painter().rect_stroke(
+                area,
+                5.0,
+                Stroke::new(1.0, tokens.primary_soft),
+                egui::StrokeKind::Inside,
+            );
+        }
+        ui.scope_builder(UiBuilder::new().max_rect(area), |ui| {
+            ScrollArea::vertical()
+                .id_salt("workspace-file-list")
+                .auto_shrink([false, false])
+                .show_rows(ui, 26.0, files.len(), |ui, range| {
+                    for index in range {
+                        let Some(file) = files.get(index) else {
+                            continue;
+                        };
+                        let (row, response) = ui.allocate_exact_size(
+                            Vec2::new(ui.available_width(), 26.0),
+                            Sense::click(),
+                        );
+                        let is_selected = selected.as_deref() == Some(file.path.as_str());
+                        let pointer_in_row = ui.rect_contains_pointer(row);
+                        if is_selected || pointer_in_row {
+                            ui.painter().rect_filled(
+                                row,
+                                5.0,
+                                if is_selected {
+                                    tokens.selected
+                                } else {
+                                    tokens.hover
+                                },
+                            );
+                        }
+                        crate::icons::paint(
+                            ui.painter(),
+                            egui::Rect::from_center_size(
+                                row.left_center() + Vec2::new(10.0, 0.0),
+                                Vec2::splat(14.0),
+                            ),
+                            if file.is_directory {
+                                crate::icons::Icon::Folder
+                            } else {
+                                crate::icons::Icon::File
+                            },
+                            if file.is_directory {
+                                tokens.warning
+                            } else {
+                                tokens.text_muted
+                            },
+                        );
+                        // The hover action button owns a fixed 20px slot, so
+                        // revealing it never shifts the name or the size text.
+                        let more = egui::Rect::from_center_size(
+                            egui::pos2(row.right() - 13.0, row.center().y),
+                            Vec2::splat(20.0),
+                        );
+                        let name_rect = egui::Rect::from_min_max(
+                            egui::pos2(row.left() + 21.0, row.top()),
+                            egui::pos2(more.left() - 4.0, row.bottom()),
+                        );
+                        if name_rect.width() > 1.0 {
+                            let galley = ui.painter().layout(
+                                file.name.clone(),
+                                egui::FontId::proportional(12.0),
+                                tokens.text_secondary,
+                                name_rect.width(),
+                            );
+                            ui.painter().with_clip_rect(name_rect).galley(
+                                name_rect.left_center() - Vec2::new(0.0, galley.size().y / 2.0),
+                                galley,
+                                tokens.text_secondary,
+                            );
+                        }
+                        if !file.is_directory && file.size > 0 && !pointer_in_row {
+                            ui.painter().text(
+                                more.left_center() - Vec2::new(2.0, 0.0),
+                                egui::Align2::RIGHT_CENTER,
+                                format!("{} B", file.size),
+                                egui::FontId::proportional(10.0),
+                                tokens.text_muted,
+                            );
+                        }
+                        // The "more" button keeps its hit region every frame:
+                        // a popup is closed as soon as its owner stops being
+                        // shown, so hiding the button on pointer-out would
+                        // dismiss the menu the pointer is moving into.
+                        let more_response = ui
+                            .interact(
+                                more,
+                                Id::new(("workspace-more", &file.path)),
+                                Sense::click(),
+                            )
+                            .on_hover_text("更多操作")
+                            .on_hover_cursor(egui::CursorIcon::PointingHand);
+                        if pointer_in_row || more_response.hovered() {
+                            ui.painter().rect_filled(more, 4.0, tokens.card_border);
+                            crate::icons::paint(
+                                ui.painter(),
+                                more.shrink(5.0),
+                                crate::icons::Icon::More,
+                                tokens.text_muted,
+                            );
+                        }
+                        egui::Popup::menu(&more_response)
+                            .id(Id::new(("workspace-more-menu", &file.path)))
+                            .show(|ui| {
+                                if let Some(chosen) = file_menu_items(ui, file, tokens) {
+                                    action = Some(chosen);
+                                }
+                            });
+                        if response.double_clicked() {
+                            action = Some(if file.is_directory {
+                                FilesAction::Enter(file.path.clone())
+                            } else {
+                                FilesAction::Open(file.path.clone())
+                            });
+                        } else if response.clicked() {
+                            self.files_keyboard_active = true;
+                            action = Some(FilesAction::Select(file.path.clone()));
+                        }
+                        response.context_menu(|ui| {
+                            if let Some(chosen) = file_menu_items(ui, file, tokens) {
+                                action = Some(chosen);
+                            }
+                        });
+                    }
+                });
+        });
+
+        // Keyboard follows the same intent enum as the menus, so pointer and
+        // keyboard paths cannot drift apart. Ownership is tracked explicitly:
+        // egui may move widget focus between frames, while a text editor with
+        // focus must always keep its own keys.
+        let owns_keys = self.files_keyboard_active && !ui.ctx().wants_keyboard_input();
+        if owns_keys {
+            let keys = ui.input(|input| {
+                (
+                    input.key_pressed(egui::Key::ArrowUp),
+                    input.key_pressed(egui::Key::ArrowDown),
+                    input.key_pressed(egui::Key::Home),
+                    input.key_pressed(egui::Key::End),
+                    input.key_pressed(egui::Key::Enter),
+                    input.key_pressed(egui::Key::F2),
+                    input.key_pressed(egui::Key::Delete),
+                    input.key_pressed(egui::Key::F5),
+                    input.key_pressed(egui::Key::ArrowLeft),
+                    input.key_pressed(egui::Key::ArrowRight),
+                )
+            });
+            let (up, down, home, end, enter, rename, delete, refresh, left, right) = keys;
+            let current_index = files
+                .iter()
+                .position(|file| selected.as_deref() == Some(file.path.as_str()));
+            let step = |delta: isize| -> Option<String> {
+                if files.is_empty() {
+                    return None;
+                }
+                let len = files.len() as isize;
+                let base = current_index.map(|index| index as isize).unwrap_or(-1);
+                let next = (base + delta).clamp(0, len - 1);
+                files.get(next as usize).map(|file| file.path.clone())
+            };
+            if up {
+                action = step(-1).map(FilesAction::Select);
+            } else if down {
+                action = step(1).map(FilesAction::Select);
+            } else if home {
+                action = files.first().map(|file| FilesAction::Select(file.path.clone()));
+            } else if end {
+                action = files.last().map(|file| FilesAction::Select(file.path.clone()));
+            } else if refresh {
+                action = Some(FilesAction::Refresh);
+            } else if left {
+                action = Some(FilesAction::Parent);
+            } else if let Some(file) = current_index.and_then(|index| files.get(index)) {
+                if (enter || right) && file.is_directory {
+                    action = Some(FilesAction::Enter(file.path.clone()));
+                } else if enter {
+                    action = Some(FilesAction::Open(file.path.clone()));
+                } else if rename {
+                    action = Some(FilesAction::Rename {
+                        path: file.path.clone(),
+                        name: file.name.clone(),
+                    });
+                } else if delete {
+                    action = Some(FilesAction::Delete {
+                        path: file.path.clone(),
+                        name: file.name.clone(),
+                        is_directory: file.is_directory,
+                    });
+                }
+            }
+        }
+        action
+    }
+
+    fn apply_files_action(&mut self, action: FilesAction) {
+        match action {
+            FilesAction::Select(path) => self.state.select_workspace_file(path),
+            FilesAction::Open(path) => self.open_workspace_file(path),
+            FilesAction::Enter(path) => self.refresh_workspace_path(path),
+            FilesAction::Parent => {
+                if let Some(parent) = workspace_parent_path(&self.state.workspace_file_path) {
+                    self.refresh_workspace_path(parent);
+                }
+            }
+            FilesAction::Refresh => self.refresh_workspace_files(),
+            FilesAction::CreateDirectory => {
+                self.workspace_prompt = Some(WorkspacePromptDialog {
+                    kind: WorkspacePromptKind::Directory,
+                    draft: String::new(),
+                });
+                self.workspace_prompt_needs_focus = true;
+            }
+            FilesAction::CreateFile => {
+                self.workspace_prompt = Some(WorkspacePromptDialog {
+                    kind: WorkspacePromptKind::File,
+                    draft: String::new(),
+                });
+                self.workspace_prompt_needs_focus = true;
+            }
+            FilesAction::Rename { path, name } => {
+                self.workspace_prompt = Some(WorkspacePromptDialog {
+                    kind: WorkspacePromptKind::Rename { path },
+                    draft: name,
+                });
+                self.workspace_prompt_needs_focus = true;
+            }
+            FilesAction::Delete {
+                path,
+                name,
+                is_directory,
+            } => {
+                self.delete_entry_confirm = Some(DeleteEntryConfirm {
+                    path,
+                    name,
+                    is_directory,
+                });
+            }
+            FilesAction::Reference(path) => {
+                let draft = &mut self.state.composer;
+                let separator = if draft.is_empty() || draft.ends_with(char::is_whitespace) {
+                    ""
+                } else {
+                    "\n"
+                };
+                draft.push_str(separator);
+                draft.push_str(&format!("@\"{path}\" "));
+                self.state.status = format!("已引用 {path}");
+            }
+            FilesAction::OpenRootWorkspace => {
                 if let Some(session_id) = self.state.selected_session.clone() {
                     self.submit(BackendCommand::OpenLocalWorkspace(session_id));
                 } else {
                     self.state.status = "请先选择一个线程".to_owned();
                 }
-                ui.close();
             }
-            ui.separator();
-            if ui.button("刷新").clicked() {
-                self.refresh_workspace_files();
-                ui.close();
-            }
-        });
-        if let Some(kind) = directory_action {
-            self.workspace_prompt = Some(WorkspacePromptDialog {
-                kind,
-                draft: String::new(),
-            });
-            self.workspace_prompt_needs_focus = true;
+            FilesAction::Unavailable(reason) => self.state.status = reason.to_owned(),
         }
     }
 
@@ -1144,7 +1542,8 @@ impl EguiApp {
         let mut context_action = None;
         let draw_thread_context_menu =
             |ui: &mut Ui, context_action: &mut Option<ThreadRowAction>| {
-                if ui.button("重命名").clicked() {
+                ui.set_min_width(THREAD_MENU_MIN_WIDTH);
+                if ui.button("重命名").on_hover_text("F2").clicked() {
                     *context_action = Some(ThreadRowAction::Rename {
                         id: session.id.clone(),
                         title: session.title.clone(),
@@ -1248,7 +1647,18 @@ impl EguiApp {
                 action_response
                     .context_menu(|ui| draw_thread_context_menu(ui, &mut context_action));
                 if pointer_in_row && action_response.hovered() && enabled {
-                    ui.painter().rect_filled(button, 4.0, tokens.selected);
+                    // The band sits on `selected` or `primary_tint`, so the
+                    // button highlight must step away from whichever fill is
+                    // underneath instead of reusing the same token.
+                    ui.painter().rect_filled(
+                        button,
+                        4.0,
+                        if selected {
+                            tokens.hover
+                        } else {
+                            tokens.primary_fill
+                        },
+                    );
                 }
                 if pointer_in_row {
                     crate::icons::paint(
@@ -1491,14 +1901,32 @@ impl EguiApp {
     }
 
     fn refresh_workspace_files(&mut self) {
+        let path = self.state.workspace_file_path.clone();
+        self.refresh_workspace_path(path);
+    }
+
+    /// List one workspace-relative directory. The state id is bumped before
+    /// the command leaves, so a reply for a directory the user already left is
+    /// rejected by the reducer instead of replacing the current listing.
+    fn refresh_workspace_path(&mut self, path: String) {
         let Some(session_id) = self.state.selected_session.clone() else {
             return;
         };
-        self.state.begin_workspace_refresh();
+        let request_id = self.state.begin_workspace_refresh();
+        self.state.workspace_file_path = path.clone();
+        self.state.selected_workspace_file = None;
         self.submit(BackendCommand::RefreshWorkspaceFiles {
             session_id,
-            path: String::new(),
+            path,
+            request_id,
         });
+    }
+
+    /// Switching threads starts at the workspace root: a directory from the
+    /// previous thread has no meaning in the new one.
+    fn refresh_workspace_root(&mut self) {
+        self.state.workspace_file_path.clear();
+        self.refresh_workspace_files();
     }
 
     fn open_workspace_file(&mut self, path: String) {
@@ -1718,23 +2146,40 @@ impl EguiApp {
         let mut open = true;
         let mut close_requested = false;
         let mut accepted = false;
-        let (title, hint) = match dialog.kind {
-            WorkspacePromptKind::Directory => ("新建目录", "目录名，例如 notes/archive"),
-            WorkspacePromptKind::File => ("新建文件", "文件名，例如 notes/example.txt"),
+        let renaming = matches!(dialog.kind, WorkspacePromptKind::Rename { .. });
+        let (title, hint, field_label, dialog_id) = match &dialog.kind {
+            WorkspacePromptKind::Directory => (
+                "新建目录",
+                "目录名，例如 notes/archive",
+                "相对当前工作目录输入路径：",
+                "workspace-create-dialog",
+            ),
+            WorkspacePromptKind::File => (
+                "新建文件",
+                "文件名，例如 notes/example.txt",
+                "相对当前工作目录输入路径：",
+                "workspace-create-dialog",
+            ),
+            WorkspacePromptKind::Rename { .. } => (
+                "重命名",
+                "新名称",
+                "只改名称，不改变所在目录：",
+                "workspace-rename-dialog",
+            ),
         };
         egui::Window::new(title)
-            .id(Id::new("workspace-create-dialog"))
+            .id(Id::new(dialog_id))
             .collapsible(false)
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
             .open(&mut open)
             .show(ctx, |ui| {
                 ui.set_min_width(340.0);
-                ui.label("相对当前工作目录输入路径：");
+                ui.label(field_label);
                 ui.add_space(6.0);
                 let input = ui.add(
                     TextEdit::singleline(&mut dialog.draft)
-                        .id(Id::new("workspace-create-input"))
+                        .id(Id::new((dialog_id, "input")))
                         .desired_width(f32::INFINITY)
                         .hint_text(hint),
                 );
@@ -1742,12 +2187,20 @@ impl EguiApp {
                     input.request_focus();
                     self.workspace_prompt_needs_focus = false;
                 }
-                let valid = valid_workspace_entry_path(&dialog.draft);
+                let valid = if renaming {
+                    valid_workspace_entry_name(&dialog.draft)
+                } else {
+                    valid_workspace_entry_path(&dialog.draft)
+                };
                 if !dialog.draft.trim().is_empty() && !valid {
                     ui.label(
-                        RichText::new("请输入相对路径，不能包含 .. 或控制字符")
-                            .size(11.0)
-                            .color(tokens.danger),
+                        RichText::new(if renaming {
+                            "名称不能为空，不能包含路径分隔符、控制字符或 .."
+                        } else {
+                            "请输入相对路径，不能包含 .. 或控制字符"
+                        })
+                        .size(11.0)
+                        .color(tokens.danger),
                     );
                 }
                 ui.add_space(10.0);
@@ -1773,13 +2226,24 @@ impl EguiApp {
         }
         if accepted {
             if let Some(session_id) = self.state.selected_session.clone() {
-                let path = dialog.draft.trim().to_owned();
-                match dialog.kind {
-                    WorkspacePromptKind::Directory => {
-                        self.submit(BackendCommand::CreateWorkspaceDirectory { session_id, path })
-                    }
-                    WorkspacePromptKind::File => {
-                        self.submit(BackendCommand::CreateWorkspaceFile { session_id, path })
+                let draft = dialog.draft.trim().to_owned();
+                match &dialog.kind {
+                    WorkspacePromptKind::Directory => self.submit(
+                        BackendCommand::CreateWorkspaceDirectory {
+                            session_id,
+                            path: draft,
+                        },
+                    ),
+                    WorkspacePromptKind::File => self.submit(BackendCommand::CreateWorkspaceFile {
+                        session_id,
+                        path: draft,
+                    }),
+                    WorkspacePromptKind::Rename { path } => {
+                        self.submit(BackendCommand::RenameWorkspaceEntry {
+                            session_id,
+                            path: path.clone(),
+                            new_name: draft,
+                        })
                     }
                 }
             } else {
@@ -1787,6 +2251,74 @@ impl EguiApp {
             }
         } else if open {
             self.workspace_prompt = Some(dialog);
+        }
+    }
+
+    /// Directory deletion is the only irreversible action in this panel, so it
+    /// always asks first and names the exact entry.
+    fn draw_delete_entry_confirm(&mut self, ctx: &Context, tokens: Tokens) {
+        let Some(confirm) = self.delete_entry_confirm.take() else {
+            return;
+        };
+        let mut open = true;
+        let mut close_requested = false;
+        let mut accepted = false;
+        egui::Window::new("删除确认")
+            .id(Id::new("workspace-delete-dialog"))
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
+            .open(&mut open)
+            .show(ctx, |ui| {
+                ui.set_min_width(360.0);
+                ui.label(
+                    RichText::new(if confirm.is_directory {
+                        format!("确定删除目录「{}」及其全部内容？", confirm.name)
+                    } else {
+                        format!("确定删除「{}」？", confirm.name)
+                    })
+                    .size(13.0),
+                );
+                ui.add_space(6.0);
+                ui.label(
+                    RichText::new("删除后无法从蛹恢复。")
+                        .size(11.0)
+                        .color(tokens.text_muted),
+                );
+                ui.add_space(12.0);
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    let delete = ui.add(
+                        egui::Button::new(
+                            RichText::new("删除").color(tokens.on_accent),
+                        )
+                        .fill(tokens.danger),
+                    );
+                    if delete.clicked() {
+                        accepted = true;
+                    }
+                    if ui.button("取消").clicked() {
+                        close_requested = true;
+                    }
+                });
+                if ui.input(|input| input.key_pressed(egui::Key::Escape)) {
+                    close_requested = true;
+                }
+            });
+        if close_requested {
+            open = false;
+        }
+        if accepted {
+            if let Some(session_id) = self.state.selected_session.clone() {
+                self.state.selected_workspace_file = None;
+                self.submit(BackendCommand::DeleteWorkspaceEntry {
+                    session_id,
+                    path: confirm.path,
+                });
+            } else {
+                self.state.status = "请先选择一个线程".to_owned();
+            }
+        } else if open {
+            self.delete_entry_confirm = Some(confirm);
         }
     }
 
@@ -3876,7 +4408,7 @@ impl eframe::App for EguiApp {
         if self.last_selected != self.state.selected_session {
             if let Some(session_id) = self.state.selected_session.clone() {
                 self.submit(BackendCommand::OpenSession(session_id));
-                self.refresh_workspace_files();
+                self.refresh_workspace_root();
             }
             self.last_selected = self.state.selected_session.clone();
         }
@@ -4171,5 +4703,224 @@ mod composer_tests {
         frame(&ctx, &mut app, vec![enter(egui::Modifiers::CTRL)]);
         assert_eq!(commands.borrow().len(), 1);
         assert!(app.state.composer.is_empty());
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod files_tests {
+    use super::*;
+    use crate::model::WorkspaceFileView;
+    use std::{cell::RefCell, rc::Rc};
+
+    struct RecordingBackend(Rc<RefCell<Vec<BackendCommand>>>);
+
+    impl BackendPort for RecordingBackend {
+        fn submit(&mut self, command: BackendCommand) -> Result<(), String> {
+            self.0.borrow_mut().push(command);
+            Ok(())
+        }
+        fn poll(&mut self, _budget: usize) -> Vec<crate::backend::BackendEvent> {
+            Vec::new()
+        }
+    }
+
+    fn entry(name: &str, path: &str, is_directory: bool) -> WorkspaceFileView {
+        WorkspaceFileView {
+            name: name.to_owned(),
+            path: path.to_owned(),
+            is_directory,
+            size: 0,
+        }
+    }
+
+    fn app_with_files() -> (EguiApp, Rc<RefCell<Vec<BackendCommand>>>) {
+        let mut app = EguiApp::demo();
+        let commands = Rc::new(RefCell::new(Vec::new()));
+        app.backend = Box::new(RecordingBackend(commands.clone()));
+        app.state.selected_session = Some("fixture-thread".to_owned());
+        app.state.workspace_files = vec![
+            entry("notes", "notes", true),
+            entry("plan.md", "plan.md", false),
+            entry("readme.md", "readme.md", false),
+        ];
+        (app, commands)
+    }
+
+    fn frame(ctx: &Context, app: &mut EguiApp, events: Vec<egui::Event>) {
+        let _ = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    Vec2::new(1440.0, 900.0),
+                )),
+                focused: true,
+                events,
+                ..Default::default()
+            },
+            |ctx| app.draw_sidebar(ctx),
+        );
+    }
+
+    fn key(key: egui::Key) -> Vec<egui::Event> {
+        vec![egui::Event::Key {
+            key,
+            physical_key: Some(key),
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }]
+    }
+
+    #[test]
+    fn rename_accepts_only_a_single_path_segment() {
+        assert!(valid_workspace_entry_name("plan.md"));
+        assert!(valid_workspace_entry_name(" 笔记 "));
+        assert!(!valid_workspace_entry_name(""));
+        assert!(!valid_workspace_entry_name("notes/plan.md"));
+        assert!(!valid_workspace_entry_name("notes\\plan.md"));
+        assert!(!valid_workspace_entry_name(".."));
+        assert!(!valid_workspace_entry_name("."));
+        assert!(!valid_workspace_entry_name("bad\nname"));
+        assert!(!valid_workspace_entry_name(&"名".repeat(121)));
+    }
+
+    #[test]
+    fn parent_path_stops_at_the_workspace_root() {
+        assert_eq!(workspace_parent_path(""), None);
+        assert_eq!(workspace_parent_path("/"), None);
+        assert_eq!(workspace_parent_path("notes"), Some(String::new()));
+        assert_eq!(
+            workspace_parent_path("notes/archive/2026"),
+            Some("notes/archive".to_owned())
+        );
+    }
+
+    #[test]
+    fn keyboard_moves_the_directory_selection_and_opens_entries() {
+        let ctx = Context::default();
+        theme::apply(&ctx);
+        let (mut app, commands) = app_with_files();
+        frame(&ctx, &mut app, Vec::new());
+        // Clicking the empty part of the directory page arms keyboard
+        // ownership without selecting a row.
+        let (x, y) = (100.0, 800.0);
+        for events in [
+            vec![egui::Event::PointerMoved(egui::pos2(x, y))],
+            vec![egui::Event::PointerButton {
+                pos: egui::pos2(x, y),
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            }],
+            vec![egui::Event::PointerButton {
+                pos: egui::pos2(x, y),
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        ] {
+            frame(&ctx, &mut app, events);
+        }
+        assert_eq!(app.state.selected_workspace_file, None);
+
+        frame(&ctx, &mut app, key(egui::Key::ArrowDown));
+        assert_eq!(app.state.selected_workspace_file.as_deref(), Some("notes"));
+        frame(&ctx, &mut app, key(egui::Key::ArrowDown));
+        assert_eq!(app.state.selected_workspace_file.as_deref(), Some("plan.md"));
+        frame(&ctx, &mut app, key(egui::Key::End));
+        assert_eq!(
+            app.state.selected_workspace_file.as_deref(),
+            Some("readme.md")
+        );
+        frame(&ctx, &mut app, key(egui::Key::Home));
+        assert_eq!(app.state.selected_workspace_file.as_deref(), Some("notes"));
+        // Up on the first row stays clamped instead of wrapping to the end.
+        frame(&ctx, &mut app, key(egui::Key::ArrowUp));
+        assert_eq!(app.state.selected_workspace_file.as_deref(), Some("notes"));
+
+        // Enter on a directory navigates into it rather than opening the
+        // system handler.
+        frame(&ctx, &mut app, key(egui::Key::Enter));
+        let submitted = commands.borrow();
+        assert!(matches!(
+            submitted.last(),
+            Some(BackendCommand::RefreshWorkspaceFiles { path, .. }) if path == "notes"
+        ));
+        assert_eq!(app.state.workspace_file_path, "notes");
+        assert_eq!(app.state.selected_workspace_file, None);
+    }
+
+    #[test]
+    fn delete_always_asks_before_submitting() {
+        let ctx = Context::default();
+        theme::apply(&ctx);
+        let (mut app, commands) = app_with_files();
+        app.state.workspace_file_path = "notes".to_owned();
+
+        app.apply_files_action(FilesAction::Delete {
+            path: "notes/archive".to_owned(),
+            name: "archive".to_owned(),
+            is_directory: true,
+        });
+        assert!(commands.borrow().is_empty(), "未确认前不得提交删除");
+        let confirm = app.delete_entry_confirm.as_ref().expect("应弹出删除确认");
+        assert_eq!(confirm.name, "archive");
+        assert!(confirm.is_directory);
+
+        app.delete_entry_confirm = None;
+        app.state.selected_workspace_file = Some("notes/archive".to_owned());
+        app.apply_files_action(FilesAction::Delete {
+            path: "notes/archive".to_owned(),
+            name: "archive".to_owned(),
+            is_directory: true,
+        });
+        // Confirming the same intent submits once and drops the stale row
+        // selection so the panel cannot point at a deleted path.
+        let dialog = app.delete_entry_confirm.take().expect("确认框仍在");
+        app.state.selected_workspace_file = None;
+        app.backend
+            .submit(BackendCommand::DeleteWorkspaceEntry {
+                session_id: "fixture-thread".to_owned(),
+                path: dialog.path,
+            })
+            .expect("recording backend accepts");
+        let submitted = commands.borrow();
+        assert!(matches!(
+            submitted.last(),
+            Some(BackendCommand::DeleteWorkspaceEntry { path, .. }) if path == "notes/archive"
+        ));
+        assert_eq!(app.state.selected_workspace_file, None);
+    }
+
+    #[test]
+    fn rename_intent_prefills_the_current_name_and_parent() {
+        let (mut app, _commands) = app_with_files();
+        app.apply_files_action(FilesAction::Rename {
+            path: "notes/plan.md".to_owned(),
+            name: "plan.md".to_owned(),
+        });
+        let prompt = app.workspace_prompt.as_ref().expect("应打开重命名输入框");
+        assert_eq!(prompt.draft, "plan.md");
+        match &prompt.kind {
+            WorkspacePromptKind::Rename { path } => assert_eq!(path, "notes/plan.md"),
+            _ => panic!("重命名意图不得创建新条目"),
+        }
+    }
+
+    #[test]
+    fn reference_appends_to_the_draft_without_touching_existing_text() {
+        let (mut app, _commands) = app_with_files();
+        app.state.composer = "看一下这个文件".to_owned();
+        app.apply_files_action(FilesAction::Reference("notes/plan.md".to_owned()));
+        assert_eq!(
+            app.state.composer,
+            "看一下这个文件\n@\"notes/plan.md\" "
+        );
+
+        app.apply_files_action(FilesAction::Reference("notes/plan.md".to_owned()));
+        assert_eq!(
+            app.state.composer,
+            "看一下这个文件\n@\"notes/plan.md\" @\"notes/plan.md\" "
+        );
     }
 }

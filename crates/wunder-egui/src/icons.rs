@@ -15,6 +15,7 @@ pub(crate) const FONT_BYTES: &[u8] = include_bytes!(concat!(
 #[derive(Clone, Copy)]
 pub enum Icon {
     Plus,
+    ChevronLeft,
     ChevronRight,
     ChevronDown,
     Folder,
@@ -72,6 +73,7 @@ impl Icon {
     fn glyph(self) -> &'static str {
         match self {
             Self::Plus => "+",
+            Self::ChevronLeft => "\u{f053}",
             Self::ChevronRight => "\u{f054}",
             Self::ChevronDown => "\u{f078}",
             Self::Folder | Self::Workspace => "\u{f07b}",

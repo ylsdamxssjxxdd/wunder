@@ -43,6 +43,7 @@ cargo build --release -p wunder-cli
 - **TTY** (stdin/stdout/stderr are all TTYs): opens the **interactive session** — a ratatui TUI rendered with an inline viewport (`Viewport::Inline`), so your shell scrollback is preserved
 - **Non-TTY**: degrades to a **one-shot run**; pipelines and scripts take this path
 - **Data directory**: `WUNDER_HOME` → `~/.wunder`
+- **Workspace**: the directory you launch the command from; `-C/--cd` selects another directory
 - **User configuration**: `~/.wunder/config.toml`
 
 Your first session:

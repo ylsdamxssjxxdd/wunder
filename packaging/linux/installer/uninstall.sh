@@ -52,26 +52,45 @@ done
 
 profile="$HOME/.profile"
 if [ -f "$profile" ] && grep -Fq '# >>> wunder commands >>>' "$profile"; then
-  awk '
+  tmp="$profile.wunder.tmp"
+  if awk '
     /^# >>> wunder commands >>>$/ { skip = 1; next }
     /^# <<< wunder commands <<<$/ { skip = 0; next }
     !skip { print }
-  ' "$profile" > "$profile.wunder.tmp" && mv -f -- "$profile.wunder.tmp" "$profile"
+  ' "$profile" > "$tmp"; then
+    cat "$tmp" > "$profile"
+    rm -f -- "$tmp"
+  fi
+fi
+
+manifest="$HOME_DIR/bin/install-manifest.txt"
+desktop_entry=""
+desktop_icon=""
+if [ -f "$manifest" ]; then
+  desktop_entry=$(sed -n 's/^desktop_entry=//p' "$manifest" | tail -n 1)
+  desktop_icon=$(sed -n 's/^desktop_icon=//p' "$manifest" | tail -n 1)
+fi
+data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
+if [ -z "$desktop_entry" ]; then
+  desktop_entry="$data_home/applications/wunder.desktop"
+fi
+entry_removed=0
+if [ -f "$desktop_entry" ] && grep -Fq 'X-Wunder-Install=1' "$desktop_entry"; then
+  rm -f -- "$desktop_entry"
+  entry_removed=1
+fi
+if [ -n "$desktop_icon" ] && [ -f "$desktop_icon" ] &&
+  grep -Fq 'X-Wunder-Install=1' "$desktop_icon"; then
+  rm -f -- "$desktop_icon"
+fi
+if [ "$entry_removed" -eq 1 ] && command -v update-desktop-database >/dev/null 2>&1; then
+  update-desktop-database "$(dirname -- "$desktop_entry")" >/dev/null 2>&1 || true
 fi
 
 rm -rf -- "$HOME_DIR/bin"
 rm -f -- "$HOME_DIR/.wunder-home"
-rm -f -- "$HOME_DIR/images/wunder.png"
+rm -f -- "$HOME_DIR/images/pupa.png" "$HOME_DIR/images/wunder.png"
 rmdir "$HOME_DIR/images" 2>/dev/null || true
-
-data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
-entry="$data_home/applications/wunder.desktop"
-if [ -f "$entry" ] && grep -Fq 'X-Wunder-Install=1' "$entry"; then
-  rm -f -- "$entry"
-  if command -v update-desktop-database >/dev/null 2>&1; then
-    update-desktop-database "$data_home/applications" >/dev/null 2>&1 || true
-  fi
-fi
 
 echo "已卸载心舰的蛹、舵机和安装时选择的补充组件。"
 echo "保留的用户数据："

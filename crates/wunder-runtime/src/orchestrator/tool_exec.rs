@@ -630,6 +630,7 @@ impl Orchestrator {
         tool_call_id: Option<&str>,
         request_context_tokens: Option<i64>,
         request_usage: Option<&TokenUsage>,
+        schema_reference: Option<&crate::tools::ToolSchemaReference>,
     ) {
         let timestamp = Local::now().to_rfc3339();
         let safe_args = if args.is_object() {
@@ -671,10 +672,10 @@ impl Orchestrator {
         }
         // 工具结果与工具调用共用同一 timeline item（后者覆盖前者）。保存稳定引用
         // 而非重复的完整 schema；完整规格由当前目录版本和 hash 恢复。
-        if let Some(schema) = crate::tools::runtime_tool_schema(tool_name) {
-            payload["schema_ref"] =
-                serde_json::to_value(crate::tools::schema_reference(tool_name, &schema))
-                    .unwrap_or(Value::Null);
+        if let Some(reference) = schema_reference {
+            payload["schema_ref"] = serde_json::to_value(reference).unwrap_or(Value::Null);
+        } else if let Some(reference) = crate::tools::runtime_tool_schema_reference(tool_name) {
+            payload["schema_ref"] = serde_json::to_value(reference).unwrap_or(Value::Null);
         }
         round_info.insert_into(payload.as_object_mut().expect("tool payload object"));
         if let Some(turn_id) = round_info.thread_turn_id {
@@ -909,7 +910,7 @@ impl Orchestrator {
         }
 
         let mut seen_names = HashSet::new();
-        let mut path_map: HashMap<PathBuf, String> = HashMap::new();
+        let mut path_map: HashMap<PathBuf, (String, crate::schemas::ToolSpec)> = HashMap::new();
         for spec in specs {
             let name = spec.name.trim();
             if name.is_empty() {
@@ -922,29 +923,46 @@ impl Orchestrator {
                 continue;
             };
             let key = normalize_compare_path(&spec_path);
-            path_map.insert(key, name.to_string());
+            let tool_spec = crate::schemas::ToolSpec {
+                name: name.to_string(),
+                title: None,
+                description: spec.description,
+                input_schema: spec.input_schema,
+            };
+            path_map.insert(key, (name.to_string(), tool_spec));
         }
         if path_map.is_empty() {
             return;
         }
 
-        let mut matched = HashSet::new();
+        let mut matched = HashMap::new();
         for raw in paths {
             let Some(candidate) = resolve_absolute_path(&raw) else {
                 continue;
             };
             let key = normalize_compare_path(&candidate);
-            if let Some(name) = path_map.get(&key) {
-                matched.insert(name.clone());
+            if let Some((name, spec)) = path_map.get(&key) {
+                matched.insert(name.clone(), spec.clone());
             }
         }
         if matched.is_empty() {
             return;
         }
         let result = ToolResultPayload::from_value(json!({ "source": "skill_read" }));
-        for name in matched {
+        for (name, spec) in matched {
+            let reference =
+                crate::tools::schema_reference(&name, &crate::tools::tool_schema_document(&spec));
             self.append_tool_log(
-                user_id, session_id, &name, args, &result, round_info, None, None, None,
+                user_id,
+                session_id,
+                &name,
+                args,
+                &result,
+                round_info,
+                None,
+                None,
+                None,
+                Some(&reference),
             );
         }
     }

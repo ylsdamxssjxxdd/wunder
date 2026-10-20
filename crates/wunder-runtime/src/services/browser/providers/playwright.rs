@@ -191,10 +191,11 @@ fn playwright_tool_specs() -> Vec<ToolSpec> {
         ),
         raw_spec(
             TOOL_OBSERVE,
-            "Read the active page. refs returns actionable element refs; text returns readable content; screenshot returns an attachment.",
+            "Read the active page. refs returns actionable element refs; text returns readable content and an opaque next_cursor when more is available; screenshot returns an attachment. Re-observe text if its cursor is stale after page changes.",
             json!({
                 "mode": {"type": "string", "enum": ["refs", "text", "screenshot"], "default": "refs"},
                 "max_chars": {"type": "integer", "minimum": 1, "maximum": 40000},
+                "cursor": {"type": "string", "description": "Opaque cursor returned by a prior mode=text observation of this unchanged page."},
                 "path": {"type": "string", "description": "Workspace-relative screenshot path."},
                 "full_page": {"type": "boolean"}
             }),
@@ -393,6 +394,7 @@ async fn dispatch_legacy(
             let mut call_args = Map::new();
             copy_opt(args, &mut call_args, "target_id");
             copy_opt(args, &mut call_args, "max_chars");
+            copy_opt(args, &mut call_args, "cursor");
             let data = service
                 .execute(&scope, "read_page", &Value::Object(call_args))
                 .await?;

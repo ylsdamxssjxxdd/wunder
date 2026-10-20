@@ -64,8 +64,8 @@ for resource in prompts skills preset_worker_cards ppt_templates i18n.messages.j
 done
 cat > "$appdir/wunder.desktop" <<'EOF'
 [Desktop Entry]
-Name=Wunder
-Comment=Native Slint desktop client
+Name=蛹
+Comment=本地 AI 工作台
 Exec=wunder-frontend-slint
 Terminal=false
 Type=Application

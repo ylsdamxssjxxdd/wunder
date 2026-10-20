@@ -51,13 +51,30 @@ pub enum BackendCommand {
     ArchiveSession(String),
     RefreshWorkspaceFiles {
         session_id: String,
+        /// Workspace-relative directory to list; empty means the root.
         path: String,
+        /// Monotonic client request id. The reply echoes it so a listing for
+        /// a directory the user already left cannot replace the current one.
+        request_id: u64,
     },
     CreateWorkspaceDirectory {
         session_id: String,
         path: String,
     },
     CreateWorkspaceFile {
+        session_id: String,
+        path: String,
+    },
+    /// Rename one entry inside its own parent directory. The façade validates
+    /// both the new name and the boundary; the UI never touches paths.
+    RenameWorkspaceEntry {
+        session_id: String,
+        path: String,
+        new_name: String,
+    },
+    /// Delete one entry, including a directory subtree. The caller is
+    /// responsible for the confirmation step; this command always deletes.
+    DeleteWorkspaceEntry {
         session_id: String,
         path: String,
     },
@@ -165,6 +182,8 @@ pub enum BackendEvent {
         /// must never replace that thread's file projection.
         session_id: String,
         path: String,
+        /// Echo of `BackendCommand::RefreshWorkspaceFiles::request_id`.
+        request_id: u64,
         files: Result<Vec<WorkspaceFileView>, String>,
     },
     WorkspaceAction {
@@ -266,10 +285,15 @@ impl BackendPort for DemoBackend {
                     result: Ok(()),
                 });
             }
-            BackendCommand::RefreshWorkspaceFiles { session_id, path } => {
+            BackendCommand::RefreshWorkspaceFiles {
+                session_id,
+                path,
+                request_id,
+            } => {
                 self.pending.push_back(BackendEvent::WorkspaceFiles {
                     session_id,
                     path,
+                    request_id,
                     files: Ok(Vec::new()),
                 });
             }
@@ -277,6 +301,8 @@ impl BackendPort for DemoBackend {
             | BackendCommand::ArchiveSession(_)
             | BackendCommand::CreateWorkspaceDirectory { .. }
             | BackendCommand::CreateWorkspaceFile { .. }
+            | BackendCommand::RenameWorkspaceEntry { .. }
+            | BackendCommand::DeleteWorkspaceEntry { .. }
             | BackendCommand::OpenWorkspaceFile { .. }
             | BackendCommand::OpenLocalWorkspace(_) => {
                 return Err("演示模式使用固定数据，不能执行本地任务".to_owned());
@@ -424,6 +450,8 @@ impl BackendPort for RemoteBackend {
             BackendCommand::RefreshWorkspaceFiles { .. } => Some("刷新工作目录"),
             BackendCommand::CreateWorkspaceDirectory { .. } => Some("新建目录"),
             BackendCommand::CreateWorkspaceFile { .. } => Some("新建文件"),
+            BackendCommand::RenameWorkspaceEntry { .. } => Some("重命名工作目录条目"),
+            BackendCommand::DeleteWorkspaceEntry { .. } => Some("删除工作目录条目"),
             BackendCommand::OpenWorkspaceFile { .. } => Some("打开工作目录条目"),
             BackendCommand::OpenLocalWorkspace(_) => Some("打开本地工作区"),
             BackendCommand::LoadProcessPage { .. } => Some("读取工作过程"),
@@ -834,13 +862,54 @@ fn native_worker(command_rx: Receiver<BackendCommand>, event_tx: SyncSender<Back
                     return;
                 }
             }
-            Ok(BackendCommand::RefreshWorkspaceFiles { session_id, path }) => {
+            Ok(BackendCommand::RefreshWorkspaceFiles {
+                session_id,
+                path,
+                request_id,
+            }) => {
                 let files = workspace_files_for_session(&desktop, &session_id, &path);
                 if event_tx
                     .send(BackendEvent::WorkspaceFiles {
                         session_id,
                         path,
+                        request_id,
                         files,
+                    })
+                    .is_err()
+                {
+                    return;
+                }
+            }
+            Ok(BackendCommand::RenameWorkspaceEntry {
+                session_id,
+                path,
+                new_name,
+            }) => {
+                let result = workspace_root_for_session(&desktop, &session_id).and_then(|root| {
+                    desktop
+                        .workspace_local_rename(&root, &path, &new_name)
+                        .map_err(display_error)
+                });
+                if event_tx
+                    .send(BackendEvent::WorkspaceAction {
+                        label: "已重命名".to_owned(),
+                        result,
+                    })
+                    .is_err()
+                {
+                    return;
+                }
+            }
+            Ok(BackendCommand::DeleteWorkspaceEntry { session_id, path }) => {
+                let result = workspace_root_for_session(&desktop, &session_id).and_then(|root| {
+                    desktop
+                        .workspace_local_delete(&root, &path)
+                        .map_err(display_error)
+                });
+                if event_tx
+                    .send(BackendEvent::WorkspaceAction {
+                        label: "已删除".to_owned(),
+                        result,
                     })
                     .is_err()
                 {
@@ -1769,6 +1838,24 @@ pub fn apply_event(state: &mut AppState, event: BackendEvent) {
                 Err(error) => state.prompt_preview.error = error,
             }
         }
+        BackendEvent::WorkspaceFiles {
+            session_id,
+            path,
+            request_id,
+            files,
+        } if state.selected_session.as_deref() == Some(session_id.as_str())
+            && request_id == state.workspace_request_id =>
+        {
+            state.workspace_file_loading = false;
+            state.workspace_file_path = path;
+            match files {
+                Ok(files) => {
+                    state.replace_workspace_files(files);
+                    state.workspace_file_error.clear();
+                }
+                Err(error) => state.workspace_file_error = error,
+            }
+        }
         BackendEvent::Ready => {
             state.connection = crate::model::ConnectionState::Ready;
             state.status = "本地运行时已就绪".to_string();
@@ -2305,6 +2392,7 @@ mod tests {
     fn workspace_listing_event_keeps_its_requesting_thread() {
         let mut state = AppState {
             selected_session: Some("selected".into()),
+            workspace_request_id: 7,
             workspace_files: vec![WorkspaceFileView {
                 path: "current.md".into(),
                 ..Default::default()
@@ -2316,6 +2404,7 @@ mod tests {
             BackendEvent::WorkspaceFiles {
                 session_id: "other".into(),
                 path: String::new(),
+                request_id: 7,
                 files: Ok(vec![WorkspaceFileView {
                     path: "stale.md".into(),
                     ..Default::default()
@@ -2323,6 +2412,52 @@ mod tests {
             },
         );
         assert_eq!(state.workspace_files[0].path, "current.md");
+    }
+
+    #[test]
+    fn late_directory_listing_cannot_replace_the_current_one() {
+        // Two refreshes raced: the older page arrives last. Only the newest
+        // request id may update the projection, and the newer directory must
+        // stay selected.
+        let mut state = AppState {
+            selected_session: Some("selected".into()),
+            ..Default::default()
+        };
+        let first = state.begin_workspace_refresh();
+        let second = state.begin_workspace_refresh();
+        state.workspace_file_path = "notes".to_owned();
+
+        apply_event(
+            &mut state,
+            BackendEvent::WorkspaceFiles {
+                session_id: "selected".into(),
+                path: String::new(),
+                request_id: first,
+                files: Ok(vec![WorkspaceFileView {
+                    path: "root.md".into(),
+                    ..Default::default()
+                }]),
+            },
+        );
+        assert!(state.workspace_files.is_empty(), "过期页不应写入文件列表");
+        assert_eq!(state.workspace_file_path, "notes");
+        assert!(state.workspace_file_loading, "仍在等待最新一页");
+
+        apply_event(
+            &mut state,
+            BackendEvent::WorkspaceFiles {
+                session_id: "selected".into(),
+                path: "notes".into(),
+                request_id: second,
+                files: Ok(vec![WorkspaceFileView {
+                    path: "notes/plan.md".into(),
+                    ..Default::default()
+                }]),
+            },
+        );
+        assert_eq!(state.workspace_files[0].path, "notes/plan.md");
+        assert_eq!(state.workspace_file_path, "notes");
+        assert!(!state.workspace_file_loading);
     }
 
     #[test]

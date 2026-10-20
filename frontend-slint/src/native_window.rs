@@ -6,10 +6,10 @@
 #[cfg(windows)]
 use windows_sys::Win32::Foundation::HWND;
 #[cfg(windows)]
-use windows_sys::Win32::System::Threading::GetCurrentThreadId;
+use windows_sys::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
 #[cfg(windows)]
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    AttachThreadInput, BringWindowToTop, GetForegroundWindow, GetWindowThreadProcessId, IsIconic,
+    BringWindowToTop, GetForegroundWindow, GetWindowThreadProcessId, IsIconic,
     IsZoomed, SetForegroundWindow, ShowWindow, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE,
 };
 
@@ -81,7 +81,7 @@ pub fn restore_and_focus(window: &slint::Window) -> bool {
         // input state and retry; without this the restored window stays
         // behind whatever the user was looking at.
         let foreground = GetForegroundWindow();
-        if foreground.is_null() || foreground == hwnd {
+        if foreground == 0 || foreground == hwnd {
             return raised;
         }
         let current_thread = GetCurrentThreadId();

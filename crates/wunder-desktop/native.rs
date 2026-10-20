@@ -207,6 +207,16 @@ pub struct NativeMessage {
     pub stats_status: String,
     pub user_round: i64,
     pub stats: NativeMessageStats,
+    pub attachments: Vec<NativeMessageAttachment>,
+}
+
+/// Bounded attachment card for a user message: enough to render a thumbnail
+/// or file row and to open the stored file from the workspace.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct NativeMessageAttachment {
+    pub name: String,
+    pub content_type: String,
+    pub public_path: String,
 }
 
 /// Compact, bounded tool-call presentation for native frontends. The raw
@@ -1567,7 +1577,21 @@ fn message_from_value(value: Value) -> Option<NativeMessage> {
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_string(),
-        text: value.get("content").and_then(Value::as_str)?.to_string(),
+        text: wunder_server::stable_core::thread_view::message_content_text(
+            value.get("content").unwrap_or(&Value::Null),
+        )?
+        .to_string(),
+        attachments: value
+            .get("attachments")
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .take(8)
+                    .filter_map(attachment_from_value)
+                    .collect()
+            })
+            .unwrap_or_default(),
         mine: role == "user",
         created_at: value
             .get("created_at")
@@ -1595,6 +1619,30 @@ fn message_from_value(value: Value) -> Option<NativeMessage> {
             .unwrap_or_default(),
         stats: NativeMessageStats::from_payload(stats),
     })
+}
+
+/// One attachment card from either the durable source shape (`content_type`)
+/// or the bounded view projection (`mime_type`).
+pub(crate) fn attachment_from_value(item: &Value) -> Option<NativeMessageAttachment> {
+    let attachment = NativeMessageAttachment {
+        name: item
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        content_type: item
+            .get("content_type")
+            .or_else(|| item.get("mime_type"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        public_path: item
+            .get("public_path")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+    };
+    (attachment != NativeMessageAttachment::default()).then_some(attachment)
 }
 
 fn now_ts() -> f64 {

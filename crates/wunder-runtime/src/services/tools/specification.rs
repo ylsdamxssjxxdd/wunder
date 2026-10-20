@@ -1,10 +1,10 @@
 //! Stable full/compact/tiny tool specifications and dynamic schema limits.
 use crate::schemas::ToolSpec;
 use anyhow::{bail, Result};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::io::{self, Write};
 
 pub const TOOL_CATALOG_VERSION: &str = "tools-v2";
@@ -29,7 +29,7 @@ pub fn schema_reference(_tool_id: &str, schema: &Value) -> ToolSchemaReference {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolProfile {
     Minimal,
@@ -40,6 +40,69 @@ pub enum ToolProfile {
     Runtime,
     Dynamic,
     Authorized,
+}
+
+impl ToolProfile {
+    /// Parse the stable profile names accepted by runtime configuration and
+    /// request overrides. Unknown values are rejected by returning `None` so
+    /// a typo cannot silently broaden a restricted tool set.
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "minimal" | "default" => Some(Self::Minimal),
+            "development" | "develop" | "dev" => Some(Self::Development),
+            "research" | "researcher" => Some(Self::Research),
+            "media" | "multimodal" => Some(Self::Media),
+            "desktop" | "local" => Some(Self::Desktop),
+            "runtime" | "orchestration" => Some(Self::Runtime),
+            "authorized" | "full" | "all" => Some(Self::Authorized),
+            _ => None,
+        }
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Minimal => "minimal",
+            Self::Development => "development",
+            Self::Research => "research",
+            Self::Media => "media",
+            Self::Desktop => "desktop",
+            Self::Runtime => "runtime",
+            Self::Dynamic => "dynamic",
+            Self::Authorized => "authorized",
+        }
+    }
+}
+
+/// Resolve a profile from a user/config value. Empty values intentionally
+/// retain the historical all-authorized behavior.
+pub fn resolve_tool_profile(value: Option<&str>) -> ToolProfile {
+    value
+        .and_then(ToolProfile::parse)
+        .unwrap_or(ToolProfile::Authorized)
+}
+
+/// Restrict an already permission-checked set of tools to one named profile.
+/// Dynamic/user tools remain available to named profiles because they are
+/// explicit capabilities selected by the caller; the profile only removes
+/// unrelated built-in families. `Authorized` is the compatibility profile.
+pub fn filter_tool_names_by_profile(
+    names: std::collections::HashSet<String>,
+    profile: ToolProfile,
+) -> std::collections::HashSet<String> {
+    if matches!(profile, ToolProfile::Authorized | ToolProfile::Dynamic) {
+        return names;
+    }
+    names
+        .into_iter()
+        .filter(|name| {
+            let canonical = super::resolve_tool_name(name);
+            let category = tool_profile(&canonical);
+            crate::services::goal::is_goal_tool_name(&canonical)
+                || category == ToolProfile::Minimal
+                || category == profile
+                || category == ToolProfile::Dynamic
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -96,6 +159,18 @@ pub fn tool_schema_document(spec: &ToolSpec) -> Value {
     })
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ToolProfileBinding {
+    pub profile: ToolProfile,
+    pub catalog_version: String,
+    pub revision: String,
+    /// Canonical tool IDs selected when this thread first established its
+    /// profile. An empty value is accepted only for pre-ID metadata and is
+    /// upgraded on the next execution; it must never add a capability.
+    #[serde(default)]
+    pub tool_ids: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct ToolProfileSnapshot {
     pub profile: ToolProfile,
@@ -106,7 +181,18 @@ pub struct ToolProfileSnapshot {
 }
 
 pub fn tool_profile_snapshot(specs: &[ToolSpec]) -> ToolProfileSnapshot {
+    tool_profile_snapshot_for_profile(specs, ToolProfile::Authorized)
+}
+
+pub fn tool_profile_snapshot_for_profile(
+    specs: &[ToolSpec],
+    profile: ToolProfile,
+) -> ToolProfileSnapshot {
     let mut sorted = BTreeMap::new();
+    // Callers pass the final permission-checked selected set. Do not apply
+    // category filtering here: dynamic capabilities have no static category
+    // but must still contribute to the thread revision when explicitly
+    // authorized.
     for spec in specs {
         let id = super::resolve_tool_name(&spec.name);
         sorted.insert(id.clone(), ToolSpecification::from_full(spec.clone()));
@@ -120,12 +206,40 @@ pub fn tool_profile_snapshot(specs: &[ToolSpec]) -> ToolProfileSnapshot {
         &serde_json::json!({"version":TOOL_CATALOG_VERSION,"tools":sorted.values().map(|item| tool_schema_document(&item.compact)).collect::<Vec<_>>() }),
     );
     ToolProfileSnapshot {
-        profile: ToolProfile::Authorized,
+        profile,
         catalog_version: TOOL_CATALOG_VERSION.into(),
         revision,
         tool_ids,
         tools,
     }
+}
+
+pub fn tool_profile_binding(snapshot: &ToolProfileSnapshot) -> ToolProfileBinding {
+    ToolProfileBinding {
+        profile: snapshot.profile,
+        catalog_version: snapshot.catalog_version.clone(),
+        revision: snapshot.revision.clone(),
+        tool_ids: snapshot.tool_ids.clone(),
+    }
+}
+
+/// Apply the frozen canonical snapshot after the current permissions and
+/// profile policy. This can only remove capabilities: a user access change or
+/// temporarily unavailable tool never comes back merely because it appeared
+/// in an older binding.
+pub fn filter_tool_names_by_frozen_ids(
+    names: HashSet<String>,
+    frozen_tool_ids: &[String],
+) -> HashSet<String> {
+    let frozen: HashSet<&str> = frozen_tool_ids
+        .iter()
+        .map(String::as_str)
+        .filter(|name| !name.trim().is_empty())
+        .collect();
+    names
+        .into_iter()
+        .filter(|name| frozen.contains(super::resolve_tool_name(name).as_str()))
+        .collect()
 }
 
 pub fn select_tool_profile(specs: &[ToolSpec], profile: ToolProfile) -> Vec<ToolSpec> {
@@ -518,6 +632,46 @@ mod tests {
             tool_profile_snapshot(&b).revision
         );
         assert_eq!(select_tool_profile(&a, ToolProfile::Authorized).len(), 2)
+    }
+    #[test]
+    fn named_profile_keeps_minimal_matching_and_dynamic_capabilities() {
+        let names = ["执行命令", "网页抓取", "桌面控制", "remote_service@lookup"]
+            .into_iter()
+            .map(str::to_string)
+            .collect();
+        let selected = filter_tool_names_by_profile(names, ToolProfile::Research);
+
+        assert!(selected.contains("执行命令"));
+        assert!(selected.contains("网页抓取"));
+        assert!(selected.contains("remote_service@lookup"));
+        assert!(!selected.contains("桌面控制"));
+    }
+
+    #[test]
+    fn profile_binding_carries_selected_catalog_revision() {
+        let snapshot =
+            tool_profile_snapshot_for_profile(&[spec("read_file")], ToolProfile::Minimal);
+        let binding = tool_profile_binding(&snapshot);
+
+        assert_eq!(binding.profile, ToolProfile::Minimal);
+        assert_eq!(binding.catalog_version, TOOL_CATALOG_VERSION);
+        assert_eq!(binding.revision, snapshot.revision);
+        assert_eq!(binding.tool_ids, vec!["读取文件".to_string()]);
+    }
+
+    #[test]
+    fn frozen_ids_only_narrow_the_current_profile_surface() {
+        let names = ["执行命令", "网页抓取", "remote_service@lookup"]
+            .into_iter()
+            .map(str::to_string)
+            .collect();
+        let current = filter_tool_names_by_profile(names, ToolProfile::Research);
+        let frozen = filter_tool_names_by_frozen_ids(
+            current,
+            &["网页抓取".to_string(), "removed_or_denied".to_string()],
+        );
+
+        assert_eq!(frozen, HashSet::from(["网页抓取".to_string()]));
     }
     #[test]
     fn registration_rejects_unbounded_array() {

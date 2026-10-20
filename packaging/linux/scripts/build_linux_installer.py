@@ -390,7 +390,7 @@ def build_payload(stage, version, arch, desktop, cli, core_only, components, sup
         add_file(target_tar, "payload/wunder-desktop.AppImage", desktop, 0o755)
         add_file(target_tar, "payload/wunder-cli", cli, 0o755)
         if image is not None and image.is_file():
-            add_file(target_tar, "payload/wunder.png", image, 0o644)
+            add_file(target_tar, "payload/pupa.png", image, 0o644)
         add_file(target_tar, "payload/install.sh", installer_dir / "install.sh", 0o755)
         add_file(target_tar, "payload/uninstall.sh", installer_dir / "uninstall.sh", 0o755)
         if not core_only:
@@ -489,7 +489,7 @@ def main():
     stage.mkdir(parents=True, exist_ok=True)
 
     installer_dir = root / "packaging" / "linux" / "installer"
-    image = root / "images" / "wunder.png"
+    image = root / "images" / "pupa.png"
     components = {}
     normalized_supplement = None
 

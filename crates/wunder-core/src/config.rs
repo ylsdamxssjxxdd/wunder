@@ -871,6 +871,11 @@ impl LlmModelConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ToolsConfig {
+    /// Named baseline used when a new thread first selects its tool surface.
+    /// The runtime freezes that selection per thread; changing this value only
+    /// affects threads that have not established a profile yet.
+    #[serde(default = "default_named_tool_profile")]
+    pub profile: String,
     #[serde(default)]
     pub builtin: BuiltinToolsConfig,
     #[serde(default)]
@@ -883,6 +888,10 @@ pub struct ToolsConfig {
     pub browser: BrowserToolConfig,
     #[serde(default)]
     pub desktop_control: DesktopControlConfig,
+}
+
+fn default_named_tool_profile() -> String {
+    "authorized".to_string()
 }
 
 /// 工具生命周期钩子配置（对齐 dsh `hooks/hook-protocol` 风格）。

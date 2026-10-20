@@ -59,7 +59,7 @@ Linux 安装包是单文件自解压 `.run`，由 Python 3.6+ 组装，不需要
 
 `pack` 会校验版本、PE/ELF 架构和补充包的 `opt/<component>` 结构，输出到 `target/installer/dist/<target>/`，并生成 `.sha256` 与 `.manifest.json`。`-CoreOnly` 只生成不含补充组件的安装器，便于快速验证。
 
-安装器默认目录为 `%USERPROFILE%\.wunder`（Windows）或 `~/.wunder`（Linux）；Windows 安装向导和 Linux 交互菜单都允许改到任意可写目录。安装根会写入 `.wunder-home` 标记，蛹和舵机在启动最早期把 `WUNDER_HOME` 指向该根，因此配置、会话、工作区、日志、数据库和 `opt/` 补充组件都会跟着迁移；显式设置的非空 `WUNDER_HOME` 仍然优先。补充组件默认全部不勾选；Windows 组件页提供“全选组件”，只勾选补充组件，不自动勾选桌面快捷方式；选中已存在的组件会先清空对应 `opt/<component>`，用户数据不会删除。
+安装器默认目录为 `%USERPROFILE%\.wunder`（Windows）或 `~/.wunder`（Linux）；Windows 安装向导和 Linux 交互菜单都允许改到任意可写目录。安装根会写入 `.wunder-home` 标记，蛹和舵机在启动最早期把 `WUNDER_HOME` 指向该根，因此配置、会话、工作区、日志、数据库和 `opt/` 补充组件都会跟着迁移；显式设置的非空 `WUNDER_HOME` 仍然优先。补充组件默认全部不勾选；Windows 组件页的“全选（推荐）”会一次勾选全部补充组件与桌面快捷方式，任一项取消会自动回退全选状态；选中已存在的组件会先清空对应 `opt/<component>`，用户数据不会删除。
 
 ## CI 发布
 

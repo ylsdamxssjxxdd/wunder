@@ -113,15 +113,17 @@ for resource in prompts skills preset_worker_cards ppt_templates i18n.messages.j
   if [[ -d "$source" ]]; then cp -a "$source" "$appdir/config/"; fi
   if [[ -f "$source" ]]; then cp -f "$source" "$appdir/config/"; fi
 done
-if [[ -f "$repo_root/images/wunder.png" ]]; then
-  cp -f "$repo_root/images/wunder.png" "$appdir/usr/share/icons/hicolor/256x256/apps/wunder.png"
-  cp -f "$repo_root/images/wunder.png" "$appdir/images/wunder.png"
+icon_source="$repo_root/images/pupa.png"
+[[ -f "$icon_source" ]] || icon_source="$repo_root/images/wunder.png"
+if [[ -f "$icon_source" ]]; then
+  cp -f "$icon_source" "$appdir/usr/share/icons/hicolor/256x256/apps/wunder.png"
+  cp -f "$icon_source" "$appdir/images/wunder.png"
 fi
 
 cat > "$appdir/wunder.desktop" <<'EOF'
 [Desktop Entry]
-Name=Wunder
-Comment=Native Slint desktop client
+Name=蛹
+Comment=本地 AI 工作台
 Exec=wunder-frontend-slint
 Icon=wunder
 Terminal=false

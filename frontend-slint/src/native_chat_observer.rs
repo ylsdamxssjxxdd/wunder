@@ -694,9 +694,39 @@ fn turn_stats(
 fn history_user(message: &wunder_desktop::NativeMessage) -> TimelineRow {
     let mut row = blank_row(crate::timeline::KIND_USER, String::new());
     row.text = message.text.as_str().into();
-    row.blocks = crate::message_blocks::from_text(&message.text);
+    row.blocks = crate::message_blocks::from_text(&user_display_source(message));
     row.foldable = false;
     row
+}
+
+/// The user bubble keeps its original text for copy; persisted attachments
+/// render as trailing image or file cards derived from their stored paths.
+fn user_display_source(message: &wunder_desktop::NativeMessage) -> String {
+    let mut source = message.text.clone();
+    for attachment in &message.attachments {
+        let name = attachment.name.replace(['[', ']'], "");
+        let name = if name.is_empty() {
+            attachment
+                .public_path
+                .rsplit(['/', '\\'])
+                .next()
+                .unwrap_or("附件")
+                .to_string()
+        } else {
+            name
+        };
+        if attachment.public_path.is_empty() {
+            source.push_str("\n\n[附件] ");
+            source.push_str(&name);
+        } else {
+            source.push_str("\n\n![");
+            source.push_str(&name);
+            source.push_str("](<");
+            source.push_str(&attachment.public_path);
+            source.push_str(">)");
+        }
+    }
+    source
 }
 
 fn blank_row(kind: i32, id: String) -> TimelineRow {
@@ -820,6 +850,50 @@ mod tests {
     use std::time::Instant;
     use wunder_desktop::native::NativeChatRound;
 
+    #[test]
+    fn history_user_keeps_copy_text_and_projects_attachment_cards() {
+        let message = wunder_desktop::NativeMessage {
+            turn_id: "fixture".into(),
+            text: "fixture question".into(),
+            mine: true,
+            created_at: 0.0,
+            state: String::new(),
+            stats_status: String::new(),
+            user_round: 0,
+            stats: Default::default(),
+            attachments: vec![wunder_desktop::NativeMessageAttachment {
+                name: "fixture.png".into(),
+                content_type: "image/png".into(),
+                public_path: "/workspaces/fixture/chat_attachments/fixture.png".into(),
+            }],
+        };
+        let row = history_user(&message);
+        assert_eq!(row.text.as_str(), "fixture question");
+        let kinds = (0..row.blocks.row_count())
+            .filter_map(|index| row.blocks.row_data(index))
+            .map(|block| block.kind)
+            .collect::<Vec<_>>();
+        assert!(
+            kinds.contains(&crate::message_blocks::KIND_IMAGE),
+            "kinds: {kinds:?}"
+        );
+        // An attachment without a stored path degrades to a labeled text row.
+        let orphan = wunder_desktop::NativeMessage {
+            attachments: vec![wunder_desktop::NativeMessageAttachment {
+                name: "fixture.txt".into(),
+                ..Default::default()
+            }],
+            ..message
+        };
+        let row = history_user(&orphan);
+        let text = (0..row.blocks.row_count())
+            .filter_map(|index| row.blocks.row_data(index))
+            .map(|block| block.text.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(text.contains("[附件] fixture.txt"), "text: {text}");
+    }
+
     fn fixture(root: &str, text: &str, status: &str) -> NativeChatTurn {
         let message = wunder_desktop::NativeMessage {
             turn_id: root.into(),
@@ -830,6 +904,7 @@ mod tests {
             stats_status: status.into(),
             user_round: 0,
             stats: Default::default(),
+            attachments: Vec::new(),
         };
         NativeChatTurn {
             root_id: root.into(),

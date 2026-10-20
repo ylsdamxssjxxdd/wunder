@@ -385,6 +385,54 @@ impl Orchestrator {
                 allowed_tool_names,
                 prepared.preview_skill,
             );
+            // Freeze only the named tool-profile binding in thread metadata.
+            // The system prompt itself was already designed to be immutable
+            // after initialization, so it must not be rewritten when this
+            // runtime policy is first established or recovered.
+            let (tool_profile, frozen_profile_binding) = self
+                .resolve_frozen_session_tool_profile(
+                    &user_id,
+                    &session_id,
+                    &config,
+                    prepared.config_overrides.as_ref(),
+                )
+                .await;
+            let allowed_tool_names = crate::tools::filter_tool_names_by_profile(
+                allowed_tool_names,
+                tool_profile,
+            );
+            // Profile policy happens before the stored surface intersection.
+            // Current permissions have already been applied above, so neither
+            // a stale binding nor a catalog change can reintroduce a tool.
+            let allowed_tool_names = match frozen_profile_binding.as_ref() {
+                Some(binding) if !binding.tool_ids.is_empty() => {
+                    crate::tools::filter_tool_names_by_frozen_ids(
+                        allowed_tool_names,
+                        &binding.tool_ids,
+                    )
+                }
+                _ => allowed_tool_names,
+            };
+            if frozen_profile_binding
+                .as_ref()
+                .map(|binding| binding.tool_ids.is_empty())
+                .unwrap_or(true)
+            {
+                let specs = collect_prompt_tool_specs_with_language(
+                    &config,
+                    &skills_snapshot,
+                    &allowed_tool_names,
+                    Some(&user_tool_bindings),
+                    "en-US",
+                );
+                let snapshot =
+                    crate::tools::tool_profile_snapshot_for_profile(&specs, tool_profile);
+                self.workspace.save_session_frozen_tool_profile(
+                    &user_id,
+                    &session_id,
+                    &crate::tools::tool_profile_binding(&snapshot),
+                );
+            }
             let tool_call_mode =
                 self.resolve_frozen_session_tool_call_mode(&user_id, &session_id, &llm_config);
             // 虚拟模型不接触真实供应商，工具面只用于合成轨迹：即便当前会话冻结在
@@ -1245,8 +1293,12 @@ impl Orchestrator {
                                 Value::String(tool_call_id.to_string()),
                             );
                         }
-                        if let Some(schema) = crate::tools::runtime_tool_schema(&planned.name) {
-                            let reference = crate::tools::schema_reference(&planned.name, &schema);
+                        if let Some(reference) = crate::tools::current_tool_schema_reference(
+                            &config,
+                            &skills_snapshot,
+                            Some(&user_tool_bindings),
+                            &planned.name,
+                        ) {
                             map.insert(
                                 "schema_ref".to_string(),
                                 serde_json::to_value(reference).unwrap_or(Value::Null),
@@ -1348,6 +1400,12 @@ impl Orchestrator {
                             .to_string();
                         let tool_display_name =
                             crate::tools::resolve_runtime_tool_display_name(&config, &name);
+                        let schema_reference = crate::tools::current_tool_schema_reference(
+                            &config,
+                            &skills_snapshot,
+                            Some(&user_tool_bindings),
+                            &name,
+                        );
 
                         tool_budget_usage.total = tool_budget_usage.total.saturating_add(1);
                         if is_db_query_tool_name(&name) {
@@ -1564,6 +1622,7 @@ impl Orchestrator {
                             event_tool_call_id.as_deref(),
                             request_context_tokens,
                             Some(&usage),
+                            schema_reference.as_ref(),
                         );
                         self.append_artifact_logs(&user_id, &session_id, &name, &args, &result);
                         if name == read_tool_name {
@@ -1599,6 +1658,12 @@ impl Orchestrator {
                                 map.insert(
                                     "tool_call_id".to_string(),
                                     Value::String(tool_call_id.clone()),
+                                );
+                            }
+                            if let Some(reference) = schema_reference.as_ref() {
+                                map.insert(
+                                    "schema_ref".to_string(),
+                                    serde_json::to_value(reference).unwrap_or(Value::Null),
                                 );
                             }
                             map.insert(

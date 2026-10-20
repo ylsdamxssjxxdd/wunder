@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hmac
 import ipaddress
 import json
 import os
@@ -299,28 +300,60 @@ HOST_PATH_JS = """(el) => {
   return parts.join(' > ');
 }"""
 
-READABLE_JS = """(maxChars) => {
+READABLE_JS = """(opts) => {
+  // Keep pagination stateless: walk the current DOM again and emit only the
+  // requested window.  Storing whole page text per tab would turn a long-lived
+  // browser session into an unbounded cache.
+  const offset = Math.max(0, Number(opts && opts.offset) || 0);
+  const maxChars = Math.max(0, Number(opts && opts.maxChars) || 0);
+  const stopAfter = Math.max(0, Number(opts && opts.stopAfter) || Number.MAX_SAFE_INTEGER);
+  const collect = opts && opts.collect !== false;
   const lines = [];
   const skip = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'SVG', 'CANVAS', 'IFRAME', 'FRAME']);
   const seen = new Set();
-  let used = 0;
+  let produced = 0;
+  let emitted = 0;
   let visited = 0;
   let truncated = false;
+  let stopped = false;
+
+  function advanceCodePoints(value, start, count) {
+    let index = start;
+    for (let seen = 0; seen < count && index < value.length; seen += 1) {
+      const code = value.codePointAt(index);
+      index += code > 0xFFFF ? 2 : 1;
+    }
+    return index;
+  }
 
   function push(text) {
     const value = (text || '').replace(/\\s+/g, ' ').trim();
     if (!value || seen.has(value)) return;
-    const remaining = maxChars - used - (lines.length ? 1 : 0);
-    if (remaining <= 0) { truncated = true; return; }
     seen.add(value);
-    const part = value.slice(0, remaining);
-    used += part.length + (lines.length ? 1 : 0);
-    lines.push(part);
-    if (part.length < value.length) truncated = true;
+    const line = (produced ? '\\n' : '') + value;
+    if (produced >= stopAfter) { stopped = true; return; }
+    const bounded = line.slice(0, stopAfter - produced);
+    const start = produced;
+    const end = start + bounded.length;
+    if (collect && emitted >= maxChars && end > offset) { stopped = true; return; }
+    if (collect && emitted < maxChars && end > offset && start < offset + maxChars) {
+      let from = Math.max(0, offset - start);
+      let to = advanceCodePoints(line, from, maxChars - emitted);
+      // JS strings use UTF-16. Never let a cursor window return one half of
+      // an astral character, because JSON transport would replace it and make
+      // successive pages impossible to join losslessly.
+      if (from > 0 && from < line.length && /[\\uDC00-\\uDFFF]/.test(line.charAt(from)) && /[\\uD800-\\uDBFF]/.test(line.charAt(from - 1))) from += 1;
+      if (to > from && to < line.length && /[\\uD800-\\uDBFF]/.test(line.charAt(to - 1)) && /[\\uDC00-\\uDFFF]/.test(line.charAt(to))) to -= 1;
+      const part = line.slice(from, to);
+      if (part) { lines.push(part); emitted += Array.from(part).length; }
+      if (to < line.length) stopped = true;
+    }
+    produced = end;
+    if (bounded.length < line.length) stopped = true;
   }
 
   function walk(node, depth) {
-    if (!node || truncated) return;
+    if (!node || truncated || stopped) return;
     if (depth > 128) { truncated = true; return; }
     if (++visited > 12000) { truncated = true; return; }
     if (node.nodeType === Node.TEXT_NODE) {
@@ -328,7 +361,7 @@ READABLE_JS = """(maxChars) => {
       return;
     }
     if (node.nodeType === Node.DOCUMENT_FRAGMENT_NODE) {
-      for (const child of node.childNodes) { if (truncated) break; walk(child, depth + 1); }
+      for (const child of node.childNodes) { if (truncated || stopped) break; walk(child, depth + 1); }
       return;
     }
     if (node.nodeType !== Node.ELEMENT_NODE) return;
@@ -339,13 +372,12 @@ READABLE_JS = """(maxChars) => {
     else if (el.tagName === 'LI') { push('- ' + (el.innerText || el.textContent || '')); return; }
     else if (el.childNodes && el.childNodes.length === 0) push(el.innerText || el.textContent || '');
     if (el.shadowRoot) walk(el.shadowRoot, depth + 1);
-    for (const child of el.childNodes || []) { if (truncated) break; walk(child, depth + 1); }
+    for (const child of el.childNodes || []) { if (truncated || stopped) break; walk(child, depth + 1); }
   }
 
   const main = document.querySelector('main, article, [role="main"], .content, #content');
   walk(main || document.body, 0);
-  const joined = lines.join('\\n').replace(/\\n{3,}/g, '\\n\\n').trim();
-  return {content: joined, truncated: truncated};
+  return {content: lines.join(''), total: produced, truncated: truncated, stopped: stopped};
 }"""
 
 
@@ -775,6 +807,10 @@ class BridgeSession:
         self.refs = {}
         self.page_generations = {}
         self.page_states = {}
+        # Cursor signatures bind a window to this one bridge process.  They are
+        # deliberately not persisted: a restarted browser cannot promise the
+        # same DOM, so callers must observe the page again.
+        self._page_cursor_secret = os.urandom(32)
         self.target_counter = 0
         self.active_target_id = None
         try:
@@ -1068,6 +1104,7 @@ class BridgeSession:
             return self.read_page(
                 target_id=raw.get("target_id"),
                 max_chars=char_budget(raw.get("max_chars")),
+                cursor=raw.get("cursor"),
             )
         return {"success": False, "error": "Unknown action: %s" % action}
 
@@ -1511,9 +1548,29 @@ class BridgeSession:
             },
         }
 
-    def read_page(self, target_id=None, max_chars=40000):
+    def read_page(self, target_id=None, max_chars=40000, cursor=None):
         page, target_id = self._resolve_page(target_id)
-        content, truncated = self._read_all_frames(page, char_budget(max_chars))
+        generation = self._refresh_page_generation(page, target_id)
+        offset = 0
+        if cursor:
+            try:
+                state = self._decode_page_cursor(cursor)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                return {"success": False, "error": "Invalid browser page cursor; call browser_observe mode=text again."}
+            if state.get("target_id") != target_id or int(state.get("page_generation", -1)) != generation:
+                return {
+                    "success": False,
+                    "error": "Stale browser page cursor; call browser_observe mode=text again.",
+                    "data": {"error_code": "BROWSER_PAGE_CURSOR_STALE", "target_id": target_id,
+                             "page_generation": generation},
+                }
+            offset = int(state.get("offset", 0))
+        content, has_more, scan_truncated = self._read_all_frames(
+            page, max(1, int(max_chars)), offset
+        )
+        next_cursor = None
+        if has_more:
+            next_cursor = self._encode_page_cursor(target_id, generation, offset + js_code_unit_count(content))
         return {
             "success": True,
             "data": {
@@ -1521,30 +1578,91 @@ class BridgeSession:
                 "title": safe_page_title(page),
                 "url": safe_page_url(page),
                 "content": content,
-                "truncated": truncated,
+                "truncated": has_more or scan_truncated,
+                "has_more": has_more,
+                "next_cursor": next_cursor,
+                "page_generation": generation,
             },
         }
 
-    def _read_all_frames(self, page, max_chars):
+    def _read_all_frames(self, page, max_chars, offset=0):
         chunks = []
-        used = 0
-        truncated = False
+        position = 0
+        scan_truncated = False
+        remaining = max_chars
+        has_more = False
         for frame in self._reachable_frames(page):
             header = "" if frame is page.main_frame or frame.parent_frame is None else "## frame url=%s\n" % (frame.url or "about:blank")
-            separator = 2 if chunks else 0
-            budget = max_chars - used - len(header) - separator
-            if budget <= 0:
-                truncated = True
+            # A one-character probe establishes whether this frame has readable
+            # text without materialising it.  Empty frames have never been part
+            # of the old read_page output and therefore have no separator.
+            probe, _, probe_truncated, _ = extract_readable(frame, 1)
+            scan_truncated = scan_truncated or probe_truncated
+            if not probe:
+                continue
+            prefix = ("\n\n" if position else "") + header
+            segment_start = position
+            body_start = segment_start + js_code_unit_count(prefix)
+            part = ""
+            if remaining and segment_start <= offset < body_start:
+                prefix_start = max(0, offset - segment_start)
+                part = take_characters(js_slice(prefix, prefix_start), remaining)
+                remaining -= len(part)
+
+            body_offset = max(0, offset - body_start)
+            body_budget = remaining
+            body, body_total, body_truncated, body_stopped = extract_readable(
+                frame, body_budget, body_offset
+            )
+            scan_truncated = scan_truncated or body_truncated
+            if body_budget:
+                part += body
+                remaining -= len(body)
+            if part:
+                chunks.append(part)
+            # A stopped scan proves the body continues past the requested
+            # window.  No full-page cache is needed to issue the next cursor.
+            if body_stopped:
+                has_more = not scan_truncated
                 break
-            body, clipped = extract_readable(frame, budget)
-            body = header + body if body else ""
-            if body:
-                chunks.append(body)
-                used += len(body) + separator
-            if clipped:
-                truncated = True
+            position = body_start + body_total
+            if remaining <= 0:
+                # We consumed the requested window exactly.  A cheap one-char
+                # read at its boundary tells whether there is another page.
+                _, tail_total, tail_truncated, _ = extract_readable(frame, 0, body_total)
+                scan_truncated = scan_truncated or tail_truncated
+                has_more = tail_total > body_total and not scan_truncated
                 break
-        return "\n\n".join(chunks), truncated
+        else:
+            has_more = False
+        return "".join(chunks), has_more, scan_truncated
+
+    def _encode_page_cursor(self, target_id, generation, offset):
+        payload = json.dumps(
+            {"v": 1, "target_id": target_id, "page_generation": generation, "offset": offset},
+            separators=(",", ":"), sort_keys=True,
+        ).encode("utf-8")
+        signature = hmac.digest(self._page_cursor_secret, payload, "sha256")[:16]
+        return base64.urlsafe_b64encode(payload + signature).decode("ascii").rstrip("=")
+
+    def _decode_page_cursor(self, cursor):
+        if not isinstance(cursor, str) or len(cursor) > 512:
+            raise ValueError("invalid cursor")
+        raw = base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4))
+        if len(raw) <= 16:
+            raise ValueError("invalid cursor")
+        payload, signature = raw[:-16], raw[-16:]
+        expected = hmac.digest(self._page_cursor_secret, payload, "sha256")[:16]
+        if not hmac.compare_digest(signature, expected):
+            raise ValueError("invalid cursor")
+        state = json.loads(payload.decode("utf-8"))
+        offset = state.get("offset")
+        if (state.get("v") != 1 or not isinstance(state.get("target_id"), str)
+                or not isinstance(state.get("page_generation"), int)
+                or isinstance(offset, bool) or not isinstance(offset, int)
+                or offset < 0 or offset > 4_000_000):
+            raise ValueError("invalid cursor")
+        return state
 
     def _new_page(self):
         limit = max(int(self.args.max_tabs), 1)
@@ -1707,6 +1825,41 @@ def safe_page_title(page):
         return ""
 
 
+def js_code_unit_count(text):
+    """JavaScript slices index UTF-16 code units; Python strings do not."""
+    return len(text.encode("utf-16-le", "surrogatepass")) // 2
+
+
+def js_slice(text, start, end=None):
+    """Mirror JavaScript String.slice boundaries while returning Python text."""
+    start = max(0, int(start))
+    end = None if end is None else max(start, int(end))
+    units = 0
+    pieces = []
+    for char in text:
+        width = js_code_unit_count(char)
+        next_units = units + width
+        if next_units <= start:
+            units = next_units
+            continue
+        if end is not None and units >= end:
+            break
+        # The caller must never receive half a surrogate pair. A boundary
+        # through an astral character is advanced to its next valid boundary.
+        if units < start < next_units or (end is not None and units < end < next_units):
+            if units < start:
+                units = next_units
+                continue
+            break
+        pieces.append(char)
+        units = next_units
+    return "".join(pieces)
+
+
+def take_characters(text, limit):
+    return "".join(list(text)[:max(0, int(limit))])
+
+
 def safe_page_url(page):
     try:
         return page.url
@@ -1714,18 +1867,35 @@ def safe_page_url(page):
         return ""
 
 
-def extract_readable(target, max_chars=40000):
-    """Read one frame (or page) as text, piercing open shadow roots."""
-    limit = char_budget(max_chars)
+def extract_readable(target, max_chars=40000, offset=0, collect=True):
+    """Read one frame window without retaining the rest of the page in memory."""
+    limit = min(max(int(max_chars if max_chars is not None else 40000), 0), 40000)
+    start = max(0, int(offset or 0))
     try:
-        result = target.evaluate(READABLE_JS, limit)
-        return result["content"][:limit], bool(result["truncated"])
+        result = target.evaluate(READABLE_JS, {
+            "offset": start,
+            "maxChars": limit if collect else 0,
+            # One extra character distinguishes an exact final page from a
+            # continuation while keeping each bridge evaluation bounded.
+            "stopAfter": start + limit + 1,
+            "collect": bool(collect),
+        })
+        return (
+            result.get("content", "")[:limit],
+            int(result.get("total", 0)),
+            bool(result.get("truncated")),
+            bool(result.get("stopped")),
+        )
     except Exception:
         try:
-            content = target.evaluate("limit => (document.body ? document.body.innerText : '').slice(0, limit + 1)", limit)
+            content = target.evaluate(
+                "opts => (document.body ? document.body.innerText : '').slice(opts.offset, opts.offset + opts.limit + 1)",
+                {"offset": start, "limit": limit},
+            )
         except Exception:
-            return "", True
-    return content[:limit], len(content) > limit
+            return "", start, True, False
+    stopped = len(content) > limit
+    return (content[:limit] if collect else "", start + min(len(content), limit + 1), False, stopped)
 
 
 def char_budget(value):

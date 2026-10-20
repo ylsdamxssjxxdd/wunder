@@ -66,6 +66,11 @@ pub(crate) trait ViewDb {
         false
     }
     fn json_text(&self, expression: &str, field: &str) -> String;
+    /// Message content as display text: multipart content arrays are
+    /// flattened to their text parts, plain strings pass through unchanged.
+    fn json_content_text(&self, expression: &str) -> String {
+        self.json_text(expression, "content")
+    }
     fn text_bytes(&self, expression: &str) -> String;
     fn query(&mut self, sql: &str, params: &[Value]) -> Result<Vec<Vec<Value>>>;
     fn execute(&mut self, sql: &str, params: &[Value]) -> Result<u64>;
@@ -566,25 +571,36 @@ pub(crate) fn project_item(
         map.remove("model_content");
         map.remove("config_overrides");
         if matches!(kind, "assistant_message" | "user_message") {
-            if let Some(Value::String(content)) = map.remove("content") {
-                let content_rev = save_body(
-                    db,
-                    user,
-                    session,
-                    &projection::body_id(id, "content"),
-                    revision,
-                    &content,
-                )?;
-                map.insert(
-                    "content_body".into(),
-                    json!(BodyRef {
-                        body_id: projection::body_id(id, "content"),
-                        revision: content_rev,
-                        bytes: content.len()
-                    }),
-                );
-                original_content = Some(content);
-                content_revision = Some(content_rev);
+            // Multipart content (text plus image parts) is flattened to its
+            // text parts before the immutable body is stored; the raw array
+            // stays only in the durable source item, never in a body chunk.
+            let removed = map.remove("content");
+            let content = removed.as_ref().and_then(message_content_text);
+            match (removed, content) {
+                (Some(raw), None) => {
+                    map.insert("content".into(), raw);
+                }
+                (_, Some(content)) => {
+                    let content_rev = save_body(
+                        db,
+                        user,
+                        session,
+                        &projection::body_id(id, "content"),
+                        revision,
+                        &content,
+                    )?;
+                    map.insert(
+                        "content_body".into(),
+                        json!(BodyRef {
+                            body_id: projection::body_id(id, "content"),
+                            revision: content_rev,
+                            bytes: content.len()
+                        }),
+                    );
+                    original_content = Some(content);
+                    content_revision = Some(content_rev);
+                }
+                (None, None) => {}
             }
         }
     }
@@ -636,7 +652,10 @@ pub(crate) fn project_item(
         return Ok(());
     };
     let mut row = decode_chat_row(db, user, session, text(&r[0]))?;
-    let content = item.get("content").and_then(Value::as_str).unwrap_or("");
+    let content = item
+        .get("content")
+        .and_then(message_content_text)
+        .unwrap_or_default();
     if kind == "plan"
         && row
             .plan
@@ -646,7 +665,7 @@ pub(crate) fn project_item(
         row.plan = projection::plan(&item, id, revision, int(&i[3]));
     }
     if kind == "user_message" && turn == root {
-        row.user = projection::message(id, content, revision);
+        row.user = projection::message(id, &content, revision);
         let content_rev = if let Some(rev) = content_revision {
             rev
         } else {
@@ -656,7 +675,7 @@ pub(crate) fn project_item(
                 session,
                 &projection::body_id(id, "content"),
                 revision,
-                content,
+                &content,
             )?
         };
         if let Some(body) = &mut row.user.body {
@@ -665,20 +684,7 @@ pub(crate) fn project_item(
         row.user.attachments = item
             .get("attachments")
             .and_then(Value::as_array)
-            .map(|v| {
-                v.iter()
-                    .take(8)
-                    .map(|a| {
-                        let mut out = serde_json::Map::new();
-                        for key in ["name", "mime_type", "public_path"] {
-                            if let Some(s) = a.get(key).and_then(Value::as_str) {
-                                out.insert(key.into(), json!(preview(s, 128)));
-                            }
-                        }
-                        Value::Object(out)
-                    })
-                    .collect()
-            })
+            .map(|v| projection::user_attachments(v))
             .unwrap_or_default();
     } else if projection::stable_answer(id, turn, kind)
         && !projection::has_tool_calls(&item)
@@ -691,7 +697,7 @@ pub(crate) fn project_item(
             .as_ref()
             .is_some_and(|b| b.body_id.ends_with("|stream"));
         if !(content.is_empty() && row.assistant.item_id == id && stream) {
-            row.assistant = projection::message(id, content, revision);
+            row.assistant = projection::message(id, &content, revision);
         }
         projection::set_reasoning(&mut row.assistant, &item);
         row.assistant.created_seq = int(&i[3]);
@@ -731,7 +737,7 @@ pub(crate) fn project_item(
                 session,
                 &projection::body_id(id, "content"),
                 revision,
-                content,
+                &content,
             )?
         };
         if let Some(body) = &mut row.assistant.body {

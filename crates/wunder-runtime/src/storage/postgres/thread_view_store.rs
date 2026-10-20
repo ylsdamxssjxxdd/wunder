@@ -45,6 +45,9 @@ impl ViewDb for Db<'_, '_> {
     fn json_text(&self, expression: &str, field: &str) -> String {
         format!("({expression})::jsonb->>'{field}'")
     }
+    fn json_content_text(&self, expression: &str) -> String {
+        format!("CASE WHEN jsonb_typeof(({expression})::jsonb->'content')='array' THEN COALESCE((SELECT string_agg(part.value->>'text', E'\\n') FROM jsonb_array_elements(({expression})::jsonb->'content') part WHERE part.value->>'type'='text'),'') ELSE (({expression})::jsonb->>'content') END")
+    }
     fn text_bytes(&self, expression: &str) -> String {
         format!("octet_length({expression})")
     }

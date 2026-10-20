@@ -974,6 +974,27 @@ impl WorkspaceManager {
         format!("session_frozen_tool_call_mode:{safe_user}:{safe_session}")
     }
 
+    fn session_frozen_tool_profile_key(&self, user_id: &str, session_id: &str) -> String {
+        let safe_user = self.safe_user_id(user_id);
+        let safe_session = session_id
+            .trim()
+            .chars()
+            .map(|ch| {
+                if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                    ch
+                } else {
+                    '_'
+                }
+            })
+            .collect::<String>();
+        let safe_session = if safe_session.trim().is_empty() {
+            "default".to_string()
+        } else {
+            safe_session
+        };
+        format!("session_frozen_tool_profile:{safe_user}:{safe_session}")
+    }
+
     fn maybe_schedule_retention_cleanup(&self) {
         let grace_hours = self.deleted_session_log_grace_hours();
         let now = now_ts();
@@ -1703,6 +1724,21 @@ impl WorkspaceManager {
         .unwrap_or(None)
     }
 
+    pub async fn load_session_frozen_tool_profile_async(
+        self: &Arc<Self>,
+        user_id: &str,
+        session_id: &str,
+    ) -> Option<crate::tools::ToolProfileBinding> {
+        let user_id = user_id.to_string();
+        let session_id = session_id.to_string();
+        let workspace = Arc::clone(self);
+        run_workspace_db("workspace.load_session_frozen_tool_profile", move || {
+            Ok(workspace.load_session_frozen_tool_profile(&user_id, &session_id))
+        })
+        .await
+        .unwrap_or(None)
+    }
+
     pub async fn load_session_context_tokens_async(
         self: &Arc<Self>,
         user_id: &str,
@@ -2098,6 +2134,31 @@ impl WorkspaceManager {
         }
         let key = self.session_frozen_tool_call_mode_key(user_id, session_id);
         let _ = self.storage.set_meta(&key, cleaned);
+    }
+
+    pub fn load_session_frozen_tool_profile(
+        &self,
+        user_id: &str,
+        session_id: &str,
+    ) -> Option<crate::tools::ToolProfileBinding> {
+        let key = self.session_frozen_tool_profile_key(user_id, session_id);
+        self.storage
+            .get_meta(&key)
+            .ok()
+            .flatten()
+            .and_then(|raw| serde_json::from_str(raw.trim()).ok())
+    }
+
+    pub fn save_session_frozen_tool_profile(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        binding: &crate::tools::ToolProfileBinding,
+    ) {
+        let key = self.session_frozen_tool_profile_key(user_id, session_id);
+        if let Ok(serialized) = serde_json::to_string(binding) {
+            let _ = self.storage.set_meta(&key, &serialized);
+        }
     }
 
     pub fn load_session_context_tokens(&self, user_id: &str, session_id: &str) -> i64 {
@@ -3715,6 +3776,7 @@ mod concurrency_tests;
 mod tests {
     use super::{effective_temp_cleanup_idle_ttl_s, TEMP_FILES_IDLE_TTL_S};
     use crate::storage::{SqliteStorage, StorageBackend, USER_PRIVATE_CONTAINER_ID};
+    use crate::tools::{ToolProfile, ToolProfileBinding};
     use serde_json::json;
     use std::collections::HashMap;
     use std::fs;
@@ -3739,6 +3801,24 @@ mod tests {
             &HashMap::new(),
         );
         (manager, dir)
+    }
+
+    #[test]
+    fn frozen_tool_profile_binding_round_trips_in_workspace_metadata() {
+        let (workspace, _dir) = build_workspace_manager();
+        let binding = ToolProfileBinding {
+            profile: ToolProfile::Research,
+            catalog_version: "tools-test".to_string(),
+            revision: "revision-test".to_string(),
+            tool_ids: vec!["网页抓取".to_string()],
+        };
+
+        workspace.save_session_frozen_tool_profile("owner", "thread", &binding);
+
+        assert_eq!(
+            workspace.load_session_frozen_tool_profile("owner", "thread"),
+            Some(binding)
+        );
     }
 
     #[test]

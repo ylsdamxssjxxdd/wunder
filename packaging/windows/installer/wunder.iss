@@ -56,17 +56,17 @@ VersionInfoDescription={#AppName} 安装程序
 Name: "chinesesimplified"; MessagesFile: "ChineseSimplified.isl"
 
 [Messages]
-WizardSelectTasks=选择可选组件
-SelectTasksDesc=请选择要安装的补充包组件。
-SelectTasksLabel2=不勾选任何组件时只安装蛹和舵机。选中已存在的组件会先清空对应目录，配置、会话和工作区等用户数据不会被删除。
+WizardSelectTasks=选择组件
+SelectTasksDesc=推荐全选，蛹与舵机将获得完整的运行环境。
+SelectTasksLabel2=本机已有这些工具，或此前已安装过组件，可取消对应项；全部不勾则只安装蛹和舵机。
 SelectDirDesc=请选择心舰的安装目录。该目录也会保存配置、会话和工作区等用户数据。
 SelectDirLabel3=安装程序将安装 [name] 到下面的文件夹，并使用该文件夹作为用户数据目录。安装目录必须可写。
 
 [Icons]
-Name: "{group}\心舰"; Filename: "{app}\bin\wunder-desktop.exe"; WorkingDir: "{app}"
-Name: "{group}\心舰舵机"; Filename: "{app}\bin\wunder-cli.exe"; WorkingDir: "{app}\workspace"
+Name: "{group}\蛹"; Filename: "{app}\bin\wunder-desktop.exe"; WorkingDir: "{app}"
+Name: "{group}\舵机"; Filename: "{app}\bin\wunder-cli.exe"; WorkingDir: "{app}\workspace"
 Name: "{group}\卸载心舰"; Filename: "{uninstallexe}"
-Name: "{userdesktop}\心舰"; Filename: "{app}\bin\wunder-desktop.exe"; WorkingDir: "{app}"; Tasks: desktopicon
+Name: "{userdesktop}\蛹"; Filename: "{app}\bin\wunder-desktop.exe"; WorkingDir: "{app}"; Tasks: desktopicon
 
 [Dirs]
 Name: "{app}\workspace"
@@ -75,7 +75,7 @@ Name: "{app}\workspace"
 Type: files; Name: "{app}\bin\wunder.exe"
 
 [Run]
-Filename: "{app}\bin\wunder-desktop.exe"; Description: "启动心舰"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\bin\wunder-desktop.exe"; Description: "启动蛹"; Flags: nowait postinstall skipifsilent
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}\bin"
@@ -113,11 +113,12 @@ procedure SelectAllClick(Sender: TObject);
 var
   I: Integer;
 begin
-  if UpdatingSelectAll then
+  if UpdatingSelectAll or (CComponentsShown <= 0) then
     Exit;
   UpdatingSelectAll := True;
-  for I := 0 to CComponentsShown - 1 do
-    WizardForm.TasksList.Checked[I] := SelectAllCheckBox.Checked;
+  for I := 0 to WizardForm.TasksList.Items.Count - 1 do
+    if WizardForm.TasksList.ItemEnabled[I] then
+      WizardForm.TasksList.Checked[I] := SelectAllCheckBox.Checked;
   UpdatingSelectAll := False;
 end;
 
@@ -129,8 +130,8 @@ begin
   if UpdatingSelectAll or (CComponentsShown <= 0) then
     Exit;
   AllChecked := True;
-  for I := 0 to CComponentsShown - 1 do
-    if not WizardForm.TasksList.Checked[I] then
+  for I := 0 to WizardForm.TasksList.Items.Count - 1 do
+    if WizardForm.TasksList.ItemEnabled[I] and (not WizardForm.TasksList.Checked[I]) then
     begin
       AllChecked := False;
       Break;
@@ -144,7 +145,7 @@ procedure InitializeWizard();
 begin
   SelectAllCheckBox := TNewCheckBox.Create(WizardForm);
   SelectAllCheckBox.Parent := WizardForm.TasksList.Parent;
-  SelectAllCheckBox.Caption := '全选组件';
+  SelectAllCheckBox.Caption := '全选（推荐）';
   SelectAllCheckBox.Left := WizardForm.TasksList.Left;
   SelectAllCheckBox.Width := WizardForm.TasksList.Width;
   SelectAllCheckBox.Height := ScaleY(20);

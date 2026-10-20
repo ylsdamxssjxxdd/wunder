@@ -276,6 +276,35 @@ pub fn preview(text: &str, budget: usize) -> String {
     text[..end].to_string()
 }
 
+
+/// Extracts the plain text of a stored chat message content value.
+///
+/// Plain messages store `content` as a string. Multipart messages (for example
+/// text plus image attachments) store it as an array of typed parts; for those
+/// the text parts are joined with a newline. Returns `None` for shapes that are
+/// neither a string nor a recognized multipart array.
+pub fn message_content_text(content: &Value) -> Option<String> {
+    match content {
+        Value::String(text) => Some(text.clone()),
+        Value::Array(parts) => {
+            if parts.is_empty()
+                || !parts.iter().all(|part| part.get("type").is_some())
+            {
+                return None;
+            }
+            let text = parts
+                .iter()
+                .filter(|part| part.get("type").and_then(Value::as_str) == Some("text"))
+                .filter_map(|part| part.get("text").and_then(Value::as_str))
+                .collect::<Vec<_>>()
+                .join("
+");
+            Some(text)
+        }
+        _ => None,
+    }
+}
+
 pub fn chunks(text: &str) -> impl Iterator<Item = &str> {
     let mut remaining = text;
     std::iter::from_fn(move || {
@@ -303,4 +332,46 @@ pub struct ThreadSearchHit {
 pub struct ThreadSearchPage {
     pub hits: Vec<ThreadSearchHit>,
     pub has_more: bool,
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn message_content_text_returns_plain_string() {
+        let content = serde_json::json!("hello");
+        assert_eq!(message_content_text(&content).as_deref(), Some("hello"));
+    }
+
+    #[test]
+    fn message_content_text_flattens_multipart_text_parts() {
+        let content = serde_json::json!([
+            {"type": "text", "text": "看看这张图"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
+            {"type": "text", "text": "第二段"}
+        ]);
+        assert_eq!(
+            message_content_text(&content).as_deref(),
+            Some("看看这张图
+第二段")
+        );
+    }
+
+    #[test]
+    fn message_content_text_returns_empty_for_image_only() {
+        let content = serde_json::json!([
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}}
+        ]);
+        assert_eq!(message_content_text(&content).as_deref(), Some(""));
+    }
+
+    #[test]
+    fn message_content_text_rejects_unrecognized_shapes() {
+        assert!(message_content_text(&serde_json::json!([])).is_none());
+        assert!(message_content_text(&serde_json::json!(["a", "b"])).is_none());
+        assert!(message_content_text(&serde_json::json!(42)).is_none());
+        assert!(message_content_text(&serde_json::json!({"text": "x"})).is_none());
+    }
 }

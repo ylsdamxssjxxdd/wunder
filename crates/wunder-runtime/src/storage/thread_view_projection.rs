@@ -174,6 +174,31 @@ pub(crate) fn message(item_id: &str, content: &str, revision: i64) -> ViewMessag
     }
 }
 
+/// Bounded attachment cards for a user message. Source items record
+/// `content_type`; the view contract exposes it as `mime_type`.
+pub(crate) fn user_attachments(attachments: &[Value]) -> Vec<Value> {
+    attachments
+        .iter()
+        .take(8)
+        .filter_map(|a| {
+            let mut out = serde_json::Map::new();
+            for key in ["name", "public_path"] {
+                if let Some(s) = a.get(key).and_then(Value::as_str) {
+                    out.insert(key.into(), json!(preview(s, 128)));
+                }
+            }
+            let mime = a
+                .get("mime_type")
+                .or_else(|| a.get("content_type"))
+                .and_then(Value::as_str);
+            if let Some(s) = mime {
+                out.insert("mime_type".into(), json!(preview(s, 128)));
+            }
+            (!out.is_empty()).then_some(Value::Object(out))
+        })
+        .collect()
+}
+
 pub(crate) fn set_reasoning(message: &mut ViewMessage, payload: &Value) {
     let reasoning = payload
         .get("reasoning")

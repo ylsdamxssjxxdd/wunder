@@ -1,6 +1,7 @@
 //! Durable user-turn projection. Execution turns never allocate page rows.
 use super::{
-    message_from_value, NativeDesktop, NativeMessage, NativeSubagentCard, NativeWorkflowEntry,
+    attachment_from_value, message_from_value, NativeDesktop, NativeMessage,
+    NativeSubagentCard, NativeWorkflowEntry,
 };
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
@@ -77,7 +78,7 @@ pub fn load_turn_headers(
     Ok(page
         .chat
         .iter()
-        .filter_map(load_turn_header)
+        .filter_map(|chat| load_turn_header(&*state.storage, user, session, chat))
         .collect::<Vec<_>>())
 }
 
@@ -198,20 +199,53 @@ pub(super) fn load_turn(
     Ok(projected)
 }
 
-fn load_turn_header(chat: &ChatViewRow) -> Option<NativeChatTurn> {
+fn load_turn_header(
+    storage: &dyn StorageBackend,
+    user: &str,
+    session: &str,
+    chat: &ChatViewRow,
+) -> Option<NativeChatTurn> {
     let id = chat.root_turn_id.as_str();
     if id.is_empty() {
         return None;
     }
+    let mut user_text = chat.user.content.clone();
+    let mut user_attachments = chat
+        .user
+        .attachments
+        .iter()
+        .filter_map(attachment_from_value)
+        .collect::<Vec<_>>();
+    if user_text.is_empty() && !chat.user.item_id.is_empty() {
+        // Rows projected before multipart content was flattened kept an empty
+        // preview. Repair just those rows from the indexed durable item.
+        if let Ok(Some(item)) = storage.get_thread_item(user, session, &chat.user.item_id, false) {
+            let payload = item.get("payload").unwrap_or(&item);
+            if let Some(text) = payload
+                .get("content")
+                .and_then(wunder_server::stable_core::thread_view::message_content_text)
+            {
+                user_text = text;
+            }
+            if user_attachments.is_empty() {
+                user_attachments = payload
+                    .get("attachments")
+                    .and_then(Value::as_array)
+                    .map(|items| items.iter().filter_map(attachment_from_value).collect())
+                    .unwrap_or_default();
+            }
+        }
+    }
     let user_message = NativeMessage {
         turn_id: id.to_string(),
-        text: chat.user.content.clone(),
+        text: user_text,
         mine: true,
         created_at: chat.created_time,
         state: String::new(),
         stats_status: String::new(),
         user_round: chat.user_round,
         stats: super::NativeMessageStats::default(),
+        attachments: user_attachments,
     };
     let state_label = match chat.status.as_str() {
         "cancelled" | "interrupted" | "stopped" => "已停止",
@@ -233,6 +267,7 @@ fn load_turn_header(chat: &ChatViewRow) -> Option<NativeChatTurn> {
         stats: super::NativeMessageStats::from_payload(
             &chat.assistant.stats.clone().unwrap_or(Value::Null),
         ),
+        attachments: Vec::new(),
     };
     let subagents = chat
         .subagents
@@ -583,6 +618,29 @@ fn item_round(item: &Value) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn multipart_user_message_keeps_text_and_attachments() {
+        let root = json!({"turn_id":"fixture-root", "status":"completed", "user_turn_index":3});
+        let items = vec![
+            json!({"kind":"user_message","turn_id":"fixture-root","payload":{
+                "content":[
+                    {"type":"text","text":"fixture question"},
+                    {"type":"image_url","image_url":{"url":"data:image/png;base64,QUJD"}}
+                ],
+                "attachments":[{"name":"fixture.png","content_type":"image/png","public_path":"/workspaces/fixture/chat_attachments/fixture.png"}]
+            }}),
+            json!({"kind":"assistant_message","item_id":"fixture-root:text-1","turn_id":"fixture-root","status":"completed","payload":{"content":"Fixture answer","model_round":1}}),
+        ];
+        let turn = project_turn(&root, &items).unwrap();
+        assert_eq!(turn.user.text, "fixture question");
+        assert_eq!(turn.user.attachments.len(), 1);
+        assert_eq!(turn.user.attachments[0].name, "fixture.png");
+        assert_eq!(turn.user.attachments[0].content_type, "image/png");
+        assert_eq!(
+            turn.user.attachments[0].public_path,
+            "/workspaces/fixture/chat_attachments/fixture.png"
+        );
+    }
     #[test]
     fn durable_footer_keeps_thread_round_and_unrounded_statistics() {
         let turn = project_turn(

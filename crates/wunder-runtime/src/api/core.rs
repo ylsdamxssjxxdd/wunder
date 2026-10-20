@@ -15,12 +15,12 @@ use crate::state::AppState;
 use crate::tools::{
     build_mcp_tool_alias_entries_for_names, builtin_tool_specs,
     collect_enabled_tool_names_for_catalog, mcp_pack_runtime_name, mcp_pack_schema,
-    mcp_pack_spec_for_server,
+    mcp_pack_spec_for_server, resolve_builtin_tool_schema,
 };
 use crate::user_store::UserStore;
 use crate::user_tools::{UserMcpServer, UserToolStore, UserToolsPayload};
 use anyhow::Error;
-use axum::extract::{DefaultBodyLimit, Multipart, Query, State};
+use axum::extract::{DefaultBodyLimit, Multipart, Path as AxumPath, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
@@ -40,6 +40,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/wunder", post(wunder_entry))
         .route("/wunder/system_prompt", post(wunder_system_prompt))
         .route("/wunder/tools", get(wunder_tools))
+        .route("/wunder/tools/schema/{schema_ref}", get(wunder_tool_schema))
         .route("/wunder/i18n", get(wunder_i18n))
         .route(
             "/wunder/attachments/convert",
@@ -195,6 +196,48 @@ async fn wunder_system_prompt(
         prompt,
         build_time_ms: elapsed.num_milliseconds() as f64,
     }))
+}
+
+/// Return one exact builtin schema referenced by a persisted tool event.
+///
+/// Dynamic tools are deliberately excluded: their schema lifetime and access
+/// rules belong to their owning registry, whereas builtin schemas are a stable
+/// process-local catalog.
+async fn wunder_tool_schema(
+    AxumPath(schema_ref): AxumPath<String>,
+    Query(query): Query<ToolSchemaQuery>,
+) -> Result<Json<Value>, Response> {
+    let catalog_version = query.catalog_version.trim();
+    let schema_hash = query.schema_hash.trim();
+    if catalog_version.is_empty()
+        || schema_hash.is_empty()
+        || schema_ref.len() > 128
+        || catalog_version.len() > 64
+        || schema_hash.len() > 128
+    {
+        return Err(crate::api::errors::error_response_with_detail(
+            StatusCode::BAD_REQUEST,
+            Some("INVALID_SCHEMA_REFERENCE"),
+            "schema reference fields are missing or exceed their bounds",
+            Some("Pass the exact bounded schema_ref, catalog_version, and schema_hash stored with the event."),
+            None,
+        ));
+    }
+    let Some(tool) = resolve_builtin_tool_schema(&schema_ref, catalog_version, schema_hash) else {
+        return Err(crate::api::errors::error_response_with_detail(
+            StatusCode::NOT_FOUND,
+            Some("TOOL_SCHEMA_NOT_FOUND"),
+            "builtin tool schema was not found in the current catalog",
+            Some("Use a schema reference from the current tool catalog."),
+            None,
+        ));
+    };
+    Ok(Json(json!({
+        "schema_ref": schema_ref,
+        "catalog_version": catalog_version,
+        "schema_hash": schema_hash,
+        "tool": tool,
+    })))
 }
 
 async fn wunder_tools(
@@ -805,4 +848,70 @@ fn orchestrator_error_response(status: StatusCode, payload: Value) -> Response {
 struct ToolsQuery {
     #[serde(default)]
     user_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ToolSchemaQuery {
+    #[serde(default)]
+    catalog_version: String,
+    #[serde(default, alias = "hash")]
+    schema_hash: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn schema_endpoint_returns_the_exact_builtin_definition() {
+        let spec = builtin_tool_specs()
+            .into_iter()
+            .find(|spec| spec.name == "读取文件")
+            .expect("read file builtin spec");
+        let reference = crate::tools::schema_reference(
+            &crate::tools::resolve_tool_name(&spec.name),
+            &crate::tools::tool_schema_document(&spec),
+        );
+        let response = wunder_tool_schema(
+            AxumPath(reference.schema_ref.clone()),
+            Query(ToolSchemaQuery {
+                catalog_version: reference.catalog_version.clone(),
+                schema_hash: reference.schema_hash.clone(),
+            }),
+        )
+        .await
+        .expect("schema endpoint should resolve current builtin catalog")
+        .0;
+
+        assert_eq!(response["schema_ref"], reference.schema_ref);
+        assert_eq!(response["catalog_version"], reference.catalog_version);
+        assert_eq!(response["schema_hash"], reference.schema_hash);
+        assert_eq!(response["tool"]["name"], spec.name);
+        assert_eq!(response["tool"]["input_schema"], spec.input_schema);
+    }
+
+    #[tokio::test]
+    async fn schema_endpoint_rejects_incomplete_or_stale_references() {
+        let missing = wunder_tool_schema(
+            AxumPath("tool-schema:abc".to_string()),
+            Query(ToolSchemaQuery {
+                catalog_version: String::new(),
+                schema_hash: String::new(),
+            }),
+        )
+        .await
+        .expect_err("partial schema references must fail");
+        assert_eq!(missing.status(), StatusCode::BAD_REQUEST);
+
+        let stale = wunder_tool_schema(
+            AxumPath(format!("tool-schema:{}", "0".repeat(64))),
+            Query(ToolSchemaQuery {
+                catalog_version: crate::tools::TOOL_CATALOG_VERSION.to_string(),
+                schema_hash: "0".repeat(64),
+            }),
+        )
+        .await
+        .expect_err("unknown current schemas must not be guessed");
+        assert_eq!(stale.status(), StatusCode::NOT_FOUND);
+    }
 }

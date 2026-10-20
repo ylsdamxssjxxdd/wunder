@@ -168,6 +168,44 @@ class BrowserBridgeTests(unittest.TestCase):
         content = self.session.read_page(self.target, 300)["data"]["content"]
         self.assertEqual(content.count("Heading"), 1)
 
+    def test_text_pages_continue_without_retaining_full_page(self):
+        self.page.set_content("<p>" + ("分页内容😀 " * 300) + "</p>")
+        first = self.session.read_page(self.target, 100)["data"]
+        self.assertTrue(first["has_more"])
+        self.assertTrue(first["next_cursor"])
+        parts = [first["content"]]
+        cursor = first["next_cursor"]
+        while cursor:
+            data = self.session.read_page(self.target, 100, cursor)["data"]
+            parts.append(data["content"])
+            cursor = data["next_cursor"]
+        complete = self.session.read_page(self.target, 40000)["data"]["content"]
+        self.assertEqual("".join(parts), complete)
+
+    def test_text_pages_make_progress_with_one_character_emoji_window(self):
+        self.page.set_content("<p>" + ("😀中文" * 20) + "</p>")
+        cursor = None
+        parts = []
+        for _ in range(200):
+            data = self.session.read_page(self.target, 1, cursor)["data"]
+            parts.append(data["content"])
+            cursor = data["next_cursor"]
+            if not cursor:
+                break
+        else:
+            self.fail("one-character pages must not loop on a surrogate boundary")
+        complete = self.session.read_page(self.target, 40000)["data"]["content"]
+        self.assertEqual("".join(parts), complete)
+
+    def test_text_cursor_becomes_stale_when_page_changes(self):
+        self.page.set_content("<p>" + ("sample text " * 100) + "</p>")
+        first = self.session.read_page(self.target, 80)["data"]
+        self.assertTrue(first["next_cursor"])
+        self.page.evaluate("document.body.append(' changed')")
+        stale = self.session.read_page(self.target, 80, first["next_cursor"])
+        self.assertFalse(stale["success"])
+        self.assertEqual(stale["data"]["error_code"], "BROWSER_PAGE_CURSOR_STALE")
+
     def test_snapshot_is_bounded_and_ref_map_matches_visible_refs(self):
         self.page.set_content("<input type='password' value='synthetic-secret'>" +
                               "<button>Sample action</button>" * 100)

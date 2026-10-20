@@ -22,8 +22,8 @@
 差异，因此阈值按"明显变化的像素占比"和"整体平均通道差"双重判定，而不是要求
 逐像素完全一致。
 
-已知噪声：设置页搜索框有光标闪烁，两次截图的该处像素不同（实测约 0.08% 的
-像素、峰值 < 100），低于默认 0.4% 门槛；其余 fixture 在固定环境下逐像素相同。
+已知噪声：设置页搜索框有光标闪烁，两次截图的该处像素不同（实测 0.07–0.20% 的
+像素、峰值 < 100），低于默认 0.4% 门槛；聊天类 fixture 在固定环境下逐像素相同。
 基线依赖视口、缩放和系统字体，跨机器比较时把 `--baseline-dir` 指向同环境基线。
 """
 
@@ -325,6 +325,7 @@ def main() -> int:
 
     results: list[dict[str, object]] = []
     failures = 0
+    scaled: list[str] = []
     for name, fixture_args, viewport in fixtures:
         current = output_dir / f"{name}.png"
         capture(binary, fixture_args, viewport, current)
@@ -333,10 +334,7 @@ def main() -> int:
         width, height = current_image[0], current_image[1]
         requested = tuple(int(part) for part in viewport.split("x"))
         if (width, height) != requested:
-            print(
-                f"[dpi     ] {name:22} 请求 {viewport} 逻辑像素，"
-                f"实得 {width}x{height}（系统缩放）"
-            )
+            scaled.append(f"{viewport}→{width}x{height}")
 
         if args.update:
             baseline.parent.mkdir(parents=True, exist_ok=True)
@@ -349,7 +347,7 @@ def main() -> int:
                     "action": "baseline",
                 }
             )
-            print(f"[baseline] {name:22} {viewport}  -> {width}x{height}")
+            print(f"[baseline] {name:22} {width}x{height}")
             continue
 
         if not baseline.exists():
@@ -400,7 +398,7 @@ def main() -> int:
                 )
                 entry["diff"] = str(diff_dir / f"{name}.png")
             print(
-                f"[{'ok' if ok else 'diff':8}] {name:22} "
+                f"[{'ok' if ok else 'diff':8}] {name:22} {width}x{height}  "
                 f"变化 {ratio * 100:6.3f}%  平均差 {mean:5.3f}  "
                 f"峰值 {report['worst_channel_delta']:3}"
             )
@@ -423,7 +421,9 @@ def main() -> int:
         ),
         encoding="utf-8",
     )
-    print(f"\n报告：{report_path}")
+    if scaled:
+        print(f"\n系统缩放：{', '.join(sorted(set(scaled)))}（基线按实际像素保存）")
+    print(f"报告：{report_path}")
     if args.update:
         print(f"基线已更新：{baseline_dir}")
         return 0

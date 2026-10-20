@@ -474,6 +474,7 @@ impl BrowserControlService {
                     "action": "read_page",
                     "target_id": optional_string(args, "target_id"),
                     "max_chars": self.snapshot_budget(args),
+                    "cursor": optional_string(args, "cursor"),
                 }),
             )
             .await?;

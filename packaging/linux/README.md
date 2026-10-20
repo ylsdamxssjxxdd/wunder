@@ -30,8 +30,9 @@ Windows 上也可以执行 `build.bat pack -a linux-amd64`；组包器是 Python
 - 补充组件默认全部不勾选；`--components=python,git` 或 `--all` 可指定，`--yes` 跳过确认。
 - 安装根会写入 `.wunder-home`。`bin/wunder-desktop` 启动器会导出 `WUNDER_HOME=<安装根>`；直接运行 AppImage 或 `bin/wunder-cli` 时，运行时也会通过标记文件识别安装根。显式设置的非空 `WUNDER_HOME` 优先。`bin/wunder` 是 `wunder-cli` 的兼容符号链接。
 - 安装器会在 `~/.local/bin` 创建 `wunder-cli`、`wunder-desktop` 和 `desktop` 三个命令链接；若 `~/.profile` 未包含该目录，会追加一段带标记的 `PATH` 设置。新开终端即可直接运行，舵机以启动目录作为工作区（`-C` 可覆盖）。
+- 默认注册名称为“蛹”的应用菜单项，并在 XDG 桌面目录（系统语言为中文时通常是 `~/桌面`，英文为 `~/Desktop`）创建可执行的 `wunder.desktop` 启动图标；`--no-desktop-entry` 和 `--no-desktop-icon` 可分别跳过。重装会先清理上一次安装的入口，卸载时一并移除。
 - 配置、会话、工作区、日志和 `opt/` 都在安装根下。选中已存在的组件会先清空对应 `opt/<component>`，用户数据不删除。
-- 卸载执行 `<安装根>/uninstall.sh`，保留用户数据；它只移除指向本安装根的命令链接、安装器追加的 `PATH` 标记块、`bin` 和本次选择的组件。`--no-desktop-entry` 可在安装时跳过应用菜单项。
+- 卸载执行 `<安装根>/uninstall.sh`，保留用户数据；它只移除指向本安装根的命令链接、安装器追加的 `PATH` 标记块、应用菜单项、桌面图标、`bin` 和本次选择的组件。
 
 补充包在组包时会从旧归档的 `./opt/...` 规范化为 `opt/...`，保留权限、相对符号链接和同组件内的硬链接；新构建的补充包也已经直接使用 `opt/...`。
 

@@ -473,13 +473,18 @@ impl NativeDesktop {
     }
 
     /// Open one workspace file with the OS default application. Paths are
-    /// relative to the workspace root and cannot escape it.
+    /// relative to the workspace root and cannot escape it. Persisted chat
+    /// attachments resolve to the controlled private workspace instead.
     pub fn open_workspace_resource(&self, root_path: &str, relative: &str) -> Result<()> {
-        let root = PathBuf::from(root_path);
-        if !root.is_dir() {
-            bail!(WORKSPACE_ROOT_MISSING);
-        }
-        let target = workspace_resource_target(&root, relative)?;
+        let target = if let Some(target) = self.chat_attachment_target(relative)? {
+            target
+        } else {
+            let root = PathBuf::from(root_path);
+            if !root.is_dir() {
+                bail!(WORKSPACE_ROOT_MISSING);
+            }
+            workspace_resource_target(&root, relative)?
+        };
         if !target.exists() {
             bail!("文件不存在");
         }

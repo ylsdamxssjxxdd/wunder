@@ -73,11 +73,12 @@ pub use catalog::{
     build_mcp_tool_alias_entries_for_names, build_read_image_followup_user_message,
     build_runtime_tool_display_map, builtin_aliases, builtin_tool_specs,
     collect_available_tool_names, collect_enabled_tool_names_for_catalog,
-    collect_prompt_tool_specs, collect_prompt_tool_specs_with_language, desktop_tools_available,
-    expand_browser_group_selection, filter_tool_names_by_model_capability, is_browser_group_name,
-    is_browser_tool_name, is_desktop_control_tool_name, is_read_image_tool_name,
-    resolve_runtime_tool_display_name, resolve_tool_name, runtime_tool_schema,
-    runtime_tool_schema_reference, with_browser_group_members,
+    collect_prompt_tool_specs, collect_prompt_tool_specs_with_language,
+    current_tool_schema_reference, desktop_tools_available, expand_browser_group_selection,
+    filter_tool_names_by_model_capability, is_browser_group_name, is_browser_tool_name,
+    is_desktop_control_tool_name, is_read_image_tool_name, resolve_builtin_tool_schema,
+    resolve_builtin_tool_schema_reference, resolve_runtime_tool_display_name, resolve_tool_name,
+    runtime_tool_schema, runtime_tool_schema_reference, with_browser_group_members,
 };
 pub use context::{
     build_tool_roots, DetachedToolContext, ToolContext, ToolEventEmitter, ToolRoots,
@@ -119,9 +120,11 @@ pub(crate) use session_tool_support::{
     SessionCleanup,
 };
 pub use specification::{
-    compact_tool_spec, schema_reference, select_tool_profile, tool_profile_snapshot,
-    tool_schema_document, validate_dynamic_tool_spec, validate_tool_spec_size, TinyToolSpec,
-    ToolEffect, ToolProfile, ToolProfileSnapshot, ToolSchemaReference, ToolSpecification,
+    compact_tool_spec, filter_tool_names_by_frozen_ids, filter_tool_names_by_profile,
+    resolve_tool_profile, schema_reference, select_tool_profile, tool_profile_binding,
+    tool_profile_snapshot, tool_profile_snapshot_for_profile, tool_schema_document,
+    validate_dynamic_tool_spec, validate_tool_spec_size, TinyToolSpec, ToolEffect, ToolProfile,
+    ToolProfileBinding, ToolProfileSnapshot, ToolSchemaReference, ToolSpecification,
     TOOL_CATALOG_VERSION,
 };
 pub(crate) use thread_control_tool::execute_thread_control_tool;

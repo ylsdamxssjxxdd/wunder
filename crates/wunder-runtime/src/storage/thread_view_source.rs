@@ -30,7 +30,7 @@ fn one(db: &mut impl ViewDb, sql: &str, values: &[Value]) -> Result<Option<Vec<V
     Ok(db.query(sql, values)?.into_iter().next())
 }
 fn content(db: &impl ViewDb) -> String {
-    format!("COALESCE({},'')", db.json_text("payload", "content"))
+    format!("COALESCE({},'')", db.json_content_text("payload"))
 }
 
 fn block_content(db: &impl ViewDb) -> String {
@@ -234,7 +234,7 @@ fn source_chat_rows(
         counts.insert(text(&row[0]).to_owned(), (int(&row[1]), int(&row[2]), int(&row[3])));
     }
 
-    let content = db.json_text("payload", "content");
+    let content = db.json_content_text("payload");
     let item_bytes = db.text_bytes(&content);
     let stats = format!(
         "COALESCE({}, {})",
@@ -246,10 +246,11 @@ fn source_chat_rows(
     // turn, even when the response only contains a dozen chat rows.
     let mut message_queries = Vec::with_capacity(roots.len().saturating_mul(2));
     let tool_calls = db.json_text("payload", "tool_calls");
+    let attachments = db.json_text("payload", "attachments");
     for root in roots {
         for kind in ["user_message", "assistant_message"] {
             let sql = format!(
-                "SELECT root_turn_id,item_id,revision,created_seq,kind,substr(COALESCE({content},''),1,2048),{item_bytes},substr({reasoning},1,2048),substr({stats},1,4096),substr({},1,65536) FROM thread_items WHERE user_id=? AND session_id=? AND root_turn_id=? AND visibility='user' AND kind=?{} ORDER BY item_index DESC,created_seq DESC LIMIT 1",
+                "SELECT root_turn_id,item_id,revision,created_seq,kind,substr(COALESCE({content},''),1,2048),{item_bytes},substr({reasoning},1,2048),substr({stats},1,4096),substr({},1,65536),substr(COALESCE({attachments},''),1,4096) FROM thread_items WHERE user_id=? AND session_id=? AND root_turn_id=? AND visibility='user' AND kind=?{} ORDER BY item_index DESC,created_seq DESC LIMIT 1",
                 db.json_text(&db.json_text("payload", "meta"), "panel"),
                 if kind == "assistant_message" {
                     format!(" AND item_id LIKE turn_id || ':text-%' AND (COALESCE({tool_calls},'')='' OR COALESCE({tool_calls},'')='[]')")
@@ -354,6 +355,9 @@ fn source_chat_rows(
         if is_assistant {
             entry.1 = Some(message);
         } else {
+            if let Ok(Value::Array(items)) = serde_json::from_str::<Value>(text(&row[10])) {
+                message.attachments = projection::user_attachments(&items);
+            }
             entry.0 = Some(message);
         }
     }
@@ -458,7 +462,7 @@ pub(super) fn page(
         let tool = db.json_text("i.payload", "tool");
         let model = db.json_text("i.payload", "model_round");
         let payload_bytes = db.text_bytes("i.payload");
-        let raw_content = db.json_text("i.payload", "content");
+        let raw_content = db.json_content_text("i.payload");
         let source_content = format!("CASE WHEN i.kind IN ('compaction','compacted') THEN COALESCE(NULLIF({},''),NULLIF({},''),NULLIF({},''),NULLIF({},''),NULLIF({raw_content},'history'),'') ELSE {raw_content} END",
             db.json_text("i.payload", "summary_text"), db.json_text("i.payload", "summaryText"),
             db.json_text("i.payload", "summary_model_output"), db.json_text("i.payload", "summary"));

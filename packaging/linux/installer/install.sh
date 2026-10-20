@@ -23,6 +23,7 @@ SELECT_ALL=0
 COMPONENTS_GIVEN=0
 COMPONENTS_ARG=""
 DESKTOP_ENTRY=1
+DESKTOP_ICON=1
 
 die() {
   echo "$*" >&2
@@ -38,6 +39,7 @@ usage() {
       --all                安装全部补充组件
       --home=PATH          安装目录，同时保存用户数据，默认 ${WUNDER_HOME:-$HOME/.wunder}
       --no-desktop-entry   不创建应用菜单项
+      --no-desktop-icon    不在桌面创建启动图标
   -h, --help               显示帮助
 
 不指定 --components/--all 时默认不安装任何补充组件。交互模式会显示菜单。
@@ -56,6 +58,47 @@ human_size() {
   else
     awk -v b="$bytes" 'BEGIN { printf "%.0f KB", b / 1024 }'
   fi
+}
+
+write_wunder_desktop_file() {
+  target=$1
+  mode=$2
+  mkdir -p "$(dirname -- "$target")" || return 1
+  cat > "$target" <<EOF
+[Desktop Entry]
+Type=Application
+Name=蛹
+Comment=本地 AI 工作台
+Exec="$escaped_exec" %U
+Icon=$icon
+Terminal=false
+Categories=Utility;
+X-Wunder-Install=1
+EOF
+  chmod "$mode" "$target"
+}
+
+resolve_desktop_dir() {
+  desktop_dir=""
+  if command -v xdg-user-dir >/dev/null 2>&1; then
+    desktop_dir=$(xdg-user-dir DESKTOP 2>/dev/null || true)
+  fi
+  case "$desktop_dir" in
+    ""|"$HOME"|"$HOME/"|"/") desktop_dir="" ;;
+  esac
+  if [ -z "$desktop_dir" ]; then
+    user_dirs="${XDG_CONFIG_HOME:-$HOME/.config}/user-dirs.dirs"
+    if [ -f "$user_dirs" ]; then
+      desktop_dir=$(sed -n 's/^XDG_DESKTOP_DIR="\(.*\)"$/\1/p' "$user_dirs" | tail -n 1)
+      case "$desktop_dir" in
+        '$HOME'/*) desktop_dir="$HOME/${desktop_dir#\$HOME/}" ;;
+      esac
+    fi
+  fi
+  case "$desktop_dir" in
+    ""|"$HOME"|"$HOME/"|"/") desktop_dir="$HOME/Desktop" ;;
+  esac
+  printf '%s\n' "$desktop_dir"
 }
 
 component_path() {
@@ -102,6 +145,7 @@ while [ "$#" -gt 0 ]; do
       HOME_GIVEN=1
       ;;
     --no-desktop-entry) DESKTOP_ENTRY=0 ;;
+    --no-desktop-icon) DESKTOP_ICON=0 ;;
     -h|--help) usage; exit 0 ;;
     *) die "未知参数：$1" ;;
   esac
@@ -335,9 +379,9 @@ else
   echo "提示：无法创建 $LOCAL_BIN；请把 $HOME_DIR/bin 加入 PATH。" >&2
 fi
 
-if [ -f "$PAYLOAD_DIR/wunder.png" ]; then
+if [ -f "$PAYLOAD_DIR/pupa.png" ]; then
   mkdir -p "$HOME_DIR/images"
-  cp -f -- "$PAYLOAD_DIR/wunder.png" "$HOME_DIR/images/wunder.png"
+  cp -f -- "$PAYLOAD_DIR/pupa.png" "$HOME_DIR/images/pupa.png"
 fi
 
 if [ "$count" -gt 0 ]; then
@@ -359,6 +403,20 @@ if [ "$count" -gt 0 ]; then
   done < "$SELECTED_FILE"
 fi
 
+previous_manifest="$HOME_DIR/bin/install-manifest.txt"
+previous_desktop_entry=""
+previous_desktop_icon=""
+if [ -f "$previous_manifest" ]; then
+  previous_desktop_entry=$(sed -n 's/^desktop_entry=//p' "$previous_manifest" | tail -n 1)
+  previous_desktop_icon=$(sed -n 's/^desktop_icon=//p' "$previous_manifest" | tail -n 1)
+fi
+for previous in "$previous_desktop_entry" "$previous_desktop_icon"; do
+  [ -n "$previous" ] || continue
+  if [ -f "$previous" ] && grep -Fq 'X-Wunder-Install=1' "$previous"; then
+    rm -f -- "$previous"
+  fi
+done
+
 components_csv=$(awk 'NF { if (out != "") out = out "," $0; else out = $0 } END { print out }' "$SELECTED_FILE")
 printf '%s\n' "$components_csv" > "$HOME_DIR/bin/install-components.txt"
 printf 'portable\n' > "$HOME_DIR/.wunder-home"
@@ -371,36 +429,55 @@ components=$components_csv
 installed_at=$installed_at
 EOF
 
-if [ "$DESKTOP_ENTRY" -eq 1 ]; then
-  data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
-  entry_dir="$data_home/applications"
-  mkdir -p "$entry_dir"
+desktop_entry_path=""
+desktop_icon_path=""
+data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
+if [ "$DESKTOP_ENTRY" -eq 1 ] || [ "$DESKTOP_ICON" -eq 1 ]; then
   escaped_exec=$(printf '%s' "$HOME_DIR/bin/wunder-desktop" | sed 's/\\/\\\\/g; s/"/\\"/g')
-  icon="$HOME_DIR/images/wunder.png"
+  icon="$HOME_DIR/images/pupa.png"
+  [ -f "$icon" ] || icon="$HOME_DIR/images/wunder.png"
   [ -f "$icon" ] || icon="wunder"
-  cat > "$entry_dir/wunder.desktop" <<EOF
-[Desktop Entry]
-Type=Application
-Name=心舰
-Comment=本地 AI 工作台
-Exec="$escaped_exec" %U
-Icon=$icon
-Terminal=false
-Categories=Utility;
-X-Wunder-Install=1
-EOF
-  chmod 0644 "$entry_dir/wunder.desktop"
-  if command -v update-desktop-database >/dev/null 2>&1; then
-    update-desktop-database "$entry_dir" >/dev/null 2>&1 || true
+
+  if [ "$DESKTOP_ENTRY" -eq 1 ]; then
+    entry_dir="$data_home/applications"
+    desktop_entry_path="$entry_dir/wunder.desktop"
+    if ! write_wunder_desktop_file "$desktop_entry_path" 0644; then
+      echo "提示：无法创建应用菜单项：$desktop_entry_path" >&2
+      desktop_entry_path=""
+    fi
+  fi
+
+  if [ "$DESKTOP_ICON" -eq 1 ]; then
+    desktop_dir=$(resolve_desktop_dir)
+    desktop_icon_path="$desktop_dir/wunder.desktop"
+    if write_wunder_desktop_file "$desktop_icon_path" 0755; then
+      if command -v gio >/dev/null 2>&1; then
+        gio set "$desktop_icon_path" metadata::trusted true >/dev/null 2>&1 || true
+      fi
+    else
+      echo "提示：无法在桌面创建启动图标：$desktop_icon_path" >&2
+      desktop_icon_path=""
+    fi
   fi
 fi
+if command -v update-desktop-database >/dev/null 2>&1; then
+  update-desktop-database "$data_home/applications" >/dev/null 2>&1 || true
+fi
+printf 'desktop_entry=%s\n' "$desktop_entry_path" >> "$HOME_DIR/bin/install-manifest.txt"
+printf 'desktop_icon=%s\n' "$desktop_icon_path" >> "$HOME_DIR/bin/install-manifest.txt"
 
 cp -f -- "$PAYLOAD_DIR/uninstall.sh" "$HOME_DIR/uninstall.sh"
 chmod 0755 "$HOME_DIR/uninstall.sh"
 
 echo
 echo "安装完成：$HOME_DIR"
-echo "蛹：$HOME_DIR/bin/wunder-desktop（应用菜单中的“心舰”）"
+echo "蛹：$HOME_DIR/bin/wunder-desktop"
+if [ -n "$desktop_entry_path" ]; then
+  echo "应用菜单：已注册“蛹”"
+fi
+if [ -n "$desktop_icon_path" ]; then
+  echo "桌面图标：$desktop_icon_path"
+fi
 echo "舵机：$HOME_DIR/bin/wunder-cli"
 if [ "$LINKS_READY" -eq 1 ]; then
   echo "终端命令：wunder-cli、wunder-desktop、desktop（新开终端或执行 . ~/.profile 后生效）"

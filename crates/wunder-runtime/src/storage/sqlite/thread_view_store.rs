@@ -29,6 +29,9 @@ impl ViewDb for Db<'_> {
     fn json_text(&self, expression: &str, field: &str) -> String {
         format!("json_extract({expression},'$.{field}')")
     }
+    fn json_content_text(&self, expression: &str) -> String {
+        format!("CASE WHEN json_type({expression},'$.content')='array' THEN COALESCE((SELECT group_concat(json_extract(part.value,'$.text'),char(10)) FROM json_each({expression},'$.content') part WHERE json_extract(part.value,'$.type')='text'),'') ELSE json_extract({expression},'$.content') END")
+    }
     fn text_bytes(&self, expression: &str) -> String {
         format!("length(CAST(({expression}) AS BLOB))")
     }
@@ -1029,6 +1032,9 @@ mod tests {
         impl ViewDb for Counted<'_> {
             fn json_text(&self, expression: &str, field: &str) -> String {
                 self.db.json_text(expression, field)
+            }
+            fn json_content_text(&self, expression: &str) -> String {
+                self.db.json_content_text(expression)
             }
             fn text_bytes(&self, expression: &str) -> String {
                 self.db.text_bytes(expression)
@@ -2102,6 +2108,79 @@ mod tests {
                 json!({"items":count,"samples":30,"old_p50_ms":old[14],"old_p95_ms":old[28],"chat_p50_ms":new[14],"chat_p95_ms":new[28],"trajectory_p95_ms":trace[28],"old_bytes":old_bytes,"chat_bytes":new_bytes,"trajectory_bytes":trajectory_bytes})
             );
             prior = count;
+        }
+    }
+
+    #[test]
+    fn multipart_user_content_flattens_and_attachments_survive_both_views() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = SqliteStorage::new(dir.path().join("fixture.db").to_string_lossy().into());
+        let accepted = storage
+            .accept_thread_turn(
+                "fixture-user",
+                "fixture-thread",
+                &json!({
+                    "content": [
+                        {"type":"text","text":"fixture question"},
+                        {"type":"image_url","image_url":{"url":"data:image/png;base64,QUJD"}}
+                    ],
+                    "attachments": [
+                        {"name":"fixture.png","content_type":"image/png","public_path":"/workspaces/fixture/chat_attachments/fixture.png"}
+                    ]
+                }),
+            )
+            .unwrap();
+        let turn = accepted["turn_id"].as_str().unwrap().to_string();
+        storage
+            .append_thread_item(
+                "fixture-user",
+                &json!({
+                    "session_id":"fixture-thread", "turn_id":turn, "item_id":format!("{turn}:text-1"),
+                    "kind":"assistant_message", "status":"completed", "content":"fixture answer"
+                }),
+            )
+            .unwrap();
+        for state in ["ready", "source"] {
+            storage
+                .open()
+                .unwrap()
+                .execute("UPDATE thread_view_heads SET projection_state=?", [state])
+                .unwrap();
+            let page = storage
+                .thread_view_page("fixture-user", "fixture-thread", "chat", None, 12)
+                .unwrap();
+            let row = page
+                .chat
+                .iter()
+                .find(|row| !row.user.item_id.is_empty())
+                .expect("user chat row");
+            assert_eq!(row.user.content, "fixture question", "state {state}");
+            assert_eq!(row.user.attachments.len(), 1, "state {state}");
+            assert_eq!(
+                row.user.attachments[0].get("name").and_then(Value::as_str),
+                Some("fixture.png"),
+                "state {state}"
+            );
+            assert_eq!(
+                row.user.attachments[0]
+                    .get("mime_type")
+                    .and_then(Value::as_str),
+                Some("image/png"),
+                "state {state}"
+            );
+            assert_eq!(
+                row.user.attachments[0]
+                    .get("public_path")
+                    .and_then(Value::as_str),
+                Some("/workspaces/fixture/chat_attachments/fixture.png"),
+                "state {state}"
+            );
+            assert_eq!(row.assistant.content, "fixture answer", "state {state}");
+            let body = row.user.body.clone().expect("user body");
+            let page = storage
+                .thread_body_page("fixture-user", "fixture-thread", &body.body_id, body.revision, 0)
+                .unwrap();
+            assert_eq!(page.chunks.join(""), "fixture question", "state {state}");
         }
     }
 }

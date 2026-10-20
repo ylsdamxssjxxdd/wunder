@@ -38,6 +38,8 @@ The Pupa covers single-user local scenarios; sharing among several people runs t
 Download and run the installer for your system. It installs the Pupa and Helm (CLI) by default; optional Python/Git/rg/ffmpeg/browser components are opt-in. The install directory defaults to `~/.wunder` and can be changed to any writable directory. The installer writes `.wunder-home` at the install root, and both local forms use that root as `WUNDER_HOME`; an explicit non-empty `WUNDER_HOME` still wins.
 
 - **Executable**: `bin/wunder-desktop.exe` (Windows) or `bin/wunder-desktop` (Linux) after installation; development builds use `wunder-frontend-slint`
+- **Terminal commands**: the installer adds the install root's `bin` to the user PATH (Windows) or creates command links under `~/.local/bin` (Linux); after opening a new terminal, `wunder-cli` (Helm) and `desktop` / `wunder-desktop` (Pupa) run directly
+- **Menu and desktop entry**: Windows names the Start Menu and optional desktop shortcuts Pupa and Helm; Linux registers a Pupa application-menu entry and creates a Pupa launcher in the XDG desktop directory by default
 - **Development launch**: on Windows, use the project's bundled `run.bat`
 - **Platforms**: primarily targets 32-bit Win7 and Ubuntu 18.04; modern Windows / Linux also run
 - **No port, no required arguments**: it calls the engine in-process right after launch

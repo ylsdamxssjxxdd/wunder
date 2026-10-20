@@ -932,16 +932,7 @@ fn bind_settings(app: &MainWindow, api: Arc<NativeDesktop>) {
             key = format!("新模型{suffix}");
             suffix += 1;
         }
-        let entry = crate::ModelCard {
-            key: key.clone().into(),
-            provider: "openai_compatible".into(),
-            model: "".into(),
-            base_url: "".into(),
-            model_type: "llm".into(),
-            is_default: false,
-            tool_call_mode: "function_call".into(),
-            ..Default::default()
-        };
+        let entry = crate::entity_state::new_model_card(key.clone());
         rows.insert(0, entry);
         model_catalogue().set(&app, rows);
         app.set_selected_model(0);
@@ -953,6 +944,18 @@ fn bind_settings(app: &MainWindow, api: Arc<NativeDesktop>) {
         app.set_model_base_url_draft("".into());
         app.set_model_token_draft("".into());
         app.set_model_type_draft("llm".into());
+        app.set_model_temperature_draft("0.7".into());
+        app.set_model_timeout_draft("120".into());
+        app.set_model_max_output_draft("8192".into());
+        app.set_model_thinking_budget_draft("2048".into());
+        app.set_model_max_rounds_draft("1000".into());
+        app.set_model_max_context_draft("128000".into());
+        app.set_model_history_compaction_ratio_draft("0.9".into());
+        app.set_model_reasoning_effort_draft("".into());
+        app.set_model_simulation_speed_draft("fast".into());
+        app.set_model_support_vision_draft(false);
+        app.set_model_support_hearing_draft(false);
+        app.set_model_stream_include_usage_draft(true);
         app.set_model_tool_call_mode_draft("function_call".into());
         app.set_status("已创建新的模型草稿，请填写模型名称后保存".into());
     });

@@ -33,6 +33,7 @@ cargo build --release -p wunder-cli
 - **TTY**（stdin/stdout/stderr 全部是 TTY）：进入**交互式界面**
 - **非 TTY**：自动降级为**一次性执行**；管道、脚本走这条
 - **数据目录**：`WUNDER_HOME` → `~/.wunder`
+- **工作区**：启动命令时所在的目录；`-C/--cd` 可指定其他目录
 - **用户配置**：`~/.wunder/config.toml`
 
 第一次会话：

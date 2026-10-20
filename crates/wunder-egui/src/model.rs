@@ -180,6 +180,10 @@ pub struct AppState {
     /// workbench where a single click only changes the focused item.
     pub selected_workspace_file: Option<String>,
     pub workspace_file_path: String,
+    /// Monotonic id of the newest directory listing request. Replies echo it
+    /// so a slow page for a directory the user already left is discarded
+    /// instead of replacing the current listing.
+    pub workspace_request_id: u64,
     pub workspace_file_loading: bool,
     pub workspace_file_error: String,
     pub selected_session: Option<String>,
@@ -221,6 +225,7 @@ impl Default for AppState {
             workspace_files: Vec::new(),
             selected_workspace_file: None,
             workspace_file_path: String::new(),
+            workspace_request_id: 0,
             workspace_file_loading: false,
             workspace_file_error: String::new(),
             selected_session: None,
@@ -274,9 +279,11 @@ impl AppState {
     /// Begin a directory refresh while retaining the visual selection until
     /// the replacement list proves that its path disappeared. This avoids a
     /// distracting deselect/reselect flash when the focused file still exists.
-    pub fn begin_workspace_refresh(&mut self) {
+    pub fn begin_workspace_refresh(&mut self) -> u64 {
         self.workspace_file_loading = true;
         self.workspace_file_error.clear();
+        self.workspace_request_id = self.workspace_request_id.wrapping_add(1);
+        self.workspace_request_id
     }
 
     pub fn select_workspace_file(&mut self, path: String) {

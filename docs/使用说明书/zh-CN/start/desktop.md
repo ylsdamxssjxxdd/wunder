@@ -25,9 +25,11 @@ updated_at: 2026-10-16
 
 ## 安装与启动
 
-从 Releases 下载对应系统的安装包并运行。安装向导默认只安装蛹和舵机，Python/Git/rg/ffmpeg 等补充组件按需勾选；安装目录默认 `~/.wunder`，也可以改成任意可写目录。安装根会写入 `.wunder-home`，蛹和舵机启动时以该根作为 `WUNDER_HOME`；显式设置的非空 `WUNDER_HOME` 优先。
+从 Releases 下载对应系统的安装包并运行。安装向导默认只安装蛹和舵机，Python/Git/rg/ffmpeg 等补充组件按需勾选（Windows 组件页的“全选（推荐）”一次勾齐全部组件与桌面快捷方式，本机已有这些工具或已装过一次可以取消对应项）；安装目录默认 `~/.wunder`，也可以改成任意可写目录。安装根会写入 `.wunder-home`，蛹和舵机启动时以该根作为 `WUNDER_HOME`；显式设置的非空 `WUNDER_HOME` 优先。
 
 - **可执行文件**：安装后的 `bin/wunder-desktop.exe`（Windows）或 `bin/wunder-desktop`（Linux）；开发构建为 `wunder-frontend-slint`
+- **终端命令**：安装器把安装根的 `bin` 加入用户 PATH（Windows），或在 `~/.local/bin` 建立命令链接（Linux）；新开终端后可直接运行 `wunder-cli`（舵机）和 `desktop` / `wunder-desktop`（蛹）
+- **菜单与桌面入口**：Windows 开始菜单和桌面快捷方式名称为“蛹”，舵机快捷方式为“舵机”；Linux 默认注册“蛹”应用菜单项，并在 XDG 桌面目录创建“蛹”启动图标
 - **开发启动**：Windows 下用项目自带的 `run.bat`
 - **平台**：主要面向 32 位 Win7 与 Ubuntu 18.04；现代 Windows / Linux 均可运行
 - **无端口、无必需参数**：启动后直接同进程调用引擎
@@ -39,7 +41,7 @@ updated_at: 2026-10-16
 | 内容 | 位置 |
 | --- | --- |
 | 根目录 | 安装时选择的目录（`WUNDER_HOME`；默认 `~/.wunder`，由 `.wunder-home` 标记） |
-| 工作区 | `<根目录>/workspace` |
+| 工作区 | 蛹：`<根目录>/workspace`；舵机：启动命令时所在的目录（`-C` 可覆盖） |
 | 临时目录 | `WUNDER_DESKTOP_TEMP_ROOT` |
 | 桌面设置 | `<temp>/config/desktop.settings.json` |
 | 会话与工具日志 | 本地 SQLite |
