@@ -1,0 +1,613 @@
+# 对齐 Codex 存储设计方案
+
+> 状态：待实施的重构设计。本文只定义目标、改造范围与验收标准，不表示代码已经完成，也不执行任何现有数据库修复、清理或迁移。
+>
+> 依据：2026-10-21 核对的本地 Codex 参考源码快照。下文以 `codex-rs/` 开头的路径均相对于该参考工程；以 `crates/`、`frontend-slint/` 等开头的路径相对于 Wunder 仓库。参考快照未提供可确认的 Git 提交号，因此不标注虚构版本。
+
+## 1. 目标与重构边界
+
+蛹是本地 AI 工作台。用户应当能够打开历史线程、继续对话、查看已完成的工作过程，同时让空闲线程停止写入，让长期历史通过合理分层和冷压缩降低占用。
+
+本次目标是复刻 Codex 当前分页历史模式的存储架构及其行为：**rollout 是执行历史真相源，SQLite 分别承载线程状态、可重建历史投影、诊断日志及独立业务状态；运行时流式事件与持久化历史分开。** 不能只把现有大表搬到 JSONL 文件，也不能保留旧写入链后再增加一份 rollout。
+
+重构遵循以下边界：
+
+- 不兼容旧数据库、旧历史格式、旧游标、旧接口及旧缓存。新实现使用新的存储根目录；旧目录不自动读入、转换或删除。
+- 使用 Codex 的新分页历史模式作为唯一模式，不移植其 Legacy 历史模式、历史迁移器和已经移除的兼容分支。
+- 后端契约、执行链、模型上下文恢复、历史查询、线程轨迹、各端订阅、监控和压测同步重构，最终删除旧实现。
+- 用户消息、已完成回复、已完成中间条目与工具执行过程按持久化策略保留。**不采用“每个用户轮次固定两条记录”的方案。**
+- 不为了节省空间修改已冻结的线程 system prompt，也不在后续轮次重新注入长期记忆。
+- wunder-core 定义契约和策略，wunder-runtime 实现存储及执行；蛹、舵机、舰体复用同一套实现。
+- 不复制 Codex 的产品专属账户字段、已移除功能或不适用的执行器。Wunder 必需的多租户、权限和调度能力以明确标注的扩展承接，不能伪称 Codex 已实现这些能力。
+
+“完全对齐”以事实边界、数据模型、写入顺序、分页语义、恢复方式、压缩与维护行为为准；不要求 Wunder 的文件能被 Codex 直接打开，也不把数据库文件名中的历史版本数字当作架构本身。所有必要差异集中列于第 19 节，禁止实施时悄悄变回旧架构。
+
+## 2. 先校正对 Codex 的认识
+
+| 已核实的事实 | 对 Wunder 的约束 |
+| --- | --- |
+| rollout JSONL 保存规范执行记录，是历史内容的权威来源 | 历史正文不能以 SQLite 中的另一套会话日志为准 |
+| `thread_history_1.sqlite` 的 `thread_items.item_json` 保存完整的已完成条目投影 | 不能宣称 Codex 的 SQLite 只保存偏移或轻量索引；这份为分页服务的正文副本是设计的一部分 |
+| 同一 rollout 可以同时包含模型上下文用的 `ResponseItem` 与展示用的 `ItemCompleted` | 不能承诺“所有正文只保存一次”；应消除无用途的重复，保留上游明确需要的语义表示 |
+| 文本、推理、命令输出等 delta 主要是临时事件，完成态才进入历史 | 不再把 token 变化持久化成块、补丁和可重放 changes 表 |
+| command/MCP 的完成条目有特定 64 KiB 持久化限制 | 不等于所有工具结果、所有模型上下文和全部记录都有统一 64 KiB 上限 |
+| writer 是有界命令队列，由接收命令驱动 | 不能靠高频计时器刷新空闲线程 |
+| 当前 writer 实际对每行执行写入和 flush | 不能把“Codex 有后台 writer”描述成已经存在自动合批、延迟刷盘或每条 fsync |
+| 冷 rollout 可转为 `.jsonl.zst`；该快照的开关默认关闭 | 压缩能力、压缩参数与默认启用状态必须分别说明 |
+| 诊断日志有清理、低频维护和空闲回收 | 不能承诺整个应用绝对没有后台唤醒或任何空闲磁盘活动 |
+| state、queue、goals、memories 包含独立状态 | 不能把所有 SQLite 都当成可以无损删除重建的缓存 |
+
+本文中的“完整历史”指持久化策略选中的完整语义历史，包含已完成的中间内容；不包含每一帧流式动画、未完成的 token 尾部、被明确截断的超长展示输出以及模型供应商未提供的内部推理。重新打开线程与查看轨迹必须共享这一口径。
+
+## 3. 当前 Wunder 的结构问题与目标替换
+
+以下为本次核对到的职责分布，不能将其解释成已经测量过每张表的体积贡献。
+
+| 当前职责 | 当前主要入口 | 目标 |
+| --- | --- | --- |
+| 综合存储接口选择 SQLite/PostgreSQL | `storage_backend.rs`、`storage/factory.rs` | 拆成 ThreadStore 与独立状态仓库，取消“一种后端承接一切”的假设 |
+| 会话正文、工具日志、过程块、变更补丁 | `orchestrator/event_stream.rs`、`execute.rs`、`tool_exec.rs`、`services/workspace.rs` | 所有执行历史统一进入 canonical rollout writer |
+| 持久化完成后通知界面 | `orchestrator/thread_log_committer.rs` | 由 ThreadStore 完成 flush、投影和发布；取消旧块日志提交器 |
+| turn/item/block/change 与额外视图投影 | SQLite/PostgreSQL 的 `thread_log_store`、`thread_view_store` | 用 Codex 形态的已完成条目投影替换，不叠加第三套正文 |
+| 线程实时观察与补水 | `thread_change_hub.rs`、`thread_change_feeder.rs` | 分离临时流序号与持久化历史位置，使用事件唤醒 |
+| 监控、诊断与执行事实混存 | `monitor_store`、`tool_logs` 等 | 诊断进入独立 logs DB；轻量监控指标独立于完整正文 |
+| 压测直接插入旧日志和视图表 | `storage/*/stress_thread.rs` | 走生产 writer、持久化策略与 projector |
+
+工作目录内容多寡可能影响其他扫描任务，但线程存储层不得依赖工作目录遍历维持自身状态。本文解决存储产生的无效写入和放大；整个应用空闲 CPU 仍需通过采样分解，不能仅凭数据库文件变化推断全部消耗来自 SQLite。
+
+## 4. 总体架构
+
+```mermaid
+flowchart TD
+    A[运行时产生强类型执行事件] --> P[统一持久化策略]
+    A --> L[有界临时流与活动条目快照]
+    P --> W[单线程有界 rollout writer]
+    W --> R[权威 rollout JSONL]
+    R --> F[flush 完整记录前缀]
+    F --> J[增量 projector]
+    J --> H[thread_history SQLite]
+    J --> N[持久化历史位置通知]
+    H --> Q[分页历史与线程轨迹]
+    R --> C[模型上下文恢复与 lineage]
+    L --> U[蛹与其他端实时界面]
+    N --> U
+    Q --> U
+    R --> Z[冷 rollout 无损 zstd 压缩]
+    D[结构化诊断] --> G[独立 logs SQLite 与限量保留]
+    S[用户和业务状态] --> B[state / queue / goals / memories]
+```
+
+各层职责：
+
+| 新组件 | 归属 | 唯一职责 |
+| --- | --- | --- |
+| `ThreadStore`、`ThreadHistoryReader`、`ThreadMetadataStore` 等窄契约 | wunder-core | 以 ThreadId 操作线程；不暴露文件路径和数据库连接 |
+| canonical 类型、持久化分类和输出限制 | wunder-core | 定义哪些语义记录可保存，保证各端规则一致 |
+| `LocalThreadStore` | wunder-runtime | 编排线程生命周期、writer、lineage、投影与查询 |
+| `RolloutRecorder`、reader、compression | wunder-runtime | 文件格式、顺序写入、读取及表示转换 |
+| `ThreadHistoryProjector` | wunder-runtime | 从已 flush 的 rollout 增量生成 SQLite 投影 |
+| `RuntimeState` 与专用仓库 | wunder-runtime | 线程元数据、目标、队列、记忆和诊断日志 |
+| NativeDesktop façade、CLI/TUI、server API | 对应入口 | 调用上述契约，应用权限和传输投影，不另写历史 |
+
+建议模块组织如下；初期可保持在现有 crate 中，不能为拆包引入反向依赖。
+
+```text
+crates/wunder-core/src/
+  thread_store/            # IDs、契约、分页协议、错误和 canonical 类型
+  storage_policy/          # 持久化分类、限制与状态仓库契约
+crates/wunder-runtime/src/storage/
+  thread_store/local/     # 生命周期、lineage、读写协调
+  rollout/                # recorder、policy adapter、reader、compression
+  thread_history/         # projector、SQLite schema、分页查询
+  runtime_state/          # state、logs、queue、goals、memories
+  control_plane/          # 舰体额外业务状态的 SQLite/PostgreSQL 实现
+```
+
+## 5. 数据目录与事实归属
+
+本地新目录用抽象的 `<storage_root>` 表示。实际路径由现有配置入口解析；配置不再只提供一个通用 `db_path`。
+
+```text
+<storage_root>/
+  sessions/YYYY/MM/DD/rollout-<time>-<thread_id>[_<rollout_id>].jsonl
+  archived_sessions/...
+  state_1.sqlite
+  thread_history_1.sqlite
+  logs_1.sqlite
+  queue_1.sqlite
+  goals_1.sqlite
+  memories_1.sqlite
+  attachments/             # 必须持久保存的独立资源，不塞入日志正文
+  tool-results/            # 有配额和有效期的工具结果溢出资源
+  .tmp/                    # 压缩、恢复等临时文件与维护标记
+  locks/                   # 本地所有权锁，打开只读历史不需要写租约
+  db-backups/              # 隔离损坏文件，不能视为正常历史索引
+```
+
+`state_1.sqlite`、`logs_1.sqlite` 使用 Wunder 新 schema 的初始版本；参考工程对应文件为 `state_5.sqlite`、`logs_2.sqlite`。数字记录各自 schema 演进，不复用上游旧迁移链。新设计不创建单体 `wunder.db`，也不从旧文件自动导入。
+
+| 数据 | 权威来源 | 是否可重建 | 生命周期 |
+| --- | --- | --- | --- |
+| 模型执行历史、已完成内容、上下文检查点 | rollout 及其 lineage | 原件本身不可由投影保证还原 | 用户保留，冷压缩；显式删除 |
+| 分页 turn/item、历史搜索所需字段 | thread_history | 可由完整 rollout 重放重建 | 与其来源 rollout 一致 |
+| 当前 rollout 选择、名称、置顶、分组、工作区等用户状态 | state | 部分派生字段可重建，用户修改不可保证还原 | 用户保留 |
+| 排队且已接受的用户提交 | queue | 不可视为历史投影重建 | 完成/取消后按策略回收 |
+| 当前目标、长期记忆及其业务状态 | goals、memories | 不能假定只靠历史即可还原 | 按各自语义保留 |
+| 诊断信息、重试细节、内部栈 | logs | 可丢弃但须报告损坏/清理 | 有容量与时间限制 |
+| 图片、附件和需独立保存的产物 | attachments | 缺失不能伪称恢复完整 | 所有权与引用决定 |
+| 临时流式尾部、进度和活动状态 | 进程内有界状态 | 进程崩溃可能丢失 | 活动执行期 |
+
+舰体在控制面之下为每个用户配置不透明的 namespace；不能使用用户输入拼接磁盘路径。所有 namespace、线程和资源解析先做权限校验。默认蛹仅使用自己的本地 namespace，不引入服务版账户依赖。
+
+## 6. canonical rollout 数据模型
+
+### 6.1 标识与位置
+
+| 标识 | 含义及约束 |
+| --- | --- |
+| `ThreadId` | 用户可见的稳定任务线程；revert 不改变它；同一智能体可拥有多个 ThreadId |
+| `RolloutId` | 一段物理历史的唯一身份；不能因路径搬移、压缩或重新打开而变化；revert 创建新的 RolloutId |
+| `TurnId` | 引擎一次 turn 的身份；不能用“数据库行数”推算用户轮次 |
+| `RootTurnId` | 将插话、恢复等引擎 turn 关联到同一用户轮次；按实际调度语义生成 |
+| `ItemId` | 语义条目身份；流式开始、delta、完成和界面替换引用同一身份 |
+| `ordinal` | rollout 记录序号；lineage 后缀从继承位置继续编号；不是 token 序号 |
+| `byte_offset` | JSONL 未压缩字节空间的位置；必须指向完整记录边界，压缩前后含义相同 |
+| `HistoryPosition` | `(rollout_id, end_ordinal_exclusive, end_byte_offset)`，精确表达继承与截断边界 |
+| `history_revision` | 读取快照/当前 lineage 的校验凭据；不是另一个不断更新的正文版本表 |
+
+第一个 rollout 可使用与 ThreadId 相同的标识，但类型必须区分。投影内部以 RolloutId 为分区键；不能因上游 schema 某列名叫 `thread_id`，就错误地把稳定 ThreadId 当成物理历史身份。
+
+用户发送一条消息计一轮用户轮次；模型每执行一次动作计一轮模型轮次，包含模型调用、工具调用或最终回复。统计器由 canonical 动作语义生成计数，不把 Codex 的 turn、item、ResponseItem 行数直接当作 Wunder 的模型轮次。
+
+### 6.2 记录封装与类型
+
+采用与 Codex 相同的逐行 JSON 封装思路：`timestamp`、`ordinal`、`type`、`payload`，UTF-8，一条完整记录以换行结束。数据格式版本在 session 元数据中声明，不为每个 token 附加一份公共元数据。
+
+核心持久化变体对齐上游：
+
+- `SessionMeta`：线程身份、rollout 身份、创建来源、初始指令、工具和工作区能力、父线程及 `history_base`。系统提示词和初始记忆一经确定即冻结。
+- `TurnContext`：继续执行所需的 turn 级上下文、模型选择与执行策略。引用稳定初始状态，避免无意义地重复构造整套历史。
+- `ResponseItem`：模型上下文实际需要的消息、推理条目、工具调用和结果、配置变化等。模型恢复必须读取这一语义层，不能把 UI 的 TurnItem 反向猜回模型上下文。
+- `EventMsg`：按白名单持久化 `TurnStarted`、`TurnComplete`、`TurnAborted`、`ItemCompleted`、目标更新、回退、已应用设置和使用量等事件。
+- `Compacted`、保留上下文和相关检查点：记录模型上下文的压缩结果及恢复边界，不删除用户可见的原始历史。
+- 计量记录：保存上游口径对应的实际用量及来源，避免只保留一个无法核验的累计数字。
+
+仅在 Wunder 存在对应能力时实现其 canonical 变体。临时子智能体以独立线程和必要父子关联表达；不借此次重构恢复已经移除的蜂群编排。
+
+### 6.3 持久化选择矩阵
+
+| 内容 | rollout | SQLite 历史投影 | 在线显示/说明 |
+| --- | --- | --- | --- |
+| 用户消息和已完成助手消息 | 按上下文/完成态语义保存 | 保存对应完整完成条目 | 重新打开后可查看和复制原始内容 |
+| 已完成的助手中间消息、计划及供应商实际提供的推理条目 | 按 canonical 类型保存 | 对应展示条目可分页读取 | 不仅保留最终答案；没有提供的内部内容无法还原 |
+| 工具调用参数、调用身份、完成状态 | 保存 | 对应完成条目保存 | 可还原调用过程；凭据不进入持久化参数 |
+| 命令完成条目的展示输出 | 保存，按 64 KiB 策略截断 | 保存同一已截断表示 | 明示截断；不能显示成“完整输出” |
+| MCP 完成条目的结果 | 保存，按上游专用 64 KiB 截断规则 | 保存同一已截断表示 | 不自行把结构化截断替换为不合法 JSON |
+| 其他工具上下文结果、原始 ResponseItem | 按各自类型和上游上下文策略保存 | 仅生成对应展示条目 | 不套用上面两类的统一限制 |
+| 文本、推理、计划与命令输出 delta | 不保存为历史行 | 不保存为 block/change | 有界在线通道与活动条目状态 |
+| ItemStarted、进度、工具 begin、临时告警 | 不作为独立历史事实保存 | 不保存持续更新的运行态正文 | 活动快照显示；最终状态由完成/中止记录表达 |
+| 失败的最终语义、用户中止 | 保存相应完成/中止状态 | 保存 turn/item 的失败或中止状态 | 调试栈进入 logs；不能因 Error 事件临时化而丢掉失败结果 |
+| 原始 HTTP 请求/响应、每次重试栈和扫描细节 | 默认不保存历史 | 不进入历史投影 | 经脱敏进入限额诊断；不常驻完整 prompt 副本 |
+| 图片和二进制资源 | 保存 canonical 引用及协议必需信息 | 保存展示引用 | 受权限控制的独立资源；不在诊断库反复编码 |
+
+持久化策略必须只有一个入口，在线 writer、恢复、导出和压测使用同一实现。展示输出的截断不改变工具是否实际执行成功；模型上下文的截断在既有工具结果/上下文策略处显式完成，不能通过 UI 的截断倒推模型收到的内容。
+
+### 6.4 “节省空间”与“完整”的明确边界
+
+节省主要来自取消无效 delta/block/change 记录、清除多套无用途的正文投影、诊断限额和冷文件压缩。仍会保留 rollout、上下文表示与已完成条目投影之间的必要重复，这是对齐 Codex 分页设计的成本。
+
+用户文本和助手完成文本不为凑固定体积而静默截断。命令/MCP 展示结果遵循既定截断规则。若工具必须允许查看更大结果，使用独立工具结果资源：有配额、有效期、分页读取与过期反馈；不能顺手新增一份永久无限增长的 raw-output 归档。必须长期保留的文件由附件/产物能力显式承接。
+
+不承诺保留任意大的所有原始字节却使空间固定，也不承诺未经测量的压缩比例。
+
+## 7. 写入与一致性协议
+
+### 7.1 单 writer 与有界内存
+
+每个活动线程由唯一 writer 持有 append 文件句柄。命令对齐 `AddItems`、`Persist`、`Flush`、`Shutdown`、`Discard`，队列容量采用上游的 **256 条命令**；无命令时等待 `recv()`，不设置周期 flush 定时器。
+
+命令数上限不能代表内存上限。针对 32 位进程，增加 Wunder 的全局/线程字节预算：初始线程待写预算 8 MiB、进程待写预算 32 MiB，大记录独占写入配额，不能与 256 个同等大小记录同时堆积。数值作为实施基线，通过目标机测试收紧。生产者异步等待配额，不能在 UI 线程阻塞，也不能丢弃已接受的用户输入、完成事件或中止事件。
+
+单条特别大的合法用户消息不复制进多层 `Vec`/JSON Value。请求入口、编码器、writer 交接缓冲区所有权；超过可处理资源边界时在接受前明确拒绝。不能先显示已持久保存，再静默裁掉尾部。
+
+新建空线程可先保留待定元数据，首次有效持久化时再创建 rollout。关闭未使用线程不产生空文件和后台清理债务。writer 注册表、每线程锁、观察器和缓存随最后一个活动句柄释放，不保留无界 ThreadId 到锁的映射。
+
+### 7.2 唯一提交顺序
+
+对一次需要持久保存的追加，顺序固定为：
+
+1. 线程写锁内确认 writer 所有权、当前 RolloutId 和生命周期状态。
+2. 通过统一 policy 过滤与规范化记录，分配稳定 ItemId/ordinal。
+3. append 完整 JSONL 记录并完成 recorder 的 flush barrier。
+4. projector 只读取 barrier 覆盖的完整记录前缀，在一次 SQLite 事务内提交条目及投影水位。
+5. 发布持久化历史位置/投影水位；界面按 ItemId 将临时条目替换为完成条目。
+
+**投影可以落后 rollout，绝不允许领先 rollout。** 文件追加与 SQLite 提交不是跨介质事务，不能画成一个数据库事务后声称原子完成。
+
+对齐源码时先保留“每行 write_all + flush”的行为；后台任务只负责所有权和异步调度，不虚构自动延迟合批。后续若改变刷写边界，须作为单独行为变更测量，不能混入本次对齐而不说明。
+
+### 7.3 确认语义
+
+| 返回状态 | 保证 | 不保证 |
+| --- | --- | --- |
+| 在线 delta 已发送 | 订阅者收到临时内容 | 不代表写盘或崩溃后可恢复 |
+| 命令已入队 | 运行时持有有界待写命令 | 不代表 rollout 已完成 |
+| rollout 已 flush | 完整记录已交给文件系统，能够按完整前缀恢复 | 不等同于 `sync_all`，不宣称抗突然断电 |
+| 投影完成 | 对应历史内容可由 SQLite 分页读取 | 不使 SQLite 成为历史真相源 |
+| `sync_all` 完成 | 达到所选平台可提供的更强同步边界 | 不等同于跨文件、跨设备原子事务 |
+
+默认活跃记录同步强度对齐 Codex，不为每个 token 或每一条记录新增 `sync_all`。压缩临时文件发布等边界按上游执行必要的同步。任何“已经保存”的 API 字段必须说明它对应 flush 还是更强同步，不能混用。
+
+### 7.4 故障处理
+
+| 故障窗口 | 必须行为 |
+| --- | --- |
+| flush 前 writer 失败 | 当前提交失败；停止接受后续追加，报告可识别错误，不先生成成功投影 |
+| rollout 成功，SQLite 失败 | 历史已保存；暴露 `projection_pending`，通知不得伪造已投影水位；后续打开/读取按需追赶 |
+| SQLite 事务中崩溃 | 事务回滚；从旧 offset/ordinal 幂等重放，不产生重复条目 |
+| 投影已提交、通知未发送 | 重新订阅以持久化游标补水，不重复执行工具 |
+| JSONL 尾部没有换行 | 读取只承认完整前缀；重开 writer 前在独占锁内识别、隔离不完整尾部，不能直接接续出一行坏 JSON |
+| 中间记录损坏或 ordinal 异常 | 报告异常位置并保护原件；不能把缺行历史当完整成功恢复，也不能悄悄用 UI 投影反写覆盖原件 |
+| 磁盘满、权限变化、文件被替换 | 保持错误状态，释放/取消受影响执行；禁止无限重试并持续刷诊断 |
+
+Codex 的写入失败有保留未写后缀及有限重试的处理，Wunder 对齐其“有界恢复、终态失败可见”的行为。投影失败后的重试使用请求触发或有次数上限的退避；没有新变化时不永久轮询损坏文件。
+
+只读打开不会建立执行租约。运行中线程使用本地进程内锁和操作系统文件所有权锁，进程退出后由系统释放；不为了“用户正在看此线程”定时向 SQLite 写 heartbeat。
+
+## 8. SQLite 拆分与历史投影
+
+### 8.1 数据库基本配置
+
+各 DB 统一通过一处连接配置初始化，采用 WAL 和与上游一致的 `synchronous=NORMAL` 基线。使用有界连接池；蛹初始按每库 1 个写入者、最多 2 个只读连接配置，未用到的 queue/goals/memories 按需打开，避免多个库各建一套大线程池。
+
+仅为 logs DB 启用经过审计的后台页回收，不能给所有 DB 统一启动 vacuum worker。新库在初始化时正确配置 vacuum 模式；禁止每次启动跑全库 VACUUM、全目录 rebuild 或全历史 JSON 解析。
+
+数据库版本、连接池、busy timeout、checkpoint 和损坏处理归各 DB 统一管理。不得由 UI 点击、监控轮询和任意 DAO 自行执行维护 PRAGMA。
+
+### 8.2 thread_history 最小 schema
+
+以下是目标结构的核心约束，实施时补齐上游当前分页功能需要的字段及索引，不移植与 Wunder 无对应能力的表。
+
+```sql
+CREATE TABLE thread_turns (
+    rollout_id TEXT NOT NULL,
+    turn_id TEXT NOT NULL,
+    root_turn_id TEXT,
+    rollout_ordinal INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    error_json TEXT,
+    started_at_ms INTEGER,
+    completed_at_ms INTEGER,
+    duration_ms INTEGER,
+    first_user_item_id TEXT,
+    final_agent_item_id TEXT,
+    start_byte_offset INTEGER,
+    end_byte_offset INTEGER,
+    end_ordinal INTEGER,
+    updated_at_ordinal INTEGER NOT NULL,
+    PRIMARY KEY (rollout_id, turn_id)
+);
+CREATE UNIQUE INDEX thread_turns_page
+    ON thread_turns(rollout_id, rollout_ordinal);
+CREATE INDEX thread_turns_changes
+    ON thread_turns(rollout_id, updated_at_ordinal);
+
+CREATE TABLE thread_items (
+    rollout_id TEXT NOT NULL,
+    turn_id TEXT NOT NULL,
+    item_id TEXT NOT NULL,
+    rollout_ordinal INTEGER NOT NULL,
+    created_at_ms INTEGER NOT NULL,
+    item_type TEXT NOT NULL,
+    item_json TEXT NOT NULL,
+    updated_at_ordinal INTEGER NOT NULL,
+    PRIMARY KEY (rollout_id, turn_id, item_id)
+);
+CREATE UNIQUE INDEX thread_items_page
+    ON thread_items(rollout_id, rollout_ordinal);
+CREATE INDEX thread_items_turn_page
+    ON thread_items(rollout_id, turn_id, rollout_ordinal);
+CREATE INDEX thread_items_changes
+    ON thread_items(rollout_id, updated_at_ordinal);
+
+CREATE TABLE thread_history_projection_state (
+    rollout_id TEXT PRIMARY KEY,
+    next_rollout_byte_offset INTEGER NOT NULL,
+    next_rollout_ordinal INTEGER NOT NULL,
+    projector_version INTEGER NOT NULL
+);
+```
+
+`item_json` 是完整的 canonical 展示条目，允许包含正文。`item_type`、时间与 ordinal 是供过滤分页的少量结构化字段，不再并存 `payload_json`、`body_json`、block payload、change payload 和 trajectory payload 多套同义正文。
+
+已有表也叫 `thread_items` 不代表可以保留其旧语义。本次采用全新 schema，不追加一层兼容视图把旧块日志继续伪装成新历史。
+
+### 8.3 projector 规则
+
+- 从 `(next_rollout_byte_offset, next_rollout_ordinal)` 继续解析，原始偏移以未压缩内容为准；只消费换行结束的记录。
+- 以 rollout 身份及预期起点检查并发；插入/更新条目与前进水位在同一 DB 事务完成。
+- 幂等键由稳定 ItemId、TurnId、RolloutId 决定，不按“收到事件次数”生成新条目。
+- 对 `ItemCompleted` 物化完成条目，对 turn 状态与设置等应用规范投影。临时 delta 不进入投影。
+- 投影算法版本变化可显式失效并重建所需分区，不修改原始 rollout。业务代码不能直接写该库。
+- 重建采用流式解析与有界批次，初始每批不超过 512 条或 4 MiB，并主动让出执行权；禁止一次分配“文件末尾减起点”大小的缓冲。此处是为 32 位目标收紧资源边界的明确扩展。
+- 普通启动不全量重建；打开线程先追赶其必要分区。全库维护任务独立、可取消、有进度，不能挂在每次获取线程列表之前。
+
+### 8.4 state 与独立业务库
+
+state 负责当前 rollout 映射、列表元信息、归档状态、名称、预览、工作区、分组、置顶等。显示预览使用有限长度字段，不保存另一份完整消息。用户编辑的名称和排序属于权威用户状态，不能声称删除 state 不会损失任何信息。
+
+queue 保存已接受但未消费的用户提交，goals 保存当前目标状态，memories 保存长期记忆业务状态。历史中保存目标变化不代表 goals 当前状态可随意丢弃；记忆抽取来源和当前记忆也不是同一事实。
+
+默认损坏策略按事实类型区分：日志可隔离重建，thread_history 显式修复投影，权威业务库保留原文件并标记不可用，提供恢复入口，不无声创建空库继续声称数据完整。参考工程多库采用 `BackupAndRebuild`、thread_history 采用 `Unavailable`；Wunder 对权威业务状态采用更保守的可见失败策略，差异见第 19 节。
+
+## 9. 历史读取、流式输出与恢复
+
+### 9.1 统一接口
+
+对外只接受 ThreadId 和不透明游标，不接受任意 rollout 路径。建议核心操作如下，Rust façade 和 HTTP/RPC 使用相同语义：
+
+| 操作 | 输入重点 | 结果与约束 |
+| --- | --- | --- |
+| `create_thread` / `resume_thread` | 初始化配置、ThreadId | 返回元数据和活动句柄，不附带全部历史 |
+| `append_items` / `flush` / `shutdown` | 强类型 canonical 条目 | 返回 rollout 与 projection 水位，错误可区分 |
+| `list_threads` | workspace、归档筛选、keyset cursor | 仅元信息，默认 50、最大 200 条 |
+| `list_turns` | ThreadId、方向、cursor | 默认 20、最大 100 轮，返回条目计数/摘要 |
+| `list_items` / `read_item` | turn 范围、类型、cursor、ItemId | 默认 100、最大 500 条；受序列化响应预算限制 |
+| `read_item_content` | ItemId、内容位置 | 大正文按 UTF-8 安全边界分段读取，不静默损坏原文 |
+| `subscribe_thread` | 持久化位置、临时订阅位置 | 先历史补水与活动快照，再接收增量 |
+| `load_model_context` | 当前 rollout 与 HistoryPosition | 恢复模型所需上下文，与显示分页独立 |
+| `fork` / `revert` / `archive` / `delete` | 显式边界与预期 revision | 生命周期内串行协调，返回新身份/状态 |
+
+页面数量不足以控制大条目内存。分页响应初始预算 2 MiB；单条超大文本通过内容分段接口返回，保留稳定 ItemId 与内容位置，保证复制/导出可以取得完整保留文本。这是资源边界扩展，不新增持久化 block 表。
+
+列表不使用不断增大的 OFFSET，不先加载所有 turn 再截取。只打开轨迹面板时加载对应页；不为了侧边栏未展开的线程预读全部历史。
+
+### 9.2 游标与 lineage
+
+游标绑定 namespace、ThreadId、当前 rollout/lineage、查询方向、筛选条件和位置。压缩改变物理表示时允许保守失效重试，但不能改写逻辑 ordinal/HistoryPosition；revert 或 lineage 变化使旧查询快照失效，返回明确的 `history_changed`，由界面重新补水。
+
+上游 `history_revision` 包含路径及文件元信息等快照依据，不能把它误当成永久业务版本号。Wunder 读取前后检查一致性，活动历史的普通追加通过水位向前推进；不能因每追加一条记录就强迫用户重新加载全部已完成条目。
+
+对继承历史按有界 lineage segment 查询并归并；每个 segment 带独立 RolloutId 和截止位置。分页读取不把祖先和子线程完整文件拼成一个巨大内存字符串。
+
+### 9.3 在线事件与历史事件分开
+
+保留两个位置体系：
+
+1. 持久化历史位置：可用于进程重启后的历史补水。
+2. 临时流位置：只在当前进程/活动执行内有效，用于文本连续性和去重。
+
+订阅流程必须处理“建立订阅期间又有新事件”的竞态：先登记有界订阅，获取持久化水位与活动快照，在同一逻辑边界之后继续发事件。完成条目通过 ItemId 原位替换临时条目，不能复制出两条回复。
+
+慢消费者落后时，不无限保留所有 token；返回 resync 标记并以活动条目当前内容快照续接。同一进程内的重连、切页及重新打开活动线程应能看到尚未完成的当前尾部。已完成内容通过 rollout/SQLite 恢复；进程崩溃前尚未落到完成态的 token 不保证恢复，必须明确显示执行已中断。
+
+临时尾部和输出环形缓冲均有字节上限。很长的单个未完成条目若超过在线快照预算，只能显式标识流式预览受限；完成态保留文本仍按 canonical 策略处理。不能一边说内存有界，一边为每个未完成条目无限增长快照。
+
+蛹直接通过强类型 NativeDesktop façade 在同进程订阅；不为新方案增加本机 HTTP、WebSocket 或 bridge 子进程。蜂巢与远程客户端使用舰体传输层，舵机复用运行时事件。UI 按约 16–33 ms 合并显示更新，UI 内存分块不等于数据库永久保存分块。
+
+### 9.4 模型上下文恢复
+
+从 SessionMeta、TurnContext、ResponseItem、compaction/retained-context 检查点和 lineage 恢复模型上下文。恢复结果必须与执行前保留的上下文语义一致，不能从“聊天窗口最后两条消息”重新构造。
+
+上下文 token 预算只决定发送给模型的内容；历史保留策略决定用户还能查看什么；zstd 压缩只改变物理表示。三者必须有独立类型、独立配置和独立指标，禁止用一次“压缩历史”同时隐含删记录、改提示词和压磁盘文件。
+
+长期记忆只在线程初始化时注入。恢复原线程读取已冻结的初始指令；重新打开、切换前端或重建 SQLite 投影不得触发再次注入。
+
+## 10. fork、revert 与线程生命周期
+
+| 操作 | 对齐后的行为 |
+| --- | --- |
+| fork | 新 ThreadId、新 rollout，`history_base` 引用父 rollout 的不可变范围；不复制整段父历史 |
+| revert | 保留 ThreadId，创建新 RolloutId，选择目标边界后接续；不原地截断仍被其他线程引用的文件 |
+| archive | 完成必要 flush 后迁移到归档根并更新映射；打开归档只读，不续写执行租约 |
+| unarchive | 在生命周期锁内恢复映射与路径；不重建另一套内容 |
+| delete | 先阻止新写入、关闭 writer/订阅，清理所属状态并处理引用；不能先删文件再发现子线程依赖它 |
+| shutdown | 停止接收新命令，排空已接受命令并等待 flush，释放资源；超时或失败反馈可见 |
+| discard | 仅丢弃未持久化的创建/准备结果；不能借此删除已经确认保存的历史 |
+
+引用索引以不可变 RolloutId 建边，包含活动和归档根。引用范围、环检测、最大解析深度和损坏引用都由一个 lineage resolver 处理，各调用方不能各自写一套“追父线程”逻辑。
+
+删除某个线程的用户可见入口，不必然能够马上释放其全部底层历史：被存活分支引用的 rollout 必须保留，或由显式重物化流程解除引用后再删。禁止隐式级联删除其他用户线程。孤立 rollout 的回收按生命周期变更触发，必要的全根引用核对是显式维护，不能放入空闲高频扫描。
+
+归档、压缩、revert、删除和 resume 都参与同一所有权协调。读取只持有短暂快照，Windows 上需要替换/删除文件时正确释放句柄，不能依赖 Unix 下删除已打开文件的语义。
+
+## 11. 冷历史压缩、备份和空间回收
+
+### 11.1 rollout 压缩
+
+对齐参考实现的物理格式和安全发布协议：
+
+| 项目 | 基线 |
+| --- | --- |
+| 压缩格式 | `zstd` level 3，后缀 `.jsonl.zst` |
+| 热度门槛 | 文件修改时间至少 7 天 |
+| 最大并发 | 2 个压缩任务 |
+| 单次 worker 上限 | 5 小时 |
+| 并发运行标记 | `<storage_root>/.tmp/rollout-compression.lock`，6 小时视为过期 |
+| 覆盖范围 | 活动与归档 rollout；包含共享 lineage 所需的祖先 |
+| 发布 | 写临时文件，校验源文件 identity/大小/时间未变，以无覆盖方式发布，再删除源文件 |
+| 读取 | `.jsonl` 与 `.jsonl.zst` 透明读取；切换时有限次数重试 |
+| 恢复写入 | 需要 append 的压缩 rollout 在独占所有权下物化为普通 JSONL 后继续，不直接追加压缩流 |
+
+新实现默认关闭自动压缩，与参考工程 `LocalThreadStoreCompression` 的默认状态一致。启用时在启动或显式维护请求触发一次有运行标记保护的扫描；它不是常驻循环。用户设置自动压缩后，界面显示最近一次扫描、候选数、压缩前后字节数、失败数和下次可扫描时间；不要用估算比例承诺节省量。
+
+压缩仅改变磁盘表示，逻辑 `ordinal`、未压缩 byte offset、Lineage 和 SQLite 投影均不变。压缩文件的随机读取代价高于普通 JSONL，thread_history 是常规分页读取路径；遇到投影缺失可按需流式解压重建，不能为了单页查询永久解压整个历史或把全部文件放进内存。
+
+压缩实现须保留目标文件权限与时间属性，失败清理临时文件。Windows 7 不使用需要较新系统 API 的文件锁捷径；在支持范围内使用 Rust/Win32 可用的原子创建、重命名和句柄关闭顺序。目标机实测后才可对替换语义作更强承诺。
+
+### 11.2 SQLite 与附件空间
+
+thread_history 的删除/重建通过删除对应分区或重建新投影库完成，不执行每次删除后的全库 VACUUM。SQLite 自由页会复用，逻辑删除不保证文件立刻变小；需要物理收缩时使用显式、可取消、仅空闲期执行的维护任务，并报告实际前后大小。
+
+附件和工具结果资源按 owner、引用、配额和到期时间清理。历史条目只保留资源句柄和完整性信息；资源被清理时返回“资源已按保留规则回收”，而不是把句柄解析成空文本。所有清理均先验证引用和 namespace，不根据展示页面是否打开决定删除。
+
+### 11.3 备份与导出
+
+本地备份按一致性边界打包：先对相关活动 rollout 执行显式 flush，记录各 SQLite 的备份快照及 WAL 一致边界，再收集 sessions、archived_sessions、独立资源和必要数据库。不能简单复制运行中的 `.sqlite` 主文件而忽略 `-wal`。
+
+导出包含历史 policy 之后的完整语义内容及截断说明，不能从诊断日志拼接。导入旧格式不属于本方案；如后续需要，可作为新 ThreadStore 的单独一次性导入器，输出新 rollout，而不是恢复双写兼容层。
+
+## 12. 诊断日志、监控与空闲行为
+
+执行历史不再借 `thread_log_changes` 充当诊断。诊断写入 `logs_1.sqlite`，采用参考工程的可审计基线：
+
+| 策略 | 值与限制 |
+| --- | --- |
+| 每分区可见内容 | 10 MiB |
+| 每分区行数 | 1,000 |
+| 分区 | 有 ThreadId 时按线程；否则按进程运行身份 |
+| 生命周期保留 | 10 天 |
+| 诊断数据库占用预算 | 64 MiB 已占用页；不是承诺物理文件严格不超过 64 MiB |
+| 清理触发 | 启动立即一次、之后每 30 分钟；错过 tick 不补跑 |
+| checkpoint | 首次维护使用不等待的 passive WAL checkpoint |
+| 页回收 | 仅 logs DB；空闲 60 秒、活跃 50 ms、争用 500 ms 的退避基线；合作式短时批次、单维护所有者 |
+
+日志写入按事务中的受影响分区裁剪，而不是先无限插入再全表扫描。监控存储仅保存聚合计数、耗时、失败类别和当前状态，不能把每轮完整 prompt、响应和工具原文再复制一次。日志内容先结构化和脱敏，禁止把凭据、授权头或本地绝对路径写入诊断。
+
+“静静空闲”的可验收定义是：所有线程 writer 队列为空且没有活动任务时，线程历史层没有定时 append、投影、轮询查询、租约续写或压缩写入。仍允许用户明确触发的动作、操作系统 I/O、日志库首次/半小时维护及其他产品已启用的定时服务；它们必须各自有可观测归属，不能伪装为线程历史写入。
+
+应给每种后台唤醒记录原因与持续时间的轻量指标：`rollout_append`、`projection`、`history_rebuild`、`logs_maintenance`、`compression`、`queue`、`workspace_scan` 等。空闲采样报告按原因归类，不能只给总 CPU 百分比后猜测。
+
+## 13. 蛹、舵机、舰体与 PostgreSQL 边界
+
+蛹和舵机默认本地 ThreadStore + 独立 SQLite 根目录，离线时可用。两者不能各维护一套 JSONL 格式、投影 schema 或 context 恢复器。蛹的 NativeDesktop façade 暴露分页读取、内容分段、活动快照和订阅；Slint 使用虚拟列表/限量加载，已完成块稳定，活动尾部按帧合并。
+
+舰体的蜂巢经服务端调用相同 runtime 语义。服务器执行节点若拥有本地 canonical 文件，必须具有单一写入所有者及持久卷；多实例不能同时 append 同一 rollout，也不能以数据库乐观锁替代文件 writer 所有权。需要跨节点调度时，路由 ThreadId 到 owner；迁移 owner 时先 `Shutdown`/flush、转移所有权、验证 rollout revision，随后重建该节点的可重建投影。
+
+PostgreSQL 保留给舰体控制面和多租户治理：身份、权限、单位、智能体定义、配额、发布、远程索引和路由。它不能再作为“把本地 thread_logs 所有表换成 PG”的平替。若将来需要服务端集中保存 rollout，须先定义对象存储/共享文件系统的 append、条件写、锁、归档与备份语义；未完成前不声称文件型 Codex 设计天然支持多节点并发写。
+
+远程 API 必须进行 tenant/owner/thread 权限校验后再取得 ThreadId 的 metadata、投影或资源。内部 RolloutId、文件位置、锁状态与 SQLite 错误不得直接作为外部 API 返回值。
+
+## 14. 需要删除或整体替换的实现面
+
+本节是实施清单，目的是防止新旧机制并存。具体文件名以实施前的当前树为准，其他开发者同期改动不改变此依赖顺序。
+
+| 现有区域 | 处理 | 原因与替代 |
+| --- | --- | --- |
+| `crates/wunder-core/src/storage_backend.rs` 的巨型 `StorageBackend`、`ConversationLogStore`、`ThreadLogStore` | 删除/拆分 | 以 `ThreadStore`、`RuntimeState`、业务专用契约替代，避免所有形态被同一巨大后端绑死 |
+| `crates/wunder-runtime/src/storage/{mod,backend,factory,sqlite,postgres}.rs` 的单 DB 装配 | 重建 | 按第 5、8、13 节分库与分角色装配 |
+| `storage/sqlite/schema.rs` 和 PostgreSQL 中的 `thread_logs`、`thread_items`、`thread_item_blocks`、`thread_log_changes`、旧 metrics/trajectory 表 | 移除 | 新 `thread_history` 是完整完成 item 投影，不复用旧字段或双写 |
+| `terminal_transcript_blocks` | 移除 | 终端正文不再另建永久块历史；完成工具条目/独立资源承接 |
+| `tool_logs`、`artifact_logs` 中与 canonical 执行历史同义的正文 | 移除或迁为资源元数据 | 工具调用和完成结果归 rollout；附件/产物只保留独立资源职责 |
+| `orchestrator/event_stream.rs` 的 TextTails/blocks/change 持久化 | 替换 | delta 只走临时有界通道；完成态交 canonical writer |
+| `execute.rs`、`tool_exec.rs` 分散的 append_chat/append_tool_log | 收敛 | 仅生成强类型 item，由统一 policy/writer 落盘 |
+| `orchestrator/thread_log_committer.rs` 与无界 per-session gate | 删除 | writer 生命周期和有界锁表管理串行性，完成后发布投影水位 |
+| `services/thread_log.rs` 及 diagnostics patch/replay 逻辑 | 删除/改接 | 历史读取来自 projector；诊断走独立 logs |
+| `services/thread_change_feeder.rs`、`thread_change_hub.rs` | 重写 | 采用活动流 + 持久化位置补水，不查 change 表轮询 |
+| `thread_view_{source,projection,store}`、`services/thread_view_rebuild.rs` | 移除正文投影；保留必要轻量 metadata | 轨迹由 turn/item projection 导出，禁止再保存全量 tile/body |
+| SQLite/PG `session_lock_store`、`thread_open_leases` 的查看续约语义 | 重构 | 只读查看不写 lease；执行所有权使用生命周期协调 |
+| `services/workspace.rs` 的 Chat/ToolLog/ArtifactLog 写队列 | 拆除/改为资源服务 | 不再做第二份历史写队列 |
+| `native_chat_turns.rs`、`frontend-slint/src/native_chat*`、`thread_trajectory.rs` | 改造 | 调用新分页/订阅 façade，保持长历史虚拟化和稳定已完成块 |
+| CLI/TUI 的线程注册、patch log | 改造 | 复用 ThreadStore cursor 与临时订阅，不维护平行日志 |
+| chat/core/ws、云线程观察、管理监控 API | 同步改造 | 所有调用方使用同一 cursor、权限与错误语义 |
+| `storage/stress_model.rs`、SQLite/PG `stress_thread.rs`、`services/stress_thread.rs`、压测 API/桌面入口 | 重写 | 生成真实 canonical 事件并走生产 write/project/read 链路 |
+
+删除旧 schema 前，先删除所有消费者、测试辅助和诊断 SQL；编译期不得保留“临时兼容 adapter”。新系统上线判定为旧写入路径、旧 changes/block 查询、旧视图 rebuild 和旧压测直插均不存在，而非两套都能运行。
+
+## 15. 分阶段实施与切换门槛
+
+没有历史兼容要求不等于可无序修改。以下阶段可以在原型主线连续完成，但每阶段必须可编译、测试，不建立生产双写或回退旧库的常态路径。
+
+| 阶段 | 交付 | 完成门槛 |
+| --- | --- | --- |
+| 0. 定义 | core IDs、canonical item、policy、窄存储契约、错误/游标类型 | 对照本方案的序列化、policy、ID 不变量单测通过 |
+| 1. 本地事实层 | recorder、文件布局、single writer、有界配额、完整前缀 reader | 断电窗口模拟、并发追加、空线程不建文件、无空闲定时 append |
+| 2. 投影 | thread_history schema、projector、分页/内容分段、重建工具 | 投影可落后不可领先；删投影重建后内容/顺序/状态一致 |
+| 3. 执行迁移 | orchestrator 只生成 canonical item；context/fork/revert/归档生命周期接入 | 一条真实工具执行从流式到重开历史只走新链路 |
+| 4. 前端和 API | Desktop/Slint、CLI、服务 API、蜂巢观察与权限接入 | 大历史分页、重连和活动尾部测试通过；无前端全量加载 |
+| 5. 辅助状态 | queue/goals/memories/logs 拆分、维护、备份、压缩 | 空闲维护归因可见；损坏策略和压缩恢复测试通过 |
+| 6. 删除旧系统 | 删除旧 tables、DAO、view、changes/blocks、直插压测、兼容分支 | `rg` 和构建证明没有旧链路；干净新根端到端通过 |
+| 7. 性能验收 | 基准、32 位目标机验证、容量报告 | 达到第 16 节门槛并记录硬件、版本、样本 |
+
+每个阶段使用全新测试根目录，测试结束删除临时根目录。因为不兼容旧格式，切换只发生在新存储根；不写“自动迁移成功”文案，也不在用户现有数据上试验 schema。
+
+## 16. 压测、验证与验收标准
+
+### 16.1 用真实链路生成样本
+
+现有压测的直接 bulk insert 会绕开 policy、writer、JSON 序列化、投影、读取、WAL 和 UI 页大小，无法代表用户。新 `StressThreadScenario` 通过公开 ThreadStore/运行时入口产生确定性 canonical 事件，并记录生成配置、随机种子、实际落盘 item 数、用户轮次、模型轮次、工具调用数、截断次数、rollout/投影/日志/附件各自字节数。
+
+配置必须明确区分：用户轮次、每用户轮次的模型动作分布、工具类型、工具结果大小、文本长度、错误/中止比例和并发线程数。调用方输入“1000 用户轮次 × 1000 模型轮次”时不得暗中改成总次数；极端规模可因资源预算被明确拒绝或分批执行，但报告原请求和实际执行值。
+
+预置三类确定性 profile，且允许覆盖参数：
+
+| profile | 目的 |
+| --- | --- |
+| typical | 短消息、少量工具、符合日常用户轮次/模型轮次比例 |
+| complex | 多个模型动作、工具和中间完成消息，验证完整轨迹与恢复 |
+| adversarial | 大结果、截断边界、取消、断开重连、fork/revert、压缩与投影滞后 |
+
+测试数据使用中性合成文本、虚构标识和相对资源名，不能把真实工作目录、身份或密钥写入日志、报告或文档。
+
+### 16.2 必测场景
+
+- policy：每个持久化/临时分类、64 KiB command/MCP 规则、截断标记、秘密清理。
+- writer：容量 256、字节预算、背压、关闭、错误、并发同线程顺序和不同线程隔离。
+- 文件：UTF-8、完整换行前缀、空线程延迟创建、尾部截断、错误位置报告、压缩/物化。
+- projection：重放幂等、offset/ordinal、投影落后、SQLite 事务失败、删除投影后重建、分页和内容分段。
+- 读取：正反向 keyset pagination、筛选、轨迹、历史 revision、压缩读取、超长正文内存上限。
+- 流式：慢订阅者、订阅竞态、完成替换、进程内重连、崩溃前未完成尾部。
+- 生命周期：archive/unarchive、fork、revert、共享祖先删除保护、引用环/损坏引用、并发 close/resume。
+- 状态：冻结 system prompt、初始记忆只注入一次、模型上下文和显示历史分别恢复。
+- 运维：logs 限额/保留、维护锁、损坏库隔离、备份一致性、压缩中断和临时文件恢复。
+- 平台：32 位 Windows 7 与 Ubuntu 18.04 的大历史打开、路径/权限、文件替换、内存峰值、启动时延。
+
+### 16.3 定量验收
+
+不预先捏造“10 GB 会变成多少 MB”。每次基准报告必须列出 raw rollout、压缩 rollout、thread_history、state、logs、附件/工具资源、WAL 的实际字节及测试条件。重点门槛：
+
+- writer 队列排空后的 10 分钟内，线程历史层追加数、投影事务数、历史轮询 SQL 数均为 0；日志维护等独立活动单独计数。
+- 任意历史页不扫描/反序列化整个线程；读取工作量随请求页大小和 lineage segment 数有界。
+- 典型/复杂样本重新打开后，用户消息、完成回复、完成中间条目、工具参数/已保留结果、turn 状态、轨迹顺序与 canonical rollout 一致。
+- 删除 `thread_history` 后的重建不改变 rollout 内容，且重建完成后的逻辑结果一致；任何不可恢复的权威业务状态不会被假装恢复。
+- 压测使用生产 writer 与 projector；报告“生成请求”与“实际用户轮次/模型轮次/行动数”，不只报告插入行数。
+- 在目标 32 位环境中，典型和复杂 profile 的峰值地址空间、页面加载等待、活动流丢失/重同步次数达到实施时记录的硬门槛；门槛由首轮实测基线设定并纳入 CI/夜间基准，不能凭开发机臆定。
+
+## 17. 可观测性与运行手册
+
+每个线程提供只读的健康摘要：当前 RolloutId、最后 flush ordinal、最后 projection ordinal、是否投影滞后、当前 lineage 深度、压缩状态、当前 writer 状态和最后可识别错误类别。面向用户的蛹只呈现可理解的“已保存/正在保存/历史索引待恢复/存储错误”；详细路径、内部错误和诊断 ID 限授权管理面。
+
+关键指标包括：rollout 写入字节和耗时、flush 到 projection 延迟、投影批次数/条目数、重建耗时、分页查询行数/字节、临时订阅丢弃后重同步次数、压缩前后字节、logs 裁剪/回收与 SQLite busy 重试。指标标签不能使用无限基数的 ThreadId 或原始路径；单线程诊断通过按权限查询实现。
+
+运行手册明确区分四类操作：
+
+1. 重建 `thread_history`：不影响 rollout，重建期间历史查询显示索引恢复状态。
+2. 隔离 logs：可丢弃诊断，保留备份供排障。
+3. 权威 state/queue/goals/memories 损坏：停止受影响能力、保留证据并提示恢复，而非自动空库继续。
+4. 历史原件损坏：保护原件、定位损坏范围、提供只读可恢复前缀和导出；不从投影反向伪造为原始 rollout。
+
+## 18. 参考源码与可追溯依据
+
+以下路径是设计核对依据，实施前如参考快照更新，应重新比对行为而不是仅复制常量：
+
+| 主题 | 参考位置 |
+| --- | --- |
+| 存储中立 ThreadStore 与类型 | `codex-rs/thread-store/src/lib.rs`、`store.rs`、`types.rs` |
+| 默认分页历史、local 组织 | `codex-rs/thread-store/src/local/mod.rs` |
+| writer 先 durable 再投影的屏障 | `codex-rs/thread-store/src/local/live_writer.rs` 的 `write_and_project` |
+| 增量物化、完整换行前缀 | `codex-rs/thread-store/src/local/thread_history_materialization.rs` |
+| history projection schema 与后续迁移 | `codex-rs/state/thread_history_migrations/` |
+| metadata 与 state schema | `codex-rs/state/migrations/` |
+| JSONL 写入、256 容量、延迟创建、flush/recovery | `codex-rs/rollout/src/recorder.rs` |
+| persistence policy、64 KiB 规则、临时事件 | `codex-rs/rollout/src/policy.rs` |
+| rollout / metadata 协议 | `codex-rs/protocol/src/protocol.rs` |
+| fork、revert、lineage、revision | `codex-rs/thread-store/src/local/paginated_fork.rs`、`revert_thread.rs`、`rollout_lineage.rs`、`history_revision.rs` |
+| 共享历史引用索引 | `codex-rs/rollout/src/rollout_reference_index.rs` |
+| zstd、热度、锁、并发和发布 | `codex-rs/rollout/src/compression.rs` |
+| SQLite 分库、恢复与连接配置 | `codex-rs/state/src/sqlite.rs`、`runtime/recovery.rs` |
+| 日志保留与低频维护 | `codex-rs/state/src/runtime.rs`、`runtime/logs_maintenance.rs`、`runtime/reclamation.rs` |
+| 压缩 feature 默认关闭 | `codex-rs/features/src/lib.rs` |
+
+## 19. 对齐结论与有意差异
+
+| 项目 | 决策 | 原因 |
+| --- | --- | --- |
+| canonical JSONL、SQLite completed-item projection、offset/ordinal、lineage、冷 zstd、诊断限额 | 对齐 | 这是参考工程的核心存储边界，直接解决当前重复写入和长历史分页问题 |
+| 旧历史兼容、Legacy history、迁移器 | 不实现 | 用户已授权不考虑兼容；保留会让新架构长期背负双路径 |
+| 新库版本名 | 语义对齐、编号独立 | 不能把 Codex 的 `state_5` 等迁移历史当作 Wunder 新 schema 的版本 |
+| 32 位进程的全局/线程字节预算、投影流式批次、内容分段 | Wunder 收紧 | 参考的某些读取实现可按剩余字节一次分配；Wunder 的目标平台要求明确防止地址空间耗尽 |
+| 多租户、PostgreSQL 控制面与跨节点 owner 路由 | Wunder 扩展 | Wunder 的舰体需要该能力；它不改变本地单 writer canonical 文件事实 |
+| 权威业务 DB 的损坏处理 | Wunder 更保守 | 不能把当前目标、队列或记忆误当可由历史无损重建的缓存 |
+| 自动压缩 | 默认关闭 | 与参考 feature 默认值一致，避免在未知负载下制造后台 I/O；启用后遵循相同门槛和安全发布 |
+
+完成本方案后，Wunder 的历史不会靠“少记内容”压缩成两行，也不会靠持续 SQLite block/change 写入维持流式效果。它会以可追溯的 canonical 执行记录保存真实完成历史，以可重建投影提供快速分页，以有界临时事件提供流式连续性，并将诊断、业务状态、附件和压缩各放在自己的生命周期中。

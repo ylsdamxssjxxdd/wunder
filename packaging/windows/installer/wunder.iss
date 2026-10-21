@@ -29,6 +29,9 @@ AppVersion={#AppVersion}
 AppVerName={#AppName} {#AppVersion}
 AppPublisher=wunder
 DefaultDirName={%USERPROFILE}\.wunder
+; auto (the Inno default) skips this page once a previous install is found in
+; the registry; the install dir doubles as WUNDER_HOME, so always ask.
+DisableDirPage=no
 DefaultGroupName=心舰
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
@@ -36,6 +39,8 @@ UsePreviousAppDir=yes
 OutputDir=.
 OutputBaseFilename={#OutputBaseFilename}
 SetupIconFile=pupa.ico
+; The pupa mark in the wizard pages' upper right corner (transparent PNG).
+WizardSmallImageFile=pupa.png
 UninstallDisplayIcon={app}\bin\wunder-desktop.exe
 UninstallDisplayName={#AppName} {#AppVersion}
 Compression={#PackCompression}
