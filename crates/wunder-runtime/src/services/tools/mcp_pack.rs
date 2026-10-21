@@ -16,35 +16,69 @@ pub fn runtime_name(server_name: &str) -> String {
 }
 
 pub fn schema() -> Value {
+    fn branch(
+        action: &str,
+        mut properties: serde_json::Map<String, Value>,
+        required: &[&str],
+    ) -> Value {
+        properties.insert(
+            "action".to_string(),
+            json!({
+                "const": action,
+                "description": "MCP package operation."
+            }),
+        );
+        json!({
+            "type": "object",
+            "properties": properties,
+            "required": required,
+            "additionalProperties": false
+        })
+    }
+
+    let mut list = serde_json::Map::new();
+    list.insert(
+        "cursor".to_string(),
+        json!({
+            "type": "string",
+            "description": "Opaque continuation cursor for action=list."
+        }),
+    );
+    list.insert(
+        "limit".to_string(),
+        json!({
+            "type": "integer",
+            "minimum": 1,
+            "maximum": MAX_LIST_LIMIT,
+            "description": "Maximum compact list items for action=list (default 32)."
+        }),
+    );
+
+    let mut get = serde_json::Map::new();
+    get.insert(
+        "tool".to_string(),
+        json!({
+            "type": "string",
+            "minLength": 1,
+            "description": "Remote MCP tool name."
+        }),
+    );
+
+    let mut call = get.clone();
+    call.insert(
+        "arguments".to_string(),
+        json!({
+            "type": "object",
+            "description": "Arguments passed to the remote MCP tool."
+        }),
+    );
+
     json!({
-        "type": "object",
-        "properties": {
-            "action": {
-                "type": "string",
-                "enum": ["list", "get", "call"],
-                "description": "list returns compact available tools; get returns one tool schema; call invokes one remote MCP tool."
-            },
-            "tool": {
-                "type": "string",
-                "description": "Remote MCP tool name. Required for get and call."
-            },
-            "cursor": {
-                "type": "string",
-                "description": "Opaque continuation cursor for action=list."
-            },
-            "limit": {
-                "type": "integer",
-                "minimum": 1,
-                "maximum": 64,
-                "description": "Maximum compact list items for action=list (default 32)."
-            },
-            "arguments": {
-                "type": "object",
-                "description": "Arguments passed to the remote MCP tool when action is call."
-            }
-        },
-        "required": ["action"],
-        "additionalProperties": false
+        "oneOf": [
+            branch("list", list, &["action"]),
+            branch("get", get, &["action", "tool"]),
+            branch("call", call, &["action", "tool"])
+        ]
     })
 }
 
@@ -83,6 +117,7 @@ pub fn spec_for_server(server: &McpServerConfig) -> Option<ToolSpec> {
 }
 
 pub async fn execute(config: &Config, server: &McpServerConfig, args: &Value) -> Result<Value> {
+    validate_action_args(args)?;
     let action = args
         .get("action")
         .and_then(Value::as_str)
@@ -102,6 +137,74 @@ pub async fn execute(config: &Config, server: &McpServerConfig, args: &Value) ->
         "" => Err(anyhow!("MCP package action is required")),
         other => Err(anyhow!("unsupported MCP package action: {other}")),
     }
+}
+
+/// Validate the model-facing package action before dispatching to MCP.
+///
+/// The catalog exposes three closed `oneOf` branches. Runtime validation is
+/// intentionally repeated here because calls can arrive through compatibility
+/// APIs without passing through provider-side JSON-schema validation.
+fn validate_action_args(args: &Value) -> Result<()> {
+    let object = args
+        .as_object()
+        .ok_or_else(|| anyhow!("MCP package arguments must be a JSON object"))?;
+    let action = object
+        .get("action")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| anyhow!("MCP package action is required"))?;
+    let allowed: &[&str] = match action {
+        "list" => &["action", "cursor", "limit"],
+        "get" => &["action", "tool"],
+        "call" => &["action", "tool", "arguments"],
+        other => return Err(anyhow!("unsupported MCP package action: {other}")),
+    };
+    if let Some(key) = object.keys().find(|key| !allowed.contains(&key.as_str())) {
+        return Err(anyhow!(
+            "MCP package field '{key}' is not valid for action '{action}'"
+        ));
+    }
+    match action {
+        "list" => {
+            if let Some(cursor) = object.get("cursor") {
+                if !cursor.is_string() {
+                    return Err(anyhow!("MCP package list cursor must be a string"));
+                }
+            }
+            if let Some(limit) = object.get("limit") {
+                let valid = limit
+                    .as_u64()
+                    .is_some_and(|value| (1..=MAX_LIST_LIMIT as u64).contains(&value));
+                if !valid {
+                    return Err(anyhow!(
+                        "MCP package list limit must be an integer from 1 to {MAX_LIST_LIMIT}"
+                    ));
+                }
+            }
+        }
+        "get" | "call" => {
+            let tool = object
+                .get("tool")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
+            if tool.is_none() {
+                return Err(anyhow!(
+                    "MCP package tool is required for action '{action}'"
+                ));
+            }
+            if action == "call" {
+                if let Some(arguments) = object.get("arguments") {
+                    if !arguments.is_object() {
+                        return Err(anyhow!("MCP package call arguments must be a JSON object"));
+                    }
+                }
+            }
+        }
+        _ => unreachable!("action validated above"),
+    }
+    Ok(())
 }
 
 async fn list_tools(config: &Config, server: &McpServerConfig, args: &Value) -> Result<Value> {
@@ -340,5 +443,60 @@ mod tests {
             output["data"]["catalog_version"],
             crate::tools::TOOL_CATALOG_VERSION
         );
+    }
+
+    #[test]
+    fn schema_closes_each_action_to_its_own_fields() {
+        let document = schema();
+        let branches = document["oneOf"].as_array().expect("oneOf branches");
+        assert_eq!(branches.len(), 3);
+        for branch in branches {
+            assert_eq!(branch["additionalProperties"], json!(false));
+            assert_eq!(branch["type"], json!("object"));
+        }
+        let list = branches
+            .iter()
+            .find(|branch| branch["properties"]["action"]["const"] == json!("list"))
+            .expect("list branch");
+        assert!(list["properties"]["cursor"].is_object());
+        assert!(list["properties"]["limit"].is_object());
+        assert!(list["properties"]["tool"].is_null());
+        assert!(list["properties"]["arguments"].is_null());
+
+        let get = branches
+            .iter()
+            .find(|branch| branch["properties"]["action"]["const"] == json!("get"))
+            .expect("get branch");
+        assert!(get["properties"]["tool"].is_object());
+        assert!(get["properties"]["cursor"].is_null());
+        assert!(get["properties"]["arguments"].is_null());
+
+        let call = branches
+            .iter()
+            .find(|branch| branch["properties"]["action"]["const"] == json!("call"))
+            .expect("call branch");
+        assert!(call["properties"]["tool"].is_object());
+        assert!(call["properties"]["arguments"].is_object());
+        assert!(call["properties"]["cursor"].is_null());
+    }
+
+    #[tokio::test]
+    async fn runtime_rejects_cross_action_and_unknown_fields() {
+        let config = Config::default();
+        let server = server(1);
+        let cases = [
+            json!({"action":"list", "tool":"tool-000"}),
+            json!({"action":"get", "tool":"tool-000", "limit":1}),
+            json!({"action":"call", "tool":"tool-000", "cursor":"x"}),
+            json!({"action":"list", "limit":0}),
+            json!({"action":"call", "tool":"tool-000", "arguments":null}),
+            json!({"action":"call", "tool":"tool-000", "unknown":true}),
+        ];
+        for args in cases {
+            let error = execute(&config, &server, &args)
+                .await
+                .expect_err("invalid package action should fail");
+            assert!(!error.to_string().is_empty());
+        }
     }
 }

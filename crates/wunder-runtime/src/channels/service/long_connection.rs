@@ -12,6 +12,10 @@ use tokio::time::{sleep, Duration};
 use tracing::debug;
 
 const FEISHU_LONG_CONN_SUPERVISOR_INTERVAL_S: u64 = 10;
+/// Without a configured account the supervisors only provide recovery for a
+/// concurrent local configuration change. Avoid repeated SQLite table scans
+/// on an ordinary desktop that does not use external channels.
+const EMPTY_LONG_CONN_SUPERVISOR_INTERVAL_S: u64 = 60;
 const FEISHU_LONG_CONN_RETRY_BASE_S: u64 = 3;
 const FEISHU_LONG_CONN_RETRY_MAX_S: u64 = 30;
 const QQBOT_LONG_CONN_SUPERVISOR_INTERVAL_S: u64 = 10;
@@ -95,7 +99,7 @@ impl ChannelHub {
                     "channels.long_connection.feishu.supervisor",
                     "disabled",
                 );
-                sleep(Duration::from_secs(FEISHU_LONG_CONN_SUPERVISOR_INTERVAL_S)).await;
+                sleep(Duration::from_secs(EMPTY_LONG_CONN_SUPERVISOR_INTERVAL_S)).await;
                 continue;
             }
 
@@ -154,7 +158,12 @@ impl ChannelHub {
                 }
             }
 
-            sleep(Duration::from_secs(FEISHU_LONG_CONN_SUPERVISOR_INTERVAL_S)).await;
+            sleep(Duration::from_secs(if workers.is_empty() {
+                EMPTY_LONG_CONN_SUPERVISOR_INTERVAL_S
+            } else {
+                FEISHU_LONG_CONN_SUPERVISOR_INTERVAL_S
+            }))
+            .await;
         }
     }
 
@@ -306,7 +315,7 @@ impl ChannelHub {
                     "channels.long_connection.qqbot.supervisor",
                     "disabled",
                 );
-                sleep(Duration::from_secs(QQBOT_LONG_CONN_SUPERVISOR_INTERVAL_S)).await;
+                sleep(Duration::from_secs(EMPTY_LONG_CONN_SUPERVISOR_INTERVAL_S)).await;
                 continue;
             }
 
@@ -362,7 +371,12 @@ impl ChannelHub {
                 }
             }
 
-            sleep(Duration::from_secs(QQBOT_LONG_CONN_SUPERVISOR_INTERVAL_S)).await;
+            sleep(Duration::from_secs(if workers.is_empty() {
+                EMPTY_LONG_CONN_SUPERVISOR_INTERVAL_S
+            } else {
+                QQBOT_LONG_CONN_SUPERVISOR_INTERVAL_S
+            }))
+            .await;
         }
     }
 
@@ -603,7 +617,7 @@ impl ChannelHub {
                     "channels.long_connection.xmpp.supervisor",
                     "disabled",
                 );
-                sleep(Duration::from_secs(XMPP_LONG_CONN_SUPERVISOR_INTERVAL_S)).await;
+                sleep(Duration::from_secs(EMPTY_LONG_CONN_SUPERVISOR_INTERVAL_S)).await;
                 continue;
             }
 
@@ -659,7 +673,12 @@ impl ChannelHub {
                 }
             }
 
-            sleep(Duration::from_secs(XMPP_LONG_CONN_SUPERVISOR_INTERVAL_S)).await;
+            sleep(Duration::from_secs(if workers.is_empty() {
+                EMPTY_LONG_CONN_SUPERVISOR_INTERVAL_S
+            } else {
+                XMPP_LONG_CONN_SUPERVISOR_INTERVAL_S
+            }))
+            .await;
         }
     }
 
@@ -841,7 +860,12 @@ impl ChannelHub {
                 }
             }
 
-            sleep(Duration::from_secs(WEIXIN_LONG_CONN_SUPERVISOR_INTERVAL_S)).await;
+            sleep(Duration::from_secs(if workers.is_empty() {
+                EMPTY_LONG_CONN_SUPERVISOR_INTERVAL_S
+            } else {
+                WEIXIN_LONG_CONN_SUPERVISOR_INTERVAL_S
+            }))
+            .await;
         }
     }
 

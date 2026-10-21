@@ -155,7 +155,7 @@ impl SqliteAgentRuntimeStorage for SqliteStorage {
     fn list_pending_agent_tasks_impl(&self, limit: i64) -> Result<Vec<AgentTaskRecord>> {
         self.ensure_initialized()?;
         let now = Self::now_ts();
-        let conn = self.open()?;
+        let conn = self.read_connection()?;
         let mut stmt = conn.prepare(
             "SELECT task_id, thread_id, user_id, agent_id, session_id, status, request_payload, request_id, retry_count, retry_at, created_at, updated_at, started_at, finished_at, last_error \
              FROM agent_tasks WHERE (status = 'pending' OR status = 'retry') AND retry_at <= ? \

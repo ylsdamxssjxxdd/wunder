@@ -460,12 +460,16 @@ fn restart_cloud_status_poll(app_weak: slint::Weak<MainWindow>, api: Arc<NativeD
     // Start with a refresh rather than waiting for the first five lightweight
     // ticks.  This makes a restored desktop converge with the web account
     // view as soon as the shell is ready, while subsequent refreshes remain
-    // rate-limited to one request per ten seconds.
+    // rate-limited to one request per fifty seconds.
     let refresh_tick = Arc::new(std::sync::atomic::AtomicU8::new(0));
     CLOUD_POLL_TIMER.with(|timer| {
         timer.start(
             slint::TimerMode::Repeated,
-            std::time::Duration::from_secs(2),
+            // Account state is cached locally and changes are applied directly
+            // after login/logout.  This is only a reconnect/backstop read;
+            // polling it every two seconds kept the idle desktop waking even
+            // when no cloud account was configured.
+            std::time::Duration::from_secs(10),
             move || {
                 let Some(app) = app_weak.upgrade() else {
                     return;
@@ -917,13 +921,28 @@ fn bind_agents(app: &MainWindow, api: Arc<NativeDesktop>) {
 }
 
 fn bind_settings(app: &MainWindow, api: Arc<NativeDesktop>) {
-    // 线程渲染压测：解析两个轮次输入后交给 facade 同步生成，工作线程把节流后的
-    // 进度推回状态行；完成后刷新线程列表，让新线程立即可见。
+    // 线程渲染压测：解析规模和个数后由 facade 顺序写入。每个完整线程提交后才会
+    // 出现在当前工作区，进度更新留在工作线程之外以保持 Slint 流畅。
     let weak = app.as_weak();
     app.on_create_model(move || {
         let Some(app) = weak.upgrade() else { return };
         if app.get_saving() || app.get_settings_loading() {
             return;
+        }
+        // Only one unsaved draft exists; "添加模型" while another model is
+        // selected resumes it instead of stacking a second new row.
+        if let Some(row_key) = crate::entity_state::model_draft_row_key() {
+            if let Some(index) = app
+                .get_models()
+                .iter()
+                .position(|entry| entry.key == row_key.as_str())
+            {
+                app.set_selected_model(index as i32);
+                if crate::entity_state::restore_model_draft(&app, index as i32, &row_key) {
+                    app.set_status("已恢复未保存的模型草稿".into());
+                    return;
+                }
+            }
         }
         let mut rows = app.get_models().iter().collect::<Vec<_>>();
         let mut key = "新模型".to_string();
@@ -942,20 +961,32 @@ fn bind_settings(app: &MainWindow, api: Arc<NativeDesktop>) {
     let weak = app.as_weak();
     app.on_discard_model_draft(move || {
         let Some(app) = weak.upgrade() else { return };
-        if !app.get_model_creating() {
+        let stashed_key = crate::entity_state::model_draft_row_key();
+        if !app.get_model_creating() && stashed_key.is_none() {
             return;
         }
-        let selected = usize::try_from(app.get_selected_model()).ok();
-        let rows = app
-            .get_models()
-            .iter()
-            .enumerate()
-            .filter(|(index, _)| Some(*index) != selected)
-            .map(|(_, entry)| entry)
-            .collect::<Vec<_>>();
-        model_catalogue().set(&app, rows);
-        app.set_model_creating(false);
-        crate::entity_state::restore_model(&app, "");
+        let selected_key = usize::try_from(app.get_selected_model())
+            .ok()
+            .and_then(|index| app.get_models().row_data(index))
+            .map(|row| row.key.to_string());
+        let row_key = if app.get_model_creating() {
+            selected_key.clone()
+        } else {
+            stashed_key.clone()
+        };
+        crate::entity_state::clear_model_draft();
+        if let Some(row_key) = row_key {
+            let rows = app
+                .get_models()
+                .iter()
+                .filter(|entry| entry.key != row_key.as_str())
+                .collect::<Vec<_>>();
+            model_catalogue().set(&app, rows);
+        }
+        if app.get_model_creating() {
+            app.set_model_creating(false);
+            crate::entity_state::restore_model(&app, "");
+        }
     });
     let weak = app.as_weak();
     let stress_api = api.clone();
@@ -972,16 +1003,32 @@ fn bind_settings(app: &MainWindow, api: Arc<NativeDesktop>) {
             app.set_stress_status("⚠ 每轮模型轮次必须是正整数".into());
             return;
         };
+        let Ok(count) = app.get_stress_count().trim().parse::<i64>() else {
+            app.set_stress_status("⚠ 个数必须是正整数".into());
+            return;
+        };
+        if count <= 0 {
+            app.set_stress_status("⚠ 个数必须是正整数".into());
+            return;
+        }
+        let workspace_id = usize::try_from(app.get_selected_workspace())
+            .ok()
+            .and_then(|index| app.get_workspaces().row_data(index))
+            .map(|workspace| workspace.workspace_id.to_string());
         app.set_stress_running(true);
-        app.set_stress_status(format!("正在生成 {user_rounds}×{model_rounds} 压测线程…").into());
+        app.set_stress_status(format!("正在生成 {count} 个 {user_rounds}×{model_rounds} 压测线程…").into());
         let weak = app.as_weak();
         let api = stress_api.clone();
         std::thread::spawn(move || {
             let total = user_rounds;
             let progress_app = weak.clone();
             let mut last_report = std::time::Instant::now();
-            let result =
-                api.generate_stress_thread(user_rounds, model_rounds, move |done, items| {
+            let result = api.generate_stress_threads(
+                user_rounds,
+                model_rounds,
+                count,
+                workspace_id.as_deref(),
+                move |current, done, items| {
                     // 节流到约每 300ms 一次；批量写入在两次报告之间全速进行。
                     let now = std::time::Instant::now();
                     if done >= total || now.duration_since(last_report).as_millis() >= 300 {
@@ -990,28 +1037,51 @@ fn bind_settings(app: &MainWindow, api: Arc<NativeDesktop>) {
                         let _ = weak.upgrade_in_event_loop(move |app| {
                             app.set_stress_status(
                                 format!(
-                                    "正在生成… 已完成 {done}/{total} 轮次，写入 {items} 条消息"
+                                    "正在生成第 {current}/{count} 个… 已完成 {done}/{total} 轮次，写入 {items} 条消息"
                                 )
                                 .into(),
                             );
                         });
                     }
-                });
+                },
+            );
             let _ = weak.upgrade_in_event_loop(move |app| {
                 app.set_stress_running(false);
                 match result {
                     Ok(stats) => {
+                        let user_turns = stats.iter().map(|entry| entry.user_turns).sum::<i64>();
+                        let items = stats.iter().map(|entry| entry.items).sum::<i64>();
+                        let tool_calls = stats.iter().map(|entry| entry.tool_calls).sum::<i64>();
                         let text = format!(
-                            "已生成 {} 轮次 / {} 条消息 / {} 次工具调用",
-                            stats.user_turns, stats.items, stats.tool_calls
+                            "已生成 {} 个线程 / {user_turns} 轮次 / {items} 条消息 / {tool_calls} 次工具调用",
+                            stats.len(),
                         );
                         app.set_stress_status(text.clone().into());
                         app.set_dialog_title("压测线程已生成".into());
                         app.set_dialog_text(
-                            format!("{text}\n会话 ID：{}", stats.session_id).into(),
+                            format!(
+                                "{text}\n会话 ID：{}",
+                                stats
+                                    .iter()
+                                    .map(|entry| entry.session_id.as_str())
+                                    .collect::<Vec<_>>()
+                                    .join("、")
+                            )
+                            .into(),
                         );
                         app.set_dialog_open(true);
                         app.invoke_refresh_chat();
+                        // A catalogue read can already be in flight when the
+                        // final bulk transaction makes these sessions visible.
+                        // Schedule one bounded follow-up after it has settled
+                        // so a generated thread appears in the current work
+                        // area without requiring manual navigation.
+                        let refresh = app.as_weak();
+                        slint::Timer::single_shot(std::time::Duration::from_millis(350), move || {
+                            if let Some(app) = refresh.upgrade() {
+                                app.invoke_refresh_chat();
+                            }
+                        });
                     }
                     Err(error) => {
                         app.set_stress_status(format!("⚠ 生成失败：{error}").into());
@@ -1181,6 +1251,9 @@ fn bind_settings(app: &MainWindow, api: Arc<NativeDesktop>) {
                 match result {
                     Ok(settings) => {
                         app.set_model_token_draft("".into());
+                        // The saved row is now persisted; the unsaved draft
+                        // (if this was it) must not be re-inserted.
+                        crate::entity_state::clear_model_draft();
                         apply_settings(&app, settings);
                         crate::entity_state::restore_model(&app, &key);
                         app.set_status("模型配置已保存到本地运行时".into());
@@ -1501,9 +1574,18 @@ pub(crate) fn model_catalogue() -> Rc<ModelCatalogue> {
 }
 
 impl ModelCatalogue {
-    /// Replaces the catalogue and projects the composer's full view.
+    /// Replaces the catalogue and projects the composer's full view. The
+    /// unsaved new-model row is re-inserted so a settings refresh cannot
+    /// silently drop it; callers that mean to discard it clear the draft
+    /// before rebuilding.
     pub(crate) fn set(&self, app: &MainWindow, models: Vec<crate::ModelCard>) {
-        *self.0.borrow_mut() = models;
+        let mut rows = models;
+        if let Some(draft) = crate::entity_state::model_draft_row() {
+            if !rows.iter().any(|entry| entry.key == draft.key) {
+                rows.insert(0, draft);
+            }
+        }
+        *self.0.borrow_mut() = rows;
         app.set_model_catalogue_count(self.0.borrow().len() as i32);
         let rows = self.0.borrow().clone();
         app.set_models(model_from(rows));

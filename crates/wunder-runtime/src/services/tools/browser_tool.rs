@@ -230,6 +230,7 @@ mod tests {
         browser_tool_names, ensure_png_extension, is_browser_group_name, is_browser_tool_name,
         BROWSER_GROUP_NAME,
     };
+    use serde_json::json;
     #[test]
     fn ensure_png_extension_adds_default_only_when_missing() {
         assert_eq!(

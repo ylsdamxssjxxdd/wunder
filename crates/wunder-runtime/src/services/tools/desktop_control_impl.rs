@@ -8,9 +8,9 @@ use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use image::ImageEncoder;
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 use tokio::fs;
 use tokio::time::{sleep, Duration};
@@ -33,13 +33,11 @@ const MAX_SCREENSHOT_BYTES: u64 = 8 * 1024 * 1024;
 // small number of consecutive frames and stop as soon as the pixels settle.
 // This avoids returning a stale frame while avoiding an unconditional long
 // sleep for every action.
-const MIN_OBSERVATION_SETTLE_MS: u64 = 240;
-const OBSERVATION_PROBE_INTERVAL_MS: u64 = 80;
-const MAX_OBSERVATION_PROBES: usize = 3;
-const MAX_SESSION_FRAME_CACHE: usize = 2048;
-
-static LAST_SESSION_SCREENSHOTS: OnceLock<Mutex<HashMap<String, PathBuf>>> = OnceLock::new();
-
+const MIN_OBSERVATION_SETTLE_MS: u64 = 320;
+const OBSERVATION_PROBE_INTERVAL_MS: u64 = 120;
+const OBSERVATION_QUIET_WINDOW_MS: u64 = 320;
+const MAX_OBSERVATION_PROBES: usize = 10;
+const MAX_OBSERVATION_DURATION_MS: u64 = 2_000;
 fn strict_desktop_action_schema(properties: Value, required: &[&str]) -> Value {
     json!({
         "type": "object",
@@ -75,6 +73,44 @@ pub fn desktop_control_tool_spec(language: &str) -> ToolSpec {
         "right_release",
         "middle_release"
     ]);
+    let mut defs = serde_json::Map::new();
+    defs.insert("bbox".to_string(), bbox);
+    defs.insert(
+        "scroll_steps".to_string(),
+        json!({
+            "type": "integer", "minimum": 1, "maximum": MAX_SCROLL_STEPS,
+            "description": t("tool.spec.desktop_control.args.scroll_steps")
+        }),
+    );
+    defs.insert(
+        "key".to_string(),
+        json!({
+            "type": "string", "minLength": 1, "maxLength": MAX_KEY_CHARS,
+            "description": t("tool.spec.desktop_control.args.key")
+        }),
+    );
+    defs.insert(
+        "text".to_string(),
+        json!({
+            "type": "string", "minLength": 1, "maxLength": MAX_INPUT_TEXT_CHARS,
+            "description": t("tool.spec.desktop_control.args.text")
+        }),
+    );
+    defs.insert(
+        "delay_ms".to_string(),
+        json!({
+            "type": "integer", "minimum": 0, "maximum": MAX_WAIT_MS,
+            "description": t("tool.spec.desktop_control.args.delay_ms")
+        }),
+    );
+    defs.insert(
+        "duration_ms".to_string(),
+        json!({
+            "type": "integer", "minimum": 0, "maximum": MAX_MOVE_DURATION_MS,
+            "description": t("tool.spec.desktop_control.args.duration_ms")
+        }),
+    );
+    let reference = |name: &str| json!({"$ref": format!("#/$defs/{name}")});
     let input_branch =
         |action: Value, mut fields: serde_json::Map<String, Value>, required: &[&str]| {
             fields.insert("action".to_string(), action);
@@ -82,58 +118,28 @@ pub fn desktop_control_tool_spec(language: &str) -> ToolSpec {
         };
     let base = || {
         let mut fields = serde_json::Map::new();
-        fields.insert("bbox".to_string(), bbox.clone());
+        fields.insert("bbox".to_string(), reference("bbox"));
         fields
     };
     let mut scroll = base();
-    scroll.insert(
-        "scroll_steps".to_string(),
-        json!({
-            "type": "integer", "minimum": 1, "maximum": MAX_SCROLL_STEPS,
-            "description": t("tool.spec.desktop_control.args.scroll_steps")
-        }),
-    );
+    scroll.insert("scroll_steps".to_string(), reference("scroll_steps"));
     let mut press = base();
-    press.insert(
-        "key".to_string(),
-        json!({
-            "type": "string", "minLength": 1, "maxLength": MAX_KEY_CHARS,
-            "description": t("tool.spec.desktop_control.args.key")
-        }),
-    );
+    press.insert("key".to_string(), reference("key"));
     let mut typing = base();
-    typing.insert(
-        "text".to_string(),
-        json!({
-            "type": "string", "minLength": 1, "maxLength": MAX_INPUT_TEXT_CHARS,
-            "description": t("tool.spec.desktop_control.args.text")
-        }),
-    );
+    typing.insert("text".to_string(), reference("text"));
     let mut wait = base();
-    wait.insert(
-        "delay_ms".to_string(),
-        json!({
-            "type": "integer", "minimum": 0, "maximum": MAX_WAIT_MS,
-            "description": t("tool.spec.desktop_control.args.delay_ms")
-        }),
-    );
-    let duration = || {
-        json!({
-            "type": "integer", "minimum": 0, "maximum": MAX_MOVE_DURATION_MS,
-            "description": t("tool.spec.desktop_control.args.duration_ms")
-        })
-    };
+    wait.insert("delay_ms".to_string(), reference("delay_ms"));
     let mut move_mouse = base();
-    move_mouse.insert("duration_ms".to_string(), duration());
+    move_mouse.insert("duration_ms".to_string(), reference("duration_ms"));
     let mut drag = base();
-    drag.insert("to_bbox".to_string(), bbox.clone());
-    drag.insert("duration_ms".to_string(), duration());
+    drag.insert("to_bbox".to_string(), reference("bbox"));
+    drag.insert("duration_ms".to_string(), reference("duration_ms"));
 
     ToolSpec {
         name: TOOL_DESKTOP_CONTROL.to_string(),
         title: None,
         description: t("tool.spec.desktop_control.description"),
-        input_schema: json!({"oneOf": [
+        input_schema: json!({"type":"object", "$defs": defs, "oneOf": [
             input_branch(json!({"enum": pointer_actions}), base(), &["action", "bbox"]),
             input_branch(json!({"enum": ["scroll_down", "scroll_up"]}), scroll, &["action", "bbox"]),
             input_branch(json!({"const": "press_key"}), press, &["action", "bbox", "key"]),
@@ -235,52 +241,22 @@ struct DesktopScreenshot {
     screen_width: i32,
     screen_height: i32,
     size_bytes: usize,
+    fingerprint: u64,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum FrameStability {
-    Stable,
-    Changing,
+#[derive(Default)]
+struct FrameStabilityTracker {
+    previous_fingerprint: Option<u64>,
+    quiet_since_ms: u64,
 }
 
-fn session_frame_cache() -> &'static Mutex<HashMap<String, PathBuf>> {
-    LAST_SESSION_SCREENSHOTS.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-fn remember_previous_screenshot_for_session(
-    session_id: &str,
-    current_path: &Path,
-) -> Option<PathBuf> {
-    let key = sanitize_session_id(session_id);
-    let cache = session_frame_cache();
-    let mut guard = match cache.lock() {
-        Ok(lock) => lock,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    let previous = guard
-        .get(&key)
-        .cloned()
-        .filter(|path| path != current_path && path.exists());
-    guard.insert(key, current_path.to_path_buf());
-    trim_session_frame_cache(&mut guard);
-    previous
-}
-
-fn trim_session_frame_cache(cache: &mut HashMap<String, PathBuf>) {
-    if cache.len() <= MAX_SESSION_FRAME_CACHE {
-        return;
-    }
-    cache.retain(|_, path| path.exists());
-    if cache.len() <= MAX_SESSION_FRAME_CACHE {
-        return;
-    }
-    let overflow = cache.len().saturating_sub(MAX_SESSION_FRAME_CACHE);
-    if overflow == 0 {
-        return;
-    }
-    let evict_keys: Vec<String> = cache.keys().take(overflow).cloned().collect();
-    for key in evict_keys {
-        cache.remove(&key);
+impl FrameStabilityTracker {
+    fn observe(&mut self, fingerprint: u64, elapsed_ms: u64) -> bool {
+        if self.previous_fingerprint != Some(fingerprint) {
+            self.previous_fingerprint = Some(fingerprint);
+            self.quiet_since_ms = elapsed_ms;
+        }
+        elapsed_ms.saturating_sub(self.quiet_since_ms) >= OBSERVATION_QUIET_WINDOW_MS
     }
 }
 
@@ -408,19 +384,15 @@ pub async fn tool_desktop_control(context: &ToolContext<'_>, args: &Value) -> Re
         }
     }
 
-    let (screenshot, observation_settled_ms) = if wait_action {
-        // An explicit wait already expresses the caller's desired delay; do
-        // not add the action-settling delay a second time.
-        (capture_screenshot(&config).await?, wait_ms)
-    } else {
-        capture_stable_screenshot(&config).await?
-    };
-    let previous_screenshot_path =
-        remember_previous_screenshot_for_session(context.session_id, &screenshot.path);
-    // Intermediate stability probes have already been discarded. Retention is
-    // applied only after the session cache records the final screenshot, so a
-    // probe never evicts the prior action frame before it can be attached to
-    // the follow-up message.
+    // Even an explicit wait may end while the application is still updating.
+    // It skips only the initial action delay; the same quiet-window check
+    // still prevents a fresh but unsettled frame from being called stable.
+    let (screenshot, observation_settled_ms, observation_stable) =
+        capture_stable_screenshot(&config, !wait_action).await?;
+    // Intermediate stability probes have already been discarded. The model
+    // receives only this latest post-action frame: the preceding frame
+    // doubles vision context while making ordinary visual differences look
+    // like an unconfirmed action result.
     cleanup_old_frames(&screenshot.path, config.max_frames.max(2));
     persist_screenshot_to_user_container(context, &screenshot).await;
     let elapsed_ms = started_at.elapsed().as_millis() as u64;
@@ -434,6 +406,11 @@ pub async fn tool_desktop_control(context: &ToolContext<'_>, args: &Value) -> Re
             format!("Completed desktop action {}.", payload.action_raw),
             "tool.desktop_control.followup_prompt",
         )
+    };
+    let prompt_key = if observation_stable {
+        prompt_key
+    } else {
+        "tool.desktop_control.followup_prompt_unsettled"
     };
     let prompt = build_followup_prompt(
         crate::i18n::t(prompt_key),
@@ -450,14 +427,12 @@ pub async fn tool_desktop_control(context: &ToolContext<'_>, args: &Value) -> Re
             "center_screen": [cx, cy],
             "wait_ms": wait_ms,
             "observation_settled_ms": observation_settled_ms,
+            "observation_stable": observation_stable,
             "normalized_width": screenshot.norm_width,
             "normalized_height": screenshot.norm_height,
             "screen_width": screenshot.screen_width,
             "screen_height": screenshot.screen_height,
             "screenshot_path": screenshot.path.to_string_lossy().to_string(),
-            "previous_screenshot_path": previous_screenshot_path
-                .as_ref()
-                .map(|path| path.to_string_lossy().to_string()),
             "screenshot_download_url": screenshot.download_url,
             "screenshot_artifact": {
                 "id": screenshot.download_url,
@@ -468,7 +443,6 @@ pub async fn tool_desktop_control(context: &ToolContext<'_>, args: &Value) -> Re
             "elapsed_ms": elapsed_ms,
             "action_applied": true,
             "screenshot_after_action": true,
-            "observation_ready": true,
             "followup_prompt": prompt,
         }),
     ))
@@ -477,31 +451,7 @@ pub async fn tool_desktop_control(context: &ToolContext<'_>, args: &Value) -> Re
 pub async fn build_followup_user_message(result_data: &Value) -> Result<Option<Value>> {
     let payload = parse_followup_payload(result_data)?;
     let current_data_url = read_screenshot_data_url(&payload.current_path).await?;
-    let previous_data_url = if let Some(previous_path) = payload
-        .previous_path
-        .as_ref()
-        .filter(|path| path.as_path() != payload.current_path.as_path())
-    {
-        match read_screenshot_data_url(previous_path).await {
-            Ok(data_url) => Some(data_url),
-            Err(err) => {
-                warn!(
-                    "desktop followup previous screenshot unavailable {}: {err}",
-                    previous_path.display()
-                );
-                None
-            }
-        }
-    } else {
-        None
-    };
     let mut content = vec![json!({ "type": "text", "text": payload.prompt })];
-    if let Some(previous_data_url) = previous_data_url {
-        content.push(json!({
-            "type": "image_url",
-            "image_url": { "url": previous_data_url }
-        }));
-    }
     content.push(json!({
         "type": "image_url",
         "image_url": { "url": current_data_url }
@@ -522,12 +472,6 @@ fn parse_followup_payload(result_data: &Value) -> Result<FollowupPayload> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .ok_or_else(|| anyhow!(crate::i18n::t("tool.desktop_control.capture_failed")))?;
-    let previous_path = obj
-        .get("previous_screenshot_path")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from);
     let prompt = obj
         .get("followup_prompt")
         .and_then(Value::as_str)
@@ -537,7 +481,6 @@ fn parse_followup_payload(result_data: &Value) -> Result<FollowupPayload> {
         .unwrap_or_else(|| crate::i18n::t("tool.desktop_control.followup_prompt"));
     Ok(FollowupPayload {
         current_path: PathBuf::from(current_path),
-        previous_path,
         prompt,
     })
 }
@@ -556,7 +499,6 @@ async fn read_screenshot_data_url(path: &Path) -> Result<String> {
 
 struct FollowupPayload {
     current_path: PathBuf,
-    previous_path: Option<PathBuf>,
     prompt: String,
 }
 
@@ -675,8 +617,24 @@ fn optional_i32_field(obj: &serde_json::Map<String, Value>, key: &str) -> Result
 }
 
 fn parse_bbox(value: &Value) -> Result<BBox> {
-    let arr = match value {
-        Value::Array(arr) => arr,
+    // Some function-call transports stringify non-scalar JSON arguments
+    // before they reach the runtime. Keep the public schema strict (bbox is
+    // an array), but recover this transport representation here so a valid
+    // model call can still reach the native action dispatcher. Only a JSON
+    // array is accepted: a free-form string never becomes a coordinate value.
+    let decoded: Vec<Value>;
+    let arr: &[Value] = match value {
+        Value::Array(items) => items.as_slice(),
+        Value::String(raw) => {
+            decoded = serde_json::from_str::<Value>(raw.trim())
+                .ok()
+                .and_then(|parsed| match parsed {
+                    Value::Array(items) => Some(items),
+                    _ => None,
+                })
+                .ok_or_else(|| anyhow!(crate::i18n::t("tool.desktop_control.invalid_bbox")))?;
+            decoded.as_slice()
+        }
         _ => return Err(anyhow!(crate::i18n::t("tool.desktop_control.invalid_bbox"))),
     };
     if arr.len() == 4 {
@@ -712,9 +670,6 @@ fn bounded_bbox(x1: i32, y1: i32, x2: i32, y2: i32) -> Result<BBox> {
 
 fn parse_i32(value: Option<&Value>) -> Option<i32> {
     let value = value?;
-    if let Some(num) = value.as_i64() {
-        return Some(num as i32);
-    }
     value.as_i64().and_then(|num| i32::try_from(num).ok())
 }
 
@@ -746,13 +701,15 @@ fn map_coord(value: i32, src_max: i32, dst_max: i32) -> i32 {
     mapped.clamp(0, dst_max)
 }
 
-async fn capture_screenshot(config: &DesktopControlConfig) -> Result<DesktopScreenshot> {
+async fn capture_screenshot(
+    config: &DesktopControlConfig,
+    timeout_ms: u64,
+) -> Result<DesktopScreenshot> {
     let norm_width = config.norm_width.max(1);
     let norm_height = config.norm_height.max(1);
-    let timeout_ms = config.capture_timeout_ms.max(100);
     let screenshot = match blocking::run_external_with_timeout(
         "tools.desktop_control.capture_screenshot",
-        Duration::from_millis(timeout_ms),
+        Duration::from_millis(timeout_ms.max(1)),
         move || capture_screenshot_blocking(norm_width, norm_height).map_err(anyhow::Error::msg),
     )
     .await
@@ -768,20 +725,47 @@ async fn capture_screenshot(config: &DesktopControlConfig) -> Result<DesktopScre
     Ok(screenshot)
 }
 
-/// Capture an action result only after a bounded settling window. Two equal
-/// consecutive frames are sufficient evidence that a native menu/window has
-/// stopped changing; if the UI remains animated we stop after three probes and
-/// return the newest frame rather than blocking the agent indefinitely.
+/// Require a quiet interval rather than accepting the first identical pair:
+/// applications can briefly keep an old frame before a delayed update begins.
+/// Animated desktops still return the newest frame after bounded probes, with
+/// a truthful unsettled flag so the caller waits instead of replaying input.
 async fn capture_stable_screenshot(
     config: &DesktopControlConfig,
-) -> Result<(DesktopScreenshot, u64)> {
+    delay_after_action: bool,
+) -> Result<(DesktopScreenshot, u64, bool)> {
     let started = Instant::now();
-    sleep(Duration::from_millis(MIN_OBSERVATION_SETTLE_MS)).await;
-    let mut previous = capture_screenshot(config).await?;
+    if delay_after_action {
+        sleep(Duration::from_millis(MIN_OBSERVATION_SETTLE_MS)).await;
+    }
+    // At least one frame is required to report an observation. Later probes
+    // share one wall-clock budget instead of multiplying capture_timeout_ms
+    // by the probe count on a slow desktop.
+    let capture_timeout_ms = config.capture_timeout_ms.max(100);
+    let mut previous = capture_screenshot(config, capture_timeout_ms).await?;
+    let mut tracker = FrameStabilityTracker::default();
+    tracker.observe(previous.fingerprint, started.elapsed().as_millis() as u64);
+    let mut stable = false;
     for _ in 0..MAX_OBSERVATION_PROBES {
+        let Some(probe_timeout_ms) =
+            observation_probe_timeout_ms(started.elapsed().as_millis() as u64, capture_timeout_ms)
+        else {
+            break;
+        };
         sleep(Duration::from_millis(OBSERVATION_PROBE_INTERVAL_MS)).await;
-        let current = capture_screenshot(config).await?;
-        let stable = screenshot_stability(&previous.path, &current.path).await;
+        let current = match tokio::time::timeout(
+            Duration::from_millis(probe_timeout_ms),
+            capture_screenshot(config, probe_timeout_ms),
+        )
+        .await
+        {
+            Ok(Ok(screenshot)) => screenshot,
+            Ok(Err(err)) => {
+                warn!("desktop observation probe skipped: {err}");
+                break;
+            }
+            Err(_) => break,
+        };
+        stable = tracker.observe(current.fingerprint, started.elapsed().as_millis() as u64);
         // Probe images are only used for settling detection; retaining them
         // would consume the configured frame budget and evict real action
         // observations. Keep the newest image, which is the one returned.
@@ -790,22 +774,19 @@ async fn capture_stable_screenshot(
         if obsolete_probe != previous.path {
             let _ = fs::remove_file(obsolete_probe).await;
         }
-        if stable == FrameStability::Stable {
+        if stable {
             break;
         }
     }
-    Ok((previous, started.elapsed().as_millis() as u64))
+    Ok((previous, started.elapsed().as_millis() as u64, stable))
 }
 
-async fn screenshot_stability(previous: &Path, current: &Path) -> FrameStability {
-    let (Ok(previous), Ok(current)) = (fs::read(previous).await, fs::read(current).await) else {
-        return FrameStability::Changing;
-    };
-    if previous == current {
-        FrameStability::Stable
-    } else {
-        FrameStability::Changing
-    }
+fn observation_probe_timeout_ms(elapsed_ms: u64, capture_timeout_ms: u64) -> Option<u64> {
+    MAX_OBSERVATION_DURATION_MS
+        .checked_sub(elapsed_ms)?
+        .checked_sub(OBSERVATION_PROBE_INTERVAL_MS)
+        .filter(|remaining| *remaining > 0)
+        .map(|remaining| remaining.min(capture_timeout_ms))
 }
 
 async fn persist_screenshot_to_user_container(
@@ -902,6 +883,8 @@ fn capture_screenshot_blocking(norm_width: i32, norm_height: i32) -> Result<Desk
             "tool.desktop_control.capture_too_large"
         )));
     }
+    let mut fingerprint = DefaultHasher::new();
+    png.hash(&mut fingerprint);
     let dir = resolve_temp_dir()?.join("desktop_control");
     std::fs::create_dir_all(&dir)
         .map_err(|err| anyhow!(format!("create temp dir failed: {err}")))?;
@@ -918,6 +901,7 @@ fn capture_screenshot_blocking(norm_width: i32, norm_height: i32) -> Result<Desk
         screen_width,
         screen_height,
         size_bytes: png.len(),
+        fingerprint: fingerprint.finish(),
     })
 }
 
@@ -1968,21 +1952,57 @@ mod tests {
         image.save(path).expect("save test png");
     }
 
+    #[test]
+    fn desktop_stability_waits_through_delayed_visual_change() {
+        let mut tracker = FrameStabilityTracker::default();
+        assert!(!tracker.observe(1, 320));
+        assert!(!tracker.observe(1, 440));
+        assert!(!tracker.observe(2, 560));
+        assert!(!tracker.observe(2, 680));
+        assert!(!tracker.observe(2, 800));
+        assert!(tracker.observe(2, 920));
+    }
+
+    #[test]
+    fn desktop_stability_reports_continuous_animation_as_unsettled() {
+        let mut tracker = FrameStabilityTracker::default();
+        for probe in 0..=MAX_OBSERVATION_PROBES {
+            assert!(!tracker.observe(
+                probe as u64,
+                MIN_OBSERVATION_SETTLE_MS + probe as u64 * OBSERVATION_PROBE_INTERVAL_MS,
+            ));
+        }
+    }
+
+    #[test]
+    fn desktop_stability_requires_a_full_quiet_window() {
+        let mut tracker = FrameStabilityTracker::default();
+        assert!(!tracker.observe(1, 0));
+        assert!(!tracker.observe(1, OBSERVATION_QUIET_WINDOW_MS - 1));
+        assert!(tracker.observe(1, OBSERVATION_QUIET_WINDOW_MS));
+    }
+
+    #[test]
+    fn desktop_observation_probe_uses_only_remaining_wall_clock_budget() {
+        assert_eq!(observation_probe_timeout_ms(320, 5_000), Some(1_560));
+        assert_eq!(observation_probe_timeout_ms(1_800, 5_000), Some(80));
+        assert_eq!(observation_probe_timeout_ms(1_880, 5_000), None);
+        assert_eq!(observation_probe_timeout_ms(5_000, 5_000), None);
+        assert_eq!(observation_probe_timeout_ms(320, 200), Some(200));
+    }
+
     #[tokio::test]
-    async fn build_followup_user_message_includes_previous_and_current_frame() {
+    async fn build_followup_user_message_includes_confirmed_current_frame_only() {
         let temp_dir = std::env::temp_dir().join(format!(
             "wunder-desktop-followup-{}",
             Uuid::new_v4().simple()
         ));
         std::fs::create_dir_all(&temp_dir).expect("create temp dir");
-        let previous_path = temp_dir.join("previous.png");
         let current_path = temp_dir.join("current.png");
-        write_test_png(&previous_path, [255, 0, 0, 255]);
         write_test_png(&current_path, [0, 255, 0, 255]);
 
         let payload = json!({
             "screenshot_path": current_path.to_string_lossy().to_string(),
-            "previous_screenshot_path": previous_path.to_string_lossy().to_string(),
             "followup_prompt": "check desktop"
         });
         let message = build_followup_user_message(&payload)
@@ -1993,7 +2013,7 @@ mod tests {
             .get("content")
             .and_then(Value::as_array)
             .expect("content array");
-        assert_eq!(content.len(), 3);
+        assert_eq!(content.len(), 2);
         assert_eq!(
             content[0]
                 .get("text")
@@ -2008,40 +2028,8 @@ mod tests {
             .and_then(Value::as_str)
             .unwrap_or_default()
             .starts_with("data:image/png;base64,"));
-        assert!(content[2]
-            .get("image_url")
-            .and_then(Value::as_object)
-            .and_then(|obj| obj.get("url"))
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .starts_with("data:image/png;base64,"));
 
-        let _ = std::fs::remove_file(previous_path);
         let _ = std::fs::remove_file(current_path);
-        let _ = std::fs::remove_dir_all(temp_dir);
-    }
-
-    #[test]
-    fn remember_previous_screenshot_uses_session_cache() {
-        let temp_dir = std::env::temp_dir().join(format!(
-            "wunder-desktop-frame-cache-{}",
-            Uuid::new_v4().simple()
-        ));
-        std::fs::create_dir_all(&temp_dir).expect("create temp dir");
-        let first_path = temp_dir.join("first.png");
-        let second_path = temp_dir.join("second.png");
-        write_test_png(&first_path, [255, 255, 255, 255]);
-        write_test_png(&second_path, [0, 0, 0, 255]);
-
-        let session = format!("session-{}", Uuid::new_v4().simple());
-        let first_previous = remember_previous_screenshot_for_session(&session, &first_path);
-        assert!(first_previous.is_none());
-
-        let second_previous = remember_previous_screenshot_for_session(&session, &second_path);
-        assert_eq!(second_previous.as_deref(), Some(first_path.as_path()));
-
-        let _ = std::fs::remove_file(first_path);
-        let _ = std::fs::remove_file(second_path);
         let _ = std::fs::remove_dir_all(temp_dir);
     }
 
@@ -2068,11 +2056,60 @@ mod tests {
     }
 
     #[test]
+    fn parse_desktop_control_args_recovers_stringified_bbox_array() {
+        let payload = parse_desktop_control_args(&json!({
+            "bbox": "[50, 75]",
+            "action": "left_click"
+        }))
+        .expect("recover serialized bbox array");
+        assert_eq!(payload.bbox.center(), (50, 75));
+    }
+
+    #[test]
+    fn parse_desktop_control_args_recovers_stringified_drag_destination() {
+        let payload = parse_desktop_control_args(&json!({
+            "bbox": "[10, 20]",
+            "to_bbox": "[80, 90]",
+            "duration_ms": 100,
+            "action": "drag_drop"
+        }))
+        .expect("recover serialized drag coordinates");
+        assert_eq!(payload.bbox.center(), (10, 20));
+        assert_eq!(payload.to_bbox.expect("destination").center(), (80, 90));
+    }
+
+    #[test]
+    fn parse_desktop_control_args_rejects_non_array_bbox_text() {
+        let payload = parse_desktop_control_args(&json!({
+            "bbox": "50, 75",
+            "action": "left_click"
+        }));
+        assert!(payload.is_err());
+    }
+
+    #[test]
     fn desktop_schema_uses_action_variants() {
         let spec = desktop_control_tool_spec("en-US");
         assert!(spec.input_schema["oneOf"]
             .as_array()
             .is_some_and(|items| items.len() >= 7));
         assert!(spec.input_schema["oneOf"][0]["additionalProperties"] == false);
+        let type_text = spec.input_schema["oneOf"]
+            .as_array()
+            .and_then(|variants| {
+                variants
+                    .iter()
+                    .find(|item| item["properties"]["action"]["const"] == "type_text")
+            })
+            .expect("type_text variant");
+        assert_eq!(
+            type_text["properties"]["bbox"]["$ref"],
+            json!("#/$defs/bbox")
+        );
+        assert_eq!(
+            type_text["properties"]["text"]["$ref"],
+            json!("#/$defs/text")
+        );
+        assert_eq!(spec.input_schema["$defs"]["bbox"]["type"], json!("array"));
     }
 }

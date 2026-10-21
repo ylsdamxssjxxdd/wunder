@@ -192,6 +192,66 @@ export component MiddleFooter inherits Rectangle {
     Text { x: 12px; width: parent.width - 24px; height: parent.height; text: root.text; color: Theme.muted; font-size: Theme.font-xs; horizontal-alignment: center; vertical-alignment: center; overflow: elide; }
 }
 
+// Themed checkbox for the neutral shell form language. The stock `CheckBox`
+// renders oversized and its palette does not follow the accent family, so
+// every desktop form uses this token-driven box instead. `checked` is a
+// projection: the owner keeps the source of truth (a Rust-owned model, or an
+// in-out draft property) and reacts to `toggled`, mirroring the tool picker.
+export component ThemeCheck inherits Rectangle {
+    in property <string> text: "";
+    in property <bool> checked: false;
+    in property <bool> enabled: true;
+    callback toggled();
+    width: 16px + (root.text == "" ? 0px : 6px + label.preferred-width);
+    height: 22px;
+    accessible-role: checkbox;
+    accessible-label: root.text;
+    accessible-checked: root.checked;
+    accessible-enabled: root.enabled;
+    accessible-action-default => { if root.enabled { root.toggled(); } }
+    forward-focus: box-focus;
+    box := Rectangle {
+        x: 0px; y: (parent.height - 16px) / 2;
+        width: 16px; height: 16px;
+        border-radius: 4px;
+        background: !root.enabled ? Theme.input-readonly-bg
+            : root.checked ? (box-touch.has-hover ? Theme.accent-deep : Theme.accent)
+            : box-touch.has-hover ? Theme.hover : Theme.surface;
+        border-width: 1px;
+        border-color: !root.enabled ? Theme.input-readonly-border
+            : root.checked ? Theme.accent
+            : box-touch.has-hover ? Theme.accent-secondary : Theme.input-border;
+        Image {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            width: 9px; height: 9px;
+            source: @image-url("../assets/icons/check.svg");
+            colorize: white; image-fit: contain;
+            opacity: root.checked ? 1 : 0;
+            animate opacity { duration: 90ms; easing: ease-out; }
+        }
+    }
+    label := Text {
+        x: 22px; y: 0px; width: parent.width - 22px; height: parent.height;
+        text: root.text; visible: root.text != "";
+        color: root.enabled ? Theme.text : Theme.muted;
+        font-size: Theme.font-sm; vertical-alignment: center; overflow: elide;
+    }
+    box-focus := FocusScope {
+        enabled: root.enabled;
+        key-pressed(event) => {
+            if event.text == " " || event.text == "\n" { root.toggled(); return accept; }
+            return reject;
+        }
+    }
+    // Full-surface pointer target above the focus scope, so the first click is
+    // not consumed by focus-theft on the Win7 renderer.
+    box-touch := TouchArea {
+        enabled: root.enabled; mouse-cursor: pointer;
+        clicked => { box-focus.focus(); root.toggled(); }
+    }
+}
+
 export component FormField inherits Rectangle {
     in property <string> label;
     in property <string> placeholder;

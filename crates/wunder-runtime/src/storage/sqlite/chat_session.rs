@@ -227,7 +227,7 @@ impl SqliteChatSessionStorage for SqliteStorage {
         if cleaned_user.is_empty() || cleaned_session.is_empty() {
             return Ok(None);
         }
-        let conn = self.open()?;
+        let conn = self.read_connection()?;
         let row = conn
             .query_row(
                 &format!(

@@ -9,11 +9,21 @@ use anyhow::{anyhow, Result};
 use bytes::Bytes;
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::runtime::Runtime;
+
+/// A local UI owns a thread only while it is open. Keep crash recovery short
+/// enough that a closed 舵机 does not leave 蛹 blocked for half a minute, while
+/// renewing well before expiry on slow Win7 disks.
+const LOCAL_THREAD_LEASE_TTL: Duration = Duration::from_secs(15);
+const LOCAL_THREAD_LEASE_HEARTBEAT: Duration = Duration::from_secs(4);
+/// A lease is valid for fifteen seconds.  Keep a small margin so an ordinary
+/// user action never trusts the in-memory confirmation after SQLite may have
+/// expired the durable row.
+const LOCAL_THREAD_LEASE_CONFIRM_WINDOW: Duration = Duration::from_secs(10);
 #[path = "native_trajectory.rs"]
 mod trajectory;
 
@@ -45,7 +55,7 @@ mod queue;
 mod stream;
 pub use crate::runtime::RuntimeToolStatus;
 pub use chat_turns::{NativeChatRound, NativeChatTurn, NativePlanStep, NativePlanView};
-pub use observer::{NativeThreadUpdate, NativeThreadWatch};
+pub use observer::{NativeThreadUpdate, NativeThreadWatch, NativeThreadWatchCancel};
 pub use queue::{NativeQueueTurn, NATIVE_QUEUE_LIMIT};
 pub use stream::{NativeChatEvent, NativeStream};
 #[path = "native_catalog.rs"]
@@ -171,6 +181,12 @@ pub struct NativeSession {
 pub struct NativeChatSnapshot {
     pub session: NativeSession,
     pub turns: Vec<NativeChatTurn>,
+    /// Exclusive user-round cursor of the oldest retained card. The frontend
+    /// uses it to request the next older bounded page when the user reaches
+    /// the top of the transcript.
+    pub history_before: Option<i64>,
+    /// Whether there are older user rounds beyond `history_before`.
+    pub history_has_more: bool,
     pub change_cursor: i64,
 }
 
@@ -426,7 +442,50 @@ pub struct NativeDesktop {
     /// processes; this prevents an opener and a delayed local reaper from
     /// observing and then independently mutating the same in-memory token.
     lease_operations: Arc<Mutex<()>>,
-    lease_heartbeat_stop: Arc<AtomicBool>,
+    /// Only submitted local turns keep a lease alive. A selected idle thread
+    /// is a read-only view and must not wake an old disk every few seconds.
+    lease_heartbeat: Arc<(Mutex<LeaseHeartbeatState>, Condvar)>,
+}
+
+#[derive(Clone, Copy)]
+struct ActiveThreadLease {
+    fencing_token: u64,
+    holders: usize,
+}
+
+#[derive(Default)]
+struct LeaseHeartbeatState {
+    active: HashMap<String, ActiveThreadLease>,
+    stopping: bool,
+}
+
+/// Keeps one durable open-thread lease alive until the native stream has
+/// accepted, run and settled its request. The stream task owns this guard, so
+/// navigating away only detaches the UI subscriber; it never drops custody
+/// while a queued or running request still needs it.
+pub(super) struct ThreadLeaseHeartbeat {
+    session_id: String,
+    fencing_token: u64,
+    state: Arc<(Mutex<LeaseHeartbeatState>, Condvar)>,
+}
+
+impl Drop for ThreadLeaseHeartbeat {
+    fn drop(&mut self) {
+        let (lock, wake) = &*self.state;
+        if let Ok(mut state) = lock.lock() {
+            let remove = match state.active.get_mut(&self.session_id) {
+                Some(active) if active.fencing_token == self.fencing_token => {
+                    active.holders = active.holders.saturating_sub(1);
+                    active.holders == 0
+                }
+                _ => false,
+            };
+            if remove {
+                state.active.remove(&self.session_id);
+            }
+            wake.notify_all();
+        }
+    }
 }
 
 impl NativeDesktop {
@@ -487,26 +546,55 @@ impl NativeDesktop {
         let lease_confirmed = Arc::new(Mutex::new(HashMap::new()));
         let lease_reapers = Arc::new(Mutex::new(HashMap::new()));
         let lease_operations = Arc::new(Mutex::new(()));
-        let lease_heartbeat_stop = Arc::new(AtomicBool::new(false));
+        let lease_heartbeat =
+            Arc::new((Mutex::new(LeaseHeartbeatState::default()), Condvar::new()));
         let heartbeat_threads = Arc::clone(&open_threads);
         let heartbeat_confirmed = Arc::clone(&lease_confirmed);
         let heartbeat_operations = Arc::clone(&lease_operations);
-        let heartbeat_stop = Arc::clone(&lease_heartbeat_stop);
+        let heartbeat_state = Arc::clone(&lease_heartbeat);
         let heartbeat_storage = Arc::clone(&desktop.state.storage);
         let heartbeat_instance = instance_id.clone();
         thread::Builder::new()
             .name("wunder-desktop-thread-lease".into())
             .spawn(move || {
-                while !heartbeat_stop.load(Ordering::Acquire) {
-                    thread::sleep(std::time::Duration::from_secs(10));
-                    if heartbeat_stop.load(Ordering::Acquire) {
-                        break;
+                let (heartbeat_lock, heartbeat_wake) = &*heartbeat_state;
+                loop {
+                    // A selected idle thread is only viewed, so waiting here
+                    // must not touch SQLite. The stream-owned heartbeat guard
+                    // wakes us only while a submitted local turn still needs
+                    // its cross-process fencing lease.
+                    let mut state = match heartbeat_lock.lock() {
+                        Ok(state) => state,
+                        Err(_) => return,
+                    };
+                    while state.active.is_empty() && !state.stopping {
+                        state = match heartbeat_wake.wait(state) {
+                            Ok(state) => state,
+                            Err(_) => return,
+                        };
                     }
+                    if state.stopping {
+                        return;
+                    }
+                    let (state, _) =
+                        match heartbeat_wake.wait_timeout(state, LOCAL_THREAD_LEASE_HEARTBEAT) {
+                            Ok(wait) => wait,
+                            Err(_) => return,
+                        };
+                    if state.stopping {
+                        return;
+                    }
+                    let active = state.active.clone();
+                    drop(state);
                     let sessions = heartbeat_threads
                         .lock()
                         .map(|set| {
-                            set.iter()
-                                .map(|(session, token)| (session.clone(), *token))
+                            active
+                                .into_iter()
+                                .filter_map(|(session, lease)| {
+                                    (set.get(&session).copied() == Some(lease.fencing_token))
+                                        .then_some((session, lease.fencing_token))
+                                })
                                 .collect::<Vec<_>>()
                         })
                         .unwrap_or_default();
@@ -517,7 +605,12 @@ impl NativeDesktop {
                         // fencing token is still current, so a close/reopen
                         // transition still retires this snapshot.
                         if !heartbeat_storage
-                            .touch_thread_open_lease(&session, &heartbeat_instance, token, 30.0)
+                            .touch_thread_open_lease(
+                                &session,
+                                &heartbeat_instance,
+                                token,
+                                LOCAL_THREAD_LEASE_TTL.as_secs_f64(),
+                            )
                             .unwrap_or(false)
                         {
                             continue;
@@ -551,7 +644,7 @@ impl NativeDesktop {
             lease_confirmed,
             lease_reapers,
             lease_operations,
-            lease_heartbeat_stop,
+            lease_heartbeat,
         })
     }
 
@@ -577,7 +670,10 @@ impl NativeDesktop {
                 .lock()
                 .ok()
                 .and_then(|confirmed| confirmed.get(session_id).copied())
-                .is_some_and(|confirmed| confirmed.elapsed() < Duration::from_secs(20));
+                // The durable lease expires after 15 seconds. Keep the local
+                // fast path shorter than that window so a stalled heartbeat
+                // cannot make us trust an expired ownership token.
+                .is_some_and(|confirmed| confirmed.elapsed() < LOCAL_THREAD_LEASE_CONFIRM_WINDOW);
             if recently_confirmed {
                 // The heartbeat refreshes durable TTLs. Returning during its
                 // healthy window avoids SQLite work on the interaction path.
@@ -588,7 +684,7 @@ impl NativeDesktop {
                 session_id,
                 &self.instance_id,
                 fencing_token,
-                30.0,
+                LOCAL_THREAD_LEASE_TTL.as_secs_f64(),
             )? {
                 if let Ok(mut confirmed) = self.lease_confirmed.lock() {
                     confirmed.insert(session_id.to_string(), Instant::now());
@@ -620,7 +716,7 @@ impl NativeDesktop {
             self.user_id(),
             &self.instance_id,
             "desktop",
-            30.0,
+            LOCAL_THREAD_LEASE_TTL.as_secs_f64(),
         )? {
             ThreadOpenLeaseStatus::Acquired { fencing_token } => {
                 leases.insert(session_id.to_string(), fencing_token);
@@ -639,6 +735,41 @@ impl NativeDesktop {
 
     pub fn open_session(&self, session_id: &str) -> Result<()> {
         self.ensure_thread_open(session_id)
+    }
+
+    fn hold_thread_lease_for_stream(
+        &self,
+        session_id: &str,
+        fencing_token: u64,
+    ) -> Result<ThreadLeaseHeartbeat> {
+        let session_id = session_id.trim();
+        anyhow::ensure!(!session_id.is_empty(), "线程不存在");
+        let (lock, wake) = &*self.lease_heartbeat;
+        let mut state = lock
+            .lock()
+            .map_err(|_| anyhow!("thread lease heartbeat unavailable"))?;
+        anyhow::ensure!(!state.stopping, "线程运行时正在关闭");
+        match state.active.get_mut(session_id) {
+            Some(active) if active.fencing_token == fencing_token => {
+                active.holders = active.holders.saturating_add(1);
+            }
+            Some(_) => return Err(anyhow!("THREAD_IN_USE")),
+            None => {
+                state.active.insert(
+                    session_id.to_string(),
+                    ActiveThreadLease {
+                        fencing_token,
+                        holders: 1,
+                    },
+                );
+            }
+        }
+        wake.notify_all();
+        Ok(ThreadLeaseHeartbeat {
+            session_id: session_id.to_string(),
+            fencing_token,
+            state: Arc::clone(&self.lease_heartbeat),
+        })
     }
 
     pub fn close_session(&self, session_id: &str) -> Result<()> {
@@ -736,6 +867,7 @@ impl NativeDesktop {
         let open_threads = self.open_threads.clone();
         let lease_activity = self.lease_activity.clone();
         let lease_confirmed = self.lease_confirmed.clone();
+        let lease_heartbeat = self.lease_heartbeat.clone();
         let lease_reapers = self.lease_reapers.clone();
         let lease_operations = self.lease_operations.clone();
         let instance_id = self.instance_id.clone();
@@ -760,6 +892,23 @@ impl NativeDesktop {
                 let Some(fencing_token) = still_owned else {
                     break;
                 };
+                // A submitted local stream owns the lease independently of
+                // the UI selection. Queued turns do not have a session lock
+                // yet, so do not release their fencing row while they wait
+                // for the runtime scheduler.
+                let stream_active = lease_heartbeat
+                    .0
+                    .lock()
+                    .map(|state| {
+                        state.active.get(&session_id).is_some_and(|active| {
+                            active.fencing_token == fencing_token && active.holders > 0
+                        })
+                    })
+                    .unwrap_or(true);
+                if stream_active {
+                    thread::sleep(Duration::from_secs(1));
+                    continue;
+                }
                 let running = storage
                     .list_session_locks_by_user(&user_id)
                     .map(|locks| locks.iter().any(|lock| lock.session_id == session_id))
@@ -892,7 +1041,7 @@ impl NativeDesktop {
             .desktop
             .state
             .monitor
-            .get_log_overview(&record.session_id);
+            .get_session_stats(&record.session_id);
         let reasoning_effort = self
             .desktop
             .state
@@ -922,30 +1071,21 @@ impl NativeDesktop {
                 .unwrap_or_default(),
             consumed_tokens: overview
                 .as_ref()
-                .and_then(|v| v.get("consumed_tokens"))
-                .and_then(Value::as_i64)
+                .map(|stats| stats.consumed_tokens)
                 .unwrap_or(0),
-            tool_calls: overview
-                .as_ref()
-                .and_then(|v| v.get("tool_calls"))
-                .and_then(Value::as_i64)
-                .unwrap_or(0),
+            tool_calls: overview.as_ref().map(|stats| stats.tool_calls).unwrap_or(0),
             model_request_count: overview
                 .as_ref()
-                .and_then(|v| v.get("model_request_count"))
-                .and_then(Value::as_i64)
+                .map(|stats| stats.model_request_count)
                 .unwrap_or(0),
             quota_used: overview
                 .as_ref()
-                .and_then(|v| v.get("quota_used").or_else(|| v.get("model_request_count")))
-                .and_then(Value::as_i64)
+                .map(|stats| stats.model_request_count)
                 .unwrap_or(0),
             runtime_status: overview
                 .as_ref()
-                .and_then(|v| v.get("status"))
-                .and_then(Value::as_str)
-                .unwrap_or("done")
-                .to_string(),
+                .map(|stats| stats.status.clone())
+                .unwrap_or_else(|| "done".into()),
             origin: record
                 .spawned_by
                 .as_deref()
@@ -1036,6 +1176,33 @@ impl NativeDesktop {
         ))
     }
 
+    /// Read an archived thread for the settings preview without acquiring an
+    /// execution lease. Archive inspection is read-only and must not prevent
+    /// another local client from restoring or opening the thread.
+    pub fn get_archived_session_detail(
+        &self,
+        session_id: &str,
+    ) -> Result<(NativeSession, Vec<NativeMessage>)> {
+        let session_id = session_id.trim();
+        anyhow::ensure!(!session_id.is_empty(), "线程不存在");
+        let record = self
+            .desktop
+            .state
+            .user_store
+            .get_chat_session(&self.desktop.user_id, session_id)?
+            .ok_or_else(|| anyhow!("线程不存在"))?;
+        anyhow::ensure!(record.status.eq_ignore_ascii_case("archived"), "线程未归档");
+        let turns = self.load_chat_turns(session_id)?;
+        let workspaces = self.workspace_lookup();
+        Ok((
+            self.session_with_stats(record, &workspaces),
+            turns
+                .into_iter()
+                .flat_map(|turn| [turn.user, turn.assistant])
+                .collect(),
+        ))
+    }
+
     pub fn get_session_info(&self, session_id: &str) -> Result<NativeSession> {
         let record = self
             .state()
@@ -1093,10 +1260,13 @@ impl NativeDesktop {
             .state()
             .storage
             .latest_thread_change_seq_by_session(session_id)?;
-        let turns = self.load_chat_headers(session_id)?;
+        let (turns, history_before, history_has_more) =
+            chat_turns::load_turn_header_page(self.state(), self.user_id(), session_id, None)?;
         let snapshot = NativeChatSnapshot {
             session,
             turns,
+            history_before,
+            history_has_more,
             change_cursor,
         };
         self.store_chat_snapshot(session_id, snapshot.clone());
@@ -1219,6 +1389,71 @@ impl NativeDesktop {
         self.close_session(session_id)
     }
 
+    /// Restore an archived thread without opening its execution lease. The
+    /// caller can select it afterwards, at which point normal ownership checks
+    /// apply.
+    pub fn restore_session(&self, session_id: &str) -> Result<()> {
+        let session_id = session_id.trim();
+        anyhow::ensure!(!session_id.is_empty(), "线程不存在");
+        let mut record = self
+            .desktop
+            .state
+            .user_store
+            .get_chat_session(&self.desktop.user_id, session_id)?
+            .ok_or_else(|| anyhow!("线程不存在"))?;
+        anyhow::ensure!(record.status.eq_ignore_ascii_case("archived"), "线程未归档");
+        record.status = "active".into();
+        record.updated_at = now_ts();
+        self.desktop.state.user_store.upsert_chat_session(&record)?;
+        Ok(())
+    }
+
+    /// Permanently remove an archived thread and its local metadata. Active
+    /// threads remain protected by the archive-first UI flow.
+    pub fn delete_archived_session(&self, session_id: &str) -> Result<()> {
+        let session_id = session_id.trim();
+        anyhow::ensure!(!session_id.is_empty(), "线程不存在");
+        let record = self
+            .desktop
+            .state
+            .user_store
+            .get_chat_session(&self.desktop.user_id, session_id)?
+            .ok_or_else(|| anyhow!("线程不存在"))?;
+        anyhow::ensure!(
+            record.status.eq_ignore_ascii_case("archived"),
+            "只能删除已归档线程"
+        );
+        self.desktop
+            .state
+            .workspace
+            .purge_session_data(&self.desktop.user_id, session_id);
+        self.desktop
+            .state
+            .workspace
+            .schedule_deleted_session_log_cleanup(&self.desktop.user_id, session_id);
+        let _ = self
+            .desktop
+            .state
+            .storage
+            .delete_cron_jobs_by_session(&self.desktop.user_id, session_id);
+        let _ = self
+            .desktop
+            .state
+            .storage
+            .delete_session_goal(&self.desktop.user_id, session_id);
+        let _ = self
+            .desktop
+            .state
+            .memory
+            .delete_record(&self.desktop.user_id, session_id);
+        let _ = self.desktop.state.monitor.forget_session(session_id);
+        self.desktop
+            .state
+            .user_store
+            .delete_chat_session(&self.desktop.user_id, session_id)?;
+        Ok(())
+    }
+
     pub fn session_detail_page(
         &self,
         session_id: &str,
@@ -1312,31 +1547,28 @@ impl NativeDesktop {
             .get(&input.session_id)
             .copied()
             .ok_or_else(|| anyhow!("THREAD_IN_USE"))?;
+        let heartbeat = self.hold_thread_lease_for_stream(&input.session_id, token)?;
         Ok(stream::start(
             &self.runtime,
             self.desktop.state.clone(),
             self.desktop.user_id.clone(),
             input,
             json!({"owner":self.instance_id,"token":token}),
+            heartbeat,
         ))
     }
 
-    /// Open the supplement's Git Bash console (`opt/git/git-bash.exe`). The
-    /// window is owned by mintty, so this only spawns the launcher and returns.
-    /// The active workspace is the shell's starting directory, and the
-    /// supplement's tool directories are prepended to the child PATH so `git`,
-    /// `python` and friends resolve to the bundled runtimes.
-    pub fn launch_git_bash(&self, workspace_root: &str) -> Result<(), String> {
+    /// Open a terminal at the active workspace. The bundled Git Bash is used
+    /// when present; a Windows system terminal is the reliable fallback for
+    /// installations without the optional Git supplement. Both launch paths
+    /// inherit the same augmented PATH so the local CLI and desktop commands
+    /// are immediately available alongside bundled tools.
+    pub fn launch_terminal(&self, workspace_root: &str) -> Result<(), String> {
         let roots = wunder_server::local_bootstrap::supplement::roots(
             &self.desktop.wunder_home,
             &self.desktop.app_dir,
             None,
         );
-        let git_bash = roots
-            .iter()
-            .map(|root| root.join("opt/git/git-bash.exe"))
-            .find(|path| path.is_file())
-            .ok_or_else(|| "补充包未安装 Git：opt/git/git-bash.exe 不存在".to_string())?;
         let workdir = {
             let requested = std::path::PathBuf::from(workspace_root.trim());
             if workspace_root.trim().is_empty() || !requested.is_dir() {
@@ -1345,26 +1577,54 @@ impl NativeDesktop {
                 requested
             }
         };
-        let supplement_path = wunder_server::local_bootstrap::supplement::path_entries(&roots);
-        let child_path = if supplement_path.is_empty() {
-            std::env::var_os("PATH").unwrap_or_default()
-        } else {
-            let mut value = std::env::join_paths(supplement_path.iter().map(|p| p.as_path()))
-                .map_err(|e| format!("构造 PATH 失败: {e}"))?
-                .into_string()
-                .map_err(|_| "PATH 编码错误".to_string())?;
-            if let Some(existing) = std::env::var_os("PATH") {
-                value.push(';');
-                value.push_str(&existing.to_string_lossy());
-            }
-            std::ffi::OsString::from(value)
-        };
-        std::process::Command::new(&git_bash)
-            .current_dir(&workdir)
-            .env("PATH", child_path)
-            .spawn()
-            .map_err(|e| format!("启动 Git Bash 失败: {e}"))?;
+        let child_path = terminal_child_path(&roots, &self.desktop.app_dir)
+            .map_err(|error| format!("构造终端 PATH 失败: {error}"))?;
+        if let Some(git_bash) = roots
+            .iter()
+            .map(|root| root.join("opt/git/git-bash.exe"))
+            .find(|path| path.is_file())
+        {
+            std::process::Command::new(git_bash)
+                .current_dir(&workdir)
+                .env("PATH", &child_path)
+                .spawn()
+                .map_err(|error| format!("启动终端失败: {error}"))?;
+            return Ok(());
+        }
+
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+
+            // `cmd.exe /K` stays open after the launcher exits and is present
+            // on every supported Windows edition, including the older systems
+            // targeted by the desktop package. The GUI has no inherited
+            // console, so explicitly request a visible console for the shell.
+            const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
+            let shell = std::env::var_os("COMSPEC").unwrap_or_else(|| "cmd.exe".into());
+            std::process::Command::new(shell)
+                .arg("/K")
+                .current_dir(&workdir)
+                .env("PATH", &child_path)
+                .creation_flags(CREATE_NEW_CONSOLE)
+                .spawn()
+                .map_err(|error| format!("启动系统终端失败: {error}"))?;
+        }
+        #[cfg(not(windows))]
+        {
+            let shell = std::env::var_os("SHELL").unwrap_or_else(|| "/bin/sh".into());
+            std::process::Command::new(shell)
+                .current_dir(&workdir)
+                .env("PATH", &child_path)
+                .spawn()
+                .map_err(|error| format!("启动系统终端失败: {error}"))?;
+        }
         Ok(())
+    }
+
+    /// Compatibility alias for native callers built against the former name.
+    pub fn launch_git_bash(&self, workspace_root: &str) -> Result<(), String> {
+        self.launch_terminal(workspace_root)
     }
 
     pub fn has_asr_model(&self) -> bool {
@@ -1410,7 +1670,12 @@ impl NativeDesktop {
 
 impl Drop for NativeDesktop {
     fn drop(&mut self) {
-        self.lease_heartbeat_stop.store(true, Ordering::Release);
+        let (lock, wake) = &*self.lease_heartbeat;
+        if let Ok(mut state) = lock.lock() {
+            state.stopping = true;
+            state.active.clear();
+            wake.notify_all();
+        }
         let sessions = self
             .open_threads
             .lock()
@@ -1589,4 +1854,44 @@ fn now_ts() -> f64 {
         .duration_since(UNIX_EPOCH)
         .map(|value| value.as_secs_f64())
         .unwrap_or_default()
+}
+
+/// Compose the environment inherited by an interactive terminal. Supplement
+/// discovery only covers optional runtimes; the two local executables live in
+/// the install's `bin` directory and must be present explicitly so a terminal
+/// opened from any workspace can invoke `wunder-cli` and `wunder-desktop`.
+fn terminal_child_path(
+    roots: &[std::path::PathBuf],
+    app_dir: &std::path::Path,
+) -> Result<std::ffi::OsString, std::env::JoinPathsError> {
+    let mut entries = wunder_server::local_bootstrap::supplement::path_entries(roots);
+    let current_exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(std::path::Path::to_path_buf));
+    let executable_dirs = [Some(app_dir.to_path_buf()), current_exe_dir]
+        .into_iter()
+        .flatten()
+        .flat_map(|directory| {
+            let parent_bin = directory.parent().map(|parent| parent.join("bin"));
+            [Some(directory.join("bin")), Some(directory), parent_bin]
+                .into_iter()
+                .flatten()
+        });
+    for directory in roots
+        .iter()
+        .map(|root| root.join("bin"))
+        .chain(executable_dirs)
+    {
+        if directory.is_dir() && !entries.contains(&directory) {
+            entries.push(directory);
+        }
+    }
+    if let Some(existing) = std::env::var_os("PATH") {
+        for directory in std::env::split_paths(&existing) {
+            if !entries.contains(&directory) {
+                entries.push(directory);
+            }
+        }
+    }
+    std::env::join_paths(entries)
 }

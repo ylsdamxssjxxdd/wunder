@@ -22,6 +22,7 @@ pub mod composer_attachments;
 pub mod icons;
 pub mod markdown;
 pub mod model;
+pub mod perf;
 pub mod settings;
 pub mod sidebar_tree;
 pub mod theme;

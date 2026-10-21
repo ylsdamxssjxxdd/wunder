@@ -62,6 +62,13 @@ impl ThreadLogCommitter {
         self.hub.publish(session_id, cursor);
     }
 
+    /// Publish an ephemeral context usage snapshot after the runtime has
+    /// produced it. The durable token value remains the source of truth; this
+    /// notification only removes avoidable UI polling latency.
+    pub(crate) fn publish_context_usage(&self, session_id: &str, payload: Value) {
+        self.hub.publish_context_usage(session_id, payload);
+    }
+
     /// Accept a durable user turn. Returns the accepted turn payload; hub wake
     /// happens only when this call actually allocated a new turn.
     pub(crate) async fn accept_turn(

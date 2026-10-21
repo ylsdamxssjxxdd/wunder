@@ -1,4 +1,5 @@
-use crate::schemas::{AbilityDescriptor, AbilityGroupKey, AbilityKind, AbilitySourceKey};
+use crate::schemas::{AbilityDescriptor, AbilityGroupKey, AbilityKind, AbilitySourceKey, ToolSpec};
+use crate::tools::validate_dynamic_tool_spec;
 use serde_json::Value;
 use std::collections::HashSet;
 
@@ -156,6 +157,26 @@ pub fn normalize_ability_items(items: Vec<AbilityDescriptor>) -> Vec<AbilityDesc
         let Some(runtime_name) = runtime_name else {
             continue;
         };
+        // User supplied abilities are another dynamic tool schema boundary.
+        // Validate them while retaining legacy descriptors with a null schema
+        // (those are name-only selections synthesized from older records).
+        if matches!(item.kind, AbilityKind::Tool)
+            && matches!(
+                item.source,
+                AbilitySourceKey::UserMcp | AbilitySourceKey::Shared
+            )
+            && !item.input_schema.is_null()
+        {
+            let candidate = ToolSpec {
+                name: runtime_name.clone(),
+                title: None,
+                description: item.description.trim().to_string(),
+                input_schema: item.input_schema.clone(),
+            };
+            if validate_dynamic_tool_spec(&candidate).is_err() {
+                continue;
+            }
+        }
         let owner_id = item
             .owner_id
             .as_deref()
@@ -409,7 +430,7 @@ mod tests {
         resolve_selected_declared_names, split_ability_item_names,
     };
     use crate::schemas::{AbilityDescriptor, AbilityGroupKey, AbilityKind, AbilitySourceKey};
-    use serde_json::json;
+    use serde_json::{json, Value};
     use std::collections::HashSet;
 
     fn sample_skill_keys() -> HashSet<String> {
@@ -451,6 +472,25 @@ mod tests {
         assert!(items.iter().all(|item| item.selected));
         assert_eq!(items[0].id, "builtin:read_file");
         assert_eq!(items[1].id, "skill:planner");
+    }
+
+    #[test]
+    fn normalize_ability_items_filters_invalid_dynamic_schema_but_keeps_legacy_null() {
+        let mut invalid = sample_item("remote_bad", AbilityKind::Tool);
+        invalid.source = AbilitySourceKey::UserMcp;
+        invalid.input_schema = json!({
+            "type": "object",
+            "properties": {
+                "items": {"type": "array", "items": {"type": "string"}}
+            },
+            "additionalProperties": false
+        });
+        let mut legacy = sample_item("remote_legacy", AbilityKind::Tool);
+        legacy.source = AbilitySourceKey::UserMcp;
+        legacy.input_schema = Value::Null;
+        let normalized = normalize_ability_items(vec![invalid, legacy]);
+        assert_eq!(normalized.len(), 1);
+        assert_eq!(normalized[0].runtime_name, "remote_legacy");
     }
 
     #[test]

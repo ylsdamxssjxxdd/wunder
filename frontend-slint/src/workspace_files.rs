@@ -1067,7 +1067,7 @@ fn done_message(kind: PromptKind, value: &str) -> String {
     }
 }
 
-/// Tunnel tick from the 2s interlink poll: project the offline state and boot
+/// Tunnel tick from the interlink poll: project the offline state and boot
 /// the tree once the tunnel comes up (re-armed after a disconnect).
 pub fn tunnel_tick(app: &MainWindow, api: &Arc<NativeDesktop>, connected: bool) {
     // A local folder is served straight from disk and never rides the tunnel,

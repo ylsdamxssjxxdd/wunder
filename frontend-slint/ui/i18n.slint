@@ -323,7 +323,7 @@ export global I18n {
     out property <string> cp_model_pick: zh ? "切换模型" : "Switch model";
     out property <string> cp_model_context: zh ? "上下文 Token" : "Context tokens";
     out property <string> cp_voice_input: zh ? "语音输入" : "Voice input";
-    out property <string> cp_terminal_mode: zh ? "Git 终端" : "Git terminal";
+    out property <string> cp_terminal_mode: zh ? "终端" : "Terminal";
     out property <string> cp_model_search: zh ? "搜索模型" : "Search models";
     out property <string> cp_model_empty: zh ? "还没有可用模型。请到「设置 → 模型设置」添加。" : "No models yet. Add one in Settings → Models.";
     out property <string> cp_model_no_match: zh ? "没有匹配的模型" : "No matching model";
@@ -916,7 +916,7 @@ export global I18n {
     out property <string> stc_prompts: zh ? "提示词包" : "Prompt packs";
     out property <string> stc_prompts_note: zh ? "分段编辑与最终提示词预览" : "Segment editing and final prompt preview";
     out property <string> stc_archives: zh ? "归档线程" : "Archived threads";
-    out property <string> stc_archives_note: zh ? "已归档线程，可查看或彻底删除" : "Archived threads: review or delete";
+    out property <string> stc_archives_note: zh ? "已归档线程，可查看、还原或彻底删除" : "Archived threads: review, restore or delete";
     out property <string> stc_help: zh ? "帮助" : "Help";
     out property <string> stc_help_note: zh ? "在本机打开使用手册" : "Open the user manual on this machine";
     out property <string> il_tunnel_title: zh ? "互通隧道" : "Interlink tunnel";
@@ -956,6 +956,8 @@ export global I18n {
     out property <string> stc_archives_empty: zh ? "还没有归档线程。" : "No archived threads yet.";
     out property <string> stc_runs_tab: zh ? "用量统计" : "Usage";
     out property <string> stc_archives_open: zh ? "查看" : "Open";
+    out property <string> stc_archives_restore: zh ? "还原" : "Restore";
+    out property <string> stc_archives_delete_confirm: zh ? "该归档线程及其本地记录将被永久删除，无法恢复。确认删除？" : "Permanently delete this archived thread and its local records? This cannot be undone.";
     out property <string> stc_agent_name: zh ? "智能体名称" : "Agent name";
     out property <string> stc_agent_greeting: zh ? "问候语" : "Greeting";
     out property <string> stc_agent_greeting_hint: zh ? "用于会话中的首次问候" : "Used for the first greeting in a session";
@@ -1080,9 +1082,10 @@ export global I18n {
     out property <string> st_diagnostics: zh ? "诊断" : "Diagnostics";
     out property <string> st_help_open: zh ? "打开帮助手册" : "Open help";
     out property <string> st_stress_title: zh ? "线程渲染压测" : "Thread render stress";
-    out property <string> st_stress_note: zh ? "在本地库生成一条模拟线程，验证消息呈现与长列表性能。" : "Generates one synthetic local thread to verify message rendering and long-list performance.";
+    out property <string> st_stress_note: zh ? "在本地库生成模拟线程，验证消息呈现与长列表性能。" : "Generates synthetic local threads to verify message rendering and long-list performance.";
     out property <string> st_stress_user_rounds: zh ? "用户轮次" : "User rounds";
     out property <string> st_stress_model_rounds: zh ? "每轮模型轮次" : "Model rounds / turn";
+    out property <string> st_stress_count: zh ? "个数" : "Count";
     out property <string> st_stress_hint: zh ? "默认 1000×1000，生成耗时较长；可先用小规模验证渲染。" : "Defaults to 1000×1000 and takes a while; try a smaller scale first.";
     out property <string> st_stress_generate: zh ? "生成压测线程" : "Generate stress thread";
     out property <string> st_stress_running: zh ? "生成中…" : "Generating…";
@@ -1219,7 +1222,6 @@ export global I18n {
     out property <string> tl_process_loading: zh ? "正在加载…" : "Loading…";
     out property <string> tl_process_retry: zh ? "加载失败，重试" : "Loading failed. Retry";
     out property <string> tl_process_earlier: zh ? "查看更早的过程" : "Earlier steps";
-    out property <string> tl_process_later: zh ? "查看后续过程" : "Later steps";
     out property <string> tl_stat_round: zh ? "用户轮次" : "User round";
     public pure function tl_user_round(round: string) -> string { return zh ? "第 " + round + " 个用户轮次" : "User round " + round + ""; }
     out property <string> tl_stat_credits: zh ? "额度" : "Quota";

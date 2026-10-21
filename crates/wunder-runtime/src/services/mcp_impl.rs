@@ -6,6 +6,7 @@ use crate::schemas::{ToolSpec, WunderRequest};
 use crate::state::AppState;
 use crate::tools::{
     browser_tools_available, builtin_aliases, is_browser_tool_name, resolve_tool_name,
+    validate_external_tool_spec,
 };
 use anyhow::{anyhow, Result};
 use axum::Router;
@@ -566,7 +567,7 @@ fn collect_tool_specs(server: &McpServerConfig, tools: Vec<Tool>) -> Vec<ToolSpe
             .clone()
             .or_else(|| server.display_name.clone())
             .unwrap_or_default();
-        items.push(ToolSpec {
+        let spec = ToolSpec {
             name,
             title: tool.title.clone(),
             description: if description.is_empty() {
@@ -575,7 +576,13 @@ fn collect_tool_specs(server: &McpServerConfig, tools: Vec<Tool>) -> Vec<ToolSpe
                 description
             },
             input_schema: tool.schema_as_json_value(),
-        });
+        };
+        // MCP servers are an external schema boundary.  Ignore one malformed
+        // declaration while keeping the remaining tools available; the
+        // caller can still refresh and repair the provider independently.
+        if validate_external_tool_spec(&spec).is_ok() {
+            items.push(spec);
+        }
     }
     items
 }
@@ -584,11 +591,14 @@ pub fn build_tool_specs_from_config(server: &McpServerConfig) -> Vec<ToolSpec> {
     server
         .tool_specs
         .iter()
-        .map(|spec| ToolSpec {
-            name: spec.name.clone(),
-            title: spec.title.clone(),
-            description: spec.description.clone(),
-            input_schema: serde_json::to_value(&spec.input_schema).unwrap_or(Value::Null),
+        .filter_map(|spec| {
+            let tool = ToolSpec {
+                name: spec.name.clone(),
+                title: spec.title.clone(),
+                description: spec.description.clone(),
+                input_schema: serde_json::to_value(&spec.input_schema).unwrap_or(Value::Null),
+            };
+            validate_external_tool_spec(&tool).is_ok().then_some(tool)
         })
         .collect()
 }

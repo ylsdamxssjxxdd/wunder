@@ -1,0 +1,8 @@
+{
+  "version": "6.2.4",
+  "note": "静态单文件 radare2（Ubuntu 18.04 容器内 sys/static.sh 构建，最高 GLIBC 符号 2.25）。CI 从 supplement release 下载并校验 SHA256 后经 WUNDER_SUPPLEMENT_R2_ARCHIVE 投喂；未列出的架构跳过 r2。",
+  "amd64": {
+    "fileName": "radare2-6.2.4-linux-amd64-static.tar.gz",
+    "sha256": "f5d4ffcbe601f2c10810f5411cf06cc535b011ae8097892c6be25f2f813946f3"
+  }
+}

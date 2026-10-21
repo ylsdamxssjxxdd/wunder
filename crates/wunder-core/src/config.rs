@@ -2553,6 +2553,17 @@ pub fn load_config_from_path(path: &Path) -> Config {
     })
 }
 
+/// Parse configuration YAML without touching the file system. Environment
+/// placeholders are expanded before typed deserialization, so in-memory
+/// templates follow the same rules as files loaded from disk.
+pub fn parse_config_yaml(content: &str) -> anyhow::Result<Config> {
+    use anyhow::Context;
+    let mut value: Value =
+        serde_yaml::from_str(content).context("parse configuration YAML failed")?;
+    expand_yaml_env(&mut value);
+    serde_yaml::from_value::<Config>(value).context("invalid configuration")
+}
+
 /// Strict deployment loader: an invalid configured file must not start an API
 /// service with unrelated defaults. Local bootstrap callers retain the legacy
 /// optional-file loader above.
@@ -2560,10 +2571,7 @@ pub fn try_load_config_from_path(path: &Path) -> anyhow::Result<Config> {
     use anyhow::Context;
     let content = read_yaml_content_with_fallback(&path.display().to_string())
         .context("read configuration failed")?;
-    let mut value: Value =
-        serde_yaml::from_str(&content).context("parse configuration YAML failed")?;
-    expand_yaml_env(&mut value);
-    let mut config = serde_yaml::from_value::<Config>(value).context("invalid configuration")?;
+    let mut config = parse_config_yaml(&content)?;
     if let Some(example_path) = resolve_example_config_path(&resolve_config_path(path)) {
         if example_path.exists() {
             let example = try_load_config_from_path(&example_path)?;

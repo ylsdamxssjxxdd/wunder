@@ -211,6 +211,43 @@ pub fn thread_count(sessions: &[SessionView], workspace_id: &str) -> usize {
         .count()
 }
 
+/// Insertion slot for a dragged workspace row.
+///
+/// `pointer_y` is compared against each row's own span; the row's midpoint
+/// decides whether the dropped row lands before or after it. Returning the
+/// insertion index keeps the geometry out of the reorder itself.
+pub fn drop_index(row_spans: &[(f32, f32)], pointer_y: f32) -> Option<usize> {
+    if row_spans.is_empty() {
+        return None;
+    }
+    let last = row_spans.len().saturating_sub(1);
+    let clamped = pointer_y.clamp(row_spans[0].0, row_spans[last].1);
+    for (index, (top, bottom)) in row_spans.iter().enumerate() {
+        if clamped <= *bottom {
+            return Some(if clamped < (top + bottom) / 2.0 {
+                index
+            } else {
+                index + 1
+            });
+        }
+    }
+    Some(row_spans.len())
+}
+
+/// Move `moved` to `target` in the given id list.
+///
+/// `target` is an insertion index in the *original* list, so moving a row down
+/// past its own slot has to account for the hole it leaves behind.
+pub fn moved_order(ids: &[String], moved: &str, target: usize) -> Option<Vec<String>> {
+    let from = ids.iter().position(|id| id == moved)?;
+    let target = target.min(ids.len());
+    let mut next = ids.to_vec();
+    let item = next.remove(from);
+    let insert = if target > from { target - 1 } else { target };
+    next.insert(insert.min(next.len()), item);
+    Some(next)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -219,6 +256,7 @@ mod tests {
         WorkspaceView {
             id: id.to_owned(),
             name: name.to_owned(),
+            root_path: format!("/tmp/{id}"),
             icon: "folder".to_owned(),
             color: "gray".to_owned(),
             thread_count: 0,
@@ -380,5 +418,93 @@ mod tests {
         assert_eq!(thread_count(&sessions, "a"), 2);
         assert_eq!(thread_count(&sessions, "b"), 1);
         assert_eq!(thread_count(&sessions, "missing"), 0);
+    }
+
+    fn ids(list: &[&str]) -> Vec<String> {
+        list.iter().map(|id| (*id).to_owned()).collect()
+    }
+
+    #[test]
+    fn moved_order_handles_both_directions() {
+        let base = ids(&["a", "b", "c"]);
+        assert_eq!(
+            moved_order(&base, "a", 2),
+            Some(ids(&["b", "a", "c"])),
+            "dragging down past one row must not skip it"
+        );
+        assert_eq!(moved_order(&base, "c", 0), Some(ids(&["c", "a", "b"])));
+        assert_eq!(
+            moved_order(&base, "b", 1),
+            Some(base.clone()),
+            "dropping on your own slot is a no-op"
+        );
+        assert_eq!(moved_order(&base, "missing", 0), None);
+        // An out-of-range target clamps to the end instead of panicking.
+        assert_eq!(moved_order(&base, "a", 99), Some(ids(&["b", "c", "a"])));
+    }
+
+    #[test]
+    fn drop_index_uses_row_midpoints_and_clamps_to_the_list() {
+        let spans = [(0.0, 34.0), (34.0, 68.0), (68.0, 102.0)];
+        assert_eq!(drop_index(&spans, 10.0), Some(0));
+        assert_eq!(drop_index(&spans, 20.0), Some(1));
+        assert_eq!(drop_index(&spans, 40.0), Some(1));
+        assert_eq!(drop_index(&spans, 90.0), Some(3));
+        // Above the first row and below the last both clamp to the ends.
+        assert_eq!(drop_index(&spans, -50.0), Some(0));
+        assert_eq!(drop_index(&spans, 500.0), Some(3));
+        assert_eq!(drop_index(&[], 10.0), None);
+    }
+
+    /// Slot the rail would use for a pointer position. A `None` is asserted
+    /// first and then replaced by a sentinel, so a geometry regression shows up
+    /// as a wrong order below instead of a panicking test.
+    fn slot_or_fail(spans: &[(f32, f32)], pointer_y: f32) -> usize {
+        assert!(
+            drop_index(spans, pointer_y).is_some(),
+            "a pointer over or below a non-empty list always resolves a slot"
+        );
+        drop_index(spans, pointer_y).unwrap_or(usize::MAX)
+    }
+
+    #[test]
+    fn rail_drag_composes_slot_and_order() {
+        // The rail's own row height, three workspaces, as painted top to bottom.
+        let spans: Vec<(f32, f32)> = (0..3)
+            .map(|index| {
+                let top = index as f32 * WORKSPACE_ROW_HEIGHT;
+                (top, top + WORKSPACE_ROW_HEIGHT)
+            })
+            .collect();
+        let base = ids(&["a", "b", "c"]);
+        // Release just under the first row's midpoint: the dragged row has to
+        // land above it, not on top of itself.
+        assert_eq!(slot_or_fail(&spans, 4.0), 0);
+        assert_eq!(
+            moved_order(&base, "c", slot_or_fail(&spans, 4.0)),
+            Some(ids(&["c", "a", "b"]))
+        );
+        // Release inside the second row, above its midpoint: between a and b.
+        assert_eq!(slot_or_fail(&spans, WORKSPACE_ROW_HEIGHT + 4.0), 1);
+        assert_eq!(
+            moved_order(&base, "c", slot_or_fail(&spans, WORKSPACE_ROW_HEIGHT + 4.0)),
+            Some(ids(&["a", "c", "b"]))
+        );
+        // Dragging the first row down past b lands between b and c.
+        assert_eq!(slot_or_fail(&spans, WORKSPACE_ROW_HEIGHT * 2.0 + 4.0), 2);
+        assert_eq!(
+            moved_order(
+                &base,
+                "a",
+                slot_or_fail(&spans, WORKSPACE_ROW_HEIGHT * 2.0 + 4.0)
+            ),
+            Some(ids(&["b", "a", "c"]))
+        );
+        // A release below the whole list clamps to the end.
+        assert_eq!(slot_or_fail(&spans, 9_999.0), 3);
+        assert_eq!(
+            moved_order(&base, "a", slot_or_fail(&spans, 9_999.0)),
+            Some(ids(&["b", "c", "a"]))
+        );
     }
 }

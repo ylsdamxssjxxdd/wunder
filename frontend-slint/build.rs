@@ -31,6 +31,10 @@ fn main() {
     generate_file_icons(&out_dir);
     generate_avatar_assets(&out_dir);
     embed_windows_exe_icon();
+    // The vendored Slint gates the array search helpers (`index-of`) behind
+    // the experimental flag; the settings dropdowns need them for the
+    // stored-value ↔ row mapping.
+    std::env::set_var("SLINT_ENABLE_EXPERIMENTAL_FEATURES", "1");
     slint_build::compile_with_config(
         "ui/main.slint",
         slint_build::CompilerConfiguration::new()

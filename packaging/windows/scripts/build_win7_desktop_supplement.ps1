@@ -7,7 +7,9 @@ Windows counterpart of packaging/linux/scripts/build_linux_supplement.sh.
 Reads packaging/windows/scripts/win7-supplement-manifest.json, downloads the
 pinned archives, stages the opt/ tree, optionally installs the Playwright
 Chromium (manifest python.installBrowser), and produces
-wunder-supplement-win7-<arch>[-<profile>].zip.
+wunder-supplement-win7-<arch>[-<profile>].zip. With the default build root the
+zip lands in target\installer\payload\<win7-arch>\ (found by build.bat pack);
+an explicit -BuildRoot keeps dist\ inside that root.
 
 The archive is imported into WUNDER_HOME (default: the user's .wunder
 directory); both local forms auto-detect opt/python, opt/git, opt/rg and
@@ -180,6 +182,95 @@ function Assert-PeMachine {
     Fail "wrong PE architecture for ${Path}: got $actual, expected $wanted"
   }
   Write-Step "validated PE architecture ($Arch): $Path"
+}
+
+function Get-PeImportedDlls {
+  # Imported DLL names from the PE import directory. Used to keep Windows 7
+  # packs free of Win8+-only static imports such as bcryptprimitives.dll.
+  param([string]$Path)
+  if (-not (Test-Path -LiteralPath $Path)) { Fail "PE file not found: $Path" }
+  $bytes = [System.IO.File]::ReadAllBytes($Path)
+  if ($bytes.Length -lt 0x40 -or $bytes[0] -ne 0x4d -or $bytes[1] -ne 0x5a) {
+    Fail "not a Windows PE image: $Path"
+  }
+  $peOffset = [BitConverter]::ToInt32($bytes, 0x3c)
+  if ($peOffset -lt 0 -or $peOffset + 24 -gt $bytes.Length -or
+      $bytes[$peOffset] -ne 0x50 -or $bytes[$peOffset + 1] -ne 0x45) {
+    Fail "invalid PE header: $Path"
+  }
+  $sectionCount = [BitConverter]::ToUInt16($bytes, $peOffset + 6)
+  $optionalSize = [BitConverter]::ToUInt16($bytes, $peOffset + 20)
+  $optionalOffset = $peOffset + 24
+  $magic = [BitConverter]::ToUInt16($bytes, $optionalOffset)
+  $dirOffset = if ($magic -eq 0x20b) { $optionalOffset + 112 } else { $optionalOffset + 96 }
+  if ($dirOffset + 12 -gt $bytes.Length) { Fail "invalid PE optional header: $Path" }
+  $importRva = [BitConverter]::ToUInt32($bytes, $dirOffset + 8)
+  if ($importRva -eq 0) { return @() }
+
+  $sections = @()
+  $sectionOffset = $optionalOffset + $optionalSize
+  for ($i = 0; $i -lt $sectionCount; $i++) {
+    $offset = $sectionOffset + ($i * 40)
+    if ($offset + 40 -gt $bytes.Length) { Fail "truncated PE section table: $Path" }
+    $virtualSize = [BitConverter]::ToUInt32($bytes, $offset + 8)
+    $rawSize = [BitConverter]::ToUInt32($bytes, $offset + 16)
+    $sections += [pscustomobject]@{
+      VirtualAddress = [BitConverter]::ToUInt32($bytes, $offset + 12)
+      Span           = if ($virtualSize -gt $rawSize) { $virtualSize } else { $rawSize }
+      RawSize        = $rawSize
+      RawPointer     = [BitConverter]::ToUInt32($bytes, $offset + 20)
+    }
+  }
+
+  $mapRva = {
+    param([uint32]$Rva)
+    foreach ($section in $sections) {
+      if (($Rva -ge $section.VirtualAddress) -and ($Rva -lt ($section.VirtualAddress + $section.Span))) {
+        $delta = $Rva - $section.VirtualAddress
+        if ($delta -ge $section.RawSize) { return -1 }
+        return [int]($section.RawPointer + $delta)
+      }
+    }
+    return -1
+  }
+
+  $importOffset = & $mapRva $importRva
+  if ($importOffset -lt 0) { Fail "cannot map PE import directory: $Path" }
+
+  $names = New-Object System.Collections.Generic.List[string]
+  $cursor = [int]$importOffset
+  while ($cursor + 20 -le $bytes.Length) {
+    $nameRva = [BitConverter]::ToUInt32($bytes, $cursor + 12)
+    $firstThunk = [BitConverter]::ToUInt32($bytes, $cursor + 16)
+    if (($nameRva -eq 0) -and ($firstThunk -eq 0)) { break }
+    $nameOffset = & $mapRva $nameRva
+    if ($nameOffset -lt 0) { Fail "cannot map PE import name: $Path" }
+    $builder = New-Object System.Text.StringBuilder
+    while (($nameOffset -lt $bytes.Length) -and ($bytes[$nameOffset] -ne 0)) {
+      [void]$builder.Append([char]$bytes[$nameOffset])
+      $nameOffset++
+    }
+    if ($builder.Length -eq 0) { break }
+    $names.Add($builder.ToString())
+    $cursor += 20
+  }
+  return $names.ToArray()
+}
+
+function Assert-Win7PeImports {
+  # Rust 1.78+ links ProcessPrng (bcryptprimitives.dll) and, for 32-bit
+  # targets, WaitOnAddress (api-ms-win-core-synch-l1-2-0.dll) statically.
+  # Both are Windows 8+ APIs, so such a binary cannot start on Windows 7.
+  param([string]$Path)
+  $denied = @(
+    'bcryptprimitives.dll',
+    'api-ms-win-core-synch-l1-2-0.dll'
+  )
+  $found = @(Get-PeImportedDlls -Path $Path | Where-Object { $denied -contains $_.ToLowerInvariant() })
+  if ($found.Count -gt 0) {
+    Fail ("Win8+-only imports in ${Path}: {0} (Windows 7 cannot load this binary)" -f ($found -join ', '))
+  }
+  Write-Step "validated Windows 7 PE imports: $Path"
 }
 
 function Expand-ZipInto {
@@ -395,7 +486,8 @@ $manifestPath = Join-Path $ScriptDir 'win7-supplement-manifest.json'
 $manifest = Read-Manifest -Path $manifestPath
 
 $buildRootEffective = $BuildRoot
-if ([string]::IsNullOrWhiteSpace($buildRootEffective)) {
+$usingDefaultBuildRoot = [string]::IsNullOrWhiteSpace($buildRootEffective)
+if ($usingDefaultBuildRoot) {
   $rel = [string](Get-PropertyValue -Object $manifest -Name 'defaultBuildRoot' -Default 'temp_dir\win7-gnu-lab\win7-supplement')
   $buildRootEffective = Join-Path $repoRoot $rel
 } elseif (-not [System.IO.Path]::IsPathRooted($buildRootEffective)) {
@@ -404,7 +496,17 @@ if ([string]::IsNullOrWhiteSpace($buildRootEffective)) {
 
 $downDir  = Join-Path $buildRootEffective ([string](Get-PropertyValue -Object $manifest -Name 'downloadsDir' -Default 'downloads'))
 $stageDir = Join-Path $buildRootEffective ([string](Get-PropertyValue -Object $manifest -Name 'stageDir' -Default 'stage'))
-$distDir  = Join-Path $buildRootEffective ([string](Get-PropertyValue -Object $manifest -Name 'distDir' -Default 'dist'))
+# With the default build root the finished zip goes to the installer payload
+# directory: `build.bat pack` searches it directly and the artifacts survive
+# temp_dir cleanups. An explicit -BuildRoot (e.g. CI) keeps dist inside it.
+$distDirName = [string](Get-PropertyValue -Object $manifest -Name 'distDir' -Default 'dist')
+$distDir = if ($usingDefaultBuildRoot -and $distDirName -eq 'dist') {
+  Join-Path $repoRoot ('target\installer\payload\' + $(if ($Arch -eq 'ia32') { 'win7-x86' } else { 'win7-x64' }))
+} elseif ([System.IO.Path]::IsPathRooted($distDirName)) {
+  $distDirName
+} else {
+  Join-Path $buildRootEffective $distDirName
+}
 $packRoot = Join-Path $stageDir 'package-root'
 
 $layout = Get-PropertyValue -Object $manifest -Name 'layout'
@@ -641,12 +743,23 @@ $rgVersion = [string](Get-PropertyValue -Object $rgMeta -Name 'version' -Default
 $rgArchiveMeta = Get-PropertyValue -Object (Get-PropertyValue -Object $rgMeta -Name 'archives') -Name $Arch
 if ($null -ne $rgArchiveMeta) {
   $rgArchive = $RgArchivePath
-  if ([string]::IsNullOrWhiteSpace($rgArchive)) {
+  $rgFromManifest = [string]::IsNullOrWhiteSpace($rgArchive)
+  if ($rgFromManifest) {
     $rgArchive = Join-Path $downDir ([string](Get-PropertyValue -Object $rgArchiveMeta -Name 'fileName' -Default 'ripgrep.zip'))
     Get-DownloadedFile -Url ([string](Get-PropertyValue -Object $rgArchiveMeta -Name 'url')) -Destination $rgArchive -Force:$RefreshDownloads | Out-Null
+    Assert-FileSha256 -Path $rgArchive -Expected ([string](Get-PropertyValue -Object $rgArchiveMeta -Name 'sha256' -Default ''))
   } elseif (-not (Test-Path -LiteralPath $rgArchive)) { Fail "ripgrep archive not found: $rgArchive" }
   Write-Step "staging ripgrep $rgVersion into $rgRoot"
   Expand-ZipFlatten -Archive $rgArchive -Destination $rgRoot
+  $rgExe = Join-Path $rgRoot 'rg.exe'
+  if (-not (Test-Path -LiteralPath $rgExe -PathType Leaf)) { Fail "ripgrep executable missing after staging: $rgExe" }
+  Assert-PeMachine -Path $rgExe -Arch $Arch
+  Assert-Win7PeImports -Path $rgExe
+  $rgSmoke = & $rgExe '--version' 2>&1
+  if (-not ("$rgSmoke" -match ('^ripgrep\s+' + [regex]::Escape($rgVersion)))) {
+    Fail "ripgrep smoke failed: $rgSmoke"
+  }
+  Write-Step "ripgrep smoke ok: $rgSmoke"
 }
 
 # ---------------------------------------------------------------------------

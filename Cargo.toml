@@ -111,6 +111,21 @@ incremental = false
 # `cargo test` hit sporadic metadata/link failures with incremental enabled.
 incremental = false
 
+# Keep release artifacts (wunder-cli/wunder-server) in the same shape as the
+# standalone frontend-slint workspace: thin LTO and one codegen unit cut most of
+# the code size that the default 16-CGU build leaves behind. Unlike the desktop
+# shell this workspace keeps panic=unwind: wunder-runtime and wunder-server rely
+# on catch_unwind for task/request isolation.
+[profile.release]
+strip = "symbols"
+lto = "thin"
+codegen-units = 1
+
+# Keep the large shared runtime parallel during release code generation; thin
+# LTO still optimizes the final binary as a whole.
+[profile.release.package.wunder-runtime]
+codegen-units = 8
+
 [patch.crates-io]
 # Use the rlib-only fork for every workspace member. The kylin-arm vendor's
 # old-layout html2md declares crate-type dylib/staticlib, which makes CLI

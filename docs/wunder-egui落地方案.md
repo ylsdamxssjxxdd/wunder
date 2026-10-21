@@ -1,6 +1,7 @@
 # wunder-egui 落地方案
 
-> 状态：实验实现推进中，原生聊天与蜂巢视觉对齐已落地，替换验收未完成（2026-10-19）  
+> 状态：实验实现推进中，原生聊天与蜂巢视觉对齐已落地，事件驱动实时底座待改造，替换验收未完成（2026-10-21）  
+> 实时性优先（2026-10-21）：egui 壳必须由后端事件唤醒；当前实现仍是“每帧 poll + 忙时 16 ms 定时重绘、空闲不排帧”，`NativeBackend::wake` 为空，后台事件在空闲时可能等不到帧。先完成 P0.5 事件驱动改造，再继续铺功能与视觉。  
 > 目标：在保留 `frontend-slint/` 作为当前默认蛹前端的前提下，建立一套可独立运行、可比较、可渐进接管的 egui 前端，并验证同一套 Rust UI 是否可以编译为 WASM，承担蜂巢的用户工作台页面。
 
 ## 1. 结论先行
@@ -13,6 +14,7 @@ egui 适合做蛹的第二套前端，也具备编译为 WASM 运行在浏览器
 
 因此：
 
+- **事件驱动是 P1 的硬前提，不是后续优化。** 帧只由输入、动画或后端唤醒触发；worker 空闲阻塞、事件到达后唤醒 UI，UI 不做定时轮询。当前轮询实现必须在原生聊天工作台验收前替换。
 - **蛹替代 Slint：可行，但应先做并行前端和功能分级验收。** egui 先接管聊天工作台，再覆盖设置、工作区、终端和系统能力；在性能、输入法、辅助功能和发行兼容性达标前，不删除 Slint。
 - **网页替代蜂巢用户工作台：可行，但属于远程适配器，不是原生适配器的复用。** egui WASM 可以替代用户侧工作台的 Vue 页面；舰桥治理界面、服务端静态托管和管理功能不应被这次迁移一并改写。
 - **Win7：按“尽量兼容、不能保证则降级”的要求处理。** 原生首选 Glow/OpenGL 路径，避免把 D3D12、WebGPU 或现代系统 API 设为蛹的唯一启动条件。最终是否支持 32 位 Win7，只以真实目标机和完整发行包冒烟为准。
@@ -39,6 +41,7 @@ egui 适合做蛹的第二套前端，也具备编译为 WASM 运行在浏览器
 - 在 WASM 模式下复用舰体已有聊天 WebSocket、分页历史和快照/补水语义，不另造一套聊天协议。
 - 覆盖蛹最重要的用户路径：工作区/线程列表、线程打开、历史消息、流式输出、工具时间线、停止、重连、草稿和主题。
 - 形成可量化的 Slint 对比结果：首帧、稳态帧耗时、流式延迟、内存峰值、中文输入、滚动和长线程表现。
+- 建立可验证的事件驱动实时底座：空闲时 worker 与 UI 都不空转，后台事件 1 帧内可见，事件不丢、不乱序。
 - 保持浅色蜂巢基调，同时吸收参考工程的密集、清晰、可扫描布局；不做营销化大留白。
 
 ### 3.2 非目标
@@ -143,31 +146,46 @@ eframe = { version = "0.36", default-features = false, features = ["wgpu"] }
 
 ### 4.4 BackendPort：UI 与运行时的唯一边界
 
-共享 UI 不应直接保存 `NativeDesktop` 或浏览器 WebSocket。建议以命令和事件为中心：
+共享 UI 不应直接保存 `NativeDesktop` 或浏览器 WebSocket。边界必须是“命令上行、事件下行、事件到达即唤醒”：
 
 ```rust
 trait BackendPort {
     fn submit(&mut self, command: BackendCommand) -> Result<(), BackendError>;
-    fn poll(&mut self, budget: usize) -> SmallVec<[BackendEvent; 32]>;
-    fn wake(&self); // 请求下一帧；不在 UI 线程等待
+    /// 只在被唤醒或存在输入时调用；一次有界 drain，不做忙等。
+    fn drain(&mut self, budget: usize) -> SmallVec<[BackendEvent; 32]>;
+    /// 注册跨线程唤醒：实现为 `egui::Context::request_repaint`。
+    fn install_waker(&mut self, waker: Arc<dyn Fn() + Send + Sync>);
 }
 ```
 
+`install_waker` 是事件驱动链路的核心：worker 每批事件进入有界队列后调用一次 waker；egui 会把同一帧内的重复唤醒合并，但事件本身不能合并丢失。UI 只在 `update()` 中调用 `drain`，没有唤醒、输入或动画时不排下一帧。现有代码里的 `poll`/`wake` 是同一契约的过渡形态，`wake` 必须真正实现为后端到 UI 的唤醒，不能保留空方法。
+
 `BackendCommand` 至少包括 `ListSessions`、`OpenSession`、`LoadOlder`、`SendMessage`、`Cancel`、`RenameSession`、`ArchiveSession`、`SaveDraft`、`SetModel` 和 `SetReasoningEffort`。`BackendEvent` 至少包括 `Sessions`、`HistoryReset`、`TurnsChanged`、`StreamDelta`、`WorkflowChanged`、`Queued`、`Terminal`、`Failed`、`ContextUsage` 和 `Disconnected`。事件必须携带线程 ID、轮次/项目稳定 ID、游标或版本号，reducer 以稳定 ID 去重，不能依赖到达顺序猜测终态。
+
+#### 事件驱动契约
+
+1. **唯一帧源。** 帧只来自四类触发：用户/系统输入、显式 UI 动画、后端唤醒、启动兜底。禁止用固定间隔的 `request_repaint_after` 模拟事件驱动；`busy` 状态本身不是重绘理由。
+2. **worker 不空转。** 没有活跃 `NativeStream`、线程观察或待合并 delta 时，worker 阻塞在命令队列上；有活跃流时按 ≤1 帧合并，合并完成后立即唤醒 UI。
+3. **唤醒可合并，事件不可丢。** 同一帧内多次唤醒由 egui 合并；同一稳定 ID 的文本 delta 可合并，但终态、错误、游标和顺序不能因合并丢失。队列满时必须回压生产端，不能静默丢事件。
+4. **唤醒不承载业务数据。** `wake` 只表示“队列里有可读事件”；reducer 仍从有界队列按稳定 ID 应用，不能把业务状态塞进 repaint 回调。
+5. **延迟预算。** 事件入队到 UI 应用并绘制 p95 ≤ 1 帧（60 Hz 约 16.7 ms；30 Hz 约 33 ms）；空闲时 worker 唤醒 0 次/秒、UI 0 帧/秒（允许 ≤1 Hz 的时钟兜底）。
 
 #### NativePort
 
 - worker 线程独占 `NativeDesktop`，UI 线程只向有界命令队列发送请求。
 - `list_sessions`、`get_session_turns`、`chat_process_page`、`watch_chat` 等同步 façade 调用都在 worker 执行。
-- `NativeStream` 的现有 128 容量保持不变；worker 将多个 delta 合并为一帧事件后再送给 UI。丢弃 UI 订阅只停止观察，不隐式取消已接受的后台任务。
+- 没有活跃 stream/watch 时，worker 阻塞在命令接收上；禁止 `recv_timeout(16 ms)` 式永久轮询。
+- `NativeStream` 的现有 128 容量保持不变；worker 将多个 delta 合并为一帧事件后再送给 UI，并在每批事件入队后调用一次 waker。丢弃 UI 订阅只停止观察，不隐式取消已接受的后台任务。
 - 线程打开、租约、取消、终端和本地文件权限继续由 `wunder-desktop` 和引擎执行；egui 不复制检查。
 - UI 线程断帧或窗口拖动时，后台仍继续排空 stream 并收敛 durable 状态；恢复后通过稳定游标补水。
+- 现有 `NativeBackend::wake` 空实现和 UI 侧 16 ms/120 ms 定时重绘都属于待替换的轮询方案，P0.5 必须先改掉。
 
 #### RemotePort（WASM）
 
 - 启动先请求会话列表和当前线程的有限历史页；历史继续使用 `transcript`/thread view 的分页读模型，不能一次拉全量日志。
 - 每个浏览器标签最多保持一条 `/wunder/chat/ws`，复用现有 `connect`、`watch`、`start`、`cancel`、ping/pong 和游标恢复语义。
 - 断线时显示明确的 reconnecting 状态；重连先带 `after_change_seq` 或服务端要求的快照游标补水，再应用实时 delta，不能用“重新播放完整回复”的打字动画代替流式。
+- WebSocket 收到消息、重连状态变化和认证结果都通过 waker 唤醒 UI；重连退避是唯一允许的常驻定时器。
 - 认证沿用现有 cookie/协议票据和服务端鉴权，不把长期密钥塞进 URL、localStorage 或 WebSocket 查询参数。
 - 浏览器文件选择通过异步 picker 进入有界 inbox；下载通过浏览器 download；偏好仅存 localStorage。没有本地 SQLite、PTY、工作区绝对路径和系统托盘。
 
@@ -184,12 +202,14 @@ NativePort worker 或 RemotePort async task
         ↓
 BackendEvent（带稳定 ID/游标）
         ↓
-纯 Rust reducer / Projection
+有界队列 + wake(request_repaint)
+        ↓
+egui 帧内 drain → 纯 Rust reducer / Projection
         ↓
 egui 当前帧的可见投影
 ```
 
-`egui::Context` 只用于请求重绘、读取输入和绘制，不能作为业务事件总线。所有异步事件先进入后端适配器的有界队列，再由每帧预算内的 reducer 应用。
+`egui::Context` 只用于读取输入、用 `request_repaint()` 唤醒和绘制，不能作为业务事件总线。所有异步事件先进入后端适配器的有界队列；worker 入队后唤醒 UI，UI 在唤醒帧内按预算 drain 一次并交给 reducer。禁止在 `update()` 里用固定间隔轮询后端。
 
 ### 5.2 线程和时间线
 
@@ -208,19 +228,22 @@ egui 当前帧的可见投影
 | NativeStream 事件通道 | 128 | 保持现有契约，生产端异步等待容量 |
 | UI 待应用事件 | 256 | 每帧最多应用一批，超时则留到下一帧 |
 | 单个 delta 进入 UI 的字节数 | 64 KiB | 更大内容切块，保持顺序 |
-| 每帧流式刷新间隔 | 16–33 ms | 底部跟随时请求重绘；上滚时降低刷新频率 |
+| 事件合并窗口 | ≤16 ms（可选） | 由事件唤醒驱动；禁止用固定 repaint 定时器制造帧 |
+| 事件到帧延迟 | p95 ≤1 帧 | 60 Hz 约 16.7 ms，30 Hz 约 33 ms；超预算先查帧成本和队列 |
+| 空闲唤醒 | worker 0 次/秒；UI 0 帧/秒 | 允许 ≤1 Hz 时钟兜底；后台事件不得等用户输入 |
 | 初始用户轮次 | 50 | 更早历史按游标加载 |
 | 工作过程页 | 100 项 | 向前/向后分页，不做全量展开 |
 | 可见消息缓存 | 由 viewport + 预算控制 | 完成块稳定，淘汰不可见的装饰性布局缓存 |
 | 单次文件选择 | 文件数、总字节数双限额 | 超限逐项报错，不能无限堆积 inbox |
 
-事件队列满时不能静默丢字。可以丢弃重复的 repaint 请求或合并同一稳定 ID 的相邻 delta，但必须保留文本顺序、终态、错误和游标；无法合并时暂停读取并回压后端。
+事件队列满时不能静默丢字。可以丢弃/合并重复的 repaint 请求，或合并同一稳定 ID 的相邻 delta，但必须保留文本顺序、终态、错误和游标；无法合并时暂停读取并回压后端。唤醒可以合并，事件不能。
 
 ### 5.4 虚拟化与 Markdown
 
 egui 的 immediate mode 不等于必须重建全部历史。聊天区使用按消息块组织的可见窗口：
 
 - 维护消息块高度估计和滚动锚点；只绘制 viewport 附近的块。
+- 每帧不得复制完整 turn 列表；绘制借用稳定投影，只有活动尾块允许更新，完成块使用 `Arc`/共享字符串。
 - 活动尾块允许重新计算布局，已完成块的高度和布局缓存保持稳定。
 - 上滚查看历史时禁止自动跳底；用户回到底部后才恢复跟随。
 - Markdown 只实现段落、换行、列表、代码块和安全链接的最低集合；图片、表格、复杂 HTML、公式和高亮降级为可读文本或占位提示。
@@ -330,7 +353,9 @@ egui 的 immediate mode 不等于必须重建全部历史。聊天区使用按�
 ### 9.1 UI 线程规则
 
 - UI 线程不做网络读取、SQLite、文件扫描、终端 IO、完整 Markdown 解析或大对象复制。
-- 每帧只应用有界事件批次；空闲帧不轮询忙等，只有待处理事件、动画或输入时请求 repaint。
+- 唯一帧源：帧只由输入、动画或后端唤醒触发；空闲时 worker 与 UI 都不空转。禁止用 `request_repaint_after(16 ms)` 的固定节拍驱动流式输出，`busy` 状态本身不是重绘理由。
+- worker 发送事件后调用 `egui::Context::request_repaint()`；唤醒只表示有事件可读，不携带业务数据。没有活跃 stream/watch 时 worker 阻塞 `recv()`，不做 16 ms 空转。
+- 每帧只应用有界事件批次；同一帧内的重复唤醒由 egui 合并，文本 delta 可合并，终态/错误/游标不可丢。
 - 不按 token 重建消息列表；按帧合并 delta，只更新活动尾块。
 - 不为每次状态更新复制完整历史；reducer 以稳定 ID 增量替换，完成块使用 `Arc`/共享字符串或不可变快照。
 - 所有事件、附件、分页、渲染缓存、重连重试和日志都有上限；上限触发时显示可理解的错误或分页入口。
@@ -343,8 +368,11 @@ egui 的 immediate mode 不等于必须重建全部历史。聊天区使用按�
 | --- | --- |
 | Native 首帧可见 | 正常机器 1000 ms 内；后台初始化不阻塞首帧 |
 | Native UI 接线完成 | 1000 ms 内，失败必须显式显示 |
-| 空闲帧 | 无持续忙等；无输入时不维持高频 repaint |
-| 流式跟手 | 16–33 ms 合并一批；滚动和输入不被阻塞 |
+| 空闲帧 | 无固定 repaint；无输入、无事件、无动画时为 0 帧 |
+| 空闲唤醒 | worker 0 次/秒；UI 允许 ≤1 Hz 时钟兜底 |
+| 事件到帧 | p95 ≤1 帧（60 Hz 16.7 ms；30 Hz 33 ms） |
+| 后台事件空闲可见 | 入队后 1 帧内；不得等用户输入 |
+| 流式跟手 | 事件驱动合并，≤1 帧可见；无新事件时不因 busy 固定 60 fps；滚动和输入不被阻塞 |
 | 普通历史滚动 | 60 FPS 优先，旧硬件允许以 30 FPS 为下限 |
 | 长线程 | 打开和滚动只读取可见/分页窗口，不随总 item 数线性复制 |
 | WASM 首屏 | 记录下载、编译、canvas ready、首个可交互帧四段时间；不得把 wasm 下载时间伪装成 UI 帧耗时 |
@@ -352,7 +380,7 @@ egui 的 immediate mode 不等于必须重建全部历史。聊天区使用按�
 
 ### 9.3 可观测性
 
-`perf.rs` 记录启动阶段、每帧 UI/布局/绘制耗时、事件队列长度、delta 合并字节数、可见消息数、重连次数、历史页大小和 WASM backend（WebGPU/WebGL2）。默认不记录正文、密钥、真实用户标识或绝对路径。`perf_probe` 输出机器可读 JSON，截图和报告只使用 fixture 数据。
+`perf.rs` 记录启动阶段、每帧 UI/布局/绘制耗时、事件队列长度、delta 合并字节数、可见消息数、重连次数、历史页大小和 WASM backend（WebGPU/WebGL2），并单独记录 `wake_count`、`repaint_count`、`event_to_frame_ms`（p50/p95）、`idle_wakeups`、`queue_depth` 与 `dropped_events`（必须为 0）。默认不记录正文、密钥、真实用户标识或绝对路径。`perf_probe` 输出机器可读 JSON，截图和报告只使用 fixture 数据。
 
 ## 10. 分阶段实施
 
@@ -364,6 +392,15 @@ egui 的 immediate mode 不等于必须重建全部历史。聊天区使用按�
 4. 加入 `ui_shot`、`perf_probe`、projection/reducer 单测和首张基线截图。
 
 出口：native 与 wasm `cargo check` 通过，fixture 可截图，主题和窗口缩放在桌面/浏览器都稳定。
+
+### P0.5：事件驱动实时底座（P1 前置门槛）
+
+1. `BackendPort` 注册 waker（`egui::Context::request_repaint`）；worker 每批事件入队后唤醒 UI，UI 只在唤醒帧内 drain。
+2. worker 无活跃 stream/watch 时阻塞 `recv()`；活跃流按 ≤1 帧合并并唤醒，去掉 16 ms 空转和 UI 忙时的 16 ms 定时 repaint。
+3. UI 每帧只 drain 一次；删除 `request_repaint_after(16/120 ms)` 驱动的轮询，保留启动兜底和 UI 动画的显式 repaint。
+4. 接入 `perf.rs` 的 wake/repaint/event→frame/idle 计数与自动化回归；空闲注入后台事件必须在 1 帧内可见，快速 delta 不丢字、不乱序、终态最后到达。
+
+出口：E-01–E-05 通过；空闲 worker 0 次/秒唤醒、UI 无固定帧；后台事件 1 帧内可见；队列有界且 `dropped_events = 0`。未通过不得进入 P1 原生聊天验收。
 
 ### P1：原生聊天工作台
 
@@ -410,6 +447,7 @@ egui 的 immediate mode 不等于必须重建全部历史。聊天区使用按�
 ### 11.2 纯逻辑回归
 
 - 事件 ID、游标和重连重放幂等；重复 delta 不重复显示，晚到旧线程事件被拒绝。
+- 唤醒合并与事件顺序无关：同一批事件无论触发几次 repaint，drain 结果、reducer 终态和游标必须一致；空闲后台事件不得依赖用户输入才被消费。
 - 用户轮次/模型轮次/工具调用/子智能体卡顺序与现有 NativeDesktop 投影一致。
 - 取消、排队、失败、服务端重同步和窗口关闭都能收敛到终态。
 - 分页边界、空线程、长文本、控制字符、畸形 Markdown 和超限附件不会 panic 或无界分配。
@@ -423,6 +461,8 @@ egui 的 immediate mode 不等于必须重建全部历史。聊天区使用按�
 ### 11.4 性能与资源
 
 - 1、100、1000 个用户轮次和大量工具项分别测打开、滚动、流式和切换线程。
+- 事件驱动：连续空闲 60 秒记录 worker 唤醒次数/秒、UI 帧数/秒；注入后台事件测入队到绘制延迟（p95 ≤1 帧）；忙时无新事件时不得维持固定 60 fps。
+- 快速 delta + 慢消费者：队列峰值有界、文本无丢字/乱序、终态和错误最后到达，`dropped_events = 0`；重复唤醒被合并。
 - 快速 delta、慢网络、断线重连、窗口连续缩放和高频终端输出测事件队列峰值与 UI 帧时间。
 - 关闭窗口、切换线程和刷新页面后检查 worker、WebSocket、租约、文件句柄、GPU 纹理和 WASM inbox 是否释放。
 - 报告首帧、可交互、队列峰值、内存峰值和产物体积；不能只报告平均帧率。
@@ -431,7 +471,8 @@ egui 的 immediate mode 不等于必须重建全部历史。聊天区使用按�
 
 | 决策项 | 必须达到 |
 | --- | --- |
-| 蛹核心聊天替代 Slint | 核心路径功能一致；线程租约/取消/重连无回归；首帧与流式预算达标；中文输入和复制通过 |
+| 事件驱动实时底座 | 空闲 worker 0 次/秒唤醒、UI 无固定帧；后台事件 1 帧内可见；事件到帧 p95 ≤1 帧；`dropped_events = 0` |
+| 蛹核心聊天替代 Slint | 核心路径功能一致；事件驱动实时性达标；线程租约/取消/重连无回归；首帧与流式预算达标；中文输入和复制通过 |
 | 蛹默认前端替换 | P1–P4 目标平台冒烟通过；终端、文件、设置等声明支持的能力有等价路径；Win7 失败组合明确降级 |
 | 蜂巢用户工作台替换 | RemoteBackend 覆盖 bootstrap、分页、WS、附件、刷新/断线；WebGPU/WebGL2 均可用；浏览器存储受限时仍可工作 |
 | 保留 Slint | 任一关键门槛未达标，尤其是 Win7、IME、辅助功能、长线程或首帧；两者共享后端，不继续复制业务逻辑 |
@@ -511,6 +552,7 @@ try {
 | 范围 | 当前状态 |
 | --- | --- |
 | 原生运行时 | 默认启动通过有界后台 worker 调用 `NativeDesktop`；线程列表、打开、有限历史、流式文本、工具摘要和停止已有命令/事件通路 |
+| 事件驱动与实时性 | 结构项已落地（P0.5）：worker 用 `tokio::select!` 同时等待命令、聊天流和线程观察，空闲阻塞；事件入队后由 `EventSink` 合并唤醒 `request_repaint`；UI 每帧一次有界 drain，满队列先唤醒再回压；空闲不排帧，启动/运行只保留 1 Hz 时钟回退。E-04 可见窗口虚拟化与空闲 60 s 实机采样仍待补 |
 | 共享聊天视图 | 已实现二栏壳体、时间线、折叠过程、基础 Markdown、完整原文复制和输入区；发送键包含输入法确认保护 |
 | 设置浮窗 | 已呈现 11 个分类的页面、导航、搜索、关闭及部分临时选项；尚未接入设置 façade 的读取、校验、保存和持久化 |
 | 线程与工作目录 | 原生侧栏已通过有界后台调用 `NativeDesktop` 完成新建、重命名、归档和本地目录的受限读取、新建、刷新、系统打开；线程悬停操作带、右键菜单和路径校验对齐 Slint。文件重命名、删除、引用和预览仍待接入。 |
@@ -528,4 +570,20 @@ try {
 
 Win7 兼容修复已接入 `builders/build-win7-egui.ps1` 和 `build.bat -Egui -a win7-x86`：使用 32 位 Win7 GNU target 重编标准库，并在发布阶段执行与 Slint 相同的 PE 导入门禁。此前主机 egui 产物直接导入 `bcryptprimitives.dll!ProcessPrng`、`api-ms-win-core-synch-l1-2-0.dll!WaitOnAddress` 等 Win7 不可用接口；不能通过复制 DLL 解决。`arboard` 的 `PathCchStripPrefix` 也会静态引入 Win8 的 `api-ms-win-core-path-l1-1-0.dll`，因此已由仓库内补丁改为等价的 UTF-16 前缀处理，保留文件拖放剪贴板路径。2026-10-19 的完整离线 release 已通过 i386 与禁止导入门禁，并生成 `target/wunder-egui/dist/win7-x86/wunder-egui-0.1.0-win7-x86.exe` 及 `imports.txt`；Win7 真机图形、中文输入、HTTPS 与聊天冒烟仍需完成，故暂不宣称 Win7 已支持。
 
-下一步优先补齐真实设置 façade、新建线程与工作目录读取，再实现 WASM 远程适配器。同时建立固定截图的自动差异阈值，补测长线程、流式响应、事件队列峰值、内存和首帧。达到第 12 节门槛后，再决定是否切换默认前端。
+P0.5 的事件驱动结构项已于 2026-10-21 完成（唤醒、worker 阻塞等待、帧内合并和可观测计数）；下一步补 E-04 可见窗口虚拟化与帧耗基准、空闲 60 s 实机采样脚本，再补齐真实设置 façade、新建线程与工作目录读取，最后实现 WASM 远程适配器。同时建立固定截图的自动差异阈值，补测长线程、流式响应、事件队列峰值、内存和首帧。达到第 12 节门槛后，再决定是否切换默认前端。
+
+### 15.5 事件驱动改造清单（P0.5）
+
+改造前是“事件队列 + 定时轮询”。2026-10-21 已按表完成 E-01–E-03、E-05 以及 E-04 的去全量 clone；下表保留缺口与目标的对应关系：
+
+| 编号 | 缺口 | 现状 | 目标 |
+| --- | --- | --- | --- |
+| E-01 | 跨线程唤醒 | `BackendPort::wake` 为空实现，worker 入队事件后不通知 UI | worker 每批事件后调用 `egui::Context::request_repaint`；唤醒可合并，事件不可丢 |
+| E-02 | 固定节拍 | UI 忙时 `request_repaint_after(16 ms)`、空闲不排帧；worker `recv_timeout(16 ms)` 永久空转 | 无事件/输入/动画时不重绘；worker 空闲阻塞 `recv()`；活跃流按 ≤1 帧合并并唤醒 |
+| E-03 | 帧内合并 | 文本在 worker 侧按 16 ms flush，UI 再按 16 ms 拉取，两个节拍互相打架 | UI 每帧一次 drain，批量应用；delta 可合并，终态/错误/游标不可丢 |
+| E-04 | 帧成本 | `draw_message_body` 每帧 clone 每个 turn；消息列表未虚拟化 | 本批至少去掉每帧全量 clone；可见窗口虚拟化分批推进；长线程帧预算不随历史线性增长 |
+| E-05 | 可观测/门禁 | 无 wake、repaint、event→frame、idle 计数 | `perf.rs` 输出计数与 p95；自动化回归覆盖空闲后台事件 1 帧内可见、空闲 0 唤醒、快速 delta 无丢字 |
+
+出口：E-01–E-03 必过，E-04/E-05 同批完成；不满足不进入 P1 原生聊天验收。
+
+2026-10-21 实施结果：E-01 由 `EventSink` 在事件入队后置唤醒位、worker 循环顶合并调用 `request_repaint`，UI 删除忙时 16 ms 与事件后 120 ms 轮询；E-02 改为 `tokio::select!` 等待命令、`NativeStream::recv` 和 `NativeThreadWatch::recv`，删除 worker 16 ms 空转与 delta flush；E-03 每帧一次 `drain(256)` 并在 reducer 前合并相邻同线程 delta，满队列走“先唤醒再阻塞”的回压路径；E-04 `draw_message_body` 改为借用遍历并延后过程分页请求，虚拟化待推进；E-05 `perf.rs` 输出 frames、wakes、dropped、queue_depth、peak_queue_depth 和 event→frame p95。回归覆盖空闲 0 排帧、运行期 1 Hz 回退、drain 饱和续帧、帧内 delta 合并、唤醒合并与满队列先唤醒。本轮 `cargo test -p wunder-egui --lib --features native` 188 项通过，`cargo clippy -p wunder-egui --no-deps --all-targets --no-default-features --features native -- -D warnings` 与 WASM `cargo check` 均通过；真实窗口的后台事件到屏延迟和空闲 60 s 采样仍需实机补测。

@@ -1,6 +1,152 @@
 //! Shared view projections for live data and the in-memory preview.
 use crate::{AgentCard, MainWindow, ModelCard};
 use slint::{ComponentHandle, Model};
+use std::cell::RefCell;
+
+/// The one unsaved new-model row. The catalogue keeps the row visible while
+/// the user inspects other models; the editor drafts travel with it and are
+/// restored when the row is selected again.
+pub(crate) struct ModelDraft {
+    /// Catalogue identity (the temporary "新模型" key), which stays stable
+    /// even while the user edits the config key field.
+    pub(crate) row_key: String,
+    /// Latest editor drafts, with `key` holding the user-typed config key.
+    pub(crate) card: ModelCard,
+}
+
+thread_local! {
+    static MODEL_DRAFT: RefCell<Option<ModelDraft>> = const { RefCell::new(None) };
+}
+
+pub(crate) fn model_draft_row_key() -> Option<String> {
+    MODEL_DRAFT.with(|slot| slot.borrow().as_ref().map(|draft| draft.row_key.clone()))
+}
+
+pub(crate) fn clear_model_draft() {
+    MODEL_DRAFT.with(|slot| {
+        slot.borrow_mut().take();
+    });
+}
+
+/// Snapshot the editor drafts of the unsaved row: write the projection back
+/// into its catalogue entry so the list reflects the edits, and park the full
+/// draft until the row is selected again.
+pub(crate) fn stash_model_draft(app: &MainWindow) -> bool {
+    if !app.get_model_creating() {
+        return false;
+    }
+    let Some(index) = usize::try_from(app.get_selected_model()).ok() else {
+        return false;
+    };
+    let Some(row) = app.get_models().row_data(index) else {
+        return false;
+    };
+    let row_key = row.key.to_string();
+    let card = draft_model_card(app, &row_key);
+    let mut row_card = card.clone();
+    row_card.key = row_key.clone().into();
+    let mut rows: Vec<ModelCard> = app.get_models().iter().collect();
+    if index < rows.len() {
+        rows[index] = row_card;
+    }
+    crate::native_pages::model_catalogue().set(app, rows);
+    MODEL_DRAFT.with(|slot| {
+        *slot.borrow_mut() = Some(ModelDraft { row_key, card });
+    });
+    true
+}
+
+/// Re-apply a parked draft when its catalogue row is selected. The row keeps
+/// its temporary key as the selection identity; the typed config key returns
+/// to the key field.
+pub(crate) fn restore_model_draft(app: &MainWindow, row_index: i32, row_key: &str) -> bool {
+    let matches = MODEL_DRAFT.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .is_some_and(|draft| draft.row_key == row_key)
+    });
+    if !matches {
+        return false;
+    }
+    let card = MODEL_DRAFT.with(|slot| slot.borrow().as_ref().map(|draft| draft.card.clone()));
+    let Some(card) = card else {
+        return false;
+    };
+    apply_model_with_creation_state(app, card, true);
+    app.set_settings_model_key(row_key.into());
+    app.set_selected_model(row_index);
+    true
+}
+
+/// Re-insert the parked draft row after a catalogue rebuild, so a settings
+/// refresh cannot silently drop the unsaved model.
+pub(crate) fn model_draft_row() -> Option<ModelCard> {
+    MODEL_DRAFT.with(|slot| {
+        slot.borrow().as_ref().map(|draft| {
+            let mut row = draft.card.clone();
+            row.key = draft.row_key.clone().into();
+            row
+        })
+    })
+}
+
+/// The editor drafts projected onto a card. `fallback_key` keeps the list
+/// identity when the key field is blank.
+fn draft_model_card(app: &MainWindow, fallback_key: &str) -> ModelCard {
+    let key = app.get_model_key_draft().trim().to_string();
+    ModelCard {
+        key: if key.is_empty() {
+            fallback_key.into()
+        } else {
+            key.into()
+        },
+        provider: app.get_model_provider_draft(),
+        model: app.get_model_name_draft(),
+        base_url: app.get_model_base_url_draft(),
+        model_type: app.get_model_type_draft(),
+        is_default: false,
+        is_cloud: false,
+        temperature: app.get_model_temperature_draft(),
+        timeout_s: app.get_model_timeout_draft(),
+        max_output: app.get_model_max_output_draft(),
+        thinking_token_budget: app.get_model_thinking_budget_draft(),
+        max_rounds: app.get_model_max_rounds_draft(),
+        max_context: app.get_model_max_context_draft(),
+        history_compaction_ratio: app.get_model_history_compaction_ratio_draft(),
+        reasoning_effort: app.get_model_reasoning_effort_draft(),
+        simulation_speed: app.get_model_simulation_speed_draft(),
+        support_vision: app.get_model_support_vision_draft(),
+        support_hearing: app.get_model_support_hearing_draft(),
+        stream_include_usage: app.get_model_stream_include_usage_draft(),
+        tool_call_mode: app.get_model_tool_call_mode_draft(),
+        tts_voice: app.get_model_tts_voice_draft(),
+        tts_response_format: app.get_model_tts_format_draft(),
+        tts_speed: app.get_model_tts_speed_draft(),
+        tts_instructions: app.get_model_tts_instructions_draft(),
+        asr_language: app.get_model_asr_language_draft(),
+        asr_response_format: app.get_model_asr_format_draft(),
+        asr_temperature: app.get_model_asr_temperature_draft(),
+        asr_prompt: app.get_model_asr_prompt_draft(),
+        image_size: app.get_model_image_size_draft(),
+        image_output_format: app.get_model_image_format_draft(),
+        image_steps: app.get_model_image_steps_draft(),
+        image_guidance_scale: app.get_model_image_guidance_draft(),
+        image_negative_prompt: app.get_model_image_negative_draft(),
+        video_size: app.get_model_video_size_draft(),
+        video_seconds: app.get_model_video_seconds_draft(),
+        video_fps: app.get_model_video_fps_draft(),
+        video_num_frames: app.get_model_video_num_frames_draft(),
+        video_negative_prompt: app.get_model_video_negative_draft(),
+        video_steps: app.get_model_video_steps_draft(),
+        video_guidance_scale: app.get_model_video_guidance_scale_draft(),
+        video_guidance_scale_2: app.get_model_video_guidance_scale_2_draft(),
+        video_boundary_ratio: app.get_model_video_boundary_ratio_draft(),
+        video_flow_shift: app.get_model_video_flow_shift_draft(),
+        video_frame_interpolation: app.get_model_video_frame_interpolation_draft(),
+        video_sync_mode: app.get_model_video_sync_mode_draft(),
+        ..Default::default()
+    }
+}
 
 pub fn bind_selection(app: &MainWindow) {
     let weak = app.as_weak();
@@ -45,29 +191,17 @@ pub fn bind_selection(app: &MainWindow) {
         else {
             return;
         };
-        // A newly added model is projected immediately so the left list gives
-        // instant feedback. Selecting another row abandons that unsaved row;
-        // remove it before applying the requested persisted model.
-        if app.get_model_creating() && index != app.get_selected_model() {
-            let draft_index = usize::try_from(app.get_selected_model()).ok();
-            let models = app
-                .get_models()
-                .iter()
-                .enumerate()
-                .filter(|(row_index, _)| Some(*row_index) != draft_index)
-                .map(|(_, entry)| entry)
-                .collect::<Vec<_>>();
-            crate::native_pages::model_catalogue().set(&app, models);
-            app.set_model_creating(false);
-            let Some(target_index) = app
-                .get_models()
-                .iter()
-                .position(|entry| entry.key == model.key)
-            else {
+        if app.get_model_creating() {
+            // Re-selecting the draft row keeps its live edits.
+            if index == app.get_selected_model() {
                 return;
-            };
-            app.set_selected_model(target_index as i32);
-            apply_model(&app, model);
+            }
+            // Park the unsaved row with its drafts instead of discarding it;
+            // selecting it again restores the configuration.
+            stash_model_draft(&app);
+            app.set_model_creating(false);
+        }
+        if restore_model_draft(&app, index, model.key.as_str()) {
             return;
         }
         app.set_selected_model(index);

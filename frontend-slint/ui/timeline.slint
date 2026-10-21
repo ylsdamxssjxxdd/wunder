@@ -535,15 +535,13 @@ component ProcessBar inherits Rectangle {
     callback copy-text(string);
     callback open-resource(string);
     // During a live turn the current work is the visible tail of the
-    // conversation. Keep it unfolded while running; once the turn settles,
-    // the normal user-controlled fold state takes over again.
-    // Visibility is the structural signal. Depending on a nested model's
-    // length here makes the first insert wait for Slint to propagate a child
-    // model notification through the parent row; the bar itself is already
-    // marked visible by the reducer in the same frame as that insert.
-    private property <bool> show-live-entries: root.data.status-kind == 1 && root.data.visible;
+    // conversation and starts unfolded: the reducer stamps the bar's `open`
+    // when it first reveals the process. After that `open` is the single source
+    // of truth for the fold, so the bar handle collapses and expands at any
+    // time, live or settled. (Visibility alone used to force a running process
+    // open, which made the handle inert until the turn finished.)
     // One step heavier than a batch bar: it owns a whole turn's process.
-    height: root.data.open || root.show-live-entries ? 40px + process-body.height : 34px;
+    height: root.data.open ? 40px + process-body.height : 34px;
     border-radius: Theme.radius-tag;
     // Keep the work-process row calm while the pointer moves across it. The
     // affordance is the small left control, matching the compact web header.
@@ -582,7 +580,7 @@ component ProcessBar inherits Rectangle {
                 width: 12px; height: 12px;
                 source: @image-url("../assets/icons/disclosure.svg");
                 colorize: Theme.muted; image-fit: contain;
-                transform-rotation: root.data.open || root.show-live-entries ? 90deg : 0deg;
+                transform-rotation: root.data.open ? 90deg : 0deg;
             }
             process-hit := TouchArea {
                 mouse-cursor: pointer;
@@ -607,7 +605,7 @@ component ProcessBar inherits Rectangle {
         }
     }
     process-body := ToolProcess {
-        visible: root.data.open || root.show-live-entries;
+        visible: root.data.open;
         x: 0px; y: 34px;
         width: parent.width;
         viewport-limit: root.process-height;
@@ -620,7 +618,7 @@ component ProcessBar inherits Rectangle {
         loading: root.data.process-loading;
         failed: root.data.process-error;
         revision: root.data.process-revision;
-        active: (root.data.open || root.show-live-entries) && root.data.process-root != "" && !root.data.process-local;
+        active: (root.data.open) && root.data.process-root != "" && !root.data.process-local;
         live: root.data.status-kind == 1;
         page(direction) => { root.process-page(root.data.payload, direction); }
         toggle(index) => { root.toggle(index); }
@@ -811,6 +809,8 @@ export component TimelineView inherits Rectangle {
     // Live scroll offset of the timeline viewport, published for the native
     // smoke checks (they assert the position holds while the user reads back).
     out property <length> scroll-y: rows-scroll.content-y;
+    callback load-older();
+    private property <bool> older-requested: false;
     callback toggle(int);
     callback process-page(int, int);
     callback copy-text(string);
@@ -879,6 +879,11 @@ export component TimelineView inherits Rectangle {
         }
     }
     changed transcript-height => {
+        // Prepending an older page changes the transcript height while the
+        // viewport remains at its top edge. The preceding request is now
+        // settled, so permit the next intentional upward scroll to request
+        // one more bounded page.
+        root.older-requested = false;
         if root.follow-output {
             root.follow-passes = 2;
             root.follow-pending = true;
@@ -938,6 +943,13 @@ export component TimelineView inherits Rectangle {
         }
         scrolled => {
             root.follow-output = self.visible-height - self.content-height - self.content-y >= -32px;
+            if self.content-y >= -8px && !root.loading && root.rows.length > 0 && !root.older-requested {
+                root.older-requested = true;
+                root.load-older();
+            }
+            if self.content-y < -24px {
+                root.older-requested = false;
+            }
         }
     }
     // ---- turn ruler (right edge): compact locator ticks sit around the

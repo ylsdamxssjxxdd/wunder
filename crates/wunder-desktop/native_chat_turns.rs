@@ -72,14 +72,27 @@ pub fn load_turn_headers(
     user: &str,
     session: &str,
 ) -> Result<Vec<NativeChatTurn>> {
+    let (turns, _, _) = load_turn_header_page(state, user, session, None)?;
+    Ok(turns)
+}
+
+/// One bounded, chronological display page. `before` is the exclusive user
+/// round of the oldest page already retained by the client.
+pub fn load_turn_header_page(
+    state: &wunder_server::state::AppState,
+    user: &str,
+    session: &str,
+    before: Option<i64>,
+) -> Result<(Vec<NativeChatTurn>, Option<i64>, bool)> {
     let page = state
         .storage
-        .thread_view_page(user, session, "chat", None, 50)?;
-    Ok(page
+        .thread_view_page(user, session, "chat", before, 12)?;
+    let turns = page
         .chat
         .iter()
         .filter_map(|chat| load_turn_header(&*state.storage, user, session, chat))
-        .collect::<Vec<_>>())
+        .collect::<Vec<_>>();
+    Ok((turns, page.next_before, page.has_more))
 }
 
 /// One model round of an assistant turn.
@@ -102,6 +115,14 @@ pub struct NativeChatRound {
 impl NativeDesktop {
     pub fn load_chat_turns(&self, session: &str) -> Result<Vec<NativeChatTurn>> {
         load_turns(self.state(), self.user_id(), session)
+    }
+
+    pub fn load_chat_history_page(
+        &self,
+        session: &str,
+        before: i64,
+    ) -> Result<(Vec<NativeChatTurn>, Option<i64>, bool)> {
+        load_turn_header_page(self.state(), self.user_id(), session, Some(before))
     }
 }
 

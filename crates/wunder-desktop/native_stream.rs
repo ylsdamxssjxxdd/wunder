@@ -1,5 +1,5 @@
 //! Bounded asynchronous delivery; dropping a subscriber never cancels a settled turn.
-use super::NativeChatInput;
+use super::{NativeChatInput, ThreadLeaseHeartbeat};
 use anyhow::{anyhow, Result};
 use futures::StreamExt;
 use serde_json::{json, Value};
@@ -43,6 +43,21 @@ impl NativeStream {
         }
     }
 
+    /// Await the next stream event. The egui worker selects this with its
+    /// command queue, so an active stream wakes the worker instead of being
+    /// polled on a timer.
+    pub async fn recv(&mut self) -> Option<NativeChatEvent> {
+        self.receiver.recv().await
+    }
+
+    /// Block a non-UI worker until the next event or stream close. This is
+    /// used only while settling an explicitly cancelled submission: draining
+    /// keeps the bounded producer moving until it has observed cancellation
+    /// and released the session-wide execution fence.
+    pub fn blocking_recv(&mut self) -> Option<NativeChatEvent> {
+        self.receiver.blocking_recv()
+    }
+
     pub fn pending_events(&self) -> usize {
         self.receiver.len()
     }
@@ -54,11 +69,16 @@ pub(super) fn start(
     user: String,
     input: NativeChatInput,
     lease_proof: Value,
+    heartbeat: ThreadLeaseHeartbeat,
 ) -> NativeStream {
     let (output, receiver) = mpsc::channel(CAPACITY);
     let cancel = CancellationToken::new();
     let token = cancel.clone();
     runtime.spawn(async move {
+        // Keep the desktop open-thread lease alive through queued hand-off,
+        // generation and durable settlement. Dropping this task releases the
+        // guard and returns the lease worker to a blocking idle wait.
+        let _heartbeat = heartbeat;
         let result = run(state, user, input, lease_proof, &output, &token).await;
         if let Err(error) = result {
             tracing::warn!(%error, "native chat failed");

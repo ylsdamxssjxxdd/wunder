@@ -36,6 +36,10 @@ const TASK_STATUS_FAILED: &str = "failed";
 const TASK_STATUS_RETRY: &str = "retry";
 const TASK_STATUS_CANCELLED: &str = "cancelled";
 const TASK_STATUS_DEAD: &str = "dead";
+/// Local submissions and settlements wake the dispatcher directly. This is
+/// only the cross-process recovery backstop, so an empty local queue must not
+/// reread SQLite several times per second on an idle desktop.
+const IDLE_QUEUE_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
 
 #[derive(Debug, Clone)]
 pub struct QueueInfo {
@@ -323,7 +327,7 @@ impl ThreadRuntime {
             let admitted = self
                 .orchestrator
                 .goal_handle()
-                .admit_round(&storage, &user_id, &session_id, tag)
+                .admit_round_while_controlled(&storage, &user_id, &session_id, tag)
                 .await
                 .unwrap_or(false);
             if !admitted {
@@ -1396,11 +1400,15 @@ impl ThreadRuntime {
             return;
         };
         let mut database_failures = 0_u32;
+        // The first scan recovers tasks left by a crashed local process. Once
+        // it finds no work, normal local transitions use `queue_tx` and the
+        // timed scan becomes only a cross-process safety net.
+        let mut next_poll = None;
         loop {
             let config = self.config_store.get().await;
             let poll_interval = config.agent_queue.poll_interval_ms.max(200);
             let retry_interval = if database_failures == 0 {
-                std::time::Duration::from_millis(poll_interval)
+                next_poll.unwrap_or_else(|| std::time::Duration::from_millis(poll_interval))
             } else {
                 database_retry_delay(poll_interval, database_failures)
             };
@@ -1413,9 +1421,20 @@ impl ThreadRuntime {
                 },
             }
             match self.process_pending_tasks().await {
-                Ok(()) => database_failures = 0,
+                Ok(next_due) => {
+                    database_failures = 0;
+                    next_poll = Some(match next_due {
+                        Some(deadline) => {
+                            std::time::Duration::from_secs_f64((deadline - now_ts()).max(0.0))
+                                .max(std::time::Duration::from_millis(poll_interval))
+                                .min(IDLE_QUEUE_POLL_INTERVAL)
+                        }
+                        None => IDLE_QUEUE_POLL_INTERVAL,
+                    });
+                }
                 Err(err) => {
                     database_failures = database_failures.saturating_add(1);
+                    next_poll = None;
                     warn!(
                         "agent queue database unavailable; retrying in {}ms: {err:#}",
                         database_retry_delay(poll_interval, database_failures).as_millis()
@@ -1425,7 +1444,10 @@ impl ThreadRuntime {
         }
     }
 
-    async fn process_pending_tasks(&self) -> Result<()> {
+    /// Returns the next retry deadline, or no deadline for an empty queue.
+    /// Due tasks retain the normal short cadence; future retries sleep until
+    /// their deadline and local admissions always wake the dispatcher.
+    async fn process_pending_tasks(&self) -> Result<Option<f64>> {
         let pending = {
             let store = self.user_store.clone();
             match blocking::run_db("runtime.thread.list_pending_tasks", move || {
@@ -1442,6 +1464,14 @@ impl ThreadRuntime {
                 }
             }
         };
+        if pending.is_empty() {
+            self.resume_suspended_tasks().await;
+            let storage = self.user_store.storage_backend().clone();
+            return blocking::run_db("runtime.thread.next_retry", move || {
+                storage.next_agent_task_retry_at()
+            })
+            .await;
+        }
         let total_pending = self.count_all_pending_tasks().await;
         for task in &pending {
             self.emit_queue_update(task, total_pending).await;
@@ -1490,7 +1520,7 @@ impl ThreadRuntime {
             });
         }
         self.resume_suspended_tasks().await;
-        Ok(())
+        Ok(Some(now_ts()))
     }
 
     async fn should_attempt_task(&self, task: &AgentTaskRecord) -> Option<SessionLease> {

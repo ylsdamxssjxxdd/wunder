@@ -1,19 +1,29 @@
 //! Passive native updates are independent of locally submitted executions.
 use super::*;
-use wunder_desktop::native::{NativeChatTurn, NativeThreadUpdate, NativeThreadWatch};
+use wunder_desktop::native::{
+    NativeChatTurn, NativeThreadUpdate, NativeThreadWatch, NativeThreadWatchCancel,
+};
 use wunder_server::stable_core::thread_view::ChatViewRow;
 
-#[derive(Default)]
 pub(super) struct Observation {
-    timer: Timer,
     session: String,
-    watch: Option<NativeThreadWatch>,
+    /// Worker-to-UI delivery stays bounded.  A worker blocks on the native
+    /// receiver and wakes Slint only when a durable update arrives, instead
+    /// of making the UI poll an empty channel every frame.
+    updates: std::sync::mpsc::Receiver<(u64, NativeThreadUpdate)>,
+    update_sender: std::sync::mpsc::SyncSender<(u64, NativeThreadUpdate)>,
+    watch_cancel: Option<NativeThreadWatchCancel>,
+    forward_generation: u64,
+    /// A bounded forward queue can fill while the UI is blocked in a modal or
+    /// the OS suspends it.  Record only its generation, then rebuild one
+    /// compact snapshot rather than retain an unbounded change backlog.
+    overflow_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
     turns: Vec<NativeChatTurn>,
     /// Durable rows of the history, rebuilt only when a turn actually changes.
     rows: Vec<TimelineRow>,
     list_refreshed: Option<Instant>,
     /// Backoff for a feed that closes immediately. Without this guard a
-    /// broken/closing subscription would spawn one replacement per 33ms UI
+    /// broken/closing subscription would spawn one replacement per UI
     /// frame and turn a transient transport error into an unbounded task
     /// storm.
     watch_retry_at: Option<Instant>,
@@ -21,15 +31,84 @@ pub(super) struct Observation {
     ready: bool,
 }
 
+impl Default for Observation {
+    fn default() -> Self {
+        let (update_sender, updates) = std::sync::mpsc::sync_channel(8);
+        Self {
+            session: String::new(),
+            updates,
+            update_sender,
+            watch_cancel: None,
+            forward_generation: 0,
+            overflow_generation: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(u64::MAX)),
+            turns: Vec::new(),
+            rows: Vec::new(),
+            list_refreshed: None,
+            watch_retry_at: None,
+            history_dirty: false,
+            ready: false,
+        }
+    }
+}
+
 impl Observation {
     pub(super) fn detach(&mut self) {
+        if let Some(cancel) = self.watch_cancel.take() {
+            cancel.cancel();
+        }
+        self.forward_generation = self.forward_generation.wrapping_add(1);
+        self.overflow_generation
+            .store(u64::MAX, std::sync::atomic::Ordering::Release);
+        while self.updates.try_recv().is_ok() {}
         self.ready = false;
-        self.watch = None;
         self.session.clear();
         self.turns.clear();
         self.rows.clear();
         self.watch_retry_at = None;
         self.history_dirty = false;
+    }
+
+    fn attach_watch(&mut self, app: &MainWindow, watch: NativeThreadWatch, session: &str) {
+        if let Some(cancel) = self.watch_cancel.take() {
+            cancel.cancel();
+        }
+        self.forward_generation = self.forward_generation.wrapping_add(1);
+        let generation = self.forward_generation;
+        let cancel = watch.cancel_handle();
+        self.watch_cancel = Some(cancel.clone());
+        let sender = self.update_sender.clone();
+        let overflow_generation = self.overflow_generation.clone();
+        let weak = app.as_weak();
+        std::thread::spawn(move || {
+            let mut watch = watch;
+            while !cancel.is_cancelled() {
+                let Some(update) = watch.blocking_recv() else {
+                    break;
+                };
+                // Never wait behind a stopped UI.  If the bounded queue is
+                // full, the next UI wake replaces it with one compact durable
+                // snapshot, so no current state is lost.
+                match sender.try_send((generation, update)) {
+                    Ok(()) => {}
+                    Err(std::sync::mpsc::TrySendError::Full(_)) => {
+                        overflow_generation.store(generation, std::sync::atomic::Ordering::Release);
+                        let _ = weak.upgrade_in_event_loop(move |app| {
+                            app.invoke_native_thread_update_ready();
+                        });
+                        break;
+                    }
+                    Err(std::sync::mpsc::TrySendError::Disconnected(_)) => break,
+                }
+                if cancel.is_cancelled() {
+                    break;
+                }
+                let _ = weak.upgrade_in_event_loop(move |app| {
+                    app.invoke_native_thread_update_ready();
+                });
+            }
+        });
+        self.session = session.to_string();
+        self.watch_retry_at = None;
     }
 
     pub(super) fn is_ready(&self) -> bool {
@@ -44,6 +123,47 @@ impl Observation {
         self.turns = turns;
         self.rows = project_history(&self.turns);
         self.ready = true;
+    }
+
+    pub(super) fn prepend(&mut self, mut turns: Vec<NativeChatTurn>) -> bool {
+        turns.retain(|turn| !self.turns.iter().any(|old| old.root_id == turn.root_id));
+        if turns.is_empty() {
+            return false;
+        }
+        turns.append(&mut self.turns);
+        self.turns = turns;
+        self.turns.sort_by_key(|turn| turn.user.user_round);
+        self.rows = project_history(&self.turns);
+        true
+    }
+
+    /// A watcher reset only carries its bounded newest page. Preserve pages
+    /// that the reader already fetched above it, then refresh overlapping
+    /// roots from the durable source. This lets a reconnect happen at any
+    /// point in an infinite scroll without snapping history back to 12 turns.
+    pub(super) fn merge_reset(&mut self, turns: Vec<NativeChatTurn>) -> bool {
+        let mut changed = false;
+        for turn in turns {
+            match self
+                .turns
+                .iter_mut()
+                .find(|old| old.root_id == turn.root_id)
+            {
+                Some(old) if *old != turn => {
+                    *old = turn;
+                    changed = true;
+                }
+                Some(_) => {}
+                None => {
+                    self.turns.push(turn);
+                    changed = true;
+                }
+            }
+        }
+        if changed {
+            self.turns.sort_by_key(|turn| turn.user.user_round);
+        }
+        changed
     }
 
     /// Remove a withdrawn queue placeholder before the watcher catches up.
@@ -76,269 +196,287 @@ impl Observation {
 pub(super) fn install(app: &MainWindow, state: Rc<RefCell<State>>) {
     let weak = app.as_weak();
     let state_weak = Rc::downgrade(&state);
-    state.borrow().observation.timer.start(
-        TimerMode::Repeated,
-        Duration::from_millis(33),
-        move || {
-            let (Some(app), Some(state)) = (weak.upgrade(), state_weak.upgrade()) else {
-                return;
-            };
-            let mut current = state.borrow_mut();
-            if app.get_cloud_chat_active() {
-                current.observation.detach();
-                return;
+    app.on_native_thread_update_ready(move || {
+        let (Some(app), Some(state)) = (weak.upgrade(), state_weak.upgrade()) else {
+            return;
+        };
+        let mut current = state.borrow_mut();
+        if app.get_cloud_chat_active() {
+            current.observation.detach();
+            return;
+        }
+        // The catalogue is bounded to 100 rows and is the only status
+        // source for threads the selected-thread watcher cannot see:
+        // background runs settle while this window pumps a live turn, and
+        // discovery covers a new channel route. A live turn must not
+        // starve that poll, or every other entry's status marker freezes
+        // until the run finishes.
+        // A running local turn changes the sidebar status several times
+        // per second. Keep the catalogue as a bounded backstop at a
+        // faster cadence while work is active; the direct event
+        // projection remains the primary path for the selected row.
+        let refresh_interval = if current.active.is_some() || !current.parked.is_empty() {
+            Duration::from_millis(500)
+        } else {
+            Duration::from_secs(3)
+        };
+        let refresh = current
+            .observation
+            .list_refreshed
+            .is_none_or(|time| time.elapsed() >= refresh_interval);
+        if refresh {
+            current.observation.list_refreshed = Some(Instant::now());
+        }
+        // Queue rows are a live admission projection too. Keep polling
+        // them while a foreground or parked turn exists so an interject
+        // and its successor are reflected even when the durable turn
+        // watcher has not emitted a new history row yet.
+        let queue_active = current.active.is_some() || !current.parked.is_empty();
+        if queue_active {
+            queue::schedule_due(&mut current.queue_due, Duration::from_millis(500));
+        }
+        let desktop = current.desktop.clone();
+        // Cloned before the observation borrow: the history rows and a live
+        // turn share one model.
+        let timeline = current.timeline.clone();
+        timeline
+            .borrow_mut()
+            .set_markdown_root(crate::native_chat::markdown_root(&app));
+        let session = app.get_active_session_id().to_string();
+        let initial = crate::native_chat::take_initial_history(&session);
+        let overflowed = current
+            .observation
+            .overflow_generation
+            .swap(u64::MAX, std::sync::atomic::Ordering::AcqRel)
+            == current.observation.forward_generation;
+        if overflowed {
+            if let Some(cancel) = current.observation.watch_cancel.take() {
+                cancel.cancel();
             }
-            // The catalogue is bounded to 100 rows and is the only status
-            // source for threads the selected-thread watcher cannot see:
-            // background runs settle while this window pumps a live turn, and
-            // discovery covers a new channel route. A live turn must not
-            // starve that poll, or every other entry's status marker freezes
-            // until the run finishes.
-            // A running local turn changes the sidebar status several times
-            // per second. Keep the catalogue as a bounded backstop at a
-            // faster cadence while work is active; the direct event
-            // projection remains the primary path for the selected row.
-            let refresh_interval = if current.active.is_some() || !current.parked.is_empty() {
-                Duration::from_millis(500)
-            } else {
-                Duration::from_secs(3)
-            };
-            let refresh = current
-                .observation
-                .list_refreshed
-                .is_none_or(|time| time.elapsed() >= refresh_interval);
-            if refresh {
-                current.observation.list_refreshed = Some(Instant::now());
-            }
-            // Queue rows are a live admission projection too. Keep polling
-            // them while a foreground or parked turn exists so an interject
-            // and its successor are reflected even when the durable turn
-            // watcher has not emitted a new history row yet.
-            let queue_active = current.active.is_some() || !current.parked.is_empty();
-            if queue_active {
-                queue::schedule_due(&mut current.queue_due, Duration::from_millis(500));
-            }
-            let desktop = current.desktop.clone();
-            // Cloned before the observation borrow: the history rows and a live
-            // turn share one model.
-            let timeline = current.timeline.clone();
-            timeline
-                .borrow_mut()
-                .set_markdown_root(crate::native_chat::markdown_root(&app));
-            let session = app.get_active_session_id().to_string();
-            let initial = crate::native_chat::take_initial_history(&session);
-            if current.observation.session != session {
-                current.observation.detach();
-                if !session.is_empty() {
-                    // Thread selection acquires its lease and reads the compact
-                    // history on a worker. Do not attach a cold watcher while
-                    // that request is in flight: it would immediately repeat
-                    // both the lease touch and the HDD history read, and then
-                    // consume the worker snapshot too late to use it. An
-                    // opening error clears `session_loading`, which makes the
-                    // next tick attach cold and report watcher errors normally.
-                    if initial.is_none() && app.get_session_loading() {
-                        return;
-                    }
-                    current.observation.session = session.clone();
-                    if let Some((turns, _)) = initial.as_ref() {
-                        // Project the background snapshot immediately. The
-                        // watch still verifies and follows durable changes,
-                        // but the loading overlay can now leave without a
-                        // blank welcome screen between threads.
-                        current.observation.seed(&session, turns.clone());
-                        current.observation.publish(&app, &timeline);
-                        app.set_session_loading(false);
-                    }
-                    // The thread's last published plan and a pending 问询面板
-                    // are durable presentation metadata; both come back with
-                    // the history instead of living only in a live turn. This
-                    // runs once per open, before the watcher is attached.
-                    if let Some((turns, _)) = initial.as_ref() {
-                        crate::native_chat::restore_thread_extras(
-                            &app,
-                            &mut current,
-                            &session,
-                            turns,
-                        );
-                    }
-                    let (turns, cursor) = initial
-                        .map(|(turns, cursor)| (Some(turns), Some(cursor)))
-                        .unwrap_or((None, None));
-                    current.observation.watch =
-                        Some(desktop.watch_chat_with_initial_cursor(&session, turns, cursor));
+            while current.observation.updates.try_recv().is_ok() {}
+        }
+        if current.observation.session != session {
+            current.observation.detach();
+            if !session.is_empty() {
+                // Thread selection acquires its lease and reads the compact
+                // history on a worker. Do not attach a cold watcher while
+                // that request is in flight: it would immediately repeat
+                // both the lease touch and the HDD history read, and then
+                // consume the worker snapshot too late to use it. An
+                // opening error clears `session_loading`, which makes the
+                // next tick attach cold and report watcher errors normally.
+                if initial.is_none() && app.get_session_loading() {
+                    return;
                 }
-            } else if current.observation.watch.is_none()
-                && !session.is_empty()
-                && current
-                    .observation
-                    .watch_retry_at
-                    .is_none_or(|retry| retry <= Instant::now())
-            {
-                // A feed can close transiently while the runtime continues
-                // committing the turn (for example during an interject). Do
-                // not leave the selected thread permanently detached; attach
-                // a fresh bounded watcher on the next UI frame.
-                current.observation.watch =
-                    Some(desktop.watch_chat_with_initial_cursor(&session, None, None));
-                current.observation.watch_retry_at = None;
+                current.observation.session = session.clone();
+                if let Some((turns, _, history_before, history_has_more)) = initial.as_ref() {
+                    // Project the background snapshot immediately. The
+                    // watch still verifies and follows durable changes,
+                    // but the loading overlay can now leave without a
+                    // blank welcome screen between threads.
+                    current.observation.seed(&session, turns.clone());
+                    current.history_before = *history_before;
+                    current.history_has_more = *history_has_more && history_before.is_some();
+                    current.history_loading_older = false;
+                    current.observation.publish(&app, &timeline);
+                    app.set_session_loading(false);
+                }
+                // The thread's last published plan and a pending 问询面板
+                // are durable presentation metadata; both come back with
+                // the history instead of living only in a live turn. This
+                // runs once per open, before the watcher is attached.
+                if let Some((turns, _, _, _)) = initial.as_ref() {
+                    crate::native_chat::restore_thread_extras(&app, &mut current, &session, turns);
+                }
+                let (turns, cursor) = initial
+                    .map(|(turns, cursor, _, _)| (Some(turns), Some(cursor)))
+                    .unwrap_or((None, None));
+                let watch = desktop.watch_chat_with_initial_cursor(&session, turns, cursor);
+                current.observation.attach_watch(&app, watch, &session);
             }
-            let local_busy = current.active.is_some() || !current.parked.is_empty();
-            let mut reconciled_history = false;
-            let observation = &mut current.observation;
-            let mut dirty = false;
-            let mut reset = false;
-            let started = Instant::now();
-            for _ in 0..8 {
-                let Some(update) = observation
-                    .watch
-                    .as_mut()
-                    .and_then(NativeThreadWatch::try_recv)
-                else {
-                    break;
-                };
-                match update {
-                    NativeThreadUpdate::Reset(turns) => {
-                        observation.ready = true;
-                        observation.watch_retry_at = None;
-                        observation.turns = turns;
-                        reset = true;
-                        dirty = true;
-                        app.set_session_loading(false);
-                    }
-                    NativeThreadUpdate::Turns(turns) => {
-                        for turn in turns {
-                            match observation
-                                .turns
-                                .iter_mut()
-                                .find(|old| old.root_id == turn.root_id)
-                            {
-                                Some(old) => {
-                                    if *old != turn {
-                                        *old = turn;
-                                        dirty = true;
-                                    }
-                                }
-                                None => {
-                                    observation.turns.push(turn);
+        } else if current.observation.watch_cancel.is_none()
+            && !session.is_empty()
+            && current
+                .observation
+                .watch_retry_at
+                .is_none_or(|retry| retry <= Instant::now())
+        {
+            // A feed can close transiently while the runtime continues
+            // committing the turn (for example during an interject). Do
+            // not leave the selected thread permanently detached; attach
+            // a fresh bounded watcher on the next UI frame.
+            let watch = desktop.watch_chat_with_initial_cursor(&session, None, None);
+            current.observation.attach_watch(&app, watch, &session);
+        }
+        let local_busy = current.active.is_some()
+            || !current.parked.is_empty()
+            || current
+                .submitting
+                .as_ref()
+                .is_some_and(|pending| pending.session == session);
+        let mut reconciled_history = false;
+        let observation = &mut current.observation;
+        let mut dirty = false;
+        let mut reset = false;
+        let mut queue_changed = false;
+        let started = Instant::now();
+        for _ in 0..8 {
+            let Ok((generation, update)) = observation.updates.try_recv() else {
+                break;
+            };
+            if generation != observation.forward_generation {
+                continue;
+            }
+            match update {
+                NativeThreadUpdate::Reset(turns) => {
+                    observation.ready = true;
+                    observation.watch_retry_at = None;
+                    dirty |= observation.merge_reset(turns);
+                    reset = true;
+                    app.set_session_loading(false);
+                }
+                NativeThreadUpdate::Turns(turns) => {
+                    for turn in turns {
+                        match observation
+                            .turns
+                            .iter_mut()
+                            .find(|old| old.root_id == turn.root_id)
+                        {
+                            Some(old) => {
+                                if *old != turn {
+                                    *old = turn;
                                     dirty = true;
                                 }
                             }
-                        }
-                        if observation.turns.len() > 50 {
-                            let drop = observation.turns.len() - 50;
-                            observation.turns.drain(..drop);
-                            reset = true;
-                        }
-                    }
-                    NativeThreadUpdate::Context(usage) => apply_context_usage(&app, usage),
-                    NativeThreadUpdate::Goal(goal) => {
-                        app.set_goal_active(goal.active());
-                        app.set_goal_visible(goal.visible());
-                        app.set_goal_objective(goal.objective.clone().into());
-                        app.set_goal_phase(goal.phase.clone().into());
-                        app.set_goal_activation(goal.activation.clone().into());
-                        app.set_goal_rounds(
-                            format!("{}/{}", goal.rounds_started, goal.max_goal_rounds).into(),
-                        );
-                        app.set_goal_paused(goal.paused());
-                        let rows = app.get_conversations();
-                        if let Some(index) = rows.iter().position(|row| row.id == session) {
-                            if let Some(mut row) = rows.row_data(index) {
-                                row.goal_active = goal.active();
-                                row.goal_visible = goal.visible();
-                                row.goal_objective = goal.objective.clone().into();
-                                row.goal_phase = goal.phase.clone().into();
-                                row.goal_activation = goal.activation.clone().into();
-                                row.goal_rounds =
-                                    format!("{}/{}", goal.rounds_started, goal.max_goal_rounds)
-                                        .into();
-                                row.goal_paused = goal.paused();
-                                rows.set_row_data(index, row);
-                                crate::navigation_ui::project(&app);
+                            None => {
+                                observation.turns.push(turn);
+                                dirty = true;
                             }
                         }
                     }
-                    NativeThreadUpdate::Failed(error) => {
-                        observation.watch = None;
-                        observation.watch_retry_at =
-                            Some(Instant::now() + Duration::from_millis(250));
-                        // Keep the existing projection visible and let the
-                        // next frame reconnect the watcher. A transient feed
-                        // close must not require navigation to restore live
-                        // status, queue and context updates.
-                        observation.ready = true;
-                        app.set_session_loading(false);
-                        app.set_status(error.into());
+                    if dirty {
+                        observation.turns.sort_by_key(|turn| turn.user.user_round);
                     }
                 }
-                if started.elapsed() > Duration::from_millis(5) {
-                    break;
+                NativeThreadUpdate::Context(usage) => apply_context_usage(&app, usage),
+                NativeThreadUpdate::QueueChanged => {
+                    queue_changed = true;
                 }
-            }
-            // While the foreground reducer owns a temporary tail, durable
-            // rows are accumulated but never installed into the shared model:
-            // their real root id differs from the client request id and would
-            // otherwise replace the live bubble mid-stream. Reconcile once
-            // the foreground owner has settled.
-            let publish_history = !local_busy;
-            if (dirty || reset || observation.history_dirty) && publish_history {
-                // The durable rows are rebuilt only when a turn changed, and
-                // only for the turns the observer actually holds.
-                observation.rows = project_history(&observation.turns);
-                observation.publish(&app, &timeline);
-                reconciled_history = true;
-                let durable_busy = observation.turns.iter().any(|turn| {
-                    matches!(
-                        turn.assistant.stats_status.as_str(),
-                        "正在生成…" | "正在排队"
-                    ) || turn.assistant.stats_status.starts_with("正在排队 ·")
-                });
-                // A durable snapshot can lag the foreground stream by one
-                // commit. Never let that lag clear the local busy indicator or
-                // stop the composer while the stream/parked hand-off is live.
-                let busy = durable_busy || local_busy;
-                let finished = app.get_busy() && !busy && !local_busy;
-                app.set_busy(busy);
-                // The activity capsule is a separate projection from the
-                // composer busy flag. Keep its spinner aligned with durable
-                // execution too, including runs resumed after an interject or
-                // while the foreground stream is temporarily unavailable.
-                app.set_activity_running(busy);
-                if !local_busy {
-                    if let Some(latest) = observation.turns.last() {
-                        crate::native_chat::set_session_status(
-                            &app,
-                            &session,
-                            latest.assistant.stats_status.as_str(),
-                        );
+                NativeThreadUpdate::Goal(goal) => {
+                    app.set_goal_active(goal.active());
+                    app.set_goal_visible(goal.visible());
+                    app.set_goal_objective(goal.objective.clone().into());
+                    app.set_goal_phase(goal.phase.clone().into());
+                    app.set_goal_activation(goal.activation.clone().into());
+                    app.set_goal_rounds(
+                        format!("{}/{}", goal.rounds_started, goal.max_goal_rounds).into(),
+                    );
+                    app.set_goal_paused(goal.paused());
+                    if goal.active() && !goal.paused() && !goal.objective.is_empty() {
+                        crate::native_chat::start_goal_clock(app.as_weak());
+                    }
+                    let rows = app.get_conversations();
+                    if let Some(index) = rows.iter().position(|row| row.id == session) {
+                        if let Some(mut row) = rows.row_data(index) {
+                            row.goal_active = goal.active();
+                            row.goal_visible = goal.visible();
+                            row.goal_objective = goal.objective.clone().into();
+                            row.goal_phase = goal.phase.clone().into();
+                            row.goal_activation = goal.activation.clone().into();
+                            row.goal_rounds =
+                                format!("{}/{}", goal.rounds_started, goal.max_goal_rounds).into();
+                            row.goal_paused = goal.paused();
+                            rows.set_row_data(index, row);
+                            crate::navigation_ui::project(&app);
+                        }
                     }
                 }
-                if finished {
-                    crate::workspace_files::execution_finished(&app, desktop.clone());
+                NativeThreadUpdate::Failed(error) => {
+                    if let Some(cancel) = observation.watch_cancel.take() {
+                        cancel.cancel();
+                    }
+                    observation.watch_retry_at = Some(Instant::now() + Duration::from_millis(250));
+                    // Keep the existing projection visible and let the
+                    // next frame reconnect the watcher. A transient feed
+                    // close must not require navigation to restore live
+                    // status, queue and context updates.
+                    observation.ready = true;
+                    app.set_session_loading(false);
+                    app.set_status(error.into());
+                    let weak = app.as_weak();
+                    slint::Timer::single_shot(Duration::from_millis(250), move || {
+                        if let Some(app) = weak.upgrade() {
+                            app.invoke_native_thread_update_ready();
+                        }
+                    });
                 }
-                if !busy {
-                    app.set_stopping(false);
+            }
+            if started.elapsed() > Duration::from_millis(5) {
+                break;
+            }
+        }
+        // While the foreground reducer owns a temporary tail, durable
+        // rows are accumulated but never installed into the shared model:
+        // their real root id differs from the client request id and would
+        // otherwise replace the live bubble mid-stream. Reconcile once
+        // the foreground owner has settled.
+        let publish_history = !local_busy;
+        if (dirty || reset || observation.history_dirty) && publish_history {
+            // The durable rows are rebuilt only when a turn changed, and
+            // only for the turns the observer actually holds.
+            observation.rows = project_history(&observation.turns);
+            observation.publish(&app, &timeline);
+            reconciled_history = true;
+            let durable_busy = observation.turns.iter().any(|turn| {
+                matches!(
+                    turn.assistant.stats_status.as_str(),
+                    "正在生成…" | "正在排队"
+                ) || turn.assistant.stats_status.starts_with("正在排队 ·")
+            });
+            // A durable snapshot can lag the foreground stream by one
+            // commit. Never let that lag clear the local busy indicator or
+            // stop the composer while the stream/parked hand-off is live.
+            let busy = durable_busy || local_busy;
+            let finished = app.get_busy() && !busy && !local_busy;
+            app.set_busy(busy);
+            // The activity capsule is a separate projection from the
+            // composer busy flag. Keep its spinner aligned with durable
+            // execution too, including runs resumed after an interject or
+            // while the foreground stream is temporarily unavailable.
+            app.set_activity_running(busy);
+            if !local_busy {
+                if let Some(latest) = observation.turns.last() {
+                    crate::native_chat::set_session_status(
+                        &app,
+                        &session,
+                        latest.assistant.stats_status.as_str(),
+                    );
                 }
             }
-            // The poll cadence was resolved before the watcher drained, so a
-            // live turn and an idle tick share one refresh schedule.
-            if reconciled_history {
-                observation.history_dirty = false;
-            } else if (dirty || reset) && local_busy {
-                observation.history_dirty = true;
+            if finished {
+                crate::workspace_files::execution_finished(&app, desktop.clone());
             }
-            let queue_due = queue_active && queue::due_arrived(&mut current.queue_due);
-            drop(current);
-            if refresh {
-                refresh_chat(&app, state.clone(), true);
+            if !busy {
+                app.set_stopping(false);
             }
-            if queue_due {
-                let session = app.get_active_session_id().to_string();
-                refresh_queue_async(&app, &state, &session);
-            }
-        },
-    );
+        }
+        // The poll cadence was resolved before the watcher drained, so a
+        // live turn and an idle tick share one refresh schedule.
+        if reconciled_history {
+            observation.history_dirty = false;
+        } else if (dirty || reset) && local_busy {
+            observation.history_dirty = true;
+        }
+        let queue_due = queue_active && queue::due_arrived(&mut current.queue_due);
+        drop(current);
+        if refresh {
+            refresh_chat(&app, state.clone(), true);
+        }
+        if queue_changed || queue_due {
+            let session = app.get_active_session_id().to_string();
+            refresh_queue_async(&app, &state, &session);
+        }
+    });
 }
 
 /// Durable history uses the same single work-process fold as streaming. Batch

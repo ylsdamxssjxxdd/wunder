@@ -10,6 +10,11 @@ static BATCHES: AtomicU64 = AtomicU64::new(0);
 static FAILURES: AtomicU64 = AtomicU64::new(0);
 static STARTED: OnceLock<Instant> = OnceLock::new();
 
+// Live thread writes update their projection in the same transaction. A clean
+// maintenance pass is therefore only a cross-process/legacy recovery path;
+// do not wake an idle desktop disk every few seconds for it.
+const IDLE_RECOVERY_INTERVAL: Duration = Duration::from_secs(60);
+
 fn record_work(elapsed: Duration, failed: bool) {
     WORK_US.fetch_add(
         elapsed.as_micros().min(u64::MAX as u128) as u64,
@@ -75,7 +80,7 @@ pub fn start(storage: Arc<dyn StorageBackend>) {
             tokio::time::sleep(maintenance_delay(elapsed)).await;
             if pending.is_empty() {
                 failures = 0;
-                tokio::time::sleep(Duration::from_secs(5)).await;
+                tokio::time::sleep(IDLE_RECOVERY_INTERVAL).await;
                 continue;
             }
             // A small indexed pending page, processed serially.

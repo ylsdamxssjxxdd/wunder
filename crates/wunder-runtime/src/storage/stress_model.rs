@@ -21,6 +21,10 @@ pub const CHANGE_TAIL_KEEP: i64 = 4096;
 pub struct StressThreadSpec {
     pub session_id: String,
     pub title: String,
+    /// Optional local work area that should reveal the generated thread.
+    /// Keeping this on the shared spec makes a bulk-generated thread behave
+    /// exactly like a normally created desktop thread.
+    pub workspace_id: Option<String>,
     pub user_rounds: i64,
     pub model_rounds_per_turn: i64,
 }

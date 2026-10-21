@@ -1157,6 +1157,7 @@ fn project_success_observation_data(tool_name: &str, data: &Value) -> Option<Val
         "定时任务" | "schedule_task" => project_schedule_task_success(data),
         "记忆管理" | "memory_manager" | "memory_manage" => project_memory_manager_success(data),
         "自身状态" | "自我状态" | "self_status" => project_self_status(data),
+        "goal" => project_goal_success(data),
         "桌面控制" | "desktop_control" => project_desktop_control(data),
         "执行命令" | "execute_command" => project_command_success(data),
         "写入文件" | "write_file" | "apply_patch" | "应用补丁" | "编辑" | "文本编辑" => {
@@ -1166,6 +1167,14 @@ fn project_success_observation_data(tool_name: &str, data: &Value) -> Option<Val
         "文件名匹配" | "glob" => project_glob_success(data),
         _ => None,
     }
+}
+
+fn project_goal_success(data: &Value) -> Option<Value> {
+    // Goal-round wrap-up instructions are consumed from the original result
+    // by the scheduler. They remain in events, but repeating them alongside
+    // the same follow-up message spends context without changing the model's
+    // next tool action.
+    Some(json!({"goal": data.as_object()?.get("goal")?}))
 }
 
 fn project_schedule_task_success(data: &Value) -> Option<Value> {
@@ -1607,8 +1616,14 @@ fn project_self_status(data: &Value) -> Option<Value> {
 
 fn project_desktop_control(data: &Value) -> Option<Value> {
     let map = data.as_object()?;
-    let mut projected = pick_non_empty_fields(map, &["action"]);
-    projected.insert("action_applied".to_string(), Value::Bool(true));
+    let mut projected = pick_non_empty_fields(map, &["action", "observation_stable"]);
+    projected.insert(
+        "action_applied".to_string(),
+        map.get("action_applied")
+            .and_then(Value::as_bool)
+            .map(Value::Bool)
+            .unwrap_or(Value::Bool(true)),
+    );
     if let Some(artifact) = map
         .get("screenshot_artifact")
         .filter(|value| !value.is_null())

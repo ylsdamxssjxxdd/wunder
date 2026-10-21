@@ -4,7 +4,6 @@ use chrono::Local;
 use rusqlite::{params, Connection};
 use std::collections::HashSet;
 use std::sync::atomic::Ordering;
-use tracing::warn;
 
 pub(super) trait SqliteSchemaStorage {
     fn ensure_initialized_impl(&self) -> Result<()>;
@@ -627,9 +626,6 @@ impl SqliteSchemaStorage for SqliteStorage {
             return Ok(());
         }
         let conn = self.open()?;
-        // Before any table exists: a fresh database takes the header directly,
-        // an already populated one is marked for the one-time VACUUM below.
-        self.apply_auto_vacuum(&conn);
         conn.execute_batch(
             r#"
             CREATE TABLE IF NOT EXISTS meta (
@@ -779,6 +775,14 @@ impl SqliteSchemaStorage for SqliteStorage {
             );
             CREATE INDEX IF NOT EXISTS idx_monitor_sessions_status
               ON monitor_sessions (status);
+            CREATE TABLE IF NOT EXISTS monitor_session_stats (
+              session_id TEXT PRIMARY KEY,
+              payload TEXT NOT NULL
+            );
+            CREATE TRIGGER IF NOT EXISTS delete_monitor_session_stats
+              AFTER DELETE ON monitor_sessions BEGIN
+                DELETE FROM monitor_session_stats WHERE session_id=OLD.session_id;
+              END;
             CREATE TABLE IF NOT EXISTS session_locks (
               session_id TEXT PRIMARY KEY,
               user_id TEXT NOT NULL,
@@ -1846,24 +1850,7 @@ impl SqliteSchemaStorage for SqliteStorage {
         self.ensure_memory_fragment_columns(&conn)?;
         self.ensure_cloud_device_interlink_columns(&conn)?;
         self.ensure_interlink_shadow_columns(&conn)?;
-        if self
-            .auto_vacuum_upgrade_pending
-            .swap(false, Ordering::SeqCst)
-        {
-            // One-time full VACUUM persists the incremental auto-vacuum header
-            // for a database that already had tables when the flag was
-            // introduced. A fresh database is created with the header in place
-            // and never reaches this branch, which keeps the rewrite out of
-            // the startup path where other connections are opening the file.
-            let outcome = conn.execute_batch("VACUUM");
-            if let Err(err) = &outcome {
-                warn!(
-                    "auto-vacuum upgrade VACUUM failed for {}: {err}",
-                    self.db_path.display()
-                );
-            }
-            outcome?;
-        }
+        *self.wal_anchor.lock() = Some(conn);
         self.initialized.store(true, Ordering::SeqCst);
         Ok(())
     }

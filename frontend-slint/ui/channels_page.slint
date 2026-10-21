@@ -1,9 +1,9 @@
 import { ExpertButton } from "expert_widgets.slint";
 import { I18n } from "i18n.slint";
 import { Theme, ChannelAccountCard, ChannelBindingCard, ChannelCatalogCard, ChannelLogCard } from "theme.slint";
-import { Action, FormField, InlineInput, PageState, PageStateKind } from "components.slint";
+import { Action, FormField, InlineInput, PageState, PageStateKind, ThemeCheck } from "components.slint";
 import { TextEditBase } from "textedit-base.slint";
-import { CheckBox, ComboBox, ScrollView } from "std-widgets.slint";
+import { ComboBox, ScrollView } from "std-widgets.slint";
 
 // Channel accounts follow the shared page form: a full-height middle list
 // separated from the detail main area, like the chat conversation pane.
@@ -183,7 +183,7 @@ export component ChannelsPage inherits Rectangle {
                         HorizontalLayout { height: 30px; spacing: 10px; Text { width: 84px; text: I18n.common_channels; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; } ComboBox { horizontal-stretch: 1; model: root.catalog-names.length == 0 ? [I18n.ch_no_channels] : root.catalog-names; current-index <=> root.editor-kind; enabled: root.editor-id == "" && !root.editor-saving; } }
                         HorizontalLayout { height: 30px; spacing: 10px; Text { width: 84px; text: I18n.ch_display_name; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; } InlineInput { horizontal-stretch: 1; height: 30px; text <=> root.edit-name; } }
                         HorizontalLayout { height: 30px; spacing: 10px; Text { width: 84px; text: I18n.common_ai; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; } ComboBox { horizontal-stretch: 1; model: root.agent-names; current-index <=> root.editor-agent; enabled: !root.editor-saving; } }
-                        HorizontalLayout { height: 24px; spacing: 10px; CheckBox { text: I18n.ch_enable_account; checked <=> root.edit-enabled; enabled: !root.editor-saving; } if root.editor-channel-key == "feishu" : CheckBox { text: I18n.ch_receive_group; checked <=> root.edit-group-chat; enabled: !root.editor-saving; } }
+                        HorizontalLayout { height: 24px; spacing: 10px; ThemeCheck { text: I18n.ch_enable_account; checked: root.edit-enabled; enabled: !root.editor-saving; toggled => { root.edit-enabled = !root.edit-enabled; } } if root.editor-channel-key == "feishu" : ThemeCheck { text: I18n.ch_receive_group; checked: root.edit-group-chat; enabled: !root.editor-saving; toggled => { root.edit-group-chat = !root.edit-group-chat; } } }
                         if root.editor-channel-key == "feishu" : VerticalLayout { spacing: 7px;
                             FormField { label: "App ID"; placeholder: I18n.ch_field_feishu_app_id; text <=> root.edit-app-id; }
                             FormField { label: I18n.ch_field_app_secret; placeholder: I18n.ch_field_writeonly_hint; secret: true; text <=> root.edit-app-secret; }

@@ -18,9 +18,13 @@ fn main() {
     for (relative, path) in &files {
         let include_path = path.to_string_lossy().replace('\\', "/");
         let target = if relative == "config/wunder-example.yaml" {
-            "config/wunder.yaml"
+            "config/wunder.yaml".to_string()
+        } else if let Some(companion) = relative.strip_prefix("config/companions/") {
+            // Source packages seed the writable companion library consumed by
+            // WUNDER_COMPANIONS_ROOT on the first launch.
+            format!("config/data/companions/global/{companion}")
         } else {
-            relative.as_str()
+            relative.clone()
         };
         source.push_str(&format!(
             "    ({:?}, include_bytes!(r#\"{}\"#)),\n",
@@ -73,7 +77,8 @@ fn collect(path: &Path, root: &Path, files: &mut Vec<(String, PathBuf)>) {
                 || relative.starts_with("config/prompts")
                 || relative.starts_with("config/skills")
                 || relative.starts_with("config/preset_worker_cards")
-                || relative.starts_with("config/preset_worker_cards_example");
+                || relative.starts_with("config/preset_worker_cards_example")
+                || relative.starts_with("config/companions");
             if can_contain_assets {
                 collect(&path, root, files);
             }
@@ -85,6 +90,7 @@ fn collect(path: &Path, root: &Path, files: &mut Vec<(String, PathBuf)>) {
             || relative.starts_with("config/skills/")
             || relative.starts_with("config/preset_worker_cards/")
             || relative.starts_with("config/preset_worker_cards_example/")
+            || relative.starts_with("config/companions/")
             || relative == "scripts/skill_runner.py";
         if !allowed {
             continue;

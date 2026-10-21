@@ -4533,6 +4533,7 @@ mod tests {
         assert_eq!(usage.think, Some(12.0));
     }
 
+
     #[test]
     fn aligns_with_web_trajectory_rules() {
         // 与 web 端 trajectoryModel 同一条规则集：会话写入器覆盖后的 payload

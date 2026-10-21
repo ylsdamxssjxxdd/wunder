@@ -170,6 +170,7 @@ pub fn start_stress_thread_job(request: StartStressJobRequest) -> Result<Value, 
     let spec = crate::storage::StressThreadSpec {
         session_id: session_id.clone(),
         title,
+        workspace_id: None,
         user_rounds,
         model_rounds_per_turn,
     };
@@ -408,6 +409,7 @@ mod tests {
         StressThreadSpec {
             session_id: "stress-timeout-unit".to_string(),
             title: "timeout".to_string(),
+            workspace_id: None,
             user_rounds,
             model_rounds_per_turn,
         }

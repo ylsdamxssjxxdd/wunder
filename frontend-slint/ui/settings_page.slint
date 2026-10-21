@@ -1,11 +1,12 @@
 import { I18n } from "i18n.slint";
 import { Theme, PromptPackCard, ToolCard, ModelCard, ProfileCard, FileCard, CronCard, CronRunCard, ChannelCatalogCard, ChannelAccountCard, ChannelBindingCard, ChannelLogCard } from "theme.slint";
-import { Action, FormField, MiddleHeader, PageState, PageStateKind } from "components.slint";
+import { Action, FormField, MiddleHeader, PageState, PageStateKind, ThemeCheck } from "components.slint";
 import { TextEditBase } from "textedit-base.slint";
 import { DragRow } from "drag_row.slint";
+import { ComboBoxBase } from "combo_base.slint";
 import { ModelPresets } from "model_presets.slint";
 import { ExpertToolGroup, ExpertToolPicker } from "expert_widgets.slint";
-import { Button, CheckBox, ComboBox, ScrollView, Switch } from "std-widgets.slint";
+import { Button, ComboBox, ScrollView, Switch } from "std-widgets.slint";
 import { CronPage } from "cron_page.slint";
 import { ChannelsPage } from "channels_page.slint";
 import { ToolsPage, ToolResource } from "tools_page.slint";
@@ -60,21 +61,218 @@ component FormSectionHead inherits Rectangle {
     Text { x: 26px; width: parent.width - 26px; height: 24px; text: root.title; color: Theme.text; font-size: Theme.font-md; font-weight: 700; vertical-alignment: center; overflow: elide; }
 }
 
+// Theme-following compact dropdown face over the headless ComboBoxBase
+// (same shape as rcho's CompactComboBox): crisp arrow, popup list below the
+// field, hover/selected highlight driven by Theme tokens so it follows the
+// active palette. The face text is a plain binding on the caller's value, so
+// the widget's internal write-backs can never freeze the display.
+component ThemeComboBox inherits Rectangle {
+    in property <[string]> options;
+    // Row index matching the caller's value; -1 hides the selection highlight.
+    in property <int> current-index: -1;
+    in property <string> text;
+    in property <bool> enabled: true;
+    in property <int> max-visible-items: 8;
+    callback pick(int);
+    out property <bool> has-focus: base.has-focus;
+
+    private property <int> popup-hover-index: -1;
+    private property <length> item-height: 26px;
+
+    forward-focus: base;
+    accessible-role: combobox;
+    accessible-enabled: root.enabled;
+    accessible-expandable: true;
+    accessible-expanded: base.popup-has-focus;
+    accessible-value: root.text;
+    accessible-action-expand => { base.show-popup(); }
+
+    Rectangle {
+        background: root.enabled ? Theme.input-bg : Theme.input-readonly-bg;
+        border-color: base.has-focus ? Theme.accent : (base.has-hover && root.enabled ? Theme.border-strong : Theme.input-border);
+        border-width: 1px;
+        border-radius: Theme.radius-sm;
+    }
+    Text {
+        x: 8px;
+        width: parent.width - 28px;
+        height: parent.height;
+        text: root.text;
+        color: root.enabled ? Theme.text : Theme.input-readonly-text;
+        font-size: Theme.font-md;
+        vertical-alignment: center;
+        overflow: elide;
+        accessible-role: none;
+    }
+    Path {
+        x: parent.width - 20px;
+        y: (parent.height - 12px) / 2;
+        width: 12px;
+        height: 12px;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: 24;
+        viewbox-height: 24;
+        commands: "M 6 9 L 12 15 L 18 9";
+        fill: transparent;
+        stroke: root.enabled ? Theme.muted : Theme.input-readonly-text;
+        stroke-width: 1.7px;
+        stroke-line-cap: round;
+        stroke-line-join: round;
+        accessible-role: none;
+    }
+
+    // The base writes current-index on selection, which would replace any
+    // declarative binding; external value changes are pushed back in here
+    // instead of relying on a surviving binding.
+    changed current-index => {
+        if base.current-index != root.current-index {
+            base.current-index = root.current-index;
+        }
+    }
+
+    base := ComboBoxBase {
+        width: 100%;
+        height: 100%;
+        model: root.options;
+        enabled: root.enabled;
+        // Initial value only; the changed handler above keeps the sync.
+        current-index: root.current-index;
+        selected(value) => {
+            root.pick(base.current-index);
+        }
+        show-popup => {
+            root.popup-hover-index = base.current-index;
+            popup.show();
+        }
+        close-popup => {
+            root.popup-hover-index = -1;
+            popup.close();
+        }
+    }
+
+    popup := PopupWindow {
+        x: 0px;
+        y: root.height + 1px;
+        width: root.width;
+        height: min(root.options.length, root.max-visible-items) * root.item-height + 4px;
+        close-policy: close-on-click-outside;
+        forward-focus: popup-fs;
+
+        Rectangle {
+            background: Theme.surface;
+            border-color: Theme.border-strong;
+            border-width: 1px;
+            border-radius: Theme.radius-sm;
+            clip: true;
+
+            popup-fs := FocusScope {
+                changed has-focus => {
+                    base.popup-has-focus = self.has-focus;
+                }
+                key-pressed(event) => {
+                    return base.popup-key-handler(event);
+                }
+            }
+
+            ScrollView {
+                x: 1px;
+                y: 1px;
+                width: parent.width - 2px;
+                height: parent.height - 2px;
+                content-height: max(self.visible-height, root.options.length * root.item-height + 2px);
+                content-y: -max(0px, min(self.content-height - self.visible-height, (base.current-index - 3) * root.item-height));
+                vertical-scrollbar-policy: ScrollBarPolicy.as-needed;
+                horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
+
+                VerticalLayout {
+                    alignment: start;
+                    padding: 1px;
+
+                    for option[index] in root.options : Rectangle {
+                        height: root.item-height;
+                        horizontal-stretch: 1;
+                        background: root.popup-hover-index == index ? Theme.hover
+                            : index == base.current-index ? Theme.accent-soft : transparent;
+                        Text {
+                            x: 10px;
+                            width: parent.width - 16px;
+                            height: parent.height;
+                            text: option;
+                            color: index == base.current-index ? Theme.accent-deep : Theme.text;
+                            font-size: Theme.font-md;
+                            vertical-alignment: center;
+                            overflow: elide;
+                            accessible-role: none;
+                        }
+                        item-touch := TouchArea {
+                            mouse-cursor: pointer;
+                            changed has-hover => {
+                                if self.has-hover {
+                                    root.popup-hover-index = index;
+                                }
+                            }
+                            moved => {
+                                root.popup-hover-index = index;
+                            }
+                            clicked => {
+                                base.select(index);
+                                root.pick(index);
+                                root.popup-hover-index = -1;
+                                popup.close();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 // Label above a dropdown, matching FormField's vertical rhythm so the two
 // can share one grid row.
 component FormCombo inherits VerticalLayout {
     in property <string> label;
     in property <[string]> items;
-    in property <string> value;
+    // Optional internal values parallel to `items`, for localized labels over
+    // enum-like drafts ("" maps to the "default" label). Empty means the
+    // labels themselves are the stored values.
+    in property <[string]> values: [];
+    in-out property <string> value;
     // Locked forms (cloud model entries) disable the dropdown without
     // hiding the current selection.
     in property <bool> enabled: true;
     callback selected(string);
     spacing: 7px;
+    property <[string]> raws: root.values.length == root.items.length ? root.values : root.items;
+    function label-for(raw: string) -> string {
+        let index = root.raws.index-of(raw);
+        return index >= 0 && index < root.items.length ? root.items[index] : raw;
+    }
+    function raw-at(index: int) -> string {
+        return index >= 0 && index < root.raws.length ? root.raws[index] : root.value;
+    }
+    // Row index of the stored value; -1 when the value is not in the list
+    // (e.g. a provider outside the presets), which shows no highlight.
+    property <int> value-index: root.raws.index-of(root.value);
     Text { height: 18px; text: root.label; color: Theme.muted; font-size: Theme.font-xs; overflow: elide; }
-    // min-width: 0 keeps long preset labels from hogging shared form rows;
-    // the dropdown still fills its column.
-    ComboBox { min-width: 0px; height: 36px; model: root.items; current-value: root.value; enabled: root.enabled; selected(value) => { root.selected(value); } }
+    ThemeComboBox {
+        height: 36px;
+        options: root.items;
+        current-index: root.value-index;
+        enabled: root.enabled;
+        text: root.label-for(root.value);
+        pick(index) => {
+            let raw = root.raw-at(index);
+            if root.value != raw {
+                root.value = raw;
+            }
+            // Read the (possibly updated) property rather than reusing `raw`:
+            // the Slint codegen moves the local string into `value` and would
+            // then borrow it again here ("borrow of moved value").
+            root.selected(root.value);
+        }
+    }
 }
 
 // Web settings row: label (+ optional note) on the left, controls on the
@@ -194,10 +392,11 @@ export component SettingsPage inherits Rectangle {
     callback pick-python-path();
     callback pick-git-path();
     callback pick-rg-path();
-    // ---- 线程渲染压测：用户手动触发，写入本地库一条模拟线程 ----
+    // ---- 线程渲染压测：用户手动触发，写入本地库模拟线程 ----
     in-out property <bool> stress-running: false;
     in-out property <string> stress-user-rounds: "1000";
     in-out property <string> stress-model-rounds: "1000";
+    in-out property <string> stress-count: "1";
     in-out property <string> stress-status;
     callback generate-stress-thread();
     // ---- cloud account (§6.1) ----
@@ -520,6 +719,8 @@ export component SettingsPage inherits Rectangle {
     callback save-expert-memory();
     callback delete-expert-memory(string);
     callback open-expert-archive(string);
+    callback restore-expert-archive(string);
+    callback delete-expert-archive(string);
 
     // ---- built-in agent editor (§9.3 分类 4) ----
     // The personal build owns exactly one agent, so this category is a single
@@ -805,6 +1006,7 @@ export component SettingsPage inherits Rectangle {
                                 HorizontalLayout { spacing: 10px;
                                     FormField { horizontal-stretch: 1; label: I18n.st_stress_user_rounds; placeholder: "1000"; text <=> root.stress-user-rounds; read-only: root.stress-running || root.saving || root.loading; }
                                     FormField { horizontal-stretch: 1; label: I18n.st_stress_model_rounds; placeholder: "1000"; text <=> root.stress-model-rounds; read-only: root.stress-running || root.saving || root.loading; }
+                                    FormField { width: 100px; label: I18n.st_stress_count; placeholder: "1"; text <=> root.stress-count; read-only: root.stress-running || root.saving || root.loading; }
                                 }
                                 Text { height: 18px; text: I18n.st_stress_hint; color: Theme.muted; font-size: Theme.font-xs; overflow: elide; }
                                 Rectangle { height: 8px; }
@@ -1045,8 +1247,8 @@ export component SettingsPage inherits Rectangle {
                                                 label: I18n.st_model_type_label;
                                                 enabled: !root.cloud-locked;
                                                 items: [I18n.st_type_llm, I18n.st_type_embedding, I18n.st_type_asr, I18n.st_type_tts, I18n.st_type_image, I18n.st_type_video];
-                                                value: root.model-type-draft == "embedding" ? I18n.st_type_embedding : root.model-type-draft == "asr" ? I18n.st_type_asr : root.model-type-draft == "tts" ? I18n.st_type_tts : root.model-type-draft == "image" ? I18n.st_type_image : root.model-type-draft == "video" ? I18n.st_type_video : I18n.st_type_llm;
-                                                selected(value) => { root.model-type-draft = value == I18n.st_type_embedding ? "embedding" : value == I18n.st_type_asr ? "asr" : value == I18n.st_type_tts ? "tts" : value == I18n.st_type_image ? "image" : value == I18n.st_type_video ? "video" : "llm"; }
+                                                values: ["llm", "embedding", "asr", "tts", "image", "video"];
+                                                value <=> root.model-type-draft;
                                             }
                                             HorizontalLayout { spacing: 10px;
                                                 FormCombo {
@@ -1054,9 +1256,8 @@ export component SettingsPage inherits Rectangle {
                                                     label: I18n.model_provider_label;
                                                     enabled: !root.cloud-locked;
                                                     items: root.model-provider-presets;
-                                                    value: root.model-provider-draft == "" ? "openai_compatible" : root.model-provider-draft;
+                                                    value <=> root.model-provider-draft;
                                                     selected(provider) => {
-                                                        root.model-provider-draft = provider;
                                                         root.model-base-url-draft = provider == "virtual_replay" ? "" : ModelPresets.base-url(provider);
                                                     }
                                                 }
@@ -1064,7 +1265,7 @@ export component SettingsPage inherits Rectangle {
                                             }
                                             FormField { label: I18n.model_base_url_label; placeholder: I18n.model_base_url_placeholder; read-only: root.cloud-locked; text <=> root.model-base-url-draft; }
                                             FormField { label: I18n.model_token_label; placeholder: I18n.model_token_placeholder; secret: true; read-only: root.cloud-locked; text <=> root.model-token-draft; }
-                                            if root.model-provider-draft == "virtual_replay" && root.virtual-replay-logs.length > 0 : FormCombo { label: "回放日志"; items: root.virtual-replay-logs; value: root.model-name-draft; selected(value) => { root.model-name-draft = value; } }
+                                            if root.model-provider-draft == "virtual_replay" && root.virtual-replay-logs.length > 0 : FormCombo { label: "回放日志"; items: root.virtual-replay-logs; value <=> root.model-name-draft; }
                                         }
                                         // Generation / multimodal parameters per type.
                                         if root.model-type-draft == "llm" || root.model-type-draft == "" : SettingsCard {
@@ -1081,15 +1282,15 @@ export component SettingsPage inherits Rectangle {
                                             FormField { label: I18n.st_param_max_rounds; placeholder: "1000"; read-only: root.cloud-locked; text <=> root.model-max-rounds-draft; }
                                             HorizontalLayout { spacing: 10px;
                                                 FormField { horizontal-stretch: 1; label: I18n.st_param_history_ratio; placeholder: "0.9"; read-only: root.cloud-locked; text <=> root.model-history-compaction-ratio-draft; }
-                                                FormCombo { horizontal-stretch: 1; label: I18n.st_param_reasoning_effort; items: [I18n.st_param_default_option, "none", "minimal", "low", "medium", "high", "xhigh"]; value: root.model-reasoning-effort-draft == "" ? I18n.st_param_default_option : root.model-reasoning-effort-draft; selected(value) => { root.model-reasoning-effort-draft = value == I18n.st_param_default_option ? "" : value; } }
+                                                FormCombo { horizontal-stretch: 1; label: I18n.st_param_reasoning_effort; items: [I18n.st_param_default_option, "none", "minimal", "low", "medium", "high", "xhigh"]; values: ["", "none", "minimal", "low", "medium", "high", "xhigh"]; value <=> root.model-reasoning-effort-draft; }
                                             }
-                                            if root.model-provider-draft == "virtual_replay" : FormCombo { label: I18n.st_param_simulation_speed; items: ["fast", "medium", "slow"]; value: root.model-simulation-speed-draft == "" ? "fast" : root.model-simulation-speed-draft; selected(value) => { root.model-simulation-speed-draft = value; } }
+                                            if root.model-provider-draft == "virtual_replay" : FormCombo { label: I18n.st_param_simulation_speed; items: ["fast", "medium", "slow"]; value <=> root.model-simulation-speed-draft; }
                                             HorizontalLayout { spacing: 10px;
-                                                CheckBox { text: "支持视觉"; checked <=> root.model-support-vision-draft; }
-                                                CheckBox { text: "支持听觉"; checked <=> root.model-support-hearing-draft; }
-                                                CheckBox { text: "流式返回 usage"; checked <=> root.model-stream-include-usage-draft; }
+                                                ThemeCheck { text: "支持视觉"; checked: root.model-support-vision-draft; toggled => { root.model-support-vision-draft = !root.model-support-vision-draft; } }
+                                                ThemeCheck { text: "支持听觉"; checked: root.model-support-hearing-draft; toggled => { root.model-support-hearing-draft = !root.model-support-hearing-draft; } }
+                                                ThemeCheck { text: "流式返回 usage"; checked: root.model-stream-include-usage-draft; toggled => { root.model-stream-include-usage-draft = !root.model-stream-include-usage-draft; } }
                                             }
-                                            FormCombo { label: "工具调用方式"; items: ["tool_call", "function_call", "freeform_call"]; value: root.model-tool-call-mode-draft; selected(value) => { root.model-tool-call-mode-draft = value; } }
+                                            FormCombo { label: "工具调用方式"; items: ["tool_call", "function_call", "freeform_call"]; value <=> root.model-tool-call-mode-draft; }
                                             HorizontalLayout { spacing: 10px;
                                                 FormField { horizontal-stretch: 1; label: I18n.st_param_max_context; placeholder: I18n.st_param_context_hint; read-only: root.cloud-locked; text <=> root.model-max-context-draft; }
                                                 Rectangle { width: 116px; height: 62px;
@@ -1111,8 +1312,8 @@ export component SettingsPage inherits Rectangle {
                                                     horizontal-stretch: 1;
                                                     label: I18n.st_param_asr_format;
                                                     items: [I18n.st_param_default_option, "json", "text", "verbose_json", "srt", "vtt"];
-                                                    value: root.model-asr-format-draft == "" ? I18n.st_param_default_option : root.model-asr-format-draft;
-                                                    selected(v) => { root.model-asr-format-draft = v == I18n.st_param_default_option ? "" : v; }
+                                                    values: ["", "json", "text", "verbose_json", "srt", "vtt"];
+                                                    value <=> root.model-asr-format-draft;
                                                 }
                                             }
                                             HorizontalLayout { spacing: 10px;
@@ -1129,8 +1330,8 @@ export component SettingsPage inherits Rectangle {
                                                     horizontal-stretch: 1;
                                                     label: I18n.st_param_tts_format;
                                                     items: [I18n.st_param_default_option, "wav", "mp3", "flac", "aac", "opus", "pcm"];
-                                                    value: root.model-tts-format-draft == "" ? I18n.st_param_default_option : root.model-tts-format-draft;
-                                                    selected(v) => { root.model-tts-format-draft = v == I18n.st_param_default_option ? "" : v; }
+                                                    values: ["", "wav", "mp3", "flac", "aac", "opus", "pcm"];
+                                                    value <=> root.model-tts-format-draft;
                                                 }
                                             }
                                             HorizontalLayout { spacing: 10px;
@@ -1150,8 +1351,8 @@ export component SettingsPage inherits Rectangle {
                                                     horizontal-stretch: 1;
                                                     label: I18n.st_param_image_format;
                                                     items: [I18n.st_param_default_option, "png", "jpeg", "webp"];
-                                                    value: root.model-image-format-draft == "" ? I18n.st_param_default_option : root.model-image-format-draft;
-                                                    selected(v) => { root.model-image-format-draft = v == I18n.st_param_default_option ? "" : v; }
+                                                    values: ["", "png", "jpeg", "webp"];
+                                                    value <=> root.model-image-format-draft;
                                                 }
                                             }
                                             HorizontalLayout { spacing: 10px;
@@ -1184,8 +1385,8 @@ export component SettingsPage inherits Rectangle {
                                                 FormField { horizontal-stretch: 1; label: "flow_shift"; placeholder: "≥ 0"; text <=> root.model-video-flow-shift-draft; }
                                             }
                                             HorizontalLayout { spacing: 10px;
-                                                CheckBox { text: "启用补帧"; checked <=> root.model-video-frame-interpolation-draft; }
-                                                CheckBox { text: "同步模式"; checked <=> root.model-video-sync-mode-draft; }
+                                                ThemeCheck { text: "启用补帧"; checked: root.model-video-frame-interpolation-draft; toggled => { root.model-video-frame-interpolation-draft = !root.model-video-frame-interpolation-draft; } }
+                                                ThemeCheck { text: "同步模式"; checked: root.model-video-sync-mode-draft; toggled => { root.model-video-sync-mode-draft = !root.model-video-sync-mode-draft; } }
                                             }
                                         }
                                     }
@@ -1500,15 +1701,18 @@ export component SettingsPage inherits Rectangle {
                                 for archive in root.expert-archives : Rectangle {
                                     height: 54px;
                                     Rectangle { y: parent.height - 1px; width: parent.width; height: 1px; background: Theme.border; }
-                                    Text { x: 0px; y: 8px; width: parent.width - 140px; height: 20px; text: archive.title; color: Theme.text; font-size: Theme.font-md; font-weight: 600; vertical-alignment: center; overflow: elide; }
-                                    Text { x: 0px; y: 29px; width: parent.width - 140px; height: 17px; text: archive.time; color: Theme.muted; font-size: Theme.font-xs; overflow: elide; }
-                                    Action {
-                                        x: parent.width - 72px; y: 13px; width: 72px;
-                                        label: I18n.stc_archives_open; show-label: true;
-                                        clicked => { root.open-expert-archive(archive.id); }
-                                    }
+                                    Text { x: 0px; y: 8px; width: max(0px, parent.width - 228px); height: 20px; text: archive.title; color: Theme.text; font-size: Theme.font-md; font-weight: 600; vertical-alignment: center; overflow: elide; }
+                                    Text { x: 0px; y: 29px; width: max(0px, parent.width - 228px); height: 17px; text: archive.time; color: Theme.muted; font-size: Theme.font-xs; overflow: elide; }
+                                    Action { x: parent.width - 220px; y: 13px; width: 66px; label: I18n.stc_archives_open; show-label: true; enabled: !root.expert-saving; clicked => { root.open-expert-archive(archive.id); } }
+                                    Action { x: parent.width - 146px; y: 13px; width: 66px; label: I18n.stc_archives_restore; show-label: true; enabled: !root.expert-saving; clicked => { root.restore-expert-archive(archive.id); } }
+                                    Action { x: parent.width - 72px; y: 13px; width: 66px; label: I18n.common_delete; show-label: true; danger: true; enabled: !root.expert-saving; clicked => { root.delete-expert-archive(archive.id); } }
+                                    // Keep the row hit target to the left of the
+                                    // action buttons.  The previous width covered
+                                    // the restore/delete controls, so a click on
+                                    // those buttons could be routed to the row's
+                                    // open-detail handler instead.
                                     archive-row := TouchArea {
-                                        x: 0px; y: 0px; width: parent.width - 80px; height: parent.height;
+                                        x: 0px; y: 0px; width: max(0px, parent.width - 228px); height: parent.height;
                                         mouse-cursor: pointer;
                                         clicked => { root.open-expert-archive(archive.id); }
                                     }

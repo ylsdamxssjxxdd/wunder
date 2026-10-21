@@ -10,6 +10,7 @@ pub fn demo_workspaces() -> Vec<WorkspaceView> {
         WorkspaceView {
             id: "fixture-workspace".into(),
             name: "本地工作区".into(),
+            root_path: "/home/user/workbench".into(),
             icon: "monitor".into(),
             color: "teal".into(),
             thread_count: 3,
@@ -17,6 +18,7 @@ pub fn demo_workspaces() -> Vec<WorkspaceView> {
         WorkspaceView {
             id: "fixture-research".into(),
             name: "资料整理".into(),
+            root_path: "/home/user/research".into(),
             icon: "flask".into(),
             color: "orange".into(),
             thread_count: 1,

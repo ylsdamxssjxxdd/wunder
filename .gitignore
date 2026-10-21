@@ -108,3 +108,7 @@ scripts/blender
 .codex-target-slint
 .codex-target-popover
 .codex-target-ime
+.cargo-target-goal-events
+.cargo-target-context-estimate
+.cargo-target-search-schema
+temp

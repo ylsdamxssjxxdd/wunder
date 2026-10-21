@@ -1,0 +1,8 @@
+Set-Win7HostTools : 不能对 Null 值表达式调用方法。
+所在位置 D:\proj\wunder\builders\build-win7-slint.ps1:18 字符: 1
++ Set-Win7HostTools -HostMingwBin $HostMingwBin
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : InvalidOperation: (:) [Set-Win7HostTools]，RuntimeException
+    + FullyQualifiedErrorId : InvokeMethodOnNull,Set-Win7HostTools
+ 
+请按任意键继续. . . 

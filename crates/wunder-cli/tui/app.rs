@@ -24,6 +24,8 @@ use wunder_server::storage::ThreadOpenLeaseStatus;
 use wunder_server::user_tools::UserMcpServer;
 use wunder_server::ThreadChangeFrame;
 
+const LOCAL_THREAD_LEASE_TTL_S: f64 = 15.0;
+
 use crate::args::GlobalArgs;
 use crate::command_session_display::{
     CommandSessionDisplayState, CommandSessionUpdate, CommandSessionView,
@@ -974,7 +976,7 @@ impl TuiApp {
                 &user_id,
                 &instance_id,
                 "cli",
-                30.0,
+                LOCAL_THREAD_LEASE_TTL_S,
             )
         })
         .await?;
@@ -1018,7 +1020,7 @@ impl TuiApp {
                 &self.session_id,
                 &self.open_instance_id,
                 self.open_lease_token,
-                30.0
+                LOCAL_THREAD_LEASE_TTL_S
             )?,
             "THREAD_IN_USE: thread lease expired; reopen the thread"
         );
@@ -1033,7 +1035,12 @@ impl TuiApp {
         let instance_id = self.open_instance_id.clone();
         let token = self.open_lease_token;
         let touched = wunder_server::blocking::run_db("cli.lease.validate", move || {
-            storage.touch_thread_open_lease(&session_id, &instance_id, token, 30.0)
+            storage.touch_thread_open_lease(
+                &session_id,
+                &instance_id,
+                token,
+                LOCAL_THREAD_LEASE_TTL_S,
+            )
         })
         .await?;
         anyhow::ensure!(
@@ -1060,7 +1067,12 @@ impl TuiApp {
         tokio::spawn(async move {
             let probe_session = session_id.clone();
             let result = wunder_server::blocking::run_db("cli.lease.touch", move || {
-                storage.touch_thread_open_lease(&probe_session, &instance_id, token, 30.0)
+                storage.touch_thread_open_lease(
+                    &probe_session,
+                    &instance_id,
+                    token,
+                    LOCAL_THREAD_LEASE_TTL_S,
+                )
             })
             .await;
             let _ = tx.send((session_id, token, result));
@@ -1098,7 +1110,7 @@ impl TuiApp {
     }
 
     fn touch_thread_lease_if_due(&mut self) {
-        if self.last_open_lease_touch.elapsed() < Duration::from_secs(10) {
+        if self.last_open_lease_touch.elapsed() < Duration::from_secs(4) {
             return;
         }
         self.request_lease_validation();

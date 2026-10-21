@@ -103,6 +103,21 @@ pub async fn execute_goal_command(
     session_id: &str,
     command: GoalCommand,
 ) -> Result<(String, Option<Value>)> {
+    let _control = service.control_guard(session_id).await;
+    execute_goal_command_while_controlled(service, storage, user_id, session_id, command).await
+}
+
+/// Execute a goal command while the caller owns [`GoalService::control_guard`]
+/// for the target thread. Multi-step HTTP controls use this after fencing the
+/// active executor, avoiding a reentrant lock while keeping their snapshot and
+/// mutation ordered with clear/disarm.
+pub(crate) async fn execute_goal_command_while_controlled(
+    service: &GoalService,
+    storage: Arc<dyn StorageBackend>,
+    user_id: &str,
+    session_id: &str,
+    command: GoalCommand,
+) -> Result<(String, Option<Value>)> {
     let current = service
         .get_view(&storage, user_id, session_id)
         .await
@@ -133,7 +148,7 @@ pub async fn execute_goal_command(
                 }
             }
             let created = service
-                .create(storage, user_id, session_id, &objective, None)
+                .create_while_controlled(storage, user_id, session_id, &objective, None)
                 .await?;
             Ok((
                 render_goal("Goal created", &created),
@@ -146,7 +161,7 @@ pub async fn execute_goal_command(
             };
             if view.phase() == GoalPhase::Complete {
                 let replaced = service
-                    .create(storage, user_id, session_id, &objective, None)
+                    .create_while_controlled(storage, user_id, session_id, &objective, None)
                     .await?;
                 return Ok((
                     render_goal("Goal created", &replaced),
@@ -154,7 +169,7 @@ pub async fn execute_goal_command(
                 ));
             }
             let edited = service
-                .edit_with_activation(
+                .edit_with_activation_while_controlled(
                     storage,
                     user_id,
                     session_id,
@@ -177,7 +192,7 @@ pub async fn execute_goal_command(
                 return Ok((missing_goal("pause"), None));
             };
             let paused = service
-                .pause(
+                .pause_while_controlled(
                     storage,
                     user_id,
                     session_id,
@@ -197,7 +212,7 @@ pub async fn execute_goal_command(
                 return Ok((missing_goal("resume"), None));
             };
             let resumed = service
-                .resume(
+                .resume_while_controlled(
                     storage,
                     user_id,
                     session_id,
@@ -215,7 +230,9 @@ pub async fn execute_goal_command(
         GoalCommand::Clear => match current {
             None => Ok(("No goal to clear.".to_string(), None)),
             Some(view) => {
-                service.clear(storage, user_id, session_id).await?;
+                service
+                    .clear_while_controlled(storage, user_id, session_id)
+                    .await?;
                 Ok(("Goal cleared.".to_string(), Some(goal_payload(&view))))
             }
         },

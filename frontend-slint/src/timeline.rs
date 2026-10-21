@@ -556,12 +556,60 @@ impl Timeline {
         self.footer.set(usize::MAX);
         self.turn = Some(root.to_string());
         self.settled = false;
+        let user_id = format!("user-turn-{root}");
+        if let Some(index) = self.model.iter().position(|row| row.id == user_id) {
+            if let Some(mut row) = self.model.row_data(index) {
+                row.text = text.into();
+                row.blocks = crate::message_blocks::from_text(text);
+                self.model.set_row_data(index, row);
+            }
+            let process_id = format!("process-{root}");
+            if let Some((bar, row)) = self
+                .model
+                .iter()
+                .enumerate()
+                .find(|(_, row)| row.id == process_id)
+            {
+                self.process_bar = bar;
+                self.process = row.process_idx;
+                self.next_process = self.next_process.max(self.process);
+                self.last_body = usize::MAX;
+                self.protected_body = usize::MAX;
+                self.footer.set(usize::MAX);
+                return index;
+            }
+            // Hydration can publish the user anchor before its process row.
+            // Reuse that anchor when the subscriber attaches instead of
+            // adding a second bubble for the same submitted message.
+            self.open_process(root);
+            return index;
+        }
         let mut user = blank(KIND_USER, format!("user-turn-{root}"));
         user.text = text.into();
         user.blocks = crate::message_blocks::from_text(text);
         let index = self.push(user);
         self.open_process(root);
         index
+    }
+
+    /// Remove a provisional live turn when the backend rejects submission.
+    /// Only the current turn can own the provisional suffix. An older send's
+    /// failure must never remove a newer submission or a durable replacement.
+    pub fn remove_live_turn(&mut self, root: &str) -> bool {
+        if self.turn.as_deref() != Some(root) {
+            return false;
+        }
+        let key = format!("user-turn-{root}");
+        let Some(start) = self.model.iter().position(|row| row.id == key) else {
+            return false;
+        };
+        while self.model.row_count() > start {
+            self.model.remove(start);
+        }
+        self.forget_turn();
+        self.sync_fold_ids();
+        self.marks_dirty.set(true);
+        true
     }
 
     pub fn set_process_root(&self, root: &str) {
@@ -651,6 +699,20 @@ impl Timeline {
             }
         }
         let enabled = steps > 0;
+        // First reveal of a live turn's work-process bar: unfold it by default.
+        // The bar's own `open` is the single source of truth for the fold, so a
+        // click can collapse it again mid-run. The view used to force a running
+        // process open off `status-kind`, which made the bar handle inert until
+        // the turn settled; keeping the default here fixes that.
+        if enabled && !self.settled {
+            let first_reveal = self
+                .model
+                .row_data(self.process_bar)
+                .is_some_and(|row| !row.visible);
+            if first_reveal {
+                self.patch(self.process_bar, |row| row.open = true);
+            }
+        }
         let open = self.process_is_open();
         for index in region {
             self.patch_process_state(index, process, open);
@@ -1684,6 +1746,69 @@ fn highlight_code(blocks: &mut crate::message_blocks::Blocks) -> ModelRc<TextBlo
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rejected_older_submission_cannot_remove_the_new_live_turn() {
+        let mut timeline = Timeline::new();
+        timeline.begin_turn("fixture-older", "Fixture input");
+        timeline.begin_turn("fixture-newer", "Fixture next input");
+        timeline.start_body(1);
+        timeline.append_body("Fixture answer").unwrap();
+        timeline.flush();
+        let row_ids = timeline.model.iter().map(|row| row.id).collect::<Vec<_>>();
+
+        assert!(!timeline.remove_live_turn("fixture-older"));
+        assert_eq!(
+            timeline.model.iter().map(|row| row.id).collect::<Vec<_>>(),
+            row_ids,
+            "a delayed failure leaves the newer turn intact"
+        );
+        timeline.append_body(" continued").unwrap();
+        timeline.flush();
+        assert_eq!(timeline.last_answer(), "Fixture answer continued");
+        assert!(timeline.remove_live_turn("fixture-newer"));
+        assert_eq!(timeline.model.row_count(), 2);
+        assert_eq!(
+            timeline.model.row_data(0).unwrap().id,
+            "user-turn-fixture-older"
+        );
+    }
+
+    #[test]
+    fn repeated_submission_identity_reuses_the_user_anchor_and_process() {
+        let mut timeline = Timeline::new();
+        let mut anchor = blank(KIND_USER, "user-turn-fixture-repeat".into());
+        anchor.text = "Fixture input".into();
+        // The watcher may hydrate the persisted bubble before the process
+        // row, while the submission worker is returning its subscriber.
+        timeline.set_history(vec![anchor]);
+
+        let first = timeline.begin_turn("fixture-repeat", "Fixture input");
+        let second = timeline.begin_turn("fixture-repeat", "Fixture input");
+        assert_eq!(first, 0);
+        assert_eq!(second, first);
+        assert_eq!(timeline.model.row_count(), 2);
+        assert_eq!(
+            timeline
+                .model
+                .iter()
+                .filter(|row| row.id == "user-turn-fixture-repeat")
+                .count(),
+            1
+        );
+        assert_eq!(
+            timeline
+                .model
+                .iter()
+                .filter(|row| row.id == "process-fixture-repeat")
+                .count(),
+            1
+        );
+        timeline.start_body(1);
+        timeline.append_body("Fixture answer").unwrap();
+        timeline.flush();
+        assert_eq!(timeline.last_answer(), "Fixture answer");
+    }
 
     #[test]
     fn long_live_process_rolls_forward_without_losing_active_reasoning_or_answer() {

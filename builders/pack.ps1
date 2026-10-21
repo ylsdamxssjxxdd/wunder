@@ -3,7 +3,6 @@ param(
   [Alias("a")][ValidateSet("win7-x86", "linux-amd64", "linux-arm64")][string]$Arch = "",
   [string]$Desktop = "",
   [string]$Cli = "",
-  [string]$CliResources = "",
   [string]$Supplement = "",
   [string]$OutputDir = "",
   [switch]$CoreOnly,
@@ -63,7 +62,6 @@ if ($Arch -eq "win7-x86") {
     & $script `
       -DesktopExe $Desktop `
       -CliExe $Cli `
-      -CliResources $CliResources `
       -Supplement $Supplement `
       -OutputDir $OutputDir `
       -CoreOnly:$CoreOnly `

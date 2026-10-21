@@ -46,7 +46,7 @@ use parking_lot::Mutex;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::mpsc::Sender as TokioSender;
+use tokio::sync::{mpsc::Sender as TokioSender, Notify};
 use tokio_stream::StreamExt;
 use tracing::{debug, warn};
 use uuid::Uuid;
@@ -180,6 +180,9 @@ pub struct ChannelHub {
     approval_registry: Arc<PendingApprovalRegistry>,
     runtime_logs: Arc<Mutex<ChannelRuntimeLogBuffer>>,
     inbound_queue_tx: TokioSender<ChannelInboundEnvelope>,
+    /// Empty outbox scans sleep for a long interval; each enqueue wakes the
+    /// worker immediately so channel replies remain responsive.
+    outbox_wake: Arc<Notify>,
 }
 
 impl ChannelHub {
@@ -213,6 +216,7 @@ impl ChannelHub {
                 CHANNEL_RUNTIME_LOG_FLOOD_WINDOW_S,
             ))),
             inbound_queue_tx,
+            outbox_wake: Arc::new(Notify::new()),
         };
         let inbound_worker = hub.clone();
         let inbound_processor: ChannelInboundProcessor = Arc::new(move |envelope| {

@@ -826,14 +826,18 @@ impl UserToolManager {
                                     }
                                 }
                             }
+                            let candidate = ToolSpec {
+                                name: alias_name.clone(),
+                                title: None,
+                                description: description.clone(),
+                                input_schema: schema.clone(),
+                            };
+                            if crate::tools::validate_dynamic_tool_spec(&candidate).is_err() {
+                                continue;
+                            }
                             append_alias(
                                 alias_name.clone(),
-                                ToolSpec {
-                                    name: alias_name.clone(),
-                                    title: None,
-                                    description,
-                                    input_schema: schema,
-                                },
+                                candidate,
                                 UserToolKind::Mcp,
                                 owner_id.to_string(),
                                 format!("{server_name}@{tool_name}"),

@@ -20,7 +20,7 @@ use crate::state::AppState;
 use crate::storage::StorageBackend;
 use crate::tools::{
     build_mcp_tool_alias_entries_for_names, builtin_tool_specs, mcp_pack_spec_for_server,
-    resolve_tool_name,
+    resolve_tool_name, validate_external_tool_spec,
 };
 use crate::user_access::{
     build_user_tool_context, build_user_tool_context_for_catalog, compute_allowed_tool_names,
@@ -1604,12 +1604,15 @@ fn build_user_tools_summary(
             } else {
                 tool.description.clone()
             };
-            mcp_tools.push(ToolSpec {
+            let spec = ToolSpec {
                 name: full_name,
                 title: tool.title.clone(),
                 description,
                 input_schema,
-            });
+            };
+            if validate_external_tool_spec(&spec).is_ok() {
+                mcp_tools.push(spec);
+            }
         }
     }
     apply_mcp_tool_display_titles(&mut mcp_tools);

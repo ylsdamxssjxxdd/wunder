@@ -35,6 +35,10 @@ export component DragRow inherits Rectangle {
     // Tooltip is attached to the row's real pointer target below. Callers can
     // describe disclosure rows without putting a Tooltip on a visual overlay.
     in property <string> tooltip: root.label;
+    // Width of the hover-action band at the row's right edge. The row tooltip
+    // yields there so it cannot compete with the tooltip of a button under the
+    // pointer. Zero means the row has no action band.
+    in property <length> actions-width: 0px;
     out property <bool> hover: touch.has-hover;
     callback activate();
     callback move-by(int);
@@ -120,7 +124,7 @@ export component DragRow inherits Rectangle {
             }
         }
         @children
-        if root.tooltip != "" : Tooltip { text: @markdown("\{root.tooltip}"); }
+        if root.tooltip != "" && !(root.actions-width > 0px && touch.mouse-x >= root.width - root.actions-width) : Tooltip { text: @markdown("\{root.tooltip}"); }
     }
     // Target rows show a highlighted seam that animates from before to after.
     if root.drop-target : Rectangle {

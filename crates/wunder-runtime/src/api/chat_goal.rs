@@ -189,7 +189,9 @@ async fn native_session_goal_outcome(
     if interrupts {
         // Fence admission before interrupting the old executor. Editing a goal
         // must never leave it writing underneath the new command's timeline.
-        service.disarm(session_id);
+        service
+            .disarm_while_controlled(&state.storage, user_id, session_id)
+            .await?;
         state
             .kernel
             .thread_runtime
@@ -246,7 +248,7 @@ async fn native_session_goal_outcome(
                 .await?;
         }
     }
-    let (_, goal_value) = execute_goal_command(
+    let (_, goal_value) = goal::command::execute_goal_command_while_controlled(
         goal_service(state).as_ref(),
         state.storage.clone(),
         user_id,
@@ -639,7 +641,10 @@ mod tests {
         // is allowed to implement the hand-off on the backend's behalf.
         for queue_enabled in [false, true] {
             wait_idle(&state, &user.user_id, session).await;
-            service.disarm(session);
+            service
+                .disarm(&state.storage, &user.user_id, session)
+                .await
+                .unwrap();
             hold_model.store(true, Ordering::SeqCst);
             state
                 .config_store
@@ -812,7 +817,10 @@ mod tests {
         .unwrap();
         wait_model_calls(&model_calls, baseline + 1).await;
 
-        service.disarm(session);
+        service
+            .disarm(&state.storage, &user.user_id, session)
+            .await
+            .unwrap();
         let view = service
             .get_view(&state.storage, &user.user_id, session)
             .await

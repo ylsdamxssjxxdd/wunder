@@ -156,6 +156,52 @@ pub fn resolve_home_from_env_or_user() -> PathBuf {
         .join(".wunder")
 }
 
+/// Canonical identity for a local workspace folder shared by 蛹 and 舵机.
+///
+/// Windows `std::fs::canonicalize` may return the extended `\\\\?\\` spelling,
+/// while command-line arguments and persisted settings normally use the plain
+/// spelling.  Those paths address the same directory but SQLite uniqueness is
+/// textual, so retaining the prefix creates duplicate workspace records.  Keep
+/// this normalization at the shared local-form boundary instead of letting
+/// each client serialize its own path representation.
+pub fn normalize_local_workspace_path(path: &Path) -> PathBuf {
+    let plain = strip_windows_verbatim_prefix(path);
+    plain
+        .canonicalize()
+        .map(|canonical| strip_windows_verbatim_prefix(&canonical))
+        .unwrap_or(plain)
+}
+
+/// Stable comparison key for a local workspace. The filesystem identity is
+/// canonicalized first; Windows comparisons are case-insensitive.
+pub fn local_workspace_identity_key(path: &Path) -> String {
+    let mut value = normalize_local_workspace_path(path)
+        .to_string_lossy()
+        .into_owned();
+    // A backslash is a legal Unix filename character. Folding it there could
+    // merge two distinct folders such as a literal `a\b` and nested `a/b`.
+    #[cfg(windows)]
+    {
+        value = value.replace('\\', "/");
+        value.make_ascii_lowercase();
+    }
+    while value.len() > 1 && value.ends_with('/') {
+        value.pop();
+    }
+    value
+}
+
+fn strip_windows_verbatim_prefix(path: &Path) -> PathBuf {
+    let value = path.to_string_lossy();
+    if let Some(unc) = value.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{unc}"));
+    }
+    value
+        .strip_prefix(r"\\?\")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| path.to_path_buf())
+}
+
 /// Copy one immutable bundled file into the mutable home only when absent.
 /// Existing user edits always win and are never overwritten on startup.
 pub fn release_file_if_missing(target: &Path, bytes: &[u8]) -> Result<bool> {
@@ -247,6 +293,41 @@ mod tests {
         assert!(release_file_if_missing(&file, b"first").unwrap());
         assert!(!release_file_if_missing(&file, b"second").unwrap());
         assert_eq!(fs::read(file).unwrap(), b"first");
+    }
+
+    #[test]
+    fn workspace_identity_trims_windows_verbatim_prefix_without_requiring_disk_access() {
+        let extended = PathBuf::from(r"\\?\C:\work\project");
+        let plain = PathBuf::from(r"C:\work\project");
+        assert_eq!(normalize_local_workspace_path(&extended), plain);
+        assert_eq!(
+            local_workspace_identity_key(&extended),
+            local_workspace_identity_key(&plain)
+        );
+        #[cfg(windows)]
+        assert_eq!(
+            local_workspace_identity_key(Path::new(r"\\?\c:\WORK\project\\")),
+            local_workspace_identity_key(&plain)
+        );
+    }
+
+    #[test]
+    fn workspace_identity_preserves_unc_roots() {
+        let extended = PathBuf::from(r"\\?\UNC\fixture-host\fixture-share\folder");
+        let plain = PathBuf::from(r"\\fixture-host\fixture-share\folder");
+        // Test spelling conversion directly; normalizing an unavailable UNC
+        // location would otherwise involve a network filesystem probe.
+        assert_eq!(strip_windows_verbatim_prefix(&extended), plain);
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn workspace_identity_preserves_unix_backslash_names() {
+        let root = tempdir().unwrap();
+        assert_ne!(
+            local_workspace_identity_key(&root.path().join(r"fixture\folder")),
+            local_workspace_identity_key(&root.path().join("fixture/folder"))
+        );
     }
 
     #[test]

@@ -6,6 +6,10 @@
 #[cfg(windows)]
 use windows_sys::Win32::Foundation::HWND;
 #[cfg(windows)]
+use windows_sys::Win32::Graphics::Gdi::{
+    GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+};
+#[cfg(windows)]
 use windows_sys::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
 #[cfg(windows)]
 use windows_sys::Win32::UI::WindowsAndMessaging::{
@@ -114,6 +118,35 @@ pub fn restore_and_focus(window: &slint::Window) -> bool {
             true
         })
         .unwrap_or(false)
+}
+
+/// Usable desktop rectangle of the window's monitor in physical pixels,
+/// excluding the taskbar and other reserved areas. Other platforms fall back
+/// to the full monitor bounds at the call site.
+#[cfg(windows)]
+pub fn work_area(window: &slint::Window) -> Option<(i32, i32, i32, i32)> {
+    native_hwnd(window).and_then(|hwnd| unsafe {
+        let monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+        if monitor == 0 {
+            return None;
+        }
+        let mut info: MONITORINFO = std::mem::zeroed();
+        info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+        if GetMonitorInfoW(monitor, &mut info) == 0 {
+            return None;
+        }
+        Some((
+            info.rcWork.left,
+            info.rcWork.top,
+            info.rcWork.right - info.rcWork.left,
+            info.rcWork.bottom - info.rcWork.top,
+        ))
+    })
+}
+
+#[cfg(not(windows))]
+pub fn work_area(_window: &slint::Window) -> Option<(i32, i32, i32, i32)> {
+    None
 }
 
 #[cfg(windows)]

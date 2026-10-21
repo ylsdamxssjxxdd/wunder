@@ -13,6 +13,13 @@ use uuid::Uuid;
 
 pub const EVENT_GOAL_UPDATED: &str = "goal_updated";
 
+/// Session-local projection wake for goal state. The durable goal row remains
+/// the recovery source; subscribers only use this to avoid polling while the
+/// owning process is alive.
+pub(crate) trait GoalUpdatePublisher: Send + Sync {
+    fn publish_goal_update(&self, session_id: &str, payload: Value);
+}
+
 fn now_ts() -> f64 {
     chrono::Utc::now().timestamp_millis() as f64 / 1000.0
 }
@@ -32,6 +39,7 @@ pub struct GoalService {
     activations: Mutex<HashMap<String, GoalActivation>>,
     controls: Mutex<HashMap<String, Weak<tokio::sync::Mutex<()>>>>,
     driver: super::driver::GoalDriver,
+    updates: Mutex<Option<Arc<dyn GoalUpdatePublisher>>>,
 }
 
 impl Default for GoalService {
@@ -46,6 +54,15 @@ impl GoalService {
             activations: Mutex::new(HashMap::new()),
             controls: Mutex::new(HashMap::new()),
             driver: super::driver::GoalDriver::new(),
+            updates: Mutex::new(None),
+        }
+    }
+
+    /// Bind the host's session update hub. A standalone goal service remains
+    /// usable without a publisher for storage-only callers and focused tests.
+    pub(crate) fn set_update_publisher(&self, publisher: Arc<dyn GoalUpdatePublisher>) {
+        if let Ok(mut updates) = self.updates.lock() {
+            *updates = Some(publisher);
         }
     }
 
@@ -62,8 +79,11 @@ impl GoalService {
             .unwrap_or(GoalActivation::Disarmed)
     }
 
-    /// Serialize human goal changes with internal admission, per task thread.
+    /// Serialize all goal mutations and live projections per task thread.
+    /// Public mutators acquire this fence; multi-step operations call their
+    /// `_while_controlled` counterpart after acquiring it once.
     pub async fn control_guard(&self, session: &str) -> tokio::sync::OwnedMutexGuard<()> {
+        let session = session.trim();
         let gate = {
             let mut controls = self.controls.lock().unwrap();
             if let Some(gate) = controls.get(session).and_then(Weak::upgrade) {
@@ -71,7 +91,7 @@ impl GoalService {
             } else {
                 controls.retain(|_, gate| gate.strong_count() > 0);
                 let gate = Arc::new(tokio::sync::Mutex::new(()));
-                controls.insert(session.into(), Arc::downgrade(&gate));
+                controls.insert(session.to_string(), Arc::downgrade(&gate));
                 gate
             }
         };
@@ -85,6 +105,21 @@ impl GoalService {
                 return;
             }
             map.insert(session_id.trim().to_string(), activation);
+        }
+    }
+
+    /// Publish a complete post-commit projection. Keep this synchronous and
+    /// in-process: listeners receive it immediately after the durable write,
+    /// while reconnects still reload the durable session-goal row.
+    fn publish_update(&self, session_id: &str, view: Option<&GoalView>) {
+        let publisher = self
+            .updates
+            .lock()
+            .ok()
+            .and_then(|updates| updates.as_ref().cloned());
+        if let Some(publisher) = publisher {
+            publisher
+                .publish_goal_update(session_id, view.map(goal_payload).unwrap_or(Value::Null));
         }
     }
 
@@ -188,6 +223,19 @@ impl GoalService {
         objective: &str,
         max_goal_rounds: Option<i64>,
     ) -> Result<GoalView> {
+        let _control = self.control_guard(session_id).await;
+        self.create_while_controlled(storage, user_id, session_id, objective, max_goal_rounds)
+            .await
+    }
+
+    pub(crate) async fn create_while_controlled(
+        &self,
+        storage: Arc<dyn StorageBackend>,
+        user_id: &str,
+        session_id: &str,
+        objective: &str,
+        max_goal_rounds: Option<i64>,
+    ) -> Result<GoalView> {
         let objective = validate_objective(objective)?;
         let max_goal_rounds = resolve_max_goal_rounds(max_goal_rounds)?;
         let user_id = user_id.trim().to_string();
@@ -231,6 +279,7 @@ impl GoalService {
         .await?;
         self.set_activation(&session_id, GoalActivation::Armed);
         let view = self.view(record);
+        self.publish_update(&session_id, Some(&view));
         self.emit_event(&storage, "created", &view).await;
         self.notify_changed(&user_id, &session_id);
         Ok(view)
@@ -245,7 +294,28 @@ impl GoalService {
         objective: &str,
         max_goal_rounds: Option<i64>,
     ) -> Result<GoalView> {
-        self.edit_with_activation(
+        let _control = self.control_guard(session_id).await;
+        self.edit_while_controlled(
+            storage,
+            user_id,
+            session_id,
+            reference,
+            objective,
+            max_goal_rounds,
+        )
+        .await
+    }
+
+    pub(crate) async fn edit_while_controlled(
+        &self,
+        storage: Arc<dyn StorageBackend>,
+        user_id: &str,
+        session_id: &str,
+        reference: &GoalRef,
+        objective: &str,
+        max_goal_rounds: Option<i64>,
+    ) -> Result<GoalView> {
+        self.edit_with_activation_while_controlled(
             storage,
             user_id,
             session_id,
@@ -259,7 +329,7 @@ impl GoalService {
 
     /// A human edit can re-arm an active goal after its old executor was
     /// fenced. Publish only the final activation in the same edited snapshot.
-    pub(super) async fn edit_with_activation(
+    pub(crate) async fn edit_with_activation_while_controlled(
         &self,
         storage: Arc<dyn StorageBackend>,
         user_id: &str,
@@ -293,12 +363,25 @@ impl GoalService {
             self.set_activation(session_id, activation);
         }
         let view = self.view(record);
+        self.publish_update(session_id, Some(&view));
         self.emit_event(&storage, "edited", &view).await;
         self.notify_changed(user_id, session_id);
         Ok(view)
     }
 
     pub async fn pause(
+        &self,
+        storage: Arc<dyn StorageBackend>,
+        user_id: &str,
+        session_id: &str,
+        reference: &GoalRef,
+    ) -> Result<GoalView> {
+        let _control = self.control_guard(session_id).await;
+        self.pause_while_controlled(storage, user_id, session_id, reference)
+            .await
+    }
+
+    pub(crate) async fn pause_while_controlled(
         &self,
         storage: Arc<dyn StorageBackend>,
         user_id: &str,
@@ -325,12 +408,25 @@ impl GoalService {
         self.cas_write(&storage, &record, expected_revision).await?;
         self.set_activation(session_id, GoalActivation::Disarmed);
         let view = self.view(record);
+        self.publish_update(session_id, Some(&view));
         self.emit_event(&storage, "paused", &view).await;
         self.notify_changed(user_id, session_id);
         Ok(view)
     }
 
     pub async fn resume(
+        &self,
+        storage: Arc<dyn StorageBackend>,
+        user_id: &str,
+        session_id: &str,
+        reference: &GoalRef,
+    ) -> Result<GoalView> {
+        let _control = self.control_guard(session_id).await;
+        self.resume_while_controlled(storage, user_id, session_id, reference)
+            .await
+    }
+
+    pub(crate) async fn resume_while_controlled(
         &self,
         storage: Arc<dyn StorageBackend>,
         user_id: &str,
@@ -358,12 +454,25 @@ impl GoalService {
         self.cas_write(&storage, &record, expected_revision).await?;
         self.set_activation(session_id, GoalActivation::Armed);
         let view = self.view(record);
+        self.publish_update(session_id, Some(&view));
         self.emit_event(&storage, "resumed", &view).await;
         self.notify_changed(user_id, session_id);
         Ok(view)
     }
 
     pub async fn complete(
+        &self,
+        storage: Arc<dyn StorageBackend>,
+        user_id: &str,
+        session_id: &str,
+        reference: &GoalRef,
+    ) -> Result<GoalView> {
+        let _control = self.control_guard(session_id).await;
+        self.complete_while_controlled(storage, user_id, session_id, reference)
+            .await
+    }
+
+    pub(crate) async fn complete_while_controlled(
         &self,
         storage: Arc<dyn StorageBackend>,
         user_id: &str,
@@ -385,6 +494,7 @@ impl GoalService {
         self.cas_write(&storage, &record, expected_revision).await?;
         self.set_activation(session_id, GoalActivation::Disarmed);
         let view = self.view(record);
+        self.publish_update(session_id, Some(&view));
         self.emit_event(&storage, "completed", &view).await;
         self.notify_changed(user_id, session_id);
         Ok(view)
@@ -393,6 +503,19 @@ impl GoalService {
     /// Unified exit for continuation failures: the goal stops driving until a
     /// human resumes it.
     pub async fn block(
+        &self,
+        storage: Arc<dyn StorageBackend>,
+        user_id: &str,
+        session_id: &str,
+        reference: &GoalRef,
+        reason: GoalBlockReason,
+    ) -> Result<GoalView> {
+        let _control = self.control_guard(session_id).await;
+        self.block_while_controlled(storage, user_id, session_id, reference, reason)
+            .await
+    }
+
+    pub(crate) async fn block_while_controlled(
         &self,
         storage: Arc<dyn StorageBackend>,
         user_id: &str,
@@ -420,12 +543,29 @@ impl GoalService {
         self.cas_write(&storage, &record, expected_revision).await?;
         self.set_activation(session_id, GoalActivation::Disarmed);
         let view = self.view(record);
+        self.publish_update(session_id, Some(&view));
         self.emit_event(&storage, "blocked", &view).await;
         self.notify_changed(user_id, session_id);
         Ok(view)
     }
 
+    /// Remove a goal under the per-thread control fence so an in-flight
+    /// projection cannot republish the deleted snapshot afterwards.
     pub async fn clear(
+        &self,
+        storage: Arc<dyn StorageBackend>,
+        user_id: &str,
+        session_id: &str,
+    ) -> Result<()> {
+        let _control = self.control_guard(session_id).await;
+        self.clear_while_controlled(storage, user_id, session_id)
+            .await
+    }
+
+    /// Clear a goal while the caller owns [`Self::control_guard`] for this
+    /// session. Kept crate-local to make multi-step controls atomic without
+    /// recursively acquiring Tokio's non-reentrant mutex.
+    pub(crate) async fn clear_while_controlled(
         &self,
         storage: Arc<dyn StorageBackend>,
         user_id: &str,
@@ -442,6 +582,7 @@ impl GoalService {
         .await?;
         self.forget_session(&session_id);
         if removed > 0 {
+            self.publish_update(&session_id, None);
             self.emit_cleared_event(&storage, &user_id, &session_id);
         }
         Ok(())
@@ -477,6 +618,18 @@ impl GoalService {
         session_id: &str,
         tag: &GoalRoundTag,
     ) -> Result<bool> {
+        let _control = self.control_guard(session_id).await;
+        self.admit_round_while_controlled(storage, user_id, session_id, tag)
+            .await
+    }
+
+    pub(crate) async fn admit_round_while_controlled(
+        &self,
+        storage: &Arc<dyn StorageBackend>,
+        user_id: &str,
+        session_id: &str,
+        tag: &GoalRoundTag,
+    ) -> Result<bool> {
         let Some(mut record) = self.load(storage, user_id, session_id).await? else {
             return Ok(false);
         };
@@ -496,13 +649,43 @@ impl GoalService {
             // Losing to a concurrent mutation is fine; the loser re-reads.
             return Ok(false);
         }
+        let view = self.view(record);
+        self.publish_update(session_id, Some(&view));
         Ok(true)
     }
 
-    /// Disarm only (no durable change): process restart, turn cut off by the
-    /// context window, or session teardown.
-    pub fn disarm(&self, session_id: &str) {
+    /// Disarm without changing the durable goal row, then publish the current
+    /// projection so selected clients do not retain a stale `armed` indicator.
+    ///
+    /// The activation fence is applied before the read. A failed read leaves
+    /// the fence in place; callers that cannot surface the error can still
+    /// safely continue execution while logging the missed UI wake.
+    pub async fn disarm(
+        &self,
+        storage: &Arc<dyn StorageBackend>,
+        user_id: &str,
+        session_id: &str,
+    ) -> Result<()> {
+        let _control = self.control_guard(session_id).await;
+        self.disarm_while_controlled(storage, user_id, session_id)
+            .await
+    }
+
+    /// Disarm while the caller owns [`Self::control_guard`] for this session.
+    /// This prevents a control path that clears the durable row from being
+    /// followed by a stale pre-clear projection.
+    pub(crate) async fn disarm_while_controlled(
+        &self,
+        storage: &Arc<dyn StorageBackend>,
+        user_id: &str,
+        session_id: &str,
+    ) -> Result<()> {
         self.set_activation(session_id, GoalActivation::Disarmed);
+        let view = self.get_view(storage, user_id, session_id).await?;
+        if let Some(view) = view.as_ref() {
+            self.publish_update(session_id, Some(view));
+        }
+        Ok(())
     }
 
     pub fn driver(&self) -> &super::driver::GoalDriver {

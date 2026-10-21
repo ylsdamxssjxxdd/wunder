@@ -155,6 +155,8 @@ export component MainWindow inherits Window {
     callback save-expert-memory();
     callback delete-expert-memory(string);
     callback open-expert-archive(string);
+    callback restore-expert-archive(string);
+    callback delete-expert-archive(string);
     in-out property <[ExpertToolGroup]> expert-tool-groups;
     in-out property <string> expert-tool-keyword;
     callback refresh-expert();
@@ -175,12 +177,13 @@ export component MainWindow inherits Window {
         : root.title-running-count > 0
         ? I18n.app_window_title + " · " + I18n.wm_status_running("" + root.title-running-count)
         : I18n.app_window_title + " · " + I18n.wm_status_idle;
-    // Open the desktop workbench maximized. The native bootstrap repeats this
-    // after mapping on window managers that defer the initial request.
-    maximized: true;
+    // Open as a compact workbench centered on the active monitor. The native
+    // bootstrap fits it to the monitor work area after mapping and keeps the
+    // chrome maximize button available.
+    maximized: false;
     no-frame: true;
     resize-border-width: 6px;
-    preferred-width: 1280px; preferred-height: 860px;
+    preferred-width: 1180px; preferred-height: 740px;
     min-width: Theme.min-window-width; min-height: Theme.min-window-height;
     default-font-family: "Microsoft YaHei"; default-font-size: Theme.font-md;
     icon: @image-url("../assets/app-icon.png");
@@ -327,6 +330,14 @@ export component MainWindow inherits Window {
     in-out property <string> dialog-title;
     in-out property <string> dialog-text;
     in-out property <bool> dialog-open: false;
+    // Archived-thread detail is a shell-owned dialog: settings is itself an
+    // overlay, so a dialog nested in the settings page would be painted below
+    // it. Keep this state here with every other application modal.
+    in-out property <bool> archive-detail-open: false;
+    in-out property <string> archive-detail-title;
+    in-out property <string> archive-detail-text;
+    in-out property <bool> archive-delete-open: false;
+    in-out property <string> archive-delete-pending;
     // Thread trajectory page. Rows, spans and detail text are pre-projected
     // in Rust (src/thread_trajectory.rs); Slint only lays them out.
     in-out property <bool> traj-open: false;
@@ -528,8 +539,11 @@ export component MainWindow inherits Window {
     callback pick-rg-path();
     // The settings page's active category, shared with the smoke harness.
     in-out property <int> settings-active-panel: 0;
+    // Leaving the settings page abandons the unsaved new-model draft (selected
+    // or parked behind another row); the native handler no-ops when there is
+    // nothing to discard. Switching entries inside the page keeps it.
     changed settings-open => {
-        if !root.settings-open && root.model-creating { root.discard-model-draft(); }
+        if !root.settings-open { root.discard-model-draft(); }
     }
     // Memory, usage and archive data are pulled on demand: the old expert page's
     // own tab strip is gone, so the active category is what selects the view.
@@ -750,6 +764,9 @@ export component MainWindow inherits Window {
     callback select-conversation(int);
     callback new-thread();
     callback refresh-chat();
+    // The selected-thread worker wakes this only when it has a durable
+    // update.  It replaces the former permanent 33 ms observer tick.
+    callback native-thread-update-ready();
     callback refresh-agents();
     callback select-agent(int);
     callback refresh-agent-dirty();
@@ -781,6 +798,7 @@ export component MainWindow inherits Window {
     in-out property <bool> stress-running: false;
     in-out property <string> stress-user-rounds: "1000";
     in-out property <string> stress-model-rounds: "1000";
+    in-out property <string> stress-count: "1";
     in-out property <string> stress-status;
     callback run-cron-now(string);
     callback open-cron-runs(string);
@@ -845,6 +863,7 @@ export component MainWindow inherits Window {
     // fold owns (itself, its tool batch, or its whole earlier turn).
     callback timeline-toggle(int);
     callback timeline-process-page(int, int);
+    callback timeline-load-older();
     callback subagent-process-page(int, int);
     in-out property <string> process-child-session;
     callback timeline-open(string);
@@ -1056,6 +1075,7 @@ export component MainWindow inherits Window {
                             stream-revision: root.stream-updates;
                             toggle(index) => { root.timeline-toggle(index); }
                             process-page(index, direction) => { root.timeline-process-page(index, direction); }
+                            load-older => { root.timeline-load-older(); }
                             copy-text(text) => { root.copy-raw(text); }
                             copy-original(id) => { root.cloud-copy-original(id); }
                             open-resource(id) => { root.timeline-open(id); }
@@ -1236,6 +1256,7 @@ export component MainWindow inherits Window {
         stress-running <=> root.stress-running;
         stress-user-rounds <=> root.stress-user-rounds;
         stress-model-rounds <=> root.stress-model-rounds;
+        stress-count <=> root.stress-count;
         stress-status <=> root.stress-status;
         generate-stress-thread => { root.generate-stress-thread(); }
         save-runtime => { root.save-runtime(); }
@@ -1457,6 +1478,11 @@ export component MainWindow inherits Window {
         save-expert-memory => { root.save-expert-memory(); }
         delete-expert-memory(id) => { root.delete-expert-memory(id); }
         open-expert-archive(id) => { root.open-expert-archive(id); }
+        restore-expert-archive(id) => { root.restore-expert-archive(id); }
+        delete-expert-archive(id) => {
+            root.archive-delete-pending = id;
+            root.archive-delete-open = true;
+        }
 
         settings-query <=> root.settings-query;
         settings-search(query) => { root.filter-settings-categories(query); }
@@ -1488,12 +1514,21 @@ export component MainWindow inherits Window {
     }
 
     if root.dialog-open : InfoDialog {
+        z: 250;
         title: root.dialog-title;
         message: root.dialog-text;
         close-label: I18n.info_ack;
         closed => { root.dialog-open = false; }
     }
+    if root.archive-detail-open : InfoDialog {
+        z: 260;
+        title: root.archive-detail-title;
+        message: root.archive-detail-text;
+        close-label: I18n.info_ack;
+        closed => { root.archive-detail-open = false; }
+    }
     if root.traj-open : ThreadTrajectoryDialog {
+        z: 250;
         rows: root.traj-rows; spans: root.traj-spans; ticks: root.traj-ticks; boundaries: root.traj-boundaries;
         view-start: root.traj-view-start; view-width: root.traj-view-width;
         selection-active: root.traj-selection-active; selection-start: root.traj-selection-start; selection-end: root.traj-selection-end;
@@ -1532,6 +1567,7 @@ export component MainWindow inherits Window {
         edge-reached(older) => { root.traj-edge(older); }
     }
     if root.subagent-open : SubagentDetailDialog {
+        z: 250;
         title: root.subagent-title;
         status-kind: root.subagent-status-kind;
         running: root.subagent-running;
@@ -1548,6 +1584,7 @@ export component MainWindow inherits Window {
         open-resource(id) => { root.subagent-open-resource(id); }
     }
     if root.ws-prompt-open : WorkspacePromptDialog {
+        z: 250;
         prompt-title: root.ws-prompt-title;
         prompt-body: root.ws-prompt-body;
         input-visible: root.ws-prompt-input;
@@ -1559,6 +1596,7 @@ export component MainWindow inherits Window {
         canceled => { root.ws-prompt-canceled(); }
     }
     if root.thread-rename-open : WorkspacePromptDialog {
+        z: 250;
         prompt-title: I18n.common_rename;
         prompt-body: I18n.sb_rename_body(root.thread-rename-title);
         input-visible: true;
@@ -1575,6 +1613,7 @@ export component MainWindow inherits Window {
         canceled => { root.thread-rename-open = false; }
     }
     if root.cron-delete-open : ConfirmDialog {
+        z: 250;
         title: I18n.cron_delete_title;
         message: I18n.cron_delete_message;
         confirm-label: I18n.common_confirm_delete;
@@ -1584,6 +1623,7 @@ export component MainWindow inherits Window {
         canceled => { root.cron-delete-open = false; }
     }
     if root.agent-leave-confirm-open : ConfirmDialog {
+        z: 250;
         title: I18n.ag_unsaved_title;
         message: I18n.ag_unsaved_confirm;
         confirm-label: I18n.common_discard;
@@ -1595,6 +1635,7 @@ export component MainWindow inherits Window {
     // Archiving a thread is a deliberate act: the hover band only opens this
     // confirmation, the actual archive happens after the user confirms.
     if root.thread-archive-open : ConfirmDialog {
+        z: 250;
         title: I18n.ap_archive_thread;
         message: I18n.ap_archive_confirm;
         confirm-label: I18n.ap_archive_thread;
@@ -1616,7 +1657,7 @@ export component MainWindow inherits Window {
     // danger treatment: red edge, a banner and an explicit note, so it can never
     // be read as an ordinary confirmation.
     if root.interlink-approval-open : Rectangle {
-        z: 240;
+        z: 250;
         background: Theme.overlay;
         TouchArea { clicked => { /* remote asks must be answered, not dismissed */ } }
         Rectangle {
@@ -1656,13 +1697,13 @@ export component MainWindow inherits Window {
         }
     }
     if root.profile-edit-open : Rectangle {
-        z: 100; background: Theme.overlay; TouchArea { clicked => { root.profile-edit-open = false; } }
+        z: 250; background: Theme.overlay; TouchArea { clicked => { root.profile-edit-open = false; } }
         Rectangle { width: min(460px, parent.width - 48px); height: 300px; x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2; border-radius: Theme.radius-xl; background: Theme.surface; border-width: 1px; border-color: Theme.border; TouchArea { }
             VerticalLayout { padding: 20px; spacing: 10px; Text { height: 24px; text: I18n.profile_edit_title; color: Theme.text; font-size: 17px; font-weight: 600; } FormField { label: I18n.profile_username; text <=> root.profile-username-draft; } FormField { label: I18n.profile_email; text <=> root.profile-email-draft; } FormField { label: I18n.profile_unit_optional; text <=> root.profile-unit-draft; } Rectangle { vertical-stretch: 1; } HorizontalLayout { height: 32px; Rectangle { horizontal-stretch: 1; } Action { label: I18n.common_cancel; show-label: true; clicked => { root.profile-edit-open = false; } } Action { label: I18n.common_save; show-label: true; primary: true; enabled: root.profile-username-draft != ""; clicked => { root.save-profile(root.profile-username-draft, root.profile-email-draft, root.profile-unit-draft); root.profile-edit-open = false; } } } }
         }
     }
     if root.prompt-preview-open : Rectangle {
-        background: #0f172a80; z: 100;
+        background: #0f172a80; z: 250;
         TouchArea { clicked => { root.prompt-preview-open = false; } }
         Rectangle {
             x: max(16px, (root.width - 560px) / 2); y: max(16px, (root.height - 420px) / 2);
@@ -1679,6 +1720,21 @@ export component MainWindow inherits Window {
                 TextEditBase { vertical-stretch: 1; text: root.prompt-preview; read-only: true; wrap: word-wrap; foreground: Theme.text; font-size: Theme.font-xs; background: Theme.panel; border-width: 1px; border-color: Theme.border; border-radius: Theme.radius-sm; scroll-view-padding: 8px; selection-background-color: Theme.accent; selection-foreground-color: white; }
             }
         }
+    }
+    if root.archive-delete-open : ConfirmDialog {
+        z: 270;
+        title: I18n.common_delete;
+        message: I18n.stc_archives_delete_confirm;
+        confirm-label: I18n.common_confirm_delete;
+        cancel-label: I18n.common_cancel;
+        danger: true;
+        confirmed => {
+            let id = root.archive-delete-pending;
+            root.archive-delete-open = false;
+            root.archive-delete-pending = "";
+            root.delete-expert-archive(id);
+        }
+        canceled => { root.archive-delete-open = false; root.archive-delete-pending = ""; }
     }
 
     // Agent avatar dialog: window-root overlay driven by the AvatarDialogState

@@ -2,6 +2,65 @@ use super::*;
 use crate::orchestrator_constants::{TOOL_RESULT_HEAD_CHARS, TOOL_RESULT_TAIL_CHARS};
 
 #[test]
+fn goal_success_keeps_wrapup_for_scheduler_and_events_only() {
+    let goal = json!({"id": "goal-1", "revision": 3, "phase": "complete", "remainingRounds": 2});
+    let wrapup = json!({
+        "kind": "complete",
+        "objective": "Finish the sample task",
+        "blocked_reason": null,
+        "text": "Summarize the verified result"
+    });
+    let result = ToolResultPayload::from_value(json!({
+        "goal": goal,
+        "__wrapup": wrapup
+    }));
+
+    assert_eq!(
+        result.to_compact_payload("goal")["data"],
+        json!({"goal": goal})
+    );
+    assert_eq!(result.to_event_payload("goal")["data"]["__wrapup"], wrapup);
+    assert_eq!(
+        crate::services::goal::read_wrapup(&result.data).as_deref(),
+        Some("Summarize the verified result")
+    );
+    assert_eq!(
+        ToolResultPayload::from_value(json!({"goal": null})).to_compact_payload("goal")["data"],
+        json!({"goal": null})
+    );
+}
+
+#[test]
+fn desktop_observation_preserves_unsettled_frame_without_audit_details() {
+    let result = ToolResultPayload::from_value(json!({
+        "ok": true,
+        "data": {
+            "action": "left_click",
+            "action_applied": true,
+            "observation_stable": false,
+            "observation_settled_ms": 1520,
+            "screenshot_artifact": {"id": "desktop/frame.png", "mime": "image/png", "bytes": 64},
+            "screenshot_path": "private/frame.png",
+            "followup_prompt": "wait for the display to settle"
+        }
+    }));
+
+    assert_eq!(
+        result.to_compact_payload("desktop_control")["data"],
+        json!({
+            "action": "left_click",
+            "action_applied": true,
+            "observation_stable": false,
+            "screenshot_artifact": {"id": "desktop/frame.png", "mime": "image/png", "bytes": 64}
+        })
+    );
+    assert_eq!(
+        result.to_event_payload("desktop_control")["data"]["observation_settled_ms"],
+        1520
+    );
+}
+
+#[test]
 fn browser_attachment_is_compact_for_model_and_complete_in_events() {
     let content = json!([
         {"type":"text","text":"Captured screenshot."},

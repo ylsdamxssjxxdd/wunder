@@ -354,14 +354,48 @@ impl NativeDesktop {
     /// shell offloads it); `progress` receives `(done user turns, written items)`
     /// so the UI can project a live status line. One dedicated write connection
     /// keeps the bulk inserts from contending with the runtime's pooled storage.
-    pub fn generate_stress_thread(
+    pub fn generate_stress_threads(
         &self,
         user_rounds: i64,
         model_rounds: i64,
-        progress: impl FnMut(i64, i64) + Send,
-    ) -> Result<wunder_server::storage::StressThreadStats> {
+        count: i64,
+        workspace_id: Option<&str>,
+        mut progress: impl FnMut(i64, i64, i64) + Send,
+    ) -> Result<Vec<wunder_server::storage::StressThreadStats>> {
         wunder_server::validate_stress_params(user_rounds, model_rounds)
             .map_err(|message| anyhow!("{message}"))?;
+        const MAX_BATCH_THREADS: i64 = 20;
+        if !(1..=MAX_BATCH_THREADS).contains(&count) {
+            return Err(anyhow!("压测线程个数必须在 1..={MAX_BATCH_THREADS}"));
+        }
+        let workspace_id = workspace_id
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+            .map(str::to_owned);
+        if let Some(workspace_id) = workspace_id.as_deref() {
+            if self
+                .state()
+                .storage
+                .get_workspace(self.user_id(), workspace_id)?
+                .is_none()
+            {
+                return Err(anyhow!("工作区不存在"));
+            }
+        }
+        // Settings can be opened before the workspace selector has projected
+        // its first frame. Generated local threads must still belong to a
+        // work area, otherwise the workspace tree quite correctly hides them.
+        let workspace_id = match workspace_id {
+            Some(workspace_id) => workspace_id,
+            None => self
+                .state()
+                .storage
+                .list_workspaces(self.user_id())?
+                .into_iter()
+                .next()
+                .map(|workspace| workspace.workspace_id)
+                .ok_or_else(|| anyhow!("工作区不存在"))?,
+        };
         let user_id = self.user_id().to_string();
         let db_path = self.runtime.block_on(async {
             self.state()
@@ -372,14 +406,28 @@ impl NativeDesktop {
                 .db_path
                 .clone()
         });
-        let spec = wunder_server::storage::StressThreadSpec {
-            session_id: uuid::Uuid::new_v4().to_string(),
-            title: format!("渲染压测 {user_rounds}×{model_rounds}"),
-            user_rounds,
-            model_rounds_per_turn: model_rounds,
-        };
         let storage = wunder_server::storage::SqliteStorage::new(db_path);
-        storage.generate_stress_thread(&user_id, &spec, progress)
+        let mut stats = Vec::with_capacity(count as usize);
+        for index in 1..=count {
+            let spec = wunder_server::storage::StressThreadSpec {
+                session_id: uuid::Uuid::new_v4().to_string(),
+                title: if count == 1 {
+                    format!("渲染压测 {user_rounds}×{model_rounds}")
+                } else {
+                    format!("渲染压测 {user_rounds}×{model_rounds} #{index}")
+                },
+                workspace_id: Some(workspace_id.clone()),
+                user_rounds,
+                model_rounds_per_turn: model_rounds,
+            };
+            let current = index;
+            stats.push(
+                storage.generate_stress_thread(&user_id, &spec, |done, items| {
+                    progress(current, done, items);
+                })?,
+            );
+        }
+        Ok(stats)
     }
 
     pub fn save_lan(&self, enabled: bool, display_name: &str) -> Result<DesktopSettings> {

@@ -1259,8 +1259,33 @@ impl Orchestrator {
                     } else {
                         json!({ "raw": args })
                     };
-                    let recovered_args =
+                    let raw_recovered =
                         crate::core::tool_args::recover_tool_args_value_with_meta(&safe_args);
+                    let schema_recovered = crate::tools::current_executable_tool_input_schema(
+                        &config,
+                        &skills_snapshot,
+                        Some(&user_tool_bindings),
+                        &planned.name,
+                    )
+                    .map(|schema| {
+                        crate::core::tool_args::recover_tool_args_value_against_schema_with_meta(
+                            &raw_recovered.value,
+                            &schema,
+                        )
+                    });
+                    let recovered_args = match schema_recovered {
+                        Some(schema_recovered) => crate::core::tool_args::ToolArgsRecovery {
+                            value: schema_recovered.value,
+                            repair: match (raw_recovered.repair, schema_recovered.repair) {
+                                (None, repair) | (repair, None) => repair,
+                                (Some(first), Some(second)) => Some(json!({
+                                    "kind": "tool_args",
+                                    "repairs": [first, second],
+                                })),
+                            },
+                        },
+                        None => raw_recovered,
+                    };
                     let event_args = if allowed_tool_names.contains(&planned.name) {
                         recovered_args.value.clone()
                     } else {
@@ -2218,7 +2243,11 @@ impl Orchestrator {
                 let outcome = match value.stop_reason.as_deref() {
                     Some("question_panel") => goal::TurnEndOutcome::WaitingUserInput,
                     Some("max_tokens") => {
-                        service.disarm(&session_id);
+                        if let Err(error) =
+                            service.disarm(&self.storage, &user_id, &session_id).await
+                        {
+                            tracing::warn!(%error, %session_id, "publish disarmed goal projection failed");
+                        }
                         goal::TurnEndOutcome::MaxTokens
                     }
                     _ => goal::TurnEndOutcome::Completed,

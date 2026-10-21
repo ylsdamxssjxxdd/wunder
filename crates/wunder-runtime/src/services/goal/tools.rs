@@ -14,49 +14,60 @@ use std::sync::Arc;
 
 pub const TOOL_GOAL: &str = "goal";
 
-const GOAL_DESCRIPTION: &str = "Manage the persisted goal for this session. Select exactly one action: get reads the current goal; create starts a long-running objective; edit changes its objective; pause/resume controls automatic continuation; complete marks verified work done; blocked reports a persistent blocker. State-changing actions require the current goal_id and revision returned by get, except create. Human-only actions are checked by the runtime; complete and blocked may also be used in the admitted goal round.";
+const GOAL_DESCRIPTION: &str = "Manage this session's persisted goal. get reads; create starts; edit changes; pause/resume controls; complete closes verified work; blocked reports a persistent blocker. Mutations need goal_id and revision from get, except create. Runtime enforces human-only and goal-round rules.";
 
 pub fn is_goal_tool_name(name: &str) -> bool {
     name.trim() == TOOL_GOAL
 }
 
 pub fn goal_tool_specs() -> Vec<ToolSpec> {
-    let action = |action: &str, properties: Value, required: &[&str]| {
+    let action = |properties: Value, required: &[&str]| {
         json!({
             "type": "object",
             "properties": properties,
             "required": required,
             "additionalProperties": false,
-            "description": format!("goal action={action}"),
         })
     };
-    let base_ref = json!({
+    // Refs keep the action union strict while defining the repeated optimistic
+    // concurrency fields and their descriptions only once. Each branch remains
+    // independently closed, so cross-action fields are still rejected.
+    let defs = json!({
         "goal_id": {"type":"string", "minLength":1, "description":"Exact id returned by action=get."},
         "revision": {"type":"integer", "minimum":1, "description":"Exact positive revision returned by action=get."},
-    });
-    let mut edit_props = base_ref.clone();
-    edit_props["objective"] = json!({"type":"string", "minLength":1, "maxLength":MAX_OBJECTIVE_CHARS, "description":"Replacement objective."});
-    edit_props["max_goal_rounds"] = json!({"type":"integer", "minimum":1, "maximum":10000, "description":"Optional replacement continuation-round cap."});
-    let mut blocked_props = base_ref.clone();
-    blocked_props["blocked_reason"] = json!({"type":"string", "minLength":1, "maxLength":MAX_BLOCK_REASON_CHARS, "description":"Concrete blocker that persisted across goal rounds."});
-    let create_props = json!({
         "objective": {"type":"string", "minLength":1, "maxLength":MAX_OBJECTIVE_CHARS, "description":"Concrete completion objective."},
-        "max_goal_rounds": {"type":"integer", "minimum":1, "maximum":10000, "description":"Optional continuation-round cap."}
+        "max_goal_rounds": {"type":"integer", "minimum":1, "maximum":10000, "description":"Optional continuation-round cap."},
+        "blocked_reason": {"type":"string", "minLength":1, "maxLength":MAX_BLOCK_REASON_CHARS, "description":"Concrete blocker that persisted across goal rounds."}
     });
+    let reference = |name: &str| json!({"$ref": format!("#/$defs/{name}")});
+    let get = json!({"action":{"const":"get"}});
+    let create = json!({
+        "action":{"const":"create"}, "objective":reference("objective"),
+        "max_goal_rounds":reference("max_goal_rounds")
+    });
+    let mutation = |name: &str| {
+        json!({
+            "action":{"const":name}, "goal_id":reference("goal_id"), "revision":reference("revision")
+        })
+    };
+    let mut edit = mutation("edit");
+    edit["objective"] = reference("objective");
+    edit["max_goal_rounds"] = reference("max_goal_rounds");
+    let mut blocked = mutation("blocked");
+    blocked["blocked_reason"] = reference("blocked_reason");
     vec![ToolSpec {
         name: TOOL_GOAL.to_string(),
         title: Some("Goal".to_string()),
         description: GOAL_DESCRIPTION.to_string(),
         input_schema: json!({
-            "type": "object",
-            "oneOf": [
-                action("get", json!({"action":{"const":"get"}}), &["action"]),
-                action("create", json!({"action":{"const":"create"}, "objective": create_props["objective"], "max_goal_rounds": create_props["max_goal_rounds"]}), &["action", "objective"]),
-                action("edit", json!({"action":{"const":"edit"}, "goal_id": edit_props["goal_id"], "revision": edit_props["revision"], "objective": edit_props["objective"], "max_goal_rounds": edit_props["max_goal_rounds"]}), &["action", "goal_id", "revision", "objective"]),
-                action("pause", json!({"action":{"const":"pause"}, "goal_id": base_ref["goal_id"], "revision": base_ref["revision"]}), &["action", "goal_id", "revision"]),
-                action("resume", json!({"action":{"const":"resume"}, "goal_id": base_ref["goal_id"], "revision": base_ref["revision"]}), &["action", "goal_id", "revision"]),
-                action("complete", json!({"action":{"const":"complete"}, "goal_id": base_ref["goal_id"], "revision": base_ref["revision"]}), &["action", "goal_id", "revision"]),
-                action("blocked", json!({"action":{"const":"blocked"}, "goal_id": blocked_props["goal_id"], "revision": blocked_props["revision"], "blocked_reason": blocked_props["blocked_reason"]}), &["action", "goal_id", "revision", "blocked_reason"]),
+            "type":"object", "$defs":defs, "oneOf":[
+                action(get, &["action"]),
+                action(create, &["action", "objective"]),
+                action(edit, &["action", "goal_id", "revision", "objective"]),
+                action(mutation("pause"), &["action", "goal_id", "revision"]),
+                action(mutation("resume"), &["action", "goal_id", "revision"]),
+                action(mutation("complete"), &["action", "goal_id", "revision"]),
+                action(blocked, &["action", "goal_id", "revision", "blocked_reason"])
             ]
         }),
     }]

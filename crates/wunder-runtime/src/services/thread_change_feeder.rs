@@ -21,8 +21,15 @@ pub const FEEDER_PAGE_SIZE: i64 = 200;
 
 const CHANNEL_CAPACITY: usize = 256;
 const BASE_POLL_INTERVAL_MS: u64 = 250;
-const MAX_POLL_INTERVAL_MS: u64 = 4000;
-const BACKOFF_FACTOR: f64 = 2.0;
+// In-process commits notify `ThreadChangeHub` immediately. The fallback is
+// only for another process writing the same local store, so once the feed is
+// idle it must not keep waking a mechanical disk every four seconds.
+const MAX_POLL_INTERVAL_MS: u64 = 60_000;
+fn idle_poll_interval(idle_rounds: usize) -> u64 {
+    BASE_POLL_INTERVAL_MS
+        .saturating_mul(1u64 << idle_rounds.min(8))
+        .min(MAX_POLL_INTERVAL_MS)
+}
 
 /// Durable frame delivered by [`watch_thread_changes`].
 #[derive(Debug, Clone)]
@@ -72,10 +79,9 @@ pub async fn watch_thread_changes(
     let workspace = state.workspace.clone();
     // The hub is only a wake signal; the poll fallback stays the correctness
     // path, so a feed without subscribers is never treated as truth.
-    let hub_notify = state.kernel.orchestrator.change_hub.subscribe(&session_id);
+    let mut hub_notify = state.kernel.orchestrator.change_hub.subscribe(&session_id);
     let mut last_seq = after_seq.max(0);
     let mut idle_rounds = 0usize;
-    let mut poll_interval = BASE_POLL_INTERVAL_MS;
 
     tokio::spawn(async move {
         loop {
@@ -121,7 +127,6 @@ pub async fn watch_thread_changes(
                     }
                     if progressed {
                         idle_rounds = 0;
-                        poll_interval = BASE_POLL_INTERVAL_MS;
                         if full_page {
                             // More durable changes likely wait; re-read immediately.
                             continue;
@@ -139,19 +144,8 @@ pub async fn watch_thread_changes(
                     idle_rounds = idle_rounds.saturating_add(1);
                 }
             }
-            if idle_rounds > 0 {
-                let backoff = (BASE_POLL_INTERVAL_MS as f64
-                    * BACKOFF_FACTOR.powi(idle_rounds.min(6) as i32))
-                    as u64;
-                poll_interval = poll_interval.min(backoff.min(MAX_POLL_INTERVAL_MS));
-            } else {
-                poll_interval = BASE_POLL_INTERVAL_MS;
-            }
+            let poll_interval = idle_poll_interval(idle_rounds);
             let wait = tokio::time::sleep(std::time::Duration::from_millis(poll_interval));
-            let wake = async {
-                let mut notify = hub_notify.clone();
-                let _ = notify.changed().await;
-            };
             let cancel_fut: std::pin::Pin<
                 std::boxed::Box<dyn std::future::Future<Output = ()> + Send>,
             > = match cancel.as_ref() {
@@ -160,12 +154,14 @@ pub async fn watch_thread_changes(
             };
             tokio::select! {
                 _ = cancel_fut => return,
-                _ = wake => {
+                changed = hub_notify.changed() => {
+                    if changed.is_err() {
+                        return;
+                    }
                     // Wake signal only: re-read when the hub claims a cursor
                     // ahead of our durable position.
                     if *hub_notify.borrow() > last_seq {
                         idle_rounds = 0;
-                        poll_interval = BASE_POLL_INTERVAL_MS;
                     }
                 }
                 _ = wait => {}
@@ -398,5 +394,14 @@ mod tests {
             other => panic!("expected durable change, got {other:?}"),
         }
         cancel.cancel();
+    }
+
+    #[test]
+    fn idle_poll_backoff_starts_fast_and_caps_at_one_minute() {
+        assert_eq!(idle_poll_interval(0), 250);
+        assert_eq!(idle_poll_interval(1), 500);
+        assert_eq!(idle_poll_interval(2), 1_000);
+        assert_eq!(idle_poll_interval(8), MAX_POLL_INTERVAL_MS);
+        assert_eq!(idle_poll_interval(usize::MAX), MAX_POLL_INTERVAL_MS);
     }
 }

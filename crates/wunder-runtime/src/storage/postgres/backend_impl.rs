@@ -607,6 +607,16 @@ impl AgentRuntimeStore for PostgresStorage {
     fn list_pending_agent_tasks(&self, limit: i64) -> Result<Vec<AgentTaskRecord>> {
         self.list_pending_agent_tasks_impl(limit)
     }
+    fn next_agent_task_retry_at(&self) -> Result<Option<f64>> {
+        self.ensure_initialized()?;
+        Ok(self
+            .conn()?
+            .query_one(
+                "SELECT MIN(retry_at) FROM agent_tasks WHERE status IN ('pending', 'retry')",
+                &[],
+            )?
+            .get(0))
+    }
     fn count_pending_agent_tasks(&self) -> Result<i64> {
         self.count_pending_agent_tasks_impl()
     }
@@ -1555,6 +1565,16 @@ impl ChannelRuntimeStore for PostgresStorage {
     }
     fn list_pending_channel_outbox(&self, limit: i64) -> Result<Vec<ChannelOutboxRecord>> {
         self.list_pending_channel_outbox_impl(limit)
+    }
+    fn next_channel_outbox_retry_at(&self) -> Result<Option<f64>> {
+        self.ensure_initialized()?;
+        Ok(self
+            .conn()?
+            .query_one(
+                "SELECT MIN(retry_at) FROM channel_outbox WHERE status IN ('pending', 'retry')",
+                &[],
+            )?
+            .get(0))
     }
     fn update_channel_outbox_status(
         &self,

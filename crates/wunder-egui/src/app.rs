@@ -1,11 +1,13 @@
 use crate::backend::{apply_event, BackendCommand, BackendPort};
 use crate::model::{AppState, ConnectionState, SessionView, TurnView};
+use crate::perf::PerfCounters;
 use crate::theme::{self, Tokens};
 use egui::{
     Align, CentralPanel, Color32, Context, Frame, Id, Layout, Margin, Order, RichText, ScrollArea,
     Sense, SidePanel, Stroke, TextEdit, Ui, UiBuilder, Vec2,
 };
 use std::collections::BTreeSet;
+use std::sync::Arc;
 use std::time::Duration;
 
 const SIDEBAR_WIDTH: f32 = 240.0;
@@ -35,6 +37,29 @@ const COMPOSER_QUEUE_ROW_HEIGHT: f32 = 26.0;
 /// How long a composer notice ("已加入待发送队列") stays on screen. Long enough
 /// to read once, short enough that it never looks like persistent state.
 const COMPOSER_NOTICE_SECONDS: f64 = 4.0;
+/// Upper bound applied to one frame's drained events. The queue itself stays
+/// bounded by the worker; this only keeps a single paint from doing unbounded
+/// reducer work.
+const EVENT_DRAIN_BUDGET: usize = 256;
+/// A silent turn still needs a frame once a second so the elapsed-time footer
+/// advances. All real content frames arrive through the backend waker.
+const IDLE_CLOCK_REPAINT: Duration = Duration::from_millis(1_000);
+
+/// Repaint sources other than a backend wake. `None` means the frame loop may
+/// sleep until input or the next wake; nothing here runs while idle and ready.
+fn scheduled_frame_delay(
+    connection: ConnectionState,
+    busy: bool,
+    drain_saturated: bool,
+) -> Option<Duration> {
+    if drain_saturated {
+        Some(Duration::ZERO)
+    } else if connection == ConnectionState::Starting || busy {
+        Some(IDLE_CLOCK_REPAINT)
+    } else {
+        None
+    }
+}
 
 /// How many chip rows fit in `width`.
 ///
@@ -131,6 +156,15 @@ enum ThreadRowAction {
     ToggleSelection(String),
 }
 
+/// One bounded process-page read requested while painting the transcript.
+/// Collecting these instead of mutating `state.turns` mid-loop keeps drawing
+/// on a borrowed projection and removes the per-frame transcript clone.
+struct ProcessPageRequest {
+    turn_id: String,
+    before: Option<i64>,
+    after: Option<i64>,
+}
+
 /// Deferred intent from the device → workspace → thread tree. Returning an
 /// intent keeps the scroll closure free of `&mut self` calls, so painting the
 /// rail cannot re-enter the state it is reading.
@@ -138,7 +172,14 @@ enum SidebarRowAction {
     Thread(ThreadRowAction),
     ToggleWorkspace(String),
     NewThread(Option<String>),
-    RenameWorkspace { workspace_id: String, name: String },
+    /// Open the create form from the device header.
+    NewWorkspace,
+    /// Open the edit form pre-filled from the row.
+    EditWorkspace(crate::model::WorkspaceView),
+    DeleteWorkspace {
+        workspace_id: String,
+        name: String,
+    },
 }
 
 /// Map a stored workspace icon name to a bundled glyph. The native editor
@@ -192,11 +233,6 @@ enum WorkspacePromptKind {
     Rename {
         path: String,
     },
-    /// Rename a workspace row. The rail's middle level owns the label, so it
-    /// must not be spelled through a file path validator.
-    RenameWorkspace {
-        workspace_id: String,
-    },
 }
 
 /// Deferred intent from the working-directory panel. Returning intents keeps
@@ -247,6 +283,73 @@ struct DeleteEntryItem {
     is_directory: bool,
 }
 
+/// Create/edit form for a workspace row.
+///
+/// 蛹 opens a full editor (name, folder, icon, colour); the same four values
+/// are what the façade's `WorkspaceEdit` takes, so the dialog never needs a
+/// second round trip to read the current binding back.
+struct WorkspaceDialog {
+    /// Empty means "create"; the façade treats it the same way.
+    workspace_id: String,
+    name: String,
+    root_path: String,
+    icon: String,
+    color: String,
+    /// Façade validation message, shown in place instead of a status line.
+    error: String,
+    /// A save is in flight. The form stays open on failure so the user can fix
+    /// the value that was rejected instead of retyping the whole thing.
+    busy: bool,
+}
+
+struct WorkspaceDeleteConfirm {
+    workspace_id: String,
+    name: String,
+    /// `true` removes the thread records; `false` archives them.
+    delete_threads: bool,
+}
+
+/// In-flight workspace reorder. Only the dragged row's id is kept; the slot
+/// under the pointer is derived from geometry, never stored, so a stale value
+/// cannot survive a re-layout.
+#[derive(Clone)]
+struct WorkspaceDrag {
+    workspace_id: String,
+}
+
+/// What one workspace row reports back: the intent its buttons raised, plus the
+/// row's own response so the caller can watch it for a reorder drag.
+struct WorkspaceRowOutcome {
+    action: Option<SidebarRowAction>,
+    response: egui::Response,
+}
+
+/// Icon choices offered by the workspace dialog, in the same order as the
+/// native `WORKSPACE_ICONS` subset this shell can draw.
+const WORKSPACE_ICON_CHOICES: &[&str] = &[
+    "folder", "monitor", "camera", "robot", "gear", "flask", "database", "cloud",
+];
+
+/// Colour choices offered by the workspace dialog. Names must stay identical
+/// to the native `WORKSPACE_COLORS`; `theme::workspace_color` resolves them.
+const WORKSPACE_COLOR_CHOICES: &[&str] = &[
+    "red",
+    "green",
+    "blue",
+    "brown",
+    "crimson",
+    "pink",
+    "purple",
+    "yellow",
+    "orange",
+    "teal",
+    "bright-blue",
+    "black",
+    "light-purple",
+    "light-green",
+    "gray",
+];
+
 /// What the composer strip asked for this frame.
 ///
 /// The strip is drawn with `&self` because it sits inside the composer's
@@ -290,6 +393,7 @@ fn toggle_composer_submenu(
 
 pub struct EguiApp {
     backend: Box<dyn BackendPort>,
+    perf: PerfCounters,
     pub state: AppState,
     styled: bool,
     last_selected: Option<String>,
@@ -321,6 +425,17 @@ pub struct EguiApp {
     workspace_prompt: Option<WorkspacePromptDialog>,
     workspace_prompt_needs_focus: bool,
     delete_entry_confirm: Option<DeleteEntryConfirm>,
+    /// Create/edit form for a workspace row. One dialog serves both because the
+    /// façade takes the same edit for either; an empty id means create.
+    workspace_dialog: Option<WorkspaceDialog>,
+    workspace_dialog_needs_focus: bool,
+    /// Deleting a workspace also decides what happens to its threads, so the
+    /// confirmation carries that choice instead of asking twice.
+    workspace_delete_confirm: Option<WorkspaceDeleteConfirm>,
+    /// A workspace row being dragged to a new position. The insertion slot is
+    /// recomputed from the row spans every frame, so it stays correct while the
+    /// list scrolls under a stationary pointer.
+    workspace_drag: Option<WorkspaceDrag>,
     /// The directory list owns Arrow/Enter/F2/Delete/F5 until a text editor
     /// takes focus back. egui's widget focus alone is not stable enough: the
     /// list is a scroll area, so arrow keys may re-target focus.
@@ -419,8 +534,12 @@ fn format_tokens(value: u32) -> String {
 impl EguiApp {
     #[cfg(not(target_arch = "wasm32"))]
     pub fn native(ctx: Context) -> Self {
+        let perf = PerfCounters::new();
+        let wake_ctx = ctx.clone();
+        let waker: crate::backend::UiWaker = Arc::new(move || wake_ctx.request_repaint());
         let mut app = Self {
-            backend: Box::new(crate::backend::NativeBackend::start()),
+            backend: Box::new(crate::backend::NativeBackend::start(waker, perf.clone())),
+            perf,
             state: AppState::default(),
             styled: false,
             last_selected: None,
@@ -442,11 +561,17 @@ impl EguiApp {
             workspace_prompt: None,
             workspace_prompt_needs_focus: false,
             delete_entry_confirm: None,
+            workspace_dialog: None,
+            workspace_dialog_needs_focus: false,
+            workspace_delete_confirm: None,
+            workspace_drag: None,
             files_keyboard_active: false,
             pending_model_change: None,
         };
         let _ = app.backend.submit(BackendCommand::RefreshSessions);
-        ctx.request_repaint_after(Duration::from_millis(120));
+        // Startup fallback only. Ready/Sessions/Workspaces wake the UI; this
+        // timer just keeps a broken runtime from freezing the splash forever.
+        ctx.request_repaint_after(IDLE_CLOCK_REPAINT);
         app
     }
 
@@ -456,6 +581,7 @@ impl EguiApp {
         let last_selected = state.selected_session.clone();
         Self {
             backend: Box::new(crate::backend::DemoBackend::default()),
+            perf: PerfCounters::new(),
             follow_tail: state.should_follow_tail,
             scroll_to_turn: None,
             composer_notice_at: 0.0,
@@ -479,6 +605,10 @@ impl EguiApp {
             workspace_prompt: None,
             workspace_prompt_needs_focus: false,
             delete_entry_confirm: None,
+            workspace_dialog: None,
+            workspace_dialog_needs_focus: false,
+            workspace_delete_confirm: None,
+            workspace_drag: None,
             files_keyboard_active: false,
             pending_model_change: None,
         }
@@ -486,8 +616,12 @@ impl EguiApp {
 
     #[cfg(target_arch = "wasm32")]
     pub fn web(ctx: Context) -> Self {
+        let perf = PerfCounters::new();
+        let wake_ctx = ctx.clone();
+        let waker: crate::backend::UiWaker = Arc::new(move || wake_ctx.request_repaint());
         let app = Self {
-            backend: Box::new(crate::backend::RemoteBackend::start()),
+            backend: Box::new(crate::backend::RemoteBackend::start(waker, perf.clone())),
+            perf,
             state: AppState::default(),
             styled: false,
             last_selected: None,
@@ -509,15 +643,27 @@ impl EguiApp {
             workspace_prompt: None,
             workspace_prompt_needs_focus: false,
             delete_entry_confirm: None,
+            workspace_dialog: None,
+            workspace_dialog_needs_focus: false,
+            workspace_delete_confirm: None,
+            workspace_drag: None,
             files_keyboard_active: false,
             pending_model_change: None,
         };
-        ctx.request_repaint_after(Duration::from_millis(120));
+        // The remote adapter also wakes through `request_repaint`; this is the
+        // startup fallback while the first connect result is in flight.
+        ctx.request_repaint_after(IDLE_CLOCK_REPAINT);
         app
     }
 
     fn pump(&mut self, ctx: &Context) {
-        let event_count = self.backend.poll(64).into_iter().fold(0, |count, event| {
+        let events = crate::backend::coalesce_delta_events(self.backend.drain(EVENT_DRAIN_BUDGET));
+        // A saturated budget means the queue still holds work. Without a
+        // follow-up frame those events would wait for the next input; wakes
+        // are not re-armed after the drain.
+        let drain_saturated = events.len() == EVENT_DRAIN_BUDGET;
+        self.perf.mark_events_applied(events.len());
+        for event in events {
             match event {
                 crate::backend::BackendEvent::ThreadRenamed {
                     session_id,
@@ -592,13 +738,38 @@ impl EguiApp {
                 crate::backend::BackendEvent::WorkspaceAction { label, result } => match result {
                     Ok(()) => {
                         self.state.status = label;
+                        // A save that the façade accepted closes its form; a
+                        // failure keeps it open with the message inline. Other
+                        // actions sharing this channel (a file write, a
+                        // reorder) leave an idle form alone.
+                        if self
+                            .workspace_dialog
+                            .as_ref()
+                            .is_some_and(|dialog| dialog.busy)
+                        {
+                            self.workspace_dialog = None;
+                        }
                         self.refresh_workspace_files();
-                        // A workspace rename and a file write share this
-                        // channel; re-reading the catalogue is cheap and keeps
-                        // the middle level truthful after either.
+                        // A workspace edit and a file write share this
+                        // channel. Re-reading both catalogues is cheap on this
+                        // user-action path and keeps the rail truthful: a
+                        // rename changes the thread's workspace label, and a
+                        // delete can remove or archive its threads.
                         self.submit(BackendCommand::RefreshWorkspaces);
+                        self.submit(BackendCommand::RefreshSessions);
                     }
-                    Err(error) => self.state.status = error,
+                    Err(error) => {
+                        self.state.status = error.clone();
+                        // A failed reorder leaves the optimistic order the drag
+                        // applied, so the catalogue has to be re-read to put the
+                        // rows back where the backend says they belong.
+                        if let Some(dialog) = self.workspace_dialog.as_mut() {
+                            dialog.busy = false;
+                            dialog.error = error;
+                        } else {
+                            self.submit(BackendCommand::RefreshWorkspaces);
+                        }
+                    }
                 },
                 crate::backend::BackendEvent::SessionsArchived { archived, failed } => {
                     let counts_changed = !archived.is_empty();
@@ -614,8 +785,7 @@ impl EguiApp {
                 }
                 event => apply_event(&mut self.state, event),
             }
-            count + 1
-        });
+        }
         // A queued prompt starts the moment the running turn lets go. The
         // reducer owns `busy`, so this is the single place that decides when
         // the queue may advance.
@@ -626,18 +796,13 @@ impl EguiApp {
         {
             self.drain_prompt_queue();
         }
-        if self.state.connection == ConnectionState::Starting
-            || self.state.busy
-            || self.state.prompt_preview.loading
-            || self.state.model_picker_loading
-            || self.state.model_picker_saving
-            || event_count > 0
+        // Content frames are driven by the backend waker. Keep only a 1 Hz
+        // clock while starting or running so elapsed time and transient
+        // notices do not freeze during silent intervals.
+        if let Some(delay) =
+            scheduled_frame_delay(self.state.connection, self.state.busy, drain_saturated)
         {
-            ctx.request_repaint_after(if self.state.busy {
-                Duration::from_millis(16)
-            } else {
-                Duration::from_millis(120)
-            });
+            ctx.request_repaint_after(delay);
         }
     }
 
@@ -645,6 +810,12 @@ impl EguiApp {
         if let Err(error) = self.backend.submit(command) {
             self.state.status = error;
         }
+    }
+
+    /// Counters for the event-driven path. Read by probes and tests; they
+    /// never contain message text, paths or user identifiers.
+    pub fn perf_snapshot(&self) -> crate::perf::PerfSnapshot {
+        self.perf.snapshot()
     }
 
     fn finish_session_model_save(
@@ -790,6 +961,8 @@ impl EguiApp {
         self.draw_thread_trajectory_dialog(ctx, tokens);
         self.draw_workspace_prompt(ctx, tokens);
         self.draw_delete_entry_confirm(ctx, tokens);
+        self.draw_workspace_dialog(ctx, tokens);
+        self.draw_workspace_delete_confirm(ctx, tokens);
     }
 
     fn draw_compact_sidebar(&mut self, ctx: &Context, screen: egui::Rect, tokens: Tokens) {
@@ -950,14 +1123,20 @@ impl EguiApp {
     /// signed-out shape: monitor glyph, `本地`, host `蛹`, and no chevron. A
     /// cloud target would add the menu; offering an empty device would let a
     /// click land on a tree the backend cannot serve.
-    fn draw_device_header(&mut self, ui: &mut Ui, tokens: Tokens) {
+    fn draw_device_header(&mut self, ui: &mut Ui, tokens: Tokens) -> Option<SidebarRowAction> {
         let (full, _) = ui.allocate_exact_size(
             Vec2::new(ui.available_width(), crate::sidebar_tree::DEVICE_ROW_HEIGHT),
             Sense::hover(),
         );
+        // The header owns the row minus the "new workspace" affordance, which
+        // sits on the right edge exactly as the Slint device bar does.
+        let plus = egui::Rect::from_center_size(
+            egui::pos2(full.right() - 21.0, full.center().y),
+            Vec2::splat(22.0),
+        );
         let rect = egui::Rect::from_min_max(
             egui::pos2(full.left() + 8.0, full.top()),
-            egui::pos2(full.right() - 10.0, full.bottom()),
+            egui::pos2(plus.left() - 2.0, full.bottom()),
         );
         let device = self.state.sidebar.device();
         let switchable = self.state.sidebar.can_switch_device();
@@ -1038,17 +1217,42 @@ impl EguiApp {
         }
         let tooltip = format!("{} · {}", device.label(), device.host());
         response.on_hover_text(tooltip);
+        let plus_response = ui
+            .interact(plus, Id::new("sidebar-new-workspace"), Sense::click())
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .on_hover_text("新建工作区");
+        if plus_response.hovered() {
+            ui.painter().rect_filled(plus, 6.0, tokens.hover);
+        }
+        crate::icons::paint(
+            ui.painter(),
+            plus.shrink(5.0),
+            crate::icons::Icon::Plus,
+            if plus_response.hovered() {
+                tokens.primary
+            } else {
+                tokens.text_muted
+            },
+        );
+        plus_response
+            .clicked()
+            .then_some(SidebarRowAction::NewWorkspace)
     }
 
     /// One workspace row: 34px, washed glyph, name, live thread count and a
-    /// hover-only "new thread" affordance, as in 蛹.
+    /// hover-only action band, as in 蛹.
+    ///
+    /// The row's own response is handed back because it doubles as the drag
+    /// handle: a press that turns into a move reorders the rail, a press that
+    /// stays put toggles the group.
     fn draw_workspace_row(
         ui: &mut Ui,
         workspace: &crate::model::WorkspaceView,
         expanded: bool,
         thread_count: usize,
+        dragging: bool,
         tokens: Tokens,
-    ) -> Option<SidebarRowAction> {
+    ) -> WorkspaceRowOutcome {
         let (full, _) = ui.allocate_exact_size(
             Vec2::new(
                 ui.available_width(),
@@ -1057,13 +1261,21 @@ impl EguiApp {
             Sense::hover(),
         );
         let rect = full.shrink2(Vec2::new(6.0, 0.0));
+        // `click_and_drag` is what makes a press that turns into a move report
+        // `dragged()` instead of silently swallowing the gesture: with plain
+        // `Sense::click` a reorder drag would never start.
         let response = ui
             .interact(
                 rect,
                 Id::new(("workspace-row", &workspace.id)),
-                Sense::click(),
+                Sense::click_and_drag(),
             )
             .on_hover_cursor(egui::CursorIcon::PointingHand);
+        // The row under the pointer reads as lifted while it is being dragged,
+        // so the drop slot stays legible.
+        if dragging {
+            ui.painter().rect_filled(rect, 7.0, tokens.selected);
+        }
         let pointer_in_row = ui.rect_contains_pointer(rect);
         // Expanded groups read as "open": a wash of the workspace colour behind
         // the glyph. Collapsed groups fall back to the neutral hover fill, the
@@ -1078,6 +1290,15 @@ impl EguiApp {
                 Color32::TRANSPARENT
             },
         );
+        // Selection indicator: the open group is the selected workspace, marked
+        // by the same 2px accent bar 蛹 paints at the row's left edge.
+        if expanded {
+            let bar = egui::Rect::from_min_size(
+                egui::pos2(rect.left(), rect.top() + 5.0),
+                Vec2::new(2.0, 24.0),
+            );
+            ui.painter().rect_filled(bar, 1.0, tokens.primary);
+        }
         let glyph = egui::Rect::from_center_size(
             rect.left_center() + Vec2::new(23.0, 0.0),
             Vec2::splat(22.0),
@@ -1101,12 +1322,34 @@ impl EguiApp {
             egui::pos2(rect.right() - 18.0, rect.center().y),
             Vec2::splat(22.0),
         );
-        // The rename affordance rides left of the new-thread button and only
-        // exists while the pointer is on the row, so the name never reflows.
+        // The rename and delete affordances ride left of the new-thread button
+        // and only exist while the pointer is on the row, so the name and the
+        // thread count never reflow. The spacing matches 蛹's 74px action band
+        // (+ at 42, pen at 26, trash at 0).
         let pen = egui::Rect::from_center_size(
-            egui::pos2(plus.left() - 15.0, rect.center().y),
+            egui::pos2(plus.left() - 16.0, rect.center().y),
             Vec2::splat(22.0),
         );
+        let trash = egui::Rect::from_center_size(
+            egui::pos2(plus.left() - 42.0, rect.center().y),
+            Vec2::splat(22.0),
+        );
+        // The band is the hovered area's backdrop: it rides over the row rather
+        // than joining its layout, exactly like the Slint rectangle.
+        if pointer_in_row {
+            ui.painter().rect_filled(
+                egui::Rect::from_min_max(
+                    egui::pos2(trash.left(), rect.top()),
+                    egui::pos2(rect.right(), rect.bottom()),
+                ),
+                7.0,
+                if expanded {
+                    tokens.selected
+                } else {
+                    tokens.primary_tint
+                },
+            );
+        }
         let count_text = format!("{thread_count}");
         let count = ui.painter().layout_no_wrap(
             count_text,
@@ -1131,7 +1374,7 @@ impl EguiApp {
         );
         let title_rect = egui::Rect::from_min_max(
             egui::pos2(glyph.right() + 8.0, rect.top()),
-            egui::pos2(pen.left() - 4.0, rect.bottom()),
+            egui::pos2(trash.left() - 4.0, rect.bottom()),
         );
         ui.painter().with_clip_rect(title_rect).galley(
             egui::pos2(title_rect.left(), rect.center().y - title.size().y / 2.0),
@@ -1150,12 +1393,33 @@ impl EguiApp {
         let pen_response = ui
             .interact(
                 pen,
-                Id::new(("workspace-rename", &workspace.id)),
+                Id::new(("workspace-edit", &workspace.id)),
                 Sense::click(),
             )
             .on_hover_cursor(egui::CursorIcon::PointingHand)
-            .on_hover_text("重命名工作区");
+            .on_hover_text("编辑工作区");
+        let trash_response = ui
+            .interact(
+                trash,
+                Id::new(("workspace-delete", &workspace.id)),
+                Sense::click(),
+            )
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .on_hover_text("删除工作区");
         if pointer_in_row {
+            if trash_response.hovered() {
+                ui.painter().rect_filled(trash, 6.0, tokens.selected);
+            }
+            crate::icons::paint(
+                ui.painter(),
+                trash.shrink(5.0),
+                crate::icons::Icon::Trash,
+                if trash_response.hovered() {
+                    tokens.danger
+                } else {
+                    tokens.text_muted
+                },
+            );
             if pen_response.hovered() {
                 ui.painter().rect_filled(pen, 6.0, tokens.selected);
             }
@@ -1186,46 +1450,46 @@ impl EguiApp {
         if plus_response.clicked() {
             action = Some(SidebarRowAction::NewThread(Some(workspace.id.clone())));
         } else if pen_response.clicked() {
-            action = Some(SidebarRowAction::RenameWorkspace {
+            action = Some(SidebarRowAction::EditWorkspace(workspace.clone()));
+        } else if trash_response.clicked() {
+            action = Some(SidebarRowAction::DeleteWorkspace {
                 workspace_id: workspace.id.clone(),
                 name: workspace.name.clone(),
             });
         } else if response.clicked() {
             action = Some(SidebarRowAction::ToggleWorkspace(workspace.id.clone()));
         }
-        action
+        WorkspaceRowOutcome { action, response }
     }
 
     /// Draw the rail's middle and lowest levels.
     fn draw_workspace_region(&mut self, ui: &mut Ui, tokens: Tokens) {
         ui.add_space(8.0);
-        self.draw_device_header(ui, tokens);
+        let mut action = self.draw_device_header(ui, tokens);
         let selection_bar_height = if self.thread_selection.is_active() {
             38.0
         } else {
             0.0
         };
         let available = (ui.available_height() - selection_bar_height).max(0.0);
-        if self.state.sidebar.device().is_cloud() {
+        // One note covers both empty shapes: an unavailable device and a
+        // device with no workspace yet. The header stays interactive either
+        // way, so its "new workspace" intent still has to be handled.
+        let note = if self.state.sidebar.device().is_cloud() {
+            Some("云端工作区尚未接入")
+        } else if self.state.workspaces_loaded && self.state.workspaces.is_empty() {
+            Some("暂无工作区")
+        } else {
+            None
+        };
+        if let Some(note) = note {
             ui.add_space(14.0);
             ui.vertical_centered(|ui| {
-                ui.label(
-                    RichText::new("云端工作区尚未接入")
-                        .size(12.0)
-                        .color(tokens.text_muted),
-                );
+                ui.label(RichText::new(note).size(12.0).color(tokens.text_muted));
             });
-            return;
-        }
-        if self.state.workspaces_loaded && self.state.workspaces.is_empty() {
-            ui.add_space(14.0);
-            ui.vertical_centered(|ui| {
-                ui.label(
-                    RichText::new("暂无工作区")
-                        .size(12.0)
-                        .color(tokens.text_muted),
-                );
-            });
+            if let Some(action) = action {
+                self.handle_sidebar_row_action(action);
+            }
             return;
         }
         let rows = self
@@ -1234,7 +1498,15 @@ impl EguiApp {
             .rows(&self.state.workspaces, &self.state.sessions);
         let selected = self.state.selected_session.clone();
         let selecting = self.thread_selection.is_active();
-        let mut action: Option<SidebarRowAction> = None;
+        // The rail bounds a reorder: a pointer that wanders into the message
+        // list must not resolve a slot from coordinates the rail never drew.
+        let rail = ui.max_rect();
+        // Screen-space spans of the workspace rows, in list order. Threads are
+        // skipped on purpose: a reorder slot is measured against the rows that
+        // actually move.
+        let mut spans: Vec<(f32, f32)> = Vec::new();
+        let mut drag_started: Option<String> = None;
+        let mut drag_released = false;
         ScrollArea::vertical()
             .id_salt("sidebar-tree")
             .auto_shrink([false, false])
@@ -1251,10 +1523,23 @@ impl EguiApp {
                                 &self.state.sessions,
                                 &workspace.id,
                             );
-                            if let Some(next) =
-                                Self::draw_workspace_row(ui, workspace, *expanded, count, tokens)
-                            {
+                            let top = ui.cursor().top();
+                            let dragging = self
+                                .workspace_drag
+                                .as_ref()
+                                .is_some_and(|drag| drag.workspace_id == workspace.id);
+                            let outcome = Self::draw_workspace_row(
+                                ui, workspace, *expanded, count, dragging, tokens,
+                            );
+                            spans.push((top, top + crate::sidebar_tree::WORKSPACE_ROW_HEIGHT));
+                            if let Some(next) = outcome.action {
                                 action = Some(next);
+                            }
+                            if outcome.response.drag_started() {
+                                drag_started = Some(workspace.id.clone());
+                            }
+                            if dragging && outcome.response.drag_stopped() {
+                                drag_released = true;
                             }
                         }
                         crate::sidebar_tree::Row::Thread { index, session } => {
@@ -1286,13 +1571,88 @@ impl EguiApp {
                         }
                     }
                 }
+                // The insertion marker has to be painted inside the scroll area
+                // or the clip rect would swallow it the moment the list scrolls.
+                if self.workspace_drag.is_some() {
+                    if let Some(slot) = Self::pointer_slot(ui, &spans, rail) {
+                        // A slot past the last row draws under it; otherwise the
+                        // line sits on top of the row the drop would precede.
+                        let y = spans.get(slot).map_or_else(
+                            || spans.last().map_or(0.0, |(_, bottom)| *bottom),
+                            |(top, _)| *top,
+                        );
+                        let left = ui.max_rect().left() + 10.0;
+                        let right = ui.max_rect().right() - 10.0;
+                        ui.painter().line_segment(
+                            [egui::pos2(left, y), egui::pos2(right, y)],
+                            Stroke::new(2.0, tokens.primary),
+                        );
+                    }
+                }
             });
+        if let Some(workspace_id) = drag_started {
+            self.workspace_drag = Some(WorkspaceDrag { workspace_id });
+        }
+        if let Some(drag) = self.workspace_drag.clone() {
+            // `drag_released` covers a release over the row; a primary-button-up
+            // check covers a release anywhere else, so a drag that ends off the
+            // rail still resolves instead of hanging.
+            let released = drag_released || !ui.input(|input| input.pointer.primary_down());
+            if released {
+                self.commit_workspace_reorder(&drag.workspace_id, &spans, rail, ui);
+                self.workspace_drag = None;
+            }
+        }
         if self.thread_selection.is_active() {
             self.draw_thread_selection_bar(ui, tokens);
         }
         if let Some(action) = action {
             self.handle_sidebar_row_action(action);
         }
+    }
+
+    /// Insertion slot under the pointer, in workspace-row order. `None` means
+    /// the pointer is outside the rail, so a drag started there must not move
+    /// anything.
+    fn pointer_slot(ui: &Ui, spans: &[(f32, f32)], rail: egui::Rect) -> Option<usize> {
+        let pointer = ui.input(|input| input.pointer.hover_pos())?;
+        if !rail.contains(pointer) {
+            return None;
+        }
+        crate::sidebar_tree::drop_index(spans, pointer.y)
+    }
+
+    /// Apply a finished drag: move the row locally so the rail answers at once,
+    /// then ask the backend to persist the same order.
+    fn commit_workspace_reorder(
+        &mut self,
+        workspace_id: &str,
+        spans: &[(f32, f32)],
+        rail: egui::Rect,
+        ui: &Ui,
+    ) {
+        let ids: Vec<String> = self
+            .state
+            .workspaces
+            .iter()
+            .map(|workspace| workspace.id.clone())
+            .collect();
+        let Some(slot) = Self::pointer_slot(ui, spans, rail) else {
+            return;
+        };
+        let Some(order) = crate::sidebar_tree::moved_order(&ids, workspace_id, slot) else {
+            return;
+        };
+        if order == ids {
+            return;
+        }
+        self.state.workspaces.sort_by_key(|workspace| {
+            order
+                .iter()
+                .position(|id| id == &workspace.id)
+                .unwrap_or(usize::MAX)
+        });
+        self.submit(BackendCommand::ReorderWorkspaces { ids: order });
     }
 
     fn handle_sidebar_row_action(&mut self, action: SidebarRowAction) {
@@ -1304,12 +1664,37 @@ impl EguiApp {
             SidebarRowAction::NewThread(workspace_id) => {
                 self.submit(BackendCommand::CreateSession { workspace_id });
             }
-            SidebarRowAction::RenameWorkspace { workspace_id, name } => {
-                self.workspace_prompt = Some(WorkspacePromptDialog {
-                    kind: WorkspacePromptKind::RenameWorkspace { workspace_id },
-                    draft: name,
+            SidebarRowAction::NewWorkspace => {
+                self.workspace_dialog = Some(WorkspaceDialog {
+                    workspace_id: String::new(),
+                    name: String::new(),
+                    root_path: String::new(),
+                    icon: "folder".to_owned(),
+                    color: "blue".to_owned(),
+                    error: String::new(),
+                    busy: false,
                 });
-                self.workspace_prompt_needs_focus = true;
+                self.workspace_dialog_needs_focus = true;
+            }
+            SidebarRowAction::EditWorkspace(workspace) => {
+                self.workspace_dialog = Some(WorkspaceDialog {
+                    workspace_id: workspace.id,
+                    name: workspace.name,
+                    root_path: workspace.root_path,
+                    icon: workspace.icon,
+                    color: workspace.color,
+                    error: String::new(),
+                    busy: false,
+                });
+                self.workspace_dialog_needs_focus = true;
+            }
+            SidebarRowAction::DeleteWorkspace { workspace_id, name } => {
+                self.workspace_delete_confirm = Some(WorkspaceDeleteConfirm {
+                    workspace_id,
+                    name,
+                    // Archiving is the reversible default, as in 蛹.
+                    delete_threads: false,
+                });
             }
         }
     }
@@ -2808,10 +3193,7 @@ impl EguiApp {
         let mut open = true;
         let mut close_requested = false;
         let mut accepted = false;
-        let renaming = matches!(
-            dialog.kind,
-            WorkspacePromptKind::Rename { .. } | WorkspacePromptKind::RenameWorkspace { .. }
-        );
+        let renaming = matches!(dialog.kind, WorkspacePromptKind::Rename { .. });
         let (title, hint, field_label, dialog_id) = match &dialog.kind {
             WorkspacePromptKind::Directory => (
                 "新建目录",
@@ -2830,12 +3212,6 @@ impl EguiApp {
                 "新名称",
                 "只改名称，不改变所在目录：",
                 "workspace-rename-dialog",
-            ),
-            WorkspacePromptKind::RenameWorkspace { .. } => (
-                "重命名工作区",
-                "新的工作区名称",
-                "只改显示名称，不改变绑定的目录：",
-                "workspace-rename-workspace-dialog",
             ),
         };
         egui::Window::new(title)
@@ -2897,43 +3273,28 @@ impl EguiApp {
         }
         if accepted {
             let draft = dialog.draft.trim().to_owned();
-            match &dialog.kind {
-                // The workspace label is independent from the working
-                // directory, so it never needs a selected thread.
-                WorkspacePromptKind::RenameWorkspace { workspace_id } => {
-                    self.submit(BackendCommand::RenameWorkspace {
-                        workspace_id: workspace_id.clone(),
-                        name: draft,
-                    });
-                }
-                _ => {
-                    if let Some(session_id) = self.state.selected_session.clone() {
-                        match &dialog.kind {
-                            WorkspacePromptKind::Directory => {
-                                self.submit(BackendCommand::CreateWorkspaceDirectory {
-                                    session_id,
-                                    path: draft,
-                                })
-                            }
-                            WorkspacePromptKind::File => {
-                                self.submit(BackendCommand::CreateWorkspaceFile {
-                                    session_id,
-                                    path: draft,
-                                })
-                            }
-                            WorkspacePromptKind::Rename { path } => {
-                                self.submit(BackendCommand::RenameWorkspaceEntry {
-                                    session_id,
-                                    path: path.clone(),
-                                    new_name: draft,
-                                })
-                            }
-                            WorkspacePromptKind::RenameWorkspace { .. } => {}
-                        }
-                    } else {
-                        self.state.status = "请先选择一个线程".to_owned();
+            if let Some(session_id) = self.state.selected_session.clone() {
+                match &dialog.kind {
+                    WorkspacePromptKind::Directory => {
+                        self.submit(BackendCommand::CreateWorkspaceDirectory {
+                            session_id,
+                            path: draft,
+                        })
+                    }
+                    WorkspacePromptKind::File => self.submit(BackendCommand::CreateWorkspaceFile {
+                        session_id,
+                        path: draft,
+                    }),
+                    WorkspacePromptKind::Rename { path } => {
+                        self.submit(BackendCommand::RenameWorkspaceEntry {
+                            session_id,
+                            path: path.clone(),
+                            new_name: draft,
+                        })
                     }
                 }
+            } else {
+                self.state.status = "请先选择一个线程".to_owned();
             }
         } else if open {
             self.workspace_prompt = Some(dialog);
@@ -3045,6 +3406,235 @@ impl EguiApp {
             }
         } else if open {
             self.delete_entry_confirm = Some(confirm);
+        }
+    }
+
+    /// Create/edit form for a workspace. The façade re-validates the folder,
+    /// the name and the palette on save, so this only refuses obviously
+    /// incomplete input and reports the façade's own message in place.
+    fn draw_workspace_dialog(&mut self, ctx: &Context, tokens: Tokens) {
+        let Some(mut dialog) = self.workspace_dialog.take() else {
+            return;
+        };
+        let creating = dialog.workspace_id.is_empty();
+        let mut open = true;
+        let mut close_requested = false;
+        let mut accepted = false;
+        egui::Window::new(if creating { "新建工作区" } else { "编辑工作区" })
+            .id(Id::new("workspace-edit-workspace-dialog"))
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
+            .open(&mut open)
+            .show(ctx, |ui| {
+                ui.set_min_width(420.0);
+                ui.label("名称");
+                let name_input = ui.add(
+                    TextEdit::singleline(&mut dialog.name)
+                        .id(Id::new("workspace-dialog-name"))
+                        .desired_width(f32::INFINITY)
+                        .hint_text("工作区名称"),
+                );
+                if self.workspace_dialog_needs_focus {
+                    name_input.request_focus();
+                    self.workspace_dialog_needs_focus = false;
+                }
+                ui.add_space(8.0);
+                ui.label("目录");
+                ui.add(
+                    TextEdit::singleline(&mut dialog.root_path)
+                        .id(Id::new("workspace-dialog-root"))
+                        .desired_width(f32::INFINITY)
+                        .hint_text("/path/to/folder"),
+                );
+                // No native folder picker is linked into this shell, so the
+                // dialog also accepts a folder dropped from the file manager:
+                // egui reports it on the same channel the composer uses, and
+                // peeking keeps that path working.
+                let dropped = ui.input(|input| {
+                    input.raw.dropped_files.iter().find_map(|file| {
+                        let path = file.path.clone()?;
+                        // `DroppedFile` carries no kind flag; `metadata` is the
+                        // only way to tell a folder from a file drop.
+                        std::fs::metadata(&path).ok().filter(|m| m.is_dir())?;
+                        Some(path)
+                    })
+                });
+                if let Some(path) = dropped {
+                    dialog.root_path = path.display().to_string();
+                    dialog.error.clear();
+                }
+                ui.label(
+                    RichText::new("必须是已存在、可写且未被其它工作区使用的文件夹；蛹不会创建目录，也可以把文件夹直接拖进窗口。")
+                        .size(11.0)
+                        .color(tokens.text_muted),
+                );
+                ui.add_space(10.0);
+                ui.label("图标");
+                ui.horizontal(|ui| {
+                    for choice in WORKSPACE_ICON_CHOICES {
+                        let selected = dialog.icon == *choice;
+                        let (rect, response) =
+                            ui.allocate_exact_size(Vec2::splat(26.0), Sense::click());
+                        ui.painter().rect(
+                            rect,
+                            6.0,
+                            if selected {
+                                tokens.primary_tint
+                            } else {
+                                Color32::TRANSPARENT
+                            },
+                            Stroke::new(
+                                1.0,
+                                if selected {
+                                    tokens.primary
+                                } else {
+                                    tokens.border
+                                },
+                            ),
+                            egui::StrokeKind::Inside,
+                        );
+                        crate::icons::paint(
+                            ui.painter(),
+                            rect.shrink(6.0),
+                            workspace_icon(choice),
+                            if selected {
+                                tokens.primary
+                            } else {
+                                tokens.text_muted
+                            },
+                        );
+                        if response.on_hover_text(*choice).clicked() {
+                            dialog.icon = (*choice).to_owned();
+                        }
+                    }
+                });
+                ui.add_space(8.0);
+                ui.label("颜色");
+                ui.horizontal_wrapped(|ui| {
+                    for choice in WORKSPACE_COLOR_CHOICES {
+                        let selected = dialog.color == *choice;
+                        let (rect, response) =
+                            ui.allocate_exact_size(Vec2::splat(22.0), Sense::click());
+                        let center = rect.center();
+                        ui.painter()
+                            .circle_filled(center, 7.0, theme::workspace_color(choice));
+                        if selected {
+                            ui.painter()
+                                .circle_stroke(center, 10.0, Stroke::new(1.5, tokens.primary));
+                        }
+                        if response.on_hover_text(*choice).clicked() {
+                            dialog.color = (*choice).to_owned();
+                        }
+                    }
+                });
+                if !dialog.error.is_empty() {
+                    ui.add_space(6.0);
+                    ui.label(RichText::new(&dialog.error).size(11.0).color(tokens.danger));
+                }
+                ui.add_space(12.0);
+                let valid = !dialog.name.trim().is_empty() && !dialog.root_path.trim().is_empty();
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    // A rejected save keeps the form open with the façade's
+                    // message inline, which is what 蛹 does; only a success
+                    // closes it.
+                    if ui
+                        .add_enabled(valid && !dialog.busy, egui::Button::new("保存"))
+                        .clicked()
+                    {
+                        dialog.busy = true;
+                        accepted = true;
+                    }
+                    if ui.add_enabled(!dialog.busy, egui::Button::new("取消")).clicked() {
+                        close_requested = true;
+                    }
+                });
+                if ui.input(|input| input.key_pressed(egui::Key::Escape)) {
+                    close_requested = true;
+                }
+            });
+        if close_requested {
+            open = false;
+        }
+        if accepted {
+            self.submit(BackendCommand::SaveWorkspace {
+                workspace_id: dialog.workspace_id.clone(),
+                name: dialog.name.trim().to_owned(),
+                root_path: dialog.root_path.trim().to_owned(),
+                icon: dialog.icon.clone(),
+                color: dialog.color.clone(),
+            });
+            // The dialog stays mounted while the reply is in flight: the
+            // catalogue refresh on success is what closes it, and a failure
+            // re-uses the same draft instead of losing the user's typing.
+        } else if open {
+            self.workspace_dialog = Some(dialog);
+        }
+    }
+
+    /// Deleting a workspace decides what happens to its threads, so the choice
+    /// lives in the confirmation instead of a second prompt.
+    fn draw_workspace_delete_confirm(&mut self, ctx: &Context, tokens: Tokens) {
+        let Some(mut confirm) = self.workspace_delete_confirm.take() else {
+            return;
+        };
+        let mut open = true;
+        let mut close_requested = false;
+        let mut accepted = false;
+        egui::Window::new("删除工作区")
+            .id(Id::new("workspace-delete-workspace-dialog"))
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
+            .open(&mut open)
+            .show(ctx, |ui| {
+                ui.set_min_width(380.0);
+                ui.label(RichText::new(format!("确定删除工作区「{}」？", confirm.name)).size(13.0));
+                ui.add_space(6.0);
+                ui.checkbox(&mut confirm.delete_threads, "同时删除该工作区的线程");
+                ui.label(
+                    RichText::new(if confirm.delete_threads {
+                        "线程记录会被删除，无法恢复。"
+                    } else {
+                        "未勾选时线程会归档，仍可在归档中找回。"
+                    })
+                    .size(11.0)
+                    .color(tokens.text_muted),
+                );
+                ui.add_space(4.0);
+                ui.label(
+                    RichText::new("只解除目录绑定，不会删除磁盘上的文件。")
+                        .size(11.0)
+                        .color(tokens.text_muted),
+                );
+                ui.add_space(12.0);
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    let delete = ui.add(
+                        egui::Button::new(RichText::new("删除").color(tokens.on_accent))
+                            .fill(tokens.danger),
+                    );
+                    if delete.clicked() {
+                        accepted = true;
+                    }
+                    if ui.button("取消").clicked() {
+                        close_requested = true;
+                    }
+                });
+                if ui.input(|input| input.key_pressed(egui::Key::Escape)) {
+                    close_requested = true;
+                }
+            });
+        if close_requested {
+            open = false;
+        }
+        if accepted {
+            self.submit(BackendCommand::DeleteWorkspace {
+                workspace_id: confirm.workspace_id.clone(),
+                delete_threads: confirm.delete_threads,
+            });
+            self.state.status = "正在删除工作区".to_owned();
+        } else if open {
+            self.workspace_delete_confirm = Some(confirm);
         }
     }
 
@@ -3181,6 +3771,8 @@ impl EguiApp {
 
     fn draw_message_body(&mut self, ui: &mut Ui, tokens: Tokens) {
         let mut open_prompt_preview = false;
+        let mut consumed_scroll = false;
+        let mut process_requests: Vec<ProcessPageRequest> = Vec::new();
         let full = ui.max_rect();
         let ruler_width = if self.state.selected_session.is_some() {
             18.0
@@ -3211,20 +3803,22 @@ impl EguiApp {
                                     self.draw_empty_state(ui, tokens);
                                 } else {
                                     let mut number = 0;
-                                    // Clone one bounded projection at a time so a
-                                    // process disclosure can mark its load state
-                                    // and enqueue a page request while the list is
-                                    // being painted.  Process details are capped
-                                    // by the backend, so this does not copy an
-                                    // unbounded transcript.
-                                    for index in 0..self.state.turns.len() {
-                                        let turn = self.state.turns[index].clone();
+                                    // Paint directly from the borrowed projection.
+                                    // Process-page reads are collected and applied
+                                    // after the scroll closure so no turn (or the
+                                    // whole transcript) is cloned per frame.
+                                    for (index, turn) in self.state.turns.iter().enumerate() {
                                         if !turn.user.text.is_empty() {
                                             number += 1;
                                         }
                                         let top_before = ui.cursor().top();
-                                        open_prompt_preview |=
-                                            self.draw_turn(ui, &turn, number, tokens);
+                                        open_prompt_preview |= self.draw_turn(
+                                            ui,
+                                            turn,
+                                            number,
+                                            tokens,
+                                            &mut process_requests,
+                                        );
                                         if self.scroll_to_turn == Some(index) {
                                             // The ruler asked for this turn: put
                                             // its first row under the reader's eye,
@@ -3237,8 +3831,7 @@ impl EguiApp {
                                                 ),
                                             );
                                             ui.scroll_to_rect(rect, Some(Align::TOP));
-                                            self.follow_tail = false;
-                                            self.scroll_to_turn = None;
+                                            consumed_scroll = true;
                                         }
                                     }
                                 }
@@ -3248,6 +3841,13 @@ impl EguiApp {
                     })
             })
             .inner;
+        if consumed_scroll {
+            self.follow_tail = false;
+            self.scroll_to_turn = None;
+        }
+        for request in process_requests {
+            self.request_process_page_at(&request.turn_id, request.before, request.after);
+        }
         if open_prompt_preview {
             self.open_system_prompt_preview();
         }
@@ -3404,7 +4004,14 @@ impl EguiApp {
         });
     }
 
-    fn draw_turn(&mut self, ui: &mut Ui, turn: &TurnView, number: usize, tokens: Tokens) -> bool {
+    fn draw_turn(
+        &self,
+        ui: &mut Ui,
+        turn: &TurnView,
+        number: usize,
+        tokens: Tokens,
+        process_requests: &mut Vec<ProcessPageRequest>,
+    ) -> bool {
         let mut open_prompt_preview = false;
         if !turn.user.text.is_empty() {
             let row_width = ui.available_width();
@@ -3458,7 +4065,7 @@ impl EguiApp {
         }
 
         let assistant_top = ui.cursor().top();
-        self.draw_workflow(ui, turn, tokens);
+        self.draw_workflow(ui, turn, tokens, process_requests);
         if !turn.assistant.text.is_empty() {
             // Reserve the paint slot before laying out selectable text so the
             // hover wash is always below the glyphs and selection overlay.
@@ -3664,10 +4271,6 @@ impl EguiApp {
     /// Start one bounded process-page read for a turn.  The loading bit is
     /// stored in the turn projection before submitting the command, so the
     /// immediate-mode list cannot enqueue the same request on every repaint.
-    fn request_process_page(&mut self, turn_id: &str) {
-        self.request_process_page_at(turn_id, None, None);
-    }
-
     /// Request one side of the durable process keyset. The values are opaque
     /// storage indexes; UI code only ever passes cursors supplied by the last
     /// bounded page.
@@ -3695,7 +4298,13 @@ impl EguiApp {
         }
     }
 
-    fn draw_workflow(&mut self, ui: &mut Ui, turn: &TurnView, tokens: Tokens) {
+    fn draw_workflow(
+        &self,
+        ui: &mut Ui,
+        turn: &TurnView,
+        tokens: Tokens,
+        process_requests: &mut Vec<ProcessPageRequest>,
+    ) {
         if !crate::model::process_panel_visible(turn) {
             return;
         }
@@ -3718,7 +4327,11 @@ impl EguiApp {
                 open = !open;
                 ui.data_mut(|data| data.insert_temp(id, open));
                 if open {
-                    self.request_process_page(&turn.id);
+                    process_requests.push(ProcessPageRequest {
+                        turn_id: turn.id.clone(),
+                        before: None,
+                        after: None,
+                    });
                 }
             }
             let disclosure =
@@ -3798,7 +4411,11 @@ impl EguiApp {
                 return;
             }
             if !turn.process_loaded && !turn.process_loading && turn.process_error.is_empty() {
-                self.request_process_page(&turn.id);
+                process_requests.push(ProcessPageRequest {
+                    turn_id: turn.id.clone(),
+                    before: None,
+                    after: None,
+                });
             }
             let max_height = (ui.ctx().screen_rect().height() * 0.48).min(420.0);
             ScrollArea::vertical()
@@ -3828,7 +4445,11 @@ impl EguiApp {
                                     .color(tokens.danger),
                             );
                             if ui.small_button("重试").clicked() {
-                                self.request_process_page(&turn.id);
+                                process_requests.push(ProcessPageRequest {
+                                    turn_id: turn.id.clone(),
+                                    before: None,
+                                    after: None,
+                                });
                             }
                         });
                     } else if turn.workflow.is_empty() {
@@ -3850,7 +4471,11 @@ impl EguiApp {
                             ))
                             .on_hover_text("读取上一页最多 100 个过程项");
                         if older.clicked() {
-                            self.request_process_page_at(&turn.id, turn.process_first, None);
+                            process_requests.push(ProcessPageRequest {
+                                turn_id: turn.id.clone(),
+                                before: turn.process_first,
+                                after: None,
+                            });
                         }
                     }
                     for item in &turn.workflow {
@@ -3993,7 +4618,11 @@ impl EguiApp {
                             ))
                             .on_hover_text("读取下一页最多 100 个过程项");
                         if newer.clicked() {
-                            self.request_process_page_at(&turn.id, None, turn.process_last);
+                            process_requests.push(ProcessPageRequest {
+                                turn_id: turn.id.clone(),
+                                before: None,
+                                after: turn.process_last,
+                            });
                         }
                     }
                 });
@@ -5679,6 +6308,7 @@ impl EguiApp {
 
 impl eframe::App for EguiApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
+        self.perf.mark_frame();
         if !self.styled {
             theme::apply(ctx);
             self.styled = true;
@@ -5887,7 +6517,7 @@ mod composer_tests {
             self.0.borrow_mut().push(command);
             Ok(())
         }
-        fn poll(&mut self, _budget: usize) -> Vec<crate::backend::BackendEvent> {
+        fn drain(&mut self, _budget: usize) -> Vec<crate::backend::BackendEvent> {
             Vec::new()
         }
     }
@@ -5993,7 +6623,7 @@ mod files_tests {
             self.0.borrow_mut().push(command);
             Ok(())
         }
-        fn poll(&mut self, _budget: usize) -> Vec<crate::backend::BackendEvent> {
+        fn drain(&mut self, _budget: usize) -> Vec<crate::backend::BackendEvent> {
             Vec::new()
         }
     }
@@ -6327,7 +6957,7 @@ mod composer_attachment_tests {
             self.0.borrow_mut().push(command);
             Ok(())
         }
-        fn poll(&mut self, _budget: usize) -> Vec<crate::backend::BackendEvent> {
+        fn drain(&mut self, _budget: usize) -> Vec<crate::backend::BackendEvent> {
             Vec::new()
         }
     }
@@ -6456,5 +7086,131 @@ mod composer_attachment_tests {
         assert!(queued[0].contains("看看这个"));
         assert!(queued[0].contains("C:/tmp/plan.md"));
         assert!(app.state.attachments.is_empty());
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod event_driven_tests {
+    use super::*;
+    use std::collections::VecDeque;
+
+    struct QueuedBackend {
+        events: VecDeque<crate::backend::BackendEvent>,
+    }
+
+    impl BackendPort for QueuedBackend {
+        fn submit(&mut self, _command: BackendCommand) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn drain(&mut self, budget: usize) -> Vec<crate::backend::BackendEvent> {
+            let take = budget.min(self.events.len());
+            self.events.drain(..take).collect()
+        }
+    }
+
+    #[test]
+    fn pump_coalesces_deltas_before_the_reducer() {
+        let ctx = Context::default();
+        let mut app = EguiApp::demo();
+        assert!(!app.state.turns.is_empty(), "demo transcript is empty");
+        let session_id = app.state.selected_session.clone().unwrap_or_default();
+        assert!(!session_id.is_empty(), "demo session is missing");
+        let turn_id = app.state.turns[0].id.clone();
+        let baseline = app.state.turns[0].assistant.text.clone();
+
+        let mut events = VecDeque::new();
+        for text in ["甲", "乙"] {
+            events.push_back(crate::backend::BackendEvent::Delta {
+                session_id: session_id.clone(),
+                turn_id: turn_id.clone(),
+                text: text.to_owned(),
+            });
+        }
+        app.backend = Box::new(QueuedBackend { events });
+        app.pump(&ctx);
+
+        assert_eq!(app.state.turns[0].assistant.text, format!("{baseline}甲乙"));
+        assert_eq!(app.perf_snapshot().events_applied, 1);
+    }
+
+    /// Run one pass through `pump` and report the soonest frame it scheduled.
+    /// `Duration::MAX` means the frame loop may sleep until input or a wake.
+    fn raw_input() -> egui::RawInput {
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                Vec2::new(960.0, 640.0),
+            )),
+            ..Default::default()
+        }
+    }
+
+    /// File names that requested a repaint during one `pump` pass. A fresh
+    /// context needs a second pass so egui rotates causes into `prev_causes`.
+    fn repaint_sources(app: &mut EguiApp) -> Vec<&'static str> {
+        let ctx = Context::default();
+        let _ = ctx.run(raw_input(), |ctx| app.pump(ctx));
+        let _ = ctx.run(raw_input(), |_| {});
+        ctx.repaint_causes()
+            .into_iter()
+            .map(|cause| cause.file)
+            .collect()
+    }
+
+    #[test]
+    fn idle_frames_are_demand_driven() {
+        let mut app = EguiApp::demo();
+        app.state.busy = false;
+        let sources = repaint_sources(&mut app);
+        assert!(
+            !sources.iter().any(|file| file.ends_with("app.rs")),
+            "an idle pump must not schedule a repaint: {sources:?}"
+        );
+    }
+
+    #[test]
+    fn only_starting_or_running_states_keep_a_clock() {
+        assert_eq!(
+            scheduled_frame_delay(ConnectionState::Ready, false, false),
+            None
+        );
+        assert_eq!(
+            scheduled_frame_delay(ConnectionState::Ready, true, false),
+            Some(IDLE_CLOCK_REPAINT)
+        );
+        assert_eq!(
+            scheduled_frame_delay(ConnectionState::Starting, false, false),
+            Some(IDLE_CLOCK_REPAINT)
+        );
+        assert_eq!(
+            scheduled_frame_delay(ConnectionState::Ready, false, true),
+            Some(Duration::ZERO)
+        );
+    }
+
+    #[test]
+    fn a_saturated_drain_schedules_the_remainder() {
+        let mut events = VecDeque::new();
+        for index in 0..(EVENT_DRAIN_BUDGET + 7) {
+            events.push_back(crate::backend::BackendEvent::Queued {
+                session_id: format!("thread-{index}"),
+            });
+        }
+        let mut app = EguiApp::demo();
+        app.backend = Box::new(QueuedBackend { events });
+
+        let ctx = Context::default();
+        app.pump(&ctx);
+        assert_eq!(
+            app.perf_snapshot().events_applied as usize,
+            EVENT_DRAIN_BUDGET
+        );
+
+        app.pump(&ctx);
+        assert_eq!(
+            app.perf_snapshot().events_applied as usize,
+            EVENT_DRAIN_BUDGET + 7
+        );
     }
 }

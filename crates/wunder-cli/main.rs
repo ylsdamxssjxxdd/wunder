@@ -74,6 +74,11 @@ const CLI_MAIN_STACK_BYTES: usize = 32 * 1024 * 1024;
 /// workers with this budget stay friendly to 32-bit address space.
 const CLI_WORKER_STACK_BYTES: usize = 16 * 1024 * 1024;
 const CLI_WORKER_THREADS: usize = 4;
+/// A stale open-thread lease must clear promptly after a local process exits.
+/// Both local forms renew this before expiry; model execution has its own
+/// independent session lock and remains protected while it is running.
+const LOCAL_THREAD_LEASE_TTL_S: f64 = 15.0;
+const LOCAL_THREAD_LEASE_HEARTBEAT: Duration = Duration::from_secs(4);
 
 fn main() -> Result<()> {
     wunder_server::local_bootstrap::install_local_home_env();
@@ -171,6 +176,7 @@ async fn handle_stress_thread(
     let spec = wunder_server::storage::StressThreadSpec {
         session_id: uuid::Uuid::new_v4().to_string(),
         title: title.clone(),
+        workspace_id: None,
         user_rounds: command.user_rounds,
         model_rounds_per_turn: command.model_rounds,
     };
@@ -3766,7 +3772,7 @@ async fn run_agent_once(
         &runtime.user_id,
         &owner_instance_id,
         "cli",
-        30.0,
+        LOCAL_THREAD_LEASE_TTL_S,
     )? {
         ThreadOpenLeaseStatus::Acquired { fencing_token } => fencing_token,
         ThreadOpenLeaseStatus::Busy => {
@@ -3822,7 +3828,7 @@ async fn run_agent_once(
             session_id,
             &lease_guard.owner_instance_id,
             lease_guard.fencing_token,
-            30.0
+            LOCAL_THREAD_LEASE_TTL_S
         )?,
         "THREAD_IN_USE: thread lease expired before execution"
     );
@@ -3943,7 +3949,7 @@ impl LeaseGuard {
             .name("wunder-cli-thread-lease".to_string())
             .spawn(move || {
                 while !heartbeat_stop.load(Ordering::Acquire) {
-                    std::thread::sleep(Duration::from_secs(10));
+                    std::thread::sleep(LOCAL_THREAD_LEASE_HEARTBEAT);
                     if heartbeat_stop.load(Ordering::Acquire) {
                         break;
                     }
@@ -3952,7 +3958,7 @@ impl LeaseGuard {
                             &heartbeat_session,
                             &heartbeat_owner,
                             heartbeat_token,
-                            30.0,
+                            LOCAL_THREAD_LEASE_TTL_S,
                         )
                         .unwrap_or(false)
                     {

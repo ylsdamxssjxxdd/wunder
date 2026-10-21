@@ -195,6 +195,29 @@ fn source_chat_rows(
     if roots.is_empty() {
         return Ok(());
     }
+    // Bulk imports can emit complete, compact chat cards as they write each
+    // turn, while the much larger trajectory stays on its source keyset path.
+    // Never mistake a partially rebuilt card for a complete source summary.
+    let cached = batch_query(db, roots.iter().map(|root| (
+        "SELECT root_turn_id,payload FROM thread_chat_rows WHERE user_id=? AND session_id=? AND root_turn_id=?".to_owned(),
+        vec![json!(user), json!(session), root[0].clone()],
+    )).collect())?.into_iter().filter_map(|row| {
+        let value: Value = serde_json::from_str(text(&row[1])).ok()?;
+        (value["source_complete"] == true).then(|| (text(&row[0]).to_owned(), value))
+    }).collect::<std::collections::HashMap<_, _>>();
+    if cached.len() == roots.len() {
+        for root in roots {
+            let row: ChatViewRow = serde_json::from_value(cached[text(&root[0])].clone())?;
+            let size = serde_json::to_vec(&row)?.len() + 1;
+            if *bytes + size > budget {
+                page.has_more = true;
+                break;
+            }
+            *bytes += size;
+            page.chat.push(row);
+        }
+        return Ok(());
+    }
     let root_ids = roots
         .iter()
         .map(|row| text(&row[0]).to_owned())

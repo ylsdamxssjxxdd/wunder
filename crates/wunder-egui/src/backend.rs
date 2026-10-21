@@ -7,9 +7,9 @@ use crate::model::{
 #[cfg(not(target_arch = "wasm32"))]
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
-use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError};
-#[cfg(not(target_arch = "wasm32"))]
-use std::time::{Duration, Instant};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError, TrySendError};
+use std::sync::Arc;
 
 const COMMAND_CAPACITY: usize = 64;
 const EVENT_CAPACITY: usize = 256;
@@ -80,12 +80,29 @@ pub enum BackendCommand {
     /// from `RefreshSessions` because the rail groups threads by workspace and
     /// the two reads can fail independently.
     RefreshWorkspaces,
-    /// Rename one workspace. Only the display name changes; the directory
-    /// binding, icon and colour are read back from the backend so the UI never
-    /// has to round-trip a whole edit it does not own.
-    RenameWorkspace {
+    /// Create or update one workspace. An empty `workspace_id` creates a new
+    /// workspace, which is the same contract the façade's `WorkspaceEdit`
+    /// uses; the backend stays the only validator of the folder binding,
+    /// name length and palette values.
+    SaveWorkspace {
         workspace_id: String,
         name: String,
+        root_path: String,
+        icon: String,
+        color: String,
+    },
+    /// Delete one workspace binding. `delete_threads` chooses between
+    /// archiving its threads and deleting their records; disk contents are
+    /// never touched either way.
+    DeleteWorkspace {
+        workspace_id: String,
+        delete_threads: bool,
+    },
+    /// Persist a new workspace order after a rail drag. The rail reorders
+    /// optimistically, so the reply is only a confirmation: a failure has to
+    /// put the catalogue order back, which the `WorkspaceAction` handler does.
+    ReorderWorkspaces {
+        ids: Vec<String>,
     },
     RefreshWorkspaceFiles {
         session_id: String,
@@ -165,7 +182,9 @@ impl BackendCommand {
             BackendCommand::ArchiveSession(_) => "归档线程",
             BackendCommand::ArchiveSessions { .. } => "批量归档",
             BackendCommand::RefreshWorkspaces => "刷新工作区",
-            BackendCommand::RenameWorkspace { .. } => "重命名工作区",
+            BackendCommand::SaveWorkspace { .. } => "保存工作区",
+            BackendCommand::DeleteWorkspace { .. } => "删除工作区",
+            BackendCommand::ReorderWorkspaces { .. } => "调整工作区顺序",
             BackendCommand::RefreshWorkspaceFiles { .. } => "刷新工作目录",
             BackendCommand::ListWorkspaceChildren { .. } => "读取子目录",
             BackendCommand::CreateWorkspaceDirectory { .. } => "新建目录",
@@ -327,10 +346,71 @@ pub enum BackendEvent {
     Disconnected(String),
 }
 
+pub type UiWaker = Arc<dyn Fn() + Send + Sync>;
+
 pub trait BackendPort {
     fn submit(&mut self, command: BackendCommand) -> Result<(), String>;
-    fn poll(&mut self, budget: usize) -> Vec<BackendEvent>;
-    fn wake(&self) {}
+    /// Called once per UI frame after a wake or input; never on a fixed timer.
+    fn drain(&mut self, budget: usize) -> Vec<BackendEvent>;
+}
+
+/// Wraps the bounded event channel so every successful batch arms exactly one
+/// cross-thread repaint. Events remain in the queue; only the wake coalesces.
+struct EventSink {
+    tx: SyncSender<BackendEvent>,
+    waker: UiWaker,
+    perf: crate::perf::PerfCounters,
+    wake_pending: AtomicBool,
+}
+
+impl EventSink {
+    fn new(tx: SyncSender<BackendEvent>, waker: UiWaker, perf: crate::perf::PerfCounters) -> Self {
+        Self {
+            tx,
+            waker,
+            perf,
+            wake_pending: AtomicBool::new(false),
+        }
+    }
+
+    fn send(&self, event: BackendEvent) -> Result<(), ()> {
+        match self.tx.try_send(event) {
+            Ok(()) => {
+                self.arm_wake();
+                Ok(())
+            }
+            Err(TrySendError::Full(event)) => {
+                // Wake before blocking on backpressure. The deferred flush at
+                // the top of the worker loop cannot run while `send` waits,
+                // so an asleep UI would otherwise never drain the queue.
+                self.wake_pending.store(true, Ordering::Release);
+                self.flush_wake();
+                if self.tx.send(event).is_ok() {
+                    self.arm_wake();
+                    Ok(())
+                } else {
+                    self.perf.record_dropped_events(1);
+                    Err(())
+                }
+            }
+            Err(TrySendError::Disconnected(_)) => {
+                self.perf.record_dropped_events(1);
+                Err(())
+            }
+        }
+    }
+
+    fn arm_wake(&self) {
+        self.perf.mark_event_queued();
+        self.wake_pending.store(true, Ordering::Release);
+    }
+
+    fn flush_wake(&self) {
+        if self.wake_pending.swap(false, Ordering::AcqRel) {
+            self.perf.mark_wake();
+            (self.waker)();
+        }
+    }
 }
 
 /// Fixed-data adapter used by the native visual review mode.
@@ -421,7 +501,9 @@ impl BackendPort for DemoBackend {
             BackendCommand::RefreshWorkspaces => self.pending.push_back(BackendEvent::Workspaces {
                 result: Ok(crate::fixtures::demo_workspaces()),
             }),
-            BackendCommand::RenameWorkspace { .. } => {
+            BackendCommand::SaveWorkspace { .. }
+            | BackendCommand::DeleteWorkspace { .. }
+            | BackendCommand::ReorderWorkspaces { .. } => {
                 return Err("演示模式使用固定数据，不能执行本地任务".to_owned());
             }
             BackendCommand::LoadModels => self.pending.push_back(BackendEvent::Models {
@@ -457,7 +539,7 @@ impl BackendPort for DemoBackend {
         Ok(())
     }
 
-    fn poll(&mut self, budget: usize) -> Vec<BackendEvent> {
+    fn drain(&mut self, budget: usize) -> Vec<BackendEvent> {
         if budget == 0 {
             Vec::new()
         } else {
@@ -468,17 +550,45 @@ impl BackendPort for DemoBackend {
     }
 }
 
+#[cfg(target_arch = "wasm32")]
 pub struct ChannelBackend {
     commands: SyncSender<BackendCommand>,
     events: Receiver<BackendEvent>,
+    perf: crate::perf::PerfCounters,
 }
 
+#[cfg(target_arch = "wasm32")]
 impl ChannelBackend {
-    fn new(commands: SyncSender<BackendCommand>, events: Receiver<BackendEvent>) -> Self {
-        Self { commands, events }
+    fn new(
+        commands: SyncSender<BackendCommand>,
+        events: Receiver<BackendEvent>,
+        perf: crate::perf::PerfCounters,
+    ) -> Self {
+        Self {
+            commands,
+            events,
+            perf,
+        }
     }
 }
 
+fn drain_events(
+    events: &Receiver<BackendEvent>,
+    budget: usize,
+    perf: &crate::perf::PerfCounters,
+) -> Vec<BackendEvent> {
+    let mut drained = Vec::with_capacity(budget.min(32));
+    for _ in 0..budget {
+        match events.try_recv() {
+            Ok(event) => drained.push(event),
+            Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
+        }
+    }
+    perf.mark_events_drained(drained.len());
+    drained
+}
+
+#[cfg(target_arch = "wasm32")]
 impl BackendPort for ChannelBackend {
     fn submit(&mut self, command: BackendCommand) -> Result<(), String> {
         self.commands
@@ -486,34 +596,32 @@ impl BackendPort for ChannelBackend {
             .map_err(|error| format!("后台队列已满或已关闭：{error}"))
     }
 
-    fn poll(&mut self, budget: usize) -> Vec<BackendEvent> {
-        let mut events = Vec::with_capacity(budget.min(32));
-        for _ in 0..budget {
-            match self.events.try_recv() {
-                Ok(event) => events.push(event),
-                Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
-            }
-        }
-        events
+    fn drain(&mut self, budget: usize) -> Vec<BackendEvent> {
+        drain_events(&self.events, budget, &self.perf)
     }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 pub struct NativeBackend {
-    channel: ChannelBackend,
+    commands: tokio::sync::mpsc::Sender<BackendCommand>,
+    events: Receiver<BackendEvent>,
+    perf: crate::perf::PerfCounters,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 impl NativeBackend {
-    pub fn start() -> Self {
-        let (command_tx, command_rx) = mpsc::sync_channel(COMMAND_CAPACITY);
+    pub fn start(waker: UiWaker, perf: crate::perf::PerfCounters) -> Self {
+        let (command_tx, command_rx) = tokio::sync::mpsc::channel(COMMAND_CAPACITY);
         let (event_tx, event_rx) = mpsc::sync_channel(EVENT_CAPACITY);
+        let sink = EventSink::new(event_tx, waker, perf.clone());
         std::thread::Builder::new()
             .name("wunder-egui-native".to_string())
-            .spawn(move || native_worker(command_rx, event_tx))
+            .spawn(move || native_worker(command_rx, sink))
             .ok();
         Self {
-            channel: ChannelBackend::new(command_tx, event_rx),
+            commands: command_tx,
+            events: event_rx,
+            perf,
         }
     }
 }
@@ -521,15 +629,13 @@ impl NativeBackend {
 #[cfg(not(target_arch = "wasm32"))]
 impl BackendPort for NativeBackend {
     fn submit(&mut self, command: BackendCommand) -> Result<(), String> {
-        self.channel.submit(command)
+        self.commands
+            .try_send(command)
+            .map_err(|error| format!("后台队列已满或已关闭：{error}"))
     }
 
-    fn poll(&mut self, budget: usize) -> Vec<BackendEvent> {
-        self.channel.poll(budget)
-    }
-
-    fn wake(&self) {
-        // eframe repaints continuously while the native worker is starting or streaming.
+    fn drain(&mut self, budget: usize) -> Vec<BackendEvent> {
+        drain_events(&self.events, budget, &self.perf)
     }
 }
 
@@ -540,15 +646,17 @@ pub struct RemoteBackend {
 
 #[cfg(target_arch = "wasm32")]
 impl RemoteBackend {
-    pub fn start() -> Self {
+    pub fn start(waker: UiWaker, perf: crate::perf::PerfCounters) -> Self {
         let (command_tx, command_rx) = mpsc::sync_channel(COMMAND_CAPACITY);
         let (event_tx, event_rx) = mpsc::sync_channel(EVENT_CAPACITY);
         let _ = command_rx;
-        let _ = event_tx.try_send(BackendEvent::Disconnected(
+        let sink = EventSink::new(event_tx, waker, perf.clone());
+        let _ = sink.send(BackendEvent::Disconnected(
             "WASM 远程适配器尚未连接舰体；当前显示协议边界预览".to_string(),
         ));
+        sink.flush_wake();
         Self {
-            channel: ChannelBackend::new(command_tx, event_rx),
+            channel: ChannelBackend::new(command_tx, event_rx, perf),
         }
     }
 }
@@ -566,7 +674,9 @@ impl BackendPort for RemoteBackend {
             BackendCommand::ArchiveSession(_) => Some("归档线程"),
             BackendCommand::ArchiveSessions { .. } => Some("批量归档线程"),
             BackendCommand::RefreshWorkspaces => Some("刷新工作区"),
-            BackendCommand::RenameWorkspace { .. } => Some("重命名工作区"),
+            BackendCommand::SaveWorkspace { .. } => Some("保存工作区"),
+            BackendCommand::DeleteWorkspace { .. } => Some("删除工作区"),
+            BackendCommand::ReorderWorkspaces { .. } => Some("调整工作区顺序"),
             BackendCommand::RefreshWorkspaceFiles { .. } => Some("刷新工作目录"),
             BackendCommand::ListWorkspaceChildren { .. } => Some("读取子目录"),
             BackendCommand::CreateWorkspaceDirectory { .. } => Some("新建目录"),
@@ -584,16 +694,14 @@ impl BackendPort for RemoteBackend {
         self.channel.submit(command)
     }
 
-    fn poll(&mut self, budget: usize) -> Vec<BackendEvent> {
-        self.channel.poll(budget)
+    fn drain(&mut self, budget: usize) -> Vec<BackendEvent> {
+        self.channel.drain(budget)
     }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn native_worker(command_rx: Receiver<BackendCommand>, event_tx: SyncSender<BackendEvent>) {
-    use wunder_desktop::{
-        NativeChatEvent, NativeChatInput, NativeDesktop, NativeStream, NativeThreadUpdate,
-    };
+fn native_worker(command_rx: tokio::sync::mpsc::Receiver<BackendCommand>, event_tx: EventSink) {
+    use wunder_desktop::NativeDesktop;
 
     let desktop = match NativeDesktop::start() {
         Ok(desktop) => desktop,
@@ -602,365 +710,75 @@ fn native_worker(command_rx: Receiver<BackendCommand>, event_tx: SyncSender<Back
                 session_id: None,
                 message: format!("本地运行时启动失败：{error}"),
             });
+            event_tx.flush_wake();
             return;
         }
     };
     let _ = event_tx.send(BackendEvent::Ready);
+    event_tx.flush_wake();
+
+    let runtime = match tokio::runtime::Builder::new_current_thread().build() {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            let _ = event_tx.send(BackendEvent::Failed {
+                session_id: None,
+                message: format!("本地事件循环启动失败：{error}"),
+            });
+            event_tx.flush_wake();
+            return;
+        }
+    };
+    runtime.block_on(native_worker_loop(desktop, command_rx, event_tx));
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+async fn native_worker_loop(
+    desktop: wunder_desktop::NativeDesktop,
+    mut command_rx: tokio::sync::mpsc::Receiver<BackendCommand>,
+    event_tx: EventSink,
+) {
+    use wunder_desktop::{NativeChatEvent, NativeChatInput, NativeStream, NativeThreadUpdate};
+
     let mut active_session: Option<String> = None;
     let mut active_root = String::new();
     let mut active_execution = String::new();
     let mut stream: Option<NativeStream> = None;
     let mut watch: Option<wunder_desktop::NativeThreadWatch> = None;
-    let mut pending_delta: Option<PendingDelta> = None;
-    let mut last_delta_flush = Instant::now();
+
+    enum Action {
+        Command(BackendCommand),
+        Stream(Option<NativeChatEvent>),
+        Watch(Option<NativeThreadUpdate>),
+    }
 
     loop {
-        if pending_delta.is_some() && last_delta_flush.elapsed() >= Duration::from_millis(16) {
-            if !flush_pending_delta(&event_tx, &mut pending_delta) {
-                break;
-            }
-            last_delta_flush = Instant::now();
-        }
+        // Arm one repaint for events produced by the previous action, then
+        // block on whichever source becomes ready first. No timers, no idle
+        // polling: with no stream or watcher this only waits for commands.
+        event_tx.flush_wake();
 
-        let mut stream_closed = false;
-        if let Some(current) = stream.as_mut() {
-            // Drain a bounded batch from the runtime on every worker tick.  Text is
-            // accumulated below and published once per frame instead of making the
-            // immediate-mode UI relayout on every token.
-            for _ in 0..64 {
-                match current.try_recv() {
-                    Ok(Some(NativeChatEvent::Event(value))) => {
-                        handle_native_event(
-                            &event_tx,
-                            active_session.as_deref(),
-                            &mut active_root,
-                            &mut active_execution,
-                            &mut pending_delta,
-                            value,
-                        );
-                    }
-                    Ok(Some(NativeChatEvent::Queued)) => {
-                        if !flush_pending_delta(&event_tx, &mut pending_delta) {
-                            return;
-                        }
-                        if let Some(session_id) = active_session.clone() {
-                            if event_tx.send(BackendEvent::Queued { session_id }).is_err() {
-                                return;
-                            }
-                        }
-                    }
-                    Ok(Some(NativeChatEvent::Finished)) => {
-                        if !flush_pending_delta(&event_tx, &mut pending_delta) {
-                            return;
-                        }
-                        if let Some(session_id) = active_session.clone() {
-                            if event_tx
-                                .send(BackendEvent::Finished { session_id })
-                                .is_err()
-                            {
-                                return;
-                            }
-                        }
-                        stream_closed = true;
-                        break;
-                    }
-                    Ok(Some(NativeChatEvent::Failed(message))) => {
-                        if !flush_pending_delta(&event_tx, &mut pending_delta) {
-                            return;
-                        }
-                        if event_tx
-                            .send(BackendEvent::Failed {
-                                session_id: active_session.clone(),
-                                message,
-                            })
-                            .is_err()
-                        {
-                            return;
-                        }
-                        stream_closed = true;
-                        break;
-                    }
-                    Ok(None) => break,
-                    Err(message) => {
-                        if !flush_pending_delta(&event_tx, &mut pending_delta) {
-                            return;
-                        }
-                        if event_tx
-                            .send(BackendEvent::Failed {
-                                session_id: active_session.clone(),
-                                message: message.to_string(),
-                            })
-                            .is_err()
-                        {
-                            return;
-                        }
-                        stream_closed = true;
-                        break;
-                    }
-                }
-            }
-        }
-        if stream_closed {
-            stream = None;
-        }
-        if let Some(current) = watch.as_mut() {
-            while let Some(update) = current.try_recv() {
-                match update {
-                    NativeThreadUpdate::Reset(turns) => {
-                        if let Some(session_id) = active_session.clone() {
-                            if event_tx
-                                .send(BackendEvent::History {
-                                    session_id,
-                                    turns: turns.into_iter().map(turn_view).collect(),
-                                    replace: true,
-                                })
-                                .is_err()
-                            {
-                                return;
-                            }
-                        }
-                    }
-                    NativeThreadUpdate::Turns(turns) => {
-                        if let Some(session_id) = active_session.clone() {
-                            if event_tx
-                                .send(BackendEvent::History {
-                                    session_id,
-                                    turns: turns.into_iter().map(turn_view).collect(),
-                                    replace: false,
-                                })
-                                .is_err()
-                            {
-                                return;
-                            }
-                        }
-                    }
-                    NativeThreadUpdate::Context(usage) => {
-                        if let Some(session_id) = active_session.clone() {
-                            if event_tx
-                                .send(BackendEvent::ContextUsage {
-                                    session_id,
-                                    used_tokens: context_token_count(usage.used),
-                                    capacity_tokens: context_token_count(usage.capacity),
-                                })
-                                .is_err()
-                            {
-                                return;
-                            }
-                        }
-                    }
-                    NativeThreadUpdate::Failed(message) => {
-                        if event_tx
-                            .send(BackendEvent::Failed {
-                                session_id: active_session.clone(),
-                                message,
-                            })
-                            .is_err()
-                        {
-                            return;
-                        }
-                    }
-                    NativeThreadUpdate::Goal(_) => {}
-                }
-            }
-        }
-
-        match command_rx.recv_timeout(Duration::from_millis(16)) {
-            Ok(BackendCommand::RefreshSessions) => match desktop.list_sessions(None) {
-                Ok(sessions) => {
-                    if event_tx
-                        .send(BackendEvent::Sessions(
-                            sessions.into_iter().map(session_view).collect(),
-                        ))
-                        .is_err()
-                    {
-                        return;
-                    }
-                }
-                Err(error) => {
-                    if event_tx
-                        .send(BackendEvent::Failed {
-                            session_id: None,
-                            message: error.to_string(),
-                        })
-                        .is_err()
-                    {
-                        return;
-                    }
-                }
+        let action = tokio::select! {
+            command = command_rx.recv() => match command {
+                Some(command) => Action::Command(command),
+                None => break,
             },
-            Ok(BackendCommand::OpenSession(session_id)) => {
-                if !flush_pending_delta(&event_tx, &mut pending_delta) {
-                    return;
+            event = async {
+                match stream.as_mut() {
+                    Some(stream) => stream.recv().await,
+                    None => std::future::pending::<Option<NativeChatEvent>>().await,
                 }
-                if let Err(error) = desktop.open_session(&session_id) {
-                    if event_tx
-                        .send(BackendEvent::Failed {
-                            session_id: Some(session_id),
-                            message: error.to_string(),
-                        })
-                        .is_err()
-                    {
-                        return;
-                    }
-                    continue;
+            } => Action::Stream(event),
+            update = async {
+                match watch.as_mut() {
+                    Some(watch) => watch.recv().await,
+                    None => std::future::pending::<Option<NativeThreadUpdate>>().await,
                 }
-                active_session = Some(session_id.clone());
-                active_root.clear();
-                active_execution.clear();
-                stream = None;
-                match desktop.open_chat_snapshot(&session_id) {
-                    Ok(snapshot) => {
-                        watch = Some(desktop.watch_chat_with_initial_cursor(
-                            &session_id,
-                            Some(snapshot.turns.clone()),
-                            Some(snapshot.change_cursor),
-                        ));
-                        if event_tx
-                            .send(BackendEvent::History {
-                                session_id,
-                                turns: snapshot.turns.into_iter().map(turn_view).collect(),
-                                replace: true,
-                            })
-                            .is_err()
-                        {
-                            return;
-                        }
-                    }
-                    Err(error) => {
-                        if event_tx
-                            .send(BackendEvent::Failed {
-                                session_id: active_session.clone(),
-                                message: error.to_string(),
-                            })
-                            .is_err()
-                        {
-                            return;
-                        }
-                    }
-                }
-            }
-            Ok(BackendCommand::LoadProcessPage {
-                session_id,
-                turn_id,
-                before,
-                after,
-            }) => {
-                let result = desktop
-                    .chat_process_page(&session_id, &turn_id, before, after)
-                    .map(process_page_view)
-                    .map_err(display_error);
-                if event_tx
-                    .send(BackendEvent::ProcessPage {
-                        session_id,
-                        turn_id,
-                        before,
-                        after,
-                        result,
-                    })
-                    .is_err()
-                {
-                    return;
-                }
-            }
-            Ok(BackendCommand::SendMessage {
-                session_id,
-                content,
-                attachments,
-            }) => {
-                if active_session.as_deref() != Some(session_id.as_str()) {
-                    if event_tx
-                        .send(BackendEvent::Failed {
-                            session_id: Some(session_id),
-                            message: "请先打开目标线程".to_string(),
-                        })
-                        .is_err()
-                    {
-                        return;
-                    }
-                    continue;
-                }
-                // Reading happens here, on the worker thread. A file that
-                // vanished or is unreadable is reported instead of being
-                // silently dropped from the message.
-                let mut payloads = Vec::with_capacity(attachments.len());
-                let mut skipped = 0usize;
-                for item in &attachments {
-                    match read_prompt_attachment(item) {
-                        Ok(payload) => payloads.push(payload),
-                        Err(_) => skipped += 1,
-                    }
-                }
-                if skipped > 0
-                    && event_tx
-                        .send(BackendEvent::WorkspaceAction {
-                            label: format!("已跳过 {skipped} 个无法读取的附件"),
-                            result: Ok(()),
-                        })
-                        .is_err()
-                {
-                    return;
-                }
-                match desktop.send_chat(NativeChatInput {
-                    session_id,
-                    content,
-                    client_message_id: None,
-                    reasoning_effort: None,
-                    attachments: payloads,
-                }) {
-                    Ok(next) => {
-                        active_root.clear();
-                        active_execution.clear();
-                        stream = Some(next);
-                    }
-                    Err(error) => {
-                        if event_tx
-                            .send(BackendEvent::Failed {
-                                session_id: active_session.clone(),
-                                message: error.to_string(),
-                            })
-                            .is_err()
-                        {
-                            return;
-                        }
-                    }
-                }
-            }
-            Ok(BackendCommand::PreviewSystemPrompt {
-                session_id,
-                request_id,
-            }) => {
-                // The façade returns the frozen prompt for an initialized
-                // thread. This path never edits settings or thread state.
-                let result = desktop
-                    .preview_thread_system_prompt(Some(&session_id), None)
-                    .map(bounded_system_prompt)
-                    .map_err(|error| error.to_string().chars().take(1024).collect());
-                if event_tx
-                    .send(BackendEvent::SystemPromptPreview {
-                        session_id,
-                        request_id,
-                        result,
-                    })
-                    .is_err()
-                {
-                    return;
-                }
-            }
-            Ok(BackendCommand::RenameSession { session_id, title }) => {
-                let result = desktop
-                    .rename_session(&session_id, &title)
-                    .map_err(|error| error.to_string());
-                if event_tx
-                    .send(BackendEvent::ThreadRenamed {
-                        session_id: session_id.clone(),
-                        title,
-                        result,
-                    })
-                    .is_err()
-                {
-                    return;
-                }
-                match desktop.list_sessions(None) {
+            } => Action::Watch(update),
+        };
+
+        match action {
+            Action::Command(command) => match command {
+                BackendCommand::RefreshSessions => match desktop.list_sessions(None) {
                     Ok(sessions) => {
                         if event_tx
                             .send(BackendEvent::Sessions(
@@ -982,290 +800,641 @@ fn native_worker(command_rx: Receiver<BackendCommand>, event_tx: SyncSender<Back
                             return;
                         }
                     }
-                }
-            }
-            Ok(BackendCommand::CreateSession { workspace_id }) => {
-                let result = desktop
-                    .create_session(workspace_id.as_deref())
-                    .map(session_view)
-                    .map_err(display_error);
-                if event_tx
-                    .send(BackendEvent::SessionCreated { result })
-                    .is_err()
-                {
-                    return;
-                }
-            }
-            Ok(BackendCommand::RefreshWorkspaces) => {
-                let result = desktop
-                    .list_workspaces()
-                    .map(|workspaces| workspaces.into_iter().map(workspace_view).collect())
-                    .map_err(display_error);
-                if event_tx.send(BackendEvent::Workspaces { result }).is_err() {
-                    return;
-                }
-            }
-            Ok(BackendCommand::RenameWorkspace { workspace_id, name }) => {
-                let label = format!("已重命名工作区「{}」", name.trim());
-                // Read the record first: the edit needs the directory binding,
-                // icon and colour the rail never carries.
-                let result = if name.trim().is_empty() {
-                    Err("工作区名称不能为空".to_owned())
-                } else {
-                    desktop
-                        .get_workspace(&workspace_id)
-                        .and_then(|workspace| {
-                            desktop.update_workspace(&wunder_desktop::WorkspaceEdit {
-                                workspace_id: workspace.workspace_id,
-                                name: name.trim().to_owned(),
-                                root_path: workspace.root_path,
-                                icon: workspace.icon,
-                                color: workspace.color,
+                },
+                BackendCommand::OpenSession(session_id) => {
+                    if let Err(error) = desktop.open_session(&session_id) {
+                        if event_tx
+                            .send(BackendEvent::Failed {
+                                session_id: Some(session_id),
+                                message: error.to_string(),
                             })
-                        })
-                        .map(|_| ())
-                        .map_err(display_error)
-                };
-                if event_tx
-                    .send(BackendEvent::WorkspaceAction { label, result })
-                    .is_err()
-                {
-                    return;
-                }
-            }
-            Ok(BackendCommand::ArchiveSession(session_id)) => {
-                let result = desktop.archive_session(&session_id).map_err(display_error);
-                if event_tx
-                    .send(BackendEvent::SessionArchived { session_id, result })
-                    .is_err()
-                {
-                    return;
-                }
-            }
-            Ok(BackendCommand::ArchiveSessions { ids }) => {
-                let targets = archive_targets(&ids);
-                if targets.is_empty() {
-                    // Nothing was asked for, so reporting an empty result would
-                    // replace a meaningful status line with a no-op message.
-                    continue;
-                }
-                let mut archived = Vec::with_capacity(targets.len());
-                let mut failed = Vec::new();
-                for session_id in targets {
-                    // Each archive is independent: one failure must not leave
-                    // the remaining selected threads unarchived.
-                    match desktop.archive_session(&session_id) {
-                        Ok(()) => archived.push(session_id),
-                        Err(error) => failed.push((session_id, display_error(error))),
+                            .is_err()
+                        {
+                            return;
+                        }
+                        continue;
+                    }
+                    active_session = Some(session_id.clone());
+                    active_root.clear();
+                    active_execution.clear();
+                    stream = None;
+                    match desktop.open_chat_snapshot(&session_id) {
+                        Ok(snapshot) => {
+                            watch = Some(desktop.watch_chat_with_initial_cursor(
+                                &session_id,
+                                Some(snapshot.turns.clone()),
+                                Some(snapshot.change_cursor),
+                            ));
+                            if event_tx
+                                .send(BackendEvent::History {
+                                    session_id,
+                                    turns: snapshot.turns.into_iter().map(turn_view).collect(),
+                                    replace: true,
+                                })
+                                .is_err()
+                            {
+                                return;
+                            }
+                        }
+                        Err(error) => {
+                            if event_tx
+                                .send(BackendEvent::Failed {
+                                    session_id: active_session.clone(),
+                                    message: error.to_string(),
+                                })
+                                .is_err()
+                            {
+                                return;
+                            }
+                        }
                     }
                 }
-                if event_tx
-                    .send(BackendEvent::SessionsArchived { archived, failed })
-                    .is_err()
-                {
-                    return;
-                }
-            }
-            Ok(BackendCommand::RefreshWorkspaceFiles {
-                session_id,
-                path,
-                request_id,
-            }) => {
-                let files = workspace_files_for_session(&desktop, &session_id, &path);
-                if event_tx
-                    .send(BackendEvent::WorkspaceFiles {
-                        session_id,
-                        path,
-                        request_id,
-                        files,
-                    })
-                    .is_err()
-                {
-                    return;
-                }
-            }
-            Ok(BackendCommand::ListWorkspaceChildren { session_id, path }) => {
-                // Read-only: unlike a directory change this must not reset the
-                // active stream or root, because the user is only unfolding a
-                // node inside the thread they already opened.
-                let children = workspace_files_for_session(&desktop, &session_id, &path);
-                if event_tx
-                    .send(BackendEvent::WorkspaceChildren {
-                        session_id,
-                        path,
-                        children,
-                    })
-                    .is_err()
-                {
-                    return;
-                }
-            }
-            Ok(BackendCommand::RenameWorkspaceEntry {
-                session_id,
-                path,
-                new_name,
-            }) => {
-                let result = workspace_root_for_session(&desktop, &session_id).and_then(|root| {
-                    desktop
-                        .workspace_local_rename(&root, &path, &new_name)
-                        .map_err(display_error)
-                });
-                if event_tx
-                    .send(BackendEvent::WorkspaceAction {
-                        label: "已重命名".to_owned(),
-                        result,
-                    })
-                    .is_err()
-                {
-                    return;
-                }
-            }
-            Ok(BackendCommand::DeleteWorkspaceEntry { session_id, path }) => {
-                let result = workspace_root_for_session(&desktop, &session_id).and_then(|root| {
-                    desktop
-                        .workspace_local_delete(&root, &path)
-                        .map_err(display_error)
-                });
-                if event_tx
-                    .send(BackendEvent::WorkspaceAction {
-                        label: "已删除".to_owned(),
-                        result,
-                    })
-                    .is_err()
-                {
-                    return;
-                }
-            }
-            Ok(BackendCommand::CreateWorkspaceDirectory { session_id, path }) => {
-                let result = workspace_create_for_session(&desktop, &session_id, &path, true);
-                if event_tx
-                    .send(BackendEvent::WorkspaceAction {
-                        label: "目录已创建".to_owned(),
-                        result,
-                    })
-                    .is_err()
-                {
-                    return;
-                }
-            }
-            Ok(BackendCommand::CreateWorkspaceFile { session_id, path }) => {
-                let result = workspace_create_for_session(&desktop, &session_id, &path, false);
-                if event_tx
-                    .send(BackendEvent::WorkspaceAction {
-                        label: "文件已创建".to_owned(),
-                        result,
-                    })
-                    .is_err()
-                {
-                    return;
-                }
-            }
-            Ok(BackendCommand::OpenWorkspaceFile { session_id, path }) => {
-                let result = workspace_root_for_session(&desktop, &session_id).and_then(|root| {
-                    desktop
-                        .open_workspace_resource(&root, &path)
-                        .map_err(display_error)
-                });
-                if event_tx
-                    .send(BackendEvent::WorkspaceAction {
-                        label: "已打开工作目录条目".to_owned(),
-                        result,
-                    })
-                    .is_err()
-                {
-                    return;
-                }
-            }
-            Ok(BackendCommand::OpenLocalWorkspace(session_id)) => {
-                let result = workspace_root_for_session(&desktop, &session_id).and_then(|root| {
-                    desktop
-                        .open_workspace_resource(&root, "")
-                        .map_err(display_error)
-                });
-                if event_tx
-                    .send(BackendEvent::WorkspaceAction {
-                        label: "已打开本地工作区".to_owned(),
-                        result,
-                    })
-                    .is_err()
-                {
-                    return;
-                }
-            }
-            Ok(BackendCommand::LoadModels) => {
-                let result = desktop
-                    .get_desktop_settings()
-                    .map(model_options)
-                    .map_err(display_error);
-                if event_tx.send(BackendEvent::Models { result }).is_err() {
-                    return;
-                }
-            }
-            Ok(BackendCommand::SetSessionModel {
-                session_id,
-                model_key,
-            }) => {
-                let result = desktop
-                    .set_session_model(&session_id, &model_key)
-                    .map_err(display_error);
-                if event_tx
-                    .send(BackendEvent::SessionModelSaved {
-                        session_id,
-                        model_key,
-                        result,
-                    })
-                    .is_err()
-                {
-                    return;
-                }
-            }
-            Ok(BackendCommand::SaveSessionReasoningEffort { session_id, value }) => {
-                let result = desktop
-                    .save_session_reasoning_effort(&session_id, &value)
-                    .map_err(display_error);
-                if event_tx
-                    .send(BackendEvent::SessionReasoningEffortSaved {
-                        session_id,
-                        value,
-                        result,
-                    })
-                    .is_err()
-                {
-                    return;
-                }
-            }
-            Ok(BackendCommand::Cancel { session_id }) => {
-                if !flush_pending_delta(&event_tx, &mut pending_delta) {
-                    return;
-                }
-                if let Some(current) = stream.as_ref() {
-                    current.cancel();
-                }
-                if let Err(error) = desktop.cancel_chat(&session_id) {
+                BackendCommand::LoadProcessPage {
+                    session_id,
+                    turn_id,
+                    before,
+                    after,
+                } => {
+                    let result = desktop
+                        .chat_process_page(&session_id, &turn_id, before, after)
+                        .map(process_page_view)
+                        .map_err(display_error);
                     if event_tx
-                        .send(BackendEvent::Failed {
-                            session_id: Some(session_id),
-                            message: error.to_string(),
+                        .send(BackendEvent::ProcessPage {
+                            session_id,
+                            turn_id,
+                            before,
+                            after,
+                            result,
                         })
                         .is_err()
                     {
                         return;
                     }
                 }
-            }
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
-            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                BackendCommand::SendMessage {
+                    session_id,
+                    content,
+                    attachments,
+                } => {
+                    if active_session.as_deref() != Some(session_id.as_str()) {
+                        if event_tx
+                            .send(BackendEvent::Failed {
+                                session_id: Some(session_id),
+                                message: "请先打开目标线程".to_string(),
+                            })
+                            .is_err()
+                        {
+                            return;
+                        }
+                        continue;
+                    }
+                    // Reading happens here, on the worker thread. A file that
+                    // vanished or is unreadable is reported instead of being
+                    // silently dropped from the message.
+                    let mut payloads = Vec::with_capacity(attachments.len());
+                    let mut skipped = 0usize;
+                    for item in &attachments {
+                        match read_prompt_attachment(item) {
+                            Ok(payload) => payloads.push(payload),
+                            Err(_) => skipped += 1,
+                        }
+                    }
+                    if skipped > 0
+                        && event_tx
+                            .send(BackendEvent::WorkspaceAction {
+                                label: format!("已跳过 {skipped} 个无法读取的附件"),
+                                result: Ok(()),
+                            })
+                            .is_err()
+                    {
+                        return;
+                    }
+                    match desktop.send_chat(NativeChatInput {
+                        session_id,
+                        content,
+                        client_message_id: None,
+                        reasoning_effort: None,
+                        attachments: payloads,
+                    }) {
+                        Ok(next) => {
+                            active_root.clear();
+                            active_execution.clear();
+                            stream = Some(next);
+                        }
+                        Err(error) => {
+                            if event_tx
+                                .send(BackendEvent::Failed {
+                                    session_id: active_session.clone(),
+                                    message: error.to_string(),
+                                })
+                                .is_err()
+                            {
+                                return;
+                            }
+                        }
+                    }
+                }
+                BackendCommand::PreviewSystemPrompt {
+                    session_id,
+                    request_id,
+                } => {
+                    // The façade returns the frozen prompt for an initialized
+                    // thread. This path never edits settings or thread state.
+                    let result = desktop
+                        .preview_thread_system_prompt(Some(&session_id), None)
+                        .map(bounded_system_prompt)
+                        .map_err(|error| error.to_string().chars().take(1024).collect());
+                    if event_tx
+                        .send(BackendEvent::SystemPromptPreview {
+                            session_id,
+                            request_id,
+                            result,
+                        })
+                        .is_err()
+                    {
+                        return;
+                    }
+                }
+                BackendCommand::RenameSession { session_id, title } => {
+                    let result = desktop
+                        .rename_session(&session_id, &title)
+                        .map_err(|error| error.to_string());
+                    if event_tx
+                        .send(BackendEvent::ThreadRenamed {
+                            session_id: session_id.clone(),
+                            title,
+                            result,
+                        })
+                        .is_err()
+                    {
+                        return;
+                    }
+                    match desktop.list_sessions(None) {
+                        Ok(sessions) => {
+                            if event_tx
+                                .send(BackendEvent::Sessions(
+                                    sessions.into_iter().map(session_view).collect(),
+                                ))
+                                .is_err()
+                            {
+                                return;
+                            }
+                        }
+                        Err(error) => {
+                            if event_tx
+                                .send(BackendEvent::Failed {
+                                    session_id: None,
+                                    message: error.to_string(),
+                                })
+                                .is_err()
+                            {
+                                return;
+                            }
+                        }
+                    }
+                }
+                BackendCommand::CreateSession { workspace_id } => {
+                    let result = desktop
+                        .create_session(workspace_id.as_deref())
+                        .map(session_view)
+                        .map_err(display_error);
+                    if event_tx
+                        .send(BackendEvent::SessionCreated { result })
+                        .is_err()
+                    {
+                        return;
+                    }
+                }
+                BackendCommand::RefreshWorkspaces => {
+                    let result = desktop
+                        .list_workspaces()
+                        .map(|workspaces| workspaces.into_iter().map(workspace_view).collect())
+                        .map_err(display_error);
+                    if event_tx.send(BackendEvent::Workspaces { result }).is_err() {
+                        return;
+                    }
+                }
+                BackendCommand::SaveWorkspace {
+                    workspace_id,
+                    name,
+                    root_path,
+                    icon,
+                    color,
+                } => {
+                    let creating = workspace_id.trim().is_empty();
+                    let label = if creating {
+                        format!("已新建工作区「{}」", name.trim())
+                    } else {
+                        format!("已保存工作区「{}」", name.trim())
+                    };
+                    // The façade owns every rule here: name length, folder
+                    // existence/writability, overlapping bindings and palette
+                    // fallbacks. Forwarding the edit keeps one validator.
+                    let result = desktop
+                        .update_workspace(&wunder_desktop::WorkspaceEdit {
+                            workspace_id,
+                            name,
+                            root_path,
+                            icon,
+                            color,
+                        })
+                        .map(|_| ())
+                        .map_err(display_error);
+                    if event_tx
+                        .send(BackendEvent::WorkspaceAction { label, result })
+                        .is_err()
+                    {
+                        return;
+                    }
+                }
+                BackendCommand::DeleteWorkspace {
+                    workspace_id,
+                    delete_threads,
+                } => {
+                    let summary = desktop
+                        .delete_workspace(&workspace_id, delete_threads)
+                        .map_err(display_error);
+                    let (label, result) = match summary {
+                        Ok(summary) => (
+                            format!(
+                                "已删除工作区（归档 {} 个线程、删除 {} 个线程）",
+                                summary.archived_threads, summary.deleted_threads
+                            ),
+                            Ok(()),
+                        ),
+                        Err(error) => (String::new(), Err(error)),
+                    };
+                    if event_tx
+                        .send(BackendEvent::WorkspaceAction { label, result })
+                        .is_err()
+                    {
+                        return;
+                    }
+                }
+                BackendCommand::ReorderWorkspaces { ids } => {
+                    // A drag that produced the same order is not worth a write, and
+                    // reporting success for it would hide a broken caller.
+                    let result = if ids.is_empty() {
+                        Err("没有可排序的工作区".to_owned())
+                    } else {
+                        desktop.reorder_workspaces(&ids).map_err(display_error)
+                    };
+                    if event_tx
+                        .send(BackendEvent::WorkspaceAction {
+                            label: "已调整工作区顺序".to_owned(),
+                            result,
+                        })
+                        .is_err()
+                    {
+                        return;
+                    }
+                }
+                BackendCommand::ArchiveSession(session_id) => {
+                    let result = desktop.archive_session(&session_id).map_err(display_error);
+                    if event_tx
+                        .send(BackendEvent::SessionArchived { session_id, result })
+                        .is_err()
+                    {
+                        return;
+                    }
+                }
+                BackendCommand::ArchiveSessions { ids } => {
+                    let targets = archive_targets(&ids);
+                    if targets.is_empty() {
+                        // Nothing was asked for, so reporting an empty result would
+                        // replace a meaningful status line with a no-op message.
+                        continue;
+                    }
+                    let mut archived = Vec::with_capacity(targets.len());
+                    let mut failed = Vec::new();
+                    for session_id in targets {
+                        // Each archive is independent: one failure must not leave
+                        // the remaining selected threads unarchived.
+                        match desktop.archive_session(&session_id) {
+                            Ok(()) => archived.push(session_id),
+                            Err(error) => failed.push((session_id, display_error(error))),
+                        }
+                    }
+                    if event_tx
+                        .send(BackendEvent::SessionsArchived { archived, failed })
+                        .is_err()
+                    {
+                        return;
+                    }
+                }
+                BackendCommand::RefreshWorkspaceFiles {
+                    session_id,
+                    path,
+                    request_id,
+                } => {
+                    let files = workspace_files_for_session(&desktop, &session_id, &path);
+                    if event_tx
+                        .send(BackendEvent::WorkspaceFiles {
+                            session_id,
+                            path,
+                            request_id,
+                            files,
+                        })
+                        .is_err()
+                    {
+                        return;
+                    }
+                }
+                BackendCommand::ListWorkspaceChildren { session_id, path } => {
+                    // Read-only: unlike a directory change this must not reset the
+                    // active stream or root, because the user is only unfolding a
+                    // node inside the thread they already opened.
+                    let children = workspace_files_for_session(&desktop, &session_id, &path);
+                    if event_tx
+                        .send(BackendEvent::WorkspaceChildren {
+                            session_id,
+                            path,
+                            children,
+                        })
+                        .is_err()
+                    {
+                        return;
+                    }
+                }
+                BackendCommand::RenameWorkspaceEntry {
+                    session_id,
+                    path,
+                    new_name,
+                } => {
+                    let result =
+                        workspace_root_for_session(&desktop, &session_id).and_then(|root| {
+                            desktop
+                                .workspace_local_rename(&root, &path, &new_name)
+                                .map_err(display_error)
+                        });
+                    if event_tx
+                        .send(BackendEvent::WorkspaceAction {
+                            label: "已重命名".to_owned(),
+                            result,
+                        })
+                        .is_err()
+                    {
+                        return;
+                    }
+                }
+                BackendCommand::DeleteWorkspaceEntry { session_id, path } => {
+                    let result =
+                        workspace_root_for_session(&desktop, &session_id).and_then(|root| {
+                            desktop
+                                .workspace_local_delete(&root, &path)
+                                .map_err(display_error)
+                        });
+                    if event_tx
+                        .send(BackendEvent::WorkspaceAction {
+                            label: "已删除".to_owned(),
+                            result,
+                        })
+                        .is_err()
+                    {
+                        return;
+                    }
+                }
+                BackendCommand::CreateWorkspaceDirectory { session_id, path } => {
+                    let result = workspace_create_for_session(&desktop, &session_id, &path, true);
+                    if event_tx
+                        .send(BackendEvent::WorkspaceAction {
+                            label: "目录已创建".to_owned(),
+                            result,
+                        })
+                        .is_err()
+                    {
+                        return;
+                    }
+                }
+                BackendCommand::CreateWorkspaceFile { session_id, path } => {
+                    let result = workspace_create_for_session(&desktop, &session_id, &path, false);
+                    if event_tx
+                        .send(BackendEvent::WorkspaceAction {
+                            label: "文件已创建".to_owned(),
+                            result,
+                        })
+                        .is_err()
+                    {
+                        return;
+                    }
+                }
+                BackendCommand::OpenWorkspaceFile { session_id, path } => {
+                    let result =
+                        workspace_root_for_session(&desktop, &session_id).and_then(|root| {
+                            desktop
+                                .open_workspace_resource(&root, &path)
+                                .map_err(display_error)
+                        });
+                    if event_tx
+                        .send(BackendEvent::WorkspaceAction {
+                            label: "已打开工作目录条目".to_owned(),
+                            result,
+                        })
+                        .is_err()
+                    {
+                        return;
+                    }
+                }
+                BackendCommand::OpenLocalWorkspace(session_id) => {
+                    let result =
+                        workspace_root_for_session(&desktop, &session_id).and_then(|root| {
+                            desktop
+                                .open_workspace_resource(&root, "")
+                                .map_err(display_error)
+                        });
+                    if event_tx
+                        .send(BackendEvent::WorkspaceAction {
+                            label: "已打开本地工作区".to_owned(),
+                            result,
+                        })
+                        .is_err()
+                    {
+                        return;
+                    }
+                }
+                BackendCommand::LoadModels => {
+                    let result = desktop
+                        .get_desktop_settings()
+                        .map(model_options)
+                        .map_err(display_error);
+                    if event_tx.send(BackendEvent::Models { result }).is_err() {
+                        return;
+                    }
+                }
+                BackendCommand::SetSessionModel {
+                    session_id,
+                    model_key,
+                } => {
+                    let result = desktop
+                        .set_session_model(&session_id, &model_key)
+                        .map_err(display_error);
+                    if event_tx
+                        .send(BackendEvent::SessionModelSaved {
+                            session_id,
+                            model_key,
+                            result,
+                        })
+                        .is_err()
+                    {
+                        return;
+                    }
+                }
+                BackendCommand::SaveSessionReasoningEffort { session_id, value } => {
+                    let result = desktop
+                        .save_session_reasoning_effort(&session_id, &value)
+                        .map_err(display_error);
+                    if event_tx
+                        .send(BackendEvent::SessionReasoningEffortSaved {
+                            session_id,
+                            value,
+                            result,
+                        })
+                        .is_err()
+                    {
+                        return;
+                    }
+                }
+                BackendCommand::Cancel { session_id } => {
+                    if let Some(current) = stream.as_ref() {
+                        current.cancel();
+                    }
+                    if let Err(error) = desktop.cancel_chat(&session_id) {
+                        if event_tx
+                            .send(BackendEvent::Failed {
+                                session_id: Some(session_id),
+                                message: error.to_string(),
+                            })
+                            .is_err()
+                        {
+                            return;
+                        }
+                    }
+                }
+            },
+            Action::Stream(event) => match event {
+                Some(NativeChatEvent::Event(value)) => {
+                    handle_native_event(
+                        &event_tx,
+                        active_session.as_deref(),
+                        &mut active_root,
+                        &mut active_execution,
+                        value,
+                    );
+                }
+                Some(NativeChatEvent::Queued) => {
+                    if let Some(session_id) = active_session.clone() {
+                        if event_tx.send(BackendEvent::Queued { session_id }).is_err() {
+                            return;
+                        }
+                    }
+                }
+                Some(NativeChatEvent::Finished) => {
+                    if let Some(session_id) = active_session.clone() {
+                        if event_tx
+                            .send(BackendEvent::Finished { session_id })
+                            .is_err()
+                        {
+                            return;
+                        }
+                    }
+                    stream = None;
+                }
+                Some(NativeChatEvent::Failed(message)) => {
+                    if event_tx
+                        .send(BackendEvent::Failed {
+                            session_id: active_session.clone(),
+                            message,
+                        })
+                        .is_err()
+                    {
+                        return;
+                    }
+                    stream = None;
+                }
+                None => {
+                    if event_tx
+                        .send(BackendEvent::Failed {
+                            session_id: active_session.clone(),
+                            message: "原生事件通道已关闭".to_string(),
+                        })
+                        .is_err()
+                    {
+                        return;
+                    }
+                    stream = None;
+                }
+            },
+            Action::Watch(update) => match update {
+                Some(NativeThreadUpdate::Reset(turns)) => {
+                    if let Some(session_id) = active_session.clone() {
+                        if event_tx
+                            .send(BackendEvent::History {
+                                session_id,
+                                turns: turns.into_iter().map(turn_view).collect(),
+                                replace: true,
+                            })
+                            .is_err()
+                        {
+                            return;
+                        }
+                    }
+                }
+                Some(NativeThreadUpdate::Turns(turns)) => {
+                    if let Some(session_id) = active_session.clone() {
+                        if event_tx
+                            .send(BackendEvent::History {
+                                session_id,
+                                turns: turns.into_iter().map(turn_view).collect(),
+                                replace: false,
+                            })
+                            .is_err()
+                        {
+                            return;
+                        }
+                    }
+                }
+                Some(NativeThreadUpdate::Context(usage)) => {
+                    if let Some(session_id) = active_session.clone() {
+                        if event_tx
+                            .send(BackendEvent::ContextUsage {
+                                session_id,
+                                used_tokens: context_token_count(usage.used),
+                                capacity_tokens: context_token_count(usage.capacity),
+                            })
+                            .is_err()
+                        {
+                            return;
+                        }
+                    }
+                }
+                Some(NativeThreadUpdate::Failed(message)) => {
+                    if event_tx
+                        .send(BackendEvent::Failed {
+                            session_id: active_session.clone(),
+                            message,
+                        })
+                        .is_err()
+                    {
+                        return;
+                    }
+                }
+                Some(NativeThreadUpdate::Goal(_)) => {}
+                Some(NativeThreadUpdate::QueueChanged) => {}
+                None => {
+                    watch = None;
+                }
+            },
         }
     }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 fn handle_native_event(
-    event_tx: &SyncSender<BackendEvent>,
+    event_tx: &EventSink,
     session_id: Option<&str>,
     active_root: &mut String,
     active_execution: &mut String,
-    pending_delta: &mut Option<PendingDelta>,
     value: Value,
 ) {
     let Some(session_id) = session_id else { return };
@@ -1299,7 +1468,6 @@ fn handle_native_event(
                 payload,
                 text,
                 false,
-                pending_delta,
             );
         }
         return;
@@ -1327,7 +1495,6 @@ fn handle_native_event(
                 payload,
                 reasoning,
                 event == "llm_output",
-                pending_delta,
             );
         }
         let text = payload
@@ -1336,7 +1503,7 @@ fn handle_native_event(
             .or_else(|| payload.get("delta").and_then(Value::as_str))
             .unwrap_or_default();
         if !text.is_empty() {
-            append_delta(event_tx, pending_delta, session_id, active_root, text);
+            send_delta(event_tx, session_id, active_root, text);
         }
         return;
     }
@@ -1416,7 +1583,6 @@ fn handle_native_event(
         if !targets.is_empty() {
             item.targets = targets;
         }
-        let _ = flush_pending_delta(event_tx, pending_delta);
         let _ = event_tx.send(BackendEvent::Workflow {
             session_id: session_id.to_string(),
             turn_id: active_root.to_string(),
@@ -1441,20 +1607,18 @@ fn reasoning_item_id(root: &str, round: i64) -> String {
 #[cfg(not(target_arch = "wasm32"))]
 #[allow(clippy::too_many_arguments)]
 fn emit_reasoning_delta(
-    event_tx: &SyncSender<BackendEvent>,
+    event_tx: &EventSink,
     session_id: &str,
     active_root: &str,
     active_execution: &str,
     payload: &Value,
     text: &str,
     replace: bool,
-    pending_delta: &mut Option<PendingDelta>,
 ) {
     let round = payload
         .get("model_round")
         .and_then(Value::as_i64)
         .unwrap_or(1);
-    let _ = flush_pending_delta(event_tx, pending_delta);
     let _ = event_tx.send(BackendEvent::ReasoningDelta {
         session_id: session_id.to_owned(),
         turn_id: active_root.to_owned(),
@@ -1471,57 +1635,16 @@ fn emit_reasoning_delta(
     });
 }
 
+/// Forward one visible text chunk immediately. The UI applies all chunks
+/// drained in a frame before drawing, so coalescing happens on the paint side
+/// without delaying a token behind a worker-side timer.
 #[cfg(not(target_arch = "wasm32"))]
-#[derive(Debug)]
-struct PendingDelta {
-    session_id: String,
-    turn_id: String,
-    text: String,
-}
-
-/// Adjacent output for the same turn becomes one UI event.  Flushing through
-/// `send` deliberately propagates queue pressure back to the worker: output
-/// bytes and terminal states must never be discarded merely because a frame is
-/// late.
-#[cfg(not(target_arch = "wasm32"))]
-fn append_delta(
-    event_tx: &SyncSender<BackendEvent>,
-    pending: &mut Option<PendingDelta>,
-    session_id: &str,
-    turn_id: &str,
-    text: &str,
-) {
-    let same_turn = pending
-        .as_ref()
-        .is_some_and(|item| item.session_id == session_id && item.turn_id == turn_id);
-    if !same_turn {
-        let _ = flush_pending_delta(event_tx, pending);
-        *pending = Some(PendingDelta {
-            session_id: session_id.to_string(),
-            turn_id: turn_id.to_string(),
-            text: String::new(),
-        });
-    }
-    if let Some(item) = pending {
-        item.text.push_str(text);
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn flush_pending_delta(
-    event_tx: &SyncSender<BackendEvent>,
-    pending: &mut Option<PendingDelta>,
-) -> bool {
-    let Some(delta) = pending.take() else {
-        return true;
-    };
-    event_tx
-        .send(BackendEvent::Delta {
-            session_id: delta.session_id,
-            turn_id: delta.turn_id,
-            text: delta.text,
-        })
-        .is_ok()
+fn send_delta(event_tx: &EventSink, session_id: &str, turn_id: &str, text: &str) {
+    let _ = event_tx.send(BackendEvent::Delta {
+        session_id: session_id.to_string(),
+        turn_id: turn_id.to_string(),
+        text: text.to_string(),
+    });
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -1550,6 +1673,7 @@ fn workspace_view(workspace: wunder_desktop::NativeWorkspace) -> WorkspaceView {
     WorkspaceView {
         id: workspace.workspace_id,
         name: workspace.name,
+        root_path: workspace.root_path,
         icon: workspace.icon,
         color: workspace.color,
         thread_count: i32::try_from(workspace.thread_count).unwrap_or(i32::MAX),
@@ -1684,6 +1808,7 @@ fn display_error(error: impl std::fmt::Display) -> String {
 /// Content type for the data URL prefix. Matched by extension only: the
 /// attachment store re-sniffs nothing, and a wrong-but-harmless label beats a
 /// blocking magic-number read for every file the user drops.
+#[cfg(not(target_arch = "wasm32"))]
 fn attachment_content_type(path: &str) -> &'static str {
     let extension = std::path::Path::new(path)
         .extension()
@@ -2119,6 +2244,35 @@ fn bounded_system_prompt(mut text: String) -> (String, bool) {
     (text, truncated)
 }
 
+/// Merge adjacent text deltas for the same turn into one reducer call. The
+/// worker forwards every token immediately; this keeps one paint to one append
+/// per turn without putting a timer back into the delivery path.
+pub fn coalesce_delta_events(events: Vec<BackendEvent>) -> Vec<BackendEvent> {
+    let mut coalesced = Vec::with_capacity(events.len());
+    for event in events {
+        if let BackendEvent::Delta {
+            session_id,
+            turn_id,
+            text,
+        } = &event
+        {
+            if let Some(BackendEvent::Delta {
+                session_id: last_session,
+                turn_id: last_turn,
+                text: last_text,
+            }) = coalesced.last_mut()
+            {
+                if last_session == session_id && last_turn == turn_id {
+                    last_text.push_str(text);
+                    continue;
+                }
+            }
+        }
+        coalesced.push(event);
+    }
+    coalesced
+}
+
 pub fn apply_event(state: &mut AppState, event: BackendEvent) {
     match event {
         BackendEvent::SystemPromptPreview {
@@ -2205,6 +2359,18 @@ pub fn apply_event(state: &mut AppState, event: BackendEvent) {
             state.status = "本地运行时已就绪".to_string();
         }
         BackendEvent::Sessions(sessions) => {
+            // A thread can disappear without an archive command: deleting its
+            // workspace removes or archives every thread in it. Keeping the
+            // stale selection would leave the transcript pointing at nothing.
+            if state
+                .selected_session
+                .as_deref()
+                .is_some_and(|id| !sessions.iter().any(|session| session.id == id))
+            {
+                state.selected_session = None;
+                state.turns.clear();
+                state.busy = false;
+            }
             if state.selected_session.is_none() {
                 state.selected_session = sessions.first().map(|s| s.id.clone());
             }
@@ -3459,5 +3625,102 @@ mod tests {
         // reports the failure instead of orphaning every thread.
         assert_eq!(state.workspaces.len(), 1);
         assert!(state.status.contains("数据库忙"));
+    }
+
+    #[test]
+    fn adjacent_deltas_coalesce_without_crossing_other_events() {
+        let coalesced = coalesce_delta_events(vec![
+            BackendEvent::Delta {
+                session_id: "thread".into(),
+                turn_id: "turn".into(),
+                text: "你".into(),
+            },
+            BackendEvent::Delta {
+                session_id: "thread".into(),
+                turn_id: "turn".into(),
+                text: "好".into(),
+            },
+            BackendEvent::Queued {
+                session_id: "thread".into(),
+            },
+            BackendEvent::Delta {
+                session_id: "thread".into(),
+                turn_id: "turn".into(),
+                text: "！".into(),
+            },
+        ]);
+        assert_eq!(coalesced.len(), 3);
+        assert_eq!(delta_text(&coalesced[0]), "你好");
+        assert!(matches!(coalesced[1], BackendEvent::Queued { .. }));
+        assert_eq!(delta_text(&coalesced[2]), "！");
+    }
+
+    fn delta_text(event: &BackendEvent) -> &str {
+        match event {
+            BackendEvent::Delta { text, .. } => text,
+            _ => "",
+        }
+    }
+
+    #[test]
+    fn event_sink_coalesces_wakes_per_batch() {
+        let wake_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = wake_count.clone();
+        let waker: UiWaker = Arc::new(move || {
+            counter.fetch_add(1, Ordering::SeqCst);
+        });
+        let (tx, rx) = mpsc::sync_channel(8);
+        let perf = crate::perf::PerfCounters::new();
+        let sink = EventSink::new(tx, waker, perf.clone());
+
+        for index in 0..3 {
+            assert!(sink
+                .send(BackendEvent::Queued {
+                    session_id: format!("thread-{index}"),
+                })
+                .is_ok());
+        }
+        assert_eq!(wake_count.load(Ordering::SeqCst), 0);
+        sink.flush_wake();
+        assert_eq!(wake_count.load(Ordering::SeqCst), 1);
+        sink.flush_wake();
+        assert_eq!(wake_count.load(Ordering::SeqCst), 1);
+
+        assert_eq!(drain_events(&rx, 10, &perf).len(), 3);
+        assert_eq!(perf.snapshot().wakes, 1);
+    }
+
+    #[test]
+    fn a_full_queue_wakes_before_blocking_the_worker() {
+        let wake_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = wake_count.clone();
+        let waker: UiWaker = Arc::new(move || {
+            counter.fetch_add(1, Ordering::SeqCst);
+        });
+        let (tx, rx) = mpsc::sync_channel(1);
+        let sink = EventSink::new(tx, waker, crate::perf::PerfCounters::new());
+        assert!(sink
+            .send(BackendEvent::Queued {
+                session_id: "first".into(),
+            })
+            .is_ok());
+
+        let blocked = std::thread::spawn(move || {
+            sink.send(BackendEvent::Queued {
+                session_id: "second".into(),
+            })
+        });
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while wake_count.load(Ordering::SeqCst) == 0 && std::time::Instant::now() < deadline {
+            std::thread::yield_now();
+        }
+        assert_eq!(
+            wake_count.load(Ordering::SeqCst),
+            1,
+            "a full queue must wake the UI before send blocks"
+        );
+
+        assert!(rx.recv().is_ok());
+        assert!(blocked.join().is_ok_and(|result| result.is_ok()));
     }
 }

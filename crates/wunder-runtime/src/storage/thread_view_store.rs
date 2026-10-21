@@ -29,6 +29,7 @@ CREATE INDEX IF NOT EXISTS idx_thread_blocks_view_rebuild ON thread_item_blocks(
 CREATE INDEX IF NOT EXISTS idx_thread_items_view_rebuild ON thread_items(user_id,session_id,created_seq);
 CREATE INDEX IF NOT EXISTS idx_thread_items_view_root_seq ON thread_items(user_id,session_id,root_turn_id,created_seq DESC);
 CREATE INDEX IF NOT EXISTS idx_thread_items_view_plan ON thread_items(user_id,session_id,root_turn_id,created_seq DESC) WHERE kind='plan' AND visibility='user';
+CREATE INDEX IF NOT EXISTS idx_thread_items_view_kind ON thread_items(user_id,session_id,root_turn_id,kind,item_index DESC) WHERE visibility='user';
 CREATE TABLE IF NOT EXISTS thread_trajectory_rows (
  session_id TEXT NOT NULL, user_id TEXT NOT NULL, item_id TEXT NOT NULL,
  root_turn_id TEXT NOT NULL, created_seq BIGINT NOT NULL, revision BIGINT NOT NULL,
@@ -256,7 +257,14 @@ fn head(db: &mut impl ViewDb, user: &str, session: &str) -> Result<i64> {
     .unwrap_or(0))
 }
 
-fn save_chat(
+#[derive(serde::Serialize)]
+struct StoredChatRow<'a> {
+    projection_version: u8,
+    #[serde(flatten)]
+    row: &'a ChatViewRow,
+}
+
+pub(crate) fn save_chat(
     db: &mut impl ViewDb,
     user: &str,
     session: &str,
@@ -264,7 +272,13 @@ fn save_chat(
     seq: i64,
 ) -> Result<()> {
     row.revision = seq;
-    db.execute("INSERT INTO thread_chat_rows(session_id,user_id,root_turn_id,user_round,revision,payload) VALUES(?,?,?,?,?,?) ON CONFLICT(session_id,root_turn_id) DO UPDATE SET revision=excluded.revision,payload=excluded.payload", &[json!(session),json!(user),json!(row.root_turn_id),json!(row.user_round),json!(seq),json!(serde_json::to_string(row)?)])?;
+    // Version the stored projection, not the API. Older rows with an explicit
+    // empty reasoning field can still need durable-block repair.
+    let payload = serde_json::to_string(&StoredChatRow {
+        projection_version: 1,
+        row,
+    })?;
+    db.execute("INSERT INTO thread_chat_rows(session_id,user_id,root_turn_id,user_round,revision,payload) VALUES(?,?,?,?,?,?) ON CONFLICT(session_id,root_turn_id) DO UPDATE SET revision=excluded.revision,payload=excluded.payload", &[json!(session),json!(user),json!(row.root_turn_id),json!(row.user_round),json!(seq),json!(payload)])?;
     Ok(())
 }
 
@@ -280,6 +294,11 @@ fn decode_chat_row(
     let value: Value = serde_json::from_str(payload)?;
     let legacy = value.get("plan").is_none();
     let legacy_panel = value.pointer("/assistant/question_panel").is_none();
+    let legacy_reasoning = value
+        .get("projection_version")
+        .and_then(Value::as_u64)
+        .unwrap_or(0)
+        < 1;
     let mut row: ChatViewRow = serde_json::from_value(value)?;
     if legacy {
         row.plan = super::thread_view_source::load_chat_plans(
@@ -301,6 +320,9 @@ fn decode_chat_row(
         projection::settle_question_panel(&mut row);
     }
     repair_stop_reason(db, user, session, &mut row)?;
+    if legacy_reasoning {
+        hydrate_chat_reasoning(db, user, session, &mut row)?;
+    }
     Ok(row)
 }
 
@@ -1201,12 +1223,22 @@ pub(crate) fn page(
     };
     let rows = db.query(&sql, &query_params)?;
     page.has_more = rows.len() > cap;
-    let mut legacy_plans = if kind == "chat" {
-        let roots = rows
-            .iter()
+    // Decode each compact row once. Presence (including an explicit empty
+    // field) distinguishes a current projection from a legacy row needing I/O.
+    let mut decoded = if kind == "chat" {
+        rows.iter()
             .take(cap)
-            .filter_map(|r| {
-                let row: Value = serde_json::from_str(text(&r[0])).ok()?;
+            .map(|r| serde_json::from_str::<Value>(text(&r[0])))
+            .collect::<std::result::Result<Vec<_>, _>>()?
+    } else {
+        vec![]
+    }
+    .into_iter();
+    let mut legacy_plans = if kind == "chat" {
+        let roots = decoded
+            .as_slice()
+            .iter()
+            .filter_map(|row| {
                 if row.get("plan").is_some() {
                     return None;
                 }
@@ -1218,10 +1250,10 @@ pub(crate) fn page(
         Default::default()
     };
     let panel_ids = if kind == "chat" {
-        rows.iter()
-            .take(cap)
-            .filter_map(|r| {
-                let value: Value = serde_json::from_str(text(&r[0])).ok()?;
+        decoded
+            .as_slice()
+            .iter()
+            .filter_map(|value| {
                 if value.pointer("/assistant/question_panel").is_some() {
                     return None;
                 }
@@ -1301,7 +1333,13 @@ pub(crate) fn page(
             bytes += size;
             page.trajectory.push(trajectory);
         } else {
-            let mut row: ChatViewRow = serde_json::from_str(text(&r[0]))?;
+            let value = decoded.next().expect("decoded chat page");
+            let legacy_reasoning = value
+                .get("projection_version")
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+                < 1;
+            let mut row: ChatViewRow = serde_json::from_value(value)?;
             repair_stop_reason(db, user, session, &mut row)?;
             if row.plan.is_none() {
                 row.plan = legacy_plans.remove(&row.root_turn_id);
@@ -1310,6 +1348,9 @@ pub(crate) fn page(
                 row.assistant.question_panel = panels.remove(&row.assistant.item_id);
             }
             projection::settle_question_panel(&mut row);
+            if legacy_reasoning {
+                hydrate_chat_reasoning(db, user, session, &mut row)?;
+            }
             let size = serde_json::to_vec(&row)?.len() + 1;
             if bytes + size > CHAT_RESPONSE_BYTES {
                 page.has_more = true;
@@ -1322,11 +1363,6 @@ pub(crate) fn page(
     }
     if after.is_none() {
         page.chat.reverse();
-    }
-    if kind == "chat" {
-        for row in &mut page.chat {
-            hydrate_chat_reasoning(db, user, session, row)?;
-        }
     }
     if after.is_none() {
         page.trajectory.reverse();

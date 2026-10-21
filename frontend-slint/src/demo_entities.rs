@@ -221,6 +221,20 @@ pub fn install(app: &MainWindow) {
     let weak = app.as_weak();
     app.on_create_model(move || {
         let Some(app) = weak.upgrade() else { return };
+        // Resume the parked unsaved draft instead of stacking a second row.
+        if let Some(row_key) = crate::entity_state::model_draft_row_key() {
+            if let Some(index) = app
+                .get_models()
+                .iter()
+                .position(|entry| entry.key == row_key.as_str())
+            {
+                app.set_selected_model(index as i32);
+                if crate::entity_state::restore_model_draft(&app, index as i32, &row_key) {
+                    app.set_status("已恢复未保存的模型草稿 · 仅本次演示有效".into());
+                    return;
+                }
+            }
+        }
         let mut models: Vec<_> = app.get_models().iter().collect();
         let mut key = "新模型".to_string();
         let mut suffix = 1usize;
@@ -238,20 +252,32 @@ pub fn install(app: &MainWindow) {
     let weak = app.as_weak();
     app.on_discard_model_draft(move || {
         let Some(app) = weak.upgrade() else { return };
-        if !app.get_model_creating() {
+        let stashed_key = crate::entity_state::model_draft_row_key();
+        if !app.get_model_creating() && stashed_key.is_none() {
             return;
         }
-        let selected = usize::try_from(app.get_selected_model()).ok();
-        let models: Vec<_> = app
-            .get_models()
-            .iter()
-            .enumerate()
-            .filter(|(index, _)| Some(*index) != selected)
-            .map(|(_, entry)| entry)
-            .collect();
-        store_models(&app, models);
-        app.set_model_creating(false);
-        crate::entity_state::restore_model(&app, "");
+        let selected_key = usize::try_from(app.get_selected_model())
+            .ok()
+            .and_then(|index| app.get_models().row_data(index))
+            .map(|row| row.key.to_string());
+        let row_key = if app.get_model_creating() {
+            selected_key.clone()
+        } else {
+            stashed_key.clone()
+        };
+        crate::entity_state::clear_model_draft();
+        if let Some(row_key) = row_key {
+            let models: Vec<_> = app
+                .get_models()
+                .iter()
+                .filter(|entry| entry.key != row_key.as_str())
+                .collect();
+            store_models(&app, models);
+        }
+        if app.get_model_creating() {
+            app.set_model_creating(false);
+            crate::entity_state::restore_model(&app, "");
+        }
     });
     let weak = app.as_weak();
     app.on_save_model(move || {
@@ -273,6 +299,14 @@ pub fn install(app: &MainWindow) {
             return;
         }
         let mut models: Vec<_> = app.get_models().iter().collect();
+        // The saved row replaces the unsaved draft; drop the parked row so it
+        // does not linger under its temporary key.
+        if let Some(row_key) = crate::entity_state::model_draft_row_key() {
+            if row_key != key {
+                models.retain(|entry| entry.key != row_key.as_str());
+            }
+        }
+        crate::entity_state::clear_model_draft();
         let index = models.iter().position(|entry| entry.key == key);
         let entry = ModelCard {
             key: key.clone().into(),
@@ -415,5 +449,57 @@ mod tests {
         assert_eq!(first.provider.as_str(), "openai_compatible");
         assert_eq!(first.model_type.as_str(), "llm");
         assert_eq!(first.tool_call_mode.as_str(), "function_call");
+    }
+
+    /// 回归：未保存的新模型切换到其它条目后不丢弃——草稿行保留在列表里并
+    /// 显示已编辑的值，切回该行恢复编辑草稿；再次「添加模型」恢复而非新建。
+    #[test]
+    fn unsaved_model_draft_survives_switching_entries() {
+        let _ui = crate::test_support::lock();
+        crate::register_bundled_font().expect("注册内嵌字体");
+        let app = crate::MainWindow::new().expect("创建主窗口");
+        super::install(&app);
+        app.invoke_create_model();
+        assert!(app.get_model_creating(), "新建后应处于创建态");
+        app.set_model_provider_draft("deepseek".into());
+        app.set_model_name_draft("draft-model".into());
+        app.set_model_base_url_draft("https://example.invalid/v1".into());
+
+        let existing = app
+            .get_models()
+            .iter()
+            .position(|entry| entry.key == "demo-voice")
+            .expect("演示目录缺少 asr 模型");
+        app.invoke_select_model(existing as i32);
+        assert!(!app.get_model_creating(), "切走后应退出创建态");
+        let draft = app
+            .get_models()
+            .iter()
+            .find(|entry| entry.key == "新模型")
+            .expect("草稿行应保留在列表中");
+        assert_eq!(draft.provider.as_str(), "deepseek");
+        assert_eq!(draft.model.as_str(), "draft-model");
+        assert_eq!(draft.base_url.as_str(), "https://example.invalid/v1");
+
+        let draft_index = app
+            .get_models()
+            .iter()
+            .position(|entry| entry.key == "新模型")
+            .expect("草稿行缺席");
+        app.invoke_select_model(draft_index as i32);
+        assert!(app.get_model_creating(), "切回应恢复创建态");
+        assert_eq!(app.get_model_provider_draft().as_str(), "deepseek");
+        assert_eq!(app.get_model_name_draft().as_str(), "draft-model");
+        assert_eq!(app.get_model_base_url_draft().as_str(), "https://example.invalid/v1");
+
+        app.invoke_select_model(existing as i32);
+        app.invoke_create_model();
+        assert!(app.get_model_creating(), "再次添加应恢复草稿");
+        assert_eq!(app.get_model_name_draft().as_str(), "draft-model");
+        assert_eq!(
+            app.get_models().iter().filter(|entry| entry.key == "新模型").count(),
+            1,
+            "不得出现第二张新模型卡片"
+        );
     }
 }

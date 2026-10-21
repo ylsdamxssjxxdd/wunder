@@ -11,6 +11,7 @@ mod disabled {
     use crate::config::{Config, McpServerConfig};
     use crate::schemas::ToolSpec;
     use crate::state::AppState;
+    use crate::tools::validate_external_tool_spec;
     use anyhow::{anyhow, Result};
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
@@ -43,11 +44,14 @@ mod disabled {
         server
             .tool_specs
             .iter()
-            .map(|spec| ToolSpec {
-                name: spec.name.clone(),
-                title: spec.title.clone(),
-                description: spec.description.clone(),
-                input_schema: serde_json::to_value(&spec.input_schema).unwrap_or(Value::Null),
+            .filter_map(|spec| {
+                let tool = ToolSpec {
+                    name: spec.name.clone(),
+                    title: spec.title.clone(),
+                    description: spec.description.clone(),
+                    input_schema: serde_json::to_value(&spec.input_schema).unwrap_or(Value::Null),
+                };
+                validate_external_tool_spec(&tool).is_ok().then_some(tool)
             })
             .collect()
     }

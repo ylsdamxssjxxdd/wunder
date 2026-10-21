@@ -160,7 +160,17 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
     app.on_refresh_expert(move || {
         let Some(app) = weak.upgrade() else { return };
         let Some(agent) = agent_id(&app) else { return };
-        project_tools(&app);
+        // Toggle-only refresh: a tool checkbox round-trips through the 500ms
+        // live-save and this post-save re-projection. Rebuilding the picker here
+        // re-renders every card and snaps its scroll to the top, which the user
+        // reads as "the whole list refreshed". Build only when the picker is
+        // still empty; otherwise `sync_tool_selection` already rewrote the
+        // enabled flags in place and the model must be left untouched.
+        if app.get_expert_tool_groups().row_count() == 0 {
+            project_tools(&app);
+        } else {
+            app.set_expert_agent_names(model(app.get_agents().iter().map(|a| a.name).collect()));
+        }
         // The active settings category is the only view selector now that the
         // expert page's own tab strip is gone: 6 memories, 13 account (runtime
         // usage, folded in from the retired activity category), 10 archives.
@@ -388,17 +398,21 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         });
     });
     let weak = app.as_weak();
+    let open_archive_api = api.clone();
     app.on_open_expert_archive(move |id| {
         let Some(app) = weak.upgrade() else { return };
-        let api = api.clone();
+        let api = open_archive_api.clone();
         let weak = app.as_weak();
         let id = id.to_string();
         std::thread::spawn(move || {
-            let result = api.get_session(&id);
+            // Archive inspection is read-only. It deliberately bypasses the
+            // normal selected-thread lease so viewing a detail modal cannot
+            // block a concurrent restore/open in 蛹 or 舵机.
+            let result = api.get_archived_session_detail(&id);
             let _ = weak.upgrade_in_event_loop(move |app| match result {
                 Ok((session, messages)) => {
-                    app.set_dialog_title(session.title.into());
-                    app.set_dialog_text(
+                    app.set_archive_detail_title(session.title.into());
+                    app.set_archive_detail_text(
                         messages
                             .into_iter()
                             .take(200)
@@ -407,9 +421,69 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                             .join("\n\n")
                             .into(),
                     );
-                    app.set_dialog_open(true);
+                    app.set_archive_detail_open(true);
                 }
                 Err(e) => app.set_expert_error(e.to_string().into()),
+            });
+        });
+    });
+    let weak = app.as_weak();
+    let restore_api = api.clone();
+    app.on_restore_expert_archive(move |id| {
+        let Some(app) = weak.upgrade() else { return };
+        if app.get_expert_saving() {
+            return;
+        }
+        let id = id.to_string();
+        if id.trim().is_empty() {
+            return;
+        }
+        app.set_expert_saving(true);
+        let api = restore_api.clone();
+        let weak = app.as_weak();
+        std::thread::spawn(move || {
+            let result = api.restore_session(&id);
+            let _ = weak.upgrade_in_event_loop(move |app| {
+                app.set_expert_saving(false);
+                match result {
+                    Ok(()) => {
+                        app.set_archive_detail_open(false);
+                        app.set_status("线程已还原".into());
+                        app.invoke_refresh_expert();
+                        app.invoke_refresh_chat();
+                    }
+                    Err(error) => app.set_expert_error(error.to_string().into()),
+                }
+            });
+        });
+    });
+    let weak = app.as_weak();
+    let delete_api = api.clone();
+    app.on_delete_expert_archive(move |id| {
+        let Some(app) = weak.upgrade() else { return };
+        if app.get_expert_saving() {
+            return;
+        }
+        let id = id.to_string();
+        if id.trim().is_empty() {
+            return;
+        }
+        app.set_expert_saving(true);
+        let api = delete_api.clone();
+        let weak = app.as_weak();
+        std::thread::spawn(move || {
+            let result = api.delete_archived_session(&id);
+            let _ = weak.upgrade_in_event_loop(move |app| {
+                app.set_expert_saving(false);
+                match result {
+                    Ok(()) => {
+                        app.set_archive_detail_open(false);
+                        app.set_status("已永久删除归档线程".into());
+                        app.invoke_refresh_expert();
+                        app.invoke_refresh_chat();
+                    }
+                    Err(error) => app.set_expert_error(error.to_string().into()),
+                }
             });
         });
     });

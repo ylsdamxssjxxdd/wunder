@@ -1,4 +1,4 @@
-//! Interlink (§I9) shell bindings: a 2s poll reads the tunnel state and drains
+//! Interlink (§I9) shell bindings: a low-frequency poll reads the tunnel state and drains
 //! the approval queue in-process. The 设备互通 settings page is gone, so the
 //! cloud-workspace browsing that used to ride the same façade now lives only in
 //! the working-directory panel (`crate::workspace_files`).
@@ -14,9 +14,10 @@ thread_local! {
     static POLL_TIMER: RefCell<slint::Timer> = RefCell::new(slint::Timer::default());
 }
 
-/// Two-second cadence: fast enough that a remote approval request never feels
-/// lost, slow enough to stay invisible on the UI thread.
-const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
+/// Approvals are exceptional, while the normal desktop state is event driven.
+/// Five seconds keeps the fallback responsive without waking an idle desktop
+/// twice every second alongside the account-status poll.
+const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// One poll tick: push status, then open the next approval if the card is
 /// free. Runs on the UI thread; both façade calls are synchronous in-process.
@@ -47,7 +48,7 @@ fn poll(app: &MainWindow, api: &Arc<NativeDesktop>) {
 }
 
 pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
-    // Standing 2s poll; the first tick fires immediately so the panel is
+    // Standing low-frequency poll; the first tick fires immediately so the panel is
     // never blank while the process is connected.
     let weak = app.as_weak();
     let poll_api = api.clone();

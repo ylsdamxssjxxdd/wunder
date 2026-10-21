@@ -56,7 +56,7 @@ impl SqliteWorkspaceStorage for SqliteStorage {
         if cleaned_user.is_empty() || cleaned_id.is_empty() {
             return Ok(None);
         }
-        let conn = self.open()?;
+        let conn = self.read_connection()?;
         let record = conn
             .query_row(
                 "SELECT workspace_id, user_id, name, root_path, icon, color, sort_index, created_at, updated_at \
@@ -74,8 +74,8 @@ impl SqliteWorkspaceStorage for SqliteStorage {
         if cleaned_user.is_empty() {
             return Ok(Vec::new());
         }
-        let conn = self.open()?;
-        let mut stmt = conn.prepare(
+        let conn = self.read_connection()?;
+        let mut stmt = conn.prepare_cached(
             "SELECT workspace_id, user_id, name, root_path, icon, color, sort_index, created_at, updated_at \
              FROM workspaces WHERE user_id = ? ORDER BY sort_index ASC, created_at ASC, workspace_id ASC",
         )?;

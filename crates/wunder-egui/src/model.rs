@@ -44,6 +44,10 @@ pub struct WorkspaceFileView {
 pub struct WorkspaceView {
     pub id: String,
     pub name: String,
+    /// Absolute folder the workspace is bound to. The edit dialog shows it and
+    /// the façade re-validates it on save, so the rail carries it rather than
+    /// issuing a separate read per edit.
+    pub root_path: String,
     /// Palette icon name (`folder`, `monitor`, …). Unknown names fall back to
     /// the generic folder glyph.
     pub icon: String,

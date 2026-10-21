@@ -100,7 +100,7 @@ impl ViewDb for Db<'_> {
             .execute(sql, rusqlite::params_from_iter(p.iter().map(param)))? as u64)
     }
     fn query(&mut self, sql: &str, p: &[Value]) -> Result<Vec<Vec<Value>>> {
-        let mut stmt = self.0.prepare(sql)?;
+        let mut stmt = self.0.prepare_cached(sql)?;
         let count = stmt.column_count();
         let rows = stmt
             .query_map(rusqlite::params_from_iter(p.iter().map(param)), |r| {
@@ -131,23 +131,48 @@ fn param(v: &Value) -> SqlValue {
     }
 }
 impl SqliteStorage {
-    fn view_connection(&self) -> Result<Connection> {
+    fn view_connection(&self) -> Result<super::read_connection::ReadConnection<'_>> {
         self.ensure_initialized()?;
-        let conn = Connection::open_with_flags(
-            &self.db_path,
-            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
-        )?;
-        conn.busy_timeout(std::time::Duration::from_millis(250))?;
-        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(1500);
-        conn.progress_handler(1000, Some(move || std::time::Instant::now() > deadline));
+        let conn = self.read_connection()?;
+        // Chat pages are keyset- and response-budget-bounded. Interrupting a
+        // valid page after an arbitrary wall-clock deadline made large local
+        // threads impossible to open on slow disks. Keep the reusable reader
+        // free of request-local cancellation; callers still bound rows, bytes
+        // and SQL LIMITs before any result reaches the UI.
+        conn.progress_handler(0, None::<fn() -> bool>);
         Ok(conn)
     }
     pub(super) fn view_search(&self, u: &str, s: &str, q: &str) -> Result<ThreadSearchPage> {
         self.ensure_initialized()?;
-        Db(&self.view_connection()?).search(u, s, q)
+        let conn = self.view_connection()?;
+        Db(&*conn).search(u, s, q)
     }
     pub(super) fn view_pending(&self) -> Result<Vec<(String, String, i64)>> {
         self.ensure_initialized()?;
+        // Once the one-time legacy discovery completed, ordinary live writes
+        // maintain their view in the writer transaction.  Keep an all-clean
+        // maintenance pass strictly read-only: `open()` probes a write lock,
+        // which otherwise wakes an idle Windows disk even though there is no
+        // work to rebuild.
+        let reader = self.read_connection()?;
+        let discovery: String = reader.query_row(
+            "SELECT COALESCE((SELECT value FROM meta WHERE key = 'thread_view_discovery_v2'), '')",
+            [],
+            |row| row.get(0),
+        )?;
+        let discovery_complete = serde_json::from_str::<Value>(&discovery)
+            .ok()
+            .and_then(|state| state.get("done").and_then(Value::as_bool))
+            .unwrap_or(false);
+        let rebuild_pending: bool = reader.query_row(
+            "SELECT EXISTS(SELECT 1 FROM thread_view_heads WHERE projection_state = 'rebuilding')",
+            [],
+            |row| row.get(0),
+        )?;
+        drop(reader);
+        if discovery_complete && !rebuild_pending {
+            return Ok(Vec::new());
+        }
         let mut conn = self.open()?;
         conn.busy_timeout(std::time::Duration::from_millis(100))?;
         // A deferred transaction keeps idle polling free of SQLite write locks.
@@ -171,7 +196,11 @@ impl SqliteStorage {
         // Repair legacy lifecycle writes before opening the read-only snapshot.
         // Catalog reads do the same for threads that are not currently open.
         self.reconcile_terminal_turns_impl(u, s)?;
-        let mut conn = self.view_connection()?;
+        // Keyset pages are bounded by rows and bytes. A wall-clock interrupt
+        // makes valid history unreadable on slow disks; reserve deadlines for
+        // search and maintenance, whose work can grow with the database.
+        self.ensure_initialized()?;
+        let mut conn = self.read_connection()?;
         let tx = conn.transaction()?;
         let page = view::page(&mut Db(&tx), u, s, k, b, a, r, l)?;
         tx.commit()?;
@@ -192,7 +221,8 @@ impl SqliteStorage {
         r: i64,
         c: i64,
     ) -> Result<ThreadBodyPage> {
-        view::body(&mut Db(&self.view_connection()?), u, s, id, r, c)
+        let conn = self.view_connection()?;
+        view::body(&mut Db(&*conn), u, s, id, r, c)
     }
     pub(super) fn view_rebuild(&self, u: &str, s: &str, a: i64) -> Result<(i64, bool)> {
         self.ensure_initialized()?;
@@ -1031,6 +1061,48 @@ mod tests {
     }
 
     #[test]
+    fn chat_open_reads_through_an_active_wal_writer_and_repairs_legacy_reasoning() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = SqliteStorage::new(dir.path().join("fixture.db").to_string_lossy().into());
+        let accepted = db
+            .accept_thread_turn(
+                "fixture-user",
+                "fixture-thread",
+                &json!({"content":"fixture input"}),
+            )
+            .unwrap();
+        let root = accepted["turn_id"].as_str().unwrap();
+        let item = format!("{root}:text-1");
+        db.append_thread_item(
+            "fixture-user",
+            &json!({"session_id":"fixture-thread", "turn_id":root,
+            "item_id":item, "kind":"assistant_message", "status":"completed",
+            "content":"fixture answer", "reasoning":"fixture thought"}),
+        )
+        .unwrap();
+        let mut conn = db.open().unwrap();
+        conn.execute(
+            "UPDATE thread_chat_rows SET payload=json_set(json_remove(payload,'$.projection_version'),'$.assistant.reasoning','')",
+            [],
+        )
+        .unwrap();
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .unwrap();
+        tx.execute(
+            "INSERT INTO meta(key,value,updated_time) VALUES('fixture-key','pending',0)",
+            [],
+        )
+        .unwrap();
+        let page = db
+            .thread_view_page("fixture-user", "fixture-thread", "chat", None, 12)
+            .unwrap();
+        assert_eq!(page.chat[0].assistant.content, "fixture answer");
+        assert_eq!(page.chat[0].assistant.reasoning, "fixture thought");
+        tx.commit().unwrap();
+    }
+
+    #[test]
     fn source_chat_batches_page_queries_and_preserves_block_fallbacks() {
         struct Counted<'a> {
             db: Db<'a>,
@@ -1093,6 +1165,27 @@ mod tests {
             }
         }
         let conn = storage.open().unwrap();
+        let mut ready = Counted {
+            db: Db(&conn),
+            queries: 0,
+            rows: 0,
+        };
+        let page = view::page(
+            &mut ready,
+            "fixture-user",
+            "fixture-thread",
+            "chat",
+            None,
+            None,
+            None,
+            20,
+        )
+        .unwrap();
+        assert_eq!(page.chat.len(), 20);
+        assert_eq!(
+            ready.queries, 2,
+            "current chat rows need only head and page, never raw log reads"
+        );
         conn.execute("UPDATE thread_view_heads SET projection_state='source'", [])
             .unwrap();
         let mut db = Counted {
@@ -2012,6 +2105,7 @@ mod tests {
                             user_round: round,
                             revision: round,
                             status: "completed".into(),
+                            stop_reason: Some(String::new()),
                             user: ViewMessage {
                                 item_id: id.clone(),
                                 content: "fixture input".into(),
@@ -2025,12 +2119,11 @@ mod tests {
                             workflow_count: 98,
                             ..Default::default()
                         };
-                        chat.execute(rusqlite::params![
-                            root,
-                            round,
-                            round,
-                            serde_json::to_string(&row).unwrap()
-                        ])
+                        chat.execute(rusqlite::params![root, round, round, {
+                            let mut stored = serde_json::to_value(&row).unwrap();
+                            stored["projection_version"] = json!(1);
+                            stored.to_string()
+                        }])
                         .unwrap();
                     }
                     item.execute(rusqlite::params![

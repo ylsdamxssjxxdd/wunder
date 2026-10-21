@@ -890,19 +890,19 @@ fn now_ts() -> f64 {
 /// Canonicalize a candidate workspace folder; on Windows canonical paths carry
 /// a verbatim prefix that is stripped for stable storage and display.
 fn normalize_root(raw: &str) -> Result<PathBuf> {
-    let path = raw.strip_prefix("\\\\?\\").unwrap_or(raw);
-    if path.trim().is_empty() {
+    if raw.trim().is_empty() {
         bail!("路径为空");
     }
-    let canonical = Path::new(path).canonicalize()?;
-    Ok(canonical)
+    let path = wunder_server::local_bootstrap::normalize_local_workspace_path(Path::new(raw));
+    if !path.exists() {
+        bail!(WORKSPACE_ROOT_MISSING);
+    }
+    Ok(path)
 }
 
 fn paths_equal(a: &Path, b: &Path) -> bool {
-    match (a.canonicalize(), b.canonicalize()) {
-        (Ok(a), Ok(b)) => a == b,
-        _ => a == b,
-    }
+    wunder_server::local_bootstrap::local_workspace_identity_key(a)
+        == wunder_server::local_bootstrap::local_workspace_identity_key(b)
 }
 
 fn probe_writable(root: &Path) -> bool {

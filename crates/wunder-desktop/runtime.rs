@@ -23,6 +23,7 @@ pub const DESKTOP_DEFAULT_USER_ID: &str = "local_user";
 const BUILTIN_SKILLS_ROOT_ENV: &str = "WUNDER_BUILTIN_SKILLS_ROOT";
 const ADMIN_CUSTOM_SKILLS_ROOT_ENV: &str = "WUNDER_ADMIN_CUSTOM_SKILLS_ROOT";
 const DESKTOP_APPROVAL_MODE_MIGRATION_VERSION: &str = "full_auto_v1";
+const DESKTOP_WORKSPACE_IDENTITY_MIGRATION_VERSION: &str = "path_identity_v1";
 /// Name of the workspace created on first run; migrated legacy threads land
 /// here. Mirrored by the workspace façade's docs, never user-configurable.
 const DEFAULT_WORKSPACE_NAME: &str = "默认工作区";
@@ -122,8 +123,8 @@ impl DesktopRuntime {
 
         let mut step_start = Instant::now();
         let app_dir = resolve_app_dir()?;
-        let repo_root = resolve_repo_root(&app_dir);
         let wunder_home = resolve_wunder_home_dir();
+        let repo_root = resolve_repo_root(&app_dir, &wunder_home);
         fs::create_dir_all(&wunder_home)?;
         // Shared configuration, settings and the database always live below
         // WUNDER_HOME. `--temp-root` only selects ephemeral process files.
@@ -382,6 +383,7 @@ impl DesktopRuntime {
             .ensure_user_root(&user_id)
             .unwrap_or_else(|_| workspace_root.join(sanitize_workspace_scope(&user_id)));
         migrate_local_workspaces(state.as_ref(), &user_id, &legacy_user_root)?;
+        migrate_workspace_path_identity(state.as_ref(), &user_id)?;
         log_startup_segment(
             startup_enabled,
             "bridge-runtime",
@@ -432,7 +434,11 @@ fn resolve_app_dir() -> Result<PathBuf> {
         .ok_or_else(|| anyhow!("resolve app dir failed from exe path"))
 }
 
-fn resolve_repo_root(app_dir: &Path) -> PathBuf {
+/// Asset root for the local form. A source checkout or a portable resources
+/// folder wins so development and hand-assembled layouts keep live files; an
+/// installed desktop falls back to WUNDER_HOME, where the embedded assets are
+/// projected.
+fn resolve_repo_root(app_dir: &Path, wunder_home: &Path) -> PathBuf {
     if let Some(repo_root) = repo_assets::resolve_local_form_repo_root(app_dir, None) {
         return repo_root;
     }
@@ -441,7 +447,7 @@ fn resolve_repo_root(app_dir: &Path) -> PathBuf {
     {
         return repo_root;
     }
-    app_dir.to_path_buf()
+    wunder_home.to_path_buf()
 }
 
 fn resolve_temp_root(temp_root: Option<&Path>, wunder_home: &Path) -> Result<PathBuf> {
@@ -1322,6 +1328,10 @@ fn apply_desktop_defaults(
     config.gateway.enabled = false;
     config.agent_queue.enabled = true;
     config.cron.enabled = true;
+    // New and edited cron jobs wake the local scheduler directly. With no
+    // jobs, leave only a long cross-process recovery backstop so an idle
+    // desktop does not query its SQLite file every few seconds.
+    config.cron.max_idle_sleep_ms = config.cron.max_idle_sleep_ms.max(60_000);
     if let Some(preset_worker_cards_root) = resolve_desktop_preset_worker_cards_root(
         &config.user_agents.worker_cards_root,
         repo_root,
@@ -1744,6 +1754,69 @@ fn migrate_local_workspaces(state: &AppState, user_id: &str, legacy_root: &Path)
             state.storage.upsert_chat_session(&record)?;
         }
     }
+    Ok(())
+}
+
+/// Merge historic workspace rows which name the same real folder using
+/// different serialized paths (most commonly Windows `\\?\\` versus the plain
+/// canonical path).  蛹 and 舵机 share this database, so leaving both rows
+/// splits the same project in the desktop sidebar and causes new CLI threads
+/// to land under a second id. Keep the first row in sidebar order as the stable
+/// id and move all threads before deleting its duplicate. Runtime root bindings
+/// are process-local and must be restored on every startup.
+fn migrate_workspace_path_identity(state: &AppState, user_id: &str) -> Result<()> {
+    let migration_key = format!(
+        "desktop_workspace_path_identity_migration:{DESKTOP_WORKSPACE_IDENTITY_MIGRATION_VERSION}:{user_id}"
+    );
+    let storage = state.storage.as_ref();
+    if state.user_store.get_meta(&migration_key)?.as_deref() == Some("1") {
+        for record in storage.list_workspaces(user_id)? {
+            state
+                .workspace
+                .register_workspace_root(&record.workspace_id, &record.root_path);
+        }
+        return Ok(());
+    }
+    let records = storage.list_workspaces(user_id)?;
+    let mut canonical_by_key: HashMap<String, String> = HashMap::new();
+    // Remove duplicate identities before rewriting roots: otherwise changing a
+    // legacy row to the plain spelling can collide with the already canonical
+    // row's unique `(user_id, root_path)` index.
+    for record in &records {
+        let identity = wunder_server::local_bootstrap::local_workspace_identity_key(Path::new(
+            &record.root_path,
+        ));
+        if let Some(keeper) = canonical_by_key.get(&identity).cloned() {
+            storage.reassign_chat_sessions_workspace(
+                user_id,
+                &record.workspace_id,
+                &keeper,
+                now_ts(),
+            )?;
+            storage.delete_workspace(user_id, &record.workspace_id)?;
+            state
+                .workspace
+                .unregister_workspace_root(&record.workspace_id);
+        }
+        canonical_by_key
+            .entry(identity)
+            .or_insert_with(|| record.workspace_id.clone());
+    }
+    for mut record in storage.list_workspaces(user_id)? {
+        let normalized_root = wunder_server::local_bootstrap::normalize_local_workspace_path(
+            Path::new(&record.root_path),
+        );
+        let normalized_path = normalized_root.to_string_lossy().into_owned();
+        if record.root_path != normalized_path {
+            record.root_path = normalized_path;
+            record.updated_at = now_ts();
+            storage.upsert_workspace(&record)?;
+        }
+        state
+            .workspace
+            .register_workspace_root(&record.workspace_id, &record.root_path);
+    }
+    state.user_store.set_meta(&migration_key, "1")?;
     Ok(())
 }
 

@@ -7,7 +7,7 @@ use crate::{
 use serde_json::Value;
 use slint::{ComponentHandle, Model, ModelRc, Timer, TimerMode, VecModel};
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     collections::VecDeque,
     rc::Rc,
     sync::{
@@ -357,14 +357,44 @@ fn inquiry_from_payload(data: &Value) -> Option<InquiryState> {
     })
 }
 
+struct PendingSubmission {
+    session: String,
+    client_message_id: String,
+    cancelled: Arc<AtomicBool>,
+}
+
+/// A stop may race the worker's synchronous lease acquisition. Keep the
+/// session fenced until both the explicit runtime cancellation and a stream
+/// that returned late have settled; otherwise that late stream can cancel a
+/// newer request in the same thread.
+struct CancellingSubmission {
+    session: String,
+    client_message_id: String,
+    control_settled: bool,
+    stream_settled: bool,
+}
+
 struct State {
     timer: Timer,
     observation: observer::Observation,
     desktop: Arc<NativeDesktop>,
     active: Option<Active>,
+    /// One idle-thread submission owns its provisional timeline until the
+    /// worker returns. Running threads retain their ordinary queue path.
+    submitting: Option<PendingSubmission>,
+    /// Stop barrier for a submission whose worker or returned stream is still
+    /// settling. Unlike `submitting`, this survives navigation away and back.
+    cancelling_submission: Option<CancellingSubmission>,
+    /// Independent low-duty directory reconciliation while another local
+    /// process owns one of the visible thread leases.
+    lease_refresh_timer: Timer,
     /// History plus the live turn; the timeline is the single chat model.
     timeline: Rc<RefCell<crate::timeline::Timeline>>,
     history_generation: Arc<AtomicU64>,
+    /// Oldest loaded durable user round and the next-page state.
+    history_before: Option<i64>,
+    history_has_more: bool,
+    history_loading_older: bool,
     drafts: std::collections::HashMap<String, String>,
     recording: Option<Recording>,
     list_inflight: Arc<AtomicBool>,
@@ -396,16 +426,15 @@ struct State {
     /// Counter behind the per-send `client_message_id`: the only key that ties
     /// an engine queue row back to the parked subscriber this window owns.
     send_seq: u64,
-    /// A foreground stream renders under its client request id while durable
-    /// history uses the committed root-turn id. Keep a single dirty bit while
-    /// that foreground tail is protected, then let the observer reconcile it
-    /// in one frame after the stream settles.
-    durable_history_dirty: bool,
 }
 
 thread_local! {
     static CHAT_STATE: RefCell<std::rc::Weak<RefCell<State>>> = RefCell::new(std::rc::Weak::new());
-    static INITIAL_HISTORY: RefCell<Option<(String, Vec<wunder_desktop::native::NativeChatTurn>, i64)>> = RefCell::new(None);
+    static INITIAL_HISTORY: RefCell<Option<(String, Vec<wunder_desktop::native::NativeChatTurn>, i64, Option<i64>, bool)>> = RefCell::new(None);
+    /// The goal elapsed label needs a one-second cadence only while a goal is
+    /// actively running.  Keeping this guard on the Slint thread prevents a
+    /// durable update from starting a second clock.
+    static GOAL_CLOCK_ARMED: Cell<bool> = const { Cell::new(false) };
 }
 
 /// Retain one selected-thread snapshot until the passive watcher attaches. The
@@ -417,20 +446,36 @@ pub(crate) fn seed_initial_history(
     session: &str,
     turns: Vec<wunder_desktop::native::NativeChatTurn>,
     cursor: i64,
+    history_before: Option<i64>,
+    history_has_more: bool,
 ) {
     if app.get_active_session_id() != session {
         return;
     }
-    INITIAL_HISTORY.with(|slot| *slot.borrow_mut() = Some((session.to_string(), turns, cursor)));
+    INITIAL_HISTORY.with(|slot| {
+        *slot.borrow_mut() = Some((
+            session.to_string(),
+            turns,
+            cursor,
+            history_before,
+            history_has_more,
+        ));
+    });
 }
 
 pub(crate) fn take_initial_history(
     session: &str,
-) -> Option<(Vec<wunder_desktop::native::NativeChatTurn>, i64)> {
+) -> Option<(
+    Vec<wunder_desktop::native::NativeChatTurn>,
+    i64,
+    Option<i64>,
+    bool,
+)> {
     INITIAL_HISTORY.with(|slot| {
         let mut slot = slot.borrow_mut();
-        if slot.as_ref().is_some_and(|(id, _, _)| id == session) {
-            slot.take().map(|(_, turns, cursor)| (turns, cursor))
+        if slot.as_ref().is_some_and(|(id, _, _, _, _)| id == session) {
+            slot.take()
+                .map(|(_, turns, cursor, before, has_more)| (turns, cursor, before, has_more))
         } else {
             None
         }
@@ -450,10 +495,18 @@ pub(crate) fn prepare_external_timeline(app: &MainWindow) {
         };
         let mut state = state.borrow_mut();
         state.timer.stop();
+        state.lease_refresh_timer.stop();
         state.active = None;
+        // A local submission may still be acquiring its lease while cloud
+        // navigation changes the visible page. Retain it (and any stop
+        // barrier) so returning to its thread cannot start a second request
+        // before the late worker has settled.
         state.parked.clear();
         state.observation.detach();
         state.history_generation.fetch_add(1, Ordering::AcqRel);
+        state.history_before = None;
+        state.history_has_more = false;
+        state.history_loading_older = false;
         state.timeline.borrow_mut().clear();
         let local_id = app.get_active_session_id().to_string();
         if !local_id.is_empty() {
@@ -572,8 +625,14 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
         observation: observer::Observation::default(),
         desktop,
         active: None,
+        submitting: None,
+        cancelling_submission: None,
+        lease_refresh_timer: Timer::default(),
         timeline: Rc::new(RefCell::new(crate::timeline::Timeline::new())),
         history_generation: Arc::new(AtomicU64::new(0)),
+        history_before: None,
+        history_has_more: false,
+        history_loading_older: false,
         drafts: std::collections::HashMap::new(),
         recording: None,
         list_inflight: Arc::new(AtomicBool::new(false)),
@@ -587,21 +646,21 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
         queue_due: None,
         recall: Recall::default(),
         send_seq: 0,
-        durable_history_dirty: false,
     }));
     observer::install(app, state.clone());
     CHAT_STATE.with(|slot| *slot.borrow_mut() = Rc::downgrade(&state));
     bind_refresh(app, state.clone());
     bind_selection(app, state.clone());
+    bind_history_paging(app, state.clone());
     bind_new_thread(app, state.clone());
     bind_send(app, state.clone());
-    // 加号菜单「终端」：直接呼出补充包里的 Git Bash。
+    // 加号菜单「终端」：优先呼出补充包的 Git Bash，缺失时交给系统终端。
     let launch_weak = app.as_weak();
     let launch_desktop = state.borrow().desktop.clone();
     app.on_launch_terminal(move || {
         if let Some(app) = launch_weak.upgrade() {
             let workspace = app.get_active_workspace_root().to_string();
-            if let Err(message) = launch_desktop.launch_git_bash(&workspace) {
+            if let Err(message) = launch_desktop.launch_terminal(&workspace) {
                 app.set_status(message.into());
             }
         }
@@ -914,7 +973,7 @@ fn publish_idle_plan(app: &MainWindow, state: &State, session: &str) {
 /// last published plan feeds the dock cache and a still-pending 问询面板 comes
 /// back as the card above the composer. The observer calls this once per open,
 /// right after it seeds the compact history.
-pub(crate) fn restore_thread_extras(
+fn restore_thread_extras(
     app: &MainWindow,
     state: &mut State,
     session: &str,
@@ -1128,6 +1187,74 @@ fn bind_refresh(app: &MainWindow, state: Rc<RefCell<State>>) {
     });
 }
 
+/// Close one side of the pending-stop handshake. `stream_settled` is only
+/// true after a returned `NativeStream` has been cancelled and fully drained;
+/// `control_settled` is only true after the session-wide cancellation call
+/// completed. Both are required before a new request may enter this thread.
+fn settle_cancelling_submission(
+    app: &MainWindow,
+    state: &Rc<RefCell<State>>,
+    session: &str,
+    client_message_id: &str,
+    control_settled: bool,
+    stream_settled: bool,
+) {
+    let release = {
+        let mut state = state.borrow_mut();
+        let Some(pending) = state.cancelling_submission.as_mut() else {
+            return;
+        };
+        if pending.session != session
+            || (!client_message_id.is_empty() && pending.client_message_id != client_message_id)
+        {
+            return;
+        }
+        pending.control_settled |= control_settled;
+        pending.stream_settled |= stream_settled;
+        if !(pending.control_settled && pending.stream_settled) {
+            return;
+        }
+        state.cancelling_submission = None;
+        true
+    };
+    if release && app.get_active_session_id() == session {
+        app.set_stopping(false);
+        app.invoke_native_thread_update_ready();
+    }
+}
+
+/// Keep lock indicators current while another 蛹 or 舵机 owns a thread.
+/// This timer is independent of the 33ms stream reducer, runs only when the
+/// visible catalogue has a lock, and its worker captures only weak UI state.
+fn sync_lease_refresh_timer(app: &MainWindow, state: &Rc<RefCell<State>>) {
+    let locked = app.get_conversations().iter().any(|row| row.locked);
+    let weak = app.as_weak();
+    let state = Rc::downgrade(state);
+    let current = state.upgrade();
+    let Some(current) = current else { return };
+    let current = current.borrow();
+    if !locked {
+        current.lease_refresh_timer.stop();
+        return;
+    }
+    if current.lease_refresh_timer.running() {
+        return;
+    }
+    current
+        .lease_refresh_timer
+        .start(TimerMode::Repeated, Duration::from_millis(500), move || {
+            let (Some(app), Some(state)) = (weak.upgrade(), state.upgrade()) else {
+                return;
+            };
+            if app.get_cloud_chat_active() || !app.get_conversations().iter().any(|row| row.locked)
+            {
+                state.borrow().lease_refresh_timer.stop();
+                return;
+            }
+            refresh_chat(&app, state, true);
+        });
+}
+
 fn refresh_chat(app: &MainWindow, state: Rc<RefCell<State>>, silent: bool) {
     if app.get_cloud_chat_active() {
         return;
@@ -1238,6 +1365,14 @@ fn refresh_chat(app: &MainWindow, state: Rc<RefCell<State>>, silent: bool) {
                     if !app.get_conversations().iter().eq(rows.iter().cloned()) {
                         app.set_conversations(ModelRc::new(VecModel::from(rows)));
                     }
+                    // This callback is running back on Slint's event loop.
+                    // Look up the UI-owned state here rather than capturing
+                    // its Rc in the list worker (Rc is deliberately !Send).
+                    CHAT_STATE.with(|slot| {
+                        if let Some(state) = slot.borrow().upgrade() {
+                            sync_lease_refresh_timer(&app, &state);
+                        }
+                    });
                     crate::navigation_ui::project(&app);
                     crate::navigation_ui::project_sidebar(&app, Some(desktop.clone()));
                     // The working-directory panel opens on the selected
@@ -1305,6 +1440,9 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
         app.set_goal_rounds(row.goal_rounds.clone());
         set_goal_clock(&app, row.goal_seconds);
         app.set_goal_paused(row.goal_paused);
+        if row.goal_active && !row.goal_paused && !row.goal_objective.is_empty() {
+            start_goal_clock(app.as_weak());
+        }
         // The dock mirrors the live turn only: switching to a thread without
         // one must not inherit the previous thread's activity (or the preview
         // demo values). The plan signature drops too, so the next flush
@@ -1335,6 +1473,12 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
                 current.timer.stop();
             }
             current.observation.detach();
+            current.history_before = None;
+            current.history_has_more = false;
+            current.history_loading_older = false;
+            // Keep a pending submission (and its stop barrier) across
+            // navigation. Returning to the thread must not bypass an
+            // in-flight lease acquisition by sending a second request.
             // This window pumps one thread at a time, so a parked subscriber of
             // another thread would only back-pressure the engine once its
             // bounded channel fills. Dropping a subscriber never cancels the
@@ -1416,6 +1560,8 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
                         // across the native worker boundary.
                         let history = snapshot.turns;
                         let history_cursor = snapshot.change_cursor;
+                        let history_before = snapshot.history_before;
+                        let history_has_more = snapshot.history_has_more;
                         let session = snapshot.session;
                         let agent = session.agent_id.unwrap_or_else(|| "__default__".into());
                         if app.get_active_agent_id() != agent {
@@ -1447,7 +1593,14 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
                             id.as_str(),
                             history,
                             history_cursor,
+                            history_before,
+                            history_has_more,
                         );
+                        // The selected-thread observer is event driven.  The
+                        // snapshot is its activation edge, replacing the old
+                        // permanent UI timer that noticed this on its next
+                        // UI pass.
+                        app.invoke_native_thread_update_ready();
                         // The durable snapshot is ready; let the observer
                         // attach on its next frame. Keep the loading overlay
                         // until that frame publishes history, so a slow disk
@@ -1464,6 +1617,73 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
                         app.set_queue_turns(ModelRc::default());
                         app.set_queue_overflow(0);
                         app.set_status(format!("无法打开线程：{error}").into());
+                    }
+                }
+            });
+        });
+    });
+}
+
+/// Request the next older, keyset-bounded chat page when the timeline reaches
+/// its top edge. The UI only owns a small page at a time; older cards remain
+/// stable in the model until the user explicitly continues scrolling.
+fn bind_history_paging(app: &MainWindow, state: Rc<RefCell<State>>) {
+    let weak = app.as_weak();
+    app.on_timeline_load_older(move || {
+        let Some(app) = weak.upgrade() else { return };
+        if app.get_cloud_chat_active() {
+            return;
+        }
+        let session = app.get_active_session_id().to_string();
+        if session.is_empty() {
+            return;
+        }
+        let (desktop, before, generation, request) = {
+            let mut current = state.borrow_mut();
+            if current.history_loading_older
+                || !current.history_has_more
+                || current.history_before.is_none()
+            {
+                return;
+            }
+            current.history_loading_older = true;
+            let generation = current.history_generation.clone();
+            let request = generation.load(Ordering::Acquire);
+            (
+                current.desktop.clone(),
+                current.history_before.expect("checked above"),
+                generation,
+                request,
+            )
+        };
+        let weak = app.as_weak();
+        std::thread::spawn(move || {
+            let result = desktop.load_chat_history_page(&session, before);
+            let _ = weak.upgrade_in_event_loop(move |app| {
+                let Some(state) = CHAT_STATE.with(|slot| slot.borrow().upgrade()) else {
+                    return;
+                };
+                let mut current = state.borrow_mut();
+                if generation.load(Ordering::Acquire) != request
+                    || app.get_active_session_id() != session
+                {
+                    return;
+                }
+                current.history_loading_older = false;
+                match result {
+                    Ok((turns, next_before, has_more)) => {
+                        // A non-progressing cursor would otherwise issue the
+                        // same slow disk read forever if a malformed legacy
+                        // record cannot fit into the response budget.
+                        current.history_before = next_before;
+                        current.history_has_more = has_more && next_before.is_some();
+                        if current.observation.prepend(turns) {
+                            let timeline = current.timeline.clone();
+                            current.observation.publish(&app, &timeline);
+                        }
+                    }
+                    Err(error) => {
+                        app.set_status(format!("无法读取更早的历史记录：{error}").into());
                     }
                 }
             });
@@ -1654,6 +1874,24 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
         if app.get_command_pending() {
             return;
         }
+        if !app.get_cloud_chat_active() {
+            // `State` has one foreground timeline and one provisional
+            // submission slot. Do not let a quick A -> B navigation replace
+            // A's identity while its worker is still acquiring A's lease:
+            // the late completion must either own that exact slot or settle
+            // its stop barrier. The lease trip is short, and blocking this
+            // one local send preserves thread isolation without making Rc UI
+            // state cross a worker boundary.
+            let pending = state.borrow();
+            if pending.cancelling_submission.is_some() {
+                app.set_status("正在停止上一条请求，请稍候…".into());
+                return;
+            }
+            if pending.submitting.is_some() {
+                app.set_status("正在提交，请稍候…".into());
+                return;
+            }
+        }
         let content = app.get_draft().trim().to_string();
         if app.get_cloud_chat_active() {
             if !crate::cloud_threads::is_active(&app) {
@@ -1693,7 +1931,7 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
             return;
         }
         let session = app.get_active_session_id().to_string();
-        let content = app.get_draft().trim().to_string();
+        let draft_content = app.get_draft().trim().to_string();
         // A fully answered 问询面板 *is* the message: the choices go out first
         // and the draft follows as the user's own note. An unanswered card is
         // left alone, so a plain message cannot silently consume a question the
@@ -1707,13 +1945,13 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
         let content = match answered.as_ref() {
             Some(panel) => {
                 let reply = panel.reply();
-                if content.is_empty() {
+                if draft_content.is_empty() {
                     reply
                 } else {
-                    format!("{reply}\n\n用户补充：{content}")
+                    format!("{reply}\n\n用户补充：{draft_content}")
                 }
             }
-            None => content,
+            None => draft_content.clone(),
         };
         let pending_attachments = app.get_pending_attachments().iter().collect::<Vec<_>>();
         let attachments = pending_attachments
@@ -1760,27 +1998,122 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
         // so nothing the user typed is lost.
         app.set_draft("".into());
         app.set_pending_attachments(ModelRc::default());
-        // The answered panel has been carried out by this turn.
-        state.borrow_mut().inquiries.remove(&session);
+        // Only an answered panel was carried out by this turn. Ordinary
+        // messages must leave an unanswered panel available to the user.
+        if answered.is_some() {
+            state.borrow_mut().inquiries.remove(&session);
+        }
         publish_inquiry(&app, &session, &state.borrow());
+        // An answered inquiry is a user reply even before the worker finishes
+        // the lease round-trip. Project its bubble now when this thread has no
+        // foreground run. A normal interjection still uses its queue path so
+        // it cannot overwrite another live reducer's timeline state.
+        let optimistic = answered.is_some() && state.borrow().active.is_none();
+        let submission_cancelled = Arc::new(AtomicBool::new(false));
+        if state.borrow().active.is_none() {
+            state.borrow_mut().submitting = Some(PendingSubmission {
+                session: session.clone(),
+                client_message_id: client_message_id.clone(),
+                cancelled: submission_cancelled.clone(),
+            });
+        }
+        let previous_busy = app.get_busy();
+        let previous_activity_running = app.get_activity_running();
+        let previous_session_status = app
+            .get_conversations()
+            .iter()
+            .find(|row| row.id == session)
+            .map(|row| row.runtime_status.to_string())
+            .unwrap_or_default();
+        if optimistic {
+            let timeline = state.borrow().timeline.clone();
+            let mut live = timeline.borrow_mut();
+            live.set_highlight(true);
+            live.begin_turn(&client_message_id, &display_content);
+            live.set_turn_status("请求中", 0);
+            publish_timeline(&app, &live);
+            app.set_busy(true);
+            app.set_activity_running(true);
+            app.set_stopping(false);
+            app.set_follow_output(true);
+            set_session_status(&app, &session, "请求中");
+        }
         let desktop = state.borrow().desktop.clone();
         let send_order = Arc::clone(&send_lock);
         let weak = weak.clone();
         std::thread::spawn(move || {
             let _order = send_order.lock().ok();
-            let result = desktop.send_chat(NativeChatInput {
-                session_id: session.clone(),
-                content: content.clone(),
-                client_message_id: Some(client_message_id.clone()),
-                reasoning_effort,
-                attachments,
-            });
+            let result = if submission_cancelled.load(Ordering::Acquire) {
+                Err(anyhow::anyhow!("submission cancelled"))
+            } else {
+                desktop.send_chat(NativeChatInput {
+                    session_id: session.clone(),
+                    content: content.clone(),
+                    client_message_id: Some(client_message_id.clone()),
+                    reasoning_effort,
+                    attachments,
+                })
+            };
             let _ = weak.upgrade_in_event_loop(move |app| {
                 CHAT_STATE.with(|slot| {
                     let Some(state) = slot.borrow().upgrade() else {
                         return;
                     };
                     let same_thread = app.get_active_session_id() == session;
+                    let owns_submission = {
+                        let mut st = state.borrow_mut();
+                        let owns = st.submitting.as_ref().is_some_and(|pending| {
+                            pending.session == session
+                                && pending.client_message_id == client_message_id
+                        });
+                        if owns {
+                            st.submitting = None;
+                        }
+                        owns
+                    };
+                    // Stop releases the UI immediately, even while a slow
+                    // lease read is finishing. Its late callback must never
+                    // re-install the stopped request or restore an old panel.
+                    if submission_cancelled.load(Ordering::Acquire) {
+                        if let Ok(mut stream) = result {
+                            stream.cancel();
+                            let weak = app.as_weak();
+                            let session = session.clone();
+                            let client_message_id = client_message_id.clone();
+                            std::thread::spawn(move || {
+                                // This is the cancellation acknowledgement:
+                                // do not release the session fence until the
+                                // native stream task has observed its token
+                                // and stopped producing events.
+                                while stream.blocking_recv().is_some() {}
+                                let _ = weak.upgrade_in_event_loop(move |app| {
+                                    CHAT_STATE.with(|slot| {
+                                        if let Some(state) = slot.borrow().upgrade() {
+                                            settle_cancelling_submission(
+                                                &app,
+                                                &state,
+                                                &session,
+                                                &client_message_id,
+                                                false,
+                                                true,
+                                            );
+                                        }
+                                    });
+                                });
+                            });
+                        } else {
+                            settle_cancelling_submission(
+                                &app,
+                                &state,
+                                &session,
+                                &client_message_id,
+                                false,
+                                true,
+                            );
+                        }
+                        return;
+                    }
+                    let optimistic_visible = optimistic && owns_submission;
                     let stream = match result {
                         Ok(stream) => stream,
                         Err(error) => {
@@ -1788,7 +2121,7 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
                             // consumed, unless the user already typed on.
                             if same_thread {
                                 if app.get_draft().trim().is_empty() {
-                                    app.set_draft(content.as_str().into());
+                                    app.set_draft(draft_content.as_str().into());
                                 }
                                 if app.get_pending_attachments().row_count() == 0
                                     && !pending_attachments.is_empty()
@@ -1804,7 +2137,7 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
                                     .get(&session)
                                     .is_none_or(|draft| draft.trim().is_empty());
                                 if untouched {
-                                    st.drafts.insert(session.clone(), content.clone());
+                                    st.drafts.insert(session.clone(), draft_content.clone());
                                 }
                             }
                             if let Some(panel) = answered {
@@ -1812,6 +2145,27 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
                                 st.inquiries.entry(session.clone()).or_insert(panel);
                                 if same_thread {
                                     publish_inquiry(&app, &session, &st);
+                                }
+                            }
+                            if same_thread && optimistic_visible {
+                                // The optimistic bubble did not reach the
+                                // engine. Remove only its provisional tail;
+                                // a durable snapshot can be stale while the
+                                // selected-thread watcher is mid-refresh.
+                                let st = state.borrow();
+                                let timeline = st.timeline.clone();
+                                let mut live = timeline.borrow_mut();
+                                // A newer submission may already own the
+                                // stream and timeline. Its state must survive
+                                // this older worker's failed completion.
+                                if st.active.is_none()
+                                    && st.parked.is_empty()
+                                    && live.remove_live_turn(&client_message_id)
+                                {
+                                    publish_timeline_passive(&app, &live);
+                                    app.set_busy(previous_busy);
+                                    app.set_activity_running(previous_activity_running);
+                                    set_session_status(&app, &session, &previous_session_status);
                                 }
                             }
                             app.set_status(format!("无法发送：{error}").into());
@@ -1848,24 +2202,24 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
                         app.set_status("已加入等待发送".into());
                         return;
                     }
-                    // The live turn appends to the timeline that already holds
-                    // this thread's history; nothing is rebuilt from the
-                    // conversation list.
+                    // An answered inquiry may already own the timeline.
+                    // Ordinary sends get their bubble only after the worker
+                    // returns, preserving a running turn's live projection.
                     let timeline = state.borrow().timeline.clone();
-                    state.borrow_mut().durable_history_dirty = false;
-                    {
+                    if !optimistic_visible {
                         let mut live = timeline.borrow_mut();
                         live.set_highlight(true);
                         live.begin_turn(&client_message_id, &display_content);
                         live.set_turn_status("请求中", 0);
                         publish_timeline(&app, &live);
+                        app.set_busy(true);
+                        app.set_activity_running(true);
+                        app.set_stopping(false);
+                        app.set_follow_output(true);
+                        set_session_status(&app, &session, "请求中");
                     }
-                    app.set_busy(true);
                     // A fresh turn starts without a stale queue banner.
                     app.set_cloud_queue_position(-1);
-                    set_session_status(&app, &session, "running");
-                    app.set_follow_output(true);
-                    app.set_stopping(false);
                     app.set_stream_bytes(0);
                     app.set_stream_updates(0);
                     app.set_stream_max_ui_ms(0.0);
@@ -2435,8 +2789,27 @@ fn bind_stop(app: &MainWindow, state: Rc<RefCell<State>>) {
         // handed out of the block instead of reprojected while it is held — a
         // second `borrow_mut`/`borrow` here aborts the process.
         let mut stopped: Option<(String, String)> = None;
+        let mut stopped_submission = false;
         {
             let mut current = state.borrow_mut();
+            if current
+                .submitting
+                .as_ref()
+                .is_some_and(|pending| pending.session == session)
+            {
+                let pending = current.submitting.take().unwrap();
+                pending.cancelled.store(true, Ordering::Release);
+                current.cancelling_submission = Some(CancellingSubmission {
+                    session: pending.session.clone(),
+                    client_message_id: pending.client_message_id.clone(),
+                    control_settled: false,
+                    stream_settled: false,
+                });
+                let mut timeline = current.timeline.borrow_mut();
+                timeline.remove_live_turn(&pending.client_message_id);
+                publish_timeline_passive(&app, &timeline);
+                stopped_submission = true;
+            }
             if let Some(active) = current.active.as_mut() {
                 app.set_stopping(true);
                 active.stream.cancel();
@@ -2448,16 +2821,29 @@ fn bind_stop(app: &MainWindow, state: Rc<RefCell<State>>) {
         if let Some((stopped_session, stopped_status)) = stopped {
             set_session_status(&app, &stopped_session, &stopped_status);
             app.set_status("正在停止…".into());
-        } else if app.get_busy() || app.get_goal_active() {
+        } else if stopped_submission || app.get_busy() || app.get_goal_active() {
             app.set_stopping(true);
+            if stopped_submission {
+                app.set_busy(false);
+                app.set_activity_running(false);
+                set_session_status(&app, &session, "已停止");
+            }
             let desktop = state.borrow().desktop.clone();
             let cancel_session = session.clone();
             let weak = app.as_weak();
+            let waits_for_submission_stream = stopped_submission;
             std::thread::spawn(move || {
                 let result = desktop.cancel_chat(&cancel_session);
                 let _ = weak.upgrade_in_event_loop(move |app| {
                     if app.get_active_session_id() == cancel_session {
-                        app.set_stopping(false);
+                        // A stopped submission can return a stream only after
+                        // this control request did. Keep the composer fenced
+                        // until that stream was cancelled and drained too;
+                        // otherwise its session-wide cancellation can hit a
+                        // new request submitted in the gap.
+                        if !waits_for_submission_stream {
+                            app.set_stopping(false);
+                        }
                         match result {
                             Err(error) => app.set_status(format!("无法停止：{error}").into()),
                             Ok(()) => {
@@ -2466,6 +2852,18 @@ fn bind_stop(app: &MainWindow, state: Rc<RefCell<State>>) {
                             }
                         }
                     }
+                    CHAT_STATE.with(|slot| {
+                        if let Some(state) = slot.borrow().upgrade() {
+                            settle_cancelling_submission(
+                                &app,
+                                &state,
+                                &cancel_session,
+                                "",
+                                true,
+                                false,
+                            );
+                        }
+                    });
                 });
             });
         }
@@ -2516,13 +2914,32 @@ pub(crate) fn set_goal_clock(app: &MainWindow, seconds: i32) {
 /// Local one-second tick. The backend observer pushes durable goal updates,
 /// but only while it is allowed to run; this keeps the banner counting during
 /// a foreground generation and corrects itself on the next durable update.
-fn start_goal_clock(app: slint::Weak<MainWindow>) {
+pub(super) fn start_goal_clock(app: slint::Weak<MainWindow>) {
+    let should_start = GOAL_CLOCK_ARMED.with(|armed| {
+        if armed.get() {
+            false
+        } else {
+            armed.set(true);
+            true
+        }
+    });
+    if should_start {
+        tick_goal_clock(app);
+    }
+}
+
+fn tick_goal_clock(app: slint::Weak<MainWindow>) {
     slint::Timer::single_shot(Duration::from_secs(1), move || {
         let Some(app) = app.upgrade() else { return };
-        if app.get_goal_active() && !app.get_goal_paused() && !app.get_goal_objective().is_empty() {
-            set_goal_clock(&app, app.get_goal_seconds() + 1);
+        if !app.get_goal_active() || app.get_goal_paused() || app.get_goal_objective().is_empty() {
+            // Do not keep a recursive one-second wake-up alive for every
+            // ordinary idle thread.  A goal update explicitly arms the clock
+            // again when it becomes active.
+            GOAL_CLOCK_ARMED.with(|armed| armed.set(false));
+            return;
         }
-        start_goal_clock(app.as_weak());
+        set_goal_clock(&app, app.get_goal_seconds() + 1);
+        tick_goal_clock(app.as_weak());
     });
 }
 
@@ -2690,7 +3107,6 @@ fn start_timer(app: &MainWindow, state: Rc<RefCell<State>>) {
                     output,
                     client_message_id: entry.client_message_id,
                 });
-                state.durable_history_dirty = false;
                 app.set_busy(true);
                 app.set_stopping(false);
                 app.set_follow_output(true);

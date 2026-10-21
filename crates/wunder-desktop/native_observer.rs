@@ -1,6 +1,7 @@
 //! Passive, bounded observation of every user turn in the selected thread.
 use super::{chat_turns, NativeChatTurn, NativeDesktop};
 use anyhow::{anyhow, Result};
+use serde_json::Value;
 use std::{collections::BTreeSet, sync::Arc, time::Duration};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -10,6 +11,9 @@ use wunder_server::{blocking, state::AppState, watch_thread_changes, ThreadChang
 pub enum NativeThreadUpdate {
     Reset(Vec<NativeChatTurn>),
     Turns(Vec<NativeChatTurn>),
+    /// A durable queue item changed. Queue rows are projected separately from
+    /// chat history, so the UI can refresh the bounded queue strip immediately.
+    QueueChanged,
     Context(super::NativeContextUsage),
     Goal(super::NativeGoal),
     Failed(String),
@@ -18,6 +22,21 @@ pub enum NativeThreadUpdate {
 pub struct NativeThreadWatch {
     receiver: mpsc::Receiver<NativeThreadUpdate>,
     cancel: CancellationToken,
+}
+
+/// A cloneable, receive-free handle for releasing a native thread observer
+/// from a UI event loop while its receiver blocks on a worker thread.
+#[derive(Clone)]
+pub struct NativeThreadWatchCancel(CancellationToken);
+
+impl NativeThreadWatchCancel {
+    pub fn cancel(&self) {
+        self.0.cancel();
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.0.is_cancelled()
+    }
 }
 
 impl Drop for NativeThreadWatch {
@@ -30,6 +49,23 @@ impl Drop for NativeThreadWatch {
 impl NativeThreadWatch {
     pub fn try_recv(&mut self) -> Option<NativeThreadUpdate> {
         self.receiver.try_recv().ok()
+    }
+
+    /// Block a forwarding worker until a durable update arrives.  The UI can
+    /// keep only [NativeThreadWatchCancel], so an idle selected thread causes
+    /// no frontend timer or repeated channel probe.
+    pub fn blocking_recv(&mut self) -> Option<NativeThreadUpdate> {
+        self.receiver.blocking_recv()
+    }
+
+    pub fn cancel_handle(&self) -> NativeThreadWatchCancel {
+        NativeThreadWatchCancel(self.cancel.clone())
+    }
+
+    /// Await the next durable update. Selection is event-driven so an idle
+    /// thread observer does not keep the UI worker awake.
+    pub async fn recv(&mut self) -> Option<NativeThreadUpdate> {
+        self.receiver.recv().await
     }
 }
 
@@ -129,6 +165,9 @@ async fn observe(
         if output.send(NativeThreadUpdate::Reset(turns)).await.is_err() {
             return Ok(());
         }
+        // Subscribe before the durable read so an update in between is queued
+        // on the watch receiver instead of being lost until another change.
+        let mut context_events = state.kernel.orchestrator.subscribe_context_usage(&session);
         let mut context = super::context::snapshot(&state, &user, &session).await?;
         if output
             .send(NativeThreadUpdate::Context(context))
@@ -137,7 +176,10 @@ async fn observe(
         {
             return Ok(());
         }
-        let mut goal = goal_snapshot(&state, &user, &session).await?;
+        // Subscribe before reading the durable snapshot so a mutation between
+        // the read and the event loop cannot be missed.
+        let mut goal_events = state.kernel.orchestrator.subscribe_goal_updates(&session);
+        let goal = goal_snapshot(&state, &user, &session).await?;
         if output
             .send(NativeThreadUpdate::Goal(goal.clone()))
             .await
@@ -150,61 +192,75 @@ async fn observe(
         let mut feed =
             watch_thread_changes(state.clone(), session.clone(), cursor, Some(feed_cancel)).await?;
         let mut reset = false;
-        let mut goal_clock = tokio::time::interval(Duration::from_secs(1));
-        // Context occupancy is persisted as soon as a model request is
-        // accounted. It does not necessarily create a new thread-log frame,
-        // so keep a small independent clock for the selected thread. This
-        // makes the composer meter follow long tool runs without forcing a
-        // history reload or waiting for the next durable turn burst.
-        let mut context_clock = tokio::time::interval(Duration::from_millis(250));
-        context_clock.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        // Context and goal snapshots are pushed by their owning services. Do
+        // not retain periodic SQLite safety reads here: an idle selected
+        // thread must stay silent.
         loop {
             let first = tokio::select! {
                 frame = feed.recv() => match frame { Some(frame) => frame, None => break },
-                _ = goal_clock.tick() => {
-                    let next = goal_snapshot(&state, &user, &session).await?;
-                    if next != goal {
-                        goal = next;
-                        if output.send(NativeThreadUpdate::Goal(goal.clone())).await.is_err() { return Ok(()); }
+                changed = context_events.changed() => {
+                    if changed.is_ok() {
+                        let payload = context_events.borrow_and_update().clone();
+                        let next = super::NativeContextUsage::from_value(&payload);
+                        if next.used.is_some() || next.capacity.is_some() {
+                            if next.used.is_some() { context.used = next.used; }
+                            if next.capacity.is_some() { context.capacity = next.capacity; }
+                            if output.send(NativeThreadUpdate::Context(context)).await.is_err() {
+                                return Ok(());
+                            }
+                        }
+                    } else {
+                        context_events = state
+                            .kernel
+                            .orchestrator
+                            .subscribe_context_usage(&session);
                     }
                     continue;
                 }
-                _ = context_clock.tick() => {
-                    let db = state.clone();
-                    let owner = user.clone();
-                    let target = session.clone();
-                    let used = blocking::run_db("native.observe.context_tick", move || {
-                        Ok(db.workspace.load_session_context_tokens(&owner, &target).max(0) as f64)
-                    }).await?;
-                    if context.used != Some(used) {
-                        context.used = Some(used);
-                        if output.send(NativeThreadUpdate::Context(context)).await.is_err() {
+                changed = goal_events.changed() => {
+                    if changed.is_ok() {
+                        let goal = goal_from_update(&goal_events.borrow_and_update());
+                        if output.send(NativeThreadUpdate::Goal(goal)).await.is_err() {
                             return Ok(());
                         }
+                    } else {
+                        goal_events = state
+                            .kernel
+                            .orchestrator
+                            .subscribe_goal_updates(&session);
                     }
                     continue;
                 }
             };
             let mut executions = BTreeSet::new();
-            let mut collect = |frame: ThreadChangeFrame| match frame {
-                ThreadChangeFrame::Change { data, .. } => {
-                    if let Some(id) = data["turn_id"].as_str().filter(|id| !id.is_empty()) {
-                        executions.insert(id.to_owned());
-                    }
-                }
-                _ => reset = true,
-            };
-            collect(first);
+            let mut queue_changed = false;
+            queue_changed |= collect_frame(first, &mut executions, &mut reset);
+            // Queue rows are projected separately from chat history. Wake the
+            // composer as soon as the first durable queue frame arrives; the
+            // history burst can still be coalesced independently below.
+            if queue_changed && output.send(NativeThreadUpdate::QueueChanged).await.is_err() {
+                return Ok(());
+            }
+            let queue_notified = queue_changed;
             // Merge durable commits from a burst, with bounded feed and output.
-            tokio::time::sleep(Duration::from_millis(80)).await;
+            tokio::time::sleep(Duration::from_millis(16)).await;
             for _ in 0..255 {
                 match feed.try_recv() {
-                    Ok(frame) => collect(frame),
+                    Ok(frame) => queue_changed |= collect_frame(frame, &mut executions, &mut reset),
                     Err(_) => break,
                 }
             }
             if reset {
                 break;
+            }
+            // Queue rows are projected separately from chat history. Publish
+            // this control update before the history read so an interject or
+            // terminal queue event does not wait for the polling backstop.
+            if queue_changed
+                && !queue_notified
+                && output.send(NativeThreadUpdate::QueueChanged).await.is_err()
+            {
+                return Ok(());
             }
             let db = state.clone();
             let owner = user.clone();
@@ -300,30 +356,78 @@ async fn goal_snapshot(
         .unwrap_or_default())
 }
 
+/// A goal publisher always sends the complete stable projection, or null for
+/// a successful clear. It is intentionally decoded without a storage read so
+/// a selected idle thread stays event-driven.
+fn goal_from_update(payload: &Value) -> super::NativeGoal {
+    if payload.is_null() {
+        return super::NativeGoal::default();
+    }
+    super::NativeGoal {
+        objective: payload["objective"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string(),
+        phase: payload["phase"].as_str().unwrap_or_default().to_string(),
+        rounds_started: payload["rounds_started"].as_i64().unwrap_or_default(),
+        max_goal_rounds: payload["max_goal_rounds"].as_i64().unwrap_or_default(),
+        activation: payload["activation"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string(),
+    }
+}
+
+/// Durable queue lifecycle events are stored as `kind: "queue"` item upserts.
+/// Depending on the feeder projection the item may be wrapped under
+/// `payload`; inspect this small bounded envelope without querying SQLite for
+/// every history frame.
+fn is_queue_change(data: &Value) -> bool {
+    let mut current = data;
+    for _ in 0..3 {
+        if current.get("kind").and_then(Value::as_str) == Some("queue")
+            || current
+                .get("event_type")
+                .and_then(Value::as_str)
+                .is_some_and(|event| event.starts_with("queue_"))
+        {
+            return true;
+        }
+        let Some(next) = current.get("payload") else {
+            break;
+        };
+        current = next;
+    }
+    false
+}
+
+fn collect_frame(
+    frame: ThreadChangeFrame,
+    executions: &mut BTreeSet<String>,
+    reset: &mut bool,
+) -> bool {
+    match frame {
+        ThreadChangeFrame::Change { data, .. } => {
+            let queue = is_queue_change(&data);
+            if let Some(id) = data["turn_id"].as_str().filter(|id| !id.is_empty()) {
+                executions.insert(id.to_owned());
+            }
+            queue
+        }
+        _ => {
+            *reset = true;
+            false
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
     use wunder_server::{config::Config, config_store::ConfigStore, state::AppStateInitOptions};
 
-    async fn next(receiver: &mut mpsc::Receiver<NativeThreadUpdate>) -> Vec<NativeChatTurn> {
-        loop {
-            match tokio::time::timeout(Duration::from_secs(4), receiver.recv())
-                .await
-                .unwrap()
-                .unwrap()
-            {
-                NativeThreadUpdate::Reset(turns) | NativeThreadUpdate::Turns(turns) => {
-                    return turns
-                }
-                NativeThreadUpdate::Context(_) | NativeThreadUpdate::Goal(_) => {}
-                NativeThreadUpdate::Failed(error) => panic!("{error}"),
-            }
-        }
-    }
-
-    #[tokio::test]
-    async fn channel_turns_arrive_without_local_send_and_survive_resubscription() {
+    async fn isolated_state() -> (tempfile::TempDir, Arc<AppState>) {
         let temp = tempfile::tempdir().unwrap();
         let mut config = Config::default();
         config.storage.backend = "sqlite".into();
@@ -344,8 +448,10 @@ mod tests {
             )
             .unwrap(),
         );
-        let user = "fixture-owner";
-        let session = "fixture-channel-thread";
+        (temp, state)
+    }
+
+    fn create_session(state: &AppState, user: &str, session: &str) {
         state
             .user_store
             .upsert_chat_session(&wunder_server::storage::ChatSessionRecord {
@@ -365,6 +471,39 @@ mod tests {
                 spawned_by: None,
             })
             .unwrap();
+    }
+
+    async fn update(receiver: &mut mpsc::Receiver<NativeThreadUpdate>) -> NativeThreadUpdate {
+        tokio::time::timeout(Duration::from_secs(4), receiver.recv())
+            .await
+            .expect("thread observer did not publish an update")
+            .expect("thread observer closed before the expected update")
+    }
+
+    async fn next(receiver: &mut mpsc::Receiver<NativeThreadUpdate>) -> Vec<NativeChatTurn> {
+        loop {
+            match tokio::time::timeout(Duration::from_secs(4), receiver.recv())
+                .await
+                .unwrap()
+                .unwrap()
+            {
+                NativeThreadUpdate::Reset(turns) | NativeThreadUpdate::Turns(turns) => {
+                    return turns
+                }
+                NativeThreadUpdate::QueueChanged
+                | NativeThreadUpdate::Context(_)
+                | NativeThreadUpdate::Goal(_) => {}
+                NativeThreadUpdate::Failed(error) => panic!("{error}"),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn channel_turns_arrive_without_local_send_and_survive_resubscription() {
+        let (_temp, state) = isolated_state().await;
+        let user = "fixture-owner";
+        let session = "fixture-channel-thread";
+        create_session(&state, user, session);
         let (output, mut receiver) = mpsc::channel(8);
         let cancel = CancellationToken::new();
         let db = state.clone();
@@ -454,7 +593,11 @@ mod tests {
             .get_thread_turn(user, session, id, -1, 10, false)
             .unwrap()
             .unwrap();
-        assert_eq!(detail["status"], "queued");
+        assert!(
+            matches!(detail["status"].as_str(), Some("queued" | "accepted")),
+            "accepted turns may remain accepted until the runtime claims them: {}",
+            detail["status"]
+        );
         state
             .storage
             .update_thread_turn(user, session, id, "cancelled", "", &json!({}))
@@ -494,5 +637,226 @@ mod tests {
         )
         .await
         .is_err());
+    }
+
+    #[tokio::test]
+    async fn durable_queue_item_notifies_an_already_running_observer() {
+        let (_temp, state) = isolated_state().await;
+        let user = "fixture-owner";
+        let session = "fixture-queue-thread";
+        create_session(&state, user, session);
+        let accepted = state
+            .storage
+            .accept_thread_turn(user, session, &json!({"content": "Fixture input"}))
+            .unwrap();
+        let turn_id = accepted["turn_id"].as_str().unwrap().to_owned();
+        let (output, mut receiver) = mpsc::channel(8);
+        let cancel = CancellationToken::new();
+        let db = state.clone();
+        let token = cancel.clone();
+        let task = tokio::spawn(async move {
+            tokio::select! {
+                _ = token.cancelled() => Ok(()),
+                result = observe(db, user.into(), session.into(), None, None, &output, &token) => result,
+            }
+        });
+        assert_eq!(next(&mut receiver).await.len(), 1);
+        assert!(matches!(
+            update(&mut receiver).await,
+            NativeThreadUpdate::Context(_)
+        ));
+        assert!(matches!(
+            update(&mut receiver).await,
+            NativeThreadUpdate::Goal(_)
+        ));
+
+        // Each lifecycle update upserts the same stable queue item. The native
+        // queue strip must receive a control event independently of chat text.
+        for (event_type, status) in [("queue_start", "running"), ("queue_finish", "completed")] {
+            state
+                .storage
+                .append_thread_item(
+                    user,
+                    &json!({
+                        "session_id": session,
+                        "turn_id": turn_id,
+                        "item_id": format!("{turn_id}:queue-fixture"),
+                        "kind": "queue",
+                        "event_type": event_type,
+                        "status": status,
+                        "visibility": "user"
+                    }),
+                )
+                .unwrap();
+            loop {
+                match update(&mut receiver).await {
+                    NativeThreadUpdate::QueueChanged => break,
+                    NativeThreadUpdate::Failed(error) => panic!("{error}"),
+                    _ => {}
+                }
+            }
+            assert!(!task.is_finished(), "queue events must not end observation");
+        }
+        cancel.cancel();
+        tokio::time::timeout(Duration::from_secs(1), task)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn goal_service_updates_reach_an_idle_native_observer_without_a_durable_frame() {
+        let (_temp, state) = isolated_state().await;
+        let user = "fixture-owner";
+        let session = "fixture-goal-thread";
+        create_session(&state, user, session);
+        let (output, mut receiver) = mpsc::channel(8);
+        let cancel = CancellationToken::new();
+        let db = state.clone();
+        let token = cancel.clone();
+        let task = tokio::spawn(async move {
+            tokio::select! {
+                _ = token.cancelled() => Ok(()),
+                result = observe(db, user.into(), session.into(), None, None, &output, &token) => result,
+            }
+        });
+
+        assert!(next(&mut receiver).await.is_empty());
+        assert!(matches!(
+            update(&mut receiver).await,
+            NativeThreadUpdate::Context(_)
+        ));
+        assert!(matches!(
+            update(&mut receiver).await,
+            NativeThreadUpdate::Goal(goal) if goal == super::super::NativeGoal::default()
+        ));
+
+        let service = state.kernel.orchestrator.goal_handle();
+        service
+            .create(
+                state.storage.clone(),
+                user,
+                session,
+                "Fixture objective",
+                Some(8),
+            )
+            .await
+            .unwrap();
+        loop {
+            match update(&mut receiver).await {
+                NativeThreadUpdate::Goal(goal)
+                    if goal.objective == "Fixture objective"
+                        && goal.phase == "active"
+                        && goal.activation == "armed" =>
+                {
+                    break;
+                }
+                NativeThreadUpdate::Failed(error) => panic!("{error}"),
+                _ => {}
+            }
+        }
+
+        service.disarm(&state.storage, user, session).await.unwrap();
+        loop {
+            match update(&mut receiver).await {
+                NativeThreadUpdate::Goal(goal) if goal.activation == "disarmed" => break,
+                NativeThreadUpdate::Failed(error) => panic!("{error}"),
+                _ => {}
+            }
+        }
+
+        service
+            .clear(state.storage.clone(), user, session)
+            .await
+            .unwrap();
+        loop {
+            match update(&mut receiver).await {
+                NativeThreadUpdate::Goal(goal) if goal == super::super::NativeGoal::default() => {
+                    break;
+                }
+                NativeThreadUpdate::Failed(error) => panic!("{error}"),
+                _ => {}
+            }
+        }
+
+        cancel.cancel();
+        tokio::time::timeout(Duration::from_secs(1), task)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+    }
+
+    #[test]
+    fn queue_change_classification_accepts_bounded_durable_envelopes() {
+        for data in [
+            json!({"kind": "queue"}),
+            json!({"event_type": "queue_start"}),
+            json!({"payload": {"kind": "queue"}}),
+            json!({"payload": {"payload": {"event_type": "queue_finish"}}}),
+        ] {
+            assert!(
+                is_queue_change(&data),
+                "queue frame was not classified: {data}"
+            );
+        }
+        for data in [
+            Value::Null,
+            json!({"kind": "assistant_message"}),
+            json!({"event_type": "question_panel"}),
+            json!({"payload": {"payload": {"payload": {"kind": "queue"}}}}),
+        ] {
+            assert!(
+                !is_queue_change(&data),
+                "unrelated frame classified as queue: {data}"
+            );
+        }
+    }
+
+    #[test]
+    fn durable_frames_collect_roots_and_control_frames_request_reset() {
+        let mut executions = BTreeSet::new();
+        let mut reset = false;
+        assert!(collect_frame(
+            ThreadChangeFrame::Change {
+                seq: 1,
+                event: "thread_item_upsert".into(),
+                data: json!({"turn_id": "fixture-turn", "payload": {"kind": "queue"}}),
+            },
+            &mut executions,
+            &mut reset,
+        ));
+        assert_eq!(executions, BTreeSet::from(["fixture-turn".to_owned()]));
+        assert!(!reset);
+        assert!(!collect_frame(
+            ThreadChangeFrame::Change {
+                seq: 2,
+                event: "thread_turn_update".into(),
+                data: json!({"turn_id": "fixture-turn", "status": "completed"}),
+            },
+            &mut executions,
+            &mut reset,
+        ));
+        assert_eq!(
+            executions.len(),
+            1,
+            "root identities are deduplicated per burst"
+        );
+        assert!(!reset);
+        for frame in [
+            ThreadChangeFrame::SnapshotRequired { data: json!({}) },
+            ThreadChangeFrame::Overflow {
+                cursor: 2,
+                resume_recommended: true,
+            },
+        ] {
+            reset = false;
+            assert!(!collect_frame(frame, &mut executions, &mut reset));
+            assert!(
+                reset,
+                "control frames must trigger durable snapshot recovery"
+            );
+        }
     }
 }

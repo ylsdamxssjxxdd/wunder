@@ -68,6 +68,7 @@ mod web_search_tool;
 pub use browser_tool::{
     browser_tool_names, browser_tool_summary_spec, BROWSER_GROUP_NAME, BROWSER_GROUP_NAME_ALIAS,
 };
+pub(crate) use catalog::current_executable_tool_input_schema;
 pub use catalog::{
     browser_tools_available, build_desktop_followup_user_message, build_mcp_tool_alias_entries,
     build_mcp_tool_alias_entries_for_names, build_read_image_followup_user_message,
@@ -123,9 +124,9 @@ pub use specification::{
     compact_tool_spec, filter_tool_names_by_frozen_ids, filter_tool_names_by_profile,
     resolve_tool_profile, schema_reference, select_tool_profile, tool_profile_binding,
     tool_profile_snapshot, tool_profile_snapshot_for_profile, tool_schema_document,
-    validate_dynamic_tool_spec, validate_tool_spec_size, TinyToolSpec, ToolEffect, ToolProfile,
-    ToolProfileBinding, ToolProfileSnapshot, ToolSchemaReference, ToolSpecification,
-    TOOL_CATALOG_VERSION,
+    validate_dynamic_tool_spec, validate_external_tool_spec, validate_tool_spec_size, TinyToolSpec,
+    ToolEffect, ToolProfile, ToolProfileBinding, ToolProfileSnapshot, ToolSchemaReference,
+    ToolSpecification, TOOL_CATALOG_VERSION,
 };
 pub(crate) use thread_control_tool::execute_thread_control_tool;
 pub(crate) use user_tool_dispatch::{execute_mcp_tool, execute_user_tool, is_mcp_tool_name};

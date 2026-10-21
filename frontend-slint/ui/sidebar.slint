@@ -456,7 +456,8 @@ export component Sidebar inherits Rectangle {
                         row-index: ri;
                         row-kind: row.kind;
                         workspace-id: row.workspace-id;
-                        tooltip: row.expanded ? I18n.ws_collapse_threads : I18n.ws_expand_threads;
+                        tooltip: row.path != "" ? row.path : row.expanded ? I18n.ws_collapse_threads : I18n.ws_expand_threads;
+                        actions-width: 74px;
                         activate => { root.select-row(ri); }
                         move-by(travel) => { root.move-row(ri, travel); }
                         // Selection indicator on the workspace row.
@@ -548,6 +549,7 @@ export component Sidebar inherits Rectangle {
                         row-index: ri;
                         row-kind: row.kind;
                         workspace-id: row.workspace-id;
+                        actions-width: 76px;
                         activate => { root.select-row(ri); }
                         move-by(travel) => { root.move-row(ri, travel); }
                         ThreadRow {
@@ -573,7 +575,7 @@ export component Sidebar inherits Rectangle {
                         cloud-thread-touch := TouchArea {
                             mouse-cursor: pointer;
                             accessible-role: button; accessible-label: row.title;
-                            Tooltip { text: @markdown("\{row.title}"); }
+                            if !(cloud-thread-touch.mouse-x >= cloud-thread-touch.width - 76px) : Tooltip { text: @markdown("\{row.title}"); }
                             clicked => { root.select-row(ri); }
                             ThreadRow {
                                 width: parent.width; height: parent.height;
@@ -602,6 +604,7 @@ export component Sidebar inherits Rectangle {
                         row-kind: row.kind;
                         workspace-id: "cloud";
                         tooltip: row.expanded ? I18n.ws_collapse_threads : I18n.ws_expand_threads;
+                        actions-width: 32px;
                         activate => { root.select-row(ri); }
                         move-by(travel) => { root.move-row(ri, travel); }
                         Rectangle { x: 0px; y: 5px; width: 2px; height: 24px; border-radius: 1px; background: row.selected ? Theme.accent : transparent; }

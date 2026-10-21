@@ -1563,6 +1563,19 @@ pub fn current_tool_schema_reference(
 
 /// Resolve a currently executable tool specification without fabricating a
 /// definition for a tool that is absent from this request's sources.
+/// Return the schema accepted by the executable tool selected for this call.
+///
+/// This mirrors dispatch precedence so schema-guided argument recovery cannot
+/// coerce values against an unrelated builtin when a user tool shadows it.
+pub(crate) fn current_executable_tool_input_schema(
+    config: &Config,
+    skills: &SkillRegistry,
+    user_tool_bindings: Option<&UserToolBindings>,
+    tool_name: &str,
+) -> Option<Value> {
+    current_tool_spec(config, skills, user_tool_bindings, tool_name).map(|spec| spec.input_schema)
+}
+
 fn current_tool_spec(
     config: &Config,
     skills: &SkillRegistry,
@@ -2251,6 +2264,146 @@ mod tests {
     use serde_json::json;
     use std::path::PathBuf;
 
+    /// Inline the local definitions used by an action schema for a byte-size
+    /// comparison. This intentionally supports the catalog's `$defs` form
+    /// only: it is a regression metric for repeated field definitions, not a
+    /// general JSON-Schema resolver.
+    fn inline_local_definitions(schema: &serde_json::Value) -> serde_json::Value {
+        let definitions = schema
+            .get("$defs")
+            .and_then(serde_json::Value::as_object)
+            .cloned()
+            .unwrap_or_default();
+        let mut expanded = schema.clone();
+        if let Some(root) = expanded.as_object_mut() {
+            root.remove("$defs");
+        }
+        inline_local_definitions_in_place(&mut expanded, &definitions);
+        expanded
+    }
+
+    fn inline_local_definitions_in_place(
+        value: &mut serde_json::Value,
+        definitions: &serde_json::Map<String, serde_json::Value>,
+    ) {
+        match value {
+            serde_json::Value::Object(fields) => {
+                let reference = fields
+                    .get("$ref")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned);
+                if let Some(name) =
+                    reference.and_then(|value| value.strip_prefix("#/$defs/").map(str::to_owned))
+                {
+                    if let Some(definition) = definitions.get(&name) {
+                        *value = definition.clone();
+                        inline_local_definitions_in_place(value, definitions);
+                        return;
+                    }
+                }
+                for child in fields.values_mut() {
+                    inline_local_definitions_in_place(child, definitions);
+                }
+            }
+            serde_json::Value::Array(items) => {
+                for item in items {
+                    inline_local_definitions_in_place(item, definitions);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn executable_schemas_recover_stringified_typed_action_arguments() {
+        let config = Config::default();
+        let skills = SkillRegistry::default();
+        let schema_for = |name: &str| {
+            let resolved =
+                super::current_executable_tool_input_schema(&config, &skills, None, name)
+                    .unwrap_or_else(|| panic!("missing executable schema for {name}"));
+            let canonical = resolve_tool_name(name);
+            let expected = builtin_tool_specs_with_language(&crate::i18n::get_language())
+                .into_iter()
+                .find(|spec| spec.name == canonical)
+                .unwrap_or_else(|| panic!("missing builtin schema for {canonical}"))
+                .input_schema;
+            assert_eq!(
+                resolved, expected,
+                "resolver returned a stale schema for {name}"
+            );
+            resolved
+        };
+        let recover = |arguments: serde_json::Value, schema: serde_json::Value| {
+            crate::core::tool_args::recover_tool_args_value_against_schema_with_meta(
+                &arguments, &schema,
+            )
+            .value
+        };
+
+        let goal = recover(
+            json!({
+                "action": "complete",
+                "goal_id": "goal-007",
+                "revision": "4"
+            }),
+            schema_for("goal"),
+        );
+        assert_eq!(goal["revision"], 4);
+        assert_eq!(goal["goal_id"], "goal-007");
+
+        let desktop = recover(
+            json!({"action": "left_click", "bbox": "[10,20,30,40]"}),
+            schema_for("desktop_control"),
+        );
+        assert_eq!(desktop["bbox"], json!([10, 20, 30, 40]));
+
+        let schedule = recover(
+            json!({
+                "action": "add",
+                "message": "scheduled notification",
+                "enabled": "false",
+                "schedule": "{\"kind\":\"every\",\"every_ms\":\"5000\"}"
+            }),
+            schema_for("定时任务"),
+        );
+        assert_eq!(schedule["enabled"], false);
+        assert_eq!(schedule["schedule"]["every_ms"], 5000);
+
+        let memory = recover(
+            json!({"action": "search", "query": "007", "limit": "12"}),
+            schema_for("记忆管理"),
+        );
+        assert_eq!(memory["limit"], 12);
+        assert_eq!(memory["query"], "007");
+    }
+
+    #[test]
+    fn shared_action_definitions_reduce_goal_and_desktop_schema_bytes() {
+        let specs = builtin_tool_specs_with_language("en-US");
+        for name in ["goal", "桌面控制"] {
+            let schema = &specs
+                .iter()
+                .find(|spec| spec.name == name)
+                .unwrap_or_else(|| panic!("missing {name} schema"))
+                .input_schema;
+            let compact_bytes = serde_json::to_vec(schema)
+                .expect("serialize compact schema")
+                .len();
+            let expanded_bytes = serde_json::to_vec(&inline_local_definitions(schema))
+                .expect("serialize expanded schema")
+                .len();
+            eprintln!(
+                "{name} schema bytes: compact={compact_bytes}, expanded={expanded_bytes}, saved={}",
+                expanded_bytes.saturating_sub(compact_bytes)
+            );
+            assert!(
+                compact_bytes < expanded_bytes,
+                "{name}: $defs schema should be smaller (compact={compact_bytes}, expanded={expanded_bytes})"
+            );
+        }
+    }
+
     #[test]
     fn builtin_schema_reference_resolves_only_the_exact_current_definition() {
         let spec = builtin_tool_specs_with_language("en-US")
@@ -2685,7 +2838,16 @@ mod tests {
 
         assert_eq!(specs.len(), 1);
         assert_eq!(specs[0].name, "mcp_package");
-        assert_eq!(specs[0].input_schema["required"][0], "action");
+        let branches = specs[0].input_schema["oneOf"]
+            .as_array()
+            .expect("MCP package action branches");
+        assert_eq!(branches.len(), 3);
+        assert!(branches.iter().all(|branch| {
+            branch["required"]
+                .as_array()
+                .is_some_and(|required| required.iter().any(|item| item == "action"))
+                && branch["additionalProperties"] == false
+        }));
     }
 
     #[test]

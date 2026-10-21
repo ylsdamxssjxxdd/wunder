@@ -19,7 +19,7 @@ pub(super) trait SqliteMetaStorage {
 impl SqliteMetaStorage for SqliteStorage {
     fn get_meta_impl(&self, key: &str) -> Result<Option<String>> {
         self.ensure_initialized()?;
-        let conn = self.open()?;
+        let conn = self.read_connection()?;
         let value: Option<String> = conn
             .query_row(
                 "SELECT value FROM meta WHERE key = ?",

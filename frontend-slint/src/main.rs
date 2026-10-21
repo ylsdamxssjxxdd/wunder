@@ -114,7 +114,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         tray::install(&app);
         app.show()?;
         startup_log("window_show_return", startup_boot);
-        maximize_main_window(&app);
+        fit_and_center_main_window(&app);
         return screenshot::run_hide_probe(&app);
     }
     if matches!(
@@ -163,7 +163,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     tray::install(&app);
     app.show()?;
     startup_log("window_show_return", startup_boot);
-    maximize_main_window(&app);
+    fit_and_center_main_window(&app);
     app.run()?;
     Ok(())
 }
@@ -372,55 +372,83 @@ fn install_first_frame_probe(boot: std::time::Instant) {
     });
 }
 
-/// Apply the startup maximized state after the Slint window has been created.
+/// Fit the workbench to a compact size and center it on the active monitor.
 ///
-/// Winit can ignore a maximized attribute while a window is still withdrawn
-/// (most visibly on X11). Windows receives the request from the platform hook,
-/// while other platforms retry briefly after the first map.
-fn maximize_main_window(app: &MainWindow) {
-    #[cfg(windows)]
-    {
-        app.window().set_maximized(true);
-    }
+/// Slint creates the window before the monitor work area is known, and some
+/// window managers ignore geometry requests while it is still withdrawn. Retry
+/// briefly after the first map, then leave the window alone so a later resize
+/// or move by the user is never snapped back.
+fn fit_and_center_main_window(app: &MainWindow) {
+    use slint::winit_030::{winit, WinitWindowAccessor};
+    use std::cell::Cell;
+    use std::rc::Rc;
 
-    #[cfg(not(windows))]
-    {
-        use slint::winit_030::WinitWindowAccessor;
-        use std::cell::Cell;
-        use std::rc::Rc;
-
-        let weak = app.as_weak();
-        let timer = Rc::new(slint::Timer::default());
-        let timer_handle = Rc::clone(&timer);
-        let attempts = Rc::new(Cell::new(0u32));
-        let attempts_handle = Rc::clone(&attempts);
-        timer.start(
-            slint::TimerMode::Repeated,
-            std::time::Duration::from_millis(50),
-            move || {
-                attempts_handle.set(attempts_handle.get().saturating_add(1));
-                let applied = weak
-                    .upgrade()
-                    .map(|app| {
-                        app.window().with_winit_window(|native| {
-                            if native.is_maximized() {
-                                true
-                            } else if native.is_visible().unwrap_or(false) {
-                                native.set_maximized(true);
-                                true
-                            } else {
-                                false
+    let weak = app.as_weak();
+    let timer = Rc::new(slint::Timer::default());
+    let timer_handle = Rc::clone(&timer);
+    let attempts = Rc::new(Cell::new(0u32));
+    let attempts_handle = Rc::clone(&attempts);
+    timer.start(
+        slint::TimerMode::Repeated,
+        std::time::Duration::from_millis(50),
+        move || {
+            attempts_handle.set(attempts_handle.get().saturating_add(1));
+            let applied = weak
+                .upgrade()
+                .map(|app| {
+                    let area = native_window::work_area(app.window());
+                    app.window()
+                        .with_winit_window(|native| {
+                            if !native.is_visible().unwrap_or(false) {
+                                return false;
                             }
+                            let Some(monitor) = native
+                                .current_monitor()
+                                .or_else(|| native.primary_monitor())
+                            else {
+                                return false;
+                            };
+                            let scale = monitor.scale_factor();
+                            let monitor_position = monitor.position();
+                            let monitor_size = monitor.size();
+                            let (area_x, area_y, area_w, area_h) = area.unwrap_or((
+                                monitor_position.x,
+                                monitor_position.y,
+                                monitor_size.width as i32,
+                                monitor_size.height as i32,
+                            ));
+                            if area_w <= 0 || area_h <= 0 {
+                                return false;
+                            }
+                            let min_w = (1024.0 * scale).round() as i32;
+                            let min_h = (700.0 * scale).round() as i32;
+                            let max_w = (1280.0 * scale).round() as i32;
+                            let max_h = (820.0 * scale).round() as i32;
+                            let target_w = ((area_w as f64 * 0.8).round() as i32)
+                                .min(max_w)
+                                .max(min_w)
+                                .min(area_w);
+                            let target_h = ((area_h as f64 * 0.8).round() as i32)
+                                .min(max_h)
+                                .max(min_h)
+                                .min(area_h);
+                            let x = area_x + (area_w - target_w) / 2;
+                            let y = area_y + (area_h - target_h) / 2;
+                            let _ = native.request_inner_size(winit::dpi::PhysicalSize::new(
+                                target_w as u32,
+                                target_h as u32,
+                            ));
+                            native.set_outer_position(winit::dpi::PhysicalPosition::new(x, y));
+                            true
                         })
-                    })
-                    .flatten()
-                    .unwrap_or(true);
-                if applied || attempts_handle.get() >= 100 {
-                    timer_handle.stop();
-                }
-            },
-        );
-    }
+                        .unwrap_or(false)
+                })
+                .unwrap_or(true);
+            if applied || attempts_handle.get() >= 100 {
+                timer_handle.stop();
+            }
+        },
+    );
 }
 
 /// Register the compressed Microsoft YaHei before the first text layout.
@@ -500,14 +528,12 @@ pub(crate) mod test_support {
 }
 
 fn install_slint_platform() -> Result<(), Box<dyn std::error::Error>> {
-    let maximize_first_window = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
     // The workbench draws its own WindowChrome; auxiliary top-levels (tray
     // notice, screenshot selector, help, terminal) keep the system frame.
     let frameless_first_window = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
     let backend = i_slint_backend_winit::Backend::builder()
         .with_renderer_name("software")
         .with_window_attributes_hook({
-            let maximize_first_window = std::sync::Arc::clone(&maximize_first_window);
             let frameless_first_window = std::sync::Arc::clone(&frameless_first_window);
             move |attributes| {
                 let frameless =
@@ -523,13 +549,7 @@ fn install_slint_platform() -> Result<(), Box<dyn std::error::Error>> {
                         winit::window::WindowButtons::empty()
                     } else {
                         winit::window::WindowButtons::all()
-                    })
-                    // Only the first top-level is the workbench. Auxiliary
-                    // windows (screenshot selector and tray notice) keep
-                    // their authored sizes.
-                    .with_maximized(
-                        maximize_first_window.swap(false, std::sync::atomic::Ordering::AcqRel),
-                    );
+                    });
                 attributes
             }
         })

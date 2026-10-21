@@ -25,13 +25,13 @@ use windows_sys::Win32::System::Threading::GetCurrentThreadId;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow,
-    DispatchMessageW, GetCursorPos, GetMessageW, LoadCursorW, PostQuitMessage, PostThreadMessageW,
-    RegisterClassExW, SetForegroundWindow, SetTimer, ShowWindow, SystemParametersInfoW,
-    TrackPopupMenu, TranslateMessage, UpdateLayeredWindow, CREATESTRUCTW, CS_HREDRAW, IDC_ARROW,
-    MF_CHECKED, MF_SEPARATOR, MF_STRING, MSG, SPI_GETWORKAREA, SW_SHOWNOACTIVATE, TPM_NONOTIFY,
-    TPM_RETURNCMD, TPM_RIGHTBUTTON, ULW_ALPHA, WM_APP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE,
-    WM_NCCREATE, WM_NCDESTROY, WM_RBUTTONUP, WM_TIMER, WNDCLASSEXW, WS_EX_LAYERED,
-    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+    DispatchMessageW, GetCursorPos, GetMessageW, KillTimer, LoadCursorW, PostQuitMessage,
+    PostThreadMessageW, RegisterClassExW, SetForegroundWindow, SetTimer, ShowWindow,
+    SystemParametersInfoW, TrackPopupMenu, TranslateMessage, UpdateLayeredWindow, CREATESTRUCTW,
+    CS_HREDRAW, IDC_ARROW, MF_CHECKED, MF_SEPARATOR, MF_STRING, MSG, SPI_GETWORKAREA,
+    SW_SHOWNOACTIVATE, TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON, ULW_ALPHA, WM_APP,
+    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCCREATE, WM_NCDESTROY, WM_RBUTTONUP, WM_TIMER,
+    WNDCLASSEXW, WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 
 /// `windows-sys` does not re-export these blend constants for this version.
@@ -40,7 +40,8 @@ const AC_SRC_ALPHA: u8 = 1;
 /// Sprite frame box, matching the web sheet geometry.
 const FRAME_WIDTH: i32 = 192;
 const FRAME_HEIGHT: i32 = 208;
-const TICK_MS: u32 = 30;
+const MIN_TICK_MS: u32 = 16;
+const MAX_TICK_MS: u32 = 1_000;
 /// Web `bottom: calc(100% + 4px)` between the bubble and the sprite.
 const GAP_LOGICAL: i32 = 4;
 const BUBBLE_PADDING_LOGICAL: i32 = 8;
@@ -291,10 +292,12 @@ unsafe fn handle_command(command: PetCommand, context: &mut Loop<'_>) {
                 drop(Box::from_raw(pointer));
                 return;
             }
-            SetTimer(hwnd, 1, TICK_MS, None);
             ShowWindow(hwnd, SW_SHOWNOACTIVATE);
             context.windows.insert(id, hwnd);
-            with_state(hwnd, |state, hwnd| render(state, hwnd, true));
+            with_state(hwnd, |state, hwnd| {
+                schedule_animation_tick(state, hwnd);
+                render(state, hwnd, true);
+            });
         }
         PetCommand::Update { id, visual } => {
             let Some(hwnd) = context.windows.get(&id).copied() else {
@@ -302,6 +305,7 @@ unsafe fn handle_command(command: PetCommand, context: &mut Loop<'_>) {
             };
             with_state(hwnd, |state, hwnd| {
                 apply_visual(state, *visual);
+                schedule_animation_tick(state, hwnd);
                 render(state, hwnd, true);
             });
         }
@@ -641,6 +645,7 @@ unsafe extern "system" fn wndproc(
                     state.dragging = true;
                     state.frame = 0;
                     state.since = Instant::now();
+                    schedule_animation_tick(state, hwnd);
                 }
                 state.drag_left = dx < 0;
                 state.sprite_x = state.press_sprite.0 + dx;
@@ -660,6 +665,7 @@ unsafe extern "system" fn wndproc(
                     state.dragging = false;
                     state.frame = 0;
                     state.since = Instant::now();
+                    schedule_animation_tick(state, hwnd);
                     PetEvent::Dragged {
                         id: state.id.clone(),
                         x: state.sprite_x as f64 / state.dpi,
@@ -721,6 +727,21 @@ unsafe fn tick(state: &mut WindowState, hwnd: HWND) {
         state.frame = index;
     }
     render(state, hwnd, false);
+}
+
+/// Do not wake every layered companion thirty times per second when its source
+/// sheet advances only five to eight frames per second.  Slower machines pay
+/// the alpha compositing cost per actual sprite frame, while short animations
+/// retain their authored cadence.
+unsafe fn schedule_animation_tick(state: &WindowState, hwnd: HWND) {
+    let Some(anim) = active_anim(state) else {
+        KillTimer(hwnd, 1);
+        return;
+    };
+    let interval = anim
+        .frame_millis
+        .clamp(MIN_TICK_MS as u64, MAX_TICK_MS as u64) as u32;
+    SetTimer(hwnd, 1, interval, None);
 }
 
 /// Last composited surface per window, kept only for the visual probe.

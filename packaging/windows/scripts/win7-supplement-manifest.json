@@ -116,20 +116,24 @@
     }
   },
   "rg": {
-    "version": "14.1.1",
+    "version": "14.1.0",
     "flavor": "ripgrep official binary",
     "source": "BurntSushi/ripgrep",
     "notes": [
-      "ripgrep is bundled as a standalone binary so search_content can use rg without relying on system installation."
+      "ripgrep is bundled as a standalone binary so search_content can use rg without relying on system installation.",
+      "14.1.0 is the last official release that still runs on Windows 7: the i686 14.1.1 binary is built with Rust 1.78+ and statically imports bcryptprimitives.dll (ProcessPrng) plus api-ms-win-core-synch-l1-2-0.dll (WaitOnAddress), so it fails to start on Windows 7 and Git Bash reports a segmentation fault.",
+      "Do not bump past 14.1.0 unless the binary is rebuilt with Rust <= 1.77.2; the build now rejects Win8+-only PE imports for rg."
     ],
     "archives": {
       "x64": {
-        "fileName": "ripgrep-14.1.1-x86_64-pc-windows-msvc.zip",
-        "url": "https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/ripgrep-14.1.1-x86_64-pc-windows-msvc.zip"
+        "fileName": "ripgrep-14.1.0-x86_64-pc-windows-msvc.zip",
+        "url": "https://github.com/BurntSushi/ripgrep/releases/download/14.1.0/ripgrep-14.1.0-x86_64-pc-windows-msvc.zip",
+        "sha256": "fe4f75edfaa50f0d4fecbf47696b7629f3449c9c2c5a4da828753139e5a2e203"
       },
       "ia32": {
-        "fileName": "ripgrep-14.1.1-i686-pc-windows-msvc.zip",
-        "url": "https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/ripgrep-14.1.1-i686-pc-windows-msvc.zip"
+        "fileName": "ripgrep-14.1.0-i686-pc-windows-msvc.zip",
+        "url": "https://github.com/BurntSushi/ripgrep/releases/download/14.1.0/ripgrep-14.1.0-i686-pc-windows-msvc.zip",
+        "sha256": "3b2e4776f9510d2f502fea92f1be45c02ff0f46da50f034b04fe866182ffc0d6"
       }
     }
   },

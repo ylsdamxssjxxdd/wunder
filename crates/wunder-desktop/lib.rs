@@ -17,10 +17,11 @@ pub use native::{
     NativeCronJobEdit, NativeDesktop, NativeMessage, NativeMessageAttachment,
     NativeNavigationOrder, NativePatchFile, NativePatchLine, NativePlanStep, NativePlanView,
     NativeProcessItem, NativeProcessPage, NativeProfile, NativeQueueTurn, NativeSession,
-    NativeStream, NativeSubagentCard, NativeThreadUpdate, NativeThreadWatch, NativeWorkflowEntry,
-    NativeWorkflowLine, NativeWorkflowSection, NativeWorkspace, PromptPackInfo,
-    PromptSegmentContent, RuntimeToolStatus, ToolRecord, WorkspaceDeleteSummary, WorkspaceEdit,
-    WorkspacePathReport, DEFAULT_AGENT_ID, WORKSPACE_COLORS, WORKSPACE_ICONS,
+    NativeStream, NativeSubagentCard, NativeThreadUpdate, NativeThreadWatch,
+    NativeThreadWatchCancel, NativeWorkflowEntry, NativeWorkflowLine, NativeWorkflowSection,
+    NativeWorkspace, PromptPackInfo, PromptSegmentContent, RuntimeToolStatus, ToolRecord,
+    WorkspaceDeleteSummary, WorkspaceEdit, WorkspacePathReport, DEFAULT_AGENT_ID, WORKSPACE_COLORS,
+    WORKSPACE_ICONS,
 };
 pub use runtime::DesktopRuntime;
 

@@ -7,8 +7,8 @@ use crate::storage::{
     InterlinkChannelRecord, InterlinkCommandRecord, InterlinkShadowOverview, InterlinkShadowRecord,
     InterlinkStore, ListCloudDeviceLogsQuery, ListCloudRecordsQuery, ListInterlinkAuditQuery,
     ListInterlinkCommandsQuery, LogStatsStore, MediaStore, MemoryRecordStore, MetaStore,
-    MonitorStore, QuotaBalanceStore, RetentionStore, SessionGoalStore, SessionLockStore,
-    SessionRunStore, StorageLifecycle, TerminalTranscriptStore, ThreadLogStore,
+    MonitorSessionStats, MonitorStore, QuotaBalanceStore, RetentionStore, SessionGoalStore,
+    SessionLockStore, SessionRunStore, StorageLifecycle, TerminalTranscriptStore, ThreadLogStore,
     ThreadOpenLeaseRecord, ThreadOpenLeaseStatus, ThreadOpenLeaseStore, UserAccountStore,
     UserRefreshTokenRecord, UserRefreshTokenStore, UserWorldStore, VectorDocumentStore,
     WorkspaceRecord, WorkspaceStore,
@@ -464,6 +464,9 @@ impl LogStatsStore for SqliteStorage {
 }
 
 impl MonitorStore for SqliteStorage {
+    fn get_monitor_session_stats(&self, session_id: &str) -> Result<Option<MonitorSessionStats>> {
+        self.monitor_session_stats(session_id)
+    }
     fn upsert_monitor_record(&self, payload: &Value) -> Result<()> {
         self.upsert_monitor_record_impl(payload)
     }
@@ -617,6 +620,15 @@ impl AgentRuntimeStore for SqliteStorage {
     }
     fn list_pending_agent_tasks(&self, limit: i64) -> Result<Vec<AgentTaskRecord>> {
         self.list_pending_agent_tasks_impl(limit)
+    }
+    fn next_agent_task_retry_at(&self) -> Result<Option<f64>> {
+        self.ensure_initialized()?;
+        let conn = self.read_connection()?;
+        Ok(conn.query_row(
+            "SELECT MIN(retry_at) FROM agent_tasks WHERE status IN ('pending', 'retry')",
+            [],
+            |row| row.get(0),
+        )?)
     }
     fn count_pending_agent_tasks(&self) -> Result<i64> {
         self.count_pending_agent_tasks_impl()
@@ -1568,6 +1580,15 @@ impl ChannelRuntimeStore for SqliteStorage {
     }
     fn list_pending_channel_outbox(&self, limit: i64) -> Result<Vec<ChannelOutboxRecord>> {
         self.list_pending_channel_outbox_impl(limit)
+    }
+    fn next_channel_outbox_retry_at(&self) -> Result<Option<f64>> {
+        self.ensure_initialized()?;
+        let conn = self.read_connection()?;
+        Ok(conn.query_row(
+            "SELECT MIN(retry_at) FROM channel_outbox WHERE status IN ('pending', 'retry')",
+            [],
+            |row| row.get(0),
+        )?)
     }
     fn update_channel_outbox_status(
         &self,

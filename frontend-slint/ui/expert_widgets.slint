@@ -1,6 +1,6 @@
 import { Theme, ToolCard } from "theme.slint";
-import { Action, InlineInput } from "components.slint";
-import { CheckBox, ScrollView } from "std-widgets.slint";
+import { Action, InlineInput, ThemeCheck } from "components.slint";
+import { ScrollView } from "std-widgets.slint";
 import { ToolIcons } from "tool_icons.slint";
 import { I18n } from "i18n.slint";
 
@@ -33,7 +33,7 @@ component ToolTile inherits Rectangle {
     border-color: root.tool.enabled ? Theme.accent-secondary : Theme.border;
     background: root.tool.enabled ? Theme.accent-soft : Theme.surface;
     HorizontalLayout { padding-left: 10px; padding-right: 10px; padding-top: 8px; padding-bottom: 8px; spacing: 10px;
-        CheckBox { width: 20px; checked: root.tool.enabled; enabled: root.enabled; toggled => { root.toggle(root.tool.name); } }
+        ThemeCheck { checked: root.tool.enabled; enabled: root.enabled; toggled => { root.toggle(root.tool.name); } }
         Rectangle { width: 36px; height: 36px; border-radius: 10px; background: ToolIcons.tone-background(root.tool.tone); border-width: 1px; border-color: ToolIcons.tone-border(root.tool.tone);
             Image { width: 18px; height: 18px; source: ToolIcons.image(root.tool.icon); colorize: ToolIcons.tone-color(root.tool.tone); }
         }

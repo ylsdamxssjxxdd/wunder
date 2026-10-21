@@ -2,6 +2,43 @@ use crate::schemas::AbilityDescriptor;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+/// Small navigation projection; diagnostic events never belong in thread open.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct MonitorSessionStats {
+    pub status: String,
+    pub consumed_tokens: i64,
+    pub tool_calls: i64,
+    pub model_request_count: i64,
+}
+
+impl MonitorSessionStats {
+    pub fn from_payload(payload: &Value) -> Self {
+        Self {
+            status: payload
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or("finished")
+                .into(),
+            consumed_tokens: payload
+                .get("consumed_tokens")
+                .and_then(Value::as_i64)
+                .unwrap_or(0)
+                .max(0),
+            tool_calls: payload
+                .get("tool_calls")
+                .and_then(Value::as_i64)
+                .unwrap_or(0)
+                .max(0),
+            model_request_count: payload
+                .get("model_request_count")
+                .or_else(|| payload.get("quota_used"))
+                .and_then(Value::as_i64)
+                .unwrap_or(0)
+                .max(0),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct UserAccountRecord {
     pub user_id: String,

@@ -8,7 +8,7 @@
 - `opt/ffmpeg`：给音视频抽帧、抽音轨与转码使用的内置静态 ffmpeg
 - `opt/r2`：（可选）radare2 反汇编工具集；构建时通过 `WUNDER_SUPPLEMENT_R2_ARCHIVE` 投喂预编译包才会包含
 
-`WUNDER_SUPPLEMENT_R2_ARCHIVE` 接受两种投喂物：静态单文件 r2 二进制（或仅含该文件的 tar.gz/zip，落到 `opt/r2/bin/radare2` 并自动建立 `r2` 符号链接），或带 `bin/radare2` 布局的压缩包（顶层目录拍平进 `opt/r2`）。发行版 deb 与官方 6.x 发布物要求的 glibc 高于 Ubuntu 18.04，不要直接投喂； amd64 可用 radare2 6.2.4 静态单文件（在 ubuntu:18.04 容器内 `sys/static.sh` 构建产物），arm64 可在 ARM64 构建机上以同样方式源码编译。
+`WUNDER_SUPPLEMENT_R2_ARCHIVE` 接受两种投喂物：静态单文件 r2 二进制（或仅含该文件的 tar.gz/zip，落到 `opt/r2/bin/radare2` 并自动建立 `r2` 符号链接），或带 `bin/radare2` 布局的压缩包（顶层目录拍平进 `opt/r2`）。发行版 deb 与官方 6.x 发布物要求的 glibc 高于 Ubuntu 18.04，不要直接投喂； amd64 可用 radare2 6.2.4 静态单文件（在 ubuntu:18.04 容器内 `sys/static.sh` 构建产物），arm64 可在 ARM64 构建机上以同样方式源码编译。CI 从固定的 `supplement` release 下载清单 [r2-static-archives.json](scripts/r2-static-archives.json) 中登记的产物（文件名 + SHA256，未列出的架构跳过 r2），并以该清单参与补充包缓存键。
 
 补充包设计目标与 Win7 版一致：**统一安装到 `WUNDER_HOME/opt`，蛹与舵机共用一份运行环境**。
 

@@ -56,8 +56,11 @@ pub struct NativeGoal {
     pub activation: String,
 }
 impl NativeGoal {
+    /// A goal can retain its durable `active` phase after this process has
+    /// fenced continuation. Only an armed active goal keeps the composer in
+    /// its running state and advances the local elapsed clock.
     pub fn active(&self) -> bool {
-        self.phase == "active"
+        self.phase == "active" && self.activation == "armed"
     }
     pub fn paused(&self) -> bool {
         self.phase == "paused"
@@ -130,6 +133,30 @@ impl NativeDesktop {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn active_goal_requires_the_process_local_armed_activation() {
+        let armed = NativeGoal {
+            phase: "active".into(),
+            activation: "armed".into(),
+            ..Default::default()
+        };
+        assert!(armed.active());
+
+        let fenced = NativeGoal {
+            phase: "active".into(),
+            activation: "disarmed".into(),
+            ..Default::default()
+        };
+        assert!(!fenced.active());
+        assert!(!NativeGoal {
+            phase: "paused".into(),
+            activation: "armed".into(),
+            ..Default::default()
+        }
+        .active());
+    }
+
     #[test]
     fn commands_match_web_and_preserve_objective() {
         assert_eq!(

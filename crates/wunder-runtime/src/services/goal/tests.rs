@@ -13,13 +13,14 @@ use super::prompt::{
 };
 use super::service::{
     goal_payload, goal_tool_value, goal_tool_value_none, validate_blocked_reason,
-    validate_objective, GoalService,
+    validate_objective, GoalService, GoalUpdatePublisher,
 };
 use super::tools::{goal_tool_specs, is_goal_tool_name, read_wrapup, TOOL_GOAL};
 use super::types::*;
 use crate::storage::{SessionGoalRecord, SqliteStorage, StorageBackend, StorageLifecycle};
 use serde_json::json;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 const USER: &str = "user-1";
 const SESSION: &str = "session-1";
@@ -40,6 +41,15 @@ async fn setup() -> (GoalService, Arc<dyn StorageBackend>, tempfile::TempDir) {
         Arc::new(storage) as Arc<dyn StorageBackend>,
         dir,
     )
+}
+
+#[derive(Default)]
+struct GoalUpdates(Mutex<Vec<serde_json::Value>>);
+
+impl GoalUpdatePublisher for GoalUpdates {
+    fn publish_goal_update(&self, _session_id: &str, payload: serde_json::Value) {
+        self.0.lock().unwrap().push(payload);
+    }
 }
 
 fn view(phase: &str, revision: i64, rounds_started: i64, activation: GoalActivation) -> GoalView {
@@ -546,7 +556,7 @@ async fn human_resume_rearms_disarmed_active_goal_after_restart() {
         .create(storage.clone(), USER, SESSION, "Example task", Some(8))
         .await
         .unwrap();
-    service.disarm(SESSION);
+    service.disarm(&storage, USER, SESSION).await.unwrap();
     let resumed = service
         .resume(
             storage,
@@ -727,6 +737,141 @@ async fn admit_round_folds_rounds_without_bumping_revision() {
         )
         .await
         .unwrap());
+}
+
+#[tokio::test]
+async fn mutations_publish_complete_goal_projections_without_polling() {
+    let (service, storage, _dir) = setup().await;
+    let updates = Arc::new(GoalUpdates::default());
+    service.set_update_publisher(updates.clone());
+
+    let created = service
+        .create(storage.clone(), USER, SESSION, "ship", Some(8))
+        .await
+        .unwrap();
+    let mut reference = GoalRef {
+        goal_id: created.record.goal_id.clone(),
+        revision: created.record.revision,
+    };
+    let edited = service
+        .edit(storage.clone(), USER, SESSION, &reference, "revised", None)
+        .await
+        .unwrap();
+    reference.revision = edited.record.revision;
+    service
+        .admit_round(
+            &storage,
+            USER,
+            SESSION,
+            &GoalRoundTag {
+                goal_id: reference.goal_id.clone(),
+                revision: reference.revision,
+                round: 1,
+            },
+        )
+        .await
+        .unwrap();
+    let paused = service
+        .pause(storage.clone(), USER, SESSION, &reference)
+        .await
+        .unwrap();
+    let resumed = service
+        .resume(
+            storage.clone(),
+            USER,
+            SESSION,
+            &GoalRef {
+                goal_id: paused.record.goal_id.clone(),
+                revision: paused.record.revision,
+            },
+        )
+        .await
+        .unwrap();
+    service
+        .clear(storage, USER, SESSION)
+        .await
+        .expect("clear goal");
+
+    let updates = updates.0.lock().unwrap();
+    assert_eq!(updates[0]["phase"], PHASE_ACTIVE);
+    assert_eq!(updates[1]["objective"], "revised");
+    assert_eq!(updates[2]["rounds_started"], 1);
+    assert_eq!(updates[3]["phase"], PHASE_PAUSED);
+    assert_eq!(updates[4]["activation"], "armed");
+    assert_eq!(updates[4]["revision"], resumed.record.revision);
+    assert!(updates[5].is_null());
+}
+
+#[tokio::test]
+async fn clear_cannot_be_overwritten_by_a_waiting_disarm_projection() {
+    let (service, storage, _dir) = setup().await;
+    let service = Arc::new(service);
+    let updates = Arc::new(GoalUpdates::default());
+    service.set_update_publisher(updates.clone());
+    service
+        .create(storage.clone(), USER, SESSION, "ship", Some(8))
+        .await
+        .unwrap();
+
+    // Keep the control fence while clear publishes `null`. A public disarm
+    // must wait here, then observe the removed row rather than restoring its
+    // pre-clear view to the live projection.
+    let control = service.control_guard(SESSION).await;
+    let disarm_service = service.clone();
+    let disarm_storage = storage.clone();
+    let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+    let mut disarm = tokio::spawn(async move {
+        let _ = started_tx.send(());
+        disarm_service.disarm(&disarm_storage, USER, SESSION).await
+    });
+    started_rx.await.unwrap();
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), &mut disarm)
+            .await
+            .is_err(),
+        "disarm must wait for the per-thread control fence"
+    );
+
+    service
+        .clear_while_controlled(storage.clone(), USER, SESSION)
+        .await
+        .unwrap();
+    drop(control);
+    disarm.await.unwrap().unwrap();
+
+    let updates = updates.0.lock().unwrap();
+    assert_eq!(updates.len(), 2);
+    assert!(updates[1].is_null());
+    assert!(
+        service
+            .get_view(&storage, USER, SESSION)
+            .await
+            .unwrap()
+            .is_none(),
+        "the durable target must remain cleared"
+    );
+}
+
+#[tokio::test]
+async fn disarm_publishes_the_existing_goal_with_its_new_activation() {
+    let (service, storage, _dir) = setup().await;
+    let updates = Arc::new(GoalUpdates::default());
+    service.set_update_publisher(updates.clone());
+
+    service
+        .create(storage.clone(), USER, SESSION, "ship", Some(8))
+        .await
+        .unwrap();
+    service
+        .disarm(&storage, USER, SESSION)
+        .await
+        .expect("disarm must publish its activation projection");
+
+    let updates = updates.0.lock().unwrap();
+    assert_eq!(updates.len(), 2);
+    assert_eq!(updates[0]["activation"], "armed");
+    assert_eq!(updates[1]["phase"], PHASE_ACTIVE);
+    assert_eq!(updates[1]["activation"], "disarmed");
 }
 
 #[test]
@@ -944,7 +1089,7 @@ async fn human_edit_publishes_final_activation_after_execution_handoff() {
         .create(storage.clone(), USER, SESSION, "Fixture objective", None)
         .await
         .unwrap();
-    service.disarm(SESSION);
+    service.disarm(&storage, USER, SESSION).await.unwrap();
     let (_, payload) = execute_goal_command(
         &service,
         storage.clone(),
@@ -1120,9 +1265,19 @@ fn goal_tool_spec_is_one_strict_action_union() {
         .find(|branch| branch["properties"]["action"]["const"] == "blocked")
         .expect("missing blocked branch");
     assert_eq!(
-        blocked["properties"]["blocked_reason"]["maxLength"],
+        blocked["properties"]["blocked_reason"]["$ref"],
+        json!("#/$defs/blocked_reason")
+    );
+    assert_eq!(
+        spec.input_schema["$defs"]["blocked_reason"]["maxLength"],
         json!(MAX_BLOCK_REASON_CHARS)
     );
+    for field in ["goal_id", "revision"] {
+        assert_eq!(
+            blocked["properties"][field]["$ref"],
+            json!(format!("#/$defs/{field}"))
+        );
+    }
 }
 
 #[test]

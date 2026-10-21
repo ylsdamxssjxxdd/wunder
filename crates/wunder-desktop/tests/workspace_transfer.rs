@@ -21,6 +21,12 @@ impl std::ops::Deref for IsolatedRuntime {
 }
 
 fn start_isolated() -> Result<IsolatedRuntime, Box<dyn std::error::Error>> {
+    start_isolated_with_seed(|_| Ok(()))
+}
+
+fn start_isolated_with_seed(
+    seed: impl FnOnce(&std::path::Path) -> Result<(), Box<dyn std::error::Error>>,
+) -> Result<IsolatedRuntime, Box<dyn std::error::Error>> {
     static FIXTURE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     let guard = FIXTURE_LOCK
         .lock()
@@ -41,17 +47,22 @@ fn start_isolated() -> Result<IsolatedRuntime, Box<dyn std::error::Error>> {
         config.join("desktop.settings.json"),
         serde_json::to_vec(&settings)?,
     )?;
-    let mut args = DesktopArgs::native_defaults();
-    args.temp_root = Some(directory.path().join("runtime").canonicalize()?);
-    args.workspace = Some(directory.path().join("workspace"));
+    seed(directory.path())?;
     std::env::set_var("WUNDER_HOME", directory.path().join("runtime"));
-    let runtime = NativeDesktop::start_with_args(args)?;
+    let runtime = NativeDesktop::start_with_args(isolated_args(directory.path())?)?;
     assert!(directory.path().join("runtime/data/wunder.db").is_file());
     Ok(IsolatedRuntime {
         runtime,
         _directory: directory,
         _guard: guard,
     })
+}
+
+fn isolated_args(root: &std::path::Path) -> Result<DesktopArgs, std::io::Error> {
+    let mut args = DesktopArgs::native_defaults();
+    args.temp_root = Some(root.join("runtime").canonicalize()?);
+    args.workspace = Some(root.join("workspace"));
+    Ok(args)
 }
 
 fn make_folder(root: &std::path::Path, name: &str) -> String {
@@ -61,6 +72,138 @@ fn make_folder(root: &std::path::Path, name: &str) -> String {
         .expect("canonical")
         .to_string_lossy()
         .into_owned()
+}
+
+#[cfg(windows)]
+#[test]
+fn startup_merges_windows_workspace_paths_and_rebinds_every_thread(
+) -> Result<(), Box<dyn std::error::Error>> {
+    use wunder_desktop::runtime::DESKTOP_DEFAULT_USER_ID;
+    use wunder_server::storage::{
+        ChatSessionRecord, ChatSessionStore, SqliteStorage, WorkspaceRecord, WorkspaceStore,
+    };
+
+    const KEEPER: &str = "ws_fixture_keeper";
+    const DUPLICATE: &str = "ws_fixture_duplicate";
+    const UNRELATED: &str = "ws_fixture_unrelated";
+    let fixture = start_isolated_with_seed(|root| {
+        let project = root.join("project");
+        let unrelated = root.join("other");
+        std::fs::create_dir_all(&project)?;
+        std::fs::create_dir_all(&unrelated)?;
+        let plain = wunder_server::local_bootstrap::normalize_local_workspace_path(&project);
+        let extended = format!(r"\\?\{}", plain.display());
+        assert_ne!(plain.to_string_lossy(), extended);
+        let storage = SqliteStorage::new(
+            root.join("runtime/data/wunder.db")
+                .to_string_lossy()
+                .into_owned(),
+        );
+        let now = chrono::Utc::now().timestamp_millis() as f64 / 1000.0;
+        // The extended spelling deliberately wins the sidebar order: its
+        // normalized root would hit the plain row's unique index unless the
+        // duplicate is removed before root paths are rewritten.
+        for (id, path, index) in [
+            (KEEPER, extended, 0),
+            (DUPLICATE, plain.to_string_lossy().into_owned(), 1),
+            (UNRELATED, unrelated.to_string_lossy().into_owned(), 2),
+        ] {
+            storage.upsert_workspace(&WorkspaceRecord {
+                workspace_id: id.into(),
+                user_id: DESKTOP_DEFAULT_USER_ID.into(),
+                name: id.into(),
+                root_path: path,
+                icon: "folder".into(),
+                color: "teal".into(),
+                sort_index: index,
+                created_at: now,
+                updated_at: now,
+            })?;
+        }
+        for (id, workspace_id, status) in [
+            ("fixture-kept", KEEPER, "active"),
+            ("fixture-moved", DUPLICATE, "active"),
+            ("fixture-archived", DUPLICATE, "archived"),
+            ("fixture-unrelated", UNRELATED, "active"),
+        ] {
+            storage.upsert_chat_session(&ChatSessionRecord {
+                session_id: id.into(),
+                user_id: DESKTOP_DEFAULT_USER_ID.into(),
+                title: id.into(),
+                status: status.into(),
+                created_at: now,
+                updated_at: now,
+                last_message_at: now,
+                agent_id: None,
+                workspace_id: Some(workspace_id.into()),
+                tool_overrides: Vec::new(),
+                parent_session_id: None,
+                parent_message_id: None,
+                spawn_label: None,
+                spawned_by: None,
+            })?;
+        }
+        Ok(())
+    })?;
+    let normalized = wunder_server::local_bootstrap::normalize_local_workspace_path(
+        &fixture._directory.path().join("project"),
+    );
+    let assert_migrated = |runtime: &NativeDesktop| -> Result<(), Box<dyn std::error::Error>> {
+        let workspaces = runtime.list_workspaces()?;
+        assert_eq!(workspaces.len(), 2);
+        let keeper = workspaces
+            .iter()
+            .find(|record| record.workspace_id == KEEPER)
+            .expect("stable workspace id kept");
+        assert_eq!(
+            std::path::Path::new(&keeper.root_path),
+            normalized.as_path()
+        );
+        assert_eq!(keeper.name, KEEPER);
+        assert_eq!(keeper.color, "teal");
+        assert_eq!(keeper.sort_index, 0);
+        assert_eq!(keeper.thread_count, 2);
+        assert!(workspaces
+            .iter()
+            .all(|record| record.workspace_id != DUPLICATE));
+        let storage = &runtime.state().storage;
+        for (id, expected_workspace, expected_status) in [
+            ("fixture-kept", KEEPER, "active"),
+            ("fixture-moved", KEEPER, "active"),
+            ("fixture-archived", KEEPER, "archived"),
+            ("fixture-unrelated", UNRELATED, "active"),
+        ] {
+            let record = storage
+                .get_chat_session(runtime.user_id(), id)?
+                .expect("thread retained");
+            assert_eq!(record.workspace_id.as_deref(), Some(expected_workspace));
+            assert_eq!(record.status, expected_status);
+            assert_eq!(record.title, id);
+        }
+        let scope = runtime
+            .state()
+            .workspace
+            .scoped_user_id_for_workspace(runtime.user_id(), KEEPER);
+        assert_eq!(runtime.state().workspace.workspace_root(&scope), normalized);
+        Ok(())
+    };
+    assert_migrated(&fixture)?;
+
+    // The durable migration marker skips data rewriting on the next launch,
+    // but process-local tool roots must still resolve to the real directory.
+    let IsolatedRuntime {
+        runtime,
+        _directory: directory,
+        _guard: guard,
+    } = fixture;
+    drop(runtime);
+    let fixture = IsolatedRuntime {
+        runtime: NativeDesktop::start_with_args(isolated_args(directory.path())?)?,
+        _directory: directory,
+        _guard: guard,
+    };
+    assert_migrated(&fixture)?;
+    Ok(())
 }
 
 #[test]

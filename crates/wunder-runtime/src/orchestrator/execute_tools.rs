@@ -345,8 +345,33 @@ impl Orchestrator {
                         scoped
                     }),
                 );
-                let recovered_args =
+                let raw_recovered =
                     crate::core::tool_args::recover_tool_args_value_with_meta(&call.arguments);
+                let schema_recovered = crate::tools::current_executable_tool_input_schema(
+                    scoped_tool_context.config,
+                    scoped_tool_context.skills,
+                    scoped_tool_context.user_tool_bindings,
+                    &name,
+                )
+                .map(|schema| {
+                    crate::core::tool_args::recover_tool_args_value_against_schema_with_meta(
+                        &raw_recovered.value,
+                        &schema,
+                    )
+                });
+                let recovered_args = match schema_recovered {
+                    Some(schema_recovered) => crate::core::tool_args::ToolArgsRecovery {
+                        value: schema_recovered.value,
+                        repair: match (raw_recovered.repair, schema_recovered.repair) {
+                            (None, repair) | (repair, None) => repair,
+                            (Some(first), Some(second)) => Some(serde_json::json!({
+                                "kind": "tool_args",
+                                "repairs": [first, second],
+                            })),
+                        },
+                    },
+                    None => raw_recovered,
+                };
                 call.arguments = recovered_args.value.clone();
                 let args = call.arguments.clone();
                 let args_repair = recovered_args.repair.clone();

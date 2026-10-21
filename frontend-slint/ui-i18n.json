@@ -1606,8 +1606,8 @@
  },
  {
   "key": "cp_terminal_mode",
-  "zh": "Git 终端",
-  "en": "Git terminal"
+  "zh": "终端",
+  "en": "Terminal"
  },
  {
   "key": "cp_model_search",
@@ -6119,11 +6119,6 @@
   "key": "tl_process_earlier",
   "zh": "查看更早的过程",
   "en": "Earlier steps"
- },
- {
-  "key": "tl_process_later",
-  "zh": "查看后续过程",
-  "en": "Later steps"
  },
  {
   "key": "tl_stat_round",

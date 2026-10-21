@@ -165,6 +165,25 @@ pub struct Orchestrator {
 }
 
 impl Orchestrator {
+    /// Subscribe to in-process context usage snapshots for a session. The
+    /// durable session token value remains the recovery source after restart
+    /// or a missed notification.
+    pub fn subscribe_context_usage(
+        &self,
+        session_id: &str,
+    ) -> tokio::sync::watch::Receiver<serde_json::Value> {
+        self.change_hub.subscribe_context_usage(session_id)
+    }
+
+    /// Subscribe to complete in-process goal projections for one session.
+    /// The durable session-goal row remains the reconnect recovery source.
+    pub fn subscribe_goal_updates(
+        &self,
+        session_id: &str,
+    ) -> tokio::sync::watch::Receiver<serde_json::Value> {
+        self.change_hub.subscribe_goal_updates(session_id)
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         config_store: ConfigStore,
@@ -184,10 +203,12 @@ impl Orchestrator {
     ) -> Self {
         let change_hub = Arc::new(ThreadChangeHub::new());
         let committer = Arc::new(ThreadLogCommitter::new(storage.clone(), change_hub.clone()));
+        let goal = Arc::new(crate::services::goal::GoalService::new());
+        goal.set_update_publisher(change_hub.clone());
         Self {
             task_runtime: Arc::default(),
             scheduling: Arc::new(Default::default()),
-            goal: Arc::new(crate::services::goal::GoalService::new()),
+            goal,
             config_store,
             workspace,
             monitor,

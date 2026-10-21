@@ -44,6 +44,7 @@ impl ChannelHub {
             delivered_at: None,
         };
         self.insert_outbox(&record).await?;
+        self.outbox_wake.notify_one();
         Ok(outbox_id)
     }
 
@@ -333,7 +334,13 @@ impl ChannelHub {
             if !outbox_cfg.worker_enabled {
                 database_failures = 0;
                 runtime_metrics::record_loop_tick("channels.outbox.loop", "worker_disabled");
-                sleep(Duration::from_millis(outbox_cfg.poll_interval_ms)).await;
+                // The synchronous fallback delivers a new record when this
+                // worker is disabled. Keep this task only as a recovery
+                // backstop, never as a 500 ms idle wake-up on the desktop.
+                tokio::select! {
+                    _ = self.outbox_wake.notified() => {}
+                    _ = sleep(Duration::from_secs(60)) => {}
+                }
                 continue;
             }
             let pending = self.list_pending_outbox(outbox_cfg.max_batch as i64).await;
@@ -342,7 +349,31 @@ impl ChannelHub {
                     database_failures = 0;
                     if items.is_empty() {
                         runtime_metrics::record_loop_tick("channels.outbox.loop", "empty");
-                        sleep(Duration::from_millis(outbox_cfg.poll_interval_ms)).await;
+                        // A due-only query can be empty while a retry waits in
+                        // the future. Preserve that deadline instead of
+                        // treating every empty page as a fully idle outbox.
+                        let storage = self.storage.clone();
+                        let delay =
+                            match blocking::run_db("channels.outbox.next_retry", move || {
+                                storage.next_channel_outbox_retry_at()
+                            })
+                            .await
+                            {
+                                Ok(Some(deadline)) => {
+                                    Duration::from_secs_f64((deadline - now_ts()).max(0.0))
+                                        .max(Duration::from_millis(outbox_cfg.poll_interval_ms))
+                                        .min(Duration::from_secs(60))
+                                }
+                                Ok(None) => Duration::from_secs(60),
+                                Err(err) => {
+                                    error!("load next outbox retry failed: {err:#}");
+                                    Duration::from_millis(outbox_cfg.poll_interval_ms)
+                                }
+                            };
+                        tokio::select! {
+                            _ = self.outbox_wake.notified() => {}
+                            _ = sleep(delay) => {}
+                        }
                         continue;
                     }
                     runtime_metrics::record_loop_tick("channels.outbox.loop", "deliver");

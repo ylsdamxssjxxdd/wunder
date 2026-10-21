@@ -520,7 +520,7 @@ impl SqliteChannelRuntimeStorage for SqliteStorage {
 
     fn list_pending_channel_outbox_impl(&self, limit: i64) -> Result<Vec<ChannelOutboxRecord>> {
         self.ensure_initialized()?;
-        let conn = self.open()?;
+        let conn = self.read_connection()?;
         let now = Self::now_ts();
         let limit_value = if limit <= 0 { 50 } else { limit.min(200) };
         let mut stmt = conn.prepare(

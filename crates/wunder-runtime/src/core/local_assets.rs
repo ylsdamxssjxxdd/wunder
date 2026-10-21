@@ -6,6 +6,16 @@ use std::path::{Path, PathBuf};
 
 include!(concat!(env!("OUT_DIR"), "/embedded_local_assets.rs"));
 
+/// Immutable build-time asset content, addressed by its projected home path.
+/// The engine template ships as `config/wunder.yaml` so a first launch can seed
+/// the writable config without a second copy next to the executable.
+pub fn embedded_asset(name: &str) -> Option<&'static [u8]> {
+    EMBEDDED_LOCAL_ASSETS
+        .iter()
+        .find(|(path, _)| *path == name)
+        .map(|(_, bytes)| *bytes)
+}
+
 pub fn release_embedded_local_assets(home: &Path) -> Result<usize> {
     let layout = LocalHomeLayout::from_home(home);
     layout.ensure_dirs()?;
@@ -55,6 +65,9 @@ mod tests {
         assert!(EMBEDDED_LOCAL_ASSETS
             .iter()
             .any(|(path, _)| *path == "config/wunder.yaml"));
+        assert!(embedded_asset("config/wunder.yaml")
+            .map(|bytes| !bytes.is_empty())
+            .unwrap_or(false));
     }
 
     #[test]
@@ -74,7 +87,8 @@ mod tests {
                         "config/prompts/",
                         "config/skills/",
                         "config/preset_worker_cards/",
-                        "config/preset_worker_cards_example/"
+                        "config/preset_worker_cards_example/",
+                        "config/data/companions/global/"
                     ]
                     .iter()
                     .any(|prefix| name.starts_with(prefix)),
@@ -109,5 +123,38 @@ mod tests {
             std::fs::read(dir.path().join("config/wunder.yaml")).unwrap(),
             b"user-edited\n"
         );
+    }
+
+    #[test]
+    fn bundled_companions_are_released_into_the_library_root() {
+        let dir = tempdir().unwrap();
+        release_embedded_local_assets(dir.path()).unwrap();
+        let root = dir.path().join("config/data/companions/global");
+        let mut released = 0usize;
+        for &(name, bytes) in EMBEDDED_LOCAL_ASSETS {
+            if !name.starts_with("config/data/companions/global/") || !name.ends_with("/pet.json") {
+                continue;
+            }
+            released += 1;
+            assert!(dir.path().join(name).is_file(), "missing released {name}");
+            let manifest: serde_json::Value = serde_json::from_slice(bytes).unwrap();
+            let sheet = manifest["spritesheetPath"].as_str().unwrap();
+            let id = name
+                .strip_prefix("config/data/companions/global/")
+                .unwrap()
+                .split('/')
+                .next()
+                .unwrap();
+            assert_eq!(
+                manifest["id"].as_str().unwrap(),
+                id,
+                "companion id must match its library directory"
+            );
+            assert!(
+                root.join(id).join(sheet).is_file(),
+                "missing spritesheet for {name}"
+            );
+        }
+        assert!(released > 0, "no bundled companions were embedded");
     }
 }

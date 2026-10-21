@@ -1375,6 +1375,10 @@
     "en-US": "Waited and captured a fresh desktop screenshot.",
     "zh-CN": "已等待并捕获一张新的桌面截图。"
   },
+  "tool.desktop_control.followup_prompt_unsettled": {
+    "en-US": "The action was applied, but the display is still changing. This is the newest frame. Use wait to observe it again before repeating input.",
+    "zh-CN": "动作已执行，但画面仍在变化。下面是最新截图，请先调用 wait 再次观察，然后再决定是否重复操作。"
+  },
   "tool.replace.count_mismatch": {
     "en-US": "Replacement count mismatch.",
     "zh-CN": "实际替换数量与期望不一致。"

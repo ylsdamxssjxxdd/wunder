@@ -80,7 +80,7 @@ impl SqliteChannelDirectoryStorage for SqliteStorage {
         if cleaned_channel.is_empty() || cleaned_account.is_empty() {
             return Ok(None);
         }
-        let conn = self.open()?;
+        let conn = self.read_connection()?;
         let row = conn
             .query_row(
                 "SELECT channel, account_id, config, status, created_at, updated_at FROM channel_accounts WHERE channel = ? AND account_id = ?",
@@ -97,7 +97,7 @@ impl SqliteChannelDirectoryStorage for SqliteStorage {
         status: Option<&str>,
     ) -> Result<Vec<ChannelAccountRecord>> {
         self.ensure_initialized()?;
-        let conn = self.open()?;
+        let conn = self.read_connection()?;
         let mut filters = Vec::new();
         let mut params_list: Vec<SqlValue> = Vec::new();
         if let Some(channel) = channel

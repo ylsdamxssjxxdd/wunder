@@ -199,7 +199,7 @@ impl SqliteCronStorage for SqliteStorage {
 
     fn count_running_cron_jobs_impl(&self, now: f64) -> Result<i64> {
         self.ensure_initialized()?;
-        let conn = self.open()?;
+        let conn = self.read_connection()?;
         let total: i64 = conn.query_row(
         "SELECT COUNT(*) FROM cron_jobs WHERE running_at IS NOT NULL AND lease_expires_at IS NOT NULL AND lease_expires_at > ?",
         params![now],
@@ -351,7 +351,7 @@ impl SqliteCronStorage for SqliteStorage {
 
     fn get_next_cron_run_at_impl(&self, now: f64) -> Result<Option<f64>> {
         self.ensure_initialized()?;
-        let conn = self.open()?;
+        let conn = self.read_connection()?;
         let value: Option<f64> = conn.query_row(
             "SELECT MIN(next_run_at) FROM cron_jobs WHERE enabled = 1 AND next_run_at IS NOT NULL AND next_run_at > ?",
             params![now],

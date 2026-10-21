@@ -57,6 +57,10 @@ Windows 安装包优先使用离线 SDK 的 `Rust-builder/win7/offline/tools/inn
 - Git：`MinGit 2.46.2`
   - Git for Windows FAQ 将 `2.46.2` 标为最后支持 Windows `7 / 8 / 8.1` 的版本。
   - `MinGit` 适合嵌入第三方桌面应用，体积比完整安装包更小。
+- ripgrep：`14.1.0`
+  - `14.1.1` 起的官方 Windows 二进制用 Rust 1.78+ 构建，静态导入 `bcryptprimitives.dll`（`ProcessPrng`）和 `api-ms-win-core-synch-l1-2-0.dll`（`WaitOnAddress`），这两个 DLL 从 Windows 8 才提供；在 32 位 Windows 7 上启动即崩溃，Git Bash 会报 `Segmentation fault`。
+  - `14.1.0` 是最后一个仍能在 Windows 7 运行的官方版本。构建脚本会校验 SHA256、PE 架构和导入表；若以后要升级到 `14.1.1+`，必须用 Rust `<= 1.77.2` 自行重编，否则门禁会直接失败。
+  - 代价：`14.1.1` 才修复了正则内层字面量优化可能漏匹配的问题（ripgrep #2884），`14.1.0` 仍带该缺陷；若搜索正确性必须包含该修复，只能用 Rust `<= 1.77.2` 自行重编 `14.1.1`。
 
 ## 入口命令
 
@@ -89,14 +93,14 @@ powershell -ExecutionPolicy Bypass -File packaging/windows/scripts/build_win7_de
   -Arch ia32 `
   -PythonArchivePath C:\cache\python-3.8.10-embed-win32.zip `
   -GitArchivePath C:\cache\MinGit-2.46.2-32-bit.zip `
-  -RgArchivePath C:\cache\ripgrep-14.1.1-i686-pc-windows-msvc.zip
+  -RgArchivePath C:\cache\ripgrep-14.1.0-i686-pc-windows-msvc.zip
 ```
 
 ## 默认输出目录
 
 - 下载缓存：`temp_dir/win7-gnu-lab/win7-supplement/downloads/`
 - 展开目录：`temp_dir/win7-gnu-lab/win7-supplement/stage/package-root/`
-- 默认压缩包：`temp_dir/win7-gnu-lab/win7-supplement/dist/wunder-supplement-win7-ia32-common.zip`
+- 默认压缩包：`target/installer/payload/win7-x86/wunder-supplement-win7-ia32-common.zip`（`build.bat pack` 直接检索该目录；显式传 `-BuildRoot` 时产物留在该构建根的 `dist/` 下）
 
 压缩包内部目录结构是：
 

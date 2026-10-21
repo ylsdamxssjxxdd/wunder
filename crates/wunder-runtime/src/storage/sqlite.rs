@@ -51,6 +51,7 @@ mod meta_store;
 mod monitor_store;
 mod queue_control;
 mod quota_balance_store;
+mod read_connection;
 mod retention_store;
 mod schema;
 mod session_cleanup;
@@ -102,13 +103,14 @@ pub struct SqliteStorage {
     db_path: PathBuf,
     initialized: AtomicBool,
     init_guard: Mutex<()>,
-    // Set when `apply_auto_vacuum` could not change the header because the
-    // database already had tables; `ensure_initialized` then runs the one-time
-    // VACUUM that persists the change. A fresh database never sets it.
-    auto_vacuum_upgrade_pending: AtomicBool,
+    // Readers are checked out without holding this mutex during any SQL.
+    read_connections: Mutex<Vec<Connection>>,
     // SQLite has one writer. Reuse one bounded connection for message admission
     // instead of reopening/checkpointing the WAL for every small queue write.
     agent_message_connection: Mutex<Option<Connection>>,
+    // Keep the WAL open between short operations instead of checkpointing and
+    // deleting its sidecars each time. Close after readers at storage shutdown.
+    wal_anchor: Mutex<Option<Connection>>,
 }
 
 impl SqliteStorage {
@@ -122,7 +124,8 @@ impl SqliteStorage {
             db_path: path,
             initialized: AtomicBool::new(false),
             init_guard: Mutex::new(()),
-            auto_vacuum_upgrade_pending: AtomicBool::new(false),
+            wal_anchor: Mutex::new(None),
+            read_connections: Mutex::new(Vec::new()),
             agent_message_connection: Mutex::new(None),
         }
     }
@@ -198,6 +201,10 @@ impl SqliteStorage {
         }
         // Parallel child runs can briefly contend on SQLite writes.
         conn.busy_timeout(Duration::from_secs(5)).ok();
+        // The header must be set before WAL creates the first database page.
+        if !self.initialized.load(Ordering::Acquire) {
+            self.apply_auto_vacuum(&conn);
+        }
         // The WAL switch needs the -wal/-shm pair. Losing it silently leaves
         // the connection on the rollback journal and, when the file cannot be
         // written at all, turns every later write into the same opaque
@@ -260,18 +267,9 @@ impl SqliteStorage {
         }
     }
 
-    /// Incremental auto-vacuum, applied by the one place that owns schema
-    /// creation.
-    ///
-    /// `PRAGMA auto_vacuum` only takes effect before the first table exists;
-    /// changing it on a populated database needs a full VACUUM to persist the
-    /// header. That VACUUM rewrites the whole file and leaves concurrent
-    /// readers holding a handle to the version that was just replaced, which
-    /// surfaces as `attempt to write a readonly database` on their next write.
-    /// Doing this here - before `ensure_initialized_impl` creates anything -
-    /// means a fresh database is born with the right header and never needs
-    /// the rewrite at all; only a database upgraded from before this flag
-    /// pays for one.
+    /// Enable incremental vacuum for new files only. Upgrading an existing
+    /// file requires a full rewrite and belongs to explicit maintenance, never
+    /// the startup/first-history-read path.
     fn apply_auto_vacuum(&self, conn: &Connection) {
         let current: i64 = conn
             .pragma_query_value(None, "auto_vacuum", |row| row.get(0))
@@ -279,12 +277,16 @@ impl SqliteStorage {
         if current == 2 {
             return;
         }
-        conn.pragma_update(None, "auto_vacuum", 2).ok();
-        let applied: i64 = conn
-            .pragma_query_value(None, "auto_vacuum", |row| row.get(0))
-            .unwrap_or(0);
-        self.auto_vacuum_upgrade_pending
-            .store(applied != 2, Ordering::SeqCst);
+        let populated = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table')",
+                [],
+                |row| row.get::<_, bool>(0),
+            )
+            .unwrap_or(true);
+        if !populated {
+            conn.pragma_update(None, "auto_vacuum", 2).ok();
+        }
     }
 
     fn now_ts() -> f64 {
@@ -764,7 +766,7 @@ mod tests {
     }
 
     #[test]
-    fn auto_vacuum_is_enabled_for_existing_databases() {
+    fn startup_preserves_existing_database_without_full_vacuum() {
         let temp = tempdir().expect("tempdir");
         let db_path = temp.path().join("auto-vacuum-upgrade.db");
         let conn = Connection::open(&db_path).expect("open sqlite");
@@ -786,6 +788,25 @@ mod tests {
         let mode: i64 = conn
             .pragma_query_value(None, "auto_vacuum", |row| row.get(0))
             .expect("read upgraded auto_vacuum");
-        assert_eq!(mode, 2);
+        assert_eq!(mode, 0, "startup must not rewrite an existing database");
+        let value: i64 = conn
+            .query_row("SELECT id FROM placeholder", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(value, 1);
+    }
+
+    #[test]
+    fn new_database_enables_incremental_vacuum() {
+        let temp = tempdir().unwrap();
+        let storage = SqliteStorage::new(temp.path().join("fixture.db").to_string_lossy().into());
+        storage.ensure_initialized().unwrap();
+        assert_eq!(
+            storage
+                .read_connection()
+                .unwrap()
+                .pragma_query_value(None, "auto_vacuum", |r| r.get::<_, i64>(0))
+                .unwrap(),
+            2
+        );
     }
 }

@@ -391,6 +391,17 @@ pub fn validate_dynamic_tool_spec(spec: &ToolSpec) -> Result<()> {
     validate_tool_spec_size(spec)?;
     validate_registration_schema(&spec.input_schema)
 }
+
+/// Validate a schema obtained from an external provider.
+///
+/// Provider schemas still need bounded size, depth and node count before they
+/// enter the catalog, but imposing the local-registration closure rules would
+/// reject valid remote schemas such as open objects or unbounded result
+/// filters. Their execution remains isolated behind the provider boundary.
+pub fn validate_external_tool_spec(spec: &ToolSpec) -> Result<()> {
+    validate_tool_spec_size(spec)
+}
+
 pub fn validate_tool_spec_size(spec: &ToolSpec) -> Result<()> {
     if spec.name.is_empty() || spec.name.len() > 256 {
         bail!("tool name must contain 1..256 bytes")

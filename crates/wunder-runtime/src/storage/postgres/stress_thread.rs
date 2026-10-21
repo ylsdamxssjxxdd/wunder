@@ -747,8 +747,8 @@ async fn run_generation(
     )
     .await?;
     tx.execute(
-        "INSERT INTO chat_sessions(session_id,user_id,title,status,created_at,updated_at,last_message_at) VALUES($1,$2,$3,'active',$4,$5,$5)",
-        &[&session_id, &user_id, &spec.title, &plan.start_time, &end_time],
+        "INSERT INTO chat_sessions(session_id,user_id,title,status,workspace_id,created_at,updated_at,last_message_at) VALUES($1,$2,$3,'active',$4,$5,$6,$6)",
+        &[&session_id, &user_id, &spec.title, &spec.workspace_id, &plan.start_time, &end_time],
     )
     .await?;
     tx.execute(

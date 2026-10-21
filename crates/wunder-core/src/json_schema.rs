@@ -99,7 +99,107 @@ fn ensure_object_properties(map: &mut Map<String, Value>) {
     }
 }
 
+/// OpenAI function schemas require an object at the root and do not accept a
+/// root composition keyword.  Action tools are normally expressed as a strict
+/// `oneOf` of closed objects, which is the right surface for providers that
+/// support it.  For OpenAI only, project that union into one closed object:
+/// `action` becomes an enum and every action field is listed once.  The
+/// runtime continues to validate the original action-specific union before
+/// dispatch, so this compatibility projection cannot widen execution.
+///
+/// Return `true` only when every branch is an object with a literal action
+/// discriminator. Generic unions retain the conservative legacy treatment.
+fn lift_action_union_for_openai(map: &mut Map<String, Value>) -> bool {
+    let Some(branches) = map.get("oneOf").and_then(Value::as_array) else {
+        return false;
+    };
+    if branches.is_empty() {
+        return false;
+    }
+
+    let mut fields = Map::new();
+    let mut actions = Vec::new();
+    for branch in branches {
+        let Some(properties) = branch.get("properties").and_then(Value::as_object) else {
+            return false;
+        };
+        let Some(action_schema) = properties.get("action") else {
+            return false;
+        };
+        let mut branch_actions = action_values(action_schema);
+        if branch_actions.is_empty() {
+            return false;
+        }
+        actions.append(&mut branch_actions);
+        for (name, schema) in properties {
+            if name == "action" {
+                continue;
+            }
+            merge_openai_action_property(&mut fields, name, schema);
+        }
+    }
+
+    actions.sort();
+    actions.dedup();
+    if actions.is_empty() {
+        return false;
+    }
+    fields.insert(
+        "action".to_string(),
+        json!({"type": SCHEMA_TYPE_STRING, "enum": actions}),
+    );
+    map.insert("properties".to_string(), Value::Object(fields));
+    map.insert("required".to_string(), json!(["action"]));
+    map.insert("additionalProperties".to_string(), Value::Bool(false));
+    true
+}
+
+fn action_values(schema: &Value) -> Vec<String> {
+    if let Some(value) = schema.get("const").and_then(Value::as_str) {
+        return vec![value.to_string()];
+    }
+    schema
+        .get("enum")
+        .and_then(Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(Value::as_str)
+                .map(ToString::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn merge_openai_action_property(fields: &mut Map<String, Value>, name: &str, schema: &Value) {
+    let Some(existing) = fields.get_mut(name) else {
+        fields.insert(name.to_string(), schema.clone());
+        return;
+    };
+    if *existing == *schema {
+        return;
+    }
+    let mut alternatives = match existing {
+        Value::Object(existing_map) if existing_map.len() == 1 => existing_map
+            .get("anyOf")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_else(|| vec![existing.clone()]),
+        _ => vec![existing.clone()],
+    };
+    if !alternatives.iter().any(|candidate| candidate == schema) {
+        alternatives.push(schema.clone());
+    }
+    *existing = json!({"anyOf": alternatives});
+}
+
 fn sanitize_schema_map(map: &mut Map<String, Value>) {
+    // `$ref` is a complete schema in its own right. Inferring a `type` for a
+    // reference-only node corrupts references to arrays or objects (for
+    // example, it used to add `type: string` to `{"$ref":"#/$defs/bbox"}`).
+    // Preserve it verbatim, while still sanitizing explicitly composed sibling
+    // schemas when a provider uses the JSON Schema 2019-09/2020-12 form.
+    let is_reference = map.contains_key("$ref") || map.contains_key("$dynamicRef");
     sanitize_schema_object_values(map, "properties");
     sanitize_schema_object_values(map, "$defs");
     sanitize_schema_object_values(map, "definitions");
@@ -113,6 +213,18 @@ fn sanitize_schema_map(map: &mut Map<String, Value>) {
         if let Some(value) = map.get_mut(key) {
             sanitize_json_schema_in_place(value);
         }
+    }
+
+    // A composition also defines its own accepted types. Adding the default
+    // string type to `anyOf: [string, array]` excludes the array branch; adding
+    // it to `allOf: [$ref]` can contradict the referenced object entirely.
+    // Preserve untyped compositions while still normalizing their children.
+    let is_untyped_composition = !map.contains_key("type")
+        && ["oneOf", "anyOf", "allOf"]
+            .iter()
+            .any(|key| map.contains_key(*key));
+    if is_reference || is_untyped_composition {
+        return;
     }
 
     let schema_type =
@@ -185,7 +297,9 @@ fn normalize_tool_input_schema_inner(
         ensure_object_properties(map);
         if strip_openai_top_level_forbidden {
             // OpenAI tool schemas require top-level object parameters and reject
-            // these composition/negation keywords at the root level.
+            // these composition/negation keywords at the root level. Preserve
+            // action fields by projecting a strict action union first.
+            let _ = lift_action_union_for_openai(map);
             for forbidden in ["oneOf", "anyOf", "allOf", "enum", "not"] {
                 map.remove(forbidden);
             }
@@ -324,6 +438,45 @@ mod tests {
     }
 
     #[test]
+    fn normalize_tool_input_schema_for_openai_projects_action_union_fields() {
+        let schema = json!({
+            "type": "object",
+            "oneOf": [
+                {
+                    "type": "object",
+                    "properties": {
+                        "action": {"const": "get"},
+                        "goal_id": {"type": "string"}
+                    },
+                    "required": ["action"],
+                    "additionalProperties": false
+                },
+                {
+                    "type": "object",
+                    "properties": {
+                        "action": {"const": "set"},
+                        "enabled": {"type": "boolean"}
+                    },
+                    "required": ["action", "enabled"],
+                    "additionalProperties": false
+                }
+            ]
+        });
+
+        let normalized = normalize_tool_input_schema_for_openai(Some(&schema));
+
+        assert!(normalized.get("oneOf").is_none());
+        assert_eq!(
+            normalized["properties"]["action"]["enum"],
+            json!(["get", "set"])
+        );
+        assert_eq!(normalized["properties"]["goal_id"]["type"], "string");
+        assert_eq!(normalized["properties"]["enabled"]["type"], "boolean");
+        assert_eq!(normalized["required"], json!(["action"]));
+        assert_eq!(normalized["additionalProperties"], false);
+    }
+
+    #[test]
     fn sanitize_json_schema_replaces_boolean_subschemas() {
         let mut schema = json!({
             "type": "object",
@@ -349,6 +502,60 @@ mod tests {
         sanitize_json_schema_in_place(&mut schema);
 
         assert_eq!(schema["type"], json!("integer"));
+    }
+
+    #[test]
+    fn normalize_tool_input_schema_preserves_ref_without_inferred_type() {
+        let schema = json!({
+            "type": "object",
+            "$defs": {
+                "bbox": {"type": "array", "items": {"type": "integer"}}
+            },
+            "properties": {
+                "bbox": {"$ref": "#/$defs/bbox"}
+            }
+        });
+
+        let normalized = normalize_tool_input_schema(Some(&schema));
+
+        assert_eq!(
+            normalized["properties"]["bbox"]["$ref"],
+            json!("#/$defs/bbox")
+        );
+        assert!(normalized["properties"]["bbox"].get("type").is_none());
+        assert_eq!(normalized["$defs"]["bbox"]["type"], json!("array"));
+    }
+
+    #[test]
+    fn normalize_tool_input_schema_preserves_untyped_compositions() {
+        let schema = json!({
+            "type": "object",
+            "$defs": {
+                "choice": {"anyOf": [
+                    {"type": "string"},
+                    {"type": "array", "items": {"type": "string"}}
+                ]},
+                "step": {"oneOf": [
+                    {"type": "object", "properties": {"kind": {"const": "wait"}}},
+                    {"type": "object", "properties": {"kind": {"const": "click"}}}
+                ]}
+            },
+            "properties": {
+                "value": {"$ref": "#/$defs/choice"},
+                "step": {"allOf": [{"$ref": "#/$defs/step"}]}
+            }
+        });
+
+        for normalized in [
+            normalize_tool_input_schema(Some(&schema)),
+            normalize_tool_input_schema_for_openai(Some(&schema)),
+        ] {
+            assert!(normalized["$defs"]["choice"].get("type").is_none());
+            assert!(normalized["$defs"]["step"].get("type").is_none());
+            assert!(normalized["properties"]["step"].get("type").is_none());
+            assert_eq!(normalized["$defs"]["choice"]["anyOf"][1]["type"], "array");
+            assert_eq!(normalized["$defs"]["step"]["oneOf"][0]["type"], "object");
+        }
     }
 
     #[test]

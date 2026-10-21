@@ -135,6 +135,13 @@ pub struct TrajectoryViewRow {
     /// on the page itself so trajectory rendering does not fetch whole bodies.
     #[serde(default)]
     pub stats: Option<Value>,
+    /// Bounded, numeric-only per-request token estimate (native tool / system
+    /// prompt / history / latest user / image / reasoning / tool-call buckets),
+    /// projected onto the detail row so trajectory rendering never fetches the
+    /// whole request body. Absent when the source item carries no numeric
+    /// breakdown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_token_breakdown: Option<Value>,
     pub started_at: f64,
     pub completed_at: Option<f64>,
     pub detail: Option<BodyRef>,

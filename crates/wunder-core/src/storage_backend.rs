@@ -433,6 +433,12 @@ pub trait LogStatsStore {
 pub trait MonitorStore {
     fn upsert_monitor_record(&self, payload: &Value) -> Result<()>;
     fn get_monitor_record(&self, session_id: &str) -> Result<Option<Value>>;
+    fn get_monitor_session_stats(&self, session_id: &str) -> Result<Option<MonitorSessionStats>> {
+        Ok(self
+            .get_monitor_record(session_id)?
+            .as_ref()
+            .map(MonitorSessionStats::from_payload))
+    }
     fn load_monitor_records_by_session_ids(&self, session_ids: &[String]) -> Result<Vec<Value>> {
         let mut records = Vec::with_capacity(session_ids.len());
         for session_id in session_ids {
@@ -624,6 +630,9 @@ pub trait AgentRuntimeStore {
         -> Result<()>;
     fn get_agent_task(&self, task_id: &str) -> Result<Option<AgentTaskRecord>>;
     fn list_pending_agent_tasks(&self, limit: i64) -> Result<Vec<AgentTaskRecord>>;
+    /// Earliest pending or retry task deadline, including future retries. A
+    /// dispatcher may sleep until this instant only when no task is due.
+    fn next_agent_task_retry_at(&self) -> Result<Option<f64>>;
     fn count_pending_agent_tasks(&self) -> Result<i64>;
     fn count_pending_agent_tasks_ahead(
         &self,
@@ -1259,6 +1268,8 @@ pub trait ChannelRuntimeStore {
     fn enqueue_channel_outbox(&self, record: &ChannelOutboxRecord) -> Result<()>;
     fn get_channel_outbox(&self, outbox_id: &str) -> Result<Option<ChannelOutboxRecord>>;
     fn list_pending_channel_outbox(&self, limit: i64) -> Result<Vec<ChannelOutboxRecord>>;
+    /// Earliest undelivered outbox deadline, including future retries.
+    fn next_channel_outbox_retry_at(&self) -> Result<Option<f64>>;
     fn update_channel_outbox_status(
         &self,
         params: UpdateChannelOutboxStatusParams<'_>,

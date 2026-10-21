@@ -2,7 +2,7 @@ use super::SqliteStorage;
 use crate::storage::*;
 use anyhow::Result;
 use rusqlite::types::Value as SqlValue;
-use rusqlite::{params, params_from_iter};
+use rusqlite::{params, params_from_iter, OptionalExtension};
 use serde_json::Value;
 
 pub(super) trait SqliteMonitorStorage {
@@ -57,13 +57,21 @@ impl SqliteMonitorStorage for SqliteStorage {
             .and_then(Value::as_f64)
             .unwrap_or(0.0);
         let payload_text = Self::json_to_string(payload);
-        let conn = self.open()?;
-        conn.execute(
+        let mut conn = self.open()?;
+        let tx = conn.transaction()?;
+        let changed = tx.execute(
             "INSERT INTO monitor_sessions (session_id, user_id, status, updated_time, payload) VALUES (?, ?, ?, ?, ?) \
              ON CONFLICT(session_id) DO UPDATE SET user_id = excluded.user_id, status = excluded.status, updated_time = excluded.updated_time, payload = excluded.payload \
              WHERE excluded.updated_time >= COALESCE(monitor_sessions.updated_time, 0)",
             params![session_id, user_id, status, updated_time, payload_text],
         )?;
+        if changed > 0 {
+            tx.execute(
+                "INSERT INTO monitor_session_stats(session_id,payload) VALUES(?,?) ON CONFLICT(session_id) DO UPDATE SET payload=excluded.payload",
+                params![session_id, serde_json::to_string(&MonitorSessionStats::from_payload(payload))?],
+            )?;
+        }
+        tx.commit()?;
         Ok(())
     }
 
@@ -73,8 +81,9 @@ impl SqliteMonitorStorage for SqliteStorage {
         if cleaned.is_empty() {
             return Ok(None);
         }
-        let conn = self.open()?;
-        let mut stmt = conn.prepare("SELECT payload FROM monitor_sessions WHERE session_id = ?")?;
+        let conn = self.read_connection()?;
+        let mut stmt =
+            conn.prepare_cached("SELECT payload FROM monitor_sessions WHERE session_id = ?")?;
         let mut rows = stmt.query([cleaned])?;
         if let Some(row) = rows.next()? {
             let payload: String = row.get(0)?;
@@ -288,6 +297,27 @@ impl SqliteMonitorStorage for SqliteStorage {
     }
 }
 
+impl SqliteStorage {
+    pub(super) fn monitor_session_stats(
+        &self,
+        session: &str,
+    ) -> Result<Option<MonitorSessionStats>> {
+        self.ensure_initialized()?;
+        let conn = self.read_connection()?;
+        let stored: Option<String> = conn
+            .prepare_cached("SELECT payload FROM monitor_session_stats WHERE session_id=?")?
+            .query_row([session.trim()], |row| row.get(0))
+            .optional()?;
+        if let Some(stored) = stored {
+            return Ok(Some(serde_json::from_str(&stored)?));
+        }
+        // Let the monitor's on-demand compatibility decoder handle records
+        // written before this small projection existed. It retains counters
+        // derived from legacy events without a startup-wide backfill.
+        Ok(None)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::SqliteStorage;
@@ -418,6 +448,53 @@ mod tests {
             .expect("record");
         assert_eq!(record["updated_time"], json!(20.0));
         assert_eq!(record["user_rounds"], json!(4));
+    }
+
+    #[test]
+    fn navigation_stats_are_small_atomic_and_cleaned_with_the_monitor() {
+        let (db, _dir) = build_storage();
+        let mut payload = json!({
+            "session_id":"fixture-thread", "status":"completed", "updated_time":2.0,
+            "consumed_tokens":120, "tool_calls":7, "model_request_count":3,
+            "events":[{"data":{"content":"fixture text ".repeat(100_000)}}]
+        });
+        db.upsert_monitor_record(&payload).unwrap();
+        let expected = MonitorSessionStats::from_payload(&payload);
+        assert_eq!(
+            db.get_monitor_session_stats("fixture-thread").unwrap(),
+            Some(expected.clone())
+        );
+        let conn = db.open().unwrap();
+        let size: i64 = conn.query_row("SELECT length(payload) FROM monitor_session_stats WHERE session_id='fixture-thread'", [], |r| r.get(0)).unwrap();
+        assert!(size < 200);
+        payload["updated_time"] = json!(1.0);
+        payload["tool_calls"] = json!(0);
+        db.upsert_monitor_record(&payload).unwrap();
+        assert_eq!(
+            db.get_monitor_session_stats("fixture-thread").unwrap(),
+            Some(expected.clone())
+        );
+        // An old record is readable immediately, without a startup backfill.
+        conn.execute("DELETE FROM monitor_session_stats", [])
+            .unwrap();
+        assert_eq!(
+            db.get_monitor_session_stats("fixture-thread").unwrap(),
+            None
+        );
+        payload["updated_time"] = json!(3.0);
+        db.upsert_monitor_record(&payload).unwrap();
+        // All cleanup paths deleting the source also remove its projection.
+        conn.execute("DELETE FROM monitor_sessions", []).unwrap();
+        assert_eq!(
+            db.get_monitor_session_stats("fixture-thread").unwrap(),
+            None
+        );
+        assert_eq!(
+            conn.query_row("SELECT count(*) FROM monitor_session_stats", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
     }
 
     #[test]

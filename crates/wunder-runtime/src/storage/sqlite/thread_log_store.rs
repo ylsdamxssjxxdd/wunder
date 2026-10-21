@@ -5,6 +5,38 @@ use rusqlite::{params, OptionalExtension};
 use serde_json::{json, Value};
 use uuid::Uuid;
 use wunder_core::storage_backend::ThreadSnapshotWindow;
+// Force status seeks: ordering by round alone makes SQLite scan completed history.
+const RECONCILE_TERMINAL_TURNS_SQL: &str = "SELECT t.turn_id
+             FROM (
+                 SELECT * FROM (SELECT turn_id,user_id,session_id,root_turn_id,user_turn_index FROM thread_turns INDEXED BY idx_thread_turn_status_page
+                     WHERE user_id=?1 AND session_id=?2 AND status='accepted' ORDER BY user_turn_index LIMIT 32)
+                 UNION ALL
+                 SELECT * FROM (SELECT turn_id,user_id,session_id,root_turn_id,user_turn_index FROM thread_turns INDEXED BY idx_thread_turn_status_page
+                     WHERE user_id=?1 AND session_id=?2 AND status='running' ORDER BY user_turn_index LIMIT 32)
+             ) t
+             JOIN thread_items i ON i.session_id=t.session_id
+               AND i.item_id=(SELECT candidate.item_id FROM thread_items candidate
+                    WHERE candidate.user_id=t.user_id AND candidate.session_id=t.session_id
+                      AND candidate.root_turn_id=t.root_turn_id AND candidate.turn_id=t.turn_id
+                      AND candidate.kind='assistant_message'
+                    ORDER BY candidate.created_seq DESC LIMIT 1)
+             WHERE NOT EXISTS (SELECT 1 FROM session_locks l
+                    WHERE l.session_id=t.session_id AND l.expires_at>?3)
+               AND i.kind='assistant_message' AND i.status='completed' AND i.visibility='user'
+               AND length(trim(COALESCE(json_extract(i.payload, '$.content'), '')))>0
+               AND (json_extract(i.payload, '$.event_type')='llm_output'
+                    OR (json_extract(i.payload, '$.role')='assistant'
+                        AND json_type(i.payload, '$.meta.message_stats')='object'
+                        AND json_extract(i.payload, '$.meta.type') IS NULL))
+               AND (json_extract(i.payload, '$.tool_calls') IS NULL
+                    OR json_array_length(json_extract(i.payload, '$.tool_calls'))=0)
+               AND NOT EXISTS (SELECT 1 FROM thread_items newer
+                    WHERE newer.user_id=i.user_id AND newer.session_id=i.session_id
+                      AND newer.root_turn_id=i.root_turn_id AND newer.turn_id=i.turn_id
+                      AND newer.created_seq>i.created_seq
+                      AND newer.kind IN ('assistant_message','tool_call','approval'))
+             ORDER BY t.user_turn_index LIMIT 32";
+
 pub(super) trait SqliteThreadLogStorage {
     fn load_subagent_context_impl(
         &self,
@@ -173,8 +205,8 @@ impl SqliteThreadLogStorage for SqliteStorage {
         turns: i64,
     ) -> Result<Vec<Value>> {
         self.ensure_initialized()?;
-        let conn = self.open()?;
-        let mut stmt = conn.prepare("SELECT i.root_turn_id, i.kind, substr(json_extract(i.payload,'$.content'),1,16384), length(json_extract(i.payload,'$.content')) FROM thread_items i WHERE i.user_id=?1 AND i.session_id=?2 AND i.visibility='user' AND i.kind IN ('user_message','assistant_message') AND i.root_turn_id IN (SELECT root_turn_id FROM thread_turns WHERE user_id=?1 AND session_id=?2 AND trigger_kind='user' ORDER BY user_turn_index DESC LIMIT ?3) ORDER BY i.created_seq DESC LIMIT 257")?;
+        let conn = self.read_connection()?;
+        let mut stmt = conn.prepare_cached("SELECT i.root_turn_id, i.kind, substr(json_extract(i.payload,'$.content'),1,16384), length(json_extract(i.payload,'$.content')) FROM thread_items i WHERE i.user_id=?1 AND i.session_id=?2 AND i.visibility='user' AND i.kind IN ('user_message','assistant_message') AND i.root_turn_id IN (SELECT root_turn_id FROM thread_turns WHERE user_id=?1 AND session_id=?2 AND trigger_kind='user' ORDER BY user_turn_index DESC LIMIT ?3) ORDER BY i.created_seq DESC LIMIT 257")?;
         let mut rows = stmt.query_map(params![user_id, session_id, turns.clamp(0,16)], |row| {
             let kind: String = row.get(1)?;
             let content: Option<String> = row.get(2)?;
@@ -230,9 +262,9 @@ impl SqliteThreadLogStorage for SqliteStorage {
         limit: i64,
     ) -> Result<Vec<Value>> {
         self.ensure_initialized()?;
-        let conn = self.open()?;
+        let conn = self.read_connection()?;
         let before = before_seq.unwrap_or(i64::MAX);
-        let mut stmt = conn.prepare("SELECT i.payload,i.created_seq,i.kind,t.status FROM thread_items i JOIN thread_turns t ON t.session_id=i.session_id AND t.turn_id=i.turn_id WHERE i.user_id=? AND i.session_id=? AND i.visibility='user' AND i.kind IN ('user_message','assistant_message') AND i.created_seq<? ORDER BY i.created_seq DESC LIMIT ?")?;
+        let mut stmt = conn.prepare_cached("SELECT i.payload,i.created_seq,i.kind,t.status FROM thread_items i JOIN thread_turns t ON t.session_id=i.session_id AND t.turn_id=i.turn_id WHERE i.user_id=? AND i.session_id=? AND i.visibility='user' AND i.kind IN ('user_message','assistant_message') AND i.created_seq<? ORDER BY i.created_seq DESC LIMIT ?")?;
         let rows = stmt
             .query_map(
                 params![user_id, session_id, before, limit.clamp(1, 501)],
@@ -256,7 +288,7 @@ impl SqliteThreadLogStorage for SqliteStorage {
     }
     fn latest_thread_change_seq_by_session_impl(&self, session_id: &str) -> Result<i64> {
         self.ensure_initialized()?;
-        let conn = self.open()?;
+        let conn = self.read_connection()?;
         Ok(conn
             .query_row(
                 "SELECT COALESCE(latest_change_seq,0) FROM thread_logs WHERE session_id=?",
@@ -275,8 +307,8 @@ impl SqliteThreadLogStorage for SqliteStorage {
         executing_turn: Option<&str>,
     ) -> Result<Vec<Value>> {
         self.ensure_initialized()?;
-        let conn = self.open()?;
-        let mut stmt = conn.prepare("SELECT i.payload FROM thread_items i JOIN thread_turns t ON t.session_id=i.session_id AND t.turn_id=i.turn_id WHERE i.user_id=? AND i.session_id=? AND (? OR i.visibility='user') AND (? IS NULL OR (t.status NOT IN ('accepted','queued') AND i.item_id<>? || ':user')) AND i.kind IN ('user_message','assistant_message','tool_message','system_message') ORDER BY i.created_seq DESC LIMIT ?")?;
+        let conn = self.read_connection()?;
+        let mut stmt = conn.prepare_cached("SELECT i.payload FROM thread_items i JOIN thread_turns t ON t.session_id=i.session_id AND t.turn_id=i.turn_id WHERE i.user_id=? AND i.session_id=? AND (? OR i.visibility='user') AND (? IS NULL OR (t.status NOT IN ('accepted','queued') AND i.item_id<>? || ':user')) AND i.kind IN ('user_message','assistant_message','tool_message','system_message') ORDER BY i.created_seq DESC LIMIT ?")?;
         let rows = stmt
             .query_map(
                 params![
@@ -361,8 +393,8 @@ impl SqliteThreadLogStorage for SqliteStorage {
         limit: i64,
     ) -> Result<Vec<Value>> {
         self.ensure_initialized()?;
-        let conn = self.open()?;
-        let mut stmt=conn.prepare("SELECT payload FROM thread_item_blocks WHERE session_id=? AND event_id>? ORDER BY event_id LIMIT ?")?;
+        let conn = self.read_connection()?;
+        let mut stmt=conn.prepare_cached("SELECT payload FROM thread_item_blocks WHERE session_id=? AND event_id>? ORDER BY event_id LIMIT ?")?;
         let rows = stmt
             .query_map(params![session_id, after, limit.clamp(1, 500)], |r| {
                 r.get::<_, String>(0)
@@ -384,10 +416,10 @@ impl SqliteThreadLogStorage for SqliteStorage {
         include_internal: bool,
     ) -> Result<(Vec<Value>, Option<i64>, bool)> {
         self.ensure_initialized()?;
-        let conn = self.open()?;
+        let conn = self.read_connection()?;
         let requested = limit.clamp(1, 100);
         let field = field.unwrap_or("content");
-        let mut stmt = conn.prepare("SELECT b.payload FROM thread_item_blocks b JOIN thread_items i ON i.session_id=b.session_id AND i.item_id=b.item_id WHERE b.user_id=? AND b.session_id=? AND b.item_id=? AND b.field=? AND b.block_index>=? AND (? OR i.visibility='user') ORDER BY b.block_index LIMIT ?")?;
+        let mut stmt = conn.prepare_cached("SELECT b.payload FROM thread_item_blocks b JOIN thread_items i ON i.session_id=b.session_id AND i.item_id=b.item_id WHERE b.user_id=? AND b.session_id=? AND b.item_id=? AND b.field=? AND b.block_index>=? AND (? OR i.visibility='user') ORDER BY b.block_index LIMIT ?")?;
         let rows = stmt
             .query_map(
                 params![
@@ -442,7 +474,7 @@ impl SqliteThreadLogStorage for SqliteStorage {
         user_turn_index: i64,
     ) -> Result<Option<String>> {
         self.ensure_initialized()?;
-        let conn = self.open()?;
+        let conn = self.read_connection()?;
         Ok(conn.query_row("SELECT turn_id FROM thread_turns WHERE user_id=? AND session_id=? AND user_turn_index=? AND trigger_kind='user'", params![user_id,session_id,user_turn_index], |r| r.get(0)).optional()?)
     }
     fn accept_thread_turn_impl(
@@ -745,34 +777,8 @@ impl SqliteThreadLogStorage for SqliteStorage {
         self.ensure_initialized()?;
         // This is deliberately bounded: a read repairs only a small number of
         // abandoned requests, while normal traffic is settled by the runner.
-        let conn = self.open()?;
-        let mut stmt = conn.prepare(
-            "SELECT t.turn_id
-             FROM (SELECT * FROM thread_turns WHERE user_id=? AND session_id=?
-                   AND status IN ('accepted','running') ORDER BY user_turn_index LIMIT 32) t
-             JOIN thread_items i ON i.user_id=t.user_id AND i.session_id=t.session_id AND i.root_turn_id=t.root_turn_id AND i.turn_id=t.turn_id
-             WHERE NOT EXISTS (SELECT 1 FROM session_locks l
-                    WHERE l.session_id=t.session_id AND l.expires_at>?)
-               AND i.item_id=(SELECT candidate.item_id FROM thread_items candidate
-                    WHERE candidate.user_id=t.user_id AND candidate.session_id=t.session_id
-                      AND candidate.root_turn_id=t.root_turn_id AND candidate.turn_id=t.turn_id
-                      AND candidate.kind='assistant_message'
-                    ORDER BY candidate.created_seq DESC LIMIT 1)
-               AND i.kind='assistant_message' AND i.status='completed' AND i.visibility='user'
-               AND length(trim(COALESCE(json_extract(i.payload, '$.content'), '')))>0
-               AND (json_extract(i.payload, '$.event_type')='llm_output'
-                    OR (json_extract(i.payload, '$.role')='assistant'
-                        AND json_type(i.payload, '$.meta.message_stats')='object'
-                        AND json_extract(i.payload, '$.meta.type') IS NULL))
-               AND (json_extract(i.payload, '$.tool_calls') IS NULL
-                    OR json_array_length(json_extract(i.payload, '$.tool_calls'))=0)
-               AND NOT EXISTS (SELECT 1 FROM thread_items newer
-                    WHERE newer.user_id=i.user_id AND newer.session_id=i.session_id
-                      AND newer.root_turn_id=i.root_turn_id AND newer.turn_id=i.turn_id
-                      AND newer.created_seq>i.created_seq
-                      AND newer.kind IN ('assistant_message','tool_call','approval'))
-             ORDER BY t.user_turn_index LIMIT 32",
-        )?;
+        let conn = self.read_connection()?;
+        let mut stmt = conn.prepare_cached(RECONCILE_TERMINAL_TURNS_SQL)?;
         let candidates = stmt
             .query_map(params![user_id, session_id, Self::now_ts()], |row| {
                 row.get::<_, String>(0)
@@ -914,11 +920,11 @@ impl SqliteThreadLogStorage for SqliteStorage {
     ) -> Result<Vec<Value>> {
         self.ensure_initialized()?;
         self.reconcile_terminal_turns_impl(user_id, session_id)?;
-        let conn = self.open()?;
+        let conn = self.read_connection()?;
         let before = before.unwrap_or(i64::MAX);
         let limit = limit.clamp(1, 101);
         Ok({
-            let mut stmt = conn.prepare("SELECT turn_id,user_turn_index,status,summary,payload,updated_time,root_turn_id,trigger_kind FROM thread_turns WHERE user_id=? AND session_id=? AND user_turn_index<? AND trigger_kind='user' ORDER BY user_turn_index DESC LIMIT ?")?;
+            let mut stmt = conn.prepare_cached("SELECT turn_id,user_turn_index,status,summary,payload,updated_time,root_turn_id,trigger_kind FROM thread_turns WHERE user_id=? AND session_id=? AND user_turn_index<? AND trigger_kind='user' ORDER BY user_turn_index DESC LIMIT ?")?;
             let rows = stmt
                 .query_map(params![user_id, session_id, before, limit], turn_row)?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -932,7 +938,7 @@ impl SqliteThreadLogStorage for SqliteStorage {
         include_internal: bool,
     ) -> Result<(i64, i64)> {
         self.ensure_initialized()?;
-        let conn = self.open()?;
+        let conn = self.read_connection()?;
         let user_turns = conn.query_row(
             "SELECT COUNT(*) FROM thread_turns WHERE user_id=? AND session_id=? AND trigger_kind='user'",
             params![user_id, session_id],
@@ -947,7 +953,7 @@ impl SqliteThreadLogStorage for SqliteStorage {
     }
     fn latest_thread_user_round_by_session_impl(&self, session_id: &str) -> Result<i64> {
         self.ensure_initialized()?;
-        let conn = self.open()?;
+        let conn = self.read_connection()?;
         Ok(conn.query_row("SELECT COALESCE(MAX(user_turn_index),0) FROM thread_turns WHERE session_id=? AND trigger_kind='user'", params![session_id], |r| r.get(0))?)
     }
     fn thread_turn_tails_impl(
@@ -973,7 +979,7 @@ impl SqliteThreadLogStorage for SqliteStorage {
             .join(",");
         let mut tails: std::collections::HashMap<String, crate::storage::ThreadTurnTail> =
             std::collections::HashMap::new();
-        let conn = self.open()?;
+        let conn = self.read_connection()?;
         // Newest durable user turn per session in one pass: round, status and summary.
         let turn_sql = format!(
             "SELECT latest.session_id,latest.user_turn_index,latest.status,latest.summary,h.runtime_status,h.active_turn_id,h.epoch,h.view_seq FROM (SELECT session_id,user_turn_index,status,summary,ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY user_turn_index DESC) AS row_number FROM thread_turns WHERE user_id=? AND trigger_kind='user' AND session_id IN ({placeholders})) latest LEFT JOIN thread_view_heads h ON h.session_id=latest.session_id AND h.projection_state='ready' WHERE row_number=1"
@@ -985,7 +991,7 @@ impl SqliteThreadLogStorage for SqliteStorage {
                 .map(|id| rusqlite::types::Value::Text((*id).to_owned())),
         );
         {
-            let mut statement = conn.prepare(&turn_sql)?;
+            let mut statement = conn.prepare_cached(&turn_sql)?;
             let rows = statement.query_map(rusqlite::params_from_iter(values), |row| {
                 Ok((
                     row.get::<_, String>(0)?,
@@ -1028,7 +1034,7 @@ impl SqliteThreadLogStorage for SqliteStorage {
             "SELECT session_id,COALESCE(latest_change_seq,0) FROM thread_logs WHERE user_id=? AND session_id IN ({placeholders})"
         );
         {
-            let mut statement = conn.prepare(&seq_sql)?;
+            let mut statement = conn.prepare_cached(&seq_sql)?;
             let rows = statement.query_map(
                 rusqlite::params_from_iter(
                     std::iter::once(rusqlite::types::Value::Text(user_id.to_owned())).chain(
@@ -1085,11 +1091,11 @@ impl SqliteThreadLogStorage for SqliteStorage {
     ) -> Result<Option<Value>> {
         self.ensure_initialized()?;
         self.reconcile_terminal_turns_impl(user_id, session_id)?;
-        let conn = self.open()?;
+        let conn = self.read_connection()?;
         let limit = limit.clamp(1, 100);
         let fetch = limit + 1;
         let mut turns = {
-            let mut stmt = conn.prepare("SELECT turn_id,user_turn_index,status,summary,payload,updated_time,root_turn_id,trigger_kind FROM thread_turns WHERE user_id=? AND session_id=? AND turn_id=?")?;
+            let mut stmt = conn.prepare_cached("SELECT turn_id,user_turn_index,status,summary,payload,updated_time,root_turn_id,trigger_kind FROM thread_turns WHERE user_id=? AND session_id=? AND turn_id=?")?;
             let rows = stmt
                 .query_map(params![user_id, session_id, turn_id], turn_row)?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -1102,7 +1108,7 @@ impl SqliteThreadLogStorage for SqliteStorage {
         let older = before.filter(|cursor| *cursor >= 0);
         let newer = after.filter(|cursor| *cursor >= 0);
         let mut items = if let Some(cursor) = older {
-            let mut stmt = conn.prepare("SELECT item_id,item_index,kind,status,revision,payload,created_time,updated_time,turn_id,visibility FROM thread_items WHERE user_id=? AND session_id=? AND root_turn_id=? AND item_index<? AND (? OR visibility='user') ORDER BY item_index DESC LIMIT ?")?;
+            let mut stmt = conn.prepare_cached("SELECT item_id,item_index,kind,status,revision,payload,created_time,updated_time,turn_id,visibility FROM thread_items WHERE user_id=? AND session_id=? AND root_turn_id=? AND item_index<? AND (? OR visibility='user') ORDER BY item_index DESC LIMIT ?")?;
             let mut rows = stmt
                 .query_map(
                     params![
@@ -1120,7 +1126,7 @@ impl SqliteThreadLogStorage for SqliteStorage {
             rows
         } else {
             let cursor = newer.unwrap_or(-1);
-            let mut stmt = conn.prepare("SELECT item_id,item_index,kind,status,revision,payload,created_time,updated_time,turn_id,visibility FROM thread_items WHERE user_id=? AND session_id=? AND root_turn_id=? AND item_index>? AND (? OR visibility='user') ORDER BY item_index LIMIT ?")?;
+            let mut stmt = conn.prepare_cached("SELECT item_id,item_index,kind,status,revision,payload,created_time,updated_time,turn_id,visibility FROM thread_items WHERE user_id=? AND session_id=? AND root_turn_id=? AND item_index>? AND (? OR visibility='user') ORDER BY item_index LIMIT ?")?;
             let rows = stmt
                 .query_map(
                     params![
@@ -1182,8 +1188,8 @@ impl SqliteThreadLogStorage for SqliteStorage {
         include_internal: bool,
     ) -> Result<Option<Value>> {
         self.ensure_initialized()?;
-        let conn = self.open()?;
-        let mut stmt = conn.prepare("SELECT item_id,item_index,kind,status,revision,payload,created_time,updated_time,turn_id,visibility FROM thread_items WHERE user_id=? AND session_id=? AND item_id=? AND (? OR visibility='user') LIMIT 1")?;
+        let conn = self.read_connection()?;
+        let mut stmt = conn.prepare_cached("SELECT item_id,item_index,kind,status,revision,payload,created_time,updated_time,turn_id,visibility FROM thread_items WHERE user_id=? AND session_id=? AND item_id=? AND (? OR visibility='user') LIMIT 1")?;
         let mut items = stmt
             .query_map(
                 params![user_id, session_id, item_id, include_internal],
@@ -1270,7 +1276,7 @@ impl SqliteThreadLogStorage for SqliteStorage {
     ) -> Result<Value> {
         self.ensure_initialized()?;
         let window = window.clone().clamped();
-        let conn = self.open()?;
+        let conn = self.read_connection()?;
         let tx = conn.unchecked_transaction()?;
         let owner: Option<String> = tx
             .query_row(
@@ -1306,7 +1312,7 @@ impl SqliteThreadLogStorage for SqliteStorage {
         let max_turns = window.max_turns as i64;
         let mut turns = Vec::new();
         {
-            let mut stmt = tx.prepare("SELECT turn_id,user_turn_index,status,summary,payload,updated_time,root_turn_id,trigger_kind FROM thread_turns WHERE user_id=? AND session_id=? AND user_turn_index < ? ORDER BY user_turn_index DESC, created_time DESC, turn_id DESC LIMIT ?")?;
+            let mut stmt = tx.prepare_cached("SELECT turn_id,user_turn_index,status,summary,payload,updated_time,root_turn_id,trigger_kind FROM thread_turns WHERE user_id=? AND session_id=? AND user_turn_index < ? ORDER BY user_turn_index DESC, created_time DESC, turn_id DESC LIMIT ?")?;
             let rows = stmt.query_map(params![user_id, session_id, before, max_turns], turn_row)?;
             for row in rows {
                 let mut turn = row?;
@@ -1339,7 +1345,7 @@ impl SqliteThreadLogStorage for SqliteStorage {
         let max_items = window.max_items as i64;
         let mut items = Vec::new();
         {
-            let mut stmt = tx.prepare("SELECT item_id,item_index,kind,status,revision,payload,created_time,updated_time,turn_id,visibility,root_turn_id,created_seq FROM thread_items WHERE user_id=? AND session_id=? AND visibility='user' AND turn_id IN (SELECT turn_id FROM thread_turns WHERE user_id=? AND session_id=? AND user_turn_index < ? ORDER BY user_turn_index DESC, created_time DESC, turn_id DESC LIMIT ?) ORDER BY created_seq DESC, item_index DESC LIMIT ?")?;
+            let mut stmt = tx.prepare_cached("SELECT item_id,item_index,kind,status,revision,payload,created_time,updated_time,turn_id,visibility,root_turn_id,created_seq FROM thread_items WHERE user_id=? AND session_id=? AND visibility='user' AND turn_id IN (SELECT turn_id FROM thread_turns WHERE user_id=? AND session_id=? AND user_turn_index < ? ORDER BY user_turn_index DESC, created_time DESC, turn_id DESC LIMIT ?) ORDER BY created_seq DESC, item_index DESC LIMIT ?")?;
             let rows = stmt.query_map(
                 params![user_id, session_id, user_id, session_id, before, max_turns, max_items],
                 change_item_row,
@@ -1359,7 +1365,7 @@ impl SqliteThreadLogStorage for SqliteStorage {
         let max_blocks = window.max_blocks as i64;
         let mut blocks = Vec::new();
         {
-            let mut stmt = tx.prepare("SELECT payload FROM thread_item_blocks WHERE user_id=? AND session_id=? AND item_id IN (SELECT item_id FROM thread_items WHERE user_id=? AND session_id=? AND visibility='user' AND turn_id IN (SELECT turn_id FROM thread_turns WHERE user_id=? AND session_id=? AND user_turn_index < ? ORDER BY user_turn_index DESC, created_time DESC, turn_id DESC LIMIT ?) ORDER BY created_seq DESC, item_index DESC LIMIT ?) ORDER BY item_id, field, block_index LIMIT ?")?;
+            let mut stmt = tx.prepare_cached("SELECT payload FROM thread_item_blocks WHERE user_id=? AND session_id=? AND item_id IN (SELECT item_id FROM thread_items WHERE user_id=? AND session_id=? AND visibility='user' AND turn_id IN (SELECT turn_id FROM thread_turns WHERE user_id=? AND session_id=? AND user_turn_index < ? ORDER BY user_turn_index DESC, created_time DESC, turn_id DESC LIMIT ?) ORDER BY created_seq DESC, item_index DESC LIMIT ?) ORDER BY item_id, field, block_index LIMIT ?")?;
             let rows = stmt.query_map(
                 params![
                     user_id, session_id, user_id, session_id, user_id, session_id, before,
@@ -1395,7 +1401,7 @@ impl SqliteThreadLogStorage for SqliteStorage {
         limit: i64,
     ) -> Result<Vec<Value>> {
         self.ensure_initialized()?;
-        let conn = self.open()?;
+        let conn = self.read_connection()?;
         let after = after.max(0);
         let earliest: Option<i64> = conn.query_row(
             "SELECT MIN(change_seq) FROM thread_log_changes WHERE session_id=?",
@@ -1405,7 +1411,7 @@ impl SqliteThreadLogStorage for SqliteStorage {
         if earliest.is_some_and(|first| first > after.saturating_add(1)) {
             return Ok(vec![json!({"change_type":"snapshot_required"})]);
         }
-        let mut stmt = conn.prepare("SELECT change_seq,change_type,turn_id,item_id,revision,payload,created_time FROM thread_log_changes WHERE session_id=? AND change_seq>? ORDER BY change_seq LIMIT ?")?;
+        let mut stmt = conn.prepare_cached("SELECT change_seq,change_type,turn_id,item_id,revision,payload,created_time FROM thread_log_changes WHERE session_id=? AND change_seq>? ORDER BY change_seq LIMIT ?")?;
         let rows = stmt
             .query_map(params![session_id, after, limit.clamp(1, 500)], change_row)?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -1419,7 +1425,7 @@ impl SqliteThreadLogStorage for SqliteStorage {
         limit: i64,
     ) -> Result<Vec<Value>> {
         self.ensure_initialized()?;
-        let conn = self.open()?;
+        let conn = self.read_connection()?;
         let limit = limit.clamp(1, 500);
         let after = after.max(0);
         let earliest: Option<i64> = conn.query_row(
@@ -1431,7 +1437,7 @@ impl SqliteThreadLogStorage for SqliteStorage {
             return Ok(vec![json!({"change_type":"snapshot_required"})]);
         }
         Ok({
-            let mut stmt = conn.prepare("SELECT change_seq,change_type,turn_id,item_id,revision,payload,created_time FROM thread_log_changes WHERE user_id=? AND session_id=? AND change_seq>? ORDER BY change_seq LIMIT ?")?;
+            let mut stmt = conn.prepare_cached("SELECT change_seq,change_type,turn_id,item_id,revision,payload,created_time FROM thread_log_changes WHERE user_id=? AND session_id=? AND change_seq>? ORDER BY change_seq LIMIT ?")?;
             let rows = stmt
                 .query_map(params![user_id, session_id, after, limit], change_row)?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -1554,6 +1560,59 @@ fn change_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
 mod tests {
     use super::*;
     use std::sync::Arc;
+    #[test]
+    fn terminal_reconciliation_seeks_status_and_latest_item_with_bounded_work() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = SqliteStorage::new(dir.path().join("fixture.db").to_string_lossy().into());
+        let receipt = db
+            .accept_thread_turn_impl(
+                "fixture-user",
+                "fixture-thread",
+                &json!({"content":"fixture input"}),
+            )
+            .unwrap();
+        let root = receipt["turn_id"].as_str().unwrap();
+        let conn = db.open().unwrap();
+        conn.execute_batch("WITH RECURSIVE n(v) AS (VALUES(1) UNION ALL SELECT v+1 FROM n WHERE v<5000)
+            INSERT INTO thread_turns(session_id,turn_id,user_id,root_turn_id,trigger_kind,user_turn_index,status,summary,payload,created_time,updated_time)
+            SELECT 'fixture-thread','fixture-'||v,'fixture-user','fixture-'||v,'user',v+1,'completed','','{}',0,0 FROM n").unwrap();
+        conn.execute(r#"WITH RECURSIVE n(v) AS (VALUES(1) UNION ALL SELECT v+1 FROM n WHERE v<10001)
+            INSERT INTO thread_items(session_id,item_id,turn_id,root_turn_id,user_id,item_index,kind,status,visibility,payload,created_time,updated_time,created_seq)
+            SELECT 'fixture-thread','fixture-item-'||v,?1,?1,'fixture-user',v,
+                CASE WHEN v=10001 THEN 'assistant_message' ELSE 'tool_call' END,'completed','user',
+                CASE WHEN v=10001 THEN '{"content":"fixture answer","event_type":"llm_output"}' ELSE '{}' END,0,0,v+1 FROM n"#, [root]).unwrap();
+        let plan = conn
+            .prepare(&format!(
+                "EXPLAIN QUERY PLAN {RECONCILE_TERMINAL_TURNS_SQL}"
+            ))
+            .unwrap()
+            .query_map(params!["fixture-user", "fixture-thread", 0.0], |r| {
+                r.get::<_, String>(3)
+            })
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap();
+        assert_eq!(
+            plan.iter()
+                .filter(|line| line.contains("idx_thread_turn_status_page")
+                    && line.contains("status=?"))
+                .count(),
+            2
+        );
+        // VM instructions, not wall-clock time: independent of machine speed.
+        conn.progress_handler(5000, Some(|| true));
+        let rows = conn
+            .prepare(RECONCILE_TERMINAL_TURNS_SQL)
+            .unwrap()
+            .query_map(params!["fixture-user", "fixture-thread", 0.0], |r| {
+                r.get::<_, String>(0)
+            })
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .expect("must not scan completed turns or the dense root");
+        assert_eq!(rows, [root]);
+    }
+
     fn input(id: usize) -> Value {
         json!({"role":"user","content":format!("message {id}"),"client_message_id":format!("message-{id}")})
     }

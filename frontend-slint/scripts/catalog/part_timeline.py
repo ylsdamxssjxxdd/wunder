@@ -1,3 +1,4 @@
+# AI生成
 # -*- coding: utf-8 -*-
 # Chat timeline (§7): entry labels, tool group bars and the patch diff card.
 ENTRIES = [
@@ -14,7 +15,6 @@ ENTRIES = [
     ("tl_process_loading", "正在加载…", "Loading…"),
     ("tl_process_retry", "加载失败，重试", "Loading failed. Retry"),
     ("tl_process_earlier", "查看更早的过程", "Earlier steps"),
-    ("tl_process_later", "查看后续过程", "Later steps"),
     # ---- end-of-turn metrics: labels double as the row tooltips ----
     ("tl_stat_round", "用户轮次", "User round"),
     ("tl_user_round", "第 {} 个用户轮次", "User round {}", ["round"]),

@@ -75,8 +75,8 @@ impl CliRuntime {
         let mut step_start = startup_boot;
         cli_startup_point("init_begin", startup_boot);
         let launch_dir = resolve_launch_dir(global)?;
-        let repo_root = resolve_repo_root(&launch_dir);
         let wunder_home = resolve_wunder_home_dir(&launch_dir);
+        let repo_root = resolve_repo_root(&launch_dir, &wunder_home);
         migrate_legacy_cli_temp_root(&wunder_home)?;
         let temp_root = global
             .temp_root
@@ -355,16 +355,7 @@ fn resolve_launch_dir(global: &GlobalArgs) -> Result<PathBuf> {
 /// Canonicalize the workspace folder. Windows canonical paths carry a verbatim
 /// prefix and the repo stores the plain form, so strip it for a stable key.
 fn normalize_workspace_root(path: &Path) -> PathBuf {
-    let raw = path.to_string_lossy();
-    let plain = raw.strip_prefix(r"\\?\").unwrap_or(raw.as_ref());
-    Path::new(plain)
-        .canonicalize()
-        .map(|canonical| {
-            let text = canonical.to_string_lossy();
-            let stripped = text.strip_prefix(r"\\?\").unwrap_or(text.as_ref());
-            PathBuf::from(stripped)
-        })
-        .unwrap_or_else(|_| PathBuf::from(plain))
+    wunder_server::local_bootstrap::normalize_local_workspace_path(path)
 }
 
 /// Find (or create) the workspace row bound to `dir`. Creation is idempotent:
@@ -386,6 +377,29 @@ async fn ensure_workspace_binding(
     })
     .await
     .map_err(|err| anyhow!("workspace lookup cancelled: {err}"))??;
+    // Desktop builds before path identity was centralized could persist the
+    // Windows extended (`\\\\?\\`) spelling while the CLI stores the plain
+    // canonical spelling.  The database index compares strings, so also scan
+    // the bounded workspace list using normalized path identity before
+    // creating a new row.
+    let existing = if existing.is_some() {
+        existing
+    } else {
+        let owner = user_id.to_string();
+        let root = root.clone();
+        let lookup_state = state.clone();
+        tokio::task::spawn_blocking(move || {
+            lookup_state.storage.list_workspaces(&owner).map(|rows| {
+                rows.into_iter().find(|row| {
+                    wunder_server::local_bootstrap::local_workspace_identity_key(Path::new(
+                        &row.root_path,
+                    )) == wunder_server::local_bootstrap::local_workspace_identity_key(&root)
+                })
+            })
+        })
+        .await
+        .map_err(|err| anyhow!("workspace equivalent lookup cancelled: {err}"))??
+    };
     if let Some(record) = existing {
         return Ok(CliWorkspace {
             workspace_id: record.workspace_id,
@@ -416,11 +430,7 @@ async fn ensure_workspace_binding(
         let state = state.clone();
         let record = record.clone();
         move || -> Result<bool> {
-            if state
-                .storage
-                .find_workspace_by_root(&record.user_id, &record.root_path)?
-                .is_some()
-            {
+            if workspace_binding_exists(&state, &record.user_id, &record.root_path)? {
                 return Ok(false);
             }
             let mut record = record;
@@ -429,11 +439,7 @@ async fn ensure_workspace_binding(
                 // The existence check and insert are separate storage calls.
                 // A competing process can publish the same binding between
                 // them; only suppress the error when its durable row exists.
-                if state
-                    .storage
-                    .find_workspace_by_root(&record.user_id, &record.root_path)?
-                    .is_some()
-                {
+                if workspace_binding_exists(&state, &record.user_id, &record.root_path)? {
                     return Ok(false);
                 }
                 return Err(error);
@@ -447,8 +453,17 @@ async fn ensure_workspace_binding(
         // Another process bound this folder first; use its row.
         let owner = user_id.to_string();
         let lookup_root = root_path.clone();
+        let lookup_state = state.clone();
         let existing = tokio::task::spawn_blocking(move || {
-            state.storage.find_workspace_by_root(&owner, &lookup_root)
+            lookup_state.storage.list_workspaces(&owner).map(|rows| {
+                rows.into_iter().find(|row| {
+                    wunder_server::local_bootstrap::local_workspace_identity_key(Path::new(
+                        &row.root_path,
+                    )) == wunder_server::local_bootstrap::local_workspace_identity_key(Path::new(
+                        &lookup_root,
+                    ))
+                })
+            })
         })
         .await
         .map_err(|err| anyhow!("workspace lookup cancelled: {err}"))??;
@@ -465,6 +480,22 @@ async fn ensure_workspace_binding(
         root_path: root,
         name,
     })
+}
+
+/// Compare workspace roots by filesystem identity rather than their serialized
+/// spelling. This handles Windows `\\?\\` prefixes and separator/case changes
+/// left by older desktop releases.
+fn workspace_binding_exists(state: &AppState, user_id: &str, root_path: &str) -> Result<bool> {
+    let expected =
+        wunder_server::local_bootstrap::local_workspace_identity_key(Path::new(root_path));
+    Ok(state
+        .storage
+        .list_workspaces(user_id)?
+        .into_iter()
+        .any(|row| {
+            wunder_server::local_bootstrap::local_workspace_identity_key(Path::new(&row.root_path))
+                == expected
+        }))
 }
 
 /// Threads created before workspaces existed have no binding. Adopt them once
@@ -555,10 +586,11 @@ fn now_ts() -> f64 {
         .unwrap_or(0.0)
 }
 
-/// Asset root for the local form. Bundled assets next to the executable come
-/// first so a shipped CLI works without a source tree; `WUNDER_CLI_PROJECT_ROOT`
-/// stays the explicit override.
-fn resolve_repo_root(launch_dir: &Path) -> PathBuf {
+/// Asset root for the local form. A source checkout or a portable resources
+/// folder wins so development and hand-assembled layouts keep live files; an
+/// installed CLI falls back to WUNDER_HOME, where the embedded assets are
+/// projected. `WUNDER_CLI_PROJECT_ROOT` stays the explicit override.
+fn resolve_repo_root(launch_dir: &Path, wunder_home: &Path) -> PathBuf {
     if let Ok(value) = std::env::var("WUNDER_CLI_PROJECT_ROOT") {
         let cleaned = value.trim();
         if !cleaned.is_empty() {
@@ -585,8 +617,7 @@ fn resolve_repo_root(launch_dir: &Path) -> PathBuf {
         return repo_root;
     }
 
-    // Fallback: keep the previous behavior as last resort.
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    wunder_home.to_path_buf()
 }
 
 fn ensure_runtime_dirs(
@@ -920,17 +951,30 @@ fn warn_on_dangerous_sandbox(config: &Config, sandbox: Option<crate::args::Sandb
     );
 }
 
-/// The shipped local engine template (`config/wunder-example.yaml`). The
-/// deployment `config/wunder.yaml` is never read by local packaged forms.
+/// The shipped local engine template. Source checkouts read the live
+/// `config/wunder-example.yaml`; an installed CLI reads the same content from
+/// the embedded asset that seeded `WUNDER_HOME/config/wunder.yaml`.
 fn load_engine_template(repo_root: &Path) -> Result<Config> {
     let path = repo_root.join("config/wunder-example.yaml");
-    let text = fs::read_to_string(&path)
-        .with_context(|| format!("read engine config template failed: {}", path.display()))?;
+    let (text, source) = match fs::read_to_string(&path) {
+        Ok(text) => (text, path.display().to_string()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            let bytes = wunder_server::local_assets::embedded_asset("config/wunder.yaml")
+                .context("embedded engine config template is missing")?;
+            let text = String::from_utf8(bytes.to_vec())
+                .context("embedded engine config template is not valid UTF-8")?;
+            (text, "embedded asset config/wunder.yaml".to_string())
+        }
+        Err(err) => {
+            return Err(err)
+                .with_context(|| format!("read engine config template failed: {}", path.display()))
+        }
+    };
     // A template saved by a Windows editor can carry a BOM, which serde_yaml
     // rejects; the engine's own config loader normalizes the same way.
     let text = text.strip_prefix('\u{feff}').unwrap_or(text.as_str());
-    serde_yaml::from_str::<Config>(text)
-        .with_context(|| format!("parse engine config template failed: {}", path.display()))
+    wunder_server::config::parse_config_yaml(text)
+        .with_context(|| format!("parse engine config template failed: {source}"))
 }
 
 /// Reset the configuration this CLI owns alone back to the shipped template.
@@ -1537,6 +1581,23 @@ mod workspace_tests {
         assert_eq!(
             config.llm.default, "template-model",
             "the generated config must not keep a value the user removed"
+        );
+    }
+
+    #[test]
+    fn an_installed_cli_reads_the_engine_template_from_the_embedded_asset() {
+        let scratch = TempRoot::new("embedded-template");
+
+        let config = load_engine_template(scratch.path()).expect("embedded engine template");
+
+        assert_eq!(config.i18n.default_language, "zh-CN");
+        assert!(
+            config
+                .skills
+                .paths
+                .iter()
+                .any(|path| path == "./config/skills"),
+            "the embedded template must carry the shipped skill scan path"
         );
     }
 

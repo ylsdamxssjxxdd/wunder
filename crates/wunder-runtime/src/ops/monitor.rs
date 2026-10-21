@@ -1815,7 +1815,40 @@ impl MonitorState {
             .unwrap_or(0)
     }
 
-    /// Return the bounded, presentation-neutral metrics shared by user and admin log views.
+    /// Navigation counters without cloning or decoding diagnostic events.
+    pub fn get_session_stats(
+        &self,
+        session_id: &str,
+    ) -> Option<crate::storage::MonitorSessionStats> {
+        let sessions = self.sessions.lock();
+        if let Some(record) = sessions.get(session_id.trim()) {
+            return Some(crate::storage::MonitorSessionStats {
+                status: record.status.clone(),
+                consumed_tokens: record.consumed_tokens.max(0),
+                tool_calls: record.tool_calls.max(0),
+                model_request_count: record.model_request_count.unwrap_or(0).max(0),
+            });
+        }
+        drop(sessions);
+        if let Ok(Some(stats)) = self.storage.get_monitor_session_stats(session_id.trim()) {
+            return Some(stats);
+        }
+        // Only old rows lack the small projection. Decode one old record when
+        // it is actually opened; current records never deserialize events.
+        self.storage
+            .get_monitor_record(session_id.trim())
+            .ok()
+            .flatten()
+            .and_then(|payload| SessionRecord::from_storage(&payload))
+            .map(|record| crate::storage::MonitorSessionStats {
+                status: record.status,
+                consumed_tokens: record.consumed_tokens.max(0),
+                tool_calls: record.tool_calls.max(0),
+                model_request_count: record.model_request_count.unwrap_or(0).max(0),
+            })
+    }
+
+    /// Return bounded metrics shared by user and admin log views.
     /// Keep trace IDs and raw event payloads out of this projection.
     pub fn get_log_overview(&self, session_id: &str) -> Option<Value> {
         self.run_guarded(

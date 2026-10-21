@@ -1,7 +1,7 @@
 import { I18n } from "i18n.slint";
 import { Theme, CronCard, CronRunCard } from "theme.slint";
-import { Action, InlineInput, PageState, PageStateKind } from "components.slint";
-import { CheckBox, ComboBox, ScrollView } from "std-widgets.slint";
+import { Action, InlineInput, PageState, PageStateKind, ThemeCheck } from "components.slint";
+import { ComboBox, ScrollView } from "std-widgets.slint";
 
 export component CronPage inherits Rectangle {
     in property <bool> loading: false;
@@ -135,7 +135,7 @@ export component CronPage inherits Rectangle {
             }
             HorizontalLayout { height: 52px; spacing: 10px; Text { width: 64px; text: I18n.cr_field_message; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; } InlineInput { horizontal-stretch: 1; height: 52px; text <=> root.editor-message; multiline: true; } }
             HorizontalLayout { height: 30px; spacing: 10px; Text { width: 64px; text: I18n.cr_field_target_agent; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; } ComboBox { horizontal-stretch: 1; model: root.agent-names; current-index <=> root.editor-agent; enabled: !root.editor-saving; } }
-            HorizontalLayout { height: 24px; spacing: 10px; CheckBox { text: I18n.cr_delete_after_run; checked <=> root.editor-delete-after; enabled: !root.editor-saving; } CheckBox { text: I18n.common_enable; checked <=> root.editor-enabled; enabled: !root.editor-saving; } }
+            HorizontalLayout { height: 24px; spacing: 10px; ThemeCheck { text: I18n.cr_delete_after_run; checked: root.editor-delete-after; enabled: !root.editor-saving; toggled => { root.editor-delete-after = !root.editor-delete-after; } } ThemeCheck { text: I18n.common_enable; checked: root.editor-enabled; enabled: !root.editor-saving; toggled => { root.editor-enabled = !root.editor-enabled; } } }
             Rectangle { vertical-stretch: 1; }
             HorizontalLayout { height: 34px; spacing: 8px; Rectangle { horizontal-stretch: 1; } Action { width: 84px; label: I18n.common_save; show-label: true; primary: true; enabled: !root.editor-saving; clicked => { root.save-editor(); } } Action { width: 84px; label: I18n.common_cancel; show-label: true; enabled: !root.editor-saving; clicked => { root.cancel-editor(); } } }
         } } }

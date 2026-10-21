@@ -73,6 +73,12 @@ Name: "{app}\workspace"
 
 [InstallDelete]
 Type: files; Name: "{app}\bin\wunder.exe"
+; Older installers copied repository assets next to the binaries. The runtime
+; now projects embedded assets into WUNDER_HOME, so drop the duplicate tree.
+Type: filesandordirs; Name: "{app}\bin\resources"
+; Older local builds created an empty sessions folder; sessions now live in
+; SQLite. Only remove it when the user has not put anything there.
+Type: dirifempty; Name: "{app}\sessions"
 
 [Run]
 Filename: "{app}\bin\wunder-desktop.exe"; Description: "启动蛹"; Flags: nowait postinstall skipifsilent

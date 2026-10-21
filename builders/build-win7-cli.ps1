@@ -200,37 +200,11 @@ $release = Join-Path $outputDir "wunder-cli-$($versionMatch.Groups['version'].Va
 Copy-Item -LiteralPath $exe -Destination $release -Force
 $peDetails | Set-Content -Encoding UTF8 -LiteralPath (Join-Path $outputDir "imports.txt")
 
-# The CLI resolves its asset root like the desktop form does: a resources
-# folder next to the executable. A bare exe would leave a clean install without
-# the engine template, so it would run with neither tools nor prompts.
+# Assets (config template, prompts, skills and the skill runner) are embedded
+# by wunder-runtime at compile time and projected into WUNDER_HOME on first
+# launch. The release artifact is the executable alone; drop a resources folder
+# left by an older build so staging cannot pick it up again.
 $resourceRoot = Join-Path $outputDir "resources"
 if (Test-Path -LiteralPath $resourceRoot) { Remove-Item -LiteralPath $resourceRoot -Recurse -Force }
-New-Item -ItemType Directory -Force -Path $resourceRoot | Out-Null
-
-$releaseAssetDirs = @("config\prompts", "config\skills", "scripts")
-foreach ($relative in $releaseAssetDirs) {
-  $source = Join-Path $repoRoot $relative
-  if (-not (Test-Path -LiteralPath $source -PathType Container)) { continue }
-  $destination = Join-Path $resourceRoot $relative
-  New-Item -ItemType Directory -Force -Path (Split-Path $destination) | Out-Null
-  Copy-Item -LiteralPath $source -Destination $destination -Recurse -Force
-}
-$releaseAssetFiles = @("config\i18n.messages.json", "scripts\skill_runner.py")
-foreach ($relative in $releaseAssetFiles) {
-  $source = Join-Path $repoRoot $relative
-  if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { continue }
-  $destination = Join-Path $resourceRoot $relative
-  New-Item -ItemType Directory -Force -Path (Split-Path $destination) | Out-Null
-  Copy-Item -LiteralPath $source -Destination $destination -Force
-}
-
-# The local runtime loads config/wunder-example.yaml as its engine template.
-# The deployment config/wunder.yaml is untracked and may carry credentials, so
-# a clean release checkout must seed from the tracked example instead.
-$templateSource = Join-Path $repoRoot "config\wunder-example.yaml"
-Require-Path $templateSource "Engine config template"
-New-Item -ItemType Directory -Force -Path (Join-Path $resourceRoot "config") | Out-Null
-Copy-Item -LiteralPath $templateSource -Destination (Join-Path $resourceRoot "config\wunder-example.yaml") -Force
 
 Write-Host "Win7 CLI release executable: $release"
-Write-Host "Win7 CLI release assets: $resourceRoot"

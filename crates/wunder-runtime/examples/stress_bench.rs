@@ -25,6 +25,7 @@ fn run(user_rounds: i64, model_rounds: i64) {
     let spec = StressThreadSpec {
         session_id: format!("bench-{}-{}", user_rounds, model_rounds),
         title: format!("bench {}x{}", user_rounds, model_rounds),
+        workspace_id: None,
         user_rounds,
         model_rounds_per_turn: model_rounds,
     };

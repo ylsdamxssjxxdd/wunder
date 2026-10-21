@@ -105,98 +105,147 @@ fn strict_object_schema(properties: Value, required: &[&str], constraints: Optio
 }
 
 fn playwright_tool_specs() -> Vec<ToolSpec> {
-    let target = json!({"target_id":{"type":"string","minLength":1}});
-    let target_or_index = json!({
-        "target_id":{"type":"string","minLength":1},
-        "index":{"type":"integer","minimum":0}
-    });
-    let element = json!({
-        "target_id": target["target_id"],
-        "ref":{"type":"string","minLength":1,"description":"Element ref from action=observe_refs."},
-        "selector":{"type":"string","minLength":1,"description":"CSS selector when no ref is available."}
-    });
-    let element_target = json!({"oneOf":[{"required":["ref"]},{"required":["selector"]}]});
-    let drag_target = json!({"oneOf":[
-        {"required":["from_ref","to_ref"]},
-        {"required":["from_selector","to_selector"]}
-    ]});
+    // Keep the action union strict while defining repeated fields once. Each
+    // branch still owns its `properties`, `required`, and
+    // `additionalProperties=false`; shared fields and target constraints never
+    // widen those action-specific closed object shapes.
+    // Definition identifiers are part of every serialized `$ref`; retain
+    // descriptive action fields while using compact local identifiers.
+    let mut defs = serde_json::Map::new();
+    defs.insert("x".to_string(), json!({"type":"string","minLength":1}));
+    defs.insert("i".to_string(), json!({"type":"integer","minimum":0}));
+    defs.insert(
+        "u".to_string(),
+        json!({"type":"string","minLength":1,"description":"Absolute http(s) URL."}),
+    );
+    defs.insert(
+        "m".to_string(),
+        json!({"type":"integer","minimum":1,"maximum":120000}),
+    );
+    defs.insert(
+        "h".to_string(),
+        json!({"type":"integer","minimum":1,"maximum":40000}),
+    );
+    defs.insert(
+        "n".to_string(),
+        json!({"type":"integer","minimum":0,"maximum":120000}),
+    );
+
+    defs.insert(
+        "p".to_string(),
+        json!({"type":"string","minLength":1,"description":"Workspace-relative output path."}),
+    );
+    defs.insert("f".to_string(), json!({"type":"boolean"}));
+    defs.insert("r".to_string(), json!({"type":"string","minLength":1,"description":"Element ref from action=observe_refs."}));
+    defs.insert("s".to_string(), json!({"type":"string","minLength":1,"description":"CSS selector when no ref is available."}));
+    defs.insert(
+        "v".to_string(),
+        json!({"anyOf":[
+            {"type":"string","minLength":1},
+            {"type":"array","items":{"type":"string","minLength":1},"minItems":1,"maxItems":64}
+        ]}),
+    );
+
+    defs.insert(
+        "l".to_string(),
+        json!({"type":"string","enum":["load","domcontentloaded","networkidle"]}),
+    );
+    defs.insert(
+        "q".to_string(),
+        json!({"type":"string","enum":["visible","hidden","attached","detached"]}),
+    );
+
+    defs.insert(
+        "e".to_string(),
+        json!({"type":"object","oneOf":[{"required":["ref"]},{"required":["selector"]}]}),
+    );
+    defs.insert(
+        "d".to_string(),
+        json!({"type":"object","oneOf":[
+            {"required":["from_ref","to_ref"]}, {"required":["from_selector","to_selector"]}
+        ]}),
+    );
+
+    let reference = |name: &str| json!({"$ref": format!("#/$defs/{name}")});
+    let target = || reference("x");
+    let target_or_index = || json!({"target_id":target(),"index":reference("i")});
+    let element = || {
+        json!({
+            "target_id":target(), "ref":reference("r"), "selector":reference("s")
+        })
+    };
+    let element_target = || json!({"allOf":[reference("e")]});
+    let drag_target = || json!({"allOf":[reference("d")]});
     let tab_target = json!({"oneOf":[{"required":["target_id"]},{"required":["index"]}]});
 
-    let mut click = element.clone();
+    let mut click = element();
     click["action"] = json!({"const":"click"});
-    click["double_click"] = json!({"type":"boolean"});
-    let mut typing = element.clone();
+    click["double_click"] = reference("f");
+    let mut typing = element();
     typing["action"] = json!({"const":"type"});
-    typing["text"] = json!({"type":"string","minLength":1});
-    typing["submit"] = json!({"type":"boolean"});
-    let mut hover = element.clone();
+    typing["text"] = reference("x");
+    typing["submit"] = reference("f");
+    let mut hover = element();
     hover["action"] = json!({"const":"hover"});
-    let mut select = element.clone();
+    let mut select = element();
     select["action"] = json!({"const":"select"});
-    select["value"] = json!({"anyOf":[
-        {"type":"string","minLength":1},
-        {"type":"array","items":{"type":"string","minLength":1},"minItems":1,"maxItems":64}
-    ]});
+    select["value"] = reference("v");
 
+    let tabs_select = target_or_index();
+    let tabs_close = target_or_index();
+    defs.insert("b".to_string(), batch_step_schema());
     vec![ToolSpec {
         name: TOOL_BROWSER.to_string(),
         title: None,
         description: "Browser automation. Select one action; observe refs before element actions. Text cursors require an unchanged page; batch has 1-10 dependent steps.".to_string(),
-        input_schema: json!({"oneOf":[
-            strict_object_schema(json!({"action":{"const":"navigate"},"url":{"type":"string","minLength":1,"description":"Absolute http(s) URL."},"target_id":target["target_id"],"timeout_ms":{"type":"integer","minimum":1,"maximum":120000}}), &["action","url"], None),
-            strict_object_schema(json!({"action":{"const":"back"},"target_id":target["target_id"]}), &["action"], None),
+        input_schema: json!({"type":"object","$defs":defs,"oneOf":[
+            strict_object_schema(json!({"action":{"const":"navigate"},"url":reference("u"),"target_id":target(),"timeout_ms":reference("m")}), &["action","url"], None),
+            strict_object_schema(json!({"action":{"const":"back"},"target_id":target()}), &["action"], None),
             strict_object_schema(json!({"action":{"const":"tabs_list"}}), &["action"], None),
-            strict_object_schema(json!({"action":{"const":"tabs_new"},"url":{"type":"string","minLength":1},"target_id":target["target_id"]}), &["action"], None),
-            strict_object_schema(json!({"action":{"const":"tabs_select"},"target_id":target_or_index["target_id"],"index":target_or_index["index"]}), &["action"], Some(tab_target.clone())),
-            strict_object_schema(json!({"action":{"const":"tabs_close"},"target_id":target_or_index["target_id"],"index":target_or_index["index"]}), &["action"], Some(tab_target)),
-            strict_object_schema(json!({"action":{"const":"observe_refs"},"target_id":target["target_id"],"max_chars":{"type":"integer","minimum":1,"maximum":40000},"snapshot_timeout_ms":{"type":"integer","minimum":0,"maximum":120000}}), &["action"], None),
-            strict_object_schema(json!({"action":{"const":"observe_text"},"target_id":target["target_id"],"max_chars":{"type":"integer","minimum":1,"maximum":40000},"cursor":{"type":"string","minLength":1}}), &["action"], None),
-            strict_object_schema(json!({"action":{"const":"screenshot"},"target_id":target["target_id"],"path":{"type":"string","minLength":1,"description":"Workspace-relative output path."},"full_page":{"type":"boolean"}}), &["action"], None),
-            strict_object_schema(click, &["action"], Some(element_target.clone())),
-            strict_object_schema(typing, &["action","text"], Some(element_target.clone())),
-            strict_object_schema(hover, &["action"], Some(element_target.clone())),
-            strict_object_schema(select, &["action","value"], Some(element_target)),
-            strict_object_schema(json!({"action":{"const":"drag"},"target_id":target["target_id"],"from_ref":{"type":"string","minLength":1},"from_selector":{"type":"string","minLength":1},"to_ref":{"type":"string","minLength":1},"to_selector":{"type":"string","minLength":1}}), &["action"], Some(drag_target)),
-            strict_object_schema(json!({"action":{"const":"press"},"target_id":target["target_id"],"key":{"type":"string","minLength":1}}), &["action","key"], None),
-            strict_object_schema(json!({"action":{"const":"wait"},"target_id":target["target_id"],"wait_ms":{"type":"integer","minimum":0,"maximum":120000},"load_state":{"type":"string","enum":["load","domcontentloaded","networkidle"]},"text":{"type":"string","minLength":1},"selector":{"type":"string","minLength":1},"state":{"type":"string","enum":["visible","hidden","attached","detached"]},"url":{"type":"string","minLength":1},"timeout_ms":{"type":"integer","minimum":1,"maximum":120000}}), &["action"], None),
-            strict_object_schema(json!({"action":{"const":"batch"},"target_id":target["target_id"],"steps":{"type":"array","items":batch_step_schema(),"minItems":1,"maxItems":10}}), &["action","steps"], None)
+            strict_object_schema(json!({"action":{"const":"tabs_new"},"url":reference("u"),"target_id":target()}), &["action"], None),
+            strict_object_schema(json!({"action":{"const":"tabs_select"},"target_id":tabs_select["target_id"],"index":tabs_select["index"]}), &["action"], Some(tab_target.clone())),
+            strict_object_schema(json!({"action":{"const":"tabs_close"},"target_id":tabs_close["target_id"],"index":tabs_close["index"]}), &["action"], Some(tab_target)),
+            strict_object_schema(json!({"action":{"const":"observe_refs"},"target_id":target(),"max_chars":reference("h"),"snapshot_timeout_ms":reference("n")}), &["action"], None),
+            strict_object_schema(json!({"action":{"const":"observe_text"},"target_id":target(),"max_chars":reference("h"),"cursor":reference("x")}), &["action"], None),
+            strict_object_schema(json!({"action":{"const":"screenshot"},"target_id":target(),"path":reference("p"),"full_page":reference("f")}), &["action"], None),
+            strict_object_schema(click, &["action"], Some(element_target())),
+            strict_object_schema(typing, &["action","text"], Some(element_target())),
+            strict_object_schema(hover, &["action"], Some(element_target())),
+            strict_object_schema(select, &["action","value"], Some(element_target())),
+            strict_object_schema(json!({"action":{"const":"drag"},"target_id":target(),"from_ref":reference("r"),"from_selector":reference("s"),"to_ref":reference("r"),"to_selector":reference("s")}), &["action"], Some(drag_target())),
+            strict_object_schema(json!({"action":{"const":"press"},"target_id":target(),"key":reference("x")}), &["action","key"], None),
+            strict_object_schema(json!({"action":{"const":"wait"},"target_id":target(),"wait_ms":reference("n"),"load_state":reference("l"),"text":reference("x"),"selector":reference("s"),"state":reference("q"),"url":reference("u"),"timeout_ms":reference("m")}), &["action"], None),
+            strict_object_schema(json!({"action":{"const":"batch"},"target_id":target(),"steps":{"type":"array","items":reference("b"),"minItems":1,"maxItems":10}}), &["action","steps"], None)
         ]}),
     }]
 }
 
 fn batch_step_schema() -> Value {
-    let element_target = json!({"oneOf":[{"required":["ref"]},{"required":["selector"]}]});
-    let drag_target = json!({"oneOf":[
-        {"required":["from_ref","to_ref"]},
-        {"required":["from_selector","to_selector"]}
-    ]});
-    let element = |kind: &str| {
-        json!({
-            "kind":{"const":kind},
-            "ref":{"type":"string","minLength":1},
-            "selector":{"type":"string","minLength":1}
-        })
+    let reference = |name: &str| json!({"$ref": format!("#/$defs/{name}")});
+    let strict = |properties: Value, required: &[&str], constraints: Option<Value>| {
+        strict_object_schema(properties, required, constraints)
     };
+    let element_target = || json!({"allOf":[reference("e")]});
+    let drag_target = || json!({"allOf":[reference("d")]});
+    let element =
+        |kind: &str| json!({"kind":{"const":kind},"ref":reference("r"),"selector":reference("s")});
     let mut click = element("click");
-    click["double_click"] = json!({"type":"boolean"});
+    click["double_click"] = reference("f");
     let mut typing = element("type");
-    typing["text"] = json!({"type":"string","minLength":1});
-    typing["submit"] = json!({"type":"boolean"});
+    typing["text"] = reference("x");
+    typing["submit"] = reference("f");
     let hover = element("hover");
     let mut select = element("select");
-    select["value"] = json!({"anyOf":[
-        {"type":"string","minLength":1},
-        {"type":"array","items":{"type":"string","minLength":1},"minItems":1,"maxItems":64}
-    ]});
-    json!({"oneOf":[
-        strict_object_schema(json!({"kind":{"const":"navigate"},"url":{"type":"string","minLength":1},"timeout_ms":{"type":"integer","minimum":1,"maximum":120000}}), &["kind","url"], None),
-        strict_object_schema(click, &["kind"], Some(element_target.clone())),
-        strict_object_schema(typing, &["kind","text"], Some(element_target.clone())),
-        strict_object_schema(hover, &["kind"], Some(element_target.clone())),
-        strict_object_schema(select, &["kind","value"], Some(element_target)),
-        strict_object_schema(json!({"kind":{"const":"drag"},"from_ref":{"type":"string","minLength":1},"from_selector":{"type":"string","minLength":1},"to_ref":{"type":"string","minLength":1},"to_selector":{"type":"string","minLength":1}}), &["kind"], Some(drag_target)),
-        strict_object_schema(json!({"kind":{"const":"press"},"key":{"type":"string","minLength":1}}), &["kind","key"], None),
-        strict_object_schema(json!({"kind":{"const":"wait"},"wait_ms":{"type":"integer","minimum":0,"maximum":120000},"load_state":{"type":"string","enum":["load","domcontentloaded","networkidle"]},"text":{"type":"string","minLength":1},"selector":{"type":"string","minLength":1},"state":{"type":"string","enum":["visible","hidden","attached","detached"]},"url":{"type":"string","minLength":1},"timeout_ms":{"type":"integer","minimum":1,"maximum":120000}}), &["kind"], None)
+    select["value"] = reference("v");
+    json!({"type":"object","oneOf":[
+        strict(json!({"kind":{"const":"navigate"},"url":reference("u"),"timeout_ms":reference("m")}), &["kind","url"], None),
+        strict(click, &["kind"], Some(element_target())),
+        strict(typing, &["kind","text"], Some(element_target())),
+        strict(hover, &["kind"], Some(element_target())),
+        strict(select, &["kind","value"], Some(element_target())),
+        strict(json!({"kind":{"const":"drag"},"from_ref":reference("r"),"from_selector":reference("s"),"to_ref":reference("r"),"to_selector":reference("s")}), &["kind"], Some(drag_target())),
+        strict(json!({"kind":{"const":"press"},"key":reference("x")}), &["kind","key"], None),
+        strict(json!({"kind":{"const":"wait"},"wait_ms":reference("n"),"load_state":reference("l"),"text":reference("x"),"selector":reference("s"),"state":reference("q"),"url":reference("u"),"timeout_ms":reference("m")}), &["kind"], None)
     ]})
 }
 
@@ -922,7 +971,7 @@ mod tests {
         validate_browser_action, PlaywrightProvider, TOOL_BROWSER, TOOL_NAMES,
     };
     use crate::services::browser::provider::BrowserProvider;
-    use serde_json::json;
+    use serde_json::{json, Value};
 
     #[test]
     fn provider_exposes_only_the_single_browser_tool() {
@@ -973,12 +1022,76 @@ mod tests {
             .unwrap();
         assert_eq!(batch["properties"]["steps"]["minItems"], 1);
         assert_eq!(batch["properties"]["steps"]["maxItems"], 10);
-        let steps = batch["properties"]["steps"]["items"]["oneOf"]
+        assert_eq!(
+            batch["properties"]["steps"]["items"]["$ref"],
+            json!("#/$defs/b")
+        );
+        let steps = schema["$defs"]["b"]["oneOf"]
             .as_array()
             .expect("strict batch variants");
         assert!(steps
             .iter()
             .all(|step| step["additionalProperties"] == false));
+        assert_eq!(schema["$defs"]["x"]["type"], json!("string"));
+    }
+
+    #[test]
+    fn browser_schema_refs_reduce_serialized_size_and_survive_normalization() {
+        let compact = PlaywrightProvider::new()
+            .tool_specs()
+            .pop()
+            .expect("browser spec")
+            .input_schema;
+        let expanded = expand_local_refs_for_test(&compact);
+        let compact_bytes = serde_json::to_vec(&compact)
+            .expect("serialize compact browser schema")
+            .len();
+        let expanded_bytes = serde_json::to_vec(&expanded)
+            .expect("serialize expanded browser schema")
+            .len();
+        eprintln!("browser schema compact={compact_bytes}, expanded={expanded_bytes}");
+
+        // This compares the exact same strict action schema with every local
+        // reference inlined, rather than a hand-maintained old fixture.
+        assert!(
+            compact_bytes * 100 <= expanded_bytes * 80,
+            "compact={compact_bytes}, expanded={expanded_bytes}"
+        );
+        let normalized = crate::core::json_schema::normalize_tool_input_schema(Some(&compact));
+        assert_eq!(
+            normalized["oneOf"][0]["properties"]["target_id"]["$ref"],
+            json!("#/$defs/x")
+        );
+        assert_eq!(normalized["$defs"]["b"]["oneOf"][0]["type"], "object");
+        assert!(normalized["$defs"]["v"].get("type").is_none());
+        assert_eq!(
+            normalized["$defs"]["v"]["anyOf"][1],
+            json!({"type":"array","items":{"type":"string","minLength":1},"minItems":1,"maxItems":64})
+        );
+    }
+
+    fn expand_local_refs_for_test(schema: &Value) -> Value {
+        let defs = schema["$defs"].as_object().expect("local definitions");
+        fn expand(value: &Value, defs: &serde_json::Map<String, Value>) -> Value {
+            if let Some(reference) = value.get("$ref").and_then(Value::as_str) {
+                if let Some(name) = reference.strip_prefix("#/$defs/") {
+                    return expand(defs.get(name).expect("known local definition"), defs);
+                }
+            }
+            match value {
+                Value::Array(items) => {
+                    Value::Array(items.iter().map(|item| expand(item, defs)).collect())
+                }
+                Value::Object(map) => Value::Object(
+                    map.iter()
+                        .filter(|(key, _)| key.as_str() != "$defs")
+                        .map(|(key, item)| (key.clone(), expand(item, defs)))
+                        .collect(),
+                ),
+                _ => value.clone(),
+            }
+        }
+        expand(schema, defs)
     }
 
     #[test]

@@ -37,7 +37,7 @@ jobs:
         shell: bash
         run: |
           win7_hash="${{ hashFiles('packaging/windows/scripts/build_win7_desktop_supplement.ps1', 'packaging/windows/scripts/win7-supplement-manifest.json', 'packaging/python/requirements-win7-common.txt', 'config/matplotlibrc', 'fonts/*') }}"
-          linux_hash="${{ hashFiles('packaging/linux/scripts/build_linux_supplement.sh', 'packaging/linux/scripts/linux-supplement-manifest.json', 'packaging/python/requirements-linux-common.txt', 'packaging/docker/Dockerfile.ubuntu18-supplement', 'config/matplotlibrc', 'fonts/*') }}"
+          linux_hash="${{ hashFiles('packaging/linux/scripts/build_linux_supplement.sh', 'packaging/linux/scripts/linux-supplement-manifest.json', 'packaging/linux/scripts/r2-static-archives.json', 'packaging/python/requirements-linux-common.txt', 'packaging/docker/Dockerfile.ubuntu18-supplement', 'config/matplotlibrc', 'fonts/*') }}"
           # 浏览器 pin（版本+SHA256 字面量）参与 win7 缓存键：来源变更即触发重建
           browser_pin='chromium-109.0.5414.120-r1070088-hibbiki-mini_installer.sync.exe-sha256-C1AABD6EEF38D759BBD92CA9516353D88C463A1E8389A875B4D12D53DB467F98'
           echo "win7_key=wunder-supplement-win7-ia32-v1-${win7_hash}-${browser_pin}" >> "$GITHUB_OUTPUT"
@@ -164,6 +164,19 @@ jobs:
             cached=true
           fi
           echo "cached=$cached" >> "$GITHUB_OUTPUT"
+      - name: Download r2 static binary (amd64 only)
+        if: matrix.arch == 'amd64' && (steps.pack.outputs.cached != 'true' || github.event.inputs.force_rebuild == 'true')
+        shell: bash
+        run: |
+          set -euo pipefail
+          pin=packaging/linux/scripts/r2-static-archives.json
+          file="$(jq -r '.amd64.fileName' "$pin")"
+          sha="$(jq -r '.amd64.sha256' "$pin")"
+          mkdir -p r2-static
+          curl -fsSL --retry 3 -o "r2-static/$file" \
+            "${{ github.server_url }}/${{ github.repository }}/releases/download/${{ env.RELEASE_TAG }}/$file"
+          echo "$sha  r2-static/$file" | sha256sum -c -
+          echo "WUNDER_R2_ARCHIVE=/app/r2-static/$file" >> "$GITHUB_ENV"
       - name: Build Ubuntu 18.04 supplement
         if: steps.pack.outputs.cached != 'true' || github.event.inputs.force_rebuild == 'true'
         shell: bash
@@ -181,6 +194,7 @@ jobs:
             -e WUNDER_OUTPUT_DIR=/app/supplement-dist \
             -e WUNDER_SUPPLEMENT_BUILD_ROOT=/app/supplement-build \
             -e WUNDER_SUPPLEMENT_PYPI_INDEX=https://pypi.org/simple \
+            -e WUNDER_SUPPLEMENT_R2_ARCHIVE="${WUNDER_R2_ARCHIVE:-}" \
             "wunder-supplement-ubuntu1804-${{ matrix.arch }}" \
             bash packaging/linux/scripts/build_linux_supplement.sh
       - name: Verify pack exists

@@ -41,8 +41,7 @@ mod disabled {
         let description =
             crate::i18n::t_in_language("tool.spec.desktop_control.description", language);
         let bbox = json!({
-            "type": "array",
-            "items": {"type": "integer", "minimum": 0, "maximum": 10000},
+            "type": "array", "items": {"type": "integer", "minimum": 0, "maximum": 10000},
             "anyOf": [
                 {"type": "array", "items": {"type": "integer", "minimum": 0, "maximum": 10000}, "minItems": 2, "maxItems": 2},
                 {"type": "array", "items": {"type": "integer", "minimum": 0, "maximum": 10000}, "minItems": 4, "maxItems": 4}
@@ -54,47 +53,34 @@ mod disabled {
             properties.insert("action".to_string(), action);
             json!({"type":"object","properties":properties,"required":required,"additionalProperties":false})
         };
+        let reference = |name: &str| json!({"$ref": format!("#/$defs/{name}")});
         let base = || {
             let mut properties = serde_json::Map::new();
-            properties.insert("bbox".to_string(), bbox.clone());
+            properties.insert("bbox".to_string(), reference("bbox"));
             properties
         };
         let mut scroll = base();
-        scroll.insert(
-            "scroll_steps".to_string(),
-            json!({"type":"integer","minimum":1,"maximum":100}),
-        );
+        scroll.insert("scroll_steps".to_string(), reference("scroll_steps"));
         let mut press = base();
-        press.insert(
-            "key".to_string(),
-            json!({"type":"string","minLength":1,"maxLength":128}),
-        );
+        press.insert("key".to_string(), reference("key"));
         let mut typing = base();
-        typing.insert(
-            "text".to_string(),
-            json!({"type":"string","minLength":1,"maxLength":16384}),
-        );
+        typing.insert("text".to_string(), reference("text"));
         let mut wait = base();
-        wait.insert(
-            "delay_ms".to_string(),
-            json!({"type":"integer","minimum":0,"maximum":30000}),
-        );
+        wait.insert("delay_ms".to_string(), reference("delay_ms"));
         let mut move_mouse = base();
-        move_mouse.insert(
-            "duration_ms".to_string(),
-            json!({"type":"integer","minimum":0,"maximum":30000}),
-        );
+        move_mouse.insert("duration_ms".to_string(), reference("duration_ms"));
         let mut drag = base();
-        drag.insert("to_bbox".to_string(), bbox.clone());
-        drag.insert(
-            "duration_ms".to_string(),
-            json!({"type":"integer","minimum":0,"maximum":30000}),
-        );
+        drag.insert("to_bbox".to_string(), reference("bbox"));
+        drag.insert("duration_ms".to_string(), reference("duration_ms"));
         ToolSpec {
             name: TOOL_DESKTOP_CONTROL.to_string(),
             title: None,
             description,
-            input_schema: json!({"oneOf":[
+            input_schema: json!({"type":"object","$defs":{
+                "bbox": bbox, "scroll_steps":{"type":"integer","minimum":1,"maximum":100},
+                "key":{"type":"string","minLength":1,"maxLength":128}, "text":{"type":"string","minLength":1,"maxLength":16384},
+                "delay_ms":{"type":"integer","minimum":0,"maximum":30000}, "duration_ms":{"type":"integer","minimum":0,"maximum":30000}
+            },"oneOf":[
                 branch(json!({"enum":["left_click","left_double_click","right_click","middle_click","left_hold","right_hold","middle_hold","left_release","right_release","middle_release"]}), base(), &["action","bbox"]),
                 branch(json!({"enum":["scroll_down","scroll_up"]}), scroll, &["action","bbox"]),
                 branch(json!({"const":"press_key"}), press, &["action","bbox","key"]),

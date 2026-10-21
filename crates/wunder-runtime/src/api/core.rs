@@ -15,7 +15,7 @@ use crate::state::AppState;
 use crate::tools::{
     build_mcp_tool_alias_entries_for_names, builtin_tool_specs,
     collect_enabled_tool_names_for_catalog, mcp_pack_runtime_name, mcp_pack_schema,
-    mcp_pack_spec_for_server, resolve_builtin_tool_schema,
+    mcp_pack_spec_for_server, resolve_builtin_tool_schema, validate_external_tool_spec,
 };
 use crate::user_store::UserStore;
 use crate::user_tools::{UserMcpServer, UserToolStore, UserToolsPayload};
@@ -339,12 +339,15 @@ async fn wunder_tools(
             } else {
                 tool.description.clone()
             };
-            mcp_tools.push(ToolSpec {
+            let spec = ToolSpec {
                 name: format!("{}@{}", server.name, tool.name),
                 title: tool.title.clone(),
                 description,
                 input_schema,
-            });
+            };
+            if validate_external_tool_spec(&spec).is_ok() {
+                mcp_tools.push(spec);
+            }
         }
     }
     apply_mcp_tool_display_titles(&mut mcp_tools);
@@ -579,6 +582,15 @@ fn collect_user_mcp_tools<F>(
             }
             let description = resolve_user_mcp_description(server, tool);
             let schema = normalize_mcp_input_schema(tool);
+            let candidate = ToolSpec {
+                name: format!("{server_name}@{tool_name}"),
+                title: None,
+                description: description.clone(),
+                input_schema: schema.clone(),
+            };
+            if validate_external_tool_spec(&candidate).is_err() {
+                continue;
+            }
             append(
                 owner_id,
                 &format!("{server_name}@{tool_name}"),

@@ -161,7 +161,7 @@ impl SqliteThreadOpenLeaseStorage for SqliteStorage {
     ) -> Result<Option<ThreadOpenLeaseRecord>> {
         self.ensure_initialized()?;
         let now = Self::now_ts();
-        let conn = self.open()?;
+        let conn = self.read_connection()?;
         conn.query_row(
             "SELECT session_id, user_id, owner_instance_id, client_kind, fencing_token, updated_time, expires_at FROM thread_open_leases WHERE session_id = ? AND user_id = ? AND expires_at > ?",
             params![session_id.trim(), user_id.trim(), now],

@@ -163,7 +163,7 @@ jobs:
             --pattern 'wunder-supplement-win7-ia32-common.zip' --dir $dir --clobber
           if ($LASTEXITCODE -ne 0) { throw 'failed to download the supplement release asset' }
           Get-ChildItem -LiteralPath $dir | Format-Table Name, Length
-      - name: Verify Windows supplement matches the Playwright pin
+      - name: Verify Windows supplement matches the Playwright and ripgrep pins
         shell: pwsh
         run: |
           $supplement = Get-ChildItem -LiteralPath (Join-Path $env:GITHUB_WORKSPACE 'supplement') -Filter 'wunder-supplement-win7-ia32-common.zip' | Select-Object -First 1
@@ -188,10 +188,14 @@ jobs:
             if ($meta.python.playwrightDriverNode.machine -ne 'i386') {
               throw "supplement Playwright driver is not i386: $($meta.python.playwrightDriverNode.machine)"
             }
+            $rgPin = (Get-Content -LiteralPath 'packaging/windows/scripts/win7-supplement-manifest.json' -Raw -Encoding UTF8 | ConvertFrom-Json).rg.version
+            if ($meta.rg.version -ne $rgPin) {
+              throw "supplement ripgrep is $($meta.rg.version), expected $rgPin; rebuild the Desktop Supplements release"
+            }
           } finally {
             $zip.Dispose()
           }
-          Write-Host "supplement Playwright $pin with i386 driver verified"
+          Write-Host "supplement Playwright $pin with i386 driver and ripgrep $rgPin verified"
       - name: Build Windows installer
         shell: pwsh
         run: |
@@ -206,7 +210,6 @@ jobs:
             -Arch win7-x86 `
             -Desktop $desktop.FullName `
             -Cli $cli.FullName `
-            -CliResources (Join-Path $out 'resources') `
             -Supplement $supplement.FullName `
             -OutputDir $out `
             -Compression lzma2/fast

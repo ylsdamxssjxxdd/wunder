@@ -445,6 +445,7 @@ pub(crate) fn trajectory(
         tool_name: tool.or(runtime_label).map(|v| preview(v, 96)),
         model_round: item.get("model_round").and_then(Value::as_i64).unwrap_or(0),
         stats: finite_stats(item),
+        request_token_breakdown: request_token_breakdown(item),
         started_at,
         completed_at,
         detail: Some(BodyRef {
@@ -460,6 +461,37 @@ pub(crate) fn trajectory(
         .then(|| crate::services::thread_log::diagnostics::project(item, status))
         .flatten(),
     }
+}
+
+/// Keep the trajectory page compact and safe: this local estimate is numeric
+/// only, and never carries any part of the request body or provider settings.
+fn request_token_breakdown(item: &Value) -> Option<Value> {
+    let source = item.get("request_token_breakdown")?.as_object()?;
+    let keys = [
+        "native_tool_tokens",
+        "system_prompt_tokens",
+        "history_tokens",
+        "latest_user_tokens",
+        "image_tokens",
+        "reasoning_tokens",
+        "tool_call_tokens",
+        "tool_call_id_tokens",
+        "message_envelope_tokens",
+        "fixed_protocol_tokens",
+        "message_tokens",
+        "estimated_input_tokens",
+        "tool_count",
+        "message_count",
+    ];
+    let mut out = serde_json::Map::new();
+    for key in keys {
+        let value = source.get(key)?;
+        if !(value.is_i64() || value.is_u64()) {
+            return None;
+        }
+        out.insert(key.into(), value.clone());
+    }
+    Some(Value::Object(out))
 }
 
 pub(crate) fn subagent_label(item: &Value) -> Option<&str> {
@@ -820,6 +852,27 @@ mod tests {
         assert_eq!(stats["usage"]["inputTokens"], "1200");
         assert_eq!(stats["usage"]["outputTokens"], 340);
         assert_eq!(stats["usage"]["reasoningTokens"], "12");
+    }
+
+    #[test]
+    fn trajectory_projects_only_numeric_request_token_breakdown() {
+        let row = project(
+            "assistant_message",
+            &json!({
+                "content":"response", "request_token_breakdown": {
+                    "native_tool_tokens":12,"system_prompt_tokens":8,"history_tokens":4,
+                    "latest_user_tokens":2,"image_tokens":0,"reasoning_tokens":0,
+                    "tool_call_tokens":0,"tool_call_id_tokens":0,"message_envelope_tokens":8,
+                    "fixed_protocol_tokens":16,"message_tokens":22,"estimated_input_tokens":58,
+                    "tool_count":1,"message_count":2,"unexpected":"omitted"
+                }
+            }),
+        );
+        let breakdown = row
+            .request_token_breakdown
+            .expect("numeric request estimate");
+        assert_eq!(breakdown["estimated_input_tokens"], 58);
+        assert!(breakdown.get("unexpected").is_none());
     }
 
     #[test]

@@ -394,6 +394,11 @@ impl EventEmitter {
             id: Some(event_id.to_string()),
             timestamp: Some(timestamp),
         };
+        if matches!(event_type, "context_usage" | "round_usage") {
+            if let Some(committer) = self.committer.as_ref() {
+                committer.publish_context_usage(&self.session_id, event.data.clone());
+            }
+        }
         self.enqueue_event(&event, false).await;
         event
     }

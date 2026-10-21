@@ -2,7 +2,6 @@ param(
   [string]$Version = "",
   [string]$DesktopExe = "",
   [string]$CliExe = "",
-  [string]$CliResources = "",
   [string]$Supplement = "",
   [string]$OutputDir = "",
   [switch]$CoreOnly,
@@ -312,17 +311,6 @@ Copy-Item -LiteralPath $cliPath -Destination (Join-Path $coreStage "wunder-cli.e
 $markerPath = Join-Path $coreStage ".wunder-home"
 [IO.File]::WriteAllText($markerPath, "portable`r`n", (New-Object Text.UTF8Encoding $false))
 
-$cliResourcesPath = if ($CliResources) { Resolve-RepoPath $CliResources } else {
-  Join-Path (Split-Path -Parent $cliPath) "resources"
-}
-$coreResources = Join-Path $coreStage "resources"
-if (Test-Path -LiteralPath $cliResourcesPath -PathType Container) {
-  if (Test-Path -LiteralPath $coreResources) { Remove-Item -LiteralPath $coreResources -Recurse -Force }
-  Copy-Item -LiteralPath $cliResourcesPath -Destination $coreResources -Recurse -Force
-} else {
-  Write-Host "[wunder-pack] CLI resources folder not found; relying on embedded assets: $cliResourcesPath"
-}
-
 $available = @()
 $componentBytes = @{}
 $componentFiles = @{}
@@ -374,9 +362,6 @@ $lines.Add("[Files]")
 $lines.Add(('Source: "{0}"; DestDir: "{{app}}\bin"; DestName: "wunder-desktop.exe"; Flags: ignoreversion' -f (Join-Path $coreStage "wunder-desktop.exe")))
 $lines.Add(('Source: "{0}"; DestDir: "{{app}}\bin"; DestName: "wunder-cli.exe"; Flags: ignoreversion' -f (Join-Path $coreStage "wunder-cli.exe")))
 $lines.Add(('Source: "{0}"; DestDir: "{{app}}"; DestName: ".wunder-home"; Flags: ignoreversion' -f $markerPath))
-if (Test-Path -LiteralPath $coreResources -PathType Container) {
-  $lines.Add(('Source: "{0}\*"; DestDir: "{{app}}\bin\resources"; Flags: ignoreversion recursesubdirs createallsubdirs' -f $coreResources))
-}
 if (-not $CoreOnly) {
   foreach ($name in $available) {
     $source = Join-Path $supplementRoot "opt\$name\*"

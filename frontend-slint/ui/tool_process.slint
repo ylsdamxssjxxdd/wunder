@@ -178,7 +178,9 @@ export component ToolProcess inherits Rectangle {
     callback copy-text(string);
     callback open-resource(string);
     // Grow naturally for a few entries; long processes keep their own scroll.
-    height: min(root.viewport-limit, root.viewport-height + page-top.height + page-bottom.height);
+    // There is no "later" pager button (the tail auto-follows); only the
+    // "earlier" strip above the list can add height.
+    height: min(root.viewport-limit, root.viewport-height + page-top.height);
     Timer {
         interval: 33ms;
         running: root.active && !root.paged && !root.loading && !root.failed;
@@ -222,7 +224,7 @@ export component ToolProcess inherits Rectangle {
     }
     process-list := ListView {
         y: page-top.height;
-        width: parent.width; height: parent.height - page-top.height - page-bottom.height;
+        width: parent.width; height: parent.height - page-top.height;
         horizontal-scrollbar-policy: always-off;
         vertical-scrollbar-policy: as-needed;
         content-width: self.visible-width;
@@ -250,15 +252,6 @@ export component ToolProcess inherits Rectangle {
             x: parent.width - self.preferred-width; height: parent.height;
             text: I18n.tl_process_loading; color: Theme.muted; font-size: Theme.font-xs;
             vertical-alignment: center;
-        }
-    }
-    page-bottom := Rectangle {
-        x: 24px; y: parent.height - self.height; width: parent.width - 48px;
-        height: root.has-newer ? 30px : 0px;
-        if root.has-newer : Button {
-            height: 26px; width: min(220px, parent.width);
-            text: I18n.tl_process_later; enabled: !root.loading;
-            clicked => { root.page(1); }
         }
     }
 }

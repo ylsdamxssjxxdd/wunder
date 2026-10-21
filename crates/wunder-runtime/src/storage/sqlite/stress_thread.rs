@@ -17,12 +17,14 @@ use crate::storage::stress_model::{
     committed_item_json, plan_timeline, profile_hint, sample_turn_plans, IdGen, StressThreadSpec,
     StressThreadStats,
 };
+use crate::storage::{thread_view_projection as projection, thread_view_store as view};
 use anyhow::{ensure, Result};
 use chrono::{Local, TimeZone};
 use rusqlite::{params, params_from_iter, Connection, ToSql, Transaction, TransactionBehavior};
 use serde_json::{json, Value};
 use std::time::Duration;
 use wunder_core::storage_backend::StorageLifecycle;
+use wunder_core::thread_view::BodyRef;
 
 /// Rows per multi-row INSERT. 2000 × 13 = 26000 parameters, still under the
 /// 32766 bind-parameter limit of bundled SQLite, and fewer statements per turn.
@@ -114,13 +116,12 @@ impl SqliteStorage {
         // "now"; the thread then reads as recent history.
         let plan = plan_timeline(seed, now, spec)?;
 
-        // Bulk connection: journal in memory, no fsync per commit. WAL is
-        // restored afterwards so the live runtime keeps its normal settings.
+        // Keep WAL so readers remain independent during a generation job.
         let mut conn = Connection::open(&self.db_path)?;
         conn.busy_timeout(Duration::from_secs(30)).ok();
-        conn.pragma_update(None, "journal_mode", "MEMORY").ok();
-        conn.pragma_update(None, "synchronous", "OFF").ok();
-        conn.pragma_update(None, "cache_size", -262_144).ok();
+        conn.pragma_update(None, "journal_mode", "WAL")?;
+        conn.pragma_update(None, "synchronous", "NORMAL")?;
+        conn.pragma_update(None, "cache_size", -8192)?;
 
         let write_result =
             self.write_stress_thread(&mut conn, user_id, spec, &plan, seed, &mut progress);
@@ -135,6 +136,8 @@ impl SqliteStorage {
                      DELETE FROM thread_item_blocks WHERE session_id='{sid}'; \
                      DELETE FROM thread_log_changes WHERE session_id='{sid}'; \
                      DELETE FROM thread_log_metrics WHERE session_id='{sid}'; \
+                     DELETE FROM thread_chat_rows WHERE session_id='{sid}'; \
+                     DELETE FROM thread_view_heads WHERE session_id='{sid}'; \
                      DELETE FROM tool_logs WHERE session_id='{sid}'; \
                      DELETE FROM thread_logs WHERE session_id='{sid}'; \
                      DELETE FROM chat_sessions WHERE session_id='{sid}'; \
@@ -231,6 +234,23 @@ impl SqliteStorage {
 
             // User bubble item.
             let user_item_id = format!("{turn_id}:user");
+            let mut chat = projection::new_chat(
+                &turn_id,
+                turn_index,
+                Some(client_message_id.clone()),
+                "completed",
+                turn_start,
+                turn_start,
+            );
+            chat.execution_turn_id = turn_id.clone();
+            chat.stop_reason = Some(String::new());
+            chat.user = projection::message(&user_item_id, &prompt, 1);
+            chat.user.created_seq = seq;
+            chat.user.body = Some(BodyRef {
+                body_id: projection::body_id(&user_item_id, "source_content"),
+                revision: 1,
+                bytes: prompt.len(),
+            });
             let user_payload = serde_json::to_string(&json!({
                 "role": "user",
                 "content": prompt,
@@ -314,6 +334,8 @@ impl SqliteStorage {
                     let duration_ms = (*duration_s * 1000.0).round() as i64;
                     let result = build_tool_result(&mut turn_rng, profile, &args, duration_ms)?;
                     let failed = result.failed;
+                    chat.workflow_count += 1;
+                    chat.failed_count += i64::from(failed);
                     let tool_done = round_start + duration_s;
                     let item_id = format!("{turn_id}:tool-{call_id}");
                     let usage = json!({
@@ -500,6 +522,17 @@ impl SqliteStorage {
                 item_index += 1;
                 seq += 1;
                 let item_id = format!("{turn_id}:text-{model_round}");
+                if !reasoning.is_empty() {
+                    chat.reasoning_count += 1;
+                }
+                chat.assistant = projection::message(&item_id, &answer, 1);
+                chat.assistant.created_seq = seq;
+                chat.assistant.reasoning = wunder_core::thread_view::preview(&reasoning, 2048);
+                chat.assistant.body = Some(BodyRef {
+                    body_id: projection::body_id(&item_id, "source_content"),
+                    revision: 1,
+                    bytes: answer.len(),
+                });
                 item_rows.push(vec![
                     P::S(session_id.to_string()),
                     P::S(item_id.clone()),
@@ -579,6 +612,16 @@ impl SqliteStorage {
                 "UPDATE thread_turns SET updated_time=? WHERE session_id=? AND turn_id=?",
                 params![turn_end, session_id, turn_id],
             )?;
+            chat.updated_time = turn_end;
+            chat.assistant.durable_seq = seq;
+            view::save_chat(
+                &mut super::thread_view_store::Db(&tx),
+                user_id,
+                session_id,
+                &mut chat,
+                seq,
+            )?;
+            tx.execute("UPDATE thread_chat_rows SET payload=json_set(payload,'$.source_complete',json('true')) WHERE session_id=? AND root_turn_id=?", params![session_id, turn_id])?;
             tx.commit()?;
             progress(turn_index, items_written);
         }
@@ -592,15 +635,15 @@ impl SqliteStorage {
             "INSERT INTO thread_logs(session_id,user_id,latest_user_turn,latest_change_seq,created_time,updated_time) VALUES(?,?,?,?,?,?)",
             params![session_id, user_id, spec.user_rounds, seq, plan.start_time, end_time],
         )?;
-        tx.execute("INSERT INTO thread_view_heads(session_id,user_id,projection_state) VALUES(?,?,'rebuilding') ON CONFLICT(session_id) DO NOTHING",params![session_id,user_id])?;
+        tx.execute("INSERT INTO thread_view_heads(session_id,user_id,projection_state) VALUES(?,?,'source') ON CONFLICT(session_id) DO NOTHING",params![session_id,user_id])?;
         tx.execute(
             "INSERT INTO thread_log_metrics(session_id,user_id,metric_key,metric_value,updated_time) VALUES(?,?, 'user_turn_total', ?, ?) \
              ON CONFLICT(session_id,metric_key) DO UPDATE SET metric_value=excluded.metric_value,updated_time=excluded.updated_time",
             params![session_id, user_id, spec.user_rounds, end_time],
         )?;
         tx.execute(
-            "INSERT INTO chat_sessions(session_id,user_id,title,status,created_at,updated_at,last_message_at) VALUES(?,?,?,'active',?,?,?)",
-            params![session_id, user_id, spec.title, plan.start_time, end_time, end_time],
+            "INSERT INTO chat_sessions(session_id,user_id,title,status,workspace_id,created_at,updated_at,last_message_at) VALUES(?,?,?,'active',?,?,?,?)",
+            params![session_id, user_id, spec.title, spec.workspace_id, plan.start_time, end_time, end_time],
         )?;
         tx.execute(
             "DELETE FROM thread_log_changes WHERE session_id=? AND change_seq<=?",
@@ -622,7 +665,10 @@ mod tests {
     use super::*;
     use crate::storage::stress_model::MAX_USER_ROUNDS;
     use uuid::Uuid;
-    use wunder_core::storage_backend::{ChatSessionStore, ThreadLogStore};
+    use wunder_core::{
+        storage_backend::{ChatSessionStore, ThreadLogStore, WorkspaceStore},
+        storage_records::WorkspaceRecord,
+    };
 
     fn temp_db() -> (std::path::PathBuf, SqliteStorage) {
         let dir = std::env::temp_dir().join(format!("wunder-stress-{}", Uuid::new_v4().simple()));
@@ -638,6 +684,7 @@ mod tests {
         let spec = StressThreadSpec {
             session_id: "stress-session-1".to_string(),
             title: "渲染压测 3×4".to_string(),
+            workspace_id: None,
             user_rounds: 3,
             model_rounds_per_turn: 4,
         };
@@ -655,6 +702,16 @@ mod tests {
             .list_chat_sessions("tester", None, None, 0, 50)
             .unwrap();
         assert!(sessions.iter().any(|s| s.session_id == "stress-session-1"));
+
+        // Compact cards are completed as each generated turn commits. Opening
+        // a stress thread therefore does not wait for a background rebuild of
+        // its full source log.
+        let page = storage
+            .thread_view_page("tester", "stress-session-1", "chat", None, 12)
+            .unwrap();
+        assert_eq!(page.projection_state, "source");
+        assert_eq!(page.chat.len(), 3);
+        assert!(page.chat.iter().all(|row| row.user_round > 0));
 
         // Visible messages: every model round contributes an assistant bubble,
         // so 3 turns × (1 user + 4 assistant) = 15, newest first.
@@ -733,11 +790,74 @@ mod tests {
     }
 
     #[test]
+    fn generated_thread_preserves_workspace_and_pages_every_user_round() {
+        let (dir, storage) = temp_db();
+        let workspace = WorkspaceRecord {
+            workspace_id: "stress-workspace".to_string(),
+            user_id: "tester".to_string(),
+            name: "Stress workspace".to_string(),
+            root_path: dir.join("work").to_string_lossy().into_owned(),
+            icon: String::new(),
+            color: String::new(),
+            sort_index: 0,
+            created_at: 1.0,
+            updated_at: 1.0,
+        };
+        storage.upsert_workspace(&workspace).unwrap();
+        let spec = StressThreadSpec {
+            session_id: "stress-pages".to_string(),
+            title: "Render stress".to_string(),
+            workspace_id: Some(workspace.workspace_id.clone()),
+            user_rounds: 25,
+            model_rounds_per_turn: 1,
+        };
+        storage
+            .generate_stress_thread("tester", &spec, |_, _| {})
+            .unwrap();
+        let (sessions, _) = storage
+            .list_chat_sessions_by_workspace(
+                "tester",
+                &workspace.workspace_id,
+                Some("active"),
+                0,
+                10,
+            )
+            .unwrap();
+        assert!(sessions.iter().any(|row| row.session_id == spec.session_id));
+
+        let mut before = None;
+        let mut rounds = Vec::new();
+        loop {
+            let page = storage
+                .thread_view_page("tester", &spec.session_id, "chat", before, 12)
+                .unwrap();
+            assert_eq!(page.projection_state, "source");
+            // `before` walks newest pages towards older pages. The desktop
+            // history reducer prepends every newly loaded older page, so
+            // simulate that order here instead of flattening fetch order.
+            let page_rounds = page
+                .chat
+                .iter()
+                .map(|row| row.user_round)
+                .collect::<Vec<_>>();
+            rounds.splice(0..0, page_rounds);
+            if !page.has_more {
+                break;
+            }
+            before = page.next_before;
+            assert!(before.is_some(), "more history needs a cursor");
+        }
+        assert_eq!(rounds, (1..=25).collect::<Vec<_>>());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn oversized_requests_are_rejected() {
         let (dir, storage) = temp_db();
         let spec = StressThreadSpec {
             session_id: "stress-too-big".to_string(),
             title: "超出上限".to_string(),
+            workspace_id: None,
             user_rounds: MAX_USER_ROUNDS + 1,
             model_rounds_per_turn: 4,
         };
@@ -754,6 +874,7 @@ mod tests {
         let spec = StressThreadSpec {
             session_id: "stress-perf-50x20".to_string(),
             title: "渲染压测 50×20".to_string(),
+            workspace_id: None,
             user_rounds: 50,
             model_rounds_per_turn: 20,
         };
