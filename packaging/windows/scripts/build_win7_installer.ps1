@@ -373,7 +373,7 @@ $generatedPath = Join-Path $stageRoot "payload.generated.iss"
 
 Copy-Item -LiteralPath (Join-Path $installerRoot "wunder.iss") -Destination (Join-Path $stageRoot "wunder.iss") -Force
 Copy-Item -LiteralPath (Join-Path $installerRoot "ChineseSimplified.isl") -Destination (Join-Path $stageRoot "ChineseSimplified.isl") -Force
-Copy-Item -LiteralPath (Join-Path $repoRoot "images\pupa.ico") -Destination (Join-Path $stageRoot "pupa.ico") -Force
+Copy-Item -LiteralPath (Join-Path $repoRoot "images\eva01-head.ico") -Destination (Join-Path $stageRoot "eva01-head.ico") -Force
 Copy-Item -LiteralPath (Join-Path $repoRoot "images\pupa.png") -Destination (Join-Path $stageRoot "pupa.png") -Force
 
 $isccPath = Ensure-Iscc $Iscc (-not $NoDownload)

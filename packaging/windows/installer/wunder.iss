@@ -38,7 +38,7 @@ PrivilegesRequired=lowest
 UsePreviousAppDir=yes
 OutputDir=.
 OutputBaseFilename={#OutputBaseFilename}
-SetupIconFile=pupa.ico
+SetupIconFile=eva01-head.ico
 ; The pupa mark in the wizard pages' upper right corner (transparent PNG).
 WizardSmallImageFile=pupa.png
 UninstallDisplayIcon={app}\bin\wunder-desktop.exe
