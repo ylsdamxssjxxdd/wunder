@@ -29,11 +29,7 @@ async fn build_test_context(username: &str) -> TestContext {
     let mut config = Config::default();
     config.channels.enabled = true;
     config.storage.backend = "sqlite".to_string();
-    config.storage.db_path = temp_dir
-        .path()
-        .join("channel-runtime-logs-routes.db")
-        .to_string_lossy()
-        .to_string();
+    config.storage.data_root = temp_dir.path().join("data").to_string_lossy().to_string();
     config.workspace.root = temp_dir
         .path()
         .join("workspaces")

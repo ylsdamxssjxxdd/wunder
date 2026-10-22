@@ -34,10 +34,7 @@ async fn main() -> Result<()> {
     let config_store = ConfigStore::new(ConfigStore::config_path_default());
     let mut config = config_store.get().await;
     config.storage.backend = "sqlite".to_string();
-    config.storage.db_path = runtime_dir
-        .join("backend_sim.sqlite3")
-        .to_string_lossy()
-        .to_string();
+    config.storage.data_root = runtime_dir.join("data").to_string_lossy().to_string();
     config.cron.enabled = false;
     config.agent_queue.enabled = false;
     config.channels.enabled = false;

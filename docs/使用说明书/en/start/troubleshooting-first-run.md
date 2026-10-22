@@ -57,7 +57,7 @@ Sections are organized by form. Each section's verification points are a health 
 | Loading the example config at startup silently fails and falls back to defaults | Known issue; point explicitly at `config/wunder.yaml`, or use `WUNDER_CONFIG_PATH` | [Configuration reference](/docs/en/capabilities/config/) |
 | Client WebSocket keeps hitting `slow_client` | Slow-client backpressure (queue watermark 2); first check whether long messages are involved | [Troubleshooting](/docs/en/help/troubleshooting/) |
 | PostgreSQL connection failure | `WUNDER_POSTGRES_DSN` / `WUNDER_POSTGRES_POOL_SIZE`; whether the `postgres` service is healthy | [Hull deployment](/docs/en/start/server/) |
-| Want to switch back to SQLite | `WUNDER_STORAGE_BACKEND=sqlite` + `WUNDER_SQLITE_DB_PATH=/path/to/wunder.db` | [Configuration reference](/docs/en/capabilities/config/) |
+| Want to switch back to SQLite | `WUNDER_STORAGE_BACKEND=sqlite` + `WUNDER_STORAGE_DATA_ROOT=./runtime-data` | [Configuration reference](/docs/en/capabilities/config/) |
 | Started in sandbox mode and it listens on 9001 | Normal: sandbox mode takes a different path | [Hull deployment](/docs/en/start/server/) |
 
 ## Beehive (web)

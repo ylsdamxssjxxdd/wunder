@@ -18,7 +18,7 @@ async fn main() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let mut config = Config::default();
     config.storage.backend = "sqlite".into();
-    config.storage.db_path = dir.path().join("fixture.db").to_string_lossy().into();
+    config.storage.data_root = dir.path().join("data").to_string_lossy().into();
     config.workspace.root = dir
         .path()
         .join("fixture-workspace")

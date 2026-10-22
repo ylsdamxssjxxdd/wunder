@@ -110,7 +110,7 @@ pub(super) trait SqliteMemoryStorage {
 impl SqliteMemoryStorage for SqliteStorage {
     fn get_memory_enabled_impl(&self, user_id: &str) -> Result<Option<bool>> {
         self.ensure_initialized()?;
-        let conn = self.open()?;
+        let conn = self.open_memories()?;
         let value: Option<i64> = conn
             .query_row(
                 "SELECT enabled FROM memory_settings WHERE user_id = ?",
@@ -127,7 +127,7 @@ impl SqliteMemoryStorage for SqliteStorage {
             return Ok(());
         }
         let now = Self::now_ts();
-        let conn = self.open()?;
+        let conn = self.open_memories()?;
         conn.execute(
             "INSERT INTO memory_settings (user_id, enabled, updated_time) VALUES (?, ?, ?) \
              ON CONFLICT(user_id) DO UPDATE SET enabled = excluded.enabled, updated_time = excluded.updated_time",
@@ -138,7 +138,7 @@ impl SqliteMemoryStorage for SqliteStorage {
 
     fn load_memory_settings_impl(&self) -> Result<Vec<HashMap<String, Value>>> {
         self.ensure_initialized()?;
-        let conn = self.open()?;
+        let conn = self.open_memories()?;
         let mut stmt =
             conn.prepare("SELECT user_id, enabled, updated_time FROM memory_settings")?;
         let rows = stmt
@@ -180,7 +180,7 @@ impl SqliteMemoryStorage for SqliteStorage {
         if cleaned_user.is_empty() || cleaned_session.is_empty() || cleaned_summary.is_empty() {
             return Ok(());
         }
-        let conn = self.open()?;
+        let conn = self.open_memories()?;
         conn.execute(
             "INSERT INTO memory_records (user_id, session_id, summary, created_time, updated_time) VALUES (?, ?, ?, ?, ?) \
              ON CONFLICT(user_id, session_id) DO UPDATE SET summary = excluded.summary, updated_time = excluded.updated_time",
@@ -225,7 +225,7 @@ impl SqliteMemoryStorage for SqliteStorage {
                 "SELECT session_id, summary, created_time, updated_time FROM memory_records WHERE user_id = ? ORDER BY updated_time {direction}, id {direction}"
             )
         };
-        let conn = self.open()?;
+        let conn = self.open_memories()?;
         let mut stmt = conn.prepare(&query)?;
         let rows = if limit > 0 {
             stmt.query_map(params![cleaned, limit], |row| {
@@ -262,7 +262,7 @@ impl SqliteMemoryStorage for SqliteStorage {
 
     fn get_memory_record_stats_impl(&self) -> Result<Vec<HashMap<String, Value>>> {
         self.ensure_initialized()?;
-        let conn = self.open()?;
+        let conn = self.open_memories()?;
         let mut stmt = conn.prepare(
             "SELECT user_id, COUNT(*) as record_count, MAX(updated_time) as last_time FROM memory_records GROUP BY user_id",
         )?;
@@ -297,7 +297,7 @@ impl SqliteMemoryStorage for SqliteStorage {
         if cleaned_user.is_empty() || cleaned_session.is_empty() {
             return Ok(0);
         }
-        let conn = self.open()?;
+        let conn = self.open_memories()?;
         let affected = conn.execute(
             "DELETE FROM memory_records WHERE user_id = ? AND session_id = ?",
             params![cleaned_user, cleaned_session],
@@ -311,7 +311,7 @@ impl SqliteMemoryStorage for SqliteStorage {
         if cleaned_user.is_empty() {
             return Ok(0);
         }
-        let conn = self.open()?;
+        let conn = self.open_memories()?;
         let affected = conn.execute(
             "DELETE FROM memory_records WHERE user_id = ?",
             params![cleaned_user],
@@ -325,7 +325,7 @@ impl SqliteMemoryStorage for SqliteStorage {
         if cleaned_user.is_empty() {
             return Ok(0);
         }
-        let conn = self.open()?;
+        let conn = self.open_memories()?;
         let affected = conn.execute(
             "DELETE FROM memory_settings WHERE user_id = ?",
             params![cleaned_user],
@@ -347,7 +347,7 @@ impl SqliteMemoryStorage for SqliteStorage {
             .map(Self::json_to_string)
             .unwrap_or_default();
         let now = params.updated_time.unwrap_or_else(Self::now_ts);
-        let conn = self.open()?;
+        let conn = self.open_memories()?;
         conn.execute(
             "INSERT INTO memory_task_logs (task_id, user_id, session_id, status, queued_time, started_time, finished_time, elapsed_s, request_payload, result, error, updated_time)              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)              ON CONFLICT(user_id, session_id) DO UPDATE SET                task_id = excluded.task_id, status = excluded.status, queued_time = excluded.queued_time, started_time = excluded.started_time,                finished_time = excluded.finished_time, elapsed_s = excluded.elapsed_s, request_payload = excluded.request_payload, result = excluded.result,                error = excluded.error, updated_time = excluded.updated_time",
             params![
@@ -381,7 +381,7 @@ impl SqliteMemoryStorage for SqliteStorage {
             query.push_str(" LIMIT ?");
             params_list.push(SqlValue::from(limit));
         }
-        let conn = self.open()?;
+        let conn = self.open_memories()?;
         let mut stmt = conn.prepare(&query)?;
         let rows = stmt
             .query_map(rusqlite::params_from_iter(params_list.iter()), |row| {
@@ -438,7 +438,7 @@ impl SqliteMemoryStorage for SqliteStorage {
         if cleaned.is_empty() {
             return Ok(None);
         }
-        let conn = self.open()?;
+        let conn = self.open_memories()?;
         let mut stmt = conn.prepare(
             "SELECT task_id, user_id, session_id, status, queued_time, started_time, finished_time, elapsed_s, request_payload, result, error, updated_time FROM memory_task_logs WHERE task_id = ? ORDER BY updated_time DESC, id DESC LIMIT 1",
         )?;
@@ -500,7 +500,7 @@ impl SqliteMemoryStorage for SqliteStorage {
         if cleaned_user.is_empty() || cleaned_session.is_empty() {
             return Ok(0);
         }
-        let conn = self.open()?;
+        let conn = self.open_memories()?;
         let affected = conn.execute(
             "DELETE FROM memory_task_logs WHERE user_id = ? AND session_id = ?",
             params![cleaned_user, cleaned_session],
@@ -514,7 +514,7 @@ impl SqliteMemoryStorage for SqliteStorage {
         if cleaned_user.is_empty() {
             return Ok(0);
         }
-        let conn = self.open()?;
+        let conn = self.open_memories()?;
         let affected = conn.execute(
             "DELETE FROM memory_task_logs WHERE user_id = ?",
             params![cleaned_user],
@@ -524,7 +524,7 @@ impl SqliteMemoryStorage for SqliteStorage {
 
     fn upsert_memory_fragment_impl(&self, record: &MemoryFragmentRecord) -> Result<()> {
         self.ensure_initialized()?;
-        let conn = self.open()?;
+        let conn = self.open_memories()?;
         conn.execute(
             "INSERT INTO memory_fragments (memory_id, user_id, agent_id, source_session_id, source_round_id, source_type, category, title_l0, summary_l1, content_l2, fact_key, tags, entities, importance, confidence, tier, status, pinned, confirmed_by_user, access_count, hit_count, last_accessed_at, valid_from, invalidated_at, supersedes_memory_id, superseded_by_memory_id, embedding_model, vector_ref, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(memory_id) DO UPDATE SET user_id = excluded.user_id, agent_id = excluded.agent_id, source_session_id = excluded.source_session_id, source_round_id = excluded.source_round_id, source_type = excluded.source_type, category = excluded.category, title_l0 = excluded.title_l0, summary_l1 = excluded.summary_l1, content_l2 = excluded.content_l2, fact_key = excluded.fact_key, tags = excluded.tags, entities = excluded.entities, importance = excluded.importance, confidence = excluded.confidence, tier = excluded.tier, status = excluded.status, pinned = excluded.pinned, confirmed_by_user = excluded.confirmed_by_user, access_count = excluded.access_count, hit_count = excluded.hit_count, last_accessed_at = excluded.last_accessed_at, valid_from = excluded.valid_from, invalidated_at = excluded.invalidated_at, supersedes_memory_id = excluded.supersedes_memory_id, superseded_by_memory_id = excluded.superseded_by_memory_id, embedding_model = excluded.embedding_model, vector_ref = excluded.vector_ref, created_at = excluded.created_at, updated_at = excluded.updated_at",
             params![
@@ -570,7 +570,7 @@ impl SqliteMemoryStorage for SqliteStorage {
         memory_id: &str,
     ) -> Result<Option<MemoryFragmentRecord>> {
         self.ensure_initialized()?;
-        let conn = self.open()?;
+        let conn = self.open_memories()?;
         let mut stmt = conn.prepare("SELECT memory_id, user_id, agent_id, source_session_id, source_round_id, source_type, category, title_l0, summary_l1, content_l2, fact_key, tags, entities, importance, confidence, tier, status, pinned, confirmed_by_user, access_count, hit_count, last_accessed_at, valid_from, invalidated_at, supersedes_memory_id, superseded_by_memory_id, embedding_model, vector_ref, created_at, updated_at FROM memory_fragments WHERE user_id = ? AND agent_id = ? AND memory_id = ? LIMIT 1")?;
         let row = stmt
             .query_row(
@@ -620,7 +620,7 @@ impl SqliteMemoryStorage for SqliteStorage {
         agent_id: &str,
     ) -> Result<Vec<MemoryFragmentRecord>> {
         self.ensure_initialized()?;
-        let conn = self.open()?;
+        let conn = self.open_memories()?;
         let mut stmt = conn.prepare("SELECT memory_id, user_id, agent_id, source_session_id, source_round_id, source_type, category, title_l0, summary_l1, content_l2, fact_key, tags, entities, importance, confidence, tier, status, pinned, confirmed_by_user, access_count, hit_count, last_accessed_at, valid_from, invalidated_at, supersedes_memory_id, superseded_by_memory_id, embedding_model, vector_ref, created_at, updated_at FROM memory_fragments WHERE user_id = ? AND agent_id = ? ORDER BY pinned DESC, updated_at DESC, created_at DESC")?;
         let rows = stmt
             .query_map(params![user_id.trim(), agent_id.trim()], |row| {
@@ -670,7 +670,7 @@ impl SqliteMemoryStorage for SqliteStorage {
         content_hash: &str,
     ) -> Result<Option<MemoryFragmentEmbeddingRecord>> {
         self.ensure_initialized()?;
-        let conn = self.open()?;
+        let conn = self.open_memories()?;
         let mut stmt = conn.prepare("SELECT memory_id, user_id, agent_id, embedding_model, content_hash, vector_json, dimensions, updated_at FROM memory_fragment_embeddings WHERE user_id = ? AND agent_id = ? AND memory_id = ? AND embedding_model = ? AND content_hash = ? LIMIT 1")?;
         stmt.query_row(
             params![
@@ -703,7 +703,7 @@ impl SqliteMemoryStorage for SqliteStorage {
         record: &MemoryFragmentEmbeddingRecord,
     ) -> Result<()> {
         self.ensure_initialized()?;
-        let conn = self.open()?;
+        let conn = self.open_memories()?;
         conn.execute(
             "DELETE FROM memory_fragment_embeddings WHERE memory_id = ? AND embedding_model = ? AND content_hash <> ?",
             params![record.memory_id, record.embedding_model, record.content_hash],
@@ -725,7 +725,7 @@ impl SqliteMemoryStorage for SqliteStorage {
         memory_id: &str,
     ) -> Result<i64> {
         self.ensure_initialized()?;
-        let conn = self.open()?;
+        let conn = self.open_memories()?;
         let affected = conn.execute(
             "DELETE FROM memory_fragment_embeddings WHERE user_id = ? AND agent_id = ? AND memory_id = ?",
             params![user_id.trim(), agent_id.trim(), memory_id.trim()],
@@ -740,7 +740,7 @@ impl SqliteMemoryStorage for SqliteStorage {
         memory_id: &str,
     ) -> Result<i64> {
         self.ensure_initialized()?;
-        let conn = self.open()?;
+        let conn = self.open_memories()?;
         let _ = conn.execute(
             "DELETE FROM memory_fragment_embeddings WHERE user_id = ? AND agent_id = ? AND memory_id = ?",
             params![user_id.trim(), agent_id.trim(), memory_id.trim()],
@@ -754,7 +754,7 @@ impl SqliteMemoryStorage for SqliteStorage {
 
     fn insert_memory_hit_impl(&self, record: &MemoryHitRecord) -> Result<()> {
         self.ensure_initialized()?;
-        let conn = self.open()?;
+        let conn = self.open_memories()?;
         conn.execute(
             "INSERT INTO memory_hits (hit_id, memory_id, user_id, agent_id, session_id, round_id, query_text, reason_json, lexical_score, semantic_score, freshness_score, importance_score, final_score, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             params![record.hit_id, record.memory_id, record.user_id, record.agent_id, record.session_id, record.round_id, record.query_text, Self::json_to_string(&record.reason_json), record.lexical_score, record.semantic_score, record.freshness_score, record.importance_score, record.final_score, record.created_at],
@@ -770,7 +770,7 @@ impl SqliteMemoryStorage for SqliteStorage {
         limit: i64,
     ) -> Result<Vec<MemoryHitRecord>> {
         self.ensure_initialized()?;
-        let conn = self.open()?;
+        let conn = self.open_memories()?;
         let cleaned_user = user_id.trim();
         let cleaned_agent = agent_id.trim();
         let safe_limit = limit.max(1);
@@ -838,7 +838,7 @@ impl SqliteMemoryStorage for SqliteStorage {
         agent_id: &str,
     ) -> Result<HashMap<String, i64>> {
         self.ensure_initialized()?;
-        let conn = self.open()?;
+        let conn = self.open_memories()?;
         let mut stmt = conn.prepare(
             "SELECT memory_id, COUNT(DISTINCT CASE
                 WHEN TRIM(round_id) <> '' THEN session_id || '::r::' || TRIM(round_id)
@@ -868,7 +868,7 @@ impl SqliteMemoryStorage for SqliteStorage {
         query_text: Option<&str>,
     ) -> Result<bool> {
         self.ensure_initialized()?;
-        let conn = self.open()?;
+        let conn = self.open_memories()?;
         let cleaned_user = user_id.trim();
         let cleaned_agent = agent_id.trim();
         let cleaned_memory = memory_id.trim();
@@ -915,7 +915,7 @@ impl SqliteMemoryStorage for SqliteStorage {
 
     fn upsert_memory_job_impl(&self, record: &MemoryJobRecord) -> Result<()> {
         self.ensure_initialized()?;
-        let conn = self.open()?;
+        let conn = self.open_memories()?;
         conn.execute(
             "INSERT INTO memory_jobs (job_id, user_id, agent_id, session_id, job_type, status, request_payload, result_summary, error_message, queued_at, started_at, finished_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(job_id) DO UPDATE SET user_id = excluded.user_id, agent_id = excluded.agent_id, session_id = excluded.session_id, job_type = excluded.job_type, status = excluded.status, request_payload = excluded.request_payload, result_summary = excluded.result_summary, error_message = excluded.error_message, queued_at = excluded.queued_at, started_at = excluded.started_at, finished_at = excluded.finished_at, updated_at = excluded.updated_at",
             params![record.job_id, record.user_id, record.agent_id, record.session_id, record.job_type, record.status, Self::json_to_string(&record.request_payload), record.result_summary, record.error_message, record.queued_at, record.started_at, record.finished_at, record.updated_at],
@@ -930,7 +930,7 @@ impl SqliteMemoryStorage for SqliteStorage {
         limit: i64,
     ) -> Result<Vec<MemoryJobRecord>> {
         self.ensure_initialized()?;
-        let conn = self.open()?;
+        let conn = self.open_memories()?;
         let mut stmt = conn.prepare("SELECT job_id, user_id, agent_id, session_id, job_type, status, request_payload, result_summary, error_message, queued_at, started_at, finished_at, updated_at FROM memory_jobs WHERE user_id = ? AND agent_id = ? ORDER BY updated_at DESC LIMIT ?")?;
         let rows = stmt
             .query_map(

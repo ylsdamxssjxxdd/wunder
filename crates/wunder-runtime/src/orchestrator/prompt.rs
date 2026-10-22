@@ -277,14 +277,21 @@ impl Orchestrator {
         user_id: &str,
         workspace_id: &str,
         session_id: &str,
-        language: Option<&str>,
+        _language: Option<&str>,
         agent_id: Option<&str>,
         _is_admin: bool,
         agent_prompt: Option<&str>,
         preview_skill: bool,
         _query_text: Option<&str>,
         round_id: Option<&str>,
-    ) -> String {
+    ) -> Result<String> {
+        use wunder_core::thread_store::{ThreadId, ThreadStoreError};
+        let thread_id = ThreadId::new(session_id)?;
+        let stored: Option<String> = match self.thread_store.session_meta(&thread_id).await {
+            Ok(meta) => return Ok(meta.initial_system_prompt),
+            Err(ThreadStoreError::NotFound { .. }) => None,
+            Err(error) => return Err(error.into()),
+        };
         let resolved_agent_id = agent_id
             .map(str::trim)
             .filter(|value| !value.is_empty())
@@ -302,20 +309,6 @@ impl Orchestrator {
             .workspace
             .ensure_user_root(workspace_id)
             .unwrap_or_else(|_| self.workspace.root().to_path_buf());
-        let expected_public_workdir = self.workspace.display_path(workspace_id, &workdir);
-        let expected_local_workdir = workdir.to_string_lossy().replace('\\', "/");
-        let stored = self
-            .workspace
-            .load_session_system_prompt_async(user_id, session_id, None)
-            .await
-            .unwrap_or(None);
-        if let Some(prompt) = reuse_stored_session_prompt_if_valid(
-            stored.as_deref(),
-            &expected_public_workdir,
-            &expected_local_workdir,
-        ) {
-            return prompt;
-        }
         // Snapshot AGENTS.md only when the thread prompt is first finalized so
         // later file edits do not mutate the prompt already cached for this thread.
         let agents_md_policy = AgentsMdPolicy::from_config(config);
@@ -366,26 +359,9 @@ impl Orchestrator {
             }
             prompt
         };
-        match self.workspace.build_session_system_prompt_item(
-            user_id,
-            session_id,
-            &session_prompt,
-            language,
-        ) {
-            Err(err) => {
-                warn!("freeze session system prompt failed for session {session_id}: {err}")
-            }
-            Ok(Some(item)) => {
-                // The frozen prompt is a durable item append through the unified
-                // commit exit, which publishes the change cursor only on the
-                // real commit; polling remains the cross-instance fallback.
-                if let Err(err) = self.committer.append_item(user_id, &item).await {
-                    warn!("freeze session system prompt failed for session {session_id}: {err}");
-                }
-            }
-            Ok(None) => {}
-        }
-        session_prompt
+        self.committer
+            .freeze_session(user_id, session_id, &session_prompt, workspace_id)
+            .await
     }
 }
 

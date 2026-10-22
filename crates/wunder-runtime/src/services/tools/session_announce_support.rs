@@ -85,7 +85,7 @@ pub(crate) fn insert_run_metadata_field(target: &mut Value, key: &str, value: Va
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn append_child_announce(
-    workspace: &WorkspaceManager,
+    _workspace: &WorkspaceManager,
     storage: &Arc<dyn StorageBackend>,
     user_id: &str,
     parent_session_id: &str,
@@ -155,7 +155,7 @@ pub(crate) fn append_child_announce(
             map.insert("model_round".to_string(), json!(model_round));
         }
     }
-    let _ = workspace.append_chat(user_id, &payload);
+    let _ = storage.append_chat(user_id, &payload);
     let now = now_ts();
     let _ = storage.touch_chat_session(user_id, parent_session_id, now, now);
 }

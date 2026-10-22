@@ -668,8 +668,7 @@ export const chatSendActions = {
               // Mount the session watcher immediately; it replays from the
               // last applied durable cursor.
               onSnapshotRequired: () => {void this.loadSessionDetail(sessionId);},
-              onOverflow: () => startSessionWatcher(this, sessionId),
-              onGapOverflow: () => startSessionWatcher(this, sessionId)
+              onOverflow: () => startSessionWatcher(this, sessionId)
             })
           ) {
             return;
@@ -1346,7 +1345,6 @@ export const chatSendActions = {
         for (const [itemId, item] of threadState.items) {
           if (!removedTurnIds.has(item.turnId)) continue;
           threadState.items.delete(itemId);
-          threadState.blocks.delete(itemId);
           threadState.tails.delete(itemId);
         }
       }

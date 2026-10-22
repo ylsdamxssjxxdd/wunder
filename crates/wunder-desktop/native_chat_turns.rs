@@ -350,70 +350,14 @@ pub(super) fn recover_fields(
         .iter_mut()
         .filter(|item| item["kind"] == "assistant_message")
     {
-        let item_id = item["item_id"].as_str().unwrap_or_default().to_string();
-        if item_id.is_empty() {
-            continue;
-        }
-        for field in ["content", "reasoning"] {
-            if !item["payload"][field]
-                .as_str()
-                .unwrap_or_default()
-                .is_empty()
-            {
-                continue;
-            }
-            let text = recover_text(storage, user, session, &item_id, field)?;
-            if !text.is_empty() {
-                item["payload"][field] = json!(text);
-            }
-        }
-    }
-    Ok(())
-}
-
-/// Concatenate one item's durable text blocks of one field. Bounded by the
-/// storage page size and an 8 MiB ceiling, the same limits the single-answer
-/// recovery carried before it became per-round.
-fn recover_text(
-    storage: &dyn StorageBackend,
-    user: &str,
-    session: &str,
-    item_id: &str,
-    field: &str,
-) -> Result<String> {
-    let mut from = 0;
-    let mut text = String::new();
-    for page in 0..64 {
-        let (blocks, next, more) = storage.list_thread_item_blocks_page(
+        wunder_server::services::thread_log::hydrate_active_text(
+            storage,
             user,
             session,
-            item_id,
-            Some(field),
-            from,
-            100,
-            false,
+            &mut item["payload"],
         )?;
-        for block in blocks {
-            let data = block.get("data").unwrap_or(&block);
-            if data["field"].as_str().unwrap_or(field) != field {
-                continue;
-            }
-            if let Some(part) = data[field].as_str().or_else(|| data["content"].as_str()) {
-                if text.len() + part.len() > 8 * 1024 * 1024 {
-                    return Err(anyhow!("turn text limit exceeded"));
-                }
-                text.push_str(part);
-            }
-        }
-        if !more {
-            break;
-        }
-        if page == 63 {
-            return Err(anyhow!("turn block limit exceeded"));
-        }
-        from = next.ok_or_else(|| anyhow!("missing block cursor"))? + 1;
     }
-    Ok(text)
+    Ok(())
 }
 
 fn stable_answer(item: &Value) -> bool {

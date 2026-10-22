@@ -275,8 +275,8 @@ fn configure_sandbox_file_tool_storage_from(
     let backend = env_string_from(env_lookup, "WUNDER_STORAGE_BACKEND")
         .unwrap_or_else(|| "postgres".to_string());
     config.storage.backend = backend.clone();
-    if let Some(db_path) = env_string_from(env_lookup, "WUNDER_SQLITE_DB_PATH") {
-        config.storage.db_path = db_path;
+    if let Some(data_root) = env_string_from(env_lookup, "WUNDER_STORAGE_DATA_ROOT") {
+        config.storage.data_root = data_root;
     }
     if let Some(dsn) = env_string_from(env_lookup, "WUNDER_POSTGRES_DSN") {
         config.storage.postgres.dsn = dsn;

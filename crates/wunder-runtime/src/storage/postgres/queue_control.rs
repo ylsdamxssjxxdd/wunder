@@ -4,6 +4,28 @@ use anyhow::Result;
 use serde_json::Value;
 
 impl PostgresStorage {
+    pub(super) fn park_queued_admission(
+        &self,
+        record: &crate::storage::AgentTaskRecord,
+    ) -> Result<()> {
+        if record.request_payload.get("__queue_wait").is_none() {
+            return Ok(());
+        }
+        let Some(turn) = record
+            .request_payload
+            .pointer("/config_overrides/__thread_log_turn_id")
+            .and_then(Value::as_str)
+        else {
+            return Ok(());
+        };
+        self.canonical_threads()?.admission_store()?.park_queued(
+            &record.user_id,
+            &record.session_id,
+            turn,
+        )?;
+        Ok(())
+    }
+
     pub(super) fn ensure_queue_control_schema(&self, conn: &mut PgConn<'_>) -> Result<()> {
         conn.batch_execute("ALTER TABLE agent_tasks ADD COLUMN IF NOT EXISTS priority BIGINT NOT NULL DEFAULT 0;
             ALTER TABLE session_locks ADD COLUMN IF NOT EXISTS suspended BIGINT NOT NULL DEFAULT 0;

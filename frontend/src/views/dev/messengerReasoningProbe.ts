@@ -2,7 +2,7 @@ import { nextTick } from 'vue';
 import { useChatStore } from '@/stores/chat';
 import { syncChatRuntimeProjectionFromSnapshot } from '@/stores/chatRuntimeState';
 import { chatPerf } from '@/utils/chatPerf';
-import { applyThreadChange, applyThreadTextBlock, installChatThreadFixture } from './messengerThreadFixture';
+import { applyThreadChange, applyThreadCompletedItem, installChatThreadFixture } from './messengerThreadFixture';
 
 const settle = (ms = 200) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -30,11 +30,11 @@ export const runMessengerReasoningProbe = async (sessionId: string) => {
     { immediate: true, authoritative: true, running: true });
   installChatThreadFixture(chat, sessionId, fixture);
   await settle();
-  applyThreadTextBlock(chat, sessionId, textItemId, userTurnId, 'output', 'content');
+  applyThreadCompletedItem(chat, sessionId, textItemId, userTurnId, 'output', 'content');
   await settle();
   // The first reasoning chunk after visible content must mount the thinking row.
   let reasoning = 'reasoning '.repeat(12000);
-  applyThreadTextBlock(chat, sessionId, textItemId, userTurnId, reasoning, 'reasoning');
+  applyThreadCompletedItem(chat, sessionId, textItemId, userTurnId, reasoning, 'reasoning');
   await settle(600);
   // 条目区默认展开由轮次行的「有内容」上报决定；探针直接展开以稳定断言。
   document.querySelector<HTMLElement>('.timeline-group-head')?.click();
@@ -44,7 +44,7 @@ export const runMessengerReasoningProbe = async (sessionId: string) => {
   chatPerf.start();
   for (let index = 0; index < 100; index++) {
     reasoning += ` chunk-${index}`;
-    applyThreadTextBlock(chat, sessionId, textItemId, userTurnId, reasoning, 'reasoning');
+    applyThreadCompletedItem(chat, sessionId, textItemId, userTurnId, reasoning, 'reasoning');
     await settle(5);
   }
   await settle();

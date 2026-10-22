@@ -3,7 +3,7 @@ import { useChatStore } from '@/stores/chat';
 import { getChatThreadState } from '@/realtime/chat/chatThreadRuntime';
 import {
   applyThreadChange,
-  applyThreadTextBlock,
+  applyThreadCompletedItem,
   installChatThreadFixture
 } from './messengerThreadFixture';
 
@@ -130,7 +130,7 @@ export const runMessengerTwoTurnProbe = async (sessionId: string) => {
     let streamed = seed;
     for (let chunk = 0; chunk < 24; chunk++) {
       streamed = `${streamed} ${marker}${chunk}`;
-      applyThreadTextBlock(chat, sessionId, turn.textItemId, turn.userTurnId, streamed);
+      applyThreadCompletedItem(chat, sessionId, turn.textItemId, turn.userTurnId, streamed);
       const input = document.querySelector<HTMLTextAreaElement>('.messenger-agent-composer textarea');
       if (input) { input.value = `draft-${chunk}`; input.dispatchEvent(new Event('input', { bubbles: true })); }
       await sample();

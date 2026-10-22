@@ -7,7 +7,7 @@ async fn virtual_provider_enforces_capabilities_and_completes_tool_exchange() {
     let root = tempfile::tempdir().unwrap();
     let mut config = Config::default();
     config.storage.backend = "sqlite".into();
-    config.storage.db_path = root.path().join("state.db").to_string_lossy().into_owned();
+    config.storage.data_root = root.path().join("data").to_string_lossy().into_owned();
     config.workspace.root = root.path().join("workspace").to_string_lossy().into_owned();
     let store = ConfigStore::new(root.path().join("config.yaml"));
     store
@@ -171,7 +171,7 @@ async fn virtual_replay_works_at_zero_balance_without_spending_or_granting_token
     let root = tempfile::tempdir().unwrap();
     let mut config = Config::default();
     config.storage.backend = "sqlite".into();
-    config.storage.db_path = root.path().join("state.db").to_string_lossy().into_owned();
+    config.storage.data_root = root.path().join("data").to_string_lossy().into_owned();
     config.workspace.root = root.path().join("workspace").to_string_lossy().into_owned();
     let store = ConfigStore::new(root.path().join("config.yaml"));
     store
@@ -269,7 +269,7 @@ async fn random_simulation_persists_records_like_real_models() {
     let root = tempfile::tempdir().unwrap();
     let mut config = Config::default();
     config.storage.backend = "sqlite".into();
-    config.storage.db_path = root.path().join("state.db").to_string_lossy().into_owned();
+    config.storage.data_root = root.path().join("data").to_string_lossy().into_owned();
     config.workspace.root = root.path().join("workspace").to_string_lossy().into_owned();
     let store = ConfigStore::new(root.path().join("config.yaml"));
     store
@@ -349,16 +349,18 @@ async fn random_simulation_persists_records_like_real_models() {
         .unwrap();
     assert!(!result.0.trim().is_empty());
 
-    // 文本块与 assistant item 均已持久化，重新加载会话可见。
+    // The completed semantic item contains all text needed to reopen history.
     let item_id = format!("{turn_id}:text-1");
-    let blocks = state
+    let item = state
         .storage
-        .list_thread_item_blocks(&user.user_id, "session_1", &item_id, 0, 20, false)
+        .get_thread_item(&user.user_id, "session_1", &item_id, false)
+        .unwrap()
         .unwrap();
-    assert!(
-        !blocks.is_empty(),
-        "simulated assistant text blocks must be persisted like real ones"
-    );
+    assert!(!item["payload"]["content"]
+        .as_str()
+        .unwrap_or_default()
+        .trim()
+        .is_empty());
     let context_items = state
         .storage
         .load_thread_context_items(&user.user_id, "session_1", 20, false)
@@ -379,7 +381,7 @@ async fn user_question_drives_virtual_round_plan_after_history_rewrite() {
     let root = tempfile::tempdir().unwrap();
     let mut config = Config::default();
     config.storage.backend = "sqlite".into();
-    config.storage.db_path = root.path().join("state.db").to_string_lossy().into_owned();
+    config.storage.data_root = root.path().join("data").to_string_lossy().into_owned();
     config.workspace.root = root.path().join("workspace").to_string_lossy().into_owned();
     let store = ConfigStore::new(root.path().join("config.yaml"));
     store

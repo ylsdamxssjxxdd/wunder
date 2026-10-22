@@ -275,7 +275,7 @@ impl Orchestrator {
         } else {
             String::new()
         };
-        let _ = self.workspace.flush_writes_async().await;
+
         if artifact_content.is_empty() {
             let history_manager = HistoryManager;
             artifact_content =
@@ -699,7 +699,7 @@ impl Orchestrator {
         // The compaction summary chat row below carries the committed replacement
         // history in its meta; model input is derived from ThreadLog, so no
         // separate context table write is needed.
-        let _ = self.workspace.flush_writes_async().await;
+
         let rebuilt_tokens = estimate_messages_tokens(&rebuilt);
         let observed_rebuilt_tokens = 0_i64;
         let committed_replacement_history_tokens =
@@ -723,7 +723,7 @@ impl Orchestrator {
             Value::String(compaction_profile.trigger_mode().to_string()),
         );
         let meta_value = Value::Object(meta);
-        self.append_chat(
+        self.try_append_chat(
             user_id,
             session_id,
             "system",
@@ -735,7 +735,9 @@ impl Orchestrator {
             None,
             None,
             compaction_round,
-        );
+        )
+        .await
+        .map_err(|error| OrchestratorError::internal(error.to_string()))?;
 
         if guard_stats.applied {
             let mut guard_payload = json!({
@@ -1186,7 +1188,7 @@ impl Orchestrator {
                         ),
                     )
                     .await;
-                    let _ = self.workspace.flush_writes_async().await;
+
                     self.emit_manual_compaction_failure(&emitter, lifecycle_round_info, &err)
                         .await;
                     self.finish_manual_compaction_turn(
@@ -1246,25 +1248,23 @@ impl Orchestrator {
                 None,
                 None,
             )
-            .await;
+            .await
+            .map_err(|error| OrchestratorError::internal(error.to_string()))?;
 
-        let _ = self.workspace.flush_writes_async().await;
-        let history_manager = HistoryManager;
         let context_manager = ContextManager;
         let mut messages = vec![json!({ "role": "system", "content": system_prompt })];
-        let history_limit = if is_admin {
-            0
-        } else {
-            config.workspace.max_history_items
-        };
-        let history_messages = history_manager
-            .load_history_messages_async(
-                self.workspace.clone(),
-                user_id.to_string(),
-                session_id.to_string(),
-                history_limit,
+        let history_messages = self
+            .thread_store
+            .model_messages(
+                &wunder_core::thread_store::ThreadId::new(session_id)
+                    .map_err(|error| OrchestratorError::internal(error.to_string()))?,
+                None,
             )
-            .await;
+            .await
+            .map_err(|error| OrchestratorError::internal(error.to_string()))?
+            .iter()
+            .filter_map(|item| crate::services::history::build_message_from_item(item, true))
+            .collect::<Vec<_>>();
         messages.extend(history_messages);
         let messages = context_manager.normalize_messages(messages);
         let manual_round_info = lifecycle_round_info;
@@ -1286,7 +1286,7 @@ impl Orchestrator {
                     ),
                 )
                 .await;
-                let _ = self.workspace.flush_writes_async().await;
+
                 self.emit_manual_compaction_failure(&emitter, manual_round_info, &err)
                     .await;
                 self.finish_manual_compaction_turn(
@@ -1348,7 +1348,7 @@ impl Orchestrator {
                         ),
                     )
                     .await;
-                    let _ = self.workspace.flush_writes_async().await;
+
                 }
                 self.emit_manual_compaction_failure(&emitter, manual_round_info, &err)
                     .await;
@@ -1384,7 +1384,7 @@ impl Orchestrator {
                     ),
                 )
                 .await;
-                let _ = self.workspace.flush_writes_async().await;
+
             }
             self.emit_manual_compaction_failure(&emitter, manual_round_info, &err)
                 .await;
@@ -1467,7 +1467,7 @@ impl Orchestrator {
                     ),
                 )
                 .await;
-                let _ = self.workspace.flush_writes_async().await;
+
             } else {
                 self.append_manual_compaction_result(
                     user_id,
@@ -1484,7 +1484,7 @@ impl Orchestrator {
                     ),
                 )
                 .await;
-                let _ = self.workspace.flush_writes_async().await;
+
             }
         }
 

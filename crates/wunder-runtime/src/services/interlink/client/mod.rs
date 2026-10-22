@@ -1675,7 +1675,6 @@ async fn thread_snapshot(inner: &Arc<ClientInner>, user_id: &str, thread_id: &st
             &crate::storage::ThreadSnapshotWindow {
                 max_turns: 12,
                 max_items: 100,
-                max_blocks: 64,
                 before_turn_index: None,
             },
         )

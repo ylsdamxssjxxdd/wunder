@@ -2,7 +2,7 @@
 use super::{cancel_chat, NativeChatEvent};
 use anyhow::{anyhow, ensure, Result};
 use serde_json::{json, Value};
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{collections::HashMap, sync::Arc};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use wunder_server::{blocking, state::AppState, watch_thread_changes, ThreadChangeFrame};
@@ -19,13 +19,12 @@ struct Projection {
     items: HashMap<String, (i64, String, i64)>,
     text_item: String,
     text: String,
-    offset: usize,
     reasoning: String,
-    reasoning_offset: usize,
     user_round: i64,
 }
 
 impl Projection {
+    #[cfg(test)]
     fn restore(&mut self, snapshot: &Value) -> Result<Vec<Value>> {
         let cursor = snapshot["cursor"]
             .as_i64()
@@ -50,9 +49,7 @@ impl Projection {
         self.items.clear();
         self.text.clear();
         self.text_item.clear();
-        self.offset = 0;
         self.reasoning.clear();
-        self.reasoning_offset = 0;
         self.cursor = 0;
         let mut events = self.apply(
             &json!({"cursor":1,"change_type":"turn_upsert","turn_id":execution,
@@ -61,30 +58,6 @@ impl Projection {
         if let Some(items) = snapshot["items"].as_array() {
             for item in items.iter().filter(|item| item["turn_id"] == execution) {
                 events.extend(self.apply(&json!({"cursor":self.cursor+1,"change_type":"item_upsert","turn_id":execution,"payload":item}))?);
-            }
-        }
-        if let Some(blocks) = snapshot["blocks"].as_array() {
-            // Snapshot rows are grouped by field in storage, not by stream
-            // arrival. Restore the thought before opening its answer body.
-            for block in ["reasoning", "content"]
-                .into_iter()
-                .flat_map(|field| {
-                    blocks.iter().filter(move |block| {
-                        block.get("data").unwrap_or(block)["field"]
-                            .as_str()
-                            .or_else(|| block["field"].as_str())
-                            .unwrap_or("content")
-                            == field
-                    })
-                })
-                .filter(|block| block["item_id"] == self.text_item)
-                .cloned()
-                .collect::<Vec<_>>()
-            {
-                events.extend(self.apply(
-                    &json!({"cursor":self.cursor+1,"change_type":"text_block","turn_id":execution,
-                    "item_id":block["item_id"],"payload":block.get("data").unwrap_or(&block)}),
-                )?);
             }
         }
         self.status = latest["status"].as_str().unwrap_or_default().into();
@@ -98,7 +71,10 @@ impl Projection {
         if seq <= self.cursor {
             return Ok(vec![]);
         }
-        ensure!(seq == self.cursor + 1, "native durable cursor gap");
+        // Canonical rollout positions include non-display records (for
+        // example model context), so cursor values are strictly monotonic but
+        // intentionally sparse. A gap is not a missing UI event.
+        ensure!(seq > self.cursor, "native durable cursor did not advance");
         self.cursor = seq;
         let p = &data["payload"];
         let execution = data["turn_id"].as_str().unwrap_or_default();
@@ -135,9 +111,7 @@ impl Projection {
                     self.items.clear();
                     self.text_item.clear();
                     self.text.clear();
-                    self.offset = 0;
                     self.reasoning.clear();
-                    self.reasoning_offset = 0;
                     events.push(json!({"event":"native_execution_started","data":{"root_turn_id":self.root,"turn_id":execution,"user_round":self.user_round}}));
                 }
                 self.status = p["status"].as_str().unwrap_or_default().into();
@@ -179,9 +153,7 @@ impl Projection {
                     if self.text_item != id {
                         self.text_item = id.into();
                         self.text.clear();
-                        self.offset = 0;
                         self.reasoning.clear();
-                        self.reasoning_offset = 0;
                     }
                     if let Some(reasoning) = payload["reasoning"].as_str() {
                         // Completion snapshots repeat the streamed prefix. Only
@@ -196,7 +168,6 @@ impl Projection {
                         {
                             events.push(json!({"event":"reasoning_delta","data":{"delta":delta,"model_round":round}}));
                             self.reasoning = reasoning.into();
-                            self.reasoning_offset = reasoning.encode_utf16().count();
                         }
                     }
                     if let Some(content) =
@@ -207,7 +178,6 @@ impl Projection {
                             "native text limit exceeded"
                         );
                         self.text = content.into();
-                        self.offset = content.encode_utf16().count();
                         events.push(json!({"event":"llm_output","data":{"content":content,"model_round":round}}));
                     }
                     if let Some(stats) = payload
@@ -243,89 +213,46 @@ impl Projection {
                     events.push(json!({"event":"queue_update","data":payload}));
                 }
             }
-            "text_block" if execution == self.execution => {
-                let id = data["item_id"].as_str().unwrap_or_default();
-                let block = p.get("data").unwrap_or(p);
-                let field = p["field"]
-                    .as_str()
-                    .or_else(|| block["field"].as_str())
-                    .unwrap_or("content");
-                if id != self.text_item || !matches!(field, "content" | "reasoning") {
-                    return Ok(events);
-                }
-                // Reasoning and body have independent UTF-16 clocks, even
-                // though both fields share the same assistant item identity.
-                let (current, applied, offset_key) = if field == "reasoning" {
-                    (
-                        &mut self.reasoning,
-                        &mut self.reasoning_offset,
-                        "reasoning_offset",
-                    )
-                } else {
-                    (&mut self.text, &mut self.offset, "content_offset")
-                };
-                let offset = block[offset_key].as_u64().unwrap_or(0) as usize;
-                let text = block[field].as_str().unwrap_or_default();
-                let end = offset + text.encode_utf16().count();
-                if end <= *applied {
-                    return Ok(events);
-                }
-                // The emitter re-flushes the active tail block in place: the
-                // same block_index returns with an identical start offset and
-                // longer text under a new change_seq. The durable block is
-                // authoritative, so the applied text is grown from the block
-                // start and the UI only receives the newly added suffix.
-                let delta = if offset < *applied {
-                    let skip = *applied - offset;
-                    let split = utf16_byte_index(text, skip)
-                        .ok_or_else(|| anyhow!("native text block rewrite boundary"))?;
-                    ensure!(
-                        current.ends_with(&text[..split]),
-                        "native text block rewrite mismatch"
-                    );
-                    current.truncate(current.len() - text[..split].len());
-                    &text[split..]
-                } else {
-                    ensure!(offset == *applied, "native text block gap");
-                    text
-                };
-                ensure!(
-                    current.len() + text.len() <= 8 * 1024 * 1024,
-                    "native text limit exceeded"
-                );
-                current.push_str(text);
-                *applied = end;
-                let round = self.items.get(id).map(|v| v.2).unwrap_or(1);
-                events.push(json!({"event":if field == "reasoning" {"reasoning_delta"} else {"llm_output_delta"},
-                    "data":{"delta":delta,"model_round":round}}));
-            }
             _ => {}
         }
         Ok(events)
     }
 
+    fn control_status(
+        &mut self,
+        row: &wunder_server::stable_core::thread_view::ChatViewRow,
+    ) -> Vec<Value> {
+        if row.root_turn_id != self.root {
+            return vec![];
+        }
+        self.user_round = row.user_round;
+        if self.execution.is_empty() {
+            self.execution = row.execution_turn_id.clone();
+        } else if self.execution != row.execution_turn_id {
+            self.admitted = row.execution_turn_id.clone();
+        }
+        if self.status == row.status {
+            return vec![];
+        }
+        self.status = row.status.clone();
+        vec![
+            json!({"event":"native_execution_status","data":{"root_turn_id":self.root,
+            "status":self.status,"user_round":self.user_round}}),
+        ]
+    }
+
     fn settled(&self, goal_active: bool) -> bool {
         matches!(
             self.status.as_str(),
-            "failed" | "cancelled" | "interrupted" | "waiting_input" | "waiting_user_input"
+            "failed"
+                | "cancelled"
+                | "interrupted"
+                | "aborted"
+                | "rejected"
+                | "waiting_input"
+                | "waiting_user_input"
         ) || (self.status == "completed" && !goal_active)
     }
-}
-
-/// Byte offset of the given UTF-16 code-unit index inside `text`, or `None`
-/// when the index falls inside a multi-unit character (surrogate pair).
-fn utf16_byte_index(text: &str, units: usize) -> Option<usize> {
-    let mut walked = 0usize;
-    for (index, ch) in text.char_indices() {
-        if walked == units {
-            return Some(index);
-        }
-        walked += ch.len_utf16();
-        if walked > units {
-            return None;
-        }
-    }
-    (walked == units).then_some(text.len())
 }
 
 pub(super) async fn watch(
@@ -339,6 +266,10 @@ pub(super) async fn watch(
     continuing: bool,
 ) -> Result<()> {
     ensure!(!root.is_empty(), "missing native root turn identity");
+    // Subscribe before the initial durable goal read so a concurrent pause or
+    // clear cannot be lost between initialization and the first history frame.
+    let mut goal_events = state.kernel.orchestrator.subscribe_goal_updates(session);
+    let mut control_events = state.kernel.orchestrator.subscribe_thread_updates(session);
     let feed_cancel = CancellationToken::new();
     let _guard = feed_cancel.clone().drop_guard();
     let mut feed = watch_thread_changes(
@@ -357,13 +288,18 @@ pub(super) async fn watch(
     // Resolve the root ordinal once, without replaying the full conversation.
     let storage = state.storage.clone();
     let (owner, target, root_id) = (user.to_string(), session.to_string(), root.to_string());
-    projection.user_round = blocking::run_db("native.follow.identity", move || {
-        Ok(storage
+    let (user_round, mut goal_active) = blocking::run_db("native.follow.identity", move || {
+        let user_round = storage
             .get_thread_turn(&owner, &target, &root_id, -1, 1, false)?
             .and_then(|turn| turn["user_turn_index"].as_i64())
-            .unwrap_or_default())
+            .unwrap_or_default();
+        let goal_active = storage
+            .get_session_goal(&owner, &target)?
+            .is_some_and(|goal| goal.phase == "active");
+        Ok((user_round, goal_active))
     })
     .await?;
+    projection.user_round = user_round;
     tokio::select! {
         _ = cancel.cancelled() => { cancel_chat(state, user, session).await?; return Ok(()); }
         result = output.send(NativeChatEvent::Event(json!({"event":"native_turn_identity","data":{"root_turn_id":root,"user_round":projection.user_round}}))) => {
@@ -384,9 +320,24 @@ pub(super) async fn watch(
             )) => { if result.is_err() { return Ok(()); } }
         }
     }
-    let mut clock = tokio::time::interval(Duration::from_millis(100));
-    clock.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut refresh_control = true;
     loop {
+        if refresh_control {
+            if !sync_control(state, user, session, &mut projection, output, cancel).await? {
+                return Ok(());
+            }
+            refresh_control = false;
+            if projection.settled(goal_active) {
+                let terminal = json!({"event":"turn_terminal","data":{
+                    "status":projection.status,"user_round":projection.user_round}});
+                tokio::select! {
+                    _ = cancel.cancelled() => { cancel_chat(state, user, session).await?; },
+                    _ = output.closed() => {},
+                    _ = output.send(NativeChatEvent::Event(terminal)) => {},
+                }
+                return Ok(());
+            }
+        }
         tokio::select! {
             biased;
             _ = cancel.cancelled() => {
@@ -408,14 +359,8 @@ pub(super) async fn watch(
                         }
                     }
                     ThreadChangeFrame::SnapshotRequired { .. } => {
-                        let storage = state.storage.clone();
-                        let owner = user.to_string(); let target = session.to_string();
-                        let snapshot = blocking::run_db("native.follow.snapshot", move || storage.thread_snapshot(&owner, &target)).await?;
-                        for event in projection.restore(&snapshot)? {
-                            tokio::select! {
-                                _ = cancel.cancelled() => { cancel_chat(state, user, session).await?; return Ok(()); }
-                                result = output.send(NativeChatEvent::Event(event)) => { if result.is_err() { return Ok(()); } }
-                            }
+                        if !restore_target_turn(state,user,session,&mut projection,output,cancel).await? {
+                            return Ok(());
                         }
                         feed = watch_thread_changes(state.clone(), session.into(), projection.cursor, Some(feed_cancel.clone())).await?;
                     }
@@ -424,28 +369,216 @@ pub(super) async fn watch(
                     }
                 }
             }
-            _ = clock.tick() => {
-                let storage = state.storage.clone();
-                let owner = user.to_string(); let target = session.to_string();
-                let (active, watermark) = blocking::run_db("native.follow.settlement", move || {
-                    let goal = storage.get_session_goal(&owner, &target)?;
-                    let active = goal.as_ref().is_some_and(|goal| goal.phase == "active");
-                    Ok((active, storage.latest_thread_change_seq_by_session(&target)?))
-                }).await?;
-                // Drain the terminal item's text/statistics commits before Finished.
-                if projection.settled(active) && projection.cursor >= watermark {
-                    let status = projection.status.clone();
-                    output.send(NativeChatEvent::Event(json!({"event":"turn_terminal","data":{"status":status,"user_round":projection.user_round}}))).await.ok();
+            changed = control_events.changed() => {
+                if changed.is_err() { return Ok(()); }
+                control_events.borrow_and_update();
+                refresh_control = true;
+                continue;
+            }
+            changed = goal_events.changed() => {
+                if changed.is_err() {
                     return Ok(());
+                }
+                // Publishers send a complete post-commit projection (or null
+                // after a clear), so goal changes need no second SQLite read.
+                goal_active = goal_events.borrow_and_update()["phase"] == "active";
+            }
+        }
+        // Canonical terminal events follow all completed items for this turn.
+        // The feed is ordered; model-context positions are intentionally not
+        // UI frames and must not force an idle watermark polling loop.
+        if projection.settled(goal_active) {
+            let status = projection.status.clone();
+            tokio::select! {
+                _ = cancel.cancelled() => { cancel_chat(state, user, session).await?; },
+                _ = output.closed() => {},
+                _ = output.send(NativeChatEvent::Event(json!({"event":"turn_terminal","data":{"status":status,"user_round":projection.user_round}}))) => {},
+            }
+            return Ok(());
+        }
+    }
+}
+
+/// Recovery materializes one item page at a time. A generic snapshot can be
+/// truncated by byte/item limits and can omit continuation execution turns;
+/// targeting the user root keeps its full completed output recoverable.
+async fn restore_target_turn(
+    state: &Arc<AppState>,
+    user: &str,
+    session: &str,
+    projection: &mut Projection,
+    output: &mpsc::Sender<NativeChatEvent>,
+    cancel: &CancellationToken,
+) -> Result<bool> {
+    let storage = state.storage.clone();
+    let (owner, target, round) = (user.to_owned(), session.to_owned(), projection.user_round);
+    let page = tokio::select! {
+        _=cancel.cancelled()=>{cancel_chat(state,user,session).await?;return Ok(false);},
+        _=output.closed()=>return Ok(false),
+        page=blocking::run_db("native.follow.restore_head",move||storage.thread_view_window(
+            &owner,&target,"chat",Some(round.saturating_add(1)),None,None,1))=>page?,
+    };
+    let row = page
+        .chat
+        .into_iter()
+        .find(|row| row.root_turn_id == projection.root)
+        .ok_or_else(|| anyhow!("native root no longer exists"))?;
+    let watermark = page.view_seq;
+    let root = projection.root.clone();
+    *projection = Projection {
+        root: root.clone(),
+        user_round: row.user_round,
+        ..Default::default()
+    };
+    let initial = json!({"cursor":1,"change_type":"turn_upsert","turn_id":row.execution_turn_id,
+        "payload":{"root_turn_id":root,"status":"running","user_turn_index":row.user_round}});
+    for event in projection.apply(&initial)? {
+        tokio::select! {
+            _=cancel.cancelled()=>{cancel_chat(state,user,session).await?;return Ok(false);},
+            result=output.send(NativeChatEvent::Event(event))=>if result.is_err(){return Ok(false);},
+        }
+    }
+    let mut after = -1;
+    loop {
+        let storage = state.storage.clone();
+        let (owner, target, root) = (user.to_owned(), session.to_owned(), root.clone());
+        let page = tokio::select! {
+            _=cancel.cancelled()=>{cancel_chat(state,user,session).await?;return Ok(false);},
+            _=output.closed()=>return Ok(false),
+            page=blocking::run_db("native.follow.restore_items",move||storage.get_thread_turn(
+                &owner,&target,&root,after,100,false))=>page?,
+        }
+        .ok_or_else(|| anyhow!("native root disappeared during recovery"))?;
+        for item in page["items"].as_array().into_iter().flatten() {
+            let cursor = item["created_seq"].as_i64().unwrap_or(0);
+            if item["turn_id"] != row.execution_turn_id || cursor > watermark {
+                continue;
+            }
+            let change = json!({"cursor":cursor,"change_type":"item_upsert",
+                "turn_id":row.execution_turn_id,"item_id":item["item_id"],"payload":item});
+            for event in projection.apply(&change)? {
+                tokio::select! {
+                    _=cancel.cancelled()=>{cancel_chat(state,user,session).await?;return Ok(false);},
+                    result=output.send(NativeChatEvent::Event(event))=>if result.is_err(){return Ok(false);},
+                }
+            }
+        }
+        if page["has_more"] != true {
+            break;
+        }
+        let next = page["next_after"]
+            .as_i64()
+            .ok_or_else(|| anyhow!("native recovery item cursor missing"))?;
+        ensure!(next > after, "native recovery item cursor did not advance");
+        after = next;
+    }
+    projection.cursor = watermark;
+    for event in projection.control_status(&row) {
+        tokio::select! {
+            _=cancel.cancelled()=>{cancel_chat(state,user,session).await?;return Ok(false);},
+            result=output.send(NativeChatEvent::Event(event))=>if result.is_err(){return Ok(false);},
+        }
+    }
+    Ok(true)
+}
+
+/// Reconcile control-only edges after draining every completed item committed
+/// before the captured watermark. This keeps waiting/cancellation event-driven
+/// without letting a status notification overtake the final history item.
+async fn sync_control(
+    state: &Arc<AppState>,
+    user: &str,
+    session: &str,
+    projection: &mut Projection,
+    output: &mpsc::Sender<NativeChatEvent>,
+    cancel: &CancellationToken,
+) -> Result<bool> {
+    let storage = state.storage.clone();
+    let (owner, target, round) = (user.to_owned(), session.to_owned(), projection.user_round);
+    let page = tokio::select! {
+        _ = cancel.cancelled() => { cancel_chat(state, user, session).await?; return Ok(false); },
+        _ = output.closed() => return Ok(false),
+        page = blocking::run_db("native.follow.control", move || {
+            storage.thread_view_window(&owner, &target, "chat",
+                Some(round.saturating_add(1)), None, None, 1)
+        }) => page?,
+    };
+    let watermark = page.view_seq;
+    while projection.cursor < watermark {
+        let storage = state.storage.clone();
+        let target = session.to_owned();
+        let after = projection.cursor;
+        let changes = tokio::select! {
+            _ = cancel.cancelled() => { cancel_chat(state, user, session).await?; return Ok(false); },
+            _ = output.closed() => return Ok(false),
+            changes = blocking::run_db("native.follow.control_history", move ||
+                storage.list_thread_changes_by_session(&target, after, 200)) => changes?,
+        };
+        let mut progressed = false;
+        for mut change in changes {
+            if change["change_type"] == "snapshot_required" {
+                // The feed owns rollout replacement/snapshot recovery. Avoid
+                // applying a control state against a different history epoch.
+                return Ok(true);
+            }
+            let cursor = change["change_seq"].as_i64().unwrap_or(0);
+            if cursor > watermark {
+                break;
+            }
+            change["cursor"] = json!(cursor);
+            for event in projection.apply(&change)? {
+                tokio::select! {
+                    _ = cancel.cancelled() => { cancel_chat(state, user, session).await?; return Ok(false); },
+                    result = output.send(NativeChatEvent::Event(event)) => {
+                        if result.is_err() { return Ok(false); }
+                    }
+                }
+            }
+            progressed |= projection.cursor > after;
+        }
+        if !progressed {
+            // Remaining canonical ordinals can be model-only context records.
+            projection.cursor = watermark;
+            break;
+        }
+    }
+    if let Some(row) = page
+        .chat
+        .iter()
+        .find(|row| row.root_turn_id == projection.root)
+    {
+        for event in projection.control_status(row) {
+            tokio::select! {
+                _ = cancel.cancelled() => { cancel_chat(state, user, session).await?; return Ok(false); },
+                result = output.send(NativeChatEvent::Event(event)) => {
+                    if result.is_err() { return Ok(false); }
                 }
             }
         }
     }
+    Ok(true)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn canonical_cursor_gaps_are_accepted_and_replays_are_ignored() {
+        let mut projection = Projection {
+            root: "fixture-root".into(),
+            cursor: 3,
+            ..Default::default()
+        };
+        let event = json!({"cursor":8,"change_type":"turn_upsert","turn_id":"fixture-root","payload":{"status":"running"}});
+        assert!(!projection.apply(&event).unwrap().is_empty());
+        assert_eq!(projection.cursor, 8);
+        assert!(projection.apply(&event).unwrap().is_empty());
+        let stale = json!({"cursor":5,"change_type":"turn_upsert","turn_id":"fixture-root","payload":{"status":"completed"}});
+        assert!(projection.apply(&stale).unwrap().is_empty());
+        assert_eq!(projection.status, "running");
+    }
     #[test]
     fn accepted_continuation_starts_only_after_running_revision() {
         let mut projection = Projection {
@@ -500,124 +633,58 @@ mod tests {
         assert!(p.settled(true));
     }
     #[test]
-    fn durable_blocks_duplicate_replay_and_foreign_turn_are_isolated() {
-        let mut p = Projection {
+    fn completed_items_duplicate_replay_and_foreign_turn_are_isolated() {
+        let mut projection = Projection {
             root: "fixture-root".into(),
             execution: "fixture-child".into(),
             ..Default::default()
         };
-        let item = json!({"cursor":1,"change_type":"item_upsert","turn_id":"fixture-child","payload":{"item_id":"fixture-child:text-1","kind":"assistant_message","revision":1,"payload":{"content":"","model_round":1}}});
-        p.apply(&item).unwrap();
-        assert!(p.apply(&item).unwrap().is_empty());
-        let block = json!({"cursor":2,"change_type":"text_block","turn_id":"fixture-child","item_id":"fixture-child:text-1","payload":{"content":"🐣","content_offset":0,"field":"content"}});
-        assert_eq!(p.apply(&block).unwrap().len(), 1);
-        assert!(p.apply(&block).unwrap().is_empty());
-        assert_eq!(p.offset, 2);
-        p.apply(&json!({"cursor":3,"change_type":"turn_upsert","turn_id":"other","payload":{"status":"queued"}})).unwrap();
-        assert_eq!(p.execution, "fixture-child");
-        assert_eq!(p.text, "🐣");
-    }
-
-    #[test]
-    fn tail_block_rewrite_extends_text_and_streams_only_suffix() {
-        let mut p = Projection {
-            root: "fixture-root".into(),
-            execution: "fixture-child".into(),
-            ..Default::default()
-        };
-        let item = json!({"cursor":1,"change_type":"item_upsert","turn_id":"fixture-child","payload":{"item_id":"fixture-child:text-1","kind":"assistant_message","revision":1,"payload":{"content":"","model_round":1}}});
-        p.apply(&item).unwrap();
-        // First due-flush of the active tail block.
-        let short = json!({"cursor":2,"change_type":"text_block","turn_id":"fixture-child","item_id":"fixture-child:text-1","payload":{"content":"你好，","content_offset":0,"field":"content"}});
-        let events = p.apply(&short).unwrap();
-        assert_eq!(events[0]["data"]["delta"], "你好，");
-        // The emitter re-flushes the same block_index with longer text under a
-        // new change_seq; the suffix is streamed and the text stays identical
-        // to the durable block content.
-        let longer = json!({"cursor":3,"change_type":"text_block","turn_id":"fixture-child","item_id":"fixture-child:text-1","payload":{"content":"你好，世界","content_offset":0,"field":"content"}});
-        let events = p.apply(&longer).unwrap();
-        assert_eq!(events[0]["data"]["delta"], "世界");
-        assert_eq!(p.text, "你好，世界");
-        assert_eq!(p.offset, 5);
-        // A finalized later block continues from the rewritten tail.
-        let next = json!({"cursor":4,"change_type":"text_block","turn_id":"fixture-child","item_id":"fixture-child:text-1","payload":{"content":"！","content_offset":5,"field":"content"}});
-        let events = p.apply(&next).unwrap();
-        assert_eq!(events[0]["data"]["delta"], "！");
-        assert_eq!(p.text, "你好，世界！");
-        // A rewrite that would alter already-applied text is rejected.
-        let corrupted = json!({"cursor":5,"change_type":"text_block","turn_id":"fixture-child","item_id":"fixture-child:text-1","payload":{"content":"完全不同的内容","content_offset":0,"field":"content"}});
-        assert!(p.apply(&corrupted).is_err());
-        // A genuine offset gap stays an error.
-        let gap = json!({"cursor":6,"change_type":"text_block","turn_id":"fixture-child","item_id":"fixture-child:text-1","payload":{"content":"跳","content_offset":9,"field":"content"}});
-        assert!(p.apply(&gap).is_err());
-    }
-
-    #[test]
-    fn reasoning_stream_has_its_own_clock_and_survives_snapshot_replay() {
-        let mut p = Projection {
-            root: "fixture-root".into(),
-            execution: "fixture-child".into(),
-            ..Default::default()
-        };
-        p.apply(
-            &json!({"cursor":1,"change_type":"item_upsert","turn_id":"fixture-child",
+        let item = json!({"cursor":7,"change_type":"item_upsert","turn_id":"fixture-child",
             "payload":{"item_id":"fixture-child:text-1","kind":"assistant_message","revision":1,
-                "payload":{"content":"","model_round":1}}}),
-        )
-        .unwrap();
-        for (seq, text, expected) in [(2, "Think 🐣", "Think 🐣"), (3, "Think 🐣 more", " more")]
-        {
-            let events = p
-                .apply(
-                    &json!({"cursor":seq,"change_type":"text_block","turn_id":"fixture-child",
-                "item_id":"fixture-child:text-1","payload":{"field":"reasoning",
-                    "data":{"reasoning":text,"reasoning_offset":0}}}),
-                )
-                .unwrap();
-            assert_eq!(events.len(), 1);
-            assert_eq!(events[0]["event"], "reasoning_delta");
-            assert_eq!(events[0]["data"]["delta"], expected);
-        }
-        assert_eq!(p.reasoning_offset, 13);
-        assert_eq!(p.offset, 0);
-        let events = p.apply(&json!({"cursor":4,"change_type":"text_block","turn_id":"fixture-child",
-            "item_id":"fixture-child:text-1","payload":{"field":"content","content":"Reply","content_offset":0}})).unwrap();
-        assert_eq!(events[0]["data"]["delta"], "Reply");
-        let events = p
+                "payload":{"content":"Complete reply 🐣","reasoning":"Complete thought","model_round":1}}});
+        let events = projection.apply(&item).unwrap();
+        assert_eq!(events[0]["event"], "reasoning_delta");
+        assert_eq!(events[0]["data"]["delta"], "Complete thought");
+        assert_eq!(events[1]["event"], "llm_output");
+        assert_eq!(events[1]["data"]["content"], "Complete reply 🐣");
+        assert!(projection.apply(&item).unwrap().is_empty());
+        let mut duplicate = item;
+        duplicate["cursor"] = json!(9);
+        assert!(projection.apply(&duplicate).unwrap().is_empty());
+        projection
             .apply(
-                &json!({"cursor":5,"change_type":"item_upsert","turn_id":"fixture-child",
-            "payload":{"item_id":"fixture-child:text-1","kind":"assistant_message","revision":2,
-                "payload":{"content":"Reply","reasoning":"Think 🐣 more!","model_round":1}}}),
+                &json!({"cursor":10,"change_type":"turn_upsert","turn_id":"other",
+            "payload":{"status":"queued"}}),
             )
             .unwrap();
-        assert_eq!(events[0]["event"], "reasoning_delta");
-        assert_eq!(events[0]["data"]["delta"], "!");
-        assert_eq!(p.reasoning, "Think 🐣 more!");
+        assert_eq!(projection.execution, "fixture-child");
+        assert_eq!(projection.text, "Complete reply 🐣");
+        assert_eq!(projection.reasoning, "Complete thought");
+    }
 
-        let events = p.restore(&json!({"cursor":20,
-            "turns":[{"turn_id":"fixture-child","root_turn_id":"fixture-root","status":"running"}],
-            "items":[{"turn_id":"fixture-child","item_id":"fixture-child:text-1","kind":"assistant_message","revision":2,"payload":{"model_round":1}}],
-            "blocks":[{"item_id":"fixture-child:text-1","data":{"field":"reasoning","reasoning":"Recovered thought","reasoning_offset":0}},
-                {"item_id":"fixture-child:text-1","data":{"field":"content","content":"Recovered reply","content_offset":0}}]})).unwrap();
+    #[test]
+    fn snapshot_restores_full_completed_content_and_reasoning() {
+        let mut projection = Projection {
+            root: "fixture-root".into(),
+            ..Default::default()
+        };
+        let events = projection.restore(&json!({"cursor":20,
+            "turns":[{"turn_id":"fixture-child","root_turn_id":"fixture-root","status":"completed"}],
+            "items":[{"turn_id":"fixture-child","item_id":"fixture-child:text-1",
+                "kind":"assistant_message","revision":1,"payload":{"model_round":1,
+                    "reasoning":"Recovered thought 🐣","content":"Recovered reply"}}]})).unwrap();
+        assert_eq!(projection.reasoning, "Recovered thought 🐣");
+        assert_eq!(projection.text, "Recovered reply");
+        assert_eq!(projection.cursor, 20);
         assert!(events
             .iter()
             .any(|event| event["event"] == "reasoning_delta"
-                && event["data"]["delta"] == "Recovered thought"));
-        assert_eq!(p.reasoning, "Recovered thought");
-        assert_eq!(p.text, "Recovered reply");
-    }
-
-    #[test]
-    fn utf16_byte_index_maps_boundaries_and_rejects_surrogate_splits() {
-        assert_eq!(utf16_byte_index("你好", 0), Some(0));
-        assert_eq!(utf16_byte_index("你好", 1), Some(3));
-        assert_eq!(utf16_byte_index("你好", 2), Some(6));
-        // Out-of-range and mid-character indexes have no byte position.
-        assert_eq!(utf16_byte_index("你好", 5), None);
-        // A surrogate pair occupies two UTF-16 units; splitting it is invalid.
-        assert_eq!(utf16_byte_index("🐣x", 1), None);
-        assert_eq!(utf16_byte_index("🐣x", 2), Some(4));
-        assert_eq!(utf16_byte_index("abc", 3), Some(3));
+                && event["data"]["delta"] == "Recovered thought 🐣"));
+        assert!(events
+            .iter()
+            .any(|event| event["event"] == "llm_output"
+                && event["data"]["content"] == "Recovered reply"));
+        assert!(projection.settled(false));
     }
 
     #[test]
@@ -629,34 +696,34 @@ mod tests {
         let events = p.restore(&json!({"cursor":40,
             "turns":[{"turn_id":"fixture-root","root_turn_id":"fixture-root","status":"completed"},
                 {"turn_id":"fixture-child","root_turn_id":"fixture-root","status":"running"}],
-            "items":[{"turn_id":"fixture-child","item_id":"fixture-child:text-1","kind":"assistant_message","revision":2,"payload":{"content":"","model_round":1}}],
-            "blocks":[{"item_id":"fixture-child:text-1","data":{"content":"Recovered partial","field":"content","content_offset":0}}]})).unwrap();
+            "items":[{"turn_id":"fixture-child","item_id":"fixture-child:text-1","kind":"assistant_message","revision":1,"payload":{"content":"Recovered partial","model_round":1}}]})).unwrap();
         assert_eq!(p.cursor, 40);
         assert_eq!(p.text, "Recovered partial");
         assert!(events
             .iter()
-            .any(|event| event["data"]["delta"] == "Recovered partial"));
+            .any(|event| event["data"]["content"] == "Recovered partial"));
         assert!(!p.settled(false));
         p.apply(&json!({"cursor":41,"change_type":"turn_upsert","turn_id":"fixture-child","payload":{"root_turn_id":"fixture-root","status":"cancelled"}})).unwrap();
         assert!(p.settled(true));
     }
 
     #[tokio::test]
-    async fn background_commits_stream_before_completion_and_drain_terminal_output() {
+    async fn recovery_pages_the_target_root_and_restores_complete_continuation() {
         use wunder_server::{
-            config::Config, config_store::ConfigStore, state::AppStateInitOptions,
+            config::Config, config_store::ConfigStore, stable_core::thread_store::*,
+            state::AppStateInitOptions,
         };
-        let temp = tempfile::tempdir().unwrap();
+        let directory = tempfile::tempdir().unwrap();
         let mut config = Config::default();
         config.storage.backend = "sqlite".into();
-        config.storage.db_path = temp
+        config.storage.data_root = directory.path().join("data").to_string_lossy().into_owned();
+        config.workspace.root = directory
             .path()
-            .join("fixture.db")
+            .join("workspace")
             .to_string_lossy()
             .into_owned();
-        config.workspace.root = temp.path().join("workspace").to_string_lossy().into_owned();
         config.skills.enabled.clear();
-        let config_store = ConfigStore::new(temp.path().join("fixture.yaml"));
+        let config_store = ConfigStore::new(directory.path().join("config.yaml"));
         config_store
             .update(|value| *value = config.clone())
             .await
@@ -669,244 +736,502 @@ mod tests {
             )
             .unwrap(),
         );
-        let root = state
+        let thread = ThreadId::new("fixture-thread").unwrap();
+        let accepted = state
             .storage
             .accept_thread_turn(
-                "owner",
-                "fixture-session",
-                &json!({"content":"Fixture objective"}),
+                "fixture-user",
+                thread.as_str(),
+                &json!({"content":"sample input"}),
             )
             .unwrap();
-        let root_id = root["turn_id"].as_str().unwrap().to_string();
+        let root = TurnId::new(accepted["turn_id"].as_str().unwrap()).unwrap();
+        let rollout = RolloutId::new("fixture-rollout").unwrap();
+        state
+            .thread_store
+            .create_thread(CreateThreadRequest {
+                metadata: ThreadMetadata {
+                    thread_id: thread.clone(),
+                    current_rollout_id: rollout.clone(),
+                    status: ThreadStatus::Active,
+                    created_at_ms: 1,
+                    updated_at_ms: 1,
+                    title: None,
+                    workspace_id: None,
+                    pinned: false,
+                },
+                session_meta: SessionMeta {
+                    thread_id: thread.clone(),
+                    rollout_id: rollout,
+                    created_at_ms: 1,
+                    source: "fixture".into(),
+                    initial_system_prompt: "sample instruction".into(),
+                    initial_memory: None,
+                    parent_thread_id: None,
+                    history_base: None,
+                    capabilities: Value::Null,
+                },
+            })
+            .await
+            .unwrap();
+        state
+            .thread_store
+            .begin_turn("fixture-user", &thread, &root, "fixture-model")
+            .await
+            .unwrap();
+        let tools = |turn: &TurnId, prefix: &str, count: usize| {
+            (0..count)
+                .map(|index| {
+                    CanonicalRecord::Event(CanonicalEvent::ItemCompleted(CanonicalItem {
+                        item_id: ItemId::new(format!("{prefix}-{index}")).unwrap(),
+                        turn_id: turn.clone(),
+                        root_turn_id: Some(root.clone()),
+                        created_at_ms: 3,
+                        kind: CanonicalItemKind::ToolCall,
+                        payload: json!({"tool":"read_file","result":"sample result"}),
+                        display_output: None,
+                        display_output_truncated: false,
+                    }))
+                })
+                .collect::<Vec<_>>()
+        };
+        state
+            .thread_store
+            .append_canonical(&thread, tools(&root, "fixture-root-tool", 105))
+            .await
+            .unwrap();
         state
             .storage
             .update_thread_turn(
-                "owner",
-                "fixture-session",
-                &root_id,
+                "fixture-user",
+                thread.as_str(),
+                root.as_str(),
                 "completed",
                 "",
                 &json!({}),
             )
             .unwrap();
-        let mut goal = wunder_server::storage::SessionGoalRecord {
-            goal_id: "fixture-goal".into(),
-            session_id: "fixture-session".into(),
-            user_id: "owner".into(),
-            revision: 1,
-            objective: "Fixture objective".into(),
-            phase: "active".into(),
-            blocked_code: None,
-            blocked_message: None,
-            max_goal_rounds: 256,
-            rounds_started: 0,
-            created_at: 0.0,
-            updated_at: 0.0,
-        };
-        state.storage.upsert_session_goal(&goal).unwrap();
-        let cursor = state
+        let accepted = state
             .storage
-            .latest_thread_change_seq_by_session("fixture-session")
+            .accept_thread_turn(
+                "fixture-user",
+                thread.as_str(),
+                &json!({"content":"sample continuation","root_user_round":1}),
+            )
             .unwrap();
-        let (output, mut receiver) = mpsc::channel(128);
-        let cancel = CancellationToken::new();
+        let child = TurnId::new(accepted["turn_id"].as_str().unwrap()).unwrap();
+        state
+            .thread_store
+            .begin_turn("fixture-user", &thread, &child, "fixture-model")
+            .await
+            .unwrap();
+        let mut records = tools(&child, "fixture-child-tool", 120);
+        let complete_text = "Complete reply 🐣".repeat(1024);
+        let complete_reasoning = "Complete thought 🐣".repeat(1024);
+        records.push(CanonicalRecord::Event(CanonicalEvent::ItemCompleted(CanonicalItem {
+            item_id:ItemId::new(format!("{}:text-1",child.as_str())).unwrap(),turn_id:child.clone(),
+            root_turn_id:Some(root.clone()),created_at_ms:4,kind:CanonicalItemKind::AssistantMessage,
+            payload:json!({"content":complete_text,"reasoning":complete_reasoning,"model_round":1}),
+            display_output:None,display_output_truncated:false,
+        })));
+        state
+            .thread_store
+            .append_canonical(&thread, records)
+            .await
+            .unwrap();
+        state
+            .storage
+            .update_thread_turn(
+                "fixture-user",
+                thread.as_str(),
+                child.as_str(),
+                "completed",
+                "",
+                &json!({}),
+            )
+            .unwrap();
+        let watermark = state
+            .storage
+            .latest_thread_change_seq_by_session(thread.as_str())
+            .unwrap();
+        // The tiny transport exercises page-by-page recovery under backpressure.
+        let (output, mut receiver) = mpsc::channel(4);
+        let collector = tokio::spawn(async move {
+            let mut events = Vec::new();
+            while let Some(NativeChatEvent::Event(event)) = receiver.recv().await {
+                events.push(event);
+            }
+            events
+        });
+        let mut projection = Projection {
+            root: root.to_string(),
+            user_round: 1,
+            ..Default::default()
+        };
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            restore_target_turn(
+                &state,
+                "fixture-user",
+                thread.as_str(),
+                &mut projection,
+                &output,
+                &CancellationToken::new(),
+            ),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        drop(output);
+        let events = collector.await.unwrap();
+        assert_eq!(projection.execution, child.as_str());
+        assert_eq!(projection.text, complete_text);
+        assert_eq!(projection.reasoning, complete_reasoning);
+        assert_eq!(projection.cursor, watermark);
+        assert!(projection.settled(false));
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event["event"] == "tool_result")
+                .count(),
+            120
+        );
+        assert!(events
+            .iter()
+            .filter_map(|event| event["data"]["item_id"].as_str())
+            .all(|id| !id.starts_with("fixture-root-tool")));
+        let answer = events
+            .iter()
+            .position(|event| event["event"] == "llm_output")
+            .unwrap();
+        let terminal = events
+            .iter()
+            .position(|event| {
+                event["event"] == "native_execution_status"
+                    && event["data"]["status"] == "completed"
+            })
+            .unwrap();
+        assert!(answer < terminal);
+    }
+
+    #[tokio::test]
+    async fn control_only_queued_cancellation_wakes_without_rollout_or_idle_polling() {
+        use wunder_server::{
+            config::Config, config_store::ConfigStore, state::AppStateInitOptions,
+        };
+        let directory = tempfile::tempdir().unwrap();
+        let mut config = Config::default();
+        config.storage.backend = "sqlite".into();
+        config.storage.data_root = directory.path().join("data").to_string_lossy().into_owned();
+        config.workspace.root = directory
+            .path()
+            .join("workspace")
+            .to_string_lossy()
+            .into_owned();
+        config.skills.enabled.clear();
+        let config_store = ConfigStore::new(directory.path().join("config.yaml"));
+        config_store
+            .update(|value| *value = config.clone())
+            .await
+            .unwrap();
+        let state = Arc::new(
+            AppState::new_with_options(
+                config_store,
+                config,
+                AppStateInitOptions::cli_default().with_start_thread_runtime(false),
+            )
+            .unwrap(),
+        );
+        let turn = state
+            .storage
+            .accept_thread_turn(
+                "fixture-user",
+                "fixture-thread",
+                &json!({"content":"sample input"}),
+            )
+            .unwrap();
+        let root = turn["turn_id"].as_str().unwrap().to_owned();
+        state
+            .storage
+            .update_thread_turn(
+                "fixture-user",
+                "fixture-thread",
+                &root,
+                "queued",
+                "",
+                &json!({"queued_input":{"queue_id":"fixture-queue","reason":"wait","priority":0}}),
+            )
+            .unwrap();
+        let (output, mut receiver) = mpsc::channel(16);
         let task_state = state.clone();
-        let task_root = root_id.clone();
+        let task_root = root.clone();
+        let cancel = CancellationToken::new();
         let task_cancel = cancel.clone();
         let task = tokio::spawn(async move {
             watch(
                 &task_state,
-                "owner",
-                "fixture-session",
+                "fixture-user",
+                "fixture-thread",
                 &task_root,
-                cursor,
+                0,
                 &output,
                 &task_cancel,
-                true,
+                false,
             )
             .await
         });
-        // A completed root must remain subscribed throughout the scheduling gap.
-        tokio::time::sleep(Duration::from_millis(300)).await;
-        assert!(!task.is_finished());
-        let child = state
+        tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                let Some(NativeChatEvent::Event(event)) = receiver.recv().await else {
+                    panic!("follow closed")
+                };
+                if event["event"] == "native_execution_status"
+                    && event["data"]["status"] == "queued"
+                {
+                    break;
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), receiver.recv())
+                .await
+                .is_err()
+        );
+        assert!(state
+            .storage
+            .update_thread_turn(
+                "fixture-user",
+                "fixture-thread",
+                &root,
+                "cancelled",
+                "",
+                &json!({"stop_reason":"fixture-stop"})
+            )
+            .unwrap());
+        state
+            .kernel
+            .orchestrator
+            .notify_thread_committed("fixture-thread", 0);
+        let terminal = tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                let Some(NativeChatEvent::Event(event)) = receiver.recv().await else {
+                    panic!("follow closed")
+                };
+                if event["event"] == "turn_terminal" {
+                    break event;
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(terminal["data"]["status"], "cancelled");
+        tokio::time::timeout(Duration::from_secs(3), task)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            state
+                .storage
+                .latest_thread_change_seq_by_session("fixture-thread")
+                .unwrap(),
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn completed_history_is_drained_before_terminal_and_goal_updates_wake_settlement() {
+        use wunder_server::{
+            config::Config, config_store::ConfigStore, services::goal::GoalRef,
+            stable_core::thread_store::*, state::AppStateInitOptions,
+        };
+        let directory = tempfile::tempdir().unwrap();
+        let mut config = Config::default();
+        config.storage.backend = "sqlite".into();
+        config.storage.data_root = directory.path().join("data").to_string_lossy().into_owned();
+        config.workspace.root = directory
+            .path()
+            .join("workspace")
+            .to_string_lossy()
+            .into_owned();
+        config.skills.enabled.clear();
+        let config_store = ConfigStore::new(directory.path().join("config.yaml"));
+        config_store
+            .update(|value| *value = config.clone())
+            .await
+            .unwrap();
+        let state = Arc::new(
+            AppState::new_with_options(
+                config_store,
+                config,
+                AppStateInitOptions::cli_default().with_start_thread_runtime(false),
+            )
+            .unwrap(),
+        );
+        let accepted = state
             .storage
             .accept_thread_turn(
                 "owner",
-                "fixture-session",
-                &json!({"content":"Internal", "root_user_round":1}),
+                "fixture-thread",
+                &json!({"content":"sample input"}),
             )
             .unwrap();
-        let child_id = child["turn_id"].as_str().unwrap();
-        // Admission is not execution. Mirror the scheduler's durable running
-        // transition before writing streamed items.
+        let thread = ThreadId::new("fixture-thread").unwrap();
+        let turn = TurnId::new(accepted["turn_id"].as_str().unwrap()).unwrap();
+        let rollout = RolloutId::new("fixture-rollout").unwrap();
+        state
+            .thread_store
+            .create_thread(CreateThreadRequest {
+                metadata: ThreadMetadata {
+                    thread_id: thread.clone(),
+                    current_rollout_id: rollout.clone(),
+                    status: ThreadStatus::Active,
+                    created_at_ms: 1,
+                    updated_at_ms: 1,
+                    title: None,
+                    workspace_id: None,
+                    pinned: false,
+                },
+                session_meta: SessionMeta {
+                    thread_id: thread.clone(),
+                    rollout_id: rollout,
+                    created_at_ms: 1,
+                    source: "fixture".into(),
+                    initial_system_prompt: "sample instruction".into(),
+                    initial_memory: None,
+                    parent_thread_id: None,
+                    history_base: None,
+                    capabilities: Value::Null,
+                },
+            })
+            .await
+            .unwrap();
+        state
+            .thread_store
+            .begin_turn("owner", &thread, &turn, "fixture-model")
+            .await
+            .unwrap();
+        state
+            .thread_store
+            .append_canonical(
+                &thread,
+                vec![CanonicalRecord::ResponseItem(ResponseItem {
+                    item_id: ItemId::new("fixture-context").unwrap(),
+                    turn_id: turn.clone(),
+                    root_turn_id: Some(turn.clone()),
+                    created_at_ms: 3,
+                    kind: CanonicalItemKind::AssistantMessage,
+                    payload: json!({"content":"context"}),
+                })],
+            )
+            .await
+            .unwrap();
+        state
+            .storage
+            .commit_thread_item(
+                "owner",
+                &json!({
+                    "session_id":"fixture-thread", "turn_id":turn.as_str(),
+                    "item_id":format!("{}:text-1", turn.as_str()),
+                    "kind":"assistant_message", "status":"completed", "visibility":"user",
+                    "content":"sample answer", "model_round":1,
+                }),
+            )
+            .unwrap();
         state
             .storage
             .update_thread_turn(
                 "owner",
-                "fixture-session",
-                child_id,
-                "running",
-                "",
-                &json!({}),
-            )
-            .unwrap();
-        let item = format!("{child_id}:text-1");
-        state.storage.append_thread_item("owner", &json!({"session_id":"fixture-session","turn_id":child_id,
-            "item_id":item,"kind":"assistant_message","role":"assistant","model_round":1,"content":"","status":"running"})).unwrap();
-        state.storage.upsert_thread_text_block("owner", "fixture-session",
-            &json!({"item_id":item,"field":"reasoning","block_index":0,"event_id":1,
-                "data":{"field":"reasoning","reasoning_offset":0,"reasoning":"Fixture live thought"}})).unwrap();
-        let thought = tokio::time::timeout(Duration::from_secs(3), async {
-            loop {
-                if let Some(NativeChatEvent::Event(event)) = receiver.recv().await {
-                    if event["event"] == "reasoning_delta" {
-                        break event;
-                    }
-                }
-            }
-        })
-        .await
-        .unwrap();
-        assert_eq!(thought["data"]["delta"], "Fixture live thought");
-        assert!(!task.is_finished());
-        state
-            .storage
-            .upsert_thread_text_block(
-                "owner",
-                "fixture-session",
-                &json!({"item_id":item,"field":"content","block_index":0,"event_id":1,
-            "data":{"field":"content","content_offset":0,"content":"Fixture partial"}}),
-            )
-            .unwrap();
-        let partial = tokio::time::timeout(Duration::from_secs(3), async {
-            loop {
-                if let Some(NativeChatEvent::Event(event)) = receiver.recv().await {
-                    if event["event"] == "llm_output_delta" {
-                        break event;
-                    }
-                }
-            }
-        })
-        .await
-        .unwrap();
-        assert_eq!(partial["data"]["delta"], "Fixture partial");
-        assert!(!task.is_finished());
-        goal.phase = "complete".into();
-        state.storage.upsert_session_goal(&goal).unwrap();
-        // The goal is complete before the execution commits its final answer.
-        tokio::time::sleep(Duration::from_millis(150)).await;
-        assert!(!task.is_finished());
-        state.storage.append_thread_item("owner", &json!({"session_id":"fixture-session","turn_id":child_id,
-            "item_id":item,"kind":"assistant_message","role":"assistant","model_round":1,"content":"Fixture final","status":"completed"})).unwrap();
-        state
-            .storage
-            .update_thread_turn(
-                "owner",
-                "fixture-session",
-                child_id,
+                "fixture-thread",
+                turn.as_str(),
                 "completed",
                 "",
                 &json!({}),
             )
+            .unwrap();
+        let goal_service = state.kernel.orchestrator.goal_handle();
+        let goal = goal_service
+            .create(
+                state.storage.clone(),
+                "owner",
+                thread.as_str(),
+                "sample objective",
+                Some(8),
+            )
+            .await
+            .unwrap();
+        let reference = GoalRef {
+            goal_id: goal.record.goal_id,
+            revision: goal.record.revision,
+        };
+        let (output, mut receiver) = mpsc::channel(32);
+        let cancel = CancellationToken::new();
+        let task_state = state.clone();
+        let task_cancel = cancel.clone();
+        let root_turn = turn.to_string();
+        let task = tokio::spawn(async move {
+            watch(
+                &task_state,
+                "owner",
+                "fixture-thread",
+                &root_turn,
+                0,
+                &output,
+                &task_cancel,
+                false,
+            )
+            .await
+        });
+        let mut events = Vec::new();
+        tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                let Some(NativeChatEvent::Event(event)) = receiver.recv().await else {
+                    panic!("follow closed");
+                };
+                let completed = event["event"] == "native_execution_status"
+                    && event["data"]["status"] == "completed";
+                events.push(event);
+                if completed {
+                    break;
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert!(
+            !task.is_finished(),
+            "active goal retains the completed follower"
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_millis(150), receiver.recv())
+                .await
+                .is_err(),
+            "idle follow emits no timer probes"
+        );
+        goal_service
+            .complete(state.storage.clone(), "owner", "fixture-thread", &reference)
+            .await
             .unwrap();
         tokio::time::timeout(Duration::from_secs(3), task)
             .await
             .unwrap()
             .unwrap()
             .unwrap();
-        let mut events = Vec::new();
         while let Some(NativeChatEvent::Event(event)) = receiver.recv().await {
             events.push(event);
         }
         let answer = events
             .iter()
-            .position(|event| event["data"]["content"] == "Fixture final")
+            .position(|event| {
+                event["event"] == "llm_output" && event["data"]["content"] == "sample answer"
+            })
             .unwrap();
         let terminal = events
             .iter()
             .position(|event| event["event"] == "turn_terminal")
             .unwrap();
         assert!(answer < terminal);
-        // Closing the UI subscriber stops observation, not the goal or task.
-        goal.phase = "active".into();
-        state.storage.upsert_session_goal(&goal).unwrap();
-        let (output, receiver) = mpsc::channel(1);
-        drop(receiver);
-        tokio::time::timeout(
-            Duration::from_secs(1),
-            watch(
-                &state,
-                "owner",
-                "fixture-session",
-                &root_id,
-                state
-                    .storage
-                    .latest_thread_change_seq_by_session("fixture-session")
-                    .unwrap(),
-                &output,
-                &cancel,
-                true,
-            ),
-        )
-        .await
-        .unwrap()
-        .unwrap();
-        assert_eq!(
-            state
-                .storage
-                .get_session_goal("owner", "fixture-session")
-                .unwrap()
-                .unwrap()
-                .phase,
-            "active"
-        );
-        // Explicit stop must clear the goal even when UI delivery is full.
-        state
-            .user_store
-            .upsert_chat_session(&wunder_server::storage::ChatSessionRecord {
-                session_id: "fixture-session".into(),
-                user_id: "owner".into(),
-                title: "Fixture".into(),
-                status: "active".into(),
-                created_at: 0.0,
-                updated_at: 0.0,
-                last_message_at: 0.0,
-                agent_id: None,
-                workspace_id: None,
-                tool_overrides: vec![],
-                parent_session_id: None,
-                parent_message_id: None,
-                spawn_label: None,
-                spawned_by: None,
-            })
-            .unwrap();
-        let (output, _receiver) = mpsc::channel(1);
-        output.try_send(NativeChatEvent::Queued).unwrap();
-        cancel.cancel();
-        tokio::time::timeout(
-            Duration::from_secs(3),
-            watch(
-                &state,
-                "owner",
-                "fixture-session",
-                &root_id,
-                state
-                    .storage
-                    .latest_thread_change_seq_by_session("fixture-session")
-                    .unwrap(),
-                &output,
-                &cancel,
-                true,
-            ),
-        )
-        .await
-        .unwrap()
-        .unwrap();
-        assert!(state
-            .storage
-            .get_session_goal("owner", "fixture-session")
-            .unwrap()
-            .is_none());
     }
 }

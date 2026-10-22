@@ -412,7 +412,7 @@ fn parse_timestamp(value: Option<&Value>) -> Option<f64> {
     }
 }
 
-fn build_message_from_item(item: &Value, include_reasoning: bool) -> Option<Value> {
+pub(crate) fn build_message_from_item(item: &Value, include_reasoning: bool) -> Option<Value> {
     let role = item.get("role").and_then(Value::as_str)?;
     // Manual compaction command/summary rows are durable UI transcript entries.
     // They must not be replayed into the next model request as a new user task.
@@ -937,7 +937,7 @@ fn extract_compacted_until_ts(item: Option<&Value>) -> Option<f64> {
 mod tests {
     use super::*;
     use crate::i18n;
-    use crate::storage::SqliteStorage;
+    use crate::storage::{SqliteStorage, ThreadLogStore};
     use serde_json::json;
     use std::sync::Arc;
     use tempfile::tempdir;
@@ -952,6 +952,61 @@ mod tests {
                 language.to_string(),
                 async move { f() },
             ))
+    }
+
+    fn seed_context_rows(
+        root: &Path,
+        storage: &SqliteStorage,
+        user: &str,
+        session: &str,
+        rows: Vec<Value>,
+    ) {
+        use wunder_core::thread_store::*;
+        let store = crate::storage::thread_store::LocalThreadStore::open(root).unwrap();
+        let thread = ThreadId::new(session).unwrap();
+        let rollout = RolloutId::new("sample-rollout").unwrap();
+        let admission = storage
+            .accept_thread_turn(user, session, &json!({"content":"sample input"}))
+            .unwrap();
+        let turn = TurnId::new(admission["turn_id"].as_str().unwrap()).unwrap();
+        crate::storage::canonical_thread_log::wait(async {
+            store
+                .create_thread(CreateThreadRequest {
+                    metadata: ThreadMetadata {
+                        thread_id: thread.clone(),
+                        current_rollout_id: rollout.clone(),
+                        status: ThreadStatus::Active,
+                        created_at_ms: 1,
+                        updated_at_ms: 1,
+                        title: None,
+                        workspace_id: None,
+                        pinned: false,
+                    },
+                    session_meta: SessionMeta {
+                        thread_id: thread.clone(),
+                        rollout_id: rollout,
+                        created_at_ms: 1,
+                        source: "sample".into(),
+                        initial_system_prompt: "frozen sample instructions".into(),
+                        initial_memory: None,
+                        parent_thread_id: None,
+                        history_base: None,
+                        capabilities: Value::Null,
+                    },
+                })
+                .await
+                .unwrap();
+            store
+                .begin_turn(user, &thread, &turn, "sample-model")
+                .await
+                .unwrap();
+            for mut row in rows {
+                row["session_id"] = json!(session);
+                row["turn_id"] = json!(turn);
+                store.append_chat_payload(user, &row).await.unwrap();
+            }
+        })
+        .unwrap();
     }
 
     #[test]
@@ -1642,97 +1697,45 @@ mod tests {
     }
 
     #[test]
-    fn load_history_messages_orders_legacy_retained_head_then_summary_then_tail() {
-        let dir = tempdir().expect("tempdir");
-        let db_path = dir.path().join("history-retained-head-tail.db");
-        let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
-        let workspace_root = dir.path().join("workspaces");
-        let workspace = Arc::new(WorkspaceManager::new(
-            workspace_root.to_string_lossy().as_ref(),
-            storage,
+    fn load_history_messages_uses_the_canonical_compaction_checkpoint() {
+        let dir = tempdir().unwrap();
+        let storage = Arc::new(SqliteStorage::new(
+            dir.path()
+                .join("state_1.sqlite")
+                .to_string_lossy()
+                .into_owned(),
+        ));
+        let workspace = WorkspaceManager::new(
+            &dir.path().join("workspaces").to_string_lossy(),
+            storage.clone(),
             0,
             &HashMap::new(),
-        ));
-        let user_id = "history-test-user";
-        let session_id = "history-test-session";
-        let history = vec![
-            json!({
-                "role": "user",
-                "content": "head question",
-                "timestamp": "2026-03-27T00:00:01Z"
-            }),
-            json!({
-                "role": "assistant",
-                "content": "head answer",
-                "timestamp": "2026-03-27T00:00:02Z"
-            }),
-            json!({
-                "role": "user",
-                "content": "middle question",
-                "timestamp": "2026-03-27T00:00:03Z"
-            }),
-            json!({
-                "role": "assistant",
-                "content": "middle answer",
-                "timestamp": "2026-03-27T00:00:04Z"
-            }),
-            json!({
-                "role": "user",
-                "content": "tail question",
-                "timestamp": "2026-03-27T00:00:05Z"
-            }),
-            json!({
-                "role": "assistant",
-                "content": "tail answer",
-                "timestamp": "2026-03-27T00:00:06Z"
-            }),
-            json!({
-                "role": "user",
-                "content": "summary body",
-                "timestamp": "2026-03-27T00:00:07Z",
-                "meta": {
-                    "type": COMPACTION_META_TYPE,
-                    "compacted_until": "2026-03-27T00:00:06Z",
-                    "retained_head_until_index": 1,
-                    "retained_tail_from_index": 4
-                }
-            }),
-            json!({
-                "role": "user",
-                "content": "current question",
-                "timestamp": "2026-03-27T00:00:08Z"
-            }),
-        ];
-        for item in history {
-            let payload = json!({
-                "role": item.get("role").cloned().unwrap_or(Value::Null),
-                "content": item.get("content").cloned().unwrap_or(Value::Null),
-                "timestamp": item.get("timestamp").cloned().unwrap_or(Value::Null),
-                "meta": item.get("meta").cloned().unwrap_or(Value::Null),
-                "session_id": session_id,
-            });
-            workspace
-                .append_chat(user_id, &payload)
-                .expect("append history");
-        }
-        Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("build runtime")
-            .block_on(workspace.clone().flush_writes_async());
-
-        let messages = HistoryManager.load_history_messages(&workspace, user_id, session_id, 0);
-        let contents = messages
-            .iter()
-            .map(|item| item["content"].as_str().unwrap_or("").to_string())
-            .collect::<Vec<_>>();
-        assert_eq!(contents.len(), 6);
-        assert_eq!(contents[0], "head question");
-        assert_eq!(contents[1], "head answer");
-        assert!(contents[2].contains("summary body"));
-        assert_eq!(contents[3], "tail question");
-        assert_eq!(contents[4], "tail answer");
-        assert_eq!(contents[5], "current question");
+        );
+        let user = "sample-user";
+        let thread = "sample-thread";
+        seed_context_rows(
+            dir.path(),
+            &storage,
+            user,
+            thread,
+            vec![
+                json!({"role":"user","content":"earlier input"}),
+                json!({"role":"assistant","content":"earlier output"}),
+                json!({"role":"system","content":"sample summary","meta":{
+                "type":MICROCOMPACTION_META_TYPE,"hidden":true,
+                COMPACTION_REPLACEMENT_HISTORY_META_KEY:[{"role":"user","content":"retained input"},
+                    {"role":"assistant","content":"retained output"}]}}),
+                json!({"role":"user","content":"latest input"}),
+            ],
+        );
+        assert_eq!(
+            HistoryManager.load_history_messages(&workspace, user, thread, 0),
+            vec![
+                json!({"role":"user","content":"retained input"}),
+                json!({"role":"assistant","content":"retained output"}),
+                json!({"role":"user","content":"latest input"}),
+            ]
+        );
     }
 
     #[test]
@@ -1743,7 +1746,7 @@ mod tests {
         let workspace_root = dir.path().join("workspaces");
         let workspace = Arc::new(WorkspaceManager::new(
             workspace_root.to_string_lossy().as_ref(),
-            storage,
+            storage.clone(),
             0,
             &HashMap::new(),
         ));
@@ -1795,16 +1798,7 @@ mod tests {
                 "session_id": session_id,
             }),
         ];
-        for row in rows {
-            workspace
-                .append_chat(user_id, &row)
-                .expect("append history");
-        }
-        Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("build runtime")
-            .block_on(workspace.clone().flush_writes_async());
+        seed_context_rows(dir.path(), &storage, user_id, session_id, rows);
 
         let messages = HistoryManager.load_history_messages(&workspace, user_id, session_id, 0);
         assert_eq!(
@@ -1825,7 +1819,7 @@ mod tests {
         let workspace_root = dir.path().join("workspaces");
         let workspace = Arc::new(WorkspaceManager::new(
             workspace_root.to_string_lossy().as_ref(),
-            storage,
+            storage.clone(),
             0,
             &HashMap::new(),
         ));
@@ -1850,16 +1844,7 @@ mod tests {
                 "session_id": session_id,
             }),
         ];
-        for row in rows {
-            workspace
-                .append_chat(user_id, &row)
-                .expect("append history");
-        }
-        Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("build runtime")
-            .block_on(workspace.clone().flush_writes_async());
+        seed_context_rows(dir.path(), &storage, user_id, session_id, rows);
 
         let messages = HistoryManager.load_history_messages(&workspace, user_id, session_id, 0);
         assert_eq!(

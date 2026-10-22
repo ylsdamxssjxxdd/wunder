@@ -18,7 +18,7 @@ fn embed_windows_icon() {
         .join("..")
         .join("..")
         .join("images")
-        .join("servo.ico");
+        .join("asset-154424-transparent.ico");
     println!("cargo:rerun-if-changed={}", icon.display());
     if !icon.is_file() {
         println!("cargo:warning=CLI icon not found; exe file icon not embedded");

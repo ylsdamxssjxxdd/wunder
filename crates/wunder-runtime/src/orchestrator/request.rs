@@ -84,13 +84,10 @@ impl Orchestrator {
         let resume_from_seq = if let Some(seq) = reserved_resume_from_seq {
             seq
         } else {
-            let storage = self.storage.clone();
-            let thread = session_id.clone();
-            crate::core::blocking::run_db("thread_log.resume_baseline", move || {
-                storage.latest_thread_change_seq_by_session(&thread)
-            })
-            .await
-            .map_err(|err| OrchestratorError::internal(err.to_string()))?
+            self.committer
+                .latest_position(&session_id)
+                .await
+                .map_err(|err| OrchestratorError::internal(err.to_string()))?
         };
         let tool_names = if request.tool_names.is_empty() {
             None
@@ -137,9 +134,8 @@ impl Orchestrator {
                     "client_message_id already accepted".to_string(),
                 ));
             }
-            // The durable transaction completed and the unified exit already
-            // published the change cursor; polling remains the cross-instance
-            // fallback.
+            // The durable admission transaction completed and its commit
+            // boundary already woke subscribers.
             (
                 accepted["turn_id"]
                     .as_str()

@@ -1939,8 +1939,8 @@ struct AttachProjection {
     items: Vec<Value>,
     /// `item_key` -> position in `items`; also the bound of the maps below.
     position: HashMap<String, usize>,
-    /// Active text block per item: `(block_index, characters before the block)`.
-    tails: HashMap<String, (i64, usize)>,
+    /// Exclusive canonical rollout position; display positions may be sparse.
+    cursor: i64,
 }
 
 impl AttachProjection {
@@ -1997,6 +1997,11 @@ impl AttachProjection {
         let Some(data) = data else {
             return AttachFrameEffect::Ignored;
         };
+        let cursor = data["cursor"].as_i64().unwrap_or(0);
+        if cursor <= self.cursor {
+            return AttachFrameEffect::Ignored;
+        }
+        self.cursor = cursor;
         let Some(row) = data.get("payload") else {
             return AttachFrameEffect::Ignored;
         };
@@ -2017,59 +2022,9 @@ impl AttachProjection {
                 self.upsert_item(&item_id, &kind, &status, Some(attach_row_text(row)));
                 AttachFrameEffect::Applied
             }
-            "text_block" => {
-                // Reasoning blocks stay out of the echo: the transcript
-                // projection only serves the content field.
-                if attach_str(row, "field") != Some("content".to_string()) {
-                    return AttachFrameEffect::Ignored;
-                }
-                let item_id = attach_str(row, "item_id")
-                    .or_else(|| attach_str(data, "item_id"))
-                    .unwrap_or_default();
-                if item_id.is_empty() {
-                    return AttachFrameEffect::Ignored;
-                }
-                let block_index = row.get("block_index").and_then(Value::as_i64).unwrap_or(0);
-                let text = row
-                    .get("content")
-                    .and_then(Value::as_str)
-                    .or_else(|| row.pointer("/data/content").and_then(Value::as_str))
-                    .unwrap_or_default()
-                    .to_string();
-                self.apply_text_block(&item_id, block_index, text.as_str());
-                AttachFrameEffect::Applied
-            }
             // `turn_upsert` and unknown change types carry no echoed text.
             _ => AttachFrameEffect::Ignored,
         }
-    }
-
-    /// A durable text block is that block's own cumulative text, re-emitted as
-    /// it grows; the item text is the finalized blocks plus this active tail.
-    fn apply_text_block(&mut self, item_id: &str, block_index: i64, text: &str) {
-        let known = self.tails.get(item_id).copied();
-        if known.is_some_and(|(known_index, _)| block_index < known_index) {
-            return;
-        }
-        let index = self.slot(item_id, "assistant_message");
-        let current = item_text(&self.items[index]);
-        let base = match known {
-            Some((known_index, base)) if block_index == known_index => base,
-            // A higher block finalizes the active tail: it becomes the prefix.
-            Some(_) => current.chars().count(),
-            // The first frame seen for this item: block 0 starts at the top, a
-            // later block appends after whatever the transcript page carried.
-            None if block_index == 0 => 0,
-            None => current.chars().count(),
-        };
-        let mut content = current;
-        let keep = char_prefix_len(content.as_str(), base);
-        content.truncate(keep);
-        content.push_str(text);
-        if let Some(map) = self.items[index].as_object_mut() {
-            map.insert("content".to_string(), json!(content));
-        }
-        self.tails.insert(item_id.to_string(), (block_index, base));
     }
 
     fn upsert_item(&mut self, item_id: &str, kind: &str, status: &str, text: Option<String>) {
@@ -2079,18 +2034,11 @@ impl AttachProjection {
             map.insert("status".to_string(), json!(status));
             if let Some(text) = text {
                 map.insert("content".to_string(), json!(text));
-                if attach_status_settled(status) {
-                    // A committed item row is the whole text: no later block of
-                    // the same item may shrink it.
-                    self.tails
-                        .insert(item_id.to_string(), (i64::MAX, text.chars().count()));
-                }
             }
         }
     }
 
-    /// Position of one tracked item, creating it when a text block lands before
-    /// its item row is committed.
+    /// Position of one completed transcript item in the bounded display window.
     fn slot(&mut self, item_id: &str, kind: &str) -> usize {
         if let Some(index) = self.position.get(item_id).copied() {
             return index;
@@ -2153,7 +2101,6 @@ impl AttachProjection {
         for (index, item) in self.items.iter().enumerate() {
             self.position.insert(item_key(item, index), index);
         }
-        self.tails.retain(|key, _| self.position.contains_key(key));
         run.forget(&self.position);
     }
 }
@@ -2213,14 +2160,6 @@ fn attach_status_settled(status: &str) -> bool {
     )
 }
 
-/// Byte offset after `chars` characters: the watermark counts characters, the
-/// buffer stores bytes.
-fn char_prefix_len(text: &str, chars: usize) -> usize {
-    text.char_indices()
-        .nth(chars)
-        .map(|(index, _)| index)
-        .unwrap_or(text.len())
-}
 /// Colour only for a real terminal, and never against `NO_COLOR`.
 fn attach_color(stdout_tty: bool, no_color: bool) -> bool {
     stdout_tty && !no_color
@@ -3304,48 +3243,45 @@ mod tests {
     }
 
     #[test]
-    fn a_growing_text_block_never_repeats_what_was_echoed() {
+    fn completed_items_echo_once_across_sparse_cursors_and_duplicate_replay() {
         let mut run = AttachRun::default();
         let mut projection = AttachProjection::from_items(vec![
             json!({"item_id": "turn_1:user", "kind": "user_message", "status": "completed", "content": "ask"}),
         ]);
         run.watermark = attach_seed_watermark(projection.items());
         let mut printed = run.echo(projection.items(), false, false);
-        for (text, cursor) in [("hel", 9i64), ("hello", 10), ("hello!", 11)] {
-            let frame = thread_change_frame(
-                "text_block",
-                "turn_1:text-0",
-                json!({"field": "content", "block_index": 0, "content": text, "content_offset": 0}),
-                cursor,
-            );
-            assert_eq!(
-                projection.apply_frame(&frame, ATTACH_WATCH_REQUEST_ID),
-                AttachFrameEffect::Applied
-            );
-            printed.extend(run.echo(projection.items(), false, false));
-        }
-        assert_eq!(
-            printed,
-            vec![
-                "<user>ask".to_string(),
-                "<assistant>hel".to_string(),
-                "<assistant>lo".to_string(),
-                "<assistant>!".to_string(),
-            ]
-        );
-        assert_eq!(run.watermark.get("turn_1:text-0"), Some(&6usize));
-        // A block re-delivered out of order cannot shrink the item again.
-        let stale = thread_change_frame(
-            "text_block",
+        let frame = thread_change_frame(
+            "item_upsert",
             "turn_1:text-0",
-            json!({"field": "content", "block_index": 0, "content": "h"}),
+            json!({"item_id":"turn_1:text-0","kind":"assistant_message","status":"completed",
+                "payload":{"content":"complete reply 🐣"}}),
+            12,
+        );
+        assert_eq!(
+            projection.apply_frame(&frame, ATTACH_WATCH_REQUEST_ID),
+            AttachFrameEffect::Applied
+        );
+        printed.extend(run.echo(projection.items(), false, false));
+        assert_eq!(
+            projection.apply_frame(&frame, ATTACH_WATCH_REQUEST_ID),
+            AttachFrameEffect::Ignored
+        );
+        printed.extend(run.echo(projection.items(), false, false));
+        let stale = thread_change_frame(
+            "item_upsert",
+            "turn_1:text-0",
+            json!({"item_id":"turn_1:text-0","kind":"assistant_message","status":"completed",
+                "payload":{"content":"stale"}}),
             8,
         );
-        projection.apply_frame(&stale, ATTACH_WATCH_REQUEST_ID);
         assert_eq!(
-            run.echo(projection.items(), false, false),
-            Vec::<String>::new()
+            projection.apply_frame(&stale, ATTACH_WATCH_REQUEST_ID),
+            AttachFrameEffect::Ignored
         );
+        assert_eq!(printed, vec!["<user>ask", "<assistant>complete reply 🐣"]);
+        assert_eq!(projection.cursor, 12);
+        assert_eq!(item_text(&projection.items()[1]), "complete reply 🐣");
+        assert!(run.echo(projection.items(), false, false).is_empty());
     }
 
     #[test]
@@ -3364,9 +3300,9 @@ mod tests {
             AttachFrameEffect::Ignored
         );
         let reasoning = thread_change_frame(
-            "text_block",
-            "turn_1:text-0",
-            json!({"field": "reasoning", "block_index": 0, "reasoning": "think"}),
+            "item_upsert",
+            "turn_1:model-0",
+            json!({"item_id":"turn_1:model-0","kind":"model_call","status":"completed","payload":{"reasoning":"think"}}),
             6,
         );
         assert_eq!(
@@ -3536,9 +3472,10 @@ mod tests {
         run.watermark = attach_seed_watermark(projection.items());
         for index in 0..(ATTACH_STREAM_MAX_ITEMS + 60) {
             let frame = thread_change_frame(
-                "text_block",
+                "item_upsert",
                 format!("turn_1:text-{index}").as_str(),
-                json!({"field": "content", "block_index": 0, "content": "x"}),
+                json!({"item_id":format!("turn_1:text-{index}"),"kind":"assistant_message",
+                    "status":"completed","payload":{"content":"x"}}),
                 index as i64 + 2,
             );
             projection.apply_frame(&frame, ATTACH_WATCH_REQUEST_ID);

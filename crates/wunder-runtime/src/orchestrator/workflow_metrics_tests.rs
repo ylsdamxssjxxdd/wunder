@@ -12,7 +12,7 @@ async fn workflow_metrics_preserve_parallel_success_failure_and_cancellation() {
     let root = tempfile::tempdir().unwrap();
     let mut config = Config::default();
     config.storage.backend = "sqlite".into();
-    config.storage.db_path = root.path().join("state.db").to_string_lossy().into_owned();
+    config.storage.data_root = root.path().join("data").to_string_lossy().into_owned();
     config.workspace.root = root.path().join("workspace").to_string_lossy().into_owned();
     // Run commands through the local blocking path instead of the sandbox HTTP client.
     config.server.mode = "desktop".to_string();

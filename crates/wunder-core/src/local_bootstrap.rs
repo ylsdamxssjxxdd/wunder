@@ -19,7 +19,7 @@ pub const HOME_ENV: &str = "WUNDER_HOME";
 /// workspaces and bundled tools never silently fall back to the user profile.
 pub const HOME_MARKER: &str = ".wunder-home";
 pub const CONFIG_FILE: &str = "config/wunder.yaml";
-pub const DATABASE_FILE: &str = "data/wunder.db";
+pub const STORAGE_ROOT: &str = "data";
 
 /// Mutable directories shared by the two local forms. Immutable bundled
 /// prompts and skills are projected to the same home so runtime path
@@ -42,7 +42,7 @@ pub const SHARED_DIRS: &[&str] = &[
 pub struct LocalHomeLayout {
     pub home: PathBuf,
     pub config: PathBuf,
-    pub database: PathBuf,
+    pub storage_root: PathBuf,
     pub logs: PathBuf,
     pub skills: PathBuf,
     pub user_tools: PathBuf,
@@ -56,7 +56,7 @@ impl LocalHomeLayout {
         let home = home.into();
         Self {
             config: home.join("config"),
-            database: home.join(DATABASE_FILE),
+            storage_root: home.join(STORAGE_ROOT),
             logs: home.join("logs"),
             skills: home.join("skills"),
             user_tools: home.join("user_tools"),
@@ -227,8 +227,8 @@ pub fn release_file_if_missing(target: &Path, bytes: &[u8]) -> Result<bool> {
     // after the complete staging write, so competing processes cannot observe
     // a partial publication. These reconstructible seeds do not promise fsync
     // durability across power loss. Avoiding a per-asset fsync is material on
-    // the first launch with hundreds of small files; the user database and
-    // credentials still use strict atomic writes.
+    // the first launch with hundreds of small files. Canonical history uses
+    // its own flush barriers; credentials still use strict atomic writes.
     let mut file = OpenOptions::new()
         .create_new(true)
         .write(true)
@@ -260,7 +260,7 @@ mod tests {
         let home = tempdir().unwrap().path().to_path_buf();
         let layout = LocalHomeLayout::from_home(&home);
         assert_eq!(layout.config_file(), home.join("config/wunder.yaml"));
-        assert_eq!(layout.database, home.join("data/wunder.db"));
+        assert_eq!(layout.storage_root, home.join("data"));
         assert_eq!(layout.skills, home.join("skills"));
         assert_eq!(layout.user_tools, home.join("user_tools"));
         assert_eq!(layout.vector_knowledge, home.join("vector_knowledge"));

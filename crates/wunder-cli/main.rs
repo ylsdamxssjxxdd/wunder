@@ -29,7 +29,6 @@ use args::{
     SkillNameCommand, SkillsCommand, SkillsListCommand, SkillsSubcommand, SkillsUploadCommand,
     StressThreadCommand, ToolCallModeArg, ToolCommand, ToolRunCommand, ToolSubcommand,
 };
-use chrono::{Local, TimeZone};
 use clap::CommandFactory;
 use clap::Parser;
 use clap_complete::generate;
@@ -165,7 +164,9 @@ async fn handle_stress_thread(
     wunder_server::validate_stress_params(command.user_rounds, command.model_rounds)
         .map_err(|message| anyhow!("{message}"))?;
     let config = runtime.state.config_store.get().await;
-    let db_path = config.storage.db_path.clone();
+    let db_path = wunder_server::storage::sqlite_state_database_path(&config.storage)
+        .to_string_lossy()
+        .into_owned();
     drop(config);
     let user_id = runtime.user_id.clone();
     let title = command
@@ -447,19 +448,6 @@ pub(crate) async fn load_session_history_entries(
         .workspace
         .load_history_async(&runtime.user_id, session_id, limit)
         .await
-}
-
-fn format_session_time(ts: f64) -> String {
-    if !ts.is_finite() || ts <= 0.0 {
-        return "-".to_string();
-    }
-    let secs = ts.floor() as i64;
-    let nanos = ((ts - secs as f64).max(0.0) * 1_000_000_000.0).round() as u32;
-    Local
-        .timestamp_opt(secs, nanos.min(999_999_999))
-        .single()
-        .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
-        .unwrap_or_else(|| "-".to_string())
 }
 
 async fn ensure_cli_session_record(
@@ -1498,56 +1486,106 @@ pub(crate) async fn compact_session_into_branch(
     }
     let history = load_session_history_entries(runtime, source.as_str(), 0).await?;
     let summary = build_compact_summary_from_history(&history, language);
-    let user_store = runtime.state.user_store.clone();
-    let user_id = runtime.user_id.clone();
+    use wunder_server::stable_core::thread_store::*;
+    let source_thread = ThreadId::new(source.clone())?;
+    let source_meta = runtime
+        .state
+        .thread_store
+        .session_meta(&source_thread)
+        .await?;
+    let source_record = runtime
+        .state
+        .user_store
+        .get_chat_session(&runtime.user_id, &source)?;
     let new_session_id = uuid::Uuid::new_v4().simple().to_string();
-    let source_for_record = source.clone();
-    let new_session_for_record = new_session_id.clone();
-    let title = if locale::is_zh_language(language) {
-        "压缩会话".to_string()
-    } else {
-        "compact session".to_string()
-    };
-
-    tokio::task::spawn_blocking(move || -> Result<()> {
-        let now = current_ts();
-        let source_record = user_store.get_chat_session(&user_id, &source_for_record)?;
-        let record = ChatSessionRecord {
-            session_id: new_session_for_record.clone(),
-            user_id: user_id.clone(),
+    let thread = ThreadId::new(new_session_id.clone())?;
+    let rollout = RolloutId::new(uuid::Uuid::new_v4().to_string())?;
+    let now = chrono::Utc::now().timestamp_millis();
+    let title = locale::tr(language, "压缩会话", "compact session");
+    let admission = runtime.state.storage.accept_thread_turn(
+        &runtime.user_id,
+        &new_session_id,
+        &json!({"content":"/compact", "client_message_id":uuid::Uuid::new_v4().to_string()}),
+    )?;
+    let turn = TurnId::new(
+        admission["turn_id"]
+            .as_str()
+            .context("compact turn identity missing")?,
+    )?;
+    runtime
+        .state
+        .thread_store
+        .create_thread(CreateThreadRequest {
+            metadata: ThreadMetadata {
+                thread_id: thread.clone(),
+                current_rollout_id: rollout.clone(),
+                status: ThreadStatus::Active,
+                created_at_ms: now,
+                updated_at_ms: now,
+                title: Some(title.clone()),
+                workspace_id: None,
+                pinned: false,
+            },
+            session_meta: SessionMeta {
+                thread_id: thread.clone(),
+                rollout_id: rollout,
+                created_at_ms: now,
+                source: "cli_compaction".into(),
+                initial_system_prompt: source_meta.initial_system_prompt,
+                initial_memory: source_meta.initial_memory,
+                parent_thread_id: Some(source_thread),
+                history_base: None,
+                capabilities: source_meta.capabilities,
+            },
+        })
+        .await?;
+    runtime
+        .state
+        .thread_store
+        .begin_turn(&runtime.user_id, &thread, &turn, "")
+        .await?;
+    runtime.state.thread_store.append_canonical(&thread, vec![
+        CanonicalRecord::Compacted(CompactionCheckpoint {
+            turn_id: turn.clone(), summary: json!(summary),
+            retained_context: json!([{ "role":"assistant", "content":summary }]),
+        }),
+        CanonicalRecord::Event(CanonicalEvent::ItemCompleted(CanonicalItem {
+            item_id: ItemId::new(format!("{turn}:summary"))?,
+            turn_id: turn.clone(), root_turn_id: Some(turn.clone()), created_at_ms: now,
+            kind: CanonicalItemKind::AssistantMessage,
+            payload: json!({"session_id":new_session_id,"role":"assistant","status":"completed",
+                "content":summary,"meta":{"kind":"compaction_summary","source_session_id":source}}),
+            display_output: None, display_output_truncated: false,
+        })),
+        CanonicalRecord::Event(CanonicalEvent::TurnCompleted {turn_id: turn.clone(), completed_at_ms:now}),
+    ]).await?;
+    runtime.state.storage.update_thread_turn(
+        &runtime.user_id,
+        &new_session_id,
+        turn.as_str(),
+        "completed",
+        "compaction",
+        &Value::Null,
+    )?;
+    runtime
+        .state
+        .user_store
+        .upsert_chat_session(&ChatSessionRecord {
+            session_id: new_session_id.clone(),
+            user_id: runtime.user_id.clone(),
             title,
             status: CLI_DEFAULT_SESSION_STATUS.to_string(),
-            created_at: now,
-            updated_at: now,
-            last_message_at: now,
+            created_at: now as f64 / 1000.0,
+            updated_at: now as f64 / 1000.0,
+            last_message_at: now as f64 / 1000.0,
             agent_id: source_record.and_then(|record| record.agent_id),
             workspace_id: None,
             tool_overrides: Vec::new(),
-            parent_session_id: Some(source_for_record.clone()),
+            parent_session_id: Some(source),
             parent_message_id: None,
-            spawn_label: Some("compact".to_string()),
-            spawned_by: Some("wunder-cli".to_string()),
-        };
-        user_store.upsert_chat_session(&record)?;
-        Ok(())
-    })
-    .await
-    .map_err(|err| anyhow!("compact session metadata cancelled: {err}"))??;
-
-    let compact_payload = json!({
-        "session_id": new_session_id,
-        "role": "assistant",
-        "content": summary.clone(),
-        "timestamp": format_session_time(current_ts()),
-        "meta": {
-            "kind": "compaction_summary",
-            "source_session_id": source,
-        }
-    });
-    runtime
-        .state
-        .workspace
-        .append_chat(&runtime.user_id, &compact_payload)?;
+            spawn_label: Some("compact".into()),
+            spawned_by: Some("wunder-cli".into()),
+        })?;
     runtime
         .state
         .workspace
@@ -3297,7 +3335,7 @@ async fn config_show(runtime: &CliRuntime, global: &GlobalArgs) -> Result<()> {
             "root_path": runtime.workspace_root(),
         },
         "storage_backend": config.storage.backend,
-        "db_path": config.storage.db_path,
+        "data_root": config.storage.data_root,
         "project_doc": {
             "enabled": config.project_doc.enabled,
             "max_bytes": config.project_doc.max_bytes,
@@ -3525,9 +3563,9 @@ async fn handle_doctor(
     println!(
         "{}",
         if is_zh {
-            format!("- 数据库路径: {}", config.storage.db_path)
+            format!("- 存储目录: {}", config.storage.data_root)
         } else {
-            format!("- db_path: {}", config.storage.db_path)
+            format!("- data_root: {}", config.storage.data_root)
         }
     );
     println!(

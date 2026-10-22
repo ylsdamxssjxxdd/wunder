@@ -99,13 +99,13 @@ fn parallel_results_count_as_one_recent_group() {
 
 #[cfg(feature = "sqlite-storage")]
 #[tokio::test]
-async fn local_reduction_persists_marker_row_without_rewriting_chat_history() {
+async fn local_reduction_persists_canonical_checkpoint_without_rewriting_chat_history() {
     use crate::state::{AppState, AppStateInitOptions};
 
     let root = tempfile::tempdir().unwrap();
     let mut config = Config::default();
     config.storage.backend = "sqlite".into();
-    config.storage.db_path = root.path().join("state.db").to_string_lossy().into_owned();
+    config.storage.data_root = root.path().join("data").to_string_lossy().into_owned();
     config.workspace.root = root.path().join("workspace").to_string_lossy().into_owned();
     let store = ConfigStore::new(root.path().join("config.yaml"));
     store
@@ -126,18 +126,44 @@ async fn local_reduction_persists_marker_row_without_rewriting_chat_history() {
     let messages = history(false);
     let tokens = estimate_messages_tokens(&messages);
     let orchestrator = &state.kernel.orchestrator;
+    let accepted = orchestrator
+        .committer
+        .accept_turn("user", "session", &json!({"content":"request"}))
+        .await
+        .unwrap();
+    let first_turn = uuid::Uuid::parse_str(accepted["turn_id"].as_str().unwrap()).unwrap();
     orchestrator
-        .workspace
-        .append_chat(
+        .committer
+        .freeze_session("user", "session", "frozen", "")
+        .await
+        .unwrap();
+    orchestrator
+        .committer
+        .begin_turn(
             "user",
-            &json!({"session_id": "session", "role": "user", "content": "request"}),
+            "session",
+            accepted["turn_id"].as_str().unwrap(),
+            "fixture",
         )
+        .await
         .unwrap();
-    assert!(orchestrator.workspace.flush_writes_async().await);
-    let chat_before = orchestrator
-        .workspace
-        .load_history("user", "session", 0)
+    orchestrator
+        .try_append_chat(
+            "user",
+            "session",
+            "user",
+            Some(&json!("request")),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            RoundInfo::user_only_thread(1, first_turn),
+        )
+        .await
         .unwrap();
+
     let result = orchestrator
         .try_microcompact_messages(
             &messages,
@@ -153,27 +179,14 @@ async fn local_reduction_persists_marker_row_without_rewriting_chat_history() {
     assert!(result.model_context_replaced);
     assert_eq!(result.compaction_id, None);
 
-    // Existing chat rows stay untouched; the reduction lands as one hidden marker row.
+    // The canonical checkpoint is the model-context boundary.  Reading the
+    // model context after compaction expands its retained snapshot directly;
+    // the checkpoint itself remains in the rollout and is not exposed as a
+    // second ordinary chat row.
     let chat_after = orchestrator
         .workspace
         .load_history("user", "session", 0)
         .unwrap();
-    assert_eq!(chat_after.len(), chat_before.len() + 1);
-    assert_eq!(&chat_after[..chat_before.len()], chat_before.as_slice());
-    let marker = chat_after.last().expect("marker row");
-    let marker_meta = marker.get("meta").and_then(Value::as_object).unwrap();
-    assert_eq!(
-        marker_meta.get("type").and_then(Value::as_str),
-        Some(MICROCOMPACTION_META_TYPE)
-    );
-    assert_eq!(
-        marker_meta.get("hidden").and_then(Value::as_bool),
-        Some(true)
-    );
-    let replacement = marker_meta
-        .get(COMPACTION_REPLACEMENT_HISTORY_META_KEY)
-        .and_then(Value::as_array)
-        .expect("replacement history");
     // The snapshot excludes the in-flight current user message (index 1 here);
     // its chat row is appended after compaction in the real flow and replays it.
     let expected_snapshot_source: Vec<Value> = result
@@ -183,21 +196,47 @@ async fn local_reduction_persists_marker_row_without_rewriting_chat_history() {
         .filter(|(index, _)| *index != 1)
         .map(|(_, message)| message.clone())
         .collect();
+    let replacement = model_context_entries_from_messages(&expected_snapshot_source);
     assert_eq!(
         replacement,
-        &model_context_entries_from_messages(&expected_snapshot_source)
+        chat_after
     );
 
     // Mirror the production order: the current user chat row lands after the
-    // marker row, then derivation replays snapshot + that row.
-    orchestrator
-        .workspace
-        .append_chat(
-            "user",
-            &json!({"session_id": "session", "role": "user", "content": "follow-up request"}),
-        )
+    // checkpoint, then derivation replays snapshot + that row.
+    let accepted = orchestrator
+        .committer
+        .accept_turn("user", "session", &json!({"content":"follow-up request"}))
+        .await
         .unwrap();
-    assert!(orchestrator.workspace.flush_writes_async().await);
+    let second_turn = uuid::Uuid::parse_str(accepted["turn_id"].as_str().unwrap()).unwrap();
+    orchestrator
+        .committer
+        .begin_turn(
+            "user",
+            "session",
+            accepted["turn_id"].as_str().unwrap(),
+            "fixture",
+        )
+        .await
+        .unwrap();
+    orchestrator
+        .try_append_chat(
+            "user",
+            "session",
+            "user",
+            Some(&json!("follow-up request")),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            RoundInfo::user_only_thread(2, second_turn),
+        )
+        .await
+        .unwrap();
+
     let derived = crate::history::HistoryManager
         .load_history_messages_async(
             orchestrator.workspace.clone(),

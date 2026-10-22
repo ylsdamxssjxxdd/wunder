@@ -349,6 +349,17 @@ function Format-ComponentLabel([string]$Name, [string]$Version, [int64]$Bytes) {
 
 $lines = New-Object System.Collections.Generic.List[string]
 $lines.Add("[Tasks]")
+# The app bodies (Pupa/Harness) are selectable tasks too, checked by default; leaving
+# them unchecked skips their executables so a components-only install is possible.
+# Checking Pupa also creates the desktop shortcut, so there is no separate task for it.
+$coreBytes = @{
+  desktop = (Get-Item -LiteralPath $desktopPath).Length
+  cli = (Get-Item -LiteralPath $cliPath).Length
+}
+foreach ($name in @("desktop", "cli")) {
+  $label = Format-ComponentLabel $name $version $coreBytes[$name]
+  $lines.Add(('Name: "{0}"; Description: "{1}"' -f $name, $label))
+}
 if (-not $CoreOnly) {
   foreach ($name in $available) {
     $versionForLabel = Get-MetadataVersion $metadata $name
@@ -356,11 +367,10 @@ if (-not $CoreOnly) {
     $lines.Add(('Name: "{0}"; Description: "{1}"; Flags: unchecked' -f $name, $label))
   }
 }
-$lines.Add(('Name: "desktopicon"; Description: "{0}"; Flags: unchecked' -f [string]$labels.desktopicon))
 $lines.Add("")
 $lines.Add("[Files]")
-$lines.Add(('Source: "{0}"; DestDir: "{{app}}\bin"; DestName: "wunder-desktop.exe"; Flags: ignoreversion' -f (Join-Path $coreStage "wunder-desktop.exe")))
-$lines.Add(('Source: "{0}"; DestDir: "{{app}}\bin"; DestName: "wunder-cli.exe"; Flags: ignoreversion' -f (Join-Path $coreStage "wunder-cli.exe")))
+$lines.Add(('Source: "{0}"; DestDir: "{{app}}\bin"; DestName: "wunder-desktop.exe"; Flags: ignoreversion; Tasks: desktop' -f (Join-Path $coreStage "wunder-desktop.exe")))
+$lines.Add(('Source: "{0}"; DestDir: "{{app}}\bin"; DestName: "wunder-cli.exe"; Flags: ignoreversion; Tasks: cli' -f (Join-Path $coreStage "wunder-cli.exe")))
 $lines.Add(('Source: "{0}"; DestDir: "{{app}}"; DestName: ".wunder-home"; Flags: ignoreversion' -f $markerPath))
 if (-not $CoreOnly) {
   foreach ($name in $available) {
@@ -373,7 +383,7 @@ $generatedPath = Join-Path $stageRoot "payload.generated.iss"
 
 Copy-Item -LiteralPath (Join-Path $installerRoot "wunder.iss") -Destination (Join-Path $stageRoot "wunder.iss") -Force
 Copy-Item -LiteralPath (Join-Path $installerRoot "ChineseSimplified.isl") -Destination (Join-Path $stageRoot "ChineseSimplified.isl") -Force
-Copy-Item -LiteralPath (Join-Path $repoRoot "images\eva01-head.ico") -Destination (Join-Path $stageRoot "eva01-head.ico") -Force
+Copy-Item -LiteralPath (Join-Path $repoRoot "images\pupa.ico") -Destination (Join-Path $stageRoot "pupa.ico") -Force
 Copy-Item -LiteralPath (Join-Path $repoRoot "images\pupa.png") -Destination (Join-Path $stageRoot "pupa.png") -Force
 
 $isccPath = Ensure-Iscc $Iscc (-not $NoDownload)

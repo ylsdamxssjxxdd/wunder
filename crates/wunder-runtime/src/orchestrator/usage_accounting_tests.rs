@@ -55,7 +55,7 @@ async fn usage_accounting_includes_rejected_calls_empty_responses_and_compaction
     let root = tempfile::tempdir().unwrap();
     let mut config = Config::default();
     config.storage.backend = "sqlite".into();
-    config.storage.db_path = root.path().join("state.db").to_string_lossy().into_owned();
+    config.storage.data_root = root.path().join("data").to_string_lossy().into_owned();
     config.workspace.root = root.path().join("workspace").to_string_lossy().into_owned();
     let store = ConfigStore::new(root.path().join("config.yaml"));
     store
@@ -276,7 +276,7 @@ async fn administrator_requests_track_thread_quota_without_debiting_account() {
     let root = tempfile::tempdir().unwrap();
     let mut config = Config::default();
     config.storage.backend = "sqlite".into();
-    config.storage.db_path = root.path().join("state.db").to_string_lossy().into_owned();
+    config.storage.data_root = root.path().join("data").to_string_lossy().into_owned();
     config.workspace.root = root.path().join("workspace").to_string_lossy().into_owned();
     let store = ConfigStore::new(root.path().join("config.yaml"));
     store

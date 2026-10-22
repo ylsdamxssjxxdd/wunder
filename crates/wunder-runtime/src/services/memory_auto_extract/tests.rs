@@ -60,11 +60,7 @@ async fn build_test_context_with_mock_llm(username: &str) -> TestContext {
     let (base_url, mock_llm_state) = spawn_mock_llm_server().await;
     let mut config = Config::default();
     config.storage.backend = "sqlite".to_string();
-    config.storage.db_path = temp_dir
-        .path()
-        .join("memory-auto-extract-e2e.db")
-        .to_string_lossy()
-        .to_string();
+    config.storage.data_root = temp_dir.path().join("data").to_string_lossy().to_string();
     config.workspace.root = temp_dir
         .path()
         .join("workspaces")

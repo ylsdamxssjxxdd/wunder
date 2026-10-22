@@ -40,7 +40,7 @@ impl SqliteSessionGoalStorage for SqliteStorage {
         {
             return Ok(());
         }
-        let conn = self.open()?;
+        let conn = self.open_goals()?;
         conn.execute(
             "INSERT INTO session_goals (
                 session_id, user_id, goal_id, revision, objective, phase,
@@ -89,7 +89,7 @@ impl SqliteSessionGoalStorage for SqliteStorage {
         if cleaned_user.is_empty() || cleaned_session.is_empty() || cleaned_goal.is_empty() {
             return Ok(false);
         }
-        let conn = self.open()?;
+        let conn = self.open_goals()?;
         let affected = conn.execute(
             "UPDATE session_goals SET
                 revision = ?, objective = ?, phase = ?, blocked_code = ?, blocked_message = ?,
@@ -124,7 +124,7 @@ impl SqliteSessionGoalStorage for SqliteStorage {
         if cleaned_user.is_empty() || cleaned_session.is_empty() {
             return Ok(None);
         }
-        let conn = self.open()?;
+        let conn = self.open_goals()?;
         let row = conn
             .query_row(
                 session_goal_select_sql("WHERE user_id = ? AND session_id = ?").as_str(),
@@ -153,7 +153,7 @@ impl SqliteSessionGoalStorage for SqliteStorage {
         if cleaned_sessions.is_empty() {
             return Ok(Vec::new());
         }
-        let conn = self.open()?;
+        let conn = self.open_goals()?;
         let placeholders = vec!["?"; cleaned_sessions.len()].join(", ");
         let sql = session_goal_select_sql(&format!(
             "WHERE user_id = ? AND session_id IN ({placeholders})"
@@ -178,7 +178,7 @@ impl SqliteSessionGoalStorage for SqliteStorage {
         if cleaned_user.is_empty() || cleaned_session.is_empty() {
             return Ok(0);
         }
-        let conn = self.open()?;
+        let conn = self.open_goals()?;
         let affected = conn.execute(
             "DELETE FROM session_goals WHERE user_id = ? AND session_id = ?",
             params![cleaned_user, cleaned_session],

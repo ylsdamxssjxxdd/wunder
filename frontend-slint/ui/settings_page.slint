@@ -6,12 +6,12 @@ import { DragRow } from "drag_row.slint";
 import { ComboBoxBase } from "combo_base.slint";
 import { ModelPresets } from "model_presets.slint";
 import { ExpertToolGroup, ExpertToolPicker } from "expert_widgets.slint";
-import { Button, ComboBox, ScrollView, Switch } from "std-widgets.slint";
+import { Button, ComboBox, ScrollView, Slider, Switch } from "std-widgets.slint";
 import { CronPage } from "cron_page.slint";
 import { ChannelsPage } from "channels_page.slint";
 import { ToolsPage, ToolResource } from "tools_page.slint";
 import { ExpertData, MemoryCard, ArchiveCard, RuntimePoint } from "expert_data.slint";
-import { AvatarDialogState } from "avatar_dialog.slint";
+import { PetSettingsState } from "pet_settings.slint";
 
 // Web-style settings navigation entry: 36px circular icon badge, title and
 // subtitle rows, solid accent background with white text when selected.
@@ -1180,7 +1180,7 @@ export component SettingsPage inherits Rectangle {
                                     Text { height: 30px; text: I18n.st_models_list_title; color: Theme.text; font-size: Theme.font-md; font-weight: 600; vertical-alignment: center; }
                                     Rectangle { horizontal-stretch: 1; }
                                     Action { icon: @image-url("../assets/icons/rotate-right.svg"); enabled: !root.loading; label: I18n.common_refresh; clicked => { root.refresh(); } }
-                                    Action { icon: @image-url("../assets/icons/plus.svg"); label: I18n.model_editor_add; show-label: true; primary: true; enabled: !root.loading && !root.saving && !root.model-creating; clicked => { root.create-model(); } }
+                                    Action { icon: @image-url("../assets/icons/plus.svg"); label: I18n.model_editor_add; show-label: true; primary: true; enabled: !root.loading && !root.saving; clicked => { root.create-model(); } }
                                 }
                                 ScrollView { vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
                                     VerticalLayout { alignment: start; spacing: 6px;
@@ -1230,11 +1230,20 @@ export component SettingsPage inherits Rectangle {
                                     }
                                     // The former page-header actions live with the
                                     // form now that the title bar is gone.
-                                    Action { height: 32px; icon: @image-url("../assets/icons/save.svg"); label: I18n.st_models_save; show-label: true; primary: true; enabled: !root.loading && !root.saving && !root.cloud-locked && root.model-key-draft != "" && root.model-name-draft != "" && root.model-provider-draft != "" && (root.model-creating || root.selected-key != ""); clicked => { root.save-model(); } }
+                                    Action { height: 32px; icon: @image-url("../assets/icons/save.svg"); label: I18n.st_models_save; show-label: true; primary: true; enabled: !root.loading && !root.saving && !root.cloud-locked && root.model-key-draft != "" && root.model-name-draft != "" && root.model-provider-draft != ""; clicked => { root.save-model(); } }
                                     Action { height: 32px; icon: @image-url("../assets/icons/fa-star.svg"); label: root.selected-is-default ? I18n.st_is_default : I18n.st_set_default; show-label: true; enabled: !root.loading && !root.saving && !root.model-creating && !root.cloud-locked && root.selected-key != "" && !root.selected-is-default; clicked => { root.set-default-model(root.selected-key); } }
-                                    // Cloud entries keep the delete slot visible but inert:
-                                    // they are engine-managed and cleared together on logout.
-                                    Action { height: 32px; icon: @image-url("../assets/icons/trash.svg"); label: root.cloud-locked ? I18n.st_cl_remove : I18n.common_delete; show-label: true; danger: true; enabled: !root.loading && !root.saving && !root.model-creating && !root.cloud-locked && root.selected-key != ""; clicked => { root.model-delete-open = true; } }
+                                    // While a new model is being created the same slot discards
+                                    // the unsaved draft; a saved row keeps the delete confirmation.
+                                    // Cloud entries stay visible but inert (the engine clears them
+                                    // together on logout).
+                                    Action {
+                                        height: 32px;
+                                        icon: root.model-creating ? @image-url("../assets/icons/xmark.svg") : @image-url("../assets/icons/trash.svg");
+                                        label: root.model-creating ? I18n.common_discard : (root.cloud-locked ? I18n.st_cl_remove : I18n.common_delete);
+                                        show-label: true; danger: true;
+                                        enabled: !root.loading && !root.saving && !root.cloud-locked && (root.selected-key != "" || root.model-creating);
+                                        clicked => { if root.model-creating { root.discard-model-draft(); } else { root.model-delete-open = true; } }
+                                    }
                                 }
                                 if root.cloud-locked : Text { height: 17px; text: I18n.st_cl_locked_note; color: Theme.muted; font-size: Theme.font-xs; overflow: elide; }
                                 ScrollView { vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
@@ -1557,36 +1566,41 @@ export component SettingsPage inherits Rectangle {
                                 SettingsCardHeader { title: I18n.stc_pet; subtitle: I18n.stc_pet_note; }
                                 SettingRow { label: I18n.pet_show; note: I18n.pet_show_note;
                                     Switch {
-                                        checked: AvatarDialogState.companion-show;
-                                        toggled => { AvatarDialogState.companion-show = self.checked; }
+                                        checked: PetSettingsState.enabled;
+                                        toggled => { PetSettingsState.toggle-enabled(self.checked); }
                                     }
                                 }
                                 SettingRow { label: I18n.pet_hints; note: I18n.pet_hints_note;
                                     Switch {
-                                        checked: AvatarDialogState.companion-hints;
-                                        toggled => { AvatarDialogState.companion-hints = self.checked; }
+                                        checked: PetSettingsState.hints;
+                                        toggled => { PetSettingsState.toggle-hints(self.checked); }
                                     }
                                 }
                                 SettingRow { label: I18n.pet_scale; note: I18n.pet_scale_note; last: true;
-                                    Text { text: AvatarDialogState.companion-scale-index; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; }
+                                    HorizontalLayout { spacing: 10px; alignment: end;
+                                        Slider {
+                                            min-width: 150px; max-width: 220px; minimum: 0.5; maximum: 1.6; step: 0.1;
+                                            value: PetSettingsState.scale;
+                                            changed => { PetSettingsState.set-scale(self.value); }
+                                        }
+                                        Text { text: PetSettingsState.scale-label; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; }
+                                    }
                                 }
                             }
                             SettingsCard {
-                                SettingsCardHeader { title: I18n.stc_pet_tab; subtitle: I18n.pet_library_subtitle; }
-                                SettingRow { label: I18n.pet_library_title; note: I18n.pet_library_note;
-                                    HorizontalLayout { spacing: 8px;
-                                        Action {
-                                            label: I18n.pet_open_library; show-label: true;
-                                            clicked => { AvatarDialogState.kind = 1; AvatarDialogState.open = true; AvatarDialogState.open-requested(); }
-                                        }
-                                        Action { label: I18n.pet_import; show-label: true; clicked => { AvatarDialogState.open-requested(); AvatarDialogState.import-companion(); } }
-                                    }
+                                SettingsCardHeader { title: I18n.pet_library_title; subtitle: I18n.pet_library_subtitle; }
+                                Rectangle { height: 12px; }
+                                HorizontalLayout { height: 34px; alignment: end; spacing: 8px;
+                                    Rectangle { horizontal-stretch: 1; }
+                                    Action { width: 84px; height: 30px; label: I18n.pet_refresh; show-label: true; enabled: !PetSettingsState.loading; clicked => { PetSettingsState.refresh(); } }
+                                    Action { width: 120px; height: 30px; label: I18n.pet_import; show-label: true; primary: true; clicked => { PetSettingsState.import-package(); } }
                                 }
-                                if AvatarDialogState.companions.length == 0 : Text {
+                                Rectangle { height: 10px; }
+                                if PetSettingsState.companions.length == 0 : Text {
                                     height: 44px; text: I18n.pet_library_empty; color: Theme.muted; font-size: Theme.font-sm;
                                     vertical-alignment: center;
                                 }
-                                for companion in AvatarDialogState.companions : Rectangle {
+                                for companion in PetSettingsState.companions : Rectangle {
                                     height: 58px;
                                     Rectangle { y: parent.height - 1px; width: parent.width; height: 1px; background: Theme.border; }
                                     Image {
@@ -1595,7 +1609,7 @@ export component SettingsPage inherits Rectangle {
                                     }
                                     Text { x: 50px; y: 9px; width: parent.width - 190px; height: 19px; text: companion.name; color: Theme.text; font-size: Theme.font-md; font-weight: 600; vertical-alignment: center; overflow: elide; }
                                     Text { x: 50px; y: 29px; width: parent.width - 190px; height: 17px; text: companion.description; color: Theme.muted; font-size: Theme.font-xs; overflow: elide; }
-                                    if companion.id == AvatarDialogState.companion-id : Rectangle {
+                                    if companion.id == PetSettingsState.selected-id : Rectangle {
                                         x: parent.width - 148px; y: 17px; width: 62px; height: 24px; border-radius: 12px;
                                         background: Theme.accent-soft;
                                         Text { width: parent.width; height: parent.height; text: I18n.pet_in_use; color: Theme.accent; font-size: Theme.font-2xs; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
@@ -1603,13 +1617,19 @@ export component SettingsPage inherits Rectangle {
                                     Action {
                                         x: parent.width - 78px; y: 16px; width: 30px; height: 26px;
                                         icon: @image-url("../assets/icons/trash.svg"); label: I18n.common_delete;
-                                        clicked => { AvatarDialogState.delete-companion(companion.id); }
+                                        clicked => { PetSettingsState.delete(companion.id); }
                                     }
                                     pet-row := TouchArea {
                                         x: 0px; y: 0px; width: parent.width - 86px; height: parent.height;
                                         mouse-cursor: pointer;
-                                        clicked => { AvatarDialogState.select-companion(companion.id); }
+                                        clicked => { PetSettingsState.select(companion.id); }
                                     }
+                                }
+                                if PetSettingsState.page-count > 1 : HorizontalLayout {
+                                    height: 34px; spacing: 10px; alignment: center;
+                                    Action { width: 72px; height: 30px; label: I18n.av_page_prev; show-label: true; enabled: PetSettingsState.page > 1; clicked => { PetSettingsState.prev-page(); } }
+                                    Text { text: PetSettingsState.page-label; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; }
+                                    Action { width: 72px; height: 30px; label: I18n.av_page_next; show-label: true; enabled: PetSettingsState.page < PetSettingsState.page-count; clicked => { PetSettingsState.next-page(); } }
                                 }
                             }
                         }

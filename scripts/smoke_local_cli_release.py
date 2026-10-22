@@ -42,7 +42,7 @@ def run_group(executable, root, count):
         "command_elapsed_ms": round((time.perf_counter() - started) * 1000),
         "shared_directories": all((root / name).is_dir() for name in directories),
         "config": (root / "config/wunder.yaml").is_file(),
-        "database": (root / "data/wunder.db").is_file(),
+        "database": (root / "data/state_1.sqlite").is_file(),
         "skill_runner": (root / "scripts/skill_runner.py").is_file(),
     }
 

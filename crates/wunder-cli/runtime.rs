@@ -759,10 +759,11 @@ fn apply_cli_defaults(
     // oscillate as the second client starts.
     config.server.mode = "desktop".to_string();
     config.storage.backend = "sqlite".to_string();
-    config.storage.db_path = wunder_home
-        .join("data/wunder.db")
-        .to_string_lossy()
-        .to_string();
+    config.storage.data_root = std::env::var("WUNDER_STORAGE_DATA_ROOT")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| wunder_home.join("data").to_string_lossy().into_owned());
     // Runtime-owned data belongs under the user's single Wunder home. The
     // launch directory remains an input workspace only when explicitly
     // selected by the caller; it is never used as a storage root.
@@ -1229,7 +1230,7 @@ mod workspace_tests {
         let mut config = Config::default();
         config.server.mode = "cli".to_string();
         config.storage.backend = "sqlite".to_string();
-        config.storage.db_path = root.join("state.sqlite3").to_string_lossy().to_string();
+        config.storage.data_root = root.join("data").to_string_lossy().to_string();
         config.workspace.root = root.join("workspace").to_string_lossy().to_string();
         let config_path = root.join("config/wunder.yaml");
         fs::write(

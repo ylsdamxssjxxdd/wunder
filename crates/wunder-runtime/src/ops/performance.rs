@@ -501,7 +501,7 @@ async fn measure_command_exec(
 
 async fn measure_log_write(concurrency: usize, context: &PerformanceContext) -> MetricSummary {
     run_concurrent(concurrency, |index| async move {
-        let workspace = context.workspace.clone();
+        let storage = context.state.storage.clone();
         let user_id = context.user_id.clone();
         let session_id = format!("perf_log_{}_{}", context.run_id, index);
         let payload = json!({
@@ -514,8 +514,8 @@ async fn measure_log_write(concurrency: usize, context: &PerformanceContext) -> 
             "timestamp": Local::now().to_rfc3339(),
         });
         let started = Instant::now();
-        blocking::run_fs("ops.performance.append_tool_log", move || {
-            workspace.append_tool_log(&user_id, &payload)
+        blocking::run_fs("ops.performance.append_tool_metrics", move || {
+            storage.append_tool_log(&user_id, &payload)
         })
         .await
         .map_err(|err| err.to_string())?;

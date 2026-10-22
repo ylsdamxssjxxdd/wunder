@@ -6,7 +6,7 @@ async fn queue_handoff_parks_original_turn_and_keeps_cancel_available() {
     let root = tempfile::tempdir().unwrap();
     let mut config = Config::default();
     config.storage.backend = "sqlite".into();
-    config.storage.db_path = root.path().join("state.db").to_string_lossy().into_owned();
+    config.storage.data_root = root.path().join("data").to_string_lossy().into_owned();
     config.workspace.root = root.path().join("workspace").to_string_lossy().into_owned();
     config.server.max_active_sessions = 1;
     let store = ConfigStore::new(root.path().join("config.yaml"));

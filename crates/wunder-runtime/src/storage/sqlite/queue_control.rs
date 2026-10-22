@@ -1,39 +1,35 @@
 use super::SqliteStorage;
 use crate::storage::StorageLifecycle;
 use anyhow::Result;
-use rusqlite::{params, Connection, TransactionBehavior};
+use rusqlite::{params, TransactionBehavior};
 use serde_json::Value;
 
 impl SqliteStorage {
-    pub(super) fn ensure_queue_control_schema(&self, conn: &Connection) -> Result<()> {
-        for (table, column, ddl) in [
-            (
-                "agent_tasks",
-                "priority",
-                "ALTER TABLE agent_tasks ADD COLUMN priority INTEGER NOT NULL DEFAULT 0",
-            ),
-            (
-                "session_locks",
-                "suspended",
-                "ALTER TABLE session_locks ADD COLUMN suspended INTEGER NOT NULL DEFAULT 0",
-            ),
-        ] {
-            let mut statement = conn.prepare(&format!("PRAGMA table_info({table})"))?;
-            let columns = statement
-                .query_map([], |row| row.get::<_, String>(1))?
-                .collect::<rusqlite::Result<Vec<_>>>()?;
-            if !columns.iter().any(|name| name == column) {
-                conn.execute(ddl, [])?;
-            }
+    pub(super) fn park_queued_admission(
+        &self,
+        record: &crate::storage::AgentTaskRecord,
+    ) -> Result<()> {
+        if record.request_payload.get("__queue_wait").is_none() {
+            return Ok(());
         }
-        conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_agent_tasks_session_dispatch ON agent_tasks(session_id, status, priority DESC, retry_at);
-            CREATE INDEX IF NOT EXISTS idx_agent_tasks_dispatch ON agent_tasks(status, priority DESC, retry_at, created_at, task_id)")?;
+        let Some(turn) = record
+            .request_payload
+            .pointer("/config_overrides/__thread_log_turn_id")
+            .and_then(Value::as_str)
+        else {
+            return Ok(());
+        };
+        self.canonical_threads()?.admission_store()?.park_queued(
+            &record.user_id,
+            &record.session_id,
+            turn,
+        )?;
         Ok(())
     }
 
     pub(super) fn claim_agent_task_impl(&self, task_id: &str, now: f64) -> Result<bool> {
         self.ensure_initialized()?;
-        Ok(self.open()?.execute(
+        Ok(self.open_queue()?.execute(
             "UPDATE agent_tasks SET status='running', started_at=?, updated_at=?, finished_at=NULL, last_error=NULL WHERE task_id=? AND status IN ('pending','retry') AND retry_at<=? AND NOT EXISTS (SELECT 1 FROM agent_tasks ahead WHERE ahead.session_id=agent_tasks.session_id AND ahead.status IN ('pending','retry') AND ahead.retry_at<=? AND (ahead.priority>agent_tasks.priority OR (ahead.priority=agent_tasks.priority AND ahead.retry_at<agent_tasks.retry_at)))",
             params![now, now, task_id, now, now],
         )? == 1)
@@ -41,7 +37,7 @@ impl SqliteStorage {
 
     pub(super) fn promote_agent_task_impl(&self, task_id: &str, now: f64) -> Result<bool> {
         self.ensure_initialized()?;
-        Ok(self.open()?.execute(
+        Ok(self.open_queue()?.execute(
             "UPDATE agent_tasks SET priority=1, retry_at=MIN(retry_at, ?, COALESCE((SELECT MIN(a.retry_at)-1 FROM agent_tasks a WHERE a.session_id=agent_tasks.session_id AND a.status IN ('pending','retry') AND a.priority>0), retry_at)), updated_at=?, request_payload=json_set(request_payload, '$.queue_priority', 1) WHERE task_id=? AND status IN ('pending','retry')",
             params![now, now, task_id],
         )? == 1)
@@ -52,7 +48,7 @@ impl SqliteStorage {
         if task_ids.is_empty() {
             return Ok(0);
         }
-        let mut conn = self.open()?;
+        let mut conn = self.open_queue()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         // retry_at 是派发序里排在 created_at 之前的位次键：越靠前越小，且必须不晚于 now 才可领取。
         let total = task_ids.len();
@@ -75,7 +71,7 @@ impl SqliteStorage {
     ) -> Result<bool> {
         self.ensure_initialized()?;
         // Only queue metadata is patched; concurrent cancellation/promotion owns task state.
-        Ok(self.open()?.execute(
+        Ok(self.open_queue()?.execute(
             "UPDATE agent_tasks SET request_payload=json_patch(request_payload, ?) WHERE task_id=? AND status IN ('pending','retry')",
             params![serde_json::to_string(payload)?, task_id],
         )? == 1)
@@ -88,7 +84,7 @@ impl SqliteStorage {
         max_active: i64,
     ) -> Result<bool> {
         self.ensure_initialized()?;
-        let mut conn = self.open()?;
+        let mut conn = self.open_queue()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let now = Self::now_ts();
         let changed = tx.execute(

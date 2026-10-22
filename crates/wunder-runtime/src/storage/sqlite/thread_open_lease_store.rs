@@ -49,7 +49,7 @@ impl SqliteThreadOpenLeaseStorage for SqliteStorage {
         if session_id.is_empty() || user_id.is_empty() || owner_instance_id.is_empty() {
             return Ok(ThreadOpenLeaseStatus::Busy);
         }
-        let mut conn = self.open()?;
+        let mut conn = self.open_queue()?;
         let tx = match conn.transaction_with_behavior(TransactionBehavior::Immediate) {
             Ok(tx) => tx,
             Err(rusqlite::Error::SqliteFailure(err, _))
@@ -133,7 +133,7 @@ impl SqliteThreadOpenLeaseStorage for SqliteStorage {
         ttl_s: f64,
     ) -> Result<bool> {
         self.ensure_initialized()?;
-        let changed = self.open()?.execute(
+        let changed = self.open_queue()?.execute(
             "UPDATE thread_open_leases SET updated_time = (julianday('now')-2440587.5)*86400.0, expires_at = (julianday('now')-2440587.5)*86400.0 + ? WHERE session_id = ? AND owner_instance_id = ? AND fencing_token = ? AND expires_at > (julianday('now')-2440587.5)*86400.0",
             params![ttl_s.max(1.0), session_id.trim(), owner_instance_id.trim(), fencing_token],
         )?;
@@ -147,7 +147,7 @@ impl SqliteThreadOpenLeaseStorage for SqliteStorage {
         fencing_token: u64,
     ) -> Result<bool> {
         self.ensure_initialized()?;
-        let changed = self.open()?.execute(
+        let changed = self.open_queue()?.execute(
             "DELETE FROM thread_open_leases WHERE session_id = ? AND owner_instance_id = ? AND fencing_token = ?",
             params![session_id.trim(), owner_instance_id.trim(), fencing_token],
         )?;
@@ -161,7 +161,7 @@ impl SqliteThreadOpenLeaseStorage for SqliteStorage {
     ) -> Result<Option<ThreadOpenLeaseRecord>> {
         self.ensure_initialized()?;
         let now = Self::now_ts();
-        let conn = self.read_connection()?;
+        let conn = self.read_queue()?;
         conn.query_row(
             "SELECT session_id, user_id, owner_instance_id, client_kind, fencing_token, updated_time, expires_at FROM thread_open_leases WHERE session_id = ? AND user_id = ? AND expires_at > ?",
             params![session_id.trim(), user_id.trim(), now],
@@ -251,7 +251,7 @@ mod tests {
         let first = acquire();
         assert_eq!(first, acquire());
         storage
-            .open()
+            .open_queue()
             .unwrap()
             .execute(
                 "UPDATE thread_open_leases SET expires_at=0 WHERE session_id='thread'",

@@ -1007,7 +1007,6 @@ async fn threads_get(spec: &CommandSpec, ctx: &ExecContext) -> CommandReport {
             &crate::storage::ThreadSnapshotWindow {
                 max_turns: 12,
                 max_items: limit as usize,
-                max_blocks: (limit * 2).clamp(64, 512) as usize,
                 before_turn_index: None,
             },
         )
@@ -2259,7 +2258,7 @@ mod tests {
         let mut config = crate::config::Config::default();
         config.server.mode = "desktop".into();
         config.storage.backend = "sqlite".into();
-        config.storage.db_path = dir.path().join("fixture.db").to_string_lossy().into_owned();
+        config.storage.data_root = dir.path().join("data").to_string_lossy().into_owned();
         config.workspace.root = dir.path().join("engine").to_string_lossy().into_owned();
         let state = Arc::new(
             AppState::new_with_options(

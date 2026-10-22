@@ -372,9 +372,20 @@ fn truncate_utf8_preview(value: &str, max_bytes: usize) -> String {
     format!("{}{}{}", &value[..head_end], marker, &value[tail_start..])
 }
 
+fn canonical_model_message(payload: &Value) -> Option<Value> {
+    if payload
+        .pointer("/meta/replacement_history")
+        .is_some_and(Value::is_array)
+    {
+        return Some(payload.clone());
+    }
+    crate::services::history::build_message_from_item(payload, true)
+        .and_then(normalize_model_context_message)
+}
+
 impl Orchestrator {
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn append_chat(
+    pub(super) async fn append_chat(
         &self,
         user_id: &str,
         session_id: &str,
@@ -388,25 +399,28 @@ impl Orchestrator {
         model_content: Option<&Value>,
         round_info: RoundInfo,
     ) {
-        if let Err(err) = self.try_append_chat(
-            user_id,
-            session_id,
-            role,
-            content,
-            attachments,
-            meta,
-            reasoning,
-            tool_calls,
-            tool_call_id,
-            model_content,
-            round_info,
-        ) {
+        if let Err(err) = self
+            .try_append_chat(
+                user_id,
+                session_id,
+                role,
+                content,
+                attachments,
+                meta,
+                reasoning,
+                tool_calls,
+                tool_call_id,
+                model_content,
+                round_info,
+            )
+            .await
+        {
             warn!("append chat failed for session {session_id} role {role}: {err}");
         }
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn try_append_chat(
+    pub(super) async fn try_append_chat(
         &self,
         user_id: &str,
         session_id: &str,
@@ -529,10 +543,25 @@ impl Orchestrator {
         }
         let payload =
             crate::services::chat_payload_sanitizer::sanitize_persisted_chat_payload(&payload);
-        self.workspace.append_chat(user_id, &payload)
+        use wunder_core::thread_store::{ThreadId, TurnId};
+        let turn = payload
+            .get("turn_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow::anyhow!("model message has no admitted turn"))?;
+        let Some(model_message) = canonical_model_message(&payload) else {
+            return Ok(());
+        };
+        self.thread_store
+            .append_model_message(
+                &ThreadId::new(session_id)?,
+                &TurnId::new(turn)?,
+                model_message,
+            )
+            .await?;
+        Ok(())
     }
 
-    pub(super) fn append_internal_model_context_chat(
+    pub(super) async fn append_internal_model_context_chat(
         &self,
         user_id: &str,
         session_id: &str,
@@ -540,14 +569,17 @@ impl Orchestrator {
         source: &str,
         round_info: RoundInfo,
     ) {
-        if let Err(err) = self.try_append_internal_model_context_chat(
-            user_id, session_id, message, source, round_info,
-        ) {
+        if let Err(err) = self
+            .try_append_internal_model_context_chat(
+                user_id, session_id, message, source, round_info,
+            )
+            .await
+        {
             warn!("append internal model context chat failed for session {session_id}: {err}");
         }
     }
 
-    pub(super) fn try_append_internal_model_context_chat(
+    pub(super) async fn try_append_internal_model_context_chat(
         &self,
         user_id: &str,
         session_id: &str,
@@ -590,6 +622,7 @@ impl Orchestrator {
             None,
             round_info,
         )
+        .await
     }
 
     pub(super) fn mark_internal_model_context_message(
@@ -632,25 +665,28 @@ impl Orchestrator {
         request_usage: Option<&TokenUsage>,
         schema_reference: Option<&crate::tools::ToolSchemaReference>,
     ) {
-        let timestamp = Local::now().to_rfc3339();
-        let safe_args = if args.is_object() {
-            args.clone()
-        } else {
-            json!({ "raw": args })
-        };
-        // Tool logs always persist in the compact profile; the storage layer
-        // bounds args/data and never stores the full payload column.
+        // Completed tool bodies already passed through the canonical writer.
+        // Diagnostics retain numeric facts only, never another copy of input,
+        // output, tool schemas or arbitrary metadata.
+        let _ = (args, schema_reference);
         let mut payload = json!({
             "tool": tool_name,
             "session_id": session_id,
             "ok": result.ok,
-            "args": safe_args,
-            "data": result.data,
-            "timestamp": timestamp,
-            "event_type": "tool_result",
+            "meta": {},
         });
-        if !result.error.trim().is_empty() {
-            payload["error"] = Value::String(result.error.clone());
+        for key in ["duration_ms", "output_chars", "exit_code"] {
+            if let Some(value) = result
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.get(key))
+                .filter(|value| value.is_number())
+            {
+                payload["meta"][key] = value.clone();
+            }
+        }
+        if result.data.get("source").and_then(Value::as_str) == Some("skill_read") {
+            payload["source"] = json!("skill_read");
         }
         if let Some(tokens) = request_context_tokens {
             payload["request_context_tokens"] = json!(tokens);
@@ -658,37 +694,12 @@ impl Orchestrator {
         if let Some(usage) = request_usage {
             payload["request_usage"] = serde_json::to_value(usage).unwrap_or(Value::Null);
         }
-        if let Some(tool_call_id) = tool_call_id
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        {
-            payload["tool_call_id"] = Value::String(tool_call_id.to_string());
+        if let Some(id) = tool_call_id {
+            payload["tool_call_id"] = json!(id);
         }
-        if let Some(meta) = &result.meta {
-            payload["meta"] = meta.clone();
-        }
-        if result.sandbox {
-            payload["sandbox"] = Value::Bool(true);
-        }
-        // 工具结果与工具调用共用同一 timeline item（后者覆盖前者）。保存稳定引用
-        // 而非重复的完整 schema；完整规格由当前目录版本和 hash 恢复。
-        if let Some(reference) = schema_reference {
-            payload["schema_ref"] = serde_json::to_value(reference).unwrap_or(Value::Null);
-        } else if let Some(reference) = crate::tools::runtime_tool_schema_reference(tool_name) {
-            payload["schema_ref"] = serde_json::to_value(reference).unwrap_or(Value::Null);
-        }
-        round_info.insert_into(payload.as_object_mut().expect("tool payload object"));
-        if let Some(turn_id) = round_info.thread_turn_id {
-            let tool_id = payload
-                .get("tool_call_id")
-                .and_then(Value::as_str)
-                .filter(|value| !value.trim().is_empty())
-                .map(|id| format!("{turn_id}:tool-{id}"))
-                .unwrap_or_else(|| Uuid::new_v4().to_string());
-            payload["item_id"] = Value::String(tool_id);
-        }
-        if let Err(err) = self.workspace.append_tool_log(user_id, &payload) {
-            warn!("append tool log failed for session {session_id} tool {tool_name}: {err}");
+        round_info.insert_into(payload.as_object_mut().expect("tool metrics object"));
+        if let Err(err) = self.storage.append_tool_log(user_id, &payload) {
+            warn!("append tool metrics failed for session {session_id} tool {tool_name}: {err}");
         }
     }
 
@@ -746,7 +757,7 @@ impl Orchestrator {
                 );
                 map.insert("timestamp".to_string(), Value::String(timestamp.clone()));
             }
-            if let Err(err) = self.workspace.append_artifact_log(user_id, &entry) {
+            if let Err(err) = self.storage.append_artifact_log(user_id, &entry) {
                 warn!(
                     "append artifact log failed for session {session_id} tool {tool_name}: {err}"
                 );
@@ -1615,6 +1626,53 @@ fn parse_timeout_secs(value: Option<&Value>) -> Option<f64> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn canonical_model_messages_keep_user_assistant_and_tool_input() {
+        let user = canonical_model_message(&json!({
+            "role":"user", "content":"display", "model_content":"model input",
+            "session_id":"thread-a", "turn_id":"turn-a", "timestamp":"sample"
+        }))
+        .unwrap();
+        assert_eq!(user, json!({"role":"user", "content":"model input"}));
+
+        let assistant = canonical_model_message(&json!({
+            "role":"assistant", "content":"visible answer", "model_content":"model answer",
+            "reasoning_content":"reasoning", "meta":{"message_stats":{"tokens":3}}
+        }))
+        .unwrap();
+        assert_eq!(assistant["content"], "model answer");
+        assert_eq!(assistant["reasoning_content"], "reasoning");
+        assert!(assistant.get("meta").is_none());
+
+        let tool = canonical_model_message(&json!({
+            "role":"tool", "content":"result", "tool_call_id":"call-a"
+        }))
+        .unwrap();
+        assert_eq!(
+            tool,
+            json!({"role":"tool", "content":"result", "tool_call_id":"call-a"})
+        );
+        let observation =
+            canonical_model_message(&json!({"role":"tool", "content":"result"})).unwrap();
+        assert_eq!(observation["role"], "user");
+        assert_eq!(
+            observation["content"],
+            format!("{OBSERVATION_PREFIX}result")
+        );
+    }
+
+    #[test]
+    fn canonical_model_message_preserves_checkpoint_and_filters_ui_commands() {
+        let checkpoint = json!({"role":"system", "content":"summary",
+            "meta":{"replacement_history":[{"role":"user","content":"retained"}]}});
+        assert_eq!(canonical_model_message(&checkpoint), Some(checkpoint));
+        assert!(
+            canonical_model_message(&json!({"role":"user", "content":"sample",
+            "meta":{"type":"manual_compaction_command"}}))
+            .is_none()
+        );
+    }
+
     fn transport_envelope_bytes(result: &ToolResultPayload) -> usize {
         serde_json::to_vec(&json!({
             "ok": result.ok, "sandbox": result.sandbox,
@@ -1772,7 +1830,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let mut config = Config::default();
         config.storage.backend = "sqlite".into();
-        config.storage.db_path = root.path().join("state.db").to_string_lossy().into_owned();
+        config.storage.data_root = root.path().join("data").to_string_lossy().into_owned();
         config.workspace.root = root.path().join("workspace").to_string_lossy().into_owned();
         config.server.mode = "desktop".into();
         let state = crate::state::AppState::new_with_options(

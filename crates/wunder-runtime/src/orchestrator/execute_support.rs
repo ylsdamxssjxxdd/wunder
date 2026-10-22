@@ -277,7 +277,7 @@ pub(super) fn build_assistant_history_snapshot(
     }
 }
 
-pub(super) fn append_cancelled_generation_context_marker(
+pub(super) async fn append_cancelled_generation_context_marker(
     orchestrator: &Orchestrator,
     user_id: &str,
     session_id: &str,
@@ -291,13 +291,15 @@ pub(super) fn append_cancelled_generation_context_marker(
         "role": "assistant",
         "content": CANCELLED_GENERATION_CONTEXT_MARKER,
     });
-    orchestrator.append_internal_model_context_chat(
-        user_id,
-        session_id,
-        &marker_message,
-        "cancelled_generation_marker",
-        round_info,
-    );
+    orchestrator
+        .append_internal_model_context_chat(
+            user_id,
+            session_id,
+            &marker_message,
+            "cancelled_generation_marker",
+            round_info,
+        )
+        .await;
 }
 
 fn should_append_cancelled_generation_context_marker(messages: &[Value]) -> bool {

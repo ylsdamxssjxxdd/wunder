@@ -5,6 +5,7 @@
 //   - the old hydrate restored pending turns with an O(pending x turns) nested
 //     scan (one turn-map walk per pending turn);
 //   - there was no snapshot worker pool and therefore no teardown guarantee.
+import './mocks/browserStorage';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -44,7 +45,6 @@ const makeStore = (key: string) => ({
 const buildSnapshot = (turnCount: number, itemsPerTurn: number) => {
   const turns: Array<Record<string, unknown>> = [];
   const items: Array<Record<string, unknown>> = [];
-  const blocks: Array<Record<string, unknown>> = [];
   for (let t = 0; t < turnCount; t += 1) {
     const turnId = `turn-${t}`;
     turns.push({ turn_id: turnId, user_round: t + 1, status: 'completed', content: `input ${t}` });
@@ -55,14 +55,13 @@ const buildSnapshot = (turnCount: number, itemsPerTurn: number) => {
         content: `output ${t}-${i}`, reasoning: ''
       });
     }
-    blocks.push({ item_id: `${turnId}:text-0`, field: 'content', block_index: 0, content_offset: 0, content: `block ${t}` });
   }
-  return { cursor: 5000, turns, items, blocks };
+  return { cursor: 5000, turns, items };
 };
 
 test('sharded snapshot apply yields the main thread and matches the single-pass result', async () => {
   const snapshot = buildSnapshot(90, 6);
-  const plan = planChatThreadSnapshot(snapshot, { maxTurnsPerShard: 5, maxItemsPerShard: 10, maxBlocksPerShard: 5 });
+  const plan = planChatThreadSnapshot(snapshot, { maxTurnsPerShard: 5, maxItemsPerShard: 10 });
   assert.ok(plan.shards.length >= 60, `plan must be finely sharded, got ${plan.shards.length}`);
 
   const state = emptyChatThreadState('shard-a');
@@ -90,7 +89,6 @@ test('sharded snapshot apply yields the main thread and matches the single-pass 
   assert.equal(state.lastSeq, reference.lastSeq);
   assert.equal(state.turns.size, reference.turns.size);
   assert.equal(state.items.size, reference.items.size);
-  assert.equal(state.blocks.size, reference.blocks.size);
   for (const [itemId, item] of reference.items) {
     const mirror = state.items.get(itemId);
     assert.equal(mirror?.content, item.content);
@@ -100,7 +98,7 @@ test('sharded snapshot apply yields the main thread and matches the single-pass 
 
 test('sharded snapshot apply aborts mid-flight without advancing the durable cursor', async () => {
   const snapshot = buildSnapshot(40, 4);
-  const plan = planChatThreadSnapshot(snapshot, { maxTurnsPerShard: 2, maxItemsPerShard: 4, maxBlocksPerShard: 2 });
+  const plan = planChatThreadSnapshot(snapshot, { maxTurnsPerShard: 2, maxItemsPerShard: 4 });
   const state = emptyChatThreadState('shard-abort');
   let checks = 0;
   const outcome = await applyChatThreadSnapshotPlanSharded(state, plan, {
@@ -142,7 +140,7 @@ test('hydrate restores pending turns with a bounded number of turn-map scans', (
     turns.push({ turn_id: `server-${t}`, user_round: t + 100, status: 'completed', content: `server ${t}` });
   }
 
-  const changed = hydrateChatThreadRuntime(makeStore(key), key, { cursor: 100, turns, items: [], blocks: [] });
+  const changed = hydrateChatThreadRuntime(makeStore(key), key, { cursor: 100, turns, items: [] });
   assert.equal(changed, true);
   // Negative guard: the pre-W2-F pending loop walked the turn map once per
   // pending turn (1 + pendingCount scans); the fix is a constant number.
@@ -155,7 +153,7 @@ test('hydrate restores pending turns with a bounded number of turn-map scans', (
 });
 
 test('snapshot planner falls back to the main thread when no worker exists', async () => {
-  const planned = await planChatThreadSnapshotInWorker({ cursor: 3, turns: [], items: [], blocks: [] });
+  const planned = await planChatThreadSnapshotInWorker({ cursor: 3, turns: [], items: [] });
   assert.equal(planned, null);
 });
 
@@ -169,8 +167,8 @@ test('snapshot worker pool leaves no residual state after termination', async ()
   }
   setChatThreadSnapshotWorkerFactory(() => new FakeWorker() as unknown as Worker);
   try {
-    const first = planChatThreadSnapshotInWorker({ cursor: 1, turns: [], items: [], blocks: [] });
-    const second = planChatThreadSnapshotInWorker({ cursor: 2, turns: [], items: [], blocks: [] });
+    const first = planChatThreadSnapshotInWorker({ cursor: 1, turns: [], items: [] });
+    const second = planChatThreadSnapshotInWorker({ cursor: 2, turns: [], items: [] });
     const busy = getChatThreadSnapshotWorkerStats();
     assert.equal(busy.available, true);
     assert.equal(busy.workerAlive, true);

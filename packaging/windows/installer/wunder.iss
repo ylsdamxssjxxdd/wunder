@@ -38,7 +38,7 @@ PrivilegesRequired=lowest
 UsePreviousAppDir=yes
 OutputDir=.
 OutputBaseFilename={#OutputBaseFilename}
-SetupIconFile=eva01-head.ico
+SetupIconFile=pupa.ico
 ; The pupa mark in the wizard pages' upper right corner (transparent PNG).
 WizardSmallImageFile=pupa.png
 UninstallDisplayIcon={app}\bin\wunder-desktop.exe
@@ -46,7 +46,13 @@ UninstallDisplayName={#AppName} {#AppVersion}
 Compression={#PackCompression}
 SolidCompression=yes
 LZMANumBlockThreads=4
-WizardStyle=modern
+WizardStyle=classic light
+; 100 is the smallest Inno Setup allows (valid range 100-150); keeps the
+; wizard as compact as possible.
+WizardSizePercent=100,100
+; No big left banner on the welcome/completed pages; the pupa mark lives in
+; the header's upper right corner (WizardSmallImageFile above).
+WizardImageFile=
 MinVersion=6.1sp1
 ArchitecturesAllowed=x86compatible
 CloseApplications=yes
@@ -61,19 +67,24 @@ VersionInfoDescription={#AppName} 安装程序
 Name: "chinesesimplified"; MessagesFile: "ChineseSimplified.isl"
 
 [Messages]
-WizardSelectTasks=选择组件
-SelectTasksDesc=推荐全选，蛹与舵机将获得完整的运行环境。
-SelectTasksLabel2=本机已有这些工具，或此前已安装过组件，可取消对应项；全部不勾则只安装蛹和舵机。
-SelectDirDesc=请选择心舰的安装目录。该目录也会保存配置、会话和工作区等用户数据。
-SelectDirLabel3=安装程序将安装 [name] 到下面的文件夹，并使用该文件夹作为用户数据目录。安装目录必须可写。
+WelcomeLabel1=欢迎安装 [name]
+WelcomeLabel2=本向导将引导您完成 [name/ver] 的安装。
+WizardSelectTasks=选择安装内容
+SelectTasksDesc=勾选蛹或舵机安装程序本体（勾选蛹会自动创建桌面快捷方式），组件按需勾选。
+SelectTasksLabel2=
+SelectDirDesc=请选择心舰的安装目录，该目录也是用户数据目录。
+SelectDirLabel3=
 
 [Icons]
-Name: "{group}\蛹"; Filename: "{app}\bin\wunder-desktop.exe"; WorkingDir: "{app}"
-Name: "{group}\舵机"; Filename: "{app}\bin\wunder-cli.exe"; WorkingDir: "{app}\workspace"
+; 勾选「蛹」即创建开始菜单与桌面快捷方式（不再单列快捷方式任务）；「舵机」同理。
+Name: "{group}\蛹"; Filename: "{app}\bin\wunder-desktop.exe"; WorkingDir: "{app}"; Tasks: desktop
+Name: "{group}\舵机"; Filename: "{app}\bin\wunder-cli.exe"; WorkingDir: "{app}\workspace"; Tasks: cli
 Name: "{group}\卸载心舰"; Filename: "{uninstallexe}"
-Name: "{userdesktop}\蛹"; Filename: "{app}\bin\wunder-desktop.exe"; WorkingDir: "{app}"; Tasks: desktopicon
+Name: "{userdesktop}\蛹"; Filename: "{app}\bin\wunder-desktop.exe"; WorkingDir: "{app}"; Tasks: desktop
 
 [Dirs]
+; bin 由可选的本体文件创建，显式声明以确保组件清单等写入目录始终存在。
+Name: "{app}\bin"
 Name: "{app}\workspace"
 
 [InstallDelete]
@@ -86,7 +97,7 @@ Type: filesandordirs; Name: "{app}\bin\resources"
 Type: dirifempty; Name: "{app}\sessions"
 
 [Run]
-Filename: "{app}\bin\wunder-desktop.exe"; Description: "启动蛹"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\bin\wunder-desktop.exe"; Description: "启动蛹"; Flags: nowait postinstall skipifsilent; Tasks: desktop
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}\bin"
@@ -155,7 +166,23 @@ begin
 end;
 
 procedure InitializeWizard();
+var
+  Brand: TNewStaticText;
 begin
+  // Footer brand text, bottom left of the button strip.
+  Brand := TNewStaticText.Create(WizardForm);
+  Brand.Parent := WizardForm;
+  Brand.AutoSize := False;
+  Brand.Left := ScaleX(12);
+  Brand.Height := ScaleY(20);
+  // Stay clear of the button strip at any size/DPI: end the text before the
+  // Back button and center vertically against the buttons themselves.
+  Brand.Width := WizardForm.BackButton.Left - Brand.Left - ScaleX(12);
+  Brand.Top := WizardForm.BackButton.Top +
+    (WizardForm.BackButton.Height - Brand.Height) div 2;
+  Brand.Caption := 'Wunder Desktop Installer';
+  Brand.Font.Color := clGray;
+
   SelectAllCheckBox := TNewCheckBox.Create(WizardForm);
   SelectAllCheckBox.Parent := WizardForm.TasksList.Parent;
   SelectAllCheckBox.Caption := '全选（推荐）';
@@ -348,11 +375,13 @@ begin
     SaveStringToFile(
       ExpandConstant('{app}\bin\wunder-install-components.txt'),
       SelectedComponentList, False);
-    SaveStringToFile(
-      ExpandConstant('{app}\bin\desktop.cmd'),
-      '@echo off' + #13#10 + 'start "" "%~dp0wunder-desktop.exe" %*' + #13#10,
-      False);
-    AddAppToUserPath();
+    if WizardIsTaskSelected('desktop') then
+      SaveStringToFile(
+        ExpandConstant('{app}\bin\desktop.cmd'),
+        '@echo off' + #13#10 + 'start "" "%~dp0wunder-desktop.exe" %*' + #13#10,
+        False);
+    if WizardIsTaskSelected('cli') then
+      AddAppToUserPath();
   end;
 end;
 

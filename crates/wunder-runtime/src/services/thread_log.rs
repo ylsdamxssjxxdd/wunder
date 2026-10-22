@@ -5,8 +5,8 @@ use std::sync::Arc;
 
 pub(crate) mod diagnostics;
 
-/// Read-time lifecycle projection also repairs logs written before terminal
-/// turns began settling their unfinished items. It does not rewrite model context.
+/// Read-time lifecycle projection settles display state after terminal
+/// turns have finished. It does not rewrite model context.
 pub fn project_visible_item(message: &mut Value, kind: &str, turn_status: &str) {
     if message.get("role").and_then(Value::as_str).is_none() {
         message["role"] = json!(if kind == "user_message" {
@@ -26,77 +26,21 @@ pub fn project_visible_item(message: &mut Value, kind: &str, turn_status: &str) 
     }
 }
 
-/// Recover durable stream text when an assistant payload is missing a field.
-/// Text blocks can be the only copy of an intermediate print, even after the
-/// item and turn have completed. Existing payload text always takes precedence.
+/// Normalize the completed item's reasoning alias in memory. The item body
+/// already contains its full original content; history reads never query a
+/// second text-block log or perform storage repair.
 pub fn hydrate_active_text(
-    storage: &dyn StorageBackend,
-    user_id: &str,
-    session_id: &str,
+    _storage: &dyn StorageBackend,
+    _user_id: &str,
+    _session_id: &str,
     message: &mut Value,
 ) -> anyhow::Result<()> {
-    if message
-        .get("role")
-        .and_then(Value::as_str)
-        .is_some_and(|role| role != "assistant")
-    {
-        return Ok(());
-    }
-    let Some(item_id) = message["item_id"].as_str().map(str::to_owned) else {
-        return Ok(());
-    };
-    for (field, block_fields) in [
-        ("content", &["content"][..]),
-        ("reasoning", &["reasoning", "reasoning_content"][..]),
-    ] {
-        if message[field]
+    if message["reasoning"].as_str().is_none_or(str::is_empty) {
+        if let Some(reasoning) = message["reasoning_content"]
             .as_str()
-            .is_some_and(|value| !value.is_empty())
+            .filter(|text| !text.is_empty())
         {
-            continue;
-        }
-        if field == "reasoning"
-            && message["reasoning_content"]
-                .as_str()
-                .is_some_and(|value| !value.is_empty())
-        {
-            message[field] = message["reasoning_content"].clone();
-            continue;
-        }
-        let mut text = String::new();
-        for block_field in block_fields {
-            let mut from = 0;
-            loop {
-                let (blocks, next, more) = storage.list_thread_item_blocks_page(
-                    user_id,
-                    session_id,
-                    &item_id,
-                    Some(block_field),
-                    from,
-                    100,
-                    false,
-                )?;
-                for block in blocks {
-                    let data = block.get("data").unwrap_or(&block);
-                    if let Some(part) = data[block_field].as_str() {
-                        text.push_str(part);
-                    }
-                }
-                if !more {
-                    break;
-                }
-                let next = next
-                    .map(|next| next.saturating_add(1))
-                    .filter(|next| *next > from)
-                    .ok_or_else(|| anyhow::anyhow!("text block cursor did not advance"))?;
-                from = next;
-            }
-            if !text.is_empty() {
-                break;
-            }
-        }
-        if !text.is_empty() {
-            message[field] = json!(text);
+            message["reasoning"] = json!(reasoning);
         }
     }
     Ok(())
@@ -154,24 +98,6 @@ pub fn export_stream(
                             .ok_or_else(||anyhow::anyhow!("turn deleted during export"))?;
                         for item in page["items"].as_array().into_iter().flatten() {
                             tx.send(Ok(format!("{}\n",json!({"record_type":"item","item":item})))).await?;
-                            // A streamed response can exist only as durable blocks.
-                            // Export those blocks verbatim in bounded pages instead
-                            // of assembling another full response in memory.
-                            let item_id=item["item_id"].as_str().unwrap_or_default().to_owned();
-                            for field in ["content", "reasoning", "reasoning_content"] {
-                              let mut block_after=0;
-                              loop {
-                                let db=storage.clone();let owner=user_id.clone();let thread=session_id.clone();let id=item_id.clone();
-                                let (blocks,next,more)=crate::core::blocking::run_db("thread_log.export.blocks",move ||
-                                    db.list_thread_item_blocks_page(&owner,&thread,&id,Some(field),block_after,16,include_internal)).await?;
-                                for block in blocks {
-                                    tx.send(Ok(format!("{}\n",json!({"record_type":"item_block","item_id":item_id,"field":field,"block":block})))).await?;
-                                }
-                                if !more {break;}
-                                block_after=next.map(|cursor|cursor.saturating_add(1)).filter(|cursor|*cursor>block_after)
-                                    .ok_or_else(||anyhow::anyhow!("export block cursor did not advance"))?;
-                              }
-                            }
                         }
                         if page["has_more"]!=true {break;}
                         after=page["next_after"].as_i64().ok_or_else(||anyhow::anyhow!("missing item cursor"))?;
@@ -196,8 +122,7 @@ pub fn export_stream(
 /// workspace_update、model_usage）、生命周期回执
 /// （final/thread_status/…/llm_response；失败详情由 turn_terminal 携带，error
 /// 事件只是流式通知）以及一切未知事件（hook 通知、子会话生命周期等）一律
-/// 不入账 —— catch-all 兜底只会制造大量「无内容」的上下文噪音。queue_* 是
-/// 挂起/恢复的持久台账（同一条目 queued→running upsert），轨迹前端自行跳过。
+/// 不入账。queue_* 的排队/运行状态只走实时控制通道；结束时才保留完成条目。
 /// llm_stream_retry 通过 diagnostics 更新稳定模型条目，不新增事件行。
 pub fn event_item(session_id: &str, event_type: &str, data: &Value) -> Option<Value> {
     let turn = data.get("turn_id")?.as_str()?;
@@ -368,264 +293,9 @@ fn derive_context_text(event_type: &str, data: &Value) -> Option<String> {
     }
 }
 
-/// Only the active tail is copied on a flush. Completed blocks stay immutable.
-#[derive(Default)]
-pub struct TextTail {
-    item_id: String,
-    block_index: i64,
-    content: String,
-    reasoning: String,
-    content_offset: usize,
-    reasoning_offset: usize,
-    event_id: i64,
-    context: Value,
-    last_flush: Option<std::time::Instant>,
-    dirty: bool,
-    /// Durable cursor the active tail depends on (item registration or the
-    /// most recent text block). Ephemeral frames carry this as `base_seq` so
-    /// clients never apply text before the corresponding durable item.
-    base_seq: i64,
-}
-
-/// The number of interleaved text items retained by one emitter is bounded.
-/// Each item keeps only its active tail; completed blocks live in ThreadLog.
-#[derive(Default)]
-pub struct TextTails {
-    tails: std::collections::HashMap<String, TextTail>,
-}
-
-impl TextTails {
-    const MAX_ITEMS: usize = 16;
-
-    fn item_id(data: &Value) -> Option<String> {
-        let turn = data.get("turn_id")?.as_str()?;
-        let model = data.get("model_round").and_then(Value::as_i64).unwrap_or(0);
-        Some(format!("{turn}:text-{model}"))
-    }
-
-    pub fn set_base_seq(&mut self, item_id: &str, seq: i64) {
-        self.tails
-            .entry(item_id.to_string())
-            .or_default()
-            .set_base_seq(seq);
-    }
-
-    pub fn base_seq(&self, item_id: &str) -> i64 {
-        self.tails.get(item_id).map(TextTail::base_seq).unwrap_or(0)
-    }
-
-    pub fn append(
-        &mut self,
-        session_id: &str,
-        event_id: i64,
-        data: &Value,
-    ) -> (Vec<Value>, Vec<(String, i64, String, String)>) {
-        let Some(item_id) = Self::item_id(data) else {
-            return (Vec::new(), Vec::new());
-        };
-        let mut blocks = Vec::new();
-        if !self.tails.contains_key(&item_id) && self.tails.len() >= Self::MAX_ITEMS {
-            if let Some(oldest) = self.tails.keys().min().cloned() {
-                if let Some(mut old) = self.tails.remove(&oldest) {
-                    if let Some(flush) = old.flush(session_id) {
-                        blocks.push(flush);
-                    }
-                }
-            }
-        }
-        let tail = self.tails.entry(item_id.clone()).or_default();
-        let (_, content_offset, reasoning_offset) = tail.tail_annotation(data);
-        let mut hints = Vec::with_capacity(2);
-        if let (Some(offset), Some(text)) =
-            (content_offset, data.get("delta").and_then(Value::as_str))
-        {
-            if !text.is_empty() {
-                hints.push((item_id.clone(), offset, "content".into(), text.into()));
-            }
-        }
-        if let (Some(offset), Some(text)) = (
-            reasoning_offset,
-            data.get("reasoning_delta").and_then(Value::as_str),
-        ) {
-            if !text.is_empty() {
-                hints.push((item_id.clone(), offset, "reasoning".into(), text.into()));
-            }
-        }
-        if let Some(flush) = tail.append(session_id, event_id, data) {
-            blocks.push(flush);
-        }
-        (blocks, hints)
-    }
-
-    pub fn flush_item(&mut self, session_id: &str, item_id: &str) -> Option<Value> {
-        self.tails.get_mut(item_id)?.flush(session_id)
-    }
-
-    pub fn flush_all(&mut self, session_id: &str) -> Vec<Value> {
-        self.tails
-            .values_mut()
-            .filter_map(|tail| tail.flush(session_id))
-            .collect()
-    }
-}
-impl TextTail {
-    pub fn set_base_seq(&mut self, seq: i64) {
-        self.base_seq = self.base_seq.max(seq.max(0));
-    }
-
-    pub fn base_seq(&self) -> i64 {
-        self.base_seq
-    }
-    /// UTF-16 offsets at which the incoming delta would append, used by the
-    /// ephemeral tail frames of the change stream. Returns
-    /// `(item_id, content_offset, reasoning_offset)`; an offset is None when
-    /// the payload carries no text for that field. A fresh item (first delta
-    /// after a switch) reports offset 0 instead of the previous item's tail.
-    pub fn tail_annotation(&self, data: &Value) -> (Option<String>, Option<i64>, Option<i64>) {
-        let turn = match data.get("turn_id").and_then(Value::as_str) {
-            Some(turn) if !turn.is_empty() => turn,
-            _ => return (None, None, None),
-        };
-        let model = data.get("model_round").and_then(Value::as_i64).unwrap_or(0);
-        let incoming = format!("{turn}:text-{model}");
-        let fresh = self.item_id != incoming;
-        let content_offset = data
-            .get("delta")
-            .and_then(Value::as_str)
-            .filter(|text| !text.is_empty())
-            .map(|_| {
-                if fresh {
-                    0
-                } else {
-                    (self.content_offset + self.content.encode_utf16().count()) as i64
-                }
-            });
-        let reasoning_offset = data
-            .get("reasoning_delta")
-            .and_then(Value::as_str)
-            .filter(|text| !text.is_empty())
-            .map(|_| {
-                if fresh {
-                    0
-                } else {
-                    (self.reasoning_offset + self.reasoning.encode_utf16().count()) as i64
-                }
-            });
-        (Some(incoming), content_offset, reasoning_offset)
-    }
-
-    pub fn append(&mut self, session_id: &str, event_id: i64, data: &Value) -> Option<Value> {
-        let turn = data.get("turn_id")?.as_str()?;
-        let model = data.get("model_round").and_then(Value::as_i64).unwrap_or(0);
-        let item_id = format!("{turn}:text-{model}");
-        if self.item_id != item_id {
-            // `set_base_seq` can register this tail before its first delta.
-            // Keep that durable dependency when the first delta supplies the
-            // item's context; otherwise v2 tail frames could incorrectly use
-            // base_seq=0 and race ahead of the durable item_upsert.
-            let base_seq = self.base_seq;
-            *self = Self {
-                item_id,
-                context: data.clone(),
-                base_seq,
-                ..Default::default()
-            };
-            if let Some(map) = self.context.as_object_mut() {
-                map.remove("delta");
-                map.remove("reasoning_delta");
-            }
-        }
-        self.content
-            .push_str(data.get("delta").and_then(Value::as_str).unwrap_or(""));
-        self.reasoning.push_str(
-            data.get("reasoning_delta")
-                .and_then(Value::as_str)
-                .unwrap_or(""),
-        );
-        self.event_id = event_id;
-        self.dirty = true;
-        let full = self.content.len() + self.reasoning.len() >= 8192;
-        let due = self
-            .last_flush
-            .is_none_or(|at| at.elapsed() >= std::time::Duration::from_millis(150));
-        if !full && !due {
-            return None;
-        }
-        let block = self.flush(session_id);
-        if full {
-            self.content_offset += self.content.encode_utf16().count();
-            self.reasoning_offset += self.reasoning.encode_utf16().count();
-            self.content.clear();
-            self.reasoning.clear();
-            self.block_index += 1;
-        }
-        block
-    }
-    pub fn flush(&mut self, session_id: &str) -> Option<Value> {
-        if !self.dirty {
-            return None;
-        }
-        self.dirty = false;
-        self.last_flush = Some(std::time::Instant::now());
-        // Content and reasoning use independent field/block coordinates.  A
-        // shared payload would make the database key overwrite one field when
-        // both are present at the same block index.
-        let field_block = |field: &str, text: &str, offset: usize| {
-            let mut data = self.context.clone();
-            data["field"] = json!(field);
-            if field == "reasoning" {
-                data["reasoning"] = json!(text);
-                data["reasoning_offset"] = json!(offset);
-            } else {
-                data["content"] = json!(text);
-                data["content_offset"] = json!(offset);
-            }
-            data["item_id"] = json!(self.item_id);
-            data["block_index"] = json!(self.block_index);
-            json!({"event":"thread_item_block","event_id":self.event_id,"item_id":self.item_id,
-                "field":field,"block_index":self.block_index,"session_id":session_id,"data":data})
-        };
-        let mut blocks = Vec::with_capacity(2);
-        if !self.content.is_empty() {
-            blocks.push(field_block("content", &self.content, self.content_offset));
-        }
-        if !self.reasoning.is_empty() {
-            blocks.push(field_block(
-                "reasoning",
-                &self.reasoning,
-                self.reasoning_offset,
-            ));
-        }
-        (!blocks.is_empty()).then(|| json!({"blocks":blocks}))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn text_tail_separates_content_and_reasoning_block_identity() {
-        let mut tail = TextTail::default();
-        let flush = tail
-            .append(
-                "thread",
-                1,
-                &json!({
-                    "turn_id":"turn", "model_round":1,
-                    "delta":"answer", "reasoning_delta":"thought"
-                }),
-            )
-            .expect("initial flush");
-        let blocks = flush["blocks"].as_array().expect("blocks");
-        assert_eq!(blocks.len(), 2);
-        assert_eq!(blocks[0]["field"], "content");
-        assert_eq!(blocks[0]["data"]["content"], "answer");
-        assert!(blocks[0]["data"].get("reasoning").is_none());
-        assert_eq!(blocks[1]["field"], "reasoning");
-        assert_eq!(blocks[1]["data"]["reasoning"], "thought");
-        assert!(blocks[1]["data"].get("content").is_none());
-    }
 
     #[test]
     fn transport_status_events_never_enter_the_timeline() {
@@ -733,11 +403,8 @@ pub fn replay(
 ) -> anyhow::Result<Vec<Value>> {
     let limit = limit.clamp(1, 500);
     let after = after.max(0);
-    // The cursor belongs to durable changes. Text blocks carry independent
-    // transport offsets, so they are snapshots on every recovery rather than
-    // competing for the cursor page.
     let changes = storage.list_thread_changes_by_session(session_id, after, limit)?;
-    let mut records = Vec::with_capacity(changes.len() + limit as usize);
+    let mut records = Vec::with_capacity(changes.len());
     for mut change in changes {
         if change.get("change_type").and_then(Value::as_str) == Some("snapshot_required") {
             records
@@ -753,8 +420,5 @@ pub fn replay(
         change["data"] = json!({"change_type":change.get("change_type").cloned().unwrap_or(Value::Null),"turn_id":change.get("turn_id").cloned().unwrap_or(Value::Null),"item_id":change.get("item_id").cloned().unwrap_or(Value::Null),"revision":change.get("revision").cloned().unwrap_or(Value::Null),"cursor":cursor,"payload":change.get("payload").cloned().unwrap_or(Value::Null)});
         records.push(change);
     }
-    // The caller's event cursor does not apply to block event IDs. Return a
-    // bounded current snapshot so offsets can overwrite the active tail.
-    records.extend(storage.list_thread_text_blocks(session_id, 0, limit)?);
     Ok(records)
 }

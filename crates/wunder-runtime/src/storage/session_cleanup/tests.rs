@@ -1,114 +1,119 @@
 use crate::storage::*;
 use anyhow::Result;
+use serde_json::json;
+use std::sync::Arc;
 
-fn seed(mut execute: impl FnMut(&str) -> Result<()>) {
-    for id in [
-        "cleared", "legacy", "partial", "draft", "live", "queued", "locked", "goal", "other",
-    ] {
-        let owner = if id == "other" { "user-b" } else { "user-a" };
-        let last = if id == "draft" { 20 } else { 80 };
-        execute(&format!("INSERT INTO chat_sessions (session_id,user_id,title,status,created_at,updated_at,last_message_at) \
-            VALUES ('{id}','{owner}','thread','active',20,80,{last})")).unwrap();
+fn record(user: &str, session: &str) -> ChatSessionRecord {
+    ChatSessionRecord {
+        session_id: session.into(),
+        user_id: user.into(),
+        title: "Sample thread".into(),
+        status: "active".into(),
+        created_at: 1.0,
+        updated_at: 3.0,
+        last_message_at: 3.0,
+        agent_id: None,
+        tool_overrides: vec![],
+        parent_session_id: None,
+        parent_message_id: None,
+        spawn_label: None,
+        spawned_by: None,
+        workspace_id: None,
     }
-    execute("INSERT INTO monitor_sessions (session_id,user_id,status,updated_time,payload) VALUES ('live','user-a','running',50,'{}')").unwrap();
-    execute("INSERT INTO agent_tasks (task_id,thread_id,user_id,agent_id,session_id,status,request_payload,retry_count,retry_at,created_at,updated_at) VALUES ('task-a','thread-a','user-a','','queued','pending','{}',0,50,50,50)").unwrap();
-    execute("INSERT INTO session_locks (session_id,user_id,agent_id,created_time,updated_time,expires_at,suspended) VALUES ('locked','user-a','',50,50,0,1)").unwrap();
-    execute("INSERT INTO session_goals (session_id,user_id,goal_id,revision,objective,phase,max_goal_rounds,rounds_started,created_at,updated_at) VALUES ('goal','user-a','goal-a',1,'input','active',256,0,50,50)").unwrap();
-    // A partial response is a durable ThreadLog item.  The cleanup predicate
-    // must retain it even when no monitor or transient transport record
-    // remains for the session.
-    execute("INSERT INTO thread_logs (session_id,user_id,latest_user_turn,latest_change_seq,created_time,updated_time) VALUES ('partial','user-a',1,1,20,80)").unwrap();
-    execute("INSERT INTO thread_items (session_id,item_id,turn_id,root_turn_id,visibility,user_id,item_index,kind,status,revision,payload,created_time,updated_time,created_seq) VALUES ('partial','turn-partial:text-1','turn-partial','turn-partial','user','user-a',0,'assistant_message','running',1,'{}',20,80,1)").unwrap();
-    execute("INSERT INTO thread_logs (session_id,user_id,latest_user_turn,latest_change_seq,created_time,updated_time) VALUES ('other','user-b',1,1,20,80)").unwrap();
 }
 
-fn verify(storage: &dyn StorageBackend) {
-    let deleted = storage.delete_logs_by_time_range(10.0, 100.0).unwrap();
-    assert_eq!(deleted.get("chat_sessions"), Some(&2));
-    let (items, _) = storage
-        .list_chat_sessions_by_status("user-a", None, None, None, 0, 100)
+fn seed(root: &std::path::Path, user: &str, session: &str) -> Result<()> {
+    let store = super::super::thread_store::LocalThreadStore::open(root)?;
+    super::super::canonical_thread_log::wait(store.generate_stress_thread(
+        user,
+        &StressThreadSpec {
+            session_id: session.into(),
+            title: "Sample thread".into(),
+            workspace_id: None,
+            user_rounds: 1,
+            model_rounds_per_turn: 1,
+        },
+        |_, _| {},
+    ))??;
+    Ok(())
+}
+
+#[test]
+fn diagnostic_cleanup_preserves_thread_directory_and_canonical_history() {
+    let root = tempfile::tempdir().unwrap();
+    let storage = SqliteStorage::new(root.path().join("state_1.sqlite").to_string_lossy().into());
+    storage
+        .upsert_chat_session(&record("sample-user", "sample-thread"))
         .unwrap();
-    let mut ids = items.into_iter().map(|s| s.session_id).collect::<Vec<_>>();
-    ids.sort();
+    seed(root.path(), "sample-user", "sample-thread").unwrap();
+    storage
+        .append_tool_log(
+            "sample-user",
+            &json!({"session_id":"sample-thread","tool":"sample-tool","ok":true}),
+        )
+        .unwrap();
+    storage.upsert_monitor_record(&json!({"session_id":"sample-thread","user_id":"sample-user","status":"finished","updated_time":3.0})).unwrap();
+    storage
+        .append_stream_event(
+            "sample-thread",
+            "sample-user",
+            1,
+            &json!({"event":"progress","data":{"user_round":1}}),
+        )
+        .unwrap();
+    let deleted = storage.delete_logs_by_time_range(0.0, f64::MAX).unwrap();
+    assert_eq!(deleted.get("runtime_tool_metrics"), Some(&1));
+    assert_eq!(deleted.get("monitor_sessions"), Some(&1));
+    assert_eq!(deleted.get("stream_events"), Some(&1));
+    assert!(storage
+        .get_chat_session("sample-user", "sample-thread")
+        .unwrap()
+        .is_some());
+    assert!(!storage
+        .list_thread_visible_messages("sample-user", "sample-thread", None, 20)
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn catalog_only_delete_preserves_history_until_explicit_user_history_delete() {
+    let root = tempfile::tempdir().unwrap();
+    let storage: Arc<dyn StorageBackend> = Arc::new(SqliteStorage::new(
+        root.path().join("state_1.sqlite").to_string_lossy().into(),
+    ));
+    for (user, session) in [
+        ("sample-user", "sample-thread"),
+        ("sample-other", "sample-retained"),
+    ] {
+        storage.upsert_chat_session(&record(user, session)).unwrap();
+        seed(root.path(), user, session).unwrap();
+    }
     assert_eq!(
-        ids,
-        ["draft", "goal", "live", "locked", "partial", "queued"]
+        storage.delete_chat_sessions_by_user("sample-user").unwrap(),
+        1
     );
+    assert!(!storage
+        .list_thread_visible_messages("sample-user", "sample-thread", None, 20)
+        .unwrap()
+        .is_empty());
     assert_eq!(
-        storage
-            .delete_logs_by_time_range(10.0, 100.0)
-            .unwrap()
-            .get("chat_sessions"),
-        Some(&0)
+        storage.delete_thread_logs_by_user("sample-user").unwrap(),
+        1
     );
-    assert_eq!(storage.delete_chat_sessions_by_user("user-a").unwrap(), 6);
+    assert!(storage
+        .list_thread_visible_messages("sample-user", "sample-thread", None, 20)
+        .unwrap()
+        .is_empty());
+    assert!(!storage
+        .list_thread_visible_messages("sample-other", "sample-retained", None, 20)
+        .unwrap()
+        .is_empty());
+    assert!(storage
+        .get_chat_session("sample-other", "sample-retained")
+        .unwrap()
+        .is_some());
     assert_eq!(
-        storage
-            .list_chat_sessions("user-a", None, None, 0, 100)
-            .unwrap()
-            .1,
+        storage.delete_thread_logs_by_user("sample-user").unwrap(),
         0
     );
-    assert!(storage
-        .get_session_goal("user-a", "goal")
-        .unwrap()
-        .is_none());
-    assert!(storage
-        .get_chat_session("user-b", "other")
-        .unwrap()
-        .is_some());
-}
-
-#[test]
-fn session_cleanup_sqlite_preserves_drafts_live_partial_and_other_users() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("cleanup.db");
-    let storage = SqliteStorage::new(path.to_string_lossy().into());
-    storage.ensure_initialized().unwrap();
-    let conn = rusqlite::Connection::open(path).unwrap();
-    seed(|sql| Ok(conn.execute_batch(sql)?));
-    verify(&storage);
-}
-
-#[test]
-fn session_cleanup_sqlite_rolls_back_logs_when_catalog_delete_fails() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("cleanup.db");
-    let storage = SqliteStorage::new(path.to_string_lossy().into());
-    storage.ensure_initialized().unwrap();
-    let conn = rusqlite::Connection::open(path).unwrap();
-    seed(|sql| Ok(conn.execute_batch(sql)?));
-    conn.execute_batch("CREATE TRIGGER reject_catalog_delete BEFORE DELETE ON chat_sessions BEGIN SELECT RAISE(ABORT, 'injected failure'); END;").unwrap();
-    assert!(storage.delete_logs_by_time_range(10.0, 100.0).is_err());
-    assert!(storage
-        .get_chat_session("user-a", "cleared")
-        .unwrap()
-        .is_some());
-}
-
-#[cfg(feature = "postgres-storage")]
-#[test]
-#[ignore = "requires an isolated PostgreSQL database via WUNDER_CLEANUP_TEST_DSN"]
-fn session_cleanup_postgres_preserves_drafts_live_partial_and_other_users() {
-    let dsn = std::env::var("WUNDER_CLEANUP_TEST_DSN").unwrap();
-    let storage = PostgresStorage::new(dsn.clone(), 5, 8).unwrap();
-    storage.ensure_initialized().unwrap();
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-    runtime.block_on(async {
-        let (client, connection) = tokio_postgres::connect(&dsn, tokio_postgres::NoTls)
-            .await
-            .unwrap();
-        tokio::spawn(async move {
-            connection.await.unwrap();
-        });
-        let mut statements = Vec::new();
-        seed(|sql| {
-            statements.push(sql.to_owned());
-            Ok(())
-        });
-        for sql in statements {
-            client.batch_execute(&sql).await.unwrap();
-        }
-    });
-    verify(&storage);
 }

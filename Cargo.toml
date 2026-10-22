@@ -71,6 +71,7 @@ shell-words = "1"
 syntect = "5"
 sysinfo = "0.30"
 tempfile = "3"
+zstd = "0.11.2"
 textwrap = "0.16.2"
 tokio = { version = "1", features = ["full"] }
 tokio-postgres = "0.7.15"

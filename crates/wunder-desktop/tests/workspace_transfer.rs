@@ -50,7 +50,10 @@ fn start_isolated_with_seed(
     seed(directory.path())?;
     std::env::set_var("WUNDER_HOME", directory.path().join("runtime"));
     let runtime = NativeDesktop::start_with_args(isolated_args(directory.path())?)?;
-    assert!(directory.path().join("runtime/data/wunder.db").is_file());
+    assert!(directory
+        .path()
+        .join("runtime/data/state_1.sqlite")
+        .is_file());
     Ok(IsolatedRuntime {
         runtime,
         _directory: directory,
@@ -95,7 +98,7 @@ fn startup_merges_windows_workspace_paths_and_rebinds_every_thread(
         let extended = format!(r"\\?\{}", plain.display());
         assert_ne!(plain.to_string_lossy(), extended);
         let storage = SqliteStorage::new(
-            root.join("runtime/data/wunder.db")
+            root.join("runtime/data/state_1.sqlite")
                 .to_string_lossy()
                 .into_owned(),
         );

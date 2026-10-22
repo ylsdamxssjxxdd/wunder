@@ -57,6 +57,12 @@ updated_at: 2026-10-16
 - **SQLite**：轻量级本地数据库，适合蛹本地模式（默认）
 - **PostgreSQL**：专业级数据库，适合舰体多用户模式
 
+### 数据目录
+
+`storage.data_root` 是执行历史、专用 SQLite 与附件资源的共同根目录，可用 `WUNDER_STORAGE_DATA_ROOT` 覆盖。蛹与舵机默认共用本地工作台主目录下的 `data/`。本地状态库使用 `state_1.sqlite`；线程执行历史由 `sessions/` 下的 JSONL 保存，分页历史由独立 SQLite 投影提供。
+
+线程执行历史始终使用本机 canonical ThreadStore。`storage.thread_store.compression_enabled` 控制冷 rollout 压缩，默认关闭，对应环境变量为 `WUNDER_THREAD_STORE_COMPRESSION_ENABLED`。不再使用单一 `storage.db_path` 或 `WUNDER_SQLITE_DB_PATH`。
+
 ### 工作区位置
 
 用户文件和智能体产物的存放位置。舰体模式下要确保工作区目录持久化（使用 NAS 或网络存储）；不要把工作区放在临时目录。

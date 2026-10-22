@@ -13,7 +13,7 @@ impl SqliteStorage {
         self.ensure_initialized()?;
         let mut slot = self.agent_message_connection.lock();
         if slot.is_none() {
-            *slot = Some(self.open()?);
+            *slot = Some(self.open_queue()?);
         }
         let connection = slot.as_mut().expect("initialized message connection");
         // IMMEDIATE protects both the capacity check and insert from competing writers.

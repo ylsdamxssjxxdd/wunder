@@ -33,11 +33,7 @@ async fn build_test_context(db_name: &str) -> TestContext {
     let mut config = Config::default();
     config.channels.enabled = true;
     config.storage.backend = "sqlite".to_string();
-    config.storage.db_path = temp_dir
-        .path()
-        .join(format!("{db_name}.db"))
-        .to_string_lossy()
-        .to_string();
+    config.storage.data_root = temp_dir.path().join(db_name).to_string_lossy().to_string();
     config.workspace.root = temp_dir
         .path()
         .join("workspaces")

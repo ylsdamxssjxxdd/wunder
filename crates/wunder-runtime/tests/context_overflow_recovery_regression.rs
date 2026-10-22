@@ -81,11 +81,7 @@ async fn build_test_context_with_compaction_and_mock_limit(
 
     let mut config = Config::default();
     config.storage.backend = "sqlite".to_string();
-    config.storage.db_path = temp_dir
-        .path()
-        .join("context-overflow-recovery.db")
-        .to_string_lossy()
-        .to_string();
+    config.storage.data_root = temp_dir.path().join("data").to_string_lossy().to_string();
     config.workspace.root = temp_dir
         .path()
         .join("workspaces")

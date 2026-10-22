@@ -156,8 +156,7 @@ export const startSessionWatcher = (store, sessionId) => {
       onViewApplied: prior => applyThreadViewEffects(store,key,prior),
       onSnapshotRequired: () => {void recoverView();},
       onSnapshotApplied: () => { syncChatThreadShell(store, key); resumeWatchFromLastSeq(); },
-      onOverflow: resumeWatchFromLastSeq,
-      onGapOverflow: resumeWatchFromLastSeq
+      onOverflow: resumeWatchFromLastSeq
     })) return;
 
     // Only non-timeline controls remain outside the durable reducer.

@@ -56,8 +56,9 @@ impl SqliteMonitorStorage for SqliteStorage {
             .get("updated_time")
             .and_then(Value::as_f64)
             .unwrap_or(0.0);
-        let payload_text = Self::json_to_string(payload);
-        let mut conn = self.open()?;
+        let payload_text =
+            Self::json_to_string(&crate::storage::runtime_logs::monitor_facts(payload));
+        let mut conn = self.open_logs()?;
         let tx = conn.transaction()?;
         let changed = tx.execute(
             "INSERT INTO monitor_sessions (session_id, user_id, status, updated_time, payload) VALUES (?, ?, ?, ?, ?) \
@@ -81,7 +82,7 @@ impl SqliteMonitorStorage for SqliteStorage {
         if cleaned.is_empty() {
             return Ok(None);
         }
-        let conn = self.read_connection()?;
+        let conn = self.read_logs()?;
         let mut stmt =
             conn.prepare_cached("SELECT payload FROM monitor_sessions WHERE session_id = ?")?;
         let mut rows = stmt.query([cleaned])?;
@@ -110,7 +111,7 @@ impl SqliteMonitorStorage for SqliteStorage {
             .join(", ");
         let sql =
             format!("SELECT payload FROM monitor_sessions WHERE session_id IN ({placeholders})");
-        let conn = self.open()?;
+        let conn = self.open_logs()?;
         let mut stmt = conn.prepare(&sql)?;
         let rows = stmt
             .query_map(params_from_iter(ids.iter().copied()), |row| {
@@ -125,7 +126,7 @@ impl SqliteMonitorStorage for SqliteStorage {
 
     fn load_monitor_records_impl(&self) -> Result<Vec<Value>> {
         self.ensure_initialized()?;
-        let conn = self.open()?;
+        let conn = self.open_logs()?;
         let mut stmt = conn.prepare("SELECT payload FROM monitor_sessions")?;
         let rows = stmt
             .query_map([], |row| row.get::<_, String>(0))?
@@ -144,7 +145,7 @@ impl SqliteMonitorStorage for SqliteStorage {
         if limit <= 0 {
             return Ok(Vec::new());
         }
-        let conn = self.open()?;
+        let conn = self.open_logs()?;
         let mut stmt = conn
             .prepare("SELECT payload FROM monitor_sessions ORDER BY updated_time DESC LIMIT ?1")?;
         let rows = stmt
@@ -202,7 +203,7 @@ impl SqliteMonitorStorage for SqliteStorage {
             "SELECT payload FROM monitor_sessions WHERE {where_clause} ORDER BY updated_time DESC LIMIT ?"
         );
         params_list.push(SqlValue::from(limit));
-        let conn = self.open()?;
+        let conn = self.open_logs()?;
         let mut stmt = conn.prepare(&sql)?;
         let rows = stmt
             .query_map(params_from_iter(params_list.iter()), |row| {
@@ -224,7 +225,7 @@ impl SqliteMonitorStorage for SqliteStorage {
         if cleaned_user.is_empty() {
             return Ok(0);
         }
-        let conn = self.open()?;
+        let conn = self.open_logs()?;
         let total = conn.query_row(
             "SELECT COALESCE(SUM(CASE \
                  WHEN json_valid(payload) \
@@ -247,7 +248,7 @@ impl SqliteMonitorStorage for SqliteStorage {
         if cleaned_user.is_empty() || !since_at.is_finite() || since_at <= 0.0 {
             return Ok(Vec::new());
         }
-        let conn = self.open()?;
+        let conn = self.open_logs()?;
         let mut stmt = conn.prepare(
             "SELECT strftime('%Y-%m-%d', updated_time, 'unixepoch', 'localtime'), \
                  COALESCE(SUM(CASE \
@@ -275,7 +276,7 @@ impl SqliteMonitorStorage for SqliteStorage {
         if session_id.trim().is_empty() {
             return Ok(());
         }
-        let conn = self.open()?;
+        let conn = self.open_logs()?;
         conn.execute(
             "DELETE FROM monitor_sessions WHERE session_id = ?",
             params![session_id],
@@ -288,7 +289,7 @@ impl SqliteMonitorStorage for SqliteStorage {
         if user_id.trim().is_empty() {
             return Ok(0);
         }
-        let conn = self.open()?;
+        let conn = self.open_logs()?;
         let affected = conn.execute(
             "DELETE FROM monitor_sessions WHERE user_id = ?",
             params![user_id],
@@ -303,7 +304,7 @@ impl SqliteStorage {
         session: &str,
     ) -> Result<Option<MonitorSessionStats>> {
         self.ensure_initialized()?;
-        let conn = self.read_connection()?;
+        let conn = self.read_logs()?;
         let stored: Option<String> = conn
             .prepare_cached("SELECT payload FROM monitor_session_stats WHERE session_id=?")?
             .query_row([session.trim()], |row| row.get(0))
@@ -464,7 +465,7 @@ mod tests {
             db.get_monitor_session_stats("fixture-thread").unwrap(),
             Some(expected.clone())
         );
-        let conn = db.open().unwrap();
+        let conn = db.open_logs().unwrap();
         let size: i64 = conn.query_row("SELECT length(payload) FROM monitor_session_stats WHERE session_id='fixture-thread'", [], |r| r.get(0)).unwrap();
         assert!(size < 200);
         payload["updated_time"] = json!(1.0);

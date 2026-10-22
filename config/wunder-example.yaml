@@ -325,7 +325,9 @@ drawio:
 
 storage: # 存储配置
   backend: ${WUNDER_STORAGE_BACKEND:-auto} # auto | sqlite | postgres
-  db_path: ./config/data/wunder.db # SQLite 数据库路径（backend=sqlite 时使用）
+  data_root: ${WUNDER_STORAGE_DATA_ROOT:-./config/data} # rollout、各专用 SQLite 与资源的共同根目录
+  thread_store:
+    compression_enabled: ${WUNDER_THREAD_STORE_COMPRESSION_ENABLED:-false} # 冷 rollout 压缩，默认关闭
   postgres:
     dsn: ${WUNDER_POSTGRES_DSN:-postgresql://wunder:wunder@127.0.0.1:5432/wunder} # PostgreSQL DSN（宿主机运行默认走 127.0.0.1；容器内请通过环境变量覆盖为 postgres）
     connect_timeout_s: 5 # PostgreSQL 连接超时（秒）

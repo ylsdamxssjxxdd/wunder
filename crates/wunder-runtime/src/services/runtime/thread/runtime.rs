@@ -36,10 +36,29 @@ const TASK_STATUS_FAILED: &str = "failed";
 const TASK_STATUS_RETRY: &str = "retry";
 const TASK_STATUS_CANCELLED: &str = "cancelled";
 const TASK_STATUS_DEAD: &str = "dead";
-/// Local submissions and settlements wake the dispatcher directly. This is
-/// only the cross-process recovery backstop, so an empty local queue must not
-/// reread SQLite several times per second on an idle desktop.
-const IDLE_QUEUE_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
+/// PostgreSQL replicas need a recovery backstop for another process's queue
+/// writes. Local SQLite dispatchers wait only on events when the queue is empty.
+const CROSS_PROCESS_QUEUE_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
+
+fn queue_scan_delay(
+    cross_process: bool,
+    next_due: Option<f64>,
+    now: f64,
+    poll_interval_ms: u64,
+) -> Option<std::time::Duration> {
+    let due = next_due.map(|deadline| {
+        std::time::Duration::from_secs_f64((deadline - now).max(0.0))
+            .max(std::time::Duration::from_millis(poll_interval_ms))
+    });
+    if cross_process {
+        Some(
+            due.unwrap_or(CROSS_PROCESS_QUEUE_POLL_INTERVAL)
+                .min(CROSS_PROCESS_QUEUE_POLL_INTERVAL),
+        )
+    } else {
+        due
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct QueueInfo {
@@ -303,14 +322,11 @@ impl ThreadRuntime {
             "local_open_lease": request.config_overrides.as_ref().and_then(|v| v.get("__local_open_lease")),
         });
         let storage = self.user_store.storage_backend().clone();
-        let resume_from_seq = {
-            let storage = storage.clone();
-            let thread = session_id.clone();
-            crate::core::blocking::run_db("thread_log.accept_baseline", move || {
-                storage.latest_thread_change_seq_by_session(&thread)
-            })
-            .await?
-        };
+        let resume_from_seq = self
+            .orchestrator
+            .committer
+            .latest_position(&session_id)
+            .await?;
         let accepted = self
             .orchestrator
             .committer
@@ -1288,8 +1304,8 @@ impl ThreadRuntime {
         !self.holds_session_lock(cleaned_user, cleaned_session).await
     }
 
-    /// Persist queue lifecycle as one stable ThreadLog Item.  `stream_events`
-    /// remains a diagnostic facility and is deliberately not written here.
+    /// Persist the completed queue item and wake display subscribers after
+    /// every committed queue edge, including live states with no durable item.
     async fn emit_queue_event(
         &self,
         session_id: &str,
@@ -1312,6 +1328,10 @@ impl ThreadRuntime {
         if queue_id.is_empty() {
             return 0;
         }
+        // Queue rows are committed before this call. Running/pending edges do
+        // not append canonical items, but event-driven views still need a wake.
+        // A zero cursor is a wake signal, not a replacement durable position.
+        self.orchestrator.change_hub.publish(session_id, 0);
         let turn_id = payload
             .get("turn_id")
             .and_then(Value::as_str)
@@ -1350,9 +1370,7 @@ impl ThreadRuntime {
         // the caller's incomplete payload made queue_start impossible to
         // correlate in the diagnostic path.
         self.monitor.record_event(session_id, event_type, &payload);
-        // The queue item commit goes through the unified exit: the committer
-        // persists the upsert and publishes the receipt cursor only on a real
-        // change; no-op replays return 0 without waking feeders.
+        // Completed queue items pass through the canonical commit boundary.
         match self
             .orchestrator
             .committer
@@ -1400,37 +1418,44 @@ impl ThreadRuntime {
             return;
         };
         let mut database_failures = 0_u32;
-        // The first scan recovers tasks left by a crashed local process. Once
-        // it finds no work, normal local transitions use `queue_tx` and the
-        // timed scan becomes only a cross-process safety net.
-        let mut next_poll = None;
+        // Recover tasks immediately at startup, then park an empty local queue
+        // until a submission or settlement arrives through queue_tx.
+        let mut next_poll = Some(std::time::Duration::ZERO);
         loop {
             let config = self.config_store.get().await;
             let poll_interval = config.agent_queue.poll_interval_ms.max(200);
             let retry_interval = if database_failures == 0 {
-                next_poll.unwrap_or_else(|| std::time::Duration::from_millis(poll_interval))
+                next_poll
             } else {
-                database_retry_delay(poll_interval, database_failures)
+                Some(database_retry_delay(poll_interval, database_failures))
             };
             tokio::select! {
-                _ = rx.recv(), if database_failures == 0 => {
+                message = rx.recv(), if database_failures == 0 => {
+                    if message.is_none() { return; }
                     runtime_metrics::record_loop_tick("runtime.thread.queue_loop", "wake");
                 },
-                _ = tokio::time::sleep(retry_interval) => {
+                _ = async {
+                    if let Some(delay) = retry_interval {
+                        tokio::time::sleep(delay).await;
+                    } else {
+                        std::future::pending::<()>().await;
+                    }
+                } => {
                     runtime_metrics::record_loop_tick("runtime.thread.queue_loop", "poll");
                 },
             }
             match self.process_pending_tasks().await {
                 Ok(next_due) => {
                     database_failures = 0;
-                    next_poll = Some(match next_due {
-                        Some(deadline) => {
-                            std::time::Duration::from_secs_f64((deadline - now_ts()).max(0.0))
-                                .max(std::time::Duration::from_millis(poll_interval))
-                                .min(IDLE_QUEUE_POLL_INTERVAL)
-                        }
-                        None => IDLE_QUEUE_POLL_INTERVAL,
-                    });
+                    next_poll = queue_scan_delay(
+                        matches!(
+                            config.storage.backend.trim().to_ascii_lowercase().as_str(),
+                            "postgres" | "postgresql" | "pg" | "auto"
+                        ),
+                        next_due,
+                        now_ts(),
+                        poll_interval,
+                    );
                 }
                 Err(err) => {
                     database_failures = database_failures.saturating_add(1);
@@ -1880,10 +1905,19 @@ impl ThreadRuntime {
 
     async fn write_task_status(&self, update: TaskStatusUpdate) -> Result<()> {
         let store = self.user_store.clone();
-        blocking::run_db("runtime.thread.update_agent_task_status", move || {
-            store.update_agent_task_status(update.params())
+        let session = blocking::run_db("runtime.thread.update_agent_task_status", move || {
+            store.update_agent_task_status(update.params())?;
+            Ok(store
+                .get_agent_task(&update.task_id)?
+                .map(|task| task.session_id))
         })
-        .await
+        .await?;
+        if let Some(session) = session {
+            // Cancellation/retry/superseded paths may have no completed queue
+            // item. Wake only after the updated task row is visible.
+            self.orchestrator.change_hub.publish(&session, 0);
+        }
+        Ok(())
     }
 
     async fn retry_task(&self, task: &AgentTaskRecord, message: String) -> Result<()> {
@@ -2267,11 +2301,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let mut config = crate::config::Config::default();
         config.storage.backend = "sqlite".into();
-        config.storage.db_path = root
-            .path()
-            .join("fixture.db")
-            .to_string_lossy()
-            .into_owned();
+        config.storage.data_root = root.path().join("data").to_string_lossy().into_owned();
         config.workspace.root = root.path().join("workspace").to_string_lossy().into_owned();
         let store = ConfigStore::new(root.path().join("config.yaml"));
         store
@@ -2350,12 +2380,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn queue_commit_wakes_feeder_with_committed_cursor() {
+    async fn queue_control_edges_wake_without_appending_running_items() {
         use crate::state::{AppState, AppStateInitOptions};
         let root = tempfile::tempdir().unwrap();
         let mut config = crate::config::Config::default();
         config.storage.backend = "sqlite".into();
-        config.storage.db_path = root.path().join("state.db").to_string_lossy().into_owned();
+        config.storage.data_root = root.path().join("data").to_string_lossy().into_owned();
         config.workspace.root = root.path().join("workspace").to_string_lossy().into_owned();
         let store = ConfigStore::new(root.path().join("config.yaml"));
         store
@@ -2368,28 +2398,201 @@ mod tests {
             AppStateInitOptions::cli_default().with_start_thread_runtime(false),
         )
         .unwrap();
-        let accepted = state
-            .storage
-            .accept_thread_turn("user-a", "session-a", &json!({"content":"input"}))
+        let committer = &state.kernel.orchestrator.committer;
+        let mut wake = state
+            .kernel
+            .orchestrator
+            .change_hub
+            .subscribe("fixture-thread");
+        let accepted = committer
+            .accept_turn(
+                "fixture-user",
+                "fixture-thread",
+                &json!({"content":"input"}),
+            )
+            .await
             .unwrap();
-        let mut wake = state.kernel.orchestrator.change_hub.subscribe("session-a");
-        for event_type in ["queue_enter", "queue_start", "queue_finish"] {
-            let cursor = state.kernel.thread_runtime.emit_queue_event("session-a", "user-a", event_type,
-                json!({"session_id":"session-a", "turn_id":accepted["turn_id"], "queue_id":"queue-a"})).await;
-            assert!(cursor > 0);
+        assert!(
+            wake.has_changed().unwrap(),
+            "admission must wake before a rollout exists"
+        );
+        assert_eq!(*wake.borrow_and_update(), 0);
+        committer
+            .freeze_session(
+                "fixture-user",
+                "fixture-thread",
+                "fixture prompt",
+                "fixture-workspace",
+            )
+            .await
+            .unwrap();
+        let turn = accepted["turn_id"].as_str().unwrap();
+        committer
+            .begin_turn("fixture-user", "fixture-thread", turn, "fixture-model")
+            .await
+            .unwrap();
+        wake.borrow_and_update();
+        let before = committer.latest_position("fixture-thread").await.unwrap();
+        for event in ["queue_enter", "queue_start"] {
+            let cursor = state.kernel.thread_runtime.emit_queue_event("fixture-thread", "fixture-user", event,
+                json!({"session_id":"fixture-thread", "turn_id":turn, "queue_id":"fixture-queue"})).await;
+            assert_eq!(
+                cursor, 0,
+                "live queue state must not append a completed item"
+            );
             assert!(wake.has_changed().unwrap());
-            assert_eq!(*wake.borrow_and_update(), cursor);
-            let changes = state
-                .storage
-                .list_thread_changes_by_session("session-a", cursor - 1, 1)
-                .unwrap();
-            assert_eq!(changes[0]["payload"]["payload"]["event_type"], event_type);
+            assert_eq!(*wake.borrow_and_update(), before);
+            assert_eq!(
+                committer.latest_position("fixture-thread").await.unwrap(),
+                before
+            );
         }
-        assert!(state
-            .storage
-            .load_stream_events("session-a", 0, 100)
+        let live = committer
+            .commit_item(
+                "fixture-user",
+                &json!({
+                    "session_id":"fixture-thread", "turn_id":turn, "item_id":"fixture-assistant",
+                    "kind":"assistant_message", "status":"completed", "content":"sample answer",
+                    "model_content":"private context", "config_overrides":{"value":"private"},
+                }),
+            )
+            .await
             .unwrap()
-            .is_empty());
+            .unwrap();
+        let cursor = live["cursor"].as_i64().unwrap();
+        let replay = state
+            .storage
+            .list_thread_changes_by_session("fixture-thread", cursor - 1, 1)
+            .unwrap();
+        assert_eq!(
+            live["payload"], replay[0]["payload"],
+            "live and replay item DTOs must agree"
+        );
+        assert!(live["payload"]["payload"].get("model_content").is_none());
+        let child = committer
+            .accept_turn(
+                "fixture-user",
+                "fixture-thread",
+                &json!({
+                    "content":"continuation input", "root_user_round":1,
+                }),
+            )
+            .await
+            .unwrap();
+        let child_turn = child["turn_id"].as_str().unwrap();
+        committer
+            .begin_turn(
+                "fixture-user",
+                "fixture-thread",
+                child_turn,
+                "fixture-model",
+            )
+            .await
+            .unwrap();
+        let child_item = committer.commit_item("fixture-user", &json!({
+            "session_id":"fixture-thread", "turn_id":child_turn, "item_id":"fixture-child-assistant",
+            "kind":"assistant_message", "status":"completed", "content":"continued answer",
+        })).await.unwrap().unwrap();
+        assert_eq!(child_item["payload"]["root_turn_id"], turn);
+        let cursor = child_item["cursor"].as_i64().unwrap();
+        assert_eq!(
+            state
+                .storage
+                .list_thread_changes_by_session("fixture-thread", cursor - 1, 1)
+                .unwrap()[0]["payload"],
+            child_item["payload"]
+        );
+        committer
+            .update_turn(
+                "fixture-user",
+                "fixture-thread",
+                child_turn,
+                "completed",
+                "",
+                &json!({}),
+            )
+            .await
+            .unwrap();
+        wake.borrow_and_update();
+        let cursor = state
+            .kernel
+            .thread_runtime
+            .emit_queue_event(
+                "fixture-thread",
+                "fixture-user",
+                "queue_finish",
+                json!({"session_id":"fixture-thread", "turn_id":turn, "queue_id":"fixture-queue"}),
+            )
+            .await;
+        assert!(cursor > before);
+        assert!(wake.has_changed().unwrap());
+        assert_eq!(*wake.borrow_and_update(), cursor);
+        let changes = state
+            .storage
+            .list_thread_changes_by_session("fixture-thread", cursor - 1, 1)
+            .unwrap();
+        assert_eq!(changes.len(), 1);
+        assert_eq!(
+            changes[0]["payload"]["payload"]["event_type"],
+            "queue_finish"
+        );
+        assert!(committer
+            .update_turn(
+                "fixture-user",
+                "fixture-thread",
+                turn,
+                "completed",
+                "",
+                &json!({})
+            )
+            .await
+            .unwrap());
+        assert!(wake.has_changed().unwrap());
+        wake.borrow_and_update();
+        assert_eq!(
+            state
+                .storage
+                .list_thread_turns("fixture-user", "fixture-thread", None, 1)
+                .unwrap()[0]["status"],
+            "completed",
+            "terminal wake must follow the admission commit"
+        );
+        assert!(!committer
+            .update_turn(
+                "fixture-user",
+                "fixture-thread",
+                turn,
+                "completed",
+                "",
+                &json!({})
+            )
+            .await
+            .unwrap());
+        assert!(
+            !wake.has_changed().unwrap(),
+            "an idempotent terminal replay needs no wake"
+        );
+    }
+
+    #[test]
+    fn empty_local_queue_has_no_timer_and_server_retains_recovery_backstop() {
+        assert_eq!(queue_scan_delay(false, None, 10.0, 200), None);
+        assert_eq!(
+            queue_scan_delay(false, Some(40.0), 10.0, 200),
+            Some(std::time::Duration::from_secs(30))
+        );
+        assert_eq!(
+            queue_scan_delay(false, Some(9.0), 10.0, 200),
+            Some(std::time::Duration::from_millis(200))
+        );
+        assert_eq!(
+            queue_scan_delay(true, None, 10.0, 200),
+            Some(CROSS_PROCESS_QUEUE_POLL_INTERVAL)
+        );
+        assert_eq!(
+            queue_scan_delay(true, Some(200.0), 10.0, 200),
+            Some(CROSS_PROCESS_QUEUE_POLL_INTERVAL)
+        );
     }
 
     #[test]

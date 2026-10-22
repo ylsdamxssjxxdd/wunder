@@ -3,7 +3,7 @@ import { useChatStore } from '@/stores/chat';
 import {
   applyThreadChange,
   applyThreadTail,
-  applyThreadTextBlock,
+  applyThreadCompletedItem,
   installChatThreadFixture
 } from './messengerThreadFixture';
 
@@ -134,8 +134,8 @@ export const runMessengerLiveTimelineProbe = async (sessionId: string) => {
   await frame();
   reports.push(await capture('after-tool-result', liveTurnId));
 
-  // 7) 第一轮正文落库（text_block）
-  applyThreadTextBlock(chat, sessionId, `${liveTurnId}:text-1`, liveTurnId, '中间输出正文', 'content');
+  // 7) 第一轮完成项正文落库（item_upsert）
+  applyThreadCompletedItem(chat, sessionId, `${liveTurnId}:text-1`, liveTurnId, '中间输出正文', 'content');
   await frame();
   reports.push(await capture('after-text-block-round1', liveTurnId));
 
@@ -154,7 +154,7 @@ export const runMessengerLiveTimelineProbe = async (sessionId: string) => {
   reports.push(await capture('after-final-content-tail', liveTurnId));
 
   // 10) 最终正文落库 + 轮次完成
-  applyThreadTextBlock(chat, sessionId, `${liveTurnId}:text-2`, liveTurnId, '最终回答', 'content');
+  applyThreadCompletedItem(chat, sessionId, `${liveTurnId}:text-2`, liveTurnId, '最终回答', 'content');
   applyThreadChange(chat, sessionId, 'turn_upsert', {
     turn_id: liveTurnId, root_turn_id: liveTurnId, user_round: 901, status: 'completed'
   });

@@ -115,11 +115,7 @@ where
     let temp_dir = tempfile::tempdir().expect("tempdir");
     let mut config = Config::default();
     config.storage.backend = "sqlite".to_string();
-    config.storage.db_path = temp_dir
-        .path()
-        .join("preset-agent-model-sync.db")
-        .to_string_lossy()
-        .to_string();
+    config.storage.data_root = temp_dir.path().join("data").to_string_lossy().to_string();
     config.workspace.root = temp_dir
         .path()
         .join("workspaces")
@@ -289,11 +285,7 @@ async fn register_creates_preset_agents_immediately() {
     let temp_dir = tempfile::tempdir().expect("tempdir");
     let mut config = Config::default();
     config.storage.backend = "sqlite".to_string();
-    config.storage.db_path = temp_dir
-        .path()
-        .join("register-preset-sync.db")
-        .to_string_lossy()
-        .to_string();
+    config.storage.data_root = temp_dir.path().join("data").to_string_lossy().to_string();
     config.workspace.root = temp_dir
         .path()
         .join("workspaces")
@@ -353,11 +345,7 @@ async fn admin_create_user_creates_preset_agents_immediately() {
     let temp_dir = tempfile::tempdir().expect("tempdir");
     let mut config = Config::default();
     config.storage.backend = "sqlite".to_string();
-    config.storage.db_path = temp_dir
-        .path()
-        .join("admin-create-preset-sync.db")
-        .to_string_lossy()
-        .to_string();
+    config.storage.data_root = temp_dir.path().join("data").to_string_lossy().to_string();
     config.workspace.root = temp_dir
         .path()
         .join("workspaces")

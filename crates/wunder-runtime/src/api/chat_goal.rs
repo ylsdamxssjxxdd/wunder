@@ -1,6 +1,6 @@
 use crate::api::user_context::resolve_user;
 use crate::i18n;
-use crate::services::goal::{self, execute_goal_command, goal_payload, GoalCommand, GoalService};
+use crate::services::goal::{self, goal_payload, GoalCommand, GoalService};
 use crate::state::AppState;
 use axum::extract::{Path as AxumPath, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -413,7 +413,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut config = Config::default();
         config.storage.backend = "sqlite".into();
-        config.storage.db_path = dir.path().join("fixture.db").to_string_lossy().into();
+        config.storage.data_root = dir.path().join("data").to_string_lossy().into();
         config.workspace.root = dir.path().join("workspace").to_string_lossy().into();
         config.skills.enabled.clear();
         let config_store = ConfigStore::new(dir.path().join("fixture.yaml"));

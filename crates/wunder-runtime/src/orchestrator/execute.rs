@@ -480,27 +480,22 @@ impl Orchestrator {
                     Some(&question),
                     Some(user_round_id.as_str()),
                 )
-                .await;
+                .await.map_err(|error| OrchestratorError::internal(error.to_string()))?;
+            self.committer.begin_turn(&user_id, &session_id, &prepared.thread_turn_id.expect("accepted turn").to_string(), llm_config.model.as_deref().unwrap_or_default()).await
+                .map_err(|error| OrchestratorError::internal(error.to_string()))?;
 
-            let history_manager = HistoryManager;
             let context_manager = ContextManager;
             let mut messages = vec![json!({ "role": "system", "content": system_prompt })];
             // Ensure the previous turn's async history writes are visible before deriving
             // this turn's model input. Otherwise fast follow-up user messages can miss the
             // tail of the append-only chat history and break KV cache reuse.
-            let _ = self.workspace.flush_writes_async().await;
-            let model_context_entries = history_manager
-                .load_execution_messages_async(
-                    self.workspace.clone(),
-                    user_id.clone(),
-                    session_id.clone(),
-                    prepared.thread_turn_id.expect("accepted turn").to_string(),
-                )
-                .await
-                .map_err(|error| OrchestratorError::internal(error.to_string()))?
-                .into_iter()
-                .filter_map(normalize_model_context_message)
-                .collect::<Vec<_>>();
+
+            let model_context_entries = self.thread_store.model_messages(
+                &wunder_core::thread_store::ThreadId::new(session_id.clone()).map_err(|error| OrchestratorError::internal(error.to_string()))?,
+                Some(&wunder_core::thread_store::TurnId::new(prepared.thread_turn_id.expect("accepted turn").to_string()).map_err(|error| OrchestratorError::internal(error.to_string()))?),
+            ).await.map_err(|error| OrchestratorError::internal(error.to_string()))?
+                .iter().filter_map(|item| crate::services::history::build_message_from_item(item, true))
+                .filter_map(normalize_model_context_message).collect::<Vec<_>>();
             messages.extend(model_context_entries);
             messages = context_manager.normalize_messages(messages);
             let user_message = self
@@ -680,7 +675,7 @@ impl Orchestrator {
                         resolve_user_content_for_persist(&messages, &user_message)
                     };
                     let model_content = if display_question_override.is_some() {
-                        persisted_user_model_message.get("content").cloned()
+                        resolve_user_content_for_persist(&messages, &persisted_user_model_message)
                     } else {
                         None
                     };
@@ -690,7 +685,7 @@ impl Orchestrator {
                         None
                     };
                     if user_content.is_some() {
-                        self.append_chat(
+                        self.try_append_chat(
                             &user_id,
                             &session_id,
                             "user",
@@ -702,7 +697,7 @@ impl Orchestrator {
                             None,
                             model_content.as_ref(),
                             request_round,
-                        );
+                        ).await.map_err(|error| OrchestratorError::internal(error.to_string()))?;
                     }
                     user_message_appended = true;
                 }
@@ -894,7 +889,7 @@ impl Orchestrator {
                                     &session_id,
                                     &messages,
                                     round_info,
-                                );
+                                ).await;
                             }
                             return Err(err);
                         }
@@ -993,13 +988,13 @@ impl Orchestrator {
                         "content": encode_observation_prefixed_json(&model_notice),
                     });
                     messages.push(model_notice_message.clone());
-                    self.append_internal_model_context_chat(
+                    self.try_append_internal_model_context_chat(
                         &user_id,
                         &session_id,
                         &model_notice_message,
                         "invalid_tool_call_reroute",
                         round_info,
-                    );
+                    ).await.map_err(|error| OrchestratorError::internal(error.to_string()))?;
                     continue;
                 }
                 if planned_calls.is_empty() {
@@ -1038,13 +1033,13 @@ impl Orchestrator {
                     messages.push(assistant_model_message.clone());
                     if self.apply_agent_messages(agent_inbox.as_ref().expect("active inbox"),
                         &user_id, &session_id, &mut messages, &emitter, round_info, true).await? {
-                        self.append_internal_model_context_chat(
+                        self.try_append_internal_model_context_chat(
                             &user_id,
                             &session_id,
                             &assistant_model_message,
                             "agent_inbox_interrupted_answer",
                             round_info,
-                        );
+                        ).await.map_err(|error| OrchestratorError::internal(error.to_string()))?;
                         answer.clear();
                         stop_reason = None;
                         continue;
@@ -1060,7 +1055,7 @@ impl Orchestrator {
                             emitter.accumulated_billable_account_credits(is_admin),
                             i64::from(tool_budget_usage.total),
                         );
-                        self.append_chat(
+                        self.try_append_chat(
                             &user_id,
                             &session_id,
                             "assistant",
@@ -1070,9 +1065,9 @@ impl Orchestrator {
                             Some(&reasoning),
                             None,
                             None,
-                            None,
+                            Some(&json!(content)),
                             round_info,
-                        );
+                        ).await.map_err(|error| OrchestratorError::internal(error.to_string()))?;
                     }
                     if answer.is_empty() {
                         answer = content.trim().to_string();
@@ -1104,7 +1099,7 @@ impl Orchestrator {
                     }
                     messages.push(assistant_message);
                 }
-                if has_tool_calls_payload {
+                if should_push_assistant_message {
                     let message_stats = build_persisted_message_stats(
                         &usage,
                         &round_usage,
@@ -1115,7 +1110,7 @@ impl Orchestrator {
                         emitter.accumulated_billable_account_credits(is_admin),
                         i64::from(tool_budget_usage.total),
                     );
-                    self.append_chat(
+                    self.try_append_chat(
                         &user_id,
                         &session_id,
                         "assistant",
@@ -1127,7 +1122,7 @@ impl Orchestrator {
                         None,
                         None,
                         round_info,
-                    );
+                    ).await.map_err(|error| OrchestratorError::internal(error.to_string()))?;
                 }
 
                 let tool_event_forwarder =
@@ -1570,7 +1565,7 @@ impl Orchestrator {
                             })
                         };
                         messages.push(observation_model_message.clone());
-                        self.append_chat(
+                        self.try_append_chat(
                             &user_id,
                             &session_id,
                             "tool",
@@ -1582,7 +1577,7 @@ impl Orchestrator {
                             history_tool_call_id.as_deref(),
                             None,
                             round_info,
-                        );
+                        ).await.map_err(|error| OrchestratorError::internal(error.to_string()))?;
                         if let Some(followup_message) = read_image_followup {
                             let mut followup_message = followup_message;
                             self.mark_internal_model_context_message(
@@ -1590,13 +1585,13 @@ impl Orchestrator {
                                 "read_image_followup",
                                 round_info,
                             );
-                            self.append_internal_model_context_chat(
+                            self.try_append_internal_model_context_chat(
                                 &user_id,
                                 &session_id,
                                 &followup_message,
                                 "read_image_followup",
                                 round_info,
-                            );
+                            ).await.map_err(|error| OrchestratorError::internal(error.to_string()))?;
                             messages.push(followup_message);
                         }
                         if let Some(followup_message) = desktop_followup {
@@ -1606,13 +1601,13 @@ impl Orchestrator {
                                 "desktop_followup",
                                 round_info,
                             );
-                            self.append_internal_model_context_chat(
+                            self.try_append_internal_model_context_chat(
                                 &user_id,
                                 &session_id,
                                 &followup_message,
                                 "desktop_followup",
                                 round_info,
-                            );
+                            ).await.map_err(|error| OrchestratorError::internal(error.to_string()))?;
                             messages.push(followup_message);
                             crate::services::chat_payload_sanitizer::prune_previous_inline_image_followups(
                                 &mut messages,
@@ -1627,13 +1622,13 @@ impl Orchestrator {
                                 "goal_wrapup",
                                 round_info,
                             );
-                            self.append_internal_model_context_chat(
+                            self.try_append_internal_model_context_chat(
                                 &user_id,
                                 &session_id,
                                 &followup_message,
                                 "goal_wrapup",
                                 round_info,
-                            );
+                            ).await.map_err(|error| OrchestratorError::internal(error.to_string()))?;
                             messages.push(followup_message);
                         }
 
@@ -1790,7 +1785,7 @@ impl Orchestrator {
                             let meta = question_panel_meta.as_ref().map(|value| {
                                 merge_persisted_message_stats_meta(value, message_stats)
                             });
-                            self.append_chat(
+                            self.try_append_chat(
                                 &user_id,
                                 &session_id,
                                 "assistant",
@@ -1802,7 +1797,7 @@ impl Orchestrator {
                                 None,
                                 None,
                                 round_info,
-                            );
+                            ).await.map_err(|error| OrchestratorError::internal(error.to_string()))?;
                         }
                         if let Some(meta) = sessions_yield_meta.as_ref() {
                             let content = if answer.trim().is_empty() {
@@ -1821,7 +1816,7 @@ impl Orchestrator {
                                 i64::from(tool_budget_usage.total),
                             );
                             let meta = merge_persisted_message_stats_meta(meta, message_stats);
-                            self.append_chat(
+                            self.try_append_chat(
                                 &user_id,
                                 &session_id,
                                 "assistant",
@@ -1833,7 +1828,7 @@ impl Orchestrator {
                                 None,
                                 None,
                                 round_info,
-                            );
+                            ).await.map_err(|error| OrchestratorError::internal(error.to_string()))?;
                         }
 
                         if failure_reroute_notice.is_none() {
@@ -2018,7 +2013,7 @@ impl Orchestrator {
                                             i64::from(tool_budget_usage.total),
                                         ),
                                     );
-                                    self.append_chat(
+                                    self.try_append_chat(
                                         &user_id,
                                         &session_id,
                                         "assistant",
@@ -2030,7 +2025,7 @@ impl Orchestrator {
                                         None,
                                         None,
                                         round_info,
-                                    );
+                                    ).await.map_err(|error| OrchestratorError::internal(error.to_string()))?;
                                     should_finish = true;
                                     break;
                                 }
@@ -2056,13 +2051,13 @@ impl Orchestrator {
                             "content": model_notice,
                         });
                         messages.push(model_notice_message.clone());
-                        self.append_internal_model_context_chat(
+                        self.try_append_internal_model_context_chat(
                             &user_id,
                             &session_id,
                             &model_notice_message,
                             "tool_failure_reroute",
                             round_info,
-                        );
+                        ).await.map_err(|error| OrchestratorError::internal(error.to_string()))?;
                         continue;
                     }
                 }
@@ -2094,13 +2089,13 @@ impl Orchestrator {
                             "content": format!("{OBSERVATION_PREFIX}{model_notice}"),
                         });
                         messages.push(model_notice_message.clone());
-                        self.append_internal_model_context_chat(
+                        self.try_append_internal_model_context_chat(
                             &user_id,
                             &session_id,
                             &model_notice_message,
                             "tool_budget_guard",
                             round_info,
-                        );
+                        ).await.map_err(|error| OrchestratorError::internal(error.to_string()))?;
                         continue;
                     }
                 }

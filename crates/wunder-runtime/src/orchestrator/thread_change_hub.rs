@@ -5,11 +5,10 @@ use tokio::sync::watch;
 
 /// Per-session durable change notifications.
 ///
-/// Emit publishes the latest durable change cursor after a thread-log commit;
-/// session feeders subscribe so they wake immediately instead of waiting for
-/// the next poll tick. The hub is in-process acceleration only: the feeder
-/// always keeps its poll fallback, so multi-instance deployments converge
-/// through polling and never depend on the hub for correctness.
+/// Emit publishes a durable-history wake after a projection commit. Session
+/// feeders subscribe so they never poll while idle. The stored cursor remains
+/// monotonic, but each publish wakes receivers because a rollout replacement
+/// can change its contents without increasing the old waterline.
 #[derive(Default)]
 pub struct ThreadChangeHub {
     inner: Mutex<HashMap<String, watch::Sender<i64>>>,
@@ -25,7 +24,7 @@ impl ThreadChangeHub {
     /// Record the latest durable cursor for a session and wake its feeders.
     pub fn publish(&self, session_id: &str, cursor: i64) {
         let session_id = session_id.trim();
-        if session_id.is_empty() || cursor <= 0 {
+        if session_id.is_empty() {
             return;
         }
         let mut guard = self.inner.lock();
@@ -33,18 +32,18 @@ impl ThreadChangeHub {
             sender.send_if_modified(|current| {
                 if cursor > *current {
                     *current = cursor;
-                    true
-                } else {
-                    false
                 }
+                // A replacement can have the same (or a lower) position. A
+                // watch version is a commit wake, not an ordering authority.
+                true
             });
             if sender.receiver_count() > 0 {
                 return;
             }
         }
         // Entries without subscribers are dead weight; drop them. A later
-        // subscribe() re-creates the channel and the feeder's poll fallback
-        // covers anything published in between.
+        // subscribe() re-creates the channel; the feeder's initial bounded
+        // replay covers anything published in between.
         let subscribed = guard
             .get(session_id)
             .map(|sender| sender.receiver_count() > 0)
@@ -54,11 +53,12 @@ impl ThreadChangeHub {
         }
     }
 
-    /// Subscribe to cursor changes for a session. The receiver starts at 0
-    /// for a fresh session; feeders treat it as "wake early", never as truth.
+    /// Subscribe to projection commit wakes for a session. The receiver starts
+    /// at zero for a fresh session; feeders treat it as a wake, never as truth.
     pub fn subscribe(&self, session_id: &str) -> watch::Receiver<i64> {
         let session_id = session_id.trim();
         let mut guard = self.inner.lock();
+        guard.retain(|_, sender| sender.receiver_count() > 0);
         if let Some(sender) = guard.get(session_id) {
             return sender.subscribe();
         }
@@ -97,6 +97,7 @@ impl ThreadChangeHub {
     pub fn subscribe_context_usage(&self, session_id: &str) -> watch::Receiver<Value> {
         let session_id = session_id.trim();
         let mut guard = self.context.lock();
+        guard.retain(|_, sender| sender.receiver_count() > 0);
         if let Some(sender) = guard.get(session_id) {
             return sender.subscribe();
         }
@@ -135,6 +136,7 @@ impl ThreadChangeHub {
     pub fn subscribe_goal_updates(&self, session_id: &str) -> watch::Receiver<Value> {
         let session_id = session_id.trim();
         let mut guard = self.goal.lock();
+        guard.retain(|_, sender| sender.receiver_count() > 0);
         if let Some(sender) = guard.get(session_id) {
             return sender.subscribe();
         }
@@ -157,12 +159,19 @@ mod tests {
     #[test]
     fn publish_wakes_subscribers_with_monotonic_cursor() {
         let hub = ThreadChangeHub::new();
-        let rx = hub.subscribe("session_a");
+        let mut rx = hub.subscribe("session_a");
         hub.publish("session_a", 5);
         assert_eq!(*rx.borrow(), 5);
-        // Lower or equal cursors never move the receiver backwards.
+        rx.borrow_and_update();
+        // Lower cursors do not move the stored watermark backwards, but still
+        // publish a wake for a replacement rollout.
         hub.publish("session_a", 4);
         assert_eq!(*rx.borrow(), 5);
+        assert!(rx.has_changed().expect("replacement wake"));
+        rx.borrow_and_update();
+        hub.publish("session_a", 5);
+        assert!(rx.has_changed().expect("same-position wake"));
+        rx.borrow_and_update();
         hub.publish("session_a", 7);
         assert_eq!(*rx.borrow(), 7);
     }

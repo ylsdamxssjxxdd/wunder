@@ -41,7 +41,7 @@ const BASE_TS: f64 = 1_700_000_000.0;
 fn app_state(dir: &TempDir, db_name: &str) -> Arc<AppState> {
     let mut config = Config::default();
     config.storage.backend = "sqlite".to_string();
-    config.storage.db_path = dir.path().join(db_name).to_string_lossy().to_string();
+    config.storage.data_root = dir.path().join(db_name).to_string_lossy().to_string();
     config.workspace.root = dir.path().join("workspaces").to_string_lossy().to_string();
     Arc::new(
         AppState::new_with_options(
@@ -88,7 +88,7 @@ async fn interlink_ledger_and_audit_carry_the_indexes_the_budget_relies_on() {
         })
         .expect("empty ledger listing");
 
-    let indexes = index_names(&dir.path().join("budget-indexes.db"));
+    let indexes = index_names(&dir.path().join("budget-indexes.db/state_1.sqlite"));
     // Docs §13.6 names these two access paths.
     assert!(
         indexes

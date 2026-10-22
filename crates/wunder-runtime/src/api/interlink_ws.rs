@@ -1549,7 +1549,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let mut config = crate::config::Config::default();
         config.storage.backend = "sqlite".into();
-        config.storage.db_path = root.path().join("state.db").to_string_lossy().into_owned();
+        config.storage.data_root = root.path().join("data").to_string_lossy().into_owned();
         config.workspace.root = root.path().join("workspace").to_string_lossy().into_owned();
         let state = AppState::new_with_options(
             crate::config_store::ConfigStore::from_config(

@@ -140,6 +140,7 @@ async fn observe(
     cancel: &CancellationToken,
 ) -> Result<()> {
     loop {
+        let mut control_events = state.kernel.orchestrator.subscribe_thread_updates(&session);
         let db = state.clone();
         let owner = user.clone();
         let target = session.clone();
@@ -196,8 +197,17 @@ async fn observe(
         // not retain periodic SQLite safety reads here: an idle selected
         // thread must stay silent.
         loop {
+            let mut refresh_headers = false;
             let first = tokio::select! {
-                frame = feed.recv() => match frame { Some(frame) => frame, None => break },
+                _ = cancel.cancelled() => return Ok(()),
+                _ = output.closed() => return Ok(()),
+                frame = feed.recv() => match frame { Some(frame) => Some(frame), None => break },
+                changed = control_events.changed() => {
+                    if changed.is_err() { return Ok(()); }
+                    control_events.borrow_and_update();
+                    refresh_headers = true;
+                    None
+                }
                 changed = context_events.changed() => {
                     if changed.is_ok() {
                         let payload = context_events.borrow_and_update().clone();
@@ -233,8 +243,10 @@ async fn observe(
                 }
             };
             let mut executions = BTreeSet::new();
-            let mut queue_changed = false;
-            queue_changed |= collect_frame(first, &mut executions, &mut reset);
+            let mut queue_changed = refresh_headers;
+            if let Some(first) = first {
+                queue_changed |= collect_frame(first, &mut executions, &mut reset);
+            }
             // Queue rows are projected separately from chat history. Wake the
             // composer as soon as the first durable queue frame arrives; the
             // history burst can still be coalesced independently below.
@@ -243,7 +255,16 @@ async fn observe(
             }
             let queue_notified = queue_changed;
             // Merge durable commits from a burst, with bounded feed and output.
-            tokio::time::sleep(Duration::from_millis(16)).await;
+            tokio::select! {
+                _ = cancel.cancelled() => return Ok(()),
+                _ = output.closed() => return Ok(()),
+                _ = tokio::time::sleep(Duration::from_millis(16)) => {},
+            }
+            if control_events.has_changed().unwrap_or(false) {
+                control_events.borrow_and_update();
+                refresh_headers = true;
+                queue_changed = true;
+            }
             for _ in 0..255 {
                 match feed.try_recv() {
                     Ok(frame) => queue_changed |= collect_frame(frame, &mut executions, &mut reset),
@@ -266,6 +287,14 @@ async fn observe(
             let owner = user.clone();
             let target = session.clone();
             let (turns, used) = blocking::run_db("native.observe.turns", move || {
+                if refresh_headers {
+                    let turns = chat_turns::load_turn_headers(&db, &owner, &target)?;
+                    let used = db
+                        .workspace
+                        .load_session_context_tokens(&owner, &target)
+                        .max(0) as f64;
+                    return Ok((turns, used));
+                }
                 let mut roots = BTreeSet::new();
                 let mut turns = Vec::new();
                 for execution in executions {
@@ -431,11 +460,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let mut config = Config::default();
         config.storage.backend = "sqlite".into();
-        config.storage.db_path = temp
-            .path()
-            .join("fixture.db")
-            .to_string_lossy()
-            .into_owned();
+        config.storage.data_root = temp.path().join("data").to_string_lossy().into_owned();
         config.workspace.root = temp.path().join("workspace").to_string_lossy().into_owned();
         config.skills.enabled.clear();
         let store = ConfigStore::new(temp.path().join("fixture.yaml"));
@@ -498,8 +523,53 @@ mod tests {
         }
     }
 
+    async fn initialize_thread(state: &AppState, session: &str) {
+        use wunder_server::stable_core::thread_store::*;
+        let thread = ThreadId::new(session).unwrap();
+        let rollout = RolloutId::new(format!("{session}-rollout")).unwrap();
+        state
+            .thread_store
+            .create_thread(CreateThreadRequest {
+                metadata: ThreadMetadata {
+                    thread_id: thread.clone(),
+                    current_rollout_id: rollout.clone(),
+                    status: ThreadStatus::Active,
+                    created_at_ms: 1,
+                    updated_at_ms: 1,
+                    title: None,
+                    workspace_id: None,
+                    pinned: false,
+                },
+                session_meta: SessionMeta {
+                    thread_id: thread,
+                    rollout_id: rollout,
+                    created_at_ms: 1,
+                    source: "fixture".into(),
+                    initial_system_prompt: "sample prompt".into(),
+                    initial_memory: None,
+                    parent_thread_id: None,
+                    history_base: None,
+                    capabilities: Value::Null,
+                },
+            })
+            .await
+            .unwrap();
+    }
+
+    fn notify_committed(state: &AppState, session: &str) {
+        let cursor = state
+            .storage
+            .latest_thread_change_seq_by_session(session)
+            .unwrap();
+        state
+            .kernel
+            .orchestrator
+            .notify_thread_committed(session, cursor);
+    }
+
     #[tokio::test]
     async fn channel_turns_arrive_without_local_send_and_survive_resubscription() {
+        use wunder_server::stable_core::thread_store::*;
         let (_temp, state) = isolated_state().await;
         let user = "fixture-owner";
         let session = "fixture-channel-thread";
@@ -509,98 +579,128 @@ mod tests {
         let db = state.clone();
         let token = cancel.clone();
         let task = tokio::spawn(async move {
-            tokio::select! {
-                _ = token.cancelled() => Ok(()),
-                result = observe(db, user.into(), session.into(), None, None, &output, &token) => result,
-            }
+            observe(db, user.into(), session.into(), None, None, &output, &token).await
         });
         assert!(next(&mut receiver).await.is_empty());
         let mut ids = Vec::new();
-        for input in ["Fixture input", "/help", "[attachment]"] {
+        for input in ["sample input", "sample command", "sample attachment"] {
             let accepted = state
                 .storage
-                .accept_thread_turn(user, session, &json!({"content": input}))
+                .accept_thread_turn(user, session, &json!({"content":input}))
                 .unwrap();
-            let id = accepted["turn_id"].as_str().unwrap().to_string();
+            let id = accepted["turn_id"].as_str().unwrap().to_owned();
+            if ids.is_empty() {
+                initialize_thread(&state, session).await;
+            }
             ids.push(id.clone());
-            let rows = next(&mut receiver).await;
-            assert_eq!(rows.len(), 1);
-            assert_eq!(rows[0].root_id, id);
-            assert_eq!(rows[0].user.text, input);
-            assert!(rows[0].assistant.text.is_empty());
-            let answer = format!("Fixture result {}", ids.len());
+            state
+                .thread_store
+                .begin_turn(
+                    user,
+                    &ThreadId::new(session).unwrap(),
+                    &TurnId::new(&id).unwrap(),
+                    "fixture-model",
+                )
+                .await
+                .unwrap();
+            notify_committed(&state, session);
+            loop {
+                let rows = next(&mut receiver).await;
+                if let Some(row) = rows.iter().find(|row| row.root_id == id) {
+                    assert_eq!(row.user.text, input);
+                    break;
+                }
+            }
+            let answer = format!("sample result {}", ids.len());
             state
                 .storage
-                .append_thread_item(
+                .commit_thread_item(
                     user,
-                    &json!({"session_id":session,"turn_id":id,
-                "item_id":format!("{id}:text-0"),"kind":"assistant_message","role":"assistant",
-                "model_round":0,"content":answer,"status":"completed"}),
+                    &json!({
+                        "session_id":session,"turn_id":id,"item_id":format!("{id}:text-1"),
+                        "kind":"assistant_message","role":"assistant","model_round":1,
+                        "content":answer,"status":"completed",
+                    }),
                 )
                 .unwrap();
             state
                 .storage
                 .update_thread_turn(user, session, &id, "completed", "", &json!({}))
                 .unwrap();
+            notify_committed(&state, session);
             loop {
                 let rows = next(&mut receiver).await;
-                if rows[0].assistant.stats_status == "任务完成" {
-                    assert_eq!(rows[0].assistant.text, answer);
+                if let Some(row) = rows
+                    .iter()
+                    .find(|row| row.root_id == id && row.assistant.stats_status == "任务完成")
+                {
+                    assert_eq!(row.assistant.text, answer);
                     break;
                 }
             }
-            assert!(
-                !task.is_finished(),
-                "completion must not end thread observation"
-            );
+            assert!(!task.is_finished());
         }
         let accepted = state
             .storage
-            .accept_thread_turn(user, session, &json!({"content":"Fixture pending"}))
+            .accept_thread_turn(user, session, &json!({"content":"sample pending"}))
             .unwrap();
         let id = accepted["turn_id"].as_str().unwrap();
-        let item = format!("{id}:text-1");
+        state
+            .thread_store
+            .begin_turn(
+                user,
+                &ThreadId::new(session).unwrap(),
+                &TurnId::new(id).unwrap(),
+                "fixture-model",
+            )
+            .await
+            .unwrap();
         state
             .storage
-            .append_thread_item(
+            .commit_thread_item(
                 user,
-                &json!({"session_id":session,"turn_id":id,
-            "item_id":item,"kind":"assistant_message","role":"assistant","model_round":1,
-            "content":"","status":"running"}),
+                &json!({
+                    "session_id":session,"turn_id":id,"item_id":format!("{id}:text-1"),
+                    "kind":"assistant_message","role":"assistant","model_round":1,
+                    "content":"sample retained output","status":"completed",
+                }),
             )
             .unwrap();
-        state.storage.upsert_thread_text_block(user, session, &json!({"item_id":item,"field":"content",
-            "block_index":0,"event_id":1,"data":{"field":"content","content_offset":0,"content":"Fixture partial"}})).unwrap();
+        notify_committed(&state, session);
         loop {
             if next(&mut receiver)
                 .await
                 .iter()
-                .any(|turn| turn.assistant.text == "Fixture partial")
+                .any(|row| row.root_id == id && row.assistant.text == "sample retained output")
             {
                 break;
             }
         }
-        // A UI detach cancels observation only, preserving the pending execution.
-        let watch = NativeThreadWatch { receiver, cancel };
-        drop(watch);
+        // Detaching only releases observation; the canonical execution remains.
+        drop(NativeThreadWatch { receiver, cancel });
         tokio::time::timeout(Duration::from_secs(1), task)
             .await
             .unwrap()
             .unwrap()
             .unwrap();
-        let detail = state
-            .storage
-            .get_thread_turn(user, session, id, -1, 10, false)
-            .unwrap()
-            .unwrap();
-        assert!(
-            matches!(detail["status"].as_str(), Some("queued" | "accepted")),
-            "accepted turns may remain accepted until the runtime claims them: {}",
-            detail["status"]
+        assert_eq!(
+            state
+                .storage
+                .get_thread_turn(user, session, id, -1, 10, false)
+                .unwrap()
+                .unwrap()["status"],
+            "running"
         );
         state
             .storage
-            .update_thread_turn(user, session, id, "cancelled", "", &json!({}))
+            .update_thread_turn(
+                user,
+                session,
+                id,
+                "cancelled",
+                "",
+                &json!({"status":"cancelled"}),
+            )
             .unwrap();
         let (output, mut receiver) = mpsc::channel(8);
         let db = state.clone();
@@ -618,13 +718,9 @@ mod tests {
         });
         let restored = next(&mut receiver).await;
         assert_eq!(restored.len(), 4);
-        for (index, id) in ids.iter().enumerate() {
-            assert_eq!(&restored[index].root_id, id);
-        }
-        assert_eq!(restored[3].assistant.text, "Fixture partial");
+        assert_eq!(restored[3].assistant.text, "sample retained output");
         assert_eq!(restored[3].assistant.stats_status, "已停止");
         task.abort();
-        // The initial read validates ownership, before exposing any history.
         let (output, _receiver) = mpsc::channel(8);
         assert!(observe(
             state,
@@ -640,62 +736,74 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn durable_queue_item_notifies_an_already_running_observer() {
+    async fn queue_control_and_completed_item_both_notify_idle_observers() {
+        use wunder_server::stable_core::thread_store::*;
         let (_temp, state) = isolated_state().await;
         let user = "fixture-owner";
         let session = "fixture-queue-thread";
         create_session(&state, user, session);
         let accepted = state
             .storage
-            .accept_thread_turn(user, session, &json!({"content": "Fixture input"}))
+            .accept_thread_turn(user, session, &json!({"content":"sample input"}))
             .unwrap();
-        let turn_id = accepted["turn_id"].as_str().unwrap().to_owned();
+        let turn = accepted["turn_id"].as_str().unwrap();
+        initialize_thread(&state, session).await;
+        state
+            .thread_store
+            .begin_turn(
+                user,
+                &ThreadId::new(session).unwrap(),
+                &TurnId::new(turn).unwrap(),
+                "fixture-model",
+            )
+            .await
+            .unwrap();
+        let cursor = state
+            .storage
+            .latest_thread_change_seq_by_session(session)
+            .unwrap();
         let (output, mut receiver) = mpsc::channel(8);
         let cancel = CancellationToken::new();
         let db = state.clone();
         let token = cancel.clone();
         let task = tokio::spawn(async move {
-            tokio::select! {
-                _ = token.cancelled() => Ok(()),
-                result = observe(db, user.into(), session.into(), None, None, &output, &token) => result,
-            }
+            observe(db, user.into(), session.into(), None, None, &output, &token).await
         });
         assert_eq!(next(&mut receiver).await.len(), 1);
-        assert!(matches!(
-            update(&mut receiver).await,
-            NativeThreadUpdate::Context(_)
-        ));
-        assert!(matches!(
-            update(&mut receiver).await,
-            NativeThreadUpdate::Goal(_)
-        ));
-
-        // Each lifecycle update upserts the same stable queue item. The native
-        // queue strip must receive a control event independently of chat text.
-        for (event_type, status) in [("queue_start", "running"), ("queue_finish", "completed")] {
+        loop {
+            if matches!(update(&mut receiver).await, NativeThreadUpdate::Goal(_)) {
+                break;
+            }
+        }
+        // A queue control edge has no canonical item and keeps the cursor.
+        notify_committed(&state, session);
+        loop {
+            if matches!(
+                update(&mut receiver).await,
+                NativeThreadUpdate::QueueChanged
+            ) {
+                break;
+            }
+        }
+        assert_eq!(
             state
                 .storage
-                .append_thread_item(
-                    user,
-                    &json!({
-                        "session_id": session,
-                        "turn_id": turn_id,
-                        "item_id": format!("{turn_id}:queue-fixture"),
-                        "kind": "queue",
-                        "event_type": event_type,
-                        "status": status,
-                        "visibility": "user"
-                    }),
-                )
-                .unwrap();
-            loop {
-                match update(&mut receiver).await {
-                    NativeThreadUpdate::QueueChanged => break,
-                    NativeThreadUpdate::Failed(error) => panic!("{error}"),
-                    _ => {}
-                }
+                .latest_thread_change_seq_by_session(session)
+                .unwrap(),
+            cursor
+        );
+        state.storage.commit_thread_item(user,&json!({
+            "session_id":session,"turn_id":turn,"item_id":format!("{turn}:queue-fixture"),
+            "kind":"queue","event_type":"queue_finish","status":"completed","visibility":"user",
+        })).unwrap();
+        notify_committed(&state, session);
+        loop {
+            if matches!(
+                update(&mut receiver).await,
+                NativeThreadUpdate::QueueChanged
+            ) {
+                break;
             }
-            assert!(!task.is_finished(), "queue events must not end observation");
         }
         cancel.cancel();
         tokio::time::timeout(Duration::from_secs(1), task)

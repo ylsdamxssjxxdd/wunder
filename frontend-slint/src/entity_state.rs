@@ -22,6 +22,23 @@ pub(crate) fn model_draft_row_key() -> Option<String> {
     MODEL_DRAFT.with(|slot| slot.borrow().as_ref().map(|draft| draft.row_key.clone()))
 }
 
+/// The catalogue key of the draft row the user is editing right now: the parked
+/// draft when one exists, otherwise the row selected while `model-creating` is
+/// set. `on_create_model` uses it to re-open the single unsaved model instead of
+/// stacking a second "新模型" row.
+pub(crate) fn active_model_draft_key(app: &MainWindow) -> Option<String> {
+    if let Some(key) = model_draft_row_key() {
+        return Some(key);
+    }
+    if !app.get_model_creating() {
+        return None;
+    }
+    usize::try_from(app.get_selected_model())
+        .ok()
+        .and_then(|index| app.get_models().row_data(index))
+        .map(|row| row.key.to_string())
+}
+
 pub(crate) fn clear_model_draft() {
     MODEL_DRAFT.with(|slot| {
         slot.borrow_mut().take();

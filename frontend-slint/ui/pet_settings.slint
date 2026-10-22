@@ -1,0 +1,35 @@
+// Desktop pet settings, mirroring the web `companionStore` plus the companion
+// settings page: one globally selected companion drives the floating pet and is
+// fully decoupled from the agent list, exactly like `CompanionFloatingLayer.vue`.
+import { CompanionCard } from "theme.slint";
+
+export global PetSettingsState {
+    // Web `settings.enabled`: the master switch for the floating pet.
+    in-out property <bool> enabled: true;
+    // Web `settings.messageHintsEnabled`.
+    in-out property <bool> hints: true;
+    // Web `settings.scale`, kept by the controller inside 0.5 ..= 1.6.
+    in-out property <float> scale: 1.0;
+    // Formatted scale shown beside the slider, e.g. "1.0x".
+    in-out property <string> scale-label: "1.0x";
+    // Web `settings.selectedId` / `selectedCompanion`.
+    in-out property <string> selected-id;
+    in-out property <string> selected-name;
+    // Current library page (web LIBRARY_PAGE_SIZE = 6 cards per page).
+    in-out property <[CompanionCard]> companions;
+    in-out property <int> page: 1;
+    in-out property <int> page-count: 1;
+    // Formatted pager label, e.g. "第 1 / 3 页".
+    in-out property <string> page-label;
+    in-out property <string> status;
+    in-out property <bool> loading: false;
+    callback toggle-enabled(bool);
+    callback toggle-hints(bool);
+    callback set-scale(float);
+    callback select(string);
+    callback import-package();
+    callback delete(string);
+    callback refresh();
+    callback prev-page();
+    callback next-page();
+}

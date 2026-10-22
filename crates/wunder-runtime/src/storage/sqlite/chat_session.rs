@@ -1,3 +1,4 @@
+use super::session_goal::SqliteSessionGoalStorage;
 use super::SqliteStorage;
 use crate::storage::{ChatSessionRecord, StorageLifecycle};
 use anyhow::Result;
@@ -629,12 +630,12 @@ impl SqliteChatSessionStorage for SqliteStorage {
         if cleaned_user.is_empty() || cleaned_session.is_empty() {
             return Ok(0);
         }
+        // State and goals have independent durability boundaries. Delete the
+        // goal first; a repeated deletion is idempotent if the process stops
+        // between the two short transactions.
+        self.delete_session_goal_impl(cleaned_user, cleaned_session)?;
         let mut conn = self.open()?;
         let tx = conn.transaction()?;
-        tx.execute(
-            "DELETE FROM session_goals WHERE user_id = ? AND session_id = ?",
-            params![cleaned_user, cleaned_session],
-        )?;
         let affected = tx.execute(
             "DELETE FROM chat_sessions WHERE user_id = ? AND session_id = ?",
             params![cleaned_user, cleaned_session],

@@ -42,14 +42,11 @@ pub(crate) struct StoredResult {
 }
 
 pub(crate) fn store_root(config: &Config) -> PathBuf {
-    let database = config.storage.db_path.trim();
-    if database.is_empty() {
+    let root = config.storage.data_root.trim();
+    if root.is_empty() {
         PathBuf::from("config/data/tool-results")
     } else {
-        Path::new(database)
-            .parent()
-            .unwrap_or_else(|| Path::new("."))
-            .join("tool-results")
+        PathBuf::from(root).join("tool-results")
     }
 }
 
@@ -576,13 +573,13 @@ mod tests {
     }
 
     #[test]
-    fn root_uses_private_data_directory_beside_database() {
+    fn root_uses_private_data_directory_under_storage_root() {
         let mut config = Config::default();
         assert_eq!(
             store_root(&config),
             PathBuf::from("config/data/tool-results")
         );
-        config.storage.db_path = "state/local.db".into();
+        config.storage.data_root = "state".into();
         assert_eq!(store_root(&config), PathBuf::from("state/tool-results"));
     }
 

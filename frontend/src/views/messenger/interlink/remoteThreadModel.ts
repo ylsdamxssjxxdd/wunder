@@ -16,7 +16,7 @@ function visibleItems(state: ReturnType<typeof emptyChatThreadState>): RemoteThr
     }));
 }
 
-/** Device frames reuse the chat reducer, including replay deduplication and gaps. */
+/** Device frames reuse the chat reducer, including sparse cursors and replay deduplication. */
 export function remoteThreadModel(thread: string) {
   const state = emptyChatThreadState(thread);
   return {
@@ -36,11 +36,10 @@ export function remoteThreadModel(thread: string) {
       } else if (payload.overflow) return true;
       else if (payload.event === 'thread_change') {
         const result = applyChatThreadFrame(state, { ...payload.data, event: 'thread_change', seq: envelope.seq } as ChatThreadFrame, Date.now());
-        if (result.needResume) return true;
         if (result.changed) return true;
       }
-      // A fresh bounded snapshot heals gaps and bounds long-running subscriptions.
-      return state.items.size > 256 || state.blocks.size > 256 || [...state.blocks.values()].some(fields => [...fields.values()].some(blocks => blocks.size > 256));
+      // A fresh bounded snapshot recovers overflow and bounds long-running subscriptions.
+      return state.items.size > 256;
     },
     text(): string {
       return visibleItems(state)

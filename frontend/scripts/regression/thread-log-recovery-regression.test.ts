@@ -16,38 +16,9 @@ const assistant = (status = 'streaming', content = 'prefix😀') => ({
   user_turn_index: 1, model_turn_index: 1, turn_index: 2
 });
 
-test('refresh restores both text fields then consumes independent changes without losing prefix', () => {
-  const projection = createChatRuntimeProjection();
-  const runtime = { threadLogCursor: 20, lastEventId: 900 };
-  applyChatRuntimeEvent(projection, {event_type:'session_snapshot',source:'snapshot',strict:false,
-    session_id:'thread',messages:[assistant()],payload:{runtime_status:'running'}});
-  const emitBlock = (field: string, text: string, cursor: number) => {
-    const events = buildCanonicalChatRuntimeEvents({sessionId:'thread',eventType:'thread_item_block',
-      payload:{data:{item_id:'answer',message_id:'item:answer',user_round:1,model_round:1,
-        block_index:1,field,cursor,event_seq:900,[field]:text,
-        [`${field}_offset`]:field === 'content' ? 'prefix😀'.length : 0}}});
-    events.forEach(event => applyChatRuntimeEvent(projection, event));
-    advanceThreadLogCursor(runtime, cursor);
-    return events;
-  };
-  const events = emitBlock('content', ' tail', 21);
-  emitBlock('reasoning', 'thought', 22);
-  events.forEach(event => applyChatRuntimeEvent(projection, event));
-  let message = selectVisibleMessageProjections(projection, 'thread')[0];
-  assert.equal(message.content, 'prefix😀 tail');
-  assert.equal(message.reasoning, 'thought');
-  assert.equal(threadLogCursor(runtime), 22);
-  assert.equal(projection.sessions.thread.lastAppliedEventId, 0);
-  assert.equal(projection.sessions.thread.appliedSeq < 900, true);
-  assert.deepEqual(buildCanonicalChatRuntimeEvents({sessionId:'thread',eventType:'thread_change',
-    eventId:901,payload:{cursor:23}}), []);
-  applyChatRuntimeEvent(projection, {event_type:'session_snapshot',source:'snapshot',strict:false,
-    session_id:'thread',messages:[assistant('final', 'prefix😀 tail')],payload:{runtime_status:'idle'}});
-  emitBlock('content', ' late', 24);
-  message = selectVisibleMessageProjections(projection, 'thread')[0];
-  assert.equal(message.content, 'prefix😀 tail');
-  assert.equal(message.status, 'final');
-  assert.equal(selectSessionBusy(projection, 'thread'), false);
+test('retired block frames cannot mutate the canonical completed-history projection', () => {
+  assert.deepEqual(buildCanonicalChatRuntimeEvents({sessionId:'sample-thread',eventType:'thread_item_block',
+    payload:{cursor:9,item_id:'sample-item',content:'retired'}}),[]);
 });
 
 test('runtime recovery can change status repeatedly at the same durable cursor', () => {
@@ -236,7 +207,7 @@ test('item indexes in different rounds never share transport deduplication', () 
   assert.equal(threadLogCursor(second), 0);
 });
 
-test('snapshot rebuild clears bounded gap and tail temp state and binds the durable cursor', async () => {
+test('snapshot rebuild clears live tail temp state and binds the durable cursor', async () => {
   const values = new Map<string, string>();
   Object.defineProperty(globalThis, 'localStorage', {configurable:true,value:{
     getItem:(key:string) => values.get(key) ?? null,
@@ -256,8 +227,7 @@ test('snapshot rebuild clears bounded gap and tail temp state and binds the dura
       item_id: 'turn-r:text-1', turn_id: 'turn-r', kind: 'assistant_message',
       status: 'running', revision: 1, visibility: 'user',
       payload: { role: 'assistant', content: '重建文本', reasoning: '' }
-    }],
-    blocks: []
+    }]
   }));
   const store = useChatStore();
   store.resetState();
@@ -274,10 +244,9 @@ test('snapshot rebuild clears bounded gap and tail temp state and binds the dura
   applyChatThreadServerEvent(store, 'thread', 'thread_item_tail', {
     event: 'thread_item_tail', data: { item_id: 'turn-g:text-1', field: 'content', offset: 0, text: '旧尾' } });
   applyChatThreadServerEvent(store, 'thread', 'thread_change', {
-    event: 'thread_change', data: { change_type: 'turn_upsert', turn_id: 'turn-far', cursor: 99,
+    event: 'thread_change', data: { change_type: 'turn_upsert', turn_id: 'turn-far', cursor: 39,
       revision: 1, payload: { turn_id: 'turn-far', status: 'running' } } });
-  assert.equal(getChatThreadState('thread')?.lastSeq, 30);
-  assert.equal(getChatThreadState('thread')?.gap.length, 1);
+  assert.equal(getChatThreadState('thread')?.lastSeq, 39);
   assert.equal(getChatThreadState('thread')?.tails.get('turn-g:text-1')?.content, '旧尾');
 
   let snapshotApplied = 0;
@@ -289,7 +258,6 @@ test('snapshot rebuild clears bounded gap and tail temp state and binds the dura
   assert.equal(snapshotApplied, 1);
   const state = getChatThreadState('thread')!;
   assert.equal(state.lastSeq, 40);
-  assert.equal(state.gap.length, 0);
   assert.equal(state.tails.get('turn-g:text-1'), undefined);
   // The rebuild bound the snapshot cursor; old buffered frames are gone.
   assert.equal(state.turns.has('turn-g'), false);

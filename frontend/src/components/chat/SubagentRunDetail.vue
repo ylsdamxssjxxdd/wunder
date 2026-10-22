@@ -114,7 +114,6 @@ watch(() => [props.sessionId, props.runId, props.turnId, reload.value], (_, __, 
             if (!frame || frame.event === 'stream_started') return;
             const result = applyChatThreadFrame(state, frame, Date.now());
             if (result.changed) scheduleRender();
-            if (result.needResume || state.gap.length) { recovery = true; current.abort(); }
           } catch { error.value = '运行过程数据读取失败，请重试'; current.abort(); }
         }
       });

@@ -408,10 +408,9 @@ impl ThreadCatalogService {
         Ok(Some(snapshot))
     }
 
-    /// Durable ThreadLog frames after `change_seq`, in cursor order. This is the
-    /// paging cursor of §10: a client reconnects, dedups and orders by
-    /// `thread_log_changes.change_seq`, never by a transport event id. Frames keep
-    /// the runtime's shared change-frame shape, including the snapshot guard.
+    /// Completed canonical history frames after the exclusive rollout cursor.
+    /// The cursor may have gaps because non-display rollout records are not
+    /// emitted. Frames retain the runtime's shared change-frame schema.
     pub async fn changes(
         &self,
         session_id: &str,
@@ -422,9 +421,14 @@ impl ThreadCatalogService {
         if session.is_empty() {
             return Ok(Vec::new());
         }
-        let workspace = self.state.workspace.clone();
+        let storage = self.state.storage.clone();
         blocking::run_db("thread_catalog.changes", move || {
-            workspace.try_load_thread_changes(&session, after_seq.max(0), limit)
+            crate::services::thread_change_feeder::load_thread_change_frames(
+                storage.as_ref(),
+                &session,
+                after_seq,
+                limit,
+            )
         })
         .await
     }
@@ -1160,10 +1164,7 @@ mod tests {
         let root = temp_dir.path().to_path_buf();
         let mut config = Config::default();
         config.storage.backend = "sqlite".to_string();
-        config.storage.db_path = root
-            .join(format!("{name}.db"))
-            .to_string_lossy()
-            .to_string();
+        config.storage.data_root = root.join(format!("{name}")).to_string_lossy().to_string();
         config.workspace.root = root.join("workspaces").to_string_lossy().to_string();
         config.skills.enabled.clear();
         let config_store = ConfigStore::new(root.join("wunder.yaml"));

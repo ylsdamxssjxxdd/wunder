@@ -45,12 +45,31 @@ fn default_message_hints() -> bool {
     true
 }
 
+fn default_enabled() -> bool {
+    true
+}
+
+fn default_scale() -> f32 {
+    1.0
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CompanionOverlayState {
-    /// Web `settings.messageHintsEnabled`; a pet only bubbles hints while this
-    /// and its own `messageHints` flag are both on.
+    /// Web `settings.messageHintsEnabled`; the desktop pet only bubbles hints
+    /// while this switch is on.
     #[serde(default = "default_message_hints")]
     pub message_hints: bool,
+    /// Web `settings.enabled`: the desktop pet master switch. Off hides the pet
+    /// no matter which companion is selected.
+    #[serde(default = "default_enabled")]
+    pub enabled: bool,
+    /// Web `settings.selectedId`: the single companion the floating pet follows.
+    /// Empty means nothing is selected, so no pet is projected.
+    #[serde(default)]
+    pub selected_id: String,
+    /// Web `settings.scale`: the global pet scale, overridable per entry.
+    #[serde(default = "default_scale")]
+    pub scale: f32,
     #[serde(default)]
     pub positions: HashMap<String, CompanionPlacement>,
     #[serde(default)]
@@ -63,6 +82,9 @@ impl Default for CompanionOverlayState {
     fn default() -> Self {
         Self {
             message_hints: true,
+            enabled: true,
+            selected_id: String::new(),
+            scale: 1.0,
             positions: HashMap::new(),
             overrides: HashMap::new(),
             updated_at: 0.0,
@@ -115,6 +137,27 @@ fn write_overlay(path: &std::path::Path, state: &CompanionOverlayState) -> Resul
 impl NativeDesktop {
     pub fn companion_overlay_state(&self) -> CompanionOverlayState {
         read_overlay(&overlay_path(&self.desktop.settings_path))
+    }
+
+    /// Persist the desktop pet's global settings, the desktop counterpart of the
+    /// web `companionStore.settings` block: master switch, selected companion,
+    /// global scale and message-hint switch.
+    pub fn save_companion_settings(
+        &self,
+        enabled: bool,
+        selected_id: &str,
+        scale: f32,
+        message_hints: bool,
+    ) -> Result<CompanionOverlayState> {
+        let scale = clamp_companion_scale(scale);
+        let selected_id = selected_id.trim().to_string();
+        self.mutate_overlay(|state| {
+            state.enabled = enabled;
+            state.selected_id = selected_id.clone();
+            state.scale = scale;
+            state.message_hints = message_hints;
+        })?;
+        Ok(self.companion_overlay_state())
     }
 
     /// Remember where a pet was dropped. Positions are floored at zero, the way

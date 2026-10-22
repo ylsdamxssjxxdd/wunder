@@ -39,14 +39,7 @@ fn stress_generate_timeout(spec: &crate::storage::StressThreadSpec) -> Duration 
 /// Where the bulk writer should run. Built by each entry point from its own
 /// storage configuration.
 pub enum StressStorageTarget {
-    /// Local SQLite file (CLI / desktop default backend).
-    Sqlite { db_path: String },
-    /// Server-side PostgreSQL (fleet builds without sqlite-storage).
-    Postgres {
-        dsn: String,
-        connect_timeout_s: u64,
-        pool_size: usize,
-    },
+    Local { storage_root: String },
 }
 
 impl StressStorageTarget {
@@ -60,13 +53,8 @@ impl StressStorageTarget {
             backend.as_str()
         };
         match backend {
-            "sqlite" | "default" => Ok(Self::Sqlite {
-                db_path: storage.db_path.trim().to_string(),
-            }),
-            "postgres" | "postgresql" | "pg" | "auto" => Ok(Self::Postgres {
-                dsn: storage.postgres.dsn.clone(),
-                connect_timeout_s: storage.postgres.connect_timeout_s,
-                pool_size: storage.postgres.pool_size,
+            "sqlite" | "default" | "postgres" | "postgresql" | "pg" | "auto" => Ok(Self::Local {
+                storage_root: storage.data_root.clone(),
             }),
             other => Err(format!("unknown storage backend: {other}")),
         }
@@ -79,6 +67,7 @@ pub struct StartStressJobRequest {
     pub user_rounds: i64,
     pub model_rounds_per_turn: i64,
     pub title: Option<String>,
+    pub thread_updates: Option<Arc<crate::orchestrator::Orchestrator>>,
 }
 
 struct StressJob {
@@ -156,6 +145,7 @@ pub fn start_stress_thread_job(request: StartStressJobRequest) -> Result<Value, 
         user_rounds,
         model_rounds_per_turn,
         title,
+        thread_updates,
     } = request;
     validate_stress_params(user_rounds, model_rounds_per_turn)?;
     let user_id = user_id.trim().to_string();
@@ -194,17 +184,15 @@ pub fn start_stress_thread_job(request: StartStressJobRequest) -> Result<Value, 
         map.insert(job_id.clone(), Arc::clone(&job));
     }
 
-    // Only the storage arms consume these; a build without any storage
-    // backend returns an error before either one is read.
-    #[cfg(any(feature = "sqlite-storage", feature = "postgres-storage"))]
     let owner = user_id.clone();
+    let progress_session = session_id.clone();
     crate::core::long_task::spawn("stress_thread.generate", async move {
         // The bulk writer is one long blocking call; keep it off the async
         // workers via the shared blocking pool. One dedicated storage instance
         // per job so the write connection never contends with the runtime's
         // pooled connections.
-        #[cfg(any(feature = "sqlite-storage", feature = "postgres-storage"))]
         let job_for_progress = Arc::clone(&job);
+        let session_for_progress = progress_session;
         let exec_timeout = stress_generate_timeout(&spec);
         let outcome: anyhow::Result<crate::storage::StressThreadStats> =
             crate::core::blocking::run_with_exec_timeout(
@@ -212,54 +200,25 @@ pub fn start_stress_thread_job(request: StartStressJobRequest) -> Result<Value, 
                 "stress_thread.generate",
                 exec_timeout,
                 move || match target {
-                    #[cfg(feature = "sqlite-storage")]
-                    StressStorageTarget::Sqlite { db_path } => {
-                        let db_path = if db_path.trim().is_empty() {
-                            "./config/data/wunder.db".to_string()
-                        } else {
-                            db_path
-                        };
-                        let storage = crate::storage::SqliteStorage::new(db_path);
-                        storage.generate_stress_thread(
+                    StressStorageTarget::Local { storage_root } => {
+                        let runtime = tokio::runtime::Builder::new_current_thread()
+                            .enable_all()
+                            .build()?;
+                        let store =
+                            crate::storage::thread_store::LocalThreadStore::open(storage_root)?;
+                        runtime.block_on(store.generate_stress_thread(
                             &owner,
                             &spec,
                             |done_rounds, items_written| {
                                 update_progress(&job_for_progress, done_rounds, items_written);
+                                if let Some(orchestrator) = thread_updates.as_ref() {
+                                    // The writer invokes progress only after
+                                    // rollout, projection and admission commit.
+                                    orchestrator.notify_thread_committed(&session_for_progress, 0);
+                                }
                             },
-                        )
+                        ))
                     }
-                    #[cfg(not(feature = "sqlite-storage"))]
-                    StressStorageTarget::Sqlite { .. } => Err(anyhow::anyhow!(
-                        "当前构建未启用 sqlite 存储，无法生成压测线程"
-                    )),
-                    #[cfg(feature = "postgres-storage")]
-                    StressStorageTarget::Postgres {
-                        dsn,
-                        connect_timeout_s,
-                        pool_size,
-                    } => {
-                        let storage = crate::storage::PostgresStorage::new(
-                            dsn,
-                            connect_timeout_s,
-                            pool_size,
-                        )?;
-                        // The server that dispatched this job has already finished
-                        // the schema bootstrap; running the DDL batch again from
-                        // this dedicated instance would issue runtime DDL and
-                        // amplify any ongoing lock contention.
-                        storage.assume_schema_initialized();
-                        storage.generate_stress_thread(
-                            &owner,
-                            &spec,
-                            |done_rounds, items_written| {
-                                update_progress(&job_for_progress, done_rounds, items_written);
-                            },
-                        )
-                    }
-                    #[cfg(not(feature = "postgres-storage"))]
-                    StressStorageTarget::Postgres { .. } => Err(anyhow::anyhow!(
-                        "当前构建未启用 postgres 存储，无法生成压测线程"
-                    )),
                 },
             )
             .await;
@@ -272,6 +231,9 @@ pub fn start_stress_thread_job(request: StartStressJobRequest) -> Result<Value, 
                         "user_turns": stats.user_turns,
                         "items": stats.items,
                         "tool_calls": stats.tool_calls,
+                        "model_requests": stats.model_requests,
+                        "model_actions": stats.model_actions,
+                        "rollout_records": stats.rollout_records,
                     }),
                 };
             }

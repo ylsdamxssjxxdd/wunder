@@ -12,6 +12,7 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
     crate::agent_editor::install_save_handler(app, api.clone());
     crate::entity_state::bind_selection(app);
     crate::avatar_ui::install(app, api.clone());
+    crate::pet_settings::install(app, api.clone());
     bind_agents(app, api.clone());
     bind_model_probes(app, api.clone());
     bind_preferences_and_prompts(app, api.clone());
@@ -929,9 +930,10 @@ fn bind_settings(app: &MainWindow, api: Arc<NativeDesktop>) {
         if app.get_saving() || app.get_settings_loading() {
             return;
         }
-        // Only one unsaved draft exists; "添加模型" while another model is
-        // selected resumes it instead of stacking a second new row.
-        if let Some(row_key) = crate::entity_state::model_draft_row_key() {
+        // Only one unsaved draft exists; "添加模型" while the draft is on screen
+        // (or parked behind another selection) re-opens it instead of stacking a
+        // second "新模型" row.
+        if let Some(row_key) = crate::entity_state::active_model_draft_key(&app) {
             if let Some(index) = app
                 .get_models()
                 .iter()
@@ -939,9 +941,12 @@ fn bind_settings(app: &MainWindow, api: Arc<NativeDesktop>) {
             {
                 app.set_selected_model(index as i32);
                 if crate::entity_state::restore_model_draft(&app, index as i32, &row_key) {
-                    app.set_status("已恢复未保存的模型草稿".into());
-                    return;
+                    app.set_status("已回到未保存的模型草稿".into());
+                } else {
+                    // Already editing this row: keep the live drafts untouched.
+                    app.set_status("当前正在编辑未保存的模型草稿".into());
                 }
+                return;
             }
         }
         let mut rows = app.get_models().iter().collect::<Vec<_>>();

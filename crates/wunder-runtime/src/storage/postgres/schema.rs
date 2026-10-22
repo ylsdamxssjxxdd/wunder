@@ -14,12 +14,7 @@ fn schema_fingerprint() -> &'static str {
     static VALUE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     VALUE.get_or_init(|| {
         let mut hash = Sha256::new();
-        for source in [
-            include_str!("schema.rs"),
-            include_str!("queue_control.rs"),
-            crate::storage::thread_view_store::SCHEMA,
-            super::thread_view_store::SEARCH_SCHEMA,
-        ] {
+        for source in [include_str!("schema.rs"), include_str!("queue_control.rs")] {
             hash.update(source.as_bytes());
         }
         format!("{:x}", hash.finalize())
@@ -38,18 +33,7 @@ fn schema_is_current(conn: &mut PgConn<'_>) -> Result<bool> {
         .is_some_and(|row| row.get::<_, String>(0) == schema_fingerprint()))
 }
 
-fn partitions_are_current(conn: &mut PgConn<'_>) -> Result<bool> {
-    Ok(conn
-        .query_opt(
-            "SELECT value FROM meta WHERE key='postgres_partition_window_v1'",
-            &[],
-        )?
-        .is_some_and(|row| {
-            row.get::<_, String>(0) == chrono::Utc::now().format("%Y-%m").to_string()
-        }))
-}
-
-// Session locks are required because partition/index DDL cannot all run in a
+// Session locks are required because index DDL cannot all run in a
 // transaction. Always unlock before returning this connection to its pool.
 struct SchemaConnection<'a>(Option<PgConn<'a>>);
 impl<'a> std::ops::Deref for SchemaConnection<'a> {
@@ -108,110 +92,6 @@ impl PostgresStorage {
         Ok(())
     }
 
-    fn ensure_partition_window(&self, conn: &mut PgConn<'_>) -> Result<()> {
-        for table in PARTITIONED_TABLES {
-            self.ensure_time_partitions(conn, table, 1, 3)?;
-        }
-        let month = chrono::Utc::now().format("%Y-%m").to_string();
-        conn.execute("INSERT INTO meta(key,value,updated_time) VALUES('postgres_partition_window_v1',$1,$2) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_time=excluded.updated_time", &[&month,&Self::now_ts()])?;
-        Ok(())
-    }
-
-    fn ensure_log_time_index(&self, conn: &mut PgConn<'_>, table: &str, name: &str) -> Result<()> {
-        let existing = conn.query_opt(
-            "SELECT am.amname,i.indisvalid FROM pg_class c \
-             JOIN pg_namespace n ON n.oid=c.relnamespace \
-             JOIN pg_index i ON i.indexrelid=c.oid JOIN pg_am am ON am.oid=c.relam \
-             WHERE n.nspname=current_schema() AND c.relname=$1",
-            &[&name],
-        )?;
-        if existing
-            .as_ref()
-            .is_some_and(|r| r.get::<_, String>(0) == "btree" && r.get::<_, bool>(1))
-        {
-            return Ok(());
-        }
-        // Migrate an old BRIN once. Keep the old index available until its
-        // replacement is ready; subsequent boots preserve the existing btree.
-        let target = if existing.is_some() {
-            format!("{name}_btree")
-        } else {
-            name.into()
-        };
-        let started = Instant::now();
-        // A cancelled concurrent build can leave an invalid replacement. It
-        // must be removed before IF NOT EXISTS, which otherwise skips repair.
-        let invalid = conn
-            .query_opt(
-                "SELECT NOT i.indisvalid FROM pg_index i JOIN pg_class c ON c.oid=i.indexrelid \
-             WHERE c.relnamespace=current_schema()::regnamespace AND c.relname=$1",
-                &[&target],
-            )?
-            .is_some_and(|row| row.get::<_, bool>(0));
-        if invalid {
-            execute_index_ddl(
-                conn,
-                &format!("DROP INDEX CONCURRENTLY IF EXISTS {target}"),
-                &format!("DROP INDEX IF EXISTS {target}"),
-            )?;
-        }
-        execute_index_ddl(
-            conn,
-            &format!("CREATE INDEX CONCURRENTLY IF NOT EXISTS {target} ON {table} (created_time)"),
-            &format!("CREATE INDEX IF NOT EXISTS {target} ON {table} (created_time)"),
-        )?;
-        if existing.is_some() {
-            execute_index_ddl(
-                conn,
-                &format!("DROP INDEX CONCURRENTLY IF EXISTS {name}"),
-                &format!("DROP INDEX IF EXISTS {name}"),
-            )?;
-            conn.execute(&format!("ALTER INDEX {target} RENAME TO {name}"), &[])?;
-        }
-        tracing::info!(
-            index = name,
-            elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,
-            "postgres time index prepared"
-        );
-        Ok(())
-    }
-
-    fn ensure_thread_item_block_fields(&self, conn: &mut PgConn<'_>) -> Result<()> {
-        let mut tx = conn.transaction()?;
-        let exists: bool = tx.query_one("SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='thread_item_blocks' AND column_name='field')", &[])?.get(0);
-        if !exists {
-            tx.batch_execute("ALTER TABLE thread_item_blocks ADD COLUMN field TEXT NOT NULL DEFAULT 'content';
-                UPDATE thread_item_blocks SET field=COALESCE(payload::jsonb->>'field',payload::jsonb->'data'->>'field','content');
-                ALTER TABLE thread_item_blocks DROP CONSTRAINT IF EXISTS thread_item_blocks_pkey;
-                ALTER TABLE thread_item_blocks ADD PRIMARY KEY(session_id,item_id,field,block_index);
-                CREATE INDEX IF NOT EXISTS idx_thread_blocks_replay ON thread_item_blocks(session_id,event_id);")?;
-        }
-        tx.commit()?;
-        Ok(())
-    }
-
-    fn ensure_thread_item_sequence(&self, conn: &mut PgConn<'_>) -> Result<()> {
-        let mut tx = conn.transaction()?;
-        tx.batch_execute("LOCK TABLE thread_items IN ACCESS EXCLUSIVE MODE")?;
-        let exists: bool = tx.query_one("SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='thread_items' AND column_name='created_seq')", &[])?.get(0);
-        if !exists {
-            tx.batch_execute("ALTER TABLE thread_items ADD COLUMN created_seq BIGINT NOT NULL DEFAULT 0;
-                WITH numbered AS (SELECT session_id,item_id,ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY created_time,root_turn_id,item_index) AS seq FROM thread_items)
-                UPDATE thread_items i SET created_seq=n.seq FROM numbered n WHERE i.session_id=n.session_id AND i.item_id=n.item_id;
-                UPDATE thread_logs SET latest_change_seq=GREATEST(latest_change_seq,COALESCE((SELECT MAX(created_seq) FROM thread_items WHERE thread_items.session_id=thread_logs.session_id),0));")?;
-        }
-        tx.batch_execute("CREATE INDEX IF NOT EXISTS idx_thread_items_context_seq ON thread_items(user_id,session_id,created_seq DESC) WHERE kind IN ('user_message','assistant_message','tool_message','system_message'); CREATE INDEX IF NOT EXISTS idx_thread_items_view_root_seq ON thread_items(user_id,session_id,root_turn_id,created_seq DESC);")?;
-        tx.commit()?;
-        Ok(())
-    }
-    fn ensure_thread_trajectory_tile_columns(&self, conn: &mut PgConn<'_>) -> Result<()> {
-        conn.batch_execute(
-            "ALTER TABLE thread_trajectory_tiles ADD COLUMN IF NOT EXISTS input_count BIGINT NOT NULL DEFAULT 0;
-             ALTER TABLE thread_trajectory_tiles ADD COLUMN IF NOT EXISTS model_count BIGINT NOT NULL DEFAULT 0;
-             ALTER TABLE thread_trajectory_tiles ADD COLUMN IF NOT EXISTS tool_count BIGINT NOT NULL DEFAULT 0;",
-        )?;
-        Ok(())
-    }
     fn ensure_user_account_quota_columns(&self, conn: &mut PgConn<'_>) -> Result<()> {
         let mut tx = conn.transaction()?;
         // Serializes startup migrations across server instances.
@@ -296,11 +176,6 @@ impl PostgresStorage {
         if legacy {
             conn.execute("DROP TABLE session_goals", &[])?;
         }
-        Ok(())
-    }
-
-    fn ensure_model_context_table_retired(&self, conn: &mut PgConn<'_>) -> Result<()> {
-        conn.execute("DROP TABLE IF EXISTS model_context_entries", &[])?;
         Ok(())
     }
 
@@ -439,67 +314,6 @@ impl PostgresStorage {
              ON chat_sessions (user_id, parent_session_id, updated_at)",
             &[],
         );
-        Ok(())
-    }
-
-    fn ensure_stream_event_workflow_columns(&self, conn: &mut PgConn<'_>) -> Result<()> {
-        let rows = conn.query(
-            "SELECT column_name FROM information_schema.columns WHERE table_name = 'stream_events'",
-            &[],
-        )?;
-        let columns = rows
-            .into_iter()
-            .map(|row| row.get::<_, String>(0))
-            .collect::<HashSet<_>>();
-        let needs_backfill = !columns.contains("event_type") || !columns.contains("user_round");
-        conn.execute(
-            "ALTER TABLE stream_events ADD COLUMN IF NOT EXISTS event_type TEXT",
-            &[],
-        )?;
-        conn.execute(
-            "ALTER TABLE stream_events ADD COLUMN IF NOT EXISTS user_round BIGINT",
-            &[],
-        )?;
-        // Fill the index from old JSON payloads before relying on bounded round queries.
-        if needs_backfill {
-            conn.execute(
-                "WITH parsed AS (
-                     SELECT session_id, event_id, payload::jsonb AS value
-                     FROM stream_events
-                     WHERE event_type IS NULL OR user_round IS NULL
-                 ), extracted AS (
-                     SELECT session_id, event_id,
-                         LOWER(BTRIM(COALESCE(value ->> 'event', value ->> 'event_type', value ->> 'type', ''))) AS event_type,
-                         COALESCE(
-                             value #>> '{data,data,user_round}',
-                             value #>> '{data,data,userRound}',
-                             value #>> '{data,data,round}',
-                             value #>> '{data,user_round}',
-                             value #>> '{data,userRound}',
-                             value #>> '{data,round}',
-                             value ->> 'user_round',
-                             value ->> 'userRound',
-                             value ->> 'round'
-                         ) AS user_round_text
-                     FROM parsed
-                 )
-                 UPDATE stream_events AS target
-                 SET event_type = extracted.event_type,
-                     user_round = CASE
-                         WHEN extracted.user_round_text ~ '^[0-9]+$'
-                             THEN extracted.user_round_text::BIGINT
-                         ELSE NULL
-                     END
-                 FROM extracted
-                 WHERE target.session_id = extracted.session_id
-                   AND target.event_id = extracted.event_id",
-                &[],
-            )?;
-        }
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_stream_events_session_round ON stream_events (session_id, user_round, event_id)",
-            &[],
-        )?;
         Ok(())
     }
 
@@ -992,75 +806,9 @@ impl PostgresStorage {
     }
 
     fn ensure_performance_indexes(&self, conn: &mut PgConn<'_>) -> Result<()> {
-        // BRIN on created_time proved lossy once large backfilled history
-        // (stress-test loads) landed in the table: recent-window aggregates
-        // re-checked hundreds of thousands of heap rows and stalled requests
-        // for tens of seconds. Exact btree time indexes keep the scan
-        // proportional to the queried window instead of the whole table.
+        // The SQL control plane indexes business state only. Execution bodies
+        // and replay/search indexes live in the canonical thread store.
         let statements = [
-            (
-                "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_tool_logs_tool_time \
-                 ON tool_logs (tool, created_time DESC)",
-                "CREATE INDEX IF NOT EXISTS idx_tool_logs_tool_time \
-                 ON tool_logs (tool, created_time DESC)",
-            ),
-            // Orphan sweep sessions: the incremental sweep collects orphan
-            // (session, user) pairs per time slice, so the two big log tables
-            // need a created_time-leading index for the bounded scan.
-            (
-                "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_thread_items_time_session \
-                 ON thread_items (created_time, session_id)",
-                "CREATE INDEX IF NOT EXISTS idx_thread_items_time_session \
-                 ON thread_items (created_time, session_id)",
-            ),
-            (
-                "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_thread_items_user_session_time \
-                 ON thread_items (user_id, session_id, created_time, item_id)",
-                "CREATE INDEX IF NOT EXISTS idx_thread_items_user_session_time \
-                 ON thread_items (user_id, session_id, created_time, item_id)",
-            ),
-            (
-                "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_thread_blocks_time \
-                 ON thread_item_blocks (created_time)",
-                "CREATE INDEX IF NOT EXISTS idx_thread_blocks_time \
-                 ON thread_item_blocks (created_time)",
-            ),
-            (
-                "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_thread_changes_time \
-                 ON thread_log_changes (created_time)",
-                "CREATE INDEX IF NOT EXISTS idx_thread_changes_time \
-                 ON thread_log_changes (created_time)",
-            ),
-            (
-                "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_thread_turns_time \
-                 ON thread_turns (created_time)",
-                "CREATE INDEX IF NOT EXISTS idx_thread_turns_time \
-                 ON thread_turns (created_time)",
-            ),
-            (
-                "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_deleted_session_grace_time \
-                 ON deleted_session_log_grace (deleted_at)",
-                "CREATE INDEX IF NOT EXISTS idx_deleted_session_grace_time \
-                 ON deleted_session_log_grace (deleted_at)",
-            ),
-            (
-                "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_deleted_session_grace_session \
-                 ON deleted_session_log_grace (session_id)",
-                "CREATE INDEX IF NOT EXISTS idx_deleted_session_grace_session \
-                 ON deleted_session_log_grace (session_id)",
-            ),
-            (
-                "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_tool_logs_time_session \
-                 ON tool_logs (created_time, session_id)",
-                "CREATE INDEX IF NOT EXISTS idx_tool_logs_time_session \
-                 ON tool_logs (created_time, session_id)",
-            ),
-            (
-                "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_artifact_logs_time_session \
-                 ON artifact_logs (created_time, session_id)",
-                "CREATE INDEX IF NOT EXISTS idx_artifact_logs_time_session \
-                 ON artifact_logs (created_time, session_id)",
-            ),
             (
                 "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_monitor_sessions_updated \
                  ON monitor_sessions (updated_time)",
@@ -1079,9 +827,6 @@ impl PostgresStorage {
             execute_index_ddl(conn, concurrent, fallback)?;
         }
 
-        self.ensure_log_time_index(conn, "tool_logs", "idx_tool_logs_time")?;
-        self.ensure_log_time_index(conn, "artifact_logs", "idx_artifact_logs_time")?;
-
         if conn
             .execute(
                 "DROP INDEX CONCURRENTLY IF EXISTS idx_user_accounts_username",
@@ -1092,65 +837,6 @@ impl PostgresStorage {
             conn.execute("DROP INDEX IF EXISTS idx_user_accounts_username", &[])?;
         }
 
-        Ok(())
-    }
-
-    /// Create the monthly range partitions for `table` covering
-    /// `months_back`..=`months_ahead` around the current month, plus a
-    /// DEFAULT partition that catches rows outside the rolling window.
-    /// Parent indexes automatically extend to newly attached partitions.
-    pub(super) fn ensure_time_partitions(
-        &self,
-        conn: &mut PgConn<'_>,
-        table: &str,
-        months_back: i32,
-        months_ahead: i32,
-    ) -> Result<()> {
-        if !PARTITIONED_TABLES.contains(&table) {
-            return Ok(());
-        }
-        let now_secs = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|value| value.as_secs() as i64)
-            .unwrap_or(0);
-        let (year, month) = civil_month_from_days(now_secs.div_euclid(86400));
-        for offset in -months_back..=months_ahead {
-            let (partition_year, partition_month) = shift_month(year, month, offset);
-            let start = month_start_epoch(partition_year, partition_month);
-            let (next_year, next_month) = shift_month(partition_year, partition_month, 1);
-            let end = month_start_epoch(next_year, next_month);
-            let name = format!("{table}_y{partition_year:04}m{partition_month:02}");
-            let exists: bool = conn
-                .query_one("SELECT to_regclass($1) IS NOT NULL", &[&name])?
-                .get(0);
-            if exists {
-                continue;
-            }
-            let mut tx = conn.transaction()?;
-            tx.batch_execute("SET LOCAL lock_timeout = '2s'; SET LOCAL statement_timeout = '8s'")?;
-            tx.execute(
-                &format!(
-                    "CREATE TABLE IF NOT EXISTS {name} PARTITION OF {table} \
-                     FOR VALUES FROM ({start}) TO ({end}) \
-                     WITH (autovacuum_vacuum_scale_factor = 0.02)"
-                ),
-                &[],
-            )?;
-            tx.commit()?;
-        }
-        let name = format!("{table}_default");
-        let exists: bool = conn
-            .query_one("SELECT to_regclass($1) IS NOT NULL", &[&name])?
-            .get(0);
-        if !exists {
-            let mut tx = conn.transaction()?;
-            tx.batch_execute("SET LOCAL lock_timeout = '2s'; SET LOCAL statement_timeout = '8s'")?;
-            tx.execute(
-                &format!("CREATE TABLE IF NOT EXISTS {name} PARTITION OF {table} DEFAULT"),
-                &[],
-            )?;
-            tx.commit()?;
-        }
         Ok(())
     }
 }
@@ -1170,47 +856,6 @@ fn execute_index_ddl(conn: &mut PgConn<'_>, concurrent: &str, fallback: &str) ->
         conn.execute(fallback, &[])?;
     }
     Ok(())
-}
-
-/// Tables ranged by created_time; guarded so ensure_time_partitions only
-/// ever touches partitioned parents.
-const PARTITIONED_TABLES: &[&str] = &[
-    "thread_items",
-    "thread_item_blocks",
-    "thread_log_changes",
-    "tool_logs",
-    "artifact_logs",
-];
-
-/// Days since 1970-01-01 to (year, month) of that day.
-fn civil_month_from_days(days: i64) -> (i64, i64) {
-    // Howard Hinnant's civil_from_days, reduced to month resolution.
-    let z = days + 719468;
-    let era = if z >= 0 { z } else { z - 146096 } / 146097;
-    let doe = z - era * 146097;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let year = if m <= 2 { y + 1 } else { y };
-    (year, m)
-}
-
-fn shift_month(year: i64, month: i64, offset: i32) -> (i64, i64) {
-    let total = year * 12 + (month - 1) + offset as i64;
-    (total.div_euclid(12), total.rem_euclid(12) + 1)
-}
-
-/// Epoch seconds of the first day of the given month (UTC midnight).
-fn month_start_epoch(year: i64, month: i64) -> i64 {
-    let y = if month <= 2 { year - 1 } else { year };
-    let era = if y >= 0 { y } else { y - 399 } / 400;
-    let yoe = y - era * 400;
-    let m = if month > 2 { month - 3 } else { month + 9 };
-    let doy = (153 * m + 2) / 5;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    (era * 146097 + doe - 719468) * 86400
 }
 
 impl PostgresSchemaStorage for PostgresStorage {
@@ -1236,7 +881,7 @@ impl PostgresSchemaStorage for PostgresStorage {
                     continue;
                 }
             };
-            if schema_is_current(&mut conn)? && partitions_are_current(&mut conn)? {
+            if schema_is_current(&mut conn)? {
                 self.initialized.store(true, Ordering::SeqCst);
                 tracing::info!(
                     elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,
@@ -1252,9 +897,6 @@ impl PostgresSchemaStorage for PostgresStorage {
             )?;
             let mut conn = SchemaConnection(Some(conn));
             if schema_is_current(&mut conn)? {
-                if !partitions_are_current(&mut conn)? {
-                    self.ensure_partition_window(&mut conn)?;
-                }
                 self.initialized.store(true, Ordering::SeqCst);
                 return Ok(());
             }
@@ -1268,138 +910,6 @@ impl PostgresSchemaStorage for PostgresStorage {
                   key TEXT PRIMARY KEY,
                   value TEXT NOT NULL,
                   updated_time DOUBLE PRECISION NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS thread_logs (
-                  session_id TEXT PRIMARY KEY,
-                  user_id TEXT NOT NULL,
-                  latest_user_turn BIGINT NOT NULL DEFAULT 0,
-                  latest_change_seq BIGINT NOT NULL DEFAULT 0,
-                  created_time DOUBLE PRECISION NOT NULL,
-                  updated_time DOUBLE PRECISION NOT NULL
-                );
-                CREATE INDEX IF NOT EXISTS idx_thread_logs_user ON thread_logs (user_id, updated_time);
-                CREATE TABLE IF NOT EXISTS thread_turns (
-                  session_id TEXT NOT NULL,
-                  turn_id TEXT NOT NULL,
-                  user_id TEXT NOT NULL,
-                  root_turn_id TEXT NOT NULL,
-              trigger_kind TEXT NOT NULL,
-              client_message_id TEXT,
-              user_turn_index BIGINT NOT NULL,
-                  status TEXT NOT NULL DEFAULT 'running',
-                  summary TEXT NOT NULL DEFAULT '',
-                  payload TEXT NOT NULL,
-                  created_time DOUBLE PRECISION NOT NULL,
-                  updated_time DOUBLE PRECISION NOT NULL,
-                  PRIMARY KEY (session_id, turn_id),
-                  UNIQUE (session_id, client_message_id)
-                );
-                CREATE UNIQUE INDEX IF NOT EXISTS idx_thread_root_round ON thread_turns(session_id,user_turn_index) WHERE trigger_kind='user';
-            CREATE INDEX IF NOT EXISTS idx_thread_turns_page
-                  ON thread_turns (user_id, session_id, user_turn_index DESC);
-                CREATE TABLE IF NOT EXISTS thread_items (
-                  session_id TEXT NOT NULL,
-                  item_id TEXT NOT NULL,
-                  turn_id TEXT NOT NULL,
-              root_turn_id TEXT NOT NULL,
-              visibility TEXT NOT NULL DEFAULT 'user',
-                  user_id TEXT NOT NULL,
-                  item_index BIGINT NOT NULL,
-                  kind TEXT NOT NULL,
-                  status TEXT NOT NULL DEFAULT 'completed',
-                  revision BIGINT NOT NULL DEFAULT 1,
-                  payload TEXT NOT NULL,
-                  created_time DOUBLE PRECISION NOT NULL,
-                  updated_time DOUBLE PRECISION NOT NULL,
-                  created_seq BIGINT NOT NULL DEFAULT 0,
-                  PRIMARY KEY (session_id, item_id, created_time)
-                ) PARTITION BY RANGE (created_time);
-                CREATE INDEX IF NOT EXISTS idx_thread_items_turn
-                  ON thread_items (user_id, session_id, root_turn_id, item_index);
-            CREATE TABLE IF NOT EXISTS thread_item_blocks (
-              session_id TEXT NOT NULL, user_id TEXT NOT NULL, item_id TEXT NOT NULL,
-              field TEXT NOT NULL DEFAULT 'content', block_index BIGINT NOT NULL,
-              event_id BIGINT NOT NULL, payload TEXT NOT NULL,
-              created_time DOUBLE PRECISION NOT NULL DEFAULT 0,
-              PRIMARY KEY(session_id,item_id,field,block_index,created_time)
-            ) PARTITION BY RANGE (created_time);
-            CREATE INDEX IF NOT EXISTS idx_thread_blocks_replay ON thread_item_blocks(session_id,event_id);
-                CREATE TABLE IF NOT EXISTS thread_log_changes (
-                  session_id TEXT NOT NULL,
-                  change_seq BIGINT NOT NULL,
-                  user_id TEXT NOT NULL,
-                  change_type TEXT NOT NULL,
-                  turn_id TEXT NOT NULL,
-                  item_id TEXT,
-                  revision BIGINT NOT NULL DEFAULT 1,
-                  payload TEXT NOT NULL,
-                  created_time DOUBLE PRECISION NOT NULL,
-                  PRIMARY KEY (session_id, change_seq, created_time)
-                ) PARTITION BY RANGE (created_time);
-                CREATE INDEX IF NOT EXISTS idx_thread_changes_cursor
-                  ON thread_log_changes (user_id, session_id, change_seq);
-                CREATE TABLE IF NOT EXISTS thread_log_metrics (
-                  session_id TEXT NOT NULL,
-                  user_id TEXT NOT NULL,
-                  metric_key TEXT NOT NULL,
-                  metric_value DOUBLE PRECISION NOT NULL DEFAULT 0,
-                  updated_time DOUBLE PRECISION NOT NULL,
-                  PRIMARY KEY (session_id, metric_key)
-                );
-                CREATE INDEX IF NOT EXISTS idx_thread_metrics_user
-                  ON thread_log_metrics (user_id, session_id, metric_key);
-                CREATE TABLE IF NOT EXISTS terminal_transcript_blocks (
-                  user_id TEXT NOT NULL,
-                  session_id TEXT NOT NULL,
-                  terminal_id TEXT NOT NULL,
-                  chunk_index BIGINT NOT NULL,
-                  seq BIGINT NOT NULL,
-                  payload TEXT NOT NULL,
-                  created_time DOUBLE PRECISION NOT NULL,
-                  PRIMARY KEY (user_id, session_id, terminal_id, chunk_index)
-                );
-                CREATE INDEX IF NOT EXISTS idx_terminal_transcript_session
-                  ON terminal_transcript_blocks (user_id, session_id, chunk_index);
-                CREATE TABLE IF NOT EXISTS deleted_session_log_grace (
-                  user_id TEXT NOT NULL,
-                  session_id TEXT NOT NULL,
-                  deleted_at DOUBLE PRECISION NOT NULL,
-                  PRIMARY KEY (user_id, session_id)
-                );
-                CREATE TABLE IF NOT EXISTS tool_logs (
-                  id BIGSERIAL,
-                  user_id TEXT NOT NULL,
-                  session_id TEXT NOT NULL,
-                  tool TEXT,
-                  ok INTEGER,
-                  error TEXT,
-                  args TEXT,
-                  data TEXT,
-                  timestamp TEXT,
-                  payload TEXT NOT NULL,
-                  created_time DOUBLE PRECISION NOT NULL,
-                  excluded BOOLEAN NOT NULL DEFAULT FALSE,
-                  PRIMARY KEY (id, created_time)
-                ) PARTITION BY RANGE (created_time);
-                CREATE INDEX IF NOT EXISTS idx_tool_logs_session
-                  ON tool_logs (user_id, session_id, id);
-                CREATE TABLE IF NOT EXISTS artifact_logs (
-                  id BIGSERIAL,
-                  user_id TEXT NOT NULL,
-                  session_id TEXT NOT NULL,
-                  kind TEXT NOT NULL,
-                  name TEXT,
-                  payload TEXT NOT NULL,
-                  created_time DOUBLE PRECISION NOT NULL,
-                  PRIMARY KEY (id, created_time)
-                ) PARTITION BY RANGE (created_time);
-                CREATE INDEX IF NOT EXISTS idx_artifact_logs_session
-                  ON artifact_logs (user_id, session_id, id);
-                CREATE TABLE IF NOT EXISTS user_usage_summary (
-                  user_id TEXT PRIMARY KEY,
-                  chat_records BIGINT NOT NULL DEFAULT 0,
-                  tool_records BIGINT NOT NULL DEFAULT 0,
-                  updated_time DOUBLE PRECISION NOT NULL DEFAULT 0
                 );
                 CREATE TABLE IF NOT EXISTS monitor_sessions (
                   session_id TEXT PRIMARY KEY,
@@ -1445,20 +955,6 @@ impl PostgresSchemaStorage for PostgresStorage {
                   ON agent_tasks (status, retry_at);
                 CREATE INDEX IF NOT EXISTS idx_agent_tasks_user
                   ON agent_tasks (user_id, agent_id);
-                CREATE TABLE IF NOT EXISTS stream_events (
-                  session_id TEXT NOT NULL,
-                  event_id BIGINT NOT NULL,
-                  user_id TEXT NOT NULL,
-                  event_type TEXT,
-                  user_round BIGINT,
-                  payload TEXT NOT NULL,
-                  created_time DOUBLE PRECISION NOT NULL,
-                  PRIMARY KEY (session_id, event_id)
-                );
-                CREATE INDEX IF NOT EXISTS idx_stream_events_user
-                  ON stream_events (user_id);
-                CREATE INDEX IF NOT EXISTS idx_stream_events_time
-                  ON stream_events (created_time);
                 CREATE TABLE IF NOT EXISTS memory_settings (
                   user_id TEXT PRIMARY KEY,
                   enabled INTEGER NOT NULL,
@@ -2452,22 +1948,6 @@ impl PostgresSchemaStorage for PostgresStorage {
                     self.ensure_user_token_columns(&mut conn)?;
                     self.ensure_user_tool_access_columns(&mut conn)?;
                     self.ensure_chat_session_columns(&mut conn)?;
-                    self.ensure_thread_item_sequence(&mut conn)?;
-                    self.ensure_thread_item_block_fields(&mut conn)?;
-                    conn.batch_execute(crate::storage::thread_view_store::SCHEMA)?;
-                    self.ensure_thread_trajectory_tile_columns(&mut conn)?;
-                    conn.batch_execute(super::thread_view_store::SEARCH_SCHEMA)?;
-                    tracing::info!(
-                        elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,
-                        "postgres schema thread view ready"
-                    );
-                    // Historical view heads are discovered in bounded keyset
-                    // pages by maintenance after startup, never by a full scan
-                    // on this initialization path.
-                    // A hard cutover intentionally discards obsolete duplicate history.
-                    conn.execute("DROP TABLE IF EXISTS chat_history", &[])?;
-                    self.ensure_model_context_table_retired(&mut conn)?;
-                    self.ensure_stream_event_workflow_columns(&mut conn)?;
                     self.ensure_channel_columns(&mut conn)?;
                     self.ensure_session_lock_columns(&mut conn)?;
                     self.ensure_queue_control_schema(&mut conn)?;
@@ -2480,11 +1960,6 @@ impl PostgresSchemaStorage for PostgresStorage {
                     tracing::info!(
                         elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,
                         "postgres schema indexes ready"
-                    );
-                    self.ensure_partition_window(&mut conn)?;
-                    tracing::info!(
-                        elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,
-                        "postgres schema partitions ready"
                     );
                     conn.execute("INSERT INTO meta(key,value,updated_time) VALUES($1,$2,$3) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_time=excluded.updated_time", &[&SCHEMA_MARKER,&schema_fingerprint(),&Self::now_ts()])?;
                     self.initialized.store(true, Ordering::SeqCst);

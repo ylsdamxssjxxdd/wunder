@@ -79,7 +79,7 @@ async fn run_child_pool_scenario(messaging: bool, postgres: Option<String>) {
         config.storage.backend = "postgres".into();
         config.storage.postgres.dsn = dsn;
     }
-    config.storage.db_path = dir.path().join("test.db").to_string_lossy().into();
+    config.storage.data_root = dir.path().join("data").to_string_lossy().into();
     config.workspace.root = dir.path().join("workspace").to_string_lossy().into();
     config.llm.default = "test".into();
     config.llm.models.clear();
@@ -250,7 +250,7 @@ async fn run_child_pool_scenario(messaging: bool, postgres: Option<String>) {
         .unwrap();
         assert_eq!(result["state"], "completed");
         assert!(result["data"]["elapsed_s"].as_f64().unwrap_or(45.) < 45.);
-        assert!(state.workspace.flush_writes_async().await);
+
         {
             let captured = observed.lock().unwrap();
             assert_eq!(captured.len(), 2);

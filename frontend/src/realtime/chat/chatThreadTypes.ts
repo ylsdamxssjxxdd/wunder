@@ -9,19 +9,19 @@ export type ChatThreadField = 'content' | 'reasoning' | string;
 // Server frames (protocol v2)
 // ---------------------------------------------------------------------------
 
-/** Durable frame. One row of thread_log_changes; replayable, never dropped. */
+/** Durable frame. Canonical completed-history projection; replayable. */
 export interface ThreadChangeFrame {
   event: 'thread_change';
-  /** Session-monotonic cursor (change_seq). */
+  /** Exclusive canonical rollout cursor; values can have gaps. */
   seq: number;
-  change_type: 'item_upsert' | 'text_block' | 'turn_upsert' | 'turn_status' | string;
+  change_type: 'item_upsert' | 'turn_upsert' | 'turn_status' | string;
   item_id?: string;
   turn_id?: string;
   revision?: number;
   data: Record<string, unknown>;
 }
 
-/** Ephemeral low-latency tail append. Droppable; healed by the next text_block. */
+/** Ephemeral low-latency tail append. Droppable; replaced by the completed item. */
 export interface ThreadItemTailFrame {
   event: 'thread_item_tail';
   item_id: string;
@@ -110,17 +110,6 @@ export interface ThreadItemUpsertPayload {
   [key: string]: unknown;
 }
 
-/** change_type === 'text_block' — active-tail or completed block snapshot. */
-export interface ThreadBlockUpsertPayload {
-  item_id: string;
-  field: ChatThreadField;
-  block_index: number;
-  content_offset?: number;
-  reasoning_offset?: number;
-  content?: string;
-  reasoning?: string;
-}
-
 /** change_type === 'turn_upsert' — turn accepted (user bubble content included). */
 export interface ThreadTurnUpsertPayload {
   stop_reason?: string | null;
@@ -197,21 +186,12 @@ export interface ThreadItemState {
   revision: number;
   role: string | null;
   visibility: string | null;
-  /** Authoritative full text from the last item_upsert (may lag streamed blocks). */
+  /** Authoritative full text from the last item_upsert (may lag the ephemeral live tail). */
   content: string;
   reasoning: string;
   /** Monotonic local registration order; projection fallback ordering only. */
   order: number;
   raw: Record<string, unknown>;
-}
-
-export interface ThreadBlockState {
-  itemId: string;
-  field: ChatThreadField;
-  blockIndex: number;
-  /** UTF-16 code-unit offset of `text` inside the item field. */
-  offset: number;
-  text: string;
 }
 
 export interface ThreadTailState {
@@ -221,20 +201,12 @@ export interface ThreadTailState {
   reasoning: string;
 }
 
-export interface ThreadGapEntry {
-  frame: ThreadChangeFrame;
-  receivedAt: number;
-}
-
 export interface ChatThreadState {
   sessionId: string;
   lastSeq: number;
   turns: Map<string, ThreadTurnState>;
   items: Map<string, ThreadItemState>;
-  /** blocks per item per field, keyed by block index. */
-  blocks: Map<string, Map<ChatThreadField, Map<number, ThreadBlockState>>>;
   tails: Map<string, ThreadTailState>;
-  gap: ThreadGapEntry[];
 }
 
 /** Reducer verdict for one applied frame. */
@@ -242,16 +214,10 @@ export interface ChatThreadApplyResult {
   changed: boolean;
   /** True when list topology changed (items/turns added/removed, status flips). */
   structural: boolean;
-  /** Gap buffer overflowed; caller must resume from state.lastSeq. */
-  needResume: boolean;
   droppedEphemeral: number;
 }
 
-// Bounded buffers (plan §5.5).
-export const THREAD_GAP_MAX_FRAMES = 64;
-export const THREAD_GAP_MAX_MS = 1000;
-// stream_overflow / gap-overflow resume dispatches share one cooldown so a
-// burst of control frames collapses into a single watch resume (plan §5 M2-A).
+// Repeated overflow controls share one resume cooldown.
 export const THREAD_OVERFLOW_RESUME_COOLDOWN_MS = 800;
 
 export function emptyChatThreadState(sessionId: string): ChatThreadState {
@@ -260,8 +226,6 @@ export function emptyChatThreadState(sessionId: string): ChatThreadState {
     lastSeq: 0,
     turns: new Map(),
     items: new Map(),
-    blocks: new Map(),
     tails: new Map(),
-    gap: [],
   };
 }

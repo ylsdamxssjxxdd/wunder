@@ -27,8 +27,10 @@ use parking_lot::Mutex;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::future::Future;
+use std::hash::{Hash, Hasher};
+use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tokio_postgres::types::ToSql;
 use tokio_postgres::NoTls;
@@ -62,9 +64,6 @@ mod session_goal;
 mod session_lock_store;
 mod session_run;
 mod stress_thread;
-mod terminal_transcript_store;
-mod thread_log_store;
-mod thread_view_store;
 mod user_account_store;
 mod user_world_store;
 mod vector_document_store;
@@ -93,8 +92,6 @@ use schema::PostgresSchemaStorage;
 use session_goal::PostgresSessionGoalStorage;
 use session_lock_store::PostgresSessionLockStorage;
 use session_run::PostgresSessionRunStorage;
-use terminal_transcript_store::PostgresTerminalTranscriptStorage;
-use thread_log_store::PostgresThreadLogStorage;
 use user_account_store::PostgresUserAccountStorage;
 use user_world_store::PostgresUserWorldStorage;
 use vector_document_store::PostgresVectorDocumentStorage;
@@ -122,6 +119,11 @@ pub struct PostgresStorage {
     pool: Pool,
     initialized: AtomicBool,
     init_guard: Mutex<()>,
+    // PostgreSQL is the distributed control plane. Canonical thread rollout
+    // and bounded diagnostic facts live below this explicitly configured root.
+    data_root: PathBuf,
+    canonical_threads: OnceLock<Arc<super::thread_store::LocalThreadStore>>,
+    runtime_logs: OnceLock<Arc<super::runtime_logs::RuntimeLogs>>,
 }
 
 struct PgConn<'a> {
@@ -224,11 +226,36 @@ impl PgTx<'_> {
 }
 
 impl PostgresStorage {
+    /// Compatibility constructor for direct callers and isolated control-plane
+    /// tests. Application startup must use `new_with_data_root` so rollout
+    /// files are co-located with the configured storage root.
     pub fn new(dsn: String, connect_timeout_s: u64, pool_size: usize) -> Result<Self> {
+        // Direct test callers can connect to independent PostgreSQL schemas.
+        // Keep their local roots independent without placing DSNs on disk.
+        let mut fingerprint = std::collections::hash_map::DefaultHasher::new();
+        dsn.hash(&mut fingerprint);
+        let root = std::env::temp_dir()
+            .join("wunder-postgres-local")
+            .join(std::process::id().to_string())
+            .join(format!("{:016x}", fingerprint.finish()));
+        Self::new_with_data_root(dsn, connect_timeout_s, pool_size, root)
+    }
+
+    pub fn new_with_data_root(
+        dsn: String,
+        connect_timeout_s: u64,
+        pool_size: usize,
+        data_root: PathBuf,
+    ) -> Result<Self> {
         let cleaned = dsn.trim().to_string();
         if cleaned.is_empty() {
             return Err(anyhow!("postgres dsn is empty"));
         }
+        let data_root = if data_root.as_os_str().is_empty() {
+            PathBuf::from("./config/data")
+        } else {
+            data_root
+        };
         let timeout = Duration::from_secs(connect_timeout_s.max(1));
         let pool_size = if pool_size == 0 {
             DEFAULT_POOL_SIZE
@@ -246,7 +273,36 @@ impl PostgresStorage {
             pool,
             initialized: AtomicBool::new(false),
             init_guard: Mutex::new(()),
+            data_root,
+            canonical_threads: OnceLock::new(),
+            runtime_logs: OnceLock::new(),
         })
+    }
+
+    pub(crate) fn canonical_threads(&self) -> Result<&Arc<super::thread_store::LocalThreadStore>> {
+        if let Some(store) = self.canonical_threads.get() {
+            return Ok(store);
+        }
+        let store = Arc::new(super::thread_store::LocalThreadStore::open(
+            &self.data_root,
+        )?);
+        let _ = self.canonical_threads.set(store);
+        Ok(self
+            .canonical_threads
+            .get()
+            .expect("initialized canonical thread store"))
+    }
+
+    pub(crate) fn runtime_logs(&self) -> Result<&Arc<super::runtime_logs::RuntimeLogs>> {
+        if let Some(logs) = self.runtime_logs.get() {
+            return Ok(logs);
+        }
+        let logs = Arc::new(super::runtime_logs::RuntimeLogs::open(&self.data_root)?);
+        let _ = self.runtime_logs.set(logs);
+        Ok(self
+            .runtime_logs
+            .get()
+            .expect("initialized runtime log store"))
     }
 
     fn block_on<F, T>(&self, fut: F) -> Result<T>

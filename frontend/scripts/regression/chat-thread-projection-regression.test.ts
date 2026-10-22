@@ -51,7 +51,7 @@ test('durable plan alone reaches the composer and revisions survive replay and s
   const expected = read().plan;
   applyFrames(state, [itemUpsert(3, updated)]);
   assert.deepEqual(read().plan, expected);
-  applyChatThreadSnapshot(state, { cursor: 3, turns: [turn], items: [updated], blocks: [] });
+  applyChatThreadSnapshot(state, { cursor: 3, turns: [turn], items: [updated] });
   assert.deepEqual(read().plan, expected);
   applyFrames(state, [itemUpsert(4, textItemData(turn.turn_id, 2, { content: 'Fixture result' })), turnStatus(5, turn.turn_id, 'completed')]);
   assert.deepEqual(read().plan, expected); // answer replacement and completion retain progress
@@ -117,7 +117,7 @@ test('goal continuations share the root bubble live, after replay and after snap
   const before = read().map(row => [row.id, row.content, row.status]);
   applyChatThreadSnapshot(state, { cursor: 9,
     turns: [root, { ...child, status: 'completed' }, { ...next, status: 'completed' }],
-    items: [user, text, tool, nextText], blocks: [] }, 0);
+    items: [user, text, tool, nextText] }, 0);
   assert.deepEqual(read().map(row => [row.id, row.content, row.status]), before);
 });
 
@@ -478,27 +478,13 @@ test('chat thread projection renders the user bubble from turn content', () => {
   assert.ok(messages[1].createdSeq >= user.createdSeq);
 });
 
-test('chat thread projection composes blocks plus tail and propagates turn completion', () => {
+test('chat thread projection composes completed prefixes with live tails and propagates turn completion', () => {
   const state = emptyChatThreadState('session-projection-terminal');
   applyFrames(state, [
-    turnUpsert(1, { turn_id: 'turn-1', user_round: 0, status: 'running', content: 'hi' }),
-    itemUpsert(2, textItemData('turn-1', 0, { status: 'running', revision: 1, content: '', reasoning: '' })),
-    {
-      event: 'thread_change',
-      seq: 3,
-      change_type: 'text_block',
-      item_id: 'turn-1:text-0',
-      data: { item_id: 'turn-1:text-0', field: 'content', block_index: 0, content_offset: 0, content: 'Hello' }
-    },
-    tailFrame('turn-1:text-0', 'content', 5, ' world'),
-    {
-      event: 'thread_change',
-      seq: 4,
-      change_type: 'text_block',
-      item_id: 'turn-1:text-0',
-      data: { item_id: 'turn-1:text-0', field: 'reasoning', block_index: 0, reasoning_offset: 0, reasoning: 'thinking' }
-    },
-    tailFrame('turn-1:text-0', 'reasoning', 8, ' more')
+    turnUpsert(1, { turn_id:'turn-1',user_round:0,status:'running',content:'hi' }),
+    itemUpsert(5, textItemData('turn-1',0,{status:'running',revision:1,content:'Hello',reasoning:'thinking'})),
+    tailFrame('turn-1:text-0','content',5,' world'),
+    tailFrame('turn-1:text-0','reasoning',8,' more')
   ]);
 
   const streaming = buildChatThreadRenderableMessages(state);
@@ -510,8 +496,8 @@ test('chat thread projection composes blocks plus tail and propagates turn compl
   assert.equal(streamingBubble.reasoning, 'thinking more');
 
   applyFrames(state, [
-    itemUpsert(5, textItemData('turn-1', 0, { status: 'completed', revision: 2 })),
-    turnStatus(6, 'turn-1', 'completed')
+    itemUpsert(8, textItemData('turn-1', 0, { status: 'completed', revision: 2, content:'Hello world', reasoning:'thinking more' })),
+    turnStatus(9, 'turn-1', 'completed')
   ]);
 
   const terminal = buildChatThreadRenderableMessages(state);

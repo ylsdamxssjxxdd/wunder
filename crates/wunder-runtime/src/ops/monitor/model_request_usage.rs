@@ -21,7 +21,7 @@ impl MonitorState {
             )
         };
         if let Some(record) = to_persist {
-            self.save_record(&record);
+            self.save_record(record);
         }
         total
     }

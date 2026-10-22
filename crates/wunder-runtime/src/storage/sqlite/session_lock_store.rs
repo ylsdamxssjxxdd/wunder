@@ -39,7 +39,7 @@ impl SqliteSessionLockStorage for SqliteStorage {
         let ttl_s = ttl_s.max(1.0);
         let now = Self::now_ts();
         let expires_at = now + ttl_s;
-        let mut conn = self.open()?;
+        let mut conn = self.open_queue()?;
         let tx = match conn.transaction_with_behavior(TransactionBehavior::Immediate) {
             Ok(tx) => tx,
             Err(rusqlite::Error::SqliteFailure(err, _))
@@ -113,7 +113,7 @@ impl SqliteSessionLockStorage for SqliteStorage {
         let ttl_s = ttl_s.max(1.0);
         let now = Self::now_ts();
         let expires_at = now + ttl_s;
-        let conn = self.open()?;
+        let conn = self.open_queue()?;
         conn.execute(
             "UPDATE session_locks SET updated_time = ?, expires_at = ? WHERE session_id = ?",
             params![now, expires_at, cleaned_session],
@@ -127,7 +127,7 @@ impl SqliteSessionLockStorage for SqliteStorage {
         if cleaned_session.is_empty() {
             return Ok(());
         }
-        let conn = self.open()?;
+        let conn = self.open_queue()?;
         conn.execute(
             "DELETE FROM session_locks WHERE session_id = ?",
             params![cleaned_session],
@@ -141,7 +141,7 @@ impl SqliteSessionLockStorage for SqliteStorage {
         if cleaned_user.is_empty() {
             return Ok(0);
         }
-        let conn = self.open()?;
+        let conn = self.open_queue()?;
         let affected = conn.execute(
             "DELETE FROM session_locks WHERE user_id = ?",
             params![cleaned_user],
@@ -152,7 +152,7 @@ impl SqliteSessionLockStorage for SqliteStorage {
     fn count_session_locks_impl(&self) -> Result<i64> {
         self.ensure_initialized()?;
         let now = Self::now_ts();
-        let conn = self.open()?;
+        let conn = self.open_queue()?;
         let total = conn.query_row(
             "SELECT COUNT(*) FROM session_locks WHERE expires_at > ?",
             params![now],
@@ -168,7 +168,7 @@ impl SqliteSessionLockStorage for SqliteStorage {
             return Ok(Vec::new());
         }
         let now = Self::now_ts();
-        let conn = self.open()?;
+        let conn = self.open_queue()?;
         let mut stmt = conn.prepare(
             "SELECT session_id, user_id, agent_id, updated_time, expires_at \
              FROM session_locks WHERE user_id = ? AND expires_at > ?",

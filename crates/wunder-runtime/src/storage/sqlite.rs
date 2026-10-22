@@ -27,6 +27,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tracing::warn;
 
@@ -53,16 +54,14 @@ mod queue_control;
 mod quota_balance_store;
 mod read_connection;
 mod retention_store;
+mod runtime_state;
 mod schema;
 mod session_cleanup;
 mod session_goal;
 mod session_lock_store;
 mod session_run;
 pub(crate) mod stress_thread;
-mod terminal_transcript_store;
-mod thread_log_store;
 mod thread_open_lease_store;
-mod thread_view_store;
 mod user_account_store;
 mod user_world_store;
 mod vector_document_store;
@@ -91,8 +90,6 @@ use schema::SqliteSchemaStorage;
 use session_goal::SqliteSessionGoalStorage;
 use session_lock_store::SqliteSessionLockStorage;
 use session_run::SqliteSessionRunStorage;
-use terminal_transcript_store::SqliteTerminalTranscriptStorage;
-use thread_log_store::SqliteThreadLogStorage;
 use thread_open_lease_store::SqliteThreadOpenLeaseStorage;
 use user_account_store::SqliteUserAccountStorage;
 use user_world_store::SqliteUserWorldStorage;
@@ -111,15 +108,23 @@ pub struct SqliteStorage {
     // Keep the WAL open between short operations instead of checkpointing and
     // deleting its sidecars each time. Close after readers at storage shutdown.
     wal_anchor: Mutex<Option<Connection>>,
+    canonical_threads: OnceLock<Arc<super::thread_store::LocalThreadStore>>,
+    runtime_logs: OnceLock<Arc<super::runtime_logs::RuntimeLogs>>,
+    database_role: runtime_state::DatabaseRole,
+    runtime_databases: [OnceLock<Box<SqliteStorage>>; 4],
 }
 
 impl SqliteStorage {
     pub fn new(db_path: String) -> Self {
         let path = if db_path.trim().is_empty() {
-            PathBuf::from("./config/data/wunder.db")
+            PathBuf::from("./config/data/state_1.sqlite")
         } else {
             PathBuf::from(db_path)
         };
+        Self::with_role(path, runtime_state::DatabaseRole::State)
+    }
+
+    fn with_role(path: PathBuf, database_role: runtime_state::DatabaseRole) -> Self {
         Self {
             db_path: path,
             initialized: AtomicBool::new(false),
@@ -127,7 +132,43 @@ impl SqliteStorage {
             wal_anchor: Mutex::new(None),
             read_connections: Mutex::new(Vec::new()),
             agent_message_connection: Mutex::new(None),
+            canonical_threads: OnceLock::new(),
+            runtime_logs: OnceLock::new(),
+            database_role,
+            runtime_databases: std::array::from_fn(|_| OnceLock::new()),
         }
+    }
+
+    pub(crate) fn canonical_threads(&self) -> Result<&Arc<super::thread_store::LocalThreadStore>> {
+        if let Some(store) = self.canonical_threads.get() {
+            return Ok(store);
+        }
+        let root = self
+            .db_path
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."));
+        let store = Arc::new(super::thread_store::LocalThreadStore::open(root)?);
+        let _ = self.canonical_threads.set(store);
+        Ok(self
+            .canonical_threads
+            .get()
+            .expect("initialized canonical store"))
+    }
+
+    pub(crate) fn runtime_logs(&self) -> Result<&Arc<super::runtime_logs::RuntimeLogs>> {
+        if let Some(logs) = self.runtime_logs.get() {
+            return Ok(logs);
+        }
+        let root = self
+            .db_path
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."));
+        let logs = Arc::new(super::runtime_logs::RuntimeLogs::open(root)?);
+        let _ = self.runtime_logs.set(logs);
+        Ok(self
+            .runtime_logs
+            .get()
+            .expect("initialized diagnostic store"))
     }
 
     fn ensure_db_dir(&self) -> Result<()> {
@@ -458,8 +499,6 @@ impl SqliteStorage {
 mod tests {
     use super::SqliteStorage;
     use crate::storage::*;
-    use chrono::Local;
-    use rusqlite::params;
     use rusqlite::Connection;
     use tempfile::tempdir;
 
@@ -489,179 +528,6 @@ mod tests {
             updated_at: 1.0,
             last_login_at: None,
         }
-    }
-
-    #[test]
-    fn legacy_token_accounts_initialize_quota_once() {
-        let temp = tempdir().expect("tempdir");
-        let db_path = temp.path().join("legacy-user-accounts.db");
-        let conn = Connection::open(&db_path).expect("open sqlite");
-        conn.execute_batch(
-            "CREATE TABLE user_accounts (
-                user_id TEXT PRIMARY KEY,
-                username TEXT NOT NULL UNIQUE,
-                email TEXT,
-                password_hash TEXT NOT NULL,
-                roles TEXT NOT NULL,
-                status TEXT NOT NULL,
-                access_level TEXT NOT NULL,
-                unit_id TEXT,
-                token_balance INTEGER NOT NULL DEFAULT 0,
-                token_used_total INTEGER NOT NULL DEFAULT 0,
-                last_token_grant_date TEXT,
-                experience_total INTEGER NOT NULL DEFAULT 0,
-                is_demo INTEGER NOT NULL DEFAULT 0,
-                created_at REAL NOT NULL,
-                updated_at REAL NOT NULL,
-                last_login_at REAL
-            );",
-        )
-        .expect("create legacy user_accounts");
-        let today = Local::now().format("%Y-%m-%d").to_string();
-        conn.execute(
-            "INSERT INTO user_accounts (
-                user_id, username, email, password_hash, roles, status, access_level, unit_id,
-                token_balance, token_used_total, last_token_grant_date, experience_total, is_demo,
-                created_at, updated_at, last_login_at
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            params![
-                "user_1",
-                "user_1",
-                Option::<String>::None,
-                "hash",
-                "[\"user\"]",
-                "active",
-                "A",
-                Option::<String>::None,
-                10_000_i64,
-                2_500_i64,
-                today,
-                0_i64,
-                0_i64,
-                1.0_f64,
-                1.0_f64,
-                Option::<f64>::None,
-            ],
-        )
-        .expect("insert legacy row");
-        drop(conn);
-
-        let storage = SqliteStorage::new(db_path.to_string_lossy().to_string());
-        storage.ensure_initialized().expect("initialize storage");
-
-        let account = storage
-            .get_user_account("user_1")
-            .expect("load user")
-            .expect("user exists");
-        assert_eq!(account.quota_balance, 1_000);
-        assert_eq!(account.quota_granted_total, 1_000);
-        assert_eq!(account.quota_used_total, 0);
-        assert_eq!(
-            account.last_quota_grant_date.as_deref(),
-            Some(today.as_str())
-        );
-        let spent = storage
-            .consume_user_quota("user_1", &today, 1000, 1000)
-            .unwrap()
-            .unwrap();
-        assert_eq!(
-            (spent.balance, spent.used_total, spent.allowed),
-            (0, 1000, true)
-        );
-        drop(storage);
-        let storage = SqliteStorage::new(db_path.to_string_lossy().to_string());
-        storage.ensure_initialized().unwrap();
-        let denied = storage
-            .consume_user_quota("user_1", &today, 1000, 1)
-            .unwrap()
-            .unwrap();
-        assert_eq!(
-            (denied.balance, denied.used_total, denied.allowed),
-            (0, 1000, false)
-        );
-    }
-
-    #[test]
-    fn legacy_stream_events_gain_workflow_columns_before_their_index() {
-        let temp = tempdir().expect("tempdir");
-        let db_path = temp.path().join("legacy-stream-events.db");
-        let conn = Connection::open(&db_path).expect("open sqlite");
-        conn.execute_batch(
-            "CREATE TABLE stream_events (
-                session_id TEXT NOT NULL,
-                event_id INTEGER NOT NULL,
-                user_id TEXT NOT NULL,
-                payload TEXT NOT NULL,
-                created_time REAL NOT NULL,
-                PRIMARY KEY (session_id, event_id)
-            );
-            INSERT INTO stream_events (session_id, event_id, user_id, payload, created_time)
-            VALUES ('session-a', 1, 'user-a',
-                '{\"event\":\"tool_call\",\"data\":{\"data\":{\"user_round\":3}}}', 1);",
-        )
-        .expect("create legacy stream events");
-        drop(conn);
-
-        let storage = SqliteStorage::new(db_path.to_string_lossy().to_string());
-        storage
-            .ensure_initialized()
-            .expect("migrate legacy stream events");
-
-        let conn = Connection::open(&db_path).expect("open migrated sqlite");
-        let columns = conn
-            .prepare("PRAGMA table_info(stream_events)")
-            .expect("prepare stream event columns")
-            .query_map([], |row| row.get::<_, String>(1))
-            .expect("read stream event columns")
-            .collect::<Result<Vec<_>, _>>()
-            .expect("collect stream event columns");
-        assert!(columns.iter().any(|column| column == "event_type"));
-        assert!(columns.iter().any(|column| column == "user_round"));
-        let workflow_values: (String, Option<i64>) = conn
-            .query_row(
-                "SELECT event_type, user_round FROM stream_events WHERE session_id = 'session-a'",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .expect("read migrated workflow fields");
-        assert_eq!(workflow_values, ("tool_call".to_string(), Some(3)));
-        let index_exists: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM sqlite_master
-                 WHERE type = 'index' AND name = 'idx_stream_events_session_round'",
-                [],
-                |row| row.get(0),
-            )
-            .expect("read workflow index");
-        assert_eq!(index_exists, 1);
-    }
-
-    #[test]
-    fn legacy_thread_blocks_gain_field_identity_without_losing_rows() {
-        let temp = tempdir().expect("tempdir");
-        let db_path = temp.path().join("legacy-thread-blocks.db");
-        let conn = Connection::open(&db_path).expect("open sqlite");
-        conn.execute_batch(
-            "CREATE TABLE thread_item_blocks (
-                session_id TEXT NOT NULL, user_id TEXT NOT NULL, item_id TEXT NOT NULL,
-                block_index INTEGER NOT NULL, event_id INTEGER NOT NULL, payload TEXT NOT NULL,
-                PRIMARY KEY(session_id,item_id,block_index)
-              );
-              INSERT INTO thread_item_blocks VALUES
-                ('thread', 'owner', 'item', 0, 1, '{\"field\":\"content\",\"content\":\"text\"}');",
-        )
-        .expect("create legacy blocks");
-        drop(conn);
-
-        let storage = SqliteStorage::new(db_path.to_string_lossy().to_string());
-        storage.ensure_initialized().expect("migrate thread blocks");
-        let conn = Connection::open(&db_path).expect("open migrated sqlite");
-        let row: (String, String) = conn.query_row(
-            "SELECT field,payload FROM thread_item_blocks WHERE session_id='thread' AND item_id='item'",
-            [], |row| Ok((row.get(0)?, row.get(1)?)),
-        ).expect("read migrated block");
-        assert_eq!(row.0, "content");
-        assert!(row.1.contains("text"));
     }
 
     #[test]

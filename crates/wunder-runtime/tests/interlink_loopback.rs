@@ -39,7 +39,7 @@ const DEVICE_ID: &str = "dev-loopback-1";
 fn base_config(dir: &TempDir, db_name: &str) -> Config {
     let mut config = Config::default();
     config.storage.backend = "sqlite".to_string();
-    config.storage.db_path = dir.path().join(db_name).to_string_lossy().to_string();
+    config.storage.data_root = dir.path().join(db_name).to_string_lossy().to_string();
     config.workspace.root = dir.path().join("workspaces").to_string_lossy().to_string();
     config
 }
@@ -174,7 +174,7 @@ async fn spawn_server() -> Server {
             // `ConfigStore::new` reads the path it is given and silently falls
             // back to `Config::default()` when that file does not exist, so
             // everything reading `state.config_store` would see unrelated
-            // defaults (a `./config/data/wunder.db` storage path, another
+            // defaults (a `./config/data` storage root, another
             // workspace root) instead of this harness's database. The store
             // has to start from the config the state is built with - the same
             // reason the local node below uses `from_config`.

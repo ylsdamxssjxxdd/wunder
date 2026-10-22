@@ -2774,7 +2774,7 @@ mod tests {
 
         let mut config = Config::default();
         config.storage.backend = "sqlite".to_string();
-        config.storage.db_path = db_path.to_string_lossy().to_string();
+        config.storage.data_root = db_path.to_string_lossy().to_string();
         config.workspace.root = dir.path().join("workspaces").to_string_lossy().to_string();
         config.skills.enabled.clear();
         config.security.external_auth_key = Some("external-key".to_string());

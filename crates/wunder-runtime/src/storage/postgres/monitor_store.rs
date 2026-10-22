@@ -54,7 +54,8 @@ impl PostgresMonitorStorage for PostgresStorage {
             .get("updated_time")
             .and_then(Value::as_f64)
             .unwrap_or(0.0);
-        let payload_text = Self::json_to_string(_payload);
+        let payload_text =
+            Self::json_to_string(&crate::storage::runtime_logs::monitor_facts(_payload));
         let mut conn = self.conn()?;
         conn.execute(
             "INSERT INTO monitor_sessions (session_id, user_id, status, updated_time, payload) \

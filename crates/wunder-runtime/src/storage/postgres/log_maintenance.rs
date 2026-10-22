@@ -1,33 +1,10 @@
-//! Bounded log deletion and coordination with usage-watermark reconciliation.
+//! Bounded deletion of ephemeral PostgreSQL transport records.
 use super::{PgConn, PgTx};
-use crate::storage::{USAGE_CHAT_WATERMARK_KEY, USAGE_TOOL_WATERMARK_KEY};
 use anyhow::{ensure, Result};
-use std::error::Error;
-use std::fmt;
 use std::time::{Duration, Instant};
 use tokio_postgres::types::ToSql;
 
 pub(super) const ROW_BATCH: i64 = 1024;
-
-/// A cooperative maintenance pass could not acquire the usage-watermark
-/// advisory lock. Callers that can safely defer work use this to avoid
-/// treating normal coordination with reconciliation as a database failure.
-#[derive(Debug)]
-pub(super) struct UsageMaintenanceBusy;
-
-impl fmt::Display for UsageMaintenanceBusy {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("usage maintenance busy; retry on the next pass")
-    }
-}
-
-impl Error for UsageMaintenanceBusy {}
-
-pub(super) fn is_usage_maintenance_busy(error: &anyhow::Error) -> bool {
-    error
-        .chain()
-        .any(|cause| cause.is::<UsageMaintenanceBusy>())
-}
 
 /// Ceiling on committed batches, independent of the wall clock.  Time is the
 /// real bound; this only stops a loop that never observes it.
@@ -105,27 +82,6 @@ pub(super) fn begin<'a>(conn: &'a mut PgConn<'_>) -> Result<PgTx<'a>> {
     Ok(tx)
 }
 
-/// All usage-affecting deletes acquire the shared lock BEFORE reading their
-/// watermarks or touching rows. Reconciliation takes the exclusive lock.
-/// Try-locks avoid accumulating background jobs behind another replica.
-pub(super) fn lock_usage(tx: &mut PgTx<'_>, reconcile: bool) -> Result<()> {
-    let function = if reconcile {
-        "pg_try_advisory_xact_lock"
-    } else {
-        "pg_try_advisory_xact_lock_shared"
-    };
-    let acquired: bool = tx
-        .query_one(
-            &format!("SELECT {function}(1937202, hashtext(current_schema()))"),
-            &[],
-        )?
-        .get(0);
-    if !acquired {
-        return Err(UsageMaintenanceBusy.into());
-    }
-    Ok(())
-}
-
 /// Table and predicate come exclusively from static SQL at the call sites.
 /// tableoid is required: two monthly partitions may contain the same ctid.
 pub(super) fn delete_rows(
@@ -188,111 +144,3 @@ pub(super) fn delete_rows_all(
 ) -> Result<i64> {
     require_drained(delete_rows(conn, table, predicate, params, budget)?)
 }
-
-#[derive(Clone, Copy)]
-pub(super) enum UsageRows {
-    Chat,
-    Tool,
-}
-
-/// Delete source rows and adjust only counters admitted by the frozen usage
-/// watermark. Returning grouped deltas keeps memory bounded by ROW_BATCH.
-pub(super) fn delete_usage_rows(
-    conn: &mut PgConn<'_>,
-    source: UsageRows,
-    predicate: &str,
-    params: &[&(dyn ToSql + Sync)],
-    budget: &mut PurgeBudget,
-) -> Result<PurgeOutcome> {
-    use super::log_stats_store::{decrement_usage_summary, read_meta_f64};
-    let watermark_param = params.len() + 1;
-    let (table, key, columns, counted) = match source {
-        UsageRows::Chat => (
-            "thread_items",
-            USAGE_CHAT_WATERMARK_KEY,
-            "t.user_id,t.visibility,t.kind,t.created_time",
-            format!("visibility='user' AND kind IN ('user_message','assistant_message') AND created_time<=${watermark_param}"),
-        ),
-        UsageRows::Tool => (
-            "tool_logs",
-            USAGE_TOOL_WATERMARK_KEY,
-            "t.user_id,t.excluded,t.id",
-            format!("excluded=FALSE AND id<=${watermark_param}"),
-        ),
-    };
-    let sql = format!(
-        "WITH doomed AS MATERIALIZED (
-            SELECT tableoid,ctid FROM {table} t WHERE {predicate} LIMIT {ROW_BATCH}
-         ), del AS (
-            DELETE FROM {table} t USING doomed d
-            WHERE t.tableoid=d.tableoid AND t.ctid=d.ctid AND ({predicate}) RETURNING {columns}
-         ) SELECT user_id,COUNT(*) AS removed,COUNT(*) FILTER (WHERE {counted}) AS counted
-           FROM del GROUP BY user_id
-           UNION ALL SELECT NULL::TEXT,0,(SELECT COUNT(*) FROM doomed)
-           ORDER BY user_id NULLS LAST"
-    );
-    let mut total = 0;
-    let mut stalled = 0usize;
-    loop {
-        let mut tx = begin(conn)?;
-        let watermark = read_meta_f64(&mut tx, key)?.unwrap_or(0.0);
-        let tool_watermark = watermark as i64;
-        let mut args = params.to_vec();
-        args.push(match source {
-            UsageRows::Chat => &watermark,
-            UsageRows::Tool => &tool_watermark,
-        });
-        let mut removed = 0;
-        let mut selected = 0;
-        let mut deltas = Vec::new();
-        for row in tx.query(&sql, &args)? {
-            if let Some(user_id) = row.get::<_, Option<String>>(0) {
-                removed += row.get::<_, i64>(1);
-                deltas.push((user_id, row.get::<_, i64>(2)));
-            } else {
-                selected = row.get::<_, i64>(2);
-            }
-        }
-        let now = super::PostgresStorage::now_ts();
-        match source {
-            UsageRows::Chat => decrement_usage_summary(&mut tx, &deltas, &[], now)?,
-            UsageRows::Tool => decrement_usage_summary(&mut tx, &[], &deltas, now)?,
-        }
-        tx.commit()?;
-        total += removed;
-        budget.committed(selected);
-        stalled = if removed == 0 && selected > 0 {
-            stalled + 1
-        } else {
-            0
-        };
-        if selected < ROW_BATCH && removed == selected {
-            return Ok(PurgeOutcome {
-                removed: total,
-                drained: true,
-            });
-        }
-        if budget.exhausted() || stalled >= MAX_STALLED_BATCHES {
-            return Ok(PurgeOutcome {
-                removed: total,
-                drained: false,
-            });
-        }
-    }
-}
-
-/// Single-call purge for callers that cannot resume: a partial purge becomes
-/// an error so the durable marker survives.
-pub(super) fn delete_usage_rows_all(
-    conn: &mut PgConn<'_>,
-    source: UsageRows,
-    predicate: &str,
-    params: &[&(dyn ToSql + Sync)],
-    budget: &mut PurgeBudget,
-) -> Result<i64> {
-    require_drained(delete_usage_rows(conn, source, predicate, params, budget)?)
-}
-
-#[cfg(test)]
-#[path = "log_maintenance_tests.rs"]
-mod tests;

@@ -25,7 +25,7 @@ import {
   applyThreadChange,
   applyThreadFrame,
   applyThreadTail,
-  applyThreadTextBlock,
+  applyThreadCompletedItem,
   installChatThreadFixture,
   resolveRenderedThreadTextItem
 } from './messengerThreadFixture';
@@ -236,7 +236,7 @@ const streamLatestMessage = async () => {
     throw new Error('Canonical stream did not reach the rendered message');
   }
   // Durable settle: the block snapshot heals the ephemeral tail.
-  applyThreadTextBlock(chat, SESSION_A, target.itemId, target.turnId,
+  applyThreadCompletedItem(chat, SESSION_A, target.itemId, target.turnId,
     resolveRenderedThreadTextItem(SESSION_A)?.content || '');
   applyThreadChange(chat, SESSION_A, 'item_upsert', {
     ...target.item, item_id: target.itemId, turn_id: target.turnId, kind: 'assistant_message',
@@ -437,10 +437,10 @@ const runDurableStreamProbe = async () => {
     }
     const recoveryStartedAt = performance.now();
     // The active connection is considered lost here. Its unsent tail is
-    // healed by the next durable block delivered by the resumed watch.
+    // replaced by the completed item delivered by the resumed watch.
     apply('thread_change', {
-      cursor: 4, change_type: 'text_block', turn_id: turnId, item_id: itemId,
-      payload: { item_id: itemId, field: 'content', block_index: 0, content_offset: 0, content: chunks.join('') }
+      cursor: 4, change_type: 'item_upsert', turn_id: turnId, item_id: itemId,
+      payload: { item_id: itemId, turn_id: turnId, kind: 'assistant_message', status: 'completed', revision: 4, content: chunks.join('') }
     });
     await nextTick();
     await nextFrame();

@@ -2003,14 +2003,55 @@ fn default_server_log_retention_days() -> u64 {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct VectorStoreConfig {}
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+/// Storage roots and backend selection. Thread execution history is kept in
+/// its own rollout/history stores below `data_root`; this control-state config
+/// deliberately has no single catch-all database path.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageConfig {
-    #[serde(default)]
+    #[serde(default = "default_storage_backend")]
     pub backend: String,
+    #[serde(default = "default_storage_data_root")]
+    pub data_root: String,
     #[serde(default)]
-    pub db_path: String,
+    pub thread_store: ThreadStoreConfig,
     #[serde(default)]
     pub postgres: PostgresConfig,
+}
+
+impl Default for StorageConfig {
+    fn default() -> Self {
+        Self {
+            backend: default_storage_backend(),
+            data_root: default_storage_data_root(),
+            thread_store: ThreadStoreConfig::default(),
+            postgres: PostgresConfig::default(),
+        }
+    }
+}
+
+fn default_storage_backend() -> String {
+    "sqlite".to_string()
+}
+
+fn default_storage_data_root() -> String {
+    "./config/data".to_string()
+}
+
+/// Controls local canonical thread history below [`StorageConfig::data_root`].
+/// Compression remains opt-in, matching the Codex rollout policy.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThreadStoreConfig {
+    #[serde(default)]
+    #[serde(deserialize_with = "crate::config::deserialize_bool_from_any")]
+    pub compression_enabled: bool,
+}
+
+impl Default for ThreadStoreConfig {
+    fn default() -> Self {
+        Self {
+            compression_enabled: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -2617,8 +2658,11 @@ fn apply_storage_env_overrides(
     if let Some(value) = non_empty_env(env_lookup, "WUNDER_STORAGE_BACKEND") {
         storage.backend = value;
     }
-    if let Some(value) = non_empty_env(env_lookup, "WUNDER_SQLITE_DB_PATH") {
-        storage.db_path = value;
+    if let Some(value) = non_empty_env(env_lookup, "WUNDER_STORAGE_DATA_ROOT") {
+        storage.data_root = value;
+    }
+    if let Some(value) = env_bool(env_lookup, "WUNDER_THREAD_STORE_COMPRESSION_ENABLED") {
+        storage.thread_store.compression_enabled = value;
     }
     if let Some(value) = non_empty_env(env_lookup, "WUNDER_POSTGRES_DSN") {
         storage.postgres.dsn = value;
@@ -3137,7 +3181,7 @@ user_agents:
             r#"
 storage:
   backend: auto
-  db_path: ./config/data/wunder.db
+  data_root: ./config/data
   postgres:
     dsn: postgresql://wunder:wunder@postgres:5432/wunder
     connect_timeout_s: 5
@@ -3150,7 +3194,7 @@ storage:
             r#"
 storage:
   backend: ''
-  db_path: ''
+  data_root: ''
   postgres:
     dsn: ''
 "#,
@@ -3161,7 +3205,7 @@ storage:
         let merged: Config = serde_yaml::from_value(base).expect("parse merged config");
 
         assert_eq!(merged.storage.backend, "auto");
-        assert_eq!(merged.storage.db_path, "./config/data/wunder.db");
+        assert_eq!(merged.storage.data_root, "./config/data");
         assert_eq!(
             merged.storage.postgres.dsn,
             "postgresql://wunder:wunder@postgres:5432/wunder"
@@ -3175,7 +3219,7 @@ storage:
         config.server.port = 8000;
         config.server.mode = "cli".to_string();
         config.storage.backend = "sqlite".to_string();
-        config.storage.db_path = "local.sqlite3".to_string();
+        config.storage.data_root = "local-data".to_string();
         config.storage.postgres.dsn = "postgresql://old".to_string();
         config.storage.postgres.connect_timeout_s = 5;
         config.storage.postgres.pool_size = 8;
@@ -3189,6 +3233,8 @@ storage:
             ("WUNDER_PORT", "18000"),
             ("WUNDER_SERVER_MODE", "api"),
             ("WUNDER_STORAGE_BACKEND", "postgres"),
+            ("WUNDER_STORAGE_DATA_ROOT", "./runtime-data"),
+            ("WUNDER_THREAD_STORE_COMPRESSION_ENABLED", "true"),
             (
                 "WUNDER_POSTGRES_DSN",
                 "postgresql://wunder:wunder@wunder-postgres:5432/wunder",
@@ -3211,6 +3257,8 @@ storage:
         assert_eq!(config.server.port, 18000);
         assert_eq!(config.server.mode, "api");
         assert_eq!(config.storage.backend, "postgres");
+        assert_eq!(config.storage.data_root, "./runtime-data");
+        assert!(config.storage.thread_store.compression_enabled);
         assert_eq!(
             config.storage.postgres.dsn,
             "postgresql://wunder:wunder@wunder-postgres:5432/wunder"
@@ -3392,7 +3440,7 @@ knowledge:
 vector_store: {}
 storage:
   backend: auto
-  db_path: ./config/data/wunder.db
+  data_root: ./config/data
   postgres:
     dsn: postgresql://wunder:wunder@postgres:5432/wunder
     connect_timeout_s: 5
@@ -3431,8 +3479,10 @@ knowledge:
   bases: []
 vector_store: {}
 storage:
-  backend: ''
-  db_path: ''
+  backend: sqlite
+  data_root: ./config/data
+  thread_store:
+    compression_enabled: false
   postgres:
     dsn: ''
     connect_timeout_s: 0
@@ -3452,7 +3502,7 @@ storage:
         assert_eq!(config.skills.enabled, vec!["技能创建器".to_string()]);
         assert_eq!(config.knowledge.bases.len(), 1);
         assert_eq!(config.storage.backend, "auto");
-        assert_eq!(config.storage.db_path, "./config/data/wunder.db");
+        assert_eq!(config.storage.data_root, "./config/data");
         assert_eq!(config.tools.builtin.enabled, vec!["goal".to_string()]);
         assert_eq!(config.workspace.root, "./config/data/workspaces");
         assert_eq!(config.security.allow_commands, vec!["*".to_string()]);

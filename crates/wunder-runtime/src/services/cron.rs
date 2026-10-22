@@ -2455,7 +2455,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut config = crate::config::Config::default();
         config.storage.backend = "sqlite".into();
-        config.storage.db_path = dir.path().join("cron.db").to_string_lossy().into_owned();
+        config.storage.data_root = dir.path().join("data").to_string_lossy().into_owned();
         config.workspace.root = dir.path().join("workspace").to_string_lossy().into_owned();
         config.agent_queue.enabled = true;
         config.tools.builtin.enabled = ["execute_command", "ptc", "read_file"]

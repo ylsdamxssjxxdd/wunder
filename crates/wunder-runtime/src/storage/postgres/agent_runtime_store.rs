@@ -80,10 +80,6 @@ impl PostgresAgentRuntimeStorage for PostgresStorage {
             serde_json::to_string(&record.request_payload).unwrap_or_else(|_| "{}".to_string());
         let mut conn = self.conn()?;
         let mut tx = conn.transaction()?;
-        tx.query_opt(
-            "SELECT session_id FROM thread_logs WHERE session_id=$1 AND user_id=$2 FOR UPDATE",
-            &[&record.session_id, &cleaned_user],
-        )?;
         tx.execute(
             "INSERT INTO agent_tasks (task_id, thread_id, user_id, agent_id, session_id, status, request_payload, request_id, retry_count, retry_at, created_at, updated_at, started_at, finished_at, last_error) \
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) \
@@ -108,13 +104,11 @@ impl PostgresAgentRuntimeStorage for PostgresStorage {
                 &record.last_error,
             ],
         )?;
-        crate::storage::thread_queue::park_input(
-            &mut super::thread_view_store::Db(&mut tx),
-            cleaned_user,
-            &record.session_id,
-            &record.request_payload,
-        )?;
         tx.commit()?;
+        // Task persistence precedes the idempotent local admission transition.
+        // The two stores do not share a transaction; a retry repairs a failed
+        // transition without creating another history or accepted input copy.
+        self.park_queued_admission(record)?;
         Ok(())
     }
 

@@ -22,6 +22,8 @@ use crate::services::tools::command_sessions::CommandSessionBroker;
 use crate::services::user_world::UserWorldService;
 use crate::skills::{load_skills, SkillRegistry};
 #[cfg(any(feature = "sqlite-storage", test))]
+use crate::storage::sqlite_state_database_path;
+#[cfg(any(feature = "sqlite-storage", test))]
 use crate::storage::SqliteStorage;
 #[cfg(any(feature = "sqlite-storage", test))]
 use crate::storage::StorageLifecycle;
@@ -224,6 +226,7 @@ pub struct AppState {
     pub throughput: ThroughputManager,
     pub benchmark: BenchmarkManager,
     pub storage: Arc<dyn StorageBackend>,
+    pub thread_store: Arc<crate::storage::thread_store::LocalThreadStore>,
     /// Per-user cloud call admission (concurrency slots + bounded queue).
     pub cloud_admission: Arc<crate::api::cloud::CloudAdmissionController>,
     /// Local cloud channel (login session, model synthesis, log reporting);
@@ -246,6 +249,9 @@ impl AppState {
         let runtime_profile = options.runtime_profile;
         let runtime_capabilities = options.resolve_capabilities(&config);
         let storage = init_storage(&config)?;
+        let thread_store = Arc::new(crate::storage::thread_store::LocalThreadStore::open(
+            &config.storage.data_root,
+        )?.with_compression_enabled(config.storage.thread_store.compression_enabled));
         info!(
             "[startup][app-state] point=init_storage_done total_ms={:.1}",
             app_state_start.elapsed().as_secs_f64() * 1000.0
@@ -291,9 +297,6 @@ impl AppState {
         );
         let user_tool_manager = Arc::new(UserToolManager::new(user_tool_store.clone()));
         let user_store = Arc::new(UserStore::new(storage.clone()));
-        if options.resolved_start_thread_runtime() {
-            crate::services::thread_view_rebuild::start(storage.clone());
-        }
         let inner_visible = Arc::new(InnerVisibleService::new(
             config_store.clone(),
             workspace.clone(),
@@ -350,6 +353,7 @@ impl AppState {
             gateway.clone(),
             user_world.clone(),
             Some(cron_wake_signal.clone()),
+            thread_store.clone(),
         ));
         info!(
             "[startup][app-state] point=orchestrator_done total_ms={:.1}",
@@ -457,6 +461,7 @@ impl AppState {
             throughput,
             benchmark,
             storage,
+            thread_store,
             cloud_admission: Arc::new(crate::api::cloud::CloudAdmissionController::new()),
             cloud: Arc::clone(crate::services::cloud::shared()),
         })
@@ -500,7 +505,11 @@ fn init_storage_auto(config: &Config) -> Result<Arc<dyn StorageBackend>> {
         Ok(storage) => Ok(storage),
         Err(err) => {
             warn!("Postgres 初始化失败，已回退到 SQLite: {err}");
-            let sqlite = Arc::new(SqliteStorage::new(config.storage.db_path.clone()));
+            let sqlite = Arc::new(SqliteStorage::new(
+                sqlite_state_database_path(&config.storage)
+                    .to_string_lossy()
+                    .into_owned(),
+            ));
             sqlite.ensure_initialized()?;
             Ok(sqlite)
         }

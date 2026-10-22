@@ -86,7 +86,7 @@ fn reproject_agents(app: &MainWindow) {
     }
 }
 
-fn companion_frame(id: &str, frame: usize) -> slint::Image {
+pub(crate) fn companion_frame(id: &str, frame: usize) -> slint::Image {
     if companion_sprite::has_idle_frames(id) {
         return companion_sprite::idle_frame(id, frame);
     }
@@ -117,6 +117,8 @@ fn schedule_companion_load(id: &str) {
             if companion_sprite::store_idle_frames(&id, frames) {
                 reproject_agents(&app);
                 sync_companion_previews(&app);
+                // The pet settings library may also be showing this sprite.
+                crate::pet_settings::refresh_page(&app);
             }
         });
     });

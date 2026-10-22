@@ -66,10 +66,6 @@ pub(super) fn router() -> Router<Arc<AppState>> {
             get(admin_thread_changes),
         )
         .route(
-            "/wunder/admin/monitor/{session_id}/thread-log/items/{item_id}/content",
-            get(admin_thread_item_content),
-        )
-        .route(
             "/wunder/admin/monitor/{session_id}/cancel",
             post(admin_monitor_cancel),
         )
@@ -689,10 +685,6 @@ struct AdminThreadChangesQuery {
     item_after: Option<i64>,
     #[serde(default)]
     item_before: Option<i64>,
-    #[serde(default)]
-    from_block: Option<i64>,
-    #[serde(default)]
-    field: Option<String>,
 }
 
 fn monitor_user_id(state: &AppState, session_id: &str) -> Result<String, Response> {
@@ -793,37 +785,6 @@ async fn admin_thread_changes(
     });
     Ok(Json(
         json!({"data":{"session_id":session_id,"changes":changes,"frame":if snapshot_required {"thread_snapshot_required"} else {"thread_change"}}}),
-    ))
-}
-
-async fn admin_thread_item_content(
-    State(state): State<Arc<AppState>>,
-    AxumPath((session_id, item_id)): AxumPath<(String, String)>,
-    Query(query): Query<AdminThreadChangesQuery>,
-) -> Result<Json<Value>, Response> {
-    let session_id = session_id.trim().to_string();
-    let user_id = monitor_user_id(&state, &session_id)?;
-    let storage = state.storage.clone();
-    let lookup = session_id.clone();
-    let item_lookup = item_id.clone();
-    let field = query.field.clone();
-    let field_for_query = field.clone();
-    let from_block = query.from_block.or(query.item_after).unwrap_or(0);
-    let blocks = crate::core::blocking::run_db("api.admin.thread_log.item_content", move || {
-        storage.list_thread_item_blocks_page(
-            &user_id,
-            &lookup,
-            &item_lookup,
-            field_for_query.as_deref(),
-            from_block,
-            query.limit.unwrap_or(100).clamp(1, 100),
-            true,
-        )
-    })
-    .await
-    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    Ok(Json(
-        json!({"data":{"session_id":session_id,"item_id":item_id,"field":field,"blocks":blocks.0,"next_block":blocks.1,"has_more":blocks.2}}),
     ))
 }
 

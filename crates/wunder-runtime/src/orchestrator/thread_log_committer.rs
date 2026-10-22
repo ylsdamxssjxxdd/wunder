@@ -1,510 +1,433 @@
+//! Runtime commit boundary: canonical rollout first, derived history second.
 use crate::core::blocking;
-use crate::storage::StorageBackend;
+use crate::storage::{thread_store::LocalThreadStore, StorageBackend};
+use anyhow::{bail, Result};
 use parking_lot::Mutex;
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use tokio::sync::Mutex as AsyncMutex;
+use wunder_core::thread_store::*;
 
-/// Unified durable ThreadLog commit exit for chat v2.
-///
-/// Every ThreadLog write in the chat pipeline goes through this API:
-///   1. a per-session gate serializes commits so change order == commit order;
-///   2. the storage call runs as one short blocking transaction;
-///   3. only after the transaction succeeds is the durable cursor published
-///      to the change hub (a wake signal, never a source of truth);
-///   4. idempotent no-ops (replayed acceptance, unchanged status, repeated
-///      feedback) produce no change and no hub notification; failed commits
-///      never publish a cursor.
-///
-/// Callers must never assemble cursors themselves or notify the hub before the
-/// transaction completes.
 pub(crate) struct ThreadLogCommitter {
     storage: Arc<dyn StorageBackend>,
+    threads: Arc<LocalThreadStore>,
     hub: Arc<super::thread_change_hub::ThreadChangeHub>,
-    gates: Mutex<HashMap<String, Arc<AsyncMutex<()>>>>,
+    gates: Mutex<HashMap<String, Weak<AsyncMutex<()>>>>,
 }
 
 impl ThreadLogCommitter {
     pub fn new(
         storage: Arc<dyn StorageBackend>,
         hub: Arc<super::thread_change_hub::ThreadChangeHub>,
+        threads: Arc<LocalThreadStore>,
     ) -> Self {
         Self {
             storage,
+            threads,
             hub,
             gates: Mutex::new(HashMap::new()),
         }
     }
-
-    async fn gate(&self, session_id: &str) -> Arc<AsyncMutex<()>> {
-        let session_id = session_id.trim().to_string();
-        if session_id.is_empty() {
-            return Arc::new(AsyncMutex::new(()));
+    fn gate(&self, session: &str) -> Result<Arc<AsyncMutex<()>>> {
+        let mut gates = self.gates.lock();
+        gates.retain(|_, g| g.strong_count() > 0);
+        if let Some(g) = gates.get(session).and_then(Weak::upgrade) {
+            return Ok(g);
         }
-        self.gates.lock().entry(session_id).or_default().clone()
+        if gates.len() >= 256 {
+            bail!("active commit limit reached");
+        }
+        let gate = Arc::new(AsyncMutex::new(()));
+        gates.insert(session.to_owned(), Arc::downgrade(&gate));
+        Ok(gate)
     }
-
-    /// Publish the receipt cursor when the write actually produced a change.
-    fn publish_receipt(&self, session_id: &str, receipt: &Value) {
-        if let Some(cursor) = receipt.get("cursor").and_then(Value::as_i64) {
-            if cursor > 0 {
-                self.hub.publish(session_id, cursor);
-            }
+    pub(crate) fn publish_context_usage(&self, session: &str, payload: Value) {
+        self.hub.publish_context_usage(session, payload);
+    }
+    pub(crate) async fn latest_position(&self, session: &str) -> Result<i64> {
+        match self
+            .threads
+            .history_position(&ThreadId::new(session)?)
+            .await
+        {
+            Ok(p) => Ok(i64::try_from(p.end_ordinal_exclusive)?),
+            Err(ThreadStoreError::NotFound { .. }) => Ok(0),
+            Err(e) => Err(e.into()),
         }
     }
-
-    /// Storage helpers without receipt cursors publish the fresh latest seq.
-    fn publish_latest(&self, session_id: &str) {
-        let Ok(cursor) = self.storage.latest_thread_change_seq_by_session(session_id) else {
-            return;
-        };
-        self.hub.publish(session_id, cursor);
-    }
-
-    /// Publish an ephemeral context usage snapshot after the runtime has
-    /// produced it. The durable token value remains the source of truth; this
-    /// notification only removes avoidable UI polling latency.
-    pub(crate) fn publish_context_usage(&self, session_id: &str, payload: Value) {
-        self.hub.publish_context_usage(session_id, payload);
-    }
-
-    /// Accept a durable user turn. Returns the accepted turn payload; hub wake
-    /// happens only when this call actually allocated a new turn.
     pub(crate) async fn accept_turn(
         &self,
-        user_id: &str,
-        session_id: &str,
+        user: &str,
+        session: &str,
         input: &Value,
-    ) -> anyhow::Result<Value> {
-        let gate = self.gate(session_id).await;
+    ) -> Result<Value> {
+        let gate = self.gate(session)?;
         let _gate = gate.lock().await;
+        let admissions = self.threads.admission_store()?;
         let storage = self.storage.clone();
-        let owner = user_id.to_string();
-        let thread = session_id.to_string();
-        let consumes_question_wait = input
-            .get("root_user_round")
-            .and_then(Value::as_i64)
-            .is_none()
-            && input.pointer("/meta/type").and_then(Value::as_str) != Some("goal_command");
+        let user = user.to_owned();
+        let accepted_session = session.to_owned();
         let input = input.clone();
-        let accepted = blocking::run_db("thread_log.committer.accept", move || {
-            storage.accept_thread_turn(&owner, &thread, &input)
+        let accepted = blocking::run_db("thread_store.accept", move || {
+            if let Some(proof) = input.get("local_open_lease").filter(|v| !v.is_null()) {
+                let lease = storage.get_thread_open_lease(&accepted_session, &user)?;
+                let valid = lease.is_some_and(|lease| {
+                    lease.owner_instance_id == proof["owner"].as_str().unwrap_or_default()
+                        && lease.fencing_token == proof["token"].as_u64().unwrap_or_default()
+                        && lease.expires_at > chrono::Utc::now().timestamp_millis() as f64 / 1000.0
+                });
+                if !valid {
+                    bail!("THREAD_IN_USE: stale thread lease");
+                }
+            }
+            admissions.accept(&user, &accepted_session, &input)
         })
         .await?;
-        if accepted.get("created").and_then(Value::as_bool) == Some(true) {
-            // A real reply consumes earlier question waits. Replayed acceptance
-            // must never close a newly opened inquiry.
-            if consumes_question_wait {
-                self.settle_turns_locked(
-                    user_id,
-                    session_id,
-                    &["waiting_input"],
-                    "completed",
-                    "user_reply",
-                )
-                .await?;
-            }
-            self.publish_latest(session_id);
+        // Admission is control state and can precede the first rollout. Every
+        // committed edge wakes subscribers, including an unchanged cursor.
+        if accepted["created"] == true {
+            self.hub
+                .publish(session, self.latest_position(session).await?);
         }
         Ok(accepted)
     }
-
-    /// Update a turn and its settled items. Returns true when a durable change
-    /// was written; only then is the feeder wake published.
-    pub(crate) async fn update_turn(
+    pub(crate) async fn freeze_session(
         &self,
-        user_id: &str,
-        session_id: &str,
-        turn_id: &str,
-        status: &str,
-        summary: &str,
-        payload: &Value,
-    ) -> anyhow::Result<bool> {
-        let gate = self.gate(session_id).await;
+        user: &str,
+        session: &str,
+        prompt: &str,
+        workspace: &str,
+    ) -> Result<String> {
+        let gate = self.gate(session)?;
         let _gate = gate.lock().await;
-        let storage = self.storage.clone();
-        let owner = user_id.to_string();
-        let thread = session_id.to_string();
-        let turn = turn_id.to_string();
-        let summary = summary.to_string();
-        let status = status.to_string();
-        let payload = payload.clone();
-        let changed = blocking::run_db("thread_log.committer.update", move || {
-            storage.update_thread_turn(&owner, &thread, &turn, &status, &summary, &payload)
+        let admissions = self.threads.admission_store()?;
+        let owner = user.to_owned();
+        let id = session.to_owned();
+        blocking::run_db("thread_store.register_owner", move || {
+            admissions.register_owner(&owner, &id)
         })
         .await?;
-        if changed {
-            self.publish_latest(session_id);
+        let thread = ThreadId::new(session)?;
+        match self.threads.session_meta(&thread).await {
+            Ok(meta) => return Ok(meta.initial_system_prompt),
+            Err(ThreadStoreError::NotFound { .. }) => {}
+            Err(e) => return Err(e.into()),
+        }
+        let now = chrono::Utc::now().timestamp_millis();
+        let rollout = RolloutId::new(uuid::Uuid::new_v4().to_string())?;
+        self.threads
+            .create_thread(CreateThreadRequest {
+                metadata: ThreadMetadata {
+                    thread_id: thread.clone(),
+                    current_rollout_id: rollout.clone(),
+                    status: ThreadStatus::Active,
+                    created_at_ms: now,
+                    updated_at_ms: now,
+                    title: None,
+                    workspace_id: Some(workspace.to_owned()),
+                    pinned: false,
+                },
+                session_meta: SessionMeta {
+                    thread_id: thread,
+                    rollout_id: rollout,
+                    created_at_ms: now,
+                    source: "runtime".into(),
+                    initial_system_prompt: prompt.to_owned(),
+                    initial_memory: None,
+                    parent_thread_id: None,
+                    history_base: None,
+                    capabilities: Value::Null,
+                },
+            })
+            .await?;
+        Ok(prompt.to_owned())
+    }
+    pub(crate) async fn begin_turn(
+        &self,
+        user: &str,
+        session: &str,
+        turn: &str,
+        model: &str,
+    ) -> Result<()> {
+        self.threads
+            .begin_turn(user, &ThreadId::new(session)?, &TurnId::new(turn)?, model)
+            .await?;
+        self.hub
+            .publish(session, self.latest_position(session).await?);
+        Ok(())
+    }
+    pub(crate) async fn update_turn(
+        &self,
+        user: &str,
+        session: &str,
+        turn: &str,
+        status: &str,
+        _summary: &str,
+        payload: &Value,
+    ) -> Result<bool> {
+        let gate = self.gate(session)?;
+        let _gate = gate.lock().await;
+        let admissions = self.threads.admission_store()?;
+        let owner = user.to_owned();
+        let id = session.to_owned();
+        let tid = turn.to_owned();
+        let previous = blocking::run_db("thread_store.turn_state", move || {
+            admissions.check_owner(&owner, &id)?;
+            admissions.turn(&id, &tid)
+        })
+        .await?;
+        let Some(previous) = previous else {
+            bail!("accepted turn not found");
+        };
+        if !crate::storage::thread_admission::TurnAdmissions::can_transition(
+            previous["status"].as_str().unwrap_or_default(),
+            status,
+        ) {
+            return Ok(false);
+        }
+        let terminal = matches!(
+            status,
+            "completed" | "cancelled" | "failed" | "interrupted" | "rejected"
+        );
+        let thread = ThreadId::new(session)?;
+        let committed_cursor = if terminal && self.threads.get_thread(&thread).await.is_ok() {
+            // The accepted user body must commit before its terminal event.
+            // This is idempotent for a turn which already began execution.
+            self.threads
+                .begin_turn(user, &thread, &TurnId::new(turn)?, "")
+                .await?;
+            let now = chrono::Utc::now().timestamp_millis();
+            let event = if status == "completed" {
+                CanonicalEvent::TurnCompleted {
+                    turn_id: TurnId::new(turn)?,
+                    completed_at_ms: now,
+                }
+            } else {
+                let mut error = if payload.is_object() {
+                    payload.clone()
+                } else {
+                    json!({"error":payload})
+                };
+                error["status"] = json!(status);
+                CanonicalEvent::TurnAborted {
+                    turn_id: TurnId::new(turn)?,
+                    aborted_at_ms: now,
+                    error: Some(error),
+                }
+            };
+            let outcome = self
+                .threads
+                .append_canonical(&thread, vec![CanonicalRecord::Event(event)])
+                .await?;
+            Some(i64::try_from(
+                outcome.persisted_through.end_ordinal_exclusive,
+            )?)
+        } else {
+            None
+        };
+        let admissions = self.threads.admission_store()?;
+        let id = session.to_owned();
+        let tid = turn.to_owned();
+        let status = status.to_owned();
+        let control = payload.clone();
+        let changed = blocking::run_db("thread_store.update_turn", move || {
+            admissions.update_with_control(&id, &tid, &status, committed_cursor.is_some(), &control)
+        })
+        .await?;
+        // Publish only after the queue/control transaction is visible. Waking
+        // on the canonical append first can expose the old running state and
+        // then strand event-driven subscribers without a second notification.
+        if changed || committed_cursor.is_some() {
+            let cursor = match committed_cursor {
+                Some(cursor) => cursor,
+                None => self.latest_position(session).await?,
+            };
+            self.hub.publish(session, cursor);
         }
         Ok(changed)
     }
-
-    /// A stopped executor may already have exited into a durable input wait.
-    /// Settle that same ledger, rather than publishing a monitor-only status.
     pub(crate) async fn cancel_active_turns(
         &self,
-        user_id: &str,
-        session_id: &str,
+        user: &str,
+        session: &str,
         source: &str,
-    ) -> anyhow::Result<usize> {
-        let gate = self.gate(session_id).await;
-        let _gate = gate.lock().await;
-        self.settle_turns_locked(
-            user_id,
-            session_id,
-            &[
-                "accepted",
-                "queued",
-                "running",
-                "waiting_input",
-                "waiting_approval",
-            ],
-            "cancelled",
-            source,
-        )
-        .await
-    }
-
-    async fn settle_turns_locked(
-        &self,
-        user_id: &str,
-        session_id: &str,
-        statuses: &[&str],
-        terminal: &str,
-        source: &str,
-    ) -> anyhow::Result<usize> {
+    ) -> Result<usize> {
         let mut total = 0;
-        for status in statuses {
+        for status in [
+            "accepted",
+            "queued",
+            "running",
+            "waiting_input",
+            "waiting_approval",
+        ] {
             loop {
-                let storage = self.storage.clone();
-                let owner = user_id.to_owned();
-                let session = session_id.to_owned();
-                let status = (*status).to_owned();
-                let terminal = terminal.to_owned();
-                let source = source.to_owned();
-                let changed = blocking::run_db("thread_log.committer.settle_active", move || {
-                    let ids =
-                        storage.list_thread_turn_ids_by_status(&owner, &session, &status, 32)?;
-                    let mut changed = 0;
-                    for id in ids {
-                        changed += usize::from(storage.update_thread_turn(
-                            &owner,
-                            &session,
-                            &id,
-                            &terminal,
-                            "",
-                            &serde_json::json!({"stop_reason": source}),
-                        )?);
-                    }
-                    Ok(changed)
+                let admissions = self.threads.admission_store()?;
+                let id = session.to_owned();
+                let status = status.to_owned();
+                let ids = blocking::run_db("thread_store.active_turns", move || {
+                    admissions.ids_by_status(&id, &status, 32)
                 })
                 .await?;
-                if changed == 0 {
+                if ids.is_empty() {
                     break;
                 }
-                total += changed;
-                self.publish_latest(session_id);
-                if changed < 32 {
-                    break;
+                for turn in ids {
+                    total += usize::from(
+                        self.update_turn(
+                            user,
+                            session,
+                            &turn,
+                            "cancelled",
+                            "",
+                            &json!({"stop_reason":source}),
+                        )
+                        .await?,
+                    );
                 }
-                tokio::task::yield_now().await;
             }
         }
         Ok(total)
     }
-
-    /// Commit (upsert) a durable item version. The receipt carries the
-    /// change cursor; no-op replays return None without publishing.
-    pub(crate) async fn commit_item(
-        &self,
-        user_id: &str,
-        payload: &Value,
-    ) -> anyhow::Result<Option<Value>> {
-        let session_id = payload
-            .get("session_id")
-            .and_then(Value::as_str)
-            .unwrap_or("");
-        let gate = self.gate(session_id).await;
+    pub(crate) async fn commit_item(&self, user: &str, payload: &Value) -> Result<Option<Value>> {
+        // Running items, token patches and diagnostics belong to the live stream.
+        if !matches!(
+            payload["status"].as_str(),
+            Some("completed" | "failed" | "cancelled")
+        ) {
+            return Ok(None);
+        }
+        let session = payload["session_id"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("item has no thread"))?;
+        let gate = self.gate(session)?;
         let _gate = gate.lock().await;
-        let storage = self.storage.clone();
-        let owner = user_id.to_string();
-        let item_payload = payload.clone();
-        let receipt = blocking::run_db("thread_log.committer.item", move || {
-            storage.commit_thread_item(&owner, &item_payload)
+        let admissions = self.threads.admission_store()?;
+        let owner = user.to_owned();
+        let id = session.to_owned();
+        let turn_id = payload["turn_id"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("item has no turn"))?
+            .to_owned();
+        let turn_metadata = blocking::run_db("thread_store.item_owner", move || {
+            admissions.check_owner(&owner, &id)?;
+            admissions.turn(&id, &turn_id)
         })
         .await?;
-        // Item completion closes one model action only. The runner owns turn
-        // completion after inbox/continuation decisions and tool settlement.
-        if let Some(receipt) = receipt.as_ref() {
-            self.publish_receipt(session_id, receipt);
+        let thread = ThreadId::new(session)?;
+        let item_id = ItemId::new(
+            payload["item_id"]
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("item has no id"))?,
+        )?;
+        if let Ok(existing) = self.threads.read_item(&thread, &item_id).await {
+            if existing.item.payload == *payload {
+                return Ok(None);
+            }
+            // Completed semantic items are immutable. Later accounting belongs
+            // to usage/control state and cannot append a replacement body.
+            return Ok(None);
         }
-        Ok(receipt)
-    }
-
-    /// Append a durable item through the same unified exit. The storage layer
-    /// is the same upsert; no-op repeats return None without publishing.
-    pub(crate) async fn append_item(
-        &self,
-        user_id: &str,
-        payload: &Value,
-    ) -> anyhow::Result<Option<Value>> {
-        self.commit_item(user_id, payload).await
-    }
-
-    /// Persist one immutable text block. Returns the allocated change cursor;
-    /// an idempotent replay returns 0 without publishing.
-    pub(crate) async fn upsert_text_block(
-        &self,
-        user_id: &str,
-        session_id: &str,
-        block: &Value,
-    ) -> anyhow::Result<i64> {
-        let gate = self.gate(session_id).await;
-        let _gate = gate.lock().await;
-        let storage = self.storage.clone();
-        let owner = user_id.to_string();
-        let thread = session_id.to_string();
-        let block = block.clone();
-        let cursor = blocking::run_db("thread_log.committer.text_block", move || {
-            storage.upsert_thread_text_block(&owner, &thread, &block)
-        })
-        .await?;
-        if cursor > 0 {
-            self.hub.publish(session_id, cursor);
+        let kind = match payload["kind"].as_str().unwrap_or_default() {
+            "user_message" => CanonicalItemKind::UserMessage,
+            "assistant_message" => CanonicalItemKind::AssistantMessage,
+            "tool_call" | "tool_result" => CanonicalItemKind::ToolResult,
+            "plan" => CanonicalItemKind::Plan,
+            _ => CanonicalItemKind::Configuration,
+        };
+        let turn = TurnId::new(
+            payload["turn_id"]
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("item has no turn"))?,
+        )?;
+        let root = turn_metadata
+            .as_ref()
+            .and_then(|metadata| metadata["root_turn_id"].as_str())
+            .or_else(|| payload["root_turn_id"].as_str())
+            .unwrap_or(turn.as_str());
+        let root = TurnId::new(root)?;
+        let now = chrono::Utc::now().timestamp_millis();
+        let mut stored_payload = payload.clone();
+        stored_payload["root_turn_id"] = json!(root.as_str());
+        if stored_payload["kind"].as_str().is_none() {
+            stored_payload["kind"] = serde_json::to_value(kind)?;
         }
-        Ok(cursor)
+        let item = CanonicalItem {
+            item_id: item_id.clone(),
+            turn_id: turn.clone(),
+            root_turn_id: Some(root.clone()),
+            created_at_ms: now,
+            kind,
+            payload: stored_payload.clone(),
+            display_output: None,
+            display_output_truncated: false,
+        };
+        let outcome = self
+            .threads
+            .append_canonical(
+                &thread,
+                vec![CanonicalRecord::Event(CanonicalEvent::ItemCompleted(item))],
+            )
+            .await?;
+        let cursor = i64::try_from(outcome.persisted_through.end_ordinal_exclusive)?;
+        self.hub.publish(session, cursor);
+        // Use the same item DTO as replay: transport payload wraps item
+        // metadata, and the semantic body lives in its own payload field.
+        let mut body = stored_payload
+            .get("payload")
+            .filter(|value| value.is_object())
+            .cloned()
+            .unwrap_or_else(|| stored_payload.clone());
+        if let Some(map) = body.as_object_mut() {
+            map.remove("model_content");
+            map.remove("config_overrides");
+        }
+        let wire_item = json!({
+            "session_id":session,"turn_id":turn.as_str(),"root_turn_id":root.as_str(),
+            "item_id":item_id.as_str(),"item_index":cursor-1,"created_seq":cursor,"revision":1,
+            "kind":stored_payload["kind"],"status":stored_payload["status"],
+            "visibility":stored_payload["visibility"].as_str().unwrap_or("user"),
+            "payload":body,"created_time":now as f64/1000.0,"updated_time":now as f64/1000.0,
+        });
+        Ok(Some(
+            json!({"change_type":"item_upsert","turn_id":turn.as_str(),"item_id":item_id.as_str(),"revision":1,"cursor":cursor,"payload":wire_item}),
+        ))
     }
-
-    /// Record locked user feedback on an assistant item. Publishes only when
-    /// the feedback was actually recorded.
+    pub(crate) async fn append_item(&self, user: &str, payload: &Value) -> Result<Option<Value>> {
+        self.commit_item(user, payload).await
+    }
     pub(crate) async fn set_feedback(
         &self,
-        user_id: &str,
-        session_id: &str,
-        item_id: &str,
+        user: &str,
+        session: &str,
+        item: &str,
         vote: &str,
-    ) -> anyhow::Result<Option<Value>> {
-        let gate = self.gate(session_id).await;
-        let _gate = gate.lock().await;
-        let storage = self.storage.clone();
-        let owner = user_id.to_string();
-        let thread = session_id.to_string();
-        let item = item_id.to_string();
-        let vote = vote.to_string();
-        let feedback = blocking::run_db("thread_log.committer.feedback", move || {
-            storage.set_thread_item_feedback(&owner, &thread, &item, &vote)
+    ) -> Result<Option<Value>> {
+        let admissions = self.threads.admission_store()?;
+        let owner = user.to_owned();
+        let thread = session.to_owned();
+        blocking::run_db("thread_store.feedback_owner", move || {
+            admissions.check_owner(&owner, &thread)
         })
         .await?;
-        if feedback.is_some() {
-            self.publish_latest(session_id);
+        self.threads
+            .read_item(&ThreadId::new(session)?, &ItemId::new(item)?)
+            .await?;
+        let storage = self.storage.clone();
+        let (owner, target, item, vote) = (
+            user.to_owned(),
+            session.to_owned(),
+            item.to_owned(),
+            vote.to_owned(),
+        );
+        let changed = blocking::run_db("thread_store.feedback", move || {
+            storage.set_thread_item_feedback(&owner, &target, &item, &vote)
+        })
+        .await?;
+        if changed.is_some() {
+            self.hub
+                .publish(session, self.latest_position(session).await?);
         }
-        Ok(feedback)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    fn build_committer() -> (
-        ThreadLogCommitter,
-        std::sync::Arc<super::super::thread_change_hub::ThreadChangeHub>,
-        tempfile::TempDir,
-    ) {
-        let dir = tempfile::tempdir().unwrap();
-        let storage: Arc<dyn StorageBackend> = Arc::new(crate::storage::SqliteStorage::new(
-            dir.path()
-                .join("committer.db")
-                .to_string_lossy()
-                .into_owned(),
-        ));
-        storage.ensure_initialized().unwrap();
-        let hub = Arc::new(super::super::thread_change_hub::ThreadChangeHub::new());
-        (ThreadLogCommitter::new(storage, hub.clone()), hub, dir)
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn no_op_updates_do_not_publish_or_write() {
-        let (committer, hub, _dir) = build_committer();
-        // The hub drops publishes with no subscriber yet (poll fallback covers
-        // them), so the wake receiver must exist before the durable commit.
-        let mut wake = hub.subscribe("session-a");
-        let accepted = committer
-            .accept_turn(
-                "user-a",
-                "session-a",
-                &json!({"content":"hi","client_message_id":"msg-1"}),
-            )
-            .await
-            .unwrap();
-        assert_eq!(accepted["created"], json!(true));
-        let cursor = *wake.borrow_and_update();
-        assert!(cursor > 0);
-
-        // Re-accepting the same client message is an idempotent replay.
-        let replay = committer
-            .accept_turn(
-                "user-a",
-                "session-a",
-                &json!({"content":"hi","client_message_id":"msg-1"}),
-            )
-            .await
-            .unwrap();
-        assert_eq!(replay["turn_id"], accepted["turn_id"]);
-        assert_eq!(replay["created"], json!(false));
-        assert!(!wake.has_changed().unwrap());
-        // A no-op replay must not allocate a phantom change either.
-        assert_eq!(
-            committer
-                .storage
-                .latest_thread_change_seq_by_session("session-a")
-                .unwrap(),
-            cursor
-        );
-
-        // Repeating the same status update writes no change and wakes nothing.
-        let turn = accepted["turn_id"].as_str().unwrap();
-        let changed = committer
-            .update_turn("user-a", "session-a", turn, "accepted", "", &json!({}))
-            .await
-            .unwrap();
-        assert!(!changed);
-        assert!(!wake.has_changed().unwrap());
-    }
-
-    #[tokio::test]
-    async fn question_panel_reply_consumes_wait_and_stop_settles_durable_turns() {
-        let (committer, hub, _dir) = build_committer();
-        let mut wake = hub.subscribe("fixture-thread");
-        let first = committer
-            .accept_turn(
-                "fixture-user",
-                "fixture-thread",
-                &json!({"content":"Fixture input","client_message_id":"fixture-first"}),
-            )
-            .await
-            .unwrap();
-        let first_id = first["turn_id"].as_str().unwrap();
-        committer
-            .update_turn(
-                "fixture-user",
-                "fixture-thread",
-                first_id,
-                "waiting_input",
-                "",
-                &json!({}),
-            )
-            .await
-            .unwrap();
-        let second = committer.accept_turn("fixture-user", "fixture-thread", &json!({"content":"Fixture reply","client_message_id":"fixture-second","root_user_round":null})).await.unwrap();
-        let settled = committer
-            .storage
-            .get_thread_turn("fixture-user", "fixture-thread", first_id, 0, 1, false)
-            .unwrap()
-            .unwrap();
-        assert_eq!(settled["status"], "completed");
-        assert_eq!(settled["payload"]["stop_reason"], "user_reply");
-        assert_eq!(
-            committer
-                .storage
-                .thread_view_page("fixture-user", "fixture-thread", "chat", None, 12)
-                .unwrap()
-                .chat[0]
-                .stop_reason
-                .as_deref(),
-            Some("user_reply")
-        );
-        let second_id = second["turn_id"].as_str().unwrap();
-        committer
-            .update_turn(
-                "fixture-user",
-                "fixture-thread",
-                second_id,
-                "waiting_input",
-                "",
-                &json!({}),
-            )
-            .await
-            .unwrap();
-        committer
-            .accept_turn(
-                "fixture-user",
-                "fixture-thread",
-                &json!({"content":"Fixture reply","client_message_id":"fixture-second"}),
-            )
-            .await
-            .unwrap();
-        assert_eq!(
-            committer
-                .storage
-                .thread_view_page("fixture-user", "fixture-thread", "chat", None, 12)
-                .unwrap()
-                .runtime_status,
-            "waiting_input"
-        );
-        wake.borrow_and_update();
-        assert_eq!(
-            committer
-                .cancel_active_turns("fixture-user", "fixture-thread", "user_stop")
-                .await
-                .unwrap(),
-            1
-        );
-        assert!(wake.has_changed().unwrap());
-        let page = committer
-            .storage
-            .thread_view_page("fixture-user", "fixture-thread", "chat", None, 12)
-            .unwrap();
-        assert_eq!(page.runtime_status, "cancelled");
-        assert!(page.active_turn_id.is_empty());
-        assert_eq!(page.chat[0].status, "completed");
-        assert_eq!(page.chat[1].status, "cancelled");
-        wake.borrow_and_update();
-        assert_eq!(
-            committer
-                .cancel_active_turns("fixture-user", "fixture-thread", "user_stop")
-                .await
-                .unwrap(),
-            0
-        );
-        assert!(!wake.has_changed().unwrap());
-        assert!(committer
-            .storage
-            .list_thread_turn_ids_by_status("fixture-other", "fixture-thread", "cancelled", 32)
-            .unwrap()
-            .is_empty());
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn failing_commit_does_not_publish_cursor() {
-        let (committer, hub, _dir) = build_committer();
-        let mut wake = hub.subscribe("session-a");
-        let _ = committer
-            .accept_turn("user-a", "session-a", &json!({"content":"hi"}))
-            .await
-            .unwrap();
-        let baseline = *wake.borrow_and_update();
-
-        // A payload pointing at a foreign session owner must fail.
-        let err = committer
-            .commit_item(
-                "other-user",
-                &json!({"session_id":"session-a","turn_id":"x","item_id":"x:item",
-                         "kind":"assistant_message","status":"running","visibility":"user"}),
-            )
-            .await
-            .unwrap_err();
-        assert!(err.to_string().contains("thread owner mismatch"));
-        assert!(!wake.has_changed().unwrap());
-        assert_eq!(
-            *wake.borrow(),
-            committer
-                .storage
-                .latest_thread_change_seq_by_session("session-a")
-                .unwrap()
-        );
-        assert_eq!(*wake.borrow(), baseline);
+        Ok(changed)
     }
 }

@@ -55,6 +55,12 @@ Used to verify external requests when wunder is embedded in another system, or w
 - **SQLite**: a lightweight local database, suited to Pupa local mode (default)
 - **PostgreSQL**: a full-scale database, suited to the Hull multi-user mode
 
+### Data directory
+
+`storage.data_root` is the shared root for execution history, dedicated SQLite databases and attachment resources. Override it with `WUNDER_STORAGE_DATA_ROOT`. Pupa and Helm default to the `data/` directory in the local workbench home. Local state uses `state_1.sqlite`; canonical thread history uses JSONL files below `sessions/`, with a separate SQLite projection for paginated history.
+
+Thread execution history always uses the local canonical ThreadStore. `storage.thread_store.compression_enabled` enables cold rollout compression and defaults to `false`; its environment variable is `WUNDER_THREAD_STORE_COMPRESSION_ENABLED`. The single `storage.db_path` field and `WUNDER_SQLITE_DB_PATH` variable have been removed.
+
 ### Workspace location
 
 Where user files and agent artifacts are stored. In Hull mode, make sure the workspace directory is persistent (use NAS or network storage); do not put the workspace in a temporary directory.

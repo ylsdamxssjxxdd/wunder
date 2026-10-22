@@ -45,9 +45,9 @@ impl GatewayHarness {
             fs::create_dir_all(&workspace_root).with_context(|| {
                 format!("create workspace dir failed: {}", workspace_root.display())
             })?;
-            let db_path = temp_dir.join("gateway-regression.db");
+            let data_root = temp_dir.join("data");
             let config_path = temp_dir.join("wunder.test.yaml");
-            let config_yaml = build_test_config(port, &workspace_root, &db_path);
+            let config_yaml = build_test_config(port, &workspace_root, &data_root);
             fs::write(&config_path, config_yaml)
                 .with_context(|| format!("write config failed: {}", config_path.display()))?;
 
@@ -579,9 +579,9 @@ fn random_test_port() -> u16 {
     20_000 + (seed % 30_000) as u16
 }
 
-fn build_test_config(port: u16, workspace_root: &Path, db_path: &Path) -> String {
+fn build_test_config(port: u16, workspace_root: &Path, data_root: &Path) -> String {
     let workspace = normalize_path_for_yaml(workspace_root);
-    let db_path = normalize_path_for_yaml(db_path);
+    let data_root = normalize_path_for_yaml(data_root);
     format!(
         r#"server:
   host: "127.0.0.1"
@@ -603,7 +603,7 @@ gateway:
     - "loopback"
 storage:
   backend: "sqlite"
-  db_path: "{db_path}"
+  data_root: "{data_root}"
 workspace:
   root: "{workspace}"
 "#

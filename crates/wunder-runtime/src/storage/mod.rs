@@ -4,6 +4,9 @@
 mod agent_message_tests;
 mod backend;
 mod bridge;
+pub(crate) mod canonical_thread_log;
+#[cfg(test)]
+mod canonical_thread_log_tests;
 #[cfg(test)]
 mod cloud_tests;
 mod constants;
@@ -17,17 +20,26 @@ mod quota_tests;
 mod records;
 #[cfg(test)]
 mod refresh_token_tests;
+/// Canonical, append-only thread-history files.  This is deliberately kept
+/// separate from the legacy SQL thread-log implementation while callers move
+/// to the new ThreadStore contract.
+pub mod rollout;
+pub mod rollout_compression;
+mod runtime;
+pub(crate) mod runtime_logs;
 #[cfg(any(feature = "sqlite-storage", feature = "postgres-storage", test))]
 mod session_cleanup;
 #[cfg(any(feature = "sqlite-storage", test))]
 mod sqlite;
 pub(crate) mod stress_model;
+// The canonical history projection is deliberately isolated from the legacy
+// thread log tables. It is a rebuildable SQLite view of rollout JSONL.
+pub(crate) mod thread_admission;
+pub(crate) mod thread_history;
 #[cfg(test)]
 mod thread_lifecycle_tests;
-mod thread_queue;
+pub mod thread_store;
 mod thread_view_projection;
-mod thread_view_source;
-mod thread_view_store;
 
 pub use backend::*;
 pub use bridge::*;
@@ -35,12 +47,7 @@ pub use constants::{
     normalize_sandbox_container_id, normalize_workspace_container_id, DEFAULT_SANDBOX_CONTAINER_ID,
     MAX_SANDBOX_CONTAINER_ID, MIN_SANDBOX_CONTAINER_ID, USER_PRIVATE_CONTAINER_ID,
 };
-#[cfg(any(feature = "postgres-storage", feature = "sqlite-storage", test))]
-pub(crate) use constants::{
-    USAGE_CHAT_WATERMARK_KEY, USAGE_FULL_RECONCILE_INTERVAL_S, USAGE_FULL_RECONCILE_KEY,
-    USAGE_TOOL_WATERMARK_KEY,
-};
-pub use factory::build_storage;
+pub use factory::{build_storage, sqlite_state_database_path};
 #[cfg(feature = "postgres-storage")]
 pub use postgres::PostgresStorage;
 pub use records::*;

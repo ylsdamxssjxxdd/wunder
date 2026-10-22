@@ -218,55 +218,23 @@ impl Orchestrator {
             "hidden": true,
             COMPACTION_REPLACEMENT_HISTORY_META_KEY: entries,
         });
-        self.append_chat(
-            user_id,
-            session_id,
-            "system",
-            Some(&Value::String(String::new())),
-            None,
-            Some(&marker_meta),
-            None,
-            None,
-            None,
-            None,
-            round_info,
-        );
-        if !self.workspace.flush_writes_async().await {
-            warn!(%session_id, "local context reduction flush failed; using summary fallback");
-            return None;
-        }
-        // The shared write queue's barrier acknowledges draining, not SQL success.
-        // Verify the marker row landed before declaring the reduction persisted.
-        let storage = self.storage.clone();
-        let persisted_user_id = user_id.to_string();
-        let persisted_session_id = session_id.to_string();
-        let expected_len = marker_meta
-            .get(COMPACTION_REPLACEMENT_HISTORY_META_KEY)
-            .and_then(Value::as_array)
-            .map(Vec::len)
-            .unwrap_or(0);
-        let verified = crate::core::blocking::run_db("context.microcompaction.verify", move || {
-            let rows = storage.load_thread_context_items(
-                &persisted_user_id,
-                &persisted_session_id,
-                1,
-                true,
-            )?;
-            Ok(rows.last().is_some_and(|row| {
-                let meta = row.get("meta").and_then(Value::as_object);
-                meta.and_then(|meta| meta.get("type"))
-                    .and_then(Value::as_str)
-                    == Some(MICROCOMPACTION_META_TYPE)
-                    && meta
-                        .and_then(|meta| meta.get(COMPACTION_REPLACEMENT_HISTORY_META_KEY))
-                        .and_then(Value::as_array)
-                        .map(Vec::len)
-                        == Some(expected_len)
-            }))
-        })
-        .await;
-        if !matches!(verified, Ok(true)) {
-            warn!(%session_id, "local context replacement verification failed; using summary fallback");
+        if let Err(error) = self
+            .try_append_chat(
+                user_id,
+                session_id,
+                "system",
+                Some(&Value::String(String::new())),
+                None,
+                Some(&marker_meta),
+                None,
+                None,
+                None,
+                None,
+                round_info,
+            )
+            .await
+        {
+            warn!(%session_id, %error, "context checkpoint commit failed");
             return None;
         }
         let mut payload = json!({

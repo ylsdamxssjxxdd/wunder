@@ -108,9 +108,10 @@ impl Orchestrator {
                 None,
                 None,
                 active_turn_round,
-            );
+            )
+            .await;
         }
-        let _ = self.workspace.flush_writes_async().await;
+
         if let Some(thread_turn_id) = active_turn_round.thread_turn_id {
             let status = turn_terminal_status_for_error(err);
             let payload = json!({
@@ -200,7 +201,7 @@ impl Orchestrator {
         skip_auto_memory_extract: bool,
         llm_config: LlmModelConfig,
     ) -> Result<(), OrchestratorError> {
-        let _ = self.workspace.flush_writes_async().await;
+
         if let Some(thread_turn_id) = last_round_info.thread_turn_id {
             let status = if waiting_question_panel {
                 "waiting_input"

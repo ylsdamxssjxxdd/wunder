@@ -1,10 +1,7 @@
 use crate::core::blocking;
 use crate::i18n;
-use crate::monitor::MonitorState;
 use crate::orchestrator_constants::{
-    STREAM_EVENT_FETCH_LIMIT, STREAM_EVENT_QUEUE_SIZE, STREAM_EVENT_RESUME_POLL_BACKOFF_AFTER,
-    STREAM_EVENT_RESUME_POLL_BACKOFF_FACTOR, STREAM_EVENT_RESUME_POLL_INTERVAL_S,
-    STREAM_EVENT_RESUME_POLL_MAX_INTERVAL_S, STREAM_EVENT_SLOW_CLIENT_QUEUE_WATERMARK,
+    STREAM_EVENT_QUEUE_SIZE, STREAM_EVENT_SLOW_CLIENT_QUEUE_WATERMARK,
     STREAM_EVENT_SLOW_CLIENT_WARN_INTERVAL_S,
 };
 use crate::schemas::StreamEvent;
@@ -14,7 +11,7 @@ use axum::extract::ws::Message;
 use axum::http::header::AUTHORIZATION;
 use axum::http::header::SEC_WEBSOCKET_PROTOCOL;
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -26,8 +23,6 @@ pub(crate) const WS_PROTOCOL_VERSION: i32 = 1;
 pub(crate) const WS_PROTOCOL_MIN_VERSION: i32 = 1;
 pub(crate) const WS_PROTOCOL_MAX_VERSION: i32 = 1;
 pub(crate) const WS_MAX_MESSAGE_BYTES: usize = 512 * 1024;
-const STREAM_EVENT_HEARTBEAT_INTERVAL_S: f64 = 15.0;
-const STREAM_EVENT_IDLE_WATCH_MAX_INTERVAL_S: f64 = 5.0;
 
 /// Command tails outlive a model turn. Subscribe independently of its online
 /// queue; initial snapshots and lag recovery heal the bounded live channel.
@@ -165,11 +160,6 @@ pub(crate) struct WsPolicy {
     pub max_message_bytes: usize,
     pub stream_queue_size: usize,
     pub slow_client_queue_watermark: usize,
-    pub resume_poll_interval_s: f64,
-    pub resume_poll_max_interval_s: f64,
-    pub resume_poll_backoff_factor: f64,
-    pub resume_poll_backoff_after: usize,
-    pub stream_event_fetch_limit: i64,
 }
 
 impl WsPolicy {
@@ -178,11 +168,6 @@ impl WsPolicy {
             max_message_bytes: WS_MAX_MESSAGE_BYTES,
             stream_queue_size: STREAM_EVENT_QUEUE_SIZE,
             slow_client_queue_watermark: STREAM_EVENT_SLOW_CLIENT_QUEUE_WATERMARK,
-            resume_poll_interval_s: STREAM_EVENT_RESUME_POLL_INTERVAL_S,
-            resume_poll_max_interval_s: STREAM_EVENT_RESUME_POLL_MAX_INTERVAL_S,
-            resume_poll_backoff_factor: STREAM_EVENT_RESUME_POLL_BACKOFF_FACTOR,
-            resume_poll_backoff_after: STREAM_EVENT_RESUME_POLL_BACKOFF_AFTER,
-            stream_event_fetch_limit: STREAM_EVENT_FETCH_LIMIT,
         }
     }
 }
@@ -257,7 +242,7 @@ impl WsSender {
     }
 }
 
-/// v2 durable feeder. Every frame comes from one immutable change row and is
+/// v2 durable feeder. Every frame comes from completed canonical history and is
 /// sent through the connection's bounded writer queue. If the writer is slow,
 /// stop this subscription; the client resumes from its last applied seq.
 pub(crate) async fn resume_thread_changes_v2(
@@ -377,8 +362,14 @@ pub(crate) async fn resume_thread_view(
     cancel: Option<CancellationToken>,
 ) {
     let mut wake = state.kernel.orchestrator.change_hub.subscribe(&session_id);
-    let mut idle = 0u32;
+    let mut goal_wake = state
+        .kernel
+        .orchestrator
+        .change_hub
+        .subscribe_goal_updates(&session_id);
     let mut last_goal = None;
+    let mut last_runtime = None;
+    let mut last_row_controls = None;
     loop {
         if cancel.as_ref().is_some_and(|c| c.is_cancelled()) {
             return;
@@ -441,25 +432,46 @@ pub(crate) async fn resume_thread_view(
                 );
                 return;
             }
-            // Source cursors encode durable sequences as negative values. An
-            // unchanged source page must stay idle; changes request a refresh
-            // above instead of advancing into the projection's cursor space.
-            Ok(page) if page.epoch >= 0 && page.view_seq > after => {
-                idle = 0;
-                after = page.view_seq;
-                if try_send_ws_event(
-                    &tx,
-                    request_id,
-                    StreamEvent {
-                        event: "thread_view_change".into(),
-                        data: serde_json::to_value(page).unwrap_or(Value::Null),
-                        id: None,
-                        timestamp: Some(Utc::now()),
-                    },
-                )
-                .is_err()
-                {
-                    return;
+            Ok(page) => {
+                // Queue metadata and row status can change without advancing
+                // completed history or changing the active execution. Compare
+                // only bounded control fields; body changes use view_seq.
+                let row_controls = page
+                    .rows
+                    .iter()
+                    .map(|row| {
+                        json!([
+                            row.root_turn_id,
+                            row.execution_turn_id,
+                            row.status,
+                            row.queued_input,
+                            row.stop_reason,
+                            row.assistant.feedback,
+                        ])
+                    })
+                    .collect::<Vec<_>>();
+                let runtime = (page.runtime_status.clone(), page.active_turn_id.clone());
+                let changed = page.view_seq > after
+                    || last_runtime.as_ref() != Some(&runtime)
+                    || last_row_controls.as_ref() != Some(&row_controls);
+                if page.epoch >= 0 && changed {
+                    after = page.view_seq;
+                    last_runtime = Some(runtime);
+                    last_row_controls = Some(row_controls);
+                    if try_send_ws_event(
+                        &tx,
+                        request_id,
+                        StreamEvent {
+                            event: "thread_view_change".into(),
+                            data: serde_json::to_value(page).unwrap_or(Value::Null),
+                            id: None,
+                            timestamp: Some(Utc::now()),
+                        },
+                    )
+                    .is_err()
+                    {
+                        return;
+                    }
                 }
             }
             Err(_) => {
@@ -475,13 +487,7 @@ pub(crate) async fn resume_thread_view(
                 );
                 return;
             }
-            _ => {
-                idle = idle.saturating_add(1);
-            }
         }
-        let wait = tokio::time::sleep(std::time::Duration::from_millis(
-            (250u64 << idle.min(4)).min(4000),
-        ));
         let cancellation = async {
             if let Some(c) = cancel.as_ref() {
                 c.cancelled().await
@@ -489,7 +495,12 @@ pub(crate) async fn resume_thread_view(
                 std::future::pending::<()>().await
             }
         };
-        tokio::select! {_=cancellation=>return,_=wake.changed()=>{},_=wait=>{}}
+        tokio::select! {
+            _ = cancellation => return,
+            _ = tx.tx.closed() => return,
+            changed = wake.changed() => if changed.is_err() { return; },
+            changed = goal_wake.changed() => if changed.is_err() { return; },
+        }
     }
 }
 
@@ -516,22 +527,25 @@ pub(crate) async fn resume_queued_thread_view(
     );
     tokio::pin!(feeder);
     let mut last_task_status = String::new();
+    let mut wake = state.kernel.orchestrator.change_hub.subscribe(&session);
     loop {
-        tokio::select! {
-            _=&mut feeder=>return,
-            _=tokio::time::sleep(std::time::Duration::from_millis(500))=>{}
-        }
-        if cancel.as_ref().is_some_and(|c| c.is_cancelled()) {
-            return;
-        }
+        wake.borrow_and_update();
         let users = state.user_store.clone();
         let id = queue.clone();
-        let task = blocking::run_view("api.ws.thread_view.queue", move || {
-            users.get_agent_task(&id)
-        })
-        .await
-        .ok()
-        .flatten();
+        let task = tokio::select! {
+            _ = &mut feeder => return,
+            _ = tx.tx.closed() => return,
+            _ = async {
+                if let Some(token) = cancel.as_ref() {
+                    token.cancelled().await;
+                } else {
+                    std::future::pending::<()>().await;
+                }
+            } => return,
+            result = blocking::run_view("api.ws.thread_view.queue", move || {
+                users.get_agent_task(&id)
+            }) => result.ok().flatten(),
+        };
         if let Some(task) = task {
             if task.session_id != session {
                 return;
@@ -554,16 +568,25 @@ pub(crate) async fn resume_queued_thread_view(
                 );
                 return;
             }
-            // A queued request is accepted before it starts, so an older
-            // display cursor can miss the hand-off row while the queue feeder
-            // is switching subscriptions. Re-send the bounded current view
-            // at the running edge; the client merges by row revision and
-            // receives the user bubble without a page refresh.
+            // Running is control state and may keep the same canonical
+            // cursor. Send its bounded snapshot immediately; subsequent
+            // canonical commits wake the feeder independently.
             if task.status == "running" && last_task_status != "running" {
-                tokio::time::sleep(std::time::Duration::from_millis(40)).await;
                 send_final_thread_view(&state, &session, &user, request, &tx).await;
             }
             last_task_status = task.status.clone();
+        }
+        tokio::select! {
+            _ = &mut feeder => return,
+            _ = tx.tx.closed() => return,
+            _ = async {
+                if let Some(token) = cancel.as_ref() {
+                    token.cancelled().await;
+                } else {
+                    std::future::pending::<()>().await;
+                }
+            } => return,
+            changed = wake.changed() => if changed.is_err() { return; },
         }
     }
 }
@@ -1149,337 +1172,34 @@ pub(crate) async fn resume_stream_events(
     request_id: Option<&str>,
     tx: WsSender,
     cancel: Option<CancellationToken>,
-    keep_alive: bool,
-    mut notify: Option<tokio::sync::watch::Receiver<i64>>,
+    _keep_alive: bool,
+    _notify: Option<tokio::sync::watch::Receiver<i64>>,
 ) {
-    let workspace = state.workspace.clone();
-    let monitor = state.monitor.clone();
-    let user_store = state.user_store.clone();
-    let base_interval = std::time::Duration::from_secs_f64(STREAM_EVENT_RESUME_POLL_INTERVAL_S);
-    let heartbeat_interval = std::time::Duration::from_secs_f64(STREAM_EVENT_HEARTBEAT_INTERVAL_S);
-    let mut idle_rounds: usize = 0;
-    let mut poll_interval = base_interval;
-    let mut last_change_seq = after_change_seq;
-    let mut last_status = String::new();
-    let mut last_heartbeat = std::time::Instant::now();
-    loop {
-        if cancel
-            .as_ref()
-            .map(|token| token.is_cancelled())
-            .unwrap_or(false)
-        {
-            return;
-        }
-        let session_id_snapshot = session_id.clone();
-        let workspace_snapshot = workspace.clone();
-        let records = blocking::run_fs("api.ws_helpers.resume_stream_events", move || {
-            workspace_snapshot.try_load_thread_changes(
-                &session_id_snapshot,
-                last_change_seq,
-                STREAM_EVENT_FETCH_LIMIT,
-            )
-        })
-        .await;
-        let records = match records {
-            Ok(records) => records,
-            Err(err) => {
-                let _ =
-                    send_ws_error(&tx, request_id, "THREAD_RECOVERY_FAILED", err.to_string()).await;
-                return;
-            }
-        };
-        let full_page = records
-            .iter()
-            .filter(|record| record["event"] == "thread_change")
-            .count()
-            >= STREAM_EVENT_FETCH_LIMIT as usize;
-        let mut progressed = false;
-        for record in records {
-            let Some(event) = map_stream_event(record) else {
-                continue;
-            };
-            if let Some(cursor) = event.data["cursor"].as_i64() {
-                last_change_seq = last_change_seq.max(cursor);
-            }
-            let snapshot_required = event.event == "thread_snapshot_required";
-            if send_ws_event(&tx, request_id, event).await.is_err() {
-                return;
-            }
-            if snapshot_required {
-                return;
-            }
-            progressed = true;
-        }
-        let activity = crate::services::chat_runtime_projection::load_chat_session_activity(
-            &state,
-            &session_id,
-            monitor.get_record(&session_id).as_ref(),
-        )
-        .await;
-        let queued = has_active_queue_task(user_store.as_ref(), &session_id);
-        let running = activity.running || queued;
-        let status = activity
-            .runtime
-            .as_ref()
-            .and_then(|v| v["thread_status"].as_str())
-            .filter(|_| activity.running || !queued)
-            .unwrap_or(if activity.running {
-                "running"
-            } else if queued {
-                "queued"
-            } else {
-                "idle"
-            })
-            .to_string();
-
-        // Drain retained pages before publishing idle, otherwise intermediate
-        // text pages would repeatedly reopen and settle the same message.
-        if !full_page && (status != last_status || progressed) {
-            let mut data = activity
-                .runtime
-                .unwrap_or_else(|| json!({"thread_status":status,"loaded":true}));
-            data["thread_status"] = json!(status);
-            data["recovery"] = json!(true);
-            data["cursor"] = json!(last_change_seq);
-            if send_ws_event(
-                &tx,
-                request_id,
-                StreamEvent {
-                    event: "thread_status".into(),
-                    data,
-                    id: None,
-                    timestamp: Some(Utc::now()),
-                },
-            )
-            .await
-            .is_err()
-            {
-                return;
-            }
-            last_status = status;
-        }
-        if !progressed {
-            if running && last_heartbeat.elapsed() >= heartbeat_interval {
-                let heartbeat = StreamEvent {
-                    event: "heartbeat".to_string(),
-                    data: json!({
-                        "ts": Utc::now().to_rfc3339(),
-                        "running": running,
-                    }),
-                    id: None,
-                    timestamp: Some(Utc::now()),
-                };
-                if send_ws_event(&tx, request_id, heartbeat).await.is_err() {
-                    return;
-                }
-                last_heartbeat = std::time::Instant::now();
-            }
-            if !running && !keep_alive {
-                break;
-            }
-            idle_rounds = idle_rounds.saturating_add(1);
-            if idle_rounds > STREAM_EVENT_RESUME_POLL_BACKOFF_AFTER {
-                let next = poll_interval.as_secs_f64() * STREAM_EVENT_RESUME_POLL_BACKOFF_FACTOR;
-                let max_interval = if running {
-                    STREAM_EVENT_RESUME_POLL_MAX_INTERVAL_S
-                } else {
-                    STREAM_EVENT_IDLE_WATCH_MAX_INTERVAL_S
-                };
-                poll_interval = std::time::Duration::from_secs_f64(next.min(max_interval));
-            }
-            let changed = {
-                let mut notify = notify.clone();
-                async move {
-                    match notify.as_mut() {
-                        Some(receiver) => {
-                            let _ = receiver.changed().await;
-                        }
-                        None => std::future::pending::<()>().await,
-                    }
-                }
-            };
-            if let Some(token) = cancel.as_ref() {
-                tokio::select! {
-                    _ = token.cancelled() => return,
-                    _ = changed => {
-                        // Durable progress landed while we were idle: read
-                        // immediately instead of waiting out the backoff.
-                        if let Some(receiver) = notify.as_mut() {
-                            if *receiver.borrow_and_update() > last_change_seq {
-                                idle_rounds = 0;
-                                poll_interval = base_interval;
-                            }
-                        }
-                    }
-                    _ = tokio::time::sleep(poll_interval) => {}
-                }
-            } else {
-                tokio::select! {
-                    _ = changed => {
-                        if let Some(receiver) = notify.as_mut() {
-                            if *receiver.borrow_and_update() > last_change_seq {
-                                idle_rounds = 0;
-                                poll_interval = base_interval;
-                            }
-                        }
-                    }
-                    _ = tokio::time::sleep(poll_interval) => {}
-                }
-            }
-        } else {
-            last_heartbeat = std::time::Instant::now();
-            idle_rounds = 0;
-            poll_interval = base_interval;
-        }
-    }
+    resume_thread_changes_v2(state, session_id, after_change_seq, request_id, tx, cancel).await;
 }
 
 pub(crate) async fn resume_queued_stream_events(
     state: Arc<AppState>,
     session_id: String,
     queue_id: String,
-    _after_change_seq: i64,
+    after_change_seq: i64,
     request_id: Option<&str>,
     tx: WsSender,
     cancel: Option<CancellationToken>,
 ) {
-    let user_store = state.user_store.clone();
-    let base_interval = std::time::Duration::from_secs_f64(STREAM_EVENT_RESUME_POLL_INTERVAL_S);
-    let heartbeat_interval = std::time::Duration::from_secs_f64(STREAM_EVENT_HEARTBEAT_INTERVAL_S);
-    let mut poll_interval = base_interval;
-    let mut idle_rounds = 0usize;
-    let mut last_heartbeat = std::time::Instant::now();
-    let mut last_status = String::new();
-    loop {
-        if cancel.as_ref().is_some_and(|token| token.is_cancelled()) {
-            return;
-        }
-        let task = user_store.get_agent_task(&queue_id).ok().flatten();
-        let Some(task) = task else {
-            return;
-        };
-        if task.session_id != session_id {
-            return;
-        }
-        let status = task.status.trim().to_string();
-        let event = match status.as_str() {
-            "pending" | "retry" => Some("queued"),
-            "running" => Some("queue_start"),
-            "success" => Some("queue_finish"),
-            "failed" | "cancelled" | "dead" => Some("queue_fail"),
-            _ => None,
-        };
-        if status != last_status {
-            if let Some(kind) = event {
-                let data = json!({"queue_id":queue_id,"thread_id":task.thread_id,"session_id":task.session_id,"status":status,"queue_ahead":task.request_payload.get("queue_ahead"),"queue_total":task.request_payload.get("queue_total")});
-                if send_ws_event(
-                    &tx,
-                    request_id,
-                    StreamEvent {
-                        event: kind.into(),
-                        data,
-                        id: None,
-                        timestamp: Some(Utc::now()),
-                    },
-                )
-                .await
-                .is_err()
-                {
-                    return;
-                }
-            }
-            last_status = status.clone();
-        }
-        if matches!(status.as_str(), "success" | "failed" | "cancelled" | "dead") {
-            return;
-        }
-        if last_heartbeat.elapsed() >= heartbeat_interval {
-            let running = status == "running";
-            if send_ws_event(
-                &tx,
-                request_id,
-                StreamEvent {
-                    event: "heartbeat".into(),
-                    data: json!({"ts":Utc::now().to_rfc3339(),"running":running}),
-                    id: None,
-                    timestamp: Some(Utc::now()),
-                },
-            )
-            .await
-            .is_err()
-            {
-                return;
-            }
-            last_heartbeat = std::time::Instant::now();
-        }
-        idle_rounds = idle_rounds.saturating_add(1);
-        if idle_rounds > STREAM_EVENT_RESUME_POLL_BACKOFF_AFTER {
-            poll_interval = std::time::Duration::from_secs_f64(
-                (poll_interval.as_secs_f64() * STREAM_EVENT_RESUME_POLL_BACKOFF_FACTOR)
-                    .min(STREAM_EVENT_RESUME_POLL_MAX_INTERVAL_S),
-            );
-        }
-        if let Some(token) = cancel.as_ref() {
-            tokio::select! { _ = token.cancelled() => return, _ = tokio::time::sleep(poll_interval) => {} }
-        } else {
-            tokio::time::sleep(poll_interval).await;
-        }
-    }
-}
-
-fn is_stream_active_status(status: &str) -> bool {
-    matches!(
-        status,
-        MonitorState::STATUS_RUNNING
-            | MonitorState::STATUS_CANCELLING
-            | MonitorState::STATUS_QUEUED
-            | MonitorState::STATUS_WAITING
+    // Queue lifecycle entries are immutable canonical items, so they use the
+    // same event-driven replay as normal history. The queue id narrows only
+    // the terminal boundary; unrelated thread events retain their order.
+    resume_queued_thread_changes_v2(
+        state,
+        session_id,
+        queue_id,
+        after_change_seq,
+        request_id,
+        tx,
+        cancel,
     )
-}
-
-fn has_active_queue_task(user_store: &crate::user_store::UserStore, session_id: &str) -> bool {
-    let cleaned_session = session_id.trim();
-    if cleaned_session.is_empty() {
-        return false;
-    }
-    let thread_id = format!("thread_{cleaned_session}");
-    user_store
-        .list_agent_tasks_by_thread(&thread_id, None, 8)
-        .map(|tasks| {
-            tasks.iter().any(|task| {
-                task.status == "pending" || task.status == "retry" || task.status == "running"
-            })
-        })
-        .unwrap_or(false)
-}
-
-fn queue_event_kind(event: &StreamEvent) -> Option<&str> {
-    let normalized_event = event.event.trim();
-    match normalized_event {
-        "queue_enter" | "queue_update" | "queue_start" | "queue_finish" | "queue_fail" => {
-            Some(normalized_event)
-        }
-        _ => None,
-    }
-}
-
-fn is_terminal_queue_event_kind(kind: &str) -> bool {
-    kind == "queue_finish" || kind == "queue_fail"
-}
-
-fn is_queue_event_for_queue(event: &StreamEvent, queue_id: &str) -> bool {
-    let expected_queue_id = queue_id.trim();
-    if expected_queue_id.is_empty() {
-        return true;
-    }
-    let candidate = event
-        .data
-        .get("queue_id")
-        .or_else(|| event.data.get("queueId"))
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .trim();
-    candidate == expected_queue_id
+    .await;
 }
 
 pub(crate) fn has_ws_protocol_token(headers: &HeaderMap) -> bool {
@@ -1515,23 +1235,6 @@ fn extract_ws_protocol_token(headers: &HeaderMap) -> Option<String> {
     None
 }
 
-fn map_stream_event(record: Value) -> Option<StreamEvent> {
-    let event_id = record.get("event_id").and_then(Value::as_i64);
-    let event_type = record.get("event").and_then(Value::as_str)?;
-    let data = record.get("data").cloned().unwrap_or(Value::Null);
-    let timestamp = record
-        .get("timestamp")
-        .and_then(Value::as_str)
-        .and_then(|text| DateTime::parse_from_rfc3339(text).ok())
-        .map(|dt| dt.with_timezone(&Utc));
-    Some(StreamEvent {
-        event: event_type.to_string(),
-        data,
-        id: event_id.map(|value| value.to_string()),
-        timestamp,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1546,10 +1249,7 @@ mod tests {
         let root = temp_dir.path().to_path_buf();
         let mut config = Config::default();
         config.storage.backend = "sqlite".to_string();
-        config.storage.db_path = root
-            .join(format!("{name}.db"))
-            .to_string_lossy()
-            .to_string();
+        config.storage.data_root = root.join(format!("{name}")).to_string_lossy().to_string();
         config.workspace.root = root.join("workspaces").to_string_lossy().to_string();
         config.skills.enabled.clear();
         let config_store = ConfigStore::new(root.join("wunder.yaml"));
@@ -1577,28 +1277,6 @@ mod tests {
             .and_then(Value::as_str)
             .unwrap_or("")
             .to_string()
-    }
-
-    fn parse_ws_event_id(raw: &str) -> i64 {
-        let payload: Value = serde_json::from_str(raw).expect("parse ws payload");
-        payload
-            .get("payload")
-            .and_then(|value| value.get("id"))
-            .and_then(Value::as_str)
-            .and_then(|value| value.parse::<i64>().ok())
-            .unwrap_or(0)
-    }
-
-    #[test]
-    fn queue_event_matching_requires_queue_id_when_expected_is_known() {
-        let event = StreamEvent {
-            event: "queue_finish".to_string(),
-            data: json!({}),
-            id: Some("1".to_string()),
-            timestamp: None,
-        };
-        assert!(!is_queue_event_for_queue(&event, "queue-known"));
-        assert!(is_queue_event_for_queue(&event, ""));
     }
 
     #[tokio::test]
@@ -1676,235 +1354,154 @@ mod tests {
         record.phase = "paused".into();
         record.revision = 2;
         state.storage.upsert_session_goal(&record).unwrap();
+        state
+            .kernel
+            .orchestrator
+            .change_hub
+            .publish_goal_update(session, json!({"phase":"paused"}));
         assert_eq!(next_goal(&mut rx).await["phase"], "paused");
         state.storage.delete_session_goal(user, session).unwrap();
+        state
+            .kernel
+            .orchestrator
+            .change_hub
+            .publish_goal_update(session, Value::Null);
         assert!(next_goal(&mut rx).await.is_null());
         cancel.cancel();
         task.await.unwrap();
     }
 
     #[tokio::test]
-    async fn queued_resume_uses_anchor_and_stops_at_matching_terminal_event() {
-        let (state, _temp_dir) = build_test_state("queued-resume-anchor").await;
-        let session_id = "sess_queued_resume_anchor";
-        let user_id = "user_queued_resume_anchor";
-
-        state
-            .storage
-            .append_stream_event(
-                session_id,
-                user_id,
-                1,
-                &json!({
-                    "event": "llm_output_delta",
-                    "data": { "delta": "old" },
-                    "timestamp": "2026-03-07T00:00:00+08:00"
-                }),
+    async fn display_watch_wakes_for_control_status_with_unchanged_rollout_cursor() {
+        let (state, _dir) = build_test_state("control-display-fixture").await;
+        let committer = &state.kernel.orchestrator.committer;
+        let accepted = committer
+            .accept_turn(
+                "fixture-user",
+                "fixture-thread",
+                &json!({"content":"sample"}),
             )
-            .expect("append old event");
-        state
-            .storage
-            .append_stream_event(
-                session_id,
-                user_id,
-                2,
-                &json!({
-                    "event": "queue_enter",
-                    "data": { "queue_id": "queue-a" },
-                    "timestamp": "2026-03-07T00:00:01+08:00"
-                }),
+            .await
+            .unwrap();
+        committer
+            .freeze_session(
+                "fixture-user",
+                "fixture-thread",
+                "sample prompt",
+                "fixture-workspace",
             )
-            .expect("append queue enter");
-        state
+            .await
+            .unwrap();
+        let turn = accepted["turn_id"].as_str().unwrap();
+        committer
+            .begin_turn("fixture-user", "fixture-thread", turn, "fixture-model")
+            .await
+            .unwrap();
+        let after = state
             .storage
-            .append_stream_event(
-                session_id,
-                user_id,
-                3,
-                &json!({
-                    "event": "queue_start",
-                    "data": { "queue_id": "queue-a" },
-                    "timestamp": "2026-03-07T00:00:02+08:00"
-                }),
-            )
-            .expect("append queue start");
-        state
-            .storage
-            .append_stream_event(
-                session_id,
-                user_id,
-                4,
-                &json!({
-                    "event": "llm_output_delta",
-                    "data": { "delta": "current" },
-                    "timestamp": "2026-03-07T00:00:03+08:00"
-                }),
-            )
-            .expect("append current delta");
-        state
-            .storage
-            .append_stream_event(
-                session_id,
-                user_id,
-                5,
-                &json!({
-                    "event": "queue_finish",
-                    "data": { "queue_id": "queue-a" },
-                    "timestamp": "2026-03-07T00:00:04+08:00"
-                }),
-            )
-            .expect("append queue finish");
-        state
-            .storage
-            .append_stream_event(
-                session_id,
-                user_id,
-                6,
-                &json!({
-                    "event": "llm_output_delta",
-                    "data": { "delta": "next-turn" },
-                    "timestamp": "2026-03-07T00:00:05+08:00"
-                }),
-            )
-            .expect("append later event");
-
-        let (tx, mut rx) = mpsc::channel::<Message>(8);
-        resume_queued_stream_events(
-            state,
-            session_id.to_string(),
-            "queue-a".to_string(),
-            1,
-            Some("req-queue-a"),
-            WsSender::new(tx),
+            .latest_thread_change_seq_by_session("fixture-thread")
+            .unwrap();
+        let (tx, mut rx) = mpsc::channel(16);
+        let cancel = CancellationToken::new();
+        let task = tokio::spawn(resume_thread_view(
+            state.clone(),
+            "fixture-thread".into(),
+            "fixture-user".into(),
+            after,
             None,
-        )
-        .await;
-
-        let mut events = Vec::new();
-        while let Ok(Some(Message::Text(raw))) =
-            tokio::time::timeout(Duration::from_millis(20), rx.recv()).await
-        {
-            events.push(raw.to_string());
-        }
-        assert_eq!(
-            events
-                .iter()
-                .map(|raw| parse_ws_event_type(raw))
-                .collect::<Vec<_>>(),
-            vec![
-                "queue_enter",
-                "queue_start",
-                "llm_output_delta",
-                "queue_finish"
-            ]
-        );
-        assert_eq!(
-            events
-                .iter()
-                .map(|raw| parse_ws_event_id(raw))
-                .collect::<Vec<_>>(),
-            vec![2, 3, 4, 5]
-        );
-    }
-
-    #[tokio::test]
-    async fn queued_resume_does_not_forward_previous_task_tail_before_queue_start() {
-        let (state, _temp_dir) = build_test_state("queued-resume-previous-tail").await;
-        let session_id = "sess_queued_resume_previous_tail";
-        let user_id = "user_queued_resume_previous_tail";
-        for (event_id, payload) in [
-            (
-                1,
-                json!({
-                    "event": "queue_enter",
-                    "data": { "queue_id": "queue-new" },
-                    "timestamp": "2026-03-07T00:00:00+08:00"
-                }),
-            ),
-            (
-                2,
-                json!({
-                    "event": "llm_output_delta",
-                    "data": { "delta": "old-task-tail" },
-                    "timestamp": "2026-03-07T00:00:01+08:00"
-                }),
-            ),
-            (
-                3,
-                json!({
-                    "event": "queue_finish",
-                    "data": { "queue_id": "queue-old" },
-                    "timestamp": "2026-03-07T00:00:02+08:00"
-                }),
-            ),
-            (
-                4,
-                json!({
-                    "event": "queue_start",
-                    "data": { "queue_id": "queue-new" },
-                    "timestamp": "2026-03-07T00:00:03+08:00"
-                }),
-            ),
-            (
-                5,
-                json!({
-                    "event": "llm_output_delta",
-                    "data": { "delta": "new-task" },
-                    "timestamp": "2026-03-07T00:00:04+08:00"
-                }),
-            ),
-            (
-                6,
-                json!({
-                    "event": "queue_finish",
-                    "data": { "queue_id": "queue-new" },
-                    "timestamp": "2026-03-07T00:00:05+08:00"
-                }),
-            ),
-        ] {
-            state
-                .storage
-                .append_stream_event(session_id, user_id, event_id, &payload)
-                .expect("append stream event");
-        }
-
-        let (tx, mut rx) = mpsc::channel::<Message>(8);
-        resume_queued_stream_events(
-            state,
-            session_id.to_string(),
-            "queue-new".to_string(),
-            0,
-            Some("req-queue-new"),
             WsSender::new(tx),
-            None,
-        )
-        .await;
-
-        let mut events = Vec::new();
-        while let Ok(Some(Message::Text(raw))) =
-            tokio::time::timeout(Duration::from_millis(20), rx.recv()).await
-        {
-            events.push(raw.to_string());
+            Some(cancel.clone()),
+        ));
+        async fn next_status(rx: &mut mpsc::Receiver<Message>, status: &str) -> Value {
+            tokio::time::timeout(Duration::from_secs(3), async {
+                loop {
+                    let Some(Message::Text(raw)) = rx.recv().await else {
+                        panic!("display closed")
+                    };
+                    let value: Value = serde_json::from_str(&raw).unwrap();
+                    let payload = &value["payload"];
+                    if payload["event"] == "thread_view_change"
+                        && payload["data"]["runtime_status"] == status
+                    {
+                        return payload["data"].clone();
+                    }
+                }
+            })
+            .await
+            .unwrap()
         }
+        assert_eq!(next_status(&mut rx, "running").await["view_seq"], after);
+        committer
+            .update_turn(
+                "fixture-user",
+                "fixture-thread",
+                turn,
+                "waiting_input",
+                "",
+                &json!({}),
+            )
+            .await
+            .unwrap();
         assert_eq!(
-            events
-                .iter()
-                .map(|raw| parse_ws_event_type(raw))
-                .collect::<Vec<_>>(),
-            vec![
-                "queue_enter",
-                "queue_start",
-                "llm_output_delta",
-                "queue_finish"
-            ]
+            next_status(&mut rx, "waiting_input").await["view_seq"],
+            after
         );
-        assert_eq!(
-            events
-                .iter()
-                .map(|raw| parse_ws_event_id(raw))
-                .collect::<Vec<_>>(),
-            vec![1, 4, 5, 6]
+        let queued = committer
+            .accept_turn(
+                "fixture-user",
+                "fixture-thread",
+                &json!({"content":"next sample"}),
+            )
+            .await
+            .unwrap();
+        let queued_turn = queued["turn_id"].as_str().unwrap();
+        for (reason, priority) in [("wait", 0), ("promoted", 1)] {
+            assert!(committer
+                .update_turn(
+                    "fixture-user",
+                    "fixture-thread",
+                    queued_turn,
+                    "queued",
+                    "",
+                    &json!({"queued_input":{"queue_id":"fixture-task",
+                    "reason":reason,"priority":priority}})
+                )
+                .await
+                .unwrap());
+            let page = tokio::time::timeout(Duration::from_secs(3), async {
+                loop {
+                    let Some(Message::Text(raw)) = rx.recv().await else {
+                        panic!("display closed")
+                    };
+                    let value: Value = serde_json::from_str(&raw).unwrap();
+                    let payload = &value["payload"];
+                    if payload["event"] == "thread_view_change"
+                        && payload["data"]["rows"].as_array().is_some_and(|rows| {
+                            rows.iter().any(|row| {
+                                row["root_turn_id"] == queued_turn
+                                    && row["queued_input"]["reason"] == reason
+                                    && row["queued_input"]["priority"] == priority
+                            })
+                        })
+                    {
+                        break payload["data"].clone();
+                    }
+                }
+            })
+            .await
+            .unwrap();
+            assert_eq!(page["view_seq"], after);
+            assert_eq!(page["runtime_status"], "waiting_input");
+            assert_eq!(page["active_turn_id"], turn);
+        }
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), rx.recv())
+                .await
+                .is_err(),
+            "idle view must emit no timer updates"
         );
+        cancel.cancel();
+        task.await.unwrap();
     }
 
     #[tokio::test]

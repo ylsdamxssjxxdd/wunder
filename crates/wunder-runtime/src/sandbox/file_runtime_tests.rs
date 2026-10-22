@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 fn sqlite_config(dir: &std::path::Path) -> Config {
     let mut config = Config::default();
     config.storage.backend = "sqlite".to_string();
-    config.storage.db_path = dir.join("storage.db").to_string_lossy().into_owned();
+    config.storage.data_root = dir.join("data").to_string_lossy().into_owned();
     config
 }
 

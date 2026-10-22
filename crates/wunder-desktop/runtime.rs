@@ -1295,10 +1295,11 @@ fn apply_desktop_defaults(
 ) {
     config.server.mode = "desktop".to_string();
     config.storage.backend = "sqlite".to_string();
-    config.storage.db_path = state_root
-        .join("data/wunder.db")
-        .to_string_lossy()
-        .to_string();
+    config.storage.data_root = std::env::var("WUNDER_STORAGE_DATA_ROOT")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| state_root.join("data").to_string_lossy().into_owned());
     // `config/wunder-example.yaml` still carries the server-oriented relative
     // seed (`./config/data/workspaces`). If it survives into a desktop home,
     // the relative path is resolved against the executable/launch directory

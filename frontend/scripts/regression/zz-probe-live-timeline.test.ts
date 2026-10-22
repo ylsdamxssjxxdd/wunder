@@ -1,3 +1,4 @@
+import './mocks/browserStorage';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -127,13 +128,16 @@ test('probe: live multi-round tool turn timeline', () => {
       { turn_id: TURN, model_round: 1, item_id: `${TURN}:tool-call-1`, kind: 'tool_call', status: 'completed', visibility: 'user', event_type: 'tool_result', tool_call_id: 'call-1', tool: 'lookup', ok: true, content: 'result-data' }
     )
   });
-  // 8. durable text block round 1
+  // 8. completed item round 1
   change(store, {
-    change_type: 'text_block',
+    change_type: 'item_upsert',
     turn_id: TURN,
     item_id: `${TURN}:text-1`,
-    revision: 0,
-    payload: { item_id: `${TURN}:text-1`, turn_id: TURN, field: 'content', block_index: 0, content_offset: 0, content: 'round one body ' }
+    revision: 2,
+    payload: itemRow(
+      { item_id: `${TURN}:text-1`, kind: 'assistant_message', status: 'completed', revision: 2 },
+      { turn_id: TURN, model_round: 1, user_round: 1, role: 'assistant', content: 'round one body ', reasoning: 'let me think' }
+    )
   });
   // 9. llm_request round 2 registers text-2
   change(store, {
@@ -148,13 +152,16 @@ test('probe: live multi-round tool turn timeline', () => {
   });
   // 10. content tail round 2
   tail(store, { item_id: `${TURN}:text-2`, field: 'content', offset: -1, base_seq: cursor, text: 'final answer' });
-  // 11. durable text block round 2
+  // 11. completed item round 2
   change(store, {
-    change_type: 'text_block',
+    change_type: 'item_upsert',
     turn_id: TURN,
     item_id: `${TURN}:text-2`,
-    revision: 0,
-    payload: { item_id: `${TURN}:text-2`, turn_id: TURN, field: 'content', block_index: 0, content_offset: 0, content: 'final answer' }
+    revision: 2,
+    payload: itemRow(
+      { item_id: `${TURN}:text-2`, kind: 'assistant_message', status: 'completed', revision: 2 },
+      { turn_id: TURN, model_round: 2, user_round: 1, role: 'assistant', content: 'final answer', reasoning: '' }
+    )
   });
   // 12. turn completes
   change(store, {

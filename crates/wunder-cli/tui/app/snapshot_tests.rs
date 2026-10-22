@@ -53,7 +53,7 @@ pub(super) fn fixture_runtime(root: &Path) -> CliRuntime {
     let mut config = Config::default();
     config.server.mode = "cli".to_string();
     config.storage.backend = "sqlite".to_string();
-    config.storage.db_path = root.join("snapshot.sqlite3").to_string_lossy().to_string();
+    config.storage.data_root = root.join("data").to_string_lossy().to_string();
     config.workspace.root = root.join("workspace").to_string_lossy().to_string();
     config.channels.enabled = false;
     config.gateway.enabled = false;
@@ -1256,16 +1256,6 @@ async fn durable_replay_and_snapshot_recovery_land_the_same_text() {
                 "status": "completed", "content": "the gate is fixed", "reasoning": ""}),
         )
         .expect("seed second answer");
-    storage
-        .upsert_thread_text_block(
-            &owner,
-            &session,
-            &json!({"item_id": "answer-2", "field": "content", "block_index": 0,
-                "event_id": 7, "data": {"content": "the gate is", "field": "content",
-                    "block_index": 0, "content_offset": 0}}),
-        )
-        .expect("seed durable block");
-
     let catalog = wunder_server::ThreadCatalogService::new((*app.runtime.state).clone());
     let frames = catalog
         .changes(&session, 0, 200)

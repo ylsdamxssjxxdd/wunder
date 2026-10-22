@@ -37,7 +37,7 @@ pub(super) trait SqliteSessionRunStorage {
 impl SqliteSessionRunStorage for SqliteStorage {
     fn touch_session_run_impl(&self, user_id: &str, run_id: &str, now: f64) -> Result<()> {
         self.ensure_initialized()?;
-        self.open()?.execute("UPDATE session_runs SET updated_time = MAX(updated_time, ?) WHERE user_id=? AND run_id=? AND status IN ('queued','running','waiting')", params![now, user_id, run_id])?;
+        self.open_queue()?.execute("UPDATE session_runs SET updated_time = MAX(updated_time, ?) WHERE user_id=? AND run_id=? AND status IN ('queued','running','waiting')", params![now, user_id, run_id])?;
         Ok(())
     }
     fn interrupt_stale_session_runs_impl(
@@ -48,12 +48,12 @@ impl SqliteSessionRunStorage for SqliteStorage {
         now: f64,
     ) -> Result<i64> {
         self.ensure_initialized()?;
-        Ok(self.open()?.execute("UPDATE session_runs SET status='cancelled', error='execution lease expired; send a new task to continue', finished_time=?, updated_time=? WHERE user_id=? AND session_id=? AND run_kind='subagent' AND status IN ('queued','running','waiting') AND updated_time < ?", params![now,now,user_id,session_id,cutoff])? as i64)
+        Ok(self.open_queue()?.execute("UPDATE session_runs SET status='cancelled', error='execution lease expired; send a new task to continue', finished_time=?, updated_time=? WHERE user_id=? AND session_id=? AND run_kind='subagent' AND status IN ('queued','running','waiting') AND updated_time < ?", params![now,now,user_id,session_id,cutoff])? as i64)
     }
 
     fn upsert_session_run_impl(&self, record: &SessionRunRecord) -> Result<()> {
         self.ensure_initialized()?;
-        let conn = self.open()?;
+        let conn = self.open_queue()?;
         let metadata = record.metadata.as_ref().map(Self::json_to_string);
         conn.execute(
             "INSERT INTO session_runs (run_id, session_id, parent_session_id, user_id, dispatch_id, run_kind, requested_by, agent_id, model_name, status, queued_time, \
@@ -95,7 +95,7 @@ impl SqliteSessionRunStorage for SqliteStorage {
         if cleaned.is_empty() {
             return Ok(None);
         }
-        let conn = self.open()?;
+        let conn = self.open_queue()?;
         let row = conn
             .query_row(
                 &format!(
@@ -121,7 +121,7 @@ impl SqliteSessionRunStorage for SqliteStorage {
         if cleaned_user.is_empty() || cleaned_session.is_empty() || limit <= 0 {
             return Ok(Vec::new());
         }
-        let conn = self.open()?;
+        let conn = self.open_queue()?;
         let mut stmt = conn.prepare(&format!(
             "SELECT {} FROM session_runs WHERE user_id = ? AND session_id = ? \
              ORDER BY updated_time DESC, queued_time DESC LIMIT ?",
@@ -150,7 +150,7 @@ impl SqliteSessionRunStorage for SqliteStorage {
         if cleaned_user.is_empty() || cleaned_parent.is_empty() || limit <= 0 {
             return Ok(Vec::new());
         }
-        let conn = self.open()?;
+        let conn = self.open_queue()?;
         let mut stmt = conn.prepare(&format!(
             "SELECT {} FROM session_runs WHERE user_id = ? AND parent_session_id = ? \
              ORDER BY updated_time DESC, queued_time DESC LIMIT ?",
@@ -179,7 +179,7 @@ impl SqliteSessionRunStorage for SqliteStorage {
         if cleaned_user.is_empty() || cleaned_dispatch.is_empty() || limit <= 0 {
             return Ok(Vec::new());
         }
-        let conn = self.open()?;
+        let conn = self.open_queue()?;
         let mut stmt = conn.prepare(&format!(
             "SELECT {} FROM session_runs WHERE user_id = ? AND dispatch_id = ? \
              ORDER BY updated_time DESC, queued_time DESC LIMIT ?",

@@ -50,11 +50,7 @@ async fn exercise_stream_lifecycle() {
     // Exercise the real filesystem tool without depending on a remote sandbox.
     config.server.mode = "cli".into();
     config.storage.backend = "sqlite".into();
-    config.storage.db_path = root
-        .path()
-        .join("fixture.db")
-        .to_string_lossy()
-        .into_owned();
+    config.storage.data_root = root.path().join("data").to_string_lossy().into_owned();
     config.workspace.root = root.path().join("workspace").to_string_lossy().into_owned();
     config.tools.builtin.enabled = vec![resolve_tool_name("write_file")];
     config.llm.default = "fixture-model".into();
@@ -144,5 +140,26 @@ async fn exercise_stream_lifecycle() {
         .unwrap();
     assert_eq!(page.runtime_status, "completed");
     assert_eq!(page.chat[0].assistant.content, "fixture answer");
+    // Reopen through a fresh storage handle so the assertion cannot depend on
+    // the execution's in-memory messages or live event snapshot.
+    let reopened = crate::storage::thread_store::LocalThreadStore::open(
+        state.kernel.orchestrator.thread_store.root(),
+    )
+    .unwrap();
+    let context = reopened
+        .model_messages(
+            &wunder_core::thread_store::ThreadId::new("fixture-thread").unwrap(),
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(context.first().unwrap()["content"], "fixture input");
+    assert!(context
+        .iter()
+        .any(|message| message["role"] == "assistant" && message.get("tool_calls").is_some()));
+    assert!(context
+        .iter()
+        .any(|message| message["role"] == "tool" && message["tool_call_id"] == "fixture-call"));
+    assert_eq!(context.last().unwrap()["content"], "fixture answer");
     server.abort();
 }

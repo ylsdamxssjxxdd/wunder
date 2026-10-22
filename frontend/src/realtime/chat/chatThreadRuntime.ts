@@ -285,28 +285,7 @@ export const toChatThreadFrame = (
       client_message_id: source.client_message_id ? String(source.client_message_id) : undefined
     };
   }
-  if (eventType === 'thread_item_block') {
-    const seq = Number(envelope.cursor ?? inner?.cursor ?? 0);
-    const item_id = String(envelope.item_id ?? inner?.item_id ?? '');
-    if (!Number.isSafeInteger(seq) || seq <= 0 || !item_id) return null;
-    return {
-      event: 'thread_change',
-      seq,
-      change_type: 'text_block',
-      item_id,
-      turn_id: String(envelope.turn_id ?? ''),
-      revision: 0,
-      data: {
-        item_id,
-        field: String(envelope.field ?? inner?.field ?? 'content'),
-        block_index: Number(envelope.block_index ?? inner?.block_index ?? 0),
-        content: envelope.content ?? inner?.content,
-        content_offset: envelope.content_offset ?? inner?.content_offset,
-        reasoning: envelope.reasoning ?? inner?.reasoning,
-        reasoning_offset: envelope.reasoning_offset ?? inner?.reasoning_offset
-      }
-    };
-  }
+
   if (eventType === 'thread_change') {
     const seq = Number(envelope.cursor ?? inner?.cursor ?? 0);
     if (!Number.isSafeInteger(seq) || seq <= 0) return null;
@@ -377,7 +356,7 @@ const bumpInvalidation = (
  *   (lastSeq = snapshot cursor); the caller should re-watch from lastSeq.
  * - onSnapshotRequired: the runtime could NOT rebuild (no loader registered,
  *   load failed or snapshot stale); the caller must stop and report recovery failure.
- * - onOverflow / onGapOverflow: the caller resumes the watch from lastSeq
+ * - onOverflow: the caller resumes the watch from lastSeq
  *   (abort + start; no full reload). Dispatches share one per-session cooldown
  *   (THREAD_OVERFLOW_RESUME_COOLDOWN_MS) so bursts collapse into one resume.
  * - now: injectable clock for tests; defaults to Date.now.
@@ -389,7 +368,6 @@ export interface ChatThreadServerEventHooks {
   onSnapshotRequired?: (payload: ThreadSnapshotRequiredData) => void;
   onSnapshotApplied?: () => void;
   onOverflow?: (cursor: number) => void;
-  onGapOverflow?: () => void;
 }
 
 /**
@@ -470,8 +448,7 @@ const dispatchSnapshotRequired = (
 const dispatchResume = (
   entry: ChatThreadRuntimeEntry,
   hooks: ChatThreadServerEventHooks,
-  cursor: number,
-  reason: 'gap' | 'overflow'
+  cursor: number
 ): void => {
   const now = (hooks.now ?? Date.now)();
   // Suppress duplicate resumes: the first control frame starts the recovery,
@@ -480,8 +457,7 @@ const dispatchResume = (
     return;
   }
   entry.lastResumeDispatchAt = now;
-  if (reason === 'overflow') hooks.onOverflow?.(cursor);
-  else hooks.onGapOverflow?.();
+  hooks.onOverflow?.(cursor);
 };
 
 /**
@@ -541,16 +517,12 @@ export const applyChatThreadServerEvent = (
     return true;
   }
   if (frame.event === 'stream_overflow') {
-    dispatchResume(entry, hooks, typeof frame.cursor === 'number' ? frame.cursor : 0, 'overflow');
+    dispatchResume(entry, hooks, typeof frame.cursor === 'number' ? frame.cursor : 0);
     return true;
   }
   const changes: ThreadChangeFrame[] = [];
   const result = applyChatThreadFrame(entry.state, frame, (hooks.now ?? Date.now)(), (change) => changes.push(change));
   if (changes.length) hooks.onChangesApplied?.(changes);
-  if (result.needResume) {
-    dispatchResume(entry, hooks, 0, 'gap');
-    return true;
-  }
   bumpInvalidation(store, key, frame, result.changed, result.structural);
   return true;
 };

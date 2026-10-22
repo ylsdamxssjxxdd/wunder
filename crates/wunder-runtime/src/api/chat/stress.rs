@@ -65,6 +65,7 @@ async fn start_stress_thread(
         user_rounds: payload.user_rounds,
         model_rounds_per_turn: payload.model_rounds,
         title: payload.title,
+        thread_updates: Some(state.kernel.orchestrator.clone()),
     })
     .map(Json)
     .map_err(|message| error_response(StatusCode::BAD_REQUEST, message))

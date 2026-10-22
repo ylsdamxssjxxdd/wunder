@@ -398,13 +398,10 @@ impl NativeDesktop {
         };
         let user_id = self.user_id().to_string();
         let db_path = self.runtime.block_on(async {
-            self.state()
-                .config_store
-                .get()
-                .await
-                .storage
-                .db_path
-                .clone()
+            let config = self.state().config_store.get().await;
+            wunder_server::storage::sqlite_state_database_path(&config.storage)
+                .to_string_lossy()
+                .into_owned()
         });
         let storage = wunder_server::storage::SqliteStorage::new(db_path);
         let mut stats = Vec::with_capacity(count as usize);

@@ -1,9 +1,7 @@
 //! Storage-agnostic sampling model for synthetic stress threads.
 //!
-//! Everything here is pure computation: deterministic RNG, per-turn plans and
-//! the pass-1 timeline estimate. The SQLite and PostgreSQL backends both write
-//! from these plans so the two backends produce equally realistic threads
-//! without duplicating the sampling logic.
+//! Deterministic workloads enter the production ThreadStore writer, policy
+//! and projector. They never manufacture SQL rows or use relaxed durability.
 
 use anyhow::{ensure, Result};
 use serde_json::{json, Value};
@@ -12,11 +10,10 @@ use uuid::Uuid;
 /// Hard cap protecting the live database from an unreasonable generation job.
 pub const MAX_USER_ROUNDS: i64 = 2000;
 pub const MAX_MODEL_ROUNDS: i64 = 2000;
-/// 1000×1000 (the default stress profile) samples at most ~5M items.
-pub const MAX_TOTAL_ITEMS: i64 = 6_000_000;
-/// Change rows are a bounded recovery index; keep the same tail window the
-/// runtime prunes to.
-pub const CHANGE_TAIL_KEEP: i64 = 4096;
+/// Each requested model request can produce an assistant item, reasoning and
+/// at most four tool call/result pairs. The canonical count includes both
+/// sides of a tool invocation, unlike the retired rendering-only generator.
+pub const MAX_TOTAL_ITEMS: i64 = 12_000_000;
 
 pub struct StressThreadSpec {
     pub session_id: String,
@@ -34,6 +31,11 @@ pub struct StressThreadStats {
     pub user_turns: i64,
     pub items: i64,
     pub tool_calls: i64,
+    pub model_requests: i64,
+    /// Model calls, tool calls and final replies are separate model actions.
+    pub model_actions: i64,
+    pub rollout_records: u64,
+    pub seed: u64,
 }
 
 /// Validate the spec against the shared caps. Backends call this before
@@ -52,10 +54,14 @@ pub fn validate_spec(spec: &StressThreadSpec) -> Result<()> {
         "model_rounds out of range (1..={MAX_MODEL_ROUNDS})"
     );
     ensure!(
-        spec.user_rounds * (spec.model_rounds_per_turn * 5 + 1) <= MAX_TOTAL_ITEMS,
+        estimated_max_items(spec.user_rounds, spec.model_rounds_per_turn) <= MAX_TOTAL_ITEMS,
         "requested thread exceeds the total item budget"
     );
     Ok(())
+}
+
+pub fn estimated_max_items(user_rounds: i64, model_rounds_per_turn: i64) -> i64 {
+    user_rounds.saturating_mul(model_rounds_per_turn.saturating_mul(10).saturating_add(1))
 }
 
 /// Deterministic seed from wall-clock nanos (shared by both backends).
@@ -257,10 +263,12 @@ const ANSWER_PARAGRAPHS: &[&str] = &[
     "从耗时分布看，前 10% 的请求占了大约一半的等待时间，基本都是冷启动路径。加一层有界缓存之后，尾部延迟明显收敛。",
 ];
 
-// English traces: identical reasoning content per byte costs ~3x less than
-// CJK text (1 byte/char vs 3). Length is driven by the per-round budget, so
-// short and long lines are mixed only for texture.
+// Mix Chinese and English text so a space benchmark does not become an
+// English-only compression benchmark with unusually few UTF-8 bytes.
 const REASONING_LINES: &[&str] = &[
+    "先检查边界条件，再核对返回结果，保留能说明判断过程的依据。",
+    "这次观察与前一项结果存在差异，需要继续读取相关片段确认原因。",
+    "请求时间与执行时间分别统计，避免把工具等待误计为模型生成耗时。",
     "Check the input's boundary conditions first, then pick the branch.",
     "That assumption contradicts last round's observation; verify it another way.",
     "Split it in two: locate the difference, then size the blast radius.",
@@ -406,8 +414,8 @@ pub(crate) fn build_tool_args(rng: &mut Rng, profile: &ToolProfile, turn_index: 
 
 fn pick_command(rng: &mut Rng) -> String {
     rng.pick_str(&[
-        "cargo build -p wunder-runtime",
-        "cargo test --quiet storage",
+        "cargo build --quiet",
+        "cargo test --quiet",
         "git log --oneline -5",
         "ls -la config/data",
         "python scripts/update_feature_log.py --help",
@@ -415,9 +423,8 @@ fn pick_command(rng: &mut Rng) -> String {
     .to_string()
 }
 
-/// Sampled tool result plus the derived pieces the writers reuse. `data_text`
-/// is the serialized `data` value, shared by the item payload and the mirrored
-/// `tool_logs` row so the value is serialized once instead of twice.
+/// Sampled tool result and its display text. The production persistence policy
+/// applies to that text, exactly as it does for an actual completed tool.
 pub(crate) struct ToolResult {
     pub failed: bool,
     pub data: Value,
@@ -572,11 +579,9 @@ pub(crate) fn build_reasoning_text(rng: &mut Rng, budget_tokens: u64) -> String 
 
 pub(crate) struct TurnCost {
     pub turn_seed: u64,
-    pub round_costs: Vec<f64>,
     pub gap_before_s: f64,
     pub total_s: f64,
     pub items_in_turn: i64,
-    pub change_rows_in_turn: i64,
 }
 
 /// Plans are derived from a per-turn seed so pass 1 (cost sampling) and pass 2
@@ -586,35 +591,39 @@ pub(crate) fn sample_turn_plans(
     turn_index: i64,
     model_rounds: i64,
 ) -> Vec<RoundPlan> {
+    iter_turn_plans(turn_seed, turn_index, model_rounds).collect()
+}
+
+/// Produces one sampled model round at a time. The canonical writer uses this
+/// iterator so even an extreme user turn cannot retain thousands of tool
+/// plans while waiting for its first history batch to reach disk.
+pub(crate) fn iter_turn_plans(
+    turn_seed: u64,
+    turn_index: i64,
+    model_rounds: i64,
+) -> impl Iterator<Item = RoundPlan> {
     let mut rng = Rng::new(turn_seed ^ (turn_index as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15));
-    (0..model_rounds)
-        .map(|m| sample_round(&mut rng, m + 1 == model_rounds, turn_index, m))
-        .collect()
+    (0..model_rounds).map(move |m| sample_round(&mut rng, m + 1 == model_rounds, turn_index, m))
 }
 
 fn sample_turn_cost(turn_seed: u64, turn_index: i64, model_rounds: i64, rng: &mut Rng) -> TurnCost {
     let plans = sample_turn_plans(turn_seed, turn_index, model_rounds);
-    let mut round_costs = Vec::with_capacity(model_rounds as usize);
+    let mut rounds_total_s = 0.0;
     let mut items_in_turn = 1i64; // user bubble
     for plan in &plans {
         let mut cost = plan.prefill_duration_s + plan.decode_duration_s;
         cost += plan.tool_duration_s.iter().sum::<f64>();
-        cost += rng.float(0.4, 2.2); // inter-round orchestration overhead
-        round_costs.push(cost);
-        items_in_turn += plan.tool_count as i64 + 1; // tools + assistant message
+        rounds_total_s += cost;
+        items_in_turn +=
+            plan.tool_count as i64 * 2 + 1 + i64::from(plan.reasoning_tokens.is_some());
     }
     let gap_before_s = rng.float(4.0, 90.0);
-    let total_s = gap_before_s + round_costs.iter().sum::<f64>();
-    // Per turn: turn_upsert(queued) + user bubble upsert + one change per item
-    // + final turn_upsert(completed).
-    let change_rows_in_turn = items_in_turn + 3;
+    let total_s = gap_before_s + rounds_total_s;
     TurnCost {
         turn_seed,
-        round_costs,
         gap_before_s,
         total_s,
         items_in_turn,
-        change_rows_in_turn,
     }
 }
 
@@ -623,8 +632,6 @@ fn sample_turn_cost(turn_seed: u64, turn_index: i64, model_rounds: i64, rng: &mu
 pub(crate) struct StressTimelinePlan {
     pub costs: Vec<TurnCost>,
     pub start_time: f64,
-    pub total_change_rows: i64,
-    pub change_tail_cutoff: i64,
 }
 
 pub(crate) fn plan_timeline(
@@ -637,65 +644,19 @@ pub(crate) fn plan_timeline(
     let mut costs = Vec::with_capacity(spec.user_rounds as usize);
     let mut total_s = 0f64;
     let mut total_items = 1i64; // session row itself
-    let mut total_change_rows = 0i64;
     for turn_index in 1..=spec.user_rounds {
         let turn_seed = base_seed ^ (turn_index as u64).wrapping_mul(0x5DEE_CE66);
         let cost = sample_turn_cost(turn_seed, turn_index, spec.model_rounds_per_turn, &mut rng);
         total_s += cost.total_s;
         total_items += cost.items_in_turn;
-        total_change_rows += cost.change_rows_in_turn;
         costs.push(cost);
     }
     ensure!(
         total_items <= MAX_TOTAL_ITEMS,
         "requested thread exceeds the total item budget ({total_items})"
     );
-    let change_tail_cutoff = (total_change_rows - CHANGE_TAIL_KEEP).max(0);
-    let start_time = now - total_s.min(180.0 * 24.0 * 3600.0); // never older than ~180 days
-    Ok(StressTimelinePlan {
-        costs,
-        start_time,
-        total_change_rows,
-        change_tail_cutoff,
-    })
-}
-
-/// serde_json-compatible rendering of a float (so spliced numbers parse back to
-/// the same value serde_json would have written).
-fn json_num(value: f64) -> String {
-    serde_json::to_string(&value).unwrap_or_else(|_| value.to_string())
-}
-
-/// Committed-item change payload shape (matches committed_item_payload).
-///
-/// `payload` is already a serialized JSON object, so it is spliced in verbatim
-/// rather than being parsed and re-serialized for every row (at the default
-/// scale this runs once per item and was a large share of the CPU). Only the
-/// small scalar fields pass through `serde_json` for correct escaping.
-pub(crate) fn committed_item_json(
-    item_id: &str,
-    item_index: i64,
-    kind: &str,
-    status: &str,
-    payload: &str,
-    created_time: f64,
-    updated_time: f64,
-    turn_id: &str,
-    created_seq: i64,
-) -> Result<String> {
-    Ok(format!(
-        "{{\"item_id\":{},\"item_index\":{},\"kind\":{},\"status\":{},\"revision\":1,\"payload\":{},\"created_time\":{},\"updated_time\":{},\"turn_id\":{},\"visibility\":\"user\",\"root_turn_id\":{},\"created_seq\":{}}}",
-        serde_json::to_string(item_id)?,
-        item_index,
-        serde_json::to_string(kind)?,
-        serde_json::to_string(status)?,
-        payload,
-        json_num(created_time),
-        json_num(updated_time),
-        serde_json::to_string(turn_id)?,
-        serde_json::to_string(turn_id)?,
-        created_seq,
-    ))
+    let start_time = now - total_s;
+    Ok(StressTimelinePlan { costs, start_time })
 }
 
 pub(crate) fn profile_hint(profiles: &[(&ToolProfile, f64)]) -> String {
@@ -708,37 +669,6 @@ pub(crate) fn profile_hint(profiles: &[(&ToolProfile, f64)]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn committed_item_json_splices_payload_verbatim() {
-        let payload = serde_json::to_string(&json!({
-            "content": "hello \"world\"\n",
-            "usage": { "input_tokens": 12 },
-        }))
-        .unwrap();
-        let out = committed_item_json(
-            "turn-1:user",
-            0,
-            "user_message",
-            "completed",
-            &payload,
-            1_700_000_000.25,
-            1_700_000_000.25,
-            "turn-1",
-            7,
-        )
-        .unwrap();
-        let value: Value = serde_json::from_str(&out).expect("change payload is valid json");
-        assert_eq!(value["item_id"], json!("turn-1:user"));
-        assert_eq!(value["created_seq"], json!(7));
-        assert_eq!(value["revision"], json!(1));
-        assert_eq!(value["visibility"], json!("user"));
-        assert_eq!(value["root_turn_id"], json!("turn-1"));
-        assert_eq!(value["created_time"], json!(1_700_000_000.25));
-        // The nested item payload survives the verbatim splice intact.
-        assert_eq!(value["payload"]["content"], json!("hello \"world\"\n"));
-        assert_eq!(value["payload"]["usage"]["input_tokens"], json!(12));
-    }
 
     #[test]
     fn reasoning_text_reaches_budget() {
@@ -755,5 +685,18 @@ mod tests {
         let b = ids.next().to_string();
         assert_ne!(a, b);
         assert_eq!(a.len(), 36, "uuid-shaped: {a}");
+    }
+
+    #[test]
+    fn lazy_round_plans_preserve_deterministic_sampling() {
+        let mut plans = iter_turn_plans(17, 3, MAX_MODEL_ROUNDS);
+        let sampled = plans.next().expect("first lazy round");
+        let mut rng = Rng::new(17 ^ 3_u64.wrapping_mul(0x9E37_79B9_7F4A_7C15));
+        let expected = sample_round(&mut rng, false, 3, 0);
+        assert_eq!(sampled.tool_count, expected.tool_count);
+        assert_eq!(sampled.tool_duration_s, expected.tool_duration_s);
+        assert_eq!(sampled.answer_tokens, expected.answer_tokens);
+        assert_eq!(sampled.reasoning_tokens, expected.reasoning_tokens);
+        assert_eq!(plans.count(), MAX_MODEL_ROUNDS as usize - 1);
     }
 }

@@ -6,9 +6,9 @@ async fn build_test_state(name: &str) -> (Arc<AppState>, tempfile::TempDir) {
     let root = tempfile::tempdir().unwrap();
     let mut config = Config::default();
     config.storage.backend = "sqlite".into();
-    config.storage.db_path = root
+    config.storage.data_root = root
         .path()
-        .join(format!("{name}.db"))
+        .join(format!("{name}"))
         .to_string_lossy()
         .into_owned();
     config.workspace.root = root.path().join("workspace").to_string_lossy().into_owned();
@@ -42,6 +42,25 @@ fn accept_turn(state: &AppState, session: &str, user: &str) -> String {
     accepted["turn_id"].as_str().unwrap().to_string()
 }
 
+async fn start_turn(state: &AppState, session: &str, user: &str) -> String {
+    let turn = accept_turn(state, session, user);
+    let committer = &state.kernel.orchestrator.committer;
+    committer
+        .freeze_session(
+            user,
+            session,
+            "fixture frozen instructions",
+            "fixture-workspace",
+        )
+        .await
+        .unwrap();
+    committer
+        .begin_turn(user, session, &turn, "fixture-model")
+        .await
+        .unwrap();
+    turn
+}
+
 async fn drain_changes(queue_rx: &mut mpsc::Receiver<StreamSignal>) -> (Vec<Value>, Vec<Value>) {
     let mut changes = Vec::new();
     let mut tails = Vec::new();
@@ -58,36 +77,80 @@ async fn drain_changes(queue_rx: &mut mpsc::Receiver<StreamSignal>) -> (Vec<Valu
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn trajectory_diagnostics_survive_emission_history_and_paged_reads() {
-    let (state, _dir) = build_test_state("trajectory_diagnostics").await;
+async fn completed_response_and_failure_detail_remain_separate_durable_items() {
+    let (state, _dir) = build_test_state("trajectory_completion").await;
+    let (queue_tx, mut queue_rx) = mpsc::channel(64);
     let emitter = EventEmitter::new(
         "fixture-thread".into(),
         "fixture-owner".into(),
-        None,
+        Some(queue_tx),
         Some(state.storage.clone()),
         state.monitor.clone(),
         false,
         None,
     )
     .with_committer(state.kernel.orchestrator.committer.clone());
-    let turn = accept_turn(&state, "fixture-thread", "fixture-owner");
+    let turn = start_turn(&state, "fixture-thread", "fixture-owner").await;
     emitter.bind_turn(&turn, 1);
+    let before = state
+        .storage
+        .latest_thread_change_seq_by_session("fixture-thread")
+        .unwrap();
     emitter.emit("llm_request", json!({"model_round":1})).await;
     emitter
         .emit(
             "llm_stream_retry",
-            json!({
-                "model_round":1, "attempt":1,"max_attempts":3,"delay_s":0.1,
-                "error":"fixture transient error","will_retry":true,
-            }),
+            json!({"model_round":1,"attempt":1,"max_attempts":3,
+        "error":"fixture transient error","will_retry":true}),
         )
         .await;
+    assert_eq!(
+        state
+            .storage
+            .latest_thread_change_seq_by_session("fixture-thread")
+            .unwrap(),
+        before,
+        "in-flight request and retry are live only"
+    );
     emitter
         .emit(
             "llm_output",
             json!({"model_round":1,"content":"response","reasoning":"thought"}),
         )
         .await;
+    let item_id = format!("{turn}:text-1");
+    let completed = state
+        .storage
+        .get_thread_item("fixture-owner", "fixture-thread", &item_id, true)
+        .unwrap()
+        .unwrap();
+    emitter
+        .emit(
+            "turn_terminal",
+            json!({"model_round":1,"status":"failed","error":{
+        "code":"UPSTREAM_TIMEOUT","message":"fixture provider timeout",
+        "error_meta":{"source_stage":"llm","retryable":true,"recovery_action":"retry_later"}},
+        "retry_after_ms":500}),
+        )
+        .await;
+    state
+        .storage
+        .commit_thread_item(
+            "fixture-owner",
+            &json!({"session_id":"fixture-thread",
+        "turn_id":turn,"item_id":item_id,"kind":"assistant_message","status":"completed",
+        "content":"late replacement"}),
+        )
+        .unwrap();
+    assert_eq!(
+        state
+            .storage
+            .get_thread_item("fixture-owner", "fixture-thread", &item_id, true)
+            .unwrap()
+            .unwrap(),
+        completed,
+        "completed bodies are immutable"
+    );
     let page = state
         .storage
         .thread_view_page("fixture-owner", "fixture-thread", "trajectory", None, 20)
@@ -98,72 +161,24 @@ async fn trajectory_diagnostics_survive_emission_history_and_paged_reads() {
         .find(|row| row.kind == "assistant_message")
         .unwrap();
     assert_eq!(assistant.status, "completed");
-    let diagnostic = assistant.diagnostics.as_ref().unwrap();
-    assert_eq!(diagnostic["retry"]["will_retry"], false);
-    assert_eq!(diagnostic["retry"]["message"], "fixture transient error");
-    assert!(!page
+    let failure = page
         .trajectory
         .iter()
-        .any(|row| row.kind == "llm_stream_retry"));
-
-    emitter
-        .emit(
-            "turn_terminal",
-            json!({"model_round":1,"status":"completed"}),
-        )
-        .await;
-    let item_id = format!("{turn}:text-1");
-    let successful = state
-        .storage
-        .get_thread_item("fixture-owner", "fixture-thread", &item_id, true)
-        .unwrap()
+        .find(|row| row.kind == "terminal")
         .unwrap();
-    assert_eq!(
-        successful["status"], "completed",
-        "a success receipt cannot mark the model failed"
+    assert_eq!(failure.status, "failed");
+    let diagnostic = &failure.diagnostics.as_ref().unwrap()["failure"];
+    assert_eq!(diagnostic["code"], "UPSTREAM_TIMEOUT");
+    assert_eq!(diagnostic["source_stage"], "llm");
+    assert_eq!(diagnostic["retryable"], true);
+    let mut retry_seen = false;
+    while let Ok(StreamSignal::Event(event)) = queue_rx.try_recv() {
+        retry_seen |= event.event == "llm_stream_retry";
+    }
+    assert!(
+        retry_seen,
+        "retry diagnostics remain visible on the live stream"
     );
-    emitter.emit("turn_terminal", json!({
-        "model_round":1,"status":"failed", "error": {
-            "code":"UPSTREAM_TIMEOUT", "message":"fixture provider timeout",
-            "error_meta":{"source_stage":"llm","retryable":true,"recovery_action":"retry_later"},
-        }, "retry_after_ms":500,
-    })).await;
-    // Simulate the normal asynchronous history/usage writer arriving last.
-    state
-        .storage
-        .commit_thread_item(
-            "fixture-owner",
-            &json!({
-                "session_id":"fixture-thread","turn_id":turn,"item_id":item_id,
-                "kind":"assistant_message","role":"assistant","status":"completed",
-                "model_round":1,"content":"response","reasoning":"thought",
-            }),
-        )
-        .unwrap();
-    let item = state
-        .storage
-        .get_thread_item("fixture-owner", "fixture-thread", &item_id, true)
-        .unwrap()
-        .unwrap();
-    assert_eq!(item["status"], "failed");
-    assert_eq!(item["payload"]["content"], "response");
-    assert_eq!(item["payload"]["reasoning"], "thought");
-    let page = state
-        .storage
-        .thread_view_page("fixture-owner", "fixture-thread", "trajectory", None, 20)
-        .unwrap();
-    let assistant = page
-        .trajectory
-        .iter()
-        .find(|row| row.kind == "assistant_message")
-        .unwrap();
-    let failure = &assistant.diagnostics.as_ref().unwrap()["failure"];
-    assert_eq!(assistant.status, "failed");
-    assert_eq!(failure["code"], "UPSTREAM_TIMEOUT");
-    assert_eq!(failure["source_stage"], "llm");
-    assert_eq!(failure["recovery_action"], "retry_later");
-    assert_eq!(failure["retryable"], true);
-    assert_eq!(failure["retry_after_ms"], 500);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -180,7 +195,7 @@ async fn concurrent_emits_keep_change_cursor_order_in_queue() {
         None,
     )
     .with_committer(state.kernel.orchestrator.committer.clone());
-    let turn = accept_turn(&state, "session-a", "user-a");
+    let turn = start_turn(&state, "session-a", "user-a").await;
     emitter.bind_turn(&turn, 1);
 
     let mut tasks = Vec::new();
@@ -191,12 +206,12 @@ async fn concurrent_emits_keep_change_cursor_order_in_queue() {
             for j in 0..16 {
                 worker
                     .emit(
-                        "tool_call",
+                        "tool_result",
                         json!({
                             "turn_id": turn,
                             "model_round": 1,
                             "tool_call_id": format!("call_{i}_{j}"),
-                            "name": "tool",
+                            "name": "tool", "ok":true,
                         }),
                     )
                     .await;
@@ -219,11 +234,14 @@ async fn concurrent_emits_keep_change_cursor_order_in_queue() {
     };
     let mut cursors: Vec<i64> = changes.iter().filter_map(cursor_of).collect();
     let total = cursors.len();
-    eprintln!("debug: changes={} cursors={total}", changes.len());
     assert!(
         total >= 96,
         "every committed item must surface a change frame (changes={} cursors={total})",
         changes.len()
+    );
+    assert!(
+        cursors.windows(2).all(|pair| pair[0] < pair[1]),
+        "wire order must match durable commit order"
     );
     cursors.sort();
     cursors.dedup();
@@ -283,7 +301,7 @@ async fn subagent_message_replay_uses_one_stable_durable_item() {
         None,
     )
     .with_committer(state.kernel.orchestrator.committer.clone());
-    let turn = accept_turn(&state, "session-a", "user-a");
+    let turn = start_turn(&state, "session-a", "user-a").await;
     emitter.bind_turn(&turn, 1);
     let data = json!({
         "message_id":"mail-1", "source_session_id":"child-a",
@@ -332,7 +350,7 @@ async fn subagent_message_replay_uses_one_stable_durable_item() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn change_stream_emits_tail_frames_with_utf16_offsets() {
+async fn live_text_deltas_never_append_completed_history() {
     let (state, _dir) = build_test_state("change_stream_tail").await;
     let (queue_tx, mut queue_rx) = mpsc::channel::<StreamSignal>(256);
     let emitter = EventEmitter::new(
@@ -345,7 +363,7 @@ async fn change_stream_emits_tail_frames_with_utf16_offsets() {
         None,
     )
     .with_committer(state.kernel.orchestrator.committer.clone());
-    let turn = accept_turn(&state, "session-a", "user-a");
+    let turn = start_turn(&state, "session-a", "user-a").await;
     emitter.bind_turn(&turn, 1);
 
     emitter
@@ -370,24 +388,31 @@ async fn change_stream_emits_tail_frames_with_utf16_offsets() {
         )
         .await;
     emitter.finish().await;
-
-    let (_changes, tails) = drain_changes(&mut queue_rx).await;
-    assert_eq!(tails.len(), 3, "one tail frame per emitted field delta");
-    assert_eq!(tails[0]["item_id"], json!(format!("{turn}:text-1")));
-    assert_eq!(tails[0]["field"], "content");
-    assert_eq!(tails[0]["offset"], 0);
-    assert_eq!(tails[0]["text"], "héllo");
-    // "héllo" is 5 UTF-16 code units; the next content delta appends there.
-    assert_eq!(tails[1]["field"], "content");
-    assert_eq!(tails[1]["offset"], 5);
-    assert_eq!(tails[1]["text"], "世界");
-    assert_eq!(tails[2]["field"], "reasoning");
-    assert_eq!(tails[2]["offset"], 0);
-    assert_eq!(tails[2]["text"], "思考");
+    let mut deltas = Vec::new();
+    let mut durable = 0;
+    while let Ok(StreamSignal::Event(event)) = queue_rx.try_recv() {
+        if event.event == "thread_item_delta" {
+            deltas.push(event.data["data"].clone());
+        }
+        if event.event == "thread_change" {
+            durable += 1;
+        }
+    }
+    assert_eq!(durable, 0);
+    assert_eq!(deltas.len(), 3);
+    assert_eq!(deltas[0]["source_event"], "llm_output_delta");
+    assert_eq!(deltas[0]["delta"], "héllo");
+    assert_eq!(deltas[1]["delta"], "世界");
+    assert_eq!(deltas[2]["reasoning_delta"], "思考");
+    assert!(state
+        .storage
+        .get_thread_item("user-a", "session-a", &format!("{turn}:text-1"), true)
+        .unwrap()
+        .is_none());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn assistant_terminal_history_upserts_the_registered_stream_item() {
+async fn model_context_append_does_not_replace_completed_stream_item() {
     let (state, _dir) = build_test_state("change_stream_terminal_item").await;
     let (queue_tx, mut queue_rx) = mpsc::channel::<StreamSignal>(256);
     let emitter = EventEmitter::new(
@@ -400,35 +425,42 @@ async fn assistant_terminal_history_upserts_the_registered_stream_item() {
         None,
     )
     .with_committer(state.kernel.orchestrator.committer.clone());
-    let turn = accept_turn(&state, "session-a", "user-a");
+    let turn = start_turn(&state, "session-a", "user-a").await;
     emitter.bind_turn(&turn, 1);
     emitter
         .emit("llm_request", json!({"turn_id": turn, "model_round": 1}))
         .await;
 
+    emitter
+        .emit(
+            "llm_output",
+            json!({"model_round":1,"content":"done","reasoning":"thinking"}),
+        )
+        .await;
     let round = RoundInfo::new(1, 1);
     let stats = json!({"message_stats": {
         "interaction_duration_s": 1.25,
         "visible_decode_speed_tps": 42.0
     }});
     let orchestrator = &state.kernel.orchestrator;
-    orchestrator.append_chat(
-        "user-a",
-        "session-a",
-        "assistant",
-        Some(&json!("done")),
-        None,
-        Some(&stats),
-        Some("thinking"),
-        None,
-        None,
-        None,
-        RoundInfo {
-            thread_turn_id: Some(Uuid::parse_str(&turn).unwrap()),
-            ..round
-        },
-    );
-    state.workspace.flush_writes();
+    orchestrator
+        .append_chat(
+            "user-a",
+            "session-a",
+            "assistant",
+            Some(&json!("done")),
+            None,
+            Some(&stats),
+            Some("thinking"),
+            None,
+            None,
+            None,
+            RoundInfo {
+                thread_turn_id: Some(Uuid::parse_str(&turn).unwrap()),
+                ..round
+            },
+        )
+        .await;
 
     let item = state
         .storage
@@ -442,11 +474,11 @@ async fn assistant_terminal_history_upserts_the_registered_stream_item() {
         .cloned()
         .expect("stable assistant item");
     assert_eq!(item["payload"]["content"], "done");
-    assert_eq!(
-        item["payload"]["meta"]["message_stats"]["visible_decode_speed_tps"],
-        42.0
+    assert_eq!(item["payload"]["reasoning"], "thinking");
+    assert!(
+        item["payload"]["meta"].is_null(),
+        "model-context accounting cannot rewrite completed output"
     );
-    assert_eq!(item["payload"]["reasoning_content"], "thinking");
     assert_eq!(
         state
             .storage
@@ -464,7 +496,7 @@ async fn assistant_terminal_history_upserts_the_registered_stream_item() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn interleaved_model_tails_keep_item_offsets_and_durable_bases() {
+async fn interleaved_model_deltas_keep_round_identity_without_durable_registration() {
     let (state, _dir) = build_test_state("change_stream_interleaved_tails").await;
     let (queue_tx, mut queue_rx) = mpsc::channel::<StreamSignal>(256);
     let emitter = EventEmitter::new(
@@ -477,7 +509,7 @@ async fn interleaved_model_tails_keep_item_offsets_and_durable_bases() {
         None,
     )
     .with_committer(state.kernel.orchestrator.committer.clone());
-    let turn = accept_turn(&state, "session-a", "user-a");
+    let turn = start_turn(&state, "session-a", "user-a").await;
     emitter.bind_turn(&turn, 1);
 
     for model_round in [1, 2] {
@@ -498,41 +530,34 @@ async fn interleaved_model_tails_keep_item_offsets_and_durable_bases() {
     }
     emitter.finish().await;
 
-    let (changes, tails) = drain_changes(&mut queue_rx).await;
-    assert_eq!(tails.len(), 4);
-    assert_eq!(tails[0]["item_id"], json!(format!("{turn}:text-1")));
-    assert_eq!(tails[0]["offset"], 0);
-    assert_eq!(tails[1]["item_id"], json!(format!("{turn}:text-2")));
-    assert_eq!(tails[1]["offset"], 0);
-    assert_eq!(tails[2]["item_id"], json!(format!("{turn}:text-1")));
-    assert_eq!(tails[2]["offset"], 1);
-    assert_eq!(tails[3]["item_id"], json!(format!("{turn}:text-2")));
-    assert_eq!(tails[3]["offset"], 1);
-
-    let cursor_of = |data: &Value| -> Option<i64> {
-        data["cursor"]
-            .as_i64()
-            .or_else(|| data["data"]["cursor"].as_i64())
-    };
+    let mut deltas = Vec::new();
+    while let Ok(StreamSignal::Event(event)) = queue_rx.try_recv() {
+        assert_ne!(event.event, "thread_change");
+        if event.event == "thread_item_delta" {
+            deltas.push(event.data["data"].clone());
+        }
+    }
+    assert_eq!(deltas.len(), 4);
+    for (data, (model_round, text)) in
+        deltas
+            .iter()
+            .zip([(1, "甲"), (2, "乙"), (1, "丙"), (2, "丁")])
+    {
+        assert_eq!(data["model_round"], model_round);
+        assert_eq!(data["delta"], text);
+        assert_eq!(data["turn_id"], turn);
+    }
     for model_round in [1, 2] {
-        let item_id = format!("{turn}:text-{model_round}");
-        let item_cursor = changes
-            .iter()
-            .find(|change| {
-                let data = change.get("data").unwrap_or(change);
-                data["change_type"] == "item_upsert" && data["item_id"] == item_id
-            })
-            .and_then(cursor_of)
-            .expect("registered item durable change");
-        // The first flush can advance the dependency to its text_block cursor.
-        // In every case the tail must wait for a durable frame of the same
-        // item and never inherit the other model round's cursor.
-        assert!(tails
-            .iter()
-            .filter(|tail| tail["item_id"] == item_id)
-            .all(|tail| tail["base_seq"]
-                .as_i64()
-                .is_some_and(|seq| seq >= item_cursor)));
+        assert!(state
+            .storage
+            .get_thread_item(
+                "user-a",
+                "session-a",
+                &format!("{turn}:text-{model_round}"),
+                true
+            )
+            .unwrap()
+            .is_none());
     }
 }
 
@@ -558,7 +583,7 @@ async fn thread_change_frames_embed_item_payloads() {
             spawned_by: None,
         })
         .unwrap();
-    let turn = accept_turn(&state, "session-a", "user-a");
+    let turn = start_turn(&state, "session-a", "user-a").await;
 
     let frames = state
         .workspace
@@ -592,9 +617,9 @@ async fn thread_change_frames_embed_item_payloads() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn feedback_commit_wakes_feeder_with_snapshot_payload() {
+async fn feedback_commit_wakes_display_without_rewriting_canonical_history() {
     let (state, _dir) = build_test_state("change_stream_feedback").await;
-    let turn = accept_turn(&state, "session-a", "user-a");
+    let turn = start_turn(&state, "session-a", "user-a").await;
     let item_id = format!("{turn}:answer");
     state
         .kernel
@@ -636,8 +661,8 @@ async fn feedback_commit_wakes_feeder_with_snapshot_payload() {
             .expect("latest durable cursor")
     );
 
-    // The change payload must be the committed snapshot: it carries the locked
-    // feedback and never reads the mutable current item on replay.
+    // Feedback is mutable display metadata; the canonical completed item and
+    // its cursor/revision remain exactly as originally committed.
     let changes = state
         .storage
         .list_thread_changes_by_session("session-a", 0, 100)
@@ -649,10 +674,18 @@ async fn feedback_commit_wakes_feeder_with_snapshot_payload() {
             change["change_type"] == "item_upsert" && change["item_id"] == json!(item_id)
         })
         .expect("feedback item change");
-    assert_eq!(feedback_change["revision"], json!(2));
+    assert_eq!(feedback_change["revision"], json!(1));
     let payload = &feedback_change["payload"];
     assert_eq!(payload["kind"], json!("assistant_message"));
-    assert_eq!(payload["payload"]["feedback"]["vote"], json!("up"));
+    assert!(payload["payload"]["feedback"].is_null());
+    assert_eq!(
+        state
+            .storage
+            .get_thread_item("user-a", "session-a", &item_id, false)
+            .unwrap()
+            .unwrap()["payload"]["feedback"]["vote"],
+        "up"
+    );
 
     // A repeated vote is a no-op: no new change and no wake.
     let after = state
@@ -694,7 +727,7 @@ async fn completed_llm_output_waits_for_runner_to_close_turn_and_user_bubble() {
         None,
     )
     .with_committer(state.kernel.orchestrator.committer.clone());
-    let turn = accept_turn(&state, "session-a", "user-a");
+    let turn = start_turn(&state, "session-a", "user-a").await;
     emitter.bind_turn(&turn, 1);
 
     emitter
@@ -755,9 +788,9 @@ async fn completed_llm_output_waits_for_runner_to_close_turn_and_user_bubble() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn refresh_repairs_terminal_item_without_turn_terminal_event() {
+async fn refresh_keeps_running_until_canonical_turn_terminal() {
     let (state, _dir) = build_test_state("change_stream_terminal_recovery").await;
-    let turn = accept_turn(&state, "session-a", "user-a");
+    let turn = start_turn(&state, "session-a", "user-a").await;
     // Simulate the historical failure window: the final assistant item was
     // durable, but the follow-up turn update never ran.
     state
@@ -778,55 +811,79 @@ async fn refresh_repairs_terminal_item_without_turn_terminal_event() {
         .storage
         .list_thread_turns("user-a", "session-a", None, 10)
         .expect("refresh turns");
-    assert_eq!(turns[0]["status"], json!("completed"));
+    assert_eq!(turns[0]["status"], json!("running"));
+    assert_eq!(
+        state
+            .storage
+            .thread_view_page("user-a", "session-a", "chat", None, 12)
+            .unwrap()
+            .runtime_status,
+        "running"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn freeze_system_prompt_append_wakes_feeder_with_snapshot() {
+async fn admission_does_not_freeze_prompt_and_session_meta_keeps_initial_instructions() {
+    use wunder_core::thread_store::ThreadId;
     let (state, _dir) = build_test_state("change_stream_system_prompt").await;
     let turn = accept_turn(&state, "session-a", "user-a");
-    let mut wake = state.kernel.orchestrator.change_hub.subscribe("session-a");
-
-    let item = state
-        .workspace
-        .build_session_system_prompt_item("user-a", "session-a", "你是测试助手。", Some("zh"))
-        .expect("build system prompt item")
-        .expect("system prompt item");
-    // The unified commit exit persists the append and publishes the receipt
-    // cursor only on the real commit.
-    state
-        .kernel
-        .orchestrator
-        .committer
-        .append_item("user-a", &item)
-        .await
-        .expect("freeze system prompt");
-
-    tokio::time::timeout(std::time::Duration::from_secs(1), wake.changed())
-        .await
-        .expect("hub wake")
-        .expect("hub open");
+    let thread = ThreadId::new("session-a").unwrap();
+    assert!(state.thread_store.session_meta(&thread).await.is_err());
     assert_eq!(
-        *wake.borrow(),
         state
             .storage
             .latest_thread_change_seq_by_session("session-a")
-            .expect("latest durable cursor")
+            .unwrap(),
+        0
     );
-
+    let committer = &state.kernel.orchestrator.committer;
+    assert_eq!(
+        committer
+            .freeze_session(
+                "user-a",
+                "session-a",
+                "fixture first prompt",
+                "fixture-workspace"
+            )
+            .await
+            .unwrap(),
+        "fixture first prompt"
+    );
+    let after_freeze = state
+        .storage
+        .latest_thread_change_seq_by_session("session-a")
+        .unwrap();
+    assert_eq!(
+        committer
+            .freeze_session(
+                "user-a",
+                "session-a",
+                "different later prompt",
+                "fixture-workspace"
+            )
+            .await
+            .unwrap(),
+        "fixture first prompt"
+    );
+    assert_eq!(
+        state
+            .storage
+            .latest_thread_change_seq_by_session("session-a")
+            .unwrap(),
+        after_freeze
+    );
+    let meta = state.thread_store.session_meta(&thread).await.unwrap();
+    assert_eq!(meta.initial_system_prompt, "fixture first prompt");
+    committer
+        .begin_turn("user-a", "session-a", &turn, "fixture-model")
+        .await
+        .unwrap();
+    // Completed display history never contains a second system prompt item.
     let changes = state
         .storage
         .list_thread_changes_by_session("session-a", 0, 100)
         .unwrap();
-    let prompt_change = changes
+    assert!(!changes
         .iter()
-        .find(|change| {
-            change["change_type"] == "item_upsert"
-                && change["item_id"] == json!(format!("session-a:system-prompt"))
-        })
-        .expect("system prompt change");
-    let payload = &prompt_change["payload"];
-    assert_eq!(payload["kind"], json!("system_message"));
-    assert_eq!(payload["turn_id"], json!(turn));
-    assert_eq!(payload["payload"]["content"], json!("你是测试助手。"));
+        .any(|change| change["payload"]["kind"] == "system_message"));
 }

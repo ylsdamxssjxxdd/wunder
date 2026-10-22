@@ -78,7 +78,7 @@ impl SqliteAgentRuntimeStorage for SqliteStorage {
         }
         let payload =
             serde_json::to_string(&record.request_payload).unwrap_or_else(|_| "{}".to_string());
-        let mut conn = self.open()?;
+        let mut conn = self.open_queue()?;
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         tx.execute(
             "INSERT INTO agent_tasks (task_id, thread_id, user_id, agent_id, session_id, status, request_payload, request_id, retry_count, retry_at, created_at, updated_at, started_at, finished_at, last_error) \
@@ -104,13 +104,10 @@ impl SqliteAgentRuntimeStorage for SqliteStorage {
                 record.last_error.as_deref()
             ],
         )?;
-        crate::storage::thread_queue::park_input(
-            &mut super::thread_view_store::Db(&tx),
-            cleaned_user,
-            &record.session_id,
-            &record.request_payload,
-        )?;
         tx.commit()?;
+        // Queue state is distinct from execution history and never emits a
+        // second persisted chat/item projection.
+        self.park_queued_admission(record)?;
         Ok(())
     }
 
@@ -120,7 +117,7 @@ impl SqliteAgentRuntimeStorage for SqliteStorage {
         if cleaned.is_empty() {
             return Ok(None);
         }
-        let conn = self.open()?;
+        let conn = self.open_queue()?;
         let record = conn
             .query_row(
                 "SELECT task_id, thread_id, user_id, agent_id, session_id, status, request_payload, request_id, retry_count, retry_at, created_at, updated_at, started_at, finished_at, last_error \
@@ -155,7 +152,7 @@ impl SqliteAgentRuntimeStorage for SqliteStorage {
     fn list_pending_agent_tasks_impl(&self, limit: i64) -> Result<Vec<AgentTaskRecord>> {
         self.ensure_initialized()?;
         let now = Self::now_ts();
-        let conn = self.read_connection()?;
+        let conn = self.read_queue()?;
         let mut stmt = conn.prepare(
             "SELECT task_id, thread_id, user_id, agent_id, session_id, status, request_payload, request_id, retry_count, retry_at, created_at, updated_at, started_at, finished_at, last_error \
              FROM agent_tasks WHERE (status = 'pending' OR status = 'retry') AND retry_at <= ? \
@@ -190,7 +187,7 @@ impl SqliteAgentRuntimeStorage for SqliteStorage {
     fn count_pending_agent_tasks_impl(&self) -> Result<i64> {
         self.ensure_initialized()?;
         let now = Self::now_ts();
-        let conn = self.open()?;
+        let conn = self.open_queue()?;
         let total = conn.query_row(
             "SELECT COUNT(*) FROM agent_tasks WHERE (status = 'pending' OR status = 'retry') AND retry_at <= ?",
             params![now],
@@ -207,7 +204,7 @@ impl SqliteAgentRuntimeStorage for SqliteStorage {
     ) -> Result<i64> {
         self.ensure_initialized()?;
         let now = Self::now_ts();
-        let conn = self.open()?;
+        let conn = self.open_queue()?;
         let total = conn.query_row(
             "SELECT COUNT(*) FROM agent_tasks \
              WHERE (status = 'pending' OR status = 'retry') AND retry_at <= ? \
@@ -229,7 +226,7 @@ impl SqliteAgentRuntimeStorage for SqliteStorage {
         if cleaned_thread.is_empty() {
             return Ok(Vec::new());
         }
-        let conn = self.open()?;
+        let conn = self.open_queue()?;
         let (query, params): (String, Vec<rusqlite::types::Value>) = if let Some(status) =
             status.filter(|value| !value.trim().is_empty())
         {
@@ -295,7 +292,7 @@ impl SqliteAgentRuntimeStorage for SqliteStorage {
             "success" | "failed" | "dead" | "cancelled" => "('pending','retry','running')",
             _ => return Ok(()),
         };
-        let conn = self.open()?;
+        let conn = self.open_queue()?;
         conn.execute(
             &format!("UPDATE agent_tasks SET status = ?, retry_count = ?, retry_at = ?, started_at = ?, finished_at = ?, last_error = ?, updated_at = ? WHERE task_id = ? AND status IN {allowed_sources}"),
             params![
@@ -318,7 +315,7 @@ impl SqliteAgentRuntimeStorage for SqliteStorage {
         if cleaned_session.is_empty() {
             return Ok(0);
         }
-        let conn = self.open()?;
+        let conn = self.open_logs()?;
         let value: Option<i64> = conn.query_row(
             "SELECT MAX(event_id) FROM stream_events WHERE session_id = ?",
             params![cleaned_session],
@@ -344,7 +341,7 @@ impl SqliteAgentRuntimeStorage for SqliteStorage {
         let payload_text = Self::json_to_string(payload);
         let event_type = stream_event_type(payload);
         let user_round = stream_event_user_round(payload);
-        let conn = self.open()?;
+        let conn = self.open_logs()?;
         conn.execute(
             "INSERT OR REPLACE INTO stream_events (session_id, event_id, user_id, event_type, user_round, payload, created_time) VALUES (?, ?, ?, ?, ?, ?, ?)",
             params![cleaned_session, event_id, cleaned_user, event_type, user_round, payload_text, now],
@@ -363,7 +360,7 @@ impl SqliteAgentRuntimeStorage for SqliteStorage {
         if cleaned_session.is_empty() || limit <= 0 {
             return Ok(Vec::new());
         }
-        let conn = self.open()?;
+        let conn = self.open_logs()?;
         let mut stmt = conn.prepare(
             "SELECT event_id, payload FROM stream_events WHERE session_id = ? AND event_id > ? ORDER BY event_id ASC LIMIT ?",
         )?;
@@ -395,7 +392,7 @@ impl SqliteAgentRuntimeStorage for SqliteStorage {
         if cleaned_session.is_empty() || limit <= 0 {
             return Ok(Vec::new());
         }
-        let conn = self.open()?;
+        let conn = self.open_logs()?;
         let mut stmt = conn.prepare(
             "SELECT event_id, payload FROM stream_events WHERE session_id = ? ORDER BY event_id DESC LIMIT ?",
         )?;
@@ -428,7 +425,7 @@ impl SqliteAgentRuntimeStorage for SqliteStorage {
         if session_id.is_empty() || user_round <= 0 {
             return Ok(0);
         }
-        let conn = self.open()?;
+        let conn = self.open_logs()?;
         let maximum = conn.query_row(
             "SELECT MAX(CAST(COALESCE(                json_extract(payload, '$.data.model_round'),                json_extract(payload, '$.data.data.model_round'),                json_extract(payload, '$.model_round')             ) AS INTEGER)) FROM stream_events WHERE session_id = ? AND user_round = ?",
             params![session_id, user_round],
@@ -448,7 +445,7 @@ impl SqliteAgentRuntimeStorage for SqliteStorage {
         if cleaned_session.is_empty() || from_user_round <= 0 || to_user_round < from_user_round {
             return Ok(Vec::new());
         }
-        let conn = self.open()?;
+        let conn = self.open_logs()?;
         let mut stmt = conn.prepare(
             "SELECT event_id, payload FROM stream_events \
              WHERE session_id = ? AND user_round BETWEEN ? AND ? \
@@ -482,7 +479,7 @@ impl SqliteAgentRuntimeStorage for SqliteStorage {
         {
             return Ok(Vec::new());
         }
-        let conn = self.open()?;
+        let conn = self.open_logs()?;
         let mut stmt = conn.prepare(
             "SELECT event_id, payload FROM stream_events \
              WHERE session_id = ? AND user_round BETWEEN ? AND ? \
@@ -515,7 +512,7 @@ impl SqliteAgentRuntimeStorage for SqliteStorage {
         if cleaned_session.is_empty() || from_user_round <= 0 || to_user_round < from_user_round {
             return Ok(0);
         }
-        let conn = self.open()?;
+        let conn = self.open_logs()?;
         let count = conn.query_row(
             "SELECT COUNT(*) FROM stream_events \
              WHERE session_id = ? AND user_round BETWEEN ? AND ? \
@@ -531,7 +528,7 @@ impl SqliteAgentRuntimeStorage for SqliteStorage {
         if before_time <= 0.0 {
             return Ok(0);
         }
-        let conn = self.open()?;
+        let conn = self.open_logs()?;
         let affected = conn.execute(
             "DELETE FROM stream_events WHERE created_time < ?",
             params![before_time],
@@ -545,7 +542,7 @@ impl SqliteAgentRuntimeStorage for SqliteStorage {
         if cleaned_user.is_empty() {
             return Ok(0);
         }
-        let conn = self.open()?;
+        let conn = self.open_logs()?;
         let affected = conn.execute(
             "DELETE FROM stream_events WHERE user_id = ?",
             params![cleaned_user],
@@ -559,7 +556,7 @@ impl SqliteAgentRuntimeStorage for SqliteStorage {
         if cleaned_session.is_empty() {
             return Ok(0);
         }
-        let conn = self.open()?;
+        let conn = self.open_logs()?;
         let affected = conn.execute(
             "DELETE FROM stream_events WHERE session_id = ?",
             params![cleaned_session],
@@ -589,7 +586,7 @@ impl SqliteAgentRuntimeStorage for SqliteStorage {
         for event_type in event_types {
             params_list.push(rusqlite::types::Value::from(event_type.to_string()));
         }
-        let conn = self.open()?;
+        let conn = self.open_logs()?;
         let affected = conn.execute(&sql, rusqlite::params_from_iter(params_list.iter()))?;
         Ok(affected as i64)
     }

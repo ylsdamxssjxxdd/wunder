@@ -61,7 +61,7 @@ async fn exercise_output_recovery(kind: &str, stream: bool, recover: bool) {
     let mut config = Config::default();
     config.tools.builtin.enabled = vec![resolve_tool_name("final_response")];
     config.storage.backend = "sqlite".into();
-    config.storage.db_path = root.path().join("state.db").to_string_lossy().into_owned();
+    config.storage.data_root = root.path().join("data").to_string_lossy().into_owned();
     config.workspace.root = root.path().join("workspace").to_string_lossy().into_owned();
     config.llm.default = "model_1".into();
     config.llm.models.insert(

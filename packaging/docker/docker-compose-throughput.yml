@@ -14,6 +14,7 @@ services:
       CARGO_BUILD_JOBS: "8"
       WUNDER_CONFIG_PATH: /app/temp_dir/throughput-docker/runtime.json
       WUNDER_STORAGE_BACKEND: postgres
+      WUNDER_STORAGE_DATA_ROOT: /app/config/data
       WUNDER_POSTGRES_DSN: postgresql://test:test@postgres:5432/test
       WUNDER_HOST: 0.0.0.0
       WUNDER_PORT: "18000"

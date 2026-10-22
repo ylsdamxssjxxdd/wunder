@@ -452,7 +452,7 @@ export const buildCanonicalChatRuntimeEvents = (
   options: CanonicalBuildOptions
 ): ChatRuntimeEvent[] => {
   const eventType = normalizeEventType(options.eventType);
-  if (!options.sessionId || eventType === 'heartbeat' || eventType === 'ping') {
+  if (!options.sessionId || eventType === 'heartbeat' || eventType === 'ping' || eventType === 'thread_item_block') {
     return [];
   }
   const payload = asRecord(options.payload);
@@ -668,14 +668,7 @@ export const buildCanonicalChatRuntimeEvents = (
     return [buildBaseEvent(options, 'usage_stats')];
   }
 
-  if (eventType === 'thread_item_block') {
-    return [buildBaseEvent(options, 'assistant_output_snapshot', {
-      source: 'snapshot', strict: false, event_seq: null,
-      event_id: `block:${options.sessionId}:${data.item_id}:${data.field}:${data.block_index}:${data.cursor ?? options.eventId}`,
-      content: firstText(data.content, payload.content),
-      reasoning: firstText(data.reasoning, payload.reasoning)
-    })];
-  }
+
 
   if (eventType === 'llm_output') {
     const finalContent = extractFinalContent(payload, data);

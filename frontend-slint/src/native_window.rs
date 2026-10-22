@@ -21,11 +21,49 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 /// into the native Win32 caption gesture on Windows and asks the compositor on
 /// Linux, preserving snap and monitor transitions.
 pub fn begin_system_move(window: &slint::Window) -> bool {
+    // The caption drag only starts on the active window. When another window
+    // (settings/help/...) stole focus, a bare press just activates the window
+    // and swallows the gesture, which read as "the title bar stopped dragging
+    // until the other window is closed". Pull the window forward first so the
+    // very first drag behaves like any other app.
+    #[cfg(windows)]
+    activate_for_drag(window);
     use slint::winit_030::WinitWindowAccessor;
 
     window
         .with_winit_window(|native| native.drag_window().is_ok())
         .unwrap_or(false)
+}
+
+/// Raise and activate the window before the caption drag. A plain
+/// `SetForegroundWindow` is rejected under the foreground lock, so when it
+/// fails the foreground thread's input state is borrowed and retried (the same
+/// dance the tray restore uses).
+#[cfg(windows)]
+fn activate_for_drag(window: &slint::Window) {
+    let Some(hwnd) = native_hwnd(window) else { return };
+    unsafe {
+        if GetForegroundWindow() == hwnd {
+            return;
+        }
+        BringWindowToTop(hwnd);
+        if SetForegroundWindow(hwnd) != 0 {
+            return;
+        }
+        let foreground = GetForegroundWindow();
+        if foreground == 0 {
+            return;
+        }
+        let current_thread = GetCurrentThreadId();
+        let foreground_thread = GetWindowThreadProcessId(foreground, std::ptr::null_mut());
+        if foreground_thread == 0 {
+            return;
+        }
+        AttachThreadInput(current_thread, foreground_thread, 1);
+        BringWindowToTop(hwnd);
+        SetForegroundWindow(hwnd);
+        AttachThreadInput(current_thread, foreground_thread, 0);
+    }
 }
 
 #[cfg(windows)]

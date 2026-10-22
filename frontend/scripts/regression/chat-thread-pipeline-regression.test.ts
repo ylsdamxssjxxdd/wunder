@@ -16,8 +16,6 @@ import {
 import { applyChatThreadSnapshot, composeItemText, getThreadTurn } from '../../src/realtime/chat/chatThreadState';
 import {
   emptyChatThreadState,
-  THREAD_GAP_MAX_FRAMES,
-  THREAD_GAP_MAX_MS,
   THREAD_OVERFLOW_RESUME_COOLDOWN_MS
 } from '../../src/realtime/chat/chatThreadTypes';
 
@@ -37,48 +35,14 @@ const wireChange = (data: Record<string, unknown>) => ({ event: 'thread_change',
 const wireTail = (data: Record<string, unknown>) => ({ event: 'thread_item_tail', data });
 const wireAck = (data: Record<string, unknown>) => ({ event: 'stream_started', data: { session_id: SESSION, data } });
 
-test('cancelled partial text survives reload using the persisted backend block envelope', () => {
-  resetChatThreadRuntime(SESSION);
-  ensureChatThreadRuntime(SESSION);
-  const store = new FakeStore();
-  const turn = { turn_id: 'turn-cancel-block', user_round: 1, status: 'running', content: 'Fixture input' };
-  const item = { item_id: `${turn.turn_id}:text-1`, turn_id: turn.turn_id,
-    kind: 'assistant_message', status: 'running', revision: 1, visibility: 'user',
-    payload: { model_round: 1, role: 'assistant', content: '', reasoning: '' } };
-  let cursor = 0;
-  const commit = (change_type: string, payload: Record<string, unknown>) =>
-    applyChatThreadServerEvent(store, SESSION, 'thread_change', wireChange({
-      change_type, cursor: ++cursor, turn_id: turn.turn_id, payload
-    }));
-  commit('turn_upsert', turn);
-  commit('item_upsert', item);
-  const blocks = [
-    { field: 'content', block_index: 0, content_offset: 0, content: 'Partial 🐣' },
-    { field: 'reasoning', block_index: 0, reasoning_offset: 0, reasoning: 'Thinking.' },
-    { field: 'content', block_index: 1, content_offset: 'Partial 🐣'.length, content: ' reply.' }
-  ].map(data => ({ event: 'thread_item_block', session_id: SESSION, item_id: item.item_id,
-    field: data.field, block_index: data.block_index,
-    data: { turn_id: turn.turn_id, model_round: 1, item_id: item.item_id, ...data } }));
-  applyChatThreadServerEvent(store, SESSION, 'thread_item_tail', wireTail({
-    item_id: item.item_id, field: 'content', offset: 0, text: 'Partial 🐣 reply.'
-  }));
-  blocks.forEach(block => commit('text_block', block));
-  commit('turn_status', { ...turn, status: 'cancelled' });
-  assert.equal(composeItemText(getChatThreadState(SESSION)!, item.item_id, 'content'), 'Partial 🐣 reply.');
-  assert.equal(composeItemText(getChatThreadState(SESSION)!, item.item_id, 'reasoning'), 'Thinking.');
-  assert.equal(getChatThreadState(SESSION)!.tails.get(item.item_id)?.content, '');
-
-  // A new page has no ephemeral tails and no final full-text item to rescue it.
-  resetChatThreadRuntime(SESSION);
-  ensureChatThreadRuntime(SESSION);
-  applyChatThreadSnapshot(getChatThreadState(SESSION)!, {
-    cursor, turns: [{ ...turn, status: 'cancelled' }],
-    items: [{ ...item, status: 'cancelled' }], blocks
-  });
-  const bubble = buildChatThreadMaterializedMessages(SESSION)?.find(row => row.role === 'assistant');
-  assert.equal(bubble?.content, 'Partial 🐣 reply.');
-  assert.equal(bubble?.reasoning, 'Thinking.');
-  assert.equal(bubble?.status, 'cancelled');
+test('cancelled partial text survives reload as a completed canonical item', () => {
+  const state = emptyChatThreadState(SESSION);
+  const item = { item_id: 'sample-answer', turn_id: 'sample-turn', kind: 'assistant_message',
+    status: 'cancelled', revision: 1, content: 'Partial 🐣 reply.', reasoning: 'Thinking.' };
+  applyChatThreadSnapshot(state, { cursor: 9, turns: [{turn_id:'sample-turn',status:'cancelled'}], items:[item] }, 0);
+  assert.equal(composeItemText(state, item.item_id, 'content'), item.content);
+  assert.equal(composeItemText(state, item.item_id, 'reasoning'), item.reasoning);
+  assert.equal(state.tails.size, 0);
 });
 
 test('v2 pipeline renders a full streaming turn from change frames', () => {
@@ -417,7 +381,7 @@ test('tail frames ahead of the replay cursor are dropped until their base seq la
     applyChatThreadServerEvent(store, SESSION, type, payload);
 
   applyChatThreadSnapshot(getChatThreadState(SESSION)!, { cursor: 0,
-    turns: [{ turn_id: 'turn-3', user_round: 1, status: 'running', content: 'Fixture input' }], items: [], blocks: [] });
+    turns: [{ turn_id: 'turn-3', user_round: 1, status: 'running', content: 'Fixture input' }], items: [] });
 
   apply('thread_change', wireChange({
     change_type: 'item_upsert', turn_id: 'turn-3', cursor: 1, revision: 1,
@@ -440,8 +404,8 @@ test('tail frames ahead of the replay cursor are dropped until their base seq la
     payload: { turn_id: 'turn-3', status: 'running' }
   })), true);
   assert.equal(apply('thread_change', wireChange({
-    change_type: 'text_block', turn_id: 'turn-3', item_id: 'turn-3:text-1', cursor: 3,
-    payload: { item_id: 'turn-3:text-1', field: 'content', block_index: 0, content_offset: 0, content: 'fixed' }
+    change_type: 'item_upsert', turn_id: 'turn-3', item_id: 'turn-3:text-1', cursor: 3,
+    payload: { item_id: 'turn-3:text-1', turn_id:'turn-3', kind:'assistant_message', status:'completed', revision:2, content: 'fixed' }
   })), true);
   assert.equal(apply('thread_item_tail', wireTail({
     item_id: 'turn-3:text-1', field: 'content', offset: 5, base_seq: 3, text: '+tail'
@@ -450,18 +414,16 @@ test('tail frames ahead of the replay cursor are dropped until their base seq la
   assert.equal((messages?.find(row => row.role === 'assistant') as Record<string, unknown> | undefined)?.content, 'fixed+tail');
 });
 
-test('stream_overflow resumes once per cooldown window and shares it with gap overflow', () => {
+test('stream_overflow resumes once per cooldown window while sparse cursors stay ordered', () => {
   resetChatThreadRuntime(SESSION);
   ensureChatThreadRuntime(SESSION);
   const store = new FakeStore();
   let clock = 10000;
   let overflows = 0;
-  let gapOverflows = 0;
   const apply = (type: string, payload: unknown) =>
     applyChatThreadServerEvent(store, SESSION, type, payload, {
       now: () => clock,
-      onOverflow: () => { overflows += 1; },
-      onGapOverflow: () => { gapOverflows += 1; }
+      onOverflow: () => { overflows += 1; }
     });
   const overflow = (cursor: number) =>
     apply('stream_overflow', { event: 'stream_overflow', data: { cursor, resume_recommended: true } });
@@ -479,19 +441,13 @@ test('stream_overflow resumes once per cooldown window and shares it with gap ov
   overflow(9);
   assert.equal(overflows, 2);
 
-  // Gap overflow shares the same per-session resume cooldown: overflow the
-  // gap buffer (64 frames) right after the overflow dispatch — suppressed.
-  clock += 10;
-  for (let seq = 101; seq <= 101 + THREAD_GAP_MAX_FRAMES; seq += 1) {
-    apply('thread_change', wireChange({ change_type: 'turn_status', turn_id: 't-g', cursor: seq }));
+  // Canonical context records can leave arbitrarily large cursor holes.
+  for (let cursor = 101; cursor < 1000; cursor += 17) {
+    apply('thread_change', wireChange({ change_type:'turn_status', cursor,
+      payload:{turn_id:'sample-turn',status:'running'} }));
   }
-  assert.equal(gapOverflows, 0, 'gap overflow suppressed inside the overflow cooldown');
-  // Past the cooldown, an aged gap frame triggers the gap resume.
-  clock += THREAD_OVERFLOW_RESUME_COOLDOWN_MS + 1;
-  apply('thread_change', wireChange({ change_type: 'turn_status', turn_id: 't-g', cursor: 300 }));
-  clock += THREAD_GAP_MAX_MS + 1;
-  apply('thread_change', wireChange({ change_type: 'turn_status', turn_id: 't-g', cursor: 301 }));
-  assert.equal(gapOverflows, 1);
+  assert.equal(overflows, 2);
+
 });
 
 test('snapshot_required rebuilds state from the injected atomic snapshot loader', async () => {
@@ -510,10 +466,9 @@ test('snapshot_required rebuilds state from the injected atomic snapshot loader'
         {
           item_id: 'turn-s:text-1', turn_id: 'turn-s', kind: 'assistant_message',
           status: 'running', revision: 1, visibility: 'user',
-          payload: { model_round: 1, role: 'assistant', content: '', reasoning: '' }
+          payload: { model_round: 1, role: 'assistant', content: '快照文本 ', reasoning: '' }
         }
-      ],
-      blocks: [{ item_id: 'turn-s:text-1', field: 'content', block_index: 0, content_offset: 0, content: '快照文本 ' }]
+      ]
     };
   });
   const apply = (type: string, payload: unknown) =>
@@ -543,8 +498,8 @@ test('snapshot_required rebuilds state from the injected atomic snapshot loader'
 
   // Replay continues from the snapshot cursor.
   assert.equal(apply('thread_change', wireChange({
-    change_type: 'text_block', turn_id: 'turn-s', item_id: 'turn-s:text-1', cursor: 21,
-    payload: { item_id: 'turn-s:text-1', field: 'content', block_index: 1, content_offset: 5, content: '续传' }
+    change_type: 'item_upsert', turn_id: 'turn-s', item_id: 'turn-s:text-1', cursor: 21,
+    payload: { item_id:'turn-s:text-1', turn_id:'turn-s', kind:'assistant_message', status:'completed', revision:2, content:'快照文本 续传' }
   })), true);
   const messages = buildChatThreadMaterializedMessages(SESSION);
   assert.equal((messages?.find(row => row.role === 'assistant') as Record<string, unknown> | undefined)?.content, '快照文本 续传');
@@ -581,48 +536,17 @@ test('a failed or stale snapshot keeps the durable protocol contract', async () 
   registerChatThreadSnapshotLoader(null);
 });
 
-test('out-of-order durable frames heal through the bounded gap buffer in seq order', () => {
+test('sparse canonical cursors apply immediately and stale replays stay inert', () => {
   resetChatThreadRuntime(SESSION);
   ensureChatThreadRuntime(SESSION);
   const store = new FakeStore();
-  const apply = (type: string, payload: unknown) =>
-    applyChatThreadServerEvent(store, SESSION, type, payload);
-
-  apply('thread_change', wireChange({
-    change_type: 'turn_upsert', turn_id: 'turn-g', cursor: 1, revision: 1,
-    payload: { turn_id: 'turn-g', status: 'running', user_round: 1 }
-  }));
-  apply('thread_change', wireChange({
-    change_type: 'item_upsert', turn_id: 'turn-g', cursor: 2, revision: 1,
-    item: {
-      item_id: 'turn-g:text-1', turn_id: 'turn-g', kind: 'assistant_message',
-      status: 'running', revision: 1, visibility: 'user',
-      payload: { model_round: 1, role: 'assistant', content: '', reasoning: '' }
-    }
-  }));
-
-  // Far-ahead frames wait in the gap buffer; lastSeq must not advance.
-  apply('thread_change', wireChange({
-    change_type: 'turn_status', turn_id: 'turn-g', cursor: 5,
-    payload: { turn_id: 'turn-g', status: 'e' }
-  }));
-  apply('thread_change', wireChange({
-    change_type: 'turn_status', turn_id: 'turn-g', cursor: 4,
-    payload: { turn_id: 'turn-g', status: 'd' }
-  }));
-  const stateBeforeHeal = getChatThreadState(SESSION)!;
-  assert.equal(stateBeforeHeal.lastSeq, 2);
-  assert.equal(stateBeforeHeal.gap.length, 2);
-
-  // The missing head lands: everything buffers forward in commit order.
-  apply('thread_change', wireChange({
-    change_type: 'turn_status', turn_id: 'turn-g', cursor: 3,
-    payload: { turn_id: 'turn-g', status: 'c' }
-  }));
-  const stateAfterHeal = getChatThreadState(SESSION)!;
-  assert.equal(stateAfterHeal.lastSeq, 5);
-  assert.equal(stateAfterHeal.gap.length, 0);
-  assert.equal(getThreadTurn(stateAfterHeal, 'turn-g')?.status, 'e');
+  const apply = (cursor: number, status: string) => applyChatThreadServerEvent(store, SESSION,
+    'thread_change', wireChange({cursor,change_type:'turn_status',payload:{turn_id:'sample-turn',status}}));
+  apply(7,'running');
+  apply(24,'completed');
+  apply(12,'running');
+  assert.equal(getChatThreadState(SESSION)?.lastSeq,24);
+  assert.equal(getThreadTurn(getChatThreadState(SESSION)!, 'sample-turn')?.status,'completed');
 });
 
 test('revision rollback and same-revision replay never regress item state', () => {
@@ -749,8 +673,8 @@ test('tail frames validate UTF-16 offsets: zero, continuous, hole, covered and -
   assert.equal(composeItemText(state(), 'turn-t:tool-1', 'output'), 'ab');
   // A durable block heals the -1 tail for its own field only.
   apply('thread_change', wireChange({
-    change_type: 'text_block', turn_id: 'turn-t', item_id: 'turn-t:tool-1', cursor: 3,
-    payload: { item_id: 'turn-t:tool-1', field: 'output', block_index: 0, content_offset: 0, content: 'durable-output' }
+    change_type: 'item_upsert', turn_id: 'turn-t', item_id: 'turn-t:tool-1', cursor: 3,
+    payload: { item_id:'turn-t:tool-1',turn_id:'turn-t',kind:'tool_call',status:'completed',revision:2,output:'durable-output' }
   }));
   assert.equal(composeItemText(state(), 'turn-t:tool-1', 'output'), 'durable-output');
   assert.equal(composeItemText(state(), 'turn-t:text-1', 'content'), '你好，世界😀');
@@ -855,8 +779,7 @@ test('a stale atomic snapshot is refused and keeps the durable protocol contract
   registerChatThreadSnapshotLoader(async () => ({
     cursor: 1,
     turns: [{ turn_id: 'turn-stale', user_round: 1, status: 'running' }],
-    items: [],
-    blocks: []
+    items: []
   }));
   const apply = (type: string, payload: unknown) =>
     applyChatThreadServerEvent(store, SESSION, type, payload, {
@@ -905,7 +828,7 @@ test('snapshot_required reloads are single-flight and cool down after settling',
   registerChatThreadSnapshotLoader(async () => {
     loads += 1;
     await new Promise<void>((resolve) => { release = resolve; });
-    return { cursor: 10, turns: [], items: [], blocks: [] };
+    return { cursor: 10, turns: [], items: [] };
   });
   let clock = 1_000_000;
   const apply = (payload: unknown) =>
@@ -943,67 +866,19 @@ test('snapshot_required reloads are single-flight and cool down after settling',
   registerChatThreadSnapshotLoader(null);
 });
 
-test('gap overflow at the frame limit triggers one resume and clears the buffer', () => {
+test('many sparse cursors do not allocate a missing-frame buffer or request resume', () => {
   resetChatThreadRuntime(SESSION);
   ensureChatThreadRuntime(SESSION);
   const store = new FakeStore();
-  let clock = 8000;
-  let gapOverflows = 0;
-  const apply = (type: string, payload: unknown) =>
-    applyChatThreadServerEvent(store, SESSION, type, payload, {
-      now: () => clock,
-      onGapOverflow: () => { gapOverflows += 1; }
-    });
-
-  apply('thread_change', wireChange({
-    change_type: 'turn_upsert', turn_id: 'turn-q', cursor: 1, revision: 1,
-    payload: { turn_id: 'turn-q', status: 'running' }
-  }));
-
-  // Exactly the frame limit stays buffered without a resume.
-  for (let seq = 100; seq < 100 + THREAD_GAP_MAX_FRAMES; seq += 1) {
-    apply('thread_change', wireChange({
-      change_type: 'turn_status', turn_id: 'turn-q', cursor: seq,
-      payload: { turn_id: 'turn-q', status: 'waiting' }
-    }));
+  let resumes = 0;
+  for (let cursor = 100; cursor <= 10000; cursor += 100) {
+    applyChatThreadServerEvent(store, SESSION, 'thread_change', wireChange({cursor,
+      change_type:'turn_status',payload:{turn_id:'sample-turn',status:'running'}}),
+      {onOverflow:()=>{resumes += 1;}});
   }
-  assert.equal(gapOverflows, 0);
-  assert.equal(getChatThreadState(SESSION)?.gap.length, THREAD_GAP_MAX_FRAMES);
-
-  // One frame past the limit overflows: single-flight resume, buffer cleared,
-  // durable cursor untouched (the resume replays from lastSeq).
-  apply('thread_change', wireChange({
-    change_type: 'turn_status', turn_id: 'turn-q', cursor: 100 + THREAD_GAP_MAX_FRAMES,
-    payload: { turn_id: 'turn-q', status: 'waiting' }
-  }));
-  assert.equal(gapOverflows, 1);
-  assert.equal(getChatThreadState(SESSION)?.gap.length, 0);
-  assert.equal(getChatThreadState(SESSION)?.lastSeq, 1);
-
-  // A burst past the limit collapses into the same single resume dispatch
-  // (overflow and gap overflow share one per-session cooldown).
-  for (let seq = 200; seq < 200 + THREAD_GAP_MAX_FRAMES + 4; seq += 1) {
-    apply('thread_change', wireChange({
-      change_type: 'turn_status', turn_id: 'turn-q', cursor: seq,
-      payload: { turn_id: 'turn-q', status: 'waiting' }
-    }));
-  }
-  assert.equal(gapOverflows, 1, 'burst inside the cooldown window is suppressed');
-
-  // Past the cooldown, a fresh overflow dispatches a new resume.
-  clock += THREAD_OVERFLOW_RESUME_COOLDOWN_MS + 1;
-  for (let seq = 300; seq < 300 + THREAD_GAP_MAX_FRAMES + 1; seq += 1) {
-    apply('thread_change', wireChange({
-      change_type: 'turn_status', turn_id: 'turn-q', cursor: seq,
-      payload: { turn_id: 'turn-q', status: 'waiting' }
-    }));
-  }
-  assert.equal(gapOverflows, 2);
-  assert.equal(getChatThreadState(SESSION)?.lastSeq, 1);
-  assert.ok(
-    (getChatThreadState(SESSION)?.gap.length ?? 0) <= THREAD_GAP_MAX_FRAMES,
-    'buffer stays bounded after the overflow dispatch'
-  );
+  assert.equal(resumes,0);
+  assert.equal(getChatThreadState(SESSION)?.lastSeq,10000);
+  assert.equal('gap' in getChatThreadState(SESSION)!,false);
 });
 
 test('duplicate stream_started acks bind the optimistic turn exactly once', () => {

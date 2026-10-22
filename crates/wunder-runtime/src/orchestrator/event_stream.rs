@@ -36,7 +36,6 @@ pub(super) struct EventEmitter {
     next_event_id: Arc<AtomicI64>,
     client_message_id: Option<String>,
     turn_context: Arc<ParkingMutex<Value>>,
-    text_tail: Arc<ParkingMutex<crate::services::thread_log::TextTails>>,
     /// Serializes the whole emit path (durable commits + queue enqueues) so
     /// change-cursor order == queue order == wire order for every emitter.
     emit_lock: Arc<tokio::sync::Mutex<()>>,
@@ -85,7 +84,6 @@ impl EventEmitter {
             next_event_id: Arc::new(AtomicI64::new(1)),
             client_message_id,
             turn_context: Arc::new(ParkingMutex::new(json!({}))),
-            text_tail: Arc::new(ParkingMutex::new(Default::default())),
             emit_lock: Arc::new(tokio::sync::Mutex::new(())),
             committer: None,
             usage: Arc::new(ParkingMutex::new(TokenUsage {
@@ -176,179 +174,8 @@ impl EventEmitter {
                 }
             }
         }
-        // A text block is keyed by the stable assistant Item. Register it at
-        // model-call admission, never once per token.
-        if event_type == "llm_request" {
-            if let Some(committer) = self.committer.clone() {
-                if let Some(turn_id) = data.get("turn_id").and_then(Value::as_str) {
-                    let model_round = data.get("model_round").and_then(Value::as_i64).unwrap_or(0);
-                    let item = json!({
-                        "session_id": self.session_id,
-                        "turn_id": turn_id,
-                        "model_round": model_round,
-                        "user_round": data.get("user_round").cloned().unwrap_or(Value::Null),
-                        "item_id": format!("{turn_id}:text-{model_round}"),
-                        "kind": "assistant_message",
-                        "status": "running",
-                        "visibility": "user",
-                        "role": "assistant",
-                        "content": "",
-                        "reasoning": ""
-                    });
-                    let owner = self.user_id.clone();
-                    match committer.commit_item(&owner, &item).await {
-                        Ok(Some(receipt)) => {
-                            if let Some(cursor) = receipt.get("cursor").and_then(Value::as_i64) {
-                                self.text_tail
-                                    .lock()
-                                    .set_base_seq(&format!("{turn_id}:text-{model_round}"), cursor);
-                            }
-                            let change_event = StreamEvent {
-                                event: "thread_change".into(),
-                                data: enrich_event_payload(
-                                    receipt,
-                                    Some(&self.session_id),
-                                    timestamp,
-                                ),
-                                id: None,
-                                timestamp: Some(timestamp),
-                            };
-                            self.enqueue_event(&change_event, true).await;
-                        }
-                        Ok(None) => {}
-                        Err(error) => warn!("persist text item failed: {error}"),
-                    }
-                }
-            }
-        }
-        let (blocks_to_commit, tail_events) = if event_type == "llm_output_delta" {
-            let mut tail = self.text_tail.lock();
-            let (blocks, hints) = tail.append(&self.session_id, event_id, &data);
-            let mut tail_events = Vec::new();
-            for (item_id, offset, field, text) in hints {
-                tail_events.push(StreamEvent {
-                    event: "thread_item_tail".into(),
-                    data: json!({"item_id":item_id,"field":field,"offset":offset,"text":text}),
-                    id: None,
-                    timestamp: Some(timestamp),
-                });
-            }
-            (blocks, tail_events)
-        } else if event_type == "llm_output" {
-            let item_id = data.get("turn_id").and_then(Value::as_str).map(|turn| {
-                format!(
-                    "{turn}:text-{}",
-                    data.get("model_round").and_then(Value::as_i64).unwrap_or(0)
-                )
-            });
-            let block = item_id
-                .as_deref()
-                .and_then(|id| self.text_tail.lock().flush_item(&self.session_id, id));
-            (block.into_iter().collect(), Vec::new())
-        } else if matches!(event_type, "llm_request" | "error" | "turn_terminal") {
-            (
-                self.text_tail.lock().flush_all(&self.session_id),
-                Vec::new(),
-            )
-        } else {
-            (Vec::new(), Vec::new())
-        };
-        // Durable text blocks are committed through the same emitter gate as
-        // lifecycle changes. Tail frames are held until their block commit is
-        // visible, then carry that commit cursor as `base_seq`.
-        if let Some(committer) = self.committer.clone() {
-            for flush in blocks_to_commit {
-                let blocks = flush
-                    .get("blocks")
-                    .and_then(Value::as_array)
-                    .cloned()
-                    .unwrap_or_else(|| vec![flush]);
-                for block in blocks {
-                    let owner = self.user_id.clone();
-                    let session = self.session_id.clone();
-                    let block_for_write = block.clone();
-                    match committer
-                        .upsert_text_block(&owner, &session, &block_for_write)
-                        .await
-                    {
-                        Ok(cursor) if cursor > 0 => {
-                            if let Some(item_id) = block.get("item_id").and_then(Value::as_str) {
-                                self.text_tail.lock().set_base_seq(item_id, cursor);
-                            }
-                            let turn_id = block
-                                .pointer("/data/turn_id")
-                                .or_else(|| block.get("turn_id"))
-                                .and_then(Value::as_str)
-                                .unwrap_or_default();
-                            let change_event = StreamEvent {
-                                event: "thread_change".into(),
-                                data: enrich_event_payload(
-                                    json!({
-                                        "change_type": "text_block",
-                                        "turn_id": turn_id,
-                                        "item_id": block.get("item_id"),
-                                        "revision": 0,
-                                        "cursor": cursor,
-                                        "payload": block,
-                                    }),
-                                    Some(&self.session_id),
-                                    timestamp,
-                                ),
-                                id: None,
-                                timestamp: Some(timestamp),
-                            };
-                            self.enqueue_event(&change_event, true).await;
-                        }
-                        Ok(_) => {}
-                        Err(error) => warn!("persist thread text block failed: {error}"),
-                    }
-                }
-            }
-        }
-        for mut tail_event in tail_events {
-            if let Some(map) = tail_event.data.as_object_mut() {
-                let item_id = map
-                    .get("item_id")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default();
-                map.insert(
-                    "base_seq".into(),
-                    json!(self.text_tail.lock().base_seq(item_id)),
-                );
-            }
-            self.enqueue_tail(&tail_event).await;
-        }
-        // Diagnostics update the stable admitted model item. The store merges
-        // this bounded patch inside its item transaction, preserving text and
-        // reasoning even when a history writer completes concurrently.
-        if let Some(item) = crate::services::thread_log::diagnostics::event_patch(
-            &self.session_id,
-            event_type,
-            &data,
-        ) {
-            if let Some(committer) = self.committer.clone() {
-                match committer.commit_item(&self.user_id, &item).await {
-                    Ok(Some(receipt)) => {
-                        self.enqueue_event(
-                            &StreamEvent {
-                                event: "thread_change".into(),
-                                data: enrich_event_payload(
-                                    receipt,
-                                    Some(&self.session_id),
-                                    timestamp,
-                                ),
-                                id: None,
-                                timestamp: Some(timestamp),
-                            },
-                            true,
-                        )
-                        .await;
-                    }
-                    Ok(None) => {}
-                    Err(error) => warn!("persist model diagnostics failed: {error}"),
-                }
-            }
-        }
+        // Incremental text and progress are live-only. The completed event
+        // below contains the semantic body used to restore a reopened thread.
         if let Some(item) =
             crate::services::thread_log::event_item(&self.session_id, event_type, &data)
         {
@@ -436,19 +263,6 @@ impl EventEmitter {
                     }
                 }
             }
-        }
-    }
-
-    /// Ephemeral tail frames are droppable by design: they carry explicit
-    /// offsets and the next durable text block heals any gap. Dropping one
-    /// must not bump the overflow probe, which exists for lost durable
-    /// events, so tails bypass the accounting entirely.
-    async fn enqueue_tail(&self, event: &StreamEvent) {
-        if self.closed.load(AtomicOrdering::SeqCst) {
-            return;
-        }
-        if let Some(queue) = &self.queue {
-            let _ = queue.try_send(StreamSignal::Event(event.clone()));
         }
     }
 

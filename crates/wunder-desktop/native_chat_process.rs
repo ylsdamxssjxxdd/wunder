@@ -196,11 +196,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let mut config = Config::default();
         config.storage.backend = "sqlite".into();
-        config.storage.db_path = temp
-            .path()
-            .join("fixture.db")
-            .to_string_lossy()
-            .into_owned();
+        config.storage.data_root = temp.path().join("data").to_string_lossy().into_owned();
         config.workspace.root = temp.path().join("workspace").to_string_lossy().into_owned();
         config.skills.enabled.clear();
         let store = ConfigStore::new(temp.path().join("fixture.yaml"));
@@ -218,15 +214,7 @@ mod tests {
             .unwrap();
         let root = accepted["turn_id"].as_str().unwrap();
         let answer = format!("{root}:text-1");
-        state.storage.append_thread_item(user, &json!({"session_id":session,"turn_id":root,"item_id":answer,"kind":"assistant_message","model_round":1,"content":"","reasoning":"","status":"completed"})).unwrap();
-        for (field, text) in [
-            ("content", "Fixture answer"),
-            ("reasoning", "Fixture thought"),
-        ] {
-            let mut block = json!({"field":field,"content_offset":0});
-            block[field] = json!(text);
-            state.storage.upsert_thread_text_block(user, session, &json!({"item_id":answer,"field":field,"block_index":0,"event_id":1,"data":block})).unwrap();
-        }
+        state.storage.append_thread_item(user, &json!({"session_id":session,"turn_id":root,"item_id":answer,"kind":"assistant_message","model_round":1,"content":"Fixture answer","reasoning":"Fixture thought","status":"completed"})).unwrap();
         state.storage.append_thread_item(user, &json!({"session_id":session,"turn_id":root,"item_id":"fixture-child-run","kind":"subagent_run","runtime":{"session_id":"fixture-child","title":"Fixture child","status":"running","can_terminate":true,"metrics":{"tool_calls":2}}})).unwrap();
         // Exceeds the old eight-page replay ceiling, with the answer outside
         // the initial tail. No model/network work is involved.

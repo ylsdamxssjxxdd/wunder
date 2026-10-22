@@ -1,7 +1,7 @@
-//! Shared durable ThreadLog change feeder (聊天流式管线根治方案 §3.3/§3.4，M1-C 消费侧共享层).
+//! Shared completed-history feed backed by the canonical rollout projection.
 //!
 //! CLI 与桌面 façade 从 durable 帧投影聊天状态；transport `event_id` 不参与
-//! 重连、去重或排序。`ThreadChangeHub` 只是唤醒信号，轮询兜底保证跨实例正确；
+//! 重连、去重或排序。`ThreadChangeHub` 在提交并投影后唤醒订阅者；空闲时不轮询。
 //! 消费方在会话切换、停止监视或队列水位时通过 `CancellationToken` 结束 feeder。
 //!
 //! feeder 只产出 durable 帧；ephemeral `thread_item_tail` 由各自的实时通道处理，
@@ -16,32 +16,21 @@ use tokio_util::sync::CancellationToken;
 use crate::core::blocking;
 use crate::state::AppState;
 
-/// One durable change page per poll (根治方案 §3.3：feeder 每页 200).
+/// Maximum completed-history frames read in one page.
 pub const FEEDER_PAGE_SIZE: i64 = 200;
 
 const CHANNEL_CAPACITY: usize = 256;
-const BASE_POLL_INTERVAL_MS: u64 = 250;
-// In-process commits notify `ThreadChangeHub` immediately. The fallback is
-// only for another process writing the same local store, so once the feed is
-// idle it must not keep waking a mechanical disk every four seconds.
-const MAX_POLL_INTERVAL_MS: u64 = 60_000;
-fn idle_poll_interval(idle_rounds: usize) -> u64 {
-    BASE_POLL_INTERVAL_MS
-        .saturating_mul(1u64 << idle_rounds.min(8))
-        .min(MAX_POLL_INTERVAL_MS)
-}
-
 /// Durable frame delivered by [`watch_thread_changes`].
 #[derive(Debug, Clone)]
 pub enum ThreadChangeFrame {
-    /// One durable change row (`thread_change` / `thread_item_block`).
+    /// One completed item or turn lifecycle projection (`thread_change`).
     Change {
-        /// `change_seq` of this frame; the durable cursor.
+        /// Exclusive canonical rollout position; cursors may contain gaps.
         seq: i64,
         event: String,
         data: Value,
     },
-    /// The durable window was trimmed; consumer must reload an atomic snapshot.
+    /// The rollout/cursor is no longer valid; reload a bounded snapshot.
     SnapshotRequired { data: Value },
     /// The consumer fell behind; reconnect from `cursor` (control frame, not a change).
     Overflow {
@@ -66,7 +55,7 @@ impl ThreadChangeFrame {
 
 /// Start a durable change feed for one session.
 ///
-/// `after_seq` is the exclusive durable cursor (`change_seq`); frames are
+/// `after_seq` is the exclusive canonical rollout position; frames are
 /// delivered in strictly increasing cursor order. The returned receiver is the
 /// only writer side of this feed; dropping it or cancelling ends the feed.
 pub async fn watch_thread_changes(
@@ -76,27 +65,30 @@ pub async fn watch_thread_changes(
     cancel: Option<CancellationToken>,
 ) -> Result<mpsc::Receiver<ThreadChangeFrame>> {
     let (tx, receiver) = mpsc::channel(CHANNEL_CAPACITY);
-    let workspace = state.workspace.clone();
-    // The hub is only a wake signal; the poll fallback stays the correctness
-    // path, so a feed without subscribers is never treated as truth.
+    let storage = state.storage.clone();
+    // Subscribe before the initial read so a commit during that read remains
+    // observable. The write owner publishes only after projection commits.
     let mut hub_notify = state.kernel.orchestrator.change_hub.subscribe(&session_id);
     let mut last_seq = after_seq.max(0);
-    let mut idle_rounds = 0usize;
+    let cancel = cancel.unwrap_or_default();
 
     tokio::spawn(async move {
         loop {
-            if cancel.as_ref().is_some_and(|token| token.is_cancelled()) {
+            if cancel.is_cancelled() {
                 return;
             }
             let page_session = session_id.clone();
-            let snapshot = workspace.clone();
-            let page = blocking::run_fs("thread_change_feeder.read", move || {
-                snapshot.try_load_thread_changes(&page_session, last_seq, FEEDER_PAGE_SIZE)
-            })
-            .await;
+            let snapshot = storage.clone();
+            let page = tokio::select! {
+                biased;
+                _ = cancel.cancelled() => return,
+                _ = tx.closed() => return,
+                page = blocking::run_db("thread_change_feeder.read", move || {
+                    load_thread_change_frames(snapshot.as_ref(), &page_session, last_seq, FEEDER_PAGE_SIZE)
+                }) => page,
+            };
             match page {
                 Ok(records) => {
-                    let full_page = records.len() as i64 == FEEDER_PAGE_SIZE;
                     let mut progressed = false;
                     for record in records {
                         let Some(event) = record.get("event").and_then(Value::as_str) else {
@@ -104,18 +96,28 @@ pub async fn watch_thread_changes(
                         };
                         let data = record.get("data").cloned().unwrap_or(Value::Null);
                         if event == "thread_snapshot_required" {
-                            let _ = tx.send(ThreadChangeFrame::SnapshotRequired { data }).await;
+                            let _ = send_frame(
+                                &tx,
+                                &cancel,
+                                ThreadChangeFrame::SnapshotRequired { data },
+                            )
+                            .await;
                             return;
                         }
                         let seq = data.get("cursor").and_then(Value::as_i64).unwrap_or(0);
-                        if tx
-                            .send(ThreadChangeFrame::Change {
+                        if seq <= last_seq {
+                            continue;
+                        }
+                        if !send_frame(
+                            &tx,
+                            &cancel,
+                            ThreadChangeFrame::Change {
                                 seq,
                                 event: event.to_string(),
                                 data,
-                            })
-                            .await
-                            .is_err()
+                            },
+                        )
+                        .await
                         {
                             // Consumer went away: stop the feed.
                             return;
@@ -126,49 +128,84 @@ pub async fn watch_thread_changes(
                         }
                     }
                     if progressed {
-                        idle_rounds = 0;
-                        if full_page {
-                            // More durable changes likely wait; re-read immediately.
-                            continue;
-                        }
-                    } else {
-                        idle_rounds = idle_rounds.saturating_add(1);
+                        // A byte budget can end a page before its row limit.
+                        // Drain to an empty page before waiting for another commit.
+                        continue;
                     }
                 }
                 Err(err) => {
                     tracing::warn!(
                         %err,
                         session = %session_id,
-                        "thread change feeder read failed; backing off"
+                        "thread history subscription read failed"
                     );
-                    idle_rounds = idle_rounds.saturating_add(1);
+                    return;
                 }
             }
-            let poll_interval = idle_poll_interval(idle_rounds);
-            let wait = tokio::time::sleep(std::time::Duration::from_millis(poll_interval));
-            let cancel_fut: std::pin::Pin<
-                std::boxed::Box<dyn std::future::Future<Output = ()> + Send>,
-            > = match cancel.as_ref() {
-                Some(token) => std::boxed::Box::pin(token.cancelled()),
-                None => std::boxed::Box::pin(std::future::pending()),
-            };
             tokio::select! {
-                _ = cancel_fut => return,
+                biased;
+                _ = cancel.cancelled() => return,
                 changed = hub_notify.changed() => {
                     if changed.is_err() {
                         return;
                     }
-                    // Wake signal only: re-read when the hub claims a cursor
-                    // ahead of our durable position.
-                    if *hub_notify.borrow() > last_seq {
-                        idle_rounds = 0;
-                    }
+                    // Always re-read on a commit signal: a replacement rollout
+                    // can require resetting a cursor rather than increasing it.
+                    hub_notify.borrow_and_update();
                 }
-                _ = wait => {}
+                _ = tx.closed() => return,
             }
         }
     });
     Ok(receiver)
+}
+
+async fn send_frame(
+    tx: &mpsc::Sender<ThreadChangeFrame>,
+    cancel: &CancellationToken,
+    frame: ThreadChangeFrame,
+) -> bool {
+    tokio::select! {
+        biased;
+        _ = cancel.cancelled() => false,
+        result = tx.send(frame) => result.is_ok(),
+    }
+}
+
+/// Shared transport projection. Backend implementations resolve this contract
+/// against canonical completed history, while the application database keeps
+/// only business/control data. All callers share the same cursor guard.
+pub(crate) fn load_thread_change_frames(
+    storage: &dyn crate::storage::StorageBackend,
+    session_id: &str,
+    after_seq: i64,
+    limit: i64,
+) -> Result<Vec<Value>> {
+    let after_seq = after_seq.max(0);
+    if after_seq > storage.latest_thread_change_seq_by_session(session_id)? {
+        return Ok(vec![
+            serde_json::json!({"event":"thread_snapshot_required","data":{}}),
+        ]);
+    }
+    let changes = storage.list_thread_changes_by_session(
+        session_id,
+        after_seq,
+        limit.clamp(1, FEEDER_PAGE_SIZE),
+    )?;
+    let mut frames = Vec::with_capacity(changes.len());
+    for mut change in changes {
+        if change["change_type"] == "snapshot_required" {
+            frames.push(serde_json::json!({"event":"thread_snapshot_required","data":change}));
+            break;
+        }
+        let cursor = change["change_seq"].as_i64().unwrap_or(0);
+        if let Some(data) = change.as_object_mut() {
+            data.remove("change_seq");
+            data.insert("cursor".into(), cursor.into());
+        }
+        frames.push(serde_json::json!({"event":"thread_change","data":change}));
+    }
+    Ok(frames)
 }
 
 #[cfg(test)]
@@ -178,16 +215,14 @@ mod tests {
     use crate::config_store::ConfigStore;
     use crate::state::AppStateInitOptions;
     use serde_json::json;
+    use wunder_core::thread_store::*;
 
     async fn build_state(name: &str) -> (Arc<AppState>, tempfile::TempDir) {
         let temp_dir = tempfile::tempdir().expect("create temp dir");
         let root = temp_dir.path().to_path_buf();
         let mut config = Config::default();
         config.storage.backend = "sqlite".to_string();
-        config.storage.db_path = root
-            .join(format!("{name}.db"))
-            .to_string_lossy()
-            .to_string();
+        config.storage.data_root = root.join(format!("{name}")).to_string_lossy().to_string();
         config.workspace.root = root.join("workspaces").to_string_lossy().to_string();
         config.skills.enabled.clear();
         let config_store = ConfigStore::new(root.join("wunder.yaml"));
@@ -228,180 +263,258 @@ mod tests {
             .unwrap();
     }
 
-    fn seed_answer_item(state: &Arc<AppState>, turn: &Value) {
-        state
-            .storage
-            .append_thread_item(
-                "owner",
-                &json!({"session_id":"feeder-thread",
-                    "turn_id":turn["turn_id"], "item_id":"answer", "kind":"assistant_message",
-                    "role":"assistant", "status":"running", "visibility":"user"}),
-            )
-            .unwrap();
-    }
-
-    #[tokio::test]
-    async fn feeder_delivers_durable_frames_in_change_seq_order() {
-        let (state, _temp_dir) = build_state("feeder-order").await;
+    async fn seed_canonical(state: &Arc<AppState>, records: Vec<CanonicalRecord>) {
         seed_session(&state.storage);
-        let turn = state
-            .storage
-            .accept_thread_turn("owner", "feeder-thread", &json!({"content":"hi"}))
-            .unwrap();
-        seed_answer_item(&state, &turn);
         state
-            .storage
-            .upsert_thread_text_block(
-                "owner",
-                "feeder-thread",
-                &json!({"item_id":"answer", "field":"content", "block_index":0, "event_id":1000,
-                    "data":{"content":"hello", "field":"content", "block_index":0, "content_offset":0}}),
-            )
+            .thread_store
+            .admission_store()
+            .unwrap()
+            .register_owner("owner", "feeder-thread")
             .unwrap();
-
-        let cancel = CancellationToken::new();
-        let mut rx = watch_thread_changes(
-            state.clone(),
-            "feeder-thread".into(),
-            0,
-            Some(cancel.clone()),
-        )
-        .await
-        .expect("start feeder");
-
-        let mut seqs = Vec::new();
-        for _ in 0..8 {
-            let frame = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
-                .await
-                .expect("frame within timeout")
-                .expect("receiver open");
-            match &frame {
-                ThreadChangeFrame::Change { seq, .. } => seqs.push(*seq),
-                ThreadChangeFrame::SnapshotRequired { .. } => break,
-                ThreadChangeFrame::Overflow { .. } => break,
-            }
-            if seqs.len() >= 3 {
-                break;
-            }
-        }
-        // One immutable durable frame per change_seq, including text blocks.
-        assert!(
-            seqs.windows(2).all(|pair| pair[0] + 1 == pair[1]),
-            "seqs: {seqs:?}"
-        );
-        assert!(seqs.len() >= 3, "seqs: {seqs:?}");
-        cancel.cancel();
-    }
-
-    #[tokio::test]
-    async fn feeder_stops_on_snapshot_required_when_cursor_is_beyond_window() {
-        let (state, _temp_dir) = build_state("feeder-snapshot").await;
-        seed_session(&state.storage);
-        let turn = state
-            .storage
-            .accept_thread_turn("owner", "feeder-thread", &json!({"content":"hi"}))
-            .unwrap();
-        seed_answer_item(&state, &turn);
-        let latest = state
-            .workspace
-            .latest_thread_change_seq("feeder-thread")
-            .unwrap();
-
-        let mut rx = watch_thread_changes(state.clone(), "feeder-thread".into(), latest + 1, None)
+        let thread = ThreadId::new("feeder-thread").unwrap();
+        let rollout = RolloutId::new("feeder-rollout").unwrap();
+        state
+            .thread_store
+            .create_thread(CreateThreadRequest {
+                metadata: ThreadMetadata {
+                    thread_id: thread.clone(),
+                    current_rollout_id: rollout.clone(),
+                    status: ThreadStatus::Active,
+                    created_at_ms: 1,
+                    updated_at_ms: 1,
+                    title: None,
+                    workspace_id: None,
+                    pinned: false,
+                },
+                session_meta: SessionMeta {
+                    thread_id: thread.clone(),
+                    rollout_id: rollout,
+                    created_at_ms: 1,
+                    source: "test".into(),
+                    initial_system_prompt: "sample instruction".into(),
+                    initial_memory: None,
+                    parent_thread_id: None,
+                    history_base: None,
+                    capabilities: Value::Null,
+                },
+            })
             .await
-            .expect("start feeder");
-        let frame = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
+            .expect("create canonical thread");
+        state
+            .thread_store
+            .append_canonical(&thread, records)
+            .await
+            .expect("append fixture");
+    }
+
+    fn item(id: &str, kind: CanonicalItemKind) -> CanonicalItem {
+        CanonicalItem {
+            item_id: ItemId::new(id).unwrap(),
+            turn_id: TurnId::new("feeder-turn").unwrap(),
+            root_turn_id: None,
+            created_at_ms: 10,
+            kind,
+            payload: json!({"content":"sample"}),
+            display_output: None,
+            display_output_truncated: false,
+        }
+    }
+
+    fn started() -> CanonicalRecord {
+        CanonicalRecord::Event(CanonicalEvent::TurnStarted {
+            turn_id: TurnId::new("feeder-turn").unwrap(),
+            root_turn_id: None,
+            started_at_ms: 5,
+        })
+    }
+
+    async fn next_frame(receiver: &mut mpsc::Receiver<ThreadChangeFrame>) -> ThreadChangeFrame {
+        tokio::time::timeout(std::time::Duration::from_secs(2), receiver.recv())
             .await
             .expect("frame within timeout")
-            .expect("receiver open");
-        assert!(matches!(frame, ThreadChangeFrame::SnapshotRequired { .. }));
-        // The feeder returns right after snapshot-required: the channel closes
-        // and recv yields None immediately.
-        let second = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
-            .await
-            .expect("recv must resolve once the feeder stops");
-        assert!(second.is_none(), "feeder must stop after snapshot-required");
+            .expect("feed remains open")
     }
 
     #[tokio::test]
-    async fn feeder_stops_when_cancelled() {
-        let (state, _temp_dir) = build_state("feeder-cancel").await;
-        seed_session(&state.storage);
+    async fn feeder_replays_completed_canonical_events_with_sparse_rollout_positions() {
+        let (state, _directory) = build_state("feeder-order").await;
+        let user = item("user-item", CanonicalItemKind::UserMessage);
+        let answer = item("answer-item", CanonicalItemKind::AssistantMessage);
+        seed_canonical(
+            &state,
+            vec![
+                started(),
+                CanonicalRecord::ResponseItem(ResponseItem {
+                    item_id: user.item_id.clone(),
+                    turn_id: user.turn_id.clone(),
+                    root_turn_id: None,
+                    created_at_ms: 10,
+                    kind: user.kind,
+                    payload: user.payload.clone(),
+                }),
+                CanonicalRecord::Event(CanonicalEvent::ItemCompleted(user)),
+                CanonicalRecord::ResponseItem(ResponseItem {
+                    item_id: answer.item_id.clone(),
+                    turn_id: answer.turn_id.clone(),
+                    root_turn_id: None,
+                    created_at_ms: 11,
+                    kind: answer.kind,
+                    payload: answer.payload.clone(),
+                }),
+                CanonicalRecord::Event(CanonicalEvent::ItemCompleted(answer)),
+                CanonicalRecord::Event(CanonicalEvent::TurnCompleted {
+                    turn_id: TurnId::new("feeder-turn").unwrap(),
+                    completed_at_ms: 20,
+                }),
+            ],
+        )
+        .await;
         let cancel = CancellationToken::new();
-        let cancel_for_spawn = cancel.clone();
-        let mut rx = tokio::select! {
-            rx = watch_thread_changes(state.clone(), "feeder-thread".into(), 0, Some(cancel_for_spawn)) => {
-                rx.expect("start feeder")
+        let mut receiver =
+            watch_thread_changes(state, "feeder-thread".into(), 0, Some(cancel.clone()))
+                .await
+                .expect("start feed");
+        let mut positions = Vec::new();
+        let mut item_ids = Vec::new();
+        for _ in 0..4 {
+            let ThreadChangeFrame::Change { seq, data, .. } = next_frame(&mut receiver).await
+            else {
+                panic!("expected completed history frame");
+            };
+            positions.push(seq);
+            if data["change_type"] == "item_upsert" {
+                item_ids.push(data["payload"]["item_id"].as_str().unwrap().to_owned());
+                assert_eq!(data["payload"]["payload"]["content"], "sample");
             }
-            _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {
-                panic!("feeder started within timeout");
-            }
-        };
+        }
+        assert!(
+            positions.windows(2).all(|pair| pair[0] < pair[1]),
+            "{positions:?}"
+        );
+        assert!(
+            positions.windows(2).any(|pair| pair[0] + 1 < pair[1]),
+            "context records leave cursor gaps"
+        );
+        assert_eq!(item_ids, vec!["user-item", "answer-item"]);
         cancel.cancel();
-        let stopped = tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv())
-            .await
-            .expect("recv must resolve once the feeder stops");
-        assert!(stopped.is_none(), "cancelled feeder must stop");
     }
 
     #[tokio::test]
-    async fn feeder_recovers_committed_change_by_poll_without_hub_signal() {
-        let (state, _temp_dir) = build_state("feeder-poll-fallback").await;
-        seed_session(&state.storage);
-        let turn = state
-            .storage
-            .accept_thread_turn("owner", "feeder-thread", &json!({"content":"hi"}))
-            .unwrap();
+    async fn feeder_requires_snapshot_for_a_cursor_beyond_the_rollout() {
+        let (state, _directory) = build_state("feeder-reset").await;
+        seed_canonical(&state, vec![started()]).await;
+        let latest = state
+            .thread_store
+            .history_position(&ThreadId::new("feeder-thread").unwrap())
+            .await
+            .unwrap()
+            .end_ordinal_exclusive as i64;
+        let mut receiver = watch_thread_changes(state, "feeder-thread".into(), latest + 1, None)
+            .await
+            .expect("start feed");
+        assert!(matches!(
+            next_frame(&mut receiver).await,
+            ThreadChangeFrame::SnapshotRequired { .. }
+        ));
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_secs(1), receiver.recv())
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn idle_feeder_reads_again_only_after_a_commit_wake() {
+        let (state, _directory) = build_state("feeder-event-wake").await;
+        seed_canonical(&state, vec![started()]).await;
+        let thread = ThreadId::new("feeder-thread").unwrap();
         let baseline = state
-            .storage
-            .latest_thread_change_seq_by_session("feeder-thread")
-            .unwrap();
+            .thread_store
+            .history_position(&thread)
+            .await
+            .unwrap()
+            .end_ordinal_exclusive as i64;
         let cancel = CancellationToken::new();
-        let mut rx = watch_thread_changes(
+        let mut receiver = watch_thread_changes(
             state.clone(),
             "feeder-thread".into(),
             baseline,
             Some(cancel.clone()),
         )
         .await
-        .expect("start feeder");
-
-        // Write through an independent producer with no local hub publish,
-        // representing a different server instance. The polling reader must
-        // still obtain the immutable durable payload.
-        state
-            .storage
-            .append_thread_item(
-                "owner",
-                &json!({
-                    "session_id":"feeder-thread", "turn_id":turn["turn_id"],
-                    "item_id":"cross-instance", "kind":"assistant_message",
-                    "role":"assistant", "status":"completed", "visibility":"user",
-                    "content":"durable"
-                }),
+        .expect("start feed");
+        // Let the initial bounded replay finish. No historical frame is pending.
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(75), receiver.recv())
+                .await
+                .is_err()
+        );
+        let outcome = state
+            .thread_store
+            .append_canonical(
+                &thread,
+                vec![CanonicalRecord::Event(CanonicalEvent::ItemCompleted(item(
+                    "wake-item",
+                    CanonicalItemKind::AssistantMessage,
+                )))],
             )
-            .unwrap();
-        let frame = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
             .await
-            .expect("poll fallback must deliver")
-            .expect("feeder remains open");
-        match frame {
-            ThreadChangeFrame::Change { seq, data, .. } => {
-                assert!(seq > baseline);
-                assert_eq!(data["payload"]["item_id"], "cross-instance");
-                assert_eq!(data["payload"]["payload"]["content"], "durable");
-            }
-            other => panic!("expected durable change, got {other:?}"),
-        }
+            .expect("persist and project fixture without publish");
+        // The former 250 ms fallback would read this unannounced change. A
+        // subscriber now sleeps until the owning producer publishes a commit.
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(350), receiver.recv())
+                .await
+                .is_err()
+        );
+        state.kernel.orchestrator.change_hub.publish(
+            "feeder-thread",
+            outcome.persisted_through.end_ordinal_exclusive as i64,
+        );
+        let ThreadChangeFrame::Change { data, .. } = next_frame(&mut receiver).await else {
+            panic!("expected item");
+        };
+        assert_eq!(data["payload"]["item_id"], "wake-item");
         cancel.cancel();
     }
 
-    #[test]
-    fn idle_poll_backoff_starts_fast_and_caps_at_one_minute() {
-        assert_eq!(idle_poll_interval(0), 250);
-        assert_eq!(idle_poll_interval(1), 500);
-        assert_eq!(idle_poll_interval(2), 1_000);
-        assert_eq!(idle_poll_interval(8), MAX_POLL_INTERVAL_MS);
-        assert_eq!(idle_poll_interval(usize::MAX), MAX_POLL_INTERVAL_MS);
+    #[tokio::test]
+    async fn a_full_output_channel_does_not_delay_cancellation() {
+        let (tx, mut receiver) = mpsc::channel(1);
+        let frame = ThreadChangeFrame::Overflow {
+            cursor: 0,
+            resume_recommended: true,
+        };
+        tx.send(frame.clone()).await.unwrap();
+        let cancel = CancellationToken::new();
+        let task_cancel = cancel.clone();
+        let task = tokio::spawn(async move { send_frame(&tx, &task_cancel, frame).await });
+        tokio::task::yield_now().await;
+        cancel.cancel();
+        assert!(
+            !tokio::time::timeout(std::time::Duration::from_secs(1), task)
+                .await
+                .unwrap()
+                .unwrap()
+        );
+        assert!(receiver.recv().await.is_some());
+        assert!(receiver.recv().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn feeder_stops_immediately_when_already_cancelled() {
+        let (state, _directory) = build_state("feeder-cancel").await;
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        let mut receiver = watch_thread_changes(state, "feeder-thread".into(), 0, Some(cancel))
+            .await
+            .expect("start feed");
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_secs(1), receiver.recv())
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 }

@@ -116,7 +116,7 @@ async fn session_catalog_admin_delete_without_monitor_reconciles_across_pages() 
     let dir = tempfile::tempdir().unwrap();
     let mut config = Config::default();
     config.storage.backend = "sqlite".into();
-    config.storage.db_path = dir.path().join("catalog.db").to_string_lossy().into();
+    config.storage.data_root = dir.path().join("data").to_string_lossy().into();
     config.workspace.root = dir.path().join("workspace").to_string_lossy().into();
     let config_store = ConfigStore::new(dir.path().join("config.yaml"));
     config_store

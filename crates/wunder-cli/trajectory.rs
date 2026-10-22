@@ -100,59 +100,12 @@ pub(crate) fn load_detail(
         value["content"] = Value::String(content);
         truncated |= more;
     }
-    if row.kind == "assistant_message" && value.is_object() {
-        if value["content"].as_str().is_none_or(str::is_empty) {
-            let source = BodyRef {
-                body_id: format!("{}|source_stream", row.item_id),
-                revision: row.revision,
-                bytes: 0,
-            };
-            let (content, more) = read_body(store, owner, session, &source, &mut budget)?;
-            value["content"] = Value::String(content);
-            truncated |= more;
-        }
-        if value["reasoning"].as_str().is_none_or(str::is_empty)
-            && value["reasoning_content"]
-                .as_str()
-                .is_none_or(str::is_empty)
-        {
-            let mut cursor = 0;
-            let mut text = String::new();
-            loop {
-                let (blocks, next, more) = store.list_thread_item_blocks_page(
-                    owner,
-                    session,
-                    &row.item_id,
-                    Some("reasoning"),
-                    cursor,
-                    16,
-                    false,
-                )?;
-                for block in blocks {
-                    let data = block.get("data").unwrap_or(&block);
-                    let part = data["reasoning"]
-                        .as_str()
-                        .or(data["reasoning_content"].as_str())
-                        .unwrap_or("");
-                    let original_bytes = part.len();
-                    let part = wunder_server::stable_core::thread_view::preview(part, budget);
-                    truncated |= part.len() < original_bytes;
-                    budget -= part.len();
-                    text.push_str(&part);
-                }
-                if !more || truncated {
-                    break;
-                }
-                if budget == 0 {
-                    truncated = true;
-                    break;
-                }
-                cursor = next
-                    .map(|n| n.saturating_add(1))
-                    .filter(|n| *n > cursor)
-                    .ok_or_else(|| anyhow!("reasoning cursor did not advance"))?;
-            }
-            value["reasoning"] = Value::String(text);
+    if row.kind == "assistant_message"
+        && value.is_object()
+        && value["reasoning"].as_str().is_none_or(str::is_empty)
+    {
+        if let Some(reasoning) = value["reasoning_content"].as_str() {
+            value["reasoning"] = Value::String(reasoning.to_owned());
         }
     }
     let sections = detail_sections(row, &value, truncated);

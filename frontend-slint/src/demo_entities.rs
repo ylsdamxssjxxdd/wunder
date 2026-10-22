@@ -221,8 +221,9 @@ pub fn install(app: &MainWindow) {
     let weak = app.as_weak();
     app.on_create_model(move || {
         let Some(app) = weak.upgrade() else { return };
-        // Resume the parked unsaved draft instead of stacking a second row.
-        if let Some(row_key) = crate::entity_state::model_draft_row_key() {
+        // Resume the parked or in-edit unsaved draft instead of stacking a
+        // second row.
+        if let Some(row_key) = crate::entity_state::active_model_draft_key(&app) {
             if let Some(index) = app
                 .get_models()
                 .iter()
@@ -230,9 +231,11 @@ pub fn install(app: &MainWindow) {
             {
                 app.set_selected_model(index as i32);
                 if crate::entity_state::restore_model_draft(&app, index as i32, &row_key) {
-                    app.set_status("已恢复未保存的模型草稿 · 仅本次演示有效".into());
-                    return;
+                    app.set_status("已回到未保存的模型草稿 · 仅本次演示有效".into());
+                } else {
+                    app.set_status("当前正在编辑未保存的模型草稿 · 仅本次演示有效".into());
                 }
+                return;
             }
         }
         let mut models: Vec<_> = app.get_models().iter().collect();

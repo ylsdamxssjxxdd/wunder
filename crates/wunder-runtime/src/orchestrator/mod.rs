@@ -153,6 +153,7 @@ pub struct Orchestrator {
     lsp_manager: Arc<LspManager>,
     prompt_composer: Arc<PromptComposer>,
     storage: Arc<dyn StorageBackend>,
+    pub(crate) thread_store: Arc<crate::storage::thread_store::LocalThreadStore>,
     approval_registry: Arc<PendingApprovalRegistry>,
     command_sessions: Arc<CommandSessionBroker>,
     active_turns: Arc<ActiveTurnRegistry>,
@@ -165,6 +166,19 @@ pub struct Orchestrator {
 }
 
 impl Orchestrator {
+    /// Subscribe to post-commit thread wakes. Consumers load a bounded current
+    /// view on wake; the value is only a durable watermark, not an event body.
+    pub fn subscribe_thread_updates(&self, session_id: &str) -> tokio::sync::watch::Receiver<i64> {
+        self.change_hub.subscribe(session_id)
+    }
+
+    /// Wake same-process thread observers after an explicit canonical or
+    /// control-state commit. Call only after the writer and projection have
+    /// acknowledged success; this does not persist or synthesize history.
+    pub fn notify_thread_committed(&self, session_id: &str, cursor: i64) {
+        self.change_hub.publish(session_id, cursor);
+    }
+
     /// Subscribe to in-process context usage snapshots for a session. The
     /// durable session token value remains the recovery source after restart
     /// or a missed notification.
@@ -200,9 +214,14 @@ impl Orchestrator {
         gateway: Arc<GatewayHub>,
         user_world: Arc<UserWorldService>,
         cron_wake_signal: Option<CronWakeSignal>,
+        thread_store: Arc<crate::storage::thread_store::LocalThreadStore>,
     ) -> Self {
         let change_hub = Arc::new(ThreadChangeHub::new());
-        let committer = Arc::new(ThreadLogCommitter::new(storage.clone(), change_hub.clone()));
+        let committer = Arc::new(ThreadLogCommitter::new(
+            storage.clone(),
+            change_hub.clone(),
+            thread_store.clone(),
+        ));
         let goal = Arc::new(crate::services::goal::GoalService::new());
         goal.set_update_publisher(change_hub.clone());
         Self {
@@ -219,6 +238,7 @@ impl Orchestrator {
             lsp_manager,
             prompt_composer: Arc::new(PromptComposer::new(60.0, 256)),
             storage,
+            thread_store,
             approval_registry,
             command_sessions,
             active_turns: Arc::new(ActiveTurnRegistry::new()),

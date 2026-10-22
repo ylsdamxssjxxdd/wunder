@@ -69,7 +69,7 @@ test('raw lifecycle carries settlement reasons through separate status frames', 
   } finally { cleanup(); }
 });
 
-test('durable lifecycle settles shell and dispatches workspace effects once even through replay and gaps', async () => {
+test('durable lifecycle settles shell and dispatches workspace effects once through sparse cursor replay', async () => {
   const { chat, events, apply, syncChatThreadShell, cleanup } = await setup();
   try {
     submitRawChatThreadTurn(chat, key, 'client-one', 'question');
@@ -79,7 +79,7 @@ test('durable lifecycle settles shell and dispatches workspace effects once even
     apply(1, 'turn_upsert', { turn_id: 'turn-one', user_round: 1, status: 'running', client_message_id: 'client-one' });
     const workspace = { turn_id: 'turn-one', item_id: 'workspace-one', kind: 'workspace_update', event_type: 'workspace_update', revision: 1, status: 'completed', paths: ['example.txt'] };
     apply(3, 'item_upsert', workspace);
-    assert.equal(events.includes('wunder:workspace-refresh'), false);
+    assert.equal(events.filter(event => event === 'wunder:workspace-refresh').length, 1);
     apply(2, 'item_upsert', { turn_id: 'turn-one', item_id: 'turn-one:user', kind: 'user_message', content: 'question', revision: 1 });
     apply(3, 'item_upsert', workspace);
     assert.equal(events.filter(event => event === 'wunder:workspace-refresh').length, 1);
@@ -114,7 +114,7 @@ test('row-shaped atomic snapshot restores compact input and complete tool invoca
           args: { text: 'sample input' }, data: { result: 'sample result' }, meta: { duration_ms: 125 },
           request_context_tokens: 42, request_usage: { total_tokens: 57 }
         } }
-      ], blocks: []
+      ]
     });
     syncChatThreadShell(chat, key);
     const rows = buildChatThreadMaterializedMessages(key)!;

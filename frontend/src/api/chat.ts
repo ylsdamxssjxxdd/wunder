@@ -1,4 +1,4 @@
-// AI生成
+// AI鐢熸垚
 import api from './http';
 
 import { resolveAccessToken } from '@/api/requestAuth';
@@ -121,10 +121,10 @@ export const getThreadViewBody = (id: string, bodyId: string, params: QueryParam
   api.get(`/chat/sessions/${encodeURIComponent(id)}/bodies/${encodeURIComponent(bodyId)}`, { params, ...options, timeout: options.timeout ?? 5000 });
 export const getThreadLogTurn = (sessionId: string, turnId: string, params: QueryParams = {}, options: { signal?: AbortSignal } = {}) =>
   api.get(`/chat/sessions/${sessionId}/thread-log/turns/${encodeURIComponent(turnId)}`, { params, ...options });
-// Atomic thread snapshot (plan §5 M2-C): cursor + turn/item/block rows read in
+// Atomic thread snapshot (plan 搂5 M2-C): cursor + completed turn/item rows read in
 // one transaction; the v2 pipeline rebuilds its state from it. The server
 // bounds the read to a tail window (W1-B); callers may narrow it further via
-// `params` (max_turns / max_items / max_blocks / before_turn_index) for a
+// `params` (max_turns / max_items / before_turn_index) for a
 // first-paint budget or to page strictly older turns.
 export const getThreadLogSnapshot = (
   id: string,
@@ -133,15 +133,6 @@ export const getThreadLogSnapshot = (
 ) => api.get(`/chat/sessions/${id}/thread-log/snapshot`, { params, ...options });
 export const getThreadLogChanges = (id: string, params: QueryParams = {}, options: { signal?: AbortSignal } = {}) =>
   api.get(`/chat/sessions/${id}/thread-log/changes`, { params, ...options });
-export const getThreadLogItemContent = (
-  sessionId: string,
-  itemId: string,
-  params: QueryParams = {},
-  options: { signal?: AbortSignal } = {}
-) => api.get(
-  `/chat/sessions/${encodeURIComponent(sessionId)}/thread-log/items/${encodeURIComponent(itemId)}/content`,
-  { params: sanitizeQueryParams(params), ...options }
-);
 export const getSessionGoal = (id: string, options: { signal?: AbortSignal } = {}) =>
   api.get(`/chat/sessions/${id}/goal`, options);
 export const setSessionGoal = (id: string, payload: unknown) =>

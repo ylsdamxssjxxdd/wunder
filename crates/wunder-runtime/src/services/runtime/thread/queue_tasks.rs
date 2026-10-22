@@ -410,11 +410,7 @@ mod tests {
         let root = tempfile::tempdir().expect("tempdir");
         let mut config = crate::config::Config::default();
         config.storage.backend = "sqlite".into();
-        config.storage.db_path = root
-            .path()
-            .join(format!("{tag}.db"))
-            .to_string_lossy()
-            .into();
+        config.storage.data_root = root.path().join(format!("{tag}")).to_string_lossy().into();
         config.workspace.root = root.path().join("workspace").to_string_lossy().into();
         let store = ConfigStore::new(root.path().join("config.yaml"));
         store

@@ -1,38 +1,35 @@
 use super::*;
 
 #[test]
-fn sandbox_file_only_workspace_does_not_start_writer_but_concurrent_writes_flush() {
+fn concurrent_file_only_workspace_access_does_not_materialize_history_storage() {
     let dir = tempfile::tempdir().unwrap();
+    let state_path = dir.path().join("state_1.sqlite");
     let storage = Arc::new(crate::storage::SqliteStorage::new(
-        dir.path().join("storage.db").to_string_lossy().into_owned(),
+        state_path.to_string_lossy().into_owned(),
     ));
     let workspace = Arc::new(WorkspaceManager::new(
-        &dir.path().to_string_lossy(),
+        &dir.path().join("files").to_string_lossy(),
         storage,
         0,
         &HashMap::new(),
     ));
-    assert!(workspace.flush_writes());
-    assert!(workspace.write_queue.get().is_none());
     std::thread::scope(|scope| {
         for index in 0..8 {
             let workspace = Arc::clone(&workspace);
             scope.spawn(move || {
-                workspace
-                    .append_chat(
-                        "user",
-                        &json!({
-                            "session_id": "session", "role": "user", "content": index.to_string(),
-                        }),
-                    )
-                    .unwrap()
+                let root = workspace
+                    .ensure_user_root(&format!("sample-user-{index}"))
+                    .unwrap();
+                assert!(root.is_dir());
             });
         }
     });
-    assert!(workspace.flush_writes());
-    assert!(workspace.write_queue.get().is_some());
-    assert_eq!(
-        workspace.load_history("user", "session", 16).unwrap().len(),
-        8
-    );
+    assert!(!state_path.exists());
+    for name in ["queue_1.sqlite", "thread_history_1.sqlite", "logs_1.sqlite"] {
+        assert!(
+            !dir.path().join(name).exists(),
+            "file access must not create {name}"
+        );
+    }
+    assert!(!dir.path().join("sessions").exists());
 }

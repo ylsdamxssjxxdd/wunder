@@ -381,7 +381,7 @@ export function threadViewSlots(key:string):ViewSlot[] | null {void threadViewCl
  * (rows present, or the server declared the thread ready/empty) the durable
  * thread state still owns the transcript, so durable frames must keep applying
  * and durable turn rows must keep rendering. Treating the bare entry as
- * authoritative silently starved that pipeline: the reconnect `text_block`
+ * authoritative silently starved that pipeline: the reconnect completed item
  * that heals a dropped tail never reached the state, and the page went blank.
  */
 export function threadViewCommitted(key:string):boolean {

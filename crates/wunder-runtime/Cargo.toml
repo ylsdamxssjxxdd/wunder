@@ -17,7 +17,7 @@ host-metrics = ["dep:sysinfo"]
 mcp = ["dep:rmcp"]
 postgres-storage = ["dep:deadpool-postgres", "dep:tokio-postgres"]
 sim-bins = ["sqlite-storage"]
-sqlite-storage = ["dep:rusqlite"]
+sqlite-storage = []
 web-fetch = ["dep:hickory-resolver", "dep:idna", "dep:kuchiki"]
 xmpp = ["dep:hickory-resolver", "dep:idna", "dep:sasl", "dep:scraper", "dep:tokio-xmpp"]
 
@@ -175,7 +175,7 @@ pulldown-cmark.workspace = true
 qrcode.workspace = true
 regex.workspace = true
 rmcp = { workspace = true, optional = true }
-rusqlite = { workspace = true, optional = true, features = ["hooks"] }
+rusqlite = { workspace = true, features = ["hooks"] }
 rustls.workspace = true
 sasl = { workspace = true, optional = true }
 scraper = { workspace = true, optional = true }
@@ -187,6 +187,8 @@ sha1.workspace = true
 sha2.workspace = true
 shell-words.workspace = true
 tokio.workspace = true
+tempfile.workspace = true
+zstd.workspace = true
 tokio-postgres = { workspace = true, optional = true }
 tokio-rustls.workspace = true
 tokio-stream.workspace = true

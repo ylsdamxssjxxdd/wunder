@@ -26,6 +26,8 @@ import { ToolResource, ToolsDialog, McpServerDraft, KnowledgeInfo } from "tools_
 export { ToolResource, ToolsDialog, McpServerDraft, KnowledgeInfo }
 import { AvatarDialog, AvatarDialogState } from "avatar_dialog.slint";
 export { AvatarDialogState }
+import { PetSettingsState } from "pet_settings.slint";
+export { PetSettingsState }
 import { WorkspaceDialog, WorkspaceDialogState } from "workspace_dialog.slint";
 export { WorkspaceDialogState }
 import { HelpDocs, HelpEntry, HelpTextRun, HelpRect } from "help_models.slint";
@@ -1185,6 +1187,9 @@ export component MainWindow inherits Window {
     // Frameless chrome. Its z sits above the in-window overlays so the window
     // can always be dragged, minimized or closed, even with a dialog open.
     WindowChrome {
+        // Keep the custom title bar above every in-window scrim so the window
+        // can always be dragged, minimized or closed, even with a dialog open.
+        z: 1000;
         width: root.width;
         title: root.title;
         icon: @image-url("../assets/app-icon.png");
@@ -1201,6 +1206,11 @@ export component MainWindow inherits Window {
     // clicks and the header row carries the window title plus close action.
     if root.settings-open : Rectangle {
         z: 220;
+        // The chrome paints above this scrim; starting below the title strip
+        // keeps the strip bright and draggable while the settings dialog is
+        // open, matching ordinary desktop apps.
+        y: Theme.titlebar-height;
+        height: parent.height - Theme.titlebar-height;
         background: Theme.overlay;
         TouchArea { clicked => { root.settings-open = false; } }
         Rectangle {
@@ -1658,6 +1668,8 @@ export component MainWindow inherits Window {
     // be read as an ordinary confirmation.
     if root.interlink-approval-open : Rectangle {
         z: 250;
+        y: Theme.titlebar-height;
+        height: parent.height - Theme.titlebar-height;
         background: Theme.overlay;
         TouchArea { clicked => { /* remote asks must be answered, not dismissed */ } }
         Rectangle {
@@ -1697,13 +1709,13 @@ export component MainWindow inherits Window {
         }
     }
     if root.profile-edit-open : Rectangle {
-        z: 250; background: Theme.overlay; TouchArea { clicked => { root.profile-edit-open = false; } }
+        z: 250; y: Theme.titlebar-height; height: parent.height - Theme.titlebar-height; background: Theme.overlay; TouchArea { clicked => { root.profile-edit-open = false; } }
         Rectangle { width: min(460px, parent.width - 48px); height: 300px; x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2; border-radius: Theme.radius-xl; background: Theme.surface; border-width: 1px; border-color: Theme.border; TouchArea { }
             VerticalLayout { padding: 20px; spacing: 10px; Text { height: 24px; text: I18n.profile_edit_title; color: Theme.text; font-size: 17px; font-weight: 600; } FormField { label: I18n.profile_username; text <=> root.profile-username-draft; } FormField { label: I18n.profile_email; text <=> root.profile-email-draft; } FormField { label: I18n.profile_unit_optional; text <=> root.profile-unit-draft; } Rectangle { vertical-stretch: 1; } HorizontalLayout { height: 32px; Rectangle { horizontal-stretch: 1; } Action { label: I18n.common_cancel; show-label: true; clicked => { root.profile-edit-open = false; } } Action { label: I18n.common_save; show-label: true; primary: true; enabled: root.profile-username-draft != ""; clicked => { root.save-profile(root.profile-username-draft, root.profile-email-draft, root.profile-unit-draft); root.profile-edit-open = false; } } } }
         }
     }
     if root.prompt-preview-open : Rectangle {
-        background: #0f172a80; z: 250;
+        background: #0f172a80; z: 250; y: Theme.titlebar-height; height: parent.height - Theme.titlebar-height;
         TouchArea { clicked => { root.prompt-preview-open = false; } }
         Rectangle {
             x: max(16px, (root.width - 560px) / 2); y: max(16px, (root.height - 420px) / 2);

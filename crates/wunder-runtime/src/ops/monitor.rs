@@ -857,7 +857,7 @@ impl MonitorState {
                 );
                 drop(sessions);
                 if let Some(record) = to_persist {
-                    self.save_record(&record);
+                    self.save_record(record);
                 }
                 user_round
             },
@@ -935,7 +935,7 @@ impl MonitorState {
                     }
                 };
                 if let Some(record) = to_persist {
-                    self.save_record(&record);
+                    self.save_record(record);
                 }
                 user_round
             },
@@ -1023,7 +1023,7 @@ impl MonitorState {
                 let to_persist = self.maybe_persist_record(record, now_ts(), false);
                 drop(sessions);
                 if let Some(record) = to_persist {
-                    self.save_record(&record);
+                    self.save_record(record);
                 }
                 round
             },
@@ -1136,7 +1136,7 @@ impl MonitorState {
                     (self.maybe_persist_record(record, now, false), pending_award)
                 };
                 if let Some(record) = to_persist {
-                    self.save_record(&record);
+                    self.save_record(record);
                 }
                 if let Some(award) = pending_award {
                     self.finalize_user_experience_settlement(award);
@@ -1217,7 +1217,7 @@ impl MonitorState {
                     self.maybe_persist_record(record, award.updated_time, true)
                 };
                 if let Some(record) = to_persist {
-                    self.save_record(&record);
+                    self.save_record(record);
                 }
             }
             Err(err) => {
@@ -1238,7 +1238,7 @@ impl MonitorState {
                     self.maybe_persist_record(record, award.updated_time, true)
                 };
                 if let Some(record) = to_persist {
-                    self.save_record(&record);
+                    self.save_record(record);
                 }
                 warn!(
                     "settle user experience failed: session_id={}, user_id={}, round={}, delta={}, error={err}",
@@ -1316,7 +1316,7 @@ impl MonitorState {
                     self.maybe_persist_record(record, now, true)
                 };
                 if let Some(record) = to_persist {
-                    self.save_record(&record);
+                    self.save_record(record);
                 }
             },
         );
@@ -1366,7 +1366,7 @@ impl MonitorState {
                     self.maybe_persist_record(record, updated_time, true)
                 };
                 if let Some(record) = to_persist {
-                    self.save_record(&record);
+                    self.save_record(record);
                 }
                 true
             },
@@ -2476,7 +2476,7 @@ impl MonitorState {
         append_received: bool,
         persisted_round_floor: i64,
         reuse_queued_round: bool,
-    ) -> (Option<SessionRecord>, i64) {
+    ) -> (Option<Value>, i64) {
         if session_id.trim().is_empty() {
             return (None, 1);
         }
@@ -2749,7 +2749,7 @@ impl MonitorState {
                     self.maybe_persist_record(record, now, true)
                 };
                 if let Some(record) = to_persist {
-                    self.save_record(&record);
+                    self.save_record(record);
                 }
             },
         );
@@ -2839,7 +2839,7 @@ impl MonitorState {
         record: &mut SessionRecord,
         now: f64,
         force: bool,
-    ) -> Option<SessionRecord> {
+    ) -> Option<Value> {
         if !record.dirty && !force {
             return None;
         }
@@ -2851,34 +2851,41 @@ impl MonitorState {
         }
         record.dirty = false;
         record.last_persisted = now;
-        Some(record.clone())
+        Some(self.build_persisted_record_payload(record))
     }
 
-    fn save_record(&self, record: &SessionRecord) {
-        let payload = self.build_persisted_record_payload(record);
+    fn save_record(&self, payload: Value) {
         self.write_queue.enqueue(MonitorWriteTask::Upsert(payload));
     }
 
     fn build_persisted_record_payload(&self, record: &SessionRecord) -> Value {
-        let mut compacted = record.clone();
-        let mut events = compacted
-            .events
-            .iter()
-            .rev()
-            .map(|event| MonitorEvent {
-                event_id: event.event_id,
-                timestamp: event.timestamp,
-                event_type: event.event_type.clone(),
-                data: sanitize_persisted_event_data(
-                    &event.event_type,
-                    &event.data,
-                    self.payload_limit,
-                ),
-            })
-            .collect::<Vec<_>>();
-        events.reverse();
-        compacted.events = events.into();
-        compacted.to_storage()
+        // Build only bounded diagnostic facts at the producer. Copying the
+        // event deque here would serialize execution bodies solely for the
+        // storage boundary to discard them again.
+        crate::storage::runtime_logs::monitor_facts(&json!({
+            "session_id": record.session_id,
+            "user_id": record.user_id,
+            "agent_id": record.agent_id,
+            "is_admin": record.is_admin,
+            "trace_id": record.trace_id,
+            "status": record.status,
+            "stage": record.stage,
+            "start_time": record.start_time,
+            "updated_time": record.updated_time,
+            "ended_time": record.ended_time,
+            "cancel_requested": record.cancel_requested,
+            "user_rounds": record.user_rounds,
+            "rounds": record.user_rounds,
+            "model_round_high_water": record.model_round_high_water,
+            "last_awarded_user_round": record.last_awarded_user_round,
+            "context_tokens": record.context_tokens,
+            "context_tokens_peak": record.context_tokens_peak,
+            "consumed_tokens": record.consumed_tokens,
+            "tool_calls": record.tool_calls,
+            "model_request_count": record.model_request_count,
+            "quota_used": record.model_request_count,
+            "next_event_id": record.next_event_id,
+        }))
     }
 }
 
@@ -3010,28 +3017,6 @@ fn resolve_payload_limit(raw: i64) -> Option<usize> {
 
 fn build_monitor_trace_id() -> String {
     format!("trace_{}", Uuid::new_v4().simple())
-}
-
-fn sanitize_persisted_event_data(event_type: &str, data: &Value, limit: Option<usize>) -> Value {
-    if event_type == "llm_request" {
-        return summarize_llm_request_event(data, limit);
-    }
-    if event_type == "llm_output" {
-        let mut trimmed = trim_string_fields(data, limit);
-        if let Value::Object(ref mut map) = trimmed {
-            if let Some(Value::String(text)) = map.get("content") {
-                map.insert("content".to_string(), Value::String(trim_text(text, limit)));
-            }
-            if let Some(Value::String(text)) = map.get("reasoning") {
-                map.insert(
-                    "reasoning".to_string(),
-                    Value::String(trim_text(text, limit)),
-                );
-            }
-        }
-        return trimmed;
-    }
-    trim_string_fields(data, limit)
 }
 
 fn should_merge_monitor_event(previous: &MonitorEvent, event_type: &str, data: &Value) -> bool {

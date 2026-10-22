@@ -349,7 +349,7 @@ impl TuiApp {
             ),
             "workspace_root": config.workspace.root,
             "storage_backend": config.storage.backend,
-            "db_path": config.storage.db_path,
+            "data_root": config.storage.data_root,
             "model": model,
             "tool_call_mode": tool_call_mode,
             "approval_mode": self.approval_mode,

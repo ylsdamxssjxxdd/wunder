@@ -5,31 +5,26 @@
 // reactive invalidation.
 //
 // Side store: ChatThreadState is a frozen cross-module contract
-// (chatThreadTypes.ts) with no slot for three reducer internals, so they live
+// (chatThreadTypes.ts) with no slot for two reducer internals, so they live
 // in a WeakMap keyed by the state instance (per-session, GC'd with the state,
 // reset by applyChatThreadSnapshot):
 //   1. the monotonic ThreadItemState.order counter — items.size cannot derive
 //      it because the items map shrinks on snapshot replacement and would
 //      repeat values;
-//   2. the per-(item_id, field) max block end offset — keeps every tail
-//      decision O(1) instead of scanning the block map;
-//   3. tails for fields other than content/reasoning (tool/command output),
+//   2. tails for fields other than content/reasoning (tool/command output),
 //      which ThreadTailState cannot represent.
 //
 // ChatThreadApplyResult.droppedEphemeral counts ephemeral tail frames the
 // reducer discarded (offset mismatch against the current tail position).
 
-import { THREAD_GAP_MAX_FRAMES, THREAD_GAP_MAX_MS, flattenThreadItemRow, hasEmbeddedItemPayload } from './chatThreadTypes';
+import { flattenThreadItemRow, hasEmbeddedItemPayload } from './chatThreadTypes';
 import type {
   ChatThreadApplyResult,
   ChatThreadField,
   ChatThreadFrame,
   ChatThreadState,
   StreamStartedAck,
-  ThreadBlockState,
-  ThreadBlockUpsertPayload,
   ThreadChangeFrame,
-  ThreadGapEntry,
   ThreadItemState,
   ThreadItemTailFrame,
   ThreadItemUpsertPayload,
@@ -67,16 +62,14 @@ export interface ChatThreadSnapshot {
   cursor: number;
   turns: ChatThreadSnapshotTurn[];
   items: ThreadItemUpsertPayload[];
-  blocks: ThreadBlockUpsertPayload[];
 }
 
 // Shared verdict objects: the reducer never mutates results, so hot paths can
 // return these without allocating.
-const UNCHANGED: ChatThreadApplyResult = { changed: false, structural: false, needResume: false, droppedEphemeral: 0 };
-const CHANGED_CONTENT: ChatThreadApplyResult = { changed: true, structural: false, needResume: false, droppedEphemeral: 0 };
-const CHANGED_STRUCTURAL: ChatThreadApplyResult = { changed: true, structural: true, needResume: false, droppedEphemeral: 0 };
-const DROPPED_TAIL: ChatThreadApplyResult = { changed: false, structural: false, needResume: false, droppedEphemeral: 1 };
-const RESUME_REQUIRED: ChatThreadApplyResult = { changed: false, structural: false, needResume: true, droppedEphemeral: 0 };
+const UNCHANGED: ChatThreadApplyResult = { changed: false, structural: false, droppedEphemeral: 0 };
+const CHANGED_CONTENT: ChatThreadApplyResult = { changed: true, structural: false, droppedEphemeral: 0 };
+const CHANGED_STRUCTURAL: ChatThreadApplyResult = { changed: true, structural: true, droppedEphemeral: 0 };
+const DROPPED_TAIL: ChatThreadApplyResult = { changed: false, structural: false, droppedEphemeral: 1 };
 
 interface FieldTail {
   offset: number;
@@ -85,8 +78,6 @@ interface FieldTail {
 
 interface ChatThreadSideState {
   orderCounter: number;
-  /** Max block end per `${itemId}\u0000${field}`; O(1) tail positioning. */
-  blockEnds: Map<string, number>;
   /** Tails for fields outside content/reasoning (tool/command output). */
   extraTails: Map<string, FieldTail>;
 }
@@ -101,7 +92,7 @@ const sideStates = new WeakMap<ChatThreadState, ChatThreadSideState>();
 function sideState(state: ChatThreadState): ChatThreadSideState {
   let side = sideStates.get(state);
   if (!side) {
-    side = { orderCounter: 0, blockEnds: new Map(), extraTails: new Map() };
+    side = { orderCounter: 0, extraTails: new Map() };
     sideStates.set(state, side);
   }
   return side;
@@ -123,17 +114,6 @@ function firstNumber(...values: unknown[]): number | undefined {
     if (typeof value === 'number' && Number.isFinite(value)) return value;
   }
   return undefined;
-}
-
-function mergeResults(a: ChatThreadApplyResult, b: ChatThreadApplyResult): ChatThreadApplyResult {
-  if (a === UNCHANGED) return b;
-  if (b === UNCHANGED) return a;
-  return {
-    changed: a.changed || b.changed,
-    structural: a.structural || b.structural,
-    needResume: a.needResume || b.needResume,
-    droppedEphemeral: a.droppedEphemeral + b.droppedEphemeral
-  };
 }
 
 function nextItemOrder(state: ChatThreadState): number {
@@ -176,24 +156,13 @@ function applyChangeFrame(
   const seq = frame.seq;
   if (typeof seq !== 'number' || !Number.isFinite(seq)) return UNCHANGED;
   if (seq <= state.lastSeq) return UNCHANGED; // idempotent replay
-  if (seq > state.lastSeq + 1) {
-    insertGapEntry(state, frame, now);
-    return gapOverflowResult(state, now);
-  }
-
-  let result = applyInOrderChange(state, frame);
+  // Model-context records do not produce display frames, so valid rollout
+  // cursors are ordered but intentionally sparse. Transport order is stable.
+  void now;
+  const result = applyInOrderChange(state, frame);
   state.lastSeq = seq;
   if (result.changed) onChange?.(frame);
-  let entry = takeContiguousGapEntry(state);
-  while (entry) {
-    const applied = applyInOrderChange(state, entry.frame);
-    result = mergeResults(result, applied);
-    if (applied.changed) onChange?.(entry.frame);
-    state.lastSeq = entry.frame.seq;
-    entry = takeContiguousGapEntry(state);
-  }
-  // Far-ahead frames may remain buffered; size/age overflow still applies.
-  return mergeResults(result, gapOverflowResult(state, now));
+  return result;
 }
 
 function applyInOrderChange(state: ChatThreadState, frame: ThreadChangeFrame): ChatThreadApplyResult {
@@ -212,8 +181,6 @@ function applyInOrderChange(state: ChatThreadState, frame: ThreadChangeFrame): C
   switch (frame.change_type) {
     case 'item_upsert':
       return applyItemUpsert(state, frame);
-    case 'text_block':
-      return applyTextBlock(state, frame);
     case 'turn_upsert':
       return applyTurnUpsert(state, frame);
     case 'turn_status':
@@ -223,43 +190,6 @@ function applyInOrderChange(state: ChatThreadState, frame: ThreadChangeFrame): C
       // (they advance lastSeq) but change nothing.
       return UNCHANGED;
   }
-}
-
-// ---------------------------------------------------------------------------
-// Gap buffer (bounded per §5.5: 64 frames / 1000ms)
-// ---------------------------------------------------------------------------
-
-function insertGapEntry(state: ChatThreadState, frame: ThreadChangeFrame, now: number): void {
-  const gap = state.gap;
-  // The gap is bounded (≤ 64 entries before the overflow check), so a linear
-  // scan from the tail is cheaper than maintaining a binary search.
-  for (let i = gap.length - 1; i >= 0; i -= 1) {
-    const seq = gap[i].frame.seq;
-    if (seq === frame.seq) return; // duplicate delivery
-    if (seq < frame.seq) {
-      gap.splice(i + 1, 0, { frame, receivedAt: now });
-      return;
-    }
-  }
-  gap.unshift({ frame, receivedAt: now });
-}
-
-function takeContiguousGapEntry(state: ChatThreadState): ThreadGapEntry | null {
-  const head = state.gap[0];
-  if (head && head.frame.seq === state.lastSeq + 1) {
-    state.gap.shift();
-    return head;
-  }
-  return null;
-}
-
-function gapOverflowResult(state: ChatThreadState, now: number): ChatThreadApplyResult {
-  const gap = state.gap;
-  const overflowed = gap.length > THREAD_GAP_MAX_FRAMES ||
-    (gap.length > 0 && now - gap[0].receivedAt > THREAD_GAP_MAX_MS);
-  if (!overflowed) return UNCHANGED;
-  gap.length = 0;
-  return RESUME_REQUIRED;
 }
 
 // ---------------------------------------------------------------------------
@@ -290,6 +220,7 @@ function applyItemUpsert(state: ChatThreadState, frame: ThreadChangeFrame): Chat
       raw: data
     };
     state.items.set(itemId, item);
+    settleItemTails(state, item);
     if (item.kind === 'user_message') syncUserTurn(state, item);
     // A terminal item carries the turn outcome; admin-visibility items are
     // stored normally here, exclusion is the projection's job.
@@ -323,6 +254,7 @@ function applyItemUpsert(state: ChatThreadState, frame: ThreadChangeFrame): Chat
   const reasoning = typeof data.reasoning === 'string' ? data.reasoning :
     typeof data.reasoning_content === 'string' ? data.reasoning_content : undefined;
   if (!preserveStoppedText && reasoning !== undefined) existing.reasoning = reasoning;
+  settleItemTails(state, existing);
   const role = firstString(data.role);
   if (role !== undefined) existing.role = role;
   const visibility = firstString(data.visibility);
@@ -356,53 +288,6 @@ function syncTerminalTurnStatus(state: ChatThreadState, item: ThreadItemState): 
     return;
   }
   turn.status = item.status;
-}
-
-function applyTextBlock(state: ChatThreadState, frame: ThreadChangeFrame): ChatThreadApplyResult {
-  // Wire payloads are unvalidated JSON; casts go through unknown.
-  // Storage and emitter persist a block envelope with text/offsets under data.
-  // Apply the same normalization for live changes and atomic snapshot replay.
-  const envelope = frame.data;
-  const nested = envelope.data && typeof envelope.data === 'object' && !Array.isArray(envelope.data)
-    ? envelope.data as Record<string, unknown> : {};
-  const data = { ...nested, ...envelope } as unknown as ThreadBlockUpsertPayload;
-  const itemId = firstString(data.item_id, frame.item_id);
-  if (!itemId) return UNCHANGED;
-  const field = firstString(data.field) ?? 'content';
-  const blockIndex = firstNumber(data.block_index);
-  if (blockIndex === undefined) return UNCHANGED;
-  // content_offset / reasoning_offset are mutually exclusive; `field` picks
-  // the side that applies.
-  const offset = field === 'reasoning'
-    ? firstNumber(data.reasoning_offset, data.content_offset) ?? 0
-    : firstNumber(data.content_offset, data.reasoning_offset) ?? 0;
-  const rawText = field === 'reasoning' ? data.reasoning : data.content;
-  const text = typeof rawText === 'string' ? rawText : '';
-
-  let fieldBlocks = state.blocks.get(itemId);
-  if (!fieldBlocks) {
-    fieldBlocks = new Map();
-    state.blocks.set(itemId, fieldBlocks);
-  }
-  let indexBlocks = fieldBlocks.get(field);
-  if (!indexBlocks) {
-    indexBlocks = new Map();
-    fieldBlocks.set(field, indexBlocks);
-  }
-  const previous = indexBlocks.get(blockIndex);
-  if (previous && previous.offset === offset && previous.text === text) return UNCHANGED; // snapshot idempotent
-  indexBlocks.set(blockIndex, { itemId, field, blockIndex, offset, text });
-
-  // Advance the block-end watermark and heal the ephemeral tail: everything
-  // the durable snapshot now covers must no longer be served from the tail.
-  const side = sideState(state);
-  const coordinate = tailCoordinate(itemId, field);
-  const end = offset + text.length;
-  if (end > (side.blockEnds.get(coordinate) ?? 0)) {
-    side.blockEnds.set(coordinate, end);
-    truncateFieldTail(state, itemId, field, end);
-  }
-  return CHANGED_CONTENT;
 }
 
 function applyTurnUpsert(state: ChatThreadState, frame: ThreadChangeFrame): ChatThreadApplyResult {
@@ -527,27 +412,46 @@ function writeFieldTail(
   sideState(state).extraTails.set(tailCoordinate(itemId, field), { offset, text });
 }
 
-function truncateFieldTail(state: ChatThreadState, itemId: string, field: ChatThreadField, blockEnd: number): void {
+function truncateFieldTail(state: ChatThreadState, itemId: string, field: ChatThreadField, completedEnd: number): void {
   if (field === 'content' || field === 'reasoning') {
     const tail = state.tails.get(itemId);
     if (!tail) return;
     if (field === 'content') {
-      if (tail.contentOffset < blockEnd) {
-        tail.content = tail.content.slice(blockEnd - tail.contentOffset);
-        tail.contentOffset = blockEnd;
+      if (tail.contentOffset < completedEnd) {
+        tail.content = tail.content.slice(completedEnd - tail.contentOffset);
+        tail.contentOffset = completedEnd;
       }
       return;
     }
-    if (tail.reasoningOffset < blockEnd) {
-      tail.reasoning = tail.reasoning.slice(blockEnd - tail.reasoningOffset);
-      tail.reasoningOffset = blockEnd;
+    if (tail.reasoningOffset < completedEnd) {
+      tail.reasoning = tail.reasoning.slice(completedEnd - tail.reasoningOffset);
+      tail.reasoningOffset = completedEnd;
     }
     return;
   }
   const stored = sideState(state).extraTails.get(tailCoordinate(itemId, field));
-  if (stored && stored.offset < blockEnd) {
-    stored.text = stored.text.slice(blockEnd - stored.offset);
-    stored.offset = blockEnd;
+  if (stored && stored.offset < completedEnd) {
+    stored.text = stored.text.slice(completedEnd - stored.offset);
+    stored.offset = completedEnd;
+  }
+}
+
+function itemFieldText(item: ThreadItemState | undefined, field: ChatThreadField): string {
+  if (!item) return '';
+  if (field === 'content') return item.content;
+  if (field === 'reasoning') return item.reasoning;
+  const value = item.raw[field];
+  return typeof value === 'string' ? value : '';
+}
+
+function settleItemTails(state: ChatThreadState, item: ThreadItemState): void {
+  truncateFieldTail(state, item.itemId, 'content', item.content.length);
+  truncateFieldTail(state, item.itemId, 'reasoning', item.reasoning.length);
+  const prefix = `${item.itemId}\u0000`;
+  for (const key of sideState(state).extraTails.keys()) {
+    if (!key.startsWith(prefix)) continue;
+    const field = key.slice(prefix.length);
+    truncateFieldTail(state, item.itemId, field, itemFieldText(item, field).length);
   }
 }
 
@@ -560,7 +464,7 @@ function applyTailFrame(state: ChatThreadState, frame: ThreadItemTailFrame): Cha
   // Plan §2 I3: the writer only emits a tail after its base durable frame, and
   // the client only applies it once the replay reached that frame. A tail
   // ahead of lastSeq belongs to a frame we have not applied yet — drop it and
-  // let the following durable text_block heal the text. Missing base_seq is
+  // let the completed item replace the missing text. Missing base_seq is
   // treated as 0 for legacy senders.
   const baseSeq = typeof frame.base_seq === 'number' && Number.isFinite(frame.base_seq)
     ? frame.base_seq
@@ -568,15 +472,16 @@ function applyTailFrame(state: ChatThreadState, frame: ThreadItemTailFrame): Cha
   if (state.lastSeq < baseSeq) return DROPPED_TAIL;
 
   const current = readFieldTail(state, itemId, field);
-  // An empty stored tail (fresh field slot or fully healed by blocks) restarts
-  // from the durable block-end watermark.
-  const side = sideState(state);
+  // An empty stored tail (fresh field slot or covered by a completed item) restarts
+  // from the completed item prefix.
+  const item = state.items.get(itemId);
+  const completed = itemFieldText(item, field);
   const position = current && current.text
     ? current.offset + current.text.length
-    : side.blockEnds.get(tailCoordinate(itemId, field)) ?? 0;
+    : completed.length;
   if (frame.offset !== -1 && frame.offset !== position) {
-    // offset < position: already covered by a block snapshot or an earlier
-    // append; offset > position: hole — wait for the next block snapshot.
+    // offset < position: already covered by a completed item or an earlier
+    // append; offset > position: hole — wait for the next completed item.
     return DROPPED_TAIL;
   }
   const baseOffset = current && current.text ? current.offset : position;
@@ -593,16 +498,15 @@ function applyTailFrame(state: ChatThreadState, frame: ThreadItemTailFrame): Cha
 // large threads; the applier yields to the main thread once a shard budget is
 // spent and honours an abort signal, so any single main-thread task stays
 // bounded (decision D5: <= 200ms per task). Shard order is turn phase, then
-// item phase, then block phase, so the applied state is identical to the
+// item phase, so the applied state is identical to the
 // pre-sharding single-pass apply.
 // ---------------------------------------------------------------------------
 
 export interface ChatThreadSnapshotShard {
-  kind: 'turns' | 'items' | 'blocks';
+  kind: 'turns' | 'items';
   turns?: ChatThreadSnapshotTurn[];
   items?: ThreadItemUpsertPayload[];
-  blocks?: ThreadBlockUpsertPayload[];
-  /** Work units (turn/item/block count) used for main-thread yield budgeting. */
+  /** Work units (turn/item count) used for main-thread yield budgeting. */
   cost: number;
 }
 
@@ -611,19 +515,16 @@ export interface ChatThreadSnapshotPlan {
   shards: ChatThreadSnapshotShard[];
   turnCount: number;
   itemCount: number;
-  blockCount: number;
 }
 
 export interface ChatThreadSnapshotPlanOptions {
   maxTurnsPerShard?: number;
   maxItemsPerShard?: number;
-  maxBlocksPerShard?: number;
 }
 
 export const CHAT_THREAD_SNAPSHOT_PLAN_DEFAULTS = {
   maxTurnsPerShard: 128,
-  maxItemsPerShard: 512,
-  maxBlocksPerShard: 512
+  maxItemsPerShard: 512
 } as const;
 
 /** Accumulated shard cost allowed between two main-thread yields. */
@@ -652,18 +553,15 @@ export function planChatThreadSnapshot(
     : Number.NaN;
   const turns = Array.isArray(snapshot?.turns) ? snapshot.turns : [];
   const sourceItems = Array.isArray(snapshot?.items) ? snapshot.items : [];
-  const blocks = Array.isArray(snapshot?.blocks) ? snapshot.blocks : [];
   const items = sourceItems.map((entry) => hasEmbeddedItemPayload(entry as Record<string, unknown>)
     ? flattenThreadItemRow(entry as Record<string, unknown>) as unknown as ThreadItemUpsertPayload
     : entry);
   const maxTurns = options.maxTurnsPerShard ?? CHAT_THREAD_SNAPSHOT_PLAN_DEFAULTS.maxTurnsPerShard;
   const maxItems = options.maxItemsPerShard ?? CHAT_THREAD_SNAPSHOT_PLAN_DEFAULTS.maxItemsPerShard;
-  const maxBlocks = options.maxBlocksPerShard ?? CHAT_THREAD_SNAPSHOT_PLAN_DEFAULTS.maxBlocksPerShard;
   const shards: ChatThreadSnapshotShard[] = [];
   for (const chunk of chunkArray(turns, maxTurns)) shards.push({ kind: 'turns', turns: chunk, cost: chunk.length });
   for (const chunk of chunkArray(items, maxItems)) shards.push({ kind: 'items', items: chunk, cost: chunk.length });
-  for (const chunk of chunkArray(blocks, maxBlocks)) shards.push({ kind: 'blocks', blocks: chunk, cost: chunk.length });
-  return { cursor, shards, turnCount: turns.length, itemCount: items.length, blockCount: blocks.length };
+  return { cursor, shards, turnCount: turns.length, itemCount: items.length };
 }
 
 const asSnapshotFrame = (changeType: string, payload: unknown): ThreadChangeFrame =>
@@ -672,12 +570,10 @@ const asSnapshotFrame = (changeType: string, payload: unknown): ThreadChangeFram
 function resetSnapshotTarget(state: ChatThreadState): void {
   const side = sideState(state);
   side.orderCounter = 0;
-  side.blockEnds.clear();
   side.extraTails.clear();
   // Replace contents in place: callers hold references to the maps.
   state.turns.clear();
   state.items.clear();
-  state.blocks.clear();
   state.tails.clear();
 }
 
@@ -706,7 +602,6 @@ function applySnapshotShard(state: ChatThreadState, shard: ChatThreadSnapshotSha
     for (const payload of shard.items ?? []) applyItemUpsert(state, asSnapshotFrame('item_upsert', payload));
     return;
   }
-  for (const payload of shard.blocks ?? []) applyTextBlock(state, asSnapshotFrame('text_block', payload));
 }
 
 function isPlanApplicable(state: ChatThreadState, plan: ChatThreadSnapshotPlan | null | undefined): boolean {
@@ -724,7 +619,6 @@ export function applyChatThreadSnapshotPlanSync(
   if (!isPlanApplicable(state, plan)) return UNCHANGED; // stale full reload: cursor guard
   resetSnapshotTarget(state);
   for (const shard of plan.shards) applySnapshotShard(state, shard);
-  state.gap.length = 0;
   state.lastSeq = plan.cursor;
   return CHANGED_STRUCTURAL;
 }
@@ -810,7 +704,6 @@ export async function applyChatThreadSnapshotPlanSharded(
         await yieldToMain();
       }
     }
-    state.gap.length = 0;
     state.lastSeq = plan.cursor;
     return { applied: true, aborted: false, shardsApplied, shardCount, yields };
   } finally {
@@ -900,32 +793,10 @@ export function getThreadTail(state: ChatThreadState, itemId: string): ThreadTai
   return state.tails.get(itemId);
 }
 
-/**
- * Authoritative text for one item field: blocks joined by offset order, plus
- * the tail portion beyond the last block end. Render-time only — O(#blocks).
- * Falls back to the item payload when the field has neither blocks nor tail.
- */
+/** Completed item text followed by any live suffix beyond its prefix. */
 export function composeItemText(state: ChatThreadState, itemId: string, field: ChatThreadField): string {
-  const indexBlocks = state.blocks.get(itemId)?.get(field);
-  let text = '';
-  let lastEnd = 0;
-  if (indexBlocks && indexBlocks.size > 0) {
-    const blocks: ThreadBlockState[] = Array.from(indexBlocks.values()).sort((a, b) => a.offset - b.offset);
-    for (const block of blocks) {
-      text += block.text;
-      lastEnd = Math.max(lastEnd, block.offset + block.text.length);
-    }
-  }
+  const item = state.items.get(itemId);
+  const text = itemFieldText(item, field);
   const tail = readFieldTail(state, itemId, field);
-  if (tail && tail.text) {
-    // Keep only the part beyond the last durable block; a tail that starts at
-    // or after it appends whole (a hole is accepted — the server never
-    // produces one).
-    text += tail.text.slice(Math.max(0, lastEnd - tail.offset));
-  }
-  if (!text) {
-    const item = state.items.get(itemId);
-    if (item) text = field === 'reasoning' ? item.reasoning : item.content;
-  }
-  return text;
+  return tail?.text ? text + tail.text.slice(Math.max(0, text.length - tail.offset)) : text;
 }

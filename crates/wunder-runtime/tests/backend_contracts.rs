@@ -28,11 +28,7 @@ async fn build_contract_context() -> ContractContext {
     let temp_dir = tempfile::tempdir().expect("create temp dir");
     let mut config = Config::default();
     config.storage.backend = "sqlite".to_string();
-    config.storage.db_path = temp_dir
-        .path()
-        .join("backend-contracts.db")
-        .to_string_lossy()
-        .to_string();
+    config.storage.data_root = temp_dir.path().join("data").to_string_lossy().to_string();
     config.workspace.root = temp_dir
         .path()
         .join("workspaces")

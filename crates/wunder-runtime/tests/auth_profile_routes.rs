@@ -26,11 +26,7 @@ async fn build_test_context(username: &str) -> TestContext {
     let temp_dir = tempfile::tempdir().expect("tempdir");
     let mut config = Config::default();
     config.storage.backend = "sqlite".to_string();
-    config.storage.db_path = temp_dir
-        .path()
-        .join("auth-profile-routes.db")
-        .to_string_lossy()
-        .to_string();
+    config.storage.data_root = temp_dir.path().join("data").to_string_lossy().to_string();
     config.workspace.root = temp_dir
         .path()
         .join("workspaces")

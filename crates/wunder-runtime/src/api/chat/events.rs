@@ -51,10 +51,6 @@ pub(super) fn router() -> Router<Arc<AppState>> {
             get(get_thread_snapshot),
         )
         .route(
-            "/wunder/chat/sessions/{session_id}/thread-log/items/{item_id}/content",
-            get(get_thread_item_content),
-        )
-        .route(
             "/wunder/chat/sessions/{session_id}/thread-log/items/{item_id}",
             get(get_thread_item),
         )
@@ -101,10 +97,6 @@ struct ThreadChangesQuery {
     item_after: Option<i64>,
     #[serde(default)]
     item_before: Option<i64>,
-    #[serde(default)]
-    from_block: Option<i64>,
-    #[serde(default)]
-    field: Option<String>,
 }
 /// Optional tail-window bounds for the atomic thread snapshot. Absent fields
 /// fall back to the storage default window, so existing callers stay bounded.
@@ -114,8 +106,6 @@ struct ThreadSnapshotQuery {
     max_turns: Option<i64>,
     #[serde(default)]
     max_items: Option<i64>,
-    #[serde(default)]
-    max_blocks: Option<i64>,
     /// Exclusive upper bound for paging strictly older turn windows.
     #[serde(default)]
     before_turn_index: Option<i64>,
@@ -259,9 +249,6 @@ async fn get_thread_snapshot(
     if let Some(max_items) = query.max_items {
         window.max_items = max_items.max(1) as usize;
     }
-    if let Some(max_blocks) = query.max_blocks {
-        window.max_blocks = max_blocks.max(1) as usize;
-    }
     window.before_turn_index = query.before_turn_index.filter(|value| *value > 0);
     let snapshot = blocking::run_db("api.chat.thread_log.snapshot", move || {
         storage.thread_snapshot_window(&user_id, &lookup_session, &window)
@@ -269,38 +256,6 @@ async fn get_thread_snapshot(
     .await
     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     Ok(Json(json!({"data": snapshot})))
-}
-
-async fn get_thread_item_content(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    AxumPath((session_id, item_id)): AxumPath<(String, String)>,
-    Query(query): Query<ThreadChangesQuery>,
-) -> Result<Json<Value>, Response> {
-    let session_id = session_id.trim().to_string();
-    let user_id = require_owned_thread(&state, &headers, &session_id).await?;
-    let storage = state.storage.clone();
-    let lookup = session_id.clone();
-    let item_lookup = item_id.clone();
-    let field = query.field.clone();
-    let field_for_query = field.clone();
-    let from_block = query.from_block.or(query.item_after).unwrap_or(0);
-    let blocks = blocking::run_db("api.chat.thread_log.item_content", move || {
-        storage.list_thread_item_blocks_page(
-            &user_id,
-            &lookup,
-            &item_lookup,
-            field_for_query.as_deref(),
-            from_block,
-            query.limit.unwrap_or(50).clamp(1, 100),
-            false,
-        )
-    })
-    .await
-    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    Ok(Json(
-        json!({"data":{"session_id":session_id,"item_id":item_id,"field":field,"blocks":blocks.0,"next_block":blocks.1,"has_more":blocks.2}}),
-    ))
 }
 
 async fn get_thread_item(

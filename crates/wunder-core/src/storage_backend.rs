@@ -4,12 +4,12 @@ use anyhow::Result;
 use serde_json::Value;
 use std::collections::HashMap;
 
-/// Bounded read window for the atomic v2 thread snapshot (根治方案 I5).
+/// Bounded read window for an atomic canonical thread snapshot.
 ///
 /// The snapshot is retained for execution/native recovery; web pages use display views. An
 /// unbounded read on a million-row thread can exhaust memory. Every
 /// reader therefore materializes only the MOST RECENT `max_turns` turns (plus
-/// their items/blocks, each independently capped) and reports whether older
+/// their completed items, independently capped) and reports whether older
 /// data was dropped. `before_turn_index` pages strictly older windows.
 #[derive(Debug, Clone)]
 pub struct ThreadSnapshotWindow {
@@ -17,8 +17,6 @@ pub struct ThreadSnapshotWindow {
     pub max_turns: usize,
     /// Hard cap on item rows materialized across the selected turns.
     pub max_items: usize,
-    /// Hard cap on text-block rows materialized across the selected items.
-    pub max_blocks: usize,
     /// Exclusive upper bound: only turns with `user_turn_index < this` are read.
     pub before_turn_index: Option<i64>,
 }
@@ -28,7 +26,6 @@ impl ThreadSnapshotWindow {
     pub fn clamped(mut self) -> Self {
         self.max_turns = self.max_turns.clamp(1, 2_000);
         self.max_items = self.max_items.clamp(1, 200_000);
-        self.max_blocks = self.max_blocks.clamp(1, 400_000);
         self
     }
 }
@@ -38,7 +35,6 @@ impl Default for ThreadSnapshotWindow {
         Self {
             max_turns: 200,
             max_items: 20_000,
-            max_blocks: 40_000,
             before_turn_index: None,
         }
     }
@@ -202,43 +198,6 @@ pub trait ThreadLogStore {
         limit: i64,
     ) -> Result<Vec<Value>>;
 
-    /// Persist one immutable text block and its durable `text_block` change.
-    /// Returns the allocated `change_seq`; an idempotent replay (event_id not
-    /// ahead of the stored block) returns 0 without allocating a cursor.
-    fn upsert_thread_text_block(
-        &self,
-        user_id: &str,
-        session_id: &str,
-        block: &Value,
-    ) -> Result<i64>;
-    fn list_thread_text_blocks(
-        &self,
-        session_id: &str,
-        after: i64,
-        limit: i64,
-    ) -> Result<Vec<Value>>;
-    /// Read one item's durable text blocks in block order. Ownership is checked
-    /// here instead of trusting a caller supplied item identifier.
-    fn list_thread_item_blocks(
-        &self,
-        user_id: &str,
-        session_id: &str,
-        item_id: &str,
-        from_block: i64,
-        limit: i64,
-        include_internal: bool,
-    ) -> Result<Vec<Value>>;
-    /// Read blocks with an explicit field and bounded page metadata.
-    fn list_thread_item_blocks_page(
-        &self,
-        user_id: &str,
-        session_id: &str,
-        item_id: &str,
-        field: Option<&str>,
-        from_block: i64,
-        limit: i64,
-        include_internal: bool,
-    ) -> Result<(Vec<Value>, Option<i64>, bool)>;
     fn find_thread_turn_id(
         &self,
         user_id: &str,
@@ -1503,46 +1462,6 @@ pub trait QuotaBalanceStore {
     ) -> Result<Option<UserQuotaStatus>>;
 }
 
-/// Durable shell transcript for the desktop terminal mode. Deliberately kept
-/// outside the thread-log model: a transcript is process output, not a chat
-/// turn, so it never allocates turns, items or replay change cursors.
-pub trait TerminalTranscriptStore {
-    /// Persist one transcript chunk. Idempotent on
-    /// `(user_id, session_id, terminal_id, chunk_index)`: a re-delivered chunk
-    /// with an equal or older `seq` is a no-op, so a writer that resumes after
-    /// a restart can never duplicate or reorder history.
-    fn upsert_terminal_transcript_block(
-        &self,
-        user_id: &str,
-        session_id: &str,
-        terminal_id: &str,
-        chunk_index: i64,
-        seq: i64,
-        text: &str,
-    ) -> Result<()>;
-    /// Next free chunk index for the session scope, continuing the numbering of
-    /// earlier shell runs (`0` when nothing is stored yet).
-    fn terminal_transcript_next_chunk(&self, user_id: &str, session_id: &str) -> Result<i64>;
-    /// Read transcript chunks of a session in chunk order for restart recovery.
-    /// Results carry `terminal_id`, `chunk_index`, `seq` and `text`.
-    fn list_terminal_transcript_blocks(
-        &self,
-        user_id: &str,
-        session_id: &str,
-        from_chunk: i64,
-        limit: i64,
-    ) -> Result<Vec<Value>>;
-    /// Drop transcript chunks outside the newest `keep_chunks` of the session
-    /// scope so a long-lived terminal cannot grow the table without bound.
-    /// Chunk numbering keeps advancing, so pruning never reuses an index.
-    fn prune_terminal_transcript(
-        &self,
-        user_id: &str,
-        session_id: &str,
-        keep_chunks: i64,
-    ) -> Result<()>;
-}
-
 /// Cloud access storage for locally logged-in desktop/cli devices: the device
 /// registry, per-call accounting and the append-only device log stream.
 ///
@@ -1745,7 +1664,6 @@ pub trait StorageBackend:
     + CronStore
     + AgentDirectoryStore
     + QuotaBalanceStore
-    + TerminalTranscriptStore
     + CloudStore
     + InterlinkStore
     + Send
@@ -1783,7 +1701,6 @@ impl<T> StorageBackend for T where
         + CronStore
         + AgentDirectoryStore
         + QuotaBalanceStore
-        + TerminalTranscriptStore
         + CloudStore
         + InterlinkStore
         + Send

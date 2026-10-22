@@ -22,10 +22,9 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicI64};
-use std::sync::mpsc::{self, SyncSender, TrySendError};
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::runtime::Handle;
 use tracing::{debug, info, warn};
 use walkdir::WalkDir;
@@ -37,7 +36,6 @@ const SEARCH_INDEX_TTL_S: f64 = 10.0;
 const SEARCH_INDEX_MAX_ITEMS: usize = 200_000;
 const SEARCH_CACHE_IDLE_TTL_S: f64 = 300.0;
 const SEARCH_CACHE_MAX_USERS: usize = 256;
-const STORAGE_WRITE_QUEUE_SIZE: usize = 2048;
 const TEMP_FILES_IDLE_TTL_S: f64 = 0.0;
 const TEMP_FILES_CLEANUP_INTERVAL_S: f64 = 3600.0;
 const SESSION_ACTIVITY_META_PREFIX: &str = "session_activity:";
@@ -231,75 +229,6 @@ struct SearchIndex {
     version: u64,
 }
 
-enum StorageWrite {
-    Chat { user_id: String, payload: Value },
-    ToolLog { user_id: String, payload: Value },
-    ArtifactLog { user_id: String, payload: Value },
-    Flush { done: SyncSender<()> },
-}
-
-struct StorageWriteQueue {
-    sender: SyncSender<StorageWrite>,
-    storage: Arc<dyn StorageBackend>,
-}
-
-impl StorageWriteQueue {
-    fn new(storage: Arc<dyn StorageBackend>) -> Self {
-        let (sender, receiver) = mpsc::sync_channel(STORAGE_WRITE_QUEUE_SIZE);
-        let worker_storage = storage.clone();
-        if let Err(err) = thread::Builder::new()
-            .name("wunder-storage-writer".to_string())
-            .spawn(move || {
-                while let Ok(task) = receiver.recv() {
-                    if let Err(err) = Self::apply_write(&worker_storage, task) {
-                        warn!("storage write failed: {err}");
-                    }
-                }
-            })
-        {
-            warn!("failed to spawn storage writer thread: {err}");
-        }
-        Self { sender, storage }
-    }
-
-    fn enqueue(&self, task: StorageWrite) -> Result<()> {
-        match self.sender.try_send(task) {
-            Ok(()) => Ok(()),
-            Err(TrySendError::Full(task)) | Err(TrySendError::Disconnected(task)) => {
-                Self::apply_write(&self.storage, task)
-            }
-        }
-    }
-
-    fn apply_write(storage: &Arc<dyn StorageBackend>, task: StorageWrite) -> Result<()> {
-        match task {
-            StorageWrite::Chat { user_id, payload } => storage.append_chat(&user_id, &payload),
-            StorageWrite::ToolLog { user_id, payload } => {
-                storage.append_tool_log(&user_id, &payload)
-            }
-            StorageWrite::ArtifactLog { user_id, payload } => {
-                storage.append_artifact_log(&user_id, &payload)
-            }
-            StorageWrite::Flush { done } => {
-                let _ = done.send(());
-                Ok(())
-            }
-        }
-    }
-
-    fn flush(&self) -> bool {
-        let (done_tx, done_rx) = mpsc::sync_channel(0);
-        if self
-            .sender
-            .send(StorageWrite::Flush { done: done_tx })
-            .is_err()
-        {
-            return false;
-        }
-        done_rx.recv_timeout(Duration::from_secs(2)).is_ok()
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct PurgeResult {
     pub chat_sessions: i64,
@@ -324,7 +253,6 @@ pub struct WorkspaceManager {
     /// `{user}__w__{workspace_id}` form resolve to these roots verbatim.
     workspace_roots: RwLock<HashMap<String, PathBuf>>,
     storage: Arc<dyn StorageBackend>,
-    write_queue: OnceLock<StorageWriteQueue>,
     stream_event_retention_hours: i64,
     deleted_session_log_grace_hours: AtomicI64,
     retention_interval_s: f64,
@@ -380,7 +308,6 @@ impl WorkspaceManager {
             container_roots: RwLock::new(normalized_container_roots),
             workspace_roots: RwLock::new(HashMap::new()),
             storage,
-            write_queue: OnceLock::new(),
             stream_event_retention_hours,
             deleted_session_log_grace_hours: AtomicI64::new(
                 DEFAULT_DELETED_SESSION_LOG_GRACE_HOURS,
@@ -1862,52 +1789,6 @@ impl WorkspaceManager {
         .unwrap_or(0)
     }
 
-    pub fn append_chat(&self, user_id: &str, payload: &Value) -> Result<()> {
-        self.write_queue().enqueue(StorageWrite::Chat {
-            user_id: user_id.to_string(),
-            payload: payload.clone(),
-        })?;
-        self.maybe_schedule_retention_cleanup();
-        Ok(())
-    }
-
-    pub fn append_tool_log(&self, user_id: &str, payload: &Value) -> Result<()> {
-        self.write_queue().enqueue(StorageWrite::ToolLog {
-            user_id: user_id.to_string(),
-            payload: payload.clone(),
-        })?;
-        self.maybe_schedule_retention_cleanup();
-        Ok(())
-    }
-
-    pub fn append_artifact_log(&self, user_id: &str, payload: &Value) -> Result<()> {
-        self.write_queue().enqueue(StorageWrite::ArtifactLog {
-            user_id: user_id.to_string(),
-            payload: payload.clone(),
-        })?;
-        self.maybe_schedule_retention_cleanup();
-        Ok(())
-    }
-
-    pub async fn flush_writes_async(self: &Arc<Self>) -> bool {
-        let workspace = Arc::clone(self);
-        run_workspace_db("workspace.flush_writes", move || {
-            Ok(workspace.flush_writes())
-        })
-        .await
-        .unwrap_or(false)
-    }
-
-    pub fn flush_writes(&self) -> bool {
-        self.write_queue.get().is_none_or(StorageWriteQueue::flush)
-    }
-
-    fn write_queue(&self) -> &StorageWriteQueue {
-        // File-only sandbox contexts never need a storage writer thread.
-        self.write_queue
-            .get_or_init(|| StorageWriteQueue::new(Arc::clone(&self.storage)))
-    }
-
     pub fn load_history(&self, user_id: &str, session_id: &str, limit: i64) -> Result<Vec<Value>> {
         let limit = normalize_history_limit(limit);
         self.storage
@@ -1980,17 +1861,7 @@ impl WorkspaceManager {
                 break;
             }
             let cursor = change["change_seq"].as_i64().unwrap_or(0);
-            let mut payload = change["payload"].clone();
-            if change["change_type"] == "text_block" {
-                payload = payload.get("data").cloned().unwrap_or(payload);
-                if let Some(map) = payload.as_object_mut() {
-                    map.entry("field")
-                        .or_insert_with(|| change["payload"]["field"].clone());
-                    map.entry("block_index")
-                        .or_insert_with(|| change["payload"]["block_index"].clone());
-                    map.insert("item_id".into(), change["item_id"].clone());
-                }
-            }
+            let payload = change["payload"].clone();
             let frame = json!({"event":"thread_change","data":{
                 "change_type":change["change_type"], "turn_id":change["turn_id"],
                 "item_id":change["item_id"], "revision":change["revision"], "cursor":cursor,
@@ -2007,7 +1878,7 @@ impl WorkspaceManager {
             .map(|seq| seq.max(0))
     }
 
-    /// I5 atomic snapshot (根治方案): `{cursor,turns,items,blocks,item_total}`
+    /// Atomic canonical history snapshot: `{cursor,turns,items,item_total}`
     /// read in one transaction. Used for full reload when the durable change
     /// window was trimmed and no cursor can safely replay.
     pub fn try_load_thread_snapshot(&self, user_id: &str, session_id: &str) -> Result<Value> {
@@ -3803,6 +3674,63 @@ mod tests {
         (manager, dir)
     }
 
+    fn seed_thread_context(
+        root: &std::path::Path,
+        storage: &dyn StorageBackend,
+        user: &str,
+        session: &str,
+    ) {
+        use wunder_core::thread_store::*;
+        let store = crate::storage::thread_store::LocalThreadStore::open(root).unwrap();
+        let thread = ThreadId::new(session).unwrap();
+        let rollout = RolloutId::new(format!("sample-rollout-{session}")).unwrap();
+        let admitted = storage
+            .accept_thread_turn(user, session, &json!({"content":"sample input"}))
+            .unwrap();
+        let turn = TurnId::new(admitted["turn_id"].as_str().unwrap()).unwrap();
+        crate::storage::canonical_thread_log::wait(async {
+            store
+                .create_thread(CreateThreadRequest {
+                    metadata: ThreadMetadata {
+                        thread_id: thread.clone(),
+                        current_rollout_id: rollout.clone(),
+                        status: ThreadStatus::Active,
+                        created_at_ms: 1,
+                        updated_at_ms: 1,
+                        title: None,
+                        workspace_id: None,
+                        pinned: false,
+                    },
+                    session_meta: SessionMeta {
+                        thread_id: thread.clone(),
+                        rollout_id: rollout,
+                        created_at_ms: 1,
+                        source: "sample".into(),
+                        initial_system_prompt: "frozen sample instructions".into(),
+                        initial_memory: None,
+                        parent_thread_id: None,
+                        history_base: None,
+                        capabilities: serde_json::Value::Null,
+                    },
+                })
+                .await
+                .unwrap();
+            store
+                .begin_turn(user, &thread, &turn, "sample-model")
+                .await
+                .unwrap();
+            store
+                .append_model_message(
+                    &thread,
+                    &turn,
+                    json!({"role":"user","content":"sample input"}),
+                )
+                .await
+                .unwrap();
+        })
+        .unwrap();
+    }
+
     #[test]
     fn frozen_tool_profile_binding_round_trips_in_workspace_metadata() {
         let (workspace, _dir) = build_workspace_manager();
@@ -4028,7 +3956,7 @@ mod tests {
     }
 
     #[test]
-    fn thread_log_recovery_emits_blocks_and_skips_private_items_without_transport_ids() {
+    fn thread_log_recovery_reads_completed_items_without_transport_ids() {
         let (workspace, _dir) = build_workspace_manager();
         workspace
             .storage
@@ -4053,38 +3981,78 @@ mod tests {
             .storage
             .accept_thread_turn("owner", "thread", &json!({"content":"input"}))
             .unwrap();
+        // Admission does not implicitly freeze thread instructions. Exercise
+        // the production create/begin boundary before committing history.
+        let threads = crate::storage::thread_store::LocalThreadStore::open(_dir.path()).unwrap();
+        use wunder_core::thread_store::*;
+        let thread = ThreadId::new("thread").unwrap();
+        let rollout = RolloutId::new("fixture-rollout").unwrap();
+        crate::storage::canonical_thread_log::wait(threads.create_thread(CreateThreadRequest {
+            metadata: ThreadMetadata {
+                thread_id: thread.clone(),
+                current_rollout_id: rollout.clone(),
+                status: ThreadStatus::Active,
+                created_at_ms: 1,
+                updated_at_ms: 1,
+                title: None,
+                workspace_id: None,
+                pinned: false,
+            },
+            session_meta: SessionMeta {
+                thread_id: thread.clone(),
+                rollout_id: rollout,
+                created_at_ms: 1,
+                source: "fixture".into(),
+                initial_system_prompt: "fixture instructions".into(),
+                initial_memory: None,
+                parent_thread_id: None,
+                history_base: None,
+                capabilities: serde_json::Value::Null,
+            },
+        }))
+        .unwrap()
+        .unwrap();
+        let turn_id = TurnId::new(turn["turn_id"].as_str().unwrap()).unwrap();
+        crate::storage::canonical_thread_log::wait(threads.begin_turn(
+            "owner",
+            &thread,
+            &turn_id,
+            "fixture-model",
+        ))
+        .unwrap()
+        .unwrap();
+        let cursor = workspace.latest_thread_change_seq("thread").unwrap();
         workspace
             .storage
             .append_thread_item(
                 "owner",
-                &json!({"session_id":"thread",
-            "turn_id":turn["turn_id"], "item_id":"answer", "kind":"assistant_message",
-            "role":"assistant", "status":"running", "visibility":"user"}),
+                &json!({
+                    "session_id":"thread","turn_id":turn["turn_id"],"item_id":"answer",
+                    "kind":"assistant_message","role":"assistant","status":"completed",
+                    "visibility":"user","content":"complete answer",
+                }),
             )
             .unwrap();
-        let cursor = workspace.latest_thread_change_seq("thread").unwrap();
-        workspace.storage.upsert_thread_text_block("owner", "thread", &json!({
-            "item_id":"answer", "field":"content", "block_index":0, "event_id":900,
-            "data":{"content":"prefix", "field":"content", "block_index":0, "content_offset":0}
-        })).unwrap();
         workspace
             .storage
             .append_thread_item(
                 "owner",
                 &json!({"session_id":"thread",
             "turn_id":turn["turn_id"], "item_id":"private", "kind":"system_message",
-            "role":"system", "visibility":"model_internal", "content":"internal"}),
+            "role":"system", "status":"completed", "visibility":"model_internal", "content":"internal"}),
             )
             .unwrap();
         let frames = workspace
             .try_load_thread_changes("thread", cursor, 100)
             .unwrap();
-        assert_eq!(frames.len(), 2);
+        assert_eq!(frames.len(), 1);
         assert_eq!(frames[0]["event"], "thread_change");
-        assert_eq!(frames[0]["data"]["change_type"], "text_block");
-        assert_eq!(frames[0]["data"]["payload"]["content"], "prefix");
-        assert_eq!(frames[0]["data"]["cursor"], cursor + 1);
-        assert_eq!(frames[1]["data"]["change_type"], "item_upsert");
+        assert_eq!(frames[0]["data"]["change_type"], "item_upsert");
+        assert_eq!(
+            frames[0]["data"]["payload"]["payload"]["content"],
+            "complete answer"
+        );
+        assert!(frames[0]["data"]["cursor"].as_i64().unwrap() > cursor);
         assert!(frames.iter().all(|frame| frame.get("event_id").is_none()));
         assert_eq!(
             workspace
@@ -4116,12 +4084,7 @@ mod tests {
         assert_eq!(manager.deleted_session_log_grace_hours(), 24);
 
         for session in ["session-old", "session-new"] {
-            storage
-                .append_chat(
-                    "user-a",
-                    &json!({"session_id": session, "role": "user", "content": "hello"}),
-                )
-                .expect("append chat");
+            seed_thread_context(dir.path(), storage.as_ref(), "user-a", session);
             storage
                 .append_tool_log(
                     "user-a",
@@ -4131,7 +4094,7 @@ mod tests {
             storage
                 .append_artifact_log(
                     "user-a",
-                    &json!({"session_id": session, "kind": "kind-a", "name": "a"}),
+                    &json!({"session_id": session, "kind": "file", "name": "sample.txt"}),
                 )
                 .expect("append artifact");
             storage
@@ -4157,8 +4120,7 @@ mod tests {
 
         assert!(storage
             .load_thread_context_items("user-a", "session-old", 500, true)
-            .expect("load old chat")
-            .is_empty());
+            .is_err());
         assert_eq!(
             storage
                 .load_thread_context_items("user-a", "session-new", 500, true)
@@ -4191,8 +4153,7 @@ mod tests {
         manager.schedule_deleted_session_log_cleanup("user-a", "session-new");
         assert!(storage
             .load_thread_context_items("user-a", "session-new", 500, true)
-            .expect("load new chat after immediate purge")
-            .is_empty());
+            .is_err());
     }
 
     #[test]
@@ -4212,9 +4173,9 @@ mod tests {
         storage
             .mark_deleted_session_log_grace("fixture-user", "fixture-session", now - 90000.0)
             .unwrap();
-        let conn = rusqlite::Connection::open(&path).unwrap();
+        let conn = rusqlite::Connection::open(dir.path().join("logs_1.sqlite")).unwrap();
         conn.execute_batch(
-            "CREATE TRIGGER fixture_hold BEFORE DELETE ON tool_logs
+            "CREATE TRIGGER fixture_hold BEFORE DELETE ON runtime_tool_metrics
             BEGIN SELECT RAISE(ABORT,'fixture lock'); END;",
         )
         .unwrap();
@@ -4247,7 +4208,7 @@ mod tests {
             )
             .unwrap();
         conn.execute_batch(
-            "CREATE TRIGGER fixture_hold BEFORE DELETE ON tool_logs
+            "CREATE TRIGGER fixture_hold BEFORE DELETE ON runtime_tool_metrics
             BEGIN SELECT RAISE(ABORT,'fixture lock'); END;",
         )
         .unwrap();
@@ -4295,9 +4256,9 @@ mod tests {
                 &json!({"session_id":"fixture-session","tool":"fixture-tool","ok":true}),
             )
             .unwrap();
-        let conn = rusqlite::Connection::open(&path).unwrap();
+        let conn = rusqlite::Connection::open(dir.path().join("logs_1.sqlite")).unwrap();
         conn.execute_batch(
-            "CREATE TRIGGER fixture_hold BEFORE DELETE ON tool_logs
+            "CREATE TRIGGER fixture_hold BEFORE DELETE ON runtime_tool_metrics
              BEGIN SELECT RAISE(ABORT,'fixture lock'); END;",
         )
         .unwrap();
@@ -4534,9 +4495,7 @@ mod tests {
         workspace
             .save_session_reasoning_effort(user_id, session_id, "medium")
             .expect("save reasoning effort");
-        storage
-            .append_chat(user_id, &json!({"session_id": session_id, "role": "user"}))
-            .expect("append chat history");
+        seed_thread_context(_dir.path(), storage.as_ref(), user_id, session_id);
         storage
             .append_tool_log(user_id, &json!({"session_id": session_id, "tool": "tool"}))
             .expect("append tool log");
@@ -4568,8 +4527,7 @@ mod tests {
             .expect("purge logs");
         assert!(storage
             .load_thread_context_items(user_id, session_id, 500, true)
-            .unwrap()
-            .is_empty());
+            .is_err());
         assert!(storage
             .load_stream_events(session_id, 0, 10)
             .unwrap()

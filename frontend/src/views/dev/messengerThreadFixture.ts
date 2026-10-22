@@ -19,7 +19,7 @@ import type {
   ChatThreadSnapshot,
   ChatThreadSnapshotTurn
 } from '@/realtime/chat/chatThreadState';
-import type { ThreadBlockUpsertPayload, ThreadItemUpsertPayload } from '@/realtime/chat/chatThreadTypes';
+import type { ThreadItemUpsertPayload } from '@/realtime/chat/chatThreadTypes';
 
 type FixtureMessage = Record<string, any>;
 
@@ -57,7 +57,6 @@ export const buildThreadSnapshotFromMessages = (
 ): ChatThreadSnapshot => {
   const turns: ChatThreadSnapshotTurn[] = [];
   const items: ThreadItemUpsertPayload[] = [];
-  const blocks: ThreadBlockUpsertPayload[] = [];
   const roundByTurn = new Map<string, number>();
   let round = 0;
   messages.forEach((message, index) => {
@@ -116,17 +115,6 @@ export const buildThreadSnapshotFromMessages = (
       ...(message.reasoning ? { reasoning: String(message.reasoning) } : {}),
       ...(typeof message.model_turn_id === 'string' ? { model_turn_id: message.model_turn_id } : {})
     });
-    if (content) {
-      // 块身份由 `item_id` + `field` + `block_index` 决定，`turn_id` 不在
-      // `ThreadBlockUpsertPayload` 里（块的应用路径从不读它），这里不再多带。
-      blocks.push({
-        item_id: textItemId,
-        field: 'content',
-        block_index: 0,
-        content_offset: 0,
-        content
-      });
-    }
     workflowItemsOf(message).forEach((entry, itemIndex) => {
       const eventType = String(entry.eventType || entry.event_type || 'tool_result');
       items.push({
@@ -142,7 +130,7 @@ export const buildThreadSnapshotFromMessages = (
       });
     });
   });
-  return { cursor: Math.max(1, items.length), turns, items, blocks };
+  return { cursor: Math.max(1, items.length), turns, items };
 };
 
 /** Replace the session's durable state with the fixture (same as a reload). */
@@ -155,7 +143,7 @@ export const installChatThreadFixture = (
   hydrateChatThreadRuntime(store, sessionId, buildThreadSnapshotFromMessages(sessionId, messages));
 };
 
-/** Next durable cursor; frames must arrive contiguously (state.lastSeq + 1). */
+/** Next durable cursor; canonical display cursors can skip context records. */
 export const nextThreadCursor = (sessionId: string): number =>
   (getChatThreadState(sessionId)?.lastSeq ?? 0) + 1;
 
@@ -248,18 +236,23 @@ export const applyThreadTail = (
   text
 });
 
-/** Settle an item's text as a durable block snapshot (heals the tail). */
-export const applyThreadTextBlock = (
+/** Persist the completed item through the same canonical frame shape. */
+export const applyThreadCompletedItem = (
   store: ReturnType<typeof useChatStore>,
   sessionId: string,
   itemId: string,
   turnId: string,
   content: string,
   field: 'content' | 'reasoning' = 'content'
-): boolean => applyThreadFrame(store, sessionId, 'thread_change', {
-  cursor: nextThreadCursor(sessionId),
-  change_type: 'text_block',
-  item_id: itemId,
-  turn_id: turnId,
-  payload: { item_id: itemId, turn_id: turnId, field, block_index: 0, content_offset: 0, [field]: content }
-});
+): boolean => {
+  const existing = getChatThreadState(sessionId)?.items.get(itemId);
+  return applyThreadChange(store, sessionId, 'item_upsert', {
+    ...existing?.raw,
+    item_id: itemId,
+    turn_id: turnId,
+    kind: existing?.kind || 'assistant_message',
+    status: 'completed',
+    revision: (existing?.revision ?? 0) + 1,
+    [field]: content
+  });
+};

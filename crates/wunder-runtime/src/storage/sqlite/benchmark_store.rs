@@ -65,7 +65,7 @@ impl SqliteBenchmarkStorage for SqliteStorage {
         let started_time = Self::parse_f64(payload.get("started_time")).unwrap_or(0.0);
         let finished_time = Self::parse_f64(payload.get("finished_time")).unwrap_or(0.0);
         let payload_text = Self::json_to_string(payload);
-        let conn = self.open()?;
+        let conn = self.open_logs()?;
         conn.execute(
             "INSERT INTO benchmark_runs (run_id, user_id, model_name, judge_model_name, status, total_score, started_time, finished_time, payload) \
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) \
@@ -138,7 +138,7 @@ impl SqliteBenchmarkStorage for SqliteStorage {
         let started_time = Self::parse_f64(payload.get("started_time")).unwrap_or(0.0);
         let finished_time = Self::parse_f64(payload.get("finished_time")).unwrap_or(0.0);
         let payload_text = Self::json_to_string(payload);
-        let conn = self.open()?;
+        let conn = self.open_logs()?;
         conn.execute(
             "INSERT INTO benchmark_attempts (run_id, task_id, attempt_no, status, final_score, started_time, finished_time, payload) \
              VALUES (?, ?, ?, ?, ?, ?, ?, ?) \
@@ -181,7 +181,7 @@ impl SqliteBenchmarkStorage for SqliteStorage {
             .to_string();
         let mean_score = Self::parse_f64(payload.get("mean_score")).unwrap_or(0.0);
         let payload_text = Self::json_to_string(payload);
-        let conn = self.open()?;
+        let conn = self.open_logs()?;
         conn.execute(
             "INSERT INTO benchmark_task_aggregates (run_id, task_id, status, mean_score, payload) \
              VALUES (?, ?, ?, ?, ?) \
@@ -201,7 +201,7 @@ impl SqliteBenchmarkStorage for SqliteStorage {
         limit: Option<i64>,
     ) -> Result<Vec<Value>> {
         self.ensure_initialized()?;
-        let conn = self.open()?;
+        let conn = self.open_logs()?;
         let mut conditions = Vec::new();
         let mut params: Vec<SqlValue> = Vec::new();
         if let Some(user_id) = user_id {
@@ -264,7 +264,7 @@ impl SqliteBenchmarkStorage for SqliteStorage {
         if cleaned.is_empty() {
             return Ok(None);
         }
-        let conn = self.open()?;
+        let conn = self.open_logs()?;
         let mut stmt = conn.prepare("SELECT payload FROM benchmark_runs WHERE run_id = ?")?;
         let mut rows = stmt.query([cleaned])?;
         if let Some(row) = rows.next()? {
@@ -280,7 +280,7 @@ impl SqliteBenchmarkStorage for SqliteStorage {
         if cleaned.is_empty() {
             return Ok(Vec::new());
         }
-        let conn = self.open()?;
+        let conn = self.open_logs()?;
         let mut stmt = conn.prepare(
             "SELECT payload FROM benchmark_attempts WHERE run_id = ? ORDER BY task_id, attempt_no",
         )?;
@@ -302,7 +302,7 @@ impl SqliteBenchmarkStorage for SqliteStorage {
         if cleaned.is_empty() {
             return Ok(Vec::new());
         }
-        let conn = self.open()?;
+        let conn = self.open_logs()?;
         let mut stmt = conn.prepare(
             "SELECT payload FROM benchmark_task_aggregates WHERE run_id = ? ORDER BY task_id",
         )?;
@@ -324,7 +324,7 @@ impl SqliteBenchmarkStorage for SqliteStorage {
         if cleaned.is_empty() {
             return Ok(0);
         }
-        let mut conn = self.open()?;
+        let mut conn = self.open_logs()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let tasks_deleted = tx.execute(
             "DELETE FROM benchmark_task_aggregates WHERE run_id = ?",

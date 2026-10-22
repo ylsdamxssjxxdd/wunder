@@ -196,11 +196,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let mut config = Config::default();
         config.storage.backend = "sqlite".into();
-        config.storage.db_path = temp
-            .path()
-            .join("fixture.db")
-            .to_string_lossy()
-            .into_owned();
+        config.storage.data_root = temp.path().join("data").to_string_lossy().into_owned();
         config.workspace.root = temp.path().join("workspace").to_string_lossy().into_owned();
         config.skills.enabled.clear();
         std::fs::write(temp.path().join("fixture.yaml"), "{}\n").unwrap();

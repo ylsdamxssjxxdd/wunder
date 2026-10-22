@@ -48,7 +48,7 @@ updated_at: 2026-10-16
 | 启动时加载 example 配置静默失败、回落默认 | 已知问题；显式指向 `config/wunder.yaml`，或用 `WUNDER_CONFIG_PATH` | [配置说明](/docs/zh-CN/capabilities/config/) |
 | 客户端 WS 频繁 `slow_client` | 慢客户端背压（队列上限 2）；先看是否长消息 | [故障排查](/docs/zh-CN/help/troubleshooting/) |
 | PostgreSQL 连接失败 | `WUNDER_POSTGRES_DSN` / `WUNDER_POSTGRES_POOL_SIZE`；`postgres` 服务是否 healthy | [舰体部署](/docs/zh-CN/start/server/) |
-| 想切回 SQLite | `WUNDER_STORAGE_BACKEND=sqlite` + `WUNDER_SQLITE_DB_PATH=/path/to/wunder.db` | [配置说明](/docs/zh-CN/capabilities/config/) |
+| 想切回 SQLite | `WUNDER_STORAGE_BACKEND=sqlite` + `WUNDER_STORAGE_DATA_ROOT=./runtime-data` | [配置说明](/docs/zh-CN/capabilities/config/) |
 | 沙箱模式启动但监听 9001 | 正常：沙箱模式走另一条链路 | [舰体部署](/docs/zh-CN/start/server/) |
 
 ## 蜂巢（web）

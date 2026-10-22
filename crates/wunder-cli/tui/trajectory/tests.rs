@@ -216,7 +216,7 @@ async fn trajectory_storage_keyboard_search_detail_export_and_frames() {
 }
 
 #[tokio::test]
-async fn trajectory_hydrates_stream_blocks_and_exports_them_without_private_fields() {
+async fn trajectory_reads_completed_content_and_exports_without_private_fields() {
     let root = TempRoot::new("trajectory-blocks");
     let app = fixture_app(root.path()).await;
     let store = app.runtime.state.storage.clone();
@@ -225,16 +225,7 @@ async fn trajectory_hydrates_stream_blocks_and_exports_them_without_private_fiel
     let turn = store
         .accept_thread_turn(user, session, &json!({"content":"fixture request"}))
         .unwrap();
-    store.append_thread_item(user, &json!({"session_id":session,"turn_id":turn["turn_id"],"item_id":"fixture-blocked-answer","kind":"assistant_message","status":"completed","content":"","model_content":"fixture-private-field"})).unwrap();
-    for (field, data) in [
-        ("content", json!({"content":"streamed fixture answer"})),
-        (
-            "reasoning",
-            json!({"reasoning":"streamed fixture reasoning"}),
-        ),
-    ] {
-        store.upsert_thread_text_block(user, session, &json!({"item_id":"fixture-blocked-answer","field":field,"block_index":0,"event_id":1,"data":data})).unwrap();
-    }
+    store.append_thread_item(user, &json!({"session_id":session,"turn_id":turn["turn_id"],"item_id":"fixture-blocked-answer","kind":"assistant_message","status":"completed","content":"streamed fixture answer","reasoning":"streamed fixture reasoning","model_content":"fixture-private-field"})).unwrap();
     let row =
         crate::trajectory::public_item_row(store.as_ref(), user, session, "fixture-blocked-answer")
             .unwrap();
@@ -250,7 +241,7 @@ async fn trajectory_hydrates_stream_blocks_and_exports_them_without_private_fiel
     assert!(exported.contains("streamed fixture answer"));
     assert!(exported.contains("streamed fixture reasoning"));
     assert!(!exported.contains("fixture-private-field"));
-    assert!(exported.contains("item_block"));
+    assert!(!exported.contains("item_block"));
 }
 
 #[tokio::test]

@@ -117,7 +117,7 @@ def isolated_paths(stem: str) -> dict[str, str]:
     """按配置文件名派生隔离路径，使多套验收环境互不覆盖。"""
     suffix = "" if stem == "wunder" else f"-{stem}"
     return {
-        "storage": {"db_path": f"./temp_dir/e2e-server/{stem}.db"},
+        "storage": {"data_root": f"./temp_dir/e2e-server/{stem}"},
         "workspace": {"root": f"./temp_dir/e2e-server/workspaces{suffix}"},
         "observability": {"server_log_dir": f"./temp_dir/e2e-server/logs{suffix}"},
     }
@@ -126,7 +126,7 @@ def isolated_paths(stem: str) -> dict[str, str]:
 def isolate_config(text: str, stem: str) -> str:
     """把运行期路径改到隔离目录。
 
-    不能只做字面量替换：配置会被服务端规范化（`db_path: ''`），字面量匹配会漏，
+    不能只做字面量替换：配置会被服务端规范化（`data_root: ''`），字面量匹配会漏，
     导致 **E2E 用户写进共享库**。这里按「顶层 section + 键」重写三处路径。
     """
     replacements = isolated_paths(stem)

@@ -26,7 +26,6 @@ use wunder_desktop::{
     native::clamp_companion_scale, CompanionAgentOverride, CompanionOverlayState,
     CompanionPlacement, NativeDesktop,
 };
-use wunder_server::worker_card_settings::parse_agent_icon_config;
 
 /// Web sprite box and screen inset.
 const BASE_WIDTH: f64 = 192.0;
@@ -319,7 +318,11 @@ impl Pet {
         } else {
             self.settled = true;
         }
-        let Some(hint) = hint.filter(|hint| hint.agent_id == self.spec.agent_id) else {
+        // The global pet is decoupled from agents, so it accepts the active
+        // session's hint no matter which agent produced it.
+        let Some(hint) = hint.filter(|hint| {
+            self.spec.agent_id.is_empty() || hint.agent_id == self.spec.agent_id
+        }) else {
             return;
         };
         match self.hint_signature.as_deref() {
@@ -436,6 +439,18 @@ pub fn sync(app: &MainWindow) {
     }
 }
 
+/// Adopt a freshly persisted overlay state (the settings page changed it) and
+/// re-project, so a selection, toggle or scale change shows at once.
+pub fn adopt(app: &MainWindow, state: CompanionOverlayState) {
+    if let Some(overlay) = current() {
+        let mut guard = overlay.borrow_mut();
+        if state.updated_at >= guard.state.updated_at {
+            guard.state = state;
+        }
+    }
+    sync(app);
+}
+
 fn current() -> Option<Rc<RefCell<Overlay>>> {
     OVERLAY.with(|slot| slot.borrow().clone())
 }
@@ -461,61 +476,52 @@ pub fn forget(companion_id: &str) {
     }
 }
 
-/// Agents that bind a companion, in list order, with the persisted overrides
-/// the web layer keeps beside the agent record.
+/// The single desktop pet, projected the way the web `CompanionFloatingLayer`
+/// does it: it follows the globally selected companion from the pet settings
+/// page and is fully decoupled from the agent list. Positions and the local
+/// show/scale override are keyed by the entry key `desktop:<id>`, matching the
+/// web layer.
 fn project_specs(app: &MainWindow, state: &CompanionOverlayState) -> Vec<PetSpec> {
-    let rows = app.get_agents();
-    let mut seen = HashSet::new();
-    let mut specs = Vec::new();
-    for (index, agent) in rows.iter().enumerate() {
-        let config = parse_agent_icon_config(Some(agent.icon_config.as_str()));
-        if !config.is_companion() {
-            continue;
-        }
-        let id = agent_key(Some(agent.id.as_str())).to_string();
-        if !seen.insert(id.clone()) {
-            continue;
-        }
-        let entry = state.overrides.get(&id).copied();
-        if !entry.and_then(|entry| entry.show).unwrap_or(config.show) {
-            continue;
-        }
-        let scale = entry
-            .and_then(|entry| entry.scale)
-            .unwrap_or(config.scale)
-            .clamp(SCALE_MIN, SCALE_MAX);
-        let scope = if config.scope.is_empty() {
-            "global"
-        } else {
-            config.scope.as_str()
-        };
-        let companion_id = if config.id.is_empty() {
-            config.name.as_str()
-        } else {
-            config.id.as_str()
-        };
-        let key = format!("{id}:{scope}:{companion_id}");
-        let position = state
-            .positions
-            .get(&key)
-            .map(|placement| (placement.x.max(0) as f64, placement.y.max(0) as f64))
-            .unwrap_or_else(|| cascade_position(index));
-        specs.push(PetSpec {
-            key,
-            agent_id: id,
-            companion_id: companion_id.to_string(),
-            name: if agent.name.trim().is_empty() {
-                config.name.clone()
-            } else {
-                agent.name.to_string()
-            },
-            scale,
-            message_hints: config.message_hints && state.message_hints,
-            x: position.0,
-            y: position.1,
-        });
+    let settings = app.global::<crate::PetSettingsState>();
+    if !settings.get_enabled() {
+        return Vec::new();
     }
-    specs
+    let companion_id = settings.get_selected_id().trim().to_string();
+    if companion_id.is_empty() {
+        return Vec::new();
+    }
+    let key = format!("desktop:{companion_id}");
+    let entry = state.overrides.get(&key).copied();
+    if !entry.and_then(|entry| entry.show).unwrap_or(true) {
+        return Vec::new();
+    }
+    let scale = entry
+        .and_then(|entry| entry.scale)
+        .unwrap_or(settings.get_scale())
+        .clamp(SCALE_MIN, SCALE_MAX);
+    let position = state
+        .positions
+        .get(&key)
+        .map(|placement| (placement.x.max(0) as f64, placement.y.max(0) as f64))
+        .unwrap_or_else(|| cascade_position(0));
+    let name = {
+        let selected = settings.get_selected_name().trim().to_string();
+        if selected.is_empty() {
+            companion_id.clone()
+        } else {
+            selected
+        }
+    };
+    vec![PetSpec {
+        key,
+        agent_id: String::new(),
+        companion_id,
+        name,
+        scale,
+        message_hints: settings.get_hints(),
+        x: position.0,
+        y: position.1,
+    }]
 }
 
 /// The active session's last answer, projected the way the web does it: an
@@ -577,6 +583,10 @@ fn agent_runtimes(app: &MainWindow) -> HashMap<String, Runtime> {
         let slot = runtimes.entry(active_agent).or_insert(Runtime::Idle);
         *slot = (*slot).max(active_runtime);
     }
+    // The global pet is decoupled from agents: it plays the busiest runtime so a
+    // single floating companion reflects any in-flight work.
+    let global = runtimes.values().copied().max().unwrap_or(Runtime::Idle);
+    runtimes.insert(String::new(), global);
     runtimes
 }
 
@@ -882,14 +892,14 @@ fn handle_event(overlay: &mut Overlay, event: PetEvent) -> Option<String> {
                     return None;
                 }
                 overlay.last_chat_open = Some(now);
-                return Some(agent_id);
+                return if agent_id.is_empty() { None } else { Some(agent_id) };
             }
             if code == MENU_TOGGLE_SHOW {
-                toggle(overlay, &id, &agent_id);
+                toggle(overlay, &id);
             } else if code >= MENU_SCALE_FIRST {
                 let index = (code - MENU_SCALE_FIRST) as usize;
                 if let Some(scale) = SCALE_PRESETS.get(index).copied() {
-                    set_scale(overlay, &agent_id, scale);
+                    set_scale(overlay, &id, scale);
                 }
             }
             None
@@ -929,13 +939,14 @@ fn menu_items(pet: &Pet) -> Vec<PetMenuItem> {
     items
 }
 
-/// Hide this pet through the local override only, never the agent record.
-/// The menu effect is immediate; the JSON write follows on a worker.
-fn toggle(overlay: &mut Overlay, key: &str, agent_id: &str) {
+/// Hide this pet through the local override only, never the agent record. The
+/// override is keyed by the entry key, matching the web layer's `desktop:<id>`
+/// keys. The menu effect is immediate; the JSON write follows on a worker.
+fn toggle(overlay: &mut Overlay, key: &str) {
     let show = overlay
         .state
         .overrides
-        .get(agent_id)
+        .get(key)
         .and_then(|entry| entry.show)
         .unwrap_or(true);
     let scale = overlay
@@ -945,15 +956,15 @@ fn toggle(overlay: &mut Overlay, key: &str, agent_id: &str) {
         .unwrap_or(1.0);
     let next_show = !show;
     overlay.state.overrides.insert(
-        agent_id.to_string(),
+        key.to_string(),
         CompanionAgentOverride {
             show: Some(next_show),
             scale: Some(clamp_companion_scale(scale)),
         },
     );
-    let agent = agent_id.to_string();
+    let entry_key = key.to_string();
     save_overlay(overlay, move |api| {
-        api.save_companion_override(&agent, next_show, scale)
+        api.save_companion_override(&entry_key, next_show, scale)
     });
     if !show {
         return;
@@ -965,17 +976,17 @@ fn toggle(overlay: &mut Overlay, key: &str, agent_id: &str) {
 }
 
 /// Resize through the same local override, keeping the current visibility.
-fn set_scale(overlay: &mut Overlay, agent_id: &str, scale: f32) {
+fn set_scale(overlay: &mut Overlay, key: &str, scale: f32) {
     overlay.state.overrides.insert(
-        agent_id.to_string(),
+        key.to_string(),
         CompanionAgentOverride {
             show: Some(true),
             scale: Some(clamp_companion_scale(scale)),
         },
     );
-    let agent = agent_id.to_string();
+    let entry_key = key.to_string();
     save_overlay(overlay, move |api| {
-        api.save_companion_override(&agent, true, scale)
+        api.save_companion_override(&entry_key, true, scale)
     });
 }
 
