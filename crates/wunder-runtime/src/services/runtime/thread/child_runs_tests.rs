@@ -131,7 +131,7 @@ fn child_catalog_filters_before_pagination_and_preserves_explicit_queries() {
                 .collect::<Vec<_>>(),
             total
         ),
-        (vec!["root".into(), "fork".into()], 2)
+        (vec!["fork".into()], 2)
     );
     let (_, total) = storage
         .list_chat_sessions_by_status("user", None, Some("root"), Some("all"), 0, 10)

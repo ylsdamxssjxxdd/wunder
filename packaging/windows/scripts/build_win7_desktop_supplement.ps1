@@ -35,8 +35,30 @@ Redownload cached archives instead of reusing them.
 Use hand-prepared local archives instead of downloading. BrowserArchivePath
 also accepts an unpacked browser directory and is staged into opt/browser.
 
+.PARAMETER NodeArchivePath
+Use a prepared official Node Windows zip. The complete distribution is placed
+in opt/node so node, npm and npx are available to 蛹 and 舵机 command tools.
+
+.PARAMETER RemotionRuntimePath
+Use a prepared directory containing package.json, package-lock.json and
+node_modules for the pinned Remotion runtime. When omitted, npm installs the
+manifest-pinned production dependencies with the staged Node runtime.
+
+.PARAMETER RemotionCompositorPath
+Use a prebuilt 32-bit Remotion compositor (scripts/win-ia32-compositor/build.sh
+output). Remotion only publishes an x64 compositor, so the ia32 pack injects this
+one together with the renderer's ia32 branch and the x264 thread cap.
+
 .PARAMETER BestEffort
 Install requirements package-by-package and continue past failures (records them).
+
+.PARAMETER SkipPrune / SkipGitPrune
+Keep the Python test suites / the Git vim-perl-tcl docs trees in the pack. Only
+needed on build hosts that wrap Remove-Item in a delete guard (every call is
+routed through the Recycle Bin, so bulk pruning fails closed and aborts the
+build). Prune afterwards instead and repack:
+
+  python packaging/windows/scripts/prune-supplement-stage.py <build>/stage/package-root
 #>
 [CmdletBinding()]
 param(
@@ -63,6 +85,15 @@ param(
   [string]$R2ArchivePath = '',
 
   [string]$BrowserArchivePath = '',
+
+  [string]$NodeArchivePath = '',
+
+  [string]$RemotionRuntimePath = '',
+
+  [string]$RemotionCompositorPath = '',
+
+  [switch]$SkipPrune,
+  [switch]$SkipGitPrune,
 
   [switch]$SkipFfmpeg,
 
@@ -418,6 +449,39 @@ function Install-BundledBrowser {
   Write-Step "bundled browser staged at opt/browser/$($expectedRel -replace '\\', '/')"
 }
 
+function New-SupplementZip {
+  # Compress-Archive chokes on the POSIX links that PortableGit ships (for
+  # example etc/mtab -> /proc/mounts, stored as a reparse point): it throws
+  # "cannot access the file" and leaves no zip behind. Those links mean nothing
+  # on Windows, so skip them and write the archive entry by entry.
+  param(
+    [Parameter(Mandatory = $true)][string]$Source,
+    [Parameter(Mandatory = $true)][string]$Destination
+  )
+  Add-Type -AssemblyName System.IO.Compression | Out-Null
+  Add-Type -AssemblyName System.IO.Compression.FileSystem | Out-Null
+  if (Test-Path -LiteralPath $Destination) { Remove-Item -LiteralPath $Destination -Force }
+  $sourceFull = (Get-Item -LiteralPath $Source).FullName.TrimEnd([char]'\')
+  $skipped = 0
+  $count = 0
+  $zip = [System.IO.Compression.ZipFile]::Open($Destination, [System.IO.Compression.ZipArchiveMode]::Create)
+  try {
+    foreach ($file in @(Get-ChildItem -LiteralPath $sourceFull -Recurse -File -Force)) {
+      if (($file.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+        $skipped++
+        continue
+      }
+      $relative = $file.FullName.Substring($sourceFull.Length + 1) -replace '\\', '/'
+      [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
+        $zip, $file.FullName, $relative, [System.IO.Compression.CompressionLevel]::Optimal) | Out-Null
+      $count++
+    }
+  } finally {
+    $zip.Dispose()
+  }
+  Write-Step ("archived {0} files, skipped {1} reparse points" -f $count, $skipped)
+}
+
 function Write-Utf8NoBom {
   param([string]$Path, [string]$Content)
   Ensure-Directory (Split-Path -Parent $Path)
@@ -477,6 +541,25 @@ function Invoke-Python {
   if ($rc -ne 0) { Fail "python failed ($rc): $PythonExe $($Arguments -join ' ')" }
 }
 
+function Invoke-NodeProcess {
+  param([string]$NodeExe, [string[]]$Arguments, [string]$WorkingDirectory = '')
+  $stdout = Join-Path $env:TEMP ('wunder-node-' + [guid]::NewGuid().ToString('N') + '.out')
+  $stderr = Join-Path $env:TEMP ('wunder-node-' + [guid]::NewGuid().ToString('N') + '.err')
+  try {
+    $argList = @($Arguments | ForEach-Object { ConvertTo-ProcessArgument -Value ([string]$_) })
+    $start = @{ FilePath = $NodeExe; ArgumentList = $argList; Wait = $true; PassThru = $true; NoNewWindow = $true; RedirectStandardOutput = $stdout; RedirectStandardError = $stderr }
+    if (-not [string]::IsNullOrWhiteSpace($WorkingDirectory)) { $start.WorkingDirectory = $WorkingDirectory }
+    $proc = Start-Process @start
+    if (Test-Path -LiteralPath $stdout) { Get-Content -LiteralPath $stdout | Write-Host }
+    if ($proc.ExitCode -ne 0) {
+      if (Test-Path -LiteralPath $stderr) { Get-Content -LiteralPath $stderr | Write-Host }
+      Fail "node failed ($($proc.ExitCode)): $NodeExe $($Arguments -join ' ')"
+    }
+  } finally {
+    Remove-Item -LiteralPath $stdout, $stderr -Force -ErrorAction SilentlyContinue
+  }
+}
+
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
@@ -515,6 +598,8 @@ $gitRoot    = Join-Path $packRoot ([string](Get-PropertyValue -Object $layout -N
 $rgRoot     = Join-Path $packRoot ([string](Get-PropertyValue -Object $layout -Name 'rgRoot' -Default 'opt\rg'))
 $ffmpegRoot = Join-Path $packRoot ([string](Get-PropertyValue -Object $layout -Name 'ffmpegRoot' -Default 'opt\ffmpeg'))
 $r2Root     = Join-Path $packRoot ([string](Get-PropertyValue -Object $layout -Name 'r2Root' -Default 'opt\r2'))
+$nodeRoot   = Join-Path $packRoot ([string](Get-PropertyValue -Object $layout -Name 'nodeRoot' -Default 'opt\node'))
+$remotionRoot = Join-Path $packRoot ([string](Get-PropertyValue -Object $layout -Name 'remotionRoot' -Default 'opt\remotion'))
 
 Write-Step "repo root : $repoRoot"
 Write-Step "build root: $buildRootEffective"
@@ -599,19 +684,27 @@ if (-not [string]::IsNullOrWhiteSpace($requirementsRel)) {
 # Wheels ship each package's test suite too (pandas alone is ~26 MB of tests).
 # The frozen supplement never runs them, so prune them before packaging; the
 # dist-info RECORD may then reference deleted paths, which is fine for runtime.
-Write-Step 'pruning package test suites'
-$sitePackages = Join-Path $pythonRoot 'Lib\site-packages'
-$prunedTests = 0
-foreach ($pkgDir in @(Get-ChildItem -LiteralPath $sitePackages -Directory -ErrorAction SilentlyContinue)) {
-  foreach ($name in @('tests', 'testdata')) {
-    $target = Join-Path $pkgDir.FullName $name
-    if (Test-Path -LiteralPath $target -PathType Container) {
-      Remove-Item -LiteralPath $target -Recurse -Force
-      $prunedTests++
+if ($SkipPrune) {
+  # Some build hosts wrap Remove-Item in a delete guard that routes every call
+  # through the Recycle Bin; pruning hundreds of nested test directories then
+  # fails closed and aborts the build. -SkipPrune keeps them (bigger zip, same
+  # runtime behaviour) so the pack can still be produced there.
+  Write-Step 'skipping test-suite pruning (-SkipPrune)'
+} else {
+  Write-Step 'pruning package test suites'
+  $sitePackages = Join-Path $pythonRoot 'Lib\site-packages'
+  $prunedTests = 0
+  foreach ($pkgDir in @(Get-ChildItem -LiteralPath $sitePackages -Directory -ErrorAction SilentlyContinue)) {
+    foreach ($name in @('tests', 'testdata')) {
+      $target = Join-Path $pkgDir.FullName $name
+      if (Test-Path -LiteralPath $target -PathType Container) {
+        Remove-Item -LiteralPath $target -Recurse -Force
+        $prunedTests++
+      }
     }
   }
+  Write-Step ("pruned {0} test directories" -f $prunedTests)
 }
-Write-Step ("pruned {0} test directories" -f $prunedTests)
 
 # Playwright 1.40 supports Node >=16, but its win32 wheel still carries an x64
 # driver/node.exe. The ia32 supplement replaces that file with a pinned 32-bit
@@ -639,6 +732,181 @@ if (-not (Test-Path -LiteralPath $playwrightDriverNode)) {
   Fail "Playwright driver node.exe missing after package installation: $playwrightDriverNode"
 }
 Assert-PeMachine -Path $playwrightDriverNode -Arch $Arch
+
+# ---------------------------------------------------------------------------
+# General Node.js + pinned Remotion runtime
+# ---------------------------------------------------------------------------
+$nodeMeta = Get-PropertyValue -Object $manifest -Name 'node'
+if ($null -eq $nodeMeta) { Fail 'manifest node section is required' }
+$nodeVersion = [string](Get-PropertyValue -Object $nodeMeta -Name 'version' -Default '16.20.2')
+$nodeRuntimeArch = [string](Get-PropertyValue -Object $nodeMeta -Name 'runtimeArch' -Default 'x64')
+if ($nodeRuntimeArch -notin @('ia32', 'x64')) { Fail "manifest node.runtimeArch must be ia32 or x64" }
+$nodeArchiveMeta = Get-PropertyValue -Object (Get-PropertyValue -Object $nodeMeta -Name 'archives') -Name $nodeRuntimeArch
+if ($null -eq $nodeArchiveMeta) { Fail "manifest has no Node archive for runtime arch $nodeRuntimeArch" }
+$nodeArchive = $NodeArchivePath
+if ([string]::IsNullOrWhiteSpace($nodeArchive)) {
+  $nodeArchive = Join-Path $downDir ([string](Get-PropertyValue -Object $nodeArchiveMeta -Name 'fileName' -Default "node-v$nodeVersion-win-$nodeRuntimeArch.zip"))
+  Get-DownloadedFile -Url ([string](Get-PropertyValue -Object $nodeArchiveMeta -Name 'url')) -Destination $nodeArchive -Force:$RefreshDownloads | Out-Null
+} elseif (-not (Test-Path -LiteralPath $nodeArchive)) { Fail "node archive not found: $nodeArchive" }
+Assert-FileSha256 -Path $nodeArchive -Expected ([string](Get-PropertyValue -Object $nodeArchiveMeta -Name 'sha256' -Default ''))
+Write-Step "staging Node.js $nodeVersion into $nodeRoot"
+Expand-ZipFlatten -Archive $nodeArchive -Destination $nodeRoot
+$nodeExe = Join-Path $nodeRoot 'node.exe'
+$npmCmd = Join-Path $nodeRoot 'npm.cmd'
+$npxCmd = Join-Path $nodeRoot 'npx.cmd'
+if (-not (Test-Path -LiteralPath $nodeExe -PathType Leaf)) { Fail "node.exe missing after extraction: $nodeExe" }
+if (-not (Test-Path -LiteralPath $npmCmd -PathType Leaf)) { Fail "npm.cmd missing after extraction: $npmCmd" }
+if (-not (Test-Path -LiteralPath $npxCmd -PathType Leaf)) { Fail "npx.cmd missing after extraction: $npxCmd" }
+Assert-PeMachine -Path $nodeExe -Arch $nodeRuntimeArch
+$nodeSmoke = & $nodeExe '--version' 2>&1
+if (-not ("$nodeSmoke" -match ('^v' + [regex]::Escape($nodeVersion)))) { Fail "node smoke failed: $nodeSmoke" }
+Write-Step "node smoke ok: $nodeSmoke"
+
+$remotionMeta = Get-PropertyValue -Object $manifest -Name 'remotion'
+if ($null -eq $remotionMeta) { Fail 'manifest remotion section is required' }
+$remotionVersion = [string](Get-PropertyValue -Object $remotionMeta -Name 'version' -Default '')
+$remotionPackages = Get-PropertyValue -Object $remotionMeta -Name 'packages'
+if ([string]::IsNullOrWhiteSpace($remotionVersion) -or $null -eq $remotionPackages) { Fail 'manifest remotion version/packages are required' }
+$bundlerMeta = Get-PropertyValue -Object $remotionMeta -Name 'bundler'
+if ($null -eq $bundlerMeta) { Fail 'manifest remotion.bundler is required' }
+$bundlerVersion = [string](Get-PropertyValue -Object $bundlerMeta -Name 'version' -Default '')
+$nativeBundlerPackages = Get-PropertyValue -Object $bundlerMeta -Name 'nativePackages'
+  $nativeBundlerPackage = [string](Get-PropertyValue -Object $nativeBundlerPackages -Name $nodeRuntimeArch -Default '')
+if ([string]::IsNullOrWhiteSpace($bundlerVersion) -or [string]::IsNullOrWhiteSpace($nativeBundlerPackage)) {
+  Fail "manifest remotion.bundler has no native package for runtime arch $nodeRuntimeArch"
+}
+if (-not [string]::IsNullOrWhiteSpace($RemotionRuntimePath)) {
+  if (-not (Test-Path -LiteralPath $RemotionRuntimePath -PathType Container)) { Fail "Remotion runtime directory not found: $RemotionRuntimePath" }
+  $runtimePackage = Join-Path $RemotionRuntimePath 'package.json'
+  $runtimeModules = Join-Path $RemotionRuntimePath 'node_modules'
+  if (-not (Test-Path -LiteralPath $runtimePackage -PathType Leaf) -or -not (Test-Path -LiteralPath $runtimeModules -PathType Container)) {
+    Fail 'Remotion runtime directory must contain package.json and node_modules'
+  }
+  Write-Step "copying prepared Remotion runtime into $remotionRoot"
+  Ensure-Directory $remotionRoot
+  Copy-Item -LiteralPath $runtimePackage -Destination (Join-Path $remotionRoot 'package.json') -Force
+  $runtimeLock = Join-Path $RemotionRuntimePath 'package-lock.json'
+  if (Test-Path -LiteralPath $runtimeLock -PathType Leaf) { Copy-Item -LiteralPath $runtimeLock -Destination (Join-Path $remotionRoot 'package-lock.json') -Force }
+  Copy-Item -LiteralPath $runtimeModules -Destination $remotionRoot -Recurse -Force
+} else {
+  Ensure-Directory $remotionRoot
+  $packageJson = [ordered]@{
+    name = 'wunder-remotion-runtime'
+    private = $true
+    version = $remotionVersion
+    dependencies = [ordered]@{}
+  }
+  foreach ($property in $remotionPackages.PSObject.Properties) {
+    $packageJson.dependencies[$property.Name] = [string]$property.Value
+  }
+  Write-Utf8NoBom -Path (Join-Path $remotionRoot 'package.json') -Content (ConvertTo-Json -InputObject $packageJson -Depth 5)
+  Write-Step "installing Remotion $remotionVersion production runtime"
+  Invoke-NodeProcess -NodeExe $nodeExe -Arguments @((Join-Path $nodeRoot 'node_modules\npm\bin\npm-cli.js'), 'install', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund') -WorkingDirectory $remotionRoot
+}
+$nativeBundlerRoot = Join-Path $remotionRoot ('node_modules\' + ($nativeBundlerPackage -replace '/', '\'))
+$nativeBundlerExe = Join-Path $nativeBundlerRoot 'esbuild.exe'
+if (-not (Test-Path -LiteralPath $nativeBundlerExe -PathType Leaf)) {
+  if (-not [string]::IsNullOrWhiteSpace($RemotionRuntimePath)) {
+    Fail "Remotion runtime is missing the architecture-specific esbuild package: $nativeBundlerPackage@$bundlerVersion"
+  }
+  Write-Step "installing native Remotion bundler $nativeBundlerPackage@$bundlerVersion"
+  Invoke-NodeProcess -NodeExe $nodeExe -Arguments @(
+    (Join-Path $nodeRoot 'node_modules\npm\bin\npm-cli.js'), 'install', '--no-save', '--ignore-scripts', '--no-audit', '--no-fund',
+    ($nativeBundlerPackage + '@' + $bundlerVersion)
+  ) -WorkingDirectory $remotionRoot
+}
+if (-not (Test-Path -LiteralPath $nativeBundlerExe -PathType Leaf)) {
+  Fail "architecture-specific esbuild executable missing after Remotion staging: $nativeBundlerExe"
+}
+Assert-PeMachine -Path $nativeBundlerExe -Arch $nodeRuntimeArch
+Write-Step "Remotion bundler smoke ok: $nativeBundlerPackage@$bundlerVersion"
+
+# An ia32 pack whose general-purpose Node runtime is x64 still has to carry the
+# 32-bit esbuild: a host that swaps in an x86 node.exe (required on real 32-bit
+# Windows) can only bundle with @esbuild/win32-ia32, and the compositor injector
+# asserts it. Install both so the pack works on either host.
+if ($Arch -eq 'ia32') {
+  $ia32BundlerPackage = [string](Get-PropertyValue -Object $nativeBundlerPackages -Name 'ia32' -Default '')
+  if (-not [string]::IsNullOrWhiteSpace($ia32BundlerPackage)) {
+    $ia32BundlerExe = Join-Path $remotionRoot ('node_modules\' + ($ia32BundlerPackage -replace '/', '\') + '\esbuild.exe')
+    if (-not (Test-Path -LiteralPath $ia32BundlerExe -PathType Leaf)) {
+      Write-Step "installing 32-bit Remotion bundler $ia32BundlerPackage@$bundlerVersion"
+      # --force: npm refuses a foreign-platform optional dependency with
+      # EBADPLATFORM when the build host is x64, but the pack has to ship it for
+      # real 32-bit Windows hosts.
+      Invoke-NodeProcess -NodeExe $nodeExe -Arguments @(
+        (Join-Path $nodeRoot 'node_modules\npm\bin\npm-cli.js'), 'install', '--no-save', '--ignore-scripts', '--no-audit', '--no-fund', '--force',
+        ($ia32BundlerPackage + '@' + $bundlerVersion)
+      ) -WorkingDirectory $remotionRoot
+    }
+    if (-not (Test-Path -LiteralPath $ia32BundlerExe -PathType Leaf)) {
+      Fail "32-bit esbuild missing after Remotion staging: $ia32BundlerExe"
+    }
+    Assert-PeMachine -Path $ia32BundlerExe -Arch 'ia32'
+    Write-Step "Remotion 32-bit bundler smoke ok: $ia32BundlerPackage@$bundlerVersion"
+  }
+}
+
+# rspack is Remotion 4's bundler and ships a native binding per platform. With a
+# 32-bit node runtime npm installs the ia32 binding automatically, so this is a
+# guard against a future runtime/manifest mismatch rather than a special case.
+if ($Arch -eq 'ia32') {
+  $rspackBindingDir = Join-Path $remotionRoot 'node_modules\@rspack\binding-win32-ia32-msvc'
+  if (-not (Test-Path -LiteralPath $rspackBindingDir -PathType Container)) {
+    Fail "32-bit Remotion runtime is missing @rspack/binding-win32-ia32-msvc (bundling would fail on a 32-bit host): $rspackBindingDir"
+  }
+  Write-Step 'Remotion 32-bit rspack binding present'
+}
+$remotionCli = Join-Path $remotionRoot 'node_modules\@remotion\cli\remotion-cli.js'
+$remotionCore = Join-Path $remotionRoot 'node_modules\remotion\package.json'
+if (-not (Test-Path -LiteralPath $remotionCli -PathType Leaf) -or -not (Test-Path -LiteralPath $remotionCore -PathType Leaf)) {
+  Fail 'Remotion CLI/core missing after runtime staging'
+}
+$remotionBin = Join-Path $remotionRoot 'bin'
+Ensure-Directory $remotionBin
+$remotionCmd = Join-Path $remotionBin 'remotion.cmd'
+$remotionCmdContent = @'
+@echo off
+setlocal
+set "WUNDER_REMOTION_ROOT=%~dp0.."
+set "NODE_PATH=%WUNDER_REMOTION_ROOT%\node_modules;%NODE_PATH%"
+"%~dp0..\..\node\node.exe" "%WUNDER_REMOTION_ROOT%\node_modules\@remotion\cli\remotion-cli.js" %*
+'@
+Write-Utf8NoBom -Path $remotionCmd -Content $remotionCmdContent
+$remotionSmoke = & $nodeExe $remotionCli '--version' 2>&1
+if (-not ("$remotionSmoke" -match ('@remotion/cli\s+' + [regex]::Escape($remotionVersion)))) { Fail "Remotion CLI smoke failed: $remotionSmoke" }
+Write-Step "Remotion CLI smoke ok: $remotionSmoke"
+
+# ---------------------------------------------------------------------------
+# 32-bit Remotion compositor (ia32 only)
+# ---------------------------------------------------------------------------
+# Remotion publishes @remotion/compositor-win32-x64-msvc only. Without an ia32
+# build the runtime can bundle a project but cannot render, so the pack ships a
+# locally compiled compositor plus the renderer branch and x264 thread cap that
+# make it safe inside a 4GB address space.
+if ($Arch -eq 'ia32') {
+  if ([string]::IsNullOrWhiteSpace($RemotionCompositorPath)) {
+    Fail 'ia32 pack requires -RemotionCompositorPath (build it with scripts/win-ia32-compositor/build.sh)'
+  }
+  if (-not (Test-Path -LiteralPath $RemotionCompositorPath -PathType Container)) {
+    Fail "Remotion compositor directory not found: $RemotionCompositorPath"
+  }
+  Write-Step "injecting 32-bit Remotion compositor from $RemotionCompositorPath"
+  $compositorInjector = Join-Path $ScriptDir 'remotion-ia32-compositor.ps1'
+  if (-not (Test-Path -LiteralPath $compositorInjector -PathType Leaf)) {
+    Fail "compositor injector missing: $compositorInjector"
+  }
+  try {
+    & $compositorInjector -RemotionRoot $remotionRoot -CompositorDir $RemotionCompositorPath -Version $remotionVersion
+  } catch {
+    Fail "32-bit compositor injection failed: $($_.Exception.Message)"
+  }
+  $ia32CompositorExe = Join-Path $remotionRoot 'node_modules\@remotion\compositor-win32-ia32-msvc\remotion.exe'
+  if (-not (Test-Path -LiteralPath $ia32CompositorExe -PathType Leaf)) {
+    Fail "32-bit compositor missing after injection: $ia32CompositorExe"
+  }
+  Assert-PeMachine -Path $ia32CompositorExe -Arch 'ia32'
+}
 
 # ---------------------------------------------------------------------------
 # Playwright browsers (manifest-driven; off for the Win7 pack)
@@ -683,6 +951,10 @@ if ($null -ne $gitArchiveMeta) {
   # supplement and every installer built from it small; the same tree is what
   # `opt/git` ships to users.
   Write-Step 'pruning Git payload (vim/perl/tcl-tk/scalar/docs)'
+  $prunedGitFiles = 0
+  if ($SkipGitPrune) {
+    Write-Step 'skipping git prune (-SkipGitPrune)'
+  } else {
   $gitPruneDirs = @(
     'usr\share\vim',
     'usr\share\doc',
@@ -729,6 +1001,7 @@ if ($null -ne $gitArchiveMeta) {
       Remove-Item -LiteralPath $target -Force
       $prunedGitFiles++
     }
+  }
   }
   $gitSmoke = & (Join-Path $gitRoot 'cmd\git.exe') '--version' 2>&1
   if (-not ("$gitSmoke" -match '^git version')) { Fail "git smoke failed after prune: $gitSmoke" }
@@ -883,16 +1156,20 @@ Contents:
   opt/rg       ripgrep __RGVER__
   opt/ffmpeg   ffmpeg __FFVER__ (when bundled)
   opt/r2       radare2 __R2VER__ (when bundled)
+  opt/node     Node.js __NODEVER__ (node, npm, npx)
+  opt/remotion Remotion __REMOTIONVER__ runtime + CLI
   opt/browser  Chrome __BROWSERVER__ win32 at __BROWSEREXE__ (when bundled)
 
 Use Import supplement in the Pupa settings to install into WUNDER_HOME.
 For manual installation, close processes using this runtime and unpack into
 WUNDER_HOME (default: .wunder in your user home). The Pupa and Helm share
-opt/python, opt/git, opt/rg and opt/ffmpeg, and prepend their bins to PATH.
+opt/python, opt/git, opt/rg, opt/ffmpeg, opt/node and opt/remotion, and prepend
+their bins to PATH.
 
 Browsers: __BROWSER__
 '@
 $readmeText = $readmeText.Replace('__ARCH__', $archLabel).Replace('__PROFILE__', $PythonProfile).Replace('__PYVER__', $pyVer).Replace('__GITVER__', $gitVersion).Replace('__RGVER__', $rgVersion).Replace('__FFVER__', $ffVersion).Replace('__R2VER__', $r2Version).Replace('__BROWSERVER__', $browserVersion).Replace('__BROWSEREXE__', $browserExeRel).Replace('__BROWSER__', $browserNote)
+$readmeText = $readmeText.Replace('__NODEVER__', $nodeVersion).Replace('__REMOTIONVER__', $remotionVersion)
 Write-Utf8NoBom -Path (Join-Path $packRoot 'README-win7-supplement.txt') -Content $readmeText
 
 $metaObj = [ordered]@{
@@ -912,6 +1189,14 @@ $metaObj = [ordered]@{
   rg            = [ordered]@{ version = $rgVersion }
   ffmpeg        = [ordered]@{ version = $ffVersion; bundled = $ffmpegBundled }
   r2            = [ordered]@{ version = $r2Version; bundled = $r2Bundled }
+  node          = [ordered]@{ version = $nodeVersion; architecture = $nodeRuntimeArch; path = 'opt/node/node.exe'; npm = 'opt/node/npm.cmd'; npx = 'opt/node/npx.cmd' }
+  remotion      = [ordered]@{
+    version = $remotionVersion
+    root = 'opt/remotion'
+    cli = 'opt/remotion/bin/remotion.cmd'
+    packages = $remotionPackages
+    bundler = [ordered]@{ version = $bundlerVersion; architecture = $nodeRuntimeArch; package = $nativeBundlerPackage; executable = ('opt/remotion/node_modules/' + ($nativeBundlerPackage -replace '\\', '/') + '/esbuild.exe') }
+  }
   browser       = [ordered]@{
     installBrowser = $installBrowser
     installed = $browserInstalled
@@ -927,7 +1212,7 @@ Write-Utf8NoBom -Path (Join-Path $packRoot 'wunder-win7-supplement.json') -Conte
 
 Write-Step "packaging -> $zipPath"
 if (Test-Path -LiteralPath $zipPath) { Remove-Item -LiteralPath $zipPath -Force }
-Compress-Archive -Path (Join-Path $packRoot '*') -DestinationPath $zipPath -CompressionLevel Optimal -Force
+New-SupplementZip -Source $packRoot -Destination $zipPath
 
 $zipInfo = Get-Item -LiteralPath $zipPath
 Write-Step ('done: {0} ({1:N1} MB)' -f $zipInfo.FullName, ($zipInfo.Length / 1MB))

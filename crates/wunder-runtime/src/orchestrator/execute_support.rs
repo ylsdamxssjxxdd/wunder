@@ -220,6 +220,73 @@ pub(super) fn build_planned_tool_calls(
     ToolPlanningResult { planned, rejected }
 }
 
+/// Converts a terminal `final_response` envelope before `llm_output` is
+/// emitted. Completed semantic items are immutable, so waiting for execution
+/// would leave the durable assistant item blank even if the returned answer is
+/// corrected later.
+///
+/// An empty or malformed terminal envelope deliberately remains an empty
+/// assistant response so the existing empty-output guard owns its single
+/// recovery attempt.
+pub(super) fn normalize_terminal_final_response(
+    content: &mut String,
+    reasoning: &str,
+    tool_calls_payload: &mut Option<Value>,
+    tool_call_mode: ToolCallMode,
+) {
+    if !content.trim().is_empty() {
+        return;
+    }
+    let mut calls = collect_tool_calls_from_output(
+        content,
+        reasoning,
+        tool_calls_payload.as_ref(),
+        tool_call_mode,
+    );
+    if let Some(answer) = take_terminal_final_response(&mut calls) {
+        *content = answer;
+        *tool_calls_payload = None;
+    }
+}
+
+/// `final_response` is a model-side terminal envelope, not an executable
+/// runtime tool. When it is the sole response shape, turn its complete
+/// payload into the normal assistant content path before tool dispatch.
+pub(super) fn take_terminal_final_response(calls: &mut Vec<ToolCall>) -> Option<String> {
+    if calls.is_empty()
+        || calls
+            .iter()
+            .any(|call| !is_final_response_tool_name(call.name.as_str()))
+    {
+        return None;
+    }
+
+    let answer = calls
+        .iter()
+        .rev()
+        .find_map(|call| terminal_final_response_text(&call.arguments))
+        .unwrap_or_default();
+    calls.clear();
+    Some(answer)
+}
+
+fn is_final_response_tool_name(tool_name: &str) -> bool {
+    let canonical = resolve_tool_name(tool_name.trim());
+    canonical == resolve_tool_name("final_response") || canonical == resolve_tool_name("最终回复")
+}
+
+fn terminal_final_response_text(arguments: &Value) -> Option<String> {
+    const CONTENT_FIELDS: [&str; 3] = ["content", "answer", "message"];
+
+    match arguments {
+        Value::Object(fields) => CONTENT_FIELDS
+            .iter()
+            .find_map(|field| terminal_final_response_text(fields.get(*field)?)),
+        Value::String(text) if !text.trim().is_empty() => Some(text.trim().to_string()),
+        _ => None,
+    }
+}
+
 fn tool_call_arguments_preview(arguments: &Value) -> String {
     let text = serde_json::to_string(arguments).unwrap_or_else(|_| String::new());
     trim_text_to_chars(&text, INVALID_TOOL_CALL_ARGUMENT_PREVIEW_CHARS, "...")
@@ -368,31 +435,43 @@ fn tool_call_mode_key(mode: ToolCallMode) -> &'static str {
 }
 
 impl Orchestrator {
-    pub(super) fn resolve_frozen_session_tool_call_mode(
+    pub(super) async fn resolve_frozen_session_tool_call_mode(
         &self,
         user_id: &str,
         session_id: &str,
         llm_config: &LlmModelConfig,
-    ) -> ToolCallMode {
+    ) -> Result<ToolCallMode> {
+        use wunder_core::thread_store::{ThreadId, ThreadStoreError};
+
         if let Some(stored) = self
             .workspace
             .load_session_frozen_tool_call_mode(user_id, session_id)
         {
-            return crate::llm::normalize_tool_call_mode(Some(stored.as_str()));
+            return Ok(crate::llm::normalize_tool_call_mode(Some(stored.as_str())));
         }
-        let mode = self
-            .workspace
-            .load_session_system_prompt(user_id, session_id, None)
-            .ok()
-            .flatten()
-            .and_then(|prompt| infer_tool_call_mode_from_frozen_system_prompt(&prompt))
-            .unwrap_or_else(|| crate::llm::resolve_tool_call_mode(llm_config));
+        // The initial canonical metadata is the only frozen prompt source.
+        // A broken rollout must not silently freeze today's model protocol.
+        let mode = match self
+            .thread_store
+            .session_meta(&ThreadId::new(session_id)?)
+            .await
+        {
+            // An empty frozen prompt is a valid canonical contract. It has
+            // no text tool protocol, so keep native function calls stable
+            // instead of consulting today's model configuration.
+            Ok(meta) => infer_tool_call_mode_from_frozen_system_prompt(&meta.initial_system_prompt)
+                .unwrap_or(ToolCallMode::FunctionCall),
+            Err(ThreadStoreError::NotFound { .. }) => {
+                crate::llm::resolve_tool_call_mode(llm_config)
+            }
+            Err(error) => return Err(error.into()),
+        };
         self.workspace.save_session_frozen_tool_call_mode(
             user_id,
             session_id,
             tool_call_mode_key(mode),
         );
-        mode
+        Ok(mode)
     }
 }
 

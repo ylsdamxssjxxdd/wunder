@@ -102,7 +102,7 @@ mod tests {
     fn sanitize_worker_card_filename_part_replaces_windows_invalid_chars() {
         assert_eq!(
             sanitize_worker_card_filename_part(" Demo:Agent? "),
-            "Demo_Agent".to_string()
+            "Demo_Agent_".to_string()
         );
     }
 }

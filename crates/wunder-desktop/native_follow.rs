@@ -1044,8 +1044,8 @@ mod tests {
     #[tokio::test]
     async fn completed_history_is_drained_before_terminal_and_goal_updates_wake_settlement() {
         use wunder_server::{
-            config::Config, config_store::ConfigStore, services::goal::GoalRef,
-            stable_core::thread_store::*, state::AppStateInitOptions,
+            config::Config, config_store::ConfigStore, goal::GoalRef, stable_core::thread_store::*,
+            state::AppStateInitOptions,
         };
         let directory = tempfile::tempdir().unwrap();
         let mut config = Config::default();

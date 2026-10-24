@@ -153,10 +153,13 @@ def validate_skill(skill_path):
         return False, f"Name must be a string, got {type(name).__name__}"
     name = name.strip()
     if name:
-        if not re.match(r"^[a-z0-9-]+$", name):
+        # 技能运行时支持中文等 Unicode 名称；保留可移植的分隔规则，禁止
+        # 空格、下划线、连续连字符和其他标点。ASCII 名称仍可使用常规
+        # lowercase-hyphen-case，已有中文内置技能也能通过同一校验器打包。
+        if not re.match(r"^[^\W_]+(?:-[^\W_]+)*$", name, re.UNICODE):
             return (
                 False,
-                f"Name '{name}' should be hyphen-case (lowercase letters, digits, and hyphens only)",
+                f"Name '{name}' should use Unicode letters/digits separated by single hyphens",
             )
         if name.startswith("-") or name.endswith("-") or "--" in name:
             return (

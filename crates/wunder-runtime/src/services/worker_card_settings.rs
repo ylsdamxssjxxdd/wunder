@@ -976,7 +976,13 @@ mod tests {
     fn collect_configured_skill_names_scans_repo_skills() {
         let mut config = Config::default();
         config.skills.enabled.clear();
-        config.skills.paths.clear();
+        let repo_skills = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("config")
+            .join("skills");
+        assert!(repo_skills.is_dir(), "bundled skill asset root is present");
+        config.skills.paths = vec![repo_skills.to_string_lossy().into_owned()];
 
         let skill_names = collect_configured_skill_names(&config);
         assert!(

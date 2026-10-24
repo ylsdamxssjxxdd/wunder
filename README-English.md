@@ -1,8 +1,20 @@
 # wunder (Xinjian)
 
-wunder is an **agent orchestration platform**:
+wunder (Xinjian) is a **multi-form agent workbench**:
 
-Diverse (multi-platform, multi-form factor), Fast (fast startup, rapid response), Superior (robust stability, high intelligence), Efficient (low CPU & memory footprint, low context overhead)
+- **Diverse**: multiple platforms — 32-bit Windows 7 and Ubuntu 18.04 — and multiple forms — web and local.
+- **Fast**: starts instantly and responds without lag.
+- **Superior**: stable enough to run 24/7, with a high degree of intelligence.
+- **Efficient**: extremely low CPU and memory use and minimal context consumption, plus a ready-made agent runtime — set up once and forget it.
+
+## Quick Start
+
+Each release publishes the main program, supplement packages, and installers.
+
+- **Legacy systems**: download the `setup` or `.run` installer. It ships with a complete runtime, but compatibility constraints limit many third-party features.
+- **Modern systems**: download the `.exe` or `.AppImage` main program directly; it relies on the local environment, or fetches the full environment later over the network.
+
+On first launch, configure a model on the settings page and you are ready to go.
 
 ## Form Matrix
 

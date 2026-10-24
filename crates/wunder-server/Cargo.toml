@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 
 [features]
-default = ["postgres-storage"]
+default = ["postgres-storage", "sqlite-storage"]
 desktop-control = ["wunder-runtime/desktop-control"]
 doc2md = ["wunder-runtime/doc2md"]
 host-metrics = ["wunder-runtime/host-metrics"]

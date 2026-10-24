@@ -257,7 +257,7 @@ Wunder仅在用户需要这些功能时读取REDLINING.md或OOXML.md。
 
 仅当正在开发的技能已经存在且需要迭代或打包时跳过此步骤。在这种情况下,继续下一步。
 
-从头创建新技能时,始终运行`init_skill.py`脚本。该脚本方便地生成新的模板技能目录,自动包含技能所需的一切,使技能创建过程更加高效可靠。
+从头创建新技能时,始终运行`init_skill.py`脚本。该脚本方便地生成新的模板技能目录,自动包含技能所需的一切,使技能创建过程更加高效可靠。运行时支持 Unicode 技能名；目录名、frontmatter `name`、工蜂卡注册名和 `skill_call` 参数必须始终保持一致。
 
 用法:
 
@@ -265,7 +265,7 @@ Wunder仅在用户需要这些功能时读取REDLINING.md或OOXML.md。
 scripts/init_skill.py <skill-name> --path <output-directory>
 ```
 
-`<skill-name>` 就是后续运行时使用的唯一标识。需要打包或分发时,优先使用小写英文、数字和连字符组成的 hyphen-case,例如`data-cleaner`。中文展示名放到标题、描述和正文里,不要先用中文目录创建,再为了打包改成英文标识。
+`<skill-name>` 就是后续运行时使用的唯一标识。英文技能可使用小写字母、数字和单个连字符组成的 hyphen-case（例如`data-cleaner`）；面向中文用户时也可直接使用 Unicode 名称（例如`视频制作`）。不要把目录名、frontmatter `name`、工蜂卡注册名和 `skill_call` 参数改成不同的别名；打包时保持同一个运行标识。
 
 脚本会:
 
@@ -305,7 +305,7 @@ scripts/init_skill.py <skill-name> --path <output-directory>
 
 编写带有`name`和`description`的YAML frontmatter:
 
-- `name`: 技能唯一运行标识。它必须与技能目录名、打包验证目标名、工蜂卡 `abilities.skills` 中注册的名字、`skill_call` 参数一致。新建可打包技能默认使用 hyphen-case。
+- `name`: 技能唯一运行标识。它必须与技能目录名、打包验证目标名、工蜂卡 `abilities.skills` 中注册的名字、`skill_call` 参数一致。新建英文技能默认使用 hyphen-case；中文技能可直接使用 Unicode 名称。
 - `description`: 这是技能的主要触发机制,帮助Wunder理解何时使用技能。
   - 包括技能做什么以及何时使用的特定触发器/上下文。
   - 在此处包含所有"何时使用"信息 - 不在主体中。主体仅在触发后加载,因此主体中的"何时使用此技能"部分对Wunder没有帮助。

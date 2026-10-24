@@ -102,7 +102,7 @@ pub struct ThreadSnapshot {
     pub consumed_tokens: i64,
     pub tool_calls: i64,
     pub model_rounds: Option<i64>,
-    /// `thread_log_changes` watermark: the cursor a client replays from.
+    /// Canonical rollout watermark used for completed-history replay.
     pub change_seq: i64,
     pub pending_reason: Option<ThreadPendingReason>,
 }

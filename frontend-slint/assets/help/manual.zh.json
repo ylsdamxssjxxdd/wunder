@@ -93,7 +93,7 @@
               ],
               "summary": [
                 {
-                  "text": "四个核心：多平台多形态、启动与响应快、稳定且智能、CPU 内存与上下文消耗低。",
+                  "text": "四个核心：多平台多形态、秒开且响应不卡顿、可 7×24 运行且智能程度高、CPU 内存与上下文消耗低并自带预制运行环境。",
                   "bold": false,
                   "code": false,
                   "kbd": false,
@@ -347,7 +347,7 @@
           "kind": "lead",
           "spans": [
             {
-              "text": "wunder 是智能体调度平台，同一套引擎对外有多个程序形态，差异只在接入层。",
+              "text": "wunder 是多形态的智能体工作台，同一套引擎对外有多个程序形态，差异只在接入层。",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -1177,7 +1177,63 @@
           "kind": "paragraph",
           "spans": [
             {
-              "text": "从 Releases 下载对应系统的安装包。",
+              "text": "从 Releases 下载对应系统的安装包并运行。安装向导默认只安装蛹和舵机，Python/Git/rg/ffmpeg 等补充组件按需勾选（Windows 组件页的“全选（推荐）”一次勾齐全部组件与桌面快捷方式，本机已有这些工具或已装过一次可以取消对应项）；安装目录默认 ",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": "~/.wunder",
+              "bold": false,
+              "code": true,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": "，也可以改成任意可写目录。安装根会写入 ",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": ".wunder-home",
+              "bold": false,
+              "code": true,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": "，蛹和舵机启动时以该根作为 ",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": "WUNDER_HOME",
+              "bold": false,
+              "code": true,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": "；显式设置的非空 ",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": "WUNDER_HOME",
+              "bold": false,
+              "code": true,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": " 优先。",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -1197,7 +1253,35 @@
               "href": ""
             },
             {
-              "text": "：",
+              "text": "：安装后的 ",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": "bin/wunder-desktop.exe",
+              "bold": false,
+              "code": true,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": "（Windows）或 ",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": "bin/wunder-desktop",
+              "bold": false,
+              "code": true,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": "（Linux）；开发构建为 ",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -1207,6 +1291,116 @@
               "text": "wunder-frontend-slint",
               "bold": false,
               "code": true,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "list",
+          "marker": "•",
+          "spans": [
+            {
+              "text": "终端命令",
+              "bold": true,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": "：安装器把安装根的 ",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": "bin",
+              "bold": false,
+              "code": true,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": " 加入用户 PATH（Windows），或在 ",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": "~/.local/bin",
+              "bold": false,
+              "code": true,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": " 建立命令链接（Linux）；新开终端后可直接运行 ",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": "wunder-cli",
+              "bold": false,
+              "code": true,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": "（舵机）和 ",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": "desktop",
+              "bold": false,
+              "code": true,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": " / ",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": "wunder-desktop",
+              "bold": false,
+              "code": true,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": "（蛹）",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "list",
+          "marker": "•",
+          "spans": [
+            {
+              "text": "菜单与桌面入口",
+              "bold": true,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": "：Windows 开始菜单和桌面快捷方式名称为“蛹”，舵机快捷方式为“舵机”；Linux 默认注册“蛹”应用菜单项，并在 XDG 桌面目录创建“蛹”启动图标",
+              "bold": false,
+              "code": false,
               "kbd": false,
               "href": ""
             }
@@ -1371,6 +1565,13 @@
                 ],
                 [
                   {
+                    "text": "安装时选择的目录（",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  },
+                  {
                     "text": "WUNDER_HOME",
                     "bold": false,
                     "code": true,
@@ -1378,7 +1579,7 @@
                     "href": ""
                   },
                   {
-                    "text": " → 默认 ",
+                    "text": "；默认 ",
                     "bold": false,
                     "code": false,
                     "kbd": false,
@@ -1388,6 +1589,27 @@
                     "text": "~/.wunder",
                     "bold": false,
                     "code": true,
+                    "kbd": false,
+                    "href": ""
+                  },
+                  {
+                    "text": "，由 ",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  },
+                  {
+                    "text": ".wunder-home",
+                    "bold": false,
+                    "code": true,
+                    "kbd": false,
+                    "href": ""
+                  },
+                  {
+                    "text": " 标记）",
+                    "bold": false,
+                    "code": false,
                     "kbd": false,
                     "href": ""
                   }
@@ -1408,9 +1630,37 @@
                 ],
                 [
                   {
-                    "text": "~/.wunder/workspace",
+                    "text": "蛹：",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  },
+                  {
+                    "text": "/workspace",
                     "bold": false,
                     "code": true,
+                    "kbd": false,
+                    "href": ""
+                  },
+                  {
+                    "text": "；舵机：启动命令时所在的目录（",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  },
+                  {
+                    "text": "-C",
+                    "bold": false,
+                    "code": true,
+                    "kbd": false,
+                    "href": ""
+                  },
+                  {
+                    "text": " 可覆盖）",
+                    "bold": false,
+                    "code": false,
                     "kbd": false,
                     "href": ""
                   }
@@ -1492,7 +1742,7 @@
           "kind": "paragraph",
           "spans": [
             {
-              "text": "迁到新机器：复制 ",
+              "text": "迁到新机器：复制整个安装根（默认 ",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -1506,7 +1756,7 @@
               "href": ""
             },
             {
-              "text": " 到新机器即可。「本地优先」指数据留在本机，不影响访问远程模型或网页。",
+              "text": "）到新机器即可。「本地优先」指数据留在本机，不影响访问远程模型或网页。",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -2357,7 +2607,7 @@
           "kind": "lead",
           "spans": [
             {
-              "text": "wunder（心舰）是智能体调度平台：把目标交给智能体，由它拆解任务、调用工具、交付结果。功能清单见",
+              "text": "wunder（心舰）是多形态的智能体工作台：把目标交给智能体，由它拆解任务、调用工具、交付结果。功能清单见",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -2457,7 +2707,7 @@
                 ],
                 [
                   {
-                    "text": "多平台，多形态。一套核心与引擎支撑蛹、蜂巢、舵机、舰体，覆盖 Windows 7 x86 起、Linux（ubuntu18.04 基线）x64 / arm64、Docker 与浏览器；模型、渠道与工作区按同一接入面扩展",
+                    "text": "多平台，多形态。一套核心与引擎支撑蛹、蜂巢、舵机、舰体，覆盖 32 位 Win7、Ubuntu 18.04 与现代 Windows / Linux / Docker，并提供网页版与本地版两种用法；模型、渠道与工作区按同一接入面扩展",
                     "bold": false,
                     "code": false,
                     "kbd": false,
@@ -2480,7 +2730,7 @@
                 ],
                 [
                   {
-                    "text": "启动速度快，响应速度快。本地形态同进程直调引擎，不经本机 HTTP；线程与历史从本地存储直接恢复；流式事件按帧合并、增量投影，工具在允许范围内并行",
+                    "text": "启动速度快，秒开不卡顿。本地形态同进程直调引擎，不经本机 HTTP；线程与历史从本地存储直接恢复；流式事件按帧合并、增量投影，工具在允许范围内并行",
                     "bold": false,
                     "code": false,
                     "kbd": false,
@@ -2503,7 +2753,7 @@
                 ],
                 [
                   {
-                    "text": "稳定性强，智能程度高。队列、缓存、视图与上下文都有界，配合会话锁、轮次上限、配额与重试熔断支持长时间运行；目标态、子智能体、工具链、长期记忆与知识库支撑复杂任务从拆解到交付",
+                    "text": "稳定性强，可 7×24 运行，智能程度高。队列、缓存、视图与上下文都有界，配合会话锁、轮次上限、配额与重试熔断支持长时间运行；目标态、子智能体、工具链、长期记忆与知识库支撑复杂任务从拆解到交付",
                     "bold": false,
                     "code": false,
                     "kbd": false,
@@ -2526,7 +2776,7 @@
                 ],
                 [
                   {
-                    "text": "CPU 内存占用低，上下文消耗低。Rust 原生进程与本地 SQLite，不依赖浏览器运行时；工具结果裁剪、提示词冻结复用缓存、记忆索引只注入一次，并用上下文微压缩与历史压缩控制 token 消耗",
+                    "text": "CPU 内存占用极低，上下文消耗极低。Rust 原生进程与本地 SQLite，不依赖浏览器运行时，补充包自带预制的智能体运行环境，省去自行搭建；工具结果裁剪、提示词冻结复用缓存、记忆索引只注入一次，并用上下文微压缩与历史压缩控制 token 消耗",
                     "bold": false,
                     "code": false,
                     "kbd": false,
@@ -2643,7 +2893,7 @@
               "cells": [
                 [
                   {
-                    "text": "get_goal",
+                    "text": "goal",
                     "bold": false,
                     "code": true,
                     "kbd": false,
@@ -2652,53 +2902,61 @@
                 ],
                 [
                   {
-                    "text": "读出当前目标及其版本号",
+                    "text": "通过 `action=get",
                     "bold": false,
                     "code": false,
                     "kbd": false,
                     "href": ""
                   }
-                ]
-              ]
-            },
-            {
-              "header": false,
-              "cells": [
-                [
-                  {
-                    "text": "create_goal",
-                    "bold": false,
-                    "code": true,
-                    "kbd": false,
-                    "href": ""
-                  }
                 ],
                 [
                   {
-                    "text": "创建目标",
+                    "text": "create",
                     "bold": false,
                     "code": false,
                     "kbd": false,
                     "href": ""
                   }
-                ]
-              ]
-            },
-            {
-              "header": false,
-              "cells": [
+                ],
                 [
                   {
-                    "text": "update_goal",
+                    "text": "edit",
                     "bold": false,
-                    "code": true,
+                    "code": false,
                     "kbd": false,
                     "href": ""
                   }
                 ],
                 [
                   {
-                    "text": "编辑、暂停、恢复、完成、报告受阻",
+                    "text": "pause",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "resume",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "complete",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "blocked` 读取、创建、编辑、暂停、恢复、完成或报告受阻",
                     "bold": false,
                     "code": false,
                     "kbd": false,
@@ -3038,7 +3296,7 @@
               "href": ""
             },
             {
-              "text": "update_goal action=resume",
+              "text": "goal action=resume",
               "bold": false,
               "code": true,
               "kbd": false,
@@ -8275,21 +8533,7 @@
                 ],
                 [
                   {
-                    "text": "聚合展示名；底层为 17 个 ",
-                    "bold": false,
-                    "code": false,
-                    "kbd": false,
-                    "href": ""
-                  },
-                  {
-                    "text": "browser_*",
-                    "bold": false,
-                    "code": true,
-                    "kbd": false,
-                    "href": ""
-                  },
-                  {
-                    "text": " 原生工具（点击、输入、等待、截图等）",
+                    "text": "单一严格 action 工具，覆盖导航、观察、交互、等待与截图",
                     "bold": false,
                     "code": false,
                     "kbd": false,
@@ -8763,7 +9007,16 @@
               "cells": [
                 [
                   {
-                    "text": "get_goal / create_goal / update_goal",
+                    "text": "goal",
+                    "bold": false,
+                    "code": true,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "`action=get",
                     "bold": false,
                     "code": false,
                     "kbd": false,
@@ -8772,7 +9025,7 @@
                 ],
                 [
                   {
-                    "text": "—",
+                    "text": "create",
                     "bold": false,
                     "code": false,
                     "kbd": false,
@@ -8781,7 +9034,52 @@
                 ],
                 [
                   {
-                    "text": "目标态三件套，由运行时按会话自动注入，不对桌面端开放选择",
+                    "text": "edit",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "pause",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "resume",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "complete",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "blocked`",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "目标态工具，由运行时按会话自动注入，不对桌面端开放选择",
                     "bold": false,
                     "code": false,
                     "kbd": false,
@@ -9613,42 +9911,68 @@
                 ],
                 [
                   {
-                    "text": "get_goal",
+                    "text": "goal",
                     "bold": false,
                     "code": true,
                     "kbd": false,
                     "href": ""
                   },
                   {
-                    "text": " / ",
+                    "text": "（`action=get",
                     "bold": false,
                     "code": false,
                     "kbd": false,
                     "href": ""
-                  },
+                  }
+                ],
+                [
                   {
-                    "text": "create_goal",
-                    "bold": false,
-                    "code": true,
-                    "kbd": false,
-                    "href": ""
-                  },
-                  {
-                    "text": " / ",
+                    "text": "create",
                     "bold": false,
                     "code": false,
                     "kbd": false,
                     "href": ""
-                  },
+                  }
+                ],
+                [
                   {
-                    "text": "update_goal",
+                    "text": "edit",
                     "bold": false,
-                    "code": true,
+                    "code": false,
                     "kbd": false,
                     "href": ""
-                  },
+                  }
+                ],
+                [
                   {
-                    "text": " 由运行时按会话自动注入，不对桌面端开放选择",
+                    "text": "pause",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "resume",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "complete",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "blocked`）由运行时按会话自动注入，不对桌面端开放选择",
                     "bold": false,
                     "code": false,
                     "kbd": false,

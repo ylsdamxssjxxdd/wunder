@@ -320,7 +320,7 @@ impl UserToolStore {
                     description: resolve_mcp_description(server, tool),
                     input_schema: normalize_mcp_input_schema(tool),
                 };
-                crate::tools::validate_dynamic_tool_spec(&spec)
+                crate::tools::validate_external_tool_spec(&spec)
                     .map_err(|err| anyhow!("invalid MCP tool {name}: {err}"))?;
             }
         }
@@ -832,7 +832,7 @@ impl UserToolManager {
                                 description: description.clone(),
                                 input_schema: schema.clone(),
                             };
-                            if crate::tools::validate_dynamic_tool_spec(&candidate).is_err() {
+                            if crate::tools::validate_external_tool_spec(&candidate).is_err() {
                                 continue;
                             }
                             append_alias(
@@ -1775,7 +1775,7 @@ mod tests {
     }
 
     #[test]
-    fn update_mcp_servers_rejects_unbounded_dynamic_schemas() {
+    fn update_mcp_servers_accepts_provider_owned_schemas() {
         let root = tempdir().expect("tempdir");
         let storage = Arc::new(SqliteStorage::new(
             root.path()
@@ -1803,9 +1803,9 @@ mod tests {
             })],
             ..UserMcpServer::default()
         };
-        assert!(store
+        store
             .update_mcp_servers("sample-user", vec![server])
-            .is_err());
+            .expect("provider-owned schemas should be retained");
     }
 
     #[test]

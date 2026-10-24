@@ -1457,7 +1457,10 @@ mod tests {
         let allowed = service
             .allowed_tool_names(user_id, &config, &skills, &bindings)
             .expect("allowed tools");
-        let selected_tool = pick_stable_allowed_tool(&allowed, Some(&skill_alias));
+        let selected_tool = crate::tools::resolve_tool_name(&pick_stable_allowed_tool(
+            &allowed,
+            Some(&skill_alias),
+        ));
 
         service
             .sync_user_state(user_id)
@@ -1782,7 +1785,6 @@ mod tests {
 
         let private_root = service.private_root(user_id);
         let skill_name = "weather";
-        let skill_alias = format!("{user_id}@{skill_name}");
         write_test_skill(&private_root.join("skills"), skill_name);
 
         let default_card = find_worker_card_file(&private_root, DEFAULT_AGENT_ID_ALIAS);
@@ -1791,6 +1793,8 @@ mod tests {
                 .expect("parse default card");
         std::thread::sleep(Duration::from_millis(30));
         document.abilities.tool_names = Vec::new();
+        // A skill owned by the current user is exposed under its bare runtime
+        // name. `owner@name` is reserved for a skill owned by somebody else.
         document.abilities.skills = vec![skill_name.to_string()];
         atomic_write_text(
             &default_card,
@@ -1815,13 +1819,13 @@ mod tests {
             .expect("meta should exist");
         let mirror: DefaultAgentConfigMirror =
             serde_json::from_str(&meta).expect("parse default meta");
-        assert_eq!(mirror.declared_skill_names, vec![skill_alias.clone()]);
-        assert!(mirror.tool_names.contains(&skill_alias));
+        assert_eq!(mirror.declared_skill_names, vec![skill_name.to_string()]);
+        assert!(mirror.tool_names.contains(&skill_name.to_string()));
 
         let rewritten: WorkerCardDocument = serde_json::from_str(
             &fs::read_to_string(&default_card).expect("read rewritten default card"),
         )
         .expect("parse rewritten default card");
-        assert_eq!(rewritten.abilities.skills, vec![skill_alias]);
+        assert_eq!(rewritten.abilities.skills, vec![skill_name.to_string()]);
     }
 }

@@ -74,6 +74,21 @@
         />
       </div>
       <div class="messenger-settings-row messenger-settings-stress-row">
+        <div class="messenger-settings-label">
+          {{ t('messenger.settingsPage.general.stressProfile') }}
+        </div>
+        <select
+          v-model="stressProfile"
+          class="messenger-settings-number-input"
+          data-testid="settings-stress-profile"
+          :disabled="stressJobRunning"
+        >
+          <option value="typical">{{ t('messenger.settingsPage.general.stressProfileTypical') }}</option>
+          <option value="complex">{{ t('messenger.settingsPage.general.stressProfileComplex') }}</option>
+          <option value="adversarial">{{ t('messenger.settingsPage.general.stressProfileAdversarial') }}</option>
+        </select>
+      </div>
+      <div class="messenger-settings-row messenger-settings-stress-row">
         <div class="messenger-settings-hint">
           {{ stressStatusText || t('messenger.settingsPage.general.stressScaleHint') }}
         </div>
@@ -190,6 +205,7 @@ const openHelpDocs = () => {
 
 const stressUserRounds = ref<number>(1000);
 const stressModelRounds = ref<number>(1000);
+const stressProfile = ref<'typical' | 'complex' | 'adversarial'>('complex');
 const stressJobRunning = ref(false);
 const stressStatusText = ref('');
 let stressJobTimer: number | null = null;
@@ -302,7 +318,8 @@ const generateStressThread = async () => {
   try {
     const { data } = await startStressThread({
       user_rounds: userRounds,
-      model_rounds: modelRounds
+      model_rounds: modelRounds,
+      scenario: stressProfile.value
     });
     const jobId = String(data?.job_id || '');
     if (!jobId) {

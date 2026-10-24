@@ -249,9 +249,10 @@ impl AppState {
         let runtime_profile = options.runtime_profile;
         let runtime_capabilities = options.resolve_capabilities(&config);
         let storage = init_storage(&config)?;
-        let thread_store = Arc::new(crate::storage::thread_store::LocalThreadStore::open(
-            &config.storage.data_root,
-        )?.with_compression_enabled(config.storage.thread_store.compression_enabled));
+        let thread_store = Arc::new(
+            crate::storage::thread_store::LocalThreadStore::open(&config.storage.data_root)?
+                .with_compression_enabled(config.storage.thread_store.compression_enabled),
+        );
         info!(
             "[startup][app-state] point=init_storage_done total_ms={:.1}",
             app_state_start.elapsed().as_secs_f64() * 1000.0
@@ -501,17 +502,33 @@ fn init_storage_strict(config: &Config) -> Result<Arc<dyn StorageBackend>> {
 
 #[cfg(any(feature = "sqlite-storage", test))]
 fn init_storage_auto(config: &Config) -> Result<Arc<dyn StorageBackend>> {
-    match init_storage_strict(config) {
+    finish_storage_auto(init_storage_strict(config), || {
+        let sqlite = Arc::new(SqliteStorage::new(
+            sqlite_state_database_path(&config.storage)
+                .to_string_lossy()
+                .into_owned(),
+        ));
+        sqlite.ensure_initialized()?;
+        Ok(sqlite as Arc<dyn StorageBackend>)
+    })
+}
+
+#[cfg(any(feature = "sqlite-storage", test))]
+fn finish_storage_auto<T>(
+    primary: Result<T>,
+    sqlite_fallback: impl FnOnce() -> Result<T>,
+) -> Result<T> {
+    match primary {
         Ok(storage) => Ok(storage),
         Err(err) => {
+            #[cfg(feature = "postgres-storage")]
+            if crate::storage::is_canonical_root_binding_failure(&err) {
+                return Err(err.context(
+                    "Postgres canonical root validation failed; use one active executor with the original persisted root",
+                ));
+            }
             warn!("Postgres 初始化失败，已回退到 SQLite: {err}");
-            let sqlite = Arc::new(SqliteStorage::new(
-                sqlite_state_database_path(&config.storage)
-                    .to_string_lossy()
-                    .into_owned(),
-            ));
-            sqlite.ensure_initialized()?;
-            Ok(sqlite)
+            sqlite_fallback()
         }
     }
 }
@@ -529,6 +546,45 @@ fn init_storage_auto(config: &Config) -> Result<Arc<dyn StorageBackend>> {
 mod tests {
     use super::{AppRuntimeCapabilities, AppRuntimeProfile, AppStateInitOptions};
     use wunder_core::config::Config;
+
+    #[cfg(feature = "postgres-storage")]
+    #[test]
+    fn auto_storage_never_calls_sqlite_fallback_for_canonical_root_failure() {
+        let fallback_called = std::cell::Cell::new(false);
+        let primary = Err(
+            anyhow::Error::new(crate::storage::CanonicalRootBindingError)
+                .context("root binding rejected"),
+        );
+        let result = super::finish_storage_auto(primary, || {
+            fallback_called.set(true);
+            Ok(())
+        });
+        let error = result.unwrap_err();
+        assert!(crate::storage::is_canonical_root_binding_failure(&error));
+        assert!(!fallback_called.get());
+    }
+
+    #[test]
+    fn auto_storage_falls_back_for_unavailable_primary_and_preserves_success() {
+        let fallback_calls = std::cell::Cell::new(0);
+        let fallback = || {
+            fallback_calls.set(fallback_calls.get() + 1);
+            Ok(7)
+        };
+        assert_eq!(
+            super::finish_storage_auto(Err(anyhow::anyhow!("connection unavailable")), fallback)
+                .unwrap(),
+            7
+        );
+        assert_eq!(super::finish_storage_auto(Ok(11), fallback).unwrap(), 11);
+        assert_eq!(fallback_calls.get(), 1);
+        let failure = super::finish_storage_auto::<()>(
+            Err(anyhow::anyhow!("connection unavailable")),
+            || Err(anyhow::anyhow!("fallback unavailable")),
+        )
+        .unwrap_err();
+        assert_eq!(failure.to_string(), "fallback unavailable");
+    }
 
     #[test]
     fn desktop_default_starts_cron_scheduler() {

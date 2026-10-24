@@ -185,7 +185,7 @@ async fn local_reduction_persists_canonical_checkpoint_without_rewriting_chat_hi
     // second ordinary chat row.
     let chat_after = orchestrator
         .workspace
-        .load_history("user", "session", 0)
+        .load_execution_history("user", "session", "", 0)
         .unwrap();
     // The snapshot excludes the in-flight current user message (index 1 here);
     // its chat row is appended after compaction in the real flow and replays it.
@@ -197,10 +197,7 @@ async fn local_reduction_persists_canonical_checkpoint_without_rewriting_chat_hi
         .map(|(_, message)| message.clone())
         .collect();
     let replacement = model_context_entries_from_messages(&expected_snapshot_source);
-    assert_eq!(
-        replacement,
-        chat_after
-    );
+    assert_eq!(replacement, chat_after);
 
     // Mirror the production order: the current user chat row lands after the
     // checkpoint, then derivation replays snapshot + that row.

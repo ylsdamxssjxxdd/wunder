@@ -1,0 +1,32 @@
+FROM ubuntu:22.04
+
+# Remotion build image. It is kept separate from the Ubuntu 18.04 base image
+# so Node/npm package installation and browser preparation do not affect the
+# compatible native-tool build.
+ARG TARGETARCH
+ENV DEBIAN_FRONTEND=noninteractive
+ENV LANG=C.UTF-8 LC_ALL=C.UTF-8 PYTHONIOENCODING=utf-8
+
+RUN if [ "${TARGETARCH}" = "arm64" ]; then \
+      printf '%s\n' \
+        "deb [trusted=yes] http://ports.ubuntu.com/ubuntu-ports jammy main universe multiverse restricted" \
+        "deb [trusted=yes] http://ports.ubuntu.com/ubuntu-ports jammy-updates main universe multiverse restricted" \
+        "deb [trusted=yes] http://ports.ubuntu.com/ubuntu-ports jammy-security main universe multiverse restricted" \
+        > /etc/apt/sources.list; \
+    else \
+      printf '%s\n' \
+        "deb [trusted=yes] http://archive.ubuntu.com/ubuntu jammy main universe multiverse restricted" \
+        "deb [trusted=yes] http://archive.ubuntu.com/ubuntu jammy-updates main universe multiverse restricted" \
+        "deb [trusted=yes] http://archive.ubuntu.com/ubuntu jammy-security main universe multiverse restricted" \
+        > /etc/apt/sources.list; \
+    fi \
+ && printf 'Acquire::Check-Valid-Until "false";\n' > /etc/apt/apt.conf.d/99no-check-valid \
+ && apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Retries=5 update \
+ && apt-get install -y --no-install-recommends \
+      ca-certificates curl file findutils python3 tar gzip \
+      libnss3 libnspr4 libgbm1 libasound2 libx11-xcb1 libxcomposite1 \
+      libxdamage1 libxfixes3 libxrandr2 libgtk-3-0 \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+CMD ["bash"]

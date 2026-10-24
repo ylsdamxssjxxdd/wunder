@@ -1605,22 +1605,6 @@ impl WorkspaceManager {
         .await
     }
 
-    pub async fn load_session_system_prompt_async(
-        self: &Arc<Self>,
-        user_id: &str,
-        session_id: &str,
-        language: Option<&str>,
-    ) -> Result<Option<String>> {
-        let user_id = user_id.to_string();
-        let session_id = session_id.to_string();
-        let language = language.map(|value| value.to_string());
-        let workspace = Arc::clone(self);
-        run_workspace_db("workspace.load_session_system_prompt", move || {
-            workspace.load_session_system_prompt(&user_id, &session_id, language.as_deref())
-        })
-        .await
-    }
-
     pub async fn load_session_frozen_tool_overrides_async(
         self: &Arc<Self>,
         user_id: &str,
@@ -1907,52 +1891,6 @@ impl WorkspaceManager {
             .unwrap_or_default()
     }
 
-    pub fn load_session_system_prompt(
-        &self,
-        user_id: &str,
-        session_id: &str,
-        language: Option<&str>,
-    ) -> Result<Option<String>> {
-        let normalized_language =
-            language.map(|value| crate::i18n::normalize_language(Some(value), true));
-        // Frozen prompts are ThreadLog system Items.  The old conversation
-        // table may still contain a compatibility mirror, but it is never a
-        // source for prompt reuse once the thread log exists.
-        let history = self
-            .storage
-            .load_thread_context_items(user_id, session_id, 0, true)?;
-        for value in history.into_iter().filter(|value| {
-            value.get("role").and_then(Value::as_str) == Some("system")
-                && value
-                    .get("meta")
-                    .and_then(Value::as_object)
-                    .and_then(|meta| meta.get("type"))
-                    .and_then(Value::as_str)
-                    == Some("system_prompt")
-        }) {
-            let meta = value.get("meta").and_then(Value::as_object);
-            if let Some(expected) = normalized_language.as_ref() {
-                let stored = meta
-                    .and_then(|meta| meta.get("language"))
-                    .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .trim();
-                if !stored.is_empty()
-                    && crate::i18n::normalize_language(Some(stored), true) != *expected
-                {
-                    continue;
-                }
-            }
-            if let Some(content) = value.get("content").and_then(Value::as_str) {
-                let content = content.trim();
-                if !content.is_empty() {
-                    return Ok(Some(content.to_string()));
-                }
-            }
-        }
-        Ok(None)
-    }
-
     pub fn load_session_frozen_tool_overrides(
         &self,
         user_id: &str,
@@ -2176,62 +2114,6 @@ impl WorkspaceManager {
     pub fn delete_session_context_limit_hint(&self, user_id: &str, session_id: &str) -> i64 {
         let key = self.session_context_limit_hint_key(user_id, session_id);
         self.storage.delete_meta_prefix(&key).unwrap_or(0) as i64
-    }
-
-    /// Build the durable frozen system-prompt item for a session. This only
-    /// reads the thread's first turn and assembles the item payload; it never
-    /// writes. The write must go through the unified ThreadLog commit exit so
-    /// the change cursor is published only on the real commit. Returns None for
-    /// an empty prompt (nothing durable to freeze).
-    pub fn build_session_system_prompt_item(
-        &self,
-        user_id: &str,
-        session_id: &str,
-        prompt: &str,
-        language: Option<&str>,
-    ) -> Result<Option<serde_json::Value>> {
-        let content = prompt.trim();
-        if content.is_empty() {
-            return Ok(None);
-        }
-        let payload = serde_json::json!({
-            "role": "system",
-            "content": content,
-            "session_id": session_id,
-            "timestamp": Local::now().to_rfc3339(),
-            "meta": {
-                "type": "system_prompt",
-                "language": language.unwrap_or("").trim(),
-            }
-        });
-        // A frozen prompt is a durable internal Item, independent from the
-        // compatibility conversation mirror.
-        let turn = self
-            .storage
-            .list_thread_turns(user_id, session_id, None, 1)?
-            .into_iter()
-            .next()
-            .and_then(|turn| {
-                turn.get("turn_id")
-                    .and_then(serde_json::Value::as_str)
-                    .map(str::to_owned)
-            })
-            .ok_or_else(|| {
-                anyhow::anyhow!("thread turn is required before freezing system prompt")
-            })?;
-        let item = json!({
-            "session_id": session_id,
-            "turn_id": turn,
-            "item_id": format!("{session_id}:system-prompt"),
-            "kind": "system_message",
-            "status": "completed",
-            "visibility": "model_internal",
-            "meta": {"type": "system_prompt", "language": language.unwrap_or("").trim()},
-            "role": "system",
-            "content": content,
-            "timestamp": payload["timestamp"].clone()
-        });
-        Ok(Some(item))
     }
 
     pub fn get_user_usage_stats(&self) -> HashMap<String, HashMap<String, i64>> {
@@ -3731,6 +3613,104 @@ mod tests {
         .unwrap();
     }
 
+    fn seeded_rollout_path(root: &std::path::Path, session: &str) -> std::path::PathBuf {
+        let relative: String = rusqlite::Connection::open_with_flags(
+            root.join("state_1.sqlite"),
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )
+        .unwrap()
+        .query_row(
+            "SELECT rollout_path FROM canonical_threads WHERE thread_id=?1",
+            [session],
+            |row| row.get(0),
+        )
+        .unwrap();
+        let rollout = root.join(relative);
+        assert!(rollout.is_file());
+        rollout
+    }
+
+    fn assert_thread_history_removed(
+        root: &std::path::Path,
+        session: &str,
+        rollout: &std::path::Path,
+    ) {
+        use wunder_core::thread_store::{ThreadId, ThreadMetadataStore, ThreadStoreError};
+
+        let store = crate::storage::thread_store::LocalThreadStore::open(root).unwrap();
+        let thread = ThreadId::new(session).unwrap();
+        assert!(matches!(
+            crate::storage::canonical_thread_log::wait(store.session_meta(&thread)).unwrap(),
+            Err(ThreadStoreError::NotFound { .. })
+        ));
+        assert!(matches!(
+            crate::storage::canonical_thread_log::wait(store.get_thread(&thread)).unwrap(),
+            Err(ThreadStoreError::NotFound { .. })
+        ));
+        assert!(!rollout.exists());
+        assert!(!crate::storage::rollout_compression::compressed_path(rollout).exists());
+
+        let conn = rusqlite::Connection::open_with_flags(
+            root.join("state_1.sqlite"),
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )
+        .unwrap();
+        for (table, key) in [
+            ("canonical_threads", "thread_id"),
+            ("canonical_rollouts", "owner_thread_id"),
+            ("canonical_thread_deletions", "thread_id"),
+            (
+                "canonical_pending_rollout_reclaims",
+                "requested_by_thread_id",
+            ),
+        ] {
+            let remaining: i64 = conn
+                .query_row(
+                    &format!("SELECT COUNT(*) FROM {table} WHERE {key}=?1"),
+                    [session],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(remaining, 0, "{table} retained deleted thread state");
+        }
+        let conn = rusqlite::Connection::open_with_flags(
+            root.join("queue_1.sqlite"),
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )
+        .unwrap();
+        for table in ["canonical_thread_owners", "canonical_turn_admissions"] {
+            let remaining: i64 = conn
+                .query_row(
+                    &format!("SELECT COUNT(*) FROM {table} WHERE thread_id=?1"),
+                    [session],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(remaining, 0, "{table} retained deleted thread state");
+        }
+        let conn = rusqlite::Connection::open_with_flags(
+            root.join("thread_history_1.sqlite"),
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )
+        .unwrap();
+        let rollout_id = format!("sample-rollout-{session}");
+        for table in [
+            "thread_items",
+            "thread_turns",
+            "thread_root_counts",
+            "thread_history_projection_state",
+        ] {
+            let remaining: i64 = conn
+                .query_row(
+                    &format!("SELECT COUNT(*) FROM {table} WHERE rollout_id=?1"),
+                    [&rollout_id],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(remaining, 0, "{table} retained deleted history");
+        }
+    }
+
     #[test]
     fn frozen_tool_profile_binding_round_trips_in_workspace_metadata() {
         let (workspace, _dir) = build_workspace_manager();
@@ -4106,6 +4086,8 @@ mod tests {
                 )
                 .expect("append stream event");
         }
+        let old_rollout = seeded_rollout_path(dir.path(), "session-old");
+        let new_rollout = seeded_rollout_path(dir.path(), "session-new");
 
         let now = super::now_ts();
         storage
@@ -4120,7 +4102,9 @@ mod tests {
 
         assert!(storage
             .load_thread_context_items("user-a", "session-old", 500, true)
-            .is_err());
+            .expect("load deleted chat")
+            .is_empty());
+        assert_thread_history_removed(dir.path(), "session-old", &old_rollout);
         assert_eq!(
             storage
                 .load_thread_context_items("user-a", "session-new", 500, true)
@@ -4153,7 +4137,9 @@ mod tests {
         manager.schedule_deleted_session_log_cleanup("user-a", "session-new");
         assert!(storage
             .load_thread_context_items("user-a", "session-new", 500, true)
-            .is_err());
+            .expect("load deleted chat")
+            .is_empty());
+        assert_thread_history_removed(dir.path(), "session-new", &new_rollout);
     }
 
     #[test]
@@ -4496,6 +4482,7 @@ mod tests {
             .save_session_reasoning_effort(user_id, session_id, "medium")
             .expect("save reasoning effort");
         seed_thread_context(_dir.path(), storage.as_ref(), user_id, session_id);
+        let rollout = seeded_rollout_path(_dir.path(), session_id);
         storage
             .append_tool_log(user_id, &json!({"session_id": session_id, "tool": "tool"}))
             .expect("append tool log");
@@ -4527,7 +4514,9 @@ mod tests {
             .expect("purge logs");
         assert!(storage
             .load_thread_context_items(user_id, session_id, 500, true)
-            .is_err());
+            .expect("load deleted chat")
+            .is_empty());
+        assert_thread_history_removed(_dir.path(), session_id, &rollout);
         assert!(storage
             .load_stream_events(session_id, 0, 10)
             .unwrap()

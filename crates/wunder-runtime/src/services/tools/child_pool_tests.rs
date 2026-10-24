@@ -251,6 +251,12 @@ async fn run_child_pool_scenario(messaging: bool, postgres: Option<String>) {
         assert_eq!(result["state"], "completed");
         assert!(result["data"]["elapsed_s"].as_f64().unwrap_or(45.) < 45.);
 
+        let frozen_prompt = state
+            .thread_store
+            .session_meta(&wunder_core::thread_store::ThreadId::new(child_id.clone()).unwrap())
+            .await
+            .unwrap()
+            .initial_system_prompt;
         {
             let captured = observed.lock().unwrap();
             assert_eq!(captured.len(), 2);
@@ -275,18 +281,36 @@ async fn run_child_pool_scenario(messaging: bool, postgres: Option<String>) {
                 })
                 .collect();
             assert_eq!(systems[0], systems[1]);
+            assert_eq!(systems[0]["content"], json!(frozen_prompt));
         }
-        let history = state
+        // Mailbox observations are model ResponseItems; transcript history
+        // contains their completed activity item rather than a second copy of
+        // the hidden model input.
+        let model_context = state
             .storage
-            .load_thread_context_items(&user.user_id, &child_id, 500, true)
+            .load_thread_execution_context(&user.user_id, &child_id, "", 500)
             .unwrap();
         assert_eq!(
-            history
+            model_context
                 .iter()
                 .filter(|m| m["content"].as_str().is_some_and(|s| s.contains("guide_1")))
                 .count(),
             1
         );
+        let changes = state
+            .storage
+            .list_thread_changes_by_session(&child_id, 0, 100)
+            .unwrap();
+        let delivered: Vec<_> = changes
+            .iter()
+            .filter(|change| {
+                change["change_type"] == "item_upsert"
+                    && change["payload"]["kind"] == "subagent_message"
+                    && change["payload"]["payload"]["message_id"] == "guide_1"
+            })
+            .collect();
+        assert_eq!(delivered.len(), 1);
+        assert_eq!(delivered[0]["payload"]["payload"]["message"], "guidance");
         // Hold the parent busy while duplicate durable reports are admitted.
         // A delayed completion already consumed by wait must not cancel its parent.
         let stale_request = crate::services::subagents::build_parent_auto_wake_request(

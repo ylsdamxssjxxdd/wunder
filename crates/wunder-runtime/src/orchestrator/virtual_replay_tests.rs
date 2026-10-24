@@ -315,6 +315,19 @@ async fn random_simulation_persists_records_like_real_models() {
         .unwrap();
     let turn_id = accepted["turn_id"].as_str().unwrap().to_string();
     let user_round = accepted["user_turn_index"].as_i64().unwrap_or(1);
+    committer
+        .freeze_session(
+            &user.user_id,
+            "session_1",
+            "frozen fixture instructions",
+            "fixture-workspace",
+        )
+        .await
+        .unwrap();
+    committer
+        .begin_turn(&user.user_id, "session_1", &turn_id, "virtual_replay")
+        .await
+        .unwrap();
     emitter.bind_turn(&turn_id, user_round);
     use wunder_core::virtual_model::VirtualModelOptions;
     let model = LlmModelConfig {

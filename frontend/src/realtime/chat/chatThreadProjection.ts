@@ -503,8 +503,15 @@ const extractItemStats = (payload: Record<string, unknown>): Record<string, unkn
   // content and lifecycle data cannot leak into the presentation stats object.
   const directKeys = [
     'usage', 'round_usage', 'decode_output_tokens', 'decode_tokens',
-    'decode_duration_s', 'decode_speed_tps', 'prefill_duration_s',
-    'prefill_speed_tps', 'stream_timing', 'ttft_ms', 'tool_calls'
+    'decode_duration_s', 'decode_duration_total_s', 'decode_speed_tps',
+    'prefill_duration_s', 'prefill_duration_total_s', 'prefill_speed_tps',
+    'interaction_duration_s', 'duration_s', 'stream_timing', 'ttft_ms',
+    'visible_decode_tokens', 'visible_decode_duration_s',
+    'visible_decode_speed_tps', 'visible_decode_measured',
+    'avg_model_round_speed_tps', 'avg_model_round_decode_speed_tps',
+    'avg_model_round_speed_rounds', 'model_request_count',
+    'account_credits_consumed', 'context_occupancy_tokens',
+    'prefill_tokens', 'tool_calls', 'toolCalls'
   ];
   const direct = Object.fromEntries(
     directKeys

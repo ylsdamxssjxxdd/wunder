@@ -415,6 +415,48 @@ fn build_planned_tool_calls_accepts_allowed_alias() {
 }
 
 #[test]
+fn terminal_final_response_keeps_usable_content_and_leaves_executable_calls() {
+    let final_call = |arguments| ToolCall {
+        id: Some("call-final".into()),
+        name: "final_response".into(),
+        function_name: None,
+        arguments,
+    };
+    let mut calls = vec![final_call(json!({"content":"", "answer":"completed"}))];
+    assert_eq!(
+        take_terminal_final_response(&mut calls).as_deref(),
+        Some("completed")
+    );
+    assert!(calls.is_empty());
+
+    let mut calls = vec![final_call(json!({"raw":"{\"content\":\""}))];
+    assert_eq!(
+        take_terminal_final_response(&mut calls).as_deref(),
+        Some("")
+    );
+    assert!(
+        calls.is_empty(),
+        "incomplete terminal output must reach the empty-output guard"
+    );
+
+    let mut calls = vec![
+        ToolCall {
+            id: Some("call-write".into()),
+            name: "write_file".into(),
+            function_name: None,
+            arguments: json!({"path":"fixture.txt", "content":"fixture"}),
+        },
+        final_call(json!({"content":"completed"})),
+    ];
+    assert_eq!(take_terminal_final_response(&mut calls), None);
+    assert_eq!(
+        calls.len(),
+        2,
+        "a terminal envelope must not bypass pending side effects"
+    );
+}
+
+#[test]
 fn build_planned_tool_calls_reports_unknown_tool_call() {
     let allowed = HashSet::from([resolve_tool_name("programmatic_tool_call")]);
     let calls = vec![ToolCall {
@@ -926,4 +968,201 @@ fn infers_tool_call_mode_from_frozen_system_prompt() {
         Some(ToolCallMode::FunctionCall)
     );
     assert_eq!(infer_tool_call_mode_from_frozen_system_prompt(" "), None);
+}
+
+#[cfg(feature = "sqlite-storage")]
+async fn frozen_mode_test_state() -> (crate::state::AppState, tempfile::TempDir) {
+    let directory = tempfile::tempdir().unwrap();
+    let mut config = Config::default();
+    config.storage.backend = "sqlite".into();
+    config.storage.data_root = directory.path().join("data").to_string_lossy().into_owned();
+    config.workspace.root = directory
+        .path()
+        .join("workspace")
+        .to_string_lossy()
+        .into_owned();
+    config.skills.enabled.clear();
+    let store = ConfigStore::new(directory.path().join("config.yaml"));
+    store.update(|value| *value = config.clone()).await.unwrap();
+    let state = crate::state::AppState::new_with_options(
+        store,
+        config,
+        crate::state::AppStateInitOptions::cli_default().with_start_thread_runtime(false),
+    )
+    .unwrap();
+    (state, directory)
+}
+
+#[cfg(feature = "sqlite-storage")]
+#[tokio::test]
+async fn frozen_tool_call_mode_uses_canonical_prompt_after_model_changes() {
+    let (state, _directory) = frozen_mode_test_state().await;
+    let orchestrator = &state.kernel.orchestrator;
+    let prompt = "Fixture frozen instructions\n<tools></tools>\n<tool_call>{}</tool_call>";
+    orchestrator
+        .committer
+        .freeze_session(
+            "fixture-user",
+            "fixture-thread",
+            prompt,
+            "fixture-workspace",
+        )
+        .await
+        .unwrap();
+    let mut config = LlmModelConfig {
+        tool_call_mode: Some("function_call".into()),
+        ..Default::default()
+    };
+    assert_eq!(
+        orchestrator
+            .resolve_frozen_session_tool_call_mode("fixture-user", "fixture-thread", &config)
+            .await
+            .unwrap(),
+        ToolCallMode::ToolCall
+    );
+    config.tool_call_mode = Some("freeform_call".into());
+    assert_eq!(
+        orchestrator
+            .resolve_frozen_session_tool_call_mode("fixture-user", "fixture-thread", &config)
+            .await
+            .unwrap(),
+        ToolCallMode::ToolCall
+    );
+    assert_eq!(
+        state
+            .thread_store
+            .session_meta(&wunder_core::thread_store::ThreadId::new("fixture-thread").unwrap())
+            .await
+            .unwrap()
+            .initial_system_prompt,
+        prompt
+    );
+}
+
+#[cfg(feature = "sqlite-storage")]
+#[tokio::test]
+async fn frozen_tool_call_mode_initializes_from_model_before_first_rollout() {
+    let (state, _directory) = frozen_mode_test_state().await;
+    let config = LlmModelConfig {
+        tool_call_mode: Some("freeform_call".into()),
+        ..Default::default()
+    };
+    assert_eq!(
+        state
+            .kernel
+            .orchestrator
+            .resolve_frozen_session_tool_call_mode("fixture-user", "fixture-thread", &config)
+            .await
+            .unwrap(),
+        ToolCallMode::FreeformCall
+    );
+    assert_eq!(
+        state
+            .workspace
+            .load_session_frozen_tool_call_mode("fixture-user", "fixture-thread")
+            .as_deref(),
+        Some("freeform_call")
+    );
+}
+
+#[cfg(feature = "sqlite-storage")]
+#[tokio::test]
+async fn frozen_tool_call_mode_keeps_synthetic_stress_prompt_on_native_protocol() {
+    let (state, _directory) = frozen_mode_test_state().await;
+    let spec = crate::storage::StressThreadSpec {
+        session_id: "fixture-stress-thread".into(),
+        title: "Fixture thread".into(),
+        workspace_id: None,
+        user_rounds: 1,
+        model_rounds_per_turn: 1,
+        seed: None,
+        scenario: crate::storage::StressThreadScenario::Complex,
+    };
+    state
+        .thread_store
+        .generate_stress_thread("fixture-user", &spec, |_, _| {})
+        .await
+        .unwrap();
+    let thread = wunder_core::thread_store::ThreadId::new(spec.session_id.clone()).unwrap();
+    let initial = state.thread_store.session_meta(&thread).await.unwrap();
+    assert!(initial
+        .initial_system_prompt
+        .contains("synthetic storage stress profile"));
+    assert_eq!(
+        initial
+            .initial_memory
+            .as_ref()
+            .and_then(|value| value.get("profile"))
+            .and_then(|value| value.as_str()),
+        Some("storage-stress-v1")
+    );
+    assert!(state
+        .workspace
+        .load_session_frozen_tool_call_mode("fixture-user", &spec.session_id)
+        .is_none());
+
+    for configured in ["tool_call", "freeform_call"] {
+        let config = LlmModelConfig {
+            tool_call_mode: Some(configured.into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            state
+                .kernel
+                .orchestrator
+                .resolve_frozen_session_tool_call_mode("fixture-user", &spec.session_id, &config)
+                .await
+                .unwrap(),
+            ToolCallMode::FunctionCall
+        );
+    }
+    assert_eq!(
+        state.thread_store.session_meta(&thread).await.unwrap(),
+        initial
+    );
+}
+
+#[cfg(feature = "sqlite-storage")]
+#[tokio::test]
+async fn frozen_tool_call_mode_does_not_replace_corrupt_canonical_prompt() {
+    let (state, _directory) = frozen_mode_test_state().await;
+    let orchestrator = &state.kernel.orchestrator;
+    orchestrator
+        .committer
+        .freeze_session(
+            "fixture-user",
+            "fixture-thread",
+            "Fixture frozen instructions",
+            "fixture-workspace",
+        )
+        .await
+        .unwrap();
+    let relative: String = rusqlite::Connection::open_with_flags(
+        state.thread_store.root().join("state_1.sqlite"),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .unwrap()
+    .query_row(
+        "SELECT rollout_path FROM canonical_threads WHERE thread_id=?1",
+        ["fixture-thread"],
+        |row| row.get(0),
+    )
+    .unwrap();
+    std::fs::write(
+        state.thread_store.root().join(relative),
+        b"invalid metadata\n",
+    )
+    .unwrap();
+    let config = LlmModelConfig {
+        tool_call_mode: Some("freeform_call".into()),
+        ..Default::default()
+    };
+    assert!(orchestrator
+        .resolve_frozen_session_tool_call_mode("fixture-user", "fixture-thread", &config)
+        .await
+        .is_err());
+    assert!(state
+        .workspace
+        .load_session_frozen_tool_call_mode("fixture-user", "fixture-thread")
+        .is_none());
 }

@@ -8,7 +8,7 @@ updated_at: 2026-10-16
 
 | Name | Short id | Meaning |
 |------|------|------|
-| wunder | wunder | The product itself, the umbrella term for the **agent orchestration platform**: hand a goal to the agent, and it breaks the task down, calls tools, and delivers results. |
+| wunder | wunder | The product itself, the umbrella term for the **multi-form agent workbench**: hand a goal to the agent, and it breaks the task down, calls tools, and delivers results. |
 | Core | core | The foundation: configuration, authentication, storage, and execution policy. |
 | Engine | runtime | The execution layer: task orchestration, thread runtime, tools, channels, and gateway. The Pupa and the Helm depend on the Engine directly, not on the Hull. |
 | Hull | server | The **user and agent management platform**: the server form, aimed at teams and organizations, handling multi-user access, permissions, and channel access, and providing the Beehive. |

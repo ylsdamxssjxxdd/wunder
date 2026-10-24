@@ -20,6 +20,7 @@ services:
       - ./config/data/workspaces:/workspaces
       - ./config/data/browser:/app/config/data/browser
       - ./config/data/ms-playwright:/ms-playwright
+      - ./config/runtime:/run/wunder-runtime:ro
       - ./config/fonts:/usr/share/fonts/wunder:ro
     environment:
       - TZ=Asia/Shanghai
@@ -57,7 +58,14 @@ services:
       - XDG_CACHE_HOME=/workspaces/.cache
       - MATPLOTLIBRC=/app/config/matplotlibrc
       - MPLCONFIGDIR=/workspaces/.matplotlib
-      - NODE_PATH=${NODE_PATH:-/usr/lib/node_modules:/usr/local/lib/node_modules}
+      - WUNDER_RUNTIME_SOURCE=${WUNDER_RUNTIME_SOURCE:-/run/wunder-runtime}
+      - NODE_PATH=${NODE_PATH:-/opt/wunder-runtime/remotion/node_modules:/usr/lib/node_modules:/usr/local/lib/node_modules}
+      - NPM_CONFIG_REGISTRY=${NPM_CONFIG_REGISTRY:-https://registry.npmmirror.com}
+      - NPM_CONFIG_CACHE=${NPM_CONFIG_CACHE:-/workspaces/.cache/npm}
+      - NPM_CONFIG_FUND=false
+      - NPM_CONFIG_AUDIT=false
+      - NPM_CONFIG_PREFER_OFFLINE=true
+      - TMPDIR=${TMPDIR:-/workspaces/.cache/tmp}
       - PLAYWRIGHT_BROWSERS_PATH=${PLAYWRIGHT_BROWSERS_PATH:-/ms-playwright}
       - RUST_LOG=${WUNDER_LOG_LEVEL:-info}
       - WUNDER_SERVER_FEATURES=${WUNDER_SERVER_FEATURES:-mcp,host-metrics,web-fetch}
@@ -141,13 +149,21 @@ services:
       - XDG_CACHE_HOME=/workspaces/.cache
       - MATPLOTLIBRC=/run/wunder-matplotlibrc
       - MPLCONFIGDIR=/workspaces/.matplotlib
-      - NODE_PATH=${NODE_PATH:-/usr/lib/node_modules:/usr/local/lib/node_modules}
+      - WUNDER_RUNTIME_SOURCE=${WUNDER_RUNTIME_SOURCE:-/run/wunder-runtime}
+      - NODE_PATH=${NODE_PATH:-/opt/wunder-runtime/remotion/node_modules:/usr/lib/node_modules:/usr/local/lib/node_modules}
+      - NPM_CONFIG_REGISTRY=${NPM_CONFIG_REGISTRY:-https://registry.npmmirror.com}
+      - NPM_CONFIG_CACHE=${NPM_CONFIG_CACHE:-/workspaces/.cache/npm}
+      - NPM_CONFIG_FUND=false
+      - NPM_CONFIG_AUDIT=false
+      - NPM_CONFIG_PREFER_OFFLINE=true
+      - TMPDIR=${TMPDIR:-/workspaces/.cache/tmp}
       - WUNDER_LOG_LEVEL=${WUNDER_LOG_LEVEL:-info}
       - RUST_LOG=${WUNDER_LOG_LEVEL:-info}
       - WUNDER_SERVER_MODE=sandbox
       - WUNDER_WORKSPACE_ROOT=${WUNDER_WORKSPACE_ROOT:-/workspaces}
       - WUNDER_STORAGE_BACKEND=${WUNDER_STORAGE_BACKEND:-postgres}
       - WUNDER_STORAGE_DATA_ROOT=${WUNDER_STORAGE_DATA_ROOT:-/app/config/data}
+      - WUNDER_SANDBOX_STORAGE_DATA_ROOT=${WUNDER_SANDBOX_STORAGE_DATA_ROOT:-/tmp/wunder-sandbox-storage}
       - WUNDER_THREAD_STORE_COMPRESSION_ENABLED=${WUNDER_THREAD_STORE_COMPRESSION_ENABLED:-false}
       - WUNDER_POSTGRES_DSN=${WUNDER_POSTGRES_DSN:-postgresql://wunder:wunder@wunder-postgres:5432/wunder}
       - WUNDER_CONFIG_PATH=/run/wunder-sandbox-runtime.yaml
@@ -164,6 +180,7 @@ services:
       - ./config/skills:/app/config/skills:ro
       - ./config/data/workspaces:/workspaces
       - ./config/data/ms-playwright:/ms-playwright
+      - ./config/runtime:/run/wunder-runtime:ro
       - ./config/fonts:/usr/share/fonts/wunder:ro
     command: ["bash", "/usr/local/bin/wunder-docker-rust-entry.sh", "wait-or-run"]
     depends_on:

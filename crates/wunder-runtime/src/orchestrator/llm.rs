@@ -1,3 +1,4 @@
+use super::execute_support::normalize_terminal_final_response;
 use super::stream_timeout::StreamActivity;
 use super::*;
 use crate::core::llm_speed::LlmSpeedSummary;
@@ -935,9 +936,15 @@ impl Orchestrator {
                     .map_err(|error| OrchestratorError::llm_unavailable(error.to_string()))?;
                 }
                 let response_finished_at = Instant::now();
-                let content = virtual_turn.content.clone();
+                let mut content = virtual_turn.content.clone();
                 let reasoning = virtual_turn.reasoning.clone();
-                let tool_calls = virtual_turn.tool_calls.clone();
+                let mut tool_calls = virtual_turn.tool_calls.clone();
+                normalize_terminal_final_response(
+                    &mut content,
+                    &reasoning,
+                    &mut tool_calls,
+                    crate::llm::resolve_tool_call_mode(&effective_config),
+                );
                 let usage = crate::services::virtual_llm::estimate_virtual_usage(
                     &request_messages,
                     &virtual_turn,
@@ -1095,9 +1102,15 @@ impl Orchestrator {
                 Ok(response) => {
                     let finish_reason = response.finish_reason;
                     let response_finished_at = Instant::now();
-                    let content = response.content;
+                    let mut content = response.content;
                     let reasoning = response.reasoning;
-                    let tool_calls = response.tool_calls;
+                    let mut tool_calls = response.tool_calls;
+                    normalize_terminal_final_response(
+                        &mut content,
+                        &reasoning,
+                        &mut tool_calls,
+                        crate::llm::resolve_tool_call_mode(&effective_config),
+                    );
                     let mut usage = response.usage;
                     if let Some(item) = usage.as_mut() {
                         if item.total == 0 {

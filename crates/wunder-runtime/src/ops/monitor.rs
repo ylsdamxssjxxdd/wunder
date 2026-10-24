@@ -3635,23 +3635,23 @@ mod tests {
     }
 
     #[test]
-    fn monitor_register_hydrates_round_floor_from_stream_events_without_monitor_record() {
+    fn monitor_register_hydrates_round_floor_from_admissions_without_monitor_record() {
         let temp = tempdir().expect("tempdir");
         let db_path = temp.path().join("monitor-stream-round-hydrate.db");
         let storage: Arc<dyn StorageBackend> =
             Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
         storage.ensure_initialized().expect("initialize storage");
-        storage
-            .append_stream_event(
-                "sess-stream-round-hydrate",
-                "user",
-                1,
-                &json!({
-                    "event": "progress",
-                    "data": { "stage": "start", "user_round": 5 }
-                }),
-            )
-            .expect("seed stream event");
+        // Accepted inputs, including those not yet executed, own round
+        // identity. Live transport events are not durable history anymore.
+        for _ in 0..5 {
+            storage
+                .accept_thread_turn(
+                    "user",
+                    "sess-stream-round-hydrate",
+                    &json!({"role": "user", "content": "Fixture input"}),
+                )
+                .expect("seed accepted round");
+        }
         let monitor = MonitorState::new(
             storage.clone(),
             ObservabilityConfig::default(),

@@ -34,10 +34,13 @@ mod sqlite;
 pub(crate) mod stress_model;
 // The canonical history projection is deliberately isolated from the legacy
 // thread log tables. It is a rebuildable SQLite view of rollout JSONL.
+#[cfg(test)]
+pub(crate) mod test_support;
 pub(crate) mod thread_admission;
 pub(crate) mod thread_history;
 #[cfg(test)]
 mod thread_lifecycle_tests;
+pub(crate) mod thread_mutation;
 pub mod thread_store;
 mod thread_view_projection;
 
@@ -48,9 +51,15 @@ pub use constants::{
     MAX_SANDBOX_CONTAINER_ID, MIN_SANDBOX_CONTAINER_ID, USER_PRIVATE_CONTAINER_ID,
 };
 pub use factory::{build_storage, sqlite_state_database_path};
+#[cfg(all(feature = "postgres-storage", any(feature = "sqlite-storage", test)))]
+pub(crate) use postgres::is_canonical_root_binding_failure;
+#[cfg(all(feature = "postgres-storage", test))]
+pub(crate) use postgres::CanonicalRootBindingError;
 #[cfg(feature = "postgres-storage")]
 pub use postgres::PostgresStorage;
 pub use records::*;
 #[cfg(any(feature = "sqlite-storage", test))]
 pub use sqlite::SqliteStorage;
-pub use stress_model::{StressThreadSpec, StressThreadStats};
+pub use stress_model::{
+    StressThreadScenario, StressThreadSpec, StressThreadStats, StressThreadStorageBytes,
+};

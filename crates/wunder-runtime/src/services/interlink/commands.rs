@@ -2194,6 +2194,9 @@ mod tests {
         let device = "fixture_drain_failure";
         let target = format!("device:{device}");
         let mut row = record(CMD_WORKSPACE_READ, &target);
+        // This suite shares the process-wide hub. Its per-user queue budget
+        // must not include commands concurrently parked by another test.
+        row.actor_user_id = format!("fixture-drain-{}", uuid::Uuid::new_v4());
         row.command_id = "fixture_drain_command".into();
         row.status = COMMAND_STATUS_QUEUED.into();
         storage.insert_interlink_command(&row).unwrap();

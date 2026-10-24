@@ -528,6 +528,15 @@ impl ThreadHistoryStore {
     }
 
     pub(crate) fn read_item(&self, rollout_id: &str, item_id: &str) -> Result<ThreadHistoryItem> {
+        self.find_item(rollout_id, item_id)?
+            .ok_or_else(|| anyhow!("thread history item not found"))
+    }
+
+    pub(crate) fn find_item(
+        &self,
+        rollout_id: &str,
+        item_id: &str,
+    ) -> Result<Option<ThreadHistoryItem>> {
         validate_id("rollout_id", rollout_id)?;
         validate_id("item_id", item_id)?;
         let conn = self.connect()?;
@@ -537,9 +546,7 @@ impl ThreadHistoryStore {
         )?;
         let rows = statement.query(params![rollout_id, item_id])?;
         let mut projected = collect_items(rows, rollout_id)?;
-        projected
-            .pop()
-            .ok_or_else(|| anyhow!("thread history item not found"))
+        Ok(projected.pop())
     }
 
     pub(crate) fn read_canonical_item(

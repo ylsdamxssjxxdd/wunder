@@ -94,6 +94,7 @@ fn register_device(state: &AppState, user_id: &str) {
                         "shadow:full",
                         "query.basic",
                         "thread.drive",
+                        "workspace.write",
                         "tool.exec"
                     ])
                     .to_string(),
@@ -1092,13 +1093,16 @@ async fn loopback_run() {
         "a chunked file.read must name its command: {file_rows:?}"
     );
 
-    // -- C2L L1 rejected: denial leaves no local side effects --------------
+    // -- C2L mutation rejected: denial leaves no local side effects --------
+    // Connected workspace thread controls no longer ask for a second device
+    // prompt. Exercise the approval boundary with a workspace mutation, which
+    // still requires a live local decision.
     let sessions_before = session_count(&node.state);
     let rejected = issue(
         &server,
         &format!("device:{DEVICE_ID}"),
-        "thread.message",
-        json!({"message": "拒绝我"}),
+        "workspace.write",
+        json!({"path": "approval-denied.txt", "content": "fixture denied content"}),
         None,
     )
     .await;
@@ -1119,13 +1123,45 @@ async fn loopback_run() {
     .await;
     assert_eq!(record["status"], json!("failed"), "{record}");
     assert_eq!(record["error_code"], json!("APPROVAL_REJECTED"), "{record}");
+    assert!(!user_root.join("approval-denied.txt").exists());
     assert_eq!(
         session_count(&node.state),
         sessions_before,
-        "a denied command must not create a thread"
+        "a denied mutation must not create a thread"
     );
 
-    // -- C2L L1 approved: the local thread is created and driven -----------
+    // -- C2L mutation approved: exactly the authorized file is written -----
+    let permitted = issue(
+        &server,
+        &format!("device:{DEVICE_ID}"),
+        "workspace.write",
+        json!({"path": "approval-granted.txt", "content": "fixture allowed content"}),
+        None,
+    )
+    .await;
+    let approval_id = wait_prompt(&node.client, &permitted, Duration::from_secs(10)).await;
+    assert!(node.client.decide_approval(
+        &approval_id,
+        wunder_server::interlink::client::Decision::Approve,
+        false,
+    ));
+    let permitted_record = wait_terminal(
+        &server,
+        permitted["command_id"].as_str().unwrap(),
+        Duration::from_secs(20),
+    )
+    .await;
+    assert_eq!(
+        permitted_record["status"],
+        json!("succeeded"),
+        "{permitted_record}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(user_root.join("approval-granted.txt")).unwrap(),
+        "fixture allowed content"
+    );
+
+    // -- C2L thread control: the local thread is created and driven --------
     let approved = issue(
         &server,
         &format!("device:{DEVICE_ID}"),
@@ -1134,15 +1170,6 @@ async fn loopback_run() {
         None,
     )
     .await;
-    let approval_id = wait_prompt(&node.client, &approved, Duration::from_secs(10)).await;
-    assert!(
-        node.client.decide_approval(
-            &approval_id,
-            wunder_server::interlink::client::Decision::Approve,
-            false
-        ),
-        "approve applied"
-    );
     let record = wait_terminal(
         &server,
         approved["command_id"].as_str().unwrap(),
@@ -1150,6 +1177,8 @@ async fn loopback_run() {
     )
     .await;
     assert_eq!(record["status"], json!("succeeded"), "{record}");
+    assert_eq!(record["approval_state"], json!("none"), "{record}");
+    assert!(node.client.pending_approvals().is_empty());
     assert_eq!(
         session_count(&node.state),
         sessions_before + 1,
@@ -1192,7 +1221,7 @@ async fn loopback_run() {
         "蜂巢's reducer takes the baseline as `payload.items`: {baseline}"
     );
 
-    // ... and the next approved turn on the same thread arrives as a delta.
+    // ... and the next turn on the same thread arrives as a delta.
     let follow = issue(
         &server,
         &format!("device:{DEVICE_ID}"),
@@ -1201,15 +1230,6 @@ async fn loopback_run() {
         None,
     )
     .await;
-    let follow_approval = wait_prompt(&node.client, &follow, Duration::from_secs(10)).await;
-    assert!(
-        node.client.decide_approval(
-            &follow_approval,
-            wunder_server::interlink::client::Decision::Approve,
-            false,
-        ),
-        "the follow-up prompt is decided"
-    );
     let follow_record = wait_terminal(
         &server,
         follow["command_id"].as_str().unwrap(),
@@ -1219,6 +1239,11 @@ async fn loopback_run() {
     assert_eq!(
         follow_record["status"],
         json!("succeeded"),
+        "{follow_record}"
+    );
+    assert_eq!(
+        follow_record["approval_state"],
+        json!("none"),
         "{follow_record}"
     );
     let delta = view
@@ -1263,7 +1288,7 @@ async fn loopback_run() {
         );
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
-    let slow = issue(
+    let _slow = issue(
         &server,
         &format!("device:{DEVICE_ID}"),
         "thread.message",
@@ -1271,15 +1296,6 @@ async fn loopback_run() {
         None,
     )
     .await;
-    let slow_approval = wait_prompt(&node.client, &slow, Duration::from_secs(10)).await;
-    assert!(
-        node.client.decide_approval(
-            &slow_approval,
-            wunder_server::interlink::client::Decision::Approve,
-            false,
-        ),
-        "the slow turn is approved"
-    );
     // `thread.message` settles at submit and the turn drains in the background,
     // so the ledger says nothing about liveness: wait for the mock to report the
     // round in flight.
@@ -1299,15 +1315,6 @@ async fn loopback_run() {
         None,
     )
     .await;
-    let cancel_approval = wait_prompt(&node.client, &cancel, Duration::from_secs(10)).await;
-    assert!(
-        node.client.decide_approval(
-            &cancel_approval,
-            wunder_server::interlink::client::Decision::Approve,
-            false,
-        ),
-        "the cancel prompt is decided"
-    );
     let cancel_record = wait_terminal(
         &server,
         cancel["command_id"].as_str().unwrap(),
@@ -1318,6 +1325,11 @@ async fn loopback_run() {
         cancel_record["status"],
         json!("succeeded"),
         "the remote cancel must settle: {cancel_record}"
+    );
+    assert_eq!(
+        cancel_record["approval_state"],
+        json!("none"),
+        "{cancel_record}"
     );
     assert_eq!(
         cancel_record["result"]["cancelled"],
@@ -1412,8 +1424,8 @@ async fn loopback_run() {
         &server.token,
         Some(json!({
             "to": format!("device:{DEVICE_ID}"),
-            "kind": "thread.message",
-            "args": {"message": "无人应答", "title": "远程超时线程"},
+            "kind": "workspace.write",
+            "args": {"path": "approval-unanswered.txt", "content": "fixture unanswered content"},
             "timeout_s": 1.0
         })),
     )
@@ -1431,6 +1443,7 @@ async fn loopback_run() {
         matches!(code, "APPROVAL_REJECTED" | "APPROVAL_EXPIRED"),
         "an unanswered prompt must close structurally, got {record}"
     );
+    assert!(!user_root.join("approval-unanswered.txt").exists());
     assert_eq!(
         session_count(&node.state),
         sessions_before + 1,

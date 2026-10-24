@@ -245,7 +245,12 @@ async fn wait_for_memory_count(
         .await;
         assert_eq!(status, StatusCode::OK);
         let count = payload["data"]["total"].as_u64().unwrap_or(0) as usize;
-        if count >= min_count {
+        let extraction_finished = payload["data"]["recent_jobs"]
+            .as_array()
+            .and_then(|jobs| jobs.first())
+            .and_then(|job| job["status"].as_str())
+            .is_some_and(|status| matches!(status, "completed" | "skipped"));
+        if count >= min_count && extraction_finished {
             return payload;
         }
         sleep(Duration::from_millis(150)).await;
@@ -478,7 +483,10 @@ async fn memory_routes_and_prompt_preview_work_end_to_end() {
         json!("response-preference")
     );
     assert!(listed["data"]["items"][0]["category"].is_null());
-    assert!(listed["data"]["items"][0]["summary_l1"].is_null());
+    assert_eq!(
+        listed["data"]["items"][0]["summary_l1"],
+        json!("Prefer concise answers.")
+    );
     assert!(listed["data"]["items"][0]["tags"].is_null());
     assert!(listed["data"]["items"][0]["entities"].is_null());
     assert!(listed["data"]["items"][0]["pinned"].is_null());
@@ -1122,7 +1130,12 @@ async fn auto_extract_uses_mock_llm_and_persists_fragments_end_to_end() {
         .iter()
         .any(|item| item["tag"] == json!("response-preference")));
     assert!(items.iter().all(|item| item["content_l2"].is_string()));
-    assert!(listed["data"]["recent_jobs"].is_null());
+    let jobs = listed["data"]["recent_jobs"]
+        .as_array()
+        .expect("recent extraction jobs");
+    assert!(!jobs.is_empty());
+    assert_eq!(jobs[0]["session_id"], json!(session_id));
+    assert_eq!(jobs[0]["status"], json!("completed"));
 
     let mock_llm_state = context.mock_llm_state.expect("mock llm state");
     assert!(mock_llm_state.chat_calls.load(Ordering::Relaxed) >= 1);

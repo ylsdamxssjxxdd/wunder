@@ -414,7 +414,7 @@ pub(crate) fn trajectory(
     } else {
         None
     };
-    let started_at = if kind == "subagent_run" {
+    let mut started_at = if kind == "subagent_run" {
         runtime
             .and_then(|value| value.get("started_time").and_then(Value::as_f64))
             .unwrap_or(created)
@@ -423,13 +423,36 @@ pub(crate) fn trajectory(
             .and_then(Value::as_f64)
             .unwrap_or(created)
     };
-    let completed_at = if kind == "subagent_run" {
+    let mut completed_at = if kind == "subagent_run" {
         runtime
             .and_then(|value| value.get("finished_time").and_then(Value::as_f64))
             .or_else(|| (is_running(status) == 0).then_some(updated))
     } else {
         (is_running(status) == 0).then_some(updated)
     };
+
+    // Canonical item rows keep their bookkeeping timestamps (`created` and
+    // `updated`) at the admission/commit edge.  For streamed model and tool
+    // items those timestamps are often equal, even though the payload carries
+    // the actual request/tool duration.  Passing the bookkeeping instant
+    // through as both ends collapses the corresponding timeline span to a
+    // one-pixel marker after reload.  Recover the own-step interval here so
+    // every consumer (web, desktop and CLI) receives one consistent range.
+    // Explicit start/end fields always win; this fallback only runs when the
+    // canonical row has no usable duration of its own.
+    if kind != "subagent_run"
+        && completed_at.is_some()
+        && item.get("started_at").and_then(Value::as_f64).is_none()
+        && item.get("completed_at").and_then(Value::as_f64).is_none()
+    {
+        if let Some(duration_s) = trajectory_duration_seconds(item, kind) {
+            let end = completed_at.unwrap_or(updated);
+            if end.is_finite() && duration_s.is_finite() && duration_s > 0.0 {
+                started_at = end - duration_s;
+                completed_at = Some(end);
+            }
+        }
+    }
     TrajectoryViewRow {
         item_id: item_id.into(),
         turn_id: turn_id.into(),
@@ -461,6 +484,76 @@ pub(crate) fn trajectory(
         .then(|| crate::services::thread_log::diagnostics::project(item, status))
         .flatten(),
     }
+}
+
+/// Return the bounded own-step duration recorded in a canonical item payload.
+/// Provider usage metadata can contain a cumulative interaction duration, so
+/// it is deliberately excluded here.  The resulting interval is only used to
+/// paint the trajectory overview; no request content is copied into the view.
+fn trajectory_duration_seconds(item: &Value, kind: &str) -> Option<f64> {
+    fn non_negative(value: Option<&Value>) -> Option<f64> {
+        let value = value
+            .and_then(Value::as_f64)
+            .or_else(|| value?.as_str()?.trim().parse::<f64>().ok())?;
+        value.is_finite().then_some(value.max(0.0))
+    }
+    fn first_non_negative(item: &Value, keys: &[&str]) -> Option<f64> {
+        keys.iter().find_map(|key| non_negative(item.get(*key)))
+    }
+
+    if kind == "assistant_message" {
+        // A persisted message_stats value is the preferred own-request metric
+        // for providers that report it.  `interaction_duration_s` is
+        // intentionally absent because it spans the whole user turn.
+        for source in [
+            item.get("message_stats"),
+            item.get("messageStats"),
+            item.pointer("/meta/message_stats"),
+            item.pointer("/meta/messageStats"),
+        ] {
+            if let Some(source) = source {
+                if let Some(value) = first_non_negative(
+                    source,
+                    &[
+                        "model_duration_s",
+                        "request_duration_s",
+                        "duration_s",
+                        "durationSeconds",
+                    ],
+                ) {
+                    if value > 0.0 {
+                        return Some(value);
+                    }
+                }
+            }
+        }
+        let prefill = first_non_negative(item, &["prefill_duration_s"]);
+        let decode = first_non_negative(item, &["decode_duration_s"]);
+        if prefill.is_some() || decode.is_some() {
+            let value = prefill.unwrap_or(0.0) + decode.unwrap_or(0.0);
+            if value > 0.0 {
+                return Some(value);
+            }
+        }
+        if let Some(timing) = item.get("stream_timing") {
+            let prefill_ms = first_non_negative(timing, &["prefill_ms"]);
+            let decode_ms = first_non_negative(timing, &["decode_ms"]);
+            let value = (prefill_ms.unwrap_or(0.0) + decode_ms.unwrap_or(0.0)) / 1000.0;
+            if value > 0.0 {
+                return Some(value);
+            }
+        }
+    }
+
+    // Tool result metadata records elapsed milliseconds on the result event;
+    // accepting a top-level duration as well keeps imported ledgers useful.
+    let milliseconds = first_non_negative(item, &["duration_ms", "durationMs"]).or_else(|| {
+        item.pointer("/meta")
+            .and_then(|meta| first_non_negative(meta, &["duration_ms", "durationMs"]))
+    });
+    milliseconds
+        .filter(|value| *value > 0.0)
+        .map(|value| value / 1000.0)
 }
 
 /// Keep the trajectory page compact and safe: this local estimate is numeric
@@ -592,12 +685,40 @@ pub(crate) fn new_chat(
 }
 
 pub(crate) fn finite_stats(item: &Value) -> Option<Value> {
-    let source = item
-        .get("message_stats")
-        .or_else(|| item.get("messageStats"))
-        .or_else(|| item.pointer("/meta/message_stats"))
-        .or_else(|| item.pointer("/meta/messageStats"))?
-        .as_object()?;
+    // Canonical assistant rows written by the executor carry the compact
+    // `message_stats` object in `meta`.  Older/streamed rows (and the
+    // append-chat snapshots used by the service) carry the same timing and
+    // usage fields directly on the assistant payload.  Read both shapes here;
+    // dropping the direct shape makes a re-opened bubble lose all timing,
+    // speed and quota metrics even though they are still persisted.
+    let persisted_source = [
+        item.get("message_stats"),
+        item.get("messageStats"),
+        item.pointer("/meta/message_stats"),
+        item.pointer("/meta/messageStats"),
+    ]
+    .into_iter()
+    .flatten()
+    .find_map(Value::as_object);
+    // Do not turn arbitrary trajectory rows (especially tool result payloads)
+    // into message metrics merely because they contain a numeric field.  A
+    // direct source is valid only for the assistant-output schema.
+    let direct_source = item.as_object().filter(|source| {
+        [
+            "prefill_duration_s",
+            "decode_duration_s",
+            "decode_output_tokens",
+            "decode_tokens",
+            "decode_speed_tps",
+            "prefill_tokens",
+            "prefill_speed_tps",
+            "stream_timing",
+            "usage",
+        ]
+        .iter()
+        .any(|key| source.contains_key(*key))
+    });
+    let source = persisted_source.or(direct_source)?;
     // Keep the small nested usage payloads intact.  The previous projection
     // admitted only top-level numbers/booleans, which silently removed
     // `round_usage`/`usage` and left the bubble's token metric as `--` after a
@@ -661,6 +782,69 @@ pub(crate) fn finite_stats(item: &Value) -> Option<Value> {
             .map(|(k, v)| (preview(k, 64), v.clone()))
             .collect::<serde_json::Map<_, _>>();
         fields.insert(key.into(), Value::Object(bounded));
+    }
+    // Preserve direct output metadata when a compact message_stats object is
+    // present as well.  The canonical row may combine the two shapes: timing
+    // is emitted on the llm_output payload while quota is emitted in meta.
+    if persisted_source.is_some() {
+        for key in [
+            "interaction_duration_s",
+            "prefill_duration_s",
+            "prefill_duration_total_s",
+            "decode_duration_s",
+            "decode_duration_total_s",
+            "decode_output_tokens",
+            "decode_tokens",
+            "decode_speed_tps",
+            "prefill_speed_tps",
+            "visible_decode_tokens",
+            "visible_decode_duration_s",
+            "visible_decode_speed_tps",
+            "visible_decode_measured",
+            "avg_model_round_speed_tps",
+            "avg_model_round_decode_speed_tps",
+            "avg_model_round_speed_rounds",
+            "ttft_ms",
+            "context_occupancy_tokens",
+            "contextTokens",
+            "model_request_count",
+            "account_credits_consumed",
+            "tool_calls",
+            "toolCalls",
+        ] {
+            if fields.contains_key(key) {
+                continue;
+            }
+            let Some(value) = item.get(key) else { continue };
+            if finite_scalar(value) {
+                fields.insert(key.into(), value.clone());
+            }
+        }
+        if !fields.contains_key("stream_timing") {
+            if let Some(value) = item.get("stream_timing").and_then(Value::as_object) {
+                let bounded = value
+                    .iter()
+                    .filter(|(_, value)| finite_scalar(value))
+                    .take(16)
+                    .map(|(key, value)| (preview(key, 64), value.clone()))
+                    .collect::<serde_json::Map<_, _>>();
+                fields.insert("stream_timing".into(), Value::Object(bounded));
+            }
+        }
+    }
+    // Some providers expose tool calls as the full OpenAI array on the
+    // assistant item instead of the persisted numeric `toolCalls` counter.
+    // Keep only its bounded count for the compact message footer.
+    if !fields.contains_key("toolCalls") && !fields.contains_key("tool_calls") {
+        if let Some(count) = item
+            .get("tool_calls")
+            .or_else(|| source.get("tool_calls"))
+            .and_then(Value::as_array)
+            .map(|v| v.len())
+        {
+            fields.insert("toolCalls".into(), json!(count));
+            fields.insert("tool_calls".into(), json!(count));
+        }
     }
     // Preserve the canonical quota aliases when they are present in the
     // nested request usage object.  This is the value shown in the bubble,
@@ -810,6 +994,33 @@ mod tests {
     }
 
     #[test]
+    fn trajectory_recovers_assistant_span_from_stream_durations() {
+        let row = project(
+            "assistant_message",
+            &json!({
+                "content": "完成",
+                "prefill_duration_s": 0.8,
+                "decode_duration_s": 1.2,
+            }),
+        );
+        assert_eq!(row.completed_at, Some(1.0));
+        assert!((row.started_at - (-1.0)).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn trajectory_recovers_tool_span_from_duration_metadata() {
+        let row = project(
+            "tool_call",
+            &json!({
+                "tool": "write_file",
+                "meta": {"duration_ms": 250},
+            }),
+        );
+        assert_eq!(row.completed_at, Some(1.0));
+        assert!((row.started_at - 0.75).abs() < f64::EPSILON);
+    }
+
+    #[test]
     fn context_rows_keep_their_body_text() {
         let row = project(
             "system_message",
@@ -852,6 +1063,25 @@ mod tests {
         assert_eq!(stats["usage"]["inputTokens"], "1200");
         assert_eq!(stats["usage"]["outputTokens"], 340);
         assert_eq!(stats["usage"]["reasoningTokens"], "12");
+    }
+
+    #[test]
+    fn finite_stats_recovers_direct_assistant_output_metadata() {
+        let stats = finite_stats(&json!({
+            "content": "done",
+            "prefill_duration_s": 1.2,
+            "decode_duration_s": 0.8,
+            "decode_output_tokens": 40,
+            "decode_speed_tps": 50.0,
+            "usage": {"input_tokens": 100, "output_tokens": 40, "total_tokens": 140},
+            "tool_calls": [{"id": "call-1"}]
+        }))
+        .expect("direct assistant metadata should be available");
+        assert_eq!(stats["prefill_duration_s"], json!(1.2));
+        assert_eq!(stats["decode_duration_s"], json!(0.8));
+        assert_eq!(stats["decode_output_tokens"], json!(40));
+        assert_eq!(stats["toolCalls"], json!(1));
+        assert_eq!(stats["usage"]["total_tokens"], json!(140));
     }
 
     #[test]

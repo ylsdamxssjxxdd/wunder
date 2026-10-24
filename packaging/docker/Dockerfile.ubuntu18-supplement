@@ -1,10 +1,12 @@
 FROM ubuntu:18.04
 
-# Lean build image for the Linux supplement pack (opt/python, opt/git, opt/rg).
-# Unlike the desktop AppImage image this carries no Rust toolchain; it only
-# needs the toolchain to compile bundled Git plus curl/python3 for the pack
-# script. The arm64 variant is run under QEMU binfmt by CI, so the single
-# Dockerfile covers both architectures through the platform flag.
+# Lean build image for the Linux base supplement pack (opt/python, opt/git,
+# opt/rg and opt/ffmpeg). Remotion is assembled in the separate
+# Dockerfile.ubuntu22-remotion image and merged into the finished pack.
+# Keeping this image on Ubuntu 18.04 preserves the desktop compatibility
+# baseline for the native tools. The arm64 variant is run under QEMU binfmt by
+# CI, so the single Dockerfile covers both architectures through the platform
+# flag.
 ARG TARGETARCH
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -12,12 +14,13 @@ ENV DEBIAN_FRONTEND=noninteractive
 # names carry non-ASCII strings and the build heredocs print with
 # ensure_ascii=False. With no locale set, Python 3.6 on bionic exposes an
 # ASCII stdout and those prints die with UnicodeEncodeError, so pin a UTF-8
-# locale and stdio encoding for every process in the container (glibc 2.27
-# ships C.UTF-8 without locale-gen).
+# locale and stdio encoding for every process in the container (the base image
+# provides C.UTF-8 without requiring locale generation).
 ENV LANG=C.UTF-8 LC_ALL=C.UTF-8 PYTHONIOENCODING=utf-8
 
-# Ubuntu 18.04 is EOL: pin the archive mirrors explicitly and ignore the
-# expired Release files, mirroring the desktop AppImage image policy.
+# Pin the Ubuntu 18.04 archive mirrors explicitly. The current archive still
+# serves bionic metadata; keeping the standard endpoints also supports local
+# mirrors that cache the base image's original sources.
 RUN if [ "${TARGETARCH}" = "arm64" ]; then \
       printf '%s\n' \
         "deb [trusted=yes] http://ports.ubuntu.com/ubuntu-ports bionic main universe multiverse restricted" \
@@ -28,7 +31,7 @@ RUN if [ "${TARGETARCH}" = "arm64" ]; then \
       printf '%s\n' \
         "deb [trusted=yes] http://archive.ubuntu.com/ubuntu bionic main universe multiverse restricted" \
         "deb [trusted=yes] http://archive.ubuntu.com/ubuntu bionic-updates main universe multiverse restricted" \
-        "deb [trusted=yes] http://archive.ubuntu.com/ubuntu bionic-security main universe multiverse restricted" \
+        "deb [trusted=yes] http://security.ubuntu.com/ubuntu bionic-security main universe multiverse restricted" \
         > /etc/apt/sources.list; \
     fi \
  && printf 'Acquire::Check-Valid-Until "false";\n' > /etc/apt/apt.conf.d/99no-check-valid \

@@ -6,6 +6,8 @@
 - `opt/git`：给 `git clone`、`git status`、补丁应用与仓库操作使用的内置 Git
 - `opt/rg`：给 `search_content` 与命令行检索使用的内置 ripgrep
 - `opt/ffmpeg`：给音视频抽帧、抽音轨与转码使用的内置静态 ffmpeg
+- `opt/node`：Node.js 16.20.2（npm、npx），由独立的 Remotion 构建环境产生
+- `opt/remotion`：Remotion 4.0.538、`@remotion/cli`、React 19.2.3、当前架构 compositor 和 Chrome Headless Shell
 - `opt/r2`：（可选）radare2 反汇编工具集；构建时通过 `WUNDER_SUPPLEMENT_R2_ARCHIVE` 投喂预编译包才会包含
 
 `WUNDER_SUPPLEMENT_R2_ARCHIVE` 接受两种投喂物：静态单文件 r2 二进制（或仅含该文件的 tar.gz/zip，落到 `opt/r2/bin/radare2` 并自动建立 `r2` 符号链接），或带 `bin/radare2` 布局的压缩包（顶层目录拍平进 `opt/r2`）。发行版 deb 与官方 6.x 发布物要求的 glibc 高于 Ubuntu 18.04，不要直接投喂； amd64 可用 radare2 6.2.4 静态单文件（在 ubuntu:18.04 容器内 `sys/static.sh` 构建产物），arm64 可在 ARM64 构建机上以同样方式源码编译。CI 从固定的 `supplement` release 下载清单 [r2-static-archives.json](scripts/r2-static-archives.json) 中登记的产物（文件名 + SHA256，未列出的架构跳过 r2），并以该清单参与补充包缓存键。
@@ -13,7 +15,7 @@
 补充包设计目标与 Win7 版一致：**统一安装到 `WUNDER_HOME/opt`，蛹与舵机共用一份运行环境**。
 
 - 推荐在蛹设置中选择“导入补充包”，默认写入 `~/.wunder/opt/`，导入后蛹新启动的工具立即生效。
-- 手动安装时，关闭使用该补充包的进程，将压缩包解压到 `${WUNDER_HOME:-$HOME/.wunder}`，使其下直接出现 `opt/python`、`opt/git`、`opt/rg`、`opt/ffmpeg`（以及可选的 `opt/r2`），再启动蛹或舵机。
+- 手动安装时，关闭使用该补充包的进程，将压缩包解压到 `${WUNDER_HOME:-$HOME/.wunder}`，使其下直接出现 `opt/python`、`opt/git`、`opt/rg`、`opt/ffmpeg`、`opt/node`、`opt/remotion`（以及可选的 `opt/r2`），再启动蛹或舵机。
 - AppImage 同样使用这个可写用户目录；安装目录与 AppImage 同级旧 `opt/` 仅保留读取回退，新导入始终写入共享 home，不自动搬迁旧文件。
 
 ## 安装器打包
@@ -52,8 +54,10 @@ Windows 上也可以执行 `build.bat pack -a linux-amd64`；组包器是 Python
   - amd64 使用静态 musl 构建；arm64 官方未发布 musl 资产，使用 gnu 构建。
 - ffmpeg：`4.4.1`（eugeneware/ffmpeg-static `b4.4.1`）
   - 与 Win7 补充包同源同版本，保证三端音视频处理行为一致（对齐 Windows）。
-  - 上游为自包含静态单文件构建，Ubuntu 18.04（glibc 2.27）与 arm64 包可直接运行；
-    当前仅内置 `ffmpeg`（不含 `ffprobe`），与 Win7 包保持一致。
+   - 上游为自包含静态单文件构建，Ubuntu 18.04（glibc 2.27）与 arm64 包可直接运行；
+     当前仅内置 `ffmpeg`（不含 `ffprobe`），与 Win7 包保持一致。
+- Node.js：`16.20.2`，用于 Ubuntu 18.04 兼容运行；由独立 Remotion 构建环境产生。
+- Remotion：`4.0.538`，npm 安装当前架构的 Linux compositor，并执行 `remotion browser ensure` 预取 Headless Shell。
 
 ## Python 依赖
 
@@ -64,11 +68,17 @@ Windows 上也可以执行 `build.bat pack -a linux-amd64`；组包器是 Python
 
 ## 入口命令
 
-补充包构建必须在 Ubuntu 18.04 容器内执行（保证 glibc 基线）。amd64 直接构建，
+基础组件在 Ubuntu 18.04 容器内构建，Node/Remotion 在独立 Ubuntu 22.04 容器内构建后合并。amd64 直接构建，
 arm64 使用 `--platform linux/arm64`（本地需 binfmt/QEMU，CI 由
 `docker/setup-qemu-action` 提供）：
 
 ```bash
+docker build -f packaging/docker/Dockerfile.ubuntu22-remotion \
+  -t wunder-remotion-ubuntu2204-amd64 .
+docker run --rm --platform linux/amd64 -v "$(pwd):/app" -w /app \
+  -e ARCH=amd64 -e WUNDER_REMOTION_OUTPUT=/app/temp_dir/linux-remotion/opt \
+  wunder-remotion-ubuntu2204-amd64 bash packaging/linux/scripts/build_linux_remotion.sh
+
 docker build -f packaging/docker/Dockerfile.ubuntu18-supplement \
   -t wunder-supplement-ubuntu1804-amd64 .
 
@@ -76,6 +86,7 @@ docker run --rm --platform linux/amd64 \
   -v "$(pwd):/app" -w /app \
   -e ARCH=amd64 \
   -e WUNDER_OUTPUT_DIR=/app/temp_dir/linux-supplement/dist \
+  -e WUNDER_REMOTION_PAYLOAD=/app/temp_dir/linux-remotion \
   wunder-supplement-ubuntu1804-amd64 \
   bash packaging/linux/scripts/build_linux_supplement.sh
 ```
@@ -105,6 +116,8 @@ opt/
   git/
   rg/
   ffmpeg/
+  node/
+  remotion/
 README-linux-supplement.txt
 wunder-linux-supplement.json
 ```

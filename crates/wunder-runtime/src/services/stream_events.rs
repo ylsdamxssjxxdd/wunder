@@ -154,19 +154,21 @@ mod tests {
     use serde_json::json;
     use std::sync::Arc;
 
-    fn build_service() -> StreamEventService {
-        let db_path = std::env::temp_dir().join(format!(
-            "wunder_stream_events_{}.db",
-            uuid::Uuid::new_v4().simple()
-        ));
+    fn build_service() -> (StreamEventService, tempfile::TempDir) {
+        // Runtime SQLite roles are siblings of the state database. Keep the
+        // whole role family inside a per-test root; placing only state in a
+        // unique file would still share `logs_1.sqlite` under the global temp
+        // directory when tests run in parallel.
+        let root = tempfile::tempdir().expect("stream event test root");
+        let db_path = root.path().join("state_1.sqlite");
         let storage: Arc<dyn StorageBackend> =
             Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
-        StreamEventService::new(storage)
+        (StreamEventService::new(storage), root)
     }
 
     #[tokio::test]
     async fn append_event_assigns_monotonic_ids() {
-        let service = build_service();
+        let (service, _root) = build_service();
         let first = service
             .append_event(
                 "chat::user-a::sess-a",
@@ -196,7 +198,8 @@ mod tests {
 
     #[tokio::test]
     async fn append_event_is_serialized_per_stream() {
-        let service = Arc::new(build_service());
+        let (service, _root) = build_service();
+        let service = Arc::new(service);
         let mut tasks = Vec::new();
         for seq in 0..40 {
             let service_snapshot = service.clone();
@@ -227,7 +230,7 @@ mod tests {
 
     #[tokio::test]
     async fn list_events_updates_tail_cache() {
-        let service = build_service();
+        let (service, _root) = build_service();
         for seq in 0..3 {
             service
                 .append_event(

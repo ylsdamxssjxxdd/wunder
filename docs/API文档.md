@@ -1,6 +1,6 @@
 # wunder API 文档
 
-wunder 是一个**智能体调度平台**：蛹（desktop）是本地 AI 工作台，蜂巢（web）是云端 AI 工作台，舵机（cli）是手工本地操作入口，舰体（server）是用户与智能体管理平台。本文档描述舰体（server）对外提供的 HTTP / WebSocket 接口，蛹与舵机在本地复用同一套引擎语义。
+wunder 是一个**多形态的智能体工作台**：蛹（desktop）是本地 AI 工作台，蜂巢（web）是云端 AI 工作台，舵机（cli）是手工本地操作入口，舰体（server）是用户与智能体管理平台。本文档描述舰体（server）对外提供的 HTTP / WebSocket 接口，蛹与舵机在本地复用同一套引擎语义。
 
 ## 4. API 设计
 

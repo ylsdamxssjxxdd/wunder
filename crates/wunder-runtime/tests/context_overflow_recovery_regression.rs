@@ -6,7 +6,7 @@ use axum::{
     Json, Router,
 };
 use serde_json::{json, Value};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tempfile::TempDir;
@@ -18,6 +18,7 @@ use wunder_server::{
     config::{Config, LlmModelConfig},
     config_store::ConfigStore,
     history::HistoryManager,
+    orchestrator_constants::COMPACTION_META_TYPE,
     state::{AppState, AppStateInitOptions},
 };
 
@@ -28,6 +29,8 @@ struct MindieOverflowMockState {
     total_calls: AtomicUsize,
     overflow_calls: AtomicUsize,
     success_calls: AtomicUsize,
+    next_success_prompt_tokens: AtomicI64,
+    override_consuming_payload: Mutex<Option<Value>>,
     last_success_payload: Mutex<Option<Value>>,
 }
 
@@ -38,6 +41,8 @@ impl MindieOverflowMockState {
             total_calls: AtomicUsize::new(0),
             overflow_calls: AtomicUsize::new(0),
             success_calls: AtomicUsize::new(0),
+            next_success_prompt_tokens: AtomicI64::new(0),
+            override_consuming_payload: Mutex::new(None),
             last_success_payload: Mutex::new(None),
         }
     }
@@ -208,6 +213,23 @@ async fn mock_chat_completions(
     }
 
     state.success_calls.fetch_add(1, Ordering::Relaxed);
+    // The override models the ordinary round-seven chat response. A compaction
+    // summary is also an LLM request and can contain the round marker in its
+    // quoted context; it must not consume the next normal-response usage.
+    let reported_prompt_tokens = if is_round_seven_chat_reply(&payload) {
+        let override_tokens = state.next_success_prompt_tokens.swap(0, Ordering::SeqCst);
+        if override_tokens > 0 {
+            *state
+                .override_consuming_payload
+                .lock()
+                .expect("override consuming payload lock") = Some(payload.clone());
+            override_tokens
+        } else {
+            estimated_tokens.max(1)
+        }
+    } else {
+        estimated_tokens.max(1)
+    };
     *state
         .last_success_payload
         .lock()
@@ -228,12 +250,28 @@ async fn mock_chat_completions(
                 "finish_reason": "stop"
             }],
             "usage": {
-                "prompt_tokens": estimated_tokens.max(1),
+                "prompt_tokens": reported_prompt_tokens,
                 "completion_tokens": 8,
-                "total_tokens": estimated_tokens.max(1) + 8
+                "total_tokens": reported_prompt_tokens + 8
             }
         })),
     )
+}
+
+fn is_round_seven_chat_reply(payload: &Value) -> bool {
+    let Some(content) = payload
+        .get("messages")
+        .and_then(Value::as_array)
+        .and_then(|messages| messages.last())
+        .and_then(|message| message.get("content"))
+        .and_then(Value::as_str)
+    else {
+        return false;
+    };
+    content
+        .trim_start()
+        .starts_with("[mindie-overflow-regression] round=7")
+        && !content.contains("[Compaction constraints /")
 }
 
 fn estimate_request_tokens(payload: &Value) -> i64 {
@@ -438,11 +476,21 @@ async fn run_pressure_round_range(
     }
 }
 
+fn is_compaction_checkpoint(item: &Value) -> bool {
+    // Visible compaction results repeat the summary text prefix. The durable
+    // checkpoint has explicit metadata and is the only replacement snapshot.
+    item.get("role").and_then(Value::as_str) == Some("system")
+        && item.pointer("/meta/type").and_then(Value::as_str) == Some(COMPACTION_META_TYPE)
+        && item
+            .pointer("/meta/replacement_history")
+            .is_some_and(Value::is_array)
+}
+
 fn latest_compaction_summary_item(history: &[Value]) -> Option<&Value> {
     history
         .iter()
         .rev()
-        .find(|item| HistoryManager::is_compaction_summary_item(item))
+        .find(|item| is_compaction_checkpoint(item))
 }
 
 fn latest_compaction_summary_item_with_trigger<'a>(
@@ -450,7 +498,7 @@ fn latest_compaction_summary_item_with_trigger<'a>(
     trigger_mode: &str,
 ) -> Option<&'a Value> {
     history.iter().rev().find(|item| {
-        HistoryManager::is_compaction_summary_item(item)
+        is_compaction_checkpoint(item)
             && item
                 .get("meta")
                 .and_then(Value::as_object)
@@ -783,7 +831,9 @@ async fn mindie_context_overflow_recovers_and_session_keeps_running() {
     let context = build_test_context("mindie_context_recovery_user").await;
     let session_id = create_test_session(&context, "MindIE context overflow regression").await;
 
-    run_pressure_rounds(&context, &session_id, 12, 600).await;
+    // Each input must fit after learning the provider's smaller context window;
+    // accumulated history still exceeds that window and exercises HTTP recovery.
+    run_pressure_rounds(&context, &session_id, 12, 200).await;
 
     let overflow_calls = context.mock_state.overflow_calls.load(Ordering::Relaxed);
     let success_calls = context.mock_state.success_calls.load(Ordering::Relaxed);
@@ -1107,7 +1157,34 @@ async fn auto_loop_compaction_keeps_first_and_recent_two_turns_after_manual_base
 
     run_pressure_rounds(&context, &session_id, 4, 125).await;
     trigger_manual_compaction_and_wait(&context, &session_id).await;
-    run_pressure_round_range(&context, &session_id, 5..=7, 125).await;
+    run_pressure_round_range(&context, &session_id, 5..=6, 125).await;
+
+    // Provider tokenizers can differ from the local estimate. Drive the next
+    // trigger through real HTTP usage accounting, without changing storage.
+    context
+        .mock_state
+        .next_success_prompt_tokens
+        .store(7_200, Ordering::SeqCst);
+    run_pressure_round_range(&context, &session_id, 7..=7, 125).await;
+    assert_eq!(
+        context
+            .mock_state
+            .next_success_prompt_tokens
+            .load(Ordering::SeqCst),
+        0,
+        "round 7 should consume the provider usage override"
+    );
+    let override_consuming_payload = context
+        .mock_state
+        .override_consuming_payload
+        .lock()
+        .expect("override consuming payload lock")
+        .clone()
+        .expect("round 7 chat request should consume the provider usage override");
+    assert!(
+        is_round_seven_chat_reply(&override_consuming_payload),
+        "only the ordinary round 7 chat request may consume the provider usage override: {override_consuming_payload}"
+    );
 
     // The next request must actually cross the provider-observed trigger.
     let observed_tokens = context
@@ -1118,6 +1195,10 @@ async fn auto_loop_compaction_keeps_first_and_recent_two_turns_after_manual_base
     assert!(
         observed_tokens >= 7_200,
         "fixture below trigger: {observed_tokens}"
+    );
+    assert_eq!(
+        observed_tokens, 7_200,
+        "the provider-reported input count should be persisted unchanged"
     );
 
     let (status, payload) = send_json(
@@ -1280,21 +1361,131 @@ async fn manual_compaction_keeps_single_compaction_id_across_events_and_summary_
         Some(compaction_id.as_str()),
         "persisted summary meta should keep the committed compaction_id"
     );
+    assert_eq!(summary_item.pointer("/meta/hidden"), Some(&json!(true)));
+    let summary_id = summary_item["item_id"].as_str().expect("summary item id");
+    let command_item = raw_history
+        .iter()
+        .find(|item| {
+            item["user_round"] == accepted_round
+                && item.pointer("/meta/type").and_then(Value::as_str)
+                    == Some("manual_compaction_command")
+        })
+        .expect("accepted command was materialized before compaction");
+    assert!(
+        command_item["created_seq"]
+            .as_i64()
+            .expect("command sequence")
+            < summary_item["created_seq"]
+                .as_i64()
+                .expect("summary sequence")
+    );
+    let turn = summary_item["turn_id"].as_str().expect("summary turn");
+    let result_item = raw_history
+        .iter()
+        .find(|item| {
+            item["turn_id"] == turn
+                && item.pointer("/meta/type").and_then(Value::as_str)
+                    == Some("manual_compaction_marker")
+        })
+        .expect("manual compaction should retain a visible assistant result");
+    assert_eq!(
+        result_item
+            .pointer("/meta/compaction_id")
+            .and_then(Value::as_str),
+        Some(compaction_id.as_str()),
+        "visible result should keep the checkpoint compaction_id"
+    );
+    // Reopen the read facade to verify visibility from the durable projection.
+    let reopened = wunder_server::storage::SqliteStorage::new(
+        context
+            ._temp_dir
+            .path()
+            .join("data")
+            .join("state_1.sqlite")
+            .to_string_lossy()
+            .into_owned(),
+    );
+    let reopened: &dyn wunder_server::storage::StorageBackend = &reopened;
+    assert!(reopened
+        .get_thread_item(&context.user_id, &session_id, summary_id, true)
+        .unwrap()
+        .is_some());
+    assert!(reopened
+        .get_thread_item(&context.user_id, &session_id, summary_id, false)
+        .unwrap()
+        .is_none());
+    let trajectory = reopened
+        .thread_view_window(
+            &context.user_id,
+            &session_id,
+            "trajectory",
+            None,
+            None,
+            Some(turn),
+            100,
+        )
+        .unwrap();
+    assert!(!trajectory
+        .trajectory
+        .iter()
+        .any(|row| row.item_id == summary_id));
+    assert!(!trajectory
+        .trajectory
+        .iter()
+        .any(|row| row.kind == "configuration"));
+    assert_eq!(
+        trajectory
+            .trajectory
+            .iter()
+            .filter(|row| row.kind == "compaction")
+            .count(),
+        1,
+        "only the semantic result should present compaction activity"
+    );
+    let durable_turn = reopened
+        .get_thread_turn(&context.user_id, &session_id, turn, -1, 100, true)
+        .unwrap()
+        .expect("reopened manual compaction turn");
+    assert_eq!(durable_turn["has_more"], false);
+    let completed_items = durable_turn["items"]
+        .as_array()
+        .expect("durable completed items");
+    for item in completed_items {
+        assert_ne!(item["kind"], "model_call");
+        assert!(
+            !matches!(
+                item.pointer("/payload/event_type").and_then(Value::as_str),
+                Some("llm_request" | "llm_response" | "progress")
+            ),
+            "transport events should not duplicate the completed compaction item: {item}"
+        );
+    }
 
-    let events_data = load_session_events(&context, &session_id).await;
-    let round = find_session_round(&events_data, accepted_round).expect("manual compaction round");
-    let events = round
+    // Request/response and progress belong to the bounded live monitor tail.
+    // Reopened workflow events contain only the completed semantic result.
+    let live_detail = context
+        .state
+        .monitor
+        .get_detail_page(&session_id, 0, 500)
+        .expect("live monitor detail");
+    let live_events = live_detail
         .get("events")
         .and_then(Value::as_array)
-        .expect("manual compaction round events");
+        .expect("live monitor events");
 
+    let mut saw_compaction_progress = false;
     let mut saw_summary_request = false;
     let mut saw_summary_response = false;
     let mut saw_final_compaction = false;
 
-    for event in events {
-        let event_type = event.get("event").and_then(Value::as_str).unwrap_or("");
+    for event in live_events {
+        let event_type = event.get("type").and_then(Value::as_str).unwrap_or("");
         let data = event.get("data").unwrap_or(event);
+        if data.get("user_round").and_then(Value::as_i64) != Some(accepted_round)
+            && data.get("turn_id").and_then(Value::as_str) != Some(turn)
+        {
+            continue;
+        }
         let event_compaction_id = data.get("compaction_id").and_then(Value::as_str);
 
         match event_type {
@@ -1306,6 +1497,7 @@ async fn manual_compaction_keeps_single_compaction_id_across_events_and_summary_
                         Some(compaction_id.as_str()),
                         "manual compaction progress should keep one compaction_id"
                     );
+                    saw_compaction_progress = true;
                 }
             }
             "llm_request" => {
@@ -1334,6 +1526,11 @@ async fn manual_compaction_keeps_single_compaction_id_across_events_and_summary_
                     Some(compaction_id.as_str()),
                     "manual compaction final event should keep one compaction_id"
                 );
+                assert_eq!(
+                    data.get("status"),
+                    compaction_event.get("status"),
+                    "durable result should preserve the live semantic compaction status"
+                );
                 saw_final_compaction = true;
             }
             _ => {}
@@ -1341,16 +1538,51 @@ async fn manual_compaction_keeps_single_compaction_id_across_events_and_summary_
     }
 
     assert!(
+        saw_compaction_progress,
+        "live monitor should include manual compaction progress"
+    );
+    assert!(
         saw_summary_request,
-        "manual compaction round should include compaction summary request event"
+        "live monitor should include the compaction summary request"
     );
     assert!(
         saw_summary_response,
-        "manual compaction round should include compaction summary response event"
+        "live monitor should include the compaction summary response"
     );
     assert!(
         saw_final_compaction,
-        "manual compaction round should include final compaction event"
+        "live monitor should include the final compaction event"
+    );
+
+    let events_data = load_session_events(&context, &session_id).await;
+    let round = find_session_round(&events_data, accepted_round).expect("manual compaction round");
+    let events = round
+        .get("events")
+        .and_then(Value::as_array)
+        .expect("durable manual compaction events");
+    let mut final_compaction_count = 0;
+    for event in events {
+        let event_type = event.get("event").and_then(Value::as_str).unwrap_or("");
+        assert!(
+            !matches!(
+                event_type,
+                "llm_request" | "llm_response" | "progress" | "model_call"
+            ),
+            "durable workflow should omit live transport events: {event}"
+        );
+        if event_type == "compaction" {
+            let data = event.get("data").unwrap_or(event);
+            assert_eq!(
+                data.get("compaction_id").and_then(Value::as_str),
+                Some(compaction_id.as_str()),
+                "durable result should keep the live compaction_id"
+            );
+            final_compaction_count += 1;
+        }
+    }
+    assert_eq!(
+        final_compaction_count, 1,
+        "durable workflow should retain exactly one semantic compaction result"
     );
 }
 
@@ -1360,7 +1592,7 @@ async fn mindie_context_overflow_recovery_stays_alive_for_50_rounds() {
     let context = build_test_context("mindie_context_recovery_50_rounds").await;
     let session_id = create_test_session(&context, "MindIE 50 rounds context stress").await;
 
-    run_pressure_rounds(&context, &session_id, 50, 600).await;
+    run_pressure_rounds(&context, &session_id, 50, 200).await;
 
     let overflow_calls = context.mock_state.overflow_calls.load(Ordering::Relaxed);
     let success_calls = context.mock_state.success_calls.load(Ordering::Relaxed);

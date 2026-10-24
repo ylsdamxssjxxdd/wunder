@@ -35,6 +35,12 @@ struct StartStressThreadRequest {
     model_rounds: i64,
     #[serde(default)]
     title: Option<String>,
+    #[serde(default)]
+    seed: Option<u64>,
+    /// Canonical workload selector. `profile` remains an input alias for
+    /// callers that used the earlier API name.
+    #[serde(default, alias = "profile")]
+    scenario: Option<String>,
 }
 
 /// 压测线程属于测试能力，仅管理员可操作，避免普通用户误触发批量写入。
@@ -62,9 +68,13 @@ async fn start_stress_thread(
     stress_thread::start_stress_thread_job(StartStressJobRequest {
         target,
         user_id: resolved.user.user_id.clone(),
+        user_store: Arc::clone(&state.user_store),
         user_rounds: payload.user_rounds,
         model_rounds_per_turn: payload.model_rounds,
         title: payload.title,
+        seed: payload.seed,
+        scenario: crate::storage::StressThreadScenario::parse(payload.scenario.as_deref())
+            .map_err(|message| error_response(StatusCode::BAD_REQUEST, message.to_string()))?,
         thread_updates: Some(state.kernel.orchestrator.clone()),
     })
     .map(Json)

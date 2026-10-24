@@ -62,7 +62,7 @@ import { useI18n } from '@/i18n';
 import { summarizePlanProgress } from '@/components/chat/composerActivity';
 
 /**
- * 输入区上方的计划状态条：只有「计划面板」写过步骤才出现，居中胶囊给出
+ * 输入区上方的计划状态条：只有「计划面板」写过步骤才出现，靠右的胶囊给出
  * 当前步骤，点击切换上方步骤卡。展开状态独立于持久计划，关闭不会移除计划。
  * 运行阶段提示不在这里——每个智能体气泡
  * 自己已经带运行信息。目标条（MessageGoalBar）仍在其下，两者不合并。
@@ -126,7 +126,8 @@ const closePanel = () => {
 .status-dock {
   position: relative;
   display: flex;
-  justify-content: center;
+  /* 靠右贴住输入区右缘：计划胶囊只占一行尾部，不横在视野中央。 */
+  justify-content: flex-end;
   margin: 0 0 8px;
   min-height: 26px;
 }
@@ -197,10 +198,11 @@ const closePanel = () => {
 /* 计划步骤卡按需展开，浮在消息流之上，细环三态图标读作进度。 */
 .status-dock-pop {
   position: absolute;
-  left: 50%;
+  /* 右缘对齐胶囊右缘，向左展开。 */
+  right: 0;
   bottom: calc(100% + 8px);
-  transform: translateX(-50%);
-  width: min(560px, calc(100vw - 48px));
+  /* 宽度不超过胶囊所在行，靠右时不会溢到输入区之外。 */
+  width: min(560px, 100%);
   max-height: min(360px, 46vh);
   display: flex;
   flex-direction: column;
@@ -304,7 +306,7 @@ const closePanel = () => {
 .status-dock-fade-enter-from,
 .status-dock-fade-leave-to {
   opacity: 0;
-  transform: translateX(-50%) translateY(4px);
+  transform: translateY(4px);
 }
 
 @keyframes status-dock-spin {

@@ -1,9 +1,9 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-10-21T06:56:42.742266+00:00",
+  "generated_at": "2026-10-24T02:01:03.188460+00:00",
   "site": {
     "name": "使用说明书",
-    "description": "wunder is an agent orchestration platform: Pupa (desktop) is the local AI workbench, Beehive (web) is the cloud AI workbench, Helm (cli) is the manual local entry point, and the Hull (server) is the user and agent management platform. / wunder 是一个智能体调度平台：蛹（desktop）是本地 AI 工作台，蜂巢（web）是云端 AI 工作台，舵机（cli）是手工本地操作入口，舰体（server）是用户与智能体管理平台。",
+    "description": "wunder is a multi-form agent workbench: Pupa (desktop) is the local AI workbench, Beehive (web) is the cloud AI workbench, Helm (cli) is the manual local entry point, and the Hull (server) is the user and agent management platform. / wunder 是多形态的智能体工作台：蛹（desktop）是本地 AI 工作台，蜂巢（web）是云端 AI 工作台，舵机（cli）是手工本地操作入口，舰体（server）是用户与智能体管理平台。",
     "default_language": "zh-CN",
     "home_page": "zh-CN/index",
     "home_url": "/docs/",
@@ -5250,65 +5250,70 @@
         {
           "id": "section-12",
           "level": 3,
-          "text": "工作区位置"
+          "text": "数据目录"
         },
         {
           "id": "section-13",
           "level": 3,
-          "text": "向量存储"
+          "text": "工作区位置"
         },
         {
           "id": "section-14",
+          "level": 3,
+          "text": "向量存储"
+        },
+        {
+          "id": "section-15",
           "level": 2,
           "text": "工具设置"
         },
         {
-          "id": "section-15",
+          "id": "section-16",
           "level": 3,
           "text": "内置工具开关"
         },
         {
-          "id": "section-16",
+          "id": "section-17",
           "level": 3,
           "text": "浏览器工具"
         },
         {
-          "id": "section-17",
+          "id": "section-18",
           "level": 3,
           "text": "MCP 扩展工具"
         },
         {
-          "id": "section-18",
+          "id": "section-19",
           "level": 2,
           "text": "模型设置"
         },
         {
-          "id": "section-19",
+          "id": "section-20",
           "level": 3,
           "text": "可用模型列表"
         },
         {
-          "id": "section-20",
+          "id": "section-21",
           "level": 3,
           "text": "上下文限制"
         },
         {
-          "id": "section-21",
+          "id": "section-22",
           "level": 2,
           "text": "渠道设置"
         },
         {
-          "id": "section-22",
+          "id": "section-23",
           "level": 3,
           "text": "渠道账号绑定"
         },
         {
-          "id": "section-23",
+          "id": "section-24",
           "level": 3,
           "text": "Webhook 配置"
         },
         {
-          "id": "section-24",
+          "id": "section-25",
           "level": 2,
           "text": "部署形态"
         }
@@ -9474,65 +9479,70 @@
         {
           "id": "section-11",
           "level": 3,
-          "text": "Workspace location"
+          "text": "Data directory"
         },
         {
           "id": "section-12",
           "level": 3,
-          "text": "Vector storage"
+          "text": "Workspace location"
         },
         {
           "id": "section-13",
+          "level": 3,
+          "text": "Vector storage"
+        },
+        {
+          "id": "section-14",
           "level": 2,
           "text": "Tool settings"
         },
         {
-          "id": "section-14",
+          "id": "section-15",
           "level": 3,
           "text": "Built-in tool switches"
         },
         {
-          "id": "section-15",
+          "id": "section-16",
           "level": 3,
           "text": "Browser tools"
         },
         {
-          "id": "section-16",
+          "id": "section-17",
           "level": 3,
           "text": "MCP extension tools"
         },
         {
-          "id": "section-17",
+          "id": "section-18",
           "level": 2,
           "text": "Model settings"
         },
         {
-          "id": "section-18",
+          "id": "section-19",
           "level": 3,
           "text": "Available model list"
         },
         {
-          "id": "section-19",
+          "id": "section-20",
           "level": 3,
           "text": "Context limit"
         },
         {
-          "id": "section-20",
+          "id": "section-21",
           "level": 2,
           "text": "Channel settings"
         },
         {
-          "id": "section-21",
+          "id": "section-22",
           "level": 3,
           "text": "Channel account binding"
         },
         {
-          "id": "section-22",
+          "id": "section-23",
           "level": 3,
           "text": "Webhook configuration"
         },
         {
-          "id": "section-23",
+          "id": "section-24",
           "level": 2,
           "text": "Deployment forms"
         }

@@ -51,6 +51,8 @@ mod tests {
                     workspace_id: None,
                     user_rounds: 2,
                     model_rounds_per_turn: 2,
+                    seed: None,
+                    scenario: crate::storage::StressThreadScenario::Complex,
                 },
                 |_, _| {},
             )

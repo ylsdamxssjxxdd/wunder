@@ -4,7 +4,7 @@ summary: The Diverse, Fast, Superior, and Efficient cores, four design principle
 updated_at: 2026-10-19
 ---
 
-wunder is an agent-scheduling platform: hand it a goal and the agent breaks the task down, calls tools, and delivers results. The feature list lives in [Tools](/docs/en/tools/) and the [Capability Quick Reference](/docs/en/capabilities/api-index/).
+wunder is a multi-form agent workbench: hand it a goal and the agent breaks the task down, calls tools, and delivers results. The feature list lives in [Tools](/docs/en/tools/) and the [Capability Quick Reference](/docs/en/capabilities/api-index/).
 
 ## Diverse, Fast, Superior, Efficient
 
@@ -12,10 +12,10 @@ Diversity and strength set the capability surface; speed and efficiency constrai
 
 | Core | Meaning |
 | --- | --- |
-| **Diverse** | Multi-platform, multi-form. One core and engine support the Pupa, Beehive, Helm, and Hull across Windows 7 x86 and up, Linux (ubuntu18.04 baseline) x64 / arm64, Docker, and browsers; models, channels, and workspaces extend through the same access layer |
-| **Fast** | Fast startup, fast response. Local forms call the engine in-process without local HTTP; threads and history restore directly from local storage; streaming events are frame-coalesced and projected incrementally, and tools run in parallel where allowed |
-| **Superior** | Strong stability, high intelligence. Queues, caches, views, and context are bounded, with session locks, round caps, quotas, and retry circuit breaking for long runs; goal mode, subagents, the tool chain, long-term memory, and knowledge bases carry complex tasks from decomposition to delivery |
-| **Efficient** | Low CPU and memory use, low context consumption. A native Rust process with local SQLite needs no browser runtime; tool-result trimming, frozen prompts that reuse cache, one-time memory-index injection, and micro-compaction and history compaction keep token consumption down |
+| **Diverse** | Multi-platform, multi-form. One core and engine back the Pupa, Beehive, Helm, and Hull across 32-bit Windows 7, Ubuntu 18.04, and modern Windows / Linux / Docker, in both web and local usage; models, channels, and workspaces extend through the same access layer |
+| **Fast** | Instant startup and a response that never lags. Local forms call the engine in-process without local HTTP; threads and history restore directly from local storage; streaming events are frame-coalesced and projected incrementally, and tools run in parallel where allowed |
+| **Superior** | Strong stability for 24/7 operation and a high degree of intelligence. Queues, caches, views, and context are bounded, with session locks, round caps, quotas, and retry circuit breaking for long runs; goal mode, subagents, the tool chain, long-term memory, and knowledge bases carry complex tasks from decomposition to delivery |
+| **Efficient** | Extremely low CPU and memory use, minimal context consumption. A native Rust process with local SQLite needs no browser runtime, and supplement packages ship a ready-made agent runtime so nothing has to be assembled by hand; tool-result trimming, frozen prompts that reuse cache, one-time memory-index injection, and micro-compaction and history compaction keep token consumption down |
 
 The nine capabilities expanded page by page — goal, compatibility, context compression, subagents, scheduled tasks, channels, memory, multithreading, and multi-tenancy — live under [Capabilities › Core Capabilities](/docs/en/capabilities/).
 

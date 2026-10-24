@@ -1,5 +1,6 @@
 //! Read-only prompt previews share web semantics and use isolated storage.
 use wunder_desktop::{args::DesktopArgs, NativeDesktop};
+use wunder_server::stable_core::thread_store::*;
 
 fn settings_payload() -> wunder_desktop::AgentSettingsEdit {
     wunder_desktop::AgentSettingsEdit {
@@ -74,14 +75,36 @@ fn prompt_preview_uses_agent_settings_and_preserves_the_frozen_thread_prompt() {
     let root = state.workspace.ensure_user_root(&workspace_id).unwrap();
     let workdir = state.workspace.display_path(&workspace_id, &root);
     let frozen = format!("Fixture frozen instructions\n{workdir}");
-    let item = state
-        .workspace
-        .build_session_system_prompt_item(runtime.user_id(), &session.id, &frozen, None)
-        .unwrap()
+    let storage_runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
         .unwrap();
-    state
-        .storage
-        .append_thread_item(runtime.user_id(), &item)
+    let thread = ThreadId::new(session.id.clone()).unwrap();
+    let rollout = RolloutId::new("fixture-prompt-rollout").unwrap();
+    storage_runtime
+        .block_on(state.thread_store.create_thread(CreateThreadRequest {
+            metadata: ThreadMetadata {
+                thread_id: thread.clone(),
+                current_rollout_id: rollout.clone(),
+                status: ThreadStatus::Active,
+                created_at_ms: 1,
+                updated_at_ms: 1,
+                title: None,
+                workspace_id: Some(workspace_id),
+                pinned: false,
+            },
+            session_meta: SessionMeta {
+                thread_id: thread.clone(),
+                rollout_id: rollout,
+                created_at_ms: 1,
+                source: "fixture".into(),
+                initial_system_prompt: frozen.clone(),
+                initial_memory: None,
+                parent_thread_id: None,
+                history_base: None,
+                capabilities: serde_json::Value::Null,
+            },
+        }))
         .unwrap();
 
     let mut settings = settings_payload();
@@ -98,11 +121,11 @@ fn prompt_preview_uses_agent_settings_and_preserves_the_frozen_thread_prompt() {
         );
     }
     assert_eq!(
-        state
-            .workspace
-            .load_session_system_prompt(runtime.user_id(), &session.id, None)
-            .unwrap(),
-        Some(frozen)
+        storage_runtime
+            .block_on(state.thread_store.session_meta(&thread))
+            .unwrap()
+            .initial_system_prompt,
+        frozen
     );
     assert!(runtime
         .preview_system_prompt()

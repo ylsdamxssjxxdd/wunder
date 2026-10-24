@@ -434,6 +434,18 @@ mod tests {
                 &json!({"content":"fixture input"}),
             )
             .unwrap();
+        state
+            .kernel
+            .orchestrator
+            .committer
+            .freeze_session(
+                &user.user_id,
+                "fixture-thread",
+                "frozen fixture instructions",
+                "fixture-workspace",
+            )
+            .await
+            .unwrap();
         let turn_id = turn["turn_id"].as_str().unwrap();
         state.storage.append_thread_item(&user.user_id,&json!({"session_id":"fixture-thread","turn_id":turn_id,"item_id":format!("{turn_id}:text-1"),"kind":"assistant_message","content":"fixture answer ".repeat(4000),"status":"completed"})).unwrap();
         let app = router().with_state(state);

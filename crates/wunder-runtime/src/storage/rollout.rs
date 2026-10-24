@@ -2,9 +2,8 @@
 //!
 //! A rollout is the durable source for one physical revision of a thread
 //! history.  The history projector is allowed to lag this file, but it must
-//! never project an item that has not been flushed here first.  This module is
-//! intentionally independent from the legacy `thread_logs` tables so the new
-//! writer can be introduced without making the old database another authority.
+//! never project an item that has not been flushed here first. SQLite stores
+//! rebuildable history projections; it is never a second history authority.
 //!
 //! The recorder owns one bounded command receiver and opens its file lazily.
 //! Consequently creating or observing an empty thread has no filesystem

@@ -201,7 +201,6 @@ impl Orchestrator {
         skip_auto_memory_extract: bool,
         llm_config: LlmModelConfig,
     ) -> Result<(), OrchestratorError> {
-
         if let Some(thread_turn_id) = last_round_info.thread_turn_id {
             let status = if waiting_question_panel {
                 "waiting_input"

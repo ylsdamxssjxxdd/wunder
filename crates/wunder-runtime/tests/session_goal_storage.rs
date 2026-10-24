@@ -1,4 +1,3 @@
-use std::sync::Arc;
 use wunder_server::goal;
 use wunder_server::storage::{
     ChatSessionRecord, ChatSessionStore, SessionGoalRecord, SessionGoalStore, SqliteStorage,
@@ -16,7 +15,7 @@ fn stale_goal_update_cannot_restore_cleared_goal() {
     let record = goal_record("owner", "thread");
     db.upsert_session_goal(&record).unwrap();
     db.delete_session_goal("owner", "thread").unwrap();
-    assert!(!db.update_session_goal(&record, record.updated_at).unwrap());
+    assert!(!db.update_session_goal(&record, record.revision).unwrap());
     assert!(db.get_session_goal("owner", "thread").unwrap().is_none());
 }
 
@@ -44,23 +43,20 @@ fn goal_record(user_id: &str, session_id: &str) -> SessionGoalRecord {
         goal_id: "goal_id".to_string(),
         session_id: session_id.to_string(),
         user_id: user_id.to_string(),
+        revision: 1,
         objective: "complete the requested work".to_string(),
-        status: goal::STATUS_ACTIVE.to_string(),
-        token_budget: Some(100),
-        tokens_used: 0,
-        time_used_seconds: 0,
+        phase: goal::PHASE_ACTIVE.to_string(),
+        blocked_code: None,
+        blocked_message: None,
+        max_goal_rounds: 4,
+        rounds_started: 0,
         created_at: now_ts(),
         updated_at: now_ts(),
-        completed_at: None,
-        last_continued_at: None,
-        source: goal::SOURCE_API.to_string(),
-        user_round: Some(3),
-        approval_mode: Some("full_auto".to_string()),
     }
 }
 
 #[test]
-fn sqlite_session_goal_crud_and_usage() {
+fn sqlite_session_goal_crud_and_revision_guard() {
     let dir = tempfile::tempdir().expect("tempdir");
     let db_path = dir.path().join("goal.db");
     let storage = SqliteStorage::new(db_path.to_string_lossy().to_string());
@@ -76,16 +72,29 @@ fn sqlite_session_goal_crud_and_usage() {
         .expect("load goal")
         .expect("goal exists");
     assert_eq!(loaded.objective, record.objective);
-    assert_eq!(loaded.status, goal::STATUS_ACTIVE);
-    assert_eq!(loaded.user_round, Some(3));
-    assert_eq!(loaded.approval_mode.as_deref(), Some("full_auto"));
+    assert_eq!(loaded.phase, goal::PHASE_ACTIVE);
+    assert_eq!(loaded.revision, 1);
+    assert_eq!(loaded.max_goal_rounds, 4);
 
-    let updated = storage
-        .account_session_goal_usage("user_id", "session_id", 42, 3, now_ts() + 1.0)
-        .expect("account usage")
-        .expect("goal exists");
-    assert_eq!(updated.tokens_used, 42);
-    assert_eq!(updated.time_used_seconds, 3);
+    let mut updated = loaded.clone();
+    updated.revision += 1;
+    updated.phase = goal::PHASE_PAUSED.into();
+    updated.rounds_started = 2;
+    updated.updated_at += 1.0;
+    assert!(storage
+        .update_session_goal(&updated, loaded.revision)
+        .unwrap());
+    assert!(!storage
+        .update_session_goal(&loaded, loaded.revision)
+        .unwrap());
+    assert_eq!(
+        storage.get_session_goal("user_id", "session_id").unwrap(),
+        Some(updated)
+    );
+    assert!(storage
+        .get_session_goal("other_user", "session_id")
+        .unwrap()
+        .is_none());
 
     assert_eq!(
         storage
@@ -157,25 +166,28 @@ fn sqlite_lists_session_goals_in_batch() {
     assert_eq!(goals, vec![goal_a, goal_c]);
 }
 
-#[tokio::test]
-async fn sqlite_goal_usage_marks_budget_limited() {
+#[test]
+fn sqlite_goal_reopen_preserves_phase_rounds_and_block_reason() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let db_path = dir.path().join("goal_budget.db");
-    let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+    let db_path = dir.path().join("state_1.sqlite");
+    let storage = SqliteStorage::new(db_path.to_string_lossy().to_string());
     storage.ensure_initialized().expect("init");
     storage
         .upsert_chat_session(&session("user_id", "session_id"))
         .expect("session");
-    storage
-        .upsert_session_goal(&goal_record("user_id", "session_id"))
-        .expect("goal");
+    let mut record = goal_record("user_id", "session_id");
+    record.revision = 3;
+    record.rounds_started = 2;
+    record.phase = goal::PHASE_BLOCKED.into();
+    record.blocked_code = Some("fixture_block".into());
+    record.blocked_message = Some("Fixture input required".into());
+    storage.upsert_session_goal(&record).expect("goal");
+    drop(storage);
 
-    let updated = goal::account_turn_usage(storage, "user_id", "session_id", 120, 2)
-        .await
-        .expect("account usage")
-        .expect("goal exists");
-
-    assert_eq!(updated.status, goal::STATUS_BUDGET_LIMITED);
-    assert_eq!(updated.tokens_used, 120);
-    assert_eq!(updated.time_used_seconds, 2);
+    assert!(dir.path().join("goals_1.sqlite").is_file());
+    let reopened = SqliteStorage::new(db_path.to_string_lossy().to_string());
+    assert_eq!(
+        reopened.get_session_goal("user_id", "session_id").unwrap(),
+        Some(record)
+    );
 }

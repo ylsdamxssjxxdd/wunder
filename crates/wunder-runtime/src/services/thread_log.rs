@@ -182,17 +182,21 @@ pub fn event_item(session_id: &str, event_type: &str, data: &Value) -> Option<Va
             },
         ),
         "plan_update" => ("plan", "plan".into(), "completed"),
-        // Preserve the compaction lifecycle; the generic completed default
-        // otherwise turns an in-flight compaction green as soon as it is stored.
+        // The item envelope uses the canonical lifecycle vocabulary. A
+        // compaction's result (fallback/guard_only/skipped) is separate from
+        // whether that operation completed and remains in its semantic body.
         "compaction" => (
             "compaction",
             data.get("compaction_id")
                 .and_then(Value::as_str)
                 .map(|id| format!("compaction-{id}"))
                 .unwrap_or_else(|| format!("compaction-{model}")),
-            data.get("status")
-                .and_then(Value::as_str)
-                .unwrap_or("running"),
+            match data.get("status").and_then(Value::as_str) {
+                Some("done" | "completed" | "fallback" | "guard_only" | "skipped") => "completed",
+                Some("failed" | "error") => "failed",
+                Some("cancelled" | "canceled") => "cancelled",
+                _ => "running",
+            },
         ),
         // 成功终止只是生命周期回执（stop_reason=「model_response」之类对时间线
         // 没有信息量，轮次边界已由台账分组表达，对齐 dsh 无终止记录的做法）；
@@ -243,6 +247,26 @@ pub fn event_item(session_id: &str, event_type: &str, data: &Value) -> Option<Va
         if let Some(text) = derive_context_text(event_type, data) {
             item["content"] = json!(text);
         }
+    }
+    if event_type == "compaction" {
+        let mut body = data.clone();
+        body["event_type"] = json!(event_type);
+        if body.get("content").is_none() {
+            body["content"] = item["content"].clone();
+        }
+        // Store the semantic body once. Restored workflow events unwrap it,
+        // preserving the same result status as the live event.
+        item = json!({
+            "session_id": session_id,
+            "turn_id": turn,
+            "root_turn_id": data.get("root_turn_id"),
+            "user_round": data.get("user_round"),
+            "model_round": data.get("model_round"),
+            "item_id": item["item_id"],
+            "kind": kind,
+            "status": status,
+            "payload": body,
+        });
     }
     Some(item)
 }
@@ -342,6 +366,31 @@ mod tests {
         assert_eq!(failed["kind"], "terminal");
         assert_eq!(failed["status"], "failed");
         assert_eq!(failed["content"], "upstream timeout");
+    }
+
+    #[test]
+    fn compaction_result_status_is_separate_from_completed_item_lifecycle() {
+        for result in ["done", "completed", "fallback", "guard_only", "skipped"] {
+            let item = event_item(
+                "thread-a",
+                "compaction",
+                &json!({"turn_id":"turn-a","compaction_id":"compact-a","status":result,
+                    "summary_text":"Retained context"}),
+            )
+            .expect("completed compaction becomes a durable item");
+            assert_eq!(item["status"], "completed", "{result}");
+            assert_eq!(item["payload"]["status"], result);
+            assert_eq!(item["payload"]["summary_text"], "Retained context");
+            assert_eq!(item["payload"]["event_type"], "compaction");
+            assert!(item.get("summary_text").is_none());
+        }
+        let running = event_item(
+            "thread-a",
+            "compaction",
+            &json!({"turn_id":"turn-a","status":"running"}),
+        )
+        .unwrap();
+        assert_eq!(running["status"], "running");
     }
 
     #[test]

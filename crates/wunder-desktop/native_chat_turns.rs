@@ -350,12 +350,7 @@ pub(super) fn recover_fields(
         .iter_mut()
         .filter(|item| item["kind"] == "assistant_message")
     {
-        wunder_server::services::thread_log::hydrate_active_text(
-            storage,
-            user,
-            session,
-            &mut item["payload"],
-        )?;
+        wunder_server::hydrate_thread_item_text(storage, user, session, &mut item["payload"])?;
     }
     Ok(())
 }

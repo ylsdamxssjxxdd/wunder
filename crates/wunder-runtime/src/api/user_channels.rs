@@ -609,6 +609,10 @@ pub async fn list_user_channel_accounts(
     user_id: &str,
     channel: Option<&str>,
 ) -> ChannelServiceResult<Value> {
+    // Settings remain readable while delivery workers are disabled.  Report
+    // the configured runtime state faithfully so clients can distinguish a
+    // dormant runtime from an empty account list.
+    let runtime_enabled = state.config_store.get().await.channels.enabled;
     let channel_filter = channel
         .map(|value| normalize_user_channel(Some(value)))
         .transpose()?;
@@ -639,7 +643,7 @@ pub async fn list_user_channel_accounts(
     Ok(json!({
         "items": items,
         "supported_channels": supported_user_channel_items(),
-        "runtime_enabled": true,
+        "runtime_enabled": runtime_enabled,
     }))
 }
 

@@ -55,6 +55,8 @@ mod tests {
             workspace_id: Some("sample-workspace".into()),
             user_rounds,
             model_rounds_per_turn,
+            seed: None,
+            scenario: crate::storage::StressThreadScenario::Complex,
         }
     }
 
@@ -71,12 +73,26 @@ mod tests {
         assert_eq!(stats.user_turns, 3);
         assert_eq!(stats.model_requests, 12);
         assert_eq!(stats.items, 3 + stats.model_requests + stats.tool_calls);
-        assert_eq!(
-            stats.model_actions,
-            stats.model_requests + stats.tool_calls + 3
-        );
+        assert_eq!(stats.model_actions, stats.model_requests + stats.tool_calls);
         assert_eq!(progress.len(), 3);
         assert_eq!(progress.last().copied(), Some((3, stats.items)));
+        let storage_bytes = stats.storage_bytes.expect("bounded storage snapshot");
+        assert!(storage_bytes.rollout_raw_bytes > 0);
+        assert_eq!(storage_bytes.rollout_zstd_bytes, 0);
+        assert!(storage_bytes.state_bytes > 0);
+        assert!(storage_bytes.queue_bytes > 0);
+        assert!(storage_bytes.thread_history_bytes > 0);
+        assert_eq!(
+            storage_bytes.total_bytes,
+            storage_bytes.rollout_raw_bytes
+                + storage_bytes.rollout_zstd_bytes
+                + storage_bytes.state_bytes
+                + storage_bytes.state_wal_bytes
+                + storage_bytes.queue_bytes
+                + storage_bytes.queue_wal_bytes
+                + storage_bytes.thread_history_bytes
+                + storage_bytes.thread_history_wal_bytes
+        );
 
         let history = Connection::open(root.path().join("thread_history_1.sqlite")).unwrap();
         assert_eq!(
@@ -122,13 +138,42 @@ mod tests {
         assert_eq!(paths.len(), 1);
         let reader = BufReader::new(std::fs::File::open(&paths[0]).unwrap());
         let mut records = 0_u64;
+        let mut usage_records = Vec::new();
         for line in reader.lines() {
             let record: Value = serde_json::from_str(&line.unwrap()).unwrap();
             assert_eq!(record["ordinal"].as_u64(), Some(records));
             assert!(!record.to_string().contains("thread_item_tail"));
+            if record["type"] == "usage" {
+                usage_records.push(record["payload"].clone());
+            }
             records += 1;
         }
         assert_eq!(records, stats.rollout_records);
+        assert_eq!(usage_records.len() as i64, stats.model_requests);
+        assert!(usage_records.iter().all(|usage| {
+            usage["input_tokens"].as_u64().unwrap_or_default() > 0
+                && usage["output_tokens"].as_u64().unwrap_or_default() > 0
+                && usage["metadata"]["estimated"] == Value::Bool(true)
+                && usage["metadata"]["profile"] == "storage-stress-v1"
+                && usage["metadata"]["request_token_breakdown"]["estimated_input_tokens"]
+                    == usage["input_tokens"]
+        }));
+        let thread_usage = usage_records
+            .iter()
+            .map(|usage| &usage["metadata"]["thread_usage"])
+            .collect::<Vec<_>>();
+        assert!(thread_usage.iter().all(|usage| {
+            usage["input_tokens"].as_u64().unwrap_or_default() > 0
+                && usage["output_tokens"].as_u64().unwrap_or_default() > 0
+                && usage["total_tokens"].as_u64().unwrap_or_default()
+                    >= usage["input_tokens"].as_u64().unwrap_or_default()
+                        + usage["output_tokens"].as_u64().unwrap_or_default()
+        }));
+        assert!(thread_usage.windows(2).all(|pair| {
+            pair[1]["input_tokens"].as_u64() >= pair[0]["input_tokens"].as_u64()
+                && pair[1]["output_tokens"].as_u64() >= pair[0]["output_tokens"].as_u64()
+                && pair[1]["total_tokens"].as_u64() >= pair[0]["total_tokens"].as_u64()
+        }));
 
         let visible = storage
             .list_thread_visible_messages("sample-user", &spec.session_id, None, 200)
@@ -141,6 +186,19 @@ mod tests {
             3
         );
         assert!(visible.iter().all(|row| row["status"] == "completed"));
+        let assistant_stats = visible
+            .iter()
+            .filter(|row| row["role"] == "assistant")
+            .map(|row| &row["meta"]["message_stats"])
+            .collect::<Vec<_>>();
+        assert_eq!(assistant_stats.len() as i64, stats.model_requests);
+        assert!(assistant_stats.iter().all(|message_stats| {
+            message_stats["usage"]["estimated"] == Value::Bool(true)
+                && message_stats["usage"]["input_tokens"]
+                    == message_stats["context_occupancy_tokens"]
+                && message_stats["round_usage"]["total_tokens"].as_u64()
+                    >= message_stats["usage"]["total_tokens"].as_u64()
+        }));
         let turns = storage
             .list_thread_turns("sample-user", &spec.session_id, None, 50)
             .unwrap();

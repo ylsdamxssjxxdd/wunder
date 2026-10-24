@@ -8,7 +8,56 @@
     "pythonRoot": "opt/python",
     "gitRoot": "opt/git",
     "rgRoot": "opt/rg",
-    "ffmpegRoot": "opt/ffmpeg"
+    "ffmpegRoot": "opt/ffmpeg",
+    "nodeRoot": "opt/node",
+    "remotionRoot": "opt/remotion"
+  },
+  "node": {
+    "version": "16.20.2",
+    "source": "nodejs.org Linux tarball",
+    "archives": {
+      "amd64": {
+        "fileName": "node-v16.20.2-linux-x64.tar.gz",
+        "url": "https://nodejs.org/dist/v16.20.2/node-v16.20.2-linux-x64.tar.gz",
+        "sha256": "c9193e6c414891694759febe846f4f023bf48410a6924a8b1520c46565859665",
+        "elfMachine": "x86-64"
+      },
+      "arm64": {
+        "fileName": "node-v16.20.2-linux-arm64.tar.gz",
+        "url": "https://nodejs.org/dist/v16.20.2/node-v16.20.2-linux-arm64.tar.gz",
+        "sha256": "b6945fcc9ad220386bb814bfae7137189fd17297f2959a744105e1bee006035a",
+        "elfMachine": "AArch64"
+      }
+    }
+  },
+  "remotion": {
+    "version": "4.0.538",
+    "reactVersion": "19.2.3",
+    "esbuildVersion": "0.28.1",
+    "packages": {
+      "@remotion/cli": "4.0.538",
+      "remotion": "4.0.538",
+      "react": "19.2.3",
+      "react-dom": "19.2.3"
+    },
+    "compositorPackages": {
+      "amd64": "@remotion/compositor-linux-x64-gnu",
+      "arm64": "@remotion/compositor-linux-arm64-gnu"
+    },
+    "browser": {
+      "install": true,
+      "pathFile": "browser-path"
+    },
+    "notes": [
+      "The CLI installs Studio, bundler, renderer and the matching native compositor. It is staged with the same Node major as the Docker runtime.",
+      "The package includes Remotion's Chrome Headless Shell so Studio and renderer commands work offline; Playwright Chromium remains available separately for browser tools."
+    ]
+  },
+  "runtime": {
+    "baseMinimumGlibc": "2.17",
+    "remotionMinimumGlibc": "2.35",
+    "baseBuilder": "ubuntu:18.04",
+    "remotionBuilder": "ubuntu:22.04"
   },
   "python": {
     "version": "3.8.18",
@@ -139,7 +188,9 @@
     "pythonRoot": "opt/python",
     "gitRoot": "opt/git",
     "rgRoot": "opt/rg",
-    "ffmpegRoot": "opt/ffmpeg"
+    "ffmpegRoot": "opt/ffmpeg",
+    "nodeRoot": "opt/node",
+    "remotionRoot": "opt/remotion"
   },
   "r2": {
     "version": "6.2.4",

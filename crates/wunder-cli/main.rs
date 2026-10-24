@@ -180,6 +180,9 @@ async fn handle_stress_thread(
         workspace_id: None,
         user_rounds: command.user_rounds,
         model_rounds_per_turn: command.model_rounds,
+        seed: command.seed,
+        scenario: wunder_server::storage::StressThreadScenario::parse(Some(&command.profile))
+            .map_err(|error| anyhow!(error.to_string()))?,
     };
     let report_every = (command.user_rounds / 50).clamp(1, 100);
     let started = std::time::Instant::now();
@@ -202,6 +205,34 @@ async fn handle_stress_thread(
     println!("  用户轮次: {}", stats.user_turns);
     println!("  消息条目: {}", stats.items);
     println!("  工具调用: {}", stats.tool_calls);
+    println!("  模型请求: {}", stats.model_requests);
+    println!("  执行动作: {}", stats.model_actions);
+    println!("  rollout 记录: {}", stats.rollout_records);
+    println!("  最终 seed: {}", stats.seed);
+    println!("  合成 profile: {}", stats.profile);
+    println!("  工作负载场景: {}", stats.scenario);
+    println!("  冻结初始上下文 token: {}", stats.initial_context_tokens);
+    if let Some(bytes) = stats.storage_bytes {
+        println!("  存储快照总字节: {}", bytes.total_bytes);
+        println!(
+            "    rollout raw/zstd: {}/{}",
+            bytes.rollout_raw_bytes, bytes.rollout_zstd_bytes
+        );
+        println!(
+            "    state db/wal: {}/{}",
+            bytes.state_bytes, bytes.state_wal_bytes
+        );
+        println!(
+            "    queue db/wal: {}/{}",
+            bytes.queue_bytes, bytes.queue_wal_bytes
+        );
+        println!(
+            "    thread-history db/wal: {}/{}",
+            bytes.thread_history_bytes, bytes.thread_history_wal_bytes
+        );
+    } else {
+        println!("  存储快照: 不可用");
+    }
     println!("  耗时: {:.1}s", elapsed.as_secs_f64());
     Ok(())
 }

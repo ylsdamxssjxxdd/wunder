@@ -14,7 +14,7 @@ updated_at: 2026-10-16
 
 # wunder
 
-<p class="docs-eyebrow">An agent orchestration platform</p>
+<p class="docs-eyebrow">A multi-form agent workbench</p>
 
 Give it a goal, and the agent breaks the task down on its own, calls tools, and hands the results back.
 

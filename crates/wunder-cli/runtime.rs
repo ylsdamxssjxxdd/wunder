@@ -102,7 +102,7 @@ impl CliRuntime {
         set_env_path_if_exists("WUNDER_SKILL_RUNNER_PATH", &skill_runner);
         set_env_path("WUNDER_HOME", &wunder_home);
         // Supplements imported by 蛹 are shared with this manual local entry.
-        wunder_server::local_bootstrap::supplement::prepend_tool_paths(&[wunder_home.clone()]);
+        wunder_server::local_bootstrap::supplement::configure_runtime_env(&[wunder_home.clone()]);
         set_env_path("WUNDER_USER_TOOLS_ROOT", &user_tools_root);
         set_env_path("WUNDER_VECTOR_KNOWLEDGE_ROOT", &vector_root);
         set_env_path("WUNDER_COMPANIONS_ROOT", &companions_root);

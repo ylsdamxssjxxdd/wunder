@@ -575,9 +575,10 @@ mod tests {
     #[test]
     fn root_uses_private_data_directory_under_storage_root() {
         let mut config = Config::default();
+        config.storage.data_root.clear();
         assert_eq!(
             store_root(&config),
-            PathBuf::from("config/data/tool-results")
+            PathBuf::from("config").join("data").join("tool-results")
         );
         config.storage.data_root = "state".into();
         assert_eq!(store_root(&config), PathBuf::from("state/tool-results"));

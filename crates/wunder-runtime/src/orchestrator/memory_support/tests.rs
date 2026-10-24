@@ -1,4 +1,5 @@
 use super::*;
+use crate::orchestrator::request_budget::{tools_tokens, RequestBudget};
 use serde_json::json;
 
 fn llm_config(value: Value) -> LlmModelConfig {
@@ -524,6 +525,51 @@ fn test_apply_rebuilt_context_guard_trims_current_user_message() {
     assert!(stats.applied);
     assert!(stats.current_user_trimmed || stats.fallback_trim_applied);
     assert!(estimate_messages_tokens(&messages) <= limit);
+}
+
+#[test]
+fn context_guard_matches_final_request_budget_at_4500_window_boundary() {
+    let config = llm_config(json!({
+        "max_context": 4500,
+        "max_output": 512
+    }));
+    let tools = [json!({
+        "type": "function",
+        "function": {
+            "name": "sample",
+            "description": "d".repeat(560)
+        }
+    })];
+    let shared_budget = RequestBudget::measure(&config, &[], Some(&tools));
+    let message_budget = shared_budget.message_budget(tools_tokens(Some(&tools)));
+    let frozen_system_prompt = "system instruction ".repeat(64);
+    let mut messages = vec![
+        json!({ "role": "system", "content": frozen_system_prompt.clone() }),
+        json!({ "role": "user", "content": "active request ".repeat(18_000) }),
+    ];
+
+    let stats = apply_rebuilt_context_guard(&mut messages, message_budget, false);
+    assert!(stats.applied);
+    assert_eq!(
+        messages[0].get("content").and_then(Value::as_str),
+        Some(frozen_system_prompt.as_str()),
+        "the guard must not rewrite the frozen system prompt"
+    );
+    assert!(estimate_messages_tokens(&messages) <= message_budget);
+    let chat_messages = messages
+        .iter()
+        .map(|message| ChatMessage {
+            role: message["role"].as_str().unwrap_or_default().to_string(),
+            content: message["content"].clone(),
+            reasoning_content: None,
+            tool_calls: None,
+            tool_call_id: None,
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        RequestBudget::measure(&config, &chat_messages, Some(&tools)).admitted(),
+        "the context guard must fit the final local provider admission"
+    );
 }
 
 #[test]

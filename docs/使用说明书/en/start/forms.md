@@ -6,7 +6,7 @@ updated_at: 2026-10-16
 
 # Form matrix
 
-wunder is an agent scheduling platform. One engine is shipped as several program forms; the difference is only in the access layer.
+wunder is a multi-form agent workbench. One engine is shipped as several program forms; the difference is only in the access layer.
 
 | Icon | Form | Tech stack | Purpose | Run model | OS support |
 | :--- | :--- | :--- | :--- | :--- | :--- |

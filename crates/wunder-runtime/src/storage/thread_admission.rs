@@ -20,7 +20,8 @@ impl TurnAdmissions {
         let conn = store.connect()?;
         conn.execute_batch("PRAGMA journal_mode=WAL;
         CREATE TABLE IF NOT EXISTS canonical_thread_owners (
-            thread_id TEXT PRIMARY KEY, user_id TEXT NOT NULL, latest_user_round INTEGER NOT NULL DEFAULT 0
+            thread_id TEXT PRIMARY KEY, user_id TEXT NOT NULL, latest_user_round INTEGER NOT NULL DEFAULT 0,
+            mutation_pending TEXT
         );
         CREATE TABLE IF NOT EXISTS canonical_turn_admissions (
             thread_id TEXT NOT NULL, turn_id TEXT NOT NULL, root_turn_id TEXT NOT NULL,
@@ -99,6 +100,7 @@ impl TurnAdmissions {
         let mut conn = self.connect()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         self.check_owner_row(&tx, user, thread)?;
+        Self::check_mutation(&tx, thread)?;
         let created = tx.execute(
             "INSERT OR IGNORE INTO canonical_thread_owners(thread_id,user_id) VALUES(?1,?2)",
             params![thread, user],
@@ -185,6 +187,47 @@ impl TurnAdmissions {
         )?;
         tx.commit()?;
         Ok(())
+    }
+
+    /// Keep ownership discoverable until all state and physical history has
+    /// been reclaimed. A failed delete can then be retried by its owner.
+    pub fn delete_admissions(&self, thread: &str) -> Result<()> {
+        let mut conn = self.connect()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        Self::check_mutation_kind(&tx, thread, "delete")?;
+        tx.execute(
+            "UPDATE canonical_thread_owners SET mutation_pending='delete' WHERE thread_id=?1",
+            [thread],
+        )?;
+        tx.execute(
+            "DELETE FROM canonical_turn_admissions WHERE thread_id=?1",
+            [thread],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    fn check_mutation_kind(conn: &Connection, thread: &str, permitted: &str) -> Result<()> {
+        let pending: Option<String> = conn
+            .query_row(
+                "SELECT mutation_pending FROM canonical_thread_owners WHERE thread_id=?1",
+                [thread],
+                |row| row.get(0),
+            )
+            .optional()?
+            .flatten();
+        if pending.as_deref().is_some_and(|kind| kind != permitted) {
+            bail!("thread mutation is pending; retry after recovery");
+        }
+        Ok(())
+    }
+
+    pub(crate) fn ensure_mutable(&self, thread: &str) -> Result<()> {
+        Self::check_mutation(&self.connect()?, thread)
+    }
+
+    fn check_mutation(conn: &Connection, thread: &str) -> Result<()> {
+        Self::check_mutation_kind(conn, thread, "")
     }
 
     /// Copies queue identity for a completed fork prefix. The copied rows
@@ -286,6 +329,89 @@ impl TurnAdmissions {
         Ok(())
     }
 
+    /// Freeze acceptance and lifecycle transitions in one queue transaction.
+    /// A running execution wins the race and leaves the queue unchanged.
+    pub fn freeze_revert(&self, thread: &str, through_turn: &str) -> Result<Option<i64>> {
+        let mut conn = self.connect()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        Self::check_mutation_kind(&tx, thread, "revert")?;
+        let owner: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM canonical_thread_owners WHERE thread_id=?1)",
+            [thread],
+            |row| row.get(0),
+        )?;
+        if !owner {
+            bail!("revert thread owner is absent");
+        }
+        let running: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM canonical_turn_admissions WHERE thread_id=?1 AND status='running')",
+            [thread], |row| row.get(0),
+        )?;
+        if running {
+            return Ok(None);
+        }
+        let round: i64 = tx.query_row(
+            "SELECT user_round FROM canonical_turn_admissions WHERE thread_id=?1 AND turn_id=?2",
+            params![thread, through_turn],
+            |row| row.get(0),
+        )?;
+        tx.execute(
+            "UPDATE canonical_thread_owners SET mutation_pending='revert' WHERE thread_id=?1 AND mutation_pending IS NULL",
+            [thread],
+        )?;
+        tx.commit()?;
+        Ok(Some(round))
+    }
+
+    /// Idempotent queue half of an already-published history revert.
+    pub fn commit_revert(&self, thread: &str, through_turn: &str, round: i64) -> Result<()> {
+        let mut conn = self.connect()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let frozen: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM canonical_thread_owners WHERE thread_id=?1 AND mutation_pending='revert')",
+            [thread], |row| row.get(0),
+        )?;
+        if !frozen {
+            bail!("revert queue is not frozen");
+        }
+        let actual: i64 = tx.query_row(
+            "SELECT user_round FROM canonical_turn_admissions WHERE thread_id=?1 AND turn_id=?2",
+            params![thread, through_turn],
+            |row| row.get(0),
+        )?;
+        if actual != round {
+            bail!("revert queue boundary changed");
+        }
+        tx.execute(
+            "DELETE FROM canonical_turn_admissions WHERE thread_id=?1 AND user_round>?2",
+            params![thread, round],
+        )?;
+        tx.execute(
+            "UPDATE canonical_thread_owners SET latest_user_round=?2 WHERE thread_id=?1 AND latest_user_round<>?2",
+            params![thread, round],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// The state intent is removed first. A queue-only marker means that its
+    /// idempotent trim finished and this final acknowledgement can be retried.
+    pub fn finish_revert(&self, thread: &str) -> Result<()> {
+        let conn = self.connect()?;
+        conn.execute(
+            "UPDATE canonical_thread_owners SET mutation_pending=NULL WHERE thread_id=?1 AND mutation_pending='revert'",
+            [thread],
+        )?;
+        Ok(())
+    }
+
+    pub fn revert_pending(&self, thread: &str) -> Result<bool> {
+        Ok(self.connect()?.query_row(
+            "SELECT EXISTS(SELECT 1 FROM canonical_thread_owners WHERE thread_id=?1 AND mutation_pending='revert')",
+            [thread], |row| row.get(0),
+        )?)
+    }
+
     pub fn accept(&self, user: &str, thread: &str, input: &Value) -> Result<Value> {
         if user.trim().is_empty() || thread.trim().is_empty() {
             bail!("missing thread identity");
@@ -317,6 +443,7 @@ impl TurnAdmissions {
         let mut conn = self.connect()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         self.check_owner_row(&tx, user, thread)?;
+        Self::check_mutation(&tx, thread)?;
         if let Some(lease) = input
             .get("local_open_lease")
             .filter(|value| !value.is_null())
@@ -391,6 +518,7 @@ impl TurnAdmissions {
     pub fn park_queued(&self, user: &str, thread: &str, turn: &str) -> Result<bool> {
         let mut conn = self.connect()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        Self::check_mutation(&tx, thread)?;
         let owner: Option<String> = tx
             .query_row(
                 "SELECT user_id FROM canonical_thread_owners WHERE thread_id=?1",
@@ -450,6 +578,7 @@ impl TurnAdmissions {
     ) -> Result<bool> {
         let mut conn = self.connect()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        Self::check_mutation(&tx, thread)?;
         let previous: Option<(String, Option<String>, bool)> = tx
             .query_row(
                 "SELECT status,control_json,input_json IS NOT NULL FROM canonical_turn_admissions

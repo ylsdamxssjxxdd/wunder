@@ -1116,7 +1116,15 @@ pub async fn sync_preset_across_users(
 
         for user in users {
             let agents = agents_by_user.remove(&user.user_id).unwrap_or_default();
-            let Some(record) = bound_agent_record(&agents).cloned() else {
+            // A default-agent sync also converges the pre-binding shape: its
+            // newest live record had no binding at all. Named presets remain
+            // opt-in and therefore never claim an unbound instance here.
+            let selected_record = if preset.preset_id == "__default__" {
+                bound_agent_record(&agents).or_else(|| newest_active_agent(&agents))
+            } else {
+                bound_agent_record(&agents)
+            };
+            let Some(record) = selected_record.cloned() else {
                 // Assigning a preset is an explicit admin action. A preset update
                 // only reaches users already governed by this preset.
                 continue;

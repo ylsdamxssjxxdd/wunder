@@ -26,7 +26,6 @@ async fn queue_handoff_parks_original_turn_and_keeps_cancel_available() {
         .accept_thread_turn("user-a", "session-a", &json!({"content":"input"}))
         .unwrap();
     let durable_turn = accepted["turn_id"].as_str().unwrap();
-    let mut wake = orchestrator.change_hub.subscribe("session-a");
     state
         .monitor
         .register("session-a", "user-a", "agent-a", "input", false);
@@ -38,10 +37,11 @@ async fn queue_handoff_parks_original_turn_and_keeps_cancel_available() {
         .thread_runtime
         .begin_turn("session-a", "turn-a");
     let _owner = orchestrator.scheduling.register("session-a", false);
+    let (live_tx, mut live_rx) = tokio::sync::mpsc::channel(16);
     let emitter = EventEmitter::new(
         "session-a".into(),
         "user-a".into(),
-        None,
+        Some(live_tx),
         Some(state.storage.clone()),
         state.monitor.clone(),
         false,
@@ -100,18 +100,26 @@ async fn queue_handoff_parks_original_turn_and_keeps_cancel_available() {
         .storage
         .list_thread_changes_by_session("session-a", 0, 100)
         .unwrap();
-    let queue_items = events
-        .iter()
-        .filter(|event| event["payload"]["kind"] == "queue")
-        .collect::<Vec<_>>();
-    assert_eq!(queue_items.len(), 2);
-    assert_eq!(queue_items[0]["payload"]["status"], "queued");
-    assert_eq!(queue_items[1]["payload"]["status"], "running");
-    assert_eq!(queue_items[0]["item_id"], queue_items[1]["item_id"]);
-    assert_eq!(
-        *wake.borrow_and_update(),
-        events.last().unwrap()["change_seq"].as_i64().unwrap()
+    assert!(
+        events.is_empty(),
+        "queue state is live control, not history"
     );
+    let mut queue_events = Vec::new();
+    while queue_events.len() < 2 {
+        let event = tokio::time::timeout(Duration::from_secs(1), live_rx.recv())
+            .await
+            .unwrap()
+            .expect("live queue control event");
+        if let StreamSignal::Event(event) = event {
+            if matches!(event.event.as_str(), "queue_enter" | "queue_start") {
+                queue_events.push(event);
+            }
+        }
+    }
+    assert_eq!(queue_events[0].event, "queue_enter");
+    assert_eq!(queue_events[0].data["data"]["queue_state"], "suspended");
+    assert_eq!(queue_events[1].event, "queue_start");
+    assert_eq!(queue_events[1].data["data"]["queue_state"], "resumed");
     assert!(state
         .storage
         .load_stream_events("session-a", 0, 100)

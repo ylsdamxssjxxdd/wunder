@@ -225,6 +225,112 @@ impl Orchestrator {
         })
     }
 
+    /// Freeze the prompt for an admitted control turn that has no model
+    /// execution. It shares the same prompt finalization path as an ordinary
+    /// request, so the admitted body can be materialized in canonical history.
+    pub(crate) async fn freeze_session_for_request(
+        &self,
+        request: &crate::schemas::WunderRequest,
+        user_round: i64,
+    ) -> Result<String> {
+        let user_id = request.user_id.trim();
+        let session_id = request
+            .session_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| anyhow!("control request has no session"))?;
+        let workspace_id = self.resolve_workspace_id(
+            user_id,
+            request.agent_id.as_deref(),
+            request.workspace_container_id,
+            request.workspace_id.as_deref(),
+        );
+        let config = self.resolve_config(request.config_overrides.as_ref()).await;
+        // Control-only commands must remain durable even when no provider is
+        // configured yet. Model dispatch still validates its provider later.
+        let llm_config = self
+            .resolve_llm_config(&config, request.model_name.as_deref())
+            .map(|(_, config)| config)
+            .unwrap_or_default();
+        let skills = if request.config_overrides.is_some() {
+            Arc::new(RwLock::new(load_skills(&config, true, true, true)))
+        } else {
+            self.skills.clone()
+        };
+        let skills_snapshot = skills.read().await.clone();
+        let bindings = self
+            .user_tool_manager
+            .build_bindings(&config, &skills_snapshot, user_id);
+        let allowed = self.filter_tools_for_model_capability(
+            self.resolve_allowed_tool_names(
+                &config,
+                &request.tool_names,
+                &skills_snapshot,
+                Some(&bindings),
+            ),
+            llm_config.support_vision,
+        );
+        let allowed = self.apply_preview_skill_tool_policy(allowed, request.preview_skill);
+        let (profile, binding) = self
+            .resolve_frozen_session_tool_profile(
+                user_id,
+                session_id,
+                &config,
+                request.config_overrides.as_ref(),
+            )
+            .await;
+        let allowed = crate::tools::filter_tool_names_by_profile(allowed, profile);
+        let allowed = match binding.as_ref() {
+            Some(binding) if !binding.tool_ids.is_empty() => {
+                crate::tools::filter_tool_names_by_frozen_ids(allowed, &binding.tool_ids)
+            }
+            _ => allowed,
+        };
+        if binding
+            .as_ref()
+            .map(|binding| binding.tool_ids.is_empty())
+            .unwrap_or(true)
+        {
+            let specs = collect_prompt_tool_specs_with_language(
+                &config,
+                &skills_snapshot,
+                &allowed,
+                Some(&bindings),
+                "en-US",
+            );
+            let snapshot = crate::tools::tool_profile_snapshot_for_profile(&specs, profile);
+            self.workspace.save_session_frozen_tool_profile(
+                user_id,
+                session_id,
+                &crate::tools::tool_profile_binding(&snapshot),
+            );
+        }
+        let mode = self
+            .resolve_frozen_session_tool_call_mode(user_id, session_id, &llm_config)
+            .await?;
+        let round_id = user_round.max(1).to_string();
+        self.resolve_session_prompt(
+            &config,
+            request.config_overrides.as_ref(),
+            &allowed,
+            mode,
+            &skills_snapshot,
+            Some(&bindings),
+            user_id,
+            &workspace_id,
+            session_id,
+            request.language.as_deref(),
+            request.agent_id.as_deref(),
+            request.is_admin,
+            request.agent_prompt.as_deref(),
+            request.preview_skill,
+            Some(request.question.as_str()),
+            Some(round_id.as_str()),
+        )
+        .await
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(super) async fn build_system_prompt_with_allowed(
         &self,
@@ -391,29 +497,6 @@ pub(crate) fn merge_agent_prompt_with_thread_agents_snapshot(
         (None, Some(snapshot)) => Some(snapshot),
         (Some(prompt), Some(snapshot)) => Some(format!("{prompt}\n\n{snapshot}")),
     }
-}
-
-fn reuse_stored_session_prompt_if_valid(
-    stored_prompt: Option<&str>,
-    public_workdir: &str,
-    local_workdir: &str,
-) -> Option<String> {
-    stored_prompt
-        .filter(|prompt| stored_prompt_matches_workdir(prompt, public_workdir, local_workdir))
-        .map(str::to_string)
-}
-
-fn stored_prompt_matches_workdir(prompt: &str, public_workdir: &str, local_workdir: &str) -> bool {
-    let cleaned_prompt = prompt.trim();
-    if cleaned_prompt.is_empty() {
-        return false;
-    }
-    let public = public_workdir.trim();
-    if !public.is_empty() && cleaned_prompt.contains(public) {
-        return true;
-    }
-    let local = local_workdir.trim();
-    !local.is_empty() && cleaned_prompt.contains(local)
 }
 
 fn extract_thread_agents_md_snapshot(prompt: &str) -> Option<String> {
@@ -871,28 +954,6 @@ mod tests {
             "the budget must bound the snapshot length"
         );
         let _ = std::fs::remove_dir_all(dir);
-    }
-
-    #[test]
-    fn reuse_stored_session_prompt_returns_frozen_snapshot_when_workdir_matches() {
-        let prompt = "system prompt /workspace/demo";
-        let reused = reuse_stored_session_prompt_if_valid(
-            Some(prompt),
-            "/workspace/demo",
-            "C:/workspace/demo",
-        );
-        assert_eq!(reused, Some(prompt.to_string()));
-    }
-
-    #[test]
-    fn reuse_stored_session_prompt_skips_mismatched_workdir() {
-        let prompt = "system prompt /workspace/other";
-        let reused = reuse_stored_session_prompt_if_valid(
-            Some(prompt),
-            "/workspace/demo",
-            "C:/workspace/demo",
-        );
-        assert_eq!(reused, None);
     }
 
     #[test]

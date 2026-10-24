@@ -10,6 +10,64 @@ use crate::core::{blocking, long_task};
 
 pub(super) use super::memory_support::{insert_compaction_id, CompactionRunMode};
 
+fn ensure_frozen_system_message(
+    messages: &mut Vec<Value>,
+    frozen_system_message: Option<&Value>,
+    message_budget: i64,
+) -> Result<(), OrchestratorError> {
+    let Some(frozen_system_message) = frozen_system_message else {
+        return Ok(());
+    };
+    match messages.first_mut() {
+        Some(message) if message.get("role").and_then(Value::as_str) == Some("system") => {
+            *message = frozen_system_message.clone();
+        }
+        _ => messages.insert(0, frozen_system_message.clone()),
+    }
+    let frozen_system_tokens = estimate_message_tokens(frozen_system_message);
+    if frozen_system_tokens > message_budget {
+        return Err(OrchestratorError::new(
+            "CONTEXT_WINDOW_EXCEEDED",
+            "The frozen system prompt and request envelope exceed the local input budget."
+                .to_string(),
+            Some(json!({
+                "source": "compaction_message_budget",
+                "message_budget": message_budget,
+                "system_prompt_tokens": frozen_system_tokens,
+            })),
+        ));
+    }
+    if estimate_messages_tokens(messages) > message_budget {
+        let remaining_budget = message_budget.saturating_sub(frozen_system_tokens);
+        let mut remaining_messages = trim_messages_to_budget(&messages[1..], remaining_budget);
+        if estimate_messages_tokens(&remaining_messages) > remaining_budget {
+            if let Some(last_message) = remaining_messages.last_mut() {
+                if let Some(trimmed) = trim_message_to_fit_tokens(last_message, remaining_budget) {
+                    *last_message = trimmed;
+                } else {
+                    remaining_messages.clear();
+                }
+            }
+        }
+        messages.clear();
+        messages.push(frozen_system_message.clone());
+        messages.extend(remaining_messages);
+    }
+    if estimate_messages_tokens(messages) > message_budget {
+        return Err(OrchestratorError::new(
+            "CONTEXT_WINDOW_EXCEEDED",
+            "The frozen system prompt cannot be combined with a request that fits the local input budget."
+                .to_string(),
+            Some(json!({
+                "source": "compaction_message_budget",
+                "message_budget": message_budget,
+                "system_prompt_tokens": frozen_system_tokens,
+            })),
+        ));
+    }
+    Ok(())
+}
+
 impl Orchestrator {
     pub(super) fn shrink_messages_to_limit(&self, messages: Vec<Value>, limit: i64) -> Vec<Value> {
         let total_tokens = estimate_messages_tokens(&messages);
@@ -105,7 +163,23 @@ impl Orchestrator {
         let context_tokens = persisted_context_tokens;
         let projected_request_tokens = resolve_projected_request_tokens(context_tokens);
         let limit = resolve_compaction_limit(llm_config, projected_request_tokens, force);
-        let message_budget = resolve_message_budget(limit.saturating_sub(request_overhead_tokens));
+        let shared_request_budget =
+            super::request_budget::RequestBudget::measure(llm_config, &[], None);
+        let shared_message_budget = shared_request_budget.message_budget(request_overhead_tokens);
+        if shared_message_budget <= 0 {
+            return Err(OrchestratorError::new(
+                "CONTEXT_WINDOW_EXCEEDED",
+                "The model has no input budget after output, safety, tool, and request-envelope reserves."
+                    .to_string(),
+                Some(json!({
+                    "source": "compaction_message_budget",
+                    "input_budget_tokens": shared_request_budget.limit_tokens,
+                    "request_overhead_tokens": request_overhead_tokens,
+                })),
+            ));
+        }
+        let message_budget = resolve_message_budget(limit.saturating_sub(request_overhead_tokens))
+            .min(shared_message_budget);
         let max_context = llm_config.effective_max_context() as i64;
         let mut ratio = llm_config
             .history_compaction_ratio
@@ -294,6 +368,11 @@ impl Orchestrator {
             let mut guarded_messages = messages.clone();
             let guard_stats =
                 apply_rebuilt_context_guard(&mut guarded_messages, message_budget, false);
+            ensure_frozen_system_message(
+                &mut guarded_messages,
+                system_message.as_ref(),
+                message_budget,
+            )?;
             if guard_stats.applied {
                 let mut guard_payload = json!({
                     "stage": "context_guard",
@@ -381,9 +460,39 @@ impl Orchestrator {
 
         let summary_config = build_compaction_summary_config(llm_config);
 
-        let summary_limit = HistoryManager::get_auto_compact_limit(&summary_config);
+        let summary_request_budget =
+            super::request_budget::RequestBudget::measure(&summary_config, &[], None);
+        let summary_message_budget = summary_request_budget.message_budget(0);
+        let summary_limit =
+            HistoryManager::get_auto_compact_limit(&summary_config).min(summary_message_budget);
+        if summary_limit <= 0 {
+            return Err(OrchestratorError::new(
+                "CONTEXT_WINDOW_EXCEEDED",
+                "The compaction summary has no input budget after output, safety, and request-envelope reserves."
+                    .to_string(),
+                Some(json!({
+                    "source": "compaction_summary_message_budget",
+                    "input_budget_tokens": summary_request_budget.limit_tokens,
+                })),
+            ));
+        }
         let per_message_limit = summary_limit.clamp(1, COMPACTION_SUMMARY_MESSAGE_MAX_TOKENS);
-        summary_input = self.prepare_summary_messages(summary_input, per_message_limit);
+        // The frozen thread prompt is an immutable request prefix. Prepare
+        // history independently so compaction cannot truncate or merge it.
+        let frozen_summary_system = summary_input
+            .first()
+            .filter(|message| message.get("role").and_then(Value::as_str) == Some("system"))
+            .cloned();
+        let summary_history_start = usize::from(frozen_summary_system.is_some());
+        let mut prepared_summary_input = frozen_summary_system
+            .clone()
+            .into_iter()
+            .collect::<Vec<_>>();
+        prepared_summary_input.extend(self.prepare_summary_messages(
+            summary_input.split_off(summary_history_start),
+            per_message_limit,
+        ));
+        summary_input = prepared_summary_input;
         if estimate_messages_tokens(&summary_input) > summary_limit {
             summary_input = self.shrink_messages_to_limit(summary_input, summary_limit);
         }
@@ -403,6 +512,7 @@ impl Orchestrator {
             trimmed.extend(tail);
             summary_input = trimmed;
         }
+        ensure_frozen_system_message(&mut summary_input, system_message.as_ref(), summary_limit)?;
 
         // Compaction summary requests always log in the compact profile; the
         // full request body is never persisted into monitor events.
@@ -499,6 +609,11 @@ impl Orchestrator {
             let mut guarded_messages = messages.clone();
             let guard_stats =
                 apply_rebuilt_context_guard(&mut guarded_messages, message_budget, false);
+            ensure_frozen_system_message(
+                &mut guarded_messages,
+                system_message.as_ref(),
+                message_budget,
+            )?;
             let mut compaction_payload = json!({
                 "reason": if should_compact_by_history { "history" } else { "overflow" },
                 "trigger": compaction_trigger,
@@ -689,6 +804,7 @@ impl Orchestrator {
             message_budget,
             compaction_profile.prefer_preserving_summary,
         );
+        ensure_frozen_system_message(&mut rebuilt, system_message.as_ref(), message_budget)?;
         let rebuilt_request_debug = build_compaction_message_debug_entries(&rebuilt);
         let committed_replacement_history =
             build_committed_replacement_history_from_rebuilt(&rebuilt);
@@ -1226,8 +1342,10 @@ impl Orchestrator {
         });
         let allowed_tool_names =
             self.apply_preview_skill_tool_policy(allowed_tool_names, preview_skill);
-        let tool_call_mode =
-            self.resolve_frozen_session_tool_call_mode(user_id, session_id, &llm_config);
+        let tool_call_mode = self
+            .resolve_frozen_session_tool_call_mode(user_id, session_id, &llm_config)
+            .await
+            .map_err(|error| OrchestratorError::internal(error.to_string()))?;
         let workspace_id = self.resolve_workspace_id(user_id, agent_id, None, None);
         let system_prompt = self
             .resolve_session_prompt(
@@ -1250,6 +1368,21 @@ impl Orchestrator {
             )
             .await
             .map_err(|error| OrchestratorError::internal(error.to_string()))?;
+
+        // SessionMeta must be frozen before materializing the accepted command.
+        // Persist its turn boundary and input before the checkpoint/result so
+        // the durable timeline and duration start at execution admission.
+        if let Some(turn) = durable_turn.as_deref() {
+            self.committer
+                .begin_turn(
+                    user_id,
+                    session_id,
+                    turn,
+                    llm_config.model.as_deref().unwrap_or_default(),
+                )
+                .await
+                .map_err(|error| OrchestratorError::internal(error.to_string()))?;
+        }
 
         let context_manager = ContextManager;
         let mut messages = vec![json!({ "role": "system", "content": system_prompt })];
@@ -1348,7 +1481,6 @@ impl Orchestrator {
                         ),
                     )
                     .await;
-
                 }
                 self.emit_manual_compaction_failure(&emitter, manual_round_info, &err)
                     .await;
@@ -1384,7 +1516,6 @@ impl Orchestrator {
                     ),
                 )
                 .await;
-
             }
             self.emit_manual_compaction_failure(&emitter, manual_round_info, &err)
                 .await;
@@ -1467,7 +1598,6 @@ impl Orchestrator {
                     ),
                 )
                 .await;
-
             } else {
                 self.append_manual_compaction_result(
                     user_id,
@@ -1484,7 +1614,6 @@ impl Orchestrator {
                     ),
                 )
                 .await;
-
             }
         }
 

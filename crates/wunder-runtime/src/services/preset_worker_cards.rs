@@ -486,8 +486,16 @@ mod tests {
     }
 
     #[test]
-    fn shipped_preset_worker_cards_declare_default_tools_and_skills_explicitly() {
-        let shipped_root = std::path::PathBuf::from("config").join("preset_worker_cards");
+    fn bundled_preset_worker_cards_declare_default_tools_and_skills_explicitly() {
+        let shipped_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("config")
+            .join("preset_worker_cards_example");
+        assert!(
+            shipped_root.is_dir(),
+            "bundled worker-card asset root is present"
+        );
         let skill_keys = HashSet::from(["技能创建器".to_string()]);
         let assets = load_preset_worker_card_assets(&shipped_root, &skill_keys)
             .expect("load shipped assets");

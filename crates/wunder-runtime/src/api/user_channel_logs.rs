@@ -86,7 +86,9 @@ pub async fn list_user_channel_runtime_logs(
     agent_id: Option<&str>,
     limit: Option<usize>,
 ) -> ChannelServiceResult<Value> {
-    let runtime_enabled = true;
+    // Reading configuration/log projections must not start channel workers,
+    // but the response still exposes whether that runtime is enabled.
+    let runtime_enabled = state.config_store.get().await.channels.enabled;
     let channel_filter = channel
         .map(|value| normalize_user_channel(Some(value)))
         .transpose()?;

@@ -4,7 +4,7 @@
     :data-turn-id="String(message.__runtime_user_turn_id || message.user_turn_id || message.root_turn_id || '')"
   >
     <MessageTimelineTurnProcess
-      v-if="Number(message.process_count ?? message.workflow_count)>0 || Boolean(String(message.reasoning || '').trim())"
+      v-if="!hasProjectionBlocks && (Number(message.process_count ?? message.workflow_count)>0 || Boolean(String(message.reasoning || '').trim()))"
       :session-id="activeSessionId"
       :turn-id="processTurnId"
       :count="Number(message.process_count ?? message.workflow_count)||0"

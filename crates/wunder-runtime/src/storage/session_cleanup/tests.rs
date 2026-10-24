@@ -32,6 +32,8 @@ fn seed(root: &std::path::Path, user: &str, session: &str) -> Result<()> {
             workspace_id: None,
             user_rounds: 1,
             model_rounds_per_turn: 1,
+            seed: None,
+            scenario: crate::storage::StressThreadScenario::Complex,
         },
         |_, _| {},
     ))??;

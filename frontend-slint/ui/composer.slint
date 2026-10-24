@@ -353,11 +353,13 @@ component GoalTool inherits Rectangle {
 // §StatusDock: the plan capsule above the goal banner. It exists only while the
 // 计划面板 tool has published steps — the turn's phase text (thinking / tools /
 // generating) already reads on the timeline rows, so repeating it here would
-// duplicate what the user sees above. Collapsed it is one centred pill (title,
-// the step being worked on, the progress counter, a chevron); clicking opens the
-// checklist card above the pill, exactly like the web client's composer status
-// dock. Expanding is pure view state: closing the card never drops the plan,
-// which stays in the turn and the per-thread plan cache.
+// duplicate what the user sees above. Collapsed it is one right-aligned pill
+// (title, the step being worked on, the progress counter, a chevron); clicking
+// opens the checklist card above the pill, anchored to the same right edge as
+// the web client's composer status dock. Keeping the capsule off-centre leaves
+// the middle of the reading column clear. Expanding is pure view state: closing
+// the card never drops the plan, which stays in the turn and the per-thread
+// plan cache.
 export component StatusDock inherits Rectangle {
     in property <bool> running: false;
     in property <int> steps-done: 0;
@@ -379,7 +381,9 @@ export component StatusDock inherits Rectangle {
         360px);
     // ---- the pill ----
     HorizontalLayout {
-        alignment: center;
+        // Right-aligned inside the reading column: the pill rides the input's
+        // right edge instead of sitting in the middle of the viewport.
+        alignment: end;
         Rectangle {
             height: 26px;
             border-radius: 13px;
@@ -432,7 +436,8 @@ export component StatusDock inherits Rectangle {
     if root.expanded : Rectangle {
         width: min(560px, parent.width);
         height: root.card-height;
-        x: (parent.width - self.width) / 2;
+        // Same right edge as the pill, growing leftwards.
+        x: parent.width - self.width;
         y: -self.height - 8px;
         z: 30;
         border-radius: 14px; background: Theme.surface;

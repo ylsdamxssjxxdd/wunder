@@ -3510,6 +3510,26 @@ storage:
         let _ = fs::remove_dir_all(&root);
     }
 
+    /// 蛹/舵机随包附带的技能必须在新装环境默认启用；否则用户只能手写配置
+    /// 才能在智能体里勾选它们，随包技能等于不可用。
+    #[test]
+    fn test_shipped_template_enables_bundled_default_skills() {
+        let template = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(|crates| crates.parent())
+            .map(|root| root.join("config").join("wunder-example.yaml"))
+            .expect("repo config template");
+        let config = try_load_config_from_path(&template).expect("deployment template must parse");
+        for name in ["技能创建器", "公文写作", "文稿校对", "3D网页", "视频制作"]
+        {
+            assert!(
+                config.skills.enabled.iter().any(|skill| skill == name),
+                "{} must enable bundled skill {name}",
+                template.display()
+            );
+        }
+    }
+
     #[test]
     fn test_external_auth_key_prefers_dedicated_key() {
         let mut config = Config::default();

@@ -69,8 +69,9 @@ fn task_tree_restores_identity_and_rejects_other_roots_users_and_cycles() {
 
 #[test]
 fn context_inherits_bounded_recent_turns_without_system_or_tool_roles() {
-    let (_dir, db) = storage();
+    let (dir, db) = storage();
     session(&db, "owner", "root", None, None);
+    crate::storage::test_support::freeze_thread(dir.path(), "owner", "root");
     for index in 1..=3 {
         let turn = db
             .accept_thread_turn("owner", "root", &json!({"content":format!("user-{index}")}))
@@ -124,20 +125,25 @@ fn context_inherits_bounded_recent_turns_without_system_or_tool_roles() {
 
 #[test]
 fn subagent_context_caps_unicode_and_groups_continuations_by_user_round() {
-    let (_dir, db) = storage();
+    let (dir, db) = storage();
     session(&db, "owner", "root", None, None);
+    crate::storage::test_support::freeze_thread(dir.path(), "owner", "root");
     let root = db
         .accept_thread_turn("owner", "root", &json!({"content":"Fixture root"}))
         .unwrap();
     let root_id = root["turn_id"].as_str().unwrap();
+    crate::storage::test_support::begin_turn(dir.path(), "owner", "root", root_id);
     let continuation = db
         .accept_thread_turn(
             "owner",
             "root",
-            &json!({"content":"Internal","root_turn_id":root_id,"trigger_kind":"continuation"}),
+            &json!({"content":"Internal","root_user_round":1}),
         )
         .unwrap();
+    assert_eq!(continuation["root_turn_id"], root_id);
+    assert_eq!(continuation["user_turn_index"], root["user_turn_index"]);
     let turn = continuation["turn_id"].as_str().unwrap();
+    crate::storage::test_support::begin_turn(dir.path(), "owner", "root", turn);
     for index in 0..6 {
         db.commit_thread_item(
             "owner",
@@ -155,20 +161,19 @@ fn subagent_context_caps_unicode_and_groups_continuations_by_user_round() {
     assert!(text.contains("文"));
     assert_eq!(meta["context_truncated"], true);
     assert!(meta["context_bytes"].as_u64().unwrap() <= 65536);
-    assert!(db
-        .load_subagent_context("other-owner", "root", 1)
-        .unwrap()
-        .is_empty());
+    assert!(db.load_subagent_context("other-owner", "root", 1).is_err());
 }
 
 #[test]
 fn expired_execution_recovers_once_preserving_history_and_fresh_workers() {
-    let (_dir, db) = storage();
+    let (dir, db) = storage();
     session(&db, "owner", "child", None, None);
+    crate::storage::test_support::freeze_thread(dir.path(), "owner", "child");
     let turn = db
         .accept_thread_turn("owner", "child", &json!({"content":"Fixture task"}))
         .unwrap();
     let turn_id = turn["turn_id"].as_str().unwrap();
+    crate::storage::test_support::begin_turn(dir.path(), "owner", "child", turn_id);
     db.update_thread_turn("owner", "child", turn_id, "running", "", &json!({}))
         .unwrap();
     let mut run = SessionRunRecord {

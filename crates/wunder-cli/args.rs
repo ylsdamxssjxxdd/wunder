@@ -584,6 +584,14 @@ pub struct StressThreadCommand {
     /// Optional session title / 可选会话标题。
     #[arg(long)]
     pub title: Option<String>,
+
+    /// Deterministic workload seed / 可复现工作负载的随机种子。
+    #[arg(long)]
+    pub seed: Option<u64>,
+
+    /// Bounded synthetic workload: typical, complex, or adversarial.
+    #[arg(long, default_value = "complex", value_parser = ["typical", "complex", "adversarial"])]
+    pub profile: String,
 }
 
 #[derive(Debug, Args)]

@@ -259,6 +259,146 @@ async fn application_chat_append_requires_freeze_and_preserves_model_context() {
 }
 
 #[tokio::test]
+async fn completed_compaction_summary_stays_in_history_but_not_model_context() {
+    let root = tempfile::tempdir().unwrap();
+    let db_path = root.path().join("state_1.sqlite");
+    let db = SqliteStorage::new(db_path.to_string_lossy().into_owned());
+    db.ensure_initialized().unwrap();
+    let backend: &dyn StorageBackend = &db;
+    let store = LocalThreadStore::open(root.path()).unwrap();
+    let thread = ThreadId::new(THREAD).unwrap();
+    let rollout = RolloutId::new("rollout-summary").unwrap();
+    let admission = backend
+        .accept_thread_turn(USER, THREAD, &json!({"content":"sample input"}))
+        .unwrap();
+    let turn = TurnId::new(admission["turn_id"].as_str().unwrap()).unwrap();
+    store
+        .create_thread(CreateThreadRequest {
+            metadata: ThreadMetadata {
+                thread_id: thread.clone(),
+                current_rollout_id: rollout.clone(),
+                status: ThreadStatus::Active,
+                created_at_ms: 1,
+                updated_at_ms: 1,
+                title: None,
+                workspace_id: None,
+                pinned: false,
+            },
+            session_meta: SessionMeta {
+                thread_id: thread.clone(),
+                rollout_id: rollout,
+                created_at_ms: 1,
+                source: "sample".into(),
+                initial_system_prompt: "frozen instructions".into(),
+                initial_memory: None,
+                parent_thread_id: None,
+                history_base: None,
+                capabilities: Value::Null,
+            },
+        })
+        .await
+        .unwrap();
+    store
+        .begin_turn(USER, &thread, &turn, "sample-model")
+        .await
+        .unwrap();
+
+    backend
+        .append_chat(
+            USER,
+            &json!({
+                "session_id": THREAD,
+                "turn_id": turn,
+                "item_id": "summary-item",
+                "role": "system",
+                "content": "Compacted sample history",
+                "status": "completed",
+                "meta": {
+                    "type": "compaction_summary",
+                    "compaction_id": "compact-sample",
+                    "replacement_history": [
+                        {"role": "user", "content": "retained input"},
+                        {"role": "assistant", "content": "retained answer"}
+                    ]
+                }
+            }),
+        )
+        .unwrap();
+
+    // Workflow events have readable text but are not chat messages. Their
+    // configuration/tool kind must not manufacture an assistant role.
+    store
+        .append_canonical(
+            &thread,
+            vec![
+                CanonicalRecord::Event(CanonicalEvent::ItemCompleted(CanonicalItem {
+                    item_id: ItemId::new("workflow-item").unwrap(),
+                    turn_id: turn.clone(),
+                    root_turn_id: Some(turn.clone()),
+                    created_at_ms: 2,
+                    kind: CanonicalItemKind::Configuration,
+                    payload: json!({"kind":"plan", "status":"completed", "content":"sample plan"}),
+                    display_output: None,
+                    display_output_truncated: false,
+                })),
+                CanonicalRecord::Event(CanonicalEvent::ItemCompleted(CanonicalItem {
+                    item_id: ItemId::new("workflow-tool-item").unwrap(),
+                    turn_id: turn.clone(),
+                    root_turn_id: Some(turn),
+                    created_at_ms: 3,
+                    kind: CanonicalItemKind::ToolResult,
+                    payload: json!({"kind":"tool", "status":"completed", "content":"sample tool result"}),
+                    display_output: None,
+                    display_output_truncated: false,
+                })),
+            ],
+        )
+        .await
+        .unwrap();
+    drop(store);
+    drop(db);
+    let reopened = SqliteStorage::new(db_path.to_string_lossy().into_owned());
+    reopened.ensure_initialized().unwrap();
+    let backend: &dyn StorageBackend = &reopened;
+    assert!(backend
+        .load_thread_context_items("other-sample", THREAD, 20, true)
+        .is_err());
+    assert!(backend
+        .load_thread_context_items("other-sample", THREAD, 20, false)
+        .is_err());
+    let history = backend
+        .load_thread_context_items(USER, THREAD, 20, true)
+        .unwrap();
+    assert!(!history.iter().any(|item| matches!(
+        item["item_id"].as_str(),
+        Some("workflow-item" | "workflow-tool-item")
+    )));
+    let summary = history
+        .iter()
+        .find(|item| item["item_id"] == "summary-item")
+        .expect("completed compaction summary is a durable history item");
+    assert_eq!(summary["meta"]["compaction_id"], "compact-sample");
+    assert_eq!(
+        summary["meta"]["replacement_history"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+
+    let context = backend
+        .load_thread_execution_context(USER, THREAD, "", 20)
+        .unwrap();
+    assert_eq!(
+        context,
+        vec![
+            json!({"role": "user", "content": "retained input"}),
+            json!({"role": "assistant", "content": "retained answer"}),
+        ]
+    );
+}
+
+#[tokio::test]
 async fn fork_facade_reads_shared_prefix_counts_and_body_after_source_delete() {
     let root = tempfile::tempdir().unwrap();
     let store = LocalThreadStore::open(root.path()).unwrap();
@@ -268,6 +408,8 @@ async fn fork_facade_reads_shared_prefix_counts_and_body_after_source_delete() {
         workspace_id: None,
         user_rounds: 2,
         model_rounds_per_turn: 1,
+        seed: None,
+        scenario: crate::storage::StressThreadScenario::Complex,
     };
     store
         .generate_stress_thread(USER, &spec, |_, _| {})

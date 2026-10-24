@@ -541,8 +541,24 @@ impl Orchestrator {
             payload["turn_id"] = Value::String(turn_id);
             payload["item_id"] = Value::String(item_id);
         }
-        let payload =
+        let mut payload =
             crate::services::chat_payload_sanitizer::sanitize_persisted_chat_payload(&payload);
+        // A checkpoint commits its replacement model context and durable
+        // summary together. Ordinary completions already have their UI item
+        // committed by the event lifecycle and only append model input here.
+        if payload
+            .pointer("/meta/replacement_history")
+            .is_some_and(Value::is_array)
+        {
+            payload["status"] = Value::String("completed".to_string());
+            // The replacement snapshot belongs to internal history. Its
+            // separate compaction result event supplies the visible activity.
+            payload["meta"]["hidden"] = Value::Bool(true);
+            return self
+                .thread_store
+                .append_chat_payload(user_id, &payload)
+                .await;
+        }
         use wunder_core::thread_store::{ThreadId, TurnId};
         let turn = payload
             .get("turn_id")

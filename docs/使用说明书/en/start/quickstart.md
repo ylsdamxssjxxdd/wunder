@@ -13,11 +13,16 @@ updated_at: 2026-10-16
 
 # Quick Start
 
-Individual users start with the **Pupa (desktop)** — download the installer and it runs; there is no Hull (server) to deploy first. The four sections below follow install, model configuration, your first message, and the run itself.
+Individual users start with the **Pupa (desktop)**: download the matching build and it runs; there is no Hull (server) to deploy first. The four sections below follow install, model configuration, your first message, and the run itself.
 
 ## Download and install
 
-Download the installer matching your system from Releases. The Pupa targets 32-bit Win7 and Ubuntu 18.04 and also covers modern Windows / Linux. Install or extract it, then launch.
+Download the build that matches your system from Releases. The Pupa targets 32-bit Win7 and Ubuntu 18.04 and also covers modern Windows / Linux.
+
+- **Legacy systems** (32-bit Win7, Ubuntu 18.04): download the `setup` or `.run` installer. It ships with a complete runtime, but compatibility constraints limit some third-party features.
+- **Modern systems**: download the `.exe` or `.AppImage` main program directly; it relies on the local environment, or fetches the full environment later over the network.
+
+Install or extract it, then launch.
 
 In a development environment you can also run the launch script directly (on Windows that's `run.bat`, or run `wunder-frontend-slint` straight). It calls the engine natively in-process — it takes no local port and needs no local HTTP/WebSocket relay.
 

@@ -16,7 +16,7 @@ use parking_lot::Mutex;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use std::fs::{File, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock, Weak};
@@ -221,8 +221,21 @@ impl LocalThreadStore {
                 CHECK ((base_rollout_id IS NULL AND base_end_ordinal IS NULL AND base_end_byte_offset IS NULL)
                     OR (base_rollout_id IS NOT NULL AND base_end_ordinal IS NOT NULL AND base_end_byte_offset IS NOT NULL))
              );
-             CREATE INDEX IF NOT EXISTS canonical_rollouts_reference ON canonical_rollouts(base_rollout_id);",
+             CREATE INDEX IF NOT EXISTS canonical_rollouts_reference ON canonical_rollouts(base_rollout_id);
+             CREATE TABLE IF NOT EXISTS canonical_thread_deletions (
+                thread_id TEXT PRIMARY KEY NOT NULL,
+                created_at_ms INTEGER NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS canonical_pending_rollout_reclaims (
+                requested_by_thread_id TEXT NOT NULL,
+                rollout_id TEXT PRIMARY KEY NOT NULL,
+                rollout_path TEXT NOT NULL,
+                created_at_ms INTEGER NOT NULL
+             );
+             CREATE INDEX IF NOT EXISTS canonical_pending_reclaims_thread
+                ON canonical_pending_rollout_reclaims(requested_by_thread_id,created_at_ms,rollout_id);",
         )?;
+        super::thread_mutation::initialize(&conn)?;
         Ok(Self {
             state_path: Arc::new(state_path),
             history: ThreadHistoryStore::open(root.join("thread_history_1.sqlite"))?,
@@ -350,6 +363,7 @@ impl LocalThreadStore {
     /// checks this thread's durable suffix, never opens an append writer and
     /// never repairs/truncates a canonical file. Later pages only read SQLite.
     pub(crate) async fn ensure_history(&self, thread: &ThreadId) -> ThreadStoreResult<()> {
+        self.recover_pending_revert_for_access(thread).await?;
         let stored = self.stored(thread).await?;
         let key = stored.descriptor.rollout_id.clone();
         if self.history_verified.lock().contains(&key) {
@@ -432,23 +446,30 @@ impl LocalThreadStore {
             }
             for id in ids {
                 let thread = ThreadId::new(id.clone())?;
-                match self.delete_thread(&thread).await {
-                    Ok(()) => removed += 1,
-                    Err(ThreadStoreError::NotFound { .. }) => {
-                        // An admission can exist before its first rollout.
-                        let admissions = self.admission_store()?;
-                        let deleted = id.clone();
-                        db(move || admissions.delete_thread(&deleted)).await?;
-                    }
-                    Err(error) => return Err(error.into()),
-                }
+                let path = self.state_path.clone();
+                let check = id.clone();
+                let exists: bool = db(move || {
+                    Ok(connect(&path)?.query_row(
+                        "SELECT EXISTS(SELECT 1 FROM canonical_threads WHERE thread_id=?1)",
+                        [check],
+                        |row| row.get(0),
+                    )?)
+                })
+                .await?;
+                // Admission-only cleanup also stays inside the thread gate.
+                self.delete_thread(&thread).await?;
+                removed += i64::from(exists);
                 after = Some(id);
             }
         }
     }
 
     pub async fn session_meta(&self, thread: &ThreadId) -> ThreadStoreResult<SessionMeta> {
-        let stored = self.stored(thread).await?;
+        self.recover_pending_revert_for_access(thread).await?;
+        self.session_meta_stored(self.stored(thread).await?).await
+    }
+
+    async fn session_meta_stored(&self, stored: StoredThread) -> ThreadStoreResult<SessionMeta> {
         blocking::run_fs("thread_store.session_meta", move || {
             let mut line = Vec::new();
             BufReader::new(rollout_compression::open_rollout_stream(
@@ -470,6 +491,7 @@ impl LocalThreadStore {
     }
 
     pub async fn history_position(&self, thread: &ThreadId) -> ThreadStoreResult<HistoryPosition> {
+        self.recover_pending_revert_for_access(thread).await?;
         let stored = self.stored(thread).await?;
         let history = self.history.clone();
         db(move || {
@@ -487,6 +509,47 @@ impl LocalThreadStore {
         Ok(self.admissions_store.clone())
     }
 
+    pub(crate) async fn deletion_pending(&self, thread: &ThreadId) -> ThreadStoreResult<bool> {
+        let path = self.state_path.clone();
+        let thread = thread.to_string();
+        db(move || {
+            Ok(connect(&path)?.query_row(
+                "SELECT EXISTS(SELECT 1 FROM canonical_thread_deletions WHERE thread_id=?1)",
+                [thread],
+                |row| row.get(0),
+            )?)
+        })
+        .await
+    }
+
+    /// Reclamation is explicit and journaled. No idle timer scans history or
+    /// retries I/O. Keep each batch bounded even after repeated failed edits.
+    async fn reclaim_pending_rollouts(&self, thread: &ThreadId) -> ThreadStoreResult<()> {
+        let path = self.state_path.clone();
+        let root = self.root.clone();
+        let history = self.history.clone();
+        let thread = thread.to_string();
+        db(move || {
+            let conn = connect(&path)?;
+            let pending = conn.prepare(
+                "SELECT rollout_id,rollout_path FROM canonical_pending_rollout_reclaims
+                 WHERE requested_by_thread_id=?1 ORDER BY created_at_ms,rollout_id LIMIT 64"
+            )?.query_map([&thread], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            for (rollout, relative) in pending {
+                rollout_compression::remove_rollout_representations(&checked_rollout_path(&root, &root.join(relative))?)?;
+                history.delete_rollout(&rollout)?;
+                conn.execute("DELETE FROM canonical_pending_rollout_reclaims WHERE rollout_id=?1", [&rollout])?;
+            }
+            let remaining: bool = conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM canonical_pending_rollout_reclaims WHERE requested_by_thread_id=?1)",
+                [&thread], |row| row.get(0),
+            )?;
+            if remaining { bail!("rollout reclamation is pending; retry the explicit operation"); }
+            Ok(())
+        }).await
+    }
+
     /// Materialize an accepted submission only after the frozen instructions
     /// exist. Admission/queue state is not a second execution-history log.
     pub async fn begin_turn(
@@ -496,6 +559,7 @@ impl LocalThreadStore {
         turn: &TurnId,
         model: &str,
     ) -> ThreadStoreResult<()> {
+        self.recover_pending_revert_for_access(thread).await?;
         let admissions = self.admission_store().map_err(unavailable)?;
         let owner = user.to_owned();
         let id = thread.to_string();
@@ -513,7 +577,11 @@ impl LocalThreadStore {
             id: turn.to_string(),
         })?;
         let item_id = ItemId::new(format!("{turn}:user"))?;
-        let already_written = self.read_item(thread, &item_id).await.is_ok();
+        let already_written = match self.read_item(thread, &item_id).await {
+            Ok(_) => true,
+            Err(ThreadStoreError::NotFound { .. }) => false,
+            Err(error) => return Err(error),
+        };
         let root = admitted["root_turn_id"]
             .as_str()
             .map(TurnId::new)
@@ -683,8 +751,10 @@ impl LocalThreadStore {
                 .map(str::to_owned)
                 .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
         )?;
-        if self.read_item(&thread, &item_id).await.is_ok() {
-            return Ok(());
+        match self.read_item(&thread, &item_id).await {
+            Ok(_) => return Ok(()),
+            Err(ThreadStoreError::NotFound { .. }) => {}
+            Err(error) => return Err(error.into()),
         }
         let mut records = Vec::with_capacity(2);
         if let Some(checkpoint) = checkpoint {
@@ -724,6 +794,7 @@ impl LocalThreadStore {
         thread: &ThreadId,
         excluding_turn: Option<&TurnId>,
     ) -> ThreadStoreResult<Vec<serde_json::Value>> {
+        self.recover_pending_revert_for_access(thread).await?;
         let context = self
             .load_model_context(ModelContextRequest {
                 thread_id: thread.clone(),
@@ -765,13 +836,19 @@ impl LocalThreadStore {
         mut progress: impl FnMut(i64, i64) + Send,
     ) -> Result<super::stress_model::StressThreadStats> {
         use super::stress_model::{
-            base_seed, build_answer_text, build_reasoning_text, build_tool_args, build_tool_result,
-            fill_template, iter_turn_plans, user_prompts, validate_spec, Rng,
+            base_seed, build_answer_text, build_reasoning_text, build_tool_args,
+            build_tool_result_for_scenario, fill_template, iter_turn_plans_for_scenario,
+            synthetic_initial_context_tokens, synthetic_initial_memory,
+            synthetic_initial_system_prompt, user_prompts, validate_spec, Rng,
+            SYNTHETIC_PROFILE_ID,
         };
         validate_spec(spec)?;
         let thread = ThreadId::new(spec.session_id.clone())?;
         let now = Utc::now().timestamp_millis();
         let rollout = RolloutId::new(uuid::Uuid::new_v4().to_string())?;
+        let seed = spec.seed.unwrap_or_else(base_seed);
+        let initial_system_prompt = synthetic_initial_system_prompt(seed, spec.scenario);
+        let initial_memory = synthetic_initial_memory(seed, spec.scenario);
         // The synthetic generator uses the same admission lifecycle as a
         // live thread. Register ownership before materializing any session
         // state so every accepted pressure-test turn has a stable owner.
@@ -796,11 +873,17 @@ impl LocalThreadStore {
                     rollout_id: rollout.clone(),
                     created_at_ms: now,
                     source: "stress".into(),
-                    initial_system_prompt: "".into(),
-                    initial_memory: None,
+                    initial_system_prompt,
+                    initial_memory: Some(initial_memory),
                     parent_thread_id: None,
                     history_base: None,
-                    capabilities: serde_json::json!({"synthetic":true}),
+                    capabilities: serde_json::json!({
+                        "synthetic": true,
+                        "profile": SYNTHETIC_PROFILE_ID,
+                        "scenario": spec.scenario.as_str(),
+                        "seed": seed,
+                        "initial_context_tokens": synthetic_initial_context_tokens(seed, spec.scenario),
+                    }),
                 },
             })
             .await;
@@ -817,11 +900,13 @@ impl LocalThreadStore {
             }
             return Err(error.into());
         }
-        let seed = base_seed();
         let mut rng = Rng::new(seed);
         let mut records = 1_u64;
         let mut items = 0_i64;
         let mut tools = 0_i64;
+        let mut thread_input_tokens = 0_u64;
+        let mut thread_output_tokens = 0_u64;
+        let mut thread_reasoning_tokens = 0_u64;
         for number in 1..=spec.user_rounds {
             let prompt = fill_template(rng.pick_str(user_prompts()), &mut rng, number);
             let admissions = self.admission_store()?;
@@ -842,6 +927,16 @@ impl LocalThreadStore {
                     .ok_or_else(|| anyhow!("accepted stress turn has no root turn id"))?,
             )?;
             let mut batch = StressRecordBatch::new();
+            // Keep the synthetic usage snapshots at the same semantic boundary
+            // as production: one observed response usage fact per model
+            // request, while display-only message statistics stay on the
+            // completed assistant item below.  Usage records are ignored by
+            // model-context reconstruction and therefore cannot pollute the
+            // next request's prompt.
+            let mut turn_input_tokens = 0_u64;
+            let mut turn_output_tokens = 0_u64;
+            let mut turn_reasoning_tokens = 0_u64;
+            let mut completed_turn_tool_calls = 0_u64;
             self.push_stress_record(
                 &thread,
                 &mut batch,
@@ -895,12 +990,58 @@ impl LocalThreadStore {
             )
             .await?;
             items += 1;
-            for (index, round) in
-                iter_turn_plans(seed, number, spec.model_rounds_per_turn).enumerate()
+            for (index, round) in iter_turn_plans_for_scenario(
+                seed,
+                number,
+                spec.model_rounds_per_turn,
+                spec.scenario,
+            )
+            .enumerate()
             {
                 let answer = build_answer_text(&mut rng, &prompt, number);
                 let reasoning =
                     build_reasoning_text(&mut rng, round.reasoning_tokens.unwrap_or_default());
+                let system_prompt_tokens =
+                    super::stress_model::synthetic_system_prompt_tokens(seed, spec.scenario);
+                let latest_user_tokens = (prompt.len() as u64).div_ceil(4).max(1);
+                let image_tokens = 0;
+                // Reasoning is generated output, so it is deliberately kept
+                // out of this input occupancy breakdown.  The field remains
+                // present for the shared projection contract and is zero for
+                // this request-side estimate.
+                let reasoning_tokens = 0;
+                let tool_call_tokens = (round.tool_count as u64) * 24;
+                let tool_call_id_tokens = (round.tool_count as u64) * 8;
+                let message_envelope_tokens = 8;
+                let fixed_protocol_tokens = 16;
+                // The generated input budget intentionally contains a large
+                // synthetic history component so long-thread pressure tests
+                // do not collapse into a short-message benchmark.
+                let accounted_tokens = system_prompt_tokens
+                    .saturating_add(latest_user_tokens)
+                    .saturating_add(image_tokens)
+                    .saturating_add(reasoning_tokens)
+                    .saturating_add(tool_call_tokens)
+                    .saturating_add(tool_call_id_tokens)
+                    .saturating_add(message_envelope_tokens)
+                    .saturating_add(fixed_protocol_tokens);
+                let history_tokens = round.input_tokens.saturating_sub(accounted_tokens);
+                let request_token_breakdown = serde_json::json!({
+                    "native_tool_tokens": 0,
+                    "system_prompt_tokens": system_prompt_tokens,
+                    "history_tokens": history_tokens,
+                    "latest_user_tokens": latest_user_tokens,
+                    "image_tokens": image_tokens,
+                    "reasoning_tokens": reasoning_tokens,
+                    "tool_call_tokens": tool_call_tokens,
+                    "tool_call_id_tokens": tool_call_id_tokens,
+                    "message_envelope_tokens": message_envelope_tokens,
+                    "fixed_protocol_tokens": fixed_protocol_tokens,
+                    "message_tokens": round.input_tokens,
+                    "estimated_input_tokens": round.input_tokens,
+                    "tool_count": round.tool_count as u64,
+                    "message_count": (index + 2) as u64,
+                });
                 // One bounded model round retains its actual invocation and
                 // result shapes, so pressure tests replay the same context
                 // protocol as production instead of only drawing UI rows.
@@ -909,11 +1050,12 @@ impl LocalThreadStore {
                 for (tool_index, profile) in round.tool_profiles.iter().enumerate() {
                     let call_id = format!("{turn}:call-{index}-{tool_index}");
                     let args = build_tool_args(&mut rng, profile, number);
-                    let result = build_tool_result(
+                    let result = build_tool_result_for_scenario(
                         &mut rng,
                         profile,
                         &args,
                         (round.tool_duration_s[tool_index] * 1000.0) as i64,
+                        spec.scenario,
                     )?;
                     tool_calls.push(serde_json::json!({
                         "id":call_id, "type":"function",
@@ -921,12 +1063,119 @@ impl LocalThreadStore {
                     }));
                     generated_tools.push((profile, call_id, args, result));
                 }
-                let mut model_payload = serde_json::json!({"role":"assistant","content":answer,"reasoning_content":reasoning});
-                if !tool_calls.is_empty() {
+                let mut model_payload = serde_json::json!({
+                    "role":"assistant",
+                    "content":answer,
+                    "reasoning_content":reasoning,
+                    "request_token_breakdown": request_token_breakdown.clone(),
+                });
+                let has_tool_calls = !tool_calls.is_empty();
+                if has_tool_calls {
                     model_payload["tool_calls"] = serde_json::Value::Array(tool_calls);
                 }
+                let round_reasoning_tokens = round.reasoning_tokens.unwrap_or_default();
+                let round_total_tokens = round
+                    .input_tokens
+                    .saturating_add(round.answer_tokens)
+                    .saturating_add(round_reasoning_tokens);
+                turn_input_tokens = turn_input_tokens.saturating_add(round.input_tokens);
+                turn_output_tokens = turn_output_tokens.saturating_add(round.answer_tokens);
+                turn_reasoning_tokens =
+                    turn_reasoning_tokens.saturating_add(round_reasoning_tokens);
+                thread_input_tokens = thread_input_tokens.saturating_add(round.input_tokens);
+                thread_output_tokens = thread_output_tokens.saturating_add(round.answer_tokens);
+                thread_reasoning_tokens =
+                    thread_reasoning_tokens.saturating_add(round_reasoning_tokens);
+                let round_usage = serde_json::json!({
+                    "input_tokens": round.input_tokens,
+                    "output_tokens": round.answer_tokens,
+                    "total_tokens": round_total_tokens,
+                    "reasoning_tokens": round_reasoning_tokens,
+                    "estimated": true,
+                });
+                let cumulative_usage = serde_json::json!({
+                    "input_tokens": turn_input_tokens,
+                    "output_tokens": turn_output_tokens,
+                    "total_tokens": turn_input_tokens
+                        .saturating_add(turn_output_tokens)
+                        .saturating_add(turn_reasoning_tokens),
+                    "reasoning_tokens": turn_reasoning_tokens,
+                    "estimated": true,
+                });
+                let message_stats = serde_json::json!({
+                    "interaction_duration_s": round.prefill_duration_s
+                        + round.decode_duration_s
+                        + round.tool_duration_s.iter().sum::<f64>(),
+                    "usage": round_usage,
+                    "round_usage": cumulative_usage.clone(),
+                    "model_request_count": index as i64 + 1,
+                    "account_credits_consumed": 0,
+                    // The normal executor persists this assistant item before
+                    // executing its newly proposed calls.  Mirror that state:
+                    // report only calls already completed in this user turn.
+                    "toolCalls": completed_turn_tool_calls,
+                    "tool_calls": completed_turn_tool_calls,
+                    "contextTokens": round.input_tokens,
+                    "context_occupancy_tokens": round.input_tokens,
+                    "prefill_tokens": round.input_tokens,
+                    "decode_tokens": round.answer_tokens,
+                    "decode_duration_total_s": round.decode_duration_s,
+                    "avg_model_round_speed_tps": if round.decode_duration_s > 0.0 {
+                        round.answer_tokens as f64 / round.decode_duration_s
+                    } else {
+                        0.0
+                    },
+                    "visible_decode_tokens": round.answer_tokens,
+                    "visible_decode_duration_s": round.decode_duration_s,
+                    "visible_decode_speed_tps": if round.decode_duration_s > 0.0 {
+                        round.answer_tokens as f64 / round.decode_duration_s
+                    } else {
+                        0.0
+                    },
+                    "visible_decode_measured": true,
+                    "profile": SYNTHETIC_PROFILE_ID,
+                    "scenario": spec.scenario.as_str(),
+                });
                 let mut payload = model_payload.clone();
                 payload["model_round"] = serde_json::json!(index + 1);
+                payload["meta"] = serde_json::json!({
+                    "type": if has_tool_calls { "tool_call" } else { "model_response" },
+                    "message_stats": message_stats,
+                });
+                // A Usage record is the durable, replayable usage fact. Keep
+                // it separate from the completed UI item so model context
+                // reconstruction can skip it without dropping statistics.
+                self.push_stress_record(
+                    &thread,
+                    &mut batch,
+                    &mut records,
+                    CanonicalRecord::Usage(UsageRecord {
+                        turn_id: Some(turn.clone()),
+                        input_tokens: round.input_tokens,
+                        output_tokens: round.answer_tokens,
+                        metadata: serde_json::json!({
+                            "total_tokens": round_total_tokens,
+                            "reasoning_tokens": round_reasoning_tokens,
+                            "estimated": true,
+                            "model": "stress-model",
+                            "model_round": index + 1,
+                            "response_id": format!("{turn}:response-{index}"),
+                            "profile": SYNTHETIC_PROFILE_ID,
+                            "turn_usage": cumulative_usage,
+                            "thread_usage": {
+                                "input_tokens": thread_input_tokens,
+                                "output_tokens": thread_output_tokens,
+                                "total_tokens": thread_input_tokens
+                                    .saturating_add(thread_output_tokens)
+                                    .saturating_add(thread_reasoning_tokens),
+                                "reasoning_tokens": thread_reasoning_tokens,
+                                "estimated": true,
+                            },
+                            "request_token_breakdown": request_token_breakdown,
+                        }),
+                    }),
+                )
+                .await?;
                 self.push_stress_record(
                     &thread,
                     &mut batch,
@@ -995,6 +1244,7 @@ impl LocalThreadStore {
                     .await?;
                     items += 1;
                     tools += 1;
+                    completed_turn_tool_calls = completed_turn_tool_calls.saturating_add(1);
                 }
             }
             self.push_stress_record(
@@ -1016,16 +1266,48 @@ impl LocalThreadStore {
             db(move || admissions.update(&id, &turn, "completed", true).map(|_| ())).await?;
             progress(number, items);
         }
+        // The report is intentionally diagnostic-only. A completed stress
+        // thread must remain completed when a local metadata read races an
+        // external cleanup or lacks filesystem permission.
+        let storage_bytes = match self.stored(&thread).await {
+            Ok(stored) => self
+                .stress_storage_bytes(stored.descriptor.path)
+                .await
+                .map_err(|error| {
+                    tracing::debug!(%error, "stress storage byte snapshot unavailable");
+                    error
+                })
+                .ok(),
+            Err(error) => {
+                tracing::debug!(%error, "stress storage metadata unavailable for byte snapshot");
+                None
+            }
+        };
         Ok(super::stress_model::StressThreadStats {
             session_id: spec.session_id.clone(),
             user_turns: spec.user_rounds,
             items,
             tool_calls: tools,
             model_requests: spec.user_rounds * spec.model_rounds_per_turn,
-            model_actions: spec.user_rounds * spec.model_rounds_per_turn + tools + spec.user_rounds,
+            model_actions: spec.user_rounds * spec.model_rounds_per_turn + tools,
             rollout_records: records,
             seed,
+            profile: SYNTHETIC_PROFILE_ID,
+            scenario: spec.scenario.as_str(),
+            initial_context_tokens: synthetic_initial_context_tokens(seed, spec.scenario),
+            storage_bytes,
         })
+    }
+
+    async fn stress_storage_bytes(
+        &self,
+        rollout_path: PathBuf,
+    ) -> Result<super::stress_model::StressThreadStorageBytes> {
+        let root = self.root.clone();
+        blocking::run_fs("thread_store.stress_storage_bytes", move || {
+            bounded_stress_storage_bytes(root.as_path(), rollout_path.as_path())
+        })
+        .await
     }
 
     async fn push_stress_record(
@@ -1235,6 +1517,7 @@ impl LocalThreadStore {
         let _gate = gate.lock().await;
         self.persist_thread_boundary(thread).await?;
         let _owner = self.owner_lock(thread).await?;
+        self.recover_pending_revert(thread).await?;
         let stored = self.stored(thread).await?;
         if (stored.metadata.status == ThreadStatus::Archived) == archived {
             return Ok(());
@@ -1357,6 +1640,11 @@ impl LocalThreadStore {
         };
         let _first_owner = self.owner_lock(first_id).await?;
         let _second_owner = self.owner_lock(second_id).await?;
+        // A fork must observe complete immutable prefixes on both endpoints.
+        // Recovery is already inside their ordered gates and file locks, so it
+        // cannot race a local append or leave a pending revert behind.
+        self.recover_pending_revert(source).await?;
+        self.recover_pending_revert(target).await?;
         let stored = self.stored(source).await?;
         if self.stored(target).await.is_ok() {
             return Err(ThreadStoreError::Conflict {
@@ -1379,6 +1667,7 @@ impl LocalThreadStore {
         let _gate = gate.lock().await;
         self.persist_thread_boundary(thread).await?;
         let _owner = self.owner_lock(thread).await?;
+        self.recover_pending_revert(thread).await?;
         let stored = self.stored(thread).await?;
         if &stored.metadata.current_rollout_id != expected_rollout {
             return Err(ThreadStoreError::Conflict {
@@ -1388,16 +1677,6 @@ impl LocalThreadStore {
         if stored.metadata.status == ThreadStatus::Archived {
             return Err(ThreadStoreError::Conflict {
                 message: "cannot revert an archived thread".into(),
-            });
-        }
-        let admissions = self.admission_store().map_err(unavailable)?;
-        let check = thread.to_string();
-        if !db(move || admissions.ids_by_status(&check, "running", 1))
-            .await?
-            .is_empty()
-        {
-            return Err(ThreadStoreError::Conflict {
-                message: "cannot revert a thread with an active turn".into(),
             });
         }
         let segments = self.lineage_segments(thread).await?;
@@ -1412,93 +1691,191 @@ impl LocalThreadStore {
         })
         .await
         .map_err(unavailable)?;
-        let mut meta = self.session_meta(thread).await?;
         let now = Utc::now().timestamp_millis();
         let rollout = RolloutId::new(uuid::Uuid::new_v4().to_string())?;
         let mut metadata = stored.metadata.clone();
         metadata.current_rollout_id = rollout.clone();
         metadata.updated_at_ms = now;
+        let mut session_meta = self.session_meta_stored(stored.clone()).await?;
+        session_meta.rollout_id = rollout.clone();
+        session_meta.created_at_ms = now;
+        session_meta.history_base = Some(base);
+        // This recorder only selects a managed filename; no worker command or
+        // file is created before the durable intent has been recorded.
         let recorder =
             RolloutRecorder::create(self.root.as_path(), thread.to_string(), rollout.to_string())
                 .map_err(unavailable)?;
-        let descriptor = recorder.descriptor().clone();
-        meta.rollout_id = rollout.clone();
-        meta.created_at_ms = now;
-        meta.history_base = Some(base.clone());
-        let write = recorder
-            .append_records(vec![RolloutRecord {
-                timestamp_ms: now,
-                ordinal: base.end_ordinal_exclusive,
-                record: CanonicalRecord::SessionMeta(meta),
-            }])
-            .await;
-        let shutdown = recorder.shutdown().await;
-        let receipt = write.map_err(unavailable)?;
-        shutdown.map_err(unavailable)?;
-        let state_path = self.state_path.clone();
-        let root = self.root.clone();
-        let relative = descriptor
+        let relative_path = recorder
+            .descriptor()
             .path
-            .strip_prefix(root.as_path())
+            .strip_prefix(self.root.as_path())
             .map_err(unavailable)?
             .to_string_lossy()
             .into_owned();
-        let new_meta = metadata.clone();
-        let old_rollout = expected_rollout.to_string();
-        let through = through_turn.to_string();
-        let update=db(move||{
-            let mut conn=connect(&state_path)?;
-            conn.execute("ATTACH DATABASE ?1 AS admission_queue",[root.join("queue_1.sqlite").to_string_lossy().as_ref()])?;
-            let tx=conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-            let round:Option<i64>=tx.query_row("SELECT user_round FROM admission_queue.canonical_turn_admissions WHERE thread_id=?1 AND turn_id=?2",params![new_meta.thread_id.as_str(),through],|row|row.get(0)).optional()?;
-            let round=round.ok_or_else(||anyhow!("revert turn is absent from admissions"))?;
-            let running:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM admission_queue.canonical_turn_admissions WHERE thread_id=?1 AND status='running')",[new_meta.thread_id.as_str()],|row|row.get(0))?;
-            if running {bail!("cannot revert a thread with an active turn");}
-            insert_rollout_row(&tx,&new_meta,&relative,Some(&base))?;
-            let changed=tx.execute("UPDATE canonical_threads SET rollout_id=?2,rollout_path=?3,updated_at_ms=?4 WHERE thread_id=?1 AND rollout_id=?5",params![new_meta.thread_id.as_str(),new_meta.current_rollout_id.as_str(),relative,now,old_rollout])?;
-            if changed!=1 {bail!("history changed before revert");}
-            tx.execute("DELETE FROM admission_queue.canonical_turn_admissions WHERE thread_id=?1 AND user_round>?2",params![new_meta.thread_id.as_str(),round])?;
-            tx.execute("UPDATE admission_queue.canonical_thread_owners SET latest_user_round=?2 WHERE thread_id=?1",params![new_meta.thread_id.as_str(),round])?;
-            let obsolete=collect_unreferenced_rollouts(&tx,&old_rollout)?;
-            tx.commit()?;
-            Ok(obsolete)
-        }).await;
-        let obsolete = match update {
-            Ok(obsolete) => obsolete,
-            Err(error) => {
-                let cleanup = descriptor.path.clone();
-                let _ = blocking::run_fs("thread_store.revert_cleanup", move || {
-                    rollout_compression::remove_rollout_representations(&cleanup)
-                })
-                .await;
-                return Err(error);
-            }
-        };
-        self.history_verified
-            .lock()
-            .remove(expected_rollout.as_str());
-        let new_stored = StoredThread {
+        recorder.shutdown().await.map_err(unavailable)?;
+        let intent = super::thread_mutation::RevertIntent {
             metadata: metadata.clone(),
-            descriptor,
+            session_meta,
+            expected_rollout: expected_rollout.clone(),
+            through_turn: through_turn.clone(),
+            relative_path,
         };
-        self.project(&new_stored, receipt).await?;
-        let root = self.root.clone();
-        let history = self.history.clone();
-        if let Err(error) = blocking::run_fs("thread_store.revert_reclaim", move || {
-            for (rollout, relative) in obsolete {
-                rollout_compression::remove_rollout_representations(&checked_rollout_path(
-                    &root,
-                    &root.join(relative),
-                )?)?;
-                history.delete_rollout(&rollout)?;
+        let state = self.state_path.clone();
+        db(move || {
+            let mut conn = connect(&state)?;
+            let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+            let current: String = tx.query_row(
+                "SELECT rollout_id FROM canonical_threads WHERE thread_id=?1",
+                [intent.metadata.thread_id.as_str()],
+                |row| row.get(0),
+            )?;
+            if current != intent.expected_rollout.as_str() {
+                bail!("history changed before revert");
             }
+            super::thread_mutation::insert(&tx, &intent)?;
+            tx.commit()?;
             Ok(())
         })
-        .await
-        {
-            tracing::warn!(%error,"obsolete rollout reclaim pending after revert");
-        }
+        .await?;
+        self.recover_pending_revert(thread).await?;
         Ok(metadata)
+    }
+
+    /// Recover only the requested thread. The two short intent checks avoid
+    /// taking a filesystem lock on ordinary reads, and there is no startup
+    /// scan, timer, or background retry loop.
+    async fn recover_pending_revert_for_access(&self, thread: &ThreadId) -> ThreadStoreResult<()> {
+        let state = self.state_path.clone();
+        let id = thread.clone();
+        let state_pending =
+            db(move || Ok(super::thread_mutation::pending(&connect(&state)?, &id)?.is_some()))
+                .await?;
+        let queue_pending = if state_pending {
+            false
+        } else {
+            let admissions = self.admission_store().map_err(unavailable)?;
+            let id = thread.to_string();
+            db(move || admissions.revert_pending(&id)).await?
+        };
+        if !state_pending && !queue_pending {
+            return Ok(());
+        }
+        let gate = self.gate(thread)?;
+        let _gate = gate.lock().await;
+        let _owner = self.owner_lock(thread).await?;
+        self.recover_pending_revert(thread).await
+    }
+
+    /// Finish a recorded revert while the caller holds this thread's gate and
+    /// ownership lock. Each phase commits in one database; it is safe to retry
+    /// after a process exit or a busy/error result in any later phase.
+    pub(crate) async fn recover_pending_revert(&self, thread: &ThreadId) -> ThreadStoreResult<()> {
+        let state = self.state_path.clone();
+        let id = thread.clone();
+        let pending = db(move || super::thread_mutation::pending(&connect(&state)?, &id)).await?;
+        let Some(intent) = pending else {
+            let admissions = self.admission_store().map_err(unavailable)?;
+            let id = thread.to_string();
+            db(move || {
+                if admissions.revert_pending(&id)? {
+                    admissions.finish_revert(&id)?;
+                }
+                Ok(())
+            })
+            .await?;
+            return Ok(());
+        };
+        let state = self.state_path.clone();
+        let id = thread.to_string();
+        let expected = intent.expected_rollout.to_string();
+        let revision = intent.metadata.current_rollout_id.to_string();
+        let published = db(move || {
+            let current: String = connect(&state)?.query_row(
+                "SELECT rollout_id FROM canonical_threads WHERE thread_id=?1",
+                [&id],
+                |row| row.get(0),
+            )?;
+            if current != expected && current != revision {
+                bail!("pending revert no longer matches the thread revision");
+            }
+            Ok(current == revision)
+        })
+        .await?;
+        let admissions = self.admission_store().map_err(unavailable)?;
+        let id = thread.to_string();
+        let through = intent.through_turn.to_string();
+        let round = db(move || admissions.freeze_revert(&id, &through)).await?;
+        let Some(round) = round else {
+            if published {
+                return Err(ThreadStoreError::CorruptHistory {
+                    message: "published revert has an active queue execution".into(),
+                });
+            }
+            let state = self.state_path.clone();
+            let id = thread.clone();
+            db(move || super::thread_mutation::remove(&connect(&state)?, &id)).await?;
+            return Err(ThreadStoreError::Conflict {
+                message: "cannot revert a thread with an active turn".into(),
+            });
+        };
+        let root = self.root.clone();
+        let prepared = intent.clone();
+        blocking::run_fs("thread_store.revert_prepare_suffix", move || {
+            let relative = super::thread_mutation::relative_path(&prepared.relative_path)?;
+            let path = checked_rollout_path(&root, &root.join(relative))?;
+            super::thread_mutation::prepare_suffix(&path, &prepared, published)
+        })
+        .await
+        .map_err(unavailable)?;
+        let state = self.state_path.clone();
+        let switch = intent.clone();
+        db(move || {
+            let mut conn = connect(&state)?;
+            let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+            let current: String = tx.query_row(
+                "SELECT rollout_id FROM canonical_threads WHERE thread_id=?1",
+                [switch.metadata.thread_id.as_str()], |row| row.get(0),
+            )?;
+            if current == switch.expected_rollout.as_str() {
+                insert_rollout_row(&tx, &switch.metadata, &switch.relative_path,
+                    switch.session_meta.history_base.as_ref())?;
+                let changed = tx.execute(
+                    "UPDATE canonical_threads SET rollout_id=?2,rollout_path=?3,updated_at_ms=?4 WHERE thread_id=?1 AND rollout_id=?5",
+                    params![switch.metadata.thread_id.as_str(), switch.metadata.current_rollout_id.as_str(),
+                        switch.relative_path, switch.metadata.updated_at_ms, switch.expected_rollout.as_str()],
+                )?;
+                if changed != 1 { bail!("history changed before revert"); }
+                for (rollout, path) in collect_unreferenced_rollouts(&tx, switch.expected_rollout.as_str())? {
+                    tx.execute(
+                        "INSERT OR IGNORE INTO canonical_pending_rollout_reclaims(requested_by_thread_id,rollout_id,rollout_path,created_at_ms) VALUES(?1,?2,?3,?4)",
+                        params![switch.metadata.thread_id.as_str(), rollout, path, switch.metadata.updated_at_ms],
+                    )?;
+                }
+            } else if current != switch.metadata.current_rollout_id.as_str() {
+                bail!("pending revert no longer matches the thread revision");
+            }
+            tx.commit()?;
+            Ok(())
+        }).await?;
+        let admissions = self.admission_store().map_err(unavailable)?;
+        let id = thread.to_string();
+        let through = intent.through_turn.to_string();
+        db(move || admissions.commit_revert(&id, &through, round)).await?;
+        let state = self.state_path.clone();
+        let id = thread.clone();
+        db(move || super::thread_mutation::remove(&connect(&state)?, &id)).await?;
+        let admissions = self.admission_store().map_err(unavailable)?;
+        let id = thread.to_string();
+        db(move || admissions.finish_revert(&id)).await?;
+        {
+            let mut verified = self.history_verified.lock();
+            verified.remove(intent.expected_rollout.as_str());
+            verified.remove(intent.metadata.current_rollout_id.as_str());
+        }
+        if let Err(error) = self.reclaim_pending_rollouts(thread).await {
+            tracing::warn!(%error, "obsolete rollout reclaim remains durable after revert");
+        }
+        Ok(())
     }
 
     async fn fork_known_source(
@@ -1507,7 +1884,7 @@ impl LocalThreadStore {
         target: &ThreadId,
         through_turn: &TurnId,
     ) -> ThreadStoreResult<()> {
-        let source_meta = self.session_meta(&source.metadata.thread_id).await?;
+        let source_meta = self.session_meta_stored(source.clone()).await?;
         let segments = self.lineage_segments(&source.metadata.thread_id).await?;
         if segments.len() >= 64 {
             return Err(ThreadStoreError::Conflict {
@@ -1590,6 +1967,9 @@ impl LocalThreadStore {
         descriptor: &RolloutDescriptor,
         history_base: Option<HistoryPosition>,
     ) -> ThreadStoreResult<()> {
+        let admissions = self.admission_store().map_err(unavailable)?;
+        let thread = metadata.thread_id.to_string();
+        db(move || admissions.ensure_mutable(&thread)).await?;
         let path = self.state_path.clone();
         let root = self.root.clone();
         let metadata = metadata.clone();
@@ -1603,7 +1983,7 @@ impl LocalThreadStore {
         db(move || {
             let mut conn=connect(&path)?;
             let tx=conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-            if tx.query_row("SELECT EXISTS(SELECT 1 FROM canonical_threads WHERE thread_id=?1)",[metadata.thread_id.as_str()],|row|row.get::<_,bool>(0))? {bail!("thread already exists");}
+            if tx.query_row("SELECT EXISTS(SELECT 1 FROM canonical_threads WHERE thread_id=?1) OR EXISTS(SELECT 1 FROM canonical_thread_deletions WHERE thread_id=?1)",[metadata.thread_id.as_str()],|row|row.get::<_,bool>(0))? {bail!("thread already exists");}
             insert_rollout_row(&tx,&metadata,&relative,history_base.as_ref())?;
             tx.execute("INSERT INTO canonical_threads(thread_id,rollout_id,rollout_path,status,created_at_ms,updated_at_ms,title,workspace_id,pinned) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",params![metadata.thread_id.as_str(),metadata.current_rollout_id.as_str(),relative,status_name(metadata.status),metadata.created_at_ms,metadata.updated_at_ms,metadata.title,metadata.workspace_id,metadata.pinned])?;
             tx.commit()?;
@@ -1722,6 +2102,7 @@ impl ThreadMetadataStore for LocalThreadStore {
     }
 
     async fn get_thread(&self, thread_id: &ThreadId) -> ThreadStoreResult<ThreadMetadata> {
+        self.recover_pending_revert_for_access(thread_id).await?;
         Ok(self.stored(thread_id).await?.metadata)
     }
 
@@ -1735,7 +2116,8 @@ impl ThreadMetadataStore for LocalThreadStore {
         db(move || {
             let conn = connect(&path)?;
             let mut statement = conn.prepare("SELECT thread_id,rollout_id,status,created_at_ms,updated_at_ms,title,workspace_id,pinned FROM canonical_threads
-              WHERE (?1 IS NULL OR workspace_id=?1) AND (?2 IS NULL OR status=?2)
+              WHERE NOT EXISTS(SELECT 1 FROM canonical_thread_deletions d WHERE d.thread_id=canonical_threads.thread_id)
+              AND (?1 IS NULL OR workspace_id=?1) AND (?2 IS NULL OR status=?2)
               AND (?3 IS NULL OR updated_at_ms < ?3 OR (updated_at_ms=?3 AND thread_id < ?4))
               ORDER BY updated_at_ms DESC,thread_id DESC LIMIT ?5")?;
             let rows = statement.query(params![query.workspace_id,query.archived.map(|v|if v {"archived"} else {"active"}),
@@ -1760,34 +2142,62 @@ impl ThreadMetadataStore for LocalThreadStore {
         let _gate = gate.lock().await;
         self.close_active_writer(thread_id).await?;
         let _owner = self.owner_lock(thread_id).await?;
-        let stored = self.stored(thread_id).await?;
+        // Complete a prior thread-local revert before beginning the independent
+        // delete saga. Otherwise their queue mutation markers can block one
+        // another and strand a thread between lifecycle operations.
+        self.recover_pending_revert(thread_id).await?;
         let path = self.state_path.clone();
-        let root = self.root.clone();
-        let descriptor = stored.descriptor.clone();
-        let history = self.history.clone();
-        let admissions = self.admission_store().map_err(unavailable)?;
+        let thread = thread_id.to_string();
+        // Persist intent before touching a separate database. The catalog is
+        // retained until queue input is gone, and all removed file identities
+        // are journaled in the same transaction as catalog reclamation.
         db(move || {
-            // Remove the user-visible root first. Referenced physical ranges
-            // remain available to surviving forks, even across owner deletion.
+            connect(&path)?.execute(
+                "INSERT OR IGNORE INTO canonical_thread_deletions(thread_id,created_at_ms) VALUES(?1,?2)",
+                params![thread, Utc::now().timestamp_millis()],
+            )?;
+            Ok(())
+        }).await?;
+        let admissions = self.admission_store().map_err(unavailable)?;
+        let thread = thread_id.to_string();
+        db(move || admissions.delete_admissions(&thread)).await?;
+        let path = self.state_path.clone();
+        let thread = thread_id.to_string();
+        db(move || {
             let mut conn = connect(&path)?;
             let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-            tx.execute(
-                "DELETE FROM canonical_threads WHERE thread_id=?1",
-                [stored.metadata.thread_id.as_str()],
-            )?;
-            let orphaned = collect_unreferenced_rollouts(&tx, &descriptor.rollout_id)?;
-            tx.commit()?;
-            admissions.delete_thread(stored.metadata.thread_id.as_str())?;
-            for (rollout, relative) in orphaned {
-                rollout_compression::remove_rollout_representations(&checked_rollout_path(
-                    &root,
-                    &root.join(relative),
-                )?)?;
-                history.delete_rollout(&rollout)?;
+            let rollout: Option<String> = tx.query_row(
+                "SELECT rollout_id FROM canonical_threads WHERE thread_id=?1", [&thread], |row| row.get(0),
+            ).optional()?;
+            tx.execute("DELETE FROM canonical_threads WHERE thread_id=?1", [&thread])?;
+            if let Some(rollout) = rollout {
+                for (id, relative) in collect_unreferenced_rollouts(&tx, &rollout)? {
+                    tx.execute(
+                        "INSERT OR IGNORE INTO canonical_pending_rollout_reclaims(requested_by_thread_id,rollout_id,rollout_path,created_at_ms) VALUES(?1,?2,?3,?4)",
+                        params![thread,id,relative,Utc::now().timestamp_millis()],
+                    )?;
+                }
             }
+            tx.commit()?;
+            Ok(())
+        }).await?;
+        self.reclaim_pending_rollouts(thread_id).await?;
+        let path = self.state_path.clone();
+        let thread = thread_id.to_string();
+        // Keep queue ownership through physical deletion. If the final queue
+        // cleanup fails it remains discoverable by user-wide delete and can
+        // only be retried under this same per-thread gate.
+        db(move || {
+            connect(&path)?.execute(
+                "DELETE FROM canonical_thread_deletions WHERE thread_id=?1",
+                [&thread],
+            )?;
             Ok(())
         })
-        .await
+        .await?;
+        let admissions = self.admission_store().map_err(unavailable)?;
+        let thread = thread_id.to_string();
+        db(move || admissions.delete_thread(&thread)).await
     }
 }
 
@@ -1807,6 +2217,7 @@ impl ThreadStore for LocalThreadStore {
             .map_err(unavailable)?;
         let gate = self.gate(thread)?;
         let _gate = gate.lock().await;
+        self.recover_pending_revert(thread).await?;
         let stored = self.stored(thread).await?;
         if stored.metadata.status == ThreadStatus::Archived {
             return Err(ThreadStoreError::Conflict {
@@ -1878,6 +2289,7 @@ impl ThreadStore for LocalThreadStore {
     async fn flush(&self, thread: &ThreadId) -> ThreadStoreResult<AppendOutcome> {
         let gate = self.gate(thread)?;
         let _gate = gate.lock().await;
+        self.recover_pending_revert(thread).await?;
         let stored = self.stored(thread).await?;
         let writer = self.active_writer(&stored).await?;
         let result = writer.recorder.flush().await;
@@ -1899,6 +2311,8 @@ impl ThreadHistoryReader for LocalThreadStore {
             limit: query.limit,
         }
         .validate(200)?;
+        self.recover_pending_revert_for_access(&query.thread_id)
+            .await?;
         let stored = self.stored(&query.thread_id).await?;
         let request = history_request(
             query.cursor.as_ref(),
@@ -1962,6 +2376,8 @@ impl ThreadHistoryReader for LocalThreadStore {
             limit: query.limit,
         }
         .validate(PageRequest::MAX_TURN_LIMIT)?;
+        self.recover_pending_revert_for_access(&query.thread_id)
+            .await?;
         let stored = self.stored(&query.thread_id).await?;
         let request = history_request(query.cursor.as_ref(), &stored, None, "turns", query.limit)?;
         self.ensure_history(&stored.metadata.thread_id).await?;
@@ -2020,6 +2436,7 @@ impl ThreadHistoryReader for LocalThreadStore {
     }
 
     async fn read_item(&self, thread: &ThreadId, item: &ItemId) -> ThreadStoreResult<ItemSummary> {
+        self.recover_pending_revert_for_access(thread).await?;
         let stored = self.stored(thread).await?;
         self.ensure_history(&stored.metadata.thread_id).await?;
         let segments = self.lineage_segments(&stored.metadata.thread_id).await?;
@@ -2034,15 +2451,23 @@ impl ThreadHistoryReader for LocalThreadStore {
                 })
                 .collect(),
         );
-        let item = item.clone();
+        let item_id = item.clone();
         db(move || {
-            let row = history.read_item(&stored.descriptor.rollout_id, item.as_str())?;
-            Ok(ItemSummary {
-                item: serde_json::from_value(row.item_json)?,
-                rollout_ordinal: row.rollout_ordinal,
-            })
+            history
+                .find_item(&stored.descriptor.rollout_id, item_id.as_str())?
+                .map(|row| {
+                    Ok(ItemSummary {
+                        item: serde_json::from_value(row.item_json)?,
+                        rollout_ordinal: row.rollout_ordinal,
+                    })
+                })
+                .transpose()
         })
-        .await
+        .await?
+        .ok_or_else(|| ThreadStoreError::NotFound {
+            kind: "item",
+            id: item.to_string(),
+        })
     }
 
     async fn read_item_content(
@@ -2091,6 +2516,8 @@ impl ThreadHistoryReader for LocalThreadStore {
                 message: "invalid model context budget".into(),
             });
         }
+        self.recover_pending_revert_for_access(&request.thread_id)
+            .await?;
         let mut segments = self.lineage_segments(&request.thread_id).await?;
         if request.position.as_ref().is_some_and(|p| {
             segments
@@ -2449,6 +2876,39 @@ fn canonicalize_existing_ancestor(path: &Path) -> Result<PathBuf> {
     }
 }
 
+/// Read the fixed artifact set that belongs in a synthetic-storage report.
+/// This intentionally has no directory iterator: a report remains O(1) in
+/// filesystem entries as unrelated sessions accumulate under the root.
+fn bounded_stress_storage_bytes(
+    root: &Path,
+    rollout_path: &Path,
+) -> Result<super::stress_model::StressThreadStorageBytes> {
+    let rollout_path = checked_rollout_path(root, rollout_path)?;
+    let rollout_zstd = rollout_compression::compressed_path(&rollout_path);
+    Ok(super::stress_model::StressThreadStorageBytes::new(
+        regular_file_len(&rollout_path)?,
+        regular_file_len(&rollout_zstd)?,
+        regular_file_len(&root.join("state_1.sqlite"))?,
+        regular_file_len(&root.join("state_1.sqlite-wal"))?,
+        regular_file_len(&root.join("queue_1.sqlite"))?,
+        regular_file_len(&root.join("queue_1.sqlite-wal"))?,
+        regular_file_len(&root.join("thread_history_1.sqlite"))?,
+        regular_file_len(&root.join("thread_history_1.sqlite-wal"))?,
+    ))
+}
+
+/// Missing optional artifacts count as zero. Symlinks and other non-regular
+/// entries are deliberately excluded so a storage-root report cannot follow a
+/// path outside the managed root.
+fn regular_file_len(path: &Path) -> Result<u64> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_file() => Ok(metadata.len()),
+        Ok(_) => Ok(0),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(0),
+        Err(error) => Err(error.into()),
+    }
+}
+
 /// One resolver owns lineage traversal for every consumer. Metadata stores
 /// immutable rollout identities; file moves only update their relative path.
 pub(crate) fn resolve_lineage(
@@ -2727,6 +3187,15 @@ fn connect(path: &Path) -> Result<Connection> {
 
 fn load_thread(path: &Path, root: &Path, id: &ThreadId) -> Result<Option<StoredThread>> {
     let conn = connect(path)?;
+    let deleting: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM canonical_thread_deletions WHERE thread_id=?1)",
+        [id.as_str()],
+        |row| row.get(0),
+    )?;
+    if deleting {
+        bail!("thread deletion is pending; retry deletion to finish reclamation");
+    }
+
     let relative: Option<String> = conn
         .query_row(
             "SELECT rollout_path FROM canonical_threads WHERE thread_id=?1",
@@ -2838,6 +3307,203 @@ mod stress_batch_tests {
     }
 
     #[tokio::test]
+    async fn missing_item_is_distinct_from_corruption_before_chat_append() {
+        let root = tempfile::tempdir().unwrap();
+        let store = LocalThreadStore::open(root.path()).unwrap();
+        let spec = super::super::stress_model::StressThreadSpec {
+            session_id: "sample-item-read".into(),
+            title: "Sample".into(),
+            workspace_id: None,
+            user_rounds: 1,
+            model_rounds_per_turn: 1,
+            seed: None,
+            scenario: crate::storage::StressThreadScenario::Complex,
+        };
+        store
+            .generate_stress_thread("sample-owner", &spec, |_, _| {})
+            .await
+            .unwrap();
+        let thread = ThreadId::new(spec.session_id).unwrap();
+        assert!(matches!(
+            store
+                .read_item(&thread, &ItemId::new("sample-missing").unwrap())
+                .await,
+            Err(ThreadStoreError::NotFound { kind: "item", .. })
+        ));
+        let turns = store
+            .list_turns(TurnListQuery {
+                thread_id: thread.clone(),
+                cursor: None,
+                limit: 1,
+            })
+            .await
+            .unwrap();
+        let turn = &turns.entries[0].turn_id;
+        let item = ItemId::new(format!("{turn}:user")).unwrap();
+        store.read_item(&thread, &item).await.unwrap();
+        let rollout = store.stored(&thread).await.unwrap().descriptor.path;
+        let length = std::fs::metadata(&rollout).unwrap().len();
+        let history = Connection::open(root.path().join("thread_history_1.sqlite")).unwrap();
+        history
+            .execute(
+                "UPDATE thread_items SET item_json='{' WHERE item_id=?1",
+                [item.as_str()],
+            )
+            .unwrap();
+        assert!(matches!(
+            store.read_item(&thread, &item).await,
+            Err(ThreadStoreError::Unavailable { .. })
+        ));
+        assert!(store
+            .append_chat_payload(
+                "sample-owner",
+                &serde_json::json!({"session_id":thread, "turn_id":turn,
+                    "item_id":item, "role":"user", "content":"sample input"}),
+            )
+            .await
+            .is_err());
+        assert_eq!(std::fs::metadata(&rollout).unwrap().len(), length);
+    }
+
+    #[tokio::test]
+    async fn deletion_retries_after_queue_lock_without_losing_rollout_identity() {
+        let root = tempfile::tempdir().unwrap();
+        let store = LocalThreadStore::open(root.path()).unwrap();
+        let spec = super::super::stress_model::StressThreadSpec {
+            session_id: "sample-delete-lock".into(),
+            title: "Sample".into(),
+            workspace_id: None,
+            user_rounds: 1,
+            model_rounds_per_turn: 1,
+            seed: None,
+            scenario: crate::storage::StressThreadScenario::Complex,
+        };
+        store
+            .generate_stress_thread("sample-owner", &spec, |_, _| {})
+            .await
+            .unwrap();
+        let thread = ThreadId::new(spec.session_id).unwrap();
+        let rollout = store.stored(&thread).await.unwrap().descriptor.path;
+        let queue = Connection::open(root.path().join("queue_1.sqlite")).unwrap();
+        queue.execute_batch("BEGIN IMMEDIATE").unwrap();
+        assert!(store.delete_thread(&thread).await.is_err());
+        assert!(store.deletion_pending(&thread).await.unwrap());
+        assert!(rollout.exists());
+        assert!(store.get_thread(&thread).await.is_err());
+        queue.execute_batch("ROLLBACK").unwrap();
+        let reopened = LocalThreadStore::open(root.path()).unwrap();
+        reopened.delete_thread(&thread).await.unwrap();
+        assert!(!rollout.exists());
+        assert!(!reopened.deletion_pending(&thread).await.unwrap());
+        assert!(reopened
+            .admission_store()
+            .unwrap()
+            .thread_ids_for_user("sample-owner", None, 10)
+            .unwrap()
+            .is_empty());
+        reopened.delete_thread(&thread).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn deletion_reclaims_journal_after_representation_lock_failure_and_reopen() {
+        let root = tempfile::tempdir().unwrap();
+        let store = LocalThreadStore::open(root.path()).unwrap();
+        let spec = super::super::stress_model::StressThreadSpec {
+            session_id: "sample-delete-reclaim".into(),
+            title: "Sample".into(),
+            workspace_id: None,
+            user_rounds: 1,
+            model_rounds_per_turn: 1,
+            seed: None,
+            scenario: crate::storage::StressThreadScenario::Complex,
+        };
+        store
+            .generate_stress_thread("sample-owner", &spec, |_, _| {})
+            .await
+            .unwrap();
+        let thread = ThreadId::new(spec.session_id).unwrap();
+        let stored = store.stored(&thread).await.unwrap();
+        let rollout = stored.descriptor.path;
+        let guard = rollout_compression::try_representation_lock(&rollout)
+            .unwrap()
+            .unwrap();
+        assert!(store.delete_thread(&thread).await.is_err());
+        assert!(store.deletion_pending(&thread).await.unwrap());
+        let admissions = store.admission_store().unwrap();
+        assert!(admissions
+            .accept(
+                "sample-owner",
+                thread.as_str(),
+                &serde_json::json!({"content":"sample"})
+            )
+            .is_err());
+        assert_eq!(
+            admissions
+                .thread_ids_for_user("sample-owner", None, 10)
+                .unwrap(),
+            vec![thread.to_string()]
+        );
+        let pending: i64 = connect(&store.state_path).unwrap().query_row(
+            "SELECT COUNT(*) FROM canonical_pending_rollout_reclaims WHERE requested_by_thread_id=?1",
+            [thread.as_str()], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(pending, 1);
+        drop(guard);
+        drop(store);
+        let reopened = LocalThreadStore::open(root.path()).unwrap();
+        reopened.delete_thread(&thread).await.unwrap();
+        assert!(!rollout.exists());
+        assert_eq!(
+            reopened
+                .history
+                .projection_state(&stored.descriptor.rollout_id)
+                .unwrap()
+                .next_rollout_ordinal,
+            0
+        );
+        assert!(admissions
+            .thread_ids_for_user("sample-owner", None, 10)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn deletion_state_lock_preserves_catalog_and_queue_for_retry() {
+        let root = tempfile::tempdir().unwrap();
+        let store = LocalThreadStore::open(root.path()).unwrap();
+        let spec = super::super::stress_model::StressThreadSpec {
+            session_id: "sample-delete-state-lock".into(),
+            title: "Sample".into(),
+            workspace_id: None,
+            user_rounds: 1,
+            model_rounds_per_turn: 1,
+            seed: None,
+            scenario: crate::storage::StressThreadScenario::Complex,
+        };
+        store
+            .generate_stress_thread("sample-owner", &spec, |_, _| {})
+            .await
+            .unwrap();
+        let thread = ThreadId::new(spec.session_id).unwrap();
+        let rollout = store.stored(&thread).await.unwrap().descriptor.path;
+        let conn = connect(&store.state_path).unwrap();
+        conn.execute_batch("BEGIN IMMEDIATE").unwrap();
+        assert!(store.delete_thread(&thread).await.is_err());
+        assert!(!store.deletion_pending(&thread).await.unwrap());
+        assert!(rollout.exists());
+        assert!(store.get_thread(&thread).await.is_ok());
+        assert!(!store
+            .admission_store()
+            .unwrap()
+            .thread_ids_for_user("sample-owner", None, 10)
+            .unwrap()
+            .is_empty());
+        conn.execute_batch("ROLLBACK").unwrap();
+        store.delete_thread(&thread).await.unwrap();
+        assert!(!rollout.exists());
+    }
+
+    #[tokio::test]
     async fn explicit_user_history_delete_pages_owners_and_preserves_other_users() {
         let root = tempfile::tempdir().unwrap();
         let store = LocalThreadStore::open(root.path()).unwrap();
@@ -2847,6 +3513,8 @@ mod stress_batch_tests {
             workspace_id: None,
             user_rounds: 1,
             model_rounds_per_turn: 1,
+            seed: None,
+            scenario: crate::storage::StressThreadScenario::Complex,
         };
         store
             .generate_stress_thread("sample-owner", &spec, |_, _| {})
@@ -2858,6 +3526,8 @@ mod stress_batch_tests {
             workspace_id: None,
             user_rounds: 1,
             model_rounds_per_turn: 1,
+            seed: None,
+            scenario: crate::storage::StressThreadScenario::Complex,
         };
         store
             .generate_stress_thread("sample-other", &retained, |_, _| {})
@@ -2976,6 +3646,72 @@ mod stress_batch_tests {
     }
 
     #[tokio::test]
+    async fn fixed_stress_seed_replays_the_same_workload_across_roots() {
+        async fn generate_sample(
+            root: &std::path::Path,
+            session_id: &str,
+        ) -> (
+            super::super::stress_model::StressThreadStats,
+            Vec<serde_json::Value>,
+        ) {
+            let store = LocalThreadStore::open(root).unwrap();
+            let spec = super::super::stress_model::StressThreadSpec {
+                session_id: session_id.into(),
+                title: "Sample workload".into(),
+                workspace_id: None,
+                user_rounds: 2,
+                model_rounds_per_turn: 4,
+                seed: Some(7),
+                scenario: crate::storage::StressThreadScenario::Complex,
+            };
+            let stats = store
+                .generate_stress_thread("sample-owner", &spec, |_, _| {})
+                .await
+                .unwrap();
+            drop(store);
+            let reopened = LocalThreadStore::open(root).unwrap();
+            let thread = ThreadId::new(session_id).unwrap();
+            let mut messages = reopened.model_messages(&thread, None).await.unwrap();
+            for message in &mut messages {
+                // Admission chooses fresh linkage IDs; retain every semantic
+                // field, including the complete tool arguments and results.
+                message.as_object_mut().unwrap().remove("tool_call_id");
+                if let Some(calls) = message
+                    .get_mut("tool_calls")
+                    .and_then(serde_json::Value::as_array_mut)
+                {
+                    for call in calls {
+                        call.as_object_mut().unwrap().remove("id");
+                    }
+                }
+            }
+            (stats, messages)
+        }
+
+        let first_root = tempfile::tempdir().unwrap();
+        let second_root = tempfile::tempdir().unwrap();
+        let first = generate_sample(first_root.path(), "sample-seed-first").await;
+        let second = generate_sample(second_root.path(), "sample-seed-second").await;
+        let counts = |stats: &super::super::stress_model::StressThreadStats| {
+            (
+                stats.user_turns,
+                stats.items,
+                stats.tool_calls,
+                stats.model_requests,
+                stats.model_actions,
+                stats.rollout_records,
+                stats.seed,
+            )
+        };
+        assert_eq!(first.0.seed, 7);
+        assert_eq!(first.0.model_requests, 8);
+        assert!(first.0.tool_calls > 0);
+        assert_ne!(first.0.session_id, second.0.session_id);
+        assert_eq!(counts(&first.0), counts(&second.0));
+        assert_eq!(first.1, second.1);
+    }
+
+    #[tokio::test]
     async fn stress_thread_reopens_with_user_and_assistant_context_and_item_counts() {
         let root = tempfile::tempdir().unwrap();
         let store = LocalThreadStore::open(root.path()).unwrap();
@@ -2985,6 +3721,8 @@ mod stress_batch_tests {
             workspace_id: None,
             user_rounds: 1,
             model_rounds_per_turn: 1,
+            seed: None,
+            scenario: crate::storage::StressThreadScenario::Complex,
         };
         let stats = store
             .generate_stress_thread("user-sample", &spec, |_, _| {})
@@ -2993,11 +3731,50 @@ mod stress_batch_tests {
         drop(store);
         let reopened = LocalThreadStore::open(root.path()).unwrap();
         let thread = ThreadId::new(spec.session_id).unwrap();
+        let meta = reopened.session_meta(&thread).await.unwrap();
+        assert!(meta
+            .initial_system_prompt
+            .contains("synthetic storage stress profile"));
+        assert_eq!(
+            meta.initial_memory
+                .as_ref()
+                .and_then(|value| value.get("profile"))
+                .and_then(serde_json::Value::as_str),
+            Some("storage-stress-v1")
+        );
         let messages = reopened.model_messages(&thread, None).await.unwrap();
         assert_eq!(messages.first().unwrap()["role"], "user");
         assert!(messages
             .iter()
             .any(|message| message["role"] == "assistant"));
+        assert!(messages.iter().any(|message| {
+            message
+                .get("request_token_breakdown")
+                .and_then(|value| value.get("system_prompt_tokens"))
+                .and_then(serde_json::Value::as_u64)
+                .is_some_and(|tokens| tokens > 0)
+        }));
+        let breakdown = messages
+            .iter()
+            .find_map(|message| message.get("request_token_breakdown"))
+            .expect("synthetic request token breakdown");
+        let component_keys = [
+            "native_tool_tokens",
+            "system_prompt_tokens",
+            "history_tokens",
+            "latest_user_tokens",
+            "image_tokens",
+            "reasoning_tokens",
+            "tool_call_tokens",
+            "tool_call_id_tokens",
+            "message_envelope_tokens",
+            "fixed_protocol_tokens",
+        ];
+        let component_total = component_keys
+            .into_iter()
+            .map(|key| breakdown[key].as_u64().unwrap())
+            .sum::<u64>();
+        assert_eq!(component_total, breakdown["estimated_input_tokens"]);
         let turns = reopened
             .list_turns(TurnListQuery {
                 thread_id: thread,
@@ -3011,6 +3788,97 @@ mod stress_batch_tests {
     }
 
     #[tokio::test]
+    async fn access_recovers_revert_intent_left_before_queue_freeze() {
+        let root = tempfile::tempdir().unwrap();
+        let store = LocalThreadStore::open(root.path()).unwrap();
+        let spec = super::super::stress_model::StressThreadSpec {
+            session_id: "sample-revert-recovery".into(),
+            title: "Sample".into(),
+            workspace_id: None,
+            user_rounds: 1,
+            model_rounds_per_turn: 1,
+            seed: None,
+            scenario: crate::storage::StressThreadScenario::Complex,
+        };
+        store
+            .generate_stress_thread("sample-owner", &spec, |_, _| {})
+            .await
+            .unwrap();
+        let thread = ThreadId::new(spec.session_id).unwrap();
+        let original = store.stored(&thread).await.unwrap();
+        let turn = store
+            .list_turns(TurnListQuery {
+                thread_id: thread.clone(),
+                cursor: None,
+                limit: 10,
+            })
+            .await
+            .unwrap()
+            .entries[0]
+            .turn_id
+            .clone();
+        let segments = store.lineage_segments(&thread).await.unwrap();
+        let base = find_completed_turn_boundary(&segments, &turn).unwrap();
+        let expected_base = base.clone();
+        let rollout = RolloutId::new(uuid::Uuid::new_v4().to_string()).unwrap();
+        let mut metadata = original.metadata.clone();
+        metadata.current_rollout_id = rollout.clone();
+        metadata.updated_at_ms += 1;
+        let mut session_meta = store.session_meta(&thread).await.unwrap();
+        session_meta.rollout_id = rollout.clone();
+        session_meta.created_at_ms = metadata.updated_at_ms;
+        session_meta.history_base = Some(base);
+        let recorder =
+            RolloutRecorder::create(root.path(), thread.to_string(), rollout.to_string()).unwrap();
+        let relative_path = recorder
+            .descriptor()
+            .path
+            .strip_prefix(root.path())
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        drop(recorder);
+        let intent = super::super::thread_mutation::RevertIntent {
+            metadata: metadata.clone(),
+            session_meta,
+            expected_rollout: original.metadata.current_rollout_id,
+            through_turn: turn,
+            relative_path,
+        };
+        let state = store.state_path.clone();
+        db(move || {
+            let mut conn = connect(&state)?;
+            let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+            super::super::thread_mutation::insert(&tx, &intent)?;
+            tx.commit()?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+        let reopened = LocalThreadStore::open(root.path()).unwrap();
+        assert_eq!(reopened.get_thread(&thread).await.unwrap(), metadata);
+        assert_eq!(
+            reopened.session_meta(&thread).await.unwrap().history_base,
+            Some(expected_base)
+        );
+        assert!(!reopened
+            .admission_store()
+            .unwrap()
+            .revert_pending(thread.as_str())
+            .unwrap());
+        let path = reopened.state_path.clone();
+        let id = thread.to_string();
+        assert!(!db(move || Ok(super::super::thread_mutation::pending(
+            &connect(&path)?,
+            &ThreadId::new(id)?
+        )?
+        .is_some()))
+        .await
+        .unwrap());
+    }
+
+    #[tokio::test]
     async fn fork_shares_prefix_revert_keeps_revision_and_delete_preserves_live_branch() {
         let root = tempfile::tempdir().unwrap();
         let store = LocalThreadStore::open(root.path()).unwrap();
@@ -3020,6 +3888,8 @@ mod stress_batch_tests {
             workspace_id: None,
             user_rounds: 2,
             model_rounds_per_turn: 1,
+            seed: None,
+            scenario: crate::storage::StressThreadScenario::Complex,
         };
         store
             .generate_stress_thread("user-sample", &spec, |_, _| {})
@@ -3167,6 +4037,8 @@ mod stress_batch_tests {
             workspace_id: None,
             user_rounds: 1,
             model_rounds_per_turn: 1,
+            seed: None,
+            scenario: crate::storage::StressThreadScenario::Complex,
         };
         store
             .generate_stress_thread("user-sample", &spec, |_, _| {})
@@ -3252,6 +4124,8 @@ mod stress_batch_tests {
             workspace_id: None,
             user_rounds: 1,
             model_rounds_per_turn: 1,
+            seed: None,
+            scenario: crate::storage::StressThreadScenario::Complex,
         };
         first
             .generate_stress_thread("user-sample", &spec, |_, _| {})

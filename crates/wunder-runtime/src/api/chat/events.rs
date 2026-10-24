@@ -774,7 +774,11 @@ fn thread_item_workflow_event(item: &Value) -> Option<Value> {
     }
     Some(json!({
         "event": event,
-        "timestamp": data.get("timestamp").cloned().unwrap_or(Value::Null),
+        // EventEmitter timestamps are transport-only. A replayed canonical
+        // item instead carries its durable creation time on the envelope.
+        "timestamp": data.get("timestamp").cloned()
+            .or_else(|| item.get("created_time").cloned())
+            .unwrap_or(Value::Null),
         "data": Value::Object(data),
         "item_id": item["item_id"],
         "revision": item["revision"],
@@ -963,6 +967,7 @@ mod tests {
         append_workflow_events, collect_session_event_rounds, normalize_workflow_round_range,
         should_merge_round_event, thread_turn_to_workflow_round,
     };
+    use crate::services::thread_log::event_item;
     use crate::storage::SqliteStorage;
     use serde_json::{json, Value};
     use wunder_core::storage_backend::ThreadLogStore;
@@ -984,16 +989,50 @@ mod tests {
     }
 
     #[test]
-    fn durable_compaction_event_inherits_completed_item_status() {
-        let event = super::thread_item_workflow_event(&json!({
-            "kind":"compaction", "item_id":"compact", "revision":3,
-            "status":"done", "turn_id":"turn-1",
-            "payload":{"event_type":"compaction", "trigger_mode":"auto"}
-        }))
-        .unwrap();
-        assert_eq!(event["event"], "compaction");
-        assert_eq!(event["data"]["status"], "done");
-        assert_eq!(event["data"]["turn_id"], "turn-1");
+    fn durable_compaction_hydration_preserves_result_status_from_completed_item() {
+        for result in ["done", "fallback", "skipped"] {
+            let event = super::thread_item_workflow_event(&json!({
+                "kind":"compaction", "item_id":"compact", "revision":3,
+                "status":"completed", "turn_id":"turn-1", "root_turn_id":"root-1",
+                "created_time": 42.0,
+                "payload":{"event_type":"compaction", "status":result, "trigger_mode":"auto"}
+            }))
+            .unwrap();
+            assert_eq!(event["event"], "compaction", "{result}");
+            assert_eq!(event["data"]["status"], result, "{result}");
+            assert_eq!(event["data"]["turn_id"], "turn-1");
+            assert_eq!(event["data"]["root_turn_id"], "root-1");
+            assert_eq!(event["timestamp"], 42.0);
+        }
+    }
+
+    #[test]
+    fn compaction_event_item_hydrates_its_semantic_status_and_round_identity() {
+        for result in ["done", "fallback", "skipped"] {
+            let item = event_item(
+                "thread-a",
+                "compaction",
+                &json!({
+                    "turn_id":"turn-a", "root_turn_id":"root-a", "user_round":7,
+                    "model_round":2, "status":result, "compaction_id":"compact-a",
+                    "summary_text":"Retained context"
+                }),
+            )
+            .unwrap();
+            let event = super::thread_item_workflow_event(&json!({
+                "kind":item["kind"], "item_id":item["item_id"], "revision":1,
+                "status":item["status"], "turn_id":item["turn_id"],
+                "root_turn_id":item["root_turn_id"], "user_round":item["user_round"],
+                "model_round":item["model_round"], "payload":item["payload"]
+            }))
+            .unwrap();
+            assert_eq!(event["event"], "compaction", "{result}");
+            assert_eq!(event["data"]["status"], result, "{result}");
+            assert_eq!(event["data"]["turn_id"], "turn-a");
+            assert_eq!(event["data"]["root_turn_id"], "root-a");
+            assert_eq!(event["data"]["user_round"], 7);
+            assert_eq!(event["data"]["model_round"], 2);
+        }
     }
 
     #[test]
@@ -1012,6 +1051,7 @@ mod tests {
                 &json!({"role":"user","content":"request","client_message_id":"request-id"}),
             )
             .unwrap();
+        crate::storage::test_support::freeze_thread(dir.path(), "owner", "thread");
         let turn_id = accepted["turn_id"].as_str().unwrap();
         for index in 0..205 {
             storage

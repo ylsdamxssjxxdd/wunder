@@ -10,7 +10,7 @@ use wunder_server::{
     config::Config,
     config_store::ConfigStore,
     state::{AppState, AppStateInitOptions},
-    storage::ChatSessionRecord,
+    storage::{ChatSessionRecord, StressThreadScenario, StressThreadSpec},
 };
 
 #[tokio::main]
@@ -59,54 +59,28 @@ async fn main() -> Result<()> {
         spawn_label: None,
         spawned_by: None,
     })?;
-    let mut conn = rusqlite::Connection::open(dir.path().join("fixture.db"))?;
-    let tx = conn.transaction()?;
-    tx.execute("INSERT INTO thread_logs(session_id,user_id,latest_user_turn,latest_change_seq,created_time,updated_time) VALUES('fixture-thread',?,200,20000,1,1)",[&user.user_id])?;
-    // The disk benchmark covers 500k rows; the browser fixture keeps startup
-    // bounded while still exercising the real API/WS path with 2,000 items.
-    for round in 1..=20i64 {
-        let root = format!("fixture-turn-{round}");
-        tx.execute("INSERT INTO thread_turns(session_id,turn_id,user_id,root_turn_id,trigger_kind,user_turn_index,status,summary,payload,created_time,updated_time) VALUES('fixture-thread',?, ?,?,'user',?,'completed','','{}',?,?)",rusqlite::params![root,user.user_id,root,round,round as f64,round as f64])?;
-        for index in 0..100i64 {
-            let (id, kind, content) = if index == 0 {
-                (
-                    format!("{root}:user"),
-                    "user_message",
-                    format!("Fixture input {round}"),
-                )
-            } else if index == 99 {
-                (
-                    format!("{root}:text-1"),
-                    "assistant_message",
-                    format!("Fixture answer {round}"),
-                )
-            } else {
-                (
-                    format!("{root}:tool-{index}"),
-                    "tool_call",
-                    "Fixture tool".into(),
-                )
-            };
-            let payload =
-                json!({"content":content,"tool_name":"fixture_tool","args":{"value":"fixture"}})
-                    .to_string();
-            tx.execute("INSERT INTO thread_items(session_id,item_id,turn_id,root_turn_id,user_id,visibility,item_index,kind,status,payload,created_time,updated_time,created_seq) VALUES('fixture-thread',?,?,?,?,'user',?,?,'completed',?,?,?,?)",rusqlite::params![id,root,root,user.user_id,index,kind,payload,round as f64,round as f64,(round-1)*100+index+1])?;
-        }
-    }
-    tx.execute("INSERT INTO thread_view_heads(session_id,user_id,projection_state) VALUES('fixture-thread',?,'rebuilding') ON CONFLICT DO NOTHING",[&user.user_id])?;
-    tx.commit()?;
-    drop(conn);
-    let mut after = 0;
-    loop {
-        let (next, more) =
-            state
-                .storage
-                .rebuild_thread_view_page(&user.user_id, "fixture-thread", after)?;
-        after = next;
-        if !more {
-            break;
-        }
-    }
+    // Keep startup bounded while exercising the same rollout writer and
+    // completed-item projector as real threads and the stress generator.
+    let spec = StressThreadSpec {
+        session_id: "fixture-thread".into(),
+        title: "Fixture conversation".into(),
+        workspace_id: None,
+        user_rounds: 20,
+        model_rounds_per_turn: 30,
+        seed: Some(7),
+        scenario: StressThreadScenario::Complex,
+    };
+    let stats = state
+        .thread_store
+        .generate_stress_thread(&user.user_id, &spec, |_, _| {})
+        .await?;
+    let cursor = state
+        .storage
+        .latest_thread_change_seq_by_session("fixture-thread")?;
+    state
+        .kernel
+        .orchestrator
+        .notify_thread_committed("fixture-thread", cursor);
     let dist = std::path::PathBuf::from("frontend/dist");
     let app = api::build_router(state.clone())
         .merge(
@@ -118,7 +92,7 @@ async fn main() -> Result<()> {
             ServeDir::new(&dist).not_found_service(ServeFile::new(dist.join("index.html"))),
         );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:4176").await?;
-    println!("fixture ready: 2000 persisted items");
+    println!("fixture ready: {} persisted items", stats.items);
     axum::serve(listener, app).await?;
     drop(dir);
     Ok(())
@@ -134,11 +108,28 @@ async fn append(State(state): State<Arc<AppState>>) -> Json<Value> {
         .accept_thread_turn(
             &user.user_id,
             "fixture-thread",
-            &json!({"content":"Fixture live input","client_message_id":"fixture-live"}),
+            &json!({
+                "content":"Fixture live input",
+                "client_message_id":format!("fixture-live-{}", uuid::Uuid::new_v4())
+            }),
         )
         .unwrap();
     let id = turn["turn_id"].as_str().unwrap();
-    state.storage.append_thread_item(&user.user_id,&json!({"session_id":"fixture-thread","turn_id":id,"item_id":format!("{id}:text-1"),"kind":"assistant_message","status":"completed","content":"Fixture live answer"})).unwrap();
+    state
+        .storage
+        .append_thread_item(
+            &user.user_id,
+            &json!({
+                "session_id":"fixture-thread",
+                "turn_id":id,
+                "item_id":format!("{id}:text-1"),
+                "kind":"assistant_message",
+                "role":"assistant",
+                "status":"completed",
+                "content":"Fixture live answer"
+            }),
+        )
+        .unwrap();
     state
         .storage
         .update_thread_turn(
@@ -150,5 +141,13 @@ async fn append(State(state): State<Arc<AppState>>) -> Json<Value> {
             &json!({}),
         )
         .unwrap();
+    let cursor = state
+        .storage
+        .latest_thread_change_seq_by_session("fixture-thread")
+        .unwrap();
+    state
+        .kernel
+        .orchestrator
+        .notify_thread_committed("fixture-thread", cursor);
     Json(json!({"ok":true}))
 }

@@ -167,8 +167,10 @@ skills: # Skills 技能配置
     - ./config/skills
   enabled: # 默认启用的技能名称列表
     - 技能创建器
-    - 通用气象知识
-    - 通用回波案例
+    - 公文写作
+    - 文稿校对
+    - 3D网页
+    - 视频制作
 
 tools: # 内置工具配置
   builtin:

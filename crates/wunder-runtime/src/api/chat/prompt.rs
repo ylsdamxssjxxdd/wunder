@@ -137,27 +137,38 @@ async fn build_session_prompt_preview(
         .get_chat_session(&user.user_id, &session_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.session_not_found")))?;
-    let workspace_id = resolve_agent_workspace_id(
-        &state,
-        &user.user_id,
-        record.agent_id.as_deref().or(payload.agent_id.as_deref()),
-        None,
-    );
-    let workspace_root = state
-        .workspace
-        .ensure_user_root(&workspace_id)
-        .unwrap_or_else(|_| state.workspace.root().to_path_buf());
-    let expected_public_workdir = state.workspace.display_path(&workspace_id, &workspace_root);
-    let expected_local_workdir = workspace_root.to_string_lossy().replace('\\', "/");
     let request_overrides = payload
         .tool_overrides
         .as_ref()
         .map(|values| normalize_tool_overrides(values.clone()));
-    let stored_prompt = state
-        .workspace
-        .load_session_system_prompt_async(&user.user_id, &session_id, None)
-        .await
-        .unwrap_or(None);
+    // Canonical thread metadata owns the immutable initial system prompt.
+    // The former workspace/message projection no longer carries a system item
+    // after the storage refactor, so consulting it here would make a completed
+    // first turn look mutable in the preview UI.
+    let stored_prompt = match wunder_core::thread_store::ThreadId::new(session_id.clone()) {
+        Ok(thread) => match state
+            .kernel
+            .orchestrator
+            .thread_store
+            .session_meta(&thread)
+            .await
+        {
+            Ok(meta) => Some(meta.initial_system_prompt),
+            Err(wunder_core::thread_store::ThreadStoreError::NotFound { .. }) => None,
+            Err(error) => {
+                return Err(error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("load frozen thread prompt failed: {error}"),
+                ));
+            }
+        },
+        Err(error) => {
+            return Err(error_response(
+                StatusCode::BAD_REQUEST,
+                format!("invalid session id: {error}"),
+            ));
+        }
+    };
     let frozen_tool_overrides = state
         .workspace
         .load_session_frozen_tool_overrides_async(&user.user_id, &session_id)
@@ -183,24 +194,26 @@ async fn build_session_prompt_preview(
     let tool_names = finalize_tool_names(allowed.clone());
     if request_overrides.is_none() {
         if let Some(prompt) = stored_prompt {
-            if prompt_has_workdir(&prompt, &expected_public_workdir, &expected_local_workdir) {
-                let tooling_preview = build_prompt_tooling_preview_payload(
-                    &state,
-                    &user.user_id,
-                    &user_context,
-                    &allowed,
-                    agent_record.as_ref(),
-                    &prompt,
-                    payload.question.as_deref(),
-                );
-                return Ok(Json(json!({
-                    "data": build_system_prompt_preview_payload(
-                        prompt,
-                        "frozen",
-                        Some(tooling_preview.clone()),
-                    ),
-                })));
-            }
+            // A canonical SessionMeta is an immutable thread contract. Its
+            // original workspace location may legitimately change after the
+            // thread starts; that must never make the preview rebuild a new
+            // prompt or re-inject current long-term memory.
+            let tooling_preview = build_prompt_tooling_preview_payload(
+                &state,
+                &user.user_id,
+                &user_context,
+                &allowed,
+                agent_record.as_ref(),
+                &prompt,
+                payload.question.as_deref(),
+            );
+            return Ok(Json(json!({
+                "data": build_system_prompt_preview_payload(
+                    prompt,
+                    "frozen",
+                    Some(tooling_preview),
+                ),
+            })));
         }
     }
     let agent_prompt = agent_record
@@ -276,19 +289,6 @@ pub async fn preview_system_prompt_for_user(
         .as_str()
         .unwrap_or_default()
         .to_string())
-}
-
-fn prompt_has_workdir(prompt: &str, public_workdir: &str, local_workdir: &str) -> bool {
-    let cleaned_prompt = prompt.trim();
-    if cleaned_prompt.is_empty() {
-        return false;
-    }
-    let public = public_workdir.trim();
-    if !public.is_empty() && cleaned_prompt.contains(public) {
-        return true;
-    }
-    let local = local_workdir.trim();
-    !local.is_empty() && cleaned_prompt.contains(local)
 }
 
 fn sanitize_system_prompt_preview(prompt: String) -> String {

@@ -2488,6 +2488,18 @@ mod tests {
             .storage
             .upsert_chat_session(&build_chat_session("bound", "agent_a", now_ts_test()))
             .unwrap();
+        state
+            .kernel
+            .orchestrator
+            .committer
+            .freeze_session(
+                "cron_user",
+                "bound",
+                "frozen fixture instructions",
+                "fixture-workspace",
+            )
+            .await
+            .unwrap();
         let mut agent = crate::user_store::build_default_agent_record_from_storage(
             state.storage.as_ref(),
             "cron_user",
@@ -2507,7 +2519,10 @@ mod tests {
         )
         .unwrap();
         agent.approval_mode = "full_auto".into();
-        agent.tool_names = vec!["execute_command".into(), "ptc".into()];
+        agent.tool_names = ["execute_command", "read_file"]
+            .into_iter()
+            .map(crate::tools::resolve_tool_name)
+            .collect();
         agent.declared_tool_names = agent.tool_names.clone();
         agent.sandbox_container_id = 2;
         let snapshot =
@@ -2554,7 +2569,13 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(request.tool_names, interactive.tool_names);
-            assert_eq!(request.config_overrides, interactive.config_overrides);
+            assert_eq!(
+                request.config_overrides.as_ref().unwrap()["security"],
+                interactive.config_overrides.as_ref().unwrap()["security"]
+            );
+            assert!(!crate::services::goal::has_direct_human_source(
+                request.config_overrides.as_ref()
+            ));
             assert_eq!(
                 request.config_overrides.as_ref().unwrap()["security"]["approval_mode"],
                 "full_auto"
@@ -2565,7 +2586,7 @@ mod tests {
                 ["security"]["approval_mode"]
                 .as_str()
                 .map(str::to_string);
-            for tool in ["execute_command", "ptc"] {
+            for tool in ["execute_command", "read_file"] {
                 let tool = crate::tools::resolve_tool_name(tool);
                 assert!(
                     request
@@ -2597,7 +2618,12 @@ mod tests {
             .unwrap()
             .unwrap();
         agent.approval_mode = "suggest".into();
-        agent.tool_names = vec!["execute_command".into(), "read_file".into()];
+        // Agent update entry points persist canonical names, including the
+        // declared selection used when intersecting thread restrictions.
+        agent.tool_names = ["execute_command", "read_file"]
+            .into_iter()
+            .map(crate::tools::resolve_tool_name)
+            .collect();
         agent.declared_tool_names = agent.tool_names.clone();
         state.user_store.upsert_user_agent(&agent).unwrap();
         let mut parent = build_chat_session("bound", "agent_a", now_ts_test());
@@ -2927,6 +2953,18 @@ mod tests {
                 "agent_a",
                 now_ts_test(),
             ))
+            .unwrap();
+        state
+            .kernel
+            .orchestrator
+            .committer
+            .freeze_session(
+                "cron_user",
+                &routing.run_session_id,
+                "frozen fixture instructions",
+                "fixture-workspace",
+            )
+            .await
             .unwrap();
         let accepted = state
             .storage

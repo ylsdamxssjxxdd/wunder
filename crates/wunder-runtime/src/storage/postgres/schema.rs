@@ -21,13 +21,16 @@ fn schema_fingerprint() -> &'static str {
     })
 }
 
-fn schema_is_current(conn: &mut PgConn<'_>) -> Result<bool> {
+fn schema_is_current(storage: &PostgresStorage, conn: &mut PgConn<'_>) -> Result<bool> {
     if !conn
         .query_one("SELECT to_regclass('meta') IS NOT NULL", &[])?
         .get::<_, bool>(0)
     {
         return Ok(false);
     }
+    // Reject an independent canonical root before stale-schema maintenance
+    // can change a control plane belonging to another deployment.
+    storage.ensure_canonical_root_ownership(conn)?;
     Ok(conn
         .query_opt("SELECT value FROM meta WHERE key=$1", &[&SCHEMA_MARKER])?
         .is_some_and(|row| row.get::<_, String>(0) == schema_fingerprint()))
@@ -881,7 +884,7 @@ impl PostgresSchemaStorage for PostgresStorage {
                     continue;
                 }
             };
-            if schema_is_current(&mut conn)? {
+            if schema_is_current(self, &mut conn)? {
                 self.initialized.store(true, Ordering::SeqCst);
                 tracing::info!(
                     elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,
@@ -896,7 +899,7 @@ impl PostgresSchemaStorage for PostgresStorage {
                 &[],
             )?;
             let mut conn = SchemaConnection(Some(conn));
-            if schema_is_current(&mut conn)? {
+            if schema_is_current(self, &mut conn)? {
                 self.initialized.store(true, Ordering::SeqCst);
                 return Ok(());
             }
@@ -1957,6 +1960,7 @@ impl PostgresSchemaStorage for PostgresStorage {
                     self.ensure_cron_columns(&mut conn)?;
                     self.ensure_memory_fragment_columns(&mut conn)?;
                     self.ensure_performance_indexes(&mut conn)?;
+                    self.ensure_canonical_root_ownership(&mut conn)?;
                     tracing::info!(
                         elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,
                         "postgres schema indexes ready"

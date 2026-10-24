@@ -16,7 +16,8 @@ pub fn authorized_profile_revision(allowed: &HashSet<String>) -> String {
     crate::tools::tool_profile_snapshot(&specs).revision
 }
 
-const DEFAULT_SKILL_NAMES: &[&str] = &["技能创建器"];
+/// 蛹/舵机随包附带的默认技能：新建智能体默认勾选，用户可自行取消。
+const DEFAULT_SKILL_NAMES: &[&str] = &["技能创建器", "公文写作", "文稿校对", "3D网页", "视频制作"];
 
 /// 桌面端不对智能体开放选择的内置工具：goal 由运行时按会话自动注入，
 /// 其余为会话调度等系统级内部工具。桌面模式的
@@ -221,6 +222,18 @@ mod tests {
             "goal",
         ] {
             assert!(!selected.iter().any(|selected| selected == name));
+        }
+    }
+
+    #[test]
+    fn defaults_select_every_bundled_skill() {
+        let allowed: HashSet<String> = DEFAULT_SKILL_NAMES
+            .iter()
+            .map(|name| name.to_string())
+            .collect();
+        let selected = default_tool_names(&allowed);
+        for name in DEFAULT_SKILL_NAMES {
+            assert!(selected.iter().any(|item| item == name), "missing {name}");
         }
     }
 

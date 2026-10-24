@@ -233,6 +233,32 @@ async fn native_session_goal_outcome(
             })
             .await?
         {
+            // A goal command is a durable user turn although it does not call
+            // a model. Freeze its session metadata before completion so its
+            // canonical body survives a reload.
+            let request = crate::api::chat::build_chat_request(
+                state,
+                user,
+                session_id,
+                echo.clone(),
+                None,
+                false,
+                None,
+                crate::api::chat::ChatRequestOverrides {
+                    tool_call_mode: None,
+                    approval_mode: None,
+                    reasoning_effort: None,
+                },
+            )
+            .await
+            .map_err(|response| {
+                anyhow::anyhow!("goal command request was rejected ({})", response.status())
+            })?;
+            state
+                .kernel
+                .orchestrator
+                .freeze_session_for_request(&request, accepted_round)
+                .await?;
             state
                 .kernel
                 .orchestrator
@@ -468,6 +494,7 @@ mod tests {
         goal_service(&state).set_driver_host(host.clone());
         let app = router().with_state(state.clone());
         let mut goal_id = String::new();
+        let mut frozen_prompt = String::new();
         for (index, objective) in ["Complete the example task", "Revise the example task"]
             .iter()
             .enumerate()
@@ -504,13 +531,33 @@ mod tests {
                 .await
                 .expect("new goal schedules a model round");
                 assert_eq!(host.submitted.lock().unwrap()[0].goal_id, goal_id);
-                let turns = state
+                let page = state
                     .storage
-                    .list_thread_turns(&user.user_id, session, None, 1)
+                    .thread_view_page(&user.user_id, session, "chat", None, 1)
                     .unwrap();
-                assert_eq!(turns[0]["summary"], format!("/goal {objective}"));
+                assert_eq!(page.chat[0].user.content, format!("/goal {objective}"));
+                frozen_prompt = state
+                    .kernel
+                    .orchestrator
+                    .thread_store
+                    .session_meta(&wunder_core::thread_store::ThreadId::new(session).unwrap())
+                    .await
+                    .unwrap()
+                    .initial_system_prompt;
             } else {
                 assert_eq!(value["goal_id"], goal_id);
+                assert_eq!(
+                    state
+                        .kernel
+                        .orchestrator
+                        .thread_store
+                        .session_meta(&wunder_core::thread_store::ThreadId::new(session).unwrap())
+                        .await
+                        .unwrap()
+                        .initial_system_prompt,
+                    frozen_prompt,
+                    "later goal controls must not replace the frozen prompt"
+                );
             }
         }
 
@@ -593,12 +640,24 @@ mod tests {
         service.driver().notify_goal_changed(&user.user_id, session);
         let completed = tokio::time::timeout(std::time::Duration::from_secs(15), async {
             loop {
-                let snapshot = state
-                    .storage
-                    .thread_snapshot(&user.user_id, session)
+                let goal = service
+                    .get_view(&state.storage, &user.user_id, session)
+                    .await
+                    .unwrap()
                     .unwrap();
-                let turns = snapshot["turns"].as_array().unwrap();
-                if turns.len() == 4 && turns.iter().all(|turn| turn["status"] == "completed") {
+                // Chat history groups continuations under their user round;
+                // two goal executions do not create two extra user turns.
+                let page = state
+                    .storage
+                    .thread_view_page(&user.user_id, session, "chat", None, 12)
+                    .unwrap();
+                if goal.record.rounds_started == 2
+                    && model_calls.load(Ordering::SeqCst) == 2
+                    && page.runtime_status == "completed"
+                    && page.chat.iter().any(|row| {
+                        row.status == "completed" && row.assistant.content == "Example progress."
+                    })
+                {
                     break;
                 }
                 tokio::time::sleep(std::time::Duration::from_millis(20)).await;
@@ -607,11 +666,7 @@ mod tests {
         .await;
         assert!(
             completed.is_ok(),
-            "real runtime must finish two goal rounds: {:?}",
-            state
-                .storage
-                .list_thread_turns(&user.user_id, session, None, 8)
-                .unwrap()
+            "real runtime must finish two goal rounds"
         );
         assert_eq!(
             service
@@ -635,6 +690,18 @@ mod tests {
         assert_eq!(page.chat[0].stop_reason.as_deref(), Some("goal_command"));
         assert_eq!(page.chat[1].assistant.content, "Example progress.");
         assert_ne!(page.chat[1].execution_turn_id, page.chat[1].root_turn_id);
+        assert_eq!(
+            state
+                .kernel
+                .orchestrator
+                .thread_store
+                .session_meta(&wunder_core::thread_store::ThreadId::new(session).unwrap())
+                .await
+                .unwrap()
+                .initial_system_prompt,
+            frozen_prompt,
+            "model continuations must preserve the first control turn's prompt"
+        );
 
         // Exercise cancellation against a real HTTP model request, including
         // the direct runner and the queue's execution lease. No mock executor

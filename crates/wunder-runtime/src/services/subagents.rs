@@ -1794,12 +1794,13 @@ mod tests {
     }
 
     #[test]
-    fn child_progress_snapshot_keeps_parent_identity_and_latest_metrics() {
-        let (_dir, storage) = build_storage();
+    fn completed_child_snapshot_keeps_parent_identity_and_original_metrics() {
+        let (dir, storage) = build_storage();
         let user = "fixture-user";
         let parent = "fixture-parent";
         let child = "fixture-child";
         upsert_parent_session(&storage, user, parent);
+        crate::storage::test_support::freeze_thread(dir.path(), user, parent);
         let accepted = storage
             .accept_thread_turn(
                 user,
@@ -1835,9 +1836,10 @@ mod tests {
         let updated = super::runtime_thread_item(&storage, user, parent, runtime)
             .unwrap()
             .unwrap();
-        let second = storage.commit_thread_item(user, &updated).unwrap().unwrap();
-        assert_eq!(first["item_id"], second["item_id"]);
-        assert!(second["cursor"].as_i64() > first["cursor"].as_i64());
+        assert!(storage
+            .commit_thread_item(user, &updated)
+            .unwrap()
+            .is_none());
         let snapshot = storage.thread_snapshot(user, parent).unwrap();
         let items: Vec<_> = snapshot["items"]
             .as_array()
@@ -1846,11 +1848,12 @@ mod tests {
             .filter(|item| item["kind"] == "subagent_run")
             .collect();
         assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["item_id"], first["item_id"]);
         assert_eq!(
             items[0]["payload"]["runtime"]["latest_message"],
-            "Latest fixture reply"
+            "result-fixture-child"
         );
-        assert_eq!(items[0]["payload"]["runtime"]["metrics"]["tool_calls"], 4);
+        assert_eq!(items[0]["payload"]["runtime"]["metrics"]["tool_calls"], 2);
         assert_eq!(
             items[0]["payload"]["runtime"]["metrics"]["account_credits_consumed"],
             0

@@ -103,15 +103,15 @@ impl HistoryManager {
         max_items: i64,
     ) -> Vec<Value> {
         let history = workspace
-            .load_history(user_id, session_id, max_items)
+            .load_execution_history(user_id, session_id, "", max_items)
             .unwrap_or_default();
-        let mut messages = Vec::new();
-        for item in materialize_history_items(&history) {
-            if let Some(message) = build_message_from_item(&item, true) {
-                messages.push(message);
-            }
-        }
-        messages
+        // Canonical execution context already expands the latest checkpoint.
+        // Replaying display-history markers again would interpret a normal
+        // summary-prefixed user message as another context reset.
+        history
+            .iter()
+            .filter_map(|item| build_message_from_item(item, true))
+            .collect()
     }
 
     pub async fn load_history_messages_async(
@@ -138,7 +138,7 @@ impl HistoryManager {
     ) -> anyhow::Result<Vec<Value>> {
         blocking::run_fs("services.history.load_execution_messages", move || {
             let history = workspace.load_execution_history(&user_id, &session_id, &turn_id, 0)?;
-            Ok(materialize_history_items(&history)
+            Ok(history
                 .iter()
                 .filter_map(|item| build_message_from_item(item, true))
                 .collect())
@@ -1735,6 +1735,61 @@ mod tests {
                 json!({"role":"assistant","content":"retained output"}),
                 json!({"role":"user","content":"latest input"}),
             ]
+        );
+    }
+
+    #[tokio::test]
+    async fn execution_context_preserves_head_summary_prefix_and_tail_after_reopen() {
+        let dir = tempdir().unwrap();
+        let database = dir.path().join("state_1.sqlite");
+        let storage = SqliteStorage::new(database.to_string_lossy().into_owned());
+        let user = "sample-user";
+        let thread = "sample-thread";
+        let replacement = vec![
+            json!({"role":"user", "content":"retained head input"}),
+            json!({"role":"assistant", "content":"retained head output"}),
+            json!({"role":"user", "content":HistoryManager::format_compaction_summary("sample summary")}),
+            json!({"role":"user", "content":"retained tail input"}),
+            json!({"role":"assistant", "content":"retained tail output"}),
+        ];
+        seed_context_rows(
+            dir.path(),
+            &storage,
+            user,
+            thread,
+            vec![
+                json!({"role":"user", "content":"earlier input"}),
+                json!({"role":"system", "content":"sample summary", "meta":{
+                    "type":COMPACTION_META_TYPE, "hidden":true,
+                    COMPACTION_REPLACEMENT_HISTORY_META_KEY:replacement
+                }}),
+                json!({"role":"user", "content":"latest input"}),
+            ],
+        );
+        drop(storage);
+        let workspace = Arc::new(WorkspaceManager::new(
+            &dir.path().join("workspaces").to_string_lossy(),
+            Arc::new(SqliteStorage::new(database.to_string_lossy().into_owned())),
+            0,
+            &HashMap::new(),
+        ));
+        let mut expected = replacement;
+        expected.push(json!({"role":"user", "content":"latest input"}));
+        assert_eq!(
+            HistoryManager.load_history_messages(&workspace, user, thread, 0),
+            expected
+        );
+        assert_eq!(
+            HistoryManager
+                .load_execution_messages_async(
+                    workspace,
+                    user.into(),
+                    thread.into(),
+                    String::new(),
+                )
+                .await
+                .unwrap(),
+            expected
         );
     }
 

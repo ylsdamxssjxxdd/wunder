@@ -416,6 +416,8 @@ impl NativeDesktop {
                 workspace_id: Some(workspace_id.clone()),
                 user_rounds,
                 model_rounds_per_turn: model_rounds,
+                seed: None,
+                scenario: wunder_server::storage::StressThreadScenario::Complex,
             };
             let current = index;
             stats.push(

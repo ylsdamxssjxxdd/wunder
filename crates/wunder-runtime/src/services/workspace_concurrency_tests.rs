@@ -24,7 +24,9 @@ fn concurrent_file_only_workspace_access_does_not_materialize_history_storage() 
             });
         }
     });
-    assert!(!state_path.exists());
+    // WorkspaceManager initializes the small SQLite control plane. File-only
+    // access must still leave canonical history and runtime-log stores lazy.
+    assert!(state_path.is_file());
     for name in ["queue_1.sqlite", "thread_history_1.sqlite", "logs_1.sqlite"] {
         assert!(
             !dir.path().join(name).exists(),

@@ -15,6 +15,7 @@ pub use services::archive_extract;
 pub use services::companions;
 pub use services::memory_fragments;
 pub use services::thread_log::export_stream as export_thread_log_stream;
+pub use services::thread_log::hydrate_active_text as hydrate_thread_item_text;
 pub use services::tool_result_display;
 pub mod storage;
 

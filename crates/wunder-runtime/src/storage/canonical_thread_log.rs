@@ -192,9 +192,15 @@ impl<'a> CanonicalThreadLog<'a> {
         } else {
             "AND ?2 IS NULL"
         };
-        let sql=format!("SELECT {column},rollout_ordinal FROM thread_items WHERE rollout_id=?1 {root} AND (?3 IS NULL OR rollout_ordinal<?3) AND (?4 IS NULL OR rollout_ordinal>?4) {} {} ORDER BY rollout_ordinal {order} LIMIT ?5",
-            if internal {String::new()}else{format!("AND {VISIBLE}")},
-            if messages {"AND item_type IN ('user_message','assistant_message','agent_message')"} else {""});
+        let message_filter = if !messages {
+            String::new()
+        } else if internal {
+            format!("AND (item_type IN ('user_message','assistant_message','agent_message') OR (item_type='tool_result' AND json_extract({BODY},'$.role')='tool') OR (item_type='configuration' AND json_extract({BODY},'$.role')='system' AND json_type({BODY},'$.meta.replacement_history')='array'))")
+        } else {
+            "AND item_type IN ('user_message','assistant_message','agent_message')".to_owned()
+        };
+        let sql=format!("SELECT {column},rollout_ordinal FROM thread_items WHERE rollout_id=?1 {root} AND (?3 IS NULL OR rollout_ordinal<?3) AND (?4 IS NULL OR rollout_ordinal>?4) {} {message_filter} ORDER BY rollout_ordinal {order} LIMIT ?5",
+            if internal {String::new()}else{format!("AND {VISIBLE}")});
         let mut stmt = conn.prepare(&sql)?;
         let rows = stmt.query_map(
             params![rollout, turn, before, after, limit.clamp(1, 501)],
@@ -595,13 +601,66 @@ impl ThreadLogStore for CanonicalThreadLog<'_> {
         Ok(vec![])
     }
     fn load_subagent_context(&self, u: &str, s: &str, turns: i64) -> Result<Vec<Value>> {
-        let mut messages = self.list_thread_visible_messages(u, s, None, turns.clamp(1, 50) * 2)?;
-        messages.reverse();
-        for message in &mut messages {
-            if let Some(text) = message["content"].as_str() {
-                message["content"] = json!(preview(text, 8192));
-            }
+        self.check(u, s)?;
+        let conn = self.connection(Some(s))?;
+        let Some(rollout) = Self::rollout(&conn, s)? else {
+            return Ok(vec![]);
+        };
+        // A user round can contain several model actions. Select the newest
+        // root turns first, then retain bounded completed visible messages
+        // from those turns, keeping the quoted context faithful to the thread.
+        let roots = conn
+            .prepare(
+                "SELECT root_turn_id FROM queue.canonical_turn_admissions
+                 WHERE thread_id=?1 AND turn_id=root_turn_id
+                 ORDER BY user_round DESC, created_at_ms DESC, rowid DESC
+                 LIMIT ?2",
+            )?
+            .query_map(params![s, turns.clamp(1, 16)], |row| {
+                row.get::<_, String>(0)
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        if roots.is_empty() {
+            return Ok(vec![]);
         }
+        let mut messages = Vec::new();
+        let mut statement = conn.prepare(
+            "SELECT preview_json FROM thread_items
+             WHERE rollout_id=?1
+               AND COALESCE(root_turn_id, turn_id) IN (SELECT value FROM json_each(?2))
+               AND visible=1
+               AND item_type IN ('user_message', 'assistant_message', 'agent_message')
+             ORDER BY rollout_ordinal DESC
+             LIMIT 257",
+        )?;
+        let roots = serde_json::to_string(&roots)?;
+        let rows = statement.query_map(params![rollout, roots], |row| row.get::<_, String>(0))?;
+        for raw in rows {
+            let item = Self::item(raw?, 0, s, false)?;
+            let mut body = item["payload"].clone();
+            body["turn_id"] = item["turn_id"].clone();
+            body["root_turn_id"] = item["root_turn_id"].clone();
+            body["kind"] = item["kind"].clone();
+            if body["role"].is_null() {
+                body["role"] = json!(if item["kind"] == "user_message" {
+                    "user"
+                } else {
+                    "assistant"
+                });
+            }
+            if let Some(content) = body["content"].as_str() {
+                let truncated = body["_content_bytes"]
+                    .as_u64()
+                    .is_some_and(|bytes| bytes > content.len() as u64);
+                let content = preview(content, 8192);
+                if truncated {
+                    body["truncated"] = json!(true);
+                }
+                body["content"] = json!(content);
+            }
+            messages.push(body);
+        }
+        messages.reverse();
         Ok(messages)
     }
     fn fork_thread_log(&self, u: &str, s: &str, t: &str, round: i64) -> Result<()> {
@@ -625,13 +684,51 @@ impl ThreadLogStore for CanonicalThreadLog<'_> {
         limit: i64,
         internal: bool,
     ) -> Result<Vec<Value>> {
-        if internal {
-            return self.load_thread_execution_context(u, s, "", limit);
-        }
-        let mut items =
-            self.list_thread_visible_messages(u, s, None, if limit <= 0 { 500 } else { limit })?;
+        self.check(u, s)?;
+        // This is durable completed-item history for transcript, export and
+        // legacy callers.  It must never be substituted with model context:
+        // a Compacted record deliberately expands to its replacement context
+        // there and would hide the persisted compaction summary/item metadata.
+        // `internal` only controls whether completed hidden items may appear.
+        let conn = self.connection(Some(s))?;
+        let mut items = Self::items(
+            &conn,
+            s,
+            None,
+            None,
+            None,
+            if limit <= 0 { 500 } else { limit },
+            internal,
+            true,
+        )?;
         items.reverse();
-        Ok(items)
+        items
+            .into_iter()
+            .map(|item| {
+                let mut body = item["payload"].clone();
+                for key in [
+                    "item_id",
+                    "turn_id",
+                    "root_turn_id",
+                    "kind",
+                    "status",
+                    "created_seq",
+                    "created_time",
+                    "revision",
+                ] {
+                    body[key] = item[key].clone();
+                }
+                if body["role"].is_null() {
+                    body["role"] = json!(match item["kind"].as_str() {
+                        Some("user_message") => "user",
+                        Some("assistant_message" | "agent_message") => "assistant",
+                        Some("tool_result") => "tool",
+                        _ => bail!("completed chat item has no message role"),
+                    });
+                }
+                Ok(body)
+            })
+            .collect()
     }
     fn load_thread_execution_context(
         &self,
@@ -1101,12 +1198,13 @@ impl ThreadLogStore for CanonicalThreadLog<'_> {
     }
     fn delete_thread_log_by_session(&self, u: &str, s: &str) -> Result<i64> {
         self.check(u, s)?;
-        let count = self.get_thread_log_counts(u, s, true)?.1;
-        match wait(self.threads.delete_thread(&ThreadId::new(s)?))? {
-            Ok(()) => {}
-            Err(ThreadStoreError::NotFound { .. }) => self.admissions()?.delete_thread(s)?,
-            Err(e) => return Err(e.into()),
-        }
+        let thread = ThreadId::new(s)?;
+        let count = if wait(self.threads.deletion_pending(&thread))?? {
+            0
+        } else {
+            self.get_thread_log_counts(u, s, true)?.1
+        };
+        wait(self.threads.delete_thread(&thread))??;
         Ok(count)
     }
 }

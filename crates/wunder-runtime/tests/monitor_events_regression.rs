@@ -196,7 +196,7 @@ fn llm_request_events_are_always_summarized() {
 }
 
 #[test]
-fn persisted_record_keeps_summarized_llm_request() {
+fn persisted_record_keeps_facts_without_execution_events() {
     let (monitor, storage) = build_monitor_with_storage(12);
     let session_id = format!("sess_{}", uuid::Uuid::new_v4().simple());
     let long_text = "abcdefghijklmnopqrstuvwxyz";
@@ -228,16 +228,12 @@ fn persisted_record_keeps_summarized_llm_request() {
 
     monitor.mark_finished(&session_id);
     let record = wait_for_storage_record(&storage, &session_id);
-    let events = record["events"].as_array().expect("events should persist");
-    assert!(events
-        .iter()
-        .any(|event| event["type"].as_str() == Some("llm_output_delta")));
-    let request = events
-        .iter()
-        .find(|event| event["type"].as_str() == Some("llm_request"))
-        .expect("llm_request should persist");
-    assert!(request["data"].get("payload").is_none());
-    assert_eq!(request["data"]["message_count"], json!(2));
+    assert_eq!(record["session_id"], session_id);
+    assert_eq!(record["status"], "finished");
+    // `logs_1.sqlite` is diagnostics, not another transcript: active events
+    // remain available in memory while the durable record keeps only facts.
+    assert!(record.get("events").is_none());
+    assert!(!record.to_string().contains(long_text));
 }
 
 #[test]

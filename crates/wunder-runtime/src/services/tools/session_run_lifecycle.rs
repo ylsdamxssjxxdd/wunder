@@ -9,7 +9,6 @@ use crate::config::Config;
 use crate::core::blocking;
 use crate::core::long_task;
 use crate::core::runtime_tuning;
-use crate::history::HistoryManager;
 use crate::i18n;
 use crate::monitor::MonitorState;
 use crate::orchestrator_constants::truncate_tool_result_text;
@@ -763,18 +762,22 @@ pub(crate) async fn load_session_messages(
     include_tools: bool,
 ) -> Vec<Value> {
     blocking::run_fs("tools.session_run.load_messages", move || {
-        let messages = if include_tools {
-            let history = workspace
-                .load_history(&user_id, &session_id, limit)
-                .unwrap_or_default();
-            history
-                .into_iter()
-                .filter(|item| item.get("role").and_then(Value::as_str) != Some("system"))
-                .collect()
-        } else {
-            let manager = HistoryManager;
-            manager.load_history_messages(&workspace, &user_id, &session_id, limit)
-        };
+        // Tool transcript inspection reads completed items. Model recovery
+        // uses the separate execution-context contract in HistoryManager.
+        let messages = workspace
+            .load_history(&user_id, &session_id, limit)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|item| {
+                let role = item.get("role").and_then(Value::as_str);
+                if include_tools {
+                    role != Some("system")
+                } else {
+                    matches!(role, Some("user" | "assistant"))
+                        && item.pointer("/meta/hidden").and_then(Value::as_bool) != Some(true)
+                }
+            })
+            .collect::<Vec<_>>();
         Ok(messages)
     })
     .await

@@ -107,6 +107,50 @@ async fn sqlite_cold_start_is_shared_and_user_container_paths_stay_isolated() {
     concurrent_file_tools(sqlite_config(dir.path()), dir.path().join("workspaces")).await;
 }
 
+#[tokio::test]
+async fn file_tool_uses_isolated_sqlite_when_service_env_selects_postgres() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut config = Config::default();
+    configure_sandbox_file_tool_storage_from(&mut config, &|name| match name {
+        "WUNDER_STORAGE_BACKEND" => Some("postgres".to_string()),
+        "WUNDER_STORAGE_DATA_ROOT" => Some(dir.path().join("service").display().to_string()),
+        "WUNDER_POSTGRES_DSN" => Some("postgresql://service.invalid/wunder".to_string()),
+        "WUNDER_SANDBOX_STORAGE_DATA_ROOT" => {
+            Some(dir.path().join("sandbox").display().to_string())
+        }
+        _ => None,
+    });
+    assert_eq!(config.storage.backend, "sqlite");
+    let runtime = FileRuntime::default();
+    let workspace_root = dir.path().join("workspaces").join("user__c__1");
+    let context = SandboxContext {
+        workspace_root: workspace_root.clone(),
+        container_root: dir.path().join("workspaces"),
+        allow_commands: Arc::default(),
+    };
+    let request = serde_json::from_value(json!({
+        "user_id": "user",
+        "session_id": "thread",
+        "tool": "写入文件"
+    }))
+    .unwrap();
+    let result = execute_with_runtime(
+        &runtime,
+        config,
+        &request,
+        &context,
+        &json!({"path":"probe.txt", "content":"ok"}),
+    )
+    .await;
+    assert!(result.ok, "{}: {}", result.error, result.data);
+    assert_eq!(
+        tokio::fs::read_to_string(workspace_root.join("probe.txt"))
+            .await
+            .unwrap(),
+        "ok"
+    );
+}
+
 #[cfg(feature = "postgres-storage")]
 #[tokio::test]
 #[ignore = "requires an isolated PostgreSQL database in WUNDER_TEST_SANDBOX_POSTGRES_DSN"]

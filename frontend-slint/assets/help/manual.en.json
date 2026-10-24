@@ -93,7 +93,7 @@
               ],
               "summary": [
                 {
-                  "text": "The four cores: multi-platform and multi-form, fast startup and response, strong stability and intelligence, low CPU, memory, and context cost.",
+                  "text": "The four cores: multi-platform and multi-form, instant startup and lag-free response, 24/7 stability and high intelligence, extremely low CPU, memory, and context cost with a ready-made runtime.",
                   "bold": false,
                   "code": false,
                   "kbd": false,
@@ -347,7 +347,7 @@
           "kind": "lead",
           "spans": [
             {
-              "text": "wunder is an agent scheduling platform. One engine is shipped as several program forms; the difference is only in the access layer.",
+              "text": "wunder is a multi-form agent workbench. One engine is shipped as several program forms; the difference is only in the access layer.",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -1177,7 +1177,63 @@
           "kind": "paragraph",
           "spans": [
             {
-              "text": "Download the installer for your system from Releases.",
+              "text": "Download and run the installer for your system. It installs the Pupa and Helm (CLI) by default; optional Python/Git/rg/ffmpeg/browser components are opt-in. The install directory defaults to ",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": "~/.wunder",
+              "bold": false,
+              "code": true,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": " and can be changed to any writable directory. The installer writes ",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": ".wunder-home",
+              "bold": false,
+              "code": true,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": " at the install root, and both local forms use that root as ",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": "WUNDER_HOME",
+              "bold": false,
+              "code": true,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": "; an explicit non-empty ",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": "WUNDER_HOME",
+              "bold": false,
+              "code": true,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": " still wins.",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -1204,9 +1260,147 @@
               "href": ""
             },
             {
+              "text": "bin/wunder-desktop.exe",
+              "bold": false,
+              "code": true,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": " (Windows) or ",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": "bin/wunder-desktop",
+              "bold": false,
+              "code": true,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": " (Linux) after installation; development builds use ",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            },
+            {
               "text": "wunder-frontend-slint",
               "bold": false,
               "code": true,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "list",
+          "marker": "•",
+          "spans": [
+            {
+              "text": "Terminal commands",
+              "bold": true,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": ": the installer adds the install root's ",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": "bin",
+              "bold": false,
+              "code": true,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": " to the user PATH (Windows) or creates command links under ",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": "~/.local/bin",
+              "bold": false,
+              "code": true,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": " (Linux); after opening a new terminal, ",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": "wunder-cli",
+              "bold": false,
+              "code": true,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": " (Helm) and ",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": "desktop",
+              "bold": false,
+              "code": true,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": " / ",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": "wunder-desktop",
+              "bold": false,
+              "code": true,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": " (Pupa) run directly",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "list",
+          "marker": "•",
+          "spans": [
+            {
+              "text": "Menu and desktop entry",
+              "bold": true,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": ": Windows names the Start Menu and optional desktop shortcuts Pupa and Helm; Linux registers a Pupa application-menu entry and creates a Pupa launcher in the XDG desktop directory by default",
+              "bold": false,
+              "code": false,
               "kbd": false,
               "href": ""
             }
@@ -1371,6 +1565,13 @@
                 ],
                 [
                   {
+                    "text": "The directory chosen at install time (",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  },
+                  {
                     "text": "WUNDER_HOME",
                     "bold": false,
                     "code": true,
@@ -1378,7 +1579,7 @@
                     "href": ""
                   },
                   {
-                    "text": " → ",
+                    "text": "; defaults to ",
                     "bold": false,
                     "code": false,
                     "kbd": false,
@@ -1392,7 +1593,21 @@
                     "href": ""
                   },
                   {
-                    "text": " by default",
+                    "text": ", recorded by ",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  },
+                  {
+                    "text": ".wunder-home",
+                    "bold": false,
+                    "code": true,
+                    "kbd": false,
+                    "href": ""
+                  },
+                  {
+                    "text": ")",
                     "bold": false,
                     "code": false,
                     "kbd": false,
@@ -1415,7 +1630,7 @@
                 ],
                 [
                   {
-                    "text": "~/.wunder/workspace",
+                    "text": "/workspace",
                     "bold": false,
                     "code": true,
                     "kbd": false,
@@ -1499,7 +1714,7 @@
           "kind": "paragraph",
           "spans": [
             {
-              "text": "To move to a new machine, copy ",
+              "text": "To move to a new machine, copy the whole install root (default ",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -1513,7 +1728,7 @@
               "href": ""
             },
             {
-              "text": " across. \"Local first\" means data stays on your machine; it doesn't affect reaching remote models or web pages.",
+              "text": ") across. \"Local first\" means data stays on your machine; it doesn't affect reaching remote models or web pages.",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -2374,7 +2589,7 @@
           "kind": "lead",
           "spans": [
             {
-              "text": "wunder is an agent-scheduling platform: hand it a goal and the agent breaks the task down, calls tools, and delivers results. The feature list lives in ",
+              "text": "wunder is a multi-form agent workbench: hand it a goal and the agent breaks the task down, calls tools, and delivers results. The feature list lives in ",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -2474,7 +2689,7 @@
                 ],
                 [
                   {
-                    "text": "Multi-platform, multi-form. One core and engine support the Pupa, Beehive, Helm, and Hull across Windows 7 x86 and up, Linux (ubuntu18.04 baseline) x64 / arm64, Docker, and browsers; models, channels, and workspaces extend through the same access layer",
+                    "text": "Multi-platform, multi-form. One core and engine back the Pupa, Beehive, Helm, and Hull across 32-bit Windows 7, Ubuntu 18.04, and modern Windows / Linux / Docker, in both web and local usage; models, channels, and workspaces extend through the same access layer",
                     "bold": false,
                     "code": false,
                     "kbd": false,
@@ -2497,7 +2712,7 @@
                 ],
                 [
                   {
-                    "text": "Fast startup, fast response. Local forms call the engine in-process without local HTTP; threads and history restore directly from local storage; streaming events are frame-coalesced and projected incrementally, and tools run in parallel where allowed",
+                    "text": "Instant startup and a response that never lags. Local forms call the engine in-process without local HTTP; threads and history restore directly from local storage; streaming events are frame-coalesced and projected incrementally, and tools run in parallel where allowed",
                     "bold": false,
                     "code": false,
                     "kbd": false,
@@ -2520,7 +2735,7 @@
                 ],
                 [
                   {
-                    "text": "Strong stability, high intelligence. Queues, caches, views, and context are bounded, with session locks, round caps, quotas, and retry circuit breaking for long runs; goal mode, subagents, the tool chain, long-term memory, and knowledge bases carry complex tasks from decomposition to delivery",
+                    "text": "Strong stability for 24/7 operation and a high degree of intelligence. Queues, caches, views, and context are bounded, with session locks, round caps, quotas, and retry circuit breaking for long runs; goal mode, subagents, the tool chain, long-term memory, and knowledge bases carry complex tasks from decomposition to delivery",
                     "bold": false,
                     "code": false,
                     "kbd": false,
@@ -2543,7 +2758,7 @@
                 ],
                 [
                   {
-                    "text": "Low CPU and memory use, low context consumption. A native Rust process with local SQLite needs no browser runtime; tool-result trimming, frozen prompts that reuse cache, one-time memory-index injection, and micro-compaction and history compaction keep token consumption down",
+                    "text": "Extremely low CPU and memory use, minimal context consumption. A native Rust process with local SQLite needs no browser runtime, and supplement packages ship a ready-made agent runtime so nothing has to be assembled by hand; tool-result trimming, frozen prompts that reuse cache, one-time memory-index injection, and micro-compaction and history compaction keep token consumption down",
                     "bold": false,
                     "code": false,
                     "kbd": false,
@@ -2660,7 +2875,7 @@
               "cells": [
                 [
                   {
-                    "text": "get_goal",
+                    "text": "goal",
                     "bold": false,
                     "code": true,
                     "kbd": false,
@@ -2669,53 +2884,61 @@
                 ],
                 [
                   {
-                    "text": "Reads the current goal and its revision",
+                    "text": "Uses `action=get",
                     "bold": false,
                     "code": false,
                     "kbd": false,
                     "href": ""
                   }
-                ]
-              ]
-            },
-            {
-              "header": false,
-              "cells": [
-                [
-                  {
-                    "text": "create_goal",
-                    "bold": false,
-                    "code": true,
-                    "kbd": false,
-                    "href": ""
-                  }
                 ],
                 [
                   {
-                    "text": "Creates a goal",
+                    "text": "create",
                     "bold": false,
                     "code": false,
                     "kbd": false,
                     "href": ""
                   }
-                ]
-              ]
-            },
-            {
-              "header": false,
-              "cells": [
+                ],
                 [
                   {
-                    "text": "update_goal",
+                    "text": "edit",
                     "bold": false,
-                    "code": true,
+                    "code": false,
                     "kbd": false,
                     "href": ""
                   }
                 ],
                 [
                   {
-                    "text": "Edits, pauses, resumes, completes, or reports blocked",
+                    "text": "pause",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "resume",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "complete",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "blocked` to read, create, edit, pause, resume, complete, or report blocked",
                     "bold": false,
                     "code": false,
                     "kbd": false,
@@ -3069,7 +3292,7 @@
               "href": ""
             },
             {
-              "text": "update_goal action=resume",
+              "text": "goal action=resume",
               "bold": false,
               "code": true,
               "kbd": false,
@@ -8422,21 +8645,7 @@
                 ],
                 [
                   {
-                    "text": "聚合展示名；底层为 17 个 ",
-                    "bold": false,
-                    "code": false,
-                    "kbd": false,
-                    "href": ""
-                  },
-                  {
-                    "text": "browser_*",
-                    "bold": false,
-                    "code": true,
-                    "kbd": false,
-                    "href": ""
-                  },
-                  {
-                    "text": " 原生工具（点击、输入、等待、截图等）",
+                    "text": "单一严格 action 工具，覆盖导航、观察、交互、等待与截图",
                     "bold": false,
                     "code": false,
                     "kbd": false,
@@ -8910,7 +9119,16 @@
               "cells": [
                 [
                   {
-                    "text": "get_goal / create_goal / update_goal",
+                    "text": "goal",
+                    "bold": false,
+                    "code": true,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "`action=get",
                     "bold": false,
                     "code": false,
                     "kbd": false,
@@ -8919,7 +9137,7 @@
                 ],
                 [
                   {
-                    "text": "—",
+                    "text": "create",
                     "bold": false,
                     "code": false,
                     "kbd": false,
@@ -8928,7 +9146,52 @@
                 ],
                 [
                   {
-                    "text": "目标态三件套，由运行时按会话自动注入，不对桌面端开放选择",
+                    "text": "edit",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "pause",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "resume",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "complete",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "blocked`",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "Goal-state tool, auto-injected per session by the runtime; not selectable on desktop",
                     "bold": false,
                     "code": false,
                     "kbd": false,
@@ -9865,42 +10128,68 @@
                 ],
                 [
                   {
-                    "text": "get_goal",
+                    "text": "goal",
                     "bold": false,
                     "code": true,
                     "kbd": false,
                     "href": ""
                   },
                   {
-                    "text": " / ",
+                    "text": " (`action=get",
                     "bold": false,
                     "code": false,
                     "kbd": false,
                     "href": ""
-                  },
+                  }
+                ],
+                [
                   {
-                    "text": "create_goal",
-                    "bold": false,
-                    "code": true,
-                    "kbd": false,
-                    "href": ""
-                  },
-                  {
-                    "text": " / ",
+                    "text": "create",
                     "bold": false,
                     "code": false,
                     "kbd": false,
                     "href": ""
-                  },
+                  }
+                ],
+                [
                   {
-                    "text": "update_goal",
+                    "text": "edit",
                     "bold": false,
-                    "code": true,
+                    "code": false,
                     "kbd": false,
                     "href": ""
-                  },
+                  }
+                ],
+                [
                   {
-                    "text": " are injected by the runtime per session, and not offered for selection on the desktop endpoint",
+                    "text": "pause",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "resume",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "complete",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "blocked`) is injected by the runtime per session and is not offered for selection on the desktop endpoint",
                     "bold": false,
                     "code": false,
                     "kbd": false,

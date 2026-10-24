@@ -497,6 +497,7 @@ mod tests {
             tts_enabled: None,
             tts_voice: None,
         };
+        crate::storage::test_support::freeze_thread(dir.path(), &info.user_id, &info.session_id);
         for (input, reply, status) in [
             ("/help", "Fixture help", "completed"),
             ("Fixture upload", "Fixture file received", "completed"),

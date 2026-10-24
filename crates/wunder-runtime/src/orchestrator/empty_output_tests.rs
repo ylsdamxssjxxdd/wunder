@@ -2,6 +2,31 @@ use super::*;
 use crate::state::{AppState, AppStateInitOptions};
 use axum::{routing::post, Json, Router};
 
+fn run_on_large_stack<F, Fut>(make_future: F)
+where
+    F: FnOnce() -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = ()>,
+{
+    // The debug runner's future includes the full orchestration and SQLite
+    // initialization chain. Windows' default test-worker stack is too small.
+    // Construct the future on this thread as well, so moving a large future
+    // does not first overflow the harness stack.
+    std::thread::Builder::new()
+        .stack_size(16 * 1024 * 1024)
+        .spawn(move || {
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .thread_stack_size(16 * 1024 * 1024)
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(make_future());
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
 async fn exercise_output_recovery(kind: &str, stream: bool, recover: bool) {
     let requests = Arc::new(ParkingMutex::new(Vec::<Value>::new()));
     let captured = requests.clone();
@@ -107,6 +132,29 @@ async fn exercise_output_recovery(kind: &str, stream: bool, recover: bool) {
         assert_eq!(error.detail().unwrap()["finish_reason"], "length");
         assert_eq!(error.detail().unwrap()["output_limit_reached"], true);
     }
+    if valid_first {
+        let page = state
+            .storage
+            .thread_view_page("user_1", "session_1", "chat", None, 12)
+            .unwrap();
+        assert_eq!(page.runtime_status, "completed");
+        assert_eq!(page.chat[0].assistant.content, "completed");
+        let reopened = crate::storage::thread_store::LocalThreadStore::open(
+            state.kernel.orchestrator.thread_store.root(),
+        )
+        .unwrap();
+        let context = reopened
+            .model_messages(
+                &wunder_core::thread_store::ThreadId::new("session_1").unwrap(),
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(context.last().unwrap()["content"], "completed");
+        assert!(context
+            .iter()
+            .all(|message| message.get("tool_calls").is_none()));
+    }
     let requests = requests.lock();
     assert_eq!(
         requests.len(),
@@ -132,27 +180,33 @@ async fn exercise_output_recovery(kind: &str, stream: bool, recover: bool) {
     server.abort();
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn empty_output_stops_after_one_recovery_across_stream_and_nonstream() {
-    for stream in [false, true] {
-        for kind in ["reasoning", "empty", "arguments", "final"] {
-            exercise_output_recovery(kind, stream, false).await;
+#[test]
+fn empty_output_stops_after_one_recovery_across_stream_and_nonstream() {
+    run_on_large_stack(|| async {
+        for stream in [false, true] {
+            for kind in ["reasoning", "empty", "arguments", "final"] {
+                exercise_output_recovery(kind, stream, false).await;
+            }
         }
-    }
+    });
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn empty_output_recovers_without_changing_system_prompt() {
-    for stream in [false, true] {
-        exercise_output_recovery("reasoning", stream, true).await;
-        exercise_output_recovery("arguments", stream, true).await;
-    }
+#[test]
+fn empty_output_recovers_without_changing_system_prompt() {
+    run_on_large_stack(|| async {
+        for stream in [false, true] {
+            exercise_output_recovery("reasoning", stream, true).await;
+            exercise_output_recovery("arguments", stream, true).await;
+        }
+    });
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn empty_output_guard_keeps_usable_answers_and_complete_calls_at_limit() {
-    for stream in [false, true] {
-        exercise_output_recovery("valid_text", stream, true).await;
-        exercise_output_recovery("valid_tool", stream, true).await;
-    }
+#[test]
+fn empty_output_guard_keeps_usable_answers_and_complete_calls_at_limit() {
+    run_on_large_stack(|| async {
+        for stream in [false, true] {
+            exercise_output_recovery("valid_text", stream, true).await;
+            exercise_output_recovery("valid_tool", stream, true).await;
+        }
+    });
 }

@@ -966,11 +966,12 @@ fn resolve_desktop_tool_bin(raw: &str, app_dir: &Path) -> Option<PathBuf> {
 }
 
 /// Re-apply the process environment that routes tool commands to the embedded
-/// supplement: PATH prefixes plus `WUNDER_PYTHON_BIN` / `WUNDER_RG_BIN`. Runs
+/// supplement: PATH prefixes plus explicit runtime binary locations. Runs
 /// at boot and again after a supplement import so newly spawned tool
 /// processes pick up the unpacked runtimes without an app restart.
 pub(crate) fn refresh_runtime_tool_env(settings: &DesktopSettings, app_dir: &Path) {
-    prepend_embedded_tool_paths(app_dir);
+    let supplement_roots = embedded_supplement_roots_for_env(app_dir);
+    wunder_server::local_bootstrap::supplement::configure_runtime_env(&supplement_roots);
     match resolve_desktop_python_bin(settings, app_dir) {
         DesktopPythonBin::Custom(python_bin) | DesktopPythonBin::Auto(python_bin) => {
             set_env_path_if_exists("WUNDER_PYTHON_BIN", &python_bin);
@@ -1093,12 +1094,6 @@ pub(crate) fn embedded_supplement_roots_for_env(app_dir: &Path) -> Vec<PathBuf> 
         app_dir,
         resolve_appimage_dir(),
     )
-}
-
-fn prepend_embedded_tool_paths(app_dir: &Path) {
-    wunder_server::local_bootstrap::supplement::prepend_tool_paths(
-        &embedded_supplement_roots_for_env(app_dir),
-    );
 }
 
 fn resolve_embedded_python_bin(app_dir: &Path) -> Option<PathBuf> {

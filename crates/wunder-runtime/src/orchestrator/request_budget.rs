@@ -5,6 +5,10 @@ use crate::orchestrator_constants::DEFAULT_MAX_OUTPUT_TOKENS;
 use serde::Serialize;
 use std::io::{self, Write};
 
+/// Fixed envelope charged by the provider adapter for a request, in addition
+/// to the serialized chat messages and native tool definitions.
+pub(super) const REQUEST_MESSAGE_OVERHEAD_TOKENS: i64 = 16;
+
 #[derive(Debug, Clone, Copy)]
 pub(super) struct RequestBudget {
     pub estimated_tokens: i64,
@@ -40,9 +44,9 @@ pub(super) fn tools_tokens(tools: Option<&[Value]>) -> i64 {
 }
 
 pub(super) fn estimate_request_tokens(messages: &[ChatMessage], tools: Option<&[Value]>) -> i64 {
-    messages
-        .iter()
-        .fold(tools_tokens(tools).saturating_add(16), |total, message| {
+    messages.iter().fold(
+        tools_tokens(tools).saturating_add(REQUEST_MESSAGE_OVERHEAD_TOKENS),
+        |total, message| {
             let reasoning = message
                 .reasoning_content
                 .as_deref()
@@ -66,7 +70,8 @@ pub(super) fn estimate_request_tokens(messages: &[ChatMessage], tools: Option<&[
                 .saturating_add(calls)
                 .saturating_add(call_id)
                 .saturating_add(4)
-        })
+        },
+    )
 }
 
 impl RequestBudget {
@@ -97,6 +102,17 @@ impl RequestBudget {
 
     pub(super) fn admitted(self) -> bool {
         self.estimated_tokens <= self.limit_tokens
+    }
+
+    /// Budget available to the serialized chat messages after charging the
+    /// same tool and request-envelope costs used by `estimate_request_tokens`.
+    /// Callers use this for trimming/rebuilding context so the local guard and
+    /// the final provider admission gate share one accounting rule.
+    pub(super) fn message_budget(self, request_overhead_tokens: i64) -> i64 {
+        self.limit_tokens
+            .saturating_sub(request_overhead_tokens.max(0))
+            .saturating_sub(REQUEST_MESSAGE_OVERHEAD_TOKENS)
+            .max(0)
     }
 
     pub(super) fn ensure_admitted(self) -> Result<Self, OrchestratorError> {
@@ -195,5 +211,34 @@ mod tests {
             serialized_tokens(&value),
             approx_token_count(&value.to_string())
         );
+    }
+
+    #[test]
+    fn guarded_context_uses_shared_message_budget_at_4500_window_boundary() {
+        let config = LlmModelConfig {
+            max_context: Some(4500),
+            max_output: Some(512),
+            ..Default::default()
+        };
+        let tools = [json!({
+            "type": "function",
+            "function": {
+                "name": "sample",
+                "description": "d".repeat(560)
+            }
+        })];
+        let budget = RequestBudget::measure(&config, &[], Some(&tools));
+        let message_budget = budget.message_budget(tools_tokens(Some(&tools)));
+        assert_eq!(budget.limit_tokens, 3848);
+        assert!(message_budget > 0);
+        let messages = [
+            message("system", json!("s".repeat(1_800))),
+            message("user", json!("u".repeat(1_800))),
+        ];
+        let message_tokens = estimate_request_tokens(&messages, None)
+            .saturating_sub(REQUEST_MESSAGE_OVERHEAD_TOKENS);
+        assert!(message_tokens <= message_budget);
+        let admitted = RequestBudget::measure(&config, &messages, Some(&tools));
+        assert!(admitted.admitted());
     }
 }

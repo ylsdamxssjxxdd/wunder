@@ -15,6 +15,7 @@ set -euo pipefail
 #   WUNDER_SUPPLEMENT_BUILD_ROOT  build root (downloads/stage/dist below it)
 #   WUNDER_SUPPLEMENT_PYPI_INDEX  pip index (default: manifest default)
 #   WUNDER_SUPPLEMENT_REQUIREMENTS  requirements file override
+#   WUNDER_REMOTION_PAYLOAD         directory containing opt/node and opt/remotion
 #
 # Output: <output_dir>/<packageName>-linux-<arch>.tar.gz with opt/ at the
 # archive root, plus README-linux-supplement.txt and the manifest JSON.
@@ -67,6 +68,8 @@ emit(
     git=data["git"],
     rg=data["rg"],
     ffmpeg=data["ffmpeg"],
+    node=data["node"],
+    remotion=data["remotion"],
     fonts=data.get("fonts", []),
     install=data["install"],
 )
@@ -111,10 +114,14 @@ ffmpeg_flavor="$(json_field ffmpeg.flavor)"
 ffmpeg_archive_url="$(json_field "ffmpeg.archives.$arch.url")"
 ffmpeg_archive_file="$(json_field "ffmpeg.archives.$arch.fileName")"
 ffmpeg_archive_sha256="$(json_field "ffmpeg.archives.$arch.sha256")"
+node_version="$(json_field node.version)"
+remotion_version="$(json_field remotion.version)"
+remotion_compositor_package="$(json_field "remotion.compositorPackages.$arch")"
 
 [[ -n "$python_archive_url" && "$python_archive_url" != "null" ]] || fail "no python archive for $arch"
 [[ -n "$rg_archive_url" && "$rg_archive_url" != "null" ]] || fail "no ripgrep archive for $arch"
 [[ -n "$ffmpeg_archive_url" && "$ffmpeg_archive_url" != "null" ]] || fail "no ffmpeg archive for $arch"
+[[ -n "$remotion_compositor_package" && "$remotion_compositor_package" != "null" ]] || fail "no Remotion compositor for $arch"
 
 default_build_root="$repo_root/$(json_field default_build_root)"
 build_root="${WUNDER_SUPPLEMENT_BUILD_ROOT:-$default_build_root}"
@@ -134,8 +141,12 @@ python_root="$package_root/opt/python"
 git_root="$package_root/opt/git"
 rg_root="$package_root/opt/rg"
 ffmpeg_root="$package_root/opt/ffmpeg"
+node_root="$package_root/opt/node"
+remotion_root="$package_root/opt/remotion"
+remotion_payload="${WUNDER_REMOTION_PAYLOAD:-}"
+[[ -n "$remotion_payload" && -d "$remotion_payload/opt/node" && -d "$remotion_payload/opt/remotion" ]] || fail "WUNDER_REMOTION_PAYLOAD must contain opt/node and opt/remotion"
 rm -rf "$stage_dir"
-mkdir -p "$python_root" "$git_root" "$rg_root" "$ffmpeg_root"
+mkdir -p "$python_root" "$git_root" "$rg_root" "$ffmpeg_root" "$node_root" "$remotion_root"
 
 obtain_file() {
   # obtain_file <url> <destination> <expected-sha256>
@@ -364,6 +375,16 @@ else
 fi
 chmod 0755 "$ffmpeg_bin"
 
+log "merging Remotion payload from $remotion_payload"
+cp -a "$remotion_payload/opt/node/." "$node_root/"
+cp -a "$remotion_payload/opt/remotion/." "$remotion_root/"
+node_bin="$node_root/bin/node"
+remotion_compositor_root="$remotion_root/node_modules/$remotion_compositor_package"
+[[ -x "$node_bin" ]] || fail "Node binary missing from Remotion payload"
+[[ -f "$remotion_compositor_root/ffmpeg" ]] || fail "Remotion compositor missing from payload"
+remotion_cli="$remotion_root/node_modules/@remotion/cli/remotion-cli.js"
+[[ -f "$remotion_cli" ]] || fail "Remotion CLI missing from payload"
+
 requirements_entries="$("$python_bin" - "$requirements_path" <<'PYEOF'
 import sys
 
@@ -386,16 +407,19 @@ Python packages: $(echo "$requirements_entries" | wc -l) pinned requirements (se
 Git: $git_flavor $git_version
 Ripgrep: $rg_flavor $rg_version
 FFmpeg: $ffmpeg_flavor $ffmpeg_version (opt/ffmpeg/bin/ffmpeg)
+Node.js: $node_version (opt/node/bin/node, npm, npx)
+Remotion: $remotion_version with $remotion_compositor_package (opt/remotion/bin/remotion)
 Browsers: Playwright Chromium in opt/python/ms-playwright (when bundled)
 
 Usage:
 1. Use Import supplement in the Pupa settings, or close processes using this runtime.
 2. For manual installation, extract into WUNDER_HOME (default: ~/.wunder),
    including when the Pupa is distributed as an AppImage.
-3. Ensure the target now contains opt/python, opt/git, opt/rg, and opt/ffmpeg
+3. Ensure the target now contains opt/python, opt/git, opt/rg, opt/ffmpeg,
+   opt/node and opt/remotion
    (plus opt/r2 when WUNDER_SUPPLEMENT_R2_ARCHIVE was provided).
 4. Start the Pupa or Helm; both prepend the shared opt/python,
-   opt/git, opt/rg, and opt/ffmpeg to PATH automatically.
+    opt/git, opt/rg, opt/ffmpeg, opt/node and opt/remotion to PATH automatically.
 EOF
 
 python3 - "$manifest_json" "$arch" "$build_root" "$python_archive_url" "$git_tarball_url" "$rg_archive_url" "$ffmpeg_archive_url" "$requirements_path" "$package_root/wunder-linux-supplement.json" <<'PYEOF'
@@ -445,6 +469,18 @@ output = {
         "flavor": manifest["ffmpeg"]["flavor"],
         "source": manifest["ffmpeg"]["source"],
         "url": ffmpeg_url,
+    },
+    "node": {
+        "version": manifest["node"]["version"],
+        "architecture": arch,
+        "path": manifest["install"]["nodeRoot"] + "/bin/node",
+    },
+    "remotion": {
+        "version": manifest["remotion"]["version"],
+        "root": manifest["install"]["remotionRoot"],
+        "cli": manifest["install"]["remotionRoot"] + "/bin/remotion",
+        "compositor": manifest["remotion"]["compositorPackages"][arch],
+        "browserPath": manifest["install"]["remotionRoot"] + "/browser-path",
     },
     "r2": {
         "version": manifest.get("r2", {}).get("version", ""),
@@ -510,7 +546,7 @@ log "validated Python profile imports"
 "$rg_root/bin/rg" --version | head -n 1
 "$ffmpeg_bin" -version | head -n 1
 
-for staged_binary in "$python_bin" "$git_bin" "$rg_root/bin/rg" "$ffmpeg_bin"; do
+for staged_binary in "$python_bin" "$git_bin" "$rg_root/bin/rg" "$ffmpeg_bin" "$node_bin" "$remotion_compositor_root/ffmpeg"; do
   # -L resolves aliases (opt/python/bin/python3 is a symlink to python3.8);
   # without it file reports "symbolic link to …" and no ELF at all.
   staged_machine="$(file -bL "$staged_binary")"

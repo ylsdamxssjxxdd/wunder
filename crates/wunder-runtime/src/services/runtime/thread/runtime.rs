@@ -2322,6 +2322,18 @@ mod tests {
                 &json!({"content":"Fixture input"}),
             )
             .unwrap();
+        state
+            .kernel
+            .orchestrator
+            .committer
+            .freeze_session(
+                "fixture-user",
+                "fixture-thread",
+                "frozen fixture instructions",
+                "fixture-workspace",
+            )
+            .await
+            .unwrap();
         let turn = accepted["turn_id"].as_str().unwrap();
         state.storage.append_thread_item("fixture-user", &json!({"session_id":"fixture-thread","turn_id":turn,
             "item_id":format!("{turn}:text-1"),"kind":"assistant_message","status":"completed","content":"Fixture waiting",

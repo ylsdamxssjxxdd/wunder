@@ -25,6 +25,7 @@ fn append_chat_record(
     storage: &Arc<dyn StorageBackend>,
     user_id: &str,
     session_id: &str,
+    turn_id: &str,
     role: &str,
     content: &str,
 ) {
@@ -35,6 +36,7 @@ fn append_chat_record(
                 "role": role,
                 "content": content,
                 "session_id": session_id,
+                "turn_id": turn_id,
                 "timestamp": "2026-03-15T00:00:00Z"
             }),
         )
@@ -628,8 +630,13 @@ fn capture_turn_uses_recent_user_window() {
     storage.ensure_initialized().expect("init storage");
     let service = MemoryAutoExtractService::new(storage.clone());
 
-    append_chat_record(&storage, "u1", "s-window", "user", "以后请用中文回复。");
-    append_chat_record(&storage, "u1", "s-window", "assistant", "好的。");
+    crate::storage::test_support::freeze_thread(dir.path(), "u1", "s-window");
+    let accepted = storage
+        .accept_thread_turn("u1", "s-window", &json!({"content":"以后请用中文回复。"}))
+        .expect("accept fixture turn");
+    let turn_id = accepted["turn_id"].as_str().expect("fixture turn id");
+    crate::storage::test_support::begin_turn(dir.path(), "u1", "s-window", turn_id);
+    append_chat_record(&storage, "u1", "s-window", turn_id, "assistant", "好的。");
 
     let outcome = service
         .capture_turn(

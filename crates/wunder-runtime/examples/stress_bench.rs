@@ -2,16 +2,16 @@
 //!
 //! Usage:
 //!   cargo run --release -p wunder-runtime --features sqlite-storage \
-//!     --example stress_bench -- [user_rounds] [model_rounds_per_turn]
+//!     --example stress_bench -- [user_rounds] [model_rounds_per_turn] [seed]
 //!
 //! Prints wall-clock, item/tool counts and derived throughput so the
 //! debug-vs-release factor and the CPU/DB split can be quantified.
 
 use std::time::Instant;
 
-use wunder_server::storage::{SqliteStorage, StressThreadSpec};
+use wunder_server::storage::{SqliteStorage, StressThreadScenario, StressThreadSpec};
 
-fn run(user_rounds: i64, model_rounds: i64) {
+fn run(user_rounds: i64, model_rounds: i64, seed: Option<u64>) {
     let dir = std::env::temp_dir().join(format!(
         "wunder-stress-bench-{}-{}",
         std::process::id(),
@@ -28,6 +28,8 @@ fn run(user_rounds: i64, model_rounds: i64) {
         workspace_id: None,
         user_rounds,
         model_rounds_per_turn: model_rounds,
+        seed,
+        scenario: StressThreadScenario::Complex,
     };
 
     let t0 = Instant::now();
@@ -42,9 +44,12 @@ fn run(user_rounds: i64, model_rounds: i64) {
 
     let secs = elapsed.as_secs_f64();
     println!(
-        "RESULT turns={} model_rounds={} items={} tool_calls={} elapsed={:.3}s items_per_s={:.1} tool_per_s={:.1} model_rounds_per_s={:.1}",
+        "RESULT profile={} turns={} model_rounds={} seed={} initial_context_tokens={} items={} tool_calls={} elapsed={:.3}s items_per_s={:.1} tool_per_s={:.1} model_rounds_per_s={:.1}",
+        stats.profile,
         user_rounds,
         model_rounds,
+        stats.seed,
+        stats.initial_context_tokens,
         stats.items,
         stats.tool_calls,
         secs,
@@ -60,6 +65,11 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     let user_rounds: i64 = args.get(1).and_then(|v| v.parse().ok()).unwrap_or(50);
     let model_rounds: i64 = args.get(2).and_then(|v| v.parse().ok()).unwrap_or(20);
+    let seed = args.get(3).map(|value| {
+        value
+            .parse::<u64>()
+            .expect("seed must be an unsigned 64-bit integer")
+    });
     println!(
         "profile: sqlite-storage, {:?}",
         if cfg!(debug_assertions) {
@@ -68,9 +78,9 @@ fn main() {
             "RELEASE"
         }
     );
-    run(user_rounds, model_rounds);
+    run(user_rounds, model_rounds, seed);
     // Second, larger run to amortise warm-up.
     if user_rounds >= 50 {
-        run((user_rounds * 4).min(1000), model_rounds);
+        run((user_rounds * 4).min(1000), model_rounds, seed);
     }
 }

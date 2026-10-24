@@ -74,6 +74,7 @@ target_*/
 docker-compose-x86+.yml
 frontend/dist.__docker_tmp/
 config/data
+config/runtime
 config/knowledge/plan
 target_codex_check
 target_codex_b3
@@ -112,3 +113,4 @@ scripts/blender
 .cargo-target-context-estimate
 .cargo-target-search-schema
 temp
+config/runtime

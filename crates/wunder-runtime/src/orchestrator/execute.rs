@@ -433,8 +433,10 @@ impl Orchestrator {
                     &crate::tools::tool_profile_binding(&snapshot),
                 );
             }
-            let tool_call_mode =
-                self.resolve_frozen_session_tool_call_mode(&user_id, &session_id, &llm_config);
+            let tool_call_mode = self
+                .resolve_frozen_session_tool_call_mode(&user_id, &session_id, &llm_config)
+                .await
+                .map_err(|error| OrchestratorError::internal(error.to_string()))?;
             // 虚拟模型不接触真实供应商，工具面只用于合成轨迹：即便当前会话冻结在
             // 文本协议（`tool_call`），也要把工具定义交给模拟器，否则它拿不到可调用
             // 的工具名，随机轨迹会退化成「一轮直接收尾」，数字指定的模型轮次随之失效。
@@ -705,7 +707,7 @@ impl Orchestrator {
                 let mut overflow_recovery_attempts = 0_u32;
                 self.apply_agent_messages(agent_inbox.as_ref().expect("active inbox"),
                     &user_id, &session_id, &mut messages, &emitter, round_info, false).await?;
-                let (content, reasoning, usage, tool_calls_payload, round_speed, output) = loop {
+                let (mut content, reasoning, usage, mut tool_calls_payload, round_speed, output) = loop {
                     match self
                         .call_llm(
                             &apply_context_window_limit_hint(
@@ -926,7 +928,7 @@ impl Orchestrator {
                     round_info.insert_into(snapshot.as_object_mut().expect("context object"));
                     emitter.emit("context_usage", snapshot).await;
                 }
-                let tool_calls = if prepared.skip_tool_calls {
+                let mut tool_calls = if prepared.skip_tool_calls {
                     Vec::new()
                 } else {
                     collect_tool_calls_from_output(
@@ -936,7 +938,7 @@ impl Orchestrator {
                         tool_call_mode,
                     )
                 };
-                let tool_calls = if let Some(tooling) = function_tooling.as_ref() {
+                tool_calls = if let Some(tooling) = function_tooling.as_ref() {
                     apply_tool_name_map(tool_calls, &tooling.name_map)
                 } else {
                     apply_tool_name_map(
@@ -947,6 +949,14 @@ impl Orchestrator {
                         ),
                     )
                 };
+                if content.trim().is_empty() {
+                    if let Some(terminal_answer) = take_terminal_final_response(&mut tool_calls) {
+                        content = terminal_answer;
+                        // The terminal envelope has become assistant content and must not be
+                        // retained as an executable native tool call in model history.
+                        tool_calls_payload = None;
+                    }
+                }
                 let planning_result = build_planned_tool_calls(tool_calls, &allowed_tool_names);
                 let planned_calls = planning_result.planned;
                 if !planned_calls.is_empty() {

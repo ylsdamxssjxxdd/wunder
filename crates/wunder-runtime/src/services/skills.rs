@@ -469,10 +469,8 @@ mod tests {
         let text = read_skill_metadata_prefix(&path).expect("prefix");
         assert!(text.len() <= MAX_SKILL_METADATA_BYTES);
         assert!(text.is_char_boundary(text.len()));
-        assert_eq!(
-            extract_skill_name(&HashMap::new(), &text, dir.path()),
-            "demo"
-        );
+        let (metadata, _) = parse_frontmatter(&text).expect("frontmatter remains in prefix");
+        assert_eq!(extract_skill_name(&metadata, &text, dir.path()), "demo");
     }
 
     #[test]

@@ -282,8 +282,8 @@ def main():
     if len(sys.argv) < 4 or sys.argv[2] != "--path":
         print("Usage: init_skill.py <skill-name> --path <path>")
         print("\nSkill name requirements:")
-        print("  - Hyphen-case identifier (e.g., 'data-analyzer')")
-        print("  - Lowercase letters, digits, and hyphens only")
+        print("  - Hyphen-case identifier (e.g., 'data-analyzer') or a Unicode skill name")
+        print("  - Letters/digits, with optional single hyphens as separators")
         print("  - Max 40 characters")
         print("  - Must match directory name exactly")
         print("\nExamples:")
