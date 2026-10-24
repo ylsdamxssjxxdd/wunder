@@ -823,14 +823,16 @@ button.messenger-sidebar-workspace-row {
   background: var(--mz-primary-tint);
 }
 
+/* 文件区标题行：标题 + 右侧图标工具栏；搜索态整行换成搜索框。 */
 .messenger-sidebar-files-head {
   display: flex;
   flex-shrink: 0;
   align-items: center;
   gap: 6px;
   box-sizing: border-box;
-  height: var(--mz-group-title-height);
-  padding: 0 var(--mz-sidebar-padding);
+  height: 30px;
+  padding: 0 6px 0 var(--mz-sidebar-padding);
+  border-bottom: 1px solid var(--mz-border);
   color: var(--mz-text-muted);
   font-size: var(--mz-font-sm);
   letter-spacing: 0.02em;
@@ -844,11 +846,44 @@ button.messenger-sidebar-workspace-row {
   display: flex;
   flex-shrink: 0;
   align-items: center;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.workspace-files-search {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
   gap: 4px;
-  min-height: 30px;
-  padding: 0 var(--mz-sidebar-padding) 4px;
-  border-bottom: 1px solid var(--mz-border);
+}
+
+.workspace-files-search > i {
+  flex-shrink: 0;
+  font-size: var(--mz-font-xs);
+}
+
+.workspace-files-search-input {
+  flex: 1;
+  min-width: 0;
+  height: 24px;
+  padding: 0 6px;
+  border: 1px solid var(--mz-border-strong);
+  border-radius: var(--mz-radius-tag);
   background: var(--mz-surface);
+  color: var(--mz-text);
+  font: inherit;
+  font-size: var(--mz-font-xs);
+}
+
+.workspace-files-search-input:focus {
+  outline: none;
+  border-color: var(--mz-primary);
+}
+
+/* 原生清空按钮会和行尾的关闭按钮重复。 */
+.workspace-files-search-input::-webkit-search-cancel-button {
+  appearance: none;
 }
 
 .workspace-files-upload-input {
@@ -863,6 +898,7 @@ button.messenger-sidebar-workspace-row {
   white-space: nowrap;
 }
 
+/* 文件区工具栏按钮统一走中性灰：无主按钮，悬停只提亮底色和文字。 */
 .workspace-files-action {
   display: inline-flex;
   min-width: 0;
@@ -871,10 +907,10 @@ button.messenger-sidebar-workspace-row {
   gap: 4px;
   min-height: 24px;
   padding: 3px 7px;
-  border: 1px solid var(--mz-border-strong);
+  border: 1px solid var(--mz-border);
   border-radius: var(--mz-radius-tag);
-  color: var(--mz-text-secondary);
-  background: var(--mz-surface);
+  color: var(--mz-text-muted);
+  background: transparent;
   font: inherit;
   font-size: var(--mz-font-xs);
   line-height: 1;
@@ -882,9 +918,9 @@ button.messenger-sidebar-workspace-row {
 }
 
 .workspace-files-action:hover:not(:disabled) {
-  border-color: var(--mz-primary);
-  color: var(--mz-primary);
-  background: var(--mz-primary-tint);
+  border-color: var(--mz-border-strong);
+  color: var(--mz-text);
+  background: var(--mz-hover);
 }
 
 .workspace-files-action:focus-visible {
@@ -897,20 +933,9 @@ button.messenger-sidebar-workspace-row {
   cursor: not-allowed;
 }
 
-.workspace-files-action--primary {
-  border-color: var(--mz-primary);
-  color: #fff;
-  background: var(--mz-primary);
-}
-
-.workspace-files-action--primary:hover:not(:disabled) {
-  color: #fff;
-  background: var(--mz-primary-hover, #b95739);
-}
-
 .workspace-files-action--icon {
-  flex: 0 0 25px;
-  width: 25px;
+  flex: 0 0 24px;
+  width: 24px;
   padding: 3px;
 }
 
@@ -1044,6 +1069,18 @@ button.messenger-sidebar-workspace-row {
   flex: 1;
   min-width: 0;
   overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 搜索结果的行尾父目录提示（树行没有这个字段）。 */
+.workspace-file-path {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 55%;
+  overflow: hidden;
+  color: var(--mz-text-muted);
+  font-size: var(--mz-font-2xs);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1307,55 +1344,25 @@ button.messenger-sidebar-workspace-row {
   color: var(--mz-primary);
 }
 
-/* ----------------------------------------------------------- usage meter */
-
-/* 用量读数住在分组标题行右侧（原上传目标位），只吃剩余宽度；配额条压成固定小刻度。 */
-.workspace-files-usage {
+/* 打包下载进行中的状态条：与远程提示条同形，取中性色。 */
+.workspace-files-busy-note {
   display: flex;
-  flex: 1;
-  min-width: 0;
+  flex-shrink: 0;
   align-items: center;
-  justify-content: flex-end;
-  gap: 5px;
-  overflow: hidden;
-  color: var(--mz-text-muted);
+  gap: 6px;
+  margin: 0 var(--mz-sidebar-padding) 4px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--mz-hover, #f1efec);
+  color: var(--mz-text-secondary);
   font-size: var(--mz-font-xs);
-  font-variant-numeric: tabular-nums;
 }
 
-.workspace-files-usage > span {
+.workspace-files-busy-note span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.workspace-files-usage-value {
-  color: var(--mz-text-secondary);
-}
-
-.workspace-files-usage-sep {
-  flex-shrink: 0;
-  color: var(--mz-border-strong);
-}
-
-.workspace-files-usage-track {
-  flex: 0 0 32px;
-  height: 4px;
-  border-radius: 2px;
-  background: var(--mz-border);
-  overflow: hidden;
-}
-
-.workspace-files-usage-bar {
-  display: block;
-  height: 100%;
-  background: var(--mz-primary);
-}
-
-.workspace-files-usage-flag {
-  flex-shrink: 0;
-  color: var(--mz-warning);
 }
 
 /* 远程工作区投影不完整时的提示条（互通 §6.3）。 */

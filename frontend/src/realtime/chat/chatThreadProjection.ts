@@ -231,9 +231,12 @@ const describeTurnSignatureItem = (state: ChatThreadState, item: ThreadItemState
     String(item.raw?.created_seq ?? ''),
     String(item.raw?.root_turn_id ?? '')
   ].join('\u0001');
-  // Only the stable per-round text items can change without a revision bump:
-  // durable blocks and ephemeral tails feed composeItemText directly.
-  if (item.kind === 'assistant_message' && item.itemId === textItemId(item.turnId, item.modelRound)) {
+  // Assistant text can change through a tail without a revision bump. This
+  // applies to both the canonical per-round item and an explicitly addressed
+  // history copy: the latter may win round de-duplication when it contains the
+  // fuller durable text, so it must invalidate the cached slot as well.
+  if (item.kind === 'assistant_message' &&
+      (item.itemId === textItemId(item.turnId, item.modelRound) || hasExplicitModelRound(item))) {
     return [head, composeItemText(state, item.itemId, 'content'), composeItemText(state, item.itemId, 'reasoning')].join('\u0001');
   }
   return head;
@@ -254,24 +257,108 @@ const buildTurnSlot = (
   items: ThreadItemState[]
 ): ChatThreadTurnSlot => {
   const textItems: ThreadItemState[] = [];
+  const legacyTextItems: ThreadItemState[] = [];
+  const addressedHistoryItems: ThreadItemState[] = [];
   const workflows: ThreadItemState[] = [];
   for (const item of items) {
-    // EventEmitter owns visible output with this stable identity. Execution
-    // history snapshots use random ids and must never become duplicate bubbles.
-    if (item.kind === 'assistant_message' && item.itemId === textItemId(item.turnId, item.modelRound) &&
-        !isCompactionSummaryAssistantItem(item)) {
-      textItems.push(item);
+    // EventEmitter owns visible output with this stable identity. A history
+    // snapshot may carry a second random assistant id; it is usable only when
+    // it also carries the explicit model round needed to bind it to the stable
+    // item. Otherwise it is a legacy copy of the same thought and must stay out
+    // of the normal chat timeline (the expanded process endpoint owns it).
+    if (item.kind === 'assistant_message' && !isCompactionSummaryAssistantItem(item)) {
+      if (isStableTextItemIdentity(item)) textItems.push(item);
+      else if (hasExplicitModelRound(item)) addressedHistoryItems.push(item);
+      else legacyTextItems.push(item);
     } else if (WORKFLOW_ITEM_KINDS.has(item.kind) &&
       (item.kind !== 'system_message' || isCompactionSystemItem(item))) {
       workflows.push(item);
     }
   }
+  // A replay can briefly contain two assistant objects for the same execution
+  // round (for example the durable row and a live hand-off row).  They have
+  // different storage ids but one visible identity: (turn_id, model_round).
+  // Collapse that identity before building either the bubble text or timeline;
+  // otherwise the normal chat area renders two identical thinking entries.
+  // Keep old installs renderable when a turn contains no canonical text item
+  // at all. As soon as one stable/round-addressable item exists, unaddressable
+  // snapshot copies are excluded so one thought cannot be painted twice.
+  // A random history row with an old/default model_round is metadata only. It
+  // may participate in the visible projection when it addresses an existing
+  // canonical round (the live/durable hand-off), but it must not resurrect an
+  // earlier answer as a new thinking row. If no canonical rows exist, an
+  // explicitly addressed history row is the only renderable fallback.
+  const canonicalRounds = new Set(textItems.map(item => item.modelRound));
+  const matchedHistoryItems = addressedHistoryItems.filter(item => canonicalRounds.has(item.modelRound));
+  const canonicalTextItems = dedupeTextItems(
+    state,
+    textItems.length ? [...textItems, ...matchedHistoryItems] :
+      (addressedHistoryItems.length ? addressedHistoryItems : legacyTextItems)
+  );
   return {
     rootTurnId: turn.turnId,
     key: turn.clientMessageId ? `turn:client:${turn.clientMessageId}` : `turn:${turn.turnId}`,
     user: buildUserBubble(turn, state),
-    assistant: buildAssistantBubble(state, turn, items, textItems, workflows)
+    assistant: buildAssistantBubble(state, turn, items, canonicalTextItems, workflows)
   };
+};
+
+/**
+ * Event and history delivery can use two ids for the same canonical text
+ * record while a live item is handed over to the durable row.  The `:text-N`
+ * namespace is the protocol identity; random append_chat snapshot ids are
+ * deliberately excluded here.
+ */
+const isStableTextItemIdentity = (item: ThreadItemState): boolean =>
+  item.itemId === textItemId(item.turnId, item.modelRound);
+
+const hasExplicitModelRound = (item: ThreadItemState): boolean => {
+  const value = item.raw?.model_round;
+  if (typeof value === 'number') return Number.isFinite(value);
+  if (typeof value === 'string' && value.trim()) return Number.isFinite(Number(value));
+  return false;
+};
+
+/** Collapse duplicate text objects without merging separate model rounds. */
+const dedupeTextItems = (
+  state: ChatThreadState,
+  items: ThreadItemState[]
+): ThreadItemState[] => {
+  const byIdentity = new Map<string, ThreadItemState>();
+  for (const item of items) {
+    const identity = `${item.turnId}\u0000${item.modelRound}`;
+    const current = byIdentity.get(identity);
+    if (!current) {
+      byIdentity.set(identity, item);
+      continue;
+    }
+    const currentText = composeItemText(state, current.itemId, 'reasoning').length +
+      composeItemText(state, current.itemId, 'content').length;
+    const candidateText = composeItemText(state, item.itemId, 'reasoning').length +
+      composeItemText(state, item.itemId, 'content').length;
+    const currentStable = current.itemId === textItemId(current.turnId, current.modelRound);
+    const candidateStable = item.itemId === textItemId(item.turnId, item.modelRound);
+    if (candidateText > currentText || (candidateText === currentText && candidateStable && !currentStable)) {
+      byIdentity.set(identity, item);
+    }
+  }
+  // Preserve active status when the durable hand-off won on text length.  The
+  // timeline then updates in place instead of creating a second thinking row.
+  const grouped = new Map<string, ThreadItemState[]>();
+  for (const item of items) {
+    const identity = `${item.turnId}\u0000${item.modelRound}`;
+    const group = grouped.get(identity) ?? [];
+    group.push(item);
+    grouped.set(identity, group);
+  }
+  for (const [identity, group] of grouped) {
+    const selected = byIdentity.get(identity);
+    if (!selected || !group.some(item => isActiveItemStatus(item.status)) || isActiveItemStatus(selected.status)) continue;
+    byIdentity.set(identity, { ...selected, status: group.find(item => isActiveItemStatus(item.status))!.status });
+  }
+  return [...byIdentity.values()].sort((left, right) =>
+    itemSeq(left) - itemSeq(right) || (left.itemId < right.itemId ? -1 : left.itemId > right.itemId ? 1 : 0)
+  );
 };
 
 const bucketVisibleItemsByTurn = (
@@ -576,7 +663,7 @@ const buildTurnTimeline = (
   workflows: ThreadItemState[]
 ): ChatRuntimeTimelineBlock[] => {
   const events: TimelineEvent[] = [];
-  for (const item of textItems) {
+  for (const item of dedupeTextItems(state, textItems)) {
     const seq = itemSeq(item);
     const reasoning = composeItemText(state, item.itemId, 'reasoning');
     if (reasoning.trim()) {
@@ -897,7 +984,7 @@ const composeTurnText = (
   state: ChatThreadState,
   items: ThreadItemState[],
   field: 'content' | 'reasoning'
-): string => items
+): string => dedupeTextItems(state, items)
   .map((item) => composeItemText(state, item.itemId, field))
   .filter((text) => text.length > 0)
   .join('\n\n');

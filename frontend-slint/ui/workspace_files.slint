@@ -1,5 +1,8 @@
 // Native working-directory tree: select files on click and open on double
 // click. Virtual rows, lazy folder pages and native menus share one controller.
+// The head mirrors the web left-rail: one icon toolbar (upload / search /
+// download / multi-select / refresh) that swaps to the search field while
+// querying, and a selection bar while picking rows for batch actions.
 import { Theme, WorkspaceFileRow } from "theme.slint";
 import { I18n } from "i18n.slint";
 import { ListView, Button, LineEdit } from "std-widgets.slint";
@@ -21,9 +24,31 @@ component DirectoryBlankMenu inherits ContextMenuArea {
     }
 }
 
+// One ghost icon button of the head toolbar: 14px glyph on a hover tile.
+component ToolButton inherits Rectangle {
+    in property <image> glyph;
+    in property <string> tip;
+    in property <bool> actionable: true;
+    callback clicked();
+    height: 24px; width: 26px; border-radius: 6px;
+    background: tile-touch.has-hover && root.actionable ? Theme.hover : transparent;
+    tile-touch := TouchArea {
+        enabled: root.actionable;
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+    Image {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        width: 14px; height: 14px;
+        source: root.glyph;
+        colorize: root.actionable ? (tile-touch.has-hover ? Theme.text : Theme.muted) : Theme.border-strong;
+    }
+    Tooltip { text: @markdown("\{root.tip}"); }
+}
+
 export component WorkspaceFilesPanel inherits Rectangle {
     in property <[WorkspaceFileRow]> rows;
-    in property <string> stats;
     in property <bool> loading;
     in property <string> error;
     in property <bool> offline;
@@ -31,14 +56,32 @@ export component WorkspaceFilesPanel inherits Rectangle {
     in property <bool> local;
     in property <string> active-path;
     in property <int> active-index: -1;
+    // Search head state; `active` means flat results replaced the tree.
+    in-out property <bool> search-open;
+    in-out property <string> search-query;
+    in property <bool> search-busy;
+    in property <bool> search-active;
+    // Multi-select state: the bar under the head and the row check tiles.
+    in-out property <bool> selecting;
+    in property <int> selected-count;
+    callback upload();
+    callback search-edit(string);
+    callback search-accept(string);
+    callback search-cancel();
+    callback download();
+    callback select();
+    callback selection-action(int);
     callback toggle(int);
+    callback check(int);
     callback refresh();
     callback connect();
     callback menu(int, int);
     callback drag-row(int);
     callback drop(DropEvent);
     callback key-action(int);
-    private property <bool> empty: !root.offline && !root.loading && root.error == "" && root.rows.length == 0;
+    private property <bool> empty: !root.offline && !root.loading && !root.search-active
+        && root.error == "" && root.rows.length == 0;
+    private property <bool> writeable: !root.busy && (root.local || !root.offline);
 
     DropArea {
         enabled: !root.offline && !root.busy;
@@ -48,13 +91,71 @@ export component WorkspaceFilesPanel inherits Rectangle {
             padding-left: 10px; padding-right: 10px; padding-top: 2px; padding-bottom: 6px;
             spacing: 0px;
             HorizontalLayout {
-                height: 26px; spacing: 6px;
-                Text { text: I18n.wf_title; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; }
-                Rectangle { horizontal-stretch: 1; min-width: 0px; }
-                if root.stats != "" : Text {
-                    text: root.stats; color: Theme.muted; font-size: Theme.font-2xs;
-                    vertical-alignment: center; overflow: elide;
+                height: 26px; spacing: 4px;
+                if !root.search-open : Text {
+                    text: I18n.wf_title; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center;
                 }
+                if !root.search-open : Rectangle { horizontal-stretch: 1; min-width: 0px; }
+                if !root.search-open : ToolButton {
+                    glyph: @image-url("../assets/icons/upload.svg");
+                    tip: I18n.wf_upload;
+                    actionable: root.writeable;
+                    clicked => { root.upload(); }
+                }
+                if !root.search-open : ToolButton {
+                    glyph: @image-url("../assets/icons/magnifying-glass.svg");
+                    tip: I18n.wf_search;
+                    actionable: root.local || !root.offline;
+                    clicked => { root.search-open = true; }
+                }
+                if !root.search-open : ToolButton {
+                    glyph: @image-url("../assets/icons/file-zipper.svg");
+                    tip: I18n.wf_menu_archive_root;
+                    actionable: root.writeable;
+                    clicked => { root.download(); }
+                }
+                if !root.search-open : ToolButton {
+                    glyph: @image-url("../assets/icons/list-check.svg");
+                    tip: I18n.wf_select;
+                    clicked => { root.select(); }
+                }
+                if !root.search-open : ToolButton {
+                    glyph: @image-url("../assets/icons/rotate-right.svg");
+                    tip: I18n.wf_menu_refresh;
+                    clicked => { root.refresh(); }
+                }
+                if root.search-open : search-field := Rectangle {
+                    height: 24px; horizontal-stretch: 1;
+                    border-radius: 6px; border-width: 1px; border-color: Theme.input-border;
+                    background: Theme.input-bg;
+                    init => { search-input.focus(); }
+                    HorizontalLayout {
+                        padding-left: 8px; padding-right: 4px; spacing: 4px;
+                        search-input := LineEdit {
+                            vertical-stretch: 1;
+                            placeholder-text: I18n.wf_search_placeholder;
+                            text <=> root.search-query;
+                            edited(text) => { root.search-edit(text); }
+                            accepted(text) => { root.search-accept(text); }
+                        }
+                        ToolButton {
+                            glyph: @image-url("../assets/icons/xmark.svg");
+                            tip: I18n.common_cancel;
+                            clicked => { root.search-query = ""; root.search-open = false; root.search-cancel(); }
+                        }
+                    }
+                }
+            }
+            if root.selecting && !root.search-active : HorizontalLayout {
+                height: 26px; spacing: 6px;
+                Text {
+                    text: I18n.wf_selected_count(root.selected-count);
+                    color: Theme.text-secondary; font-size: Theme.font-xs; vertical-alignment: center;
+                }
+                Rectangle { horizontal-stretch: 1; min-width: 0px; }
+                Button { text: I18n.common_cancel; clicked => { root.selection-action(0); } }
+                Button { text: I18n.wf_batch_download; enabled: root.selected-count > 0 && !root.busy; clicked => { root.selection-action(1); } }
+                Button { text: I18n.common_delete; enabled: root.selected-count > 0 && !root.busy; clicked => { root.selection-action(2); } }
             }
             if root.rows.length > 0 && root.error != "" && !root.offline : Text {
                 text: root.error; color: Theme.danger; font-size: Theme.font-xs;
@@ -69,6 +170,14 @@ export component WorkspaceFilesPanel inherits Rectangle {
                 keyboard := FocusScope {
                     enabled: !root.offline;
                     capture-key-pressed(event) => {
+                        if event.text == Key.Escape && root.search-open {
+                            root.search-query = ""; root.search-open = false; root.search-cancel();
+                            return accept;
+                        }
+                        if event.text == Key.Escape && root.selecting {
+                            root.selection-action(0);
+                            return accept;
+                        }
                         if event.text == Key.UpArrow { root.key-action(0); return accept; }
                         if event.text == Key.DownArrow { root.key-action(1); return accept; }
                         if event.text == Key.LeftArrow { root.key-action(2); return accept; }
@@ -91,7 +200,15 @@ export component WorkspaceFilesPanel inherits Rectangle {
                         Text { text: root.error; color: Theme.danger; font-size: Theme.font-xs; horizontal-alignment: center; wrap: word-wrap; }
                         HorizontalLayout { alignment: center; Button { text: I18n.wf_reload; enabled: !root.busy; clicked => { root.refresh(); } Tooltip { text: @markdown("\{I18n.wf_menu_refresh}"); } } }
                     }
-                    if root.loading && root.rows.length == 0 && root.error == "" && !root.offline : Text {
+                    if root.search-busy && root.rows.length == 0 && root.error == "" : Text {
+                        text: I18n.wf_searching; color: Theme.muted; font-size: Theme.font-xs;
+                        horizontal-alignment: center; vertical-alignment: center;
+                    }
+                    if root.search-active && !root.search-busy && root.rows.length == 0 && root.error == "" : Text {
+                        text: I18n.wf_search_empty; color: Theme.muted; font-size: Theme.font-xs;
+                        horizontal-alignment: center; vertical-alignment: center;
+                    }
+                    if root.loading && root.rows.length == 0 && root.error == "" && !root.offline && !root.search-active : Text {
                         text: I18n.wf_loading; color: Theme.muted; font-size: Theme.font-xs;
                         horizontal-alignment: center; vertical-alignment: center;
                     }
@@ -121,7 +238,7 @@ export component WorkspaceFilesPanel inherits Rectangle {
                             }
                             for row[index] in root.rows : Rectangle {
                                 height: 26px; width: parent.width;
-                                background: row.path == root.active-path && row.kind != 2 ? Theme.selected : row-touch.has-hover ? Theme.hover : transparent;
+                                background: row.path == root.active-path && !root.search-active && row.kind != 2 ? Theme.selected : row-touch.has-hover ? Theme.hover : transparent;
                                 row-touch := TouchArea {
                                     mouse-cursor: pointer;
                                     enabled: row.kind != 2 || !row.loading;
@@ -158,6 +275,24 @@ export component WorkspaceFilesPanel inherits Rectangle {
                                         }
                                         HorizontalLayout {
                                             padding-left: 6px + row.depth * 12px; padding-right: 4px; spacing: 5px;
+                                            // Selection tile: the only toggle target in
+                                            // multi-select mode, so browsing keeps working.
+                                            if root.selecting && !root.search-active && row.kind != 2 : Rectangle {
+                                                width: 18px;
+                                                if row.selected : Image {
+                                                    x: 3px; y: 7px; width: 12px; height: 12px;
+                                                    source: @image-url("../assets/icons/check.svg"); colorize: Theme.accent;
+                                                }
+                                                if !row.selected : Rectangle {
+                                                    x: 3px; y: 7px; width: 12px; height: 12px;
+                                                    border-radius: 3px; border-width: 1px;
+                                                    border-color: Theme.border-strong; background: Theme.surface;
+                                                }
+                                                TouchArea {
+                                                    mouse-cursor: pointer;
+                                                    clicked => { root.check(index); }
+                                                }
+                                            }
                                             Rectangle {
                                                 width: 14px;
                                                 if row.kind == 1 : Image {

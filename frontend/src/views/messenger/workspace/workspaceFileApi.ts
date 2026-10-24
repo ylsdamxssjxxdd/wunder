@@ -19,10 +19,10 @@ import {
   downloadWorkspaceArchive,
   downloadWorkspaceFile,
   fetchWorkspaceContent,
-  fetchWorkspaceStats,
   listWorkspaceEntries,
   moveWorkspaceEntry,
   saveWorkspaceFile,
+  searchWorkspace,
   uploadWorkspace
 } from '@/api/workspace';
 import type { QueryParams } from '@/api/types';
@@ -46,28 +46,19 @@ export type WorkspaceDirectoryPage = {
   limit: number;
 };
 
-export type WorkspaceStatsSnapshot = {
-  path: string;
-  files: number;
-  dirs: number;
-  usedBytes: number;
-  truncated: boolean;
-  quotaBytes: number | null;
-};
-
 export type WorkspaceActionOutcome = {
   ok: boolean;
   message: string;
   files: string[];
 };
 
+// 打包与服务端递归清理不是 30s 能兜住的活，全局超时只适合普通查询。
+const WORKSPACE_ARCHIVE_TIMEOUT_MS = 5 * 60 * 1000;
+const WORKSPACE_DOWNLOAD_TIMEOUT_MS = 2 * 60 * 1000;
+const WORKSPACE_CLEAR_TIMEOUT_MS = 2 * 60 * 1000;
+
 export const resolveWorkspaceErrorMessage = (error: unknown, fallback = ''): string =>
   resolveApiError(error, fallback).message || fallback;
-
-export const isWorkspaceEndpointMissing = (error: unknown): boolean => {
-  const status = resolveApiError(error, '').status;
-  return status === 404 || status === 501;
-};
 
 export const isWorkspaceRequestCancelled = (error: unknown): boolean =>
   String((error as { code?: string } | null)?.code || '') === 'ERR_CANCELED';
@@ -133,26 +124,24 @@ export const fetchWorkspaceContentDirectory = async (
   };
 };
 
-export const fetchWorkspaceStatsSnapshot = async (
-  path = '',
-  options: { recentLimit?: number; signal?: AbortSignal } = {}
-): Promise<WorkspaceStatsSnapshot> => {
-  const params: QueryParams = {
-    path: normalizeWorkspaceRelativePath(path),
-    recent_limit: Math.max(0, Number(options.recentLimit) || 8)
-  };
-  const response = await fetchWorkspaceStats(params, { signal: options.signal });
-  const payload = asRecord(response?.data);
-  const quotaRaw = payload.quota_bytes;
-  const quota = Number(quotaRaw);
-  return {
-    path: normalizeWorkspaceRelativePath(payload.path ?? params.path),
-    files: Number(payload.files) || 0,
-    dirs: Number(payload.dirs) || 0,
-    usedBytes: Number(payload.used_bytes) || 0,
-    truncated: payload.truncated === true,
-    quotaBytes: quotaRaw === null || quotaRaw === undefined || !Number.isFinite(quota) ? null : quota
-  };
+/** 递归按文件名搜索（服务端索引）；空关键词直接返回，不发请求。 */
+export const searchWorkspaceEntries = async (
+  keyword: string,
+  options: { limit?: number; signal?: AbortSignal } = {}
+): Promise<WorkspaceEntry[]> => {
+  const trimmed = keyword.trim();
+  if (!trimmed) return [];
+  const response = await searchWorkspace(
+    {
+      keyword: trimmed,
+      offset: 0,
+      limit: Math.max(1, Math.min(500, Number(options.limit) || 200)),
+      include_files: true,
+      include_dirs: true
+    },
+    { signal: options.signal }
+  );
+  return normalizeWorkspaceEntries(asRecord(response?.data).entries);
 };
 
 export const readWorkspaceFileContent = async (
@@ -237,7 +226,7 @@ export const deleteWorkspacePaths = async (paths: string[]): Promise<WorkspaceBa
 };
 
 export const clearWorkspaceRoot = async (): Promise<void> => {
-  await clearWorkspace({});
+  await clearWorkspace({}, { timeout: WORKSPACE_CLEAR_TIMEOUT_MS });
 };
 
 const resolveDownloadFilename = (headers: unknown, fallback: string): string =>
@@ -251,7 +240,10 @@ const triggerBlobDownload = (blob: Blob, filename: string): void => {
 
 export const downloadWorkspacePath = async (path: string, fallbackName?: string): Promise<void> => {
   const normalized = normalizeWorkspaceRelativePath(path);
-  const response = await downloadWorkspaceFile({ path: normalized });
+  const response = await downloadWorkspaceFile(
+    { path: normalized },
+    { timeout: WORKSPACE_DOWNLOAD_TIMEOUT_MS }
+  );
   const filename = resolveDownloadFilename(
     response.headers,
     fallbackName || normalized.split('/').pop() || 'download'
@@ -264,7 +256,10 @@ export const downloadWorkspaceDirectoryArchive = async (
   fallbackName?: string
 ): Promise<void> => {
   const normalized = normalizeWorkspaceRelativePath(path);
-  const response = await downloadWorkspaceArchive({ path: normalized });
+  const response = await downloadWorkspaceArchive(
+    { path: normalized },
+    { timeout: WORKSPACE_ARCHIVE_TIMEOUT_MS }
+  );
   const filename = resolveDownloadFilename(
     response.headers,
     fallbackName || `${normalized ? normalized.split('/').pop() : 'workspace'}.zip`

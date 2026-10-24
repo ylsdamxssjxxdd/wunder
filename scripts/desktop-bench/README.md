@@ -1,10 +1,30 @@
 # desktop-bench
 
-桌面端性能黑盒测量工具（蛹 vs dsh 桌面端比测用，见 `docs/方案/智能体性能测试对比方案.md` 第 8 节 SOP）。
+蛹的外部自动化体验测试与性能测量工具。默认使用独立后端探针，按 [蛹体验测试方案](../../docs/蛹体验测试方案.md) 持续测试和优化。
 
-同一套脚本测两个应用，口径天然一致。所有脚本输出 JSON/CSV 原始数据 + 摘要。
+保留旧的桌面进程启动、内存和包体积比测作为可选补充。测试输出 JSON/CSV 原始数据及摘要。
 
 ## 脚本
+
+### measure-experience.py — 蛹统一后端体验测试
+
+后续测试和优化以 [蛹体验测试方案](../../docs/蛹体验测试方案.md) 为准。默认外部运行独立 Release 探针，包含 100×100 日志打开、提交、流式/慢消费、停止后继续、队列控制、线程切换、后台执行、目录分页、启动/正常重启恢复和持续运行。不需要最终蛹程序或前端。固定配置可重复执行、比较基线，正确性失败/超时/退化返回非零码。
+
+```powershell
+python scripts/desktop-bench/measure-experience.py --profile smoke --output target/desktop-experience/smoke-001
+python scripts/desktop-bench/measure-experience.py --profile daily --output target/desktop-experience/daily-001
+python scripts/desktop-bench/measure-experience.py --profile daily --baseline target/desktop-experience/daily-001/report.json --output target/desktop-experience/daily-002
+```
+
+`--profile soak` 默认运行 2 小时；`--cases` 可定向复测。强杀恢复、工具阻塞取消和双线程同时输出在方案中明确列为下一批扩充，当前不会把后端结果当作前端渲染通过证据。下面的旧桌面进程黑盒比测工具保留为可选补充。
+
+### measure-chat-open.py — 聊天打开后端基准
+
+独立测试程序直接调用蛹聊天页使用的原生后端库，不依赖最终蛹 EXE、Slint 或桌面环境。自动准备 100×100 固定夹具、重复测量首次打开/缓存返回/存储读模型/历史分页，采集资源计数并比较基线，失败或性能退化返回非零码。使用方法与性能分析见 [chat-open.md](chat-open.md)。
+
+```powershell
+python scripts/desktop-bench/measure-chat-open.py --output target/desktop-chat-open/baseline
+```
 
 ### measure-startup.ps1 — T1 启动耗时
 
@@ -53,4 +73,4 @@ python scripts\desktop-bench\summarize.py out\startup-wunder.json out\startup-ds
 ## 注意
 
 - 测量期间关闭高负载后台程序；报告必须附环境清单与原始样本。
-- T2–T9（可交互、线程打开、长会话渲染、流式、重连）需要应用内埋点（wunder 侧计划加 `--bench-scenario` 参数），属第二批实施。
+- 聊天打开的后端耗时使用上述独立基准；页面可交互、渲染、流式与重连的端到端耗时另测，不能用后端接口时间代替用户实际看到内容的时间。

@@ -62,7 +62,14 @@ function materialize(row: ChatViewRow): ViewSlot {
     stop_reason: row.stop_reason, queued_input: row.queued_input, workspace_change_seq: row.workspace_change_seq ?? 0,
     // The process badge counts every visible process entry.  The server keeps
     // tool counts separately, so include the aggregated reasoning entry here.
-    workflow_count: row.workflow_count, reasoning_count: Number(row.reasoning_count || 0), reasoning_item_id: row.reasoning_item_id || '', process_count: row.workflow_count + Number(row.reasoning_count || 0) + (role === 'assistant' && String(m.reasoning || '').trim() && !Number(row.reasoning_count || 0) ? 1 : 0), workflow_failed_count: row.failed_count, feedback: m.feedback, stats: m.stats, reasoning: m.reasoning || '',
+    workflow_count: row.workflow_count, reasoning_count: Number(row.reasoning_count || 0),
+    // The bounded chat row and the expanded process endpoint are two views of
+    // the same stable assistant item. Older servers may omit
+    // `reasoning_item_id`; use the assistant item identity whenever the row
+    // carries reasoning so a truncated preview still binds to its full
+    // process record instead of rendering a duplicate thought.
+    reasoning_item_id: row.reasoning_item_id || (String(m.reasoning || '').trim() ? m.item_id : ''),
+    process_count: row.workflow_count + Number(row.reasoning_count || 0) + (role === 'assistant' && String(m.reasoning || '').trim() && !Number(row.reasoning_count || 0) ? 1 : 0), workflow_failed_count: row.failed_count, feedback: m.feedback, stats: m.stats, reasoning: m.reasoning || '',
     process_activity: row.process_activity?.kind ? row.process_activity : undefined,
     __thread_tail: m.tail, failureDetail:m.failure, attachments:m.attachments,
     __thread_tail_offset: m.tail_offset, __thread_content_offset: m.content_offset,
@@ -205,6 +212,32 @@ function merge(e: Entry, row: ChatViewRow) {
   // Acceptance binds identity; dispatch decides ownership of parked input.
   const previous = old ?? e.rows.get(`pending:${row.client_message_id}`);
   if (row.status === 'accepted' && previous?.status === 'queued') row={...row,status:'queued'};
+  // A display refresh can be published between stream_started and the first
+  // durable assistant item. Its assistant slot is intentionally empty; it is
+  // not evidence that the live tail stopped. Keep the item-bound local stream
+  // until a durable assistant identity replaces it.
+  if (old && LIVE_ROW_STATUSES.includes(row.status) &&
+      String(old.assistant.item_id || '').trim() && !String(row.assistant.item_id || '').trim()) {
+    row = {
+      ...row,
+      assistant: {
+        ...row.assistant,
+        item_id: old.assistant.item_id,
+        content: old.assistant.content,
+        reasoning: old.assistant.reasoning,
+        content_offset: old.assistant.content_offset,
+        reasoning_offset: old.assistant.reasoning_offset,
+        tail: old.assistant.tail,
+        tail_offset: old.assistant.tail_offset,
+        live_content: old.assistant.live_content,
+        live_offset: old.assistant.live_offset,
+        body: old.assistant.body
+      },
+      reasoning_count: Math.max(Number(row.reasoning_count || 0), Number(old.reasoning_count || 0)),
+      reasoning_item_id: old.reasoning_item_id || row.reasoning_item_id,
+      process_activity: old.process_activity ?? row.process_activity
+    };
+  }
   if(old && old.assistant.item_id===row.assistant.item_id && ['accepted','running','queued','waiting_input','waiting_approval'].includes(row.status)) {
     const previous = old.process_activity;
     const incoming = row.process_activity;
@@ -393,6 +426,43 @@ export function submitThreadView(key:string,client:string,content:string) { cons
   const queued = ['accepted','running','queued','waiting_input','waiting_approval'].includes(threadViewStatus(key) || '');
   if (!queued) e.submissionHead = { id, seq: e.headSeq };
   merge(e,{root_turn_id:id,user_round:Math.max(e.latestRound,...[...e.rows.values()].map(r=>r.user_round))+1,client_message_id:client,revision:-1,status:queued?'queued':'accepted',user:{item_id:'',content},assistant:{item_id:'',content:''},workflow_count:0,failed_count:0});e.phase='ready';bound(e);notify(); }
+/** Bind the optimistic user turn before the first item tail.  The websocket
+ * acknowledgement normally arrives ahead of the display projection; without
+ * this small identity hand-off a `turn:text-N` tail cannot find the pending
+ * row and the user sees the thought only after its durable flush. */
+export function bindThreadViewStreamStarted(key: string, data: { turn_id?: unknown; client_message_id?: unknown; user_round?: unknown }): boolean {
+  const e = entries.get(key);
+  const turnId = String(data?.turn_id || '').trim();
+  if (!e || !turnId) return false;
+  const client = String(data?.client_message_id || '').trim();
+  let oldId = client ? `pending:${client}` : '';
+  let row = oldId ? e.rows.get(oldId) : undefined;
+  if (!row && client) {
+    for (const [id, candidate] of e.rows) {
+      if (id.startsWith('pending:') && String(candidate.client_message_id || '') === client) {
+        oldId = id;
+        row = candidate;
+        break;
+      }
+    }
+  }
+  if (!row || oldId === turnId || e.rows.has(turnId)) return false;
+  const userRound = Number(data?.user_round);
+  const bound: ChatViewRow = markRaw({
+    ...row,
+    root_turn_id: turnId,
+    execution_turn_id: turnId,
+    user_round: Number.isSafeInteger(userRound) && userRound > 0 ? userRound : row.user_round
+  });
+  e.rows.delete(oldId);
+  e.slots.delete(oldId);
+  e.rows.set(turnId, bound);
+  e.slots.set(turnId, materialize(bound));
+  e.order = e.order.map((id) => id === oldId ? turnId : id);
+  if (e.submissionHead?.id === oldId) e.submissionHead = { ...e.submissionHead, id: turnId };
+  notify();
+  return true;
+}
 export function resetThreadViews(){entries.clear();resetThreadBodyHydration();notify();}
 export function clearThreadView(key:string) {entries.delete(key);cancelThreadBodyHydration(key);notify();}
 export function threadViewStatus(key:string):string|null {
@@ -447,13 +517,79 @@ function advanceTailActivity(row: ChatViewRow, kind: 'thinking' | 'responding'):
   if (current?.item_id === row.assistant.item_id && current.kind === 'responding' && kind === 'thinking') return;
   row.process_activity = { kind, item_id: row.assistant.item_id, created_seq: createdSeq };
 }
+
+/** `thread_item_tail` is emitted before the immutable assistant item exists.
+ * The display row is already known from turn admission, but its compact
+ * assistant projection deliberately has no item id yet.  Bind that blank
+ * projection to the stable streaming id here; otherwise the first thought is
+ * dropped until the final item is persisted. */
+function tailTurnId(itemId: string): string {
+  const marker = itemId.lastIndexOf(':text-');
+  return marker > 0 ? itemId.slice(0, marker) : '';
+}
+
+function modelRound(itemId: string): number {
+  const marker = itemId.lastIndexOf(':text-');
+  if (marker < 0) return -1;
+  const value = Number(itemId.slice(marker + ':text-'.length));
+  return Number.isSafeInteger(value) && value >= 0 ? value : -1;
+}
+
+/** Locate the active user-round row for a tail.  An exact item match owns a
+ * continuation.  Before the assistant row is durable, use the execution turn
+ * encoded by the canonical `turn:text-model_round` identity. */
+function tailRow(e: Entry, itemId: string): ChatViewRow | undefined {
+  const executionId = tailTurnId(itemId);
+  let rootMatch: ChatViewRow | undefined;
+  for (const row of e.rows.values()) {
+    if (!LIVE_ROW_STATUSES.includes(row.status)) continue;
+    if (row.assistant.item_id === itemId) return row;
+    if (executionId && row.execution_turn_id === executionId) return row;
+    if (executionId && row.root_turn_id === executionId) rootMatch = row;
+  }
+  if (rootMatch) return rootMatch;
+  // Websocket ordering normally supplies stream_started first.  A reconnect
+  // or a very fast provider can reverse those two frames, however.  The only
+  // locally submitted, unbound active row is then the safe owner of the first
+  // tail; queued rows deliberately never qualify.
+  const submitted = e.submissionHead?.id ? e.rows.get(e.submissionHead.id) : undefined;
+  if (submitted && submitted.root_turn_id.startsWith('pending:') && submitted.status === 'accepted' &&
+      !String(submitted.assistant.item_id || '').trim()) return submitted;
+  return undefined;
+}
+
+/** Move a running compact row to a newly observed model item.  A later model
+ * round follows tools and its partial prose/reasoning belongs to the work
+ * process, not to the previous round's bounded preview. */
+function bindTailAssistant(row: ChatViewRow, itemId: string): void {
+  const current = String(row.assistant.item_id || '');
+  if (current === itemId) return;
+  const incomingRound = modelRound(itemId);
+  const currentRound = modelRound(current);
+  // Never let a delayed earlier model round overwrite a newer compact row.
+  if (current && incomingRound >= 0 && currentRound >= 0 && incomingRound < currentRound) return;
+  row.assistant = {
+    ...row.assistant,
+    item_id: itemId,
+    content: '',
+    reasoning: '',
+    content_offset: 0,
+    reasoning_offset: 0,
+    tail: '',
+    tail_offset: 0,
+    live_content: '',
+    live_offset: 0,
+    body: undefined
+  };
+  row.reasoning_item_id = '';
+}
 export function applyThreadViewTail(key:string,payload:any):boolean {
   const e=entries.get(key);if(!e)return false;
   const p=payload?.data??payload;const id=String(p?.item_id??'');const delta=String(p?.text??p?.delta??p?.content??'');
   if(!id||!delta)return true;
-  for(const row of e.rows.values()) {
-    if(row.assistant.item_id!==id)continue;
-    if(!['accepted','running','queued','waiting_input','waiting_approval'].includes(row.status))return true;
+  const row = tailRow(e, id);
+  if (row) {
+    bindTailAssistant(row, id);
     if (String(p?.field || 'content') === 'reasoning') {
       // Reasoning is a bounded live projection (the durable item remains the
       // source of truth). Keep enough text for the expanded process entry and
@@ -468,6 +604,8 @@ export function applyThreadViewTail(key:string,payload:any):boolean {
       advanceTailActivity(row, 'thinking');
       row.assistant = { ...row.assistant, reasoning: bounded,
         reasoning_offset: expected + [...delta].reduce((n, ch) => n + ch.length, 0) };
+      row.reasoning_item_id = id;
+      row.reasoning_count = Math.max(1, Number(row.reasoning_count || 0));
       e.slots.set(row.root_turn_id, materialize(row));
       notifyTail();return true;
     }

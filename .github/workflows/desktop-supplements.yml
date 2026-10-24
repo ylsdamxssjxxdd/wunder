@@ -37,7 +37,7 @@ jobs:
         shell: bash
         run: |
           win7_hash="${{ hashFiles('packaging/windows/scripts/build_win7_desktop_supplement.ps1', 'packaging/windows/scripts/remotion-ia32-compositor.ps1', 'packaging/windows/scripts/win7-supplement-manifest.json', 'packaging/python/requirements-win7-common.txt', 'config/matplotlibrc', 'fonts/*') }}"
-          linux_hash="${{ hashFiles('packaging/linux/scripts/build_linux_supplement.sh', 'packaging/linux/scripts/build_linux_remotion.sh', 'packaging/linux/scripts/linux-supplement-manifest.json', 'packaging/linux/scripts/r2-static-archives.json', 'packaging/python/requirements-linux-common.txt', 'packaging/docker/Dockerfile.ubuntu18-supplement', 'packaging/docker/Dockerfile.ubuntu22-remotion', 'config/matplotlibrc', 'fonts/*') }}"
+          linux_hash="${{ hashFiles('packaging/linux/scripts/build_linux_supplement.sh', 'packaging/linux/scripts/build_linux_remotion.sh', 'packaging/linux/scripts/linux-supplement-manifest.json', 'packaging/linux/scripts/r2-static-archives.json', 'packaging/python/requirements-linux-common.txt', 'packaging/docker/Dockerfile.ubuntu18-supplement', 'packaging/docker/Dockerfile.ubuntu22-remotion', 'packaging/docker/Dockerfile.rust-builder-kylin-x86', 'scripts/linux-ubuntu18-compositor/**', 'scripts/win-ia32-compositor/vendor/**', 'config/matplotlibrc', 'fonts/*') }}"
           # 浏览器 pin（版本+SHA256 字面量）参与 win7 缓存键：来源变更即触发重建
           browser_pin='chromium-109.0.5414.120-r1070088-hibbiki-mini_installer.sync.exe-sha256-C1AABD6EEF38D759BBD92CA9516353D88C463A1E8389A875B4D12D53DB467F98'
           echo "win7_key=wunder-supplement-win7-ia32-v3-${win7_hash}-${browser_pin}" >> "$GITHUB_OUTPUT"
@@ -90,6 +90,37 @@ jobs:
         with:
           name: remotion-compositor-ia32
           path: config/runtime/win-ia32/compositor-win32-ia32
+          if-no-files-found: error
+          retention-days: 7
+
+  # Ubuntu 18.04 cannot run the npm Linux compositor (it is linked against
+  # glibc 2.35). Rebuild the same Remotion source with the existing 18.04
+  # Rust builder, then inject only the native payload into the amd64 pack.
+  build-linux-compositor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Ubuntu 18.04 compositor
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build -f packaging/docker/Dockerfile.rust-builder-kylin-x86 \
+            -t wunder-rust-builder-kylin-x86:ubuntu18 .
+          bash scripts/linux-ubuntu18-compositor/build.sh
+      - name: Verify compositor ABI
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin=config/runtime/linux-x64/compositor-linux-x64-gnu/remotion
+          test -x "$bin"
+          max="$(readelf --version-info "$bin" | grep -o 'GLIBC_[0-9.]*' | sort -Vu | tail -1)"
+          test "$max" '<' 'GLIBC_2.28'
+          file "$bin" | grep -q 'ELF 64-bit.*x86-64'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: remotion-compositor-linux-x64-gnu
+          path: config/runtime/linux-x64/compositor-linux-x64-gnu
           if-no-files-found: error
           retention-days: 7
 
@@ -259,7 +290,7 @@ jobs:
           retention-days: 7
 
   build-linux:
-    needs: prepare
+    needs: [prepare, build-linux-compositor]
     strategy:
       fail-fast: false
       matrix:
@@ -330,6 +361,22 @@ jobs:
             -e WUNDER_SUPPLEMENT_NPM_REGISTRY=https://registry.npmjs.org \
             "wunder-remotion-ubuntu2204-${{ matrix.arch }}" \
             bash packaging/linux/scripts/build_linux_remotion.sh
+      - name: Inject Ubuntu 18.04 compositor (amd64)
+        if: matrix.arch == 'amd64' && (steps.pack.outputs.cached != 'true' || github.event.inputs.force_rebuild == 'true')
+        uses: actions/download-artifact@v4
+        with:
+          name: remotion-compositor-linux-x64-gnu
+          path: remotion-compositor-linux-x64-gnu
+      - name: Replace amd64 compositor with Ubuntu 18.04 build
+        if: matrix.arch == 'amd64' && (steps.pack.outputs.cached != 'true' || github.event.inputs.force_rebuild == 'true')
+        shell: bash
+        run: |
+          set -euo pipefail
+          target=remotion-payload/opt/remotion/node_modules/@remotion/compositor-linux-x64-gnu
+          test -d "$target"
+          cp -a remotion-compositor-linux-x64-gnu/. "$target/"
+          test -x "$target/remotion"
+          readelf --version-info "$target/remotion" | grep -o 'GLIBC_[0-9.]*' | sort -Vu | tail -1
       - name: Build Ubuntu 18.04 base supplement and merge Remotion
         if: steps.pack.outputs.cached != 'true' || github.event.inputs.force_rebuild == 'true'
         shell: bash
@@ -364,6 +411,17 @@ jobs:
           test -x "$work/opt/node/bin/node"
           test -x "$work/opt/remotion/bin/remotion"
           test -f "$work/opt/remotion/browser-path"
+          if [ '${{ matrix.arch }}' = 'amd64' ]; then
+            test -x "$work/opt/browser/chrome-linux64/chrome"
+            browser_version="$($work/opt/browser/chrome-linux64/chrome --version 2>/dev/null || true)"
+            echo "$browser_version"
+            echo "$browser_version" | grep -q '122\.'
+          else
+            test -x "$work/opt/browser/chrome-linux/chrome"
+            browser_version="$($work/opt/browser/chrome-linux/chrome --version 2>/dev/null || true)"
+            echo "$browser_version"
+            echo "$browser_version" | grep -Eq 'Chrom(e|ium).*([0-9]{3})\.'
+          fi
           compositor='@remotion/compositor-linux-x64-gnu'
           if [ '${{ matrix.arch }}' = 'arm64' ]; then compositor='@remotion/compositor-linux-arm64-gnu'; fi
           test -d "$work/opt/remotion/node_modules/$compositor"
@@ -378,6 +436,7 @@ jobs:
           assert meta['node']['version'] == '16.20.2'
           assert meta['remotion']['version'] == '4.0.538'
           assert meta['remotion']['compositor'].startswith('@remotion/compositor-linux-')
+          assert meta['browser']['bundled'] is True
           print('Linux supplement Node/Remotion metadata verified')
           PY
           ls -la "$pack"

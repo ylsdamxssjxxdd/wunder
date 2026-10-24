@@ -264,6 +264,28 @@ test('assistant timeline keeps each round body as its own block between activity
   ]);
 });
 
+test('chat timeline collapses a durable and history-copy reasoning row for one model round', () => {
+  const state = emptyChatThreadState('session-projection-reasoning-dedupe');
+  const turn = { turn_id: 'turn-reasoning-dedupe', user_round: 1, status: 'running', content: 'q' };
+  const stable = textItemData(turn.turn_id, 1, {
+    status: 'running', reasoning: 'The live reasoning prefix'
+  });
+  const historyCopy = {
+    ...stable,
+    item_id: 'history-copy-assistant-1',
+    status: 'completed',
+    revision: 2,
+    reasoning: 'The live reasoning prefix followed by the durable tail'
+  };
+  applyFrames(state, [turnUpsert(1, turn), itemUpsert(2, stable), itemUpsert(3, historyCopy)]);
+  const assistant = buildChatThreadRenderableMessages(state).find(message => message.role === 'assistant')!;
+  const reasoningRows = (assistant.timeline ?? []).flatMap(block =>
+    block.kind === 'activity' ? block.rows.filter(row => row.type === 'reasoning') : []
+  );
+  assert.equal(reasoningRows.length, 1);
+  assert.equal(reasoningRows[0]?.text, historyCopy.reasoning);
+});
+
 test('assistant stays active between model and tool rounds and retains its render key on ack', () => {
   const state = emptyChatThreadState('identity-session');
   state.turns.set('pending:client-1', { turnId: 'pending:client-1', clientMessageId: 'client-1',
@@ -549,6 +571,47 @@ test('chat thread projection merges legacy history stats into the stable output 
     contextTokens: 120,
     toolCalls: 0
   });
+});
+
+test('chat timeline collapses duplicate assistant records for one model round', () => {
+  const state = emptyChatThreadState('session-projection-duplicate-reasoning');
+  const turn = { turn_id: 'turn-duplicate', user_round: 1, status: 'completed', content: 'q' };
+  const stable = textItemData(turn.turn_id, 1, {
+    content: 'answer',
+    reasoning: 'one complete thought'
+  });
+  // A replay can expose the append_chat history row beside the canonical
+  // stream item. It has a different storage id but the same visible round.
+  const history = {
+    ...stable,
+    item_id: 'history-duplicate-round',
+    content: 'answer',
+    reasoning: 'one complete thought'
+  };
+  applyFrames(state, [turnUpsert(1, turn), itemUpsert(2, stable), itemUpsert(3, history)]);
+
+  const assistant = buildChatThreadRenderableMessages(state).find(row => row.role === 'assistant')!;
+  const reasoningRows = (assistant.timeline ?? [])
+    .flatMap(block => block.kind === 'activity' ? block.rows.filter(row => row.type === 'reasoning') : []);
+  assert.equal(reasoningRows.length, 1);
+  assert.equal(reasoningRows[0]?.text, 'one complete thought');
+  assert.equal(assistant.reasoning, 'one complete thought');
+});
+
+test('chat timeline keeps equal text from separate model rounds', () => {
+  const state = emptyChatThreadState('session-projection-distinct-rounds');
+  const turn = { turn_id: 'turn-distinct-rounds', user_round: 1, status: 'completed', content: 'q' };
+  applyFrames(state, [
+    turnUpsert(1, turn),
+    itemUpsert(2, textItemData(turn.turn_id, 1, { content: 'first', reasoning: 'same thought' })),
+    itemUpsert(3, textItemData(turn.turn_id, 2, { content: 'second', reasoning: 'same thought' }))
+  ]);
+
+  const assistant = buildChatThreadRenderableMessages(state).find(row => row.role === 'assistant')!;
+  const reasoningRows = (assistant.timeline ?? [])
+    .flatMap(block => block.kind === 'activity' ? block.rows.filter(row => row.type === 'reasoning') : []);
+  assert.equal(reasoningRows.length, 2);
+  assert.equal(assistant.reasoning, 'same thought\n\nsame thought');
 });
 
 test('child-agent tool rounds retain terminal generation speed when history row omits model round', () => {

@@ -5,6 +5,10 @@ const DEFAULT_MODEL = {
   id: "wunder",
   url: "models/wunder.glb?v=20261018-11",
   view: [0.02, -4.88, 0.01],
+  // Largest model dimension in world units. The default camera sits at 4.88,
+  // so a distant, small subject reads as "gazing at the ship" instead of a
+  // close-up inspection.
+  size: 0.6,
 };
 
 /**
@@ -224,7 +228,7 @@ export function mountWunderModelViewer(host, { assetBase = "/third/", labels, mo
       if (!Number.isFinite(extent) || extent <= 0) throw new Error("empty-model");
       gltf.scene.position.sub(sourceBounds.getCenter(new THREE.Vector3()));
       model = new THREE.Group();
-      model.scale.setScalar(4 / extent);
+      model.scale.setScalar((entry.size ?? DEFAULT_MODEL.size) / extent);
       model.add(gltf.scene);
       scene.add(model);
       const bounds = new THREE.Box3().setFromObject(model, true);

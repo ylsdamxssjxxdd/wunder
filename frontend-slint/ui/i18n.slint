@@ -1413,9 +1413,14 @@ export global I18n {
     out property <string> ws_btn_delete: zh ? "删除" : "Delete";
     out property <string> ws_pick_title: zh ? "选择工作区文件夹" : "Choose a workspace folder";
     out property <string> wf_title: zh ? "工作目录" : "Working directory";
-    public pure function wf_stats(used: string, count: string) -> string { return zh ? "已用 " + used + " · " + count + " 个文件" : "Used " + used + " · " + count + " files"; }
-    public pure function wf_stats_dirs(count: string) -> string { return zh ? "" + count + " 个文件夹" : "" + count + " folders"; }
-    out property <string> wf_stats_truncated: zh ? "统计为大目录下界" : "Lower bound of a large directory";
+    out property <string> wf_upload: zh ? "上传文件" : "Upload files";
+    out property <string> wf_search: zh ? "搜索文件" : "Search files";
+    out property <string> wf_search_placeholder: zh ? "搜索文件名" : "Search file names";
+    out property <string> wf_searching: zh ? "搜索中…" : "Searching…";
+    out property <string> wf_search_empty: zh ? "没有匹配的文件" : "No matching files";
+    out property <string> wf_select: zh ? "多选" : "Select";
+    public pure function wf_selected_count(count: int) -> string { return zh ? "已选 \{count} 项" : "\{count} selected"; }
+    out property <string> wf_batch_download: zh ? "批量下载" : "Download";
     out property <string> wf_empty: zh ? "当前目录没有文件" : "No files in this directory";
     out property <string> wf_empty_hint: zh ? "拖入文件，或新建目录和文件" : "Drop files here, or create a folder or file";
     out property <string> wf_offline: zh ? "连接云端后，这里显示你的云端工作目录" : "Sign in to the cloud to browse your workspace";
@@ -1424,7 +1429,6 @@ export global I18n {
     out property <string> wf_reload: zh ? "重新加载" : "Reload";
     public pure function wf_more(count: string) -> string { return zh ? "加载更多（剩余 " + count + " 项）" : "Load more (" + count + " remaining)"; }
     out property <string> wf_loading_dir: zh ? "加载中" : "Loading";
-    out property <string> wf_open_hint: zh ? "点击文件拉取到本地工作区并打开；拖出即下载，拖入即上传" : "Click a file to pull and open it; drag out to download, drag in to upload";
     out property <string> wf_menu_open: zh ? "打开" : "Open";
     out property <string> wf_menu_download: zh ? "下载" : "Download";
     out property <string> wf_menu_rename: zh ? "重命名" : "Rename";

@@ -26,7 +26,7 @@ use anyhow::{anyhow, Result};
 use chrono::{DateTime, Utc};
 use chrono_tz::Tz;
 use cron::Schedule;
-use serde::Deserialize;
+use serde::{de::Error as _, Deserialize, Deserializer};
 use serde_json::{json, Value};
 use std::str::FromStr;
 use std::sync::Arc;
@@ -98,6 +98,29 @@ pub struct CronActionRequest {
     pub job: Option<CronJobInput>,
 }
 
+/// Accept booleans emitted by strict schemas as well as string booleans from
+/// older clients and model tool calls (for example, `"False"`).
+fn deserialize_optional_boolish<'de, D>(deserializer: D) -> Result<Option<bool>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Value::deserialize(deserializer)?;
+    match value {
+        Value::Null => Ok(None),
+        Value::Bool(value) => Ok(Some(value)),
+        Value::String(value) => match value.trim().to_ascii_lowercase().as_str() {
+            "true" => Ok(Some(true)),
+            "false" => Ok(Some(false)),
+            _ => Err(D::Error::custom(
+                "expected a boolean or 'true'/'false' string",
+            )),
+        },
+        _ => Err(D::Error::custom(
+            "expected a boolean or 'true'/'false' string",
+        )),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn handle_cron_action(
     config: Config,
@@ -113,10 +136,18 @@ pub async fn handle_cron_action(
     payload: CronActionRequest,
 ) -> Result<Value> {
     let action = payload.action.trim().to_lowercase();
-    // Do not acknowledge an executable schedule when the worker is disabled.
-    // Read/delete/disable remain available for inspecting and cleaning up jobs.
-    if !config.cron.enabled && matches!(action.as_str(), "add" | "update" | "enable" | "run") {
-        return Err(anyhow!("Scheduled task execution is disabled (cron.enabled=false). Enable the scheduler before scheduling or running tasks."));
+    // A disabled worker may still accept explicitly disabled records. This lets
+    // clients define schedules before enabling the worker, without creating a
+    // task that can unexpectedly execute while the worker is off.
+    if !config.cron.enabled {
+        match action.as_str() {
+            "add" | "update" if payload.job.as_ref().and_then(|job| job.enabled) == Some(false) => {
+            }
+            "add" | "update" | "enable" | "run" => {
+                return Err(anyhow!("Scheduled task execution is disabled (cron.enabled=false); add/update requires enabled=false."));
+            }
+            _ => {}
+        }
     }
     let scoped_agent_id = resolve_scoped_agent_id(agent_id, payload.job.as_ref());
     let now = now_ts();
@@ -2227,9 +2258,9 @@ pub struct CronJobInput {
     pub payload: Option<Value>,
     #[serde(default)]
     pub deliver: Option<Value>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_optional_boolish")]
     pub enabled: Option<bool>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_optional_boolish")]
     pub delete_after_run: Option<bool>,
     #[serde(default)]
     pub dedupe_key: Option<String>,
@@ -2779,6 +2810,60 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("cron.enabled=false"));
+    }
+
+    #[tokio::test]
+    async fn cron_disabled_accepts_explicitly_disabled_schedule() {
+        let (mut runtime, _state, _dir) = runtime_fixture().await;
+        runtime.config.cron.enabled = false;
+        let result = super::handle_cron_action(
+            runtime.config.clone(),
+            runtime.storage.clone(),
+            Some(runtime.orchestrator.clone()),
+            Some(runtime.wake_signal.clone()),
+            runtime.user_store.clone(),
+            runtime.user_tool_manager.clone(),
+            runtime.skills.clone(),
+            "cron_user",
+            Some("bound"),
+            Some("agent_a"),
+            super::CronActionRequest {
+                action: "add".into(),
+                job: Some(super::CronJobInput {
+                    job_id: Some("disabled_job".into()),
+                    name: None,
+                    schedule: None,
+                    schedule_text: Some("every 5 minutes".into()),
+                    session: None,
+                    payload: Some(json!({"message": "deferred"})),
+                    deliver: None,
+                    enabled: Some(false),
+                    delete_after_run: None,
+                    dedupe_key: None,
+                    session_id: None,
+                    agent_id: None,
+                }),
+            },
+        )
+        .await
+        .expect("disabled schedules should be storable");
+        assert_eq!(result["job"]["enabled"], false);
+        assert!(result["job"]["next_run_at"].is_null());
+    }
+
+    #[test]
+    fn cron_input_accepts_string_booleans() {
+        let request: super::CronActionRequest = serde_json::from_value(json!({
+            "action": "add",
+            "job": {
+                "enabled": "False",
+                "delete_after_run": "TRUE"
+            }
+        }))
+        .expect("string booleans should be accepted");
+        let job = request.job.expect("job");
+        assert_eq!(job.enabled, Some(false));
+        assert_eq!(job.delete_after_run, Some(true));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

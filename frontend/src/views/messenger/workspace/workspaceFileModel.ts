@@ -21,6 +21,8 @@ export type WorkspaceVisibleRow = {
   key: string;
   path: string;
   name: string;
+  /** 搜索结果才有的行尾路径提示（父目录）；树行不填。 */
+  pathHint?: string;
   /** `more` rows are synthetic pagination footers owned by a directory. */
   kind: WorkspaceEntryKind | 'more';
   size: number;

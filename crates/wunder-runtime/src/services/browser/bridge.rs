@@ -1557,6 +1557,7 @@ pub(crate) fn apply_bridge_environment(
         "PYTHONHOME",
         "PYTHONPATH",
         "LD_LIBRARY_PATH",
+        "WUNDER_BROWSER_BIN",
     ] {
         if let Ok(value) = std::env::var(key) {
             command.env(key, value);

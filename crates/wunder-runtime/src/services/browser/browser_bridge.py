@@ -756,6 +756,8 @@ class BridgeSession:
         self.mode = str(getattr(args, "mode", None) or "launch").strip().lower()
         channel = (getattr(args, "channel", None) or "").strip() or None
         executable_path = (getattr(args, "executable_path", None) or "").strip() or None
+        if not executable_path:
+            executable_path = os.environ.get("WUNDER_BROWSER_BIN") or None
         attach_endpoint = (getattr(args, "attach_endpoint", None) or "").strip() or None
         self.channel = channel
         self.executable_path = executable_path
@@ -1925,12 +1927,13 @@ def main():
     parser.add_argument("--allow-host", dest="allow_host", action="append", default=[])
     args = parser.parse_args()
 
-    # Bundled supplements install Playwright browsers under
+    # Bundled supplements install Google Chrome under opt/browser and
+    # Playwright browsers under
     # <python_root>/ms-playwright. Prefer that bundled Chromium by default so
     # browser tasks never depend on the user's own browser and still run
-    # offline; only fall back to a system browser when the supplement ships none
-    # (supplement browsers are always Chromium, never Google Chrome, because the
-    # branded Chrome build is not redistributable). The interpreter lives either
+    # offline. The Rust launcher normally supplies the bundled Chrome through
+    # --executable-path; this environment fallback covers direct bridge use.
+    # The interpreter lives either
     # directly in <python_root> (Windows embeddable) or in <python_root>/bin
     # (Linux python-build-standalone), so probe both layouts.
     if not os.environ.get("PLAYWRIGHT_BROWSERS_PATH"):
@@ -1942,6 +1945,23 @@ def main():
         ):
             if bundled.is_dir():
                 os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(bundled)
+                break
+
+    if not os.environ.get("WUNDER_BROWSER_BIN"):
+        exe_dir = Path(sys.executable).resolve().parent
+        browser_candidates = []
+        for root in (exe_dir.parent.parent, exe_dir.parent.parent.parent):
+            browser_candidates.extend(
+                (
+                    root / "browser" / "chrome-linux64" / "chrome",
+                    root / "browser" / "chrome-linux" / "chrome",
+                    root / "opt" / "browser" / "chrome-linux64" / "chrome",
+                    root / "opt" / "browser" / "chrome-linux" / "chrome",
+                )
+            )
+        for bundled_chrome in browser_candidates:
+            if bundled_chrome.is_file() and os.access(str(bundled_chrome), os.X_OK):
+                os.environ["WUNDER_BROWSER_BIN"] = str(bundled_chrome)
                 break
 
     policy = Policy(args)

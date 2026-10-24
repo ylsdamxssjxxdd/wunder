@@ -7,6 +7,8 @@ type RequestConfig = {
   headers?: Record<string, string>;
   responseType?: 'blob' | 'json' | 'text';
   signal?: AbortSignal;
+  /** 覆盖全局 30s 超时；打包/大文件下载等长耗时请求按需放宽。 */
+  timeout?: number;
   onUploadProgress?: (event: AxiosProgressEvent) => void;
   onDownloadProgress?: (event: AxiosProgressEvent) => void;
 };
@@ -19,7 +21,8 @@ const uploadWorkspaceFiles = (formData: FormData, config: RequestConfig = {}) =>
 export const listWorkspaceEntries = (params: QueryParams) => api.get('/workspace', { params });
 export const fetchWorkspaceContent = (params: QueryParams, config: RequestConfig = {}) =>
   api.get('/workspace/content', { ...config, params });
-export const searchWorkspace = (params: QueryParams) => api.get('/workspace/search', { params });
+export const searchWorkspace = (params: QueryParams, config: RequestConfig = {}) =>
+  api.get('/workspace/search', { ...config, params });
 // Returns a bare payload: { user_id, path, files, dirs, used_bytes, truncated, quota_bytes, recent[] }.
 // It is NOT wrapped in { data: ... }; quota_bytes is null while no quota is configured.
 export const fetchWorkspaceStats = (params: QueryParams, config: RequestConfig = {}) =>
@@ -30,7 +33,8 @@ export const createWorkspaceDir = (payload: ApiPayload) => api.post('/workspace/
 export const moveWorkspaceEntry = (payload: ApiPayload) => api.post('/workspace/move', payload);
 export const copyWorkspaceEntry = (payload: ApiPayload) => api.post('/workspace/copy', payload);
 export const batchWorkspaceAction = (payload: ApiPayload) => api.post('/workspace/batch', payload);
-export const clearWorkspace = (payload: ApiPayload) => api.post('/workspace/clear', payload);
+export const clearWorkspace = (payload: ApiPayload, config: RequestConfig = {}) =>
+  api.post('/workspace/clear', payload, config);
 export const saveWorkspaceFile = (payload: ApiPayload) => api.post('/workspace/file', payload);
 export const deleteWorkspaceEntry = (params: QueryParams) => api.delete('/workspace', { params });
 export const downloadWorkspaceFile = (params: QueryParams, config: RequestConfig = {}) =>

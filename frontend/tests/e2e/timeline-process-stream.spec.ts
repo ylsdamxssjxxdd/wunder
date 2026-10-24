@@ -41,6 +41,41 @@ test('thinking previews follow live output and preserve a reader scrolling upwar
   expect(result).toEqual({ followed: true, previewFollowed: true, preserved: true, latest: true });
 });
 
+test('projection timeline paints one thought when a live handoff repeats its item in two activity blocks', async ({ page }) => {
+  await page.goto('/__e2e/composer-b4');
+  const result = await page.evaluate(async () => {
+    const source = await (await fetch('/src/components/chat/MessageTimelineBlocks.vue')).text();
+    const runtimeUrl = source.match(/from\s+["']([^"']*\/vue\.js[^"']*)["']/)?.[1];
+    if (!runtimeUrl) throw new Error('Missing fixture Vue runtime');
+    const [{ createApp, h, nextTick }, { default: Blocks }] = await Promise.all([
+      import(runtimeUrl), import('/src/components/chat/MessageTimelineBlocks.vue')
+    ]);
+    const host = document.createElement('div');
+    document.body.append(host);
+    const itemId = 'fixture-turn:text-1';
+    const blocks = [
+      { kind: 'activity', id: 'act-1', seq: 1, rows: [{ type: 'reasoning', itemId, text: 'durable thought', streaming: false }] },
+      { kind: 'body', id: 'body-1', seq: 2, round: 1, text: '' },
+      { kind: 'activity', id: 'act-2', seq: 3, rows: [{ type: 'reasoning', itemId, text: 'durable thought', streaming: true }] },
+      { kind: 'body', id: 'body-2', seq: 4, round: 2, text: 'final answer' }
+    ];
+    const app = createApp({ setup: () => () => h(Blocks, {
+      blocks, workflowItems: [], identityKey: 'fixture-turn', defaultOpen: true, streaming: true
+    }) });
+    try {
+      app.mount(host);
+      await nextTick(); await nextTick();
+      return {
+        entries: host.querySelectorAll('.tl-thinking-head').length,
+        text: host.querySelector('.tl-thinking-summary')?.textContent?.includes('durable thought') ?? false
+      };
+    } finally {
+      app.unmount(); host.remove();
+    }
+  });
+  expect(result).toEqual({ entries: 1, text: true });
+});
+
 test('process header shows phase and steps without output, failure counts or entry metrics', async ({ page }) => {
   await page.goto('/__e2e/composer-b4');
   const result = await page.evaluate(async () => {
@@ -117,6 +152,98 @@ test('settling a live thought reloads its complete durable text without changing
     }
   });
   expect(result).toEqual({ live: 'fixture live tail', complete: true, steps: 1 });
+});
+
+test('a durable thought and a live preview with different ids render only one process entry', async ({ page }) => {
+  await page.goto('/__e2e/composer-b4');
+  const result = await page.evaluate(async () => {
+    const source = await (await fetch('/src/components/chat/MessageTimelineTurnProcess.vue')).text();
+    const runtimeUrl = source.match(/from\s+["']([^"']*\/vue\.js[^"']*)["']/)?.[1];
+    if (!runtimeUrl) throw new Error('Missing fixture Vue runtime');
+    const [{ createApp, reactive, nextTick, h }, { default: Process }, { default: api }] = await Promise.all([
+      import(runtimeUrl), import('/src/components/chat/MessageTimelineTurnProcess.vue'), import('/src/api/http.ts')
+    ]);
+    const host = document.createElement('div'); document.body.append(host);
+    const originalAdapter = api.defaults.adapter;
+    const durable = 'fixture durable thought';
+    api.defaults.adapter = async (config: unknown) => ({
+      status: 200, statusText: 'OK', headers: {}, config,
+      data: { data: { turn: { items: [{
+        item_id: 'fixture-durable-item', item_index: 1, kind: 'assistant_message', status: 'running',
+        payload: { reasoning: durable, content: '' }
+      }], has_older: false, has_newer: false } } }
+    });
+    const model = reactive({ sessionId: 'fixture-thread', turnId: 'fixture-turn', count: 1, status: 'running',
+      activity: { kind: 'thinking' }, reasoning: durable, reasoningItemId: 'fixture-preview-item',
+      reasoningStreaming: true, finalItemId: 'fixture-preview-item' });
+    const app = createApp({ setup: () => () => h(Process, model) });
+    const until = async (predicate: () => boolean) => {
+      const deadline = Date.now() + 4000;
+      while (!predicate()) {
+        if (Date.now() > deadline) throw new Error(`Fixture did not update: ${host.textContent}`);
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+    };
+    try {
+      app.mount(host); await nextTick();
+      host.querySelector<HTMLButtonElement>('.timeline-process-head')!.click();
+      await until(() => host.querySelectorAll('.tl-thinking-head').length === 1);
+      model.reasoning = `${durable} extended`;
+      await until(() => host.querySelector('.tl-thinking-summary')?.textContent?.includes('extended') ?? false);
+      return {
+        entries: host.querySelectorAll('.tl-thinking-head').length,
+        updated: host.querySelector('.tl-thinking-summary')?.textContent?.includes('extended') ?? false
+      };
+    } finally {
+      app.unmount(); host.remove(); api.defaults.adapter = originalAdapter;
+    }
+  });
+  expect(result).toEqual({ entries: 1, updated: true });
+});
+
+test('a bounded live thought binds to the same model round as its full durable process row', async ({ page }) => {
+  await page.goto('/__e2e/composer-b4');
+  const result = await page.evaluate(async () => {
+    const source = await (await fetch('/src/components/chat/MessageTimelineTurnProcess.vue')).text();
+    const runtimeUrl = source.match(/from\s+["']([^"']*\/vue\.js[^"']*)["']/)?.[1];
+    if (!runtimeUrl) throw new Error('Missing fixture Vue runtime');
+    const [{ createApp, reactive, nextTick, h }, { default: Process }, { default: api }] = await Promise.all([
+      import(runtimeUrl), import('/src/components/chat/MessageTimelineTurnProcess.vue'), import('/src/api/http.ts')
+    ]);
+    const host = document.createElement('div'); document.body.append(host);
+    const originalAdapter = api.defaults.adapter;
+    const durable = 'full durable thought '.repeat(80) + 'durable tail';
+    api.defaults.adapter = async (config: unknown) => ({
+      status: 200, statusText: 'OK', headers: {}, config,
+      data: { data: { turn: { items: [{
+        item_id: 'fixture-turn:text-2', item_index: 2, kind: 'assistant_message', status: 'running',
+        payload: { model_round: 2, reasoning: durable, content: '' }
+      }], has_older: false, has_newer: false } } }
+    });
+    const model = reactive({ sessionId: 'fixture-thread', turnId: 'fixture-turn', count: 1, status: 'running',
+      activity: { kind: 'thinking' }, reasoning: durable.slice(-512), reasoningItemId: 'fixture-live:text-2',
+      reasoningStreaming: true, finalItemId: 'fixture-turn:text-2' });
+    const app = createApp({ setup: () => () => h(Process, model) });
+    const until = async (predicate: () => boolean) => {
+      const deadline = Date.now() + 4000;
+      while (!predicate()) {
+        if (Date.now() > deadline) throw new Error(`Fixture did not update: ${host.textContent}`);
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+    };
+    try {
+      app.mount(host); await nextTick();
+      host.querySelector<HTMLButtonElement>('.timeline-process-head')!.click();
+      await until(() => host.querySelectorAll('.tl-thinking-head').length === 1);
+      return {
+        entries: host.querySelectorAll('.tl-thinking-head').length,
+        text: host.querySelector('.tl-thinking-summary')?.textContent?.includes('durable tail') ?? false
+      };
+    } finally {
+      app.unmount(); host.remove(); api.defaults.adapter = originalAdapter;
+    }
+  });
+  expect(result).toEqual({ entries: 1, text: true });
 });
 
 test('a corrected final identity immediately restores intermediate prose to the process timeline', async ({ page }) => {

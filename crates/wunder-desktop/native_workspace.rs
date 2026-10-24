@@ -763,6 +763,127 @@ impl NativeDesktop {
         })
     }
 
+    /// Filename search over one local workspace folder for the working-
+    /// directory region: a bounded depth-first walk matching the keyword as a
+    /// case-insensitive substring of entry names. The result reuses the cloud
+    /// listing shape, so the panel projects both sources identically.
+    pub fn workspace_local_search(
+        &self,
+        root_path: &str,
+        keyword: &str,
+    ) -> Result<NativeInterlinkListing> {
+        const SEARCH_RESULTS: usize = 200;
+        const SEARCH_VISITED: usize = 20_000;
+        const SEARCH_DEPTH: usize = 12;
+        let keyword = keyword.trim();
+        anyhow::ensure!(!keyword.is_empty(), "关键词为空");
+        let root = normalize_root(root_path)?;
+        if !root.is_dir() {
+            bail!(WORKSPACE_ROOT_MISSING);
+        }
+        let needle: String = keyword.chars().flat_map(char::to_lowercase).collect();
+        let mut matches: Vec<NativeInterlinkEntry> = Vec::new();
+        let mut visited = 0usize;
+        let mut stack: Vec<(PathBuf, String, usize)> = vec![(root, String::new(), 0)];
+        'walk: while let Some((dir, prefix, depth)) = stack.pop() {
+            let Ok(items) = std::fs::read_dir(&dir) else {
+                continue;
+            };
+            for item in items.flatten() {
+                visited += 1;
+                if visited >= SEARCH_VISITED || matches.len() >= SEARCH_RESULTS {
+                    break 'walk;
+                }
+                let name = item.file_name().to_string_lossy().to_string();
+                if name.is_empty() || name.starts_with('.') {
+                    continue;
+                }
+                let Ok(kind) = item.file_type() else { continue };
+                let is_dir = kind.is_dir();
+                let hay: String = name.chars().flat_map(char::to_lowercase).collect();
+                let path = if prefix.is_empty() {
+                    name.clone()
+                } else {
+                    format!("{prefix}/{name}")
+                };
+                if hay.contains(&needle) {
+                    let size = if is_dir {
+                        0
+                    } else {
+                        item.metadata().map(|meta| meta.len()).unwrap_or(0)
+                    };
+                    matches.push(NativeInterlinkEntry {
+                        name: name.clone(),
+                        path: path.clone(),
+                        kind: if is_dir { "dir".into() } else { "file".into() },
+                        size,
+                        updated_time: String::new(),
+                    });
+                }
+                if is_dir && depth + 1 < SEARCH_DEPTH {
+                    stack.push((item.path(), path, depth + 1));
+                }
+            }
+        }
+        matches.sort_by(|a, b| {
+            (b.kind == "dir")
+                .cmp(&(a.kind == "dir"))
+                .then_with(|| natural_name_cmp(&a.name, &b.name))
+                .then_with(|| a.name.cmp(&b.name))
+        });
+        Ok(NativeInterlinkListing {
+            status: "succeeded".into(),
+            path: String::new(),
+            total: matches.len() as u64,
+            entries: matches,
+            error: None,
+            command_id: None,
+        })
+    }
+
+    /// Copy one workspace entry — or, for the root, every child entry — out of
+    /// the workspace into a user-picked destination folder. This is the local
+    /// working directory's download: a plain host copy, no archive detour.
+    /// Existing entries in the destination are replaced, matching the upload
+    /// semantics. Returns the number of top-level entries copied.
+    pub fn workspace_local_export(
+        &self,
+        root_path: &str,
+        relative: &str,
+        destination: &str,
+    ) -> Result<u64> {
+        let root = normalize_root(root_path)?;
+        if !root.is_dir() {
+            bail!(WORKSPACE_ROOT_MISSING);
+        }
+        let destination = PathBuf::from(destination);
+        if !destination.is_dir() {
+            bail!("目标文件夹不存在");
+        }
+        if relative.is_empty() {
+            let mut copied = 0u64;
+            for item in std::fs::read_dir(&root)? {
+                let item = item?;
+                if item.file_name().to_string_lossy().starts_with('.') {
+                    continue;
+                }
+                copy_entry_out(&item.path(), &destination.join(item.file_name()))?;
+                copied += 1;
+            }
+            return Ok(copied);
+        }
+        let source = workspace_resource_target(&root, relative)?;
+        if !source.exists() {
+            bail!("文件不存在");
+        }
+        let name = source
+            .file_name()
+            .ok_or_else(|| anyhow!("无效的路径"))?
+            .to_owned();
+        copy_entry_out(&source, &destination.join(name))?;
+        Ok(1)
+    }
+
     /// Read one workspace image for Markdown rendering after enforcing the
     /// workspace path boundary. The UI receives bounded bytes instead of a
     /// host path, so message content cannot become a local-file reader.
@@ -1037,6 +1158,38 @@ fn normalize_public_workspace_source(source: &str, root: &Path) -> String {
 }
 
 /// Validate one path segment the user typed for a new or renamed entry.
+/// Recursive copy used by the local export: files are replaced, directories
+/// are merged with the same rule. The walk is bounded so a cyclic or very
+/// deep tree cannot pin the worker thread.
+fn copy_entry_out(source: &Path, target: &Path) -> Result<()> {
+    const EXPORT_DEPTH: usize = 16;
+    const EXPORT_BUDGET: usize = 20_000;
+    fn run(source: &Path, target: &Path, depth: usize, budget: &mut usize) -> Result<()> {
+        if *budget == 0 {
+            bail!("导出内容超出上限");
+        }
+        *budget -= 1;
+        if source.is_dir() {
+            anyhow::ensure!(depth < EXPORT_DEPTH, "目录嵌套过深，无法导出");
+            std::fs::create_dir_all(target).map_err(|error| anyhow!("创建目录失败：{error}"))?;
+            for item in std::fs::read_dir(source)? {
+                let item = item?;
+                let name = item.file_name();
+                if name.to_string_lossy().starts_with('.') {
+                    continue;
+                }
+                run(&item.path(), &target.join(name), depth + 1, budget)?;
+            }
+            return Ok(());
+        }
+        std::fs::copy(source, target)
+            .map(|_| ())
+            .map_err(|error| anyhow!("复制失败：{error}"))
+    }
+    let mut budget = EXPORT_BUDGET;
+    run(source, target, 0, &mut budget)
+}
+
 fn validate_entry_name(name: &str) -> Result<()> {
     let cleaned = name.trim();
     if cleaned.is_empty() {

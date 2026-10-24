@@ -3223,6 +3223,12 @@ fn start_timer(app: &MainWindow, state: Rc<RefCell<State>>) {
                                     publish_inquiry(&app, &session, &state);
                                 }
                             }
+                        } else if event["event"].as_str() == Some("question_panel_clear") {
+                            let session = active.session.clone();
+                            state.inquiries.remove(&session);
+                            if app.get_active_session_id() == session.as_str() {
+                                publish_inquiry(&app, &session, &state);
+                            }
                         }
                         match apply_event(active, &mut timeline.borrow_mut(), &event) {
                             Ok(changed) => dirty |= changed,
@@ -3441,7 +3447,25 @@ fn apply_event(
             }
             .into();
         }
-        "native_stats" => return Ok(true),
+        "native_stats" => {
+            // Background/native replay emits a compact stats snapshot as a
+            // dedicated event.  It is already the stats object itself (unlike
+            // llm_output/final, where it lives under `message_stats`), so do
+            // not discard it.  Keeping this path in the reducer makes the
+            // live footer match the durable footer before the watcher catches
+            // up with the committed assistant item.
+            let stats = crate::turn_stats::message_stats(data).unwrap_or(data);
+            if !stats.is_null() {
+                timeline.set_turn_stats(crate::timeline::stat_metrics(
+                    &crate::turn_stats::with_user_round(
+                        crate::turn_stats::metrics(stats),
+                        active.user_round,
+                    ),
+                ));
+                timeline.set_user_round(active.user_round);
+            }
+            return Ok(true);
+        }
         "llm_request" => {
             // Admission of a model call: the answer block belongs to a new
             // round, so the previous segments settle here.

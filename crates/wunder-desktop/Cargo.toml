@@ -24,6 +24,14 @@ name = "wunder-desktop-bridge"
 path = "bridge_main.rs"
 bench = false
 
+[[example]]
+name = "chat_open_probe"
+required-features = ["sqlite-storage"]
+
+[[example]]
+name = "experience_probe"
+required-features = ["sqlite-storage"]
+
 [dependencies]
 anyhow.workspace = true
 axum.workspace = true

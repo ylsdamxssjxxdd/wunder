@@ -20,6 +20,10 @@ struct Projection {
     text_item: String,
     text: String,
     reasoning: String,
+    // A question panel is stored on the assistant message metadata rather
+    // than as a standalone durable item. Keep its item identity so a replay
+    // can publish it once when the desktop resumes a background turn.
+    question_panel_item: String,
     user_round: i64,
 }
 
@@ -50,6 +54,7 @@ impl Projection {
         self.text.clear();
         self.text_item.clear();
         self.reasoning.clear();
+        self.question_panel_item.clear();
         self.cursor = 0;
         let mut events = self.apply(
             &json!({"cursor":1,"change_type":"turn_upsert","turn_id":execution,
@@ -112,6 +117,7 @@ impl Projection {
                     self.text_item.clear();
                     self.text.clear();
                     self.reasoning.clear();
+                    self.question_panel_item.clear();
                     events.push(json!({"event":"native_execution_started","data":{"root_turn_id":self.root,"turn_id":execution,"user_round":self.user_round}}));
                 }
                 self.status = p["status"].as_str().unwrap_or_default().into();
@@ -180,11 +186,24 @@ impl Projection {
                         self.text = content.into();
                         events.push(json!({"event":"llm_output","data":{"content":content,"model_round":round}}));
                     }
-                    if let Some(stats) = payload
-                        .pointer("/meta/message_stats")
-                        .or_else(|| payload.get("stats"))
-                    {
+                    if let Some(stats) = native_stats_payload(payload) {
                         events.push(json!({"event":"native_stats","data":stats}));
+                    }
+                    // `question_panel` is emitted live by the orchestrator,
+                    // but it is not a standalone thread-log item. A native
+                    // subscriber that starts after the live event (for
+                    // example after navigation or a queued hand-off) must
+                    // reconstruct it from the persisted assistant metadata.
+                    if let Some(panel) = pending_question_panel(payload) {
+                        if self.question_panel_item != id {
+                            self.question_panel_item = id.to_string();
+                            events.push(json!({"event":"question_panel","data":panel}));
+                        }
+                    } else if self.question_panel_item == id
+                        && payload.pointer("/meta/panel").is_some()
+                    {
+                        self.question_panel_item.clear();
+                        events.push(json!({"event":"question_panel_clear","data":{}}));
                     }
                 } else if kind == "tool_call" {
                     let pending =
@@ -253,6 +272,76 @@ impl Projection {
                 | "waiting_user_input"
         ) || (self.status == "completed" && !goal_active)
     }
+}
+
+/// Keep background replay statistics independent from the assistant body.
+/// Canonical assistant items may store them under `meta.message_stats`, under
+/// `stats`, or directly beside `content`/`reasoning`; only the small numeric
+/// usage/timing fields are forwarded to the UI.
+fn native_stats_payload(payload: &Value) -> Option<Value> {
+    if let Some(stats) = payload
+        .pointer("/meta/message_stats")
+        .or_else(|| payload.get("stats"))
+    {
+        return Some(stats.clone());
+    }
+    let map = payload.as_object()?;
+    let keys = [
+        "interaction_duration_s",
+        "prefill_duration_s",
+        "prefill_duration_total_s",
+        "decode_duration_s",
+        "decode_duration_total_s",
+        "decode_output_tokens",
+        "decode_tokens",
+        "decode_speed_tps",
+        "prefill_speed_tps",
+        "visible_decode_tokens",
+        "visible_decode_duration_s",
+        "visible_decode_speed_tps",
+        "visible_decode_measured",
+        "avg_model_round_speed_tps",
+        "avg_model_round_decode_speed_tps",
+        "avg_model_round_speed_rounds",
+        "context_occupancy_tokens",
+        "contextTokens",
+        "request_consumed_tokens",
+        "consumed_tokens",
+        "toolCalls",
+        "tool_calls",
+        "model_request_count",
+        "account_credits_consumed",
+        "usage",
+        "round_usage",
+        "stream_timing",
+    ];
+    let mut stats = serde_json::Map::new();
+    for key in keys {
+        if let Some(value) = map.get(key).filter(|value| !value.is_null()) {
+            stats.insert(key.to_owned(), value.clone());
+        }
+    }
+    (!stats.is_empty()).then_some(Value::Object(stats))
+}
+
+/// Extract only a pending panel from an assistant item. The canonical item
+/// stores the panel at `payload.meta.panel`; the second path keeps recovery
+/// tolerant of the older double-wrapped preview shape.
+fn pending_question_panel(payload: &Value) -> Option<Value> {
+    let panel = payload
+        .pointer("/meta/panel")
+        .or_else(|| payload.pointer("/payload/meta/panel"))?;
+    if !panel.is_object()
+        || panel["questions"]
+            .as_array()
+            .is_none_or(|questions| questions.is_empty())
+    {
+        return None;
+    }
+    if matches!(panel["status"].as_str(), Some("answered" | "dismissed")) {
+        return None;
+    }
+    Some(panel.clone())
 }
 
 pub(super) async fn watch(
@@ -660,6 +749,49 @@ mod tests {
         assert_eq!(projection.execution, "fixture-child");
         assert_eq!(projection.text, "Complete reply 🐣");
         assert_eq!(projection.reasoning, "Complete thought");
+    }
+
+    #[test]
+    fn pending_question_panel_is_replayed_from_assistant_metadata() {
+        let mut projection = Projection {
+            root: "fixture-root".into(),
+            execution: "fixture-root".into(),
+            ..Default::default()
+        };
+        let item = json!({
+            "cursor": 4,
+            "change_type": "item_upsert",
+            "turn_id": "fixture-root",
+            "payload": {
+                "item_id": "fixture-root:text-1",
+                "kind": "assistant_message",
+                "revision": 1,
+                "payload": {
+                    "model_round": 1,
+                    "content": "等待选择",
+                    "meta": {
+                        "type": "question_panel",
+                        "panel": {
+                            "status": "pending",
+                            "keep_open": true,
+                            "questions": [{
+                                "question": "继续吗？",
+                                "options": [{"label": "继续"}]
+                            }]
+                        }
+                    }
+                }
+            }
+        });
+        let events = projection.apply(&item).expect("panel replay");
+        let panel = events
+            .iter()
+            .find(|event| event["event"] == "question_panel")
+            .expect("question panel event");
+        assert_eq!(panel["data"]["status"], "pending");
+        assert_eq!(panel["data"]["questions"][0]["question"], "继续吗？");
+        // A duplicate revision is ignored and must not reopen the card.
+        assert!(projection.apply(&item).unwrap().is_empty());
     }
 
     #[test]

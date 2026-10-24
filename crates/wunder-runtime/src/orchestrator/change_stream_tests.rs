@@ -365,6 +365,8 @@ async fn live_text_deltas_never_append_completed_history() {
     .with_committer(state.kernel.orchestrator.committer.clone());
     let turn = start_turn(&state, "session-a", "user-a").await;
     emitter.bind_turn(&turn, 1);
+    emitter.record_model_request(1);
+    emitter.record_account_credit_consumption(1);
 
     emitter
         .emit("llm_request", json!({"turn_id": turn, "model_round": 1}))
@@ -372,7 +374,7 @@ async fn live_text_deltas_never_append_completed_history() {
     emitter
         .emit(
             "llm_output_delta",
-            json!({"turn_id": turn, "model_round": 1, "delta": "héllo"}),
+            json!({"turn_id": turn, "model_round": 1, "delta": "hé😀"}),
         )
         .await;
     emitter
@@ -389,10 +391,14 @@ async fn live_text_deltas_never_append_completed_history() {
         .await;
     emitter.finish().await;
     let mut deltas = Vec::new();
+    let mut tails = Vec::new();
     let mut durable = 0;
     while let Ok(StreamSignal::Event(event)) = queue_rx.try_recv() {
         if event.event == "thread_item_delta" {
             deltas.push(event.data["data"].clone());
+        }
+        if event.event == "thread_item_tail" {
+            tails.push(event.data["data"].clone());
         }
         if event.event == "thread_change" {
             durable += 1;
@@ -401,9 +407,21 @@ async fn live_text_deltas_never_append_completed_history() {
     assert_eq!(durable, 0);
     assert_eq!(deltas.len(), 3);
     assert_eq!(deltas[0]["source_event"], "llm_output_delta");
-    assert_eq!(deltas[0]["delta"], "héllo");
+    assert_eq!(deltas[0]["delta"], "hé😀");
     assert_eq!(deltas[1]["delta"], "世界");
     assert_eq!(deltas[2]["reasoning_delta"], "思考");
+    assert_eq!(tails.len(), 3);
+    assert_eq!(tails[0]["item_id"], json!(format!("{turn}:text-1")));
+    assert_eq!(tails[0]["field"], "content");
+    assert_eq!(tails[0]["offset"], 0);
+    // The astral character makes this four UTF-16 code units rather than the
+    // three Rust Unicode scalar values; the browser uses this cursor.
+    assert_eq!(tails[1]["field"], "content");
+    assert_eq!(tails[1]["offset"], 4);
+    assert_eq!(tails[1]["text"], "世界");
+    assert_eq!(tails[2]["field"], "reasoning");
+    assert_eq!(tails[2]["offset"], 0);
+    assert_eq!(tails[2]["text"], "思考");
     assert!(state
         .storage
         .get_thread_item("user-a", "session-a", &format!("{turn}:text-1"), true)
@@ -492,6 +510,59 @@ async fn model_context_append_does_not_replace_completed_stream_item() {
             .count(),
         1
     );
+    while queue_rx.try_recv().is_ok() {}
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn completed_output_projects_context_and_quota_stats_without_history_rewrite() {
+    let (state, _dir) = build_test_state("change_stream_output_stats").await;
+    let (queue_tx, mut queue_rx) = mpsc::channel::<StreamSignal>(64);
+    let emitter = EventEmitter::new(
+        "session-a".into(),
+        "user-a".into(),
+        Some(queue_tx),
+        Some(state.storage.clone()),
+        state.monitor.clone(),
+        false,
+        None,
+    )
+    .with_committer(state.kernel.orchestrator.committer.clone());
+    let turn = start_turn(&state, "session-a", "user-a").await;
+    emitter.bind_turn(&turn, 1);
+
+    emitter
+        .emit(
+            "llm_output",
+            json!({
+                "model_round": 1,
+                "content": "done",
+                "usage": {
+                    "input_tokens": 321,
+                    "output_tokens": 34,
+                    "total_tokens": 355,
+                    "estimated": false
+                },
+                "prefill_duration_s": 0.2,
+                "decode_duration_s": 0.8,
+                "visible_decode_speed_tps": 42.5,
+            }),
+        )
+        .await;
+
+    let page = state
+        .storage
+        .thread_view_page("user-a", "session-a", "chat", None, 12)
+        .expect("chat view");
+    let stats = page.chat[0]
+        .assistant
+        .stats
+        .as_ref()
+        .expect("assistant bubble stats");
+    assert_eq!(stats["context_occupancy_tokens"], json!(321));
+    assert_eq!(stats["model_request_count"], json!(1));
+    assert_eq!(stats["account_credits_consumed"], json!(1));
+    assert_eq!(stats["usage"]["total_tokens"], json!(355));
+    assert_eq!(stats["interaction_duration_s"], json!(1.0));
     while queue_rx.try_recv().is_ok() {}
 }
 

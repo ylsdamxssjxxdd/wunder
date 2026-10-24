@@ -123,6 +123,39 @@ cat > "$output_root/remotion/bin/remotion" <<'EOF_REMOTION'
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 NODE="$ROOT/../node/bin/node"
 CLI="$ROOT/node_modules/@remotion/cli/remotion-cli.js"
+COMPOSITOR="$ROOT/node_modules/@remotion/compositor-linux-x64-gnu"
+if [ -d "$ROOT/node_modules/@remotion/compositor-linux-arm64-gnu" ]; then
+  COMPOSITOR="$ROOT/node_modules/@remotion/compositor-linux-arm64-gnu"
+fi
+if [ -n "${LD_LIBRARY_PATH:-}" ]; then
+  export LD_LIBRARY_PATH="$COMPOSITOR:${LD_LIBRARY_PATH}"
+else
+  export LD_LIBRARY_PATH="$COMPOSITOR"
+fi
+# The Linux supplement places Chrome beside Remotion. Prefer it when present;
+# callers can override with WUNDER_BROWSER_BIN or an explicit Remotion flag.
+BROWSER="${WUNDER_BROWSER_BIN:-}"
+if [ -z "$BROWSER" ] && [ -x "$ROOT/../browser/chrome-linux64/chrome" ]; then
+  BROWSER="$ROOT/../browser/chrome-linux64/chrome"
+fi
+if [ -z "$BROWSER" ] && [ -x "$ROOT/../browser/chrome-linux/chrome" ]; then
+  BROWSER="$ROOT/../browser/chrome-linux/chrome"
+fi
+if [ -n "$BROWSER" ]; then
+  NEEDS_BROWSER=0
+  case "${1:-}" in
+    render|studio|still|preview|compositions) NEEDS_BROWSER=1 ;;
+  esac
+  HAS_BROWSER_FLAG=0
+  for arg in "$@"; do
+    case "$arg" in
+      --browser-executable|--browser-executable=*) HAS_BROWSER_FLAG=1; break ;;
+    esac
+  done
+  if [ "$NEEDS_BROWSER" -eq 1 ] && [ "$HAS_BROWSER_FLAG" -eq 0 ]; then
+    set -- "$@" "--browser-executable=$BROWSER"
+  fi
+fi
 exec "$NODE" "$CLI" "$@"
 EOF_REMOTION
 chmod 0755 "$output_root/remotion/bin/remotion"

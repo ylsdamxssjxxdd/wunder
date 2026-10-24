@@ -4,7 +4,7 @@ use crate::{MainWindow, ProcessEntry, TimelineRow};
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use std::{
     cell::{Cell, RefCell},
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     rc::Rc,
     sync::{mpsc::sync_channel, Arc},
     time::Duration,
@@ -266,6 +266,12 @@ fn apply_page(row: &mut TimelineRow, page: NativeProcessPage, direction: i32) {
             });
         }
     }
+    // Keep the page projection defensive when a storage adapter repeats one
+    // immutable assistant item.  Round identity is deliberately not inferred
+    // from reasoning text: two model rounds are allowed to have identical
+    // thoughts.  Canonical local pages already filter random assistant copies
+    // in `native_chat_process::project_page` by (execution, model_round).
+    dedupe_reasoning_entries(&mut entries);
     for (index, entry) in entries.iter_mut().enumerate() {
         // Negative payloads address a child in its own process, never an outer
         // timeline index. The bounded process slot makes this unambiguous.
@@ -308,6 +314,30 @@ fn apply_page(row: &mut TimelineRow, page: NativeProcessPage, direction: i32) {
             row.process_revision.abs().saturating_add(1)
         };
     }
+}
+
+fn stable_reasoning_item(id: &str) -> bool {
+    let Some((_, round)) = id.rsplit_once(":text-") else {
+        return false;
+    };
+    !round.is_empty() && round.chars().all(|ch| ch.is_ascii_digit())
+}
+
+fn dedupe_reasoning_entries(entries: &mut Vec<ProcessEntry>) {
+    let mut stable_ids = HashSet::new();
+    entries.retain(|entry| {
+        if entry.kind != crate::timeline::KIND_REASON {
+            return true;
+        }
+        let stable = stable_reasoning_item(entry.id.as_str());
+        if stable {
+            // A repeated revision of one stable item is one thought row. Keep
+            // the first complete projection; revisions are merged by the
+            // live-tail synchronizer when the page is refreshed.
+            return stable_ids.insert(entry.id.to_string());
+        }
+        true
+    });
 }
 
 pub fn toggle_entry(model: &impl Model<Data = TimelineRow>, payload: i32) {
@@ -447,5 +477,43 @@ mod tests {
         );
         assert_eq!(child.row_count(), 1);
         assert_eq!(child.row_data(0).unwrap(), stable);
+    }
+
+    #[test]
+    fn process_page_drops_repeated_stable_reasoning_item_but_keeps_distinct_rounds() {
+        let mut row = TimelineRow {
+            kind: crate::timeline::KIND_PROCESS,
+            process_idx: 2,
+            process_entries: ModelRc::new(VecModel::<ProcessEntry>::default()),
+            ..Default::default()
+        };
+        let item = |id: &str, reasoning: &str| NativeProcessItem {
+            item_index: 0,
+            id: id.into(),
+            state: "completed".into(),
+            reasoning: reasoning.into(),
+            text: String::new(),
+            tool: None,
+        };
+        apply_page(
+            &mut row,
+            NativeProcessPage {
+                items: vec![
+                    item("fixture-root:text-1", "first thought"),
+                    item("fixture-root:text-1", "first thought"),
+                    item("fixture-root:text-2", "first thought"),
+                ],
+                ..Default::default()
+            },
+            -1,
+        );
+        let reasons: Vec<_> = row
+            .process_entries
+            .iter()
+            .filter(|entry| entry.kind == crate::timeline::KIND_REASON)
+            .collect();
+        assert_eq!(reasons.len(), 2);
+        assert_eq!(reasons[0].id, "reason-fixture-root:text-1");
+        assert_eq!(reasons[1].id, "reason-fixture-root:text-2");
     }
 }

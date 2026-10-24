@@ -92,6 +92,8 @@ fn supplement_browser_candidates(root: &Path) -> Vec<PathBuf> {
         root.join("opt/browser/chrome-win/chrome.exe"),
         root.join("opt/browser/chrome-win64/chrome.exe"),
         root.join("opt/browser/chrome-linux/chrome"),
+        root.join("opt/browser/chrome-linux64/chrome"),
+        root.join("opt/browser/chrome-linux/chrome"),
         root.join("opt/browser/chrome.exe"),
     ]
 }
@@ -320,6 +322,14 @@ mod tests {
             None => std::env::remove_var("WUNDER_HOME"),
         }
         assert_eq!(probed, Some(home.path().join("opt/browser/chrome.exe")));
+    }
+
+    #[test]
+    fn chrome_linux64_supplement_is_recognized() {
+        let bundled = PathBuf::from("supplement/opt/browser/chrome-linux64/chrome");
+        let exists = |path: &Path| path == bundled.as_path();
+        let selected = select_fallback_executable(&[], &[PathBuf::from("supplement")], &[], &exists);
+        assert_eq!(selected, Some(bundled));
     }
 
     #[test]

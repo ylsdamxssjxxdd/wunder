@@ -23,7 +23,7 @@
 
     <div v-else-if="!rows.length" class="workspace-files-state is-empty">
       <i class="fa-regular fa-folder-open" aria-hidden="true"></i>
-      <span class="workspace-files-state-text">{{ t('messenger.filesArea.empty') }}</span>
+      <span class="workspace-files-state-text">{{ props.emptyText || t('messenger.filesArea.empty') }}</span>
       <span class="workspace-files-state-hint">{{ props.emptyHint || t('messenger.filesArea.emptyHint') }}</span>
     </div>
 
@@ -70,7 +70,7 @@
             @click.stop="emit('toggle-select', row.path)"
           />
           <span
-            v-if="row.kind === 'dir'"
+            v-if="row.kind === 'dir' && row.expandable"
             class="workspace-file-twisty"
             role="button"
             tabindex="-1"
@@ -91,6 +91,7 @@
           />
           <i v-else :class="['workspace-file-icon', rowIconClass(row)]" aria-hidden="true"></i>
           <span class="workspace-file-name">{{ row.name }}</span>
+          <span v-if="row.pathHint" class="workspace-file-path">{{ row.pathHint }}</span>
           <span v-if="row.loading" class="workspace-files-spinner" aria-hidden="true"></span>
           <button
             v-if="!readOnly"
@@ -161,8 +162,10 @@ const props = withDefaults(
     remote?: boolean;
     /** 空态提示覆盖（远程投影与云端拖拽提示语义不同）。 */
     emptyHint?: string;
+    /** 空态主文案覆盖（搜索结果等非目录语义）。 */
+    emptyText?: string;
   }>(),
-  { readOnly: false, remote: false, emptyHint: '' }
+  { readOnly: false, remote: false, emptyHint: '', emptyText: '' }
 );
 
 const emit = defineEmits<{

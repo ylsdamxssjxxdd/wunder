@@ -94,16 +94,6 @@ pub struct NativeInterlinkPull {
     pub bytes: u64,
 }
 
-/// Usage line of the cloud workspace root. `quota_bytes` stays `None` because
-/// the interlink executor's stat carries used-only numbers.
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct NativeInterlinkStats {
-    pub files: u64,
-    pub dirs: u64,
-    pub used_bytes: u64,
-    pub truncated: bool,
-}
-
 /// Outcome of one cloud write operation (L2: mkdir/move/delete/write). The
 /// cloud hard-approves this level, so a run can park on an approval ticket
 /// that the desktop decides itself.
@@ -352,27 +342,34 @@ impl NativeDesktop {
         })
     }
 
-    /// Usage snapshot of the cloud workspace root: one `workspace.stat` on the
-    /// cloud target, projected for the sidebar's usage line. The interlink
-    /// executor does not carry a quota figure, so the panel renders used-only
-    /// stats.
-    pub fn interlink_cloud_stats(&self) -> Result<NativeInterlinkStats> {
+    /// Filename search over the cloud workspace: one `workspace.search` on the
+    /// cloud target, projected with the same entry shape as a listing so the
+    /// panel renders search results through the row projection.
+    pub fn interlink_cloud_search(&self, keyword: &str) -> Result<NativeInterlinkListing> {
+        let keyword = keyword.trim();
+        anyhow::ensure!(!keyword.is_empty(), "关键词为空");
         let cloud = self.state().cloud.clone();
         let issue = self.runtime.block_on(cloud.interlink_issue_command(
             "cloud",
-            "workspace.stat",
-            serde_json::json!({ "path": "", "recent_limit": 0 }),
+            "workspace.search",
+            serde_json::json!({ "keyword": keyword, "offset": 0, "limit": 200 }),
         ))?;
         let command_id = clean(issue.get("command_id"));
         if command_id.is_empty() {
             return Err(anyhow!("cloud command issue returned no id"));
         }
-        if clean(issue.get("approval_state")) == "pending" {
-            bail!("云端要求先批准该次读取");
-        }
         let deadline = std::time::Instant::now() + CLOUD_POLL_TIMEOUT;
-        let record = self.wait_cloud_command(&cloud, &command_id, deadline)?;
-        stats_from_record(&record)
+        match self.wait_cloud_command(&cloud, &command_id, deadline) {
+            Ok(record) => Ok(listing_from_record(&record, "", &command_id)),
+            Err(error) => Ok(NativeInterlinkListing {
+                status: "failed".to_string(),
+                path: String::new(),
+                entries: Vec::new(),
+                total: 0,
+                error: Some(error.to_string()),
+                command_id: Some(command_id),
+            }),
+        }
     }
 
     /// Decide a cloud-target approval ticket as the account owner.
@@ -722,30 +719,6 @@ fn decode_inline(encoded: &str) -> Result<Vec<u8>> {
         .map_err(|error| anyhow!("云端回传内容无法解码：{error}"))
 }
 
-/// Ledger record → the stat triple of a succeeded `workspace.stat`.
-fn stats_from_record(record: &Value) -> Result<NativeInterlinkStats> {
-    if clean(record.get("status")) != "succeeded" {
-        bail!(
-            "{} {}",
-            clean(record.get("error_code")),
-            clean(record.get("error_summary"))
-        );
-    }
-    let result = payload_with(record, "files");
-    Ok(NativeInterlinkStats {
-        files: result.get("files").and_then(Value::as_u64).unwrap_or(0),
-        dirs: result.get("dirs").and_then(Value::as_u64).unwrap_or(0),
-        used_bytes: result
-            .get("used_bytes")
-            .and_then(Value::as_u64)
-            .unwrap_or(0),
-        truncated: result
-            .get("truncated")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
-    })
-}
-
 /// Ledger record → listing rows. Free function so tests pin the projection
 /// without a started `DesktopRuntime`.
 fn listing_from_record(record: &Value, path: &str, command_id: &str) -> NativeInterlinkListing {
@@ -984,43 +957,6 @@ mod tests {
             summary: format!("云端回传 {} 字节", encoded.len()),
         });
         assert!(reason.contains("上限"), "{reason}");
-    }
-
-    #[test]
-    fn stat_rows_project_from_the_ledger_record() {
-        let flat = json!({
-            "status": "succeeded",
-            "result": {"files": 12, "dirs": 3, "used_bytes": 4096, "truncated": true}
-        });
-        for record in [
-            flat,
-            json!({
-                "status": "succeeded",
-                "result": {"result": {"files": 12, "dirs": 3, "used_bytes": 4096}}
-            }),
-        ] {
-            let stats = stats_from_record(&record).expect("stats");
-            assert_eq!(stats.files, 12);
-            assert_eq!(stats.dirs, 3);
-            assert_eq!(stats.used_bytes, 4096);
-        }
-        let truncated = stats_from_record(&json!({
-            "status": "succeeded",
-            "result": {"files": 1, "dirs": 0, "used_bytes": 2, "truncated": true}
-        }))
-        .expect("stats");
-        assert!(truncated.truncated);
-    }
-
-    #[test]
-    fn failed_stat_records_carry_the_error_pair() {
-        let error = stats_from_record(&json!({
-            "status": "failed",
-            "error_code": "WORKSPACE_ERROR",
-            "error_summary": "missing root"
-        }))
-        .unwrap_err();
-        assert!(error.to_string().contains("WORKSPACE_ERROR"));
     }
 
     #[test]

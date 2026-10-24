@@ -566,6 +566,17 @@ const MCP_RESULT_MAX_TEXT_CHARS: usize = 4_000;
 pub(super) const OBSERVATION_TURN_TARGET_TOKENS: i64 = 8_000;
 pub(super) const OBSERVATION_TURN_MAX_TOKENS: i64 = 12_000;
 const OBSERVATION_READ_FILE_LIMIT: usize = 8;
+// Keep list-like/browser observations small even when a provider returns an
+// unbounded page. The complete provider payload remains in the event stream;
+// these limits apply only to the model-facing projection.
+const OBSERVATION_BROWSER_TABS_LIMIT: usize = 12;
+const OBSERVATION_BROWSER_REFS_LIMIT: usize = 32;
+const OBSERVATION_BROWSER_TEXT_CHARS: usize = 12_000;
+const OBSERVATION_BROWSER_EVALUATE_CHARS: usize = 4_000;
+const OBSERVATION_SCHEDULE_JOBS_LIMIT: usize = 20;
+const OBSERVATION_MEMORY_ITEMS_LIMIT: usize = 20;
+const OBSERVATION_MEMORY_CONTENT_CHARS: usize = 4_000;
+const OBSERVATION_MEMORY_TEXT_CHARS: usize = 512;
 const READ_OUTPUT_TRUNCATION_PREFIX: &str = "...(truncated read output, omitted ";
 const READ_OUTPUT_TRUNCATION_SUFFIX: &str = " bytes)...";
 pub(super) const TRUNCATION_CONTINUATION_HINT: &str =
@@ -1072,10 +1083,16 @@ fn compact_observation_payload(payload: &mut Value, tool_name: &str) {
         observation_truncated = true;
     }
     let observation_output_chars = estimate_tool_result_chars(&compacted_data);
+    // A semantic projection can already have bounded a provider-owned field
+    // (for example browser text or a list). Preserve that state on the outer
+    // observation envelope so the model does not mistake the preview for a
+    // complete result.
+    let data_truncated = compacted_data.get("truncated").and_then(Value::as_bool) == Some(true);
     let data_continuation_required = compacted_data
         .get("continuation_required")
         .and_then(Value::as_bool)
-        == Some(true);
+        == Some(true)
+        || (data_truncated && continuation_supported);
     let data_continuation_hint = compacted_data
         .get("continuation_hint")
         .and_then(Value::as_str)
@@ -1083,6 +1100,9 @@ fn compact_observation_payload(payload: &mut Value, tool_name: &str) {
         .filter(|value| !value.is_empty())
         .map(ToString::to_string);
     map.insert("data".to_string(), compacted_data);
+    if data_truncated {
+        map.insert("truncated".to_string(), Value::Bool(true));
+    }
     if observation_truncated {
         map.insert("truncated".to_string(), Value::Bool(true));
         map.insert(
@@ -1153,6 +1173,7 @@ fn compact_success_observation_payload(map: &mut Map<String, Value>, tool_name: 
 fn project_success_observation_data(tool_name: &str, data: &Value) -> Option<Value> {
     match tool_name {
         "browser" => project_browser_action(data),
+        "问询面板" | "question_panel" => project_question_panel_success(data),
         name if name.ends_with("@__mcp_pack__") => project_mcp_pack_success(data),
         "定时任务" | "schedule_task" => project_schedule_task_success(data),
         "记忆管理" | "memory_manager" | "memory_manage" => project_memory_manager_success(data),
@@ -1160,6 +1181,12 @@ fn project_success_observation_data(tool_name: &str, data: &Value) -> Option<Val
         "goal" => project_goal_success(data),
         "桌面控制" | "desktop_control" => project_desktop_control(data),
         "执行命令" | "execute_command" => project_command_success(data),
+        "命令会话" | "command_session" => project_command_session_success(data),
+        "读取文件" | "read_file" => project_read_file_success(data),
+        "搜索内容" | "search_content" => project_search_content_success(data),
+        "网页抓取" | "web_fetch" => project_web_fetch_success(data),
+        "读图工具" | "read_image" | "view_image" => project_read_image_success(data),
+        "子智能体控制" | "subagent_control" => project_subagent_control_success(data),
         "写入文件" | "write_file" | "apply_patch" | "应用补丁" | "编辑" | "文本编辑" => {
             project_file_write_success(data)
         }
@@ -1178,7 +1205,8 @@ fn project_goal_success(data: &Value) -> Option<Value> {
 }
 
 fn project_schedule_task_success(data: &Value) -> Option<Value> {
-    let map = data.as_object()?;
+    let outer = data.as_object()?;
+    let map = model_tool_result_data_map(data)?;
     let mut output = pick_non_empty_fields(
         map,
         &[
@@ -1194,14 +1222,27 @@ fn project_schedule_task_success(data: &Value) -> Option<Value> {
             "reason",
         ],
     );
+    if !output.contains_key("action") {
+        copy_field_value(&mut output, "action", outer.get("action"));
+    }
     if let Some(job) = map.get("job") {
         output.insert("job".to_string(), compact_schedule_job(job));
     }
     if let Some(jobs) = map.get("jobs").and_then(Value::as_array) {
-        output.insert(
-            "jobs".to_string(),
-            Value::Array(jobs.iter().map(compact_schedule_job).collect()),
-        );
+        let omitted = jobs.len().saturating_sub(OBSERVATION_SCHEDULE_JOBS_LIMIT);
+        let mut compacted_jobs = jobs
+            .iter()
+            .take(OBSERVATION_SCHEDULE_JOBS_LIMIT)
+            .map(compact_schedule_job)
+            .collect::<Vec<_>>();
+        if omitted > 0 {
+            compacted_jobs.push(build_omitted_items_marker(omitted));
+        }
+        output.insert("jobs".to_string(), Value::Array(compacted_jobs));
+        if omitted > 0 {
+            output.insert("truncated".to_string(), Value::Bool(true));
+            output.insert("omitted_jobs".to_string(), json!(omitted));
+        }
     }
     if let Some(counts) = map.get("user_jobs").and_then(Value::as_object) {
         output.insert(
@@ -1217,20 +1258,74 @@ fn project_schedule_task_success(data: &Value) -> Option<Value> {
 
 fn compact_schedule_job(job: &Value) -> Value {
     let map = job.as_object();
-    json!({
-        "job_id": map.and_then(|m| m.get("job_id")).cloned().unwrap_or(Value::Null),
-        "name": map.and_then(|m| m.get("name")).cloned().unwrap_or(Value::Null),
-        "enabled": map.and_then(|m| m.get("enabled")).cloned().unwrap_or(Value::Null),
-        "running": map.and_then(|m| m.get("running")).cloned().unwrap_or(Value::Null),
-        "schedule": map.and_then(|m| m.get("schedule")).cloned().unwrap_or(Value::Null),
-        "next_run_at": map.and_then(|m| m.get("next_run_at_text").or_else(|| m.get("next_run_at"))).cloned().unwrap_or(Value::Null),
-        "last_status": map.and_then(|m| m.get("last_status")).cloned().unwrap_or(Value::Null),
-        "last_error": map.and_then(|m| m.get("last_error")).cloned().unwrap_or(Value::Null)
-    })
+    let mut output = Map::new();
+    for key in ["job_id", "name", "enabled", "running", "last_status"] {
+        if let Some(value) = map
+            .and_then(|m| m.get(key))
+            .filter(|value| !value.is_null())
+        {
+            output.insert(key.to_string(), compact_schedule_value(value, 512));
+        }
+    }
+    if let Some(value) = map
+        .and_then(|m| m.get("last_error"))
+        .filter(|value| !value.is_null())
+    {
+        output.insert(
+            "last_error".to_string(),
+            compact_schedule_value(value, 1024),
+        );
+    }
+    if let Some(value) = map
+        .and_then(|m| m.get("schedule"))
+        .filter(|value| !value.is_null())
+    {
+        output.insert("schedule".to_string(), value.clone());
+    }
+    if let Some(value) = map
+        .and_then(|m| m.get("next_run_at_text").or_else(|| m.get("next_run_at")))
+        .filter(|value| !value.is_null())
+    {
+        output.insert("next_run_at".to_string(), value.clone());
+    }
+    Value::Object(output)
+}
+
+fn compact_schedule_value(value: &Value, max_chars: usize) -> Value {
+    match value {
+        Value::String(text) => {
+            let (text, omitted) = truncate_text_head(text, max_chars);
+            if omitted == 0 {
+                Value::String(text)
+            } else {
+                json!({"value": text, "truncated": true, "omitted_chars": omitted})
+            }
+        }
+        _ => value.clone(),
+    }
+}
+
+/// A question panel is rendered from the dedicated event and persisted panel
+/// metadata. The model only needs a hand-off marker because the turn stops as
+/// soon as this tool succeeds; echoing all labels and descriptions back into
+/// the next context window wastes tokens and can confuse follow-up planning.
+fn project_question_panel_success(data: &Value) -> Option<Value> {
+    let map = model_tool_result_data_map(data)?;
+    let count = map
+        .get("questions")
+        .and_then(Value::as_array)
+        .map(|items| items.len());
+    let mut output = Map::new();
+    output.insert("waiting_for_input".to_string(), Value::Bool(true));
+    if let Some(count) = count {
+        output.insert("question_count".to_string(), json!(count));
+    }
+    Some(Value::Object(output))
 }
 
 fn project_memory_manager_success(data: &Value) -> Option<Value> {
-    let map = data.as_object()?;
+    let outer = data.as_object()?;
+    let map = model_tool_result_data_map(data)?;
     let mut output = pick_non_empty_fields(
         map,
         &[
@@ -1243,16 +1338,55 @@ fn project_memory_manager_success(data: &Value) -> Option<Value> {
             "count",
         ],
     );
+    if !output.contains_key("action") {
+        copy_field_value(&mut output, "action", outer.get("action"));
+    }
     if let Some(item) = map.get("item") {
-        output.insert("item".to_string(), item.clone());
+        output.insert("item".to_string(), compact_memory_item(item));
     }
     if let Some(items) = map.get("items").and_then(Value::as_array) {
-        output.insert(
-            "items".to_string(),
-            Value::Array(items.iter().take(30).cloned().collect()),
-        );
+        let omitted = items.len().saturating_sub(OBSERVATION_MEMORY_ITEMS_LIMIT);
+        let mut compacted_items = items
+            .iter()
+            .take(OBSERVATION_MEMORY_ITEMS_LIMIT)
+            .map(compact_memory_item)
+            .collect::<Vec<_>>();
+        if omitted > 0 {
+            compacted_items.push(build_omitted_items_marker(omitted));
+        }
+        output.insert("items".to_string(), Value::Array(compacted_items));
+        if omitted > 0 {
+            output.insert("truncated".to_string(), Value::Bool(true));
+            output.insert("omitted_items".to_string(), json!(omitted));
+        }
     }
     Some(Value::Object(output))
+}
+
+/// Memory detail records may contain user-authored content of arbitrary size.
+/// Keep the index fields intact, but bound the one field that can otherwise
+/// dominate a model observation. The full record remains available in the
+/// event/audit stream and can be fetched again with the memory tool.
+fn compact_memory_item(value: &Value) -> Value {
+    let Some(source) = value.as_object() else {
+        return value.clone();
+    };
+    let mut item = source.clone();
+    for key in ["title", "tag", "category"] {
+        if let Some(text) = item.get(key).and_then(Value::as_str) {
+            let (text, _) = truncate_text_head(text, OBSERVATION_MEMORY_TEXT_CHARS);
+            item.insert(key.to_string(), Value::String(text));
+        }
+    }
+    if let Some(content) = item.get("content").and_then(Value::as_str) {
+        let (text, omitted) = truncate_text_head(content, OBSERVATION_MEMORY_CONTENT_CHARS);
+        item.insert("content".to_string(), Value::String(text));
+        if omitted > 0 {
+            item.insert("truncated".to_string(), Value::Bool(true));
+            item.insert("content_omitted_chars".to_string(), json!(omitted));
+        }
+    }
+    Value::Object(item)
 }
 
 /// Reduce a packaged MCP call to a bounded, content-only model result.
@@ -1470,7 +1604,13 @@ fn project_browser_action(data: &Value) -> Option<Value> {
 
 fn project_browser_navigation(data: &Value) -> Option<Value> {
     let map = data.as_object()?;
-    let mut projected = pick_non_empty_fields(map, &["url", "title"]);
+    let mut projected = Map::new();
+    for key in ["url", "title"] {
+        if let Some(value) = map.get(key).and_then(Value::as_str) {
+            let (value, _) = truncate_text_head(value, if key == "url" { 2048 } else { 512 });
+            projected.insert(key.to_string(), Value::String(value));
+        }
+    }
     if projected.is_empty() {
         projected.insert("navigated".to_string(), Value::Bool(true));
     }
@@ -1486,17 +1626,32 @@ fn project_browser_tabs(data: &Value) -> Option<Value> {
     let map = data.as_object()?;
     let mut projected = Map::new();
     if let Some(tabs) = map.get("tabs").and_then(Value::as_array) {
+        let omitted = tabs.len().saturating_sub(OBSERVATION_BROWSER_TABS_LIMIT);
         let tabs = tabs
             .iter()
+            .take(OBSERVATION_BROWSER_TABS_LIMIT)
             .filter_map(Value::as_object)
             .map(|tab| {
-                let mut item = pick_non_empty_fields(tab, &["id", "target_id", "title", "url"]);
+                let mut item = Map::new();
+                for key in ["id", "target_id", "title", "url"] {
+                    if let Some(value) = tab.get(key).and_then(Value::as_str) {
+                        let (value, _) =
+                            truncate_text_head(value, if key == "url" { 2048 } else { 512 });
+                        item.insert(key.to_string(), Value::String(value));
+                    }
+                }
                 if let Some(id) = item.remove("target_id") {
                     item.entry("id".to_string()).or_insert(id);
                 }
                 Value::Object(item)
             })
             .collect::<Vec<_>>();
+        let mut tabs = tabs;
+        if omitted > 0 {
+            tabs.push(build_omitted_items_marker(omitted));
+            projected.insert("truncated".to_string(), Value::Bool(true));
+            projected.insert("omitted_tabs".to_string(), json!(omitted));
+        }
         projected.insert("tabs".to_string(), Value::Array(tabs));
     }
     if let Some(active_id) = map
@@ -1518,12 +1673,23 @@ fn project_browser_observation(data: &Value) -> Option<Value> {
         .or_else(|| map.get("snapshot"))
         .and_then(Value::as_str)
     {
-        projected.insert("text".to_string(), Value::String(content.to_string()));
+        let (text, omitted_chars) = truncate_text_head(content, OBSERVATION_BROWSER_TEXT_CHARS);
+        projected.insert("text".to_string(), Value::String(text));
+        if omitted_chars > 0 {
+            projected.insert("truncated".to_string(), Value::Bool(true));
+            projected.insert("text_omitted_chars".to_string(), json!(omitted_chars));
+            projected.insert("continuation_required".to_string(), Value::Bool(true));
+        }
     } else if let Some(content) = browser_content_text(data) {
-        projected.insert("text".to_string(), Value::String(content));
+        let (text, omitted_chars) = truncate_text_head(&content, OBSERVATION_BROWSER_TEXT_CHARS);
+        projected.insert("text".to_string(), Value::String(text));
+        if omitted_chars > 0 {
+            projected.insert("truncated".to_string(), Value::Bool(true));
+            projected.insert("text_omitted_chars".to_string(), json!(omitted_chars));
+            projected.insert("continuation_required".to_string(), Value::Bool(true));
+        }
     }
     for key in [
-        "refs",
         "truncated",
         "next_cursor",
         "has_more",
@@ -1533,6 +1699,21 @@ fn project_browser_observation(data: &Value) -> Option<Value> {
         if let Some(value) = map.get(key).filter(|value| !value.is_null()) {
             projected.insert(key.to_string(), value.clone());
         }
+    }
+    if let Some(refs) = map.get("refs").and_then(Value::as_array) {
+        let omitted = refs.len().saturating_sub(OBSERVATION_BROWSER_REFS_LIMIT);
+        let mut compacted = refs
+            .iter()
+            .take(OBSERVATION_BROWSER_REFS_LIMIT)
+            .map(compact_browser_ref)
+            .collect::<Vec<_>>();
+        if omitted > 0 {
+            compacted.push(build_omitted_items_marker(omitted));
+            projected.insert("truncated".to_string(), Value::Bool(true));
+            projected.insert("omitted_refs".to_string(), json!(omitted));
+            projected.insert("continuation_required".to_string(), Value::Bool(true));
+        }
+        projected.insert("refs".to_string(), Value::Array(compacted));
     }
     if let Some(artifact) = project_artifact(data) {
         projected.insert("artifact".to_string(), artifact);
@@ -1566,7 +1747,10 @@ fn project_browser_interaction(data: &Value) -> Option<Value> {
     }
     if projected.get("action").and_then(Value::as_str) == Some("evaluate") {
         if let Some(result) = map.get("result").filter(|value| !value.is_null()) {
-            projected.insert("result".to_string(), result.clone());
+            projected.insert(
+                "result".to_string(),
+                compact_browser_value(result, OBSERVATION_BROWSER_EVALUATE_CHARS),
+            );
         }
     }
     Some(Value::Object(projected))
@@ -1585,9 +1769,74 @@ fn project_browser_batch(data: &Value) -> Option<Value> {
     let map = data.as_object()?;
     let mut projected = pick_non_empty_fields(map, &["completed_steps", "failed_step", "url"]);
     if let Some(snapshot) = map.get("snapshot").and_then(Value::as_str) {
-        projected.insert("snapshot".to_string(), Value::String(snapshot.to_string()));
+        let (snapshot, omitted) = truncate_text_head(snapshot, OBSERVATION_BROWSER_TEXT_CHARS);
+        projected.insert("snapshot".to_string(), Value::String(snapshot));
+        if omitted > 0 {
+            projected.insert("truncated".to_string(), Value::Bool(true));
+            projected.insert("snapshot_omitted_chars".to_string(), json!(omitted));
+        }
     }
     Some(Value::Object(projected))
+}
+
+fn compact_browser_ref(value: &Value) -> Value {
+    let Some(source) = value.as_object() else {
+        return value.clone();
+    };
+    let mut item = Map::new();
+    for key in ["ref", "role", "tag"] {
+        if let Some(text) = source.get(key).and_then(Value::as_str) {
+            let (text, _) = truncate_text_head(text, 256);
+            item.insert(key.to_string(), Value::String(text));
+        }
+    }
+    for key in ["name", "selector"] {
+        if let Some(text) = source.get(key).and_then(Value::as_str) {
+            let (text, _) = truncate_text_head(text, 512);
+            item.insert(key.to_string(), Value::String(text));
+        }
+    }
+    for key in ["frame_path", "page_generation"] {
+        if let Some(value) = source.get(key).filter(|value| !value.is_null()) {
+            item.insert(key.to_string(), value.clone());
+        }
+    }
+    Value::Object(item)
+}
+
+fn compact_browser_value(value: &Value, max_chars: usize) -> Value {
+    match value {
+        Value::String(text) => {
+            let (text, omitted) = truncate_text_head(text, max_chars);
+            if omitted == 0 {
+                Value::String(text)
+            } else {
+                json!({"value": text, "truncated": true, "omitted_chars": omitted})
+            }
+        }
+        Value::Array(items) => {
+            let mut projected = items
+                .iter()
+                .take(OBSERVATION_BROWSER_REFS_LIMIT)
+                .map(|item| compact_browser_value(item, max_chars / 2))
+                .collect::<Vec<_>>();
+            if items.len() > projected.len() {
+                projected.push(build_omitted_items_marker(items.len() - projected.len()));
+            }
+            Value::Array(projected)
+        }
+        Value::Object(map) => {
+            let mut projected = Map::new();
+            for (key, child) in map.iter().take(16) {
+                projected.insert(key.clone(), compact_browser_value(child, max_chars / 2));
+            }
+            if map.len() > 16 {
+                projected.insert("__truncated".to_string(), Value::Bool(true));
+            }
+            Value::Object(projected)
+        }
+        _ => value.clone(),
+    }
 }
 
 fn project_self_status(data: &Value) -> Option<Value> {
@@ -1686,6 +1935,311 @@ fn project_command_success(data: &Value) -> Option<Value> {
     }
 }
 
+/// A command-session poll is already incremental. Keep only the cursor,
+/// status and newly returned stream deltas; the broker/audit payload retains
+/// process metadata and complete tails.
+fn project_command_session_success(data: &Value) -> Option<Value> {
+    let map = model_tool_result_data_map(data)?;
+    let mut projected = pick_non_empty_fields(
+        map,
+        &[
+            "command_session_id",
+            "session_id",
+            "status",
+            "seq",
+            "exit_code",
+            "timed_out",
+            "dropped",
+            "output_truncated",
+            "next_seq",
+        ],
+    );
+    for key in ["stdout", "stderr", "pty", "error"] {
+        if let Some(value) = map
+            .get(key)
+            .filter(|value| !value.is_null() && !is_empty_string(value))
+        {
+            let value = if let Some(text) = value.as_str() {
+                // Polls should carry only the delta. A defensive cap prevents
+                // a provider that ignores after_seq from replaying history.
+                let compacted =
+                    truncate_tool_result_string(text, 1150, 560, TOOL_RESULT_TRUNCATION_MARKER);
+                if compacted.chars().count() < text.chars().count() {
+                    projected.insert("output_truncated".to_string(), Value::Bool(true));
+                }
+                Value::String(compacted)
+            } else {
+                value.clone()
+            };
+            projected.insert(key.to_string(), value);
+        }
+    }
+    if projected.is_empty() {
+        None
+    } else {
+        Some(Value::Object(projected))
+    }
+}
+
+fn project_read_file_success(data: &Value) -> Option<Value> {
+    let map = model_tool_result_data_map(data)?;
+    // Saved-result reads use a different compact shape and must retain their
+    // byte cursor for the next read_file call.
+    if map.get("result_read") == Some(&Value::Bool(true)) {
+        let mut projected = pick_non_empty_fields(
+            map,
+            &[
+                "result_read",
+                "path",
+                "content",
+                "offset",
+                "next_offset",
+                "bytes_read",
+                "total_bytes",
+                "truncated",
+                "has_more",
+                "query",
+            ],
+        );
+        copy_pagination_fields(&mut projected, map);
+        return Some(Value::Object(projected));
+    }
+    compact_read_file_observation_data(map)
+}
+
+fn project_search_content_success(data: &Value) -> Option<Value> {
+    let map = model_tool_result_data_map(data)?;
+    compact_search_observation_data(map)
+}
+
+fn project_web_fetch_success(data: &Value) -> Option<Value> {
+    let map = model_tool_result_data_map(data)?;
+    let mut projected = pick_non_empty_fields(
+        map,
+        &[
+            "url",
+            "final_url",
+            "status",
+            "title",
+            "content_type",
+            "content_kind",
+            "format",
+            "truncated",
+            "cached",
+        ],
+    );
+    if let Some(content) = map.get("content").and_then(Value::as_str) {
+        let content_chars = content.chars().count();
+        let compacted =
+            truncate_tool_result_string(content, 6_000, 6_000, TOOL_RESULT_TRUNCATION_MARKER);
+        let omitted = content_chars.saturating_sub(compacted.chars().count());
+        projected.insert("content".to_string(), Value::String(compacted));
+        if omitted > 0 {
+            projected.insert("content_omitted_chars".to_string(), json!(omitted));
+            projected.insert("continuation_required".to_string(), Value::Bool(true));
+            projected.insert(
+                "continuation_hint".to_string(),
+                Value::String(
+                    "retry_web_fetch_with_a_narrower_page_or_max_chars_window".to_string(),
+                ),
+            );
+        }
+    }
+    if let Some(warning) = map
+        .get("warning")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        projected.insert(
+            "warning".to_string(),
+            Value::String(truncate_tool_result_string(warning, 320, 0, "…")),
+        );
+    }
+    copy_pagination_fields(&mut projected, map);
+    Some(Value::Object(projected))
+}
+
+fn project_read_image_success(data: &Value) -> Option<Value> {
+    let map = model_tool_result_data_map(data)?;
+    let mut projected = pick_non_empty_fields(map, &["path", "media_kind", "size_bytes"]);
+    let result = map.get("result").and_then(Value::as_object);
+    if let Some(result) = result {
+        for key in [
+            "duration_ms",
+            "frame_count",
+            "total_frame_count",
+            "has_audio",
+            "requested_frame_rate",
+            "applied_frame_rate",
+        ] {
+            if let Some(value) = result.get(key).filter(|value| !value.is_null()) {
+                projected.insert(key.to_string(), value.clone());
+            }
+        }
+        if let Some(attachments) = result.get("attachments").and_then(Value::as_array) {
+            let mut artifacts = attachments
+                .iter()
+                .take(8)
+                .filter_map(project_read_image_attachment)
+                .collect::<Vec<_>>();
+            if attachments.len() > 8 {
+                artifacts.push(build_omitted_items_marker(attachments.len() - 8));
+            }
+            if !artifacts.is_empty() {
+                projected.insert("artifacts".to_string(), Value::Array(artifacts));
+            }
+        }
+    }
+    if projected.is_empty() {
+        None
+    } else {
+        Some(Value::Object(projected))
+    }
+}
+
+fn project_read_image_attachment(value: &Value) -> Option<Value> {
+    let map = value.as_object()?;
+    let mut projected = pick_non_empty_fields(
+        map,
+        &["name", "content_type", "mime_type", "public_path", "bytes"],
+    );
+    if let Some(mime) = projected.remove("mime_type") {
+        projected.entry("content_type".to_string()).or_insert(mime);
+    }
+    (!projected.is_empty()).then_some(Value::Object(projected))
+}
+
+fn project_subagent_control_success(data: &Value) -> Option<Value> {
+    let map = model_tool_result_data_map(data)?;
+    let mut projected = pick_non_empty_fields(
+        map,
+        &[
+            "run_id",
+            "session_id",
+            "dispatch_id",
+            "parent_id",
+            "status",
+            "completion_mode",
+            "completed_reason",
+            "all_finished",
+            "updated_total",
+            "reply",
+            "reply_pending",
+            "error",
+        ],
+    );
+    for key in ["summary", "next_step_hint"] {
+        if let Some(text) = map
+            .get(key)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+        {
+            projected.insert(
+                key.to_string(),
+                Value::String(truncate_tool_result_string(text, 320, 0, "…")),
+            );
+        }
+    }
+    for key in ["items", "selected_items", "settled_items"] {
+        if let Some(items) = map.get(key).and_then(Value::as_array) {
+            let mut compacted = items
+                .iter()
+                .take(16)
+                .map(compact_subagent_card)
+                .collect::<Vec<_>>();
+            if items.len() > 16 {
+                compacted.push(build_omitted_items_marker(items.len() - 16));
+            }
+            projected.insert(key.to_string(), Value::Array(compacted));
+        }
+    }
+    for key in ["winner_item", "selected_item"] {
+        if let Some(item) = map.get(key).and_then(Value::as_object) {
+            projected.insert(
+                key.to_string(),
+                compact_subagent_card(&Value::Object(item.clone())),
+            );
+        }
+    }
+    if let Some(messages) = map.get("messages").and_then(Value::as_array) {
+        let mut compacted = messages
+            .iter()
+            .take(24)
+            .map(compact_subagent_message)
+            .collect::<Vec<_>>();
+        if messages.len() > 24 {
+            compacted.push(build_omitted_items_marker(messages.len() - 24));
+        }
+        projected.insert("messages".to_string(), Value::Array(compacted));
+    }
+    if let Some(counts) = map.get("counts").and_then(Value::as_object) {
+        projected.insert(
+            "counts".to_string(),
+            Value::Object(pick_non_empty_fields(
+                counts,
+                &[
+                    "total", "done", "success", "failed", "queued", "running", "selected",
+                ],
+            )),
+        );
+    }
+    Some(Value::Object(projected))
+}
+
+fn compact_subagent_card(value: &Value) -> Value {
+    let Some(map) = value.as_object() else {
+        return Value::Null;
+    };
+    let mut projected = pick_non_empty_fields(
+        map,
+        &["session_id", "run_id", "dispatch_id", "task_path", "status"],
+    );
+    for key in ["summary", "result_preview", "result", "error"] {
+        if let Some(text) = map
+            .get(key)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+        {
+            projected.insert(
+                "summary".to_string(),
+                Value::String(truncate_tool_result_string(text, 320, 0, "…")),
+            );
+            break;
+        }
+    }
+    Value::Object(projected)
+}
+
+fn compact_subagent_message(value: &Value) -> Value {
+    let Some(map) = value.as_object() else {
+        return json!({"content": "[unsupported message]"});
+    };
+    let mut projected = pick_non_empty_fields(map, &["id", "role", "type", "status"]);
+    let content = map
+        .get("content")
+        .or_else(|| map.get("text"))
+        .map(|value| match value {
+            Value::String(text) => {
+                Value::String(truncate_tool_result_string(text.trim(), 320, 0, "…"))
+            }
+            Value::Array(parts) => {
+                let text = parts
+                    .iter()
+                    .filter_map(|part| part.get("text").and_then(Value::as_str))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                Value::String(truncate_tool_result_string(&text, 320, 0, "…"))
+            }
+            _ => Value::String("[structured message]".to_string()),
+        })
+        .unwrap_or_else(|| Value::String(String::new()));
+    projected.insert("content".to_string(), content);
+    Value::Object(projected)
+}
+
 fn project_command_row(row: &Map<String, Value>) -> Value {
     let mut projected = Map::new();
     copy_first_present(
@@ -1736,8 +2290,27 @@ fn project_file_write_success(data: &Value) -> Option<Value> {
     Some(Value::Object(projected))
 }
 
-fn project_list_files_success(data: &Value) -> Option<Value> {
+/// Built-in file tools return the shared `{action, state, summary, data}`
+/// carrier. Audit history retains that carrier, while semantic projections
+/// must read its inner `data`, where the actual file entries live. Other
+/// providers can return data directly, so both forms remain accepted.
+fn model_tool_result_data_map(data: &Value) -> Option<&Map<String, Value>> {
     let map = data.as_object()?;
+    // Only unwrap the runtime's explicit model-tool carrier. Many providers
+    // legitimately return a business field named `data`; unwrapping every
+    // object would silently discard sibling fields from those results.
+    let is_carrier = map.get("action").is_some()
+        && (map.get("state").is_some() || map.get("summary").is_some())
+        && map.get("data").and_then(Value::as_object).is_some();
+    Some(if is_carrier {
+        map.get("data").and_then(Value::as_object).unwrap_or(map)
+    } else {
+        map
+    })
+}
+
+fn project_list_files_success(data: &Value) -> Option<Value> {
+    let map = model_tool_result_data_map(data)?;
     let mut projected = Map::new();
     if let Some(items) = map.get("items").filter(|value| !value.is_null()) {
         projected.insert("items".to_string(), items.clone());
@@ -1747,10 +2320,15 @@ fn project_list_files_success(data: &Value) -> Option<Value> {
 }
 
 fn project_glob_success(data: &Value) -> Option<Value> {
-    let map = data.as_object()?;
+    let map = model_tool_result_data_map(data)?;
     let mut projected = Map::new();
     if let Some(paths) = map.get("paths").filter(|value| !value.is_null()) {
         projected.insert("paths".to_string(), paths.clone());
+    }
+    for key in ["count", "total_matched", "truncated"] {
+        if let Some(value) = map.get(key).filter(|value| !value.is_null()) {
+            projected.insert(key.to_string(), value.clone());
+        }
     }
     copy_pagination_fields(&mut projected, map);
     Some(Value::Object(projected))
@@ -2103,7 +2681,11 @@ fn compact_search_observation_data(map: &Map<String, Value>) -> Option<Value> {
                     item.insert(key.to_string(), value.clone());
                 }
             }
-            if let Some(content) = hit_obj.get("content").and_then(Value::as_str) {
+            if let Some(content) = hit_obj
+                .get("content")
+                .or_else(|| hit_obj.get("content_head"))
+                .and_then(Value::as_str)
+            {
                 let (content_head, omitted_chars) =
                     truncate_text_head(content, OBSERVATION_SEARCH_CONTENT_HEAD_CHARS);
                 if !content_head.trim().is_empty() {
@@ -2112,6 +2694,16 @@ fn compact_search_observation_data(map: &Map<String, Value>) -> Option<Value> {
                 if omitted_chars > 0 {
                     item.insert("content_omitted_chars".to_string(), json!(omitted_chars));
                 }
+            }
+            if let Some(omitted) = hit_obj.get("content_omitted_chars") {
+                item.entry("content_omitted_chars".to_string())
+                    .or_insert_with(|| omitted.clone());
+            }
+            if let Some(content_head) = hit_obj.get("content_head").and_then(Value::as_str) {
+                item.insert(
+                    "content_head".to_string(),
+                    Value::String(content_head.to_string()),
+                );
             }
             for key in ["before", "after"] {
                 let Some(lines) = hit_obj.get(key).and_then(Value::as_array) else {
@@ -2218,6 +2810,15 @@ fn compact_read_file_observation_data(map: &Map<String, Value>) -> Option<Value>
             "continuation_hint".to_string(),
             Value::String(TRUNCATION_CONTINUATION_HINT.to_string()),
         );
+    }
+    for key in [
+        "read_output_omitted_bytes",
+        "continuation_required",
+        "continuation_hint",
+    ] {
+        if let Some(value) = map.get(key).filter(|value| !value.is_null()) {
+            compacted.insert(key.to_string(), value.clone());
+        }
     }
     let files = map.get("files").and_then(Value::as_array).or_else(|| {
         map.get("meta")
@@ -2513,7 +3114,17 @@ fn truncate_observation_data(
         }
         Value::Array(items) => {
             let mut truncated = false;
-            if items.len() > OBSERVATION_MAX_ARRAY_ITEMS {
+            // Semantic projections may already have inserted an explicit
+            // omission marker with a tool-specific limit (for example the
+            // browser keeps 32 refs plus one marker). Do not apply the
+            // generic 32-item sampler again and silently discard that marker.
+            let has_omission_marker = items
+                .last()
+                .and_then(Value::as_object)
+                .and_then(|marker| marker.get("__truncated"))
+                .and_then(Value::as_bool)
+                == Some(true);
+            if items.len() > OBSERVATION_MAX_ARRAY_ITEMS && !has_omission_marker {
                 let original_len = items.len();
                 let head_items = OBSERVATION_ARRAY_HEAD_ITEMS.min(original_len);
                 let tail_items = OBSERVATION_ARRAY_TAIL_ITEMS.min(original_len - head_items);

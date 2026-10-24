@@ -37,6 +37,7 @@ pub(crate) mod stress_model;
 #[cfg(test)]
 pub(crate) mod test_support;
 pub(crate) mod thread_admission;
+mod thread_chat_summary;
 pub(crate) mod thread_history;
 #[cfg(test)]
 mod thread_lifecycle_tests;

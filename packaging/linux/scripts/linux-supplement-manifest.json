@@ -10,7 +10,8 @@
     "rgRoot": "opt/rg",
     "ffmpegRoot": "opt/ffmpeg",
     "nodeRoot": "opt/node",
-    "remotionRoot": "opt/remotion"
+    "remotionRoot": "opt/remotion",
+    "browserRoot": "opt/browser"
   },
   "node": {
     "version": "16.20.2",
@@ -53,9 +54,41 @@
       "The package includes Remotion's Chrome Headless Shell so Studio and renderer commands work offline; Playwright Chromium remains available separately for browser tools."
     ]
   },
+  "browser": {
+    "name": "Chromium-family offline browser",
+    "version": "122.0.6261.111 / 120.0.6099.28",
+    "source": "Chrome for Testing and Playwright official archives",
+    "install": true,
+    "executable": "chrome-linux64/chrome",
+    "archives": {
+      "amd64": {
+        "fileName": "chrome-122.0.6261.111-linux64.zip",
+        "url": "https://storage.googleapis.com/chrome-for-testing-public/122.0.6261.111/linux64/chrome-linux64.zip",
+        "sha256": "b059c80216abd74f25a35c08c6ad601a30dfdb09588af27828a9bc7adde65bd3",
+        "elfMachine": "x86-64",
+        "executable": "chrome-linux64/chrome",
+        "browserVersion": "122.0.6261.111"
+      },
+      "arm64": {
+        "fileName": "chromium-120.0.6099.28-linux-arm64.zip",
+        "url": "https://cdn.playwright.dev/builds/chromium/1091/chromium-linux-arm64.zip",
+        "sha256": "ef686d543ddf32d5d9cc38e1fead33565ef4e4c537d67aa5d6a99f327fbcf351",
+        "elfMachine": "AArch64",
+        "executable": "chrome-linux/chrome",
+        "browserName": "Chromium",
+        "browserVersion": "120.0.6099.28"
+      }
+    },
+    "notes": [
+      "amd64 includes the official Chrome for Testing 122 Linux archive under opt/browser.",
+      "arm64 uses the Playwright Chromium revision 1091 linux-arm64 archive, staged under opt/browser and usable offline."
+    ]
+  },
   "runtime": {
     "baseMinimumGlibc": "2.17",
-    "remotionMinimumGlibc": "2.35",
+    "compositorMinimumGlibc": "2.27",
+    "browserMinimumGlibc": "2.17",
+    "remotionMinimumGlibc": "2.27",
     "baseBuilder": "ubuntu:18.04",
     "remotionBuilder": "ubuntu:22.04"
   },
@@ -190,7 +223,8 @@
     "rgRoot": "opt/rg",
     "ffmpegRoot": "opt/ffmpeg",
     "nodeRoot": "opt/node",
-    "remotionRoot": "opt/remotion"
+    "remotionRoot": "opt/remotion",
+    "browserRoot": "opt/browser"
   },
   "r2": {
     "version": "6.2.4",

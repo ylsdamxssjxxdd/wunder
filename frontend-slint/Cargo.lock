@@ -7495,6 +7495,7 @@ name = "wunder-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "chrono",
  "regex",
  "serde",
@@ -7599,6 +7600,7 @@ dependencies = [
  "sha1",
  "sha2",
  "shell-words",
+ "tempfile",
  "tokio",
  "tokio-rustls",
  "tokio-stream",
@@ -7617,6 +7619,7 @@ dependencies = [
  "wunder-core",
  "x11-dl",
  "zip 0.6.6",
+ "zstd",
 ]
 
 [[package]]

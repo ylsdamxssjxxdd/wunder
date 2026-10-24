@@ -175,6 +175,16 @@ impl ThreadHistoryStore {
             "DELETE FROM thread_root_counts WHERE rollout_id=?1",
             [rollout_id],
         )?;
+        for table in [
+            "thread_chat_heads",
+            "thread_chat_checkpoints",
+            "thread_chat_projection_state",
+        ] {
+            tx.execute(
+                &format!("DELETE FROM {table} WHERE rollout_id=?1"),
+                [rollout_id],
+            )?;
+        }
         tx.execute(
             "DELETE FROM thread_history_projection_state WHERE rollout_id=?1",
             [rollout_id],
@@ -222,6 +232,14 @@ impl ThreadHistoryStore {
             bail!("invalid history lineage segment count");
         }
         validate_id("rollout_id", current)?;
+        // Ordinary threads need no temporary views or schema reparsing.
+        if segments.len() == 1
+            && segments[0].rollout_id == current
+            && segments[0].start_ordinal == 0
+            && segments[0].end_ordinal.is_none()
+        {
+            return Ok(());
+        }
         let quote = |v: &str| format!("'{}'", v.replace('\'', "''"));
         let current = quote(current);
         let condition = |column: &str, segment: &HistorySegment| -> Result<String> {
@@ -255,8 +273,30 @@ impl ThreadHistoryStore {
                 (SELECT COUNT(*) FROM main.thread_items i WHERE {range} AND COALESCE(i.root_turn_id,i.turn_id)=c.root_turn_id AND i.visible=1 AND i.item_type!='user_message') AS workflow_items
                 FROM main.thread_root_counts c WHERE c.rollout_id={physical}"))
         }).collect::<Result<Vec<_>>>()?.join(" UNION ALL ");
-        conn.execute_batch(&format!("CREATE TEMP VIEW thread_items AS {items}; CREATE TEMP VIEW thread_turns AS {turns}; CREATE TEMP VIEW thread_root_counts AS {counts};"))?;
+        let chat = segments.iter().map(|s| -> Result<String> {
+            let physical = quote(&s.rollout_id);
+            if let Some(end) = s.end_ordinal {
+                Ok(format!("SELECT {current} AS rollout_id,h.root_turn_id,h.rollout_ordinal,h.summary_json
+                    FROM main.thread_chat_heads h WHERE h.rollout_id={physical}
+                    AND h.rollout_ordinal<{} UNION ALL
+                    SELECT {current} AS rollout_id,h.root_turn_id,c.rollout_ordinal,c.summary_json
+                    FROM main.thread_chat_heads h JOIN main.thread_chat_checkpoints c
+                    ON c.rollout_id=h.rollout_id AND c.root_turn_id=h.root_turn_id
+                    AND c.rollout_ordinal=(SELECT MAX(p.rollout_ordinal) FROM main.thread_chat_checkpoints p
+                        WHERE p.rollout_id=h.rollout_id AND p.root_turn_id=h.root_turn_id AND p.rollout_ordinal<{})
+                    WHERE h.rollout_id={physical} AND h.rollout_ordinal>={}",
+                    sqlite_i64(end)?,sqlite_i64(end)?,sqlite_i64(end)?))
+            } else {
+                Ok(format!("SELECT {current} AS rollout_id,root_turn_id,rollout_ordinal,summary_json
+                    FROM main.thread_chat_heads WHERE rollout_id={physical}"))
+            }
+        }).collect::<Result<Vec<_>>>()?.join(" UNION ALL ");
+        conn.execute_batch(&format!("CREATE TEMP VIEW thread_items AS {items}; CREATE TEMP VIEW thread_turns AS {turns}; CREATE TEMP VIEW thread_root_counts AS {counts}; CREATE TEMP VIEW thread_chat_heads AS {chat};"))?;
         Ok(())
+    }
+
+    pub(crate) fn ensure_chat_summary(&self, rollout_id: &str) -> Result<()> {
+        super::thread_chat_summary::ensure_ready(&mut self.connect()?, rollout_id)
     }
 
     /// Returns the existing projection waterline without reading a rollout.
@@ -364,6 +404,7 @@ impl ThreadHistoryStore {
         jsonl: &[u8],
     ) -> Result<ProjectionProgress> {
         let mut conn = self.connect()?;
+        super::thread_chat_summary::ensure_ready(&mut conn, rollout_id)?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         if load_state(&tx, rollout_id)? != current {
             bail!("thread history projection advanced concurrently; retry the batch");
@@ -432,6 +473,11 @@ impl ThreadHistoryStore {
                     .ok_or_else(|| anyhow!("thread history revision overflow"))?;
             }
             save_state(&tx, rollout_id, state)?;
+            super::thread_chat_summary::save_position(
+                &tx,
+                rollout_id,
+                sqlite_i64(state.next_rollout_ordinal)?,
+            )?;
         }
         tx.commit()?;
 
@@ -862,7 +908,7 @@ fn initialize_schema(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_thread_history_turns_forward_start
             ON thread_turns(rollout_id, start_ordinal);",
     )?;
-    Ok(())
+    super::thread_chat_summary::initialize(conn)
 }
 
 fn load_state(conn: &Connection, rollout_id: &str) -> Result<ProjectionState> {
@@ -1049,7 +1095,8 @@ fn project_completed_item(
         .unwrap_or_default();
     let ordinal = sqlite_i64(envelope.ordinal)?;
     let item_json = serde_json::to_string(item)?;
-    let preview_json = serde_json::to_string(&item_preview(item))?;
+    let preview = item_preview(item);
+    let preview_json = serde_json::to_string(&preview)?;
     let payload = item.get("payload").unwrap_or(item);
     let visible = payload
         .get("visibility")
@@ -1108,6 +1155,17 @@ fn project_completed_item(
     }
 
     if let Some(turn_id) = turn_id.as_deref() {
+        super::thread_chat_summary::project_item(
+            tx,
+            rollout_id,
+            root_turn_id.as_deref().unwrap_or(turn_id),
+            turn_id,
+            item_id,
+            item_type,
+            ordinal,
+            visible,
+            &preview,
+        )?;
         tx.execute("INSERT INTO thread_root_counts(rollout_id,root_turn_id,visible_items,workflow_items)
             VALUES(?1,?2,?3,?4) ON CONFLICT(rollout_id,root_turn_id) DO UPDATE SET
             visible_items=visible_items+excluded.visible_items, workflow_items=workflow_items+excluded.workflow_items",

@@ -39,7 +39,7 @@ require_command() { command -v "$1" >/dev/null 2>&1 || fail "required command is
 
 require_file "$manifest_path"
 require_file "$repo_root/config/wunder-example.yaml"
-for tool in python3 curl tar gzip sha256sum make gcc strip file find; do
+for tool in python3 curl tar gzip unzip sha256sum make gcc strip file find; do
   require_command "$tool"
 done
 
@@ -70,6 +70,7 @@ emit(
     ffmpeg=data["ffmpeg"],
     node=data["node"],
     remotion=data["remotion"],
+    browser=data.get("browser", {}),
     fonts=data.get("fonts", []),
     install=data["install"],
 )
@@ -83,11 +84,17 @@ import json, sys
 payload = json.loads(sys.argv[1])
 current = payload
 for token in sys.argv[2].split("."):
+    if current is None:
+        print("null")
+        raise SystemExit
     if isinstance(current, list):
         current = current[int(token)]
     else:
         current = current[token]
-print(current if not isinstance(current, (dict, list)) else json.dumps(current, ensure_ascii=False))
+if current is None:
+    print("null")
+else:
+    print(current if not isinstance(current, (dict, list)) else json.dumps(current, ensure_ascii=False))
 PYEOF
 }
 
@@ -117,6 +124,19 @@ ffmpeg_archive_sha256="$(json_field "ffmpeg.archives.$arch.sha256")"
 node_version="$(json_field node.version)"
 remotion_version="$(json_field remotion.version)"
 remotion_compositor_package="$(json_field "remotion.compositorPackages.$arch")"
+browser_enabled="$(json_field browser.install)"
+browser_version="$(json_field browser.version)"
+browser_archive_version="$(json_field "browser.archives.$arch.browserVersion")"
+if [[ -n "$browser_archive_version" && "$browser_archive_version" != "null" ]]; then
+  browser_version="$browser_archive_version"
+fi
+browser_archive_url="$(json_field "browser.archives.$arch.url")"
+browser_archive_file="$(json_field "browser.archives.$arch.fileName")"
+browser_archive_sha256="$(json_field "browser.archives.$arch.sha256")"
+browser_executable_rel="$(json_field "browser.archives.$arch.executable")"
+if [[ -z "$browser_executable_rel" || "$browser_executable_rel" = "null" ]]; then
+  browser_executable_rel="$(json_field browser.executable)"
+fi
 
 [[ -n "$python_archive_url" && "$python_archive_url" != "null" ]] || fail "no python archive for $arch"
 [[ -n "$rg_archive_url" && "$rg_archive_url" != "null" ]] || fail "no ripgrep archive for $arch"
@@ -143,6 +163,7 @@ rg_root="$package_root/opt/rg"
 ffmpeg_root="$package_root/opt/ffmpeg"
 node_root="$package_root/opt/node"
 remotion_root="$package_root/opt/remotion"
+browser_root="$package_root/opt/browser"
 remotion_payload="${WUNDER_REMOTION_PAYLOAD:-}"
 [[ -n "$remotion_payload" && -d "$remotion_payload/opt/node" && -d "$remotion_payload/opt/remotion" ]] || fail "WUNDER_REMOTION_PAYLOAD must contain opt/node and opt/remotion"
 rm -rf "$stage_dir"
@@ -375,6 +396,28 @@ else
 fi
 chmod 0755 "$ffmpeg_bin"
 
+# A pinned Chromium-family archive is bundled for every Linux architecture so
+# Remotion and browser tools have a deterministic offline browser.
+browser_bundled=false
+if [[ "$browser_enabled" = "True" || "$browser_enabled" = "true" ]] && [[ -n "$browser_archive_url" && "$browser_archive_url" != "null" ]]; then
+  log "staging Chrome $browser_version"
+  obtain_file "$browser_archive_url" "$downloads_dir/$browser_archive_file" "$browser_archive_sha256"
+  browser_extract="$stage_dir/browser-extract"
+  mkdir -p "$browser_extract"
+  unzip -q "$downloads_dir/$browser_archive_file" -d "$browser_extract"
+  browser_source="$browser_extract/$browser_executable_rel"
+  [[ -f "$browser_source" ]] || fail "Chrome executable missing after extraction: $browser_source"
+  browser_machine="$(file -bL "$browser_source")"
+  echo "$browser_machine" | grep -qi "$elf_machine" || fail "Chrome has wrong architecture (expected $elf_machine): $browser_machine"
+  mkdir -p "$browser_root"
+  cp -a "$browser_extract/." "$browser_root/"
+  chmod 0755 "$browser_root/$browser_executable_rel"
+  browser_bundled=true
+  rm -rf "$browser_extract"
+else
+  log "no bundled Chromium-family archive for $arch; Playwright/system-browser fallback remains available"
+fi
+
 log "merging Remotion payload from $remotion_payload"
 cp -a "$remotion_payload/opt/node/." "$node_root/"
 cp -a "$remotion_payload/opt/remotion/." "$remotion_root/"
@@ -409,6 +452,7 @@ Ripgrep: $rg_flavor $rg_version
 FFmpeg: $ffmpeg_flavor $ffmpeg_version (opt/ffmpeg/bin/ffmpeg)
 Node.js: $node_version (opt/node/bin/node, npm, npx)
 Remotion: $remotion_version with $remotion_compositor_package (opt/remotion/bin/remotion)
+Browser: $browser_version at opt/browser/$browser_executable_rel (when bundled)
 Browsers: Playwright Chromium in opt/python/ms-playwright (when bundled)
 
 Usage:
@@ -416,7 +460,7 @@ Usage:
 2. For manual installation, extract into WUNDER_HOME (default: ~/.wunder),
    including when the Pupa is distributed as an AppImage.
 3. Ensure the target now contains opt/python, opt/git, opt/rg, opt/ffmpeg,
-   opt/node and opt/remotion
+   opt/node and opt/remotion (and opt/browser on amd64)
    (plus opt/r2 when WUNDER_SUPPLEMENT_R2_ARCHIVE was provided).
 4. Start the Pupa or Helm; both prepend the shared opt/python,
     opt/git, opt/rg, opt/ffmpeg, opt/node and opt/remotion to PATH automatically.
@@ -481,6 +525,14 @@ output = {
         "cli": manifest["install"]["remotionRoot"] + "/bin/remotion",
         "compositor": manifest["remotion"]["compositorPackages"][arch],
         "browserPath": manifest["install"]["remotionRoot"] + "/browser-path",
+    },
+    "browser": {
+        "name": manifest.get("browser", {}).get("name", ""),
+        "version": (manifest.get("browser", {}).get("archives", {}).get(arch, {}).get("browserVersion") or manifest.get("browser", {}).get("version", "")) if isinstance(manifest.get("browser", {}).get("archives", {}).get(arch), dict) else manifest.get("browser", {}).get("version", ""),
+        "bundled": os.path.isdir(os.path.join(os.path.dirname(destination), manifest["install"].get("browserRoot", "opt/browser"))),
+        "root": manifest["install"].get("browserRoot", "opt/browser"),
+        "executable": (manifest["install"].get("browserRoot", "opt/browser") + "/" + ((manifest.get("browser", {}).get("archives", {}).get(arch, {}).get("executable") or manifest.get("browser", {}).get("executable", "")))) if os.path.isdir(os.path.join(os.path.dirname(destination), manifest["install"].get("browserRoot", "opt/browser"))) else None,
+        "url": manifest.get("browser", {}).get("archives", {}).get(arch, {}).get("url") if isinstance(manifest.get("browser", {}).get("archives", {}).get(arch), dict) else None,
     },
     "r2": {
         "version": manifest.get("r2", {}).get("version", ""),

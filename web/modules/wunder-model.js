@@ -5,6 +5,7 @@ const WUNDER_MODEL = {
   id: "wunder",
   url: "models/wunder.glb?v=20261018-11",
   view: [0.02, -4.88, 0.01],
+  size: 0.6,
 };
 
 let viewer = null;
@@ -14,6 +15,15 @@ const labels = () => Object.fromEntries(
   ["modelLabel", "loading", "loadFailed", "unavailable", "retry"]
     .map((key) => [key, t(`wunderModel.${key}`)])
 );
+
+// Shared by the bridge panel and the standalone /bridge/wunder-model.html page.
+export function mountWunderModel(host) {
+  return mountWunderModelViewer(host, {
+    assetBase: new URL("../third/", import.meta.url).href,
+    labels: labels(),
+    model: WUNDER_MODEL,
+  });
+}
 
 export function toggleWunderModelPanel(active) {
   if (!active) {
@@ -42,11 +52,7 @@ export function toggleWunderModelPanel(active) {
   mountTimer = window.setTimeout(() => {
     mountTimer = 0;
     if (viewer || !document.getElementById("wunderModelMount")) return;
-    viewer = mountWunderModelViewer(host, {
-      assetBase: new URL("../third/", import.meta.url).href,
-      labels: labels(),
-      model: WUNDER_MODEL,
-    });
+    viewer = mountWunderModel(host);
   }, 800);
 }
 

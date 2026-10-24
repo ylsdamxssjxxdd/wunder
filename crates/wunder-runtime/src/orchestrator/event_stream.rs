@@ -10,7 +10,8 @@ pub(super) enum StreamSignal {
 fn should_backpressure_online_stream_event(event_type: &str) -> bool {
     matches!(
         event_type,
-        "llm_output_delta"
+        "thread_item_tail"
+            | "llm_output_delta"
             | "thread_item_delta"
             | "command_session_delta"
             | "command_session_start"
@@ -43,6 +44,9 @@ pub(super) struct EventEmitter {
     usage: Arc<ParkingMutex<TokenUsage>>,
     model_requests: Arc<ParkingMutex<i64>>,
     account_credits_consumed: Arc<ParkingMutex<i64>>,
+    /// UTF-16 cursors for ephemeral assistant tails in the active request.
+    /// Completed items remain the durable source of truth.
+    tail_offsets: Arc<ParkingMutex<HashMap<(String, String), usize>>>,
 }
 
 impl EventEmitter {
@@ -92,6 +96,7 @@ impl EventEmitter {
             })),
             model_requests: Arc::new(ParkingMutex::new(0)),
             account_credits_consumed: Arc::new(ParkingMutex::new(0)),
+            tail_offsets: Arc::new(ParkingMutex::new(HashMap::new())),
         }
     }
 
@@ -165,7 +170,6 @@ impl EventEmitter {
         // cursor ahead of its own event in the wire queue.
         let _emit_guard = self.emit_lock.lock().await;
         let timestamp = Utc::now();
-        let event_id = self.next_event_id.fetch_add(1, AtomicOrdering::SeqCst);
         let mut data = self.with_client_message_id(data);
         if let Some(map) = data.as_object_mut() {
             if let Some(context) = self.turn_context.lock().as_object() {
@@ -174,6 +178,13 @@ impl EventEmitter {
                 }
             }
         }
+        // The immutable assistant item is committed from the `llm_output`
+        // event before the executor appends its model-context snapshot.  The
+        // latter may carry the final turn aggregate, but it intentionally
+        // cannot replace a completed item.  Put the bounded presentation
+        // metrics on the output event itself so a reopened chat bubble keeps
+        // context, quota, timing and speed information.
+        self.enrich_llm_output_message_stats(event_type, &mut data);
         // Incremental text and progress are live-only. The completed event
         // below contains the semantic body used to restore a reopened thread.
         if let Some(item) =
@@ -209,6 +220,24 @@ impl EventEmitter {
                 map.insert("source_event".into(), json!(event_type));
             }
         }
+        // The generic delta envelope is retained for CLI and legacy consumers.
+        // Chat additionally receives a stable item identity and an append
+        // cursor, so it can render reasoning and answer text before the final
+        // immutable assistant item is committed.
+        for tail_data in self.llm_output_tails(event_type, &data) {
+            let tail_event = StreamEvent {
+                event: "thread_item_tail".into(),
+                data: enrich_event_payload(tail_data, Some(&self.session_id), timestamp),
+                id: Some(
+                    self.next_event_id
+                        .fetch_add(1, AtomicOrdering::SeqCst)
+                        .to_string(),
+                ),
+                timestamp: Some(timestamp),
+            };
+            self.enqueue_event(&tail_event, false).await;
+        }
+        let event_id = self.next_event_id.fetch_add(1, AtomicOrdering::SeqCst);
         let payload = enrich_event_payload(data, Some(&self.session_id), timestamp);
         let online_event_type = if event_type.ends_with("_delta") {
             "thread_item_delta"
@@ -228,6 +257,126 @@ impl EventEmitter {
         }
         self.enqueue_event(&event, false).await;
         event
+    }
+
+    fn enrich_llm_output_message_stats(&self, event_type: &str, data: &mut Value) {
+        if event_type != "llm_output" {
+            return;
+        }
+        let Some(map) = data.as_object_mut() else {
+            return;
+        };
+        let usage = map.get("usage").cloned().unwrap_or(Value::Null);
+        let cumulative = self.accumulated_usage();
+        // Mock/replay providers emit the output before their diagnostic usage
+        // event. Keep the current response as a useful round snapshot rather
+        // than persisting an empty aggregate in that ordering.
+        let round_usage = if cumulative.total > 0 || cumulative.input > 0 || cumulative.output > 0 {
+            json!(cumulative)
+        } else {
+            usage.clone()
+        };
+        let mut stats = map
+            .get("message_stats")
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default();
+        stats.insert("usage".into(), usage.clone());
+        stats.insert("round_usage".into(), round_usage);
+        stats.insert(
+            "model_request_count".into(),
+            json!(self.accumulated_model_requests().max(0)),
+        );
+        stats.insert(
+            "account_credits_consumed".into(),
+            json!(self
+                .accumulated_billable_account_credits(self.is_admin)
+                .max(0)),
+        );
+        if let Some(input) = usage
+            .get("input_tokens")
+            .and_then(Value::as_u64)
+            .or_else(|| usage.get("input").and_then(Value::as_u64))
+        {
+            stats.insert("contextTokens".into(), json!(input));
+            stats.insert("context_occupancy_tokens".into(), json!(input));
+        }
+        for key in [
+            "interaction_duration_s",
+            "prefill_duration_s",
+            "decode_duration_s",
+            "decode_output_tokens",
+            "decode_tokens",
+            "decode_speed_tps",
+            "prefill_speed_tps",
+            "visible_decode_tokens",
+            "visible_decode_duration_s",
+            "visible_decode_speed_tps",
+            "visible_decode_measured",
+            "stream_timing",
+        ] {
+            if let Some(value) = map.get(key) {
+                stats.insert(key.into(), value.clone());
+            }
+        }
+        // A provider may expose only prefill/decode spans.  Their sum is the
+        // best available per-round elapsed time and keeps the footer useful.
+        if !stats.contains_key("interaction_duration_s") {
+            let prefill = stats
+                .get("prefill_duration_s")
+                .and_then(Value::as_f64)
+                .unwrap_or(0.0);
+            let decode = stats
+                .get("decode_duration_s")
+                .and_then(Value::as_f64)
+                .unwrap_or(0.0);
+            if prefill + decode > 0.0 {
+                stats.insert("interaction_duration_s".into(), json!(prefill + decode));
+            }
+        }
+        map.insert("message_stats".into(), Value::Object(stats));
+    }
+
+    /// Translate a provider delta into independent content/reasoning tail
+    /// frames. Browser strings use UTF-16 indices, so Rust byte lengths and
+    /// scalar counts are both wrong for a supplementary Unicode character.
+    fn llm_output_tails(&self, event_type: &str, data: &Value) -> Vec<Value> {
+        if event_type != "llm_output_delta" {
+            return Vec::new();
+        }
+        let Some(turn_id) = data.get("turn_id").and_then(Value::as_str) else {
+            return Vec::new();
+        };
+        let turn_id = turn_id.trim();
+        if turn_id.is_empty() {
+            return Vec::new();
+        }
+        let model_round = data.get("model_round").and_then(Value::as_i64).unwrap_or(0);
+        let item_id = format!("{turn_id}:text-{model_round}");
+        let mut offsets = self.tail_offsets.lock();
+        let mut tails = Vec::with_capacity(2);
+        for (source, field) in [("delta", "content"), ("reasoning_delta", "reasoning")] {
+            let Some(text) = data
+                .get(source)
+                .and_then(Value::as_str)
+                .filter(|text| !text.is_empty())
+            else {
+                continue;
+            };
+            let key = (item_id.clone(), field.to_string());
+            let offset = offsets.get(&key).copied().unwrap_or(0);
+            offsets.insert(key, offset.saturating_add(text.encode_utf16().count()));
+            // No assistant message has been committed while it is streaming;
+            // the first durable item will replace the transient tail.
+            tails.push(json!({
+                "item_id": item_id,
+                "field": field,
+                "offset": offset,
+                "base_seq": 0,
+                "text": text,
+            }));
+        }
+        tails
     }
 
     async fn enqueue_event(&self, event: &StreamEvent, persisted: bool) {

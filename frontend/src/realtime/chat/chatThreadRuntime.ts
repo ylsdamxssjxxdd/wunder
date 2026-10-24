@@ -34,7 +34,7 @@ import {
   materializeChatRuntimeProjectionList
 } from './chatRuntimeRenderAdapter';
 import { chatPerf } from '@/utils/chatPerf';
-import { threadViewSlots, threadViewCommitted, submitThreadView, clearThreadView, applyThreadViewChanges, applyThreadViewTail,threadViewStatus } from './threadViewStore';
+import { threadViewSlots, threadViewCommitted, submitThreadView, clearThreadView, applyThreadViewChanges, applyThreadViewTail, bindThreadViewStreamStarted,threadViewStatus } from './threadViewStore';
 import { threadViewStoreMessages } from '@/stores/chatGreeting';
 
 interface ChatThreadRuntimeEntry {
@@ -500,6 +500,17 @@ export const applyChatThreadServerEvent = (
     return true;
   }
   if(eventType==='thread_view_required'){hooks.onSnapshotRequired?.({});return true;}
+  // The display window is authoritative once it has its optimistic submission.
+  // Bind that row to the server turn id as soon as the start acknowledgement
+  // arrives so a following `thread_item_tail` can create its live assistant
+  // identity before the first durable view change.
+  if (eventType === 'stream_started' && threadViewCommitted(key)) {
+    const started = toChatThreadFrame(eventType, payload);
+    if (started && started.event === 'stream_started') {
+      bindThreadViewStreamStarted(key, started);
+      return true;
+    }
+  }
   if (CONTROL_EVENT.test(eventType)||eventType==='final') return false;
   // An uncommitted window entry must not shadow the durable transcript either:
   // the frames below are the only producer of it until the page commits.

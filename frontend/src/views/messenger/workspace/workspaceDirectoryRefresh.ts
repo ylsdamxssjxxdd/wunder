@@ -5,7 +5,7 @@ import { normalizeWorkspaceRelativePath, workspaceParentPath } from './workspace
 /** Coalesce invalidations and retain a trailing refresh when writes race a read. */
 export const createWorkspaceDirectoryRefresh = (
   tree: WorkspaceFileTree,
-  options: { refreshStats: () => Promise<void>; onBusy?: (busy: boolean) => void }
+  options: { onBusy?: (busy: boolean) => void } = {}
 ) => {
   const pendingPaths = new Set<string>();
   let full = false;
@@ -50,7 +50,6 @@ export const createWorkspaceDirectoryRefresh = (
             if (current !== generation || disposed) break;
             await Promise.all(remaining.slice(index, index + 3).map(path => tree.refreshDirectory(path)));
           }
-          if (current === generation && !disposed) await options.refreshStats();
         }
       } finally {
         // Release the task in the same job as the final pending check. A

@@ -1,0 +1,353 @@
+{
+  "schema": 1,
+  "workload": {
+    "profile": "chat-open-actions-v1",
+    "user_rounds": 100,
+    "actions_per_round": 100,
+    "seed": 42,
+    "text_bytes": 1024,
+    "reasoning_bytes": 512,
+    "tool_bytes": 4096,
+    "rollout_sha256": "0be8456d4149b2174556e83573e7dc701bf949eba0bd4c3deb5f5fa0955bd2ef"
+  },
+  "environment": {
+    "system": "Windows",
+    "release": "11",
+    "machine": "AMD64",
+    "processor": "AMD64 Family 26 Model 112 Stepping 0, AuthenticAMD",
+    "logical_cpus": 32,
+    "physical_memory_bytes": 68341796864
+  },
+  "build": {
+    "profile": "release",
+    "symbols": false,
+    "features": "sqlite-storage,desktop-control",
+    "environment_sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+    "rustc": "external probe; verify matching toolchain and build flags"
+  },
+  "sequential": {
+    "before": {
+      "first_open": {
+        "runs": 30,
+        "successful_runs": 30,
+        "failed_runs": 0,
+        "measured_calls": 30,
+        "p50_ms": 60.874900000000004,
+        "p95_ms": 78.144,
+        "max_ms": 78.3536,
+        "max_cpu_ms": 93.75,
+        "max_rss_delta_bytes": 4685824,
+        "max_read_bytes": 8547660,
+        "max_read_count": 2114
+      },
+      "cached_reopen": {
+        "runs": 30,
+        "successful_runs": 30,
+        "failed_runs": 0,
+        "measured_calls": 30,
+        "p50_ms": 0.0177,
+        "p95_ms": 0.028,
+        "max_ms": 0.0466,
+        "max_cpu_ms": 0,
+        "max_rss_delta_bytes": 12288,
+        "max_read_bytes": 4,
+        "max_read_count": 1
+      },
+      "native_headers": {
+        "runs": 30,
+        "successful_runs": 30,
+        "failed_runs": 0,
+        "measured_calls": 30,
+        "p50_ms": 57.9377,
+        "p95_ms": 72.764,
+        "max_ms": 137.84560000000002,
+        "max_cpu_ms": 156.25,
+        "max_rss_delta_bytes": 4329472,
+        "max_read_bytes": 8099396,
+        "max_read_count": 1994
+      },
+      "storage_page": {
+        "runs": 30,
+        "successful_runs": 30,
+        "failed_runs": 0,
+        "measured_calls": 30,
+        "p50_ms": 54.5366,
+        "p95_ms": 65.1245,
+        "max_ms": 66.745,
+        "max_cpu_ms": 125.0,
+        "max_rss_delta_bytes": 4251648,
+        "max_read_bytes": 8115780,
+        "max_read_count": 1998
+      },
+      "session_info": {
+        "runs": 30,
+        "successful_runs": 30,
+        "failed_runs": 0,
+        "measured_calls": 30,
+        "p50_ms": 8.6598,
+        "p95_ms": 11.5924,
+        "max_ms": 11.609,
+        "max_cpu_ms": 31.25,
+        "max_rss_delta_bytes": 978944,
+        "max_read_bytes": 382332,
+        "max_read_count": 101
+      },
+      "change_cursor": {
+        "runs": 30,
+        "successful_runs": 30,
+        "failed_runs": 0,
+        "measured_calls": 30,
+        "p50_ms": 21.0353,
+        "p95_ms": 25.748299999999997,
+        "max_ms": 26.226699999999997,
+        "max_cpu_ms": 46.875,
+        "max_rss_delta_bytes": 1585152,
+        "max_read_bytes": 632288,
+        "max_read_count": 170
+      },
+      "older_page": {
+        "runs": 30,
+        "successful_runs": 30,
+        "failed_runs": 0,
+        "measured_calls": 30,
+        "p50_ms": 45.2002,
+        "p95_ms": 53.567499999999995,
+        "max_ms": 54.792699999999996,
+        "max_cpu_ms": 62.5,
+        "max_rss_delta_bytes": 2535424,
+        "max_read_bytes": 7787400,
+        "max_read_count": 1911
+      }
+    },
+    "after": {
+      "first_open": {
+        "runs": 30,
+        "successful_runs": 30,
+        "failed_runs": 0,
+        "measured_calls": 30,
+        "p50_ms": 23.885900000000003,
+        "p95_ms": 28.3066,
+        "max_ms": 29.866899999999998,
+        "max_cpu_ms": 31.25,
+        "max_rss_delta_bytes": 2215936,
+        "max_read_bytes": 1046584,
+        "max_read_count": 270
+      },
+      "cached_reopen": {
+        "runs": 30,
+        "successful_runs": 30,
+        "failed_runs": 0,
+        "measured_calls": 30,
+        "p50_ms": 0.0156,
+        "p95_ms": 0.0262,
+        "max_ms": 0.0264,
+        "max_cpu_ms": 0,
+        "max_rss_delta_bytes": 8192,
+        "max_read_bytes": 4,
+        "max_read_count": 1
+      },
+      "native_headers": {
+        "runs": 30,
+        "successful_runs": 30,
+        "failed_runs": 0,
+        "measured_calls": 30,
+        "p50_ms": 18.113799999999998,
+        "p95_ms": 33.5942,
+        "max_ms": 33.748599999999996,
+        "max_cpu_ms": 46.875,
+        "max_rss_delta_bytes": 1601536,
+        "max_read_bytes": 738284,
+        "max_read_count": 191
+      },
+      "storage_page": {
+        "runs": 30,
+        "successful_runs": 30,
+        "failed_runs": 0,
+        "measured_calls": 30,
+        "p50_ms": 16.7104,
+        "p95_ms": 27.4536,
+        "max_ms": 31.2596,
+        "max_cpu_ms": 46.875,
+        "max_rss_delta_bytes": 1540096,
+        "max_read_bytes": 730092,
+        "max_read_count": 189
+      },
+      "session_info": {
+        "runs": 30,
+        "successful_runs": 30,
+        "failed_runs": 0,
+        "measured_calls": 30,
+        "p50_ms": 8.6596,
+        "p95_ms": 10.742700000000001,
+        "max_ms": 10.8716,
+        "max_cpu_ms": 31.25,
+        "max_rss_delta_bytes": 901120,
+        "max_read_bytes": 382332,
+        "max_read_count": 101
+      },
+      "change_cursor": {
+        "runs": 30,
+        "successful_runs": 30,
+        "failed_runs": 0,
+        "measured_calls": 30,
+        "p50_ms": 13.838899999999999,
+        "p95_ms": 29.0827,
+        "max_ms": 29.8527,
+        "max_cpu_ms": 46.875,
+        "max_rss_delta_bytes": 1064960,
+        "max_read_bytes": 426988,
+        "max_read_count": 115
+      },
+      "older_page": {
+        "runs": 30,
+        "successful_runs": 30,
+        "failed_runs": 0,
+        "measured_calls": 30,
+        "p50_ms": 6.7121,
+        "p95_ms": 8.349300000000001,
+        "max_ms": 8.3766,
+        "max_cpu_ms": 15.625,
+        "max_rss_delta_bytes": 266240,
+        "max_read_bytes": 471344,
+        "max_read_count": 119
+      }
+    },
+    "compatible": true,
+    "regressions": [],
+    "rollout_unchanged": true
+  },
+  "alternating": {
+    "summaries": {
+      "before": {
+        "first_open": {
+          "runs": 30,
+          "successful_runs": 30,
+          "failed_runs": 0,
+          "measured_calls": 30,
+          "p50_ms": 42.9932,
+          "p95_ms": 49.2228,
+          "max_ms": 50.8456,
+          "max_cpu_ms": 78.125,
+          "max_rss_delta_bytes": 4845568,
+          "max_read_bytes": 8691120,
+          "max_read_count": 2150
+        },
+        "storage_page": {
+          "runs": 30,
+          "successful_runs": 30,
+          "failed_runs": 0,
+          "measured_calls": 30,
+          "p50_ms": 34.548700000000004,
+          "p95_ms": 39.812,
+          "max_ms": 40.9221,
+          "max_cpu_ms": 78.125,
+          "max_rss_delta_bytes": 4329472,
+          "max_read_bytes": 8181316,
+          "max_read_count": 2014
+        },
+        "older_page": {
+          "runs": 30,
+          "successful_runs": 30,
+          "failed_runs": 0,
+          "measured_calls": 30,
+          "p50_ms": 28.929,
+          "p95_ms": 37.060700000000004,
+          "max_ms": 39.0074,
+          "max_cpu_ms": 46.875,
+          "max_rss_delta_bytes": 2453504,
+          "max_read_bytes": 7795592,
+          "max_read_count": 1913
+        }
+      },
+      "after": {
+        "first_open": {
+          "runs": 30,
+          "successful_runs": 30,
+          "failed_runs": 0,
+          "measured_calls": 30,
+          "p50_ms": 15.2377,
+          "p95_ms": 18.408399999999997,
+          "max_ms": 20.1717,
+          "max_cpu_ms": 46.875,
+          "max_rss_delta_bytes": 2015232,
+          "max_read_bytes": 997532,
+          "max_read_count": 259
+        },
+        "storage_page": {
+          "runs": 30,
+          "successful_runs": 30,
+          "failed_runs": 0,
+          "measured_calls": 30,
+          "p50_ms": 10.700700000000001,
+          "p95_ms": 14.4211,
+          "max_ms": 24.3239,
+          "max_cpu_ms": 31.25,
+          "max_rss_delta_bytes": 1531904,
+          "max_read_bytes": 783340,
+          "max_read_count": 202
+        },
+        "older_page": {
+          "runs": 30,
+          "successful_runs": 30,
+          "failed_runs": 0,
+          "measured_calls": 30,
+          "p50_ms": 4.2802,
+          "p95_ms": 5.748900000000001,
+          "max_ms": 6.0179,
+          "max_cpu_ms": 15.625,
+          "max_rss_delta_bytes": 278528,
+          "max_read_bytes": 471344,
+          "max_read_count": 119
+        }
+      }
+    },
+    "artifact_sha256": {
+      "before": "0cbdeaa6ad3fe84e03a7dac25938e3828fb2b70484515e69a21fa96a548c130a",
+      "after": "64f9ec28125ebe77e809908a5cada558b6373b2054b6f24ff9cf7551b0279b04"
+    },
+    "rollout_sha256": "0be8456d4149b2174556e83573e7dc701bf949eba0bd4c3deb5f5fa0955bd2ef",
+    "rollout_unchanged": true,
+    "correctness_passed": true,
+    "competing_build_samples": {
+      "before": 93,
+      "after": 93
+    },
+    "environment": {
+      "system": "Windows",
+      "release": "11",
+      "logical_cpus": 32
+    },
+    "method": "30 alternating before/after pairs per case, order reversed each pair; one warmup pair; fresh process per sample; OS cache retained; background builds recorded"
+  },
+  "first_upgrade": {
+    "first_open": {
+      "runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "measured_calls": 1,
+      "p50_ms": 382.3254,
+      "p95_ms": 382.3254,
+      "max_ms": 382.3254,
+      "max_cpu_ms": 375.0,
+      "max_rss_delta_bytes": 2797568,
+      "max_read_bytes": 65660984,
+      "max_read_count": 16045
+    }
+  },
+  "storage": {
+    "page_size": 4096,
+    "page_count": 16607,
+    "summary_rows": {
+      "thread_chat_heads": 100,
+      "thread_chat_checkpoints": 10100,
+      "thread_chat_projection_state": 1
+    },
+    "added_database_bytes": 4222976,
+    "summary_payload_bytes": 2537800
+  },
+  "limitations": [
+    "Concurrent developer builds were present; absolute timings are development measurements.",
+    "Fresh processes retain OS filesystem cache.",
+    "No frontend rendering time or isolated sustained write throughput is measured."
+  ]
+}

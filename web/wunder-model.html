@@ -1,0 +1,43 @@
+<!-- AI生成 -->
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <title>眺望心舰</title>
+    <link
+      rel="icon"
+      type="image/svg+xml"
+      href="./third/fontawesome-free-6.7.2-web/svgs/solid/dragon.svg"
+    />
+    <link rel="stylesheet" href="./styles/wunder-model-viewer.css" />
+    <style>
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+        background: #edf2f7;
+      }
+      #wunderModelMount {
+        position: fixed;
+        inset: 0;
+        display: flex;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="wunderModelMount"></div>
+    <script type="module">
+      import { setLanguage, t } from "./modules/i18n.js";
+      import { mountWunderModel } from "./modules/wunder-model.js";
+
+      setLanguage(navigator.language, { force: true });
+      document.title = t("wunderModel.title");
+      mountWunderModel(document.getElementById("wunderModelMount"));
+    </script>
+  </body>
+</html>

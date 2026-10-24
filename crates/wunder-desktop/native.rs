@@ -72,7 +72,7 @@ pub use cloud_threads::{NativeCloudAgent, NativeCloudThread, NativeCloudThreadVi
 mod interlink;
 pub use interlink::{
     CloudOpOutcome, NativeInterlinkApproval, NativeInterlinkEntry, NativeInterlinkListing,
-    NativeInterlinkNode, NativeInterlinkPull, NativeInterlinkStats, NativeInterlinkStatus,
+    NativeInterlinkNode, NativeInterlinkPull, NativeInterlinkStatus,
 };
 #[path = "native_companion_overlay.rs"]
 mod companion_overlay;
@@ -173,10 +173,9 @@ pub struct NativeSession {
     pub origin: Option<String>,
 }
 
-/// One bounded thread-open snapshot. `change_cursor` is captured before the
-/// history page, so a watcher can replay every commit made while a slow disk
-/// was reading that page. Replaying an already present root is harmless; a
-/// later commit being skipped is not.
+/// One bounded thread-open snapshot. `change_cursor` is the history page's
+/// transactional waterline, captured before reading its rows. A watcher can
+/// replay every later commit without a separate cursor read.
 #[derive(Debug, Clone)]
 pub struct NativeChatSnapshot {
     pub session: NativeSession,
@@ -1239,10 +1238,9 @@ impl NativeDesktop {
     }
 
     /// Acquire the local open lease, then take the compact initial history and
-    /// its replay cursor in one worker-owned sequence. The cursor deliberately
-    /// precedes the history page: writes which race a mechanical-disk read are
-    /// replayed through the passive watcher instead of being lost between two
-    /// otherwise independent façade calls.
+    /// its replay cursor from one storage snapshot. The cursor is read before
+    /// the rows in that transaction; commits racing a slow page read remain
+    /// available to the passive watcher.
     pub fn open_chat_snapshot(&self, session_id: &str) -> Result<NativeChatSnapshot> {
         let session_id = session_id.trim();
         self.ensure_thread_open(session_id)?;
@@ -1256,12 +1254,8 @@ impl NativeDesktop {
             .ok_or_else(|| anyhow!("chat session not found"))?;
         let workspaces = self.workspace_lookup();
         let session = self.session_with_stats(record, &workspaces);
-        let change_cursor = self
-            .state()
-            .storage
-            .latest_thread_change_seq_by_session(session_id)?;
-        let (turns, history_before, history_has_more) =
-            chat_turns::load_turn_header_page(self.state(), self.user_id(), session_id, None)?;
+        let (turns, history_before, history_has_more, change_cursor) =
+            chat_turns::load_turn_header_snapshot(self.state(), self.user_id(), session_id, None)?;
         let snapshot = NativeChatSnapshot {
             session,
             turns,

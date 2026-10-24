@@ -99,7 +99,7 @@ import type { ToolWorkflowPatchView, ToolWorkflowStructuredView } from './toolWo
 import { entryActivity, processActivityLabel, reasoningPreview, type ProcessActivity } from './timelineActivity';
 
 type ProcessRow =
-  | { kind: 'reasoning'; key: string; entry: TimelineReasoningEntry }
+  | { kind: 'reasoning'; key: string; entry: TimelineReasoningEntry; modelRound?: number }
   | { kind: 'tool'; key: string; entry: TimelineToolEntry }
   | { kind: 'print'; key: string; text: string };
 
@@ -171,8 +171,88 @@ const currentActivity = computed(() => {
 const currentReasoningItemId = computed(() => String(props.reasoningItemId || '').trim());
 const fallbackReasoningKey = ref('projected:0');
 const currentReasoningRowKey = computed(() => `reasoning:${currentReasoningItemId.value || fallbackReasoningKey.value}`);
-const hasCurrentReasoningRow = computed(() =>
-  rows.value.some((row) => row.kind === 'reasoning' && row.key === currentReasoningRowKey.value)
+/**
+ * The compact chat row and the lazy process endpoint are published by different
+ * projections.  During a running request the compact row can briefly have a
+ * newer item id than the already persisted process item, even though both hold
+ * the same thought.  Bind that durable row once by its text so the live preview
+ * updates it in place instead of adding a second, identical thinking entry.
+ *
+ * This is deliberately a binding, rather than a general content de-duplication:
+ * two completed model rounds are allowed to contain the same words and must
+ * remain two separate process records.
+ */
+const currentReasoningMatchKey = ref('');
+const currentReasoningMatchIdentity = ref('');
+/**
+ * A live preview may be addressed by the execution item id while the lazy
+ * process endpoint returns a compatibility/random item id.  Both records
+ * still carry the same model round.  The component is already scoped to one
+ * user turn, so the round number is the stable identity we can safely use for
+ * this hand-off; text is only a last-resort guard for older rows.
+ */
+const modelRoundFromIdentity = (value: string): number | null => {
+  const match = value.match(/(?:^|:)(?:text|reasoning-text|reasoning)[-_](\d+)$/i);
+  if (!match) return null;
+  const round = Number(match[1]);
+  return Number.isSafeInteger(round) && round >= 0 ? round : null;
+};
+const modelRoundFromReasoningRow = (row: ProcessRow): number | null => {
+  if (row.kind !== 'reasoning') return null;
+  if (row.modelRound !== undefined && Number.isSafeInteger(row.modelRound) && row.modelRound >= 0) {
+    return row.modelRound;
+  }
+  return modelRoundFromIdentity(row.key.slice('reasoning:'.length));
+};
+const sameCurrentReasoningIdentity = (row: ProcessRow, liveIdentity: string): boolean => {
+  if (row.kind !== 'reasoning') return false;
+  const liveRound = modelRoundFromIdentity(liveIdentity);
+  const persistedRound = modelRoundFromReasoningRow(row);
+  return liveRound !== null && persistedRound !== null && liveRound === persistedRound;
+};
+const sameCurrentReasoningRound = (row: ProcessRow, liveRound: number | null): boolean =>
+  liveRound !== null && modelRoundFromReasoningRow(row) === liveRound;
+const sameCurrentReasoningText = (persisted: string, live: string): boolean => {
+  if (persisted === live) return true;
+  // While a tail is active, either projection may be one durable flush behind.
+  // Accept only a prefix relation here; once bound, later deltas do not rescan
+  // all rows and therefore cannot accidentally merge an older completed round.
+  return Boolean(props.reasoningStreaming) && (persisted.startsWith(live) || live.startsWith(persisted));
+};
+const bindCurrentReasoningRow = (): void => {
+  const live = reasoningText.value;
+  const identity = currentReasoningRowKey.value;
+  const liveRound = Number.isSafeInteger(Number(props.reasoningItemId)) ? Number(props.reasoningItemId) : null;
+  if (!live) {
+    currentReasoningMatchKey.value = '';
+    currentReasoningMatchIdentity.value = '';
+    return;
+  }
+  if (currentReasoningMatchIdentity.value !== identity) {
+    currentReasoningMatchIdentity.value = identity;
+    currentReasoningMatchKey.value = '';
+  }
+  if (rows.value.some((row) => row.kind === 'reasoning' && row.key === identity)) {
+    currentReasoningMatchKey.value = identity;
+    return;
+  }
+  if (currentReasoningMatchKey.value && rows.value.some((row) =>
+    row.kind === 'reasoning' && row.key === currentReasoningMatchKey.value
+  )) return;
+  // Process items are chronological.  On an identity hand-off the most recent
+  // equal thought is the only viable durable counterpart of the live preview.
+  for (let index = rows.value.length - 1; index >= 0; index -= 1) {
+    const row = rows.value[index];
+    if (!sameCurrentReasoningIdentity(row, currentReasoningItemId.value) &&
+        !sameCurrentReasoningRound(row, liveRound) &&
+        !(row.kind === 'reasoning' && sameCurrentReasoningText(row.entry.text, live))) continue;
+    currentReasoningMatchKey.value = row.key;
+    return;
+  }
+  currentReasoningMatchKey.value = '';
+};
+const hasCurrentReasoningRow = computed(() => Boolean(currentReasoningMatchKey.value) &&
+  rows.value.some((row) => row.kind === 'reasoning' && row.key === currentReasoningMatchKey.value)
 );
 const reasoningEntry = computed<TimelineReasoningEntry>(() => ({
   kind: 'reasoning', key: currentReasoningRowKey.value, streaming: Boolean(props.reasoningStreaming),
@@ -218,6 +298,7 @@ const itemIndex = (item: Record<string, unknown> | undefined): number | null => 
 
 const rebuildRows = (): void => {
   rows.value = buildRows(processItems.value);
+  bindCurrentReasoningRow();
   firstItemIndex.value = itemIndex(processItems.value[0]);
   lastItemIndex.value = itemIndex(processItems.value.at(-1));
   const keys = new Set(rows.value.map(row => row.key));
@@ -411,6 +492,8 @@ const resetState = (): void => {
   lastItemIndex.value = null;
   openKeys.value = new Set();
   fallbackReasoningKey.value = 'projected:0';
+  currentReasoningMatchKey.value = '';
+  currentReasoningMatchIdentity.value = '';
   processBodyRef.value = null;
   patchViews.clear();
   structuredViews.clear();
@@ -439,21 +522,23 @@ watch(
  */
 const syncCurrentReasoningRow = (): void => {
   if (!loaded.value) return;
+  bindCurrentReasoningRow();
   let changed = false;
   // A subsequent model request starts a different item. Mark the preceding
   // thought final immediately, before the debounced log refresh supplies its
   // durable status, so an old row never keeps the live spinner.
   for (let index = 0; index < rows.value.length; index += 1) {
     const row = rows.value[index];
-    if (row.kind !== 'reasoning' || !row.entry.streaming || row.key === currentReasoningRowKey.value) continue;
+    if (row.kind !== 'reasoning' || !row.entry.streaming || row.key === (currentReasoningMatchKey.value || currentReasoningRowKey.value)) continue;
     rows.value[index] = {
       kind: 'reasoning', key: row.key,
       entry: { ...row.entry, streaming: false }
     };
     changed = true;
   }
-  if (currentReasoningItemId.value && reasoningText.value) {
-    const index = rows.value.findIndex((row) => row.kind === 'reasoning' && row.key === currentReasoningRowKey.value);
+  if (reasoningText.value) {
+    const targetKey = currentReasoningMatchKey.value || currentReasoningRowKey.value;
+    const index = rows.value.findIndex((row) => row.kind === 'reasoning' && row.key === targetKey);
     const current = index >= 0 ? rows.value[index] : null;
     if (current?.kind === 'reasoning') {
       const next = { ...reasoningEntry.value };
@@ -462,7 +547,7 @@ const syncCurrentReasoningRow = (): void => {
         next.summary = reasoningPreview(next.text);
       }
       if (current.entry.text !== next.text || current.entry.streaming !== next.streaming) {
-        rows.value[index] = { kind: 'reasoning', key: current.key, entry: next };
+        rows.value[index] = { kind: 'reasoning', key: current.key, entry: { ...next, key: current.key } };
         changed = true;
       }
     }
@@ -709,6 +794,37 @@ const buildRows = (items: Array<Record<string, unknown>>): ProcessRow[] => {
     mappedItems.push(mapped);
   }
   if (!slots.length) return rows;
+  // The process endpoint can overlap a durable assistant row with the live
+  // hand-off row while a model round is being committed.  Those rows have
+  // different ids but represent one visible identity.  Collapse by execution
+  // turn and model round before creating reasoning entries; otherwise the chat
+  // area shows the same thinking step twice.
+  const selectedMessages = new Map<string, Slot>();
+  const messageIdentity = (item: Record<string, unknown>): string => {
+    const payload = flattenItemPayload(item.payload);
+    const turnId = String(item.turn_id || payload.turn_id || '');
+    const round = Number(item.model_round ?? payload.model_round ?? 0);
+    return `${turnId}\u0000${Number.isFinite(round) ? round : 0}`;
+  };
+  const messageScore = (item: Record<string, unknown>): number => {
+    const payload = flattenItemPayload(item.payload);
+    return String(payload.content || '').length + String(payload.reasoning || payload.reasoning_content || '').length;
+  };
+  for (const slot of slots) {
+    if (slot.type !== 'message') continue;
+    const identity = messageIdentity(slot.item);
+    const current = selectedMessages.get(identity);
+    if (!current || messageScore(slot.item) > messageScore(current.item) ||
+      (messageScore(slot.item) === messageScore(current.item) &&
+       String(slot.item.item_id || '').endsWith(`:text-${String(slot.item.model_round ?? flattenItemPayload(slot.item.payload).model_round ?? 0)}`))) {
+      selectedMessages.set(identity, slot);
+    }
+  }
+  const dedupedSlots = slots.filter((slot) => {
+    if (slot.type !== 'message') return true;
+    const identity = messageIdentity(slot.item);
+    return selectedMessages.get(identity) === slot;
+  });
   // run 折叠（call/output/result 配对）复用既有链路；有界窗口与折叠提示同投影语义。
   const runs = buildWorkflowToolRuns(mappedItems);
   const entryByItemId = new Map<string, TimelineToolEntry>();
@@ -720,7 +836,7 @@ const buildRows = (items: Array<Record<string, unknown>>): ProcessRow[] => {
     }
   }
   const emittedTools = new Set<string>();
-  for (const slot of slots) {
+  for (const slot of dedupedSlots) {
     if (slot.type === 'tool') {
       const entry = entryByItemId.get(String(slot.item?.item_id || ''));
       if (entry && !emittedTools.has(entry.key)) {
@@ -747,6 +863,7 @@ const buildRows = (items: Array<Record<string, unknown>>): ProcessRow[] => {
       rows.push({
         kind: 'reasoning',
         key,
+        modelRound: Number.isSafeInteger(Number(payload.model_round)) ? Number(payload.model_round) : undefined,
         entry: {
           kind: 'reasoning', key,
           streaming: isCurrentReasoning && Boolean(props.reasoningStreaming),

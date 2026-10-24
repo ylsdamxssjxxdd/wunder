@@ -84,6 +84,19 @@ pub fn load_turn_header_page(
     session: &str,
     before: Option<i64>,
 ) -> Result<(Vec<NativeChatTurn>, Option<i64>, bool)> {
+    let (turns, before, has_more, _) = load_turn_header_snapshot(state, user, session, before)?;
+    Ok((turns, before, has_more))
+}
+
+/// The page's durable waterline is captured in its storage read transaction,
+/// before assembling rows. Replaying after this cursor cannot skip a commit
+/// racing the initial history read.
+pub(super) fn load_turn_header_snapshot(
+    state: &wunder_server::state::AppState,
+    user: &str,
+    session: &str,
+    before: Option<i64>,
+) -> Result<(Vec<NativeChatTurn>, Option<i64>, bool, i64)> {
     let page = state
         .storage
         .thread_view_page(user, session, "chat", before, 12)?;
@@ -92,7 +105,7 @@ pub fn load_turn_header_page(
         .iter()
         .filter_map(|chat| load_turn_header(&*state.storage, user, session, chat))
         .collect::<Vec<_>>();
-    Ok((turns, page.next_before, page.has_more))
+    Ok((turns, page.next_before, page.has_more, page.view_seq))
 }
 
 /// One model round of an assistant turn.

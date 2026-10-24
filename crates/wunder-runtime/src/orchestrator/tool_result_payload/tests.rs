@@ -31,6 +31,57 @@ fn goal_success_keeps_wrapup_for_scheduler_and_events_only() {
 }
 
 #[test]
+fn glob_projection_unwraps_model_tool_success_carrier() {
+    let result = ToolResultPayload::from_value(json!({
+        "ok": true,
+        "data": {
+            "action": "文件名匹配",
+            "state": "completed",
+            "summary": "Found 2 files.",
+            "data": {
+                "paths": ["assets/one.png", "assets/two.png"],
+                "count": 2,
+                "total_matched": 2,
+                "truncated": false
+            }
+        }
+    }));
+
+    assert_eq!(
+        result.to_compact_payload("glob")["data"],
+        json!({
+            "paths": ["assets/one.png", "assets/two.png"],
+            "count": 2,
+            "total_matched": 2,
+            "truncated": false
+        })
+    );
+    assert_eq!(
+        result.to_event_payload("glob")["data"]["data"]["paths"],
+        json!(["assets/one.png", "assets/two.png"]),
+        "audit payload retains the original carrier"
+    );
+}
+
+#[test]
+fn list_files_projection_unwraps_model_tool_success_carrier() {
+    let result = ToolResultPayload::from_value(json!({
+        "ok": true,
+        "data": {
+            "action": "列出文件",
+            "state": "completed",
+            "summary": "Found entries.",
+            "data": {"items": [{"name": "src", "type": "directory"}]}
+        }
+    }));
+
+    assert_eq!(
+        result.to_compact_payload("list_files")["data"],
+        json!({"items": [{"name": "src", "type": "directory"}]})
+    );
+}
+
+#[test]
 fn desktop_observation_preserves_unsettled_frame_without_audit_details() {
     let result = ToolResultPayload::from_value(json!({
         "ok": true,
@@ -245,6 +296,72 @@ fn browser_page_observation_keeps_text_and_truncation_without_page_noise() {
     assert!(observation["data"].get("target_id").is_none());
     assert_eq!(observation["data"]["truncated"], true);
     assert_eq!(observation["data"]["text"], "{\"sample\":1}");
+}
+
+#[test]
+fn compact_projection_unwraps_read_file_and_search_carriers() {
+    let read = ToolResultPayload::from_value(json!({
+        "ok": true,
+        "data": {"action":"read_file", "state":"completed", "summary":"ok", "data": {
+            "content":"line 1", "files":[{"path":"notes.md","read_lines":1,"total_lines":1}]
+        }}
+    }));
+    assert_eq!(
+        read.to_compact_payload("read_file")["data"]["content"],
+        "line 1"
+    );
+
+    let search = ToolResultPayload::from_value(json!({
+        "ok": true,
+        "data": {"action":"search_content", "state":"completed", "summary":"ok", "data": {
+            "query":"needle", "hits":[{"path":"notes.md","line":3,"content":"needle here"}]
+        }}
+    }));
+    assert_eq!(
+        search.to_compact_payload("search_content")["data"]["hits"][0]["path"],
+        "notes.md"
+    );
+}
+
+#[test]
+fn compact_projection_web_fetch_keeps_content_and_drops_diagnostics() {
+    let result = ToolResultPayload::from_value(json!({
+        "ok": true,
+        "data": {"url":"https://example.invalid", "title":"Example", "content":"body", "extractor":"internal", "fetched_at":"audit-only", "provider":"internal"}
+    }));
+    let data = result.to_compact_payload("web_fetch")["data"].clone();
+    assert_eq!(data["url"], "https://example.invalid");
+    assert_eq!(data["content"], "body");
+    assert!(data.get("extractor").is_none());
+    assert!(data.get("fetched_at").is_none());
+}
+
+#[test]
+fn compact_projection_command_session_is_incremental_and_bounded() {
+    let result = ToolResultPayload::from_value(json!({
+        "ok": true,
+        "data": {"action":"command_session", "state":"running", "data": {
+            "command_session_id":"cmd-1", "status":"running", "seq":4,
+            "stdout":"x".repeat(5000), "cwd":"audit-only", "command":"audit-only"
+        }}
+    }));
+    let data = result.to_compact_payload("command_session")["data"].clone();
+    assert_eq!(data["command_session_id"], "cmd-1");
+    assert!(data["stdout"].as_str().unwrap().chars().count() <= 1800);
+    assert!(data.get("cwd").is_none());
+}
+
+#[test]
+fn compact_projection_read_image_returns_artifact_cards_only() {
+    let result = ToolResultPayload::from_value(json!({
+        "ok": true,
+        "data": {"path":"frame.png", "resolved_path":"audit-only", "media_kind":"image", "size_bytes":12,
+            "result":{"frame_count":1,"attachments":[{"name":"frame.png","content_type":"image/png","public_path":"frames/frame.png","content":"base64-audit-only"}]}}
+    }));
+    let data = result.to_compact_payload("read_image")["data"].clone();
+    assert_eq!(data["media_kind"], "image");
+    assert!(data.get("resolved_path").is_none());
+    assert!(data["artifacts"][0].get("content").is_none());
 }
 
 #[test]
@@ -1166,6 +1283,130 @@ fn test_compact_observation_payload_keeps_small_browser_projection_unmarked() {
     assert!(observation.get("truncated").is_none());
     assert!(observation.get("observation_output_chars").is_none());
     assert_eq!(observation["data"]["action"], "click");
+}
+
+#[test]
+fn browser_list_and_observation_projection_marks_omitted_items() {
+    let tabs = (0..(OBSERVATION_BROWSER_TABS_LIMIT + 3))
+        .map(|idx| json!({"target_id": format!("tab-{idx}"), "title": "tab"}))
+        .collect::<Vec<_>>();
+    let tab_result = ToolResultPayload::from_value(json!({
+        "ok": true,
+        "data": {"action": "tabs_list", "tabs": tabs}
+    }));
+    let tab_observation = tab_result.to_compact_payload("browser");
+    assert_eq!(
+        tab_observation["data"]["tabs"].as_array().unwrap().len(),
+        OBSERVATION_BROWSER_TABS_LIMIT + 1
+    );
+    assert_eq!(tab_observation["data"]["omitted_tabs"], 3);
+    assert_eq!(tab_observation["data"]["truncated"], true);
+
+    let refs = (0..(OBSERVATION_BROWSER_REFS_LIMIT + 2))
+        .map(|idx| json!({"ref": format!("e{idx}"), "role": "button"}))
+        .collect::<Vec<_>>();
+    let result = ToolResultPayload::from_value(json!({
+        "ok": true,
+        "data": {"action": "observe_refs", "refs": refs}
+    }));
+    let observation = result.to_compact_payload("browser");
+    assert_eq!(
+        observation["data"]["refs"].as_array().unwrap().len(),
+        OBSERVATION_BROWSER_REFS_LIMIT + 1
+    );
+    assert_eq!(observation["data"]["omitted_refs"], 2);
+}
+
+#[test]
+fn schedule_and_memory_list_projection_marks_omitted_items() {
+    let jobs = (0..(OBSERVATION_SCHEDULE_JOBS_LIMIT + 2))
+        .map(|idx| json!({"job_id": format!("job-{idx}"), "name": "job", "enabled": true}))
+        .collect::<Vec<_>>();
+    let schedule = ToolResultPayload::from_value(json!({
+        "ok": true,
+        "data": {"action": "list", "jobs": jobs}
+    }));
+    let schedule_observation = schedule.to_compact_payload("schedule_task");
+    assert_eq!(schedule_observation["data"]["omitted_jobs"], 2);
+    assert_eq!(schedule_observation["data"]["truncated"], true);
+
+    let items = (0..(OBSERVATION_MEMORY_ITEMS_LIMIT + 1))
+        .map(|idx| json!({"memory_id": format!("memory-{idx}"), "title": "item"}))
+        .collect::<Vec<_>>();
+    let memory = ToolResultPayload::from_value(json!({
+        "ok": true,
+        "data": {"action": "list", "items": items}
+    }));
+    let memory_observation = memory.to_compact_payload("memory_manager");
+    assert_eq!(memory_observation["data"]["omitted_items"], 1);
+    assert_eq!(memory_observation["data"]["truncated"], true);
+}
+
+#[test]
+fn schedule_memory_and_question_projection_unwrap_model_carrier() {
+    let schedule = ToolResultPayload::from_value(json!({
+        "ok": true,
+        "data": {"action":"list", "state":"completed", "summary":"ok", "data": {
+            "action":"list", "jobs":[{"job_id":"j1", "enabled":true}]
+        }}
+    }));
+    assert_eq!(
+        schedule.to_compact_payload("schedule_task")["data"]["jobs"][0]["job_id"],
+        "j1"
+    );
+
+    let memory = ToolResultPayload::from_value(json!({
+        "ok": true,
+        "data": {"action":"list", "state":"completed", "summary":"ok", "data": {
+            "action":"list", "items":[{"memory_id":"m1"}]
+        }}
+    }));
+    assert_eq!(
+        memory.to_compact_payload("memory_manager")["data"]["items"][0]["memory_id"],
+        "m1"
+    );
+
+    let panel = ToolResultPayload::from_value(json!({
+        "ok": true,
+        "data": {"action":"question_panel", "state":"awaiting_input", "summary":"ok", "data": {
+            "questions":[{"question":"q", "options":[{"label":"a"}]}]
+        }}
+    }));
+    assert_eq!(
+        panel.to_compact_payload("question_panel")["data"]["waiting_for_input"],
+        true
+    );
+}
+
+#[test]
+fn memory_detail_and_browser_batch_projection_bound_large_text() {
+    let long_content = "x".repeat(OBSERVATION_MEMORY_CONTENT_CHARS + 100);
+    let memory = ToolResultPayload::from_value(json!({
+        "ok": true,
+        "data": {"action": "get", "item": {"memory_id": "m1", "content": long_content}}
+    }));
+    let memory_observation = memory.to_compact_payload("memory_manager");
+    assert_eq!(memory_observation["data"]["item"]["truncated"], true);
+    assert_eq!(
+        memory_observation["data"]["item"]["content_omitted_chars"],
+        100
+    );
+    assert_eq!(
+        memory_observation["data"]["item"]["content"]
+            .as_str()
+            .unwrap()
+            .len(),
+        OBSERVATION_MEMORY_CONTENT_CHARS
+    );
+
+    let long_snapshot = "s".repeat(OBSERVATION_BROWSER_TEXT_CHARS + 10);
+    let batch = ToolResultPayload::from_value(json!({
+        "ok": true,
+        "data": {"action": "batch", "snapshot": long_snapshot}
+    }));
+    let batch_observation = batch.to_compact_payload("browser");
+    assert_eq!(batch_observation["data"]["truncated"], true);
+    assert_eq!(batch_observation["data"]["snapshot_omitted_chars"], 10);
 }
 
 #[test]

@@ -189,7 +189,15 @@ const emit = defineEmits<{
 
 defineOptions({ inheritAttrs: false });
 
-type RenderReasoningRow = { kind: 'reasoning'; key: string; entry: TimelineReasoningEntry };
+type RenderReasoningRow = {
+  kind: 'reasoning';
+  key: string;
+  /** Durable item identity. A replay can place the same item in two activity
+   * blocks while the live projection is handing it off; it must still paint
+   * one thought in the chat area. */
+  itemId: string;
+  entry: TimelineReasoningEntry;
+};
 type RenderToolRow = { kind: 'tool'; key: string; entry: TimelineToolEntry };
 type RenderActivityRow = RenderReasoningRow | RenderToolRow;
 
@@ -289,11 +297,9 @@ const timeline = computed<{ blocks: RenderBlock[]; fold: TimelineFold }>(() => {
   const foldEnabled = lastBodyIndex > 0
     && (lastBodyIndex >= 2 || blocks.slice(0, lastBodyIndex).some((block) => block.kind === 'body'));
   const claimed = new Set<string>();
-  let steps = 0;
   const rendered = blocks.map((block, index): RenderBlock => {
     const inProcess = foldEnabled && index < lastBodyIndex;
     if (block.kind === 'body') {
-      if (inProcess) steps += 1;
       const isLastBlock = index === blocks.length - 1;
       return {
         kind: 'body',
@@ -316,6 +322,7 @@ const timeline = computed<{ blocks: RenderBlock[]; fold: TimelineFold }>(() => {
         rows.push({
           kind: 'reasoning',
           key,
+          itemId: String(row.itemId || ''),
           entry: {
             kind: 'reasoning',
             key,
@@ -343,7 +350,6 @@ const timeline = computed<{ blocks: RenderBlock[]; fold: TimelineFold }>(() => {
         rows.push({ kind: 'tool', key: entry.key, entry });
       });
     }
-    if (inProcess) steps += rows.length;
     const toolCount = rows.reduce((count, row) => count + (row.kind === 'tool' ? 1 : 0), 0);
     const latestRow = rows[rows.length - 1];
     return {
@@ -363,9 +369,51 @@ const timeline = computed<{ blocks: RenderBlock[]; fold: TimelineFold }>(() => {
     };
   });
 
-  if (!foldEnabled) return { blocks: rendered, fold: EMPTY_FOLD };
+  // The projection normally emits one reasoning row per stable item id. During
+  // a durable/live hand-off, however, a stale frame can briefly leave the same
+  // item in two activity blocks. The blocks component is the final chat-area
+  // boundary, so collapse that exact identity here as well. Distinct model
+  // rounds keep distinct ids and remain visible even when their text matches.
+  const selectedReasoning = new Map<string, RenderReasoningRow>();
+  rendered.forEach((block) => {
+    if (block.kind !== 'activity') return;
+    block.rows.forEach((row) => {
+      if (row.kind !== 'reasoning' || !row.itemId) return;
+      const previous = selectedReasoning.get(row.itemId);
+      // Keep the fuller live/durable text when the duplicate rows disagree.
+      if (!previous || row.entry.text.length > previous.entry.text.length ||
+          (row.entry.text.length === previous.entry.text.length && row.entry.streaming && !previous.entry.streaming)) {
+        selectedReasoning.set(row.itemId, row);
+      }
+    });
+  });
+  const emittedReasoning = new Set<string>();
+  const deduped: RenderBlock[] = rendered.map((block): RenderBlock => {
+    if (block.kind !== 'activity') return block;
+    const rows = block.rows.flatMap((row) => {
+      if (row.kind !== 'reasoning' || !row.itemId) return [row];
+      if (emittedReasoning.has(row.itemId)) return [];
+      emittedReasoning.add(row.itemId);
+      return [selectedReasoning.get(row.itemId) ?? row];
+    });
+    return { ...block, rows };
+  }).filter((block): block is RenderBlock => block.kind !== 'activity' || block.rows.length > 0);
+  const normalizedBlocks = deduped.map((block, index) => ({ ...block, isLast: index === deduped.length - 1 }));
+  // Removing a duplicate activity can shift the final body index. Keep the
+  // fold boundary tied to that body's stable id rather than to the pre-dedupe
+  // array offset, and recalculate the badge from the rows that remain visible
+  // in the process area.
+  const finalBodyId = rendered[lastBodyIndex]?.kind === 'body' ? rendered[lastBodyIndex].id : '';
+  const normalizedFinalIndex = finalBodyId
+    ? normalizedBlocks.findIndex((block) => block.kind === 'body' && block.id === finalBodyId)
+    : lastBodyIndex;
+  const normalizedSteps = normalizedBlocks.reduce((total, block, index) => {
+    if (index >= normalizedFinalIndex || normalizedFinalIndex < 0) return total;
+    return total + (block.kind === 'body' ? 1 : block.rows.length);
+  }, 0);
+  if (!foldEnabled) return { blocks: normalizedBlocks, fold: EMPTY_FOLD };
   let activity = '';
-  for (const block of rendered) {
+  for (const block of normalizedBlocks) {
     if (block.kind !== 'activity') continue;
     for (const row of block.rows) {
       if (row.kind === 'reasoning' && row.entry.streaming) activity = t('chat.timeline.thinkingRunning');
@@ -376,8 +424,8 @@ const timeline = computed<{ blocks: RenderBlock[]; fold: TimelineFold }>(() => {
   }
   if (!activity) activity = t(props.streaming ? 'chat.timeline.generatingReply' : 'chat.timeline.processCompleted');
   return {
-    blocks: rendered,
-    fold: { enabled: true, finalIndex: lastBodyIndex, steps, activity }
+    blocks: normalizedBlocks,
+    fold: { enabled: true, finalIndex: normalizedFinalIndex, steps: normalizedSteps, activity }
   };
 });
 

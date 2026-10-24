@@ -47,6 +47,9 @@ impl<'a> CanonicalThreadLog<'a> {
         self.admissions()?.check_owner(user, session)
     }
     fn connection(&self, session: Option<&str>) -> Result<Connection> {
+        self.connection_for(session, None)
+    }
+    fn connection_for(&self, session: Option<&str>, user: Option<&str>) -> Result<Connection> {
         let root = self.threads.root();
         let conn = Connection::open_with_flags(
             root.join("thread_history_1.sqlite"),
@@ -61,17 +64,57 @@ impl<'a> CanonicalThreadLog<'a> {
             "ATTACH DATABASE ?1 AS queue",
             [root.join("queue_1.sqlite").to_string_lossy().as_ref()],
         )?;
+        if let (Some(session), Some(user)) = (session, user) {
+            let owner: Option<String> = conn
+                .query_row(
+                    "SELECT user_id FROM queue.canonical_thread_owners WHERE thread_id=?1",
+                    [session],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            if user.trim().is_empty()
+                || session.trim().is_empty()
+                || owner.as_deref().is_some_and(|owner| owner != user)
+                || (owner.is_none() && Self::rollout(&conn, session)?.is_some())
+            {
+                bail!("thread owner mismatch or missing");
+            }
+        }
+        let mut prepared_segments = None;
         if let Some(session) = session {
             if Self::rollout(&conn, session)?.is_some() {
+                let deleting: bool = conn.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM state.canonical_thread_deletions WHERE thread_id=?1)",
+                    [session], |row| row.get(0),
+                )?;
+                if deleting {
+                    bail!("thread deletion is pending; retry deletion to finish reclamation");
+                }
                 let thread = ThreadId::new(session)?;
-                wait(self.threads.ensure_history(&thread))??;
+                let pending: bool = conn.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM state.canonical_pending_queue_reverts WHERE thread_id=?1)
+                     OR EXISTS(SELECT 1 FROM queue.canonical_thread_owners WHERE thread_id=?1 AND mutation_pending IS NOT NULL)",
+                    [session], |row| row.get(0),
+                )?;
+                if pending {
+                    wait(self.threads.ensure_history(&thread))??;
+                    prepared_segments =
+                        Some(super::thread_store::resolve_lineage(&conn, root, &thread)?);
+                } else {
+                    let segments = super::thread_store::resolve_lineage(&conn, root, &thread)?;
+                    wait(
+                        self.threads
+                            .ensure_history_segments(&thread, segments.clone()),
+                    )??;
+                    prepared_segments = Some(segments);
+                }
             }
         }
         conn.execute_batch("BEGIN")?;
         if let Some(session) = session {
             if let Some(current) = Self::rollout(&conn, session)? {
-                let thread = ThreadId::new(session)?;
-                let segments = wait(self.threads.lineage_segments(&thread))??;
+                let segments = prepared_segments
+                    .ok_or_else(|| anyhow!("history_changed: retry this history snapshot"))?;
                 if segments.last().map(|s| s.rollout_id.as_str()) != Some(current.as_str()) {
                     bail!("history_changed: retry this history snapshot");
                 }
@@ -303,15 +346,15 @@ impl<'a> CanonicalThreadLog<'a> {
         let Some(rollout) = Self::rollout(conn, session)? else {
             return Ok(row);
         };
-        for kind in ["user_message", "assistant_message", "plan"] {
-            let final_answer = if kind == "assistant_message" {
-                "AND COALESCE(json_array_length(json_extract(preview_json,'$.payload.tool_calls')),0)=0 AND COALESCE(json_array_length(json_extract(preview_json,'$.payload.payload.tool_calls')),0)=0"
-            } else {
-                ""
-            };
-            let sql=format!("SELECT preview_json,rollout_ordinal FROM thread_items WHERE rollout_id=?1 AND COALESCE(root_turn_id,turn_id)=?2 AND item_type=?3 AND {VISIBLE} {final_answer} ORDER BY rollout_ordinal DESC LIMIT 1");
+        let summary = super::thread_chat_summary::read(conn, &rollout, root)?;
+        for (kind, id) in [
+            ("user_message", summary.user_item_id.as_deref()),
+            ("assistant_message", summary.assistant_item_id.as_deref()),
+            ("plan", summary.plan_item_id.as_deref()),
+        ] {
+            let Some(id) = id else { continue };
             let item = conn
-                .query_row(&sql, params![rollout, root, kind], |r| {
+                .query_row("SELECT preview_json,rollout_ordinal FROM thread_items WHERE rollout_id=?1 AND item_id=?2", params![rollout, id], |r| {
                     Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
                 })
                 .optional()?;
@@ -356,8 +399,10 @@ impl<'a> CanonicalThreadLog<'a> {
                 row.assistant = message;
             }
         }
-        row.workflow_count=conn.query_row("SELECT COALESCE(SUM(workflow_items),0) FROM thread_root_counts WHERE rollout_id=?1 AND root_turn_id=?2",params![rollout,root],|r|r.get(0)).optional()?.unwrap_or(0);
-        row.workspace_change_seq=conn.query_row("SELECT MAX(rollout_ordinal+1) FROM thread_items WHERE rollout_id=?1 AND COALESCE(root_turn_id,turn_id)=?2 AND (json_extract(preview_json,'$.payload.meta.workspace_changed')=1 OR json_extract(preview_json,'$.payload.payload.meta.workspace_changed')=1)",params![rollout,root],|r|r.get::<_,Option<i64>>(0))?.unwrap_or(0);
+        row.reasoning_count = summary.reasoning_count;
+        row.reasoning_item_id = summary.reasoning_item_id.unwrap_or_default();
+        row.workflow_count = summary.workflow_count;
+        row.workspace_change_seq = summary.workspace_change_seq;
         p::settle_question_panel(&mut row);
         Ok(row)
     }
@@ -374,14 +419,20 @@ impl ThreadLogStore for CanonicalThreadLog<'_> {
         root: Option<&str>,
         limit: usize,
     ) -> Result<ThreadViewPage> {
-        self.check(u, s)?;
         if b.is_some() && a.is_some() {
             bail!("before and after are mutually exclusive");
         }
-        let conn = self.connection(Some(s))?;
+        let conn = self.connection_for(Some(s), Some(u))?;
         let rollout = Self::rollout(&conn, s)?;
         let seq = Self::position(&conn, rollout.as_deref())?;
-        let latest = self.admissions()?.latest_round(s)?;
+        let latest = conn
+            .query_row(
+                "SELECT latest_user_round FROM queue.canonical_thread_owners WHERE thread_id=?1",
+                [s],
+                |row| row.get(0),
+            )
+            .optional()?
+            .unwrap_or(0);
         let mut page = ThreadViewPage {
             session_id: s.into(),
             epoch: 1,

@@ -11,8 +11,9 @@ pub(crate) async fn execute_schedule_task_tool(
     context: &ToolContext<'_>,
     args: &Value,
 ) -> Result<Value> {
-    validate_schedule_tool_args(args)?;
-    let normalized = normalize_cron_action_args(args);
+    let args = super::recover_tool_args_value(args);
+    validate_schedule_tool_args(&args)?;
+    let normalized = normalize_cron_action_args(&args);
     let payload: CronActionRequest = serde_json::from_value(normalized.clone()).map_err(|err| {
         if normalized.get("raw").is_some() {
             anyhow!(
@@ -185,12 +186,46 @@ fn validate_schedule_tool_args(args: &Value) -> Result<()> {
     Ok(())
 }
 
+/// Deserialize only the two scheduling booleans from unambiguous JSON literals.
+/// Some model providers transport `false` as the string `"False"`; accepting
+/// that literal here prevents a recoverable formatting artifact from blocking
+/// a harmless disabled job, while all other strings remain untouched.
+fn normalize_schedule_boolean_literals(value: &Value) -> Value {
+    fn normalize(value: &Value) -> Value {
+        match value {
+            Value::Object(map) => Value::Object(
+                map.iter()
+                    .map(|(key, value)| {
+                        let value = if matches!(key.as_str(), "enabled" | "delete_after_run") {
+                            value
+                                .as_str()
+                                .and_then(|raw| match raw.trim().to_ascii_lowercase().as_str() {
+                                    "true" => Some(Value::Bool(true)),
+                                    "false" => Some(Value::Bool(false)),
+                                    _ => None,
+                                })
+                                .unwrap_or_else(|| normalize(value))
+                        } else {
+                            normalize(value)
+                        };
+                        (key.clone(), value)
+                    })
+                    .collect(),
+            ),
+            Value::Array(items) => Value::Array(items.iter().map(normalize).collect()),
+            _ => value.clone(),
+        }
+    }
+    normalize(value)
+}
+
 fn normalize_cron_action_args(args: &Value) -> Value {
-    let Some(obj) = args.as_object() else {
-        return args.clone();
+    let normalized_booleans = normalize_schedule_boolean_literals(args);
+    let Some(obj) = normalized_booleans.as_object() else {
+        return normalized_booleans;
     };
     if obj.contains_key("job") {
-        return args.clone();
+        return normalized_booleans;
     }
 
     let mut normalized = obj.clone();
@@ -351,6 +386,19 @@ mod tests {
         assert_eq!(normalized["job"]["payload"]["message"], json!("hello"));
         assert_eq!(normalized["job"]["enabled"], json!(true));
         assert!(normalized.get("message").is_none());
+    }
+
+    #[test]
+    fn normalize_cron_action_args_recovers_boolean_literals() {
+        let normalized = normalize_cron_action_args(&json!({
+            "action": "add",
+            "message": "fixture",
+            "schedule_text": "every 5 minutes",
+            "enabled": "False",
+            "delete_after_run": "TRUE"
+        }));
+        assert_eq!(normalized["job"]["enabled"], json!(false));
+        assert_eq!(normalized["job"]["delete_after_run"], json!(true));
     }
 
     #[test]

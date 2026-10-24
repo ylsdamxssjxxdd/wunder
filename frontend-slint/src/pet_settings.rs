@@ -35,7 +35,7 @@ thread_local! {
 pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
     let _ = API.set(Arc::clone(&api));
     let state = app.global::<PetSettingsState>();
-    state.set_scale_label(scale_label(state.get_scale()));
+    state.set_scale_label(scale_label(state.get_scale()).into());
 
     let weak = app.as_weak();
     state.on_toggle_enabled({
@@ -112,7 +112,7 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
             state.set_hints(persisted.message_hints);
             let scale = clamp_companion_scale(persisted.scale);
             state.set_scale(scale);
-            state.set_scale_label(scale_label(scale));
+            state.set_scale_label(scale_label(scale).into());
             state.set_selected_id(persisted.selected_id.clone().into());
             match library {
                 Ok(records) => store_library(records),
@@ -151,7 +151,7 @@ fn on_set_scale(weak: &slint::Weak<MainWindow>, value: f32) {
     let scale = clamp_companion_scale(value);
     let state = app.global::<PetSettingsState>();
     state.set_scale(scale);
-    state.set_scale_label(scale_label(scale));
+    state.set_scale_label(scale_label(scale).into());
     apply_and_persist(&app, true);
 }
 
@@ -321,7 +321,7 @@ fn show_page(app: &MainWindow, page: i32) {
     state.set_companions(model(cards));
     state.set_page(page);
     state.set_page_count(pages);
-    state.set_page_label(page_label(page, pages));
+    state.set_page_label(page_label(page, pages).into());
 }
 
 fn scale_label(scale: f32) -> String {

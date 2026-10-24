@@ -328,7 +328,6 @@ export component Sidebar inherits Rectangle {
     // apply a persisted ratio without feeding layout results back into its
     // preferred size; the clamp keeps both regions available.
     in property <[WorkspaceFileRow]> file-rows;
-    in property <string> file-stats;
     in property <bool> file-loading;
     in property <string> file-error;
     in property <bool> file-offline;
@@ -348,6 +347,24 @@ export component Sidebar inherits Rectangle {
     callback file-toggle(int);
     callback file-refresh();
     callback file-connect();
+    // Head toolbar of the working-directory region: upload, search (the head
+    // swaps to the field while open), download, multi-select and refresh.
+    // The query and the two mode flags round-trip so the controller can
+    // close a search or a selection when the target switches.
+    callback file-upload();
+    in-out property <bool> file-search-open;
+    in-out property <string> file-search-query;
+    in property <bool> file-search-busy;
+    in property <bool> file-search-active;
+    callback file-search-edit(string);
+    callback file-search-accept(string);
+    callback file-search-cancel();
+    callback file-download();
+    in-out property <bool> file-selecting;
+    in property <int> file-selected-count: 0;
+    callback file-select();
+    callback file-selection-action(int);
+    callback file-check(int);
     // Right-click menu action (row index, action code), drag-out on a row,
     // and the OS drop upload. The shell owns the handlers; the region and
     // the shell share the DropEvent type.
@@ -813,7 +830,6 @@ export component Sidebar inherits Rectangle {
             min-height: 0px; preferred-height: 0px;
             vertical-stretch: 1 - clamp(root.split-ratio, 0.3, 0.8);
             rows: root.file-rows;
-            stats: root.file-stats;
             loading: root.file-loading;
             error: root.file-error;
             offline: root.file-offline;
@@ -823,11 +839,25 @@ export component Sidebar inherits Rectangle {
             active-index: root.file-active-index;
             key-action(action) => { root.file-key(action); }
             toggle(index) => { root.file-toggle(index); }
+            check(index) => { root.file-check(index); }
             refresh => { root.file-refresh(); }
             connect => { root.file-connect(); }
             menu(index, action) => { root.file-menu(index, action); }
             drag-row(index) => { root.file-drag(index); }
             drop(event) => { root.file-drop(event); }
+            upload => { root.file-upload(); }
+            download => { root.file-download(); }
+            select => { root.file-select(); }
+            selection-action(action) => { root.file-selection-action(action); }
+            search-edit(text) => { root.file-search-edit(text); }
+            search-accept(text) => { root.file-search-accept(text); }
+            search-cancel => { root.file-search-cancel(); }
+            search-open <=> root.file-search-open;
+            search-query <=> root.file-search-query;
+            search-busy: root.file-search-busy;
+            search-active: root.file-search-active;
+            selecting <=> root.file-selecting;
+            selected-count: root.file-selected-count;
         }
         Rectangle { height: 1px; background: Theme.border; }
         // Settings button.

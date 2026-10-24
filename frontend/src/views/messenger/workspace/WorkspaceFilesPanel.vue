@@ -8,70 +8,100 @@
     @drop.prevent="handleDrop"
   >
     <div class="messenger-sidebar-files-head">
-      <span class="workspace-files-head-title">{{ t('messenger.filesArea.group') }}</span>
-      <div v-if="statsVisible" class="workspace-files-usage" :title="statsTitle">
-        <span class="workspace-files-usage-value">{{ t('messenger.filesArea.statsUsed', { size: statsUsedLabel }) }}</span>
-        <span class="workspace-files-usage-sep">·</span>
-        <span>{{ t('messenger.filesArea.statsFiles', { count: stats?.files || 0 }) }}</span>
-        <!-- No quota is configured (quota_bytes === null): never fake a denominator. -->
-        <span v-if="statsHasQuota" class="workspace-files-usage-track" aria-hidden="true">
-          <span class="workspace-files-usage-bar" :style="{ width: `${statsRatio}%` }"></span>
-        </span>
-        <span v-if="stats?.truncated" class="workspace-files-usage-flag">
-          {{ t('messenger.filesArea.statsTruncated') }}
-        </span>
-      </div>
-    </div>
-
-    <div v-if="!selectionMode" class="workspace-files-actions" role="toolbar" :aria-label="t('messenger.filesArea.group')">
-      <template v-if="!remoteInterlinkActive">
+      <template v-if="!searchOpen">
+        <span class="workspace-files-head-title">{{ t('messenger.filesArea.group') }}</span>
+        <div v-if="!selectionMode" class="workspace-files-actions" role="toolbar" :aria-label="t('messenger.filesArea.group')">
+          <template v-if="!remoteInterlinkActive">
+            <input
+              ref="uploadInputRef"
+              class="workspace-files-upload-input"
+              type="file"
+              multiple
+              tabindex="-1"
+              @change="handleUploadInputChange"
+            />
+            <button
+              class="workspace-files-action workspace-files-action--icon"
+              type="button"
+              :title="t('messenger.filesArea.upload')"
+              :aria-label="t('messenger.filesArea.upload')"
+              @click="openUploadPicker"
+            >
+              <i class="fa-solid fa-arrow-up-from-bracket" aria-hidden="true"></i>
+            </button>
+            <button
+              class="workspace-files-action workspace-files-action--icon"
+              type="button"
+              :title="t('messenger.filesArea.search')"
+              :aria-label="t('messenger.filesArea.search')"
+              @click="openSearch"
+            >
+              <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
+            </button>
+            <button
+              class="workspace-files-action workspace-files-action--icon"
+              type="button"
+              :disabled="busy"
+              :aria-busy="archiving || undefined"
+              :title="t('messenger.filesArea.archiveCurrent')"
+              :aria-label="t('messenger.filesArea.archiveCurrent')"
+              @click="handleDownloadCurrentDirectory"
+            >
+              <i
+                class="fa-solid"
+                :class="archiving ? 'fa-spinner fa-spin' : 'fa-file-zipper'"
+                aria-hidden="true"
+              ></i>
+            </button>
+            <button
+              class="workspace-files-action workspace-files-action--icon"
+              type="button"
+              :title="t('messenger.filesArea.select')"
+              :aria-label="t('messenger.filesArea.select')"
+              @click="enterSelectionMode"
+            >
+              <i class="fa-solid fa-list-check" aria-hidden="true"></i>
+            </button>
+          </template>
+          <button
+            class="workspace-files-action workspace-files-action--icon"
+            type="button"
+            :disabled="refreshing"
+            :title="t('common.refresh')"
+            :aria-label="t('common.refresh')"
+            @click="handleRefresh({ forceTree: true })"
+          >
+            <i class="fa-solid fa-rotate-right" :class="{ 'fa-spin': refreshing }" aria-hidden="true"></i>
+          </button>
+        </div>
+      </template>
+      <div v-else class="workspace-files-search" role="search">
+        <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
         <input
-          ref="uploadInputRef"
-          class="workspace-files-upload-input"
-          type="file"
-          multiple
-          tabindex="-1"
-          @change="handleUploadInputChange"
+          ref="searchInputRef"
+          v-model="searchQuery"
+          class="workspace-files-search-input"
+          type="search"
+          :placeholder="t('messenger.filesArea.searchPlaceholder')"
+          :aria-label="t('messenger.filesArea.search')"
+          @keydown.enter.prevent="runSearchNow"
+          @keydown.esc.stop.prevent="exitSearch"
         />
-        <button
-          class="workspace-files-action workspace-files-action--primary"
-          type="button"
-          :title="t('messenger.filesArea.upload')"
-          @click="openUploadPicker"
-        >
-          <i class="fa-solid fa-arrow-up-from-bracket" aria-hidden="true"></i>
-          <span>{{ t('common.upload') }}</span>
-        </button>
-        <button
-          class="workspace-files-action"
-          type="button"
-          :disabled="busy"
-          :title="t('messenger.filesArea.archiveCurrent')"
-          @click="handleDownloadCurrentDirectory"
-        >
-          <i class="fa-solid fa-file-zipper" aria-hidden="true"></i>
-          <span>{{ t('common.download') }}</span>
-        </button>
         <button
           class="workspace-files-action workspace-files-action--icon"
           type="button"
-          :title="t('messenger.filesArea.select')"
-          :aria-label="t('messenger.filesArea.select')"
-          @click="enterSelectionMode"
+          :title="t('common.cancel')"
+          :aria-label="t('common.cancel')"
+          @click="exitSearch"
         >
-          <i class="fa-solid fa-list-check" aria-hidden="true"></i>
+          <i class="fa-solid fa-xmark" aria-hidden="true"></i>
         </button>
-      </template>
-      <button
-        class="workspace-files-action workspace-files-action--icon"
-        type="button"
-        :disabled="refreshing"
-        :title="t('common.refresh')"
-        :aria-label="t('common.refresh')"
-        @click="handleRefresh({ forceTree: true })"
-      >
-        <i class="fa-solid fa-rotate-right" :class="{ 'fa-spin': refreshing }" aria-hidden="true"></i>
-      </button>
+      </div>
+    </div>
+
+    <div v-if="archiving" class="workspace-files-busy-note" role="status">
+      <i class="fa-solid fa-spinner fa-spin" aria-hidden="true"></i>
+      <span>{{ t('messenger.filesArea.archivingNote', { name: archiveTargetName }) }}</span>
     </div>
 
     <div v-if="remoteOperationState" class="workspace-files-remote-note" role="status">
@@ -96,23 +126,24 @@
     </div>
 
     <WorkspaceFileTree
-      :rows="rows"
-      :active-path="activePath"
-      :highlighted-path="highlightedPath"
-      :loading="filesLoading"
-      :error="filesError"
-      :selection-mode="selectionMode"
+      :rows="visibleFileRows"
+      :active-path="searchActive ? '' : activePath"
+      :highlighted-path="searchActive ? '' : highlightedPath"
+      :loading="visibleFilesLoading"
+      :error="visibleFilesError"
+      :selection-mode="!searchActive && selectionMode"
       :selected-paths="selectedList"
-      :read-only="remoteInterlinkActive && !remoteWritable"
-      :remote="remoteInterlinkActive"
-      :empty-hint="remoteEmptyHint"
+      :read-only="!searchActive && remoteInterlinkActive && !remoteWritable"
+      :remote="!searchActive && remoteInterlinkActive"
+      :empty-text="visibleEmptyText"
+      :empty-hint="visibleEmptyHint"
       @toggle-dir="handleToggleDirectory"
       @load-more="handleLoadMore"
       @activate="handleActivateRow"
       @open="handleOpenRow"
       @toggle-select="toggleSelection"
-      @exit-selection="exitSelectionMode"
-      @retry="handleRefresh"
+      @exit-selection="handleExitSelection"
+      @retry="handleRetry"
       @command="handleRowCommand"
     />
 
@@ -204,7 +235,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
+import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 
 import { useI18n } from '@/i18n';
@@ -246,13 +277,12 @@ import {
   fetchWorkspaceDirectory,
   fetchWorkspaceContentDirectory,
   fetchWorkspacePathBlob,
-  fetchWorkspaceStatsSnapshot,
-  isWorkspaceEndpointMissing,
+  isWorkspaceRequestCancelled,
   moveWorkspacePath,
   readWorkspaceFileContent,
   resolveWorkspaceErrorMessage,
-  writeWorkspaceFileContent,
-  type WorkspaceStatsSnapshot
+  searchWorkspaceEntries,
+  writeWorkspaceFileContent
 } from './workspaceFileApi';
 import {
   clearWorkspaceReveal,
@@ -266,6 +296,7 @@ import {
   normalizeWorkspaceRelativePath,
   workspaceFileExtension,
   workspaceParentPath,
+  type WorkspaceEntry,
   type WorkspaceVisibleRow
 } from './workspaceFileModel';
 import { useWorkspaceFileTree } from './workspaceFileTree';
@@ -288,7 +319,8 @@ const { t } = useI18n();
 const WORKSPACE_TEXT_EDIT_MAX_BYTES = 2 * 1024 * 1024;
 const HTML_PREVIEW_EXTENSIONS = new Set(['html', 'htm', 'xhtml']);
 const UPLOAD_MAX_FILES_PER_DROP = 200;
-const STATS_REFRESH_DEBOUNCE_MS = 1500;
+const SEARCH_DEBOUNCE_MS = 250;
+const SEARCH_RESULT_LIMIT = 200;
 const METAFILE_EXTENSIONS = new Set(['wmf', 'emf']);
 
 // 「新建文件」对话框的六种类型（与旧工作区面板同一套模板）。
@@ -486,6 +518,13 @@ const uploadTarget = ref('');
 const uploadInputRef = ref<HTMLInputElement | null>(null);
 const busy = ref(false);
 const refreshing = ref(false);
+/** 服务端打包当前目录期间为 true：按钮转圈并在标题下挂一条状态说明。 */
+const archiving = ref(false);
+/** 当前目录的显示名（根目录用分组名），用于打包确认与打包中提示。 */
+const archiveTargetName = computed(() => {
+  const segment = uploadTarget.value.split('/').filter(Boolean).pop();
+  return segment || t('messenger.filesArea.group');
+});
 const dragActive = ref(false);
 const newFileDialog = reactive({ visible: false, directory: '' });
 let workspaceRefreshStop: (() => void) | null = null;
@@ -527,6 +566,138 @@ const filesError = computed(() => {
   if (rootError.value || rows.value.length) return rootError.value;
   return String(shadowApi.error.value || '');
 });
+
+// ------------------------------------------------------------------- search
+// 文件名搜索走服务端递归索引；搜索期间工具栏收起、头部换成搜索框，结果平铺进同一个行视图。
+
+const searchOpen = ref(false);
+const searchQuery = ref('');
+const searchLoading = ref(false);
+const searchError = ref('');
+const searchResults = ref<WorkspaceEntry[]>([]);
+const searchInputRef = ref<HTMLInputElement | null>(null);
+let searchTimer: number | null = null;
+let searchAbort: AbortController | null = null;
+let searchSerial = 0;
+
+const clearSearchTimer = () => {
+  if (searchTimer !== null) window.clearTimeout(searchTimer);
+  searchTimer = null;
+};
+
+const openSearch = () => {
+  if (remoteInterlinkActive.value) return;
+  searchOpen.value = true;
+  void nextTick(() => searchInputRef.value?.focus());
+};
+
+const exitSearch = () => {
+  if (!searchOpen.value) return;
+  searchOpen.value = false;
+  searchQuery.value = '';
+  searchResults.value = [];
+  searchError.value = '';
+  searchLoading.value = false;
+  searchSerial += 1;
+  clearSearchTimer();
+  searchAbort?.abort();
+  searchAbort = null;
+};
+
+const runSearch = async (): Promise<void> => {
+  const keyword = searchQuery.value.trim();
+  if (!searchOpen.value) return;
+  if (!keyword) {
+    searchResults.value = [];
+    searchError.value = '';
+    searchLoading.value = false;
+    return;
+  }
+  const serial = (searchSerial += 1);
+  searchAbort?.abort();
+  const controller = new AbortController();
+  searchAbort = controller;
+  searchLoading.value = true;
+  searchError.value = '';
+  try {
+    const entries = await searchWorkspaceEntries(keyword, {
+      limit: SEARCH_RESULT_LIMIT,
+      signal: controller.signal
+    });
+    if (serial !== searchSerial) return;
+    searchResults.value = entries;
+  } catch (error) {
+    if (serial !== searchSerial || isWorkspaceRequestCancelled(error)) return;
+    searchResults.value = [];
+    searchError.value = resolveWorkspaceErrorMessage(error, t('common.requestFailed'));
+  } finally {
+    if (serial === searchSerial) searchLoading.value = false;
+  }
+};
+
+/** 回车立即搜索，跳过防抖等待。 */
+const runSearchNow = () => {
+  clearSearchTimer();
+  void runSearch();
+};
+
+watch(searchQuery, () => {
+  if (!searchOpen.value) return;
+  clearSearchTimer();
+  if (searchQuery.value.trim()) searchLoading.value = true;
+  searchTimer = window.setTimeout(() => {
+    searchTimer = null;
+    void runSearch();
+  }, SEARCH_DEBOUNCE_MS);
+});
+
+/** 关键词为空时仍显示目录树，只有真正有查询才切换到平铺结果。 */
+const searchActive = computed(() => searchOpen.value && searchQuery.value.trim().length > 0);
+
+/** 结果平铺：目录不再有展开箭头，父子目录用行尾路径提示区分同名项。 */
+const searchRows = computed<WorkspaceVisibleRow[]>(() =>
+  searchResults.value.map((entry) => ({
+    key: `search:${entry.path}`,
+    path: entry.path,
+    name: entry.name,
+    pathHint: workspaceParentPath(entry.path),
+    kind: entry.kind,
+    size: entry.size,
+    updatedTime: entry.updatedTime,
+    depth: 0,
+    expanded: false,
+    loading: false,
+    expandable: false
+  }))
+);
+
+const visibleFileRows = computed(() => (searchActive.value ? searchRows.value : rows.value));
+const visibleFilesLoading = computed(() =>
+  searchActive.value ? searchLoading.value : filesLoading.value
+);
+const visibleFilesError = computed(() => (searchActive.value ? searchError.value : filesError.value));
+const visibleEmptyText = computed(() =>
+  searchActive.value ? t('messenger.filesArea.searchEmpty') : ''
+);
+const visibleEmptyHint = computed(() =>
+  searchActive.value ? t('messenger.filesArea.searchEmptyHint') : remoteEmptyHint.value
+);
+
+const handleExitSelection = () => {
+  if (searchOpen.value) {
+    exitSearch();
+    return;
+  }
+  exitSelectionMode();
+};
+
+const handleRetry = () => {
+  if (searchActive.value) {
+    void runSearch();
+    return;
+  }
+  void handleRefresh();
+};
 
 const seedTreeFromShadow = (): void => {
   const keepExpanded = Array.from(tree.expandedPaths);
@@ -573,8 +744,6 @@ const enterRemoteWorkspace = async (): Promise<void> => {
 
 // ------------------------------------------------------------------ uploads
 
-let statsTimer: number | null = null;
-
 const uploadQueue = createWorkspaceUploadQueue({
   concurrency: 2,
   onUploaded: (task) => {
@@ -620,7 +789,6 @@ const handleUploadFinished = async (task: WorkspaceUploadTask) => {
       if (highlightedPath.value === first) highlightedPath.value = '';
     }, 2400);
   }
-  scheduleStatsRefresh();
 };
 
 const enqueueFiles = (files: File[], targetPath: string) => {
@@ -745,59 +913,6 @@ const collectDroppedEntries = async (
   }
 };
 
-// -------------------------------------------------------------------- stats
-
-const stats = ref<WorkspaceStatsSnapshot | null>(null);
-const statsDisabled = ref(false);
-
-const statsVisible = computed(
-  () => !statsDisabled.value && !remoteInterlinkActive.value && Boolean(stats.value)
-);
-const statsHasQuota = computed(() => {
-  const quota = Number(stats.value?.quotaBytes);
-  return Number.isFinite(quota) && quota > 0;
-});
-const statsUsedLabel = computed(() => formatWorkspaceBytes(stats.value?.usedBytes || 0));
-const statsRatio = computed(() => {
-  if (!statsHasQuota.value) return 0;
-  const quota = Number(stats.value?.quotaBytes);
-  return Math.max(0, Math.min(100, Math.round(((stats.value?.usedBytes || 0) / quota) * 100)));
-});
-const statsTitle = computed(() => {
-  if (!stats.value) return '';
-  const parts = [t('messenger.filesArea.statsUsed', { size: statsUsedLabel.value })];
-  parts.push(t('messenger.filesArea.statsFiles', { count: stats.value.files }));
-  if (Number.isFinite(Number(stats.value.quotaBytes))) {
-    parts.push(t('messenger.filesArea.statsQuota', { size: formatWorkspaceBytes(stats.value.quotaBytes) }));
-  }
-  if (stats.value.truncated) parts.push(t('messenger.filesArea.statsTruncated'));
-  return parts.join('  ·  ');
-});
-
-const loadStats = async () => {
-  if (statsDisabled.value || remoteInterlinkActive.value) return;
-  try {
-    const snapshot = await fetchWorkspaceStatsSnapshot('');
-    stats.value = snapshot;
-  } catch (error) {
-    // 404/501: the endpoint is not deployed — hide the bar for good, no retry loop.
-    if (isWorkspaceEndpointMissing(error)) {
-      statsDisabled.value = true;
-      stats.value = null;
-    }
-  }
-};
-
-/** Coalesce stats refreshes; never more than one request per debounce window. */
-const scheduleStatsRefresh = () => {
-  if (statsDisabled.value) return;
-  if (statsTimer) window.clearTimeout(statsTimer);
-  statsTimer = window.setTimeout(() => {
-    statsTimer = null;
-    void loadStats();
-  }, STATS_REFRESH_DEBOUNCE_MS);
-};
-
 // --------------------------------------------------------------- tree wiring
 
 /**
@@ -825,6 +940,8 @@ const toggleDirectoryPath = async (path: string): Promise<void> => {
 
 const handleActivateRow = (row: WorkspaceVisibleRow) => {
   setActivePath(row.path);
+  // 搜索结果平铺，点选只记高亮，不展开目录也不改上传目标。
+  if (searchActive.value) return;
   if (row.kind === 'dir') {
     uploadTarget.value = row.path;
     void toggleDirectoryPath(row.path);
@@ -834,6 +951,15 @@ const handleActivateRow = (row: WorkspaceVisibleRow) => {
 };
 
 const handleOpenRow = (row: WorkspaceVisibleRow) => {
+  if (searchActive.value) {
+    if (row.kind === 'dir') {
+      exitSearch();
+      void revealPath(row.path);
+    } else {
+      void openPreview(row.path, row.name, row.size);
+    }
+    return;
+  }
   if (row.kind === 'dir') {
     uploadTarget.value = row.path;
     void toggleDirectoryPath(row.path);
@@ -843,11 +969,17 @@ const handleOpenRow = (row: WorkspaceVisibleRow) => {
 };
 
 const handleToggleDirectory = (path: string) => {
+  if (searchActive.value) {
+    exitSearch();
+    void revealPath(path);
+    return;
+  }
   uploadTarget.value = normalizeWorkspaceRelativePath(path);
   void toggleDirectoryPath(path);
 };
 
 const handleLoadMore = (path: string) => {
+  if (searchActive.value) return;
   void loadMore(path);
 };
 
@@ -872,19 +1004,26 @@ const enterSelectionMode = () => {
 };
 
 const handleDownloadCurrentDirectory = async () => {
-  if (remoteInterlinkActive.value) return;
-  await runAction(
-    () => downloadWorkspaceDirectoryArchive(uploadTarget.value),
-    t('messenger.filesArea.downloadFailed')
-  );
+  if (remoteInterlinkActive.value || archiving.value) return;
+  const confirmed = await mzConfirm({
+    title: t('messenger.filesArea.archiveCurrent'),
+    message: t('messenger.filesArea.archiveConfirm', { name: archiveTargetName.value }),
+    confirmText: t('common.download'),
+    cancelText: t('common.cancel')
+  });
+  if (!confirmed) return;
+  archiving.value = true;
+  try {
+    await runAction(
+      () => downloadWorkspaceDirectoryArchive(uploadTarget.value),
+      t('messenger.filesArea.downloadFailed')
+    );
+  } finally {
+    archiving.value = false;
+  }
 };
 
 const directoryRefresh = createWorkspaceDirectoryRefresh(tree, {
-  refreshStats: async () => {
-    if (statsTimer) window.clearTimeout(statsTimer);
-    statsTimer = null;
-    await loadStats();
-  },
   onBusy: value => { refreshing.value = value; }
 });
 
@@ -924,7 +1063,6 @@ const handleCreateEntry = async (kind: 'dir' | 'file', row: WorkspaceVisibleRow 
     if (!isCurrentWorkspace(request)) return;
     await refreshDirectory(directory);
     await revealPath(joinWorkspacePath(directory, name));
-    scheduleStatsRefresh();
     ElMessage.success(t('messenger.filesArea.newDirSuccess'));
   } catch (error) {
     if (isCurrentWorkspace(request) && (error instanceof Error || (error as { response?: unknown })?.response)) {
@@ -953,7 +1091,6 @@ const handleNewFileConfirm = async (payload: { name: string; content: string; ty
     if (!isCurrentWorkspace(request)) return;
     await refreshDirectory(directory);
     await revealPath(joinWorkspacePath(directory, name));
-    scheduleStatsRefresh();
     ElMessage.success(t('messenger.filesArea.newFileSuccess'));
   } catch (error) {
     if (isCurrentWorkspace(request)) ElMessage.error(resolveWorkspaceErrorMessage(error, t('common.requestFailed')));
@@ -964,7 +1101,26 @@ const handleNewFileConfirm = async (payload: { name: string; content: string; ty
 
 // -------------------------------------------------------------- row commands
 
+/** 搜索结果里会改动工作区的命令；执行后重跑一次搜索，避免列表留旧行。 */
+const SEARCH_RERUN_COMMANDS = new Set(['new-dir', 'new-file', 'rename', 'delete']);
+
 const handleRowCommand = async (command: string, row: WorkspaceVisibleRow | null) => {
+  if (searchActive.value) {
+    if (command === 'refresh') {
+      void runSearch();
+      return;
+    }
+    if (command === 'toggle' && row?.kind === 'dir') {
+      exitSearch();
+      void revealPath(row.path);
+      return;
+    }
+  }
+  await runRowCommand(command, row);
+  if (searchActive.value && SEARCH_RERUN_COMMANDS.has(command)) void runSearch();
+};
+
+const runRowCommand = async (command: string, row: WorkspaceVisibleRow | null) => {
   if (remoteInterlinkActive.value) {
     if (command === 'refresh') { await handleRefresh({ forceTree: true }); return; }
     if (command === 'new-dir' || command === 'new-file') {
@@ -1103,7 +1259,6 @@ const deleteEntry = async (row: WorkspaceVisibleRow) => {
     if (!isCurrentWorkspace(request)) return;
     removePaths([row.path]);
     await refreshDirectory(workspaceParentPath(row.path));
-    scheduleStatsRefresh();
     ElMessage.success(t('messenger.filesArea.deleteSuccess'));
   } catch (error) {
     if (isCurrentWorkspace(request)) ElMessage.error(resolveWorkspaceErrorMessage(error, t('common.requestFailed')));
@@ -1125,7 +1280,6 @@ const handleBatchDelete = async () => {
     for (const directory of directories) {
       await refreshDirectory(directory);
     }
-    scheduleStatsRefresh();
     if (outcome.ok) {
       ElMessage.success(t('messenger.filesArea.deleteSuccess'));
     } else {
@@ -1515,29 +1669,27 @@ const handleEditorSaved = async (payload?: { path?: string }) => {
   const path = String(payload?.path || officeDialog.path || drawioDialog.path || '');
   if (!path) return;
   await refreshDirectory(workspaceParentPath(path));
-  scheduleStatsRefresh();
 };
 
 // ------------------------------------------------------------ clear workspace
 
 const handleClearWorkspace = async () => {
-  // 高危险动作：要求输入确认语「清空」才放行（e2e §6.2-11 依赖这条交互）。
-  const phrase = t('messenger.filesArea.clearPhrase');
-  const value = await mzPrompt({
+  if (busy.value) return;
+  const confirmed = await mzConfirm({
     title: t('messenger.filesArea.clear'),
-    message: `${t('messenger.filesArea.clearWarning')} ${t('messenger.filesArea.clearPrompt', { phrase })}`,
-    placeholder: phrase,
-    validator: (input: string) =>
-      String(input || '').trim() === phrase ? true : t('messenger.filesArea.clearMismatch')
+    message: t('messenger.filesArea.clearWarning'),
+    confirmText: t('common.clear'),
+    cancelText: t('common.cancel'),
+    tone: 'danger'
   });
-  if (String(value || '').trim() !== phrase) return;
+  if (!confirmed) return;
   busy.value = true;
   try {
     await clearWorkspaceRoot();
     // Root and every expanded directory changed; reset to a single fresh load.
     tree.reset();
     uploadTarget.value = '';
-    await Promise.all([loadDirectory('', { force: true }), loadStats()]);
+    await loadDirectory('', { force: true });
     ElMessage.success(t('messenger.filesArea.clearSuccess'));
   } catch (error) {
     ElMessage.error(resolveWorkspaceErrorMessage(error, t('common.requestFailed')));
@@ -1548,9 +1700,13 @@ const handleClearWorkspace = async () => {
 
 // -------------------------------------------------------- cross-module wiring
 
-/** Esc leaves selection mode from anywhere in the file area (plan §6.1). */
+/** Esc leaves search or selection mode from anywhere in the file area (plan §6.1). */
 const handleWindowKeydown = (event: KeyboardEvent) => {
   if (event.key !== 'Escape') return;
+  if (searchOpen.value) {
+    exitSearch();
+    return;
+  }
   if (selectionMode.value) exitSelectionMode();
 };
 
@@ -1580,7 +1736,6 @@ onMounted(() => {
     return;
   }
   void loadDirectory('');
-  void loadStats();
 });
 
 // 目标工作区变化（设备或工作区参数任一变化）：重铺影子快照并尝试实时根目录。
@@ -1603,11 +1758,11 @@ watch(
     officeDialog.visible = false;
     drawioDialog.visible = false;
     newFileDialog.visible = false;
+    exitSearch();
     if (remoteInterlinkActive.value) {
       void enterRemoteWorkspace();
     } else {
       void loadDirectory('');
-      void loadStats();
     }
   }
 );
@@ -1626,9 +1781,11 @@ onBeforeUnmount(() => {
   workspaceRefreshStop?.();
   workspaceRefreshStop = null;
   directoryRefresh.dispose();
-  if (statsTimer) window.clearTimeout(statsTimer);
-  statsTimer = null;
   uploadQueue.dispose();
+  clearSearchTimer();
+  searchSerial += 1;
+  searchAbort?.abort();
+  searchAbort = null;
   previewAbort?.abort();
   previewAbort = null;
   directoryAbort.controller.abort();

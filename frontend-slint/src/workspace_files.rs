@@ -9,12 +9,13 @@
 //! executes its writes directly through the `workspace_local_*` façade.
 use crate::{MainWindow, WorkspaceFileRow};
 use anyhow::Result;
-use slint::{ComponentHandle, Model, ModelRc, VecModel};
+use slint::{ComponentHandle, Model, ModelRc, Timer, TimerMode, VecModel};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::time::Duration;
 use wunder_desktop::native::{CloudOpOutcome, NativeInterlinkEntry, NativeInterlinkListing};
 use wunder_desktop::NativeDesktop;
 
@@ -46,6 +47,10 @@ const MENU_CLEAR: i32 = 8;
 /// bounded by the interlink inline cap (1 MiB, binary rejected).
 const MAX_DROP_FILES: usize = 20;
 const MAX_DROP_BYTES: u64 = 1024 * 1024;
+/// Multi-select fan-out cap: batch download / delete never walk more rows.
+const MAX_SELECTED: usize = 200;
+/// Search head debounce, matching the web file area.
+const SEARCH_DEBOUNCE: Duration = Duration::from_millis(250);
 
 /// Kind of the parked prompt: which cloud write the dialog confirms.
 #[derive(Clone, Copy, PartialEq)]
@@ -55,6 +60,9 @@ enum PromptKind {
     NewDir,
     NewFile,
     Clear,
+    /// One confirmation for the whole multi-select fan-out; the paths live in
+    /// [`BATCH_PATHS`] because the prompt payload only carries one path.
+    BatchDelete,
 }
 
 /// One parked prompt: the entry it acts on plus, once the cloud parks the
@@ -88,7 +96,7 @@ struct Panel {
 
 thread_local! {
     static PANEL: RefCell<Option<Panel>> = const { RefCell::new(None) };
-    /// One-shot boot guard: the first connected tick loads root + stats;
+    /// One-shot boot guard: the first connected tick loads the root;
     /// disconnecting re-arms it so signing back in reloads.
     static BOOTED: Cell<bool> = const { Cell::new(false) };
     static BUSY: Cell<u32> = const { Cell::new(0) };
@@ -97,6 +105,14 @@ thread_local! {
     static PROMPT: RefCell<Option<PromptOp>> = const { RefCell::new(None) };
     /// One OS drag at a time: DoDragDrop is modal on its worker thread.
     static DRAG_OUT: Cell<bool> = const { Cell::new(false) };
+    /// Multi-select working set, in pick order; the row flags project it.
+    static SELECTED: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+    /// Paths parked for the batch-delete confirmation.
+    static BATCH_PATHS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+    /// Search debounce timer plus the serial of the latest issued query;
+    /// stale results only land when their serial still matches.
+    static SEARCH_TIMER: RefCell<Timer> = RefCell::new(Timer::default());
+    static SEARCH_SERIAL: Cell<u64> = const { Cell::new(0) };
 }
 
 /// Which workspace the file panel mirrors: the cloud account workspace
@@ -154,7 +170,7 @@ pub(crate) fn set_target(app: &MainWindow, api: Arc<NativeDesktop>, target: Targ
 /// Coalesced refresh after an execution writes files; no per-token scans.
 pub(crate) fn execution_finished(app: &MainWindow, api: Arc<NativeDesktop>) {
     if !is_cloud_target() {
-        refresh(app, api);
+        settle(app, api);
     }
 }
 
@@ -171,11 +187,15 @@ fn reflect_target(app: &MainWindow) {
             .map_or(-1, |index| index as i32),
     });
     app.set_ws_file_local(!cloud);
-    app.set_ws_file_stats("".into());
     app.set_ws_file_error("".into());
     if !cloud {
         app.set_ws_file_offline(false);
     }
+    exit_search(app);
+    SELECTED.with(|slot| slot.borrow_mut().clear());
+    BATCH_PATHS.with(|slot| slot.borrow_mut().clear());
+    app.set_ws_file_selecting(false);
+    app.set_ws_file_selected_count(0);
     // Drop the cached pages so the next listing starts from a clean root.
     GENERATION.with(|slot| slot.set(slot.get().wrapping_add(1)));
     with_panel(|panel| {
@@ -250,6 +270,9 @@ fn drop_dir_cache(path: &str) {
 pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
     let model = with_panel(|panel| panel.model.clone()).expect("panel model");
     app.set_ws_file_rows(ModelRc::from(model));
+    let toolbar_api = api.clone();
+    let search_api = api.clone();
+    let select_api = api.clone();
 
     // Row click: a directory expands or collapses (lazy load on first open),
     // the load-more tail pages its directory, a file becomes selected.
@@ -265,6 +288,15 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         let path = row.path.to_string();
         app.set_ws_file_active_path(row.path.clone());
         app.set_ws_file_active_index(index);
+        if search_active(&app) {
+            // Flat search results: a directory leaves the result view and
+            // reveals itself in the tree, files only take the highlight.
+            if row.kind == 1 {
+                exit_search(&app);
+                reveal_dir(&app, toggle_api.clone(), &path);
+            }
+            return;
+        }
         match row.kind {
             0 => {}
             1 => toggle_dir(&app, toggle_api.clone(), path),
@@ -279,7 +311,7 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
             return;
         };
         if key == 9 {
-            refresh(&app, key_api.clone());
+            settle(&app, key_api.clone());
             return;
         }
         let rows = app.get_ws_file_rows();
@@ -326,16 +358,21 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         }
     });
 
-    // Refresh: usage line, root, and every expanded directory in one bounded
-    // background pass.
+    // Refresh: root and every expanded directory in one bounded background
+    // pass; while the search head holds results it re-runs the query instead.
     let refresh_api = api.clone();
     let weak = app.as_weak();
     app.on_ws_file_refresh(move || {
         let Some(app) = weak.upgrade() else {
             return;
         };
-        refresh(&app, refresh_api.clone());
+        settle(&app, refresh_api.clone());
     });
+
+    // ---- head toolbar: upload / search / download / multi-select ----
+    install_toolbar(app, toolbar_api);
+    install_search(app, search_api);
+    install_selection(app, select_api);
 
     // Context menu (aligned with the web left-rail). `index` is -1 for the
     // blank-area entries (new entries use the selected directory); actions and
@@ -369,7 +406,16 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                             row.path.to_string(),
                             row.name.to_string(),
                         ),
-                        1 => toggle_dir(&app, menu_api.clone(), row.path.to_string()),
+                        1 => {
+                            // A directory found by search leaves the result
+                            // view and reveals itself, like a row click.
+                            if search_active(&app) {
+                                exit_search(&app);
+                                reveal_dir(&app, menu_api.clone(), row.path.as_str());
+                            } else {
+                                toggle_dir(&app, menu_api.clone(), row.path.to_string());
+                            }
+                        }
                         _ => load_more(&app, menu_api.clone(), row.path.to_string()),
                     }
                 }
@@ -524,11 +570,10 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         let Some(app) = weak.upgrade() else {
             return;
         };
-        let local = !is_cloud_target();
         if app.get_ws_file_busy() {
             return;
         }
-        if !local && app.get_ws_file_offline() {
+        if is_cloud_target() && app.get_ws_file_offline() {
             return;
         }
         let paths: Vec<PathBuf> = match event.data.file_paths() {
@@ -539,48 +584,14 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
             Err(_) => Vec::new(),
         };
         if paths.is_empty() {
-            app.set_status(if local {
-                "落点没有可复制的文件".into()
-            } else {
+            app.set_status(if is_cloud_target() {
                 "落点没有可上传的文件（仅支持文本文件）".into()
+            } else {
+                "落点没有可复制的文件".into()
             });
             return;
         }
-        let count = paths.len();
-        app.set_status(if local {
-            format!("正在复制 {count} 个文件…").into()
-        } else {
-            format!("正在上传 {count} 个文件…").into()
-        });
-        let Some(request) = begin_busy(&app) else {
-            return;
-        };
-        let directory = active_directory(&app);
-        let weak = app.as_weak();
-        let worker_api = drop_api.clone();
-        let target = current_target();
-        std::thread::spawn(move || {
-            let (done, failed) = match &target {
-                Target::Local(root) => copy_files(&worker_api, root, &directory, &paths),
-                Target::Cloud => upload_files(&worker_api, &directory, &paths),
-            };
-            let refresh_api = worker_api;
-            let _ = weak.upgrade_in_event_loop(move |app| {
-                end_busy(&app, refresh_api.clone(), request);
-                if !is_current(request) {
-                    return;
-                }
-                refresh(&app, refresh_api);
-                let mut message = format!(
-                    "已{verb} {done}/{count} 个文件",
-                    verb = if local { "复制" } else { "上传" }
-                );
-                if !failed.is_empty() {
-                    message.push_str(&format!("；失败：{}", failed.join("；")));
-                }
-                app.set_status(message.into());
-            });
-        });
+        start_transfer(&app, drop_api.clone(), paths);
     });
 
     // Prompt dialog: one callback serves both stages (issue the cloud write,
@@ -621,6 +632,13 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
             app.set_ws_prompt_open(false);
             return;
         }
+        if op.kind == PromptKind::BatchDelete {
+            app.set_ws_prompt_open(false);
+            PROMPT.with(|slot| *slot.borrow_mut() = None);
+            let paths = BATCH_PATHS.with(|slot| std::mem::take(&mut *slot.borrow_mut()));
+            batch_delete(&app, prompt_api.clone(), paths);
+            return;
+        }
         let request = op.generation;
         let target = op.target.clone();
         if begin_busy(&app).is_none() {
@@ -648,7 +666,7 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                     PromptKind::NewFile => {
                         local_api.workspace_local_write(&root, &join_cloud(&path, &value))
                     }
-                    PromptKind::Clear => unreachable!(),
+                    PromptKind::Clear | PromptKind::BatchDelete => unreachable!(),
                 };
                 let _ = weak.upgrade_in_event_loop(move |app| {
                     end_busy(&app, refresh_api.clone(), request);
@@ -667,7 +685,7 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                             app.set_ws_prompt_open(false);
                             PROMPT.with(|slot| *slot.borrow_mut() = None);
                             app.set_status(done_message(kind, &value).into());
-                            refresh(&app, refresh_api);
+                            settle(&app, refresh_api);
                         }
                         Err(error) => {
                             app.set_ws_prompt_busy(false);
@@ -709,7 +727,7 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                             app.set_ws_prompt_open(false);
                             PROMPT.with(|slot| *slot.borrow_mut() = None);
                             app.set_status("云端已执行".into());
-                            refresh(&app, refresh_api);
+                            settle(&app, refresh_api);
                         }
                         Ok(CloudOpOutcome::NeedsApproval { command_id }) => {
                             // 确认路径不应停泊（等待终态）；保守恢复现场。
@@ -752,7 +770,7 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                 PromptKind::NewFile => {
                     issue_api.interlink_cloud_write(&join_cloud(&path, &value), "")
                 }
-                PromptKind::Clear => unreachable!(),
+                PromptKind::Clear | PromptKind::BatchDelete => unreachable!(),
             };
             let _ = weak.upgrade_in_event_loop(move |app| {
                 end_busy(&app, refresh_api.clone(), request);
@@ -786,7 +804,7 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                         app.set_ws_prompt_open(false);
                         PROMPT.with(|slot| *slot.borrow_mut() = None);
                         app.set_status(done_message(kind, &value).into());
-                        refresh(&app, refresh_api);
+                        settle(&app, refresh_api);
                     }
                     Ok(CloudOpOutcome::Failed(reason)) => {
                         app.set_ws_prompt_busy(false);
@@ -829,6 +847,604 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         }
         PROMPT.with(|slot| *slot.borrow_mut() = None);
     });
+}
+
+// ---------------------------------------------------------------- toolbar
+
+/// The head toolbar actions: the upload button opens the OS multi-file
+/// picker and funnels the picks through the shared transfer; the download
+/// button zips the current directory (cloud) or copies it out to a
+/// user-picked folder (local). Both run on workers and report through the
+/// status bar.
+fn install_toolbar(app: &MainWindow, api: Arc<NativeDesktop>) {
+    let weak = app.as_weak();
+    let upload_api = api.clone();
+    app.on_ws_file_upload(move || {
+        let Some(app) = weak.upgrade() else {
+            return;
+        };
+        if app.get_ws_file_busy() || (is_cloud_target() && app.get_ws_file_offline()) {
+            return;
+        }
+        let weak = weak.clone();
+        let upload_api = upload_api.clone();
+        std::thread::spawn(move || {
+            // The native picker blocks; off the UI thread like the composer's
+            // attachment flow.
+            let picked = crate::file_dialog::pick_attachments();
+            let _ = weak.upgrade_in_event_loop(move |app| {
+                let paths = match picked {
+                    Ok(paths) if !paths.is_empty() => paths,
+                    _ => return,
+                };
+                let paths: Vec<PathBuf> = paths
+                    .into_iter()
+                    .take(MAX_DROP_FILES)
+                    .map(PathBuf::from)
+                    .collect();
+                start_transfer(&app, upload_api, paths);
+            });
+        });
+    });
+
+    let weak = app.as_weak();
+    let download_api = api.clone();
+    app.on_ws_file_download(move || {
+        let Some(app) = weak.upgrade() else {
+            return;
+        };
+        if app.get_ws_file_busy() || (is_cloud_target() && app.get_ws_file_offline()) {
+            return;
+        }
+        match current_target() {
+            Target::Cloud => {
+                let directory = active_directory(&app);
+                let name = file_tail_name(&directory);
+                archive_dir(&app, download_api.clone(), directory, name);
+            }
+            Target::Local(_) => {
+                let weak = weak.clone();
+                let download_api = download_api.clone();
+                std::thread::spawn(move || {
+                    let picked = crate::file_dialog::pick_directory("选择导出位置");
+                    let _ = weak.upgrade_in_event_loop(move |app| {
+                        if let Some(destination) = picked {
+                            export_current(&app, download_api, destination);
+                        }
+                    });
+                });
+            }
+        }
+    });
+}
+
+/// One bounded copy/upload fan-out into the active directory — the drop
+/// gesture and the head upload button share it. The file work runs on a
+/// worker; the panel settles and reports once it lands.
+fn start_transfer(app: &MainWindow, api: Arc<NativeDesktop>, paths: Vec<PathBuf>) {
+    let Some(request) = begin_busy(app) else {
+        app.set_status("操作正在处理中，请稍后重试".into());
+        return;
+    };
+    let directory = active_directory(app);
+    let local = !is_cloud_target();
+    let count = paths.len();
+    app.set_status(
+        if local {
+            format!("正在复制 {count} 个文件…")
+        } else {
+            format!("正在上传 {count} 个文件…")
+        }
+        .into(),
+    );
+    let weak = app.as_weak();
+    let target = current_target();
+    std::thread::spawn(move || {
+        let (done, failed) = match &target {
+            Target::Local(root) => copy_files(&api, root, &directory, &paths),
+            Target::Cloud => upload_files(&api, &directory, &paths),
+        };
+        let _ = weak.upgrade_in_event_loop(move |app| {
+            end_busy(&app, api.clone(), request);
+            if !is_current(request) {
+                return;
+            }
+            settle(&app, api);
+            let mut message = format!(
+                "已{verb} {done}/{count} 个文件",
+                verb = if local { "复制" } else { "上传" }
+            );
+            if !failed.is_empty() {
+                message.push_str(&format!("；失败：{}", failed.join("；")));
+            }
+            app.set_status(message.into());
+        });
+    });
+}
+
+/// Copy the current directory of the local workspace out to `destination`
+/// (the head download for a bound folder: a plain host copy, no archive).
+fn export_current(app: &MainWindow, api: Arc<NativeDesktop>, destination: String) {
+    if app.get_ws_file_busy() {
+        return;
+    }
+    let Target::Local(root) = current_target() else {
+        return;
+    };
+    let Some(request) = begin_busy(app) else {
+        app.set_status("操作正在处理中，请稍后重试".into());
+        return;
+    };
+    let directory = active_directory(app);
+    app.set_status("正在导出…".into());
+    let weak = app.as_weak();
+    std::thread::spawn(move || {
+        let result = api.workspace_local_export(&root, &directory, &destination);
+        let _ = weak.upgrade_in_event_loop(move |app| {
+            end_busy(&app, api, request);
+            if !is_current(request) {
+                return;
+            }
+            match result {
+                Ok(copied) => app.set_status(format!("已导出 {copied} 项").into()),
+                Err(error) => app.set_status(format!("导出失败：{error}").into()),
+            }
+        });
+    });
+}
+
+/// The display name of a directory path for the archive flow; the root
+/// archives as "workspace".
+fn file_tail_name(path: &str) -> String {
+    path.rsplit_once('/')
+        .map(|(_, tail)| tail.to_string())
+        .filter(|tail| !tail.is_empty())
+        .unwrap_or_else(|| "workspace".to_string())
+}
+
+// ----------------------------------------------------------------- search
+
+/// The head search: edits are debounced, each run carries a serial so a late
+/// listing never replaces a newer result, and the flat result rows replace
+/// the tree until the field closes.
+fn install_search(app: &MainWindow, api: Arc<NativeDesktop>) {
+    let weak = app.as_weak();
+    let debounce_api = api.clone();
+    app.on_ws_file_search_edit(move |text| {
+        let Some(app) = weak.upgrade() else {
+            return;
+        };
+        if text.trim().is_empty() {
+            // An emptied field returns to the tree without waiting out the
+            // debounce.
+            SEARCH_TIMER.with(|timer| timer.borrow().stop());
+            SEARCH_SERIAL.with(|slot| slot.set(slot.get().wrapping_add(1)));
+            app.set_ws_file_search_busy(false);
+            app.set_ws_file_search_active(false);
+            app.set_ws_file_error("".into());
+            rebuild(&app);
+            return;
+        }
+        let weak = weak.clone();
+        let api = debounce_api.clone();
+        SEARCH_TIMER.with(|timer| {
+            timer.borrow().start(TimerMode::SingleShot, SEARCH_DEBOUNCE, move || {
+                if let Some(app) = weak.upgrade() {
+                    let query = app.get_ws_file_search_query().to_string();
+                    run_search(&app.as_weak(), api.clone(), query);
+                }
+            });
+        });
+    });
+
+    let weak = app.as_weak();
+    let accept_api = api.clone();
+    app.on_ws_file_search_accept(move |text| {
+        let Some(app) = weak.upgrade() else {
+            return;
+        };
+        SEARCH_TIMER.with(|timer| timer.borrow().stop());
+        run_search(&app.as_weak(), accept_api.clone(), text.to_string());
+    });
+
+    let weak = app.as_weak();
+    app.on_ws_file_search_cancel(move || {
+        if let Some(app) = weak.upgrade() {
+            exit_search(&app);
+        }
+    });
+}
+
+/// True while flat search results replaced the tree: an open field with a
+/// non-empty query.
+fn search_active(app: &MainWindow) -> bool {
+    app.get_ws_file_search_open() && !app.get_ws_file_search_query().trim().is_empty()
+}
+
+/// Close the search head and restore the cached tree rows.
+fn exit_search(app: &MainWindow) {
+    SEARCH_TIMER.with(|timer| timer.borrow().stop());
+    SEARCH_SERIAL.with(|slot| slot.set(slot.get().wrapping_add(1)));
+    app.set_ws_file_search_query("".into());
+    app.set_ws_file_search_open(false);
+    app.set_ws_file_search_busy(false);
+    app.set_ws_file_search_active(false);
+    app.set_ws_file_error("".into());
+    rebuild(app);
+}
+
+/// Run one bounded filename search on a worker thread; results land as flat
+/// rows (depth 0, no page tails) unless a newer query superseded them.
+fn run_search(weak: &slint::Weak<MainWindow>, api: Arc<NativeDesktop>, query: String) {
+    let trimmed = query.trim().to_string();
+    if trimmed.is_empty() {
+        if let Some(app) = weak.upgrade() {
+            exit_search(&app);
+        }
+        return;
+    }
+    let Some(app) = weak.upgrade() else {
+        return;
+    };
+    let serial = SEARCH_SERIAL.with(|slot| {
+        slot.set(slot.get().wrapping_add(1));
+        slot.get()
+    });
+    app.set_ws_file_search_busy(true);
+    app.set_ws_file_search_active(true);
+    let weak = weak.clone();
+    let target = current_target();
+    std::thread::spawn(move || {
+        let result = match &target {
+            Target::Local(root) => api.workspace_local_search(root, &trimmed),
+            Target::Cloud => api.interlink_cloud_search(&trimmed),
+        };
+        let _ = weak.upgrade_in_event_loop(move |app| {
+            if SEARCH_SERIAL.with(Cell::get) != serial {
+                return;
+            }
+            app.set_ws_file_search_busy(false);
+            match result {
+                Ok(listing) if listing_status(&listing) == "succeeded" => {
+                    app.set_ws_file_search_active(true);
+                    app.set_ws_file_error("".into());
+                    with_panel(|panel| panel.model.set_vec(search_rows(listing.entries)));
+                }
+                outcome => {
+                    let message = outcome
+                        .ok()
+                        .and_then(|listing| listing.error)
+                        .unwrap_or_else(|| "目标未返回结果".to_string());
+                    app.set_ws_file_search_active(true);
+                    app.set_ws_file_error(format!("搜索失败：{message}").into());
+                    with_panel(|panel| panel.model.set_vec(Vec::new()));
+                }
+            }
+        });
+    });
+}
+
+/// Flat projection of search results. Depth 0, no page tails; the selected
+/// flags ride the shared working set so batch actions keep working across
+/// search sessions.
+fn search_rows(entries: Vec<NativeInterlinkEntry>) -> Vec<WorkspaceFileRow> {
+    let selected: std::collections::HashSet<String> =
+        SELECTED.with(|slot| slot.borrow().iter().cloned().collect());
+    entries
+        .into_iter()
+        .map(|entry| {
+            let is_dir = entry.kind == "dir" || entry.kind == "directory";
+            WorkspaceFileRow {
+                path: entry.path.as_str().into(),
+                name: entry.name.as_str().into(),
+                kind: if is_dir { 1 } else { 0 },
+                size_text: if is_dir {
+                    slint::SharedString::default()
+                } else {
+                    format_size(entry.size).as_str().into()
+                },
+                icon: if is_dir {
+                    slint::Image::default()
+                } else {
+                    crate::file_icons::workspace_file_icon(&entry.name, &entry.kind)
+                },
+                depth: 0,
+                expanded: false,
+                loading: false,
+                remaining: 0,
+                selected: selected.contains(&entry.path),
+            }
+        })
+        .collect()
+}
+
+/// Reveal a path found by search: expand every cached ancestor and load the
+/// ones the cache lost, so the tree shows it once the search head closes.
+fn reveal_dir(app: &MainWindow, api: Arc<NativeDesktop>, path: &str) {
+    let mut prefix = String::new();
+    for segment in path.split('/') {
+        if !prefix.is_empty() {
+            prefix.push('/');
+        }
+        prefix.push_str(segment);
+        let known = with_panel(|panel| {
+            panel
+                .dirs
+                .get(&prefix)
+                .map(|dir| (dir.loaded, dir.expanded, dir.loading))
+        })
+        .flatten();
+        match known {
+            Some((loaded, expanded, loading)) => {
+                if !expanded && !loading {
+                    with_panel(|panel| {
+                        if let Some(dir) = panel.dirs.get_mut(&prefix) {
+                            dir.expanded = true;
+                        }
+                    });
+                }
+                if !loaded && !loading {
+                    load_dir(&app_weak(app), api.clone(), prefix.clone(), 0);
+                }
+            }
+            None => load_dir(&app_weak(app), api.clone(), prefix.clone(), 0),
+        }
+    }
+    rebuild(app);
+}
+
+// -------------------------------------------------------------- selection
+
+/// Multi-select: the working set feeds the row check tiles and the two batch
+/// actions (download fan-out, delete under one shared confirmation).
+fn install_selection(app: &MainWindow, api: Arc<NativeDesktop>) {
+    let weak = app.as_weak();
+    app.on_ws_file_select(move || {
+        let Some(app) = weak.upgrade() else {
+            return;
+        };
+        SELECTED.with(|slot| slot.borrow_mut().clear());
+        app.set_ws_file_selecting(true);
+        sync_selection(&app);
+    });
+
+    let weak = app.as_weak();
+    app.on_ws_file_check(move |index| {
+        let Some(app) = weak.upgrade() else {
+            return;
+        };
+        if !app.get_ws_file_selecting() {
+            return;
+        }
+        let Some(row) = app.get_ws_file_rows().row_data(index as usize) else {
+            return;
+        };
+        if row.kind == 2 {
+            return;
+        }
+        let path = row.path.to_string();
+        let picked = SELECTED.with(|slot| {
+            let mut list = slot.borrow_mut();
+            if let Some(position) = list.iter().position(|item| item == &path) {
+                list.remove(position);
+                return true;
+            }
+            if list.len() >= MAX_SELECTED {
+                return false;
+            }
+            list.push(path);
+            true
+        });
+        if !picked {
+            app.set_status(format!("一次最多选择 {MAX_SELECTED} 项").into());
+        }
+        sync_selection(&app);
+    });
+
+    let weak = app.as_weak();
+    let action_api = api.clone();
+    app.on_ws_file_selection_action(move |action| {
+        let Some(app) = weak.upgrade() else {
+            return;
+        };
+        match action {
+            0 => {
+                SELECTED.with(|slot| slot.borrow_mut().clear());
+                app.set_ws_file_selecting(false);
+                sync_selection(&app);
+            }
+            1 => batch_download(&app, action_api.clone()),
+            2 => {
+                if app.get_ws_file_busy() || app.get_ws_prompt_open() {
+                    return;
+                }
+                let paths = SELECTED.with(|slot| slot.borrow().clone());
+                if paths.is_empty() {
+                    return;
+                }
+                BATCH_PATHS.with(|slot| *slot.borrow_mut() = paths);
+                open_prompt(&app, PromptKind::BatchDelete, String::new(), String::new());
+            }
+            _ => {}
+        }
+    });
+}
+
+/// Project the working set into the visible rows and the head count. Rows are
+/// patched in place, so checking one item does not rebuild the tree.
+fn sync_selection(app: &MainWindow) {
+    app.set_ws_file_selected_count(SELECTED.with(|slot| slot.borrow().len()) as i32);
+    if search_active(app) {
+        // Search rows carry no check tiles; the flags land on their next
+        // projection.
+        return;
+    }
+    let selected: std::collections::HashSet<String> =
+        SELECTED.with(|slot| slot.borrow().iter().cloned().collect());
+    let rows = app.get_ws_file_rows();
+    for index in 0..rows.row_count() {
+        let Some(mut row) = rows.row_data(index) else {
+            continue;
+        };
+        let wanted = selected.contains(row.path.as_str());
+        if row.selected != wanted {
+            row.selected = wanted;
+            rows.set_row_data(index, row);
+        }
+    }
+}
+
+/// Batch download: local entries are copied out to one user-picked folder;
+/// cloud files are staged into the local workspace and cloud directories are
+/// archived there — the same targets as the per-row menu, fanned out.
+fn batch_download(app: &MainWindow, api: Arc<NativeDesktop>) {
+    let selected: std::collections::HashSet<String> =
+        SELECTED.with(|slot| slot.borrow().iter().cloned().collect());
+    let targets: Vec<(String, i32)> = app
+        .get_ws_file_rows()
+        .iter()
+        .filter(|row| row.kind != 2 && selected.contains(row.path.as_str()))
+        .map(|row| (row.path.to_string(), row.kind))
+        .collect();
+    if targets.is_empty() {
+        return;
+    }
+    if is_cloud_target() {
+        run_batch_download(app, api, targets, String::new());
+        return;
+    }
+    let weak = app.as_weak();
+    std::thread::spawn(move || {
+        let picked = crate::file_dialog::pick_directory("选择导出位置");
+        let _ = weak.upgrade_in_event_loop(move |app| {
+            if let Some(destination) = picked {
+                run_batch_download(&app, api, targets, destination);
+            }
+        });
+    });
+}
+
+fn run_batch_download(
+    app: &MainWindow,
+    api: Arc<NativeDesktop>,
+    targets: Vec<(String, i32)>,
+    destination: String,
+) {
+    if app.get_ws_file_busy() {
+        return;
+    }
+    let Some(request) = begin_busy(app) else {
+        app.set_status("操作正在处理中，请稍后重试".into());
+        return;
+    };
+    let root = match current_target() {
+        Target::Local(root) => root,
+        Target::Cloud => String::new(),
+    };
+    app.set_status(format!("正在下载 {} 项…", targets.len()).into());
+    let weak = app.as_weak();
+    std::thread::spawn(move || {
+        let mut done = 0usize;
+        let mut failed: Vec<String> = Vec::new();
+        for (path, kind) in &targets {
+            let outcome = if is_cloud_target() {
+                match kind {
+                    1 => api
+                        .interlink_cloud_archive(path, &file_tail_name(path))
+                        .map(|_| ()),
+                    _ => api.interlink_cloud_stage(path).map(|_| ()),
+                }
+            } else {
+                api.workspace_local_export(&root, path, &destination)
+                    .map(|_| ())
+            };
+            match outcome {
+                Ok(()) => done += 1,
+                Err(error) => failed.push(format!("{path}（{error}）")),
+            }
+        }
+        let total = targets.len();
+        let _ = weak.upgrade_in_event_loop(move |app| {
+            end_busy(&app, api.clone(), request);
+            if !is_current(request) {
+                return;
+            }
+            let mut message = format!("已下载 {done}/{total} 项");
+            if !failed.is_empty() {
+                message.push_str(&format!("；失败：{}", failed.join("；")));
+            }
+            app.set_status(message.into());
+        });
+    });
+}
+
+/// Batch delete: one shared confirmation, then a bounded fan-out. The cloud
+/// parks each delete for approval — the confirmed dialog is the user's
+/// decision, so parked commands auto-confirm like the drag-in uploads.
+fn batch_delete(app: &MainWindow, api: Arc<NativeDesktop>, paths: Vec<String>) {
+    if paths.is_empty() {
+        return;
+    }
+    let Some(request) = begin_busy(app) else {
+        app.set_status("操作正在处理中，请稍后重试".into());
+        return;
+    };
+    app.set_status(format!("正在删除 {} 项…", paths.len()).into());
+    let weak = app.as_weak();
+    let target = current_target();
+    std::thread::spawn(move || {
+        let mut done = 0usize;
+        let mut failed: Vec<String> = Vec::new();
+        for path in &paths {
+            let mut outcome = match &target {
+                Target::Local(root) => api
+                    .workspace_local_delete(root, path)
+                    .map(|_| CloudOpOutcome::Done(path.clone())),
+                Target::Cloud => api.interlink_cloud_delete(path),
+            };
+            if let Ok(CloudOpOutcome::NeedsApproval { command_id }) = &outcome {
+                outcome = api.interlink_cloud_confirm(command_id);
+            }
+            match outcome {
+                Ok(CloudOpOutcome::Done(_)) => {
+                    done += 1;
+                    drop_dir_cache(path);
+                }
+                Ok(CloudOpOutcome::NeedsApproval { .. }) => {
+                    failed.push(format!("{path}（云端命令仍待确认）"))
+                }
+                Ok(CloudOpOutcome::Failed(reason)) => failed.push(format!("{path}（{reason}）")),
+                Err(error) => failed.push(format!("{path}（{error}）")),
+            }
+        }
+        let total = paths.len();
+        let _ = weak.upgrade_in_event_loop(move |app| {
+            end_busy(&app, api.clone(), request);
+            if !is_current(request) {
+                return;
+            }
+            SELECTED.with(|slot| slot.borrow_mut().clear());
+            app.set_ws_file_selecting(false);
+            app.set_ws_file_selected_count(0);
+            let mut message = format!("已删除 {done}/{total} 项");
+            if !failed.is_empty() {
+                message.push_str(&format!("；失败：{}", failed.join("；")));
+            }
+            app.set_status(message.into());
+            settle(&app, api);
+        });
+    });
+}
+
+/// Post-mutation settle: re-run the active search, otherwise refresh the
+/// tree. Every write path funnels here so a result view never goes stale.
+fn settle(app: &MainWindow, api: Arc<NativeDesktop>) {
+    if search_active(app) {
+        let query = app.get_ws_file_search_query().to_string();
+        run_search(&app.as_weak(), api, query);
+        return;
+    }
+    refresh(app, api);
 }
 
 /// Open the shared prompt dialog for one workspace write (cloud or local);
@@ -894,6 +1510,17 @@ fn open_prompt(app: &MainWindow, kind: PromptKind, path: String, name: String) {
             false,
             String::new(),
         ),
+        PromptKind::BatchDelete => {
+            let count = BATCH_PATHS.with(|slot| slot.borrow().len());
+            (
+                "删除",
+                format!("删除选中的 {count} 项？本地或云端文件删除后不可恢复。"),
+                "确认删除",
+                true,
+                false,
+                String::new(),
+            )
+        }
     };
     PROMPT.with(|slot| {
         *slot.borrow_mut() = Some(PromptOp {
@@ -1064,6 +1691,7 @@ fn done_message(kind: PromptKind, value: &str) -> String {
         PromptKind::NewDir => format!("已新建目录 {value}"),
         PromptKind::NewFile => format!("已新建文件 {value}"),
         PromptKind::Clear => "已清空工作目录".into(),
+        PromptKind::BatchDelete => "已删除选中项".into(),
     }
 }
 
@@ -1196,7 +1824,7 @@ fn clear_root(app: &MainWindow, api: Arc<NativeDesktop>) {
                 Ok(()) => {
                     with_panel(|panel| panel.dirs.clear());
                     app.set_status("已清空工作目录".into());
-                    refresh(&app, api);
+                    settle(&app, api);
                 }
                 Err(error) => app.set_status(format!("清空失败：{error}").into()),
             }
@@ -1353,12 +1981,6 @@ fn refresh(app: &MainWindow, api: Arc<NativeDesktop>) {
     let weak = app.as_weak();
     let target = current_target();
     std::thread::spawn(move || {
-        // The usage line only exists for the cloud workspace; a local folder
-        // shows none (the stats line is already cleared by `reflect_target`).
-        let stats = match &target {
-            Target::Cloud => api.interlink_cloud_stats().ok(),
-            Target::Local(_) => None,
-        };
         let mut listings = Vec::new();
         for (path, loaded) in expanded {
             // Keep already paged rows through refresh instead of jumping back
@@ -1385,9 +2007,6 @@ fn refresh(app: &MainWindow, api: Arc<NativeDesktop>) {
             if !is_current(request) {
                 end_busy(&app, api, request);
                 return;
-            }
-            if let Some(stats) = stats {
-                app.set_ws_file_stats(stats_line(&stats).into());
             }
             for (path, listing) in listings {
                 if path.is_empty()
@@ -1540,9 +2159,14 @@ fn apply_listing_state(
 /// inline their children (recursively), each paged directory ends with the
 /// load-more tail when entries remain.
 fn rebuild(app: &MainWindow) {
+    if search_active(app) {
+        return;
+    }
+    let selected: std::collections::HashSet<String> =
+        SELECTED.with(|slot| slot.borrow().iter().cloned().collect());
     with_panel(|panel| {
         let mut rows: Vec<WorkspaceFileRow> = Vec::new();
-        walk(panel, &mut rows, "", 0);
+        walk(panel, &mut rows, "", 0, &selected);
         let count = panel.model.row_count();
         let new_count = rows.len();
         for (index, row) in rows.into_iter().enumerate() {
@@ -1622,7 +2246,13 @@ fn make_cache_room(path: &str) -> bool {
     .unwrap_or(false)
 }
 
-fn walk(panel: &Panel, rows: &mut Vec<WorkspaceFileRow>, key: &str, depth: usize) {
+fn walk(
+    panel: &Panel,
+    rows: &mut Vec<WorkspaceFileRow>,
+    key: &str,
+    depth: usize,
+    selected: &std::collections::HashSet<String>,
+) {
     let Some(dir) = panel.dirs.get(key) else {
         return;
     };
@@ -1639,9 +2269,10 @@ fn walk(panel: &Panel, rows: &mut Vec<WorkspaceFileRow>, key: &str, depth: usize
                 expanded: child.is_some_and(|child| child.expanded),
                 loading: child.is_some_and(|child| child.loading),
                 remaining: 0,
+                selected: selected.contains(&entry.path),
             });
             if child.is_some_and(|child| child.expanded) {
-                walk(panel, rows, &entry.path, depth + 1);
+                walk(panel, rows, &entry.path, depth + 1, selected);
             }
         } else {
             rows.push(WorkspaceFileRow {
@@ -1654,6 +2285,7 @@ fn walk(panel: &Panel, rows: &mut Vec<WorkspaceFileRow>, key: &str, depth: usize
                 expanded: false,
                 loading: false,
                 remaining: 0,
+                selected: selected.contains(&entry.path),
             });
         }
     }
@@ -1686,6 +2318,7 @@ fn walk(panel: &Panel, rows: &mut Vec<WorkspaceFileRow>, key: &str, depth: usize
             } else {
                 (dir.total - loaded).min(i32::MAX as u64) as i32
             },
+            selected: false,
         });
     }
 }
@@ -1697,20 +2330,7 @@ fn listing_status(listing: &NativeInterlinkListing) -> &str {
     }
 }
 
-/// Usage line of the sidebar head: used bytes and file count, the web pair.
-fn stats_line(stats: &wunder_desktop::native::NativeInterlinkStats) -> String {
-    let mut line = format!(
-        "已用 {} · {} 个文件",
-        format_size(stats.used_bytes),
-        stats.files
-    );
-    if stats.truncated {
-        line.push_str(" · 统计为大目录下界");
-    }
-    line
-}
-
-/// The bounded human size the tree rows and the usage line share.
+/// The bounded human size the tree rows share.
 fn format_size(bytes: u64) -> String {
     const KB: f64 = 1024.0;
     const MB: f64 = KB * KB;
@@ -1798,7 +2418,8 @@ mod tests {
             notes.expanded = true;
         });
         let mut rows = Vec::new();
-        with_panel(|panel| walk(panel, &mut rows, "", 0));
+        let selected = std::collections::HashSet::new();
+        with_panel(|panel| walk(panel, &mut rows, "", 0, &selected));
         assert_eq!(rows.len(), 4);
         assert_eq!(
             (rows[0].kind, rows[0].name.as_str(), rows[0].expanded),
@@ -1815,21 +2436,31 @@ mod tests {
     }
 
     #[test]
-    fn sizes_format_like_the_web_usage_line() {
+    fn sizes_format_like_the_tree_rows() {
         assert_eq!(format_size(0), "");
         assert_eq!(format_size(850), "850 B");
         assert_eq!(format_size(2048), "2 KB");
         assert_eq!(format_size(3 * 1024 * 1024), "3.0 MB");
         assert_eq!(format_size(5 * 1024 * 1024 * 1024), "5.0 GB");
-        let stats = wunder_desktop::native::NativeInterlinkStats {
-            files: 12,
-            dirs: 3,
-            used_bytes: 4096,
-            truncated: true,
-        };
-        let line = stats_line(&stats);
-        assert!(line.starts_with("已用 4 KB · 12 个文件"), "{line}");
-        assert!(line.ends_with("统计为大目录下界"), "{line}");
+    }
+
+    /// Search results project flat: dirs keep no size, files carry theirs,
+    /// and the pick-order working set rides the rows as flags.
+    #[test]
+    fn search_rows_project_flat_with_selection_flags() {
+        let rows = search_rows(vec![
+            entry("notes", "notes", "dir", 0),
+            entry("a.md", "notes/a.md", "file", 2048),
+        ]);
+        assert_eq!(rows.len(), 2);
+        assert_eq!((rows[0].kind, rows[0].depth, rows[0].expanded), (1, 0, false));
+        assert_eq!(rows[0].size_text.as_str(), "");
+        assert_eq!((rows[1].kind, rows[1].size_text.as_str()), (0, "2 KB"));
+        assert!(rows.iter().all(|row| !row.selected));
+        SELECTED.with(|slot| *slot.borrow_mut() = vec!["notes/a.md".to_string()]);
+        let rows = search_rows(vec![entry("a.md", "notes/a.md", "file", 2048)]);
+        assert!(rows[0].selected);
+        SELECTED.with(|slot| slot.borrow_mut().clear());
     }
 
     /// New entries land inside a directory row, beside a file row, and in

@@ -2,6 +2,7 @@
 use super::{NativeDesktop, NativeWorkflowEntry};
 use anyhow::{ensure, Result};
 use serde_json::Value;
+use std::collections::HashSet;
 use wunder_server::stable_core::thread_view::ChatViewRow;
 
 #[derive(Debug, Clone)]
@@ -104,6 +105,7 @@ pub(super) fn project_page(page: &Value, final_id: &str) -> NativeProcessPage {
             .rev()
             .find(|row| {
                 row["kind"] == "assistant_message"
+                    && stable_assistant_message(row)
                     && !row["payload"]["tool_calls"]
                         .as_array()
                         .is_some_and(|calls| !calls.is_empty())
@@ -113,6 +115,12 @@ pub(super) fn project_page(page: &Value, final_id: &str) -> NativeProcessPage {
     } else {
         final_id
     };
+    // Canonical storage can retain an imported/replayed assistant snapshot
+    // beside the stable execution item.  A process page is a presentation
+    // projection, so only the stable `turn_id:text-model_round` item may
+    // contribute a thought.  Without the same rule used by chat-turn headers,
+    // opening the work process shows one thought from each copy.
+    let mut assistant_rounds = HashSet::new();
     NativeProcessPage {
         first: page["next_before"].as_i64(),
         last: page["next_after"].as_i64(),
@@ -134,6 +142,19 @@ pub(super) fn project_page(page: &Value, final_id: &str) -> NativeProcessPage {
                 };
                 match row["kind"].as_str().unwrap_or_default() {
                     "assistant_message" => {
+                        if !stable_assistant_message(row) {
+                            return None;
+                        }
+                        let execution = row["turn_id"].as_str().unwrap_or_default();
+                        // Fixtures/legacy adapters may omit the execution and
+                        // model-round envelope; retain those rows because
+                        // their item ids are the only available identity.
+                        if !execution.is_empty() {
+                            let round = data["model_round"].as_i64().unwrap_or(1);
+                            if !assistant_rounds.insert((execution.to_owned(), round)) {
+                                return None;
+                            }
+                        }
                         item.reasoning = data["reasoning"].as_str().unwrap_or_default().into();
                         if id != final_id {
                             item.text = data["content"].as_str().unwrap_or_default().into();
@@ -179,6 +200,22 @@ pub(super) fn project_page(page: &Value, final_id: &str) -> NativeProcessPage {
             })
             .collect(),
     }
+}
+
+/// Assistant items are immutable per model round.  Reject replay/import
+/// copies here just as `native_chat_turns` does for the main transcript; a
+/// continuation has its own execution id, so equal round numbers there remain
+/// separate work-process entries.
+fn stable_assistant_message(row: &Value) -> bool {
+    let execution = row["turn_id"].as_str().unwrap_or_default();
+    // Hand-authored/legacy process pages may omit the execution envelope. Keep
+    // those rows renderable; canonical rows always carry turn_id and the
+    // stable `turn:text-round` identity below.
+    if execution.is_empty() {
+        return true;
+    }
+    let round = row["payload"]["model_round"].as_i64().unwrap_or(1);
+    row["item_id"] == format!("{execution}:text-{round}")
 }
 
 #[cfg(test)]
@@ -293,5 +330,24 @@ mod tests {
         assert!(page.has_older);
         assert!(!page.has_newer);
         assert_eq!(page.first, Some(101));
+    }
+
+    #[test]
+    fn process_page_deduplicates_unstable_assistant_replay_copies() {
+        let page = project_page(
+            &json!({"items":[
+                {"kind":"assistant_message","turn_id":"fixture-turn","item_id":"fixture-turn:text-1","payload":{"model_round":1,"reasoning":"Stable thought","content":""}},
+                {"kind":"assistant_message","turn_id":"fixture-turn","item_id":"random-replay-copy","payload":{"model_round":1,"reasoning":"Stable thought","content":""}},
+                {"kind":"assistant_message","turn_id":"fixture-turn","item_id":"fixture-turn:text-2","payload":{"model_round":2,"reasoning":"Second thought","content":""}}
+            ],"has_newer":true}),
+            "fixture-turn:text-99",
+        );
+        let thoughts: Vec<_> = page
+            .items
+            .iter()
+            .filter(|item| !item.reasoning.is_empty())
+            .map(|item| item.reasoning.as_str())
+            .collect();
+        assert_eq!(thoughts, vec!["Stable thought", "Second thought"]);
     }
 }

@@ -23,6 +23,101 @@ fn read_body(db: &dyn StorageBackend, body_id: &str) -> String {
     content
 }
 
+#[test]
+fn initial_chat_cursor_replays_a_commit_racing_the_page_read() {
+    use super::MetaStore;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    struct CommitDuringRead<'a> {
+        db: &'a SqliteStorage,
+        turn: String,
+        fired: AtomicBool,
+    }
+    impl MetaStore for CommitDuringRead<'_> {
+        fn get_meta(&self, key: &str) -> anyhow::Result<Option<String>> {
+            // Feedback is read after the page's transaction captured its
+            // durable cursor and selected the reply. Commit a new reply at
+            // that exact boundary, without timing-dependent sleeps.
+            if key.starts_with("thread_feedback:") && !self.fired.swap(true, Ordering::SeqCst) {
+                self.db.append_thread_item(
+                    USER,
+                    &json!({"session_id":THREAD,"turn_id":self.turn,
+                    "item_id":format!("{}:text-2",self.turn),"kind":"assistant_message",
+                    "role":"assistant","content":"fixture later answer","status":"completed"}),
+                )?;
+            }
+            self.db.get_meta(key)
+        }
+        fn set_meta(&self, key: &str, value: &str) -> anyhow::Result<()> {
+            self.db.set_meta(key, value)
+        }
+        fn compare_and_swap_meta(
+            &self,
+            key: &str,
+            expected: Option<&str>,
+            value: Option<&str>,
+        ) -> anyhow::Result<bool> {
+            self.db.compare_and_swap_meta(key, expected, value)
+        }
+        fn list_meta_prefix(&self, prefix: &str) -> anyhow::Result<Vec<(String, String)>> {
+            self.db.list_meta_prefix(prefix)
+        }
+        fn delete_meta_prefix(&self, prefix: &str) -> anyhow::Result<usize> {
+            self.db.delete_meta_prefix(prefix)
+        }
+    }
+
+    let root = tempfile::tempdir().unwrap();
+    let db = SqliteStorage::new(
+        root.path()
+            .join("state_1.sqlite")
+            .to_string_lossy()
+            .into_owned(),
+    );
+    db.ensure_initialized().unwrap();
+    let admitted = db
+        .accept_thread_turn(USER, THREAD, &json!({"content":"fixture input"}))
+        .unwrap();
+    let turn = admitted["turn_id"].as_str().unwrap();
+    super::test_support::freeze_thread(root.path(), USER, THREAD);
+    super::test_support::begin_turn(root.path(), USER, THREAD, turn);
+    db.append_thread_item(
+        USER,
+        &json!({"session_id":THREAD,"turn_id":turn,
+        "item_id":format!("{turn}:text-1"),"kind":"assistant_message","role":"assistant",
+        "content":"fixture prior answer","status":"completed"}),
+    )
+    .unwrap();
+    let before = db.latest_thread_change_seq_by_session(THREAD).unwrap();
+    let metadata = CommitDuringRead {
+        db: &db,
+        turn: turn.into(),
+        fired: AtomicBool::new(false),
+    };
+    let page = super::canonical_thread_log::CanonicalThreadLog::new(
+        db.canonical_threads().unwrap(),
+        &metadata,
+    )
+    .thread_view_page(USER, THREAD, "chat", None, 12)
+    .unwrap();
+    assert!(metadata.fired.load(Ordering::SeqCst));
+    assert_eq!(page.view_seq, before);
+    assert_eq!(page.chat[0].assistant.content, "fixture prior answer");
+    assert!(db
+        .list_thread_changes(USER, THREAD, page.view_seq, 20)
+        .unwrap()
+        .iter()
+        .any(|event| event["payload"]["payload"]["content"] == "fixture later answer"));
+    assert_eq!(
+        db.thread_view_page(USER, THREAD, "chat", None, 12)
+            .unwrap()
+            .chat[0]
+            .assistant
+            .content,
+        "fixture later answer"
+    );
+}
+
 #[tokio::test]
 async fn canonical_writer_reopens_through_backend_with_complete_chat_and_trajectory() {
     let root = tempfile::tempdir().unwrap();

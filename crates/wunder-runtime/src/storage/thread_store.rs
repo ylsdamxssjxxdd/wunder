@@ -37,6 +37,77 @@ const STRESS_BATCH_MAX_RECORDS: usize = 128;
 const STRESS_BATCH_MAX_BYTES: usize = ROLLOUT_MAX_APPEND_BYTES / 2;
 const STRESS_ENVELOPE_BYTES: usize = 128;
 
+/// Keep the persisted model context limited to fields that participate in the
+/// chat protocol.  Tool execution events carry additional accounting and
+/// diagnostics (arguments, schema references, request usage, etc.) for the
+/// UI and audit log.  Replaying those fields into every model request both
+/// wastes context and makes the cache prefix depend on runtime metadata.
+///
+/// The assistant tool call payload and the tool result's `tool_call_id` are
+/// deliberately retained: providers require the pair to remain adjacent and
+/// addressable when a thread is resumed.
+fn compact_model_context_payload(payload: serde_json::Value) -> serde_json::Value {
+    let Some(map) = payload.as_object() else {
+        return payload;
+    };
+    let role = map
+        .get("role")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    let content = map
+        .get("model_content")
+        .filter(|value| !value.is_null())
+        .or_else(|| map.get("content"))
+        .cloned()
+        .unwrap_or(serde_json::Value::String(String::new()));
+    let mut compact = serde_json::Map::new();
+    compact.insert("role".to_string(), serde_json::Value::String(role.clone()));
+    compact.insert("content".to_string(), content);
+
+    // Keep only model protocol fields. Tool call arguments live in the
+    // assistant `tool_calls` payload; tool results are linked by id. All
+    // accounting, schema, runtime and storage metadata is intentionally
+    // excluded from the replay projection.
+    if role == "assistant" {
+        if let Some(reasoning) = map
+            .get("reasoning_content")
+            .or_else(|| map.get("reasoning"))
+            .and_then(serde_json::Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+        {
+            compact.insert(
+                "reasoning_content".to_string(),
+                serde_json::Value::String(reasoning.to_string()),
+            );
+        }
+        if let Some(tool_calls) = map
+            .get("tool_calls")
+            .or_else(|| map.get("tool_call"))
+            .or_else(|| map.get("function_call"))
+            .filter(|value| !value.is_null())
+        {
+            compact.insert("tool_calls".to_string(), tool_calls.clone());
+        }
+    }
+    for key in ["tool_call_id", "toolCallId", "call_id", "callId"] {
+        if let Some(value) = map.get(key).filter(|value| !value.is_null()) {
+            compact.insert("tool_call_id".to_string(), value.clone());
+            break;
+        }
+    }
+    serde_json::Value::Object(compact)
+}
+
+fn compact_replayed_model_message(payload: serde_json::Value) -> Option<serde_json::Value> {
+    // Reuse the history normalizer before the white-list projection so legacy
+    // tool-call shapes and terminal calls retain their established replay
+    // semantics. Empty terminal-only assistant rows are intentionally omitted.
+    let normalized = crate::services::history::build_message_from_item(&payload, true)?;
+    Some(compact_model_context_payload(normalized))
+}
+
 struct StressRecordBatch {
     records: Vec<CanonicalRecord>,
     bytes: usize,
@@ -364,8 +435,31 @@ impl LocalThreadStore {
     /// never repairs/truncates a canonical file. Later pages only read SQLite.
     pub(crate) async fn ensure_history(&self, thread: &ThreadId) -> ThreadStoreResult<()> {
         self.recover_pending_revert_for_access(thread).await?;
+        // Retain deletion and metadata validation for non-facade callers.
         let stored = self.stored(thread).await?;
-        let key = stored.descriptor.rollout_id.clone();
+        if self
+            .history_verified
+            .lock()
+            .contains(&stored.descriptor.rollout_id)
+        {
+            return Ok(());
+        }
+        let segments = self.lineage_segments(thread).await?;
+        self.ensure_history_segments(thread, segments).await
+    }
+
+    /// Facade reads resolve lineage using their existing catalog connection.
+    /// Their caller checks pending mutations before entering this path.
+    pub(crate) async fn ensure_history_segments(
+        &self,
+        thread: &ThreadId,
+        segments: Vec<LineageSegment>,
+    ) -> ThreadStoreResult<()> {
+        let key = segments
+            .last()
+            .ok_or_else(|| unavailable("empty history lineage"))?
+            .rollout_id
+            .to_string();
         if self.history_verified.lock().contains(&key) {
             return Ok(());
         }
@@ -374,10 +468,10 @@ impl LocalThreadStore {
         if self.history_verified.lock().contains(&key) {
             return Ok(());
         }
-        let segments = self.lineage_segments(thread).await?;
         let history = self.history.clone();
         blocking::run_fs("thread_store.ensure_history", move || {
             for segment in segments {
+                history.ensure_chat_summary(segment.rollout_id.as_str())?;
                 let mut state = history.projection_state(segment.rollout_id.as_str())?;
                 if segment
                     .end
@@ -643,8 +737,17 @@ impl LocalThreadStore {
         let now = Utc::now().timestamp_millis();
         let replacement = payload
             .pointer("/meta/replacement_history")
-            .and_then(serde_json::Value::as_array);
-        let record = if let Some(replacement) = replacement {
+            .and_then(serde_json::Value::as_array)
+            .cloned();
+        // Normal response items are the durable model-context projection.
+        // Keep protocol fields only; the visible/audit item remains written by
+        // its separate completion event and retains diagnostics there.
+        let payload = if replacement.is_some() {
+            payload
+        } else {
+            compact_model_context_payload(payload)
+        };
+        let record = if let Some(replacement) = replacement.as_ref() {
             CanonicalRecord::Compacted(CompactionCheckpoint {
                 turn_id: turn.clone(),
                 summary: payload.get("content").cloned().unwrap_or_default(),
@@ -817,11 +920,20 @@ impl LocalThreadStore {
                             .as_array()
                             .into_iter()
                             .flatten()
-                            .cloned(),
+                            .cloned()
+                            .filter_map(compact_replayed_model_message),
                     );
                 }
                 CanonicalRecord::ResponseItem(item) if excluding_turn != Some(&item.turn_id) => {
-                    messages.push(item.payload)
+                    // Re-apply the projection at read time as well.  Stress
+                    // fixtures, imported rollouts and older writers can
+                    // contain a full event payload even though new appends
+                    // are compacted before persistence.  Keeping this boundary
+                    // deterministic prevents audit metadata from entering a
+                    // resumed model request and preserves prompt-cache hits.
+                    if let Some(message) = compact_replayed_model_message(item.payload) {
+                        messages.push(message);
+                    }
                 }
                 _ => {}
             }
@@ -3298,7 +3410,62 @@ async fn db<T: Send + 'static>(
 #[cfg(test)]
 mod stress_batch_tests {
     use super::*;
+    use serde_json::json;
     use wunder_core::thread_store::{CanonicalItemKind, ItemId, ResponseItem, TurnId};
+
+    #[test]
+    fn compact_model_context_payload_keeps_protocol_and_drops_diagnostics() {
+        let payload = json!({
+            "role": "tool",
+            "content": "result",
+            "tool_call_id": "call-1",
+            "args": {"path": "sample.txt"},
+            "request_usage": {"total_tokens": 42},
+            "request_context_tokens": 100,
+            "schema_ref": {"schema_ref": "tool-schema:sample"},
+            "model_observation": "duplicate",
+            "tool_runtime_name": "read_file",
+            "session_id": "thread-sample",
+            "meta": {"type": "tool_result", "duration_ms": 7}
+        });
+        assert_eq!(
+            compact_model_context_payload(payload),
+            json!({"role":"tool", "content":"result", "tool_call_id":"call-1"})
+        );
+    }
+
+    #[test]
+    fn compact_model_context_payload_preserves_assistant_tool_calls() {
+        let payload = json!({
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{
+                "id": "call-2",
+                "type": "function",
+                "function": {"name": "read_file", "arguments": r#"{\"path\":\"sample.txt\"}"#}
+            }],
+            "request_usage": {"total_tokens": 9},
+            "meta": {"type": "tool_call"}
+        });
+        let compact = compact_model_context_payload(payload);
+        assert_eq!(compact["tool_calls"][0]["id"], "call-2");
+        assert!(compact.get("request_usage").is_none());
+        assert!(compact.get("meta").is_none());
+    }
+
+    #[test]
+    fn compact_model_context_payload_uses_model_content_override() {
+        let payload = json!({
+            "role": "user",
+            "content": "display",
+            "model_content": "model",
+            "args": {"ignored": true}
+        });
+        assert_eq!(
+            compact_model_context_payload(payload),
+            json!({"role":"user", "content":"model"})
+        );
+    }
 
     fn settings_record() -> CanonicalRecord {
         CanonicalRecord::Event(CanonicalEvent::SettingsApplied(
@@ -3747,34 +3914,13 @@ mod stress_batch_tests {
         assert!(messages
             .iter()
             .any(|message| message["role"] == "assistant"));
-        assert!(messages.iter().any(|message| {
-            message
-                .get("request_token_breakdown")
-                .and_then(|value| value.get("system_prompt_tokens"))
-                .and_then(serde_json::Value::as_u64)
-                .is_some_and(|tokens| tokens > 0)
-        }));
-        let breakdown = messages
+        // Request token breakdown is audit metadata and must not be replayed
+        // into model context. The stress generator still persists it in the
+        // canonical/UI records, while model_messages contains only protocol
+        // fields needed to resume the conversation.
+        assert!(messages
             .iter()
-            .find_map(|message| message.get("request_token_breakdown"))
-            .expect("synthetic request token breakdown");
-        let component_keys = [
-            "native_tool_tokens",
-            "system_prompt_tokens",
-            "history_tokens",
-            "latest_user_tokens",
-            "image_tokens",
-            "reasoning_tokens",
-            "tool_call_tokens",
-            "tool_call_id_tokens",
-            "message_envelope_tokens",
-            "fixed_protocol_tokens",
-        ];
-        let component_total = component_keys
-            .into_iter()
-            .map(|key| breakdown[key].as_u64().unwrap())
-            .sum::<u64>();
-        assert_eq!(component_total, breakdown["estimated_input_tokens"]);
+            .all(|message| message.get("request_token_breakdown").is_none()));
         let turns = reopened
             .list_turns(TurnListQuery {
                 thread_id: thread,
