@@ -13,6 +13,7 @@ import {
   applyChatRuntimeEvent
 } from '../../src/realtime/chat/chatRuntimeReducer';
 import { selectVisibleMessageProjections } from '../../src/realtime/chat/chatRuntimeSelectors';
+import { extractChatInquiryPanel } from '../../src/realtime/chat/chatInquiry';
 
 const turnUpsert = (seq: number, data: Record<string, unknown>): ThreadChangeFrame => ({
   event: 'thread_change', seq, change_type: 'turn_upsert',
@@ -45,6 +46,35 @@ const materializeAssistant = (state: ChatThreadState) => {
   const projected = buildChatThreadRenderableMessages(state).find((message) => message.role === 'assistant');
   return materializeChatRuntimeMessage(projected)! as Record<string, any>;
 };
+
+test('completed durable panel item remains pending beside an independent plan', () => {
+  const state = emptyChatThreadState('fixture-panel-plan');
+  const turnId = 'fixture-panel-plan-turn';
+  const panel = { item_id: `${turnId}:question-panel-2`, turn_id: turnId, kind: 'question_panel',
+    event_type: 'question_panel', status: 'completed', revision: 1, questions: carrierQuestions, keep_open: true };
+  const plan = { item_id: `${turnId}:plan`, turn_id: turnId, kind: 'plan', status: 'completed', revision: 1,
+    plan: [{ step: 'Fixture pending step', status: 'in_progress' }] };
+  const turn = { turn_id: turnId, user_round: 1, status: 'running', content: 'Fixture input' };
+  applyChatThreadSnapshot(state, { cursor: 4, turns: [turn], items: [plan, panel] });
+  const assistant = materializeAssistant(state);
+  assert.equal(assistant.questionPanel?.status, 'pending');
+  assert.equal(assistant.plan?.steps?.[0]?.status, 'in_progress');
+  assert.equal(assistant.timeline?.some((item: any) => item.kind === 'question_panel'), false);
+  applyChatThreadSnapshot(state, { cursor: 5, turns: [{ ...turn, status: 'waiting_input' }], items: [plan, panel] });
+  assert.equal(materializeAssistant(state).questionPanel?.status, 'pending');
+});
+
+test('panel answer state is independent of enclosing tool lifecycle status', () => {
+  for (const status of ['completed', 'failed', 'cancelled']) {
+    assert.equal(extractChatInquiryPanel({ kind: 'question_panel', status, questions: carrierQuestions })?.status, 'pending');
+    assert.equal(extractChatInquiryPanel({ kind: 'assistant_message', status,
+      meta: { panel: { status: 'pending', questions: carrierQuestions } } })?.status, 'pending');
+    assert.equal(extractChatInquiryPanel({ kind: 'tool_call', status,
+      result: { data: carrier } })?.status, 'pending');
+  }
+  assert.equal(extractChatInquiryPanel({ status: 'answered', questions: carrierQuestions })?.status, 'answered');
+  assert.equal(extractChatInquiryPanel({ state: 'dismissed', data: { questions: carrierQuestions } })?.status, 'dismissed');
+});
 
 test('durable question-panel carrier promotes an independent composer panel', () => {
   const state = emptyChatThreadState('inquiry-carrier-session');

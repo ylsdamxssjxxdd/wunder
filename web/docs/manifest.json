@@ -1,6 +1,6 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-10-25T02:12:55.785003+00:00",
+  "generated_at": "2026-10-25T04:56:15.846908+00:00",
   "site": {
     "name": "使用说明书",
     "description": "wunder is a multi-form agent workbench: Pupa (desktop) is the local AI workbench, Beehive (web) is the cloud AI workbench, Helm (cli) is the manual local entry point, and the Hull (server) is the user and agent management platform. / wunder 是多形态的智能体工作台：蛹（desktop）是本地 AI 工作台，蜂巢（web）是云端 AI 工作台，舵机（cli）是手工本地操作入口，舰体（server）是用户与智能体管理平台。",
@@ -332,7 +332,7 @@
                   {
                     "slug": "zh-CN/art/index",
                     "title": "美术设计稿",
-                    "summary": "蛹桌面端的十张界面设计稿：总览、基础规范、图标、外壳、时间线、过程与工具、计划与问询、输入区、设置与弹窗、交互状态与动效。每张都按 1:1 逻辑像素标注，可直接对照实现。",
+                    "summary": "蛹桌面端的十张界面设计稿（总览、基础规范、图标、外壳、时间线、过程与工具、计划与问询、输入区、设置与弹窗、交互状态与动效），以及舵机终端端的六张（总览、基础规范、布局与底栏、会话时间线、工具与计划、输入与弹层）。每张都以当前实现为基线标注，可直接对照验收。",
                     "url": "/docs/zh-CN/art/"
                   }
                 ]
@@ -887,7 +887,7 @@
                   {
                     "slug": "en/art/index",
                     "title": "Art Sheets",
-                    "summary": "Ten interface design sheets for the Pupa desktop app, covering the overview, foundations, icons, shell, timeline, process and tools, plan and inquiry, composer, settings and dialogs, and interaction states. Each sheet is annotated in logical pixels and can be checked against the implementation directly.",
+                    "summary": "Ten interface design sheets for the Pupa desktop app (overview, foundations, icons, shell, timeline, process and tools, plan and inquiry, composer, settings and dialogs, states and motion), plus six for the Helm terminal app (overview, foundations, layout and footer, timeline, tools and plan, input and popups). Each sheet is annotated against the current implementation and can be checked directly.",
                     "url": "/docs/en/art/"
                   }
                 ]
@@ -3470,7 +3470,7 @@
       "slug": "zh-CN/art/index",
       "language": "zh-CN",
       "title": "美术设计稿",
-      "summary": "蛹桌面端的十张界面设计稿：总览、基础规范、图标、外壳、时间线、过程与工具、计划与问询、输入区、设置与弹窗、交互状态与动效。每张都按 1:1 逻辑像素标注，可直接对照实现。",
+      "summary": "蛹桌面端的十张界面设计稿（总览、基础规范、图标、外壳、时间线、过程与工具、计划与问询、输入区、设置与弹窗、交互状态与动效），以及舵机终端端的六张（总览、基础规范、布局与底栏、会话时间线、工具与计划、输入与弹层）。每张都以当前实现为基线标注，可直接对照验收。",
       "updated_at": "2026-10-25",
       "read_when": [],
       "source_docs": [],
@@ -3538,6 +3538,36 @@
         },
         {
           "id": "section-12",
+          "level": 2,
+          "text": "舵机 00 整体总览"
+        },
+        {
+          "id": "section-13",
+          "level": 2,
+          "text": "舵机 01 基础规范"
+        },
+        {
+          "id": "section-14",
+          "level": 2,
+          "text": "舵机 02 布局与底栏"
+        },
+        {
+          "id": "section-15",
+          "level": 2,
+          "text": "舵机 03 会话时间线"
+        },
+        {
+          "id": "section-16",
+          "level": 2,
+          "text": "舵机 04 工具与计划"
+        },
+        {
+          "id": "section-17",
+          "level": 2,
+          "text": "舵机 05 输入与弹层"
+        },
+        {
+          "id": "section-18",
           "level": 2,
           "text": "维护方式"
         }
@@ -7817,7 +7847,7 @@
       "slug": "en/art/index",
       "language": "en",
       "title": "Art Sheets",
-      "summary": "Ten interface design sheets for the Pupa desktop app, covering the overview, foundations, icons, shell, timeline, process and tools, plan and inquiry, composer, settings and dialogs, and interaction states. Each sheet is annotated in logical pixels and can be checked against the implementation directly.",
+      "summary": "Ten interface design sheets for the Pupa desktop app (overview, foundations, icons, shell, timeline, process and tools, plan and inquiry, composer, settings and dialogs, states and motion), plus six for the Helm terminal app (overview, foundations, layout and footer, timeline, tools and plan, input and popups). Each sheet is annotated against the current implementation and can be checked directly.",
       "updated_at": "2026-10-25",
       "read_when": [],
       "source_docs": [],
@@ -7885,6 +7915,36 @@
         },
         {
           "id": "section-12",
+          "level": 2,
+          "text": "Helm 00 Overview"
+        },
+        {
+          "id": "section-13",
+          "level": 2,
+          "text": "Helm 01 Foundations"
+        },
+        {
+          "id": "section-14",
+          "level": 2,
+          "text": "Helm 02 Layout and Footer"
+        },
+        {
+          "id": "section-15",
+          "level": 2,
+          "text": "Helm 03 Timeline"
+        },
+        {
+          "id": "section-16",
+          "level": 2,
+          "text": "Helm 04 Tools and Plan"
+        },
+        {
+          "id": "section-17",
+          "level": 2,
+          "text": "Helm 05 Input and Popups"
+        },
+        {
+          "id": "section-18",
           "level": 2,
           "text": "Maintenance"
         }

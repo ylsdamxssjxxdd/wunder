@@ -1,0 +1,142 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1500" viewBox="0 0 1600 1500" role="img" aria-label="舵机 终端 UI 布局与底栏">
+  <title>02 布局与底栏 · 舵机 CLI UI Spec</title>
+  <style>
+    svg{font-family:'Microsoft YaHei UI','Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif;fill:#1F2329}
+    .mono{font-family:Consolas,'SFMono-Regular','Cascadia Mono',monospace}
+    .h1{font-size:30px;font-weight:700;letter-spacing:-.4px}
+    .sub{font-size:13px;fill:#7C7A75}
+    .kicker{font-size:11px;font-weight:600;letter-spacing:1.4px;fill:#E07A12}
+    .sect{font-size:16px;font-weight:700}
+    .sect-en{font-size:10px;font-weight:600;letter-spacing:1.6px;fill:#A8A39B}
+    .card-t{font-size:12px;font-weight:700}
+    .tok{font-size:11px;fill:#3D3D3D}
+    .note{font-size:11px;fill:#7C7A75}
+    .tiny{font-size:10px;fill:#8A8F99}
+    .line{stroke:#E8E6E3;stroke-width:1}
+    .card{fill:#FFFFFF;stroke:#DED9D1;stroke-width:1}
+    .accent{fill:#F58A24}
+    .term{fill:#131A24}
+    .t-fg{fill:#D8DEE6}
+    .t-dim{fill:#6E7A8A}
+    .t-cy{fill:#4FC1D9}
+    .band-t{fill:#F4F1EC;stroke:#C9A26B;stroke-width:1;stroke-dasharray:4 3}
+    .bl{fill:none;stroke:#C9A26B;stroke-width:1}
+  </style>
+
+  <rect width="1600" height="1500" fill="#F4F1EC"/>
+
+  <g id="header">
+    <text x="80" y="52" class="kicker">WUNDER / 舵机 · CLI UI SPEC</text>
+    <text x="80" y="93" class="h1">02　布局与底栏</text>
+    <text x="80" y="120" class="sub">五段垂直栈是唯一的框架结构；底栏是发现性的入口——键位提示按宽度阶梯收缩，任务中心与快捷键永远最后消失。</text>
+    <text x="1520" y="52" text-anchor="end" class="mono" font-size="11" fill="#8A8F99">SHEET 02 / 05</text>
+  </g>
+
+  <!-- 布局栈 -->
+  <g id="stack">
+    <text x="80" y="176" class="sect">布局栈</text>
+    <text x="160" y="176" class="sect-en">VERTICAL STACK</text>
+    <rect x="80" y="192" width="700" height="300" class="card"/>
+    <g font-size="11">
+      <rect x="120" y="216" width="300" height="70" class="band-t"/>
+      <text x="132" y="240" class="tok">转写区</text><text x="132" y="258" class="tiny">Min(8) · 有弹层 Min(6)</text>
+      <rect x="120" y="290" width="300" height="26" fill="#EDE9E3" stroke="#C9A26B" stroke-width="1" stroke-dasharray="4 3"/>
+      <text x="132" y="308" class="tiny">弹层带（可选）min(n,7)+1</text>
+      <rect x="120" y="320" width="300" height="40" class="band-t"/>
+      <text x="132" y="345" class="tiny">欢迎横幅带 · 自适应，先被压缩</text>
+      <rect x="120" y="364" width="300" height="18" fill="#EDE9E3" stroke="#C9A26B" stroke-width="1"/>
+      <text x="132" y="378" class="tiny">活动行 · 1</text>
+      <rect x="120" y="386" width="300" height="72" fill="#FDF0DE" stroke="#E0B77F" stroke-width="1"/>
+      <text x="132" y="412" class="tok" font-weight="bold">输入区 · 5 行</text>
+      <text x="132" y="430" class="tiny">草稿 3 行 + 间隙 + 底栏</text>
+      <text x="440" y="240" class="tok" font-weight="bold">约束顺序</text>
+      <text x="440" y="264" class="tiny">1. 转写区吃剩余空间</text>
+      <text x="440" y="284" class="tiny">2. 弹层带按项数申请</text>
+      <text x="440" y="304" class="tiny">3. 横幅带钳制到余量：</text>
+      <text x="440" y="324" class="tiny">余量 = 屏高 −（弹层+1+5+8）</text>
+      <text x="440" y="348" class="tiny">4. 活动行固定 1 行</text>
+      <text x="440" y="368" class="tiny">5. 输入区固定 5 行</text>
+      <text x="440" y="396" class="tiny">屏幕越矮，先牺牲横幅带，</text>
+      <text x="440" y="416" class="tiny">再牺牲弹层项数，输入区保底。</text>
+      <text x="440" y="444" class="note">主布局固定开销 14 行（转写地板+活动+输入）。</text>
+    </g>
+  </g>
+
+  <!-- 底栏 -->
+  <g id="footerbar">
+    <text x="840" y="176" class="sect">底栏构成与收缩</text>
+    <text x="1010" y="176" class="sect-en">FOOTER · PROGRESSIVE DISCLOSURE</text>
+    <rect x="840" y="192" width="680" height="300" class="card"/>
+    <g font-size="12" fill="#3D3D3D">
+      <text x="864" y="222" class="tok" font-weight="bold">构成（左 → 右）</text>
+      <text x="864" y="248">① label-only：任务标题 ≤28 列 · 模型名 · 工作目录 ≤28 列</text>
+      <text x="864" y="272">② 键位项：「← 任务中心」「? 快捷键」</text>
+      <text x="864" y="296">③ 右对齐上下文（可选）：分支、警告等</text>
+      <text x="864" y="328" class="tok" font-weight="bold">宽度不足时的收缩顺序</text>
+      <text x="864" y="354">先丢描述文字 → 保留键名 → 逐项整条丢弃 → label-only 最先没</text>
+      <text x="864" y="386" class="tok" font-weight="bold">两个入口永不收缩丢失</text>
+      <text x="864" y="412">「← 任务中心」与「? 快捷键」是发现性门禁，始终可见。</text>
+      <text x="864" y="444" class="note">运行中的提示行：耗时=x.xx s | 速度=x.xx token/s | 工具=n</text>
+      <text x="864" y="466" class="note">历史搜索时整条底栏被搜索态替换：query · Ctrl+R 更早 · Enter 采用 · Esc 取消</text>
+    </g>
+  </g>
+
+  <!-- 对话中 mock -->
+  <g id="mock-running">
+    <text x="80" y="540" class="sect">对话中 · 横幅让位后的完整栈</text>
+    <text x="360" y="540" class="sect-en">RUNNING FRAME · 100 × 30</text>
+    <rect x="80" y="556" width="1080" height="500" class="card"/>
+    <rect x="96" y="572" width="1048" height="468" class="term" rx="6"/>
+    <g class="mono" font-size="12">
+      <text x="116" y="596" class="t-fg">把 docs 目录里所有 markdown 的标题抽出来汇总成一页。</text>
+      <text x="116" y="622" class="t-dim">› 已读取 12 个文件，正在整理章节结构…</text>
+      <text x="116" y="648" class="t-dim">› 工具 read docs/功能迭代.md → 完成</text>
+      <text x="116" y="674" class="t-dim">› 计划 □ 抽取标题　□ 汇总排序　✔ 已扫描目录</text>
+      <text x="116" y="700" class="t-fg">汇总如下，共 3 个文档、41 个标题：</text>
+      <text x="116" y="726" class="t-fg">1. 功能迭代（18）　2. 经验教训（12）　3. 对齐方案（11）</text>
+      <text x="116" y="756" class="t-dim">› 工具 读取 docs/对齐方案.md → 完成 · 0.1 s</text>
+      <text x="116" y="782" class="t-dim">› 计划 ✔ 抽取标题　✔ 汇总排序　□ 标注更新时间</text>
+      <text x="116" y="808" class="t-dim">（转写区继续向上滚动，底部停留时自动跟随）</text>
+      <!-- activity -->
+      <text x="116" y="900" class="t-cy" font-weight="bold">•</text>
+      <text x="130" y="900" class="t-dim">正在汇总标题… · 耗时 4.20 s</text>
+      <!-- composer -->
+      <rect x="116" y="916" width="1008" height="88" fill="#182430" rx="4"/>
+      <text x="128" y="940" class="t-cy" font-weight="bold">›</text>
+      <text x="146" y="940" class="t-fg">再补充：按更新日期倒序排列，标注每篇的更新时间。</text>
+      <text x="128" y="992" class="t-dim">把 docs 目录里…  ← 任务中心</text>
+      <text x="1104" y="992" text-anchor="end" class="t-dim">? 快捷键</text>
+    </g>
+    <g font-size="11" fill="#A8A39B">
+      <text x="1176" y="620">① 转写区：滚动到底跟随，</text>
+      <text x="1176" y="638">上滚即停；过程行 DIM。</text>
+      <text x="1176" y="892">② 活动行：运行态 = 呼吸点</text>
+      <text x="1176" y="910">+ 次级文本；等待审批/问询</text>
+      <text x="1176" y="928">时整行切换为 accent。</text>
+      <text x="1176" y="986">③ 输入区：表面色块唯一；</text>
+      <text x="1176" y="1004">底栏键位在输入卡内。</text>
+    </g>
+  </g>
+
+  <!-- 活动行状态 -->
+  <g id="activity">
+    <text x="80" y="1112" class="sect">活动行状态表</text>
+    <text x="220" y="1112" class="sect-en">ACTIVITY LINE · SINGLE OUTLET</text>
+    <rect x="80" y="1128" width="1440" height="186" class="card"/>
+    <g font-size="12" fill="#3D3D3D">
+      <text x="104" y="1156" class="tok" font-weight="bold">状态</text><text x="300" y="1156" class="tok" font-weight="bold">文案（zh）</text><text x="800" y="1156" class="tok" font-weight="bold">样式</text>
+      <line x1="104" y1="1166" x2="1496" y2="1166" class="line"/>
+      <text x="104" y="1190" class="tok">运行中</text><text x="300" y="1190" class="tok">• 正在执行…（含追赶/聚焦变体）</text><text x="800" y="1190" class="tok">呼吸点 cyan→白 · 正文 DIM</text>
+      <text x="104" y="1214" class="tok">审批待确认</text><text x="300" y="1214" class="tok">审批待确认 · Enter 确认 · Y/A/N 快速选择 · 待处理 n</text><text x="800" y="1214" class="tok">整行 accent + BOLD · 90 ms 唤醒</text>
+      <text x="104" y="1238" class="tok">问询面板打开</text><text x="300" y="1238" class="tok">路由面板已打开 · ↑↓ 选择 · Enter 发送 · Esc 关闭</text><text x="800" y="1238" class="tok">整行 accent</text>
+      <text x="104" y="1262" class="tok">会话恢复面板</text><text x="300" y="1262" class="tok">会话恢复面板已打开 · Enter 恢复 · Esc 取消</text><text x="800" y="1262" class="tok">整行 accent</text>
+      <text x="104" y="1286" class="tok">Ctrl+C 第一次</text><text x="300" y="1286" class="tok">再按一次 Ctrl+C 可退出当前终端会话</text><text x="800" y="1286" class="tok">整行 accent · 限时提示</text>
+    </g>
+  </g>
+
+  <g id="footer-note">
+    <line x1="80" y1="1440" x2="1520" y2="1440" class="line"/>
+    <text x="80" y="1462" class="tiny">事实来源：tui/ui/layout.rs · tui/ui/composer.rs（footer 收缩与右对齐）· tui/app.rs（activity_line / composer_footer_items / composer_hint_line）。示例文案为通用示例，落地以 i18n 资源为准。</text>
+    <text x="1520" y="1462" text-anchor="end" class="tiny">SVG · 1600 PX WIDE · 2026-10-25</text>
+  </g>
+</svg>

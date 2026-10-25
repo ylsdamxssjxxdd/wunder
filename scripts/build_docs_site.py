@@ -34,7 +34,7 @@ LOGO_SOURCE_PATH = REPO_ROOT / "images" / "eva01-head.svg"
 LOGO_TARGET_PATH = Path("assets") / "eva01-head.svg"
 DOCS_ASSET_SOURCE_DIR = DOCS_SOURCE_DIR / "assets"
 DOCS_ASSET_TARGET_PATH = Path("assets") / "manual"
-DESIGN_SOURCE_DIR = REPO_ROOT / "docs" / "wunder美术设计稿"
+DESIGN_SOURCE_DIR = REPO_ROOT / "docs" / "wunder美术设计稿" / "蛹"
 DESIGN_TARGET_PATH = Path("art")
 FENCE_PATTERN = re.compile(r"^(```|~~~)")
 HEADING_PATTERN = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
@@ -497,10 +497,12 @@ def copy_docs_assets() -> None:
 def copy_design_assets() -> None:
     """Ship the design sheets and the thumbnail index with the site.
 
-    Only the SVGs and their index are published. The sources keep a readable
+    Only the SVGs and their index are published. The 蛹 sources keep a readable
     `assets/app-icon.png` reference; the published copies embed that icon as a
     data URI because browsers block external resources in SVG loaded via
-    `<img>`. Native help keeps its own raster previews instead.
+    `<img>`. The 舵机 sheets have no external references and are published
+    under `art/servo/` to keep their names from colliding with the 蛹 sheets.
+    Native help keeps its own raster previews instead.
     """
     if not DESIGN_SOURCE_DIR.exists():
         raise FileNotFoundError(f"缺少美术设计稿目录: {DESIGN_SOURCE_DIR}")
@@ -516,6 +518,13 @@ def copy_design_assets() -> None:
     index_path = DESIGN_SOURCE_DIR / "index.html"
     if index_path.is_file():
         shutil.copy2(index_path, target_root / index_path.name)
+    servo_source_dir = DESIGN_SOURCE_DIR.parent / "舵机"
+    if servo_source_dir.is_dir():
+        servo_target = target_root / "servo"
+        servo_target.mkdir(parents=True, exist_ok=True)
+        for source_path in servo_source_dir.glob("*.svg"):
+            content = read_text(source_path).replace('href="assets/app-icon.png"', f'href="{icon_uri}"')
+            (servo_target / source_path.name).write_text(content, encoding="utf-8", newline="\n")
 
 
 def build() -> None:

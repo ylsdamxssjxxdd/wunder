@@ -13,15 +13,6 @@
         </svg>
       </button>
       <button
-        v-if="detailRootTurn"
-        class="tt-toggle tt-overview"
-        type="button"
-        :title="t('messenger.trajectory.backToOverview')"
-        @click="backToOverview"
-      >
-        {{ t('messenger.trajectory.backToOverview') }}
-      </button>
-      <button
         class="tt-toggle"
         type="button"
         :class="{ 'tt-toggle-active': showDuration }"
@@ -123,7 +114,7 @@
           @pointerleave="onTimelineLeave"
           @dblclick="clearSelection"
         >
-          <template v-if="!detailRootTurn && overviewTimeline">
+          <template v-if="overviewTimeline">
             <span
               v-for="span in projectedOverviewSpans"
               :key="span.key"
@@ -144,7 +135,7 @@
             :style="{ left: `${boundary.x}px` }"
           />
           <span v-if="hoverX !== null" class="tt-hoverline" :style="{ left: `${hoverX}px` }" />
-          <template v-if="detailRootTurn || !overviewTimeline">
+          <template v-if="!overviewTimeline">
             <span
               v-for="span in projectedSpans"
               :key="span.key"
@@ -248,12 +239,6 @@
                       </span>
                     </div>
                     <div class="tt-record-content">
-                      <button
-                        v-if="row.record.cell.overviewOnly && row.record.turnStart"
-                        class="tt-overview-open"
-                        type="button"
-                        @click.stop="openOverviewTurn(row.record.turn)"
-                      >{{ t('messenger.trajectory.openCompleteTurn') }}</button>
                       <template v-if="row.record.cell.kind === 'tool' || row.record.cell.kind === 'subtool'">
                         <span class="tt-tool-name">{{ row.record.cell.text }}</span>
                         <span v-if="argsPreview(row.record.cell)" class="tt-tool-args">{{ argsPreview(row.record.cell) }}</span>
@@ -356,10 +341,6 @@
                 <div v-else-if="selectedCell.kind === 'message'" class="tt-overview-row">
                   <dt>{{ t('messenger.trajectory.token') }}</dt>
                   <dd>{{ t('messenger.trajectory.usageNotReported') }}</dd>
-                </div>
-                <div v-if="selectedCell.kind !== 'message'" class="tt-overview-row">
-                  <dt>{{ t('messenger.trajectory.duration') }}</dt>
-                  <dd>{{ durationValue(selectedCell.timeSeconds) }}</dd>
                 </div>
                 <div v-for="row in timingRows" :key="row.label" class="tt-overview-row">
                   <dt>{{ row.label }}</dt>
@@ -495,7 +476,7 @@ import { computed, markRaw, nextTick, onBeforeUnmount, onMounted, reactive, ref,
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useI18n } from '@/i18n'
-import { searchThreadView, getThreadViewBootstrap, getThreadViewTrajectoryPage, getThreadViewBody } from '@/api/chat'
+import { searchThreadView, getThreadViewTrajectoryPage, getThreadViewBody } from '@/api/chat'
 import { exportSingleSessionLog } from '@/utils/sessionLogExport'
 import { renderMarkdown } from '@/utils/markdown'
 import TrajectoryJsonTree from './trajectory/TrajectoryJsonTree.vue'
@@ -519,6 +500,8 @@ import {
   trajectoryFailure,
   trajectoryRetry,
   trajectoryDiagnosticRows,
+  mergeTrajectoryPage,
+  trajectoryPageTurns,
 } from './trajectory/trajectoryModel'
 import type {
   TableRecord,
@@ -529,6 +512,7 @@ import type {
   TrajKind,
   TrajRequestNumber,
   Translate,
+  TrajectoryPageRow,
 } from './trajectory/trajectoryModel'
 
 const OVERSCAN_PX = 360
@@ -549,7 +533,7 @@ const modelT: Translate = (key, params) => t(`messenger.${key}`, params as never
 const loading = ref(true)
 const olderLoading = ref(false)
 const loadError = ref(false)
-// W1-B：服务端只返回尾窗（truncated=true 表示更早轮次被截断）。这是有界读取的
+// 服务端只返回逐条记录尾窗（truncated=true 表示还有更早记录）。这是有界读取的
 // 正常结果，不是错误，也不应被当成空态。
 const truncated = ref(false)
 // 线程快照可能达百万级条目，用 shallowRef 只跟踪引用本身，避免 Vue 把整份
@@ -557,22 +541,23 @@ const truncated = ref(false)
 const rawTurns = shallowRef<unknown[]>([])
 const displayPage=shallowRef<any>(null)
 const historyError = ref(false)
-const summaryRows = shallowRef<any[]>([])
+const trajectoryRows = shallowRef<TrajectoryPageRow[]>([])
 const hasNewer = ref(false)
+const beforeCursor = ref<number | null>(null)
+const afterCursor = ref<number | null>(null)
 const TRAJECTORY_WINDOW_ROWS = 600
+const TRAJECTORY_PAGE_ROWS = 80
 let retryHistoryAt = 0
-const detailRootTurn=ref<string|null>(null)
 const details=shallowRef<Record<string,unknown>>({})
 const detailRefById=new Map<string,any>()
 // Detail payloads are intentionally hydrated only for the selected row.  The
-// trajectory page contains bounded summaries, while args/schema/result live in
+// trajectory page contains individual bounded previews, while args/schema/result live in
 // the immutable per-item body referenced by `row.detail`.
 const detailLoading = ref(false)
 const detailError = ref(false)
 const detailCache = new Map<string, { revision: number; value: unknown }>()
 let detailAbort: AbortController | null = null
 let detailRequestSerial = 0
-const turnRootByRound=new Map<number,string>()
 
 // 大线程日志的快照可能非常庞大（压测会话可达百万级条目），单次全量拉取
 // 会长时间占用主线程并可能触发默认 30s 超时。这里给一个显式上界并在
@@ -787,17 +772,13 @@ function serverOverviewTimeline(rows: unknown[], mode: TimelineMode, indexBySeq:
 }
 
 const overviewTimeline = computed(() => {
-  // A detail turn has its own time domain. Keeping the session-wide tile
-  // projection mounted here stretches the detail spans and paints a second,
-  // translucent lane underneath them.
-  if (detailRootTurn.value) return null
   const page = displayPage.value
   // A tail-only timeline is useful as a bounded fallback, but it must not be
   // presented as the full session domain: older spans would otherwise appear
   // to move when the user scrolls and loads them.
   const indexById = new Map(allRecords.value.map(record => [record.cell.recordId, record.cell.index]))
   const indexBySeq = new Map<number, number>()
-  for (const row of summaryRows.value) {
+  for (const row of trajectoryRows.value) {
     const index = indexById.get(String(row.item_id))
     if (index !== undefined) indexBySeq.set(Number(row.created_seq), index)
   }
@@ -830,7 +811,7 @@ const overviewTimeline = computed(() => {
   // Overlay the rows currently in the bounded ledger with their real
   // positions. The rest of the session remains tile based, so the first
   // screen has DSH-like event marks without unbounded DOM work.
-  for (const row of summaryRows.value) {
+  for (const row of trajectoryRows.value) {
     const cell = cellsById.get(String(row.item_id))
     const localSpan = cell ? spanByIndex.get(cell.index) : undefined
     if (!cell || !localSpan) continue
@@ -1066,7 +1047,7 @@ const projectedSpans = computed(() => {
 })
 
 const projectedBoundaries = computed(() => {
-  if (!detailRootTurn.value && overviewTimeline.value) return []
+  if (overviewTimeline.value) return []
   const model = timeline.value
   if (!model || !showTurns.value) return []
   const width = trackWidth.value || 600
@@ -1134,12 +1115,10 @@ async function load(cursor: number | null = null, direction: 'older' | 'newer' |
   let timedOut = false
   const deadline = setTimeout(() => { timedOut = true; controller.abort() }, TRAJECTORY_REQUEST_TIMEOUT_MS)
   try {
-    const params = { root_turn_id: detailRootTurn.value,
+    const params = {
       ...(cursor === null ? {} : { [direction === 'newer' ? 'after' : 'before']: cursor }),
-      limit: detailRootTurn.value ? 100 : 80 }
-    const response = !direction && !detailRootTurn.value
-      ? await getThreadViewBootstrap(sessionId, { kind: 'trajectory' }, { signal: controller.signal })
-      : await getThreadViewTrajectoryPage(sessionId, params, { signal: controller.signal })
+      limit: TRAJECTORY_PAGE_ROWS }
+    const response = await getThreadViewTrajectoryPage(sessionId, params, { signal: controller.signal })
     if (controller.signal.aborted || loadAbort !== controller) return false
     const page = response.data.data.page
     if (page.degraded || !['ready', 'source'].includes(page.projection_state)) throw new Error('Display temporarily unavailable')
@@ -1153,19 +1132,19 @@ async function load(cursor: number | null = null, direction: 'older' | 'newer' |
     const anchorOffset = anchorNode && ledger ? anchorNode.getBoundingClientRect().top - ledger.getBoundingClientRect().top : 0
     const oldIndex = rows.value.findIndex(row => row.record.cell.recordId === anchorId)
     const oldOffset = oldIndex < 0 ? 0 : rowPrefix.value[oldIndex]
-    const merged = new Map((direction ? summaryRows.value : []).map(row => [row.item_id, row]))
-    for (const row of page.trajectory) merged.set(row.item_id, row)
-    const ordered = [...merged.values()].sort((a, b) => a.created_seq - b.created_seq)
-    const evicted = ordered.length > TRAJECTORY_WINDOW_ROWS
-    summaryRows.value = markRaw(direction === 'older'
-      ? ordered.slice(0, TRAJECTORY_WINDOW_ROWS) : ordered.slice(-TRAJECTORY_WINDOW_ROWS))
-    if (direction === 'older') { truncated.value = page.has_more; hasNewer.value ||= evicted }
-    else if (direction === 'newer') { hasNewer.value = Boolean(page.has_newer); truncated.value ||= evicted }
-    else { truncated.value = page.has_more; hasNewer.value = false }
+    const window = mergeTrajectoryPage(trajectoryRows.value, page, direction, TRAJECTORY_WINDOW_ROWS,
+      { before: beforeCursor.value, after: afterCursor.value, hasOlder: truncated.value, hasNewer: hasNewer.value })
+    trajectoryRows.value = markRaw(window.rows)
+    beforeCursor.value = window.before
+    afterCursor.value = window.after
+    truncated.value = window.hasOlder
+    hasNewer.value = window.hasNewer
     displayPage.value = markRaw(page)
-    rawTurns.value = summaryTurns(summaryRows.value)
+    detailRefById.clear()
+    for (const row of trajectoryRows.value) detailRefById.set(row.item_id, row.detail)
+    rawTurns.value = markRaw(trajectoryPageTurns(trajectoryRows.value))
     // Auxiliary state must have the same lifetime as the bounded ledger.
-    const rounds = new Set(summaryRows.value.map(row => row.user_round))
+    const rounds = new Set(trajectoryRows.value.map(row => row.user_round))
     collapsedTurns.value = new Set([...collapsedTurns.value].filter(round => rounds.has(round)))
     const groups = collapsibleAssistantKeys.value
     collapsedAssistants.value = new Set([...collapsedAssistants.value].filter(key => groups.has(key)))
@@ -1202,49 +1181,9 @@ async function load(cursor: number | null = null, direction: 'older' | 'newer' |
 async function loadEdge(direction: 'older' | 'newer') {
   if (loading.value || olderLoading.value || Date.now() < retryHistoryAt ||
       !(direction === 'older' ? truncated.value : hasNewer.value)) return
-  const cursor = (direction === 'older' ? summaryRows.value[0] : summaryRows.value.at(-1))?.created_seq
+  const cursor = direction === 'older' ? beforeCursor.value : afterCursor.value
   if (cursor == null) return
   await load(cursor, direction)
-}
-function summaryTurns(rows:any[], resetMaps=true):unknown[] {
-  if(resetMaps)detailRefById.clear()
-  if(resetMaps)turnRootByRound.clear()
-  const turns=new Map<string,any>()
-  for(const row of rows){
-    if (row.kind === 'source_overview') {
-      turnRootByRound.set(Number(row.user_round),String(row.root_turn_id||''))
-      const root = String(row.root_turn_id || '')
-      if (root && !turns.has(root)) turns.set(root,{turn_id:root,user_turn_index:row.user_round,source_overview:true,items:[{
-        item_id:row.item_id,item_index:0,kind:'assistant_message',status:'completed',created_time:row.started_at,updated_time:row.completed_at,
-        payload:{content:t('messenger.trajectory.largeTurnOverview')},
-      }]})
-      continue
-    }
-    detailRefById.set(row.item_id,row.detail)
-    turnRootByRound.set(Number(row.user_round),String(row.root_turn_id||''))
-    let turn=turns.get(row.root_turn_id)
-    if(!turn){turn={turn_id:row.root_turn_id,user_turn_index:row.user_round,items:[]};turns.set(row.root_turn_id,turn)}
-    const isSubagent = row.kind === 'subagent_run' || row.kind === 'subagent'
-    turn.items.push({item_id:row.item_id,turn_id:row.turn_id,item_index:row.item_index,kind:row.kind,status:row.status,created_time:row.started_at,updated_time:row.completed_at,
-      overview_only:row.overview_only===true,
-      payload:{content:row.summary,tool:row.tool_name,label:row.tool_name,
-        ...(isSubagent ? {} : { task: row.summary }),
-        model_round:row.model_round,message_stats:row.stats,runtime:row.subagent,diagnostics:row.diagnostics}})
-  }
-  return markRaw([...turns.values()])
-}
-async function loadTurnDetail(round:number):Promise<void> {
-  const root=turnRootByRound.get(round); if(!root || loading.value) return
-  detailRootTurn.value=root
-  await load()
-}
-function openOverviewTurn(round:number|null):void {
-  if (round !== null) void loadTurnDetail(Number(round))
-}
-async function backToOverview(): Promise<void> {
-  if (loading.value || !detailRootTurn.value) return
-  detailRootTurn.value = null
-  await load()
 }
 function goBack(): void {
   router.back()
@@ -1297,7 +1236,28 @@ watch(trackEl, (el) => {
   trackResizeObserver.observe(el)
 })
 
-watch(()=>route.query.session,()=>{detailAbort?.abort();detailAbort=null;detailLoading.value=false;detailError.value=false;detailCache.clear();detailRequestSerial++;detailRootTurn.value=null;summaryRows.value=[];rawTurns.value=[];displayPage.value=null;details.value={};searchQuery.value='';searchAbort?.abort();collapsedTurns.value = new Set();collapsedAssistants.value = new Set();void load()})
+watch(() => route.query.session, () => {
+  detailAbort?.abort()
+  detailAbort = null
+  detailLoading.value = false
+  detailError.value = false
+  detailCache.clear()
+  detailRefById.clear()
+  detailRequestSerial++
+  trajectoryRows.value = []
+  beforeCursor.value = null
+  afterCursor.value = null
+  truncated.value = false
+  hasNewer.value = false
+  rawTurns.value = []
+  displayPage.value = null
+  details.value = {}
+  searchQuery.value = ''
+  searchAbort?.abort()
+  collapsedTurns.value = new Set()
+  collapsedAssistants.value = new Set()
+  void load()
+})
 
 onMounted(() => {
   void load()
@@ -1752,6 +1712,12 @@ const timingRows = computed<TimingRow[]>(() => {
       value: startedAtValue(cell.startedAt),
       toggleable: true,
     })
+    rowsOut.push({
+      label: t('messenger.trajectory.duration'),
+      value: durationValue(cell.timeSeconds),
+    })
+  }
+  if (cell.kind === 'compacted') {
     rowsOut.push({
       label: t('messenger.trajectory.duration'),
       value: durationValue(cell.timeSeconds),

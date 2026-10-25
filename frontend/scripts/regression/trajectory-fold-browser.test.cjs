@@ -94,16 +94,24 @@ for (const kind of ['hive', 'bridge']) for (const count of [3, 70]) {
         await page.waitForFunction(({selector, count}) => document.querySelectorAll(selector).length === count, {selector:locator, count});
       };
       await page.locator('.tt-turn-control').first().waitFor();
+      assert.equal(await page.locator('.tt-row-summary').count(), 0, 'individual records must be the initial trajectory view');
+      assert.equal(await page.locator('.tt-overview-open').count(), 0, 'records must not require a round-summary drill-down');
+      assert.ok(await page.locator('.tt-row-tool').count() > 0, 'tool records must be visible before folding');
       if (count === 3 && kind === 'hive') {
         await page.locator('.tt-row-tool .tt-content-cell').first().click();
         await page.waitForFunction(() => window.fixtureDetailRequests === 1);
         await page.waitForTimeout(30);
         await page.locator('.tt-json-tree').first().waitFor();
         assert.equal(await page.locator('.tt-json-tree').count(), 1);
-        console.log('DETAIL DEBUG', await page.locator('.tt-details').textContent());
         await page.getByText('Schema', {exact:true}).click();
         assert.match(await page.locator('.tt-payload-pre').textContent(), /properties/);
         assert.equal(await page.evaluate(() => window.fixtureDetailRequests), 1, 'tool details should hydrate once');
+        await page.locator('.tt-detail-tab').filter({hasText:'概述'}).click();
+        const durations = await page.locator('.tt-overview-row').evaluateAll(rows => rows
+          .filter(row => row.querySelector('dt')?.textContent === '时长')
+          .map(row => row.querySelector('dd')?.textContent));
+        assert.equal(durations.length, 1, 'hive tool details must display a single duration');
+        assert.match(durations[0], /500/);
       }
       if (count === 3 && kind === 'bridge') {
         await page.evaluate(() => {

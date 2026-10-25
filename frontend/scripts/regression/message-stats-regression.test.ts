@@ -92,6 +92,34 @@ const ensureBrowserRuntimeStub = (): void => {
   }
 };
 
+test('tool invocation stats retain explicit zero and snake case without inventing missing counts', async () => {
+  ensureBrowserRuntimeStub();
+  const { normalizeMessageStats, mergeMessageStats } = await import('../../src/stores/chatStats');
+  for (const [raw, expected] of [
+    [{ tool_calls: 2 }, '2'],
+    [{ tool_calls: 0 }, '0'],
+    [{ toolCalls: '2' }, '2'],
+    [{ toolCalls: null, tool_calls: 2 }, '2'],
+    [{}, '--'],
+    [{ toolCalls: null }, '--'],
+    [{ tool_calls: [] }, '--'],
+    [{ toolCalls: false }, '--'],
+    [{ toolCalls: '' }, '--'],
+    [{ toolCalls: -1 }, '--'],
+    [{ toolCalls: 1.5 }, '--'],
+  ] as Array<[Record<string, unknown>, string]>) {
+    const stats = { interaction_duration_s: 1, ...raw };
+    for (const projected of [stats, normalizeMessageStats(stats)]) {
+      const entries = buildAssistantMessageStatsEntries({ role: 'assistant', stats: projected }, createTranslator());
+      assert.equal(findEntryValue(entries, 'Tools'), expected, JSON.stringify(raw));
+    }
+  }
+  const live = mergeMessageStats({ tool_calls: 2 }, { tool_calls: 2 });
+  assert.equal(live?.toolCalls, 2, 'terminal replay does not add counts');
+  assert.equal(mergeMessageStats(live, { interaction_duration_s: 3 })?.toolCalls, 2);
+  assert.equal(mergeMessageStats({}, { interaction_duration_s: 3 })?.toolCalls, null);
+});
+
 test('message stats present the user-round aggregate speed for the whole bubble', () => {
   const t = createTranslator();
   const entries = buildAssistantMessageStatsEntries(

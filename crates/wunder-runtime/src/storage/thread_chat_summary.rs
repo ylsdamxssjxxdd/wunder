@@ -138,6 +138,11 @@ pub(super) fn apply_item(
             "plan" => summary.plan_item_id = Some(id.into()),
             _ => {}
         }
+        // Track the actual panel carrier independently of assistant prose and
+        // plans. Both local and service projections consume this same head.
+        if super::thread_view_projection::extract_question_panel(body).is_some() {
+            summary.question_panel_item_id = Some(id.into());
+        }
     }
     // Workspace invalidation has always included private completed items.
     if [
@@ -276,6 +281,57 @@ mod tests {
         }}})
         .to_string()
             + "\n"
+    }
+
+    #[test]
+    fn inquiry_carrier_and_plan_keep_independent_checkpoint_identities() {
+        let mut summary = ChatSummary::default();
+        let panel = json!({"kind":"tool_call","status":"completed","result":{"data":{
+            "action":"question_panel","state":"awaiting_input",
+            "data":{"questions":[{"question":"Fixture choice?","options":[{"label":"Option A"}]}]}
+        }}});
+        apply_item(
+            &mut summary,
+            "fixture-turn",
+            "fixture-carrier",
+            "tool_call",
+            0,
+            true,
+            &panel,
+        );
+        apply_item(
+            &mut summary,
+            "fixture-turn",
+            "fixture-plan",
+            "plan",
+            1,
+            true,
+            &json!({"plan":[]}),
+        );
+        apply_item(
+            &mut summary,
+            "fixture-turn",
+            "fixture-text",
+            "assistant_message",
+            2,
+            true,
+            &json!({"content":"Fixture waiting"}),
+        );
+        apply_item(
+            &mut summary,
+            "fixture-turn",
+            "fixture-hidden",
+            "question_panel",
+            3,
+            false,
+            &panel,
+        );
+        assert_eq!(
+            summary.question_panel_item_id.as_deref(),
+            Some("fixture-carrier")
+        );
+        assert_eq!(summary.plan_item_id.as_deref(), Some("fixture-plan"));
+        assert_eq!(summary.assistant_item_id.as_deref(), Some("fixture-text"));
     }
 
     #[test]

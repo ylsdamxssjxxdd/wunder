@@ -22,7 +22,7 @@ from pathlib import Path
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parent.parent
-SOURCE_DIR = ROOT / "docs" / "wunder美术设计稿"
+SOURCE_DIR = ROOT / "docs" / "wunder美术设计稿" / "蛹"
 OUTPUT_DIR = ROOT / "frontend-slint" / "assets" / "help" / "art"
 PREVIEW_WIDTH = 1200
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Refresh the design sheets everywhere they are used.
 
-Run after editing any SVG under docs/wunder美术设计稿:
+Run after editing any SVG under docs/wunder美术设计稿 (蛹 or 舵机):
 
     python scripts/sync_art.py
 

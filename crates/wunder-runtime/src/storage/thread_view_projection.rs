@@ -162,13 +162,21 @@ pub(crate) fn extract_question_panel(
         if depth > 6 || !value.is_object() {
             return None;
         }
-        let status = value
-            .get("status")
-            .or_else(|| value.get("state"))
-            .and_then(Value::as_str)
-            .or(inherited_status);
-        if value.get("questions").and_then(Value::as_array).is_some() {
-            let mut panel = question_panel(value)?;
+        // Item/tool completion says the panel was opened, not that the user
+        // answered. Only panel-local status or an explicit carrier state may
+        // settle an inquiry; never inherit a timeline envelope's status.
+        let lifecycle = ["kind", "item_id", "event_type", "tool", "tool_call_id"]
+            .iter()
+            .any(|key| value.get(key).is_some());
+        let carrier_state = value.get("state").and_then(Value::as_str);
+        if let Some(mut panel) = question_panel(value) {
+            let status = carrier_state
+                .or_else(|| {
+                    (!lifecycle)
+                        .then(|| value.get("status").and_then(Value::as_str))
+                        .flatten()
+                })
+                .or(inherited_status);
             panel.status = match status
                 .unwrap_or("pending")
                 .trim()
@@ -192,7 +200,7 @@ pub(crate) fn extract_question_panel(
             "meta",
         ] {
             if let Some(nested) = value.get(key) {
-                if let Some(panel) = visit(nested, status, depth + 1) {
+                if let Some(panel) = visit(nested, carrier_state.or(inherited_status), depth + 1) {
                     return Some(panel);
                 }
             }
@@ -468,45 +476,7 @@ pub(crate) fn trajectory(
     } else {
         None
     };
-    let mut started_at = if kind == "subagent_run" {
-        runtime
-            .and_then(|value| value.get("started_time").and_then(Value::as_f64))
-            .unwrap_or(created)
-    } else {
-        item.get("started_at")
-            .and_then(Value::as_f64)
-            .unwrap_or(created)
-    };
-    let mut completed_at = if kind == "subagent_run" {
-        runtime
-            .and_then(|value| value.get("finished_time").and_then(Value::as_f64))
-            .or_else(|| (is_running(status) == 0).then_some(updated))
-    } else {
-        (is_running(status) == 0).then_some(updated)
-    };
-
-    // Canonical item rows keep their bookkeeping timestamps (`created` and
-    // `updated`) at the admission/commit edge.  For streamed model and tool
-    // items those timestamps are often equal, even though the payload carries
-    // the actual request/tool duration.  Passing the bookkeeping instant
-    // through as both ends collapses the corresponding timeline span to a
-    // one-pixel marker after reload.  Recover the own-step interval here so
-    // every consumer (web, desktop and CLI) receives one consistent range.
-    // Explicit start/end fields always win; this fallback only runs when the
-    // canonical row has no usable duration of its own.
-    if kind != "subagent_run"
-        && completed_at.is_some()
-        && item.get("started_at").and_then(Value::as_f64).is_none()
-        && item.get("completed_at").and_then(Value::as_f64).is_none()
-    {
-        if let Some(duration_s) = trajectory_duration_seconds(item, kind) {
-            let end = completed_at.unwrap_or(updated);
-            if end.is_finite() && duration_s.is_finite() && duration_s > 0.0 {
-                started_at = end - duration_s;
-                completed_at = Some(end);
-            }
-        }
-    }
+    let (started_at, completed_at) = trajectory_span(item, kind, status, created, updated);
     TrajectoryViewRow {
         item_id: item_id.into(),
         turn_id: turn_id.into(),
@@ -540,6 +510,56 @@ pub(crate) fn trajectory(
     }
 }
 
+/// Actual execution time is distinct from canonical admission/commit time.
+/// Both the compact view and administrative snapshots use this projection.
+/// Explicit boundaries win; an own-step duration can supply a missing end.
+pub(crate) fn trajectory_span(
+    item: &Value,
+    kind: &str,
+    status: &str,
+    created: f64,
+    updated: f64,
+) -> (f64, Option<f64>) {
+    fn time(source: &Value, keys: &[&str]) -> Option<f64> {
+        keys.iter().find_map(|key| {
+            let value = source.get(*key)?;
+            let number = value
+                .as_f64()
+                .or_else(|| value.as_str()?.trim().parse::<f64>().ok())?;
+            number.is_finite().then_some(if number.abs() >= 1e11 {
+                number / 1000.0
+            } else {
+                number
+            })
+        })
+    }
+    let source = if kind == "subagent_run" {
+        item.get("runtime").unwrap_or(item)
+    } else {
+        item
+    };
+    let start = time(source, &["started_at", "start_time", "started_time"]);
+    if is_running(status) != 0 {
+        return (start.unwrap_or(created), None);
+    }
+    let end = time(
+        source,
+        &["completed_at", "end_time", "finished_at", "finished_time"],
+    );
+    let duration = trajectory_duration_seconds(source, kind);
+    let completed = end
+        .or_else(|| {
+            start
+                .zip(duration)
+                .map(|(start, duration)| start + duration)
+        })
+        .unwrap_or(updated);
+    let started = start
+        .or_else(|| duration.map(|duration| completed - duration))
+        .unwrap_or(created);
+    (started, Some(completed))
+}
+
 /// Return the bounded own-step duration recorded in a canonical item payload.
 /// Provider usage metadata can contain a cumulative interaction duration, so
 /// it is deliberately excluded here.  The resulting interval is only used to
@@ -549,7 +569,7 @@ fn trajectory_duration_seconds(item: &Value, kind: &str) -> Option<f64> {
         let value = value
             .and_then(Value::as_f64)
             .or_else(|| value?.as_str()?.trim().parse::<f64>().ok())?;
-        value.is_finite().then_some(value.max(0.0))
+        (value.is_finite() && value >= 0.0).then_some(value)
     }
     fn first_non_negative(item: &Value, keys: &[&str]) -> Option<f64> {
         keys.iter().find_map(|key| non_negative(item.get(*key)))
@@ -564,6 +584,7 @@ fn trajectory_duration_seconds(item: &Value, kind: &str) -> Option<f64> {
             item.get("messageStats"),
             item.pointer("/meta/message_stats"),
             item.pointer("/meta/messageStats"),
+            item.get("stats"),
         ] {
             if let Some(source) = source {
                 if let Some(value) = first_non_negative(
@@ -575,9 +596,7 @@ fn trajectory_duration_seconds(item: &Value, kind: &str) -> Option<f64> {
                         "durationSeconds",
                     ],
                 ) {
-                    if value > 0.0 {
-                        return Some(value);
-                    }
+                    return Some(value);
                 }
             }
         }
@@ -585,15 +604,13 @@ fn trajectory_duration_seconds(item: &Value, kind: &str) -> Option<f64> {
         let decode = first_non_negative(item, &["decode_duration_s"]);
         if prefill.is_some() || decode.is_some() {
             let value = prefill.unwrap_or(0.0) + decode.unwrap_or(0.0);
-            if value > 0.0 {
-                return Some(value);
-            }
+            return Some(value);
         }
         if let Some(timing) = item.get("stream_timing") {
             let prefill_ms = first_non_negative(timing, &["prefill_ms"]);
             let decode_ms = first_non_negative(timing, &["decode_ms"]);
             let value = (prefill_ms.unwrap_or(0.0) + decode_ms.unwrap_or(0.0)) / 1000.0;
-            if value > 0.0 {
+            if prefill_ms.is_some() || decode_ms.is_some() {
                 return Some(value);
             }
         }
@@ -601,13 +618,14 @@ fn trajectory_duration_seconds(item: &Value, kind: &str) -> Option<f64> {
 
     // Tool result metadata records elapsed milliseconds on the result event;
     // accepting a top-level duration as well keeps imported ledgers useful.
+    if let Some(value) = first_non_negative(item, &["elapsed_s", "duration_s"]) {
+        return Some(value);
+    }
     let milliseconds = first_non_negative(item, &["duration_ms", "durationMs"]).or_else(|| {
         item.pointer("/meta")
             .and_then(|meta| first_non_negative(meta, &["duration_ms", "durationMs"]))
     });
-    milliseconds
-        .filter(|value| *value > 0.0)
-        .map(|value| value / 1000.0)
+    milliseconds.map(|value| value / 1000.0)
 }
 
 /// Keep the trajectory page compact and safe: this local estimate is numeric
@@ -1076,6 +1094,63 @@ mod tests {
     }
 
     #[test]
+    fn trajectory_uses_execution_boundaries_and_preserves_running_state() {
+        let payload = json!({
+            "started_at": 1_800_000_000_000_i64,
+            "completed_at": 1_800_000_002_500_i64,
+            "message_stats": {"model_duration_s": 4.0}
+        });
+        assert_eq!(
+            trajectory_span(&payload, "assistant_message", "completed", 1.0, 1.0),
+            (1_800_000_000.0, Some(1_800_000_002.5))
+        );
+        assert_eq!(
+            trajectory_span(&payload, "assistant_message", "running", 1.0, 1.0),
+            (1_800_000_000.0, None)
+        );
+        assert_eq!(
+            trajectory_span(
+                &json!({"started_at":10.0,"meta":{"duration_ms":250}}),
+                "tool_call",
+                "completed",
+                50.0,
+                50.0
+            ),
+            (10.0, Some(10.25))
+        );
+    }
+
+    #[test]
+    fn trajectory_span_recovers_seconds_without_cumulative_turn_duration() {
+        for (kind, payload, start) in [
+            (
+                "assistant_message",
+                json!({"stats":{"request_duration_s":1.5,"interaction_duration_s":99}}),
+                8.5,
+            ),
+            ("tool_call", json!({"elapsed_s":"0.25"}), 9.75),
+            ("tool_result", json!({"duration_s":0.5}), 9.5),
+            ("tool_result", json!({"meta":{"duration_ms":0}}), 10.0),
+            ("subagent_run", json!({"runtime":{"elapsed_s":2.0}}), 8.0),
+        ] {
+            assert_eq!(
+                trajectory_span(&payload, kind, "completed", 10.0, 10.0),
+                (start, Some(10.0))
+            );
+        }
+        assert_eq!(
+            trajectory_span(
+                &json!({"elapsed_s":-1}),
+                "tool_call",
+                "completed",
+                9.0,
+                10.0
+            ),
+            (9.0, Some(10.0))
+        );
+    }
+
+    #[test]
     fn context_rows_keep_their_body_text() {
         let row = project(
             "system_message",
@@ -1121,6 +1196,32 @@ mod tests {
         }))
         .expect("answered panel");
         assert_eq!(answered.status, "answered");
+    }
+
+    #[test]
+    fn question_panel_completion_is_not_a_user_answer() {
+        let questions = json!([{"question":"Fixture choice?","options":[{"label":"Option A"}]}]);
+        for status in ["completed", "cancelled", "failed"] {
+            for item in [
+                json!({"kind":"question_panel","event_type":"question_panel","status":status,"questions":questions}),
+                json!({"item_id":"fixture-panel","status":status,"payload":{"questions":questions}}),
+                json!({"kind":"tool_call","status":status,"result":{"data":{"action":"question_panel",
+                    "state":"awaiting_input","data":{"questions":questions}}}}),
+                json!({"kind":"assistant_message","status":status,"meta":{"panel":{"status":"pending","questions":questions}}}),
+            ] {
+                assert_eq!(
+                    extract_question_panel(&item).unwrap().status,
+                    "pending",
+                    "{item}"
+                );
+            }
+        }
+        assert_eq!(
+            extract_question_panel(&json!({"status":"answered","questions":questions}))
+                .unwrap()
+                .status,
+            "answered"
+        );
     }
 
     #[test]

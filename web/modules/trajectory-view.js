@@ -26,7 +26,7 @@ import {
   requestIdentity,
   timelineFocusIndexes,
   trajectoryDiagnosticRows,
-} from "./trajectory-model.js?v=20261016-02";
+} from "./trajectory-model.js?v=20261025-01";
 
 const OVERSCAN_PX = 360;
 const VIRTUAL_THRESHOLD = 100;
@@ -937,10 +937,10 @@ export function createTrajectoryView(host, options = {}) {
   };
 
   const durationValue = (seconds) =>
-    seconds === null ? modelT("notRecorded") : formatElapsedSeconds(seconds, modelT);
+    seconds === null || seconds === undefined ? modelT("notRecorded") : formatElapsedSeconds(seconds, modelT);
 
   const startedAtValue = (ms) => {
-    if (ms === null) return modelT("notRecorded");
+    if (ms === null || ms === undefined) return modelT("notRecorded");
     if (st.timestampMode === "unix") return String(Math.round(ms));
     return formatStartedAt(ms) || modelT("unavailable");
   };
@@ -1007,6 +1007,9 @@ export function createTrajectoryView(host, options = {}) {
         value: startedAtValue(cell.startedAt),
         toggleable: true,
       });
+      rowsOut.push({ label: modelT("duration"), value: durationValue(cell.timeSeconds) });
+    }
+    if (cell.kind === "compacted") {
       rowsOut.push({ label: modelT("duration"), value: durationValue(cell.timeSeconds) });
     }
     return rowsOut;
@@ -1170,9 +1173,6 @@ export function createTrajectoryView(host, options = {}) {
         addRow(modelT("token"), formatTokens(selectedCell.usage.output));
       } else if (selectedCell.kind === "message") {
         addRow(modelT("token"), modelT("usageNotReported"));
-      }
-      if (selectedCell.kind !== "message") {
-        addRow(modelT("duration"), durationValue(selectedCell.timeSeconds));
       }
       for (const row of timingRowsFor(selectedCell)) {
         addRow(row.label, row.value, {
@@ -1515,8 +1515,12 @@ export function createTrajectoryView(host, options = {}) {
       }
       if (cell) {
         if (cell.startedAt !== null) {
-          const end = cell.startedAt + (cell.timeSeconds ?? 0) * 1000;
-          lines.push(`${formatClock(cell.startedAt)} → ${formatClock(end)}`);
+          if (cell.timeSeconds !== null && cell.timeSeconds !== undefined) {
+            const end = cell.startedAt + cell.timeSeconds * 1000;
+            lines.push(`${formatClock(cell.startedAt)} → ${formatClock(end)}`);
+          } else {
+            lines.push(formatClock(cell.startedAt));
+          }
         }
         if (cell.timeSeconds !== null && cell.timeSeconds > 0) {
           lines.push(

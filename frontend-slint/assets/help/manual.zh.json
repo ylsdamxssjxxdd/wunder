@@ -12159,7 +12159,7 @@
           "kind": "tip",
           "spans": [
             {
-              "text": "设计稿源文件在 docs/wunder美术设计稿。改完 SVG 后运行 python scripts/render_art_previews.py，再运行 python scripts/build_help_manual.py 更新手册里的预览图。",
+              "text": "设计稿源文件在 docs/wunder美术设计稿/蛹。改完 SVG 后运行 python scripts/render_art_previews.py，再运行 python scripts/build_help_manual.py 更新手册里的预览图。",
               "bold": false,
               "code": false,
               "kbd": false,

@@ -671,6 +671,58 @@ async fn cancelled_admission_does_not_freeze_empty_instructions() {
 }
 
 #[tokio::test]
+async fn completed_inquiry_control_stays_pending_with_plan_after_reopen() {
+    let root = tempfile::tempdir().unwrap();
+    let db_path = root.path().join("state_1.sqlite");
+    let db = SqliteStorage::new(db_path.to_string_lossy().into_owned());
+    db.ensure_initialized().unwrap();
+    let admitted = db
+        .accept_thread_turn(USER, THREAD, &json!({"content":"Fixture input"}))
+        .unwrap();
+    let turn = admitted["turn_id"].as_str().unwrap();
+    super::test_support::freeze_thread(root.path(), USER, THREAD);
+    super::test_support::begin_turn(root.path(), USER, THREAD, turn);
+    let plan = crate::services::thread_log::event_item(
+        THREAD,
+        "plan_update",
+        &json!({
+            "turn_id":turn,"model_round":1,"plan":[{"step":"Fixture step","status":"in_progress"}]
+        }),
+    )
+    .unwrap();
+    let inquiry = crate::services::thread_log::event_item(THREAD, "question_panel", &json!({
+        "turn_id":turn,"model_round":2,"keep_open":true,
+        "questions":[{"question":"Fixture choice?","options":[{"label":"Option A","recommended":true}]}]
+    })).unwrap();
+    db.append_thread_item(USER, &plan).unwrap();
+    db.append_thread_item(USER, &inquiry).unwrap();
+    db.update_thread_turn(
+        USER,
+        THREAD,
+        turn,
+        "waiting_input",
+        "question_panel",
+        &json!({}),
+    )
+    .unwrap();
+    // Reopen through the production chat view, not a standalone panel decoder.
+    drop(db);
+    let reopened = SqliteStorage::new(db_path.to_string_lossy().into_owned());
+    reopened.ensure_initialized().unwrap();
+    let page = reopened
+        .thread_view_page(USER, THREAD, "chat", None, 10)
+        .unwrap();
+    let row = &page.chat[0];
+    assert_eq!(row.status, "waiting_input");
+    assert_eq!(
+        row.assistant.question_panel.as_ref().unwrap().status,
+        "pending"
+    );
+    assert_eq!(row.plan.as_ref().unwrap().steps[0].step, "Fixture step");
+    assert!(row.assistant.question_panel.as_ref().unwrap().questions[0].options[0].recommended);
+}
+
+#[tokio::test]
 async fn private_completed_items_do_not_block_public_replay_pagination() {
     let root = tempfile::tempdir().unwrap();
     let store = LocalThreadStore::open(root.path()).unwrap();

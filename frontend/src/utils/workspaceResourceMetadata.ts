@@ -1,4 +1,5 @@
 import workspaceIconsTheme from '@/assets/vscode-icons-theme.json';
+import { EXTRA_ALLOWED_ICON_IDS, FALLBACK_EXTENSION_ICON_ENTRIES } from '@/components/chat/workspaceIcons';
 const DRAWIO_EXTENSIONS = new Set(['dio', 'drawio', 'drawio.xml']);
 
 type WorkspaceIconTheme = {
@@ -97,6 +98,18 @@ const fileNames = new Map(
 );
 const defaultFileIconId = String(theme.file || '').trim();
 
+// The theme JSON references the full upstream icon set, but only the icons
+// covered by the curated workspace allowlist are shipped under
+// public/vscode-icons/icons. Anything else must degrade to the default file
+// icon instead of resolving to a missing asset.
+const shippedIconIds = new Set(
+  [
+    defaultFileIconId,
+    ...FALLBACK_EXTENSION_ICON_ENTRIES.map(([, iconId]) => iconId),
+    ...EXTRA_ALLOWED_ICON_IDS
+  ].filter((iconId) => iconId && iconDefinitions[iconId])
+);
+
 const normalizeThemeIconPath = (iconPath: string | undefined): string => {
   const rawPath = String(iconPath || '').trim();
   if (!rawPath) {
@@ -119,12 +132,14 @@ export const resolveWorkspaceFileCardIconPath = (filename = ''): string => {
   if (DRAWIO_EXTENSIONS.has(extension)) {
     return drawioDocIcon;
   }
-  const directId =
+  const candidateId = String(
     (normalizedName && fileNames.get(normalizedName)) ||
-    (extension && fileExtensions.get(extension)) ||
-    ICON_ID_FALLBACK_BY_EXTENSION.get(extension) ||
-    defaultFileIconId;
-  const resolved = resolveThemeIconPathById(String(directId || ''));
+      (extension && fileExtensions.get(extension)) ||
+      ICON_ID_FALLBACK_BY_EXTENSION.get(extension) ||
+      ''
+  );
+  const resolvedId = candidateId && shippedIconIds.has(candidateId) ? candidateId : defaultFileIconId;
+  const resolved = resolveThemeIconPathById(resolvedId);
   if (resolved) {
     return resolved;
   }

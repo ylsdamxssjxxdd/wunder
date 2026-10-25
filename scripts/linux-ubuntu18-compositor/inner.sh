@@ -78,7 +78,9 @@ if old in src:
         '    let ffmpeg_dir = PathBuf::from(manifest_dir)',
         1,
     )
-path.write_text(src, encoding='utf-8', newline='\n')
+# Ubuntu 18.04 的 python3 是 3.6，Path.write_text 的 newline 参数要 3.10；
+# 用内置 open() 写，它从 Python 3 起就支持 newline。
+open(path, 'w', encoding='utf-8', newline='\n').write(src)
 PY
 
 mkdir -p gen/src vendor/rust-ffmpeg-sys/bindings
@@ -144,7 +146,7 @@ ffmpeg-sys-next = {{ path = "{vendor}/rust-ffmpeg-sys" }}
 [patch."https://github.com/jonnyburger/mp4-rust"]
 mp4 = {{ path = "{vendor}/mp4-rust" }}
 '''
-manifest.write_text(src, encoding='utf-8', newline='\n')
+open(manifest, 'w', encoding='utf-8', newline='\n').write(src)
 PY
 
 export CARGO_TARGET_DIR="$work/target"

@@ -187,6 +187,14 @@ async fn thread_lifecycle_stream_commits_file_and_terminal_before_final() {
             assert_eq!(changes.runtime_status, "completed");
             assert!(changes.active_turn_id.is_empty());
             assert_eq!(changes.rows[0].assistant.content, "fixture answer");
+            assert_eq!(
+                event.data.pointer("/data/message_stats/toolCalls"),
+                Some(&json!(1))
+            );
+            assert_eq!(
+                changes.rows[0].assistant.stats.as_ref().unwrap()["toolCalls"],
+                json!(1)
+            );
         }
     }
     assert!(wrote && final_seen);
@@ -202,6 +210,10 @@ async fn thread_lifecycle_stream_commits_file_and_terminal_before_final() {
         .unwrap();
     assert_eq!(page.runtime_status, "completed");
     assert_eq!(page.chat[0].assistant.content, "fixture answer");
+    assert_eq!(
+        page.chat[0].assistant.stats.as_ref().unwrap()["toolCalls"],
+        json!(1)
+    );
     // Reopen through a fresh storage handle so the assertion cannot depend on
     // the execution's in-memory messages or live event snapshot.
     let reopened = crate::storage::thread_store::LocalThreadStore::open(
@@ -223,5 +235,32 @@ async fn thread_lifecycle_stream_commits_file_and_terminal_before_final() {
         .iter()
         .any(|message| message["role"] == "tool" && message["tool_call_id"] == "fixture-call"));
     assert_eq!(context.last().unwrap()["content"], "fixture answer");
+    let reopened_items = wunder_core::thread_store::ThreadHistoryReader::list_items(
+        &reopened,
+        wunder_core::thread_store::ItemListQuery {
+            thread_id: wunder_core::thread_store::ThreadId::new("fixture-thread").unwrap(),
+            turn_id: None,
+            cursor: None,
+            limit: 32,
+        },
+    )
+    .await
+    .unwrap();
+    let reopened_answer = reopened_items
+        .entries
+        .iter()
+        .find(|entry| {
+            entry.item.kind == wunder_core::thread_store::CanonicalItemKind::AssistantMessage
+                && entry.item.payload["content"] == "fixture answer"
+        })
+        .expect("completed answer survives reopening");
+    let reopened_stats = reopened_answer
+        .item
+        .payload
+        .get("message_stats")
+        .or_else(|| reopened_answer.item.payload.pointer("/meta/message_stats"))
+        .expect("completed answer retains invocation stats");
+    assert_eq!(reopened_stats["toolCalls"], json!(1));
+    assert_eq!(reopened_stats["tool_calls"], json!(1));
     server.abort();
 }

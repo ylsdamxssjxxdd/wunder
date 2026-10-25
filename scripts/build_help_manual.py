@@ -32,7 +32,7 @@ ART_TOPICS = [
             "lead": "蛹桌面端的整窗基线：1462×866 逻辑像素，侧栏 240、阅读列 1000、输入区固定 154 高。"
                     "侧栏、时间线、输入区放在同一张图里，方便对照布局。",
             "caption": "00 整体总览 · 窗口 1462×866（参考截图 2558×1515，175% DPI）",
-            "tip": "设计稿源文件在 docs/wunder美术设计稿。改完 SVG 后运行 python scripts/render_art_previews.py，"
+            "tip": "设计稿源文件在 docs/wunder美术设计稿/蛹。改完 SVG 后运行 python scripts/render_art_previews.py，"
                    "再运行 python scripts/build_help_manual.py 更新手册里的预览图。",
         },
         "en": {
@@ -41,7 +41,7 @@ ART_TOPICS = [
             "lead": "Whole-window baseline for the Pupa desktop app: 1462×866 logical pixels, a 240 sidebar, "
                     "a 1000 reading column and a 154-high composer band.",
             "caption": "00 Overview · window 1462×866 (reference screenshot 2558×1515 at 175% DPI)",
-            "tip": "The sources live in docs/wunder美术设计稿. After editing an SVG run "
+            "tip": "The sources live in docs/wunder美术设计稿/蛹. After editing an SVG run "
                    "python scripts/render_art_previews.py, then python scripts/build_help_manual.py to refresh the manual.",
         },
     },

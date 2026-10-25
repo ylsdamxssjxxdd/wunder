@@ -1,5 +1,6 @@
 import { normalizeChatDurationSeconds, normalizeChatTimestampMs } from './chatTiming';
 import { tokenUsageDetails } from './tokenUsageDetails';
+import { resolveMessageToolCalls } from './toolCallStats';
 import { continuesRecoveryOnModelRequest, isChatRetryEventType, isModelRecoveryReason } from '@/realtime/chat/chatRetryState';
 import { resolveAssistantFailureNotice } from './assistantFailureNotice';
 import {
@@ -916,7 +917,8 @@ export const buildAssistantMessageStatsEntries = (
     Number.isFinite(Number(effectiveQuotaConsumedTokens)) && Number(effectiveQuotaConsumedTokens) > 0;
   const hasDuration = Number.isFinite(Number(durationSeconds)) && Number(durationSeconds) > 0;
   const hasSpeed = Number.isFinite(Number(speed)) && Number(speed) > 0;
-  const hasToolCalls = stats?.toolCalls !== undefined && Number.isFinite(Number(stats.toolCalls)) && Number(stats.toolCalls) >= 0;
+  const toolCalls = resolveMessageToolCalls(stats);
+  const hasToolCalls = toolCalls !== null;
   const hasCredits = effectiveCreditsConsumed !== null;
   if (!hasUsage && !hasQuota && !hasDuration && !hasToolCalls && !hasSpeed && !hasCredits) {
     return statusEntry ? [statusEntry] : [];
@@ -943,7 +945,7 @@ export const buildAssistantMessageStatsEntries = (
     buildMetricEntry(
       'toolCalls',
       t('chat.stats.toolCalls'),
-      formatCount(stats?.toolCalls),
+      formatCount(toolCalls),
       'fa-solid fa-screwdriver-wrench'
     ),
     buildMetricEntry(

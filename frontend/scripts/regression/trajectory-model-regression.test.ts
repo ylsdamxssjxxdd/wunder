@@ -14,7 +14,10 @@ import {
   flattenRecords,
   buildFoldGroups,
   trajectoryRecordId,
+  mergeTrajectoryPage,
+  trajectoryPageTurns,
 } from '../../src/views/trajectory/trajectoryModel';
+import type { TrajectoryPageRow } from '../../src/views/trajectory/trajectoryModel';
 
 const translate = (key: string, params?: Record<string, string | number>) =>
   params ? `${key}:${JSON.stringify(params)}` : key;
@@ -23,6 +26,128 @@ const buildToolCells = (items: unknown[]) => {
   const turns = buildTrajectoryLayout([{ user_turn_index: 1, items }], translate);
   return flattenRecords(turns).map(record => record.cell);
 };
+
+const trajectoryRow = (ordinal: number, kind = 'assistant_message'): TrajectoryPageRow => ({
+  item_id: `fixture-item-${ordinal}`, root_turn_id: 'fixture-root', turn_id: 'fixture-execution',
+  user_round: 1, item_index: ordinal, created_seq: ordinal + 1, model_round: ordinal + 1,
+  kind, status: 'completed', summary: `fixture record ${ordinal}`,
+  started_at: 1800000000 + ordinal, completed_at: 1800000000 + ordinal + .25,
+});
+
+test('individual trajectory pages retain every model/tool row and its timing and diagnostics', () => {
+  const rows = [trajectoryRow(4), { ...trajectoryRow(8, 'tool_call'), tool_name: 'fixture_tool' },
+    { ...trajectoryRow(12), diagnostics: { retry: { attempt: 2, will_retry: false } },
+      stats: { round_usage: { input_tokens: 32, output_tokens: 8 } } }];
+  const input = JSON.stringify(rows);
+  const turns = trajectoryPageTurns(rows) as { items: any[] }[];
+  const records = flattenRecords(buildTrajectoryLayout(turns, translate));
+  assert.equal(turns.length, 1);
+  assert.deepEqual(turns[0].items.map(item => item.created_seq), [5, 9, 13]);
+  assert.deepEqual(records.map(record => record.cell.recordId), rows.map(row => row.item_id));
+  assert.deepEqual(records.map(record => record.cell.kind), ['message', 'tool', 'message']);
+  assert.deepEqual(records.map(record => record.cell.timeSeconds), [.25, .25, .25]);
+  assert.equal(records[2].cell.usage?.output, 8);
+  assert.equal(records[2].cell.retry?.attempt, 2);
+  assert.equal(records[0].collapsedSummary, undefined);
+  assert.equal(JSON.stringify(rows), input);
+});
+
+test('trajectory paging uses explicit ordinal cursors and preserves the opposite retained edge', () => {
+  const edges = { before: null, after: null, hasOlder: false, hasNewer: false };
+  const initial = mergeTrajectoryPage([], { trajectory: [trajectoryRow(30), trajectoryRow(50)],
+    next_before: 29, next_after: 51, has_more: true }, null, 4, edges);
+  assert.equal(initial.before, 29);
+  assert.equal(initial.after, 51);
+  const older = mergeTrajectoryPage(initial.rows, { trajectory: [trajectoryRow(10), trajectoryRow(20)],
+    next_before: 9, next_after: 21, has_more: true, has_newer: true }, 'older', 4,
+    { ...initial, hasOlder: initial.hasOlder });
+  assert.equal(older.before, 9);
+  assert.equal(older.after, 51);
+  assert.equal(older.hasNewer, false, 'server newer rows already retained must not create a paging loop');
+  const zero = mergeTrajectoryPage([], { trajectory: [trajectoryRow(0)], next_before: 0, next_after: 0 }, null, 4, edges);
+  assert.equal(zero.before, 0);
+  assert.equal(zero.after, 0);
+});
+
+test('bounded trajectory windows can traverse sparse records both ways without gaps or duplication', () => {
+  const fixture = Array.from({ length: 1001 }, (_, index) => trajectoryRow(index * 3));
+  const seen = new Set<string>();
+  const pageFor = (selected: TrajectoryPageRow[], older: boolean, newer: boolean) => ({
+    trajectory: selected, next_before: selected[0]?.item_index ?? null,
+    next_after: selected.at(-1)?.item_index ?? null, has_more: older, has_newer: newer,
+  });
+  let state = mergeTrajectoryPage([], pageFor(fixture.slice(-80), true, false), null, 600,
+    { before: null, after: null, hasOlder: false, hasNewer: false });
+  for (const row of state.rows) seen.add(row.item_id);
+  for (let request = 0; state.hasOlder && request < 20; request++) {
+    const older = fixture.filter(row => row.item_index < state.before!).slice(-80);
+    state = mergeTrajectoryPage(state.rows, pageFor(older, older[0]?.item_index !== 0, true),
+      'older', 600, state);
+    assert.ok(state.rows.length <= 600);
+    assert.equal(new Set(state.rows.map(row => row.item_id)).size, state.rows.length);
+    for (const row of state.rows) seen.add(row.item_id);
+  }
+  assert.equal(state.hasOlder, false);
+  assert.equal(state.rows[0].item_index, 0);
+  assert.equal(state.hasNewer, true);
+  assert.equal(seen.size, fixture.length);
+  for (let request = 0; state.hasNewer && request < 20; request++) {
+    const newer = fixture.filter(row => row.item_index > state.after!).slice(0, 80);
+    state = mergeTrajectoryPage(state.rows, pageFor(newer, true, newer.at(-1)?.item_id !== fixture.at(-1)!.item_id),
+      'newer', 600, state);
+    assert.ok(state.rows.length <= 600);
+  }
+  assert.equal(state.hasNewer, false);
+  assert.equal(state.rows.at(-1)?.item_id, fixture.at(-1)?.item_id);
+  assert.equal(state.hasOlder, true);
+});
+
+test('overlapping trajectory pages update one record without duplicating durable identities', () => {
+  const original = trajectoryRow(4);
+  const updated = { ...original, summary: 'fixture completed response', revision: 2 };
+  const merged = mergeTrajectoryPage([original, trajectoryRow(8)], {
+    trajectory: [trajectoryRow(0), updated], next_before: 0, next_after: 4,
+  }, 'older', 600, { before: 4, after: 8, hasOlder: true, hasNewer: false });
+  assert.deepEqual(merged.rows.map(row => row.item_index), [0, 4, 8]);
+  assert.equal(merged.rows[1].summary, updated.summary);
+  assert.equal(merged.after, 8);
+});
+
+test('both trajectory clients preserve canonical timing, explicit zero and unknown durations', async () => {
+  const bridge = await bridgeModel();
+  const committed = (id: string, kind: string, payload: Record<string, unknown> = {}) => ({
+    item_id: id, kind, status: 'completed', created_at_ms: 1800000000000,
+    updated_at_ms: 1800000000000, payload: { content: 'fixture output', ...payload },
+  });
+  const fixture = [{ user_turn_index: 1, items: [
+    committed('fixture-canonical', 'assistant_message', { item_id: 'fixture-inner',
+      kind: 'assistant_message', payload: { content: 'fixture canonical output',
+        started_at: 1800000000, completed_at: 1800000002,
+        message_stats: { interaction_duration_s: 90 } } }),
+    { ...committed('fixture-top-level', 'tool_call', { tool: 'fixture_tool' }),
+      started_at: 1800000000, completed_at: 1800000001.5 },
+    committed('fixture-model-duration', 'assistant_message', {
+      stats: { model_duration_s: 1.25, interaction_duration_s: 90 } }),
+    committed('fixture-stream-timing', 'assistant_message', { stream_timing: { prefill_ms: 100, decode_ms: 500 } }),
+    committed('fixture-tool-milliseconds', 'tool_call', { tool: 'fixture_tool', duration_ms: 75 }),
+    committed('fixture-tool-elapsed', 'tool_call', { tool: 'fixture_tool', elapsed_s: .125 }),
+    committed('fixture-explicit-zero', 'tool_call', { tool: 'fixture_tool', duration_ms: 0 }),
+    committed('fixture-interval-zero', 'assistant_message', { started_at: 1800000000, completed_at: 1800000000 }),
+    committed('fixture-unknown-tool', 'tool_call', { tool: 'fixture_tool' }),
+    committed('fixture-unknown-model', 'assistant_message', { message_stats: { interaction_duration_s: 90 } }),
+  ] }];
+  const project = (model: { buildTrajectoryLayout: typeof buildTrajectoryLayout; flattenRecords: typeof flattenRecords }) =>
+    model.flattenRecords(model.buildTrajectoryLayout(fixture, translate)).map(record => record.cell);
+  const hive = project({ buildTrajectoryLayout, flattenRecords });
+  const admin = project(bridge);
+  assert.deepEqual(admin, hive);
+  assert.deepEqual(hive.map(cell => cell.timeSeconds), [2, 1.5, 1.25, .6, .075, .125, 0, 0, null, null]);
+  assert.equal(hive[0].outputDetail, 'fixture canonical output');
+  assert.equal(hive[0].startedAt, 1800000000000);
+  assert.equal(hive[1].startedAt, 1800000000000);
+  assert.equal(hive[2].startedAt, 1799999998750);
+  assert.equal(hive.at(-1)?.metrics?.timingRecorded, false);
+});
 
 test('successful tool result with an empty error field stays successful', () => {
   const [tool] = buildToolCells([{

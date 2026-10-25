@@ -12376,7 +12376,7 @@
           "kind": "tip",
           "spans": [
             {
-              "text": "The sources live in docs/wunder美术设计稿. After editing an SVG run python scripts/render_art_previews.py, then python scripts/build_help_manual.py to refresh the manual.",
+              "text": "The sources live in docs/wunder美术设计稿/蛹. After editing an SVG run python scripts/render_art_previews.py, then python scripts/build_help_manual.py to refresh the manual.",
               "bold": false,
               "code": false,
               "kbd": false,

@@ -1,16 +1,16 @@
 ---
 title: Art Sheets
-summary: Ten interface design sheets for the Pupa desktop app, covering the overview, foundations, icons, shell, timeline, process and tools, plan and inquiry, composer, settings and dialogs, and interaction states. Each sheet is annotated in logical pixels and can be checked against the implementation directly.
+summary: Ten interface design sheets for the Pupa desktop app (overview, foundations, icons, shell, timeline, process and tools, plan and inquiry, composer, settings and dialogs, states and motion), plus six for the Helm terminal app (overview, foundations, layout and footer, timeline, tools and plan, input and popups). Each sheet is annotated against the current implementation and can be checked directly.
 updated_at: 2026-10-25
 ---
 
 # Art Sheets
 
-These sheets are the interface baseline for the Pupa desktop app. Every sheet carries its own sizes, spacing, colors and states; when the code and a sheet disagree, check the running app first and then decide which side to change.
+These sheets are the interface baseline for the two local forms: the Pupa desktop app first as the main line, then the Helm terminal app. Every sheet carries its own sizes, colors, states and rules; when the code and a sheet disagree, check the running app first and then decide which side to change.
 
-- Sources live in `docs/wunder美术设计稿`; every sheet is a standalone SVG with the app icon embedded, so it still renders when copied elsewhere
-- The page shows the SVGs directly and stays sharp at any zoom; you can also open the [design index](/docs/art/) and browse all ten sheets as thumbnails
-- The Pupa help manual embeds 1200px raster previews of the same sheets, so the Slint renderer needs no SVG pipeline
+- Sources live in `docs/wunder美术设计稿`, split by form into the `蛹/` and `舵机/` folders; every sheet is a standalone SVG, and the 蛹 sheets embed the app icon so they still render when copied elsewhere
+- The page shows the SVGs directly and stays sharp at any zoom; the ten 蛹 sheets also have a [design index](/docs/art/) that browses them as thumbnails
+- The Pupa help manual embeds 1200px raster previews of the 蛹 sheets, so the Slint renderer needs no SVG pipeline; the 舵机 sheets target the terminal implementation and stay out of the in-app manual
 
 ## 00 Overview
 
@@ -92,6 +92,54 @@ Row and input states, the motion timeline, performance limits, key bindings, acc
 
 *09 States and motion · states, timing, keys*
 
+## Helm 00 Overview
+
+The full terminal frame and its five-band vertical stack: transcript, popup band, welcome banner band, activity line and composer, plus the entry modes. The Helm has no window pixels — every layout is budgeted in terminal rows and columns, and the 5-row composer is never squeezed.
+
+![Helm overview design sheet](/docs/art/servo/00-整体总览.svg)
+
+*Helm 00 · full frame (100×30 example) and layout stack*
+
+## Helm 01 Foundations
+
+The semantic system of named colors plus weight modifiers, truecolor surfaces, NO_COLOR degradation, text-width rules, layout constants and the terminal capability ladder. Facts come from `crates/wunder-cli/tui/theme.rs`.
+
+![Helm foundations design sheet](/docs/art/servo/01-基础规范.svg)
+
+*Helm 01 · semantic colors, truecolor surfaces, degradation, baseline*
+
+## Helm 02 Layout and Footer
+
+Constraint order of the layout stack, a running frame, welcome-banner retirement rules, the activity-line state table, and the footer's composition and width-based shedding order.
+
+![Helm layout design sheet](/docs/art/servo/02-布局与底栏.svg)
+
+*Helm 02 · layout stack, activity line, footer*
+
+## Helm 03 Timeline
+
+Entry styles, the Markdown baseline, streaming rules, code and diff colors, the Ctrl+T expanded view, selection and search.
+
+![Helm timeline design sheet](/docs/art/servo/03-会话时间线.svg)
+
+*Helm 03 · entry styles, diff cards, expanded view*
+
+## Helm 04 Tools and Plan
+
+Tool lines and patch cards, plan-card states and ordering, trajectory view tabs, and the status-mark table. Process information is always secondary text; only status marks are allowed to speak up.
+
+![Helm tools design sheet](/docs/art/servo/04-工具与计划.svg)
+
+*Helm 04 · tool lines, plan card, trajectory view*
+
+## Helm 05 Input and Popups
+
+The composer, the anchored popup band, the four centered modals, the thread center, motion and frame budget, and the brand mark.
+
+![Helm input design sheet](/docs/art/servo/05-输入与弹层.svg)
+
+*Helm 05 · composer, modals, thread center*
+
 ## Maintenance
 
 After editing an SVG, run once from the repository root:
@@ -102,10 +150,12 @@ python scripts/sync_art.py
 
 It does three things in order:
 
-1. Renders the SVGs to 1200px PNGs under `frontend-slint/assets/help/art` for the desktop help
+1. Renders the 蛹 SVGs to 1200px PNGs under `frontend-slint/assets/help/art` for the desktop help
 2. Rebuilds the Chinese and English manual JSON from those PNGs
-3. Rebuilds the docs site and copies the SVGs to `web/docs/art`, embedding the app icon as a data URI
+3. Rebuilds the docs site and copies the SVGs to `web/docs/art` (蛹) and `web/docs/art/servo` (舵机), embedding the app icon as a data URI
 
 The web side takes effect after the site rebuild; the desktop app must be rebuilt because the previews are compiled into the binary with `include_bytes!`.
 
-When adding or removing a sheet, update three places besides the artwork: `SHEETS` in `scripts/render_art_previews.py`, `ART_TOPICS` in `scripts/build_help_manual.py`, and the gallery at `docs/wunder美术设计稿/index.html`; add the section on this page too, then run the sync script. Do not edit the PNGs under `frontend-slint/assets/help/art` by hand.
+When adding or removing a 蛹 sheet, update three places besides the artwork: `SHEETS` in `scripts/render_art_previews.py`, `ART_TOPICS` in `scripts/build_help_manual.py`, and the gallery at `docs/wunder美术设计稿/蛹/index.html`; add the section on this page too, then run the sync script. Do not edit the PNGs under `frontend-slint/assets/help/art` by hand.
+
+For a 舵机 sheet, sync this page's section and the file table in `docs/wunder美术设计稿/舵机/README.md`; no in-app assets are involved.

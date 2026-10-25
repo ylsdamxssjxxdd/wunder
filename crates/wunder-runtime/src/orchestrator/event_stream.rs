@@ -44,6 +44,9 @@ pub(super) struct EventEmitter {
     usage: Arc<ParkingMutex<TokenUsage>>,
     model_requests: Arc<ParkingMutex<i64>>,
     account_credits_consumed: Arc<ParkingMutex<i64>>,
+    /// Actual invocation starts in this execution; provider proposals and
+    /// result/replay events must never increment this counter.
+    tool_calls: Arc<AtomicI64>,
     /// UTF-16 cursors for ephemeral assistant tails in the active request.
     /// Completed items remain the durable source of truth.
     tail_offsets: Arc<ParkingMutex<HashMap<(String, String), usize>>>,
@@ -96,6 +99,7 @@ impl EventEmitter {
             })),
             model_requests: Arc::new(ParkingMutex::new(0)),
             account_credits_consumed: Arc::new(ParkingMutex::new(0)),
+            tool_calls: Arc::new(AtomicI64::new(0)),
             tail_offsets: Arc::new(ParkingMutex::new(HashMap::new())),
         }
     }
@@ -128,6 +132,18 @@ impl EventEmitter {
 
     pub(super) fn accumulated_model_requests(&self) -> i64 {
         *self.model_requests.lock()
+    }
+
+    pub(super) fn record_tool_call_started(&self) {
+        let _ = self.tool_calls.fetch_update(
+            AtomicOrdering::Relaxed,
+            AtomicOrdering::Relaxed,
+            |count| Some(count.saturating_add(1)),
+        );
+    }
+
+    pub(super) fn accumulated_tool_calls(&self) -> i64 {
+        self.tool_calls.load(AtomicOrdering::Relaxed)
     }
 
     pub(super) fn accumulated_account_credit_consumption(&self) -> i64 {
@@ -262,7 +278,7 @@ impl EventEmitter {
     }
 
     fn enrich_llm_output_message_stats(&self, event_type: &str, data: &mut Value) {
-        if event_type != "llm_output" {
+        if !matches!(event_type, "llm_output" | "final") {
             return;
         }
         let Some(map) = data.as_object_mut() else {
@@ -285,6 +301,13 @@ impl EventEmitter {
             .unwrap_or_default();
         stats.insert("usage".into(), usage.clone());
         stats.insert("round_usage".into(), round_usage);
+        let tool_calls = self.accumulated_tool_calls();
+        stats.insert("toolCalls".into(), json!(tool_calls));
+        stats.insert("tool_calls".into(), json!(tool_calls));
+        if event_type == "final" {
+            map.insert("toolCalls".into(), json!(tool_calls));
+            map.insert("tool_calls".into(), json!(tool_calls));
+        }
         stats.insert(
             "model_request_count".into(),
             json!(self.accumulated_model_requests().max(0)),

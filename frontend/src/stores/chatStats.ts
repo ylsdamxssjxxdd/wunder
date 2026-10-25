@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia';
 import { normalizeTokenUsage } from '@/utils/tokenUsage';
+import { resolveMessageToolCalls } from '@/utils/toolCallStats';
 
 import {
   archiveSession as archiveSessionApi,
@@ -1087,7 +1088,7 @@ export const normalizeMessageStats = (stats) => {
   );
   const rangedDuration = resolveInteractionDuration(interactionStartMs, interactionEndMs);
   return {
-    toolCalls: normalizeStatsCount(stats.toolCalls),
+    toolCalls: resolveMessageToolCalls(stats),
     usage: normalizedUsage,
     roundUsage: normalizedRoundUsage,
     prefill_duration_s: normalizeDurationValue(
@@ -1228,7 +1229,8 @@ export const mergeMessageStats = (base, incoming) => {
   const rightAverageSpeedRounds = normalizeStatsCount(right.avg_model_round_speed_rounds);
   const preferRightAverage = rightAverageSpeedRounds >= leftAverageSpeedRounds;
   return {
-    toolCalls: Math.max(left.toolCalls, right.toolCalls),
+    toolCalls: left.toolCalls === null ? right.toolCalls : right.toolCalls === null
+      ? left.toolCalls : Math.max(left.toolCalls, right.toolCalls),
     usage: right.usage || left.usage,
     roundUsage: right.roundUsage || left.roundUsage,
     prefill_duration_s:

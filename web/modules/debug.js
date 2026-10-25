@@ -10,7 +10,7 @@ import { formatTimestamp } from "./utils.js?v=20251229-02";
 import { ensureLlmConfigLoaded } from "./llm.js";
 import { getCurrentLanguage, t } from "./i18n.js?v=20261016-01";
 import { resolveApiErrorMessage } from "./api-error.js";
-import { createTrajectoryView, fetchThreadLogSnapshot } from "./trajectory-view.js?v=20261016-02";
+import { createTrajectoryView, fetchThreadLogSnapshot } from "./trajectory-view.js?v=20261025-01";
 
 const DEBUG_STATE_KEY = "wunder_debug_state";
 const DEBUG_ACTIVE_STATUSES = new Set(["running", "cancelling"]);

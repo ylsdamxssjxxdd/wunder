@@ -2343,7 +2343,6 @@ export default {
   'messenger.empty.selectConversation': 'Select a conversation to start chatting',
   'messenger.empty.input': 'Select a conversation to send messages',
   'messenger.error.openConversation': 'Failed to open conversation',
-  'messenger.trajectory.backToOverview': 'Back to turn overview',
   'messenger.error.agentRequired': 'Please select an agent first',
   'messenger.agentSettings.unsavedHint':
     'You have unsaved agent settings. Press Ctrl/Cmd + S to save quickly.',
@@ -2709,8 +2708,6 @@ export default {
   'messenger.trajectory.summaryTurn': '… {steps} steps · {tools} tool calls',
   'messenger.trajectory.summaryAssistantTools': '… {count} tool calls',
   'messenger.trajectory.noContent': 'No content',
-  'messenger.trajectory.largeTurnOverview': 'Large turn. Double-click to load its full trajectory.',
-  'messenger.trajectory.openCompleteTurn': 'Turn overview · Load complete trajectory',
   'messenger.trajectory.toolUnnamed': 'Tool',
   'messenger.trajectory.paramUnavailable': 'Parameters not captured',
   'messenger.trajectory.detailLoadFailed': 'Failed to load details',

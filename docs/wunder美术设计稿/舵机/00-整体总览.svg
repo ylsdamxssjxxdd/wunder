@@ -1,0 +1,143 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1220" viewBox="0 0 1600 1220" role="img" aria-label="舵机 终端 UI 整体总览">
+  <title>00 整体总览 · 舵机 CLI UI Spec</title>
+  <style>
+    svg{font-family:'Microsoft YaHei UI','Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif;fill:#1F2329}
+    .mono{font-family:Consolas,'SFMono-Regular','Cascadia Mono',monospace}
+    .h1{font-size:30px;font-weight:700;letter-spacing:-.4px}
+    .sub{font-size:13px;fill:#7C7A75}
+    .kicker{font-size:11px;font-weight:600;letter-spacing:1.4px;fill:#E07A12}
+    .sect{font-size:16px;font-weight:700}
+    .sect-en{font-size:10px;font-weight:600;letter-spacing:1.6px;fill:#A8A39B}
+    .card-t{font-size:12px;font-weight:700}
+    .note{font-size:11px;fill:#7C7A75}
+    .tiny{font-size:10px;fill:#8A8F99}
+    .tok{font-size:11px;fill:#3D3D3D}
+    .line{stroke:#E8E6E3;stroke-width:1}
+    .dash{stroke:#D8D5D0;stroke-width:1;stroke-dasharray:3 3}
+    .card{fill:#FFFFFF;stroke:#DED9D1;stroke-width:1}
+    .accent{fill:#F58A24}
+    .term-bg{fill:#131A24}
+    .term-frame{fill:none;stroke:#2A3646;stroke-width:1}
+    .t-fg{fill:#D8DEE6}
+    .t-dim{fill:#6E7A8A}
+    .t-cy{fill:#4FC1D9}
+    .t-gr{fill:#3FBF7F}
+    .t-mg{fill:#C678DD}
+    .callout{fill:none;stroke:#C9A26B;stroke-width:1;stroke-dasharray:4 3}
+    .chip{fill:#FFFFFF;stroke:#DED9D1;stroke-width:1;rx:8}
+  </style>
+
+  <rect width="1600" height="1220" fill="#F4F1EC"/>
+
+  <!-- header -->
+  <g id="header">
+    <text x="80" y="52" class="kicker">WUNDER / 舵机 · CLI UI SPEC</text>
+    <text x="80" y="93" class="h1">00　整体总览</text>
+    <text x="80" y="120" class="sub">以 crates/wunder-cli/tui 当前实现为事实基线。舵机没有窗口像素，终端单元格就是画布：一切布局按行数与列数预算，颜色只是语义的载体。</text>
+    <text x="1520" y="52" text-anchor="end" class="mono" font-size="11" fill="#8A8F99">SHEET 00 / 05</text>
+    <text x="1520" y="70" text-anchor="end" class="mono" font-size="11" fill="#8A8F99">RATATUI · TUI</text>
+  </g>
+
+  <!-- section: terminal overview -->
+  <g id="overview">
+    <text x="80" y="176" class="sect">终端总览 · 新线程站立态</text>
+    <text x="330" y="176" class="sect-en">FULL FRAME · 100 × 30 CELLS EXAMPLE</text>
+
+    <rect x="80" y="196" width="1080" height="668" class="card"/>
+    <rect x="96" y="212" width="1048" height="636" class="term-bg" rx="6"/>
+    <rect x="96" y="212" width="1048" height="636" class="term-frame" rx="6"/>
+
+    <!-- transcript band: 8 rows floor, fresh thread = empty -->
+    <g class="mono" font-size="13">
+      <text x="116" y="238" class="t-dim">（转写区 · 新线程为空，地板 8 行）</text>
+    </g>
+    <line x1="96" y1="392" x2="1144" y2="392" class="callout"/>
+
+    <!-- welcome banner band -->
+    <g id="logo">
+      <g transform="translate(520,416)">
+        <!-- half-block style mark -->
+        <rect x="0" y="0" width="22" height="22" fill="#C678DD"/>
+        <rect x="22" y="0" width="22" height="22" fill="#E3B8EE"/>
+        <rect x="44" y="0" width="22" height="22" fill="#C678DD"/>
+        <rect x="0" y="22" width="22" height="22" fill="#E3B8EE"/>
+        <rect x="22" y="22" width="22" height="22" fill="#131A24"/>
+        <rect x="44" y="22" width="22" height="22" fill="#E3B8EE"/>
+        <rect x="0" y="44" width="22" height="22" fill="#C678DD"/>
+        <rect x="22" y="44" width="22" height="22" fill="#E3B8EE"/>
+        <rect x="44" y="44" width="22" height="22" fill="#C678DD"/>
+        <text x="88" y="42" class="mono" font-size="20" fill="#C678DD" font-weight="bold">⚙</text>
+      </g>
+      <text x="620" y="540" text-anchor="middle" class="mono" font-size="15" fill="#D8DEE6" font-weight="bold">wunder 舵机</text>
+      <text x="620" y="562" text-anchor="middle" class="mono" font-size="11" fill="#6E7A8A">手工本地操作入口 · 终端驱动 · 脚本化</text>
+    </g>
+
+    <!-- activity row -->
+    <g class="mono" font-size="13">
+      <text x="116" y="740" class="t-dim">（活动行 · 空闲为空，1 行）</text>
+    </g>
+    <line x1="96" y1="752" x2="1144" y2="752" class="callout"/>
+
+    <!-- composer: 5 rows on surface -->
+    <rect x="116" y="760" width="1008" height="76" fill="#182430" rx="4"/>
+    <g class="mono" font-size="13">
+      <text x="128" y="784" class="t-cy" font-weight="bold">›</text>
+      <text x="146" y="784" class="t-dim">（草稿行，最多 3 行，超过内部滚动）</text>
+      <text x="128" y="826" class="t-dim">示例目录  ← 任务中心</text>
+      <text x="1124" y="826" text-anchor="end" class="t-dim">? 快捷键</text>
+    </g>
+
+    <!-- band labels -->
+    <g font-size="11" fill="#A8A39B">
+      <text x="1168" y="300">① 转写区 Min(8)</text>
+      <text x="1168" y="318" class="tiny">对话与过程回放，虚拟滚动</text>
+      <text x="1168" y="470">② 欢迎横幅带</text>
+      <text x="1168" y="488" class="tiny">自适应高度，会话推进即让位</text>
+      <text x="1168" y="736">③ 活动行 · 1 行</text>
+      <text x="1168" y="754" class="tiny">运行 / 审批 / 提示的单一出口</text>
+      <text x="1168" y="790">④ 输入区 · 5 行</text>
+      <text x="1168" y="808" class="tiny">草稿 + 底栏，永不丢行</text>
+      <text x="1168" y="844">⑤ 弹层带（未画出）</text>
+      <text x="1168" y="862" class="tiny">出现在输入区上方，高 ≤ 项数(7)+1</text>
+    </g>
+  </g>
+
+  <!-- section: layout rules -->
+  <g id="rules">
+    <text x="80" y="912" class="sect">布局规则</text>
+    <text x="180" y="912" class="sect-en">LAYOUT CONTRACT</text>
+
+    <rect x="80" y="928" width="1440" height="118" class="card"/>
+    <g font-size="12" fill="#3D3D3D">
+      <text x="104" y="954">· 行数预算自上而下：<tspan font-weight="bold">转写区 Min(8)</tspan>（有弹层时 Min(6)）→ 弹层带 → 横幅带 → <tspan font-weight="bold">活动行 1 行</tspan> → <tspan font-weight="bold">输入区 5 行</tspan></text>
+      <text x="104" y="978">· 横幅带高度 = min(请求值, 余量)；余量 = 屏高 −（弹层高 + 1 + 5 + 8）。屏幕太矮先压缩横幅，再整个去掉横幅。</text>
+      <text x="104" y="1002">· 输入区的 5 行不可被任何带吃掉；弹层高 = min(项数, 7) + 1 行边框。</text>
+      <text x="104" y="1026" class="note">· 主布局固定开销 14 行（转写地板 + 活动行 + 输入区）；低于该值时横幅必然消失。</text>
+    </g>
+  </g>
+
+  <!-- section: invocation -->
+  <g id="invocation">
+    <text x="80" y="1084" class="sect">调用形态</text>
+    <text x="180" y="1084" class="sect-en">ENTRY MODES</text>
+    <g font-size="12" fill="#3D3D3D">
+      <rect x="80" y="1100" width="272" height="40" rx="8" class="card"/>
+      <text x="96" y="1125" class="mono">无参数 → 当前目录开 TUI</text>
+      <rect x="366" y="1100" width="272" height="40" rx="8" class="card"/>
+      <text x="382" y="1125" class="mono">位置参数 → 携带初始提示词</text>
+      <rect x="652" y="1100" width="272" height="40" rx="8" class="card"/>
+      <text x="668" y="1125" class="mono">--session / --cd / --model</text>
+      <rect x="938" y="1100" width="272" height="40" rx="8" class="card"/>
+      <text x="954" y="1125" class="mono">--sandbox / --approval-mode</text>
+      <rect x="1224" y="1100" width="296" height="40" rx="8" class="card"/>
+      <text x="1240" y="1125" class="mono">非 TTY → 管道 / 脚本运行</text>
+    </g>
+  </g>
+
+  <!-- footer -->
+  <g id="footer">
+    <line x1="80" y1="1176" x2="1520" y2="1176" class="line"/>
+    <text x="80" y="1198" class="tiny">事实来源：crates/wunder-cli/tui/ui/layout.rs · tui/app.rs（banner / activity）· args.rs · empty_state_animation.rs。命名色按终端主题映射，稿中取一组合成示例值。</text>
+    <text x="1520" y="1198" text-anchor="end" class="tiny">SVG · 1600 PX WIDE · 2026-10-25</text>
+  </g>
+</svg>

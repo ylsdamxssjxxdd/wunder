@@ -101,12 +101,22 @@ const payloadOf = (item) => {
   // rows.  Preserve the row fields when no envelope exists so reasoning,
   // schema and compaction metadata do not disappear in the bridge.
   if (!isRecord(item.payload)) return item;
-  return { ...item, ...item.payload };
+  let body = item.payload;
+  let payload = { ...item, ...body };
+  // Canonical rows may preserve the original ledger envelope. Only unwrap
+  // identity-bearing rows, not an arbitrary tool result named `payload`.
+  for (let depth = 0; depth < 2 && typeof body.item_id === "string" &&
+      isRecord(body.payload); depth += 1) {
+    body = body.payload;
+    payload = { ...payload, ...body };
+  }
+  return payload;
 };
 
 const metaOf = (payload) => (isRecord(payload.meta) ? payload.meta : {});
 
 function rawKindOf(item, payload) {
+  if (typeof payload.kind === "string" && payload.kind) return payload.kind;
   if (typeof item.kind === "string" && item.kind) return item.kind;
   const eventType = payload.event_type;
   if (typeof eventType === "string" && eventType) return eventType;
@@ -133,6 +143,12 @@ function firstTime(source, keys) {
     if (ms !== null) return ms;
   }
   return null;
+}
+
+function rowTime(source, edge) {
+  const milliseconds = source?.[edge === "created" ? "created_at_ms" : "updated_at_ms"];
+  if (typeof milliseconds === "number" && Number.isFinite(milliseconds)) return milliseconds;
+  return firstTime(source, [edge === "created" ? "created_time" : "updated_time"]);
 }
 
 function contentToText(value) {
@@ -183,23 +199,54 @@ function firstNonEmptyText(...values) {
 }
 
 function finiteNonNegative(value) {
-  const number = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
+  const number = typeof value === "number" ? value
+    : typeof value === "string" && value.trim() ? Number(value) : NaN;
   return Number.isFinite(number) && number >= 0 ? number : null;
 }
 
 function assistantRecordedDurationSeconds(payload) {
   const meta = metaOf(payload);
-  const stats = isRecord(payload.message_stats)
-    ? payload.message_stats
-    : isRecord(payload.messageStats)
-      ? payload.messageStats
-      : isRecord(meta.message_stats)
-        ? meta.message_stats
-        : isRecord(meta.messageStats) ? meta.messageStats : undefined;
-  if (!stats) return null;
-  return finiteNonNegative(
-    stats.model_duration_s ?? stats.request_duration_s ?? stats.duration_s ?? stats.durationSeconds,
-  );
+  for (const stats of [payload.message_stats, payload.messageStats,
+      meta.message_stats, meta.messageStats, payload.stats]) {
+    if (!isRecord(stats)) continue;
+    for (const key of ["model_duration_s", "request_duration_s", "duration_s", "durationSeconds"]) {
+      const value = finiteNonNegative(stats[key]);
+      if (value !== null) return value;
+    }
+  }
+  const prefill = finiteNonNegative(payload.prefill_duration_s);
+  const decode = finiteNonNegative(payload.decode_duration_s);
+  if (prefill !== null || decode !== null) return (prefill ?? 0) + (decode ?? 0);
+  const timing = isRecord(payload.stream_timing) ? payload.stream_timing : {};
+  const prefillMs = finiteNonNegative(timing.prefill_ms);
+  const decodeMs = finiteNonNegative(timing.decode_ms);
+  return prefillMs !== null || decodeMs !== null ? ((prefillMs ?? 0) + (decodeMs ?? 0)) / 1000 : null;
+}
+
+function recordedDurationSeconds(payload, kind) {
+  if (kind === "message") {
+    const value = assistantRecordedDurationSeconds(payload);
+    if (value !== null) return value;
+  }
+  for (const source of [payload, metaOf(payload)]) {
+    for (const key of ["duration_ms", "durationMs"]) {
+      const value = finiteNonNegative(source[key]);
+      if (value !== null) return value / 1000;
+    }
+    for (const key of ["duration_s", "elapsed_s"]) {
+      const value = finiteNonNegative(source[key]);
+      if (value !== null) return value;
+    }
+  }
+  return null;
+}
+
+function spanDurationSeconds(start, end, explicit, recorded) {
+  if (explicit && start !== null && end !== null) return end >= start ? (end - start) / 1000 : null;
+  if (recorded !== null) return recorded;
+  // Equal canonical commit timestamps do not record an execution duration.
+  // A real zero requires an explicit interval or an explicit duration metric.
+  return start !== null && end !== null && end > start ? (end - start) / 1000 : null;
 }
 
 // Stream snapshots may wrap the event body in `data`/`payload.data`.  Keep a
@@ -352,22 +399,23 @@ function contextFallbackText(payload) {
 }
 function buildCell(item, payload, kind, index) {
     payload = eventPayloadOf(payload);
-    const status = typeof item.status === 'string' ? item.status : '';
+    const status = typeof payload.status === 'string' ? payload.status : '';
     const recordId = typeof item.item_id === 'string' ? item.item_id : String(index);
-    const createdMs = firstTime(item, ['created_time']) ?? firstTime(payload, ['created_time']);
-    const updatedMs = firstTime(item, ['updated_time']);
-    let startedAt = firstTime(payload, STARTED_KEYS) ?? createdMs;
+    const createdMs = rowTime(item, 'created') ?? rowTime(payload, 'created');
+    const updatedMs = rowTime(item, 'updated') ?? rowTime(payload, 'updated');
+    const explicitStart = firstTime(payload, STARTED_KEYS);
+    const explicitEnd = firstTime(payload, COMPLETED_KEYS);
+    let startedAt = explicitStart ?? createdMs;
     const completedAt = ['running', 'queued', 'waiting_input', 'waiting_approval'].includes(status)
-        ? null : firstTime(payload, COMPLETED_KEYS) ?? updatedMs;
-    const recordedDuration = kind === 'message' ? assistantRecordedDurationSeconds(payload) : null;
+        ? null : explicitEnd ?? updatedMs;
+    const recordedDuration = recordedDurationSeconds(payload, kind);
     // Durable assistant rows are created when the model round is admitted, but
     // updated only after child/tool work and replay have settled.  That row
     // timestamp is bookkeeping, not the model span start.  When the runtime
     // recorded an explicit per-request duration, anchor the span at completion and
     // derive the start so delegated child work stays visibly separate.
-    if (kind === 'message' && recordedDuration !== null
-        && firstTime(payload, STARTED_KEYS) === null
-        && firstTime(payload, COMPLETED_KEYS) === null
+    if (recordedDuration !== null
+        && explicitStart === null
         && completedAt !== null) {
         startedAt = completedAt - recordedDuration * 1000;
     }
@@ -382,7 +430,6 @@ function buildCell(item, payload, kind, index) {
         failure: ['message', 'tool', 'subtool', 'compacted'].includes(kind) || ['terminal', 'turn_terminal'].includes(rawKindOf(item, payload)) ? trajectoryFailure(payload, status) : undefined,
         retry: trajectoryRetry(payload),
     };
-    cell.overviewOnly = item.overview_only === true;
     const usage = extractUsage(payload);
     if (kind === 'message') {
         const contentText = contentToText(payload.content);
@@ -406,22 +453,13 @@ function buildCell(item, payload, kind, index) {
             defineLazy(cell, 'text', () => markdownPreviewText(source));
             cell.previewMarkdown = source.trim() ? source : undefined;
         }
-        const prefill = typeof payload.prefill_duration_s === 'number'
-            && Number.isFinite(payload.prefill_duration_s) ? payload.prefill_duration_s : null;
-        const decode = typeof payload.decode_duration_s === 'number'
-            && Number.isFinite(payload.decode_duration_s) ? payload.decode_duration_s : null;
         // Durable assistant rows often receive `updated_time` only after the
         // child/tool work and final replay are committed. Using that bookkeeping
         // timestamp makes the purple model span cover the whole child run. Prefer
         // an explicit per-request duration when assistant
         // start/end fields are absent; this is the same own-step duration DSH uses.
-        cell.timeSeconds = recordedDuration !== null
-            && firstTime(payload, STARTED_KEYS) === null
-            && firstTime(payload, COMPLETED_KEYS) === null
-            ? recordedDuration
-            : startedAt !== null && completedAt !== null
-                ? Math.max(0, (completedAt - startedAt) / 1000)
-                : prefill !== null && decode !== null ? prefill + decode : null;
+        cell.timeSeconds = spanDurationSeconds(startedAt, completedAt,
+            explicitStart !== null && explicitEnd !== null, recordedDuration);
         // Assistant rows contain the model response.  The persisted row does not
         // carry the prompt that produced it, so exposing `content` as both input
         // and output makes the overview misleading.  Keep the response in the
@@ -435,7 +473,7 @@ function buildCell(item, payload, kind, index) {
             ? payload.ttft_ms
             : null;
         cell.metrics = {
-            timingRecorded: startedAt !== null && completedAt !== null,
+            timingRecorded: cell.timeSeconds !== null && startedAt !== null && completedAt !== null,
             stepStartTime: startedAt,
             firstTokenTime: ttft !== null && startedAt !== null ? startedAt + ttft : null,
             completedTime: completedAt,
@@ -502,9 +540,8 @@ function buildCell(item, payload, kind, index) {
         else if (isRecord(schema))
             cell.schemaDetail = JSON.stringify(schema, null, 2);
         cell.isError = isToolFailure(payload, status);
-        cell.timeSeconds = startedAt !== null && completedAt !== null
-            ? Math.max(0, (completedAt - startedAt) / 1000)
-            : null;
+        cell.timeSeconds = spanDurationSeconds(startedAt, completedAt,
+            explicitStart !== null && explicitEnd !== null, recordedDuration);
     }
     else if (kind === 'compacted') {
         const summaryText = contentToText(payload.summary_text ?? payload.summaryText ?? payload.summary_model_output ??
@@ -518,9 +555,8 @@ function buildCell(item, payload, kind, index) {
         // A compaction row is a workflow result; its summary is output, not a
         // second copy of an input prompt.
         cell.inputDetail = undefined;
-        cell.timeSeconds = startedAt !== null && completedAt !== null
-            ? Math.max(0, (completedAt - startedAt) / 1000)
-            : null;
+        cell.timeSeconds = spanDurationSeconds(startedAt, completedAt,
+            explicitStart !== null && explicitEnd !== null, recordedDuration);
     }
     else {
         let contentText = contentToText(payload.content);
@@ -729,11 +765,17 @@ export function buildTrajectoryLayout(rawTurns, t) {
                     if (isToolFailure(candidatePayload, candidateStatus))
                         cell.isError = true;
                     const candidateStart = firstTime(candidatePayload, STARTED_KEYS)
-                        ?? firstTime(candidate, ['created_time']);
+                        ?? cell.startedAt ?? rowTime(candidate, 'created');
                     const candidateEnd = firstTime(candidatePayload, COMPLETED_KEYS)
-                        ?? firstTime(candidate, ['updated_time']);
+                        ?? rowTime(candidate, 'updated');
                     if (candidateStart !== null && candidateEnd !== null) {
-                        cell.timeSeconds = Math.max(0, (candidateEnd - candidateStart) / 1000);
+                        const duration = spanDurationSeconds(candidateStart, candidateEnd,
+                            firstTime(candidatePayload, STARTED_KEYS) !== null && firstTime(candidatePayload, COMPLETED_KEYS) !== null,
+                            recordedDurationSeconds(eventPayloadOf(candidatePayload), kind));
+                        if (duration !== null) {
+                            cell.timeSeconds = duration;
+                            cell.startedAt = candidateEnd - duration * 1000;
+                        }
                     }
                     ordered.splice(j, 1);
                     break;

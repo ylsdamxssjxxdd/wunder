@@ -678,9 +678,76 @@ async fn completed_output_projects_context_and_quota_stats_without_history_rewri
     assert_eq!(stats["context_occupancy_tokens"], json!(321));
     assert_eq!(stats["model_request_count"], json!(1));
     assert_eq!(stats["account_credits_consumed"], json!(1));
+    assert_eq!(stats["toolCalls"], json!(0));
+    assert_eq!(stats["tool_calls"], json!(0));
     assert_eq!(stats["usage"]["total_tokens"], json!(355));
     assert_eq!(stats["interaction_duration_s"], json!(1.0));
     while queue_rx.try_recv().is_ok() {}
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn completed_output_preserves_actual_tool_starts_across_parallel_results_and_replay() {
+    let (state, _dir) = build_test_state("change_stream_tool_stats").await;
+    let emitter = EventEmitter::new(
+        "session-a".into(),
+        "user-a".into(),
+        None,
+        Some(state.storage.clone()),
+        state.monitor.clone(),
+        false,
+        None,
+    )
+    .with_committer(state.kernel.orchestrator.committer.clone());
+    let turn = start_turn(&state, "session-a", "user-a").await;
+    emitter.bind_turn(&turn, 1);
+    let first = emitter.clone();
+    let second = emitter.clone();
+    tokio::join!(
+        async move {
+            first.record_tool_call_started();
+            first
+                .emit(
+                    "tool_call",
+                    json!({"model_round":1,"tool_call_id":"sample-call-a","tool":"read_file"}),
+                )
+                .await;
+        },
+        async move {
+            second.record_tool_call_started();
+            second
+                .emit(
+                    "tool_call",
+                    json!({"model_round":1,"tool_call_id":"sample-call-b","tool":"read_file"}),
+                )
+                .await;
+        },
+    );
+    for _ in 0..2 {
+        emitter.emit("tool_result", json!({"model_round":1,"tool_call_id":"sample-call-b","tool":"read_file","ok":false})).await;
+        emitter.emit("tool_result", json!({"model_round":1,"tool_call_id":"sample-call-a","tool":"read_file","ok":true})).await;
+    }
+    for _ in 0..2 {
+        let output = emitter.emit("llm_output", json!({"model_round":2,"content":"sample answer","usage":{"input_tokens":10,"output_tokens":2,"total_tokens":12}})).await;
+        assert_eq!(
+            output.data.pointer("/data/message_stats/toolCalls"),
+            Some(&json!(2))
+        );
+        let final_event = emitter
+            .emit("final", json!({"answer":"sample answer"}))
+            .await;
+        assert_eq!(
+            final_event.data.pointer("/data/tool_calls"),
+            Some(&json!(2))
+        );
+        let page = state
+            .storage
+            .thread_view_page("user-a", "session-a", "chat", None, 12)
+            .unwrap();
+        let stats = page.chat[0].assistant.stats.as_ref().unwrap();
+        assert_eq!(stats["toolCalls"], json!(2));
+        assert_eq!(stats["tool_calls"], json!(2));
+    }
+    assert_eq!(emitter.accumulated_tool_calls(), 2);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

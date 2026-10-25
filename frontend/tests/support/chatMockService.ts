@@ -1,5 +1,6 @@
 import type { Page, WebSocketRoute } from '@playwright/test';
 import type { Row } from './chatEvidenceAnalysis';
+import { extractChatInquiryPanel, presentChatInquiry } from '../../src/realtime/chat/chatInquiry';
 
 export const MOCK_SESSION = 'fixture-thread';
 export const MOCK_AGENT = 'fixture-agent';
@@ -72,17 +73,21 @@ export class ChatMockService {
       plan: [{ step: 'First fixture step', status: advance ? 'completed' : 'in_progress' },
         { step: 'Second fixture step', status: advance ? 'in_progress' : 'pending' }] });
   }
-  seedInquiryTurn() {
+  seedInquiryTurn(withPlan = false) {
     const turn = { turn_id: `fixture-turn-${++this.round}`, user_round: this.round,
       content: 'Fixture inquiry request', status: 'running' };
     this.turns.push(turn);
     this.commit('turn_upsert', turn);
     this.item(turn, 'user', 'user_message', 'completed', { role: 'user', content: turn.content });
-    this.item(turn, 'text-1', 'assistant_message', 'completed', { role: 'assistant', content: 'Fixture waiting for choice.',
-      meta: { type: 'question_panel', panel: { status: 'pending', keep_open: true, questions: [
+    if (withPlan) this.updatePlanTurn(turn);
+    this.item(turn, 'text-1', 'assistant_message', 'completed', { role: 'assistant', content: 'Fixture waiting for choice.' });
+    // Production commits a completed control item before the turn becomes
+    // waiting_input. Its lifecycle is deliberately distinct from panel status.
+    this.item(turn, 'question-panel-1', 'question_panel', 'completed', {
+      event_type: 'question_panel', keep_open: true, questions: [
         { question: 'Fixture choice?', multiple: false, options: [
           { label: 'First fixture option', description: 'Fixture description', recommended: true },
-          { label: 'Second fixture option', description: '', recommended: false }] }] } } });
+          { label: 'Second fixture option', description: '', recommended: false }] }] });
     this.state(turn, 'waiting_input');
     return turn;
   }
@@ -122,6 +127,7 @@ export class ChatMockService {
       const reasoningItems = items.filter(item => item.kind === 'assistant_message' && String(item.reasoning ?? '').trim());
       const activeReasoning = String(answer?.reasoning ?? '');
       const plan = items.filter(item => item.kind === 'plan' && Array.isArray(item.plan)).at(-1);
+      const inquiry = items.map(item => extractChatInquiryPanel(item)).filter(Boolean).at(-1);
       return {
         execution_turn_id: String(execution.turn_id), root_turn_id: String(root.turn_id),
         user_round: Number(root.user_round), client_message_id: root.client_message_id ?? null,
@@ -131,8 +137,7 @@ export class ChatMockService {
         assistant: { ...message(answer, content), content_offset: content.length,
           reasoning: activeReasoning, reasoning_offset: activeReasoning.length,
           tail: running ? persisted : '', failure, stats: answer?.meta?.message_stats, attachments: [],
-          question_panel: answer?.meta?.panel ? { ...answer.meta.panel,
-            status: status === 'cancelled' ? 'dismissed' : status === 'completed' ? 'answered' : 'pending' } : null },
+          question_panel: presentChatInquiry(inquiry, status) },
         workflow_count: items.filter(i => i.kind === 'tool_call').length,
         reasoning_count: reasoningItems.length,
         reasoning_item_id: activeReasoning ? String(answer?.item_id ?? '') : '',

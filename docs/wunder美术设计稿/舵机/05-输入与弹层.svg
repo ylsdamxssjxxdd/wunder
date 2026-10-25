@@ -1,0 +1,172 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1680" viewBox="0 0 1600 1680" role="img" aria-label="舵机 终端 UI 输入与弹层">
+  <title>05 输入与弹层 · 舵机 CLI UI Spec</title>
+  <style>
+    svg{font-family:'Microsoft YaHei UI','Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif;fill:#1F2329}
+    .mono{font-family:Consolas,'SFMono-Regular','Cascadia Mono',monospace}
+    .h1{font-size:30px;font-weight:700;letter-spacing:-.4px}
+    .sub{font-size:13px;fill:#7C7A75}
+    .kicker{font-size:11px;font-weight:600;letter-spacing:1.4px;fill:#E07A12}
+    .sect{font-size:16px;font-weight:700}
+    .sect-en{font-size:10px;font-weight:600;letter-spacing:1.6px;fill:#A8A39B}
+    .tok{font-size:11px;fill:#3D3D3D}
+    .note{font-size:11px;fill:#7C7A75}
+    .tiny{font-size:10px;fill:#8A8F99}
+    .line{stroke:#E8E6E3;stroke-width:1}
+    .card{fill:#FFFFFF;stroke:#DED9D1;stroke-width:1}
+    .accent{fill:#F58A24}
+    .term{fill:#131A24}
+    .t-fg{fill:#D8DEE6}
+    .t-dim{fill:#6E7A8A}
+    .t-cy{fill:#4FC1D9}
+    .t-gr{fill:#3FBF7F}
+    .t-rd{fill:#E06C61}
+    .t-yl{fill:#D7A65F}
+    .t-mg{fill:#C678DD}
+    .surf{fill:#182430}
+    .selrow{fill:#1A2A36}
+  </style>
+
+  <rect width="1600" height="1680" fill="#F4F1EC"/>
+
+  <g id="header">
+    <text x="80" y="52" class="kicker">WUNDER / 舵机 · CLI UI SPEC</text>
+    <text x="80" y="93" class="h1">05　输入与弹层</text>
+    <text x="80" y="120" class="sub">输入区是唯一的可编辑区域；弹层分两族——贴着输入区的一行带状弹层与居中模态；任务中心是唯一的整屏视图。</text>
+    <text x="1520" y="52" text-anchor="end" class="mono" font-size="11" fill="#8A8F99">SHEET 05 / 05</text>
+  </g>
+
+  <!-- 输入区 -->
+  <g id="composer">
+    <text x="80" y="176" class="sect">输入区</text>
+    <text x="160" y="176" class="sect-en">COMPOSER · 5 ROWS</text>
+    <rect x="80" y="192" width="720" height="330" class="card"/>
+    <g class="mono" font-size="12">
+      <rect x="100" y="212" width="680" height="160" class="surf" rx="4"/>
+      <rect x="100" y="212" width="680" height="2" class="t-cy"/>
+      <text x="116" y="240" class="t-cy" font-weight="bold">›</text>
+      <text x="134" y="240" class="t-fg">聚焦态：提示符 accent + BOLD，草稿正常前景</text>
+      <text x="116" y="276" class="t-dim" font-weight="bold">›</text>
+      <text x="134" y="276" class="t-dim">失焦态：提示符 DIM + BOLD，权重不丢</text>
+      <text x="116" y="312" class="t-dim">[已粘贴 1,842 字符] ← 大粘贴折叠为占位符</text>
+      <text x="116" y="356" class="t-dim">任务标题 · 模型名 · 目录　← 任务中心</text>
+      <text x="760" y="356" text-anchor="end" class="t-dim">? 快捷键</text>
+    </g>
+    <g font-size="12" fill="#3D3D3D">
+      <text x="104" y="392" class="tok" font-weight="bold">规则</text>
+      <text x="104" y="418">· 5 行预算：草稿 3 行（超出内部滚动）+ 间隙 + 底栏行。</text>
+      <text x="104" y="442">· 表面色 Rgb(24,36,48) 是全屏唯一面板色块，让可编辑区一眼可辨。</text>
+      <text x="104" y="466">· 大段粘贴折叠为占位符行，粘贴中逐段落地（provisional composer）。</text>
+      <text x="104" y="490">· Enter 发送；Ctrl+R 历史 / Ctrl+T 全展开 / ← 任务中心 / ? 快捷键。</text>
+      <text x="104" y="514" class="note">· 中文输入法组合串按原位显示，提交前不触发发送。</text>
+    </g>
+  </g>
+
+  <!-- 弹层带 -->
+  <g id="popup">
+    <text x="840" y="176" class="sect">弹层带</text>
+    <text x="940" y="176" class="sect-en">ANCHORED POPUP</text>
+    <rect x="840" y="192" width="680" height="330" class="card"/>
+    <g class="mono" font-size="12">
+      <rect x="860" y="212" width="640" height="130" class="term" rx="4"/>
+      <rect x="876" y="228" width="608" height="98" fill="#0F141C" rx="4"/>
+      <rect x="876" y="228" width="608" height="24" class="surf"/>
+      <text x="888" y="245" class="t-cy" font-weight="bold">会话恢复 · 7 项</text>
+      <rect x="888" y="256" width="584" height="22" class="selrow"/>
+      <text x="898" y="272" class="t-cy" font-weight="bold">❯ 昨天 · 示例任务 A</text>
+      <text x="898" y="296" class="t-dim">　 前天 · 示例任务 B</text>
+      <text x="898" y="318" class="t-dim">　 3 天前 · 示例任务 C（列表最多 7 项）</text>
+      <text x="876" y="416" class="t-dim">（弹层贴在输入区上方，占据布局中的弹层带）</text>
+    </g>
+    <g font-size="12" fill="#3D3D3D">
+      <text x="864" y="448" class="tok" font-weight="bold">规则</text>
+      <text x="864" y="474">· 高度 = min(项数, 7) + 1 行边框；标题行 accent 表示焦点在弹层。</text>
+      <text x="864" y="498">· 选中行：Cyan + BOLD + 底色 Rgb(26,42,54)；未选中行次级样式。</text>
+      <text x="864" y="522" class="note">· 会话恢复选择器使用此形态；Enter 选中、Esc 取消，活动行同步提示。</text>
+    </g>
+  </g>
+
+  <!-- 模态 -->
+  <g id="modals">
+    <text x="80" y="588" class="sect">模态</text>
+    <text x="140" y="588" class="sect-en">CENTERED MODALS</text>
+    <rect x="80" y="604" width="1440" height="362" class="card"/>
+    <g class="mono" font-size="12">
+      <!-- approval modal -->
+      <rect x="116" y="628" width="620" height="200" class="term" rx="4"/>
+      <text x="132" y="654" class="t-fg" font-weight="bold">审批</text>
+      <text x="132" y="682" class="t-dim">工具 wants to 写入文件：示例路径</text>
+      <rect x="132" y="694" width="588" height="22" class="selrow"/>
+      <text x="144" y="710" class="t-cy" font-weight="bold">❯ 允许本次（推荐）</text>
+      <text x="144" y="734" class="t-dim">　 允许本会话</text>
+      <text x="144" y="758" class="t-dim">　 拒绝</text>
+      <text x="132" y="790" class="t-dim">Enter 确认 · Y/A/N 快速选择 · Esc 拒绝</text>
+      <!-- shortcuts modal -->
+      <rect x="800" y="628" width="500" height="200" class="term" rx="4"/>
+      <text x="816" y="654" class="t-fg" font-weight="bold">快捷键</text>
+      <text x="816" y="682" class="t-dim">Enter 发送　　Ctrl+T 全展开视图</text>
+      <text x="816" y="706" class="t-dim">Ctrl+R 历史搜索　← 任务中心</text>
+      <text x="816" y="730" class="t-dim">↑↓ 选弹层项　Esc 关闭弹层</text>
+      <text x="816" y="754" class="t-dim">Ctrl+C×2 退出会话</text>
+      <text x="816" y="790" class="t-dim">Esc / q 关闭</text>
+    </g>
+    <g font-size="12" fill="#3D3D3D">
+      <text x="104" y="864" class="tok" font-weight="bold">四种模态</text>
+      <text x="104" y="890">快捷键（?）· 会话恢复 · 审批 · 问询路由；居中弹窗，宽高按内容行数 + 最小值计算，不超屏。</text>
+      <text x="104" y="916">选项行用 ❯ 标记当前项；推荐项追加「推荐」标注；带标签行（标签: 值）按标签样式解析着色。</text>
+      <text x="104" y="942" class="note">审批 / 问询打开时活动行同步 accent 提示，90 ms 唤醒帧保证提示即时可见；差异预览行沿用 03 的差异配色。</text>
+    </g>
+  </g>
+
+  <!-- 任务中心 -->
+  <g id="center">
+    <text x="80" y="998" class="sect">任务中心</text>
+    <text x="180" y="998" class="sect-en">THREAD CENTER · FULL VIEW</text>
+    <rect x="80" y="1014" width="1440" height="330" class="card"/>
+    <rect x="96" y="1030" width="1408" height="298" class="term" rx="6"/>
+    <g class="mono" font-size="12">
+      <text x="116" y="1058" class="t-cy" font-weight="bold">任务中心</text>
+      <text x="216" y="1058" class="t-dim">全部 12 · 运行中 1 · 就绪 9 · 不活跃 2</text>
+      <text x="1160" y="1058" class="t-dim">分组：父任务 ▾</text>
+      <text x="116" y="1082" class="t-dim">──────────────────────────────────────────────</text>
+      <rect x="108" y="1094" width="1384" height="26" class="selrow"/>
+      <text x="120" y="1112" class="t-cy" font-weight="bold">❯ 运行中 · 迁移配置任务 · 示例工作区 · 4 子任务</text>
+      <text x="120" y="1140" class="t-dim">　 就绪 · 文档汇总任务 · 等待授权（1 项待处理）</text>
+      <text x="120" y="1168" class="t-dim">　 就绪 · 示例任务 · 3 分钟前</text>
+      <text x="120" y="1196" class="t-dim">　 └ 就绪 · 子任务 · 由「示例任务」派生</text>
+      <text x="120" y="1224" class="t-rd">　 失败 · 示例任务 · 退出码 1</text>
+      <text x="120" y="1252" class="t-dim">　 完成 · 示例任务 · 昨天</text>
+      <text x="116" y="1288" class="t-dim">↑↓ 选择 · Enter 进入（可开轨迹视图）· / 搜索 · Tab 换分组 · Esc/←/h 关闭</text>
+      <text x="116" y="1316" class="t-fg">搜索：配置_</text>
+    </g>
+  </g>
+
+  <!-- 动效与品牌 -->
+  <g id="motion">
+    <text x="80" y="1408" class="sect">运行动效与帧调度</text>
+    <text x="290" y="1408" class="sect-en">MOTION · FRAME BUDGET</text>
+    <rect x="80" y="1424" width="720" height="140" class="card"/>
+    <g font-size="12" fill="#3D3D3D">
+      <text x="104" y="1454">· 呼吸点：1400 ms 周期，Rgb(92,188,255) → Rgb(232,248,255)；运行帧 48 ms。</text>
+      <text x="104" y="1480">· NO_COLOR：退为 560 ms 亮/暗脉冲，占位宽度不变。</text>
+      <text x="104" y="1506">· 审批 / 问询 / Ctrl+C 提示待回应时 90 ms 唤醒；空闲 10 s 保活帧。</text>
+      <text x="104" y="1532">· 复制反馈按到期时间安排下一帧；除此之外不做任何常驻动画。</text>
+    </g>
+    <rect x="840" y="1424" width="680" height="140" class="card"/>
+    <text x="864" y="1454" class="tok" font-weight="bold">品牌标记</text>
+    <g class="mono" font-size="13">
+      <text x="864" y="1484" class="t-mg">⚙</text>
+      <text x="900" y="1484" fill="#1F2329" font-weight="bold">wunder 舵机</text>
+      <text x="1080" y="1484" fill="#7C7A75">wunder servo（en）</text>
+    </g>
+    <g font-size="11" fill="#3D3D3D">
+      <text x="864" y="1516">· 欢迎横幅 = 半块像素画 + 品牌名 + 一句话定位；站立条件见 00/02。</text>
+      <text x="864" y="1540" class="note">· ⚙ U+2699 是唯一品牌符；不使用图片资产，任何终端可渲染。</text>
+    </g>
+  </g>
+
+  <g id="footer-note">
+    <line x1="80" y1="1600" x2="1520" y2="1600" class="line"/>
+    <text x="80" y="1622" class="tiny">事实来源：tui/ui/composer.rs · tui/ui/modals.rs · tui/ui/popup.rs · tui/command_center.rs · activity_indicator.rs · frame_scheduler.rs · empty_state_animation.rs。</text>
+    <text x="1520" y="1622" text-anchor="end" class="tiny">SVG · 1600 PX WIDE · 2026-10-25</text>
+  </g>
+</svg>

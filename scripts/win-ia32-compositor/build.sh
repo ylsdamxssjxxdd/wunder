@@ -65,6 +65,15 @@ if [ -d "$HERE/vendor" ]; then
   cp -r "$HERE/vendor/." "$WORK/vendor/"
 fi
 
+# wunder-x86 是本地用根 Dockerfile 构建的开发镜像（rust:1.92-slim-bookworm 基座），
+# CI 和新机器上没有。缺省镜像本地不存在时退回同基座的官方 rust 镜像即可：
+# mingw、nasm、libclang、python3 等依赖由下面的 apt 步骤补齐，rustup 装工具链
+# 也在容器内完成。显式指定 IMAGE 时不在回退之列，让它按 docker 语义报错。
+if [ "$IMAGE" = "wunder-x86:latest" ] && ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
+  printf '%s\n' "[ia32] 本地没有 $IMAGE，退回官方 rust:1.92-slim-bookworm 基座"
+  IMAGE="rust:1.92-slim-bookworm"
+fi
+
 docker rm -f xw7build >/dev/null 2>&1 || true
 MSYS_NO_PATHCONV=1 docker run -d --name xw7build --shm-size=2gb -w /b \
   -v "$WORK:/b" -v "$WORK/src/compositor:/b/crate" \

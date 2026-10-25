@@ -159,16 +159,6 @@ pub(super) fn project_batch(
             visible,
             &preview,
         );
-        // Interactive panels can be carried by an otherwise ordinary tool result.
-        if visible
-            && crate::storage::thread_view_projection::extract_question_panel(&preview["payload"])
-                .is_some()
-        {
-            heads
-                .get_mut(&root)
-                .expect("loaded head")
-                .question_panel_item_id = Some(item.item_id.to_string());
-        }
     }
     for (root, summary) in heads {
         tx.execute("INSERT INTO service_thread_chat_heads(thread_id,root_turn_id,summary_json) VALUES($1,$2,$3)
@@ -330,7 +320,8 @@ mod tests {
                         payload: if user {
                             json!({"content":format!("fixture input {round}")})
                         } else if action == 105 {
-                            json!({"content":full_text,"reasoning":"fixture reasoning"})
+                            json!({"content":full_text,"reasoning":"fixture reasoning",
+                                "prefill_duration_s":0.5,"decode_duration_s":1.5})
                         } else {
                             json!({"content":"fixture process","tool_calls":[{}]})
                         },
@@ -415,11 +406,79 @@ mod tests {
         assert!(storage
             .thread_body_page("fixture-other", thread.as_str(), body, 1, 0)
             .is_err());
-        let overview = storage
+        let trajectory = storage
             .thread_view_page(owner, thread.as_str(), "trajectory", None, 10)
             .unwrap();
-        assert_eq!(overview.trajectory.len(), 10);
-        assert!(overview.trajectory.iter().all(|r| r.overview_only));
+        assert_eq!(trajectory.trajectory.len(), 10);
+        assert!(trajectory.trajectory.iter().all(|r| !r.overview_only));
+        assert!(trajectory.trajectory.iter().all(|r| r.user_round == 25));
+        assert!(trajectory.has_more && !trajectory.has_newer);
+        let model_span = trajectory.trajectory.last().unwrap();
+        assert_eq!(
+            model_span.completed_at.unwrap() - model_span.started_at,
+            2.0
+        );
+        let snapshot = storage
+            .thread_snapshot_window(
+                owner,
+                thread.as_str(),
+                &wunder_core::storage_backend::ThreadSnapshotWindow {
+                    max_turns: 1,
+                    max_items: 4,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let snapshot_model = snapshot["items"].as_array().unwrap().last().unwrap();
+        assert_eq!(
+            snapshot_model["completed_at"].as_f64().unwrap()
+                - snapshot_model["started_at"].as_f64().unwrap(),
+            2.0
+        );
+        let older_trajectory = storage
+            .thread_view_page(
+                owner,
+                thread.as_str(),
+                "trajectory",
+                trajectory.next_before,
+                10,
+            )
+            .unwrap();
+        assert!(older_trajectory.has_newer);
+        assert!(older_trajectory.next_after < trajectory.next_before);
+        let newer_trajectory = storage
+            .thread_view_window(
+                owner,
+                thread.as_str(),
+                "trajectory",
+                None,
+                older_trajectory.next_after,
+                None,
+                10,
+            )
+            .unwrap();
+        assert_eq!(
+            serde_json::to_value(&newer_trajectory.trajectory).unwrap(),
+            serde_json::to_value(&trajectory.trajectory).unwrap()
+        );
+        // Default pages contain individual steps, including across turn
+        // boundaries, rather than replacing each turn with its final reply.
+        let across_turns = storage
+            .thread_view_window(
+                owner,
+                thread.as_str(),
+                "trajectory",
+                older_trajectory.next_before,
+                None,
+                None,
+                100,
+            )
+            .unwrap();
+        assert!(across_turns.trajectory.iter().any(|r| r.user_round == 24));
+        assert!(across_turns
+            .trajectory
+            .iter()
+            .any(|r| r.kind == "user_message"));
         let detail = storage
             .thread_view_trajectory_page(owner, thread.as_str(), None, Some(&last), 20)
             .unwrap();

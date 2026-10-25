@@ -12,7 +12,7 @@ export type WorkspaceThemeIconResolver = {
 const WORKSPACE_ICON_BASE = `${(import.meta.env.BASE_URL || '/').replace(/\/+$/, '/')}vscode-icons`;
 const WORKSPACE_ICON_PATH_RE = /^(\.\.\/|\.\/)+/;
 
-const FALLBACK_EXTENSION_ICON_ENTRIES: Array<[string, string]> = [
+export const FALLBACK_EXTENSION_ICON_ENTRIES: Array<[string, string]> = [
   ['7z', '_f_zip'],
   ['aac', '_f_audio'],
   ['adoc', '_f_asciidoc'],
@@ -149,7 +149,7 @@ const FALLBACK_EXTENSION_ICON_ENTRIES: Array<[string, string]> = [
   ['zsh', '_f_shell']
 ];
 
-const EXTRA_ALLOWED_ICON_IDS = [
+export const EXTRA_ALLOWED_ICON_IDS = [
   '_f_babel',
   '_f_bun',
   '_f_cargo',

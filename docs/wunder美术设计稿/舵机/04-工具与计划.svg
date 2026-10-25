@@ -1,0 +1,138 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1500" viewBox="0 0 1600 1500" role="img" aria-label="舵机 终端 UI 工具与计划">
+  <title>04 工具与计划 · 舵机 CLI UI Spec</title>
+  <style>
+    svg{font-family:'Microsoft YaHei UI','Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif;fill:#1F2329}
+    .mono{font-family:Consolas,'SFMono-Regular','Cascadia Mono',monospace}
+    .h1{font-size:30px;font-weight:700;letter-spacing:-.4px}
+    .sub{font-size:13px;fill:#7C7A75}
+    .kicker{font-size:11px;font-weight:600;letter-spacing:1.4px;fill:#E07A12}
+    .sect{font-size:16px;font-weight:700}
+    .sect-en{font-size:10px;font-weight:600;letter-spacing:1.6px;fill:#A8A39B}
+    .tok{font-size:11px;fill:#3D3D3D}
+    .note{font-size:11px;fill:#7C7A75}
+    .tiny{font-size:10px;fill:#8A8F99}
+    .line{stroke:#E8E6E3;stroke-width:1}
+    .card{fill:#FFFFFF;stroke:#DED9D1;stroke-width:1}
+    .accent{fill:#F58A24}
+    .term{fill:#131A24}
+    .t-fg{fill:#D8DEE6}
+    .t-dim{fill:#6E7A8A}
+    .t-cy{fill:#4FC1D9}
+    .t-gr{fill:#3FBF7F}
+    .t-rd{fill:#E06C61}
+    .t-yl{fill:#D7A65F}
+  </style>
+
+  <rect width="1600" height="1500" fill="#F4F1EC"/>
+
+  <g id="header">
+    <text x="80" y="52" class="kicker">WUNDER / 舵机 · CLI UI SPEC</text>
+    <text x="80" y="93" class="h1">04　工具与计划</text>
+    <text x="80" y="120" class="sub">过程信息一律次级文本；只有状态符号和需要行动的条目允许发出声音。计划卡排序服从「读者此刻在等什么」。</text>
+    <text x="1520" y="52" text-anchor="end" class="mono" font-size="11" fill="#8A8F99">SHEET 04 / 05</text>
+  </g>
+
+  <!-- 工具与补丁卡 -->
+  <g id="tools">
+    <text x="80" y="176" class="sect">工具行与补丁卡</text>
+    <text x="240" y="176" class="sect-en">TOOL LINES · PATCH CARDS</text>
+    <rect x="80" y="192" width="720" height="360" class="card"/>
+    <g class="mono" font-size="12">
+      <rect x="100" y="212" width="680" height="140" class="term" rx="4"/>
+      <text x="116" y="238" class="t-dim">› 工具 读取文件 目标=示例路径 → 完成 · 0.2 s</text>
+      <text x="116" y="264" class="t-dim">› 工具 检索 关键词 → 6 处命中</text>
+      <text x="116" y="290" class="t-cy" font-weight="bold">• 补丁待确认 · 3 个文件 +24/−6</text>
+      <text x="116" y="316" class="t-dim">　展开后预览差异行（复用 03 的差异配色）</text>
+      <text x="116" y="342" class="t-rd">› 工具 命令 → 退出码 1 · 已截断输出</text>
+    </g>
+    <g font-size="12" fill="#3D3D3D">
+      <text x="104" y="382" class="tok" font-weight="bold">规则</text>
+      <text x="104" y="408">· 工具行 = 名称 + 关键参数 + 结果摘要，单行优先，DIM 全程。</text>
+      <text x="104" y="432">· 补丁 / 命令等待确认时以 pending 圆点开头，整行 accent 提示行动。</text>
+      <text x="104" y="456">· 补丁卡可折叠：折叠态保留摘要（文件数、+−行数），展开态预览差异。</text>
+      <text x="104" y="480">· 连续同类工具折为一组摘要，展开才见逐条明细。</text>
+      <text x="104" y="504">· 长输出截断并标注，完整内容进轨迹视图（原始页签）。</text>
+      <text x="104" y="532" class="note">· 结果账本摘要（token/耗时/条目数）在轨迹账本页复用同一函数。</text>
+    </g>
+  </g>
+
+  <!-- 计划面板 -->
+  <g id="plan">
+    <text x="840" y="176" class="sect">计划面板</text>
+    <text x="970" y="176" class="sect-en">PLAN CARD</text>
+    <rect x="840" y="192" width="680" height="360" class="card"/>
+    <g class="mono" font-size="12">
+      <rect x="860" y="212" width="640" height="150" class="term" rx="4"/>
+      <text x="876" y="238" class="t-fg" font-weight="bold">□ 迁移配置到新格式　（进行中 · accent + BOLD）</text>
+      <text x="876" y="264" class="t-dim">□ 校验差异结果</text>
+      <text x="876" y="290" class="t-dim" text-decoration="line-through">✔ 定位全部配置项　（完成 · DIM + 划线）</text>
+      <text x="876" y="316" class="t-dim" text-decoration="line-through">✔ 备份原文件</text>
+      <text x="876" y="346" class="t-dim">说明行：由计划工具给出的一句话解释（可选）</text>
+    </g>
+    <g font-size="12" fill="#3D3D3D">
+      <text x="864" y="394" class="tok" font-weight="bold">状态与排序</text>
+      <text x="864" y="420">· 标记：完成 ✔ · 进行中/待执行 □（方框不区分，靠颜色与划线区分）。</text>
+      <text x="864" y="444">· 折叠卡排序：进行中 → 待执行 → 已完成；读者只等当前这一步。</text>
+      <text x="864" y="468">· 折叠态显示当前步骤 + 完成计数，展开态按宽度重排步骤行。</text>
+      <text x="864" y="492">· 状态由运行时投影，前端不推导；无标题头，只有步骤与说明。</text>
+      <text x="864" y="528" class="note">· 划线依赖终端 CROSSED_OUT 修饰，不支持时退化为 DIM（NO_COLOR 同理）。</text>
+    </g>
+  </g>
+
+  <!-- 轨迹视图 -->
+  <g id="trajectory">
+    <text x="80" y="616" class="sect">轨迹视图</text>
+    <text x="180" y="616" class="sect-en">TRAJECTORY · PER ROW TABS</text>
+    <rect x="80" y="632" width="1440" height="420" class="card"/>
+    <rect x="96" y="648" width="1408" height="388" class="term" rx="6"/>
+    <g class="mono" font-size="12">
+      <text x="116" y="676" class="t-fg" font-weight="bold">概览</text>
+      <text x="176" y="676" class="t-dim">正文</text>
+      <text x="236" y="676" class="t-dim">原始</text>
+      <text x="1160" y="676" class="t-dim">工具行追加页签 →</text>
+      <text x="116" y="700" class="t-dim">──────────────────────────────────────────</text>
+      <text x="116" y="728" class="t-fg">▸ [助手] 汇总完成，41 个标题分布在 3 个文档</text>
+      <text x="116" y="756" class="t-dim">▸ [工具] 读取文件 → 完成 · 0.2 s</text>
+      <text x="116" y="784" class="t-dim">▸ [工具] 检索 → 6 处命中 · token 812</text>
+      <text x="116" y="812" class="t-cy" font-weight="bold">▸ [补丁] 3 个文件 +24/−6 ← 选中行</text>
+      <text x="116" y="840" class="t-dim">▸ [计划] 4 步 · 已完成 2</text>
+      <text x="116" y="876" class="t-dim">选中行详情页签（工具行时出现）：</text>
+      <text x="116" y="900" class="t-cy">概览</text>
+      <text x="176" y="900" class="t-dim">参数</text>
+      <text x="236" y="900" class="t-dim">结果</text>
+      <text x="296" y="900" class="t-dim">契约</text>
+      <text x="356" y="900" class="t-dim">耗时</text>
+      <text x="116" y="928" class="t-dim">──────────────────────────────────────────</text>
+      <text x="116" y="956" class="t-fg">参数页签内容：只读 JSON，按语法着色，可复制。</text>
+      <text x="116" y="1000" class="t-dim">账本摘要：耗时 4.20 s · token 2,318 · 工具调用 5 次</text>
+    </g>
+    <text x="80" y="1084" class="note">消息行只有 概览/正文/原始 三个页签；工具行追加 参数/结果/契约/耗时。入口在任务中心选中线程后进入，↑↓ 换行、←→ 换页签。</text>
+  </g>
+
+  <!-- 状态符号 -->
+  <g id="marks">
+    <text x="80" y="1148" class="sect">状态符号表</text>
+    <text x="200" y="1148" class="sect-en">STATUS MARKS</text>
+    <rect x="80" y="1164" width="1440" height="150" class="card"/>
+    <g class="mono" font-size="13">
+      <text x="120" y="1198" class="t-gr">✔</text><text x="160" y="1198" class="tok">完成</text>
+      <text x="280" y="1198" class="t-rd">✘</text><text x="320" y="1198" class="tok">失败</text>
+      <text x="440" y="1198" class="t-cy" font-weight="bold">•</text><text x="480" y="1198" class="tok">运行中（呼吸点，唯一动画符）</text>
+      <text x="680" y="1198" class="t-yl" font-weight="bold">•</text><text x="720" y="1198" class="tok">待确认（补丁/命令/审批）</text>
+      <text x="920" y="1198" class="t-dim">□</text><text x="960" y="1198" class="tok">待执行步骤</text>
+      <text x="1120" y="1198" class="t-cy" font-weight="bold">□</text><text x="1160" y="1198" class="tok">进行中步骤</text>
+      <text x="1340" y="1198" fill="#3D3D3D">▸</text><text x="1380" y="1198" class="tok">轨迹行前缀</text>
+    </g>
+    <g font-size="11" fill="#3D3D3D">
+      <text x="104" y="1240">· 符号宽度全部为单列或双列，同一符号在任何上下文中语义唯一。</text>
+      <text x="104" y="1264">· 符号与文本之间固定一个空格；符号携带颜色，说明文字保持 tok 级次级样式。</text>
+      <text x="104" y="1288" class="note">· 图标不使用图片资产；一切状态由字符 + 颜色 + 修饰表达，保证任意终端可渲染。</text>
+    </g>
+  </g>
+
+  <g id="footer-note">
+    <line x1="80" y1="1440" x2="1520" y2="1440" class="line"/>
+    <text x="80" y="1462" class="tiny">事实来源：tui/app/plan_panel.rs · tui/app/patch_log.rs · tool_display.rs / tool_presentation.rs · tui/trajectory/view.rs。示例输出为通用示例值。</text>
+    <text x="1520" y="1462" text-anchor="end" class="tiny">SVG · 1600 PX WIDE · 2026-10-25</text>
+  </g>
+</svg>

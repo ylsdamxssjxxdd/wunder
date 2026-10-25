@@ -2,9 +2,9 @@ import { expect, test } from '@playwright/test';
 import { ChatMockService, MOCK_SESSION } from '../support/chatMockService';
 
 for (const action of ['answer', 'free reply', 'stop'] as const) {
-  test(`durable inquiry opens before process hydration and supports ${action}`, async ({ page }) => {
+  test(`durable inquiry beside plan opens before process hydration and supports ${action}`, async ({ page }) => {
     const service = new ChatMockService();
-    service.seedInquiryTurn();
+    service.seedInquiryTurn(true);
     await page.addInitScript(() => {
       (window as any).__inquiryTaskNotices = [];
       const seen = new WeakSet<Element>();
@@ -27,8 +27,14 @@ for (const action of ['answer', 'free reply', 'stop'] as const) {
       const panel = page.locator('.inquiry-panel');
       await expect(panel).toBeVisible();
       await expect(panel).toContainText('Fixture choice?');
+      await expect(page.locator('.messenger-agent-composer .inquiry-panel')).toBeVisible();
+      await expect(page.locator('.messenger-agent-composer .status-dock')).toBeVisible();
       await page.reload();
       await expect(panel).toBeVisible();
+      const planPill = page.locator('.messenger-agent-composer .status-dock-pill');
+      await planPill.click();
+      await expect(page.locator('.status-dock-pop')).toBeVisible();
+      await expect(panel.locator('.inquiry-option').first()).toBeEnabled();
       expect(await page.evaluate(() => (window as any).__inquiryTaskNotices)).toEqual([]);
       const send = page.getByTestId('chat-composer-send');
       if (action === 'stop') {
@@ -40,8 +46,15 @@ for (const action of ['answer', 'free reply', 'stop'] as const) {
         await expect.poll(() => service.turns[0].status).toBe('cancelled');
       } else {
         service.holdNext = true;
-        if (action === 'answer') await panel.locator('.inquiry-option').first().click();
+        if (action === 'answer') {
+          await panel.locator('.inquiry-option').first().click();
+          await expect(panel.locator('.inquiry-option').first()).toHaveClass(/is-active/);
+          service.updatePlanTurn(service.turns[0], true);
+          await expect(planPill).toContainText('Second fixture step');
+          await expect(panel.locator('.inquiry-option').first()).toHaveClass(/is-active/);
+        }
         else await page.getByTestId('chat-composer-input').fill('Fixture free reply');
+        await expect(send).toHaveAttribute('data-mode', 'send');
         await send.click();
         await expect(page.getByTestId('messenger-message-list')).toContainText('Partial reply 2.');
         expect(await page.evaluate(() => (window as any).__inquiryTaskNotices)).toEqual([]);

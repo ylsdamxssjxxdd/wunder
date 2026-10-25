@@ -24,6 +24,44 @@ pub(crate) struct PostgresThreadLog<'a> {
     pub(super) store: Arc<PostgresThreadStore>,
 }
 
+#[cfg(test)]
+mod timing_tests {
+    use super::*;
+
+    #[test]
+    fn snapshots_project_execution_span_without_changing_commit_order() {
+        let mut item = CanonicalItem {
+            item_id: ItemId::new("sample-timing-item").unwrap(),
+            turn_id: TurnId::new("sample-timing-turn").unwrap(),
+            root_turn_id: None,
+            created_at_ms: 10_000,
+            kind: CanonicalItemKind::AssistantMessage,
+            payload: json!({"content":"sample reply","prefill_duration_s":0.5,"decode_duration_s":1.5}),
+            display_output: None,
+            display_output_truncated: false,
+        };
+        let wire = PostgresThreadLog::item_wire(&item, 7);
+        assert_eq!(wire["created_time"], 10.0);
+        assert_eq!(wire["updated_time"], 10.0);
+        assert_eq!(wire["started_at"], 8.0);
+        assert_eq!(wire["completed_at"], 10.0);
+        assert_eq!(wire["item_index"], 7);
+
+        item.kind = CanonicalItemKind::ToolCall;
+        item.payload = json!({"item_id":"sample-timing-item","kind":"tool_call",
+            "payload":{"tool":"sample_tool","meta":{"duration_ms":250}}});
+        let wire = PostgresThreadLog::item_wire(&item, 8);
+        assert_eq!(wire["started_at"], 9.75);
+        assert_eq!(wire["completed_at"], 10.0);
+        assert_eq!(wire["payload"]["tool"], "sample_tool");
+
+        item.payload = json!({"tool":"sample_tool"});
+        let unknown = PostgresThreadLog::item_wire(&item, 9);
+        assert!(unknown.get("started_at").is_none());
+        assert!(unknown.get("completed_at").is_none());
+    }
+}
+
 impl<'a> PostgresThreadLog<'a> {
     pub(crate) fn new(storage: &'a PostgresStorage) -> Result<Self> {
         Ok(Self {
@@ -73,7 +111,15 @@ impl<'a> PostgresThreadLog<'a> {
             .get("status")
             .and_then(Value::as_str)
             .unwrap_or("completed");
-        json!({
+        let committed = item.created_at_ms as f64 / 1000.0;
+        let span = crate::storage::thread_view_projection::trajectory_span(
+            &payload,
+            kind.as_str().unwrap_or_default(),
+            status,
+            committed,
+            committed,
+        );
+        let mut wire = json!({
             "item_id": item.item_id,
             "turn_id": item.turn_id,
             "root_turn_id": item.root_turn_id.as_ref().unwrap_or(&item.turn_id),
@@ -86,7 +132,15 @@ impl<'a> PostgresThreadLog<'a> {
             "payload": payload,
             "created_time": item.created_at_ms as f64 / 1000.0,
             "updated_time": item.created_at_ms as f64 / 1000.0,
-        })
+        });
+        // Preserve bookkeeping timestamps for ordering. Add real execution
+        // boundaries for consumers that otherwise mistake commit time for a
+        // zero-duration operation. An unknown span remains absent.
+        if span.0 != committed || span.1.is_some_and(|end| end != committed) {
+            wire["started_at"] = json!(span.0);
+            wire["completed_at"] = json!(span.1);
+        }
+        wire
     }
 
     fn record_item(raw: &str, ordinal: i64) -> Result<Option<Value>> {

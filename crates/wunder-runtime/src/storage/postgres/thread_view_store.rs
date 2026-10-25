@@ -162,6 +162,106 @@ fn chat(turn: &Value, items: &HashMap<String, Value>, seq: i64) -> Result<ChatVi
     Ok(row)
 }
 
+#[cfg(test)]
+mod inquiry_tests {
+    use super::*;
+    use wunder_core::thread_store::CanonicalItem;
+
+    #[test]
+    fn service_chat_preserves_explicit_tool_counts_without_inventing_unknown_values() {
+        for (stats, expected) in [
+            (json!({"tool_calls":0}), Some(0)),
+            (json!({"toolCalls":2}), Some(2)),
+            (json!({"interaction_duration_s":1}), None),
+        ] {
+            let summary = ChatSummary {
+                assistant_item_id: Some("sample-answer".into()),
+                ..Default::default()
+            };
+            let turn = json!({"turn_id":"sample-turn","root_turn_id":"sample-turn",
+                "user_round":1,"status":"completed","summary":summary});
+            let items = HashMap::from([(
+                "sample-answer".into(),
+                json!({
+                    "item_id":"sample-answer","created_seq":2,
+                    "payload":{"content":"sample answer","message_stats":stats}
+                }),
+            )]);
+            let row = chat(&turn, &items, 3).unwrap();
+            let projected = row.assistant.stats.as_ref().unwrap();
+            assert_eq!(
+                projected
+                    .get("toolCalls")
+                    .or_else(|| projected.get("tool_calls"))
+                    .and_then(Value::as_u64),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn service_chat_keeps_completed_panel_pending_alongside_plan() {
+        let mut summary = ChatSummary::default();
+        let mut items = HashMap::new();
+        for (ordinal, event, data) in [
+            (
+                0,
+                "plan_update",
+                json!({"plan":[{"step":"Fixture step","status":"in_progress"}]}),
+            ),
+            (
+                1,
+                "question_panel",
+                json!({"questions":[{"question":"Fixture choice?","options":[{"label":"Option A"}]}]}),
+            ),
+        ] {
+            let mut data = data;
+            data["turn_id"] = json!("fixture-turn");
+            let event_item =
+                crate::services::thread_log::event_item("fixture-thread", event, &data).unwrap();
+            let canonical: CanonicalItem = serde_json::from_value(json!({
+                "item_id":event_item["item_id"],"turn_id":"fixture-turn","root_turn_id":"fixture-turn",
+                "created_at_ms":1,"kind":if event=="plan_update" {"plan"} else {"configuration"},
+                "payload":event_item
+            })).unwrap();
+            let preview = crate::storage::thread_history::item_preview(
+                &serde_json::to_value(canonical).unwrap(),
+            );
+            let id = preview["item_id"].as_str().unwrap();
+            let kind = preview["payload"]["kind"].as_str().unwrap();
+            crate::storage::thread_chat_summary::apply_item(
+                &mut summary,
+                "fixture-turn",
+                id,
+                kind,
+                ordinal,
+                true,
+                &preview,
+            );
+            items.insert(id.to_owned(), wire(&preview.to_string(), ordinal).unwrap());
+        }
+        for (status, expected) in [
+            ("running", "pending"),
+            ("waiting_input", "pending"),
+            ("completed", "answered"),
+            ("cancelled", "dismissed"),
+        ] {
+            let row = chat(
+                &json!({"turn_id":"fixture-turn","root_turn_id":"fixture-turn",
+                "user_round":1,"status":status,"summary":summary}),
+                &items,
+                2,
+            )
+            .unwrap();
+            assert_eq!(
+                row.assistant.question_panel.as_ref().unwrap().status,
+                expected
+            );
+            assert_eq!(row.plan.as_ref().unwrap().steps[0].step, "Fixture step");
+        }
+    }
+}
+
 fn trajectory(item: &Value, ordinal: i64, round: i64) -> TrajectoryViewRow {
     let turn = item["turn_id"].as_str().unwrap_or_default();
     p::trajectory(
@@ -321,7 +421,7 @@ impl PostgresThreadLog<'_> {
             page.next_before = page.chat.first().map(|r| r.user_round);
             page.next_after = page.chat.last().map(|r| r.user_round);
             page.has_newer = page.next_after.is_some_and(|v| v < latest);
-        } else if let Some(root) = root {
+        } else {
             let limit = limit.clamp(1, TRAJECTORY_PAGE_MAX);
             let order = if after.is_some() { "ASC" } else { "DESC" };
             let rows = tx.query(
@@ -329,7 +429,7 @@ impl PostgresThreadLog<'_> {
                     "SELECT i.ordinal,i.preview_json,COALESCE(a.user_round,0) AS user_round
                 FROM service_thread_items i LEFT JOIN service_thread_admissions a
                   ON a.thread_id=i.thread_id AND a.turn_id=i.root_turn_id
-                WHERE i.thread_id=$1 AND i.root_turn_id=$2 AND i.visible
+                WHERE i.thread_id=$1 AND ($2::text IS NULL OR i.root_turn_id=$2) AND i.visible
                   AND ($3::bigint IS NULL OR i.ordinal<$3) AND ($4::bigint IS NULL OR i.ordinal>$4)
                 ORDER BY i.ordinal {order} LIMIT $5"
                 ),
@@ -345,32 +445,8 @@ impl PostgresThreadLog<'_> {
             page.next_before = page.trajectory.first().map(|r| r.item_index);
             page.next_after = page.trajectory.last().map(|r| r.item_index);
             if let Some(cursor) = page.next_after {
-                page.has_newer=tx.query_one("SELECT EXISTS(SELECT 1 FROM service_thread_items WHERE thread_id=$1 AND root_turn_id=$2 AND visible AND ordinal>$3)",&[&session,&root,&cursor])?.get(0);
+                page.has_newer=tx.query_one("SELECT EXISTS(SELECT 1 FROM service_thread_items WHERE thread_id=$1 AND ($2::text IS NULL OR root_turn_id=$2) AND visible AND ordinal>$3)",&[&session,&root,&cursor])?.get(0);
             }
-        } else {
-            let limit = limit.clamp(1, TRAJECTORY_PAGE_MAX);
-            let mut turns = roots(&mut tx, session, before, after, limit, false)?;
-            page.has_more = turns.len() > limit;
-            turns.truncate(limit);
-            let root_ids = turns
-                .iter()
-                .filter_map(|t| t["root_turn_id"].as_str().map(str::to_owned))
-                .collect::<Vec<_>>();
-            if !root_ids.is_empty() {
-                for row in tx.query("SELECT root,record.ordinal,record.preview_json FROM unnest($2::text[]) root
-                    JOIN LATERAL (SELECT ordinal,preview_json FROM service_thread_items
-                        WHERE thread_id=$1 AND root_turn_id=root AND visible ORDER BY ordinal DESC LIMIT 1) record ON TRUE",&[&session,&root_ids])? {
-                    let root:String=row.get(0); let ordinal=row.get(1);
-                    let round=turns.iter().find(|t|t["root_turn_id"]==root).and_then(|t|t["user_round"].as_i64()).unwrap_or(0);
-                    let mut projected=trajectory(&wire(&row.get::<_,String>(2),ordinal)?,ordinal,round);
-                    projected.overview_only=true;
-                    page.trajectory.push(projected);
-                }
-            }
-            page.trajectory.sort_by_key(|r| r.user_round);
-            page.next_before = turns.iter().filter_map(|t| t["user_round"].as_i64()).min();
-            page.next_after = turns.iter().filter_map(|t| t["user_round"].as_i64()).max();
-            page.has_newer = page.next_after.is_some_and(|v| v < latest);
         }
         Ok(page)
     }

@@ -67,7 +67,6 @@ export interface TrajCell {
   failure?: TrajFailure
   retry?: TrajRetry
   toolCallOnly?: boolean
-  overviewOnly?: boolean
   timeSeconds: number | null
   startedAt: number | null
   metrics?: TrajMetrics
@@ -248,12 +247,102 @@ function defineLazy<T>(target: object, key: string, compute: () => T): void {
 
 type RawRecord = Record<string, unknown>
 
+/** One durable trajectory record; item_index is its keyset ordinal. */
+export interface TrajectoryPageRow extends RawRecord {
+  item_id: string
+  root_turn_id: string
+  turn_id: string
+  user_round: number
+  item_index: number
+  created_seq: number
+  kind: string
+  status: string
+  summary: string
+  started_at: number
+  completed_at?: number | null
+  model_round: number
+  tool_name?: string | null
+  stats?: unknown
+  subagent?: unknown
+  diagnostics?: unknown
+  detail?: unknown
+}
+
+interface TrajectoryRecordPage {
+  trajectory: TrajectoryPageRow[]
+  next_before?: number | null
+  next_after?: number | null
+  has_more?: boolean
+  has_newer?: boolean
+}
+
+/** Merge one requested page only; never drain the whole thread in the client. */
+export function mergeTrajectoryPage(
+  current: readonly TrajectoryPageRow[],
+  page: TrajectoryRecordPage,
+  direction: 'older' | 'newer' | null,
+  capacity: number,
+  edges: { before: number | null; after: number | null; hasOlder: boolean; hasNewer: boolean },
+): { rows: TrajectoryPageRow[]; before: number | null; after: number | null; hasOlder: boolean; hasNewer: boolean; evicted: boolean } {
+  const merged = new Map((direction ? current : []).map(row => [row.item_id, row]))
+  for (const row of page.trajectory) merged.set(row.item_id, row)
+  const ordered = [...merged.values()].sort((left, right) => left.item_index - right.item_index)
+  const limit = Math.max(1, Math.floor(capacity))
+  const evicted = ordered.length > limit
+  const rows = direction === 'older' ? ordered.slice(0, limit) : ordered.slice(-limit)
+  const cursor = (value: unknown, fallback: number | null): number | null =>
+    typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : fallback
+  // Explicit server cursors use ordinals. created_seq is a version and must
+  // never become before/after: PostgreSQL starts it at ordinal + 1.
+  const before = direction === 'newer'
+    ? evicted ? rows[0]?.item_index ?? null : edges.before
+    : cursor(page.next_before, rows[0]?.item_index ?? null)
+  const after = direction === 'older'
+    ? evicted ? rows.at(-1)?.item_index ?? null : edges.after
+    : cursor(page.next_after, rows.at(-1)?.item_index ?? null)
+  return { rows, before, after, evicted,
+    hasOlder: direction === 'newer' ? edges.hasOlder || evicted : Boolean(page.has_more),
+    hasNewer: direction === 'older' ? edges.hasNewer || evicted : Boolean(page.has_newer) }
+}
+
+/** Rebuild ordinary turn groups without a separate round-summary mode. */
+export function trajectoryPageTurns(rows: readonly TrajectoryPageRow[]): unknown[] {
+  const turns = new Map<string, RawRecord & { items: RawRecord[] }>()
+  for (const row of rows) {
+    const root = row.root_turn_id || row.turn_id
+    let turn = turns.get(root)
+    if (!turn) {
+      turn = { turn_id: root, user_turn_index: row.user_round, items: [] }
+      turns.set(root, turn)
+    }
+    const isSubagent = row.kind === 'subagent_run' || row.kind === 'subagent'
+    turn.items.push({ item_id: row.item_id, turn_id: row.turn_id,
+      item_index: row.item_index, created_seq: row.created_seq,
+      kind: row.kind, status: row.status,
+      created_time: row.started_at, updated_time: row.completed_at,
+      payload: { content: row.summary, tool: row.tool_name, label: row.tool_name,
+        ...(isSubagent ? {} : { task: row.summary }),
+        model_round: row.model_round, message_stats: row.stats,
+        runtime: row.subagent, diagnostics: row.diagnostics } })
+  }
+  return [...turns.values()]
+}
+
 function isRecord(value: unknown): value is RawRecord {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
 function payloadOf(item: RawRecord): RawRecord {
-  return isRecord(item.payload) ? item.payload : {}
+  if (!isRecord(item.payload)) return item
+  let body = item.payload
+  let payload = { ...item, ...body }
+  // Canonical envelopes carry identities; an arbitrary tool result named
+  // payload is data and must not be recursively flattened.
+  for (let depth = 0; depth < 2 && typeof body.item_id === 'string' && isRecord(body.payload); depth++) {
+    body = body.payload
+    payload = { ...payload, ...body }
+  }
+  return payload
 }
 
 function metaOf(payload: RawRecord): RawRecord {
@@ -270,6 +359,7 @@ function isCompactionMarkerPayload(payload: RawRecord): boolean {
 }
 
 function rawKindOf(item: RawRecord, payload: RawRecord): string {
+  if (typeof payload.kind === 'string' && payload.kind) return payload.kind
   if (typeof item.kind === 'string' && item.kind) return item.kind
   const eventType = payload.event_type
   if (typeof eventType === 'string' && eventType) return eventType
@@ -295,6 +385,12 @@ function firstTime(source: RawRecord, keys: readonly string[]): number | null {
     if (ms !== null) return ms
   }
   return null
+}
+
+function rowTime(source: RawRecord, edge: 'created' | 'updated'): number | null {
+  const milliseconds = source[edge === 'created' ? 'created_at_ms' : 'updated_at_ms']
+  if (typeof milliseconds === 'number' && Number.isFinite(milliseconds)) return milliseconds
+  return firstTime(source, [edge === 'created' ? 'created_time' : 'updated_time'])
 }
 
 function contentToText(value: unknown): string {
@@ -351,25 +447,58 @@ function firstNonEmptyText(...values: unknown[]): string {
 }
 
 function finiteNonNegative(value: unknown): number | null {
-  const number = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : NaN
+  const number = typeof value === 'number' ? value
+    : typeof value === 'string' && value.trim() ? Number(value) : NaN
   return Number.isFinite(number) && number >= 0 ? number : null
 }
 
 function assistantRecordedDurationSeconds(payload: RawRecord): number | null {
   const meta = metaOf(payload)
-  const stats = isRecord(payload.message_stats)
-    ? payload.message_stats
-    : isRecord(payload.messageStats)
-      ? payload.messageStats
-      : isRecord(meta.message_stats)
-        ? meta.message_stats
-        : isRecord(meta.messageStats) ? meta.messageStats : undefined
-  if (!stats) return null
   // interaction_duration_s is elapsed time since the USER turn began. It is
   // cumulative across requests and tools, not this assistant's own duration.
-  return finiteNonNegative(
-    stats.model_duration_s ?? stats.request_duration_s ?? stats.duration_s ?? stats.durationSeconds,
-  )
+  for (const stats of [payload.message_stats, payload.messageStats, meta.message_stats, meta.messageStats, payload.stats]) {
+    if (!isRecord(stats)) continue
+    for (const key of ['model_duration_s', 'request_duration_s', 'duration_s', 'durationSeconds']) {
+      const value = finiteNonNegative(stats[key])
+      if (value !== null) return value
+    }
+  }
+  const prefill = finiteNonNegative(payload.prefill_duration_s)
+  const decode = finiteNonNegative(payload.decode_duration_s)
+  if (prefill !== null || decode !== null) return (prefill ?? 0) + (decode ?? 0)
+  const timing = isRecord(payload.stream_timing) ? payload.stream_timing : {}
+  const prefillMs = finiteNonNegative(timing.prefill_ms)
+  const decodeMs = finiteNonNegative(timing.decode_ms)
+  return prefillMs !== null || decodeMs !== null ? ((prefillMs ?? 0) + (decodeMs ?? 0)) / 1000 : null
+}
+
+function recordedDurationSeconds(payload: RawRecord, kind: TrajKind): number | null {
+  if (kind === 'message') {
+    const value = assistantRecordedDurationSeconds(payload)
+    if (value !== null) return value
+  }
+  for (const source of [payload, metaOf(payload)]) {
+    for (const key of ['duration_ms', 'durationMs']) {
+      const value = finiteNonNegative(source[key])
+      if (value !== null) return value / 1000
+    }
+    for (const key of ['duration_s', 'elapsed_s']) {
+      const value = finiteNonNegative(source[key])
+      if (value !== null) return value
+    }
+  }
+  return null
+}
+
+function spanDurationSeconds(start: number | null, end: number | null, explicit: boolean, recorded: number | null): number | null {
+  if (explicit && start !== null && end !== null) return end >= start ? (end - start) / 1000 : null
+  if (recorded !== null) return recorded
+  // Equal canonical commit timestamps do not measure execution duration.
+  return start !== null && end !== null && end > start ? (end - start) / 1000 : null
+}
+
+function eventPayloadOf(payload: RawRecord): RawRecord {
+  return isRecord(payload.data) ? { ...payload, ...payload.data } : payload
 }
 
 export function extractUsage(payload: RawRecord): TrajUsage | undefined {
@@ -549,22 +678,24 @@ function applyTrajectoryFailure(cell: TrajCell, failure: TrajFailure, endedAt: n
 /* ------------------------------------------------------------------ */
 
 function buildCell(item: RawRecord, payload: RawRecord, kind: TrajKind, index: number): TrajCell {
-  const status = typeof item.status === 'string' ? item.status : ''
+  payload = eventPayloadOf(payload)
+  const status = typeof payload.status === 'string' ? payload.status : ''
   const recordId = typeof item.item_id === 'string' ? item.item_id : String(index)
-  const createdMs = firstTime(item, ['created_time']) ?? firstTime(payload, ['created_time'])
-  const updatedMs = firstTime(item, ['updated_time'])
-  let startedAt = firstTime(payload, STARTED_KEYS) ?? createdMs
+  const createdMs = rowTime(item, 'created') ?? rowTime(payload, 'created')
+  const updatedMs = rowTime(item, 'updated') ?? rowTime(payload, 'updated')
+  const explicitStart = firstTime(payload, STARTED_KEYS)
+  const explicitEnd = firstTime(payload, COMPLETED_KEYS)
+  let startedAt = explicitStart ?? createdMs
   const completedAt = ['running', 'queued', 'waiting_input', 'waiting_approval'].includes(status)
-    ? null : firstTime(payload, COMPLETED_KEYS) ?? updatedMs
-  const recordedDuration = kind === 'message' ? assistantRecordedDurationSeconds(payload) : null
+    ? null : explicitEnd ?? updatedMs
+  const recordedDuration = recordedDurationSeconds(payload, kind)
   // Durable assistant rows are created when the model round is admitted, but
   // updated only after child/tool work and replay have settled.  That row
   // timestamp is bookkeeping, not the model span start.  When the runtime
   // recorded an explicit per-request duration, anchor the span at completion and
   // derive the start so delegated child work stays visibly separate.
-  if (kind === 'message' && recordedDuration !== null
-    && firstTime(payload, STARTED_KEYS) === null
-    && firstTime(payload, COMPLETED_KEYS) === null
+  if (recordedDuration !== null
+    && explicitStart === null
     && completedAt !== null) {
     startedAt = completedAt - recordedDuration * 1000
   }
@@ -581,7 +712,6 @@ function buildCell(item: RawRecord, payload: RawRecord, kind: TrajKind, index: n
       || ['terminal', 'turn_terminal'].includes(rawKindOf(item, payload)) ? trajectoryFailure(payload, status) : undefined,
     retry: trajectoryRetry(payload),
   }
-  cell.overviewOnly = item.overview_only === true
   const usage = extractUsage(payload)
 
   if (kind === 'message') {
@@ -605,22 +735,13 @@ function buildCell(item: RawRecord, payload: RawRecord, kind: TrajKind, index: n
       defineLazy(cell, 'text', () => markdownPreviewText(source))
       cell.previewMarkdown = source.trim() ? source : undefined
     }
-    const prefill = typeof payload.prefill_duration_s === 'number'
-      && Number.isFinite(payload.prefill_duration_s) ? payload.prefill_duration_s : null
-    const decode = typeof payload.decode_duration_s === 'number'
-      && Number.isFinite(payload.decode_duration_s) ? payload.decode_duration_s : null
     // Durable assistant rows often receive `updated_time` only after the
     // child/tool work and final replay are committed. Using that bookkeeping
     // timestamp makes the purple model span cover the whole child run. Prefer
     // an explicit per-request duration when assistant
     // start/end fields are absent; this is the same own-step duration DSH uses.
-    cell.timeSeconds = recordedDuration !== null
-      && firstTime(payload, STARTED_KEYS) === null
-      && firstTime(payload, COMPLETED_KEYS) === null
-      ? recordedDuration
-      : startedAt !== null && completedAt !== null
-        ? Math.max(0, (completedAt - startedAt) / 1000)
-        : prefill !== null && decode !== null ? prefill + decode : null
+    cell.timeSeconds = spanDurationSeconds(startedAt, completedAt,
+      explicitStart !== null && explicitEnd !== null, recordedDuration)
     // Assistant rows contain the model response.  The persisted row does not
     // carry the prompt that produced it, so exposing `content` as both input
     // and output makes the overview misleading.  Keep the response in the
@@ -634,7 +755,7 @@ function buildCell(item: RawRecord, payload: RawRecord, kind: TrajKind, index: n
       ? payload.ttft_ms
       : null
     cell.metrics = {
-      timingRecorded: startedAt !== null && completedAt !== null,
+      timingRecorded: cell.timeSeconds !== null && startedAt !== null && completedAt !== null,
       stepStartTime: startedAt,
       firstTokenTime: ttft !== null && startedAt !== null ? startedAt + ttft : null,
       completedTime: completedAt,
@@ -703,9 +824,8 @@ function buildCell(item: RawRecord, payload: RawRecord, kind: TrajKind, index: n
     if (typeof schema === 'string' && schema.trim()) cell.schemaDetail = schema
     else if (isRecord(schema)) cell.schemaDetail = JSON.stringify(schema, null, 2)
     cell.isError = isToolFailure(payload, status)
-    cell.timeSeconds = startedAt !== null && completedAt !== null
-      ? Math.max(0, (completedAt - startedAt) / 1000)
-      : null
+    cell.timeSeconds = spanDurationSeconds(startedAt, completedAt,
+      explicitStart !== null && explicitEnd !== null, recordedDuration)
   } else if (kind === 'compacted') {
     const summaryText = contentToText(
       payload.summary_text ?? payload.summaryText ?? payload.summary_model_output ??
@@ -722,9 +842,8 @@ function buildCell(item: RawRecord, payload: RawRecord, kind: TrajKind, index: n
     // A compaction row is a workflow result; its summary is output, not a
     // second copy of an input prompt.
     cell.inputDetail = undefined
-    cell.timeSeconds = startedAt !== null && completedAt !== null
-      ? Math.max(0, (completedAt - startedAt) / 1000)
-      : null
+    cell.timeSeconds = spanDurationSeconds(startedAt, completedAt,
+      explicitStart !== null && explicitEnd !== null, recordedDuration)
   } else {
     let contentText = contentToText(payload.content)
     if (!contentText.trim()) contentText = contextFallbackText(payload)
@@ -851,11 +970,17 @@ export function buildTrajectoryLayout(rawTurns: unknown, t: Translate): TrajTurn
           cell.failure = trajectoryFailure(candidatePayload, candidateStatus)
           if (isToolFailure(candidatePayload, candidateStatus)) cell.isError = true
           const candidateStart = firstTime(candidatePayload, STARTED_KEYS)
-            ?? firstTime(candidate, ['created_time'])
+            ?? cell.startedAt ?? rowTime(candidate, 'created')
           const candidateEnd = firstTime(candidatePayload, COMPLETED_KEYS)
-            ?? firstTime(candidate, ['updated_time'])
+            ?? rowTime(candidate, 'updated')
           if (candidateStart !== null && candidateEnd !== null) {
-            cell.timeSeconds = Math.max(0, (candidateEnd - candidateStart) / 1000)
+            const duration = spanDurationSeconds(candidateStart, candidateEnd,
+              firstTime(candidatePayload, STARTED_KEYS) !== null && firstTime(candidatePayload, COMPLETED_KEYS) !== null,
+              recordedDurationSeconds(eventPayloadOf(candidatePayload), kind))
+            if (duration !== null) {
+              cell.timeSeconds = duration
+              cell.startedAt = candidateEnd - duration * 1000
+            }
           }
           ordered.splice(j, 1)
           break

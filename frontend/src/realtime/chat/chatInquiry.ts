@@ -14,15 +14,19 @@ export interface ChatInquiryPanel {
  * different envelopes, so this deliberately peels only a few known layers.
  */
 export const extractChatInquiryPanel = (value: unknown): ChatInquiryPanel | null => {
-  const visit = (candidate: unknown, depth: number): ChatInquiryPanel | null => {
-    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate) || depth > 5) return null;
+  const visit = (candidate: unknown, depth: number, inheritedState = ''): ChatInquiryPanel | null => {
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate) || depth > 6) return null;
     const record = candidate as Record<string, unknown>;
+    // Tool/item lifecycle completion means the inquiry was opened. It must
+    // never be mistaken for the user's answer when unwrapping durable rows.
+    const lifecycle = ['kind', 'item_id', 'event_type', 'tool', 'tool_call_id'].some(key => key in record);
+    const carrierState = String(record.state ?? '').trim().toLowerCase();
     const direct = record.questions;
     if (Array.isArray(direct) && direct.length > 0) {
-      const state = String(record.status ?? record.state ?? '').trim().toLowerCase();
+      const state = carrierState || String((!lifecycle ? record.status : '') || inheritedState).trim().toLowerCase();
       const status: ChatInquiryPanel['status'] =
         state === 'answered' || state === 'completed' ? 'answered' :
-          state === 'dismissed' || state === 'cancelled' ? 'dismissed' : 'pending';
+          ['dismissed', 'cancelled', 'canceled'].includes(state) ? 'dismissed' : 'pending';
       return {
         ...(record as unknown as ChatInquiryPanel),
         questions: direct as ChatInquiryPanel['questions'],
@@ -33,14 +37,8 @@ export const extractChatInquiryPanel = (value: unknown): ChatInquiryPanel | null
       };
     }
     for (const key of ['panel', 'question_panel', 'questionPanel', 'data', 'result', 'payload', 'meta']) {
-      const nested = visit(record[key], depth + 1);
-      if (nested) {
-        const state = String(record.status ?? record.state ?? '').trim().toLowerCase();
-        const carrierState = String(record.state ?? '').trim().toLowerCase();
-        if (carrierState === 'answered' || carrierState === 'completed') nested.status = 'answered';
-        else if (carrierState === 'dismissed' || carrierState === 'cancelled') nested.status = 'dismissed';
-        return nested;
-      }
+      const nested = visit(record[key], depth + 1, carrierState || inheritedState);
+      if (nested) return nested;
     }
     return null;
   };

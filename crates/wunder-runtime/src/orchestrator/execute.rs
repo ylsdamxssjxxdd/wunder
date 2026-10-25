@@ -1062,7 +1062,7 @@ impl Orchestrator {
                             turn_started_at.elapsed().as_secs_f64(),
                             emitter.accumulated_model_requests(),
                             emitter.accumulated_billable_account_credits(is_admin),
-                            i64::from(tool_budget_usage.total),
+                            emitter.accumulated_tool_calls(),
                         );
                         self.try_append_chat(
                             &user_id,
@@ -1117,7 +1117,7 @@ impl Orchestrator {
                         turn_started_at.elapsed().as_secs_f64(),
                         emitter.accumulated_model_requests(),
                         emitter.accumulated_billable_account_credits(is_admin),
-                        i64::from(tool_budget_usage.total),
+                        emitter.accumulated_tool_calls(),
                     );
                     self.try_append_chat(
                         &user_id,
@@ -1335,6 +1335,7 @@ impl Orchestrator {
                         }
                         round_info.insert_into(map);
                     }
+                    emitter.record_tool_call_started();
                     emitter.emit("tool_call", tool_payload).await;
                 }
 
@@ -1788,7 +1789,7 @@ impl Orchestrator {
                                 turn_started_at.elapsed().as_secs_f64(),
                                 emitter.accumulated_model_requests(),
                                 emitter.accumulated_billable_account_credits(is_admin),
-                                i64::from(tool_budget_usage.total),
+                                emitter.accumulated_tool_calls(),
                             );
                             let meta = question_panel_meta.as_ref().map(|value| {
                                 merge_persisted_message_stats_meta(value, message_stats)
@@ -1821,7 +1822,7 @@ impl Orchestrator {
                                 turn_started_at.elapsed().as_secs_f64(),
                                 emitter.accumulated_model_requests(),
                                 emitter.accumulated_billable_account_credits(is_admin),
-                                i64::from(tool_budget_usage.total),
+                                emitter.accumulated_tool_calls(),
                             );
                             let meta = merge_persisted_message_stats_meta(meta, message_stats);
                             self.try_append_chat(
@@ -2018,7 +2019,7 @@ impl Orchestrator {
                                             turn_started_at.elapsed().as_secs_f64(),
                                             emitter.accumulated_model_requests(),
                                             emitter.accumulated_billable_account_credits(is_admin),
-                                            i64::from(tool_budget_usage.total),
+                                            emitter.accumulated_tool_calls(),
                                         ),
                                     );
                                     self.try_append_chat(
