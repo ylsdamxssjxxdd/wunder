@@ -463,12 +463,19 @@ const postProcessContent = () => {
       anchor.setAttribute("href", decorateDocsHref(href));
     }
   });
+  if (state.pageData.slug.endsWith("/art/index") && window.WunderArtViewer) {
+    window.WunderArtViewer.enhance(elements.content, {
+      selector: 'img[src$=".svg"]',
+      initialFit: "width"
+    });
+  }
 };
 
 const renderContent = async () => {
   if (!elements.content) {
     return;
   }
+  window.WunderArtViewer?.destroyEnhancements(elements.content);
   const renderer = new marked.Renderer();
   let headingIndex = 0;
   renderer.heading = function (text, level) {

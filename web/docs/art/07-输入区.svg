@@ -1,414 +1,84 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1930" viewBox="0 0 1600 1930" role="img" aria-label="蛹 桌面端输入区设计规范">
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1900" viewBox="0 0 1600 1900" role="img" aria-label="蛹 桌面端输入区与动作状态规范">
   <title>07 输入区 · 蛹 Desktop UI Spec</title>
   <defs>
-    <filter id="popShadow" x="-20%" y="-20%" width="140%" height="160%">
-      <feDropShadow dx="0" dy="3" stdDeviation="8" flood-color="#000000" flood-opacity="0.14"/>
-    </filter>
-    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="c-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
-    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="c-x" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
-    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="c-up" viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></symbol>
-    <symbol fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" id="c-stop" viewBox="0 0 24 24"><rect x="6.75" y="6.75" width="10.5" height="10.5" rx="1.9" fill="currentColor" stroke="none"/></symbol>
-    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="c-folder" viewBox="0 0 24 24"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H9l2 2h7.5A2.5 2.5 0 0 1 21 9.5v7A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5z"/></symbol>
-    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="c-brain" viewBox="0 0 24 24"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/></symbol>
-    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="c-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3M9 21h6"/></symbol>
-    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="c-camera" viewBox="0 0 24 24"><path d="M4 8.5A2.5 2.5 0 0 1 6.5 6H9l1.5-2h3L15 6h2.5A2.5 2.5 0 0 1 20 8.5v7A2.5 2.5 0 0 1 17.5 18h-11A2.5 2.5 0 0 1 4 15.5z"/><circle cx="12" cy="12" r="3.3"/></symbol>
-    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="c-clip" viewBox="0 0 24 24"><path d="m20 11.5-7.8 7.8a5 5 0 0 1-7-7l8.3-8.3a3.3 3.3 0 1 1 4.7 4.7l-8.3 8.3a1.7 1.7 0 0 1-2.4-2.4l7.6-7.6"/></symbol>
-    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="c-chev" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></symbol>
-    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="c-chev-d" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
-    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="c-shield" viewBox="0 0 24 24"><path d="M12 3 5 6v5.5c0 4.3 2.9 7.7 7 9.5 4.1-1.8 7-5.2 7-9.5V6z"/></symbol>
-    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="c-pen" viewBox="0 0 24 24"><path d="m4 20 4.2-1 11-11a2.1 2.1 0 0 0-3-3l-11 11z"/></symbol>
-    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="c-trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6.5 7l.8 12a2 2 0 0 0 2 1.9h5.4a2 2 0 0 0 2-1.9l.8-12"/></symbol>
-    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="c-check" viewBox="0 0 24 24"><path d="m5 12.5 4.2 4.2L19 7"/></symbol>
+    <symbol id="c-plus" viewBox="0 0 16 16"><path d="M8 2v12M2 8h12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+    <symbol id="c-x" viewBox="0 0 24 24"><path d="M6 6L18 18M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="c-arrow" viewBox="0 0 384 512"><path fill="currentColor" transform="translate(0 448) scale(1 -1)" d="M215 439Q205 448 192 448Q179 448 169 439L41 311Q32 301 32 288Q32 275 41 265Q51 256 64 256Q77 256 87 265L160 339V-32Q160-46 169-55Q178-64 192-64Q206-64 215-55Q224-46 224-32V339L297 265Q307 256 320 256Q333 256 343 265Q352 275 352 288Q352 301 343 311L215 439Z"/></symbol>
+    <symbol id="c-stop" viewBox="0 0 448 512"><path fill="currentColor" d="M400 32H48C21.5 32 0 53.5 0 80v352c0 26.5 21.5 48 48 48h352c26.5 0 48-21.5 48-48V80c0-26.5-21.5-48-48-48z"/></symbol>
+    <symbol id="c-brain" viewBox="0 0 512 512"><path fill="currentColor" d="M184 0c30.9 0 56 25.1 56 56v400c0 30.9-25.1 56-56 56-28.9 0-52.7-21.9-55.7-50.1-5.2 1.4-10.7 2.1-16.3 2.1-35.3 0-64-28.7-64-64 0-7.4 1.3-14.6 3.6-21.2C21.4 367.4 0 338.2 0 304c0-31.9 18.7-59.5 45.8-72.3C37.1 220.8 32 207 32 192c0-30.7 21.6-56.3 50.4-62.6C80.8 123.9 80 118 80 112c0-29.9 20.6-55.1 48.3-62.1C131.3 21.9 155.1 0 184 0zM328 0c28.9 0 52.6 21.9 55.7 49.9 27.8 7 48.3 32.1 48.3 62.1 0 6-.8 11.9-2.4 17.4 28.8 6.2 50.4 31.9 50.4 62.6 0 15-5.1 28.8-13.8 39.7 27.1 12.8 45.8 40.4 45.8 72.3 0 34.2-21.4 63.4-51.6 74.8 2.3 6.6 3.6 13.8 3.6 21.2 0 35.3-28.7 64-64 64-5.6 0-11.1-.7-16.3-2.1-3 28.2-26.8 50.1-55.7 50.1-30.9 0-56-25.1-56-56V56c0-30.9 25.1-56 56-56z"/></symbol>
+    <symbol id="c-folder" viewBox="0 0 576 512"><path fill="currentColor" transform="translate(0 448) scale(1 -1)" d="M89 224L0 72V352Q1 379 19 397Q37 415 64 416H182Q208 416 227 397L253 371Q272 352 299 352H416Q443 351 461 333Q479 315 480 288V256H144Q108 255 89 224ZM116 208Q126 223 144 224H544Q562 223 572 208Q580 192 572 176L460-16Q450-31 432-32H32Q14-31 4-16Q-4 0 4 16L116 208Z"/></symbol>
   </defs>
-  <style>
-    svg{font-family:'Microsoft YaHei UI','Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif;fill:#1F2329}
-    .mono{font-family:Consolas,'SFMono-Regular','Cascadia Mono',monospace}
-    .h1{font-size:30px;font-weight:700;letter-spacing:-.4px}
-    .sub{font-size:13px;fill:#7C7A75}
-    .kicker{font-size:11px;font-weight:600;letter-spacing:1.4px;fill:#E07A12}
-    .sect{font-size:16px;font-weight:700}
-    .sect-en{font-size:10px;font-weight:600;letter-spacing:1.6px;fill:#A8A39B}
-    .card{fill:#FFFFFF;stroke:#DED9D1;stroke-width:1}
-    .card-t{font-size:12px;font-weight:700}
-    .note{font-size:11px;fill:#7C7A75}
-    .tiny{font-size:10px;fill:#8A8F99}
-    .mono10{font-family:Consolas,monospace;font-size:10px;fill:#8A8F99}
-    .mono9{font-family:Consolas,monospace;font-size:9px;fill:#8A8F99}
-    .ui14{font-size:14px}.ui13{font-size:13px}.ui12{font-size:12px}.ui11{font-size:11px}.ui10{font-size:10px}
-    .muted{fill:#8A8F99}.sub2{fill:#3D3D3D}
-    .key{font-family:Consolas,monospace;font-size:10px;fill:#3D3D3D}
-  </style>
+  <style>svg{font-family:'Microsoft YaHei UI','Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif;fill:#1F2329}.mono{font-family:Consolas,monospace}.sim{font-family:SimSun,serif}.h1{font-size:30px;font-weight:700}.sub{font-size:13px;fill:#6F747B}.kicker{font-size:11px;font-weight:700;letter-spacing:1.4px;fill:#D87616}.sect{font-size:18px;font-weight:700}.sect-note{font-size:12px;fill:#8A8F99}.card{fill:#FFF;stroke:#DED9D1}.card-t{font-size:14px;font-weight:700}.note{font-size:12px;fill:#6F747B}.tiny{font-size:11px;fill:#8A8F99}.chip{font-size:11px;font-weight:700;fill:#D87616}.ui14{font-size:14px}.ui13{font-size:13px}.ui12{font-size:12px}.ui11{font-size:11px}.ui10{font-size:10px}.muted{fill:#8A8F99}.secondary{fill:#3D3D3D}</style>
+  <rect width="1600" height="1900" fill="#F5F3EF"/>
+  <g id="header"><text x="64" y="42" class="kicker">WUNDER / 蛹 · DESKTOP UI SPEC</text><text x="64" y="84" class="h1">07　输入区</text><text x="64" y="114" class="sub">编辑卡与动作行是两层结构；发送/停止只看右下角动作位，附件、分支和队列按实际内容增加高度。</text><text x="1536" y="44" text-anchor="end" class="mono tiny">SHEET 07 / 09</text><text x="1536" y="84" text-anchor="end" class="mono ui12">COMPOSER · ACTION LOGIC</text><line x1="64" y1="140" x2="1536" y2="140" stroke="#D8D5D0"/></g>
 
-  <rect width="1600" height="1930" fill="#F4F1EC"/>
-  <g id="header">
-    <text x="80" y="52" class="kicker">WUNDER / 蛹 · DESKTOP UI SPEC</text>
-    <text x="80" y="93" class="h1">07　输入区</text>
-    <text x="80" y="120" class="sub">输入卡固定构图：8 + 100 + 6 + 30 + 10 = 154px；附件 +36，分支 +22，队列按行增长。</text>
-    <text x="1520" y="52" text-anchor="end" class="mono" font-size="11" fill="#8A8F99">SHEET 07 / 09</text>
-    <text x="1520" y="94" text-anchor="end" class="mono" font-size="12" fill="#3D3D3D">COMPOSER · QUEUE · MENUS · MODEL</text>
-    <line x1="80" y1="140" x2="1520" y2="140" stroke="#D8D5D0"/>
+  <g id="composer-anatomy">
+    <rect x="64" y="160" width="28" height="24" rx="6" fill="#FDF0DE"/><text x="78" y="177" text-anchor="middle" class="chip">01</text><text x="104" y="178" class="sect">结构 · 1000px 输入带，内容宽 972px</text><text x="1536" y="177" text-anchor="end" class="sect-note">8 + 100 + 6 + 30 + 10 = 154px</text>
+    <rect x="64" y="202" width="1472" height="310" rx="12" class="card"/>
+    <rect x="300" y="226" width="1000" height="154" fill="transparent"/>
+    <rect x="314" y="234" width="972" height="100" rx="16" fill="#FFF" stroke="#F58A24"/>
+    <text x="328" y="264" class="sim" font-size="14">请汇总这份记录，并给出结论。</text>
+    <rect x="1190" y="242" width="82" height="22" rx="11" fill="#FBFAF8" stroke="#E8E6E3"/><circle cx="1200" cy="253" r="3" fill="#D04A43"/><text x="1208" y="258" class="ui10" fill="#D04A43">00:03</text>
+    <rect x="314" y="343" width="24" height="24" rx="8" fill="#FFF" stroke="#D8D5D0"/><use href="#c-plus" x="318" y="347" width="16" height="16" color="#3D3D3D"/>
+    <use href="#c-folder" x="358" y="349" width="12" height="12" color="#F58A24"/><text x="380" y="360" class="ui12 secondary">默认工作区</text>
+    <use href="#c-brain" x="1138" y="341" width="16" height="16" color="#8A8F99"/><text x="1160" y="360" class="ui13" font-weight="600">标准模型</text><path d="m1240 351 4 4 4-4" fill="none" stroke="#8A8F99"/>
+    <rect x="1258" y="341" width="28" height="28" rx="8" fill="#F58A24"/><use href="#c-arrow" x="1264" y="347" width="16" height="16" color="#FFF"/>
+    <line x1="300" y1="402" x2="1300" y2="402" stroke="#E8E6E3" stroke-dasharray="4 4"/>
+    <text x="300" y="430" class="tiny">外层 1000</text><text x="1300" y="430" text-anchor="end" class="tiny">左右各 14，发送与卡片右缘齐平</text>
+    <text x="88" y="462" class="card-t">编辑卡</text><text x="88" y="488" class="note">100px · r16 · 14px SimSun</text>
+    <text x="420" y="462" class="card-t">动作行</text><text x="420" y="488" class="note">30px；加号 24、发送 28</text>
+    <text x="800" y="462" class="card-t">录音 / 转写</text><text x="800" y="488" class="note">22px 胶囊固定在编辑卡右上</text>
+    <text x="1190" y="462" class="card-t">聚焦</text><text x="1190" y="488" class="note">1px accent，无外发光</text>
   </g>
 
-  <!-- ================= A COMPOSER ================= -->
-  <g id="composer">
-    <rect x="80" y="178" width="6" height="16" rx="2" fill="#F58A24"/>
-    <text x="98" y="192" class="sect">输入卡</text>
-    <text x="162" y="192" class="sect-en">COMPOSER · 1000 × 154</text>
-
-    <!-- baseline -->
-    <g id="composer-base">
-      <rect x="80" y="216" width="1000" height="154" fill="transparent"/>
-      <rect x="80" y="224" width="1000" height="100" rx="16" fill="#FFFFFF" stroke="#E8E6E3"/>
-      <text x="104" y="258" class="ui14" fill="#8A8F99">给 默认工作区 发送消息…（长按语音）</text>
-      <rect x="94" y="330" width="24" height="24" rx="8" fill="#FFFFFF" stroke="#D8D5D0"/>
-      <g color="#3D3D3D"><use href="#c-plus" x="98" y="334" width="16" height="16"/></g>
-      <g color="#F58A24"><use href="#c-folder" x="128" y="336" width="12" height="12"/></g>
-      <text x="146" y="346" class="ui13">默认工作区</text>
-      <g color="#F58A24"><use href="#c-brain" x="900" y="334" width="16" height="16"/></g>
-      <text x="922" y="346" class="ui13" font-weight="600">标准模型</text>
-      <use href="#c-chev-d" x="986" y="338" width="10" height="10" color="#8A8F99"/>
-      <rect x="1038" y="328" width="28" height="28" rx="8" fill="#D8D5D0"/>
-      <g color="#FFFFFF"><use href="#c-up" x="1044" y="334" width="16" height="16"/></g>
-    </g>
-
-    <g id="composer-spec">
-      <rect x="1120" y="204" width="400" height="352" rx="12" class="card"/>
-      <text x="1142" y="228" class="card-t">输入卡规格</text>
-      <text x="1498" y="228" text-anchor="end" class="mono10">r16 · 100px</text>
-      <text x="1142" y="252" class="note">外层透明；顶部 8、底部 10、左右 14、间距 6。</text>
-      <text x="1142" y="272" class="note">白底，1px #E8E6E3；聚焦边框 1px #F58A24，无外发光。</text>
-      <text x="1142" y="292" class="note">内文 14px 系统字体；占位 #8A8F99；行高 1.5。</text>
-      <text x="1142" y="312" class="note">多行编辑，随内容增高；内部滚动，不撑破窗口。</text>
-      <line x1="1142" y1="326" x2="1498" y2="326" stroke="#E8E6E3"/>
-      <text x="1142" y="348" class="card-t" font-size="11">底栏 · 30px</text>
-      <text x="1142" y="368" class="note">+ 24×24 r8；白底 + 1px #D8D5D0 + 阴影 #1F23290F。</text>
-      <text x="1142" y="388" class="note">工作区标签：folder 12 accent + 13px 文本，无边框。</text>
-      <text x="1142" y="408" class="note">模型触发器 30 高：brain 16 + 名称 13/600 + chevron 10。</text>
-      <text x="1142" y="428" class="note">发送 28×28 r8：停用 #D8D5D0，可用 accent，悬停 deep。</text>
-      <text x="1142" y="448" class="note">发送门禁：(草稿、附件、已答问询) 且 !busy。</text>
-      <text x="1142" y="468" class="note">生成中且无草稿时显示 stop；有草稿时仍是发送。</text>
-      <text x="1142" y="488" class="note">回车发送遵循线程偏好：Enter / Ctrl+Enter / 关闭。</text>
-      <text x="1142" y="508" class="note">↑ / ↓ 召回历史；Shift+Enter 换行；长按语音。</text>
-      <text x="1142" y="534" class="note">附件 chip 220×28 r8；accent-soft 底、border 边。</text>
-    </g>
-
-    <!-- state cards -->
-    <g id="composer-states">
-      <!-- focused -->
-      <rect x="80" y="400" width="480" height="150" rx="12" class="card"/>
-      <text x="102" y="424" class="card-t">聚焦 + 草稿</text>
-      <text x="538" y="424" text-anchor="end" class="mono10">FOCUS</text>
-      <rect x="102" y="438" width="436" height="62" rx="10" fill="#FFFFFF" stroke="#F58A24"/>
-      <text x="116" y="466" class="ui13">请汇总这轮资料，并给出结论。</text>
-      <rect x="494" y="460" width="28" height="28" rx="8" fill="#F58A24"/>
-      <g color="#FFFFFF"><use href="#c-up" x="500" y="466" width="16" height="16"/></g>
-      <text x="102" y="522" class="tiny">聚焦 = 1px accent；发送按钮随草稿启用。</text>
-      <text x="102" y="538" class="tiny">输入卡可继续增高；底栏固定在卡底。</text>
-
-      <!-- recording -->
-      <rect x="580" y="400" width="480" height="150" rx="12" class="card"/>
-      <text x="602" y="424" class="card-t">录音中</text>
-      <text x="1038" y="424" text-anchor="end" class="mono10">RECORDING</text>
-      <rect x="602" y="438" width="436" height="62" rx="10" fill="#FFFFFF" stroke="#E8E6E3"/>
-      <rect x="614" y="448" width="216" height="22" rx="11" fill="#FBFAF8" stroke="#E8E6E3"/>
-      <circle cx="626" cy="459" r="3" fill="#F58A24"/>
-      <text x="636" y="463" class="ui11" fill="#D04A43">正在录音，再次点击停止 · 00:03</text>
-      <text x="602" y="522" class="tiny">胶囊 22 高 r11；不改变输入卡高度；识别中换文案。</text>
-
-      <!-- generating -->
-      <rect x="1080" y="400" width="440" height="150" rx="12" class="card"/>
-      <text x="1102" y="424" class="card-t">生成中 · 停止</text>
-      <text x="1498" y="424" text-anchor="end" class="mono10">GENERATING</text>
-      <rect x="1102" y="438" width="396" height="62" rx="10" fill="#FFFFFF" stroke="#E8E6E3"/>
-      <text x="1116" y="466" class="ui13" fill="#8A8F99">输入下一条消息，将进入队列…</text>
-      <rect x="1454" y="460" width="28" height="28" rx="8" fill="#F58A24"/>
-      <g color="#FFFFFF"><use href="#c-stop" x="1456" y="462" width="24" height="24"/></g>
-      <text x="1102" y="522" class="tiny">无草稿时 stop；有草稿/附件/问询答案时显示发送。</text>
-      <text x="1102" y="538" class="tiny">stop 方块 10.5；箭头 16；点击后变「正在停止」，防重复。</text>
-
-      <!-- attachments -->
-      <rect x="80" y="566" width="480" height="150" rx="12" class="card"/>
-      <text x="102" y="590" class="card-t">附件行</text>
-      <text x="538" y="590" text-anchor="end" class="mono10">+36px</text>
-      <rect x="102" y="606" width="220" height="28" rx="8" fill="#FDF0DE" stroke="#E8E6E3"/>
-      <text x="110" y="625" class="ui11">提纲.md</text>
-      <use href="#c-x" x="290" y="612" width="14" height="14" color="#8A8F99"/>
-      <rect x="334" y="606" width="220" height="28" rx="8" fill="#FDF0DE" stroke="#E8E6E3"/>
-      <text x="342" y="625" class="ui11">数据.csv</text>
-      <use href="#c-x" x="522" y="612" width="14" height="14" color="#8A8F99"/>
-      <rect x="102" y="642" width="436" height="50" rx="10" fill="#FFFFFF" stroke="#E8E6E3"/>
-      <text x="116" y="671" class="ui13" fill="#8A8F99">附带文件后仍可继续输入…</text>
-      <text x="102" y="706" class="tiny">附件行高 30；chip 固定 220×28，横向排列后换行。</text>
-
-      <!-- disabled -->
-      <rect x="580" y="566" width="480" height="150" rx="12" class="card"/>
-      <text x="602" y="590" class="card-t">发送停用</text>
-      <text x="1038" y="590" text-anchor="end" class="mono10">DISABLED</text>
-      <rect x="602" y="606" width="436" height="62" rx="10" fill="#FFFFFF" stroke="#E8E6E3"/>
-      <text x="616" y="634" class="ui13" fill="#8A8F99">空草稿 + 无附件</text>
-      <rect x="994" y="628" width="28" height="28" rx="8" fill="#D8D5D0"/>
-      <g color="#FFFFFF"><use href="#c-up" x="1000" y="634" width="16" height="16"/></g>
-      <text x="602" y="690" class="tiny">停用底 #D8D5D0，白色图标；不可点击但仍可聚焦说明。</text>
-      <text x="602" y="706" class="tiny">忙碌（加载/命令执行）时整卡可读，发送保持停用。</text>
-
-      <!-- keys -->
-      <rect x="1080" y="566" width="440" height="150" rx="12" class="card"/>
-      <text x="1102" y="590" class="card-t">键盘</text>
-      <text x="1498" y="590" text-anchor="end" class="mono10">recall / send</text>
-      <g transform="translate(1102,606)">
-        <rect width="52" height="22" rx="5" fill="#F6F5F3" stroke="#D8D5D0"/><text x="26" y="15" text-anchor="middle" class="key">Enter</text><text x="62" y="15" class="ui11">发送（偏好）</text>
-        <rect y="28" width="86" height="22" rx="5" fill="#F6F5F3" stroke="#D8D5D0"/><text x="43" y="43" text-anchor="middle" class="key">Ctrl+Enter</text><text x="96" y="43" class="ui11">发送（备用）</text>
-        <rect y="56" width="74" height="22" rx="5" fill="#F6F5F3" stroke="#D8D5D0"/><text x="37" y="71" text-anchor="middle" class="key">Shift+Enter</text><text x="84" y="71" class="ui11">换行</text>
-        <rect y="84" width="28" height="22" rx="5" fill="#F6F5F3" stroke="#D8D5D0"/><text x="14" y="99" text-anchor="middle" class="key">↑↓</text><text x="38" y="99" class="ui11">召回已发送消息</text>
-      </g>
-    </g>
+  <g id="send-states">
+    <rect x="64" y="546" width="28" height="24" rx="6" fill="#FDF0DE"/><text x="78" y="563" text-anchor="middle" class="chip">02</text><text x="104" y="564" class="sect">动作状态 · 用组合场景判断发送还是停止</text><text x="1536" y="563" text-anchor="end" class="sect-note">send-enabled = 有内容且 !busy；stop-action = generating 且没有可发送内容</text>
+    <rect x="64" y="588" width="474" height="164" rx="12" class="card"/><text x="86" y="616" class="chip">IDLE / EMPTY</text><text x="86" y="642" class="card-t">空闲 · 空草稿</text><rect x="86" y="660" width="428" height="42" rx="10" fill="#FFF" stroke="#E8E6E3"/><text x="100" y="687" class="sim" font-size="14" fill="#8A8F99">输入消息，开始新的对话…</text><rect x="472" y="667" width="28" height="28" rx="8" fill="#D8D5D0"/><use href="#c-arrow" x="478" y="673" width="16" height="16" color="#FFF"/><text x="86" y="730" class="note">发送停用：没有草稿、附件或问询答案。</text>
+    <rect x="563" y="588" width="474" height="164" rx="12" class="card"/><text x="585" y="616" class="chip">IDLE / PAYLOAD</text><text x="585" y="642" class="card-t">空闲 · 有可发送内容</text><rect x="585" y="660" width="428" height="42" rx="10" fill="#FFF" stroke="#F58A24"/><text x="599" y="687" class="sim" font-size="14">继续补充一点</text><rect x="971" y="667" width="28" height="28" rx="8" fill="#F58A24"/><use href="#c-arrow" x="977" y="673" width="16" height="16" color="#FFF"/><text x="585" y="730" class="note">发送可用；hover 才切为 accent-deep。</text>
+    <rect x="1062" y="588" width="474" height="164" rx="12" class="card"/><text x="1084" y="616" class="chip">GENERATING / EMPTY</text><text x="1084" y="642" class="card-t">生成中 · 空草稿</text><rect x="1084" y="660" width="428" height="42" rx="10" fill="#FFF" stroke="#E8E6E3"/><text x="1098" y="687" class="sim" font-size="14" fill="#8A8F99">可输入下一条并排队…</text><rect x="1470" y="667" width="28" height="28" rx="8" fill="#F58A24"/><use href="#c-stop" x="1478" y="675" width="12" height="12" color="#FFF"/><text x="1084" y="730" class="note">显示停止；12px 图像盒内含约 10.5px 方块。</text>
+    <rect x="64" y="776" width="474" height="164" rx="12" class="card"/><text x="86" y="804" class="chip">GENERATING / PAYLOAD</text><text x="86" y="830" class="card-t">生成中 · 仍有草稿</text><rect x="86" y="848" width="428" height="42" rx="10" fill="#FFF" stroke="#F58A24"/><text x="100" y="875" class="sim" font-size="14">这条进入等待队列</text><rect x="472" y="855" width="28" height="28" rx="8" fill="#F58A24"/><use href="#c-arrow" x="478" y="861" width="16" height="16" color="#FFF"/><text x="86" y="918" class="note">仍显示发送，让下一轮进入队列，不覆盖为停止。</text>
+    <rect x="563" y="776" width="474" height="164" rx="12" class="card"/><text x="585" y="804" class="chip">STOPPING</text><text x="585" y="830" class="card-t">正在停止</text><rect x="585" y="848" width="428" height="42" rx="10" fill="#FFF" stroke="#E8E6E3"/><text x="599" y="875" class="sim" font-size="14" fill="#8A8F99">正在停止当前回复…</text><rect x="971" y="855" width="28" height="28" rx="8" fill="#D8D5D0"/><use href="#c-stop" x="979" y="863" width="12" height="12" color="#FFF"/><text x="585" y="918" class="note">stopping=true：停止按钮变灰并禁止重复触发。</text>
+    <rect x="1062" y="776" width="474" height="164" rx="12" class="card"/><text x="1084" y="804" class="chip">BUSY / LOADING</text><text x="1084" y="830" class="card-t">命令或线程加载中</text><rect x="1084" y="848" width="428" height="42" rx="10" fill="#FFF" stroke="#E8E6E3"/><text x="1098" y="875" class="sim" font-size="14">草稿仍保留，但暂时不能发送</text><rect x="1470" y="855" width="28" height="28" rx="8" fill="#D8D5D0"/><use href="#c-arrow" x="1476" y="861" width="16" height="16" color="#FFF"/><text x="1084" y="918" class="note">busy 只阻止发送；编辑器仍可读并保留草稿。</text>
   </g>
 
-  <!-- ================= B QUEUE ================= -->
-  <g id="queue">
-    <rect x="80" y="750" width="6" height="16" rx="2" fill="#F58A24"/>
-    <text x="98" y="764" class="sect">发送队列</text>
-    <text x="178" y="764" class="sect-en">QUEUE STRIP · INTERJECT</text>
+  <g id="attachments-queue">
+    <rect x="64" y="974" width="28" height="24" rx="6" fill="#FDF0DE"/><text x="78" y="991" text-anchor="middle" class="chip">03</text><text x="104" y="992" class="sect">附件与队列 · 位于编辑卡上方，按可见内容增高</text>
+    <rect x="64" y="1016" width="724" height="340" rx="12" class="card"/><text x="88" y="1046" class="card-t">附件、分支与语音状态</text><text x="764" y="1046" text-anchor="end" class="tiny">附件 +36 · 分支 +22</text>
+    <rect x="88" y="1068" width="220" height="28" rx="8" fill="#FDF0DE" stroke="#E8E6E3"/><text x="96" y="1087" class="ui11">outline.txt</text><use href="#c-x" x="282" y="1075" width="14" height="14" color="#8A8F99"/><rect x="322" y="1068" width="220" height="28" rx="8" fill="#FDF0DE" stroke="#E8E6E3"/><text x="330" y="1087" class="ui11">data.csv</text><use href="#c-x" x="516" y="1075" width="14" height="14" color="#8A8F99"/>
+    <rect x="88" y="1108" width="676" height="70" rx="16" fill="#FFF" stroke="#E8E6E3"/><text x="102" y="1138" class="sim" font-size="14" fill="#8A8F99">附带文件后仍可继续输入…</text><rect x="570" y="1116" width="180" height="22" rx="11" fill="#FBFAF8" stroke="#E8E6E3"/><circle cx="582" cy="1127" r="3" fill="#D04A43"/><text x="591" y="1132" class="ui10" fill="#D04A43">正在录音 · 00:03</text>
+    <text x="88" y="1204" class="note">附件 chip 固定 220×28；移除按钮 24×24。</text><text x="88" y="1230" class="note">录音与转写共用右上胶囊；转写时圆点和文字改 muted。</text><text x="88" y="1256" class="note">分支行 16px，仅 branch-name 非空时出现。</text><text x="88" y="1288" class="tiny">语音菜单独显示计时；转写期间禁止再次开始录音。</text><text x="88" y="1320" class="tiny">附件和问询答案都可独立满足“有可发送内容”。</text>
 
-    <rect x="80" y="796" width="1000" height="190" rx="12" fill="transparent"/>
-    <rect x="80" y="796" width="1000" height="160" rx="12" fill="#FFFFFF" stroke="#D8D5D0"/>
-    <text x="92" y="818" class="ui10" font-weight="700" fill="#8A8F99">等待发送</text>
-    <text x="148" y="818" class="ui10" fill="#8A8F99">3</text>
-    <text x="1058" y="818" text-anchor="end" class="ui10" fill="#D8D5D0">拖动把手调整顺序</text>
-
-    <!-- row 1 -->
-    <rect x="90" y="828" width="980" height="28" rx="8" fill="#F8FAFC"/>
-    <g fill="#D8D5D0">
-      <circle cx="102" cy="838" r="1.2"/><circle cx="108" cy="838" r="1.2"/><circle cx="114" cy="838" r="1.2"/>
-      <circle cx="102" cy="844" r="1.2"/><circle cx="108" cy="844" r="1.2"/><circle cx="114" cy="844" r="1.2"/>
-      <circle cx="102" cy="850" r="1.2"/><circle cx="108" cy="850" r="1.2"/><circle cx="114" cy="850" r="1.2"/>
-    </g>
-    <text x="128" y="847" class="ui12">先把结论部分写出来。</text>
-    <text x="300" y="847" class="ui10" fill="#8A8F99">附件 1</text>
-    <rect x="846" y="830" width="76" height="24" rx="6" fill="#FFFFFF" stroke="#D8D5D0"/>
-    <text x="884" y="846" text-anchor="middle" class="ui11">插话</text>
-    <use href="#c-pen" x="934" y="836" width="14" height="14" color="#8A8F99"/>
-    <use href="#c-trash" x="966" y="836" width="14" height="14" color="#8A8F99"/>
-
-    <!-- insertion line -->
-    <rect x="90" y="858" width="980" height="2" rx="1" fill="#F58A24" opacity=".96"/>
-    
-    <!-- row 2 dragging -->
-    <rect x="90" y="864" width="980" height="28" rx="8" fill="#FDF0DE"/>
-    <g fill="#F58A24">
-      <circle cx="102" cy="874" r="1.2"/><circle cx="108" cy="874" r="1.2"/><circle cx="114" cy="874" r="1.2"/>
-      <circle cx="102" cy="880" r="1.2"/><circle cx="108" cy="880" r="1.2"/><circle cx="114" cy="880" r="1.2"/>
-      <circle cx="102" cy="886" r="1.2"/><circle cx="108" cy="886" r="1.2"/><circle cx="114" cy="886" r="1.2"/>
-    </g>
-    <text x="128" y="883" class="ui12">补充一份对照表。</text>
-    <rect x="846" y="866" width="76" height="24" rx="6" fill="#FFFFFF" stroke="#E8E6E3"/>
-    <text x="884" y="882" text-anchor="middle" class="ui11" fill="#8A8F99">已插话</text>
-    <use href="#c-pen" x="934" y="872" width="14" height="14" color="#8A8F99"/>
-    <use href="#c-trash" x="966" y="872" width="14" height="14" color="#8A8F99"/>
-
-    <!-- row 3 -->
-    <rect x="90" y="898" width="980" height="28" rx="8" fill="transparent"/>
-    <g fill="#D8D5D0">
-      <circle cx="102" cy="908" r="1.2"/><circle cx="108" cy="908" r="1.2"/><circle cx="114" cy="908" r="1.2"/>
-      <circle cx="102" cy="914" r="1.2"/><circle cx="108" cy="914" r="1.2"/><circle cx="114" cy="914" r="1.2"/>
-      <circle cx="102" cy="920" r="1.2"/><circle cx="108" cy="920" r="1.2"/><circle cx="114" cy="920" r="1.2"/>
-    </g>
-    <text x="128" y="917" class="ui12">最后用表格总结。</text>
-    <rect x="846" y="900" width="76" height="24" rx="6" fill="#FFFFFF" stroke="#D8D5D0"/>
-    <text x="884" y="916" text-anchor="middle" class="ui11">插话</text>
-    <use href="#c-pen" x="934" y="906" width="14" height="14" color="#8A8F99"/>
-    <use href="#c-trash" x="966" y="906" width="14" height="14" color="#8A8F99"/>
-    <text x="1078" y="920" text-anchor="end" class="ui10" fill="#8A8F99">还有 2 条未显示</text>
-
-    <rect x="1120" y="780" width="400" height="280" rx="12" class="card"/>
-    <text x="1142" y="804" class="card-t">队列规格</text>
-    <text x="1498" y="804" text-anchor="end" class="mono10">3 × 28 + header</text>
-    <text x="1142" y="828" class="note">卡 r12，1px border；内边距 10 / 8 / 6 / 6；行距 2。</text>
-    <text x="1142" y="848" class="note">表头 20 高：10/700 muted + 数量 + 右侧提示 10。</text>
-    <text x="1142" y="868" class="note">行 28 高 r8；拖拽中 accent-soft；落点行 #F6F5F3。</text>
-    <text x="1142" y="888" class="note">把手 22 宽，六点 3×3；默认 #D8D5D0，拖拽 accent。</text>
-    <text x="1142" y="908" class="note">文本 12 单行省略；附件数 10 muted。</text>
-    <text x="1142" y="928" class="note">插话 76×24（图标 13 + 11px）；已插话禁用。</text>
-    <text x="1142" y="948" class="note">编辑/删除 24×24；删除悬停 #D04A43。</text>
-    <text x="1142" y="968" class="note">插入线 2px accent，opacity .96，y 110ms ease-out。</text>
-    <text x="1142" y="988" class="note">溢出 16 高：“还有 N 条未显示”；队列有界，行数由引擎限制。</text>
-    <text x="1142" y="1008" class="note">队列高度 = 12 + 20 + n×28 + overflow + 间距 + 6。</text>
-    <text x="1142" y="1034" class="note">队列位于输入卡上方；发送后立即从队列投影移除。</text>
+    <rect x="812" y="1016" width="724" height="340" rx="12" class="card"/><text x="836" y="1046" class="card-t">等待发送队列</text><text x="1512" y="1046" text-anchor="end" class="tiny">可见行由 Rust 有界投影</text>
+    <rect x="836" y="1068" width="676" height="198" rx="12" fill="#FFF" stroke="#D8D5D0"/>
+    <text x="860" y="1090" class="ui10 muted" font-weight="700">等待发送　3+</text><text x="1498" y="1090" text-anchor="end" class="ui10" fill="#D8D5D0">拖动把手调整顺序</text>
+    <rect x="846" y="1100" width="656" height="28" rx="8" fill="#F8FAFC"/><text x="858" y="1119" class="ui12">⠿　先补充结论。</text><rect x="1348" y="1102" width="76" height="24" rx="6" fill="#FFF" stroke="#D8D5D0"/><text x="1386" y="1118" text-anchor="middle" class="ui11">插话</text><text x="1488" y="1119" text-anchor="end" class="ui13 muted">✎　▧</text>
+    <rect x="846" y="1132" width="656" height="2" rx="1" fill="#F58A24"/>
+    <rect x="846" y="1138" width="656" height="28" rx="8" fill="#FDF0DE"/><text x="858" y="1157" class="ui12">⠿　再附一份摘要。</text><rect x="1348" y="1140" width="76" height="24" rx="6" fill="#FFF" stroke="#E8E6E3"/><text x="1386" y="1156" text-anchor="middle" class="ui11 muted">已插话</text><text x="1488" y="1157" text-anchor="end" class="ui13 muted">✎　▧</text>
+    <rect x="846" y="1170" width="656" height="28" rx="8" fill="transparent"/><text x="858" y="1189" class="ui12">⠿　最后检查遗漏。</text><rect x="1348" y="1172" width="76" height="24" rx="6" fill="#FFF" stroke="#D8D5D0"/><text x="1386" y="1188" text-anchor="middle" class="ui11">插话</text><text x="1488" y="1189" text-anchor="end" class="ui13 muted">✎　▧</text>
+    <text x="860" y="1222" class="ui10 muted">还有 2 条未显示</text>
+    <text x="836" y="1294" class="note">行 28px；拖拽中 accent-soft；落点为 2px accent。</text><text x="836" y="1320" class="note">插话、编辑、删除属于队列项；发送后立即从投影移除。</text><text x="836" y="1344" class="tiny">队列高度含 20px 表头、2px 间距与可选 16px 溢出提示。</text>
   </g>
 
-  <!-- ================= C MENUS ================= -->
-  <g id="menus">
-    <rect x="80" y="1026" width="6" height="16" rx="2" fill="#F58A24"/>
-    <text x="98" y="1040" class="sect">加号菜单与级联</text>
-    <text x="230" y="1040" class="sect-en">PLUS MENU · FLYOUTS</text>
+  <g id="menus-model">
+    <rect x="64" y="1390" width="28" height="24" rx="6" fill="#FDF0DE"/><text x="78" y="1407" text-anchor="middle" class="chip">04</text><text x="104" y="1408" class="sect">菜单与模型 · 每个弹层只属于一个触发器</text><text x="1536" y="1407" text-anchor="end" class="sect-note">加号菜单 220 · 级联 268 · 模型弹层 300×340</text>
+    <rect x="64" y="1432" width="474" height="404" rx="12" class="card"/><text x="86" y="1462" class="card-t">加号菜单 · 6 项</text>
+    <rect x="86" y="1484" width="220" height="234" rx="12" fill="#FFF" stroke="#E8E6E3"/><text x="102" y="1513" class="ui13">⌘　命令　　　　　　　　　　›</text><rect x="94" y="1524" width="204" height="34" rx="8" fill="#F6F5F3"/><text x="110" y="1547" class="ui13">✦　预设问题　　　　　　　　›</text><text x="102" y="1581" class="ui13">♢　审批模式　　　　　全权限　›</text><text x="102" y="1615" class="ui13">♩　语音输入</text><text x="102" y="1649" class="ui13">▣　截图　　　　　　　　　　›</text><text x="102" y="1683" class="ui13">▤　终端模式</text>
+    <text x="86" y="1748" class="note">菜单打开时加号变为 xmark。</text><text x="86" y="1774" class="note">命令、预设、审批和截图可级联。</text><text x="86" y="1806" class="tiny">仅输入“/”且菜单关闭时，直接显示命令浮层。</text>
 
-    <!-- plus menu -->
-    <g filter="url(#popShadow)">
-      <rect x="80" y="1066" width="220" height="232" rx="12" fill="#FFFFFF" stroke="#E8E6E3"/>
-    </g>
-    <rect x="84" y="1142" width="212" height="34" rx="8" fill="#F6F5F3"/>
-    <g>
-      <text x="116" y="1092" class="ui13">新建线程</text>
-      <text x="116" y="1126" class="ui13">上传文件</text>
-      <text x="116" y="1160" class="ui13">打开工作区文件夹</text>
-      <text x="116" y="1194" class="ui13">审批模式</text><use href="#c-chev" x="266" y="1188" width="9" height="9" color="#8A8F99"/>
-      <text x="116" y="1228" class="ui13">截图</text><use href="#c-chev" x="266" y="1222" width="9" height="9" color="#8A8F99"/>
-      <text x="116" y="1262" class="ui13">录音</text>
-      <use href="#c-plus" x="92" y="1078" width="16" height="16" color="#8A8F99"/>
-      <use href="#c-clip" x="92" y="1112" width="16" height="16" color="#8A8F99"/>
-      <use href="#c-folder" x="92" y="1146" width="16" height="16" color="#8A8F99"/>
-      <use href="#c-shield" x="92" y="1180" width="16" height="16" color="#8A8F99"/>
-      <use href="#c-camera" x="92" y="1214" width="16" height="16" color="#8A8F99"/>
-      <use href="#c-mic" x="92" y="1248" width="16" height="16" color="#8A8F99"/>
-    </g>
+    <rect x="563" y="1432" width="474" height="404" rx="12" class="card"/><text x="585" y="1462" class="card-t">级联与弹层边界</text>
+    <rect x="585" y="1484" width="268" height="174" rx="10" fill="#FFF" stroke="#E8E6E3"/><text x="601" y="1512" class="ui12" font-weight="600">审批模式</text><rect x="593" y="1522" width="252" height="30" rx="7" fill="#FDF0DE"/><text x="605" y="1542" class="ui12" fill="#E07A12">全权限　✓</text><text x="601" y="1578" class="ui12">允许编辑</text><text x="601" y="1612" class="ui12">仅建议</text><text x="601" y="1644" class="tiny">当前模式在菜单行右侧保留摘要</text>
+    <text x="585" y="1690" class="note">级联从所属行右侧展开，宽 268。</text><text x="585" y="1716" class="note">同一时刻只保留一个加号子菜单。</text><text x="585" y="1742" class="note">模型与加号菜单互斥，外部点击关闭。</text><text x="585" y="1774" class="tiny">弹层向上展开，避免被输入带底边裁切。</text><text x="585" y="1806" class="tiny">z=30；不需要全窗遮罩。</text>
 
-    <!-- permission flyout -->
-    <g filter="url(#popShadow)">
-      <rect x="316" y="1180" width="268" height="126" rx="10" fill="#FFFFFF" stroke="#E8E6E3"/>
-    </g>
-    <text x="324" y="1198" class="ui10" fill="#8A8F99">审批模式</text>
-    <rect x="324" y="1206" width="252" height="28" rx="5" fill="#FDF0DE"/><text x="334" y="1224" class="ui10" fill="#E07A12">完全访问</text><use href="#c-check" x="558" y="1212" width="10" height="10" color="#E07A12"/>
-    <text x="334" y="1252" class="ui10">写入自动</text>
-    <text x="334" y="1280" class="ui10">执行前确认</text>
-    <text x="324" y="1300" class="ui10" fill="#9AA1AA">仅记录偏好，本地链路尚未接审批往返。</text>
-
-    <text x="316" y="1312" class="mono9">截图级联 · 另一状态（与审批模式互斥）</text>
-
-    <!-- screenshot flyout -->
-    <g filter="url(#popShadow)">
-      <rect x="316" y="1320" width="268" height="144" rx="10" fill="#FFFFFF" stroke="#E8E6E3"/>
-    </g>
-    <text x="324" y="1338" class="ui10" fill="#8A8F99">截图方式（默认隐藏窗口）</text>
-    <text x="334" y="1364" class="ui10">全屏截图（隐藏窗口）</text>
-    <text x="334" y="1392" class="ui10">区域截图（隐藏窗口）</text>
-    <text x="334" y="1420" class="ui10">全屏截图（保留窗口）</text>
-    <text x="334" y="1448" class="ui10">区域截图（保留窗口）</text>
-
-    <!-- command flyout -->
-    <g filter="url(#popShadow)">
-      <rect x="620" y="1066" width="268" height="168" rx="10" fill="#FFFFFF" stroke="#E8E6E3"/>
-    </g>
-    <text x="628" y="1084" class="ui10" fill="#8A8F99">命令</text>
-    <text x="638" y="1110" class="ui10">/help  查看可用命令</text>
-    <text x="638" y="1138" class="ui10">/new  新建线程</text>
-    <text x="638" y="1166" class="ui10">/stop  停止并退出目标态</text>
-    <text x="638" y="1194" class="ui10">/goal  设置目标</text>
-    <text x="638" y="1222" class="ui10">/compact  压缩上下文</text>
-
-    <!-- preset flyout -->
-    <g filter="url(#popShadow)">
-      <rect x="620" y="1246" width="268" height="112" rx="10" fill="#FFFFFF" stroke="#E8E6E3"/>
-    </g>
-    <text x="628" y="1264" class="ui10" fill="#8A8F99">预设问题</text>
-    <text x="638" y="1290" class="ui10">你好，请介绍一下你的能力。</text>
-    <text x="638" y="1318" class="ui10">请帮我整理当前内容。</text>
-    <text x="638" y="1346" class="ui10" fill="#9AA1AA">来自当前智能体的已保存问题</text>
-
-    <rect x="920" y="1040" width="600" height="384" rx="12" class="card"/>
-    <text x="942" y="1064" class="card-t">菜单规格</text>
-    <text x="1498" y="1064" text-anchor="end" class="mono10">220 / 268 · r12 / r10</text>
-    <text x="942" y="1088" class="note">+ 菜单宽 220，r12，padding 6，gap 2；行 34 高 r8。</text>
-    <text x="942" y="1108" class="note">图标 16 在 x=8；文字 13 在 x=32；chevron 9 在右 17。</text>
-    <text x="942" y="1128" class="note">悬停/展开：底 #F6F5F3；展开项图标可转 accent。</text>
-    <text x="942" y="1148" class="note">级联 x=行宽+12，y=行高+7−自身高；z2 相对菜单。</text>
-    <text x="942" y="1168" class="note">级联卡 268 宽，r10，1px border，阴影 #00000024 / 16 / 3。</text>
-    <text x="942" y="1188" class="note">级联内边距 8，gap 4；行 28 高 r5；悬停 accent-soft。</text>
-    <text x="942" y="1208" class="note">审批行有 54 高说明段，10px muted；选择只记录偏好。</text>
-    <text x="942" y="1228" class="note">截图 4 种模式；当前模式用 check 标记。</text>
-    <text x="942" y="1248" class="note">命令行文本已含命令与说明；不额外分组。</text>
-    <text x="942" y="1268" class="note">预设问题来自智能体；空列表时不显示该项。</text>
-    <text x="942" y="1288" class="note">点击外部由原生过滤器关闭；菜单本身无全窗遮罩。</text>
-    <text x="942" y="1308" class="note">同一时刻只允许一个弹层：+ 与模型选择互斥。</text>
-    <text x="942" y="1334" class="note">键盘：Esc 关闭；↑↓ 移动；Enter 选择（若实现）。</text>
-    <text x="942" y="1354" class="note">菜单打开时按钮保持展开态：+ 变 x，底色 accent-soft。</text>
-    <text x="942" y="1374" class="note">阴影只用于浮层，输入卡本身不加投影。</text>
-    <text x="942" y="1396" class="tiny">提示：级联定位以触发行为锚，窗口边缘时向上翻转。</text>
+    <rect x="1062" y="1432" width="474" height="404" rx="12" class="card"/><text x="1084" y="1462" class="card-t">模型选择 · 300×340</text>
+    <rect x="1084" y="1484" width="300" height="340" rx="12" fill="#FFF" stroke="#E8E6E3"/>
+    <text x="1096" y="1508" class="ui11 muted" font-weight="600">上下文占用</text><text x="1372" y="1508" text-anchor="end" class="ui11 secondary">12.3k / 32k · 38%</text><line x1="1092" y1="1520" x2="1376" y2="1520" stroke="#E8E6E3"/>
+    <rect x="1092" y="1530" width="284" height="40" rx="8" fill="#F6F5F3"/><text x="1100" y="1548" class="ui13" fill="#F58A24">✓</text><text x="1124" y="1548" class="ui13" fill="#F58A24" font-weight="600">标准模型</text><text x="1124" y="1564" class="ui10 muted">local · llm</text><rect x="1324" y="1542" width="40" height="16" rx="8" fill="#FDF0DE"/><text x="1344" y="1554" text-anchor="middle" class="ui10" fill="#F58A24">默认</text>
+    <text x="1100" y="1594" class="ui13" font-weight="600">云端模型</text><text x="1100" y="1612" class="ui10 muted">cloud · 需要登录</text>
+    <text x="1100" y="1640" class="ui13" font-weight="600">快速模型</text><text x="1100" y="1658" class="ui10 muted">local · llm</text>
+    <line x1="1092" y1="1674" x2="1376" y2="1674" stroke="#E8E6E3"/><text x="1096" y="1696" class="ui11 muted" font-weight="600">推理力度</text>
+    <rect x="1094" y="1706" width="56" height="24" rx="12" fill="#FDF0DE" stroke="#FDF0DE"/><text x="1122" y="1722" text-anchor="middle" class="ui11" fill="#F58A24">默认</text><rect x="1154" y="1706" width="42" height="24" rx="12" fill="#FFF" stroke="#E8E6E3"/><text x="1175" y="1722" text-anchor="middle" class="ui11 secondary">无</text><rect x="1200" y="1706" width="56" height="24" rx="12" fill="#FFF" stroke="#E8E6E3"/><text x="1228" y="1722" text-anchor="middle" class="ui11 secondary">最低</text><rect x="1260" y="1706" width="42" height="24" rx="12" fill="#FFF" stroke="#E8E6E3"/><text x="1281" y="1722" text-anchor="middle" class="ui11 secondary">低</text>
+    <rect x="1094" y="1734" width="42" height="24" rx="12" fill="#FFF" stroke="#E8E6E3"/><text x="1115" y="1750" text-anchor="middle" class="ui11 secondary">中</text><rect x="1140" y="1734" width="42" height="24" rx="12" fill="#FFF" stroke="#E8E6E3"/><text x="1161" y="1750" text-anchor="middle" class="ui11 secondary">高</text><rect x="1186" y="1734" width="62" height="24" rx="12" fill="#FFF" stroke="#E8E6E3"/><text x="1217" y="1750" text-anchor="middle" class="ui11 secondary">极高</text>
+    <text x="1096" y="1786" class="tiny">选中用勾与 accent 文本；列表行悬停 hover。</text><text x="1096" y="1806" class="tiny">云模型不可用时保留列表但灰化并禁止选择。</text>
   </g>
-
-  <!-- ================= D MODEL PICKER ================= -->
-  <g id="model">
-    <rect x="80" y="1470" width="6" height="16" rx="2" fill="#F58A24"/>
-    <text x="98" y="1484" class="sect">模型选择</text>
-    <text x="178" y="1484" class="sect-en">MODEL PICKER · CONTEXT</text>
-
-    <!-- trigger -->
-    <g filter="url(#popShadow)">
-      <rect x="80" y="1514" width="300" height="340" rx="12" fill="#FFFFFF" stroke="#E8E6E3"/>
-    </g>
-    <text x="92" y="1536" class="ui11" fill="#8A8F99">上下文 Token</text>
-    <text x="368" y="1536" text-anchor="end" class="ui11" fill="#C98A2B">12.3k / 200k · 6%</text>
-    <rect x="92" y="1544" width="276" height="4" rx="2" fill="#F1EFEC"/><rect x="92" y="1544" width="16" height="4" rx="2" fill="#F58A24"/>
-    <line x1="92" y1="1560" x2="368" y2="1560" stroke="#E8E6E3"/>
-
-    <!-- rows -->
-    <rect x="92" y="1572" width="276" height="40" rx="8" fill="#F8FAFC"/>
-    <use href="#c-check" x="100" y="1586" width="12" height="12" color="#F58A24"/>
-    <text x="126" y="1591" class="ui13" font-weight="600">标准模型</text>
-    <text x="126" y="1606" class="ui11" fill="#8A8F99">通用对话与工具调用</text>
-    <rect x="322" y="1584" width="34" height="16" rx="8" fill="#FDF0DE"/>
-    <text x="339" y="1595" text-anchor="middle" font-size="10" font-weight="600" fill="#F58A24">默认</text>
-
-    <rect x="92" y="1618" width="276" height="40" rx="8" fill="transparent"/>
-    <text x="126" y="1637" class="ui13" font-weight="600">高容量模型</text>
-    <text x="126" y="1652" class="ui11" fill="#8A8F99">更长上下文，适合长文档</text>
-    <rect x="330" y="1630" width="24" height="16" rx="8" fill="#FDF0DE"/>
-    <text x="342" y="1641" text-anchor="middle" font-size="10" font-weight="700" fill="#F58A24">云</text>
-
-    <rect x="92" y="1664" width="276" height="40" rx="8" fill="transparent" opacity=".55"/>
-    <text x="126" y="1683" class="ui13" font-weight="600">快速模型</text>
-    <text x="126" y="1698" class="ui11" fill="#8A8F99">未登录云服务，暂不可用</text>
-
-    <line x1="92" y1="1716" x2="368" y2="1716" stroke="#E8E6E3"/>
-    <text x="92" y="1736" class="ui11" fill="#8A8F99">推理强度</text>
-    <rect x="92" y="1744" width="52" height="24" rx="12" fill="#F8FAFC" stroke="#E8E6E3"/><text x="118" y="1760" text-anchor="middle" class="ui11" fill="#3D3D3D">默认</text>
-    <rect x="150" y="1744" width="40" height="24" rx="12" fill="#F8FAFC" stroke="#E8E6E3"/><text x="170" y="1760" text-anchor="middle" class="ui11" fill="#3D3D3D">低</text>
-    <rect x="196" y="1744" width="40" height="24" rx="12" fill="#FDF0DE" stroke="#F58A24"/><text x="216" y="1760" text-anchor="middle" class="ui11" font-weight="600" fill="#E07A12">中</text>
-    <rect x="242" y="1744" width="40" height="24" rx="12" fill="#F8FAFC" stroke="#E8E6E3"/><text x="262" y="1760" text-anchor="middle" class="ui11" fill="#3D3D3D">高</text>
-    <rect x="288" y="1744" width="52" height="24" rx="12" fill="#F8FAFC" stroke="#E8E6E3"/><text x="314" y="1760" text-anchor="middle" class="ui11" fill="#3D3D3D">极高</text>
-    <text x="92" y="1788" class="ui10" fill="#9AA1AA">强度按线程保存；下一条消息即时生效。</text>
-
-    <rect x="420" y="1470" width="520" height="340" rx="12" class="card"/>
-    <text x="442" y="1494" class="card-t">触发器与弹层</text>
-    <text x="918" y="1494" text-anchor="end" class="mono10">300 × 340 · r12</text>
-    <text x="442" y="1518" class="note">触发器 30 高，宽 54 + min(名称宽, 180)；r8。</text>
-    <text x="442" y="1538" class="note">悬停 #F6F5F3；展开 accent-soft；无过渡。</text>
-    <text x="442" y="1558" class="note">左侧 16px 大脑：底 muted，上层按上下文占用填充。</text>
-    <text x="442" y="1578" class="note">≥75% warning，≥90% danger；计数在弹层头部。</text>
-    <text x="442" y="1598" class="note">弹层 x=宽−300，y=−高−8；z30；1px border。</text>
-    <text x="442" y="1618" class="note">阴影 #00000024 / blur16 / y3；内边距 8，gap 6。</text>
-    <text x="442" y="1638" class="note">顶行 20 高：11px muted + 右对齐计数（按阈值变色）。</text>
-    <text x="442" y="1658" class="note">列表行 40 高 r8；悬停 #F6F5F3；勾 12 在 8/14。</text>
-    <text x="442" y="1678" class="note">名称 13/600；副行 11 muted；默认徽 34×16，云徽 24×16。</text>
-    <text x="442" y="1698" class="note">未登录云模型整行 opacity .55 并禁用。</text>
-    <text x="442" y="1718" class="note">底部推理强度：24 高 r12，选中 accent-soft + 600。</text>
-    <text x="442" y="1738" class="note">保存中显示 12px 六点转圈 1.48s；成功后勾选更新。</text>
-    <text x="442" y="1764" class="note">空目录提示「还没有可用模型。请到设置 → 模型设置添加。」</text>
-    <text x="442" y="1784" class="note">无匹配提示「没有匹配的模型」；默认徽标识线程默认。</text>
-
-    <rect x="960" y="1470" width="560" height="340" rx="12" class="card"/>
-    <text x="982" y="1494" class="card-t">状态与边界</text>
-    <text x="1498" y="1494" text-anchor="end" class="mono10">one popover at a time</text>
-    <text x="982" y="1518" class="note">模型选择与 + 菜单互斥；打开一个自动关闭另一个。</text>
-    <text x="982" y="1538" class="note">点击外部关闭由原生过滤器处理，不铺全窗遮罩。</text>
-    <text x="982" y="1558" class="note">选择模型后立即回写线程，不等待下一条消息。</text>
-    <text x="982" y="1578" class="note">思考等级默认跟随模型；选项来自模型能力。</text>
-    <text x="982" y="1598" class="note">上下文占用来自最近一次请求，不是累计值。</text>
-    <text x="982" y="1618" class="note">压缩后占用可下降；UI 不做本地推算。</text>
-    <text x="982" y="1640" class="card-t" font-size="11">触发器状态</text>
-    <g transform="translate(982,1652)">
-      <rect width="160" height="30" rx="8" fill="#FFFFFF" stroke="#E8E6E3"/><g color="#F58A24"><use href="#c-brain" x="10" y="7" width="16" height="16"/></g><text x="32" y="20" class="ui13" font-weight="600">标准模型</text><use href="#c-chev-d" x="138" y="11" width="10" height="10" color="#8A8F99"/>
-      <rect y="40" width="160" height="30" rx="8" fill="#FDF0DE" stroke="#FFC98A"/><g color="#F58A24"><use href="#c-brain" x="10" y="47" width="16" height="16"/></g><text x="32" y="60" class="ui13" font-weight="600">标准模型</text><use href="#c-chev-d" x="138" y="51" width="10" height="10" color="#E07A12"/>
-      <rect y="80" width="160" height="30" rx="8" fill="#FFFFFF" stroke="#E8E6E3"/><g color="#C98A2B"><use href="#c-brain" x="10" y="87" width="16" height="16"/></g><text x="32" y="100" class="ui13" font-weight="600">标准模型</text><text x="148" y="100" text-anchor="end" class="ui10" fill="#C98A2B">75%</text>
-      <text x="176" y="20" class="tiny">默认</text>
-      <text x="176" y="60" class="tiny">展开</text>
-      <text x="176" y="100" class="tiny">高占用</text>
-    </g>
-    <text x="982" y="1780" class="tiny">计数超过 90% 时整条阈值文字转 danger，不改变面板底色。</text>
-  </g>
-
-  <g id="footer">
-    <line x1="80" y1="1890" x2="1520" y2="1890" stroke="#D8D5D0"/>
-    <text x="80" y="1904" class="tiny">输入区是本地执行链路的唯一入口；所有弹层状态由前端临时持有，发送后语义交给引擎。</text>
-    <text x="1520" y="1904" text-anchor="end" class="mono tiny">07 / 09</text>
-  </g>
+  <g id="footer"><line x1="64" y1="1870" x2="1536" y2="1870" stroke="#D8D5D0"/><text x="64" y="1890" class="tiny">事实来源：composer.slint · textedit-base.slint · drag_row.slint；发送判断以代码布尔投影为准，不从按钮外观反推。</text><text x="1536" y="1890" text-anchor="end" class="mono tiny">07 / 09 · 2026-10-25</text></g>
 </svg>

@@ -607,6 +607,24 @@ pre {
   background: var(--docs-bg-subtle);
 }
 
+.docs-content .art-viewer-frame {
+  margin: 22px 0 26px;
+}
+
+.docs-content .art-viewer__viewport {
+  min-height: 360px;
+}
+
+.docs-content .art-viewer__button {
+  font-family: inherit;
+}
+
+@media (max-width: 760px) {
+  .docs-content .art-viewer__viewport {
+    min-height: 260px;
+  }
+}
+
 .docs-card-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));

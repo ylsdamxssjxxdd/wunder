@@ -1,143 +1,46 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1220" viewBox="0 0 1600 1220" role="img" aria-label="舵机 终端 UI 整体总览">
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1440" viewBox="0 0 1600 1440" role="img" aria-label="舵机 终端 UI 整体总览与五段布局">
   <title>00 整体总览 · 舵机 CLI UI Spec</title>
-  <style>
-    svg{font-family:'Microsoft YaHei UI','Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif;fill:#1F2329}
-    .mono{font-family:Consolas,'SFMono-Regular','Cascadia Mono',monospace}
-    .h1{font-size:30px;font-weight:700;letter-spacing:-.4px}
-    .sub{font-size:13px;fill:#7C7A75}
-    .kicker{font-size:11px;font-weight:600;letter-spacing:1.4px;fill:#E07A12}
-    .sect{font-size:16px;font-weight:700}
-    .sect-en{font-size:10px;font-weight:600;letter-spacing:1.6px;fill:#A8A39B}
-    .card-t{font-size:12px;font-weight:700}
-    .note{font-size:11px;fill:#7C7A75}
-    .tiny{font-size:10px;fill:#8A8F99}
-    .tok{font-size:11px;fill:#3D3D3D}
-    .line{stroke:#E8E6E3;stroke-width:1}
-    .dash{stroke:#D8D5D0;stroke-width:1;stroke-dasharray:3 3}
-    .card{fill:#FFFFFF;stroke:#DED9D1;stroke-width:1}
-    .accent{fill:#F58A24}
-    .term-bg{fill:#131A24}
-    .term-frame{fill:none;stroke:#2A3646;stroke-width:1}
-    .t-fg{fill:#D8DEE6}
-    .t-dim{fill:#6E7A8A}
-    .t-cy{fill:#4FC1D9}
-    .t-gr{fill:#3FBF7F}
-    .t-mg{fill:#C678DD}
-    .callout{fill:none;stroke:#C9A26B;stroke-width:1;stroke-dasharray:4 3}
-    .chip{fill:#FFFFFF;stroke:#DED9D1;stroke-width:1;rx:8}
-  </style>
-
-  <rect width="1600" height="1220" fill="#F4F1EC"/>
-
-  <!-- header -->
-  <g id="header">
-    <text x="80" y="52" class="kicker">WUNDER / 舵机 · CLI UI SPEC</text>
-    <text x="80" y="93" class="h1">00　整体总览</text>
-    <text x="80" y="120" class="sub">以 crates/wunder-cli/tui 当前实现为事实基线。舵机没有窗口像素，终端单元格就是画布：一切布局按行数与列数预算，颜色只是语义的载体。</text>
-    <text x="1520" y="52" text-anchor="end" class="mono" font-size="11" fill="#8A8F99">SHEET 00 / 05</text>
-    <text x="1520" y="70" text-anchor="end" class="mono" font-size="11" fill="#8A8F99">RATATUI · TUI</text>
+  <style>svg{font-family:'Microsoft YaHei UI','Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif;fill:#1F2329}.mono{font-family:Consolas,monospace}.h1{font-size:30px;font-weight:700}.sub{font-size:13px;fill:#6F747B}.kicker{font-size:11px;font-weight:700;letter-spacing:1.4px;fill:#D87616}.sect{font-size:18px;font-weight:700}.sect-note{font-size:12px;fill:#8A8F99}.card{fill:#FFF;stroke:#DED9D1}.card-t{font-size:14px;font-weight:700}.note{font-size:12px;fill:#6F747B}.tiny{font-size:11px;fill:#8A8F99}.chip{font-size:11px;font-weight:700;fill:#D87616}.ui14{font-size:14px}.ui13{font-size:13px}.ui12{font-size:12px}.term{fill:#131A24}.t-fg{fill:#D8DEE6}.t-dim{fill:#6E7A8A}.t-cy{fill:#4FC1D9}</style>
+  <rect width="1600" height="1440" fill="#F5F3EF"/>
+  <g id="header"><text x="64" y="42" class="kicker">WUNDER / 舵机 · CLI UI SPEC</text><text x="64" y="84" class="h1">00　整体总览</text><text x="64" y="114" class="sub">终端单元格就是画布；先看新线程实帧，再看五段垂直栈与行数预算，不把桌面窗口的卡片思维搬进终端。</text><text x="1536" y="44" text-anchor="end" class="mono tiny">SHEET 00 / 05</text><text x="1536" y="84" text-anchor="end" class="mono ui12">RATATUI · 100 × 30 EXAMPLE</text><line x1="64" y1="140" x2="1536" y2="140" stroke="#D8D5D0"/></g>
+  <g id="fresh-frame">
+    <rect x="64" y="160" width="28" height="24" rx="6" fill="#FDF0DE"/><text x="78" y="177" text-anchor="middle" class="chip">01</text><text x="104" y="178" class="sect">真实启动帧 · 新线程站立态</text><text x="1536" y="177" text-anchor="end" class="sect-note">启动信息在转写区，欢迎画在横幅带，两者不混为同一区域</text>
+    <rect x="64" y="202" width="1080" height="640" rx="12" class="card"/>
+    <rect x="80" y="218" width="1048" height="608" rx="6" class="term"/>
+    <g class="mono" font-size="13"><text x="96" y="244" class="t-cy" font-weight="bold">⚙ wunder 舵机 (v0.2.0)</text><text x="96" y="270" class="t-dim">　 工作目录 示例目录</text><text x="96" y="296" class="t-dim">　 /help 查看命令 · @ 提及文件 · ! 直接执行</text><text x="96" y="330" class="t-dim">wunder-cli tui mode. type /help for commands.</text></g>
+    <line x1="80" y1="356" x2="1128" y2="356" stroke="#2A3646" stroke-dasharray="3 4"/>
+    <image href="data:image/png;base64,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77vq7LO1bCo/vC5284JHnw99rKpjWz4oujFcWl93MzS3uCt2xvXwqW213Gmg9PsWVfpOA9GN/z9//xdVSQteGgjNXfvD0qLPG92Ab6+Pbd5HHb7469CcKxAAUgQEgBQBASBFQABIERAAUgQEgBQBASBFQABIERAAUhrRs87bL7SKbtDWtRG++sexzeeosz+ZE5pb8PTm0Fzz3djmc8+ivqJ3BvjE6KGqpIf//ZehuUd/d39o7i8PfTE0d23yei0b5lHR9226/WQtr3PUe0Nbavmcjn9yPDT3zrcOd/T3QekN+ObJu4u+H+dunA7NuQIBIEVAAEgREABSBASAFAEBQEAAuHVcgQCQIiAApAgIACmNB9fvDm2iz++dV8sG6K6ry0JzO//r/6tOFt0obf+iHZob/txoaK7Zuzw0d/3kf9dyxnppZ7bfUXQTPfr6jU+eD80t/fmRqpNFzzCfd/dDRV+XkdeGQnOt77ZquYNFaXt+9E+hud0LL9RyR4woVyAApAgIACkCAkCKgACQIiAApAgIACkCAkCKgACQIiAApDR2jg5O13F2cNSu878Nze0cHaw6+feIboou2fvNopu7uz/xlaqk6AZy9EzlP77++9DcvYfm1LKxHrV23ytFH+/YltjndMWyu0Jz/UvuLHpHgqjSG+sTO341I/7O9wyNheZ2Ly/791v693AFAkCKgACQIiAApAgIACkCAkCKgACQIiAApAgIACkCAkBKo/XDVmgTvb33QtEzfOvanIw6/sjVqg7bf3t70U3l9dcnQnO73ott/I8MHAjN9Szqq0qaunIpNHd06tnQ3Kb9U1VJv/leT2huY899Hf36DZ/aVvQOBz1HPl2VtO8rb1R12PDIwqKPt7quO3tcXRaaa+2IzbkCASBFQABIERAAUgQEgBQBASBFQABIERAAUgQEgBQBASClER0cXLcjtLE+9up7tWysRzfRP3vPkqqTld60/Ze5K4qerd3X3QzNLe6aV5UU3cwuvbEeFd0wj256t9cfLPr7Xr55PTR36cZ40TPgS3+eo3dqqMvrz03UsoleesO8/dN2qA2uQABIERAAUgQEgBQBASBFQABIERAABASAW8cVCAApAgLAR7uJXnpjffUP3i66sXls1aqq5PN2urOP3xaaG3t+b+g9fvTV+0PvW+kzwtd09Yfm5vfGNttXdscer3Via1VSdHP83I3Toblrk7HN8bcuvBiau/dQ7E4NUQ9//peNOr4POt2ClwZCc0uffqnoHTZKfx9EuQIBIEVAAEgREABSBASAFAEBIEVAAEgREABSBASAFAEBoDM20UsLn8VeeMOSW6OuDfiBT91Z8mmrU399OTS3af9ULRvhdJbBGfK95goEgBQBASBFQABIERAAUgQEgBQBASBFQABIERAAUgQEgJSO3nKEujfbS7M5zkziCgSAFAEBIEVAAEgREABSBASAFAEBIEVAAEgREABSBASAKuNvXPl3M/B/lvsAAAAASUVORK5CYII=" x="380" y="366" width="400" height="340"/>
+    <rect x="80" y="726" width="1048" height="100" fill="#182430"/>
+    <text x="96" y="758" class="mono" font-size="13" fill="#4FC1D9" font-weight="bold">›</text><text x="116" y="758" class="mono" font-size="13" fill="#6E7A8A">直接提问，或使用 / 命令、@ 文件、# 技能、$ 应用；拖入图片或文件即可附加</text>
+    <text x="96" y="812" class="mono" font-size="13" fill="#6E7A8A">示例目录　← 任务中心</text><text x="1112" y="812" text-anchor="end" class="mono" font-size="13" fill="#6E7A8A">? 快捷键</text>
+    <rect x="1180" y="202" width="356" height="640" rx="12" class="card"/>
+    <text x="1204" y="234" class="card-t">五段功能栈 · 从上到下</text>
+    <text x="1204" y="274" class="chip">01 / TRANSCRIPT</text><text x="1204" y="300" class="card-t">转写区</text><text x="1204" y="326" class="note">启动信息、会话与过程回放</text><text x="1204" y="350" class="tiny">无弹层 Min(8) / 有弹层 Min(6)</text>
+    <line x1="1204" y1="370" x2="1512" y2="370" stroke="#E8E6E3"/>
+    <text x="1204" y="398" class="chip">02 / POPUP</text><text x="1204" y="424" class="card-t">弹层带 · 可选</text><text x="1204" y="450" class="note">选择器与恢复列表，紧邻输入上方</text><text x="1204" y="474" class="tiny">min(项数, 7) + 1；本帧未开启</text>
+    <line x1="1204" y1="494" x2="1512" y2="494" stroke="#E8E6E3"/>
+    <text x="1204" y="522" class="chip">03 / BANNER</text><text x="1204" y="548" class="card-t">欢迎横幅带</text><text x="1204" y="574" class="note">真实 40×34 像素数据的半块渲染</text><text x="1204" y="598" class="tiny">输入或会话推进即让位；空间不足先压缩</text>
+    <line x1="1204" y1="618" x2="1512" y2="618" stroke="#E8E6E3"/>
+    <text x="1204" y="646" class="chip">04 + 05 / STATUS + INPUT</text><text x="1204" y="672" class="card-t">活动行 1 行 + 输入区 5 行</text><text x="1204" y="698" class="note">运行/审批提示与唯一可编辑区</text><text x="1204" y="722" class="tiny">空闲活动行保留位置；输入区包含底栏</text><text x="1204" y="752" class="tiny">主布局固定开销 14 行（含转写地板）</text><text x="1204" y="786" class="tiny">像素画内嵌自 welcome_logo_art.rs，非九宫格占位图</text><text x="1204" y="816" class="tiny">帧样例使用参考终端前景色，实际命名色随主题映射</text>
   </g>
-
-  <!-- section: terminal overview -->
-  <g id="overview">
-    <text x="80" y="176" class="sect">终端总览 · 新线程站立态</text>
-    <text x="330" y="176" class="sect-en">FULL FRAME · 100 × 30 CELLS EXAMPLE</text>
-
-    <rect x="80" y="196" width="1080" height="668" class="card"/>
-    <rect x="96" y="212" width="1048" height="636" class="term-bg" rx="6"/>
-    <rect x="96" y="212" width="1048" height="636" class="term-frame" rx="6"/>
-
-    <!-- transcript band: 8 rows floor, fresh thread = empty -->
-    <g class="mono" font-size="13">
-      <text x="116" y="238" class="t-dim">（转写区 · 新线程为空，地板 8 行）</text>
-    </g>
-    <line x1="96" y1="392" x2="1144" y2="392" class="callout"/>
-
-    <!-- welcome banner band -->
-    <g id="logo">
-      <g transform="translate(520,416)">
-        <!-- half-block style mark -->
-        <rect x="0" y="0" width="22" height="22" fill="#C678DD"/>
-        <rect x="22" y="0" width="22" height="22" fill="#E3B8EE"/>
-        <rect x="44" y="0" width="22" height="22" fill="#C678DD"/>
-        <rect x="0" y="22" width="22" height="22" fill="#E3B8EE"/>
-        <rect x="22" y="22" width="22" height="22" fill="#131A24"/>
-        <rect x="44" y="22" width="22" height="22" fill="#E3B8EE"/>
-        <rect x="0" y="44" width="22" height="22" fill="#C678DD"/>
-        <rect x="22" y="44" width="22" height="22" fill="#E3B8EE"/>
-        <rect x="44" y="44" width="22" height="22" fill="#C678DD"/>
-        <text x="88" y="42" class="mono" font-size="20" fill="#C678DD" font-weight="bold">⚙</text>
-      </g>
-      <text x="620" y="540" text-anchor="middle" class="mono" font-size="15" fill="#D8DEE6" font-weight="bold">wunder 舵机</text>
-      <text x="620" y="562" text-anchor="middle" class="mono" font-size="11" fill="#6E7A8A">手工本地操作入口 · 终端驱动 · 脚本化</text>
-    </g>
-
-    <!-- activity row -->
-    <g class="mono" font-size="13">
-      <text x="116" y="740" class="t-dim">（活动行 · 空闲为空，1 行）</text>
-    </g>
-    <line x1="96" y1="752" x2="1144" y2="752" class="callout"/>
-
-    <!-- composer: 5 rows on surface -->
-    <rect x="116" y="760" width="1008" height="76" fill="#182430" rx="4"/>
-    <g class="mono" font-size="13">
-      <text x="128" y="784" class="t-cy" font-weight="bold">›</text>
-      <text x="146" y="784" class="t-dim">（草稿行，最多 3 行，超过内部滚动）</text>
-      <text x="128" y="826" class="t-dim">示例目录  ← 任务中心</text>
-      <text x="1124" y="826" text-anchor="end" class="t-dim">? 快捷键</text>
-    </g>
-
-    <!-- band labels -->
-    <g font-size="11" fill="#A8A39B">
-      <text x="1168" y="300">① 转写区 Min(8)</text>
-      <text x="1168" y="318" class="tiny">对话与过程回放，虚拟滚动</text>
-      <text x="1168" y="470">② 欢迎横幅带</text>
-      <text x="1168" y="488" class="tiny">自适应高度，会话推进即让位</text>
-      <text x="1168" y="736">③ 活动行 · 1 行</text>
-      <text x="1168" y="754" class="tiny">运行 / 审批 / 提示的单一出口</text>
-      <text x="1168" y="790">④ 输入区 · 5 行</text>
-      <text x="1168" y="808" class="tiny">草稿 + 底栏，永不丢行</text>
-      <text x="1168" y="844">⑤ 弹层带（未画出）</text>
-      <text x="1168" y="862" class="tiny">出现在输入区上方，高 ≤ 项数(7)+1</text>
-    </g>
+  <g id="layout-contract">
+    <rect x="64" y="876" width="28" height="24" rx="6" fill="#FDF0DE"/><text x="78" y="893" text-anchor="middle" class="chip">02</text><text x="104" y="894" class="sect">布局契约 · 每段有独立行数规则</text>
+    <rect x="64" y="918" width="1472" height="238" rx="12" class="card"/>
+    <rect x="88" y="942" width="272" height="66" rx="8" fill="#F6F5F3"/><text x="104" y="968" class="card-t">转写区</text><text x="104" y="994" class="note">Min(8) / 弹层时 Min(6)</text>
+    <rect x="378" y="942" width="272" height="66" rx="8" fill="#F6F5F3"/><text x="394" y="968" class="card-t">弹层带</text><text x="394" y="994" class="note">min(n,7)+1，0 时不占位</text>
+    <rect x="668" y="942" width="272" height="66" rx="8" fill="#F6F5F3"/><text x="684" y="968" class="card-t">欢迎横幅</text><text x="684" y="994" class="note">请求高度钳制到剩余空间</text>
+    <rect x="958" y="942" width="272" height="66" rx="8" fill="#F6F5F3"/><text x="974" y="968" class="card-t">活动行</text><text x="974" y="994" class="note">固定 1 行，空闲也保留</text>
+    <rect x="1248" y="942" width="264" height="66" rx="8" fill="#FDF0DE"/><text x="1264" y="968" class="card-t">输入区</text><text x="1264" y="994" class="note">固定 5 行，通知占用内部草稿行</text>
+    <text x="88" y="1042" class="card-t">余量公式</text><text x="190" y="1042" class="mono note">banner = min(请求高度, 屏高 − (弹层 + 活动1 + 输入5 + 转写地板8))</text>
+    <text x="88" y="1072" class="note">空间不足先让横幅压缩或消失；小屏不再虚构“草稿始终 3 行”，通知与间隙会占用输入区内部行数。</text><text x="88" y="1104" class="tiny">欢迎像素画只有在适配宽度 ≥20 且高度 ≥6 时站立；首次绘制后不再预留横幅。</text><text x="88" y="1132" class="tiny">布局、配色和状态是三层：行数来自 layout.rs，颜色来自 theme.rs，文案来自运行时投影。</text>
   </g>
-
-  <!-- section: layout rules -->
-  <g id="rules">
-    <text x="80" y="912" class="sect">布局规则</text>
-    <text x="180" y="912" class="sect-en">LAYOUT CONTRACT</text>
-
-    <rect x="80" y="928" width="1440" height="118" class="card"/>
-    <g font-size="12" fill="#3D3D3D">
-      <text x="104" y="954">· 行数预算自上而下：<tspan font-weight="bold">转写区 Min(8)</tspan>（有弹层时 Min(6)）→ 弹层带 → 横幅带 → <tspan font-weight="bold">活动行 1 行</tspan> → <tspan font-weight="bold">输入区 5 行</tspan></text>
-      <text x="104" y="978">· 横幅带高度 = min(请求值, 余量)；余量 = 屏高 −（弹层高 + 1 + 5 + 8）。屏幕太矮先压缩横幅，再整个去掉横幅。</text>
-      <text x="104" y="1002">· 输入区的 5 行不可被任何带吃掉；弹层高 = min(项数, 7) + 1 行边框。</text>
-      <text x="104" y="1026" class="note">· 主布局固定开销 14 行（转写地板 + 活动行 + 输入区）；低于该值时横幅必然消失。</text>
-    </g>
+  <g id="entry-modes">
+    <rect x="64" y="1190" width="28" height="24" rx="6" fill="#FDF0DE"/><text x="78" y="1207" text-anchor="middle" class="chip">03</text><text x="104" y="1208" class="sect">调用形态 · 同一引擎，不同入口</text>
+    <rect x="64" y="1232" width="280" height="116" rx="12" class="card"/><text x="84" y="1262" class="card-t">无参数</text><text x="84" y="1290" class="mono note">wunder-cli</text><text x="84" y="1320" class="tiny">当前目录打开 TUI</text>
+    <rect x="362" y="1232" width="280" height="116" rx="12" class="card"/><text x="382" y="1262" class="card-t">初始提示词</text><text x="382" y="1290" class="mono note">wunder-cli "整理记录"</text><text x="382" y="1320" class="tiny">位置参数带入首轮输入</text>
+    <rect x="660" y="1232" width="280" height="116" rx="12" class="card"/><text x="680" y="1262" class="card-t">会话与环境</text><text x="680" y="1290" class="mono note">--session / --cd / --model</text><text x="680" y="1320" class="tiny">明确指定线程、目录与模型</text>
+    <rect x="958" y="1232" width="280" height="116" rx="12" class="card"/><text x="978" y="1262" class="card-t">权限策略</text><text x="978" y="1290" class="mono note">--sandbox / --approval-mode</text><text x="978" y="1320" class="tiny">后端执行约束，不是视觉状态</text>
+    <rect x="1256" y="1232" width="280" height="116" rx="12" class="card"/><text x="1276" y="1262" class="card-t">非 TTY</text><text x="1276" y="1290" class="mono note">管道 / 脚本运行</text><text x="1276" y="1320" class="tiny">不启动交互终端界面</text>
   </g>
-
-  <!-- section: invocation -->
-  <g id="invocation">
-    <text x="80" y="1084" class="sect">调用形态</text>
-    <text x="180" y="1084" class="sect-en">ENTRY MODES</text>
-    <g font-size="12" fill="#3D3D3D">
-      <rect x="80" y="1100" width="272" height="40" rx="8" class="card"/>
-      <text x="96" y="1125" class="mono">无参数 → 当前目录开 TUI</text>
-      <rect x="366" y="1100" width="272" height="40" rx="8" class="card"/>
-      <text x="382" y="1125" class="mono">位置参数 → 携带初始提示词</text>
-      <rect x="652" y="1100" width="272" height="40" rx="8" class="card"/>
-      <text x="668" y="1125" class="mono">--session / --cd / --model</text>
-      <rect x="938" y="1100" width="272" height="40" rx="8" class="card"/>
-      <text x="954" y="1125" class="mono">--sandbox / --approval-mode</text>
-      <rect x="1224" y="1100" width="296" height="40" rx="8" class="card"/>
-      <text x="1240" y="1125" class="mono">非 TTY → 管道 / 脚本运行</text>
-    </g>
-  </g>
-
-  <!-- footer -->
-  <g id="footer">
-    <line x1="80" y1="1176" x2="1520" y2="1176" class="line"/>
-    <text x="80" y="1198" class="tiny">事实来源：crates/wunder-cli/tui/ui/layout.rs · tui/app.rs（banner / activity）· args.rs · empty_state_animation.rs。命名色按终端主题映射，稿中取一组合成示例值。</text>
-    <text x="1520" y="1198" text-anchor="end" class="tiny">SVG · 1600 PX WIDE · 2026-10-25</text>
-  </g>
+  <g id="footer"><line x1="64" y1="1380" x2="1536" y2="1380" stroke="#D8D5D0"/><text x="64" y="1410" class="tiny">事实来源：tui/ui/layout.rs · tui/ui/composer.rs · tui/app.rs · empty_state_animation.rs · welcome_logo_art.rs</text><text x="1536" y="1410" text-anchor="end" class="mono tiny">00 / 05 · 2026-10-25</text></g>
 </svg>

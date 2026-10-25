@@ -372,6 +372,10 @@ def render_page_html(site_meta: dict[str, Any], page: dict[str, Any], asset_vers
     site_name = html.escape(site_meta["name"], quote=False)
     logo_url = html.escape(site_meta["logo_url"], quote=True)
     page_json = inline_json(page_data)
+    art_assets = ""
+    if page["slug"].endswith("/art/index"):
+        art_assets = f"""  <link rel="stylesheet" href="/docs/art/assets/art-viewer.css?v={asset_version}">
+  <script src="/docs/art/assets/art-viewer.js?v={asset_version}"></script>"""
     return f"""<!doctype html>
 <html lang="{language}">
 <head>
@@ -380,6 +384,7 @@ def render_page_html(site_meta: dict[str, Any], page: dict[str, Any], asset_vers
   <title>{page_title}</title>
   <meta name="description" content="{description}">
   <link rel="stylesheet" href="/docs/site.css?v={asset_version}">
+{art_assets}
   <script type="module" src="/docs/site.js?v={asset_version}"></script>
 </head>
 <body>
@@ -495,15 +500,13 @@ def copy_docs_assets() -> None:
 
 
 def copy_design_assets() -> None:
-    """Ship the design sheets and the thumbnail index with the site.
+    """Publish both sheet sets, their shared gallery and the pan/zoom viewer.
 
-    Only the SVGs and their index are published. The 蛹 sources keep a readable
-    `assets/app-icon.png` reference; the published copies embed that icon as a
-    data URI because browsers block external resources in SVG loaded via
-    `<img>`. The 舵机 sheets have no external references and are published
-    under `art/servo/` to keep their names from colliding with the 蛹 sheets.
-    Native help keeps its own raster previews instead.
+    External app icons are embedded in the published SVGs because browsers do
+    not load nested resources from an SVG used as an image. The gallery itself
+    stays dependency-free and also works from file:// in the source directory.
     """
+    source_root = DESIGN_SOURCE_DIR.parent
     if not DESIGN_SOURCE_DIR.exists():
         raise FileNotFoundError(f"缺少美术设计稿目录: {DESIGN_SOURCE_DIR}")
     icon_path = DESIGN_SOURCE_DIR / "assets" / "app-icon.png"
@@ -512,19 +515,37 @@ def copy_design_assets() -> None:
     icon_uri = "data:image/png;base64," + base64.b64encode(icon_path.read_bytes()).decode("ascii")
     target_root = OUTPUT_DIR / DESIGN_TARGET_PATH
     target_root.mkdir(parents=True, exist_ok=True)
+
     for source_path in DESIGN_SOURCE_DIR.glob("*.svg"):
         content = read_text(source_path).replace('href="assets/app-icon.png"', f'href="{icon_uri}"')
         (target_root / source_path.name).write_text(content, encoding="utf-8", newline="\n")
-    index_path = DESIGN_SOURCE_DIR / "index.html"
-    if index_path.is_file():
-        shutil.copy2(index_path, target_root / index_path.name)
-    servo_source_dir = DESIGN_SOURCE_DIR.parent / "舵机"
+
+    servo_source_dir = source_root / "舵机"
     if servo_source_dir.is_dir():
         servo_target = target_root / "servo"
         servo_target.mkdir(parents=True, exist_ok=True)
         for source_path in servo_source_dir.glob("*.svg"):
             content = read_text(source_path).replace('href="assets/app-icon.png"', f'href="{icon_uri}"')
             (servo_target / source_path.name).write_text(content, encoding="utf-8", newline="\n")
+
+    gallery_assets = source_root / "assets"
+    if gallery_assets.is_dir():
+        shutil.copytree(gallery_assets, target_root / "assets", dirs_exist_ok=True)
+
+    index_path = source_root / "index.html"
+    if not index_path.is_file():
+        raise FileNotFoundError(f"缺少设计稿画廊: {index_path}")
+    gallery = read_text(index_path)
+    for source, target in (
+        ('data-pupa-base="蛹/"', 'data-pupa-base=""'),
+        ('data-servo-base="舵机/"', 'data-servo-base="servo/"'),
+        ('src="蛹/', 'src="'),
+        ('src="舵机/', 'src="servo/'),
+        ('href="蛹/', 'href="'),
+        ('href="舵机/', 'href="servo/'),
+    ):
+        gallery = gallery.replace(source, target)
+    (target_root / "index.html").write_text(gallery, encoding="utf-8", newline="\n")
 
 
 def build() -> None:
@@ -547,7 +568,12 @@ def build() -> None:
     copy_site_assets()
     copy_docs_assets()
     copy_design_assets()
-    asset_version = compute_asset_version(OUTPUT_DIR / "site.js", OUTPUT_DIR / "site.css")
+    asset_version = compute_asset_version(
+        OUTPUT_DIR / "site.js",
+        OUTPUT_DIR / "site.css",
+        OUTPUT_DIR / "art" / "assets" / "art-viewer.js",
+        OUTPUT_DIR / "art" / "assets" / "art-viewer.css",
+    )
 
     for page in pages.values():
         write_text(OUTPUT_DIR / page["output_path"], render_page_html(site_meta, page, asset_version))

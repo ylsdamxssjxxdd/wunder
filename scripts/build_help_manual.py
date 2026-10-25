@@ -68,17 +68,15 @@ ART_TOPICS = [
         "slug": "02-icons",
         "zh": {
             "title": "02 图标系统",
-            "keywords": ["美术", "图标", "蜂标", "蛹图标", "线性图标"],
-            "lead": "品牌图标、工具图标、状态图标和线性图标的重绘规则。应用图标是蛹；"
-                    "蜂标只保留为渠道与协作的辅助标识。",
-            "caption": "02 图标系统 · 品牌、工具、状态与线性图标",
+            "keywords": ["美术", "图标", "生产资产", "蛹图标", "状态图标"],
+            "lead": "30 个真实生产图标，按导航、会话、输入和状态分类；保留实心、线性与代码绘制状态符的差异。",
+            "caption": "02 图标系统 · 真实资产、尺寸、着色与状态",
         },
         "en": {
             "title": "02 Icons",
-            "keywords": ["art", "icons", "bee mark", "pupa icon", "line icons"],
-            "lead": "Rules for the brand mark, tool icons, state icons and line icons. The app icon is the pupa; "
-                    "the bee mark stays only as an auxiliary channel and collaboration identifier.",
-            "caption": "02 Icons · brand, tools, states and line icons",
+            "keywords": ["art", "icons", "production assets", "pupa icon", "status icons"],
+            "lead": "Thirty production icons grouped by purpose and state, preserving solid, line and code-drawn differences.",
+            "caption": "02 Icons · production assets, sizes, color and states",
         },
     },
     {

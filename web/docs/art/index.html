@@ -3,123 +3,145 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>蛹 · 桌面端 UI 设计稿</title>
+<title>wunder 美术设计稿 · 实机界面与状态规范</title>
+<link rel="stylesheet" href="assets/art-viewer.css">
 <style>
-  :root{
-    --paper:#f4f1ec; --card:#ffffff; --ink:#1f2329; --muted:#7c7a75; --line:#ded9d1;
-    --accent:#f58a24; --accent-deep:#e07a12; --soft:#fdf0de;
-  }
-  *{box-sizing:border-box}
-  html,body{margin:0;background:var(--paper);color:var(--ink);
-    font-family:"Microsoft YaHei UI","Microsoft YaHei","PingFang SC","Noto Sans SC",sans-serif}
-  a{color:inherit;text-decoration:none}
-  .wrap{max-width:1600px;margin:0 auto;padding:48px 40px 64px}
-  header{display:flex;justify-content:space-between;align-items:flex-start;gap:32px;border-bottom:1px solid #d8d5d0;padding-bottom:28px}
-  .kicker{font-size:11px;font-weight:600;letter-spacing:1.4px;color:var(--accent-deep)}
-  h1{font-size:34px;line-height:1.2;margin:10px 0 10px;letter-spacing:-.5px}
-  .sub{font-size:14px;line-height:1.7;color:var(--muted);max-width:880px}
-  .meta{font-family:Consolas,monospace;font-size:11px;color:#8a8f99;text-align:right;line-height:1.8;white-space:nowrap}
-  .chips{display:flex;gap:8px;flex-wrap:wrap;margin-top:18px}
-  .chip{font-size:11px;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:#fff;color:#3d3d3d}
-  .chip b{color:var(--accent-deep)}
-  .hero{margin:28px 0 42px;display:block;border:1px solid var(--line);background:#fff;border-radius:14px;overflow:hidden;
-    box-shadow:0 18px 40px rgba(43,28,11,.08)}
-  .hero img{display:block;width:100%;height:auto}
-  .hero .cap{display:flex;justify-content:space-between;gap:20px;padding:14px 18px;border-top:1px solid #e8e6e3;font-size:12px;color:var(--muted)}
-  .hero .cap b{color:var(--ink);font-size:13px}
-  .grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:20px}
-  .tile{border:1px solid var(--line);background:#fff;border-radius:12px;overflow:hidden;display:flex;flex-direction:column;
-    transition:transform .15s ease-out,box-shadow .15s ease-out,border-color .15s ease-out}
-  .tile:hover{transform:translateY(-2px);border-color:#d0c9bd;box-shadow:0 14px 28px rgba(43,28,11,.09)}
-  .thumb{height:310px;background:#faf8f4;border-bottom:1px solid #eeeae5;display:flex;align-items:center;justify-content:center;overflow:hidden}
-  .thumb img{width:100%;height:100%;object-fit:contain;object-position:top center;display:block}
-  .tile .body{padding:14px 16px 16px;display:flex;flex-direction:column;gap:6px;flex:1}
-  .num{font-family:Consolas,monospace;font-size:10px;color:var(--accent-deep);letter-spacing:1px}
-  .tile h2{font-size:15px;margin:0;letter-spacing:-.2px}
-  .tile p{font-size:12px;line-height:1.65;color:var(--muted);margin:0}
-  .tile .go{margin-top:auto;padding-top:10px;font-family:Consolas,monospace;font-size:10px;color:#9a958d}
-  .tile:hover .go{color:var(--accent-deep)}
-  footer{margin-top:36px;border-top:1px solid #d8d5d0;padding-top:18px;display:flex;justify-content:space-between;gap:24px;
-    font-size:11px;line-height:1.7;color:#8a8f99}
-  code{font-family:Consolas,monospace;font-size:11px;background:#fff;border:1px solid #e8e6e3;border-radius:4px;padding:1px 5px}
-  @media (max-width:1200px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
-  @media (max-width:760px){.wrap{padding:28px 18px 48px}header{flex-direction:column}h1{font-size:28px}.meta{text-align:left}.grid{grid-template-columns:1fr}.thumb{height:240px}}
-  @media print{.wrap{max-width:none;padding:0}.tile{break-inside:avoid}.hero{box-shadow:none}}
+  :root{--paper:#f5f3ef;--card:#fff;--ink:#1f2329;--secondary:#3d3d3d;--muted:#747a83;--line:#ded9d1;--accent:#f58a24;--deep:#d87616;--soft:#fdf0de}
+  *{box-sizing:border-box}html{background:var(--paper);scroll-behavior:smooth}body{margin:0;color:var(--ink);font-family:"Microsoft YaHei UI","Microsoft YaHei","PingFang SC","Noto Sans SC",sans-serif}a{color:inherit;text-decoration:none}button{font:inherit}.wrap{max-width:1560px;margin:0 auto;padding:42px 36px 58px}.masthead{display:flex;align-items:flex-start;justify-content:space-between;gap:28px;padding-bottom:26px;border-bottom:1px solid var(--line)}
+  .kicker{font-size:11px;font-weight:700;letter-spacing:1.5px;color:var(--deep)}h1{margin:10px 0 12px;font-size:32px;line-height:1.25;letter-spacing:-.5px}.intro{max-width:900px;margin:0;color:var(--muted);font-size:14px;line-height:1.8}.meta{text-align:right;color:var(--muted);font:11px/1.9 Consolas,monospace;white-space:nowrap}.facts{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px}.fact{padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:#fff;color:var(--secondary);font-size:11px}.fact b{color:var(--deep)}
+  .hero{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(280px,.65fr);gap:22px;margin:26px 0 34px}.hero-preview{position:relative;overflow:hidden;border:1px solid var(--line);border-radius:14px;background:#fff;box-shadow:0 12px 32px rgba(43,28,11,.07)}.hero-preview img{display:block;width:100%;height:310px;object-fit:cover;object-position:top center}.hero-open{position:absolute;right:16px;bottom:16px;min-height:34px;padding:7px 14px;border:0;border-radius:8px;background:var(--accent);color:#fff;font-size:12px;font-weight:600;cursor:pointer;box-shadow:0 4px 14px rgba(80,45,8,.18)}.hero-open:hover{background:var(--deep)}.hero-open:focus-visible,.card-open:focus-visible,.source-link:focus-visible,.text-link:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+  .guide{display:flex;flex-direction:column;justify-content:center;padding:24px 26px;border:1px solid var(--line);border-radius:14px;background:#fff}.guide h2{margin:0 0 12px;font-size:18px}.guide p{margin:0 0 14px;color:var(--muted);font-size:12px;line-height:1.8}.guide ol{margin:0;padding-left:20px;color:var(--secondary);font-size:12px;line-height:1.95}.guide .note{margin-top:16px;padding-top:14px;border-top:1px solid #ebe7e1;font-size:11px}.text-link{display:inline-flex;align-items:center;min-height:30px;margin-top:16px;color:var(--deep);font-size:12px;font-weight:600}
+  .form-section{margin-top:34px;scroll-margin-top:20px}.form-head{display:flex;align-items:baseline;justify-content:space-between;gap:20px;padding-bottom:14px;border-bottom:2px solid var(--ink)}.form-head h2{margin:0;font-size:23px;letter-spacing:-.3px}.form-head p{margin:0;color:var(--muted);font-size:12px}.group{margin-top:24px}.group-head{display:flex;align-items:baseline;gap:12px;margin-bottom:12px}.group-index{padding:3px 7px;border-radius:5px;background:var(--soft);color:var(--deep);font:700 10px Consolas,monospace}.group-head h3{margin:0;font-size:16px}.group-head p{margin:0;color:var(--muted);font-size:11px}.cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}.sheet-card{display:flex;min-width:0;flex-direction:column;overflow:hidden;border:1px solid var(--line);border-radius:12px;background:#fff}.card-open{display:block;width:100%;padding:0;border:0;background:transparent;color:inherit;text-align:left;cursor:pointer;flex:1}.thumb{display:block;height:190px;overflow:hidden;border-bottom:1px solid #ebe7e1;background:#edeae5}.thumb img{display:block;width:100%;height:100%;object-fit:cover;object-position:top center;transition:transform .16s ease}.card-open:hover .thumb img{transform:scale(1.015)}.card-body{padding:14px 16px 12px}.sheet-no{color:var(--deep);font:700 10px Consolas,monospace;letter-spacing:.8px}.card-body h4{margin:6px 0 7px;font-size:16px}.card-body p{min-height:40px;margin:0;color:var(--muted);font-size:12px;line-height:1.7}.states{display:block;margin-top:10px;color:var(--secondary);font-size:11px;line-height:1.65}.card-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 16px;border-top:1px solid #efebe6}.open-label{color:var(--deep);font-size:11px;font-weight:600}.source-link{color:var(--muted);font:10px Consolas,monospace}.source-link:hover{color:var(--deep)}
+  .usage{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-top:34px;padding:20px;border:1px solid var(--line);border-radius:12px;background:#fff}.usage h3{grid-column:1/-1;margin:0 0 2px;font-size:15px}.usage div{padding-right:12px;border-right:1px solid #ebe7e1}.usage div:last-child{border-right:0}.usage b{display:block;margin-bottom:5px;font-size:12px}.usage span{color:var(--muted);font-size:11px;line-height:1.7}.footer{display:flex;justify-content:space-between;gap:20px;margin-top:28px;padding-top:18px;border-top:1px solid var(--line);color:var(--muted);font-size:11px;line-height:1.8}.footer code{font-family:Consolas,monospace;color:var(--secondary)}noscript section{margin-top:28px;padding:22px;border:1px solid var(--line);border-radius:12px;background:#fff}noscript li{margin:8px 0;font-size:13px}noscript a{color:var(--deep)}
+  @media(max-width:1180px){.cards{grid-template-columns:repeat(2,minmax(0,1fr))}.hero{grid-template-columns:1fr}.guide{display:grid;grid-template-columns:1fr 1fr;gap:12px 24px}.guide .note{grid-column:1/-1}.usage{grid-template-columns:repeat(2,minmax(0,1fr))}.usage div:nth-child(3){border-right:0}}
+  @media(max-width:700px){.wrap{padding:26px 16px 40px}.masthead{flex-direction:column}.meta{text-align:left}.cards{grid-template-columns:1fr}.thumb{height:210px}.form-head{flex-direction:column;gap:6px}.guide{display:block}.usage{grid-template-columns:1fr}.usage div{padding:0 0 10px;border-right:0;border-bottom:1px solid #ebe7e1}.usage div:last-child{border-bottom:0}.footer{flex-direction:column}h1{font-size:27px}}
+  @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}.thumb img{transition:none}}
+  @media print{.hero-open,.usage,.guide,.card-footer{display:none}.hero-preview{box-shadow:none}.cards{grid-template-columns:repeat(2,minmax(0,1fr))}.thumb{height:auto}.thumb img{height:auto}.wrap{max-width:none;padding:0}}
 </style>
 </head>
-<body>
+<body data-pupa-base="" data-servo-base="servo/">
 <div class="wrap">
-  <header>
+  <header class="masthead">
     <div>
-      <div class="kicker">WUNDER / 蛹 · DESKTOP UI SPEC</div>
-      <h1>桌面端 UI 设计稿</h1>
-      <p class="sub">以 <b>frontend-slint</b> 当前实现为事实基线的完整视觉规范：基础变量、图标、外壳、时间线、过程与工具、计划与问询、输入区、设置与弹窗、交互状态。适合后续改稿、重构对照与实现验收。</p>
-      <div class="chips">
-        <span class="chip"><b>10</b> 张分页</span>
-        <span class="chip">基准窗口 <b>1440×900</b></span>
-        <span class="chip">总览对照 <b>1462×866</b></span>
-        <span class="chip">最小窗口 <b>1024×700</b></span>
-        <span class="chip">强调色 <b>#F58A24</b></span>
-        <span class="chip">更新日期 <b>2026-10-25</b></span>
-      </div>
+      <div class="kicker">WUNDER / INTERFACE BASELINE</div>
+      <h1>wunder 美术设计稿</h1>
+      <p class="intro">以当前实现为事实基线的界面与状态规范。先读真实界面，再看功能结构和控件状态；蛹的桌面逻辑像素与舵机的终端行列分别表达，不混用尺度。</p>
+      <div class="facts"><span class="fact"><b>16</b> 张分页</span><span class="fact">蛹 <b>10</b> 张</span><span class="fact">舵机 <b>6</b> 张</span><span class="fact">实机结构 / 控件状态 / 任务状态</span><span class="fact">更新 <b>2026-10-25</b></span></div>
     </div>
-    <div class="meta">
-      WUNDER DESKTOP<br>
-      SLINT / RUST<br>
-      SHEET 00–09 / 09<br>
-      ACTUAL SIZE · LOGICAL PX
-    </div>
+    <div class="meta">CURRENT IMPLEMENTATION<br>SVG · 1600 PX WIDE<br>DESKTOP + TERMINAL<br>OFFLINE READY</div>
   </header>
 
-  <a class="hero" href="00-整体总览.svg" target="_blank" rel="noopener">
-    <img src="00-整体总览.svg" alt="整体界面总览">
-    <div class="cap"><span><b>00 整体总览</b> · 默认空闲态与结构索引</span><span>点击查看原始 SVG</span></div>
-  </a>
+  <section class="hero" aria-label="总览预览与使用说明">
+    <div class="hero-preview">
+      <img src="00-整体总览.svg" alt="蛹桌面端整体总览预览">
+      <button class="hero-open" type="button" data-open-index="0" aria-haspopup="dialog">打开总览并拖动查看</button>
+    </div>
+    <aside class="guide">
+      <h2>不用滚动条，直接拖动画布</h2>
+      <p>点击任一设计稿进入大图浏览器。画布可以超出视口，但不会无限拖丢。</p>
+      <ol><li>按住鼠标左键拖动平移，触屏单指同样可用。</li><li>适宽、适窗、100% 随时切换；放大后查看控件细节。</li><li>方向键移动，+ / − 缩放，0 重置，Esc 关闭。</li></ol>
+      <p class="note">文档站内嵌的大图也支持拖动；普通滚轮继续滚动文档，Ctrl/⌘ + 滚轮才缩放图片。</p>
+      <a class="text-link" href="README.md">阅读维护与事实来源说明 →</a>
+    </aside>
+  </section>
 
-  <div class="grid">
-    <a class="tile" href="01-基础规范.svg" target="_blank" rel="noopener">
-      <div class="thumb"><img src="01-基础规范.svg" alt="基础规范"></div>
-      <div class="body"><div class="num">SHEET 01</div><h2>基础规范</h2><p>颜色、强调色族、字阶、间距、圆角、布局基线与语义色。</p><div class="go">COLOR · TYPE · SPACING · RADIUS</div></div>
-    </a>
-    <a class="tile" href="02-图标系统.svg" target="_blank" rel="noopener">
-      <div class="thumb"><img src="02-图标系统.svg" alt="图标系统"></div>
-      <div class="body"><div class="num">SHEET 02</div><h2>图标系统</h2><p>48 个统一化图标，24×24 画布、1.7px 描边、currentColor 着色。</p><div class="go">48 ICONS · 6 GROUPS</div></div>
-    </a>
-    <a class="tile" href="03-外壳与侧栏.svg" target="_blank" rel="noopener">
-      <div class="thumb"><img src="03-外壳与侧栏.svg" alt="外壳与侧栏"></div>
-      <div class="body"><div class="num">SHEET 03</div><h2>外壳与侧栏</h2><p>28px 标题栏、窗口按钮状态、工作区/线程行、工作目录与底栏。</p><div class="go">SHELL · TITLEBAR · SIDEBAR</div></div>
-    </a>
-    <a class="tile" href="04-会话时间线.svg" target="_blank" rel="noopener">
-      <div class="thumb"><img src="04-会话时间线.svg" alt="会话时间线"></div>
-      <div class="body"><div class="num">SHEET 04</div><h2>会话时间线</h2><p>阅读列、欢迎语、用户气泡、过程折叠、输出卡、Markdown 降级、回合页脚与空态。</p><div class="go">TRANSCRIPT · MARKDOWN · FOOTER</div></div>
-    </a>
-    <a class="tile" href="05-过程与工具.svg" target="_blank" rel="noopener">
-      <div class="thumb"><img src="05-过程与工具.svg" alt="过程与工具"></div>
-      <div class="body"><div class="num">SHEET 05</div><h2>过程与工具</h2><p>过程条与思考条目、工具行状态矩阵、工具组、子智能体卡、差异卡与详情。</p><div class="go">PROCESS · TOOL · SUBAGENT · PATCH</div></div>
-    </a>
-    <a class="tile" href="06-计划与问询.svg" target="_blank" rel="noopener">
-      <div class="thumb"><img src="06-计划与问询.svg" alt="计划与问询"></div>
-      <div class="body"><div class="num">SHEET 06</div><h2>计划与问询</h2><p>计划胶囊与展开卡、目标横幅四种状态、问询面板的选项/其他/无偏好与分页。</p><div class="go">PLAN · GOAL · INQUIRY</div></div>
-    </a>
-    <a class="tile" href="07-输入区.svg" target="_blank" rel="noopener">
-      <div class="thumb"><img src="07-输入区.svg" alt="输入区"></div>
-      <div class="body"><div class="num">SHEET 07</div><h2>输入区</h2><p>输入卡构图与状态、发送/停止、附件、录音、队列、加号菜单与级联、模型选择。</p><div class="go">COMPOSER · QUEUE · MENUS · MODEL</div></div>
-    </a>
-    <a class="tile" href="08-设置与弹窗.svg" target="_blank" rel="noopener">
-      <div class="thumb"><img src="08-设置与弹窗.svg" alt="设置与弹窗"></div>
-      <div class="body"><div class="num">SHEET 08</div><h2>设置与弹窗</h2><p>设置壳与 11 个分类、控制件规格、确认/信息/模态/Toast/菜单/Tooltip。</p><div class="go">SETTINGS · CONTROLS · DIALOGS</div></div>
-    </a>
-    <a class="tile" href="09-交互状态与动效.svg" target="_blank" rel="noopener">
-      <div class="thumb"><img src="09-交互状态与动效.svg" alt="交互状态与动效"></div>
-      <div class="body"><div class="num">SHEET 09</div><h2>交互状态与动效</h2><p>按钮/行/输入状态矩阵、动效时长、键盘、无障碍、响应式断点与反馈层级。</p><div class="go">STATES · MOTION · A11Y · RESPONSIVE</div></div>
-    </a>
-  </div>
+  <main id="library" aria-live="off"></main>
 
-  <footer>
-    <div>事实来源：<code>frontend-slint/ui/design_tokens.slint</code>、<code>theme.slint</code>、<code>main.slint</code>、<code>sidebar.slint</code>、<code>timeline.slint</code>、<code>composer.slint</code>、<code>tool_process.slint</code>、<code>patch_diff_card.slint</code>、<code>settings_page.slint</code>、<code>i18n.slint</code>。<br>
-    图标为统一化重绘，生产资产仍在 <code>frontend-slint/assets/icons</code>；本稿不替代代码中的 token 定义。</div>
-    <div style="text-align:right">SVG · 1600 PX WIDE<br>2026-10-25</div>
-  </footer>
+  <section class="usage" aria-label="查看器快捷键">
+    <h3>大图浏览操作</h3>
+    <div><b>拖动 / 单指拖动</b><span>平移画布；指针捕获让拖出图片后仍能完成操作。</span></div>
+    <div><b>滚轮 / Ctrl + 滚轮</b><span>画廊滚轮缩放；文档内嵌图需 Ctrl/⌘，避免误阻页面滚动。</span></div>
+    <div><b>适窗 / 适宽 / 100%</b><span>按任务切换整体结构、横向内容与真实像素。</span></div>
+    <div><b>PageUp / PageDown</b><span>画廊内前后切换；工具栏始终保留原始 SVG 入口。</span></div>
+  </section>
+
+  <noscript>
+    <section><h2>直接打开设计稿</h2><p>当前未启用 JavaScript，可使用原始 SVG 链接：</p><ul>
+      <li><a href="00-整体总览.svg">蛹 00 整体总览</a> · <a href="01-基础规范.svg">01 基础规范</a> · <a href="02-图标系统.svg">02 图标系统</a> · <a href="03-外壳与侧栏.svg">03 外壳与侧栏</a> · <a href="04-会话时间线.svg">04 会话时间线</a></li>
+      <li><a href="05-过程与工具.svg">蛹 05 过程与工具</a> · <a href="06-计划与问询.svg">06 计划与问询</a> · <a href="07-输入区.svg">07 输入区</a> · <a href="08-设置与弹窗.svg">08 设置与弹窗</a> · <a href="09-交互状态与动效.svg">09 交互状态与动效</a></li>
+      <li><a href="servo/00-整体总览.svg">舵机 00 整体总览</a> · <a href="servo/01-基础规范.svg">01 基础规范</a> · <a href="servo/02-布局与底栏.svg">02 布局与底栏</a> · <a href="servo/03-会话时间线.svg">03 会话时间线</a> · <a href="servo/04-工具与计划.svg">04 工具与计划</a> · <a href="servo/05-输入与弹层.svg">05 输入与弹层</a></li>
+    </ul></section>
+  </noscript>
+
+  <footer class="footer"><div>事实来源：<code>frontend-slint/ui</code> 与 <code>crates/wunder-cli/tui</code>。建议项不与实机状态混画。</div><div>离线可用 · 无第三方依赖 · <a href="README.md">维护说明</a></div></footer>
 </div>
+<script src="assets/art-viewer.js"></script>
+<script>
+(function () {
+  const groups = [
+    {form:"pupa",formTitle:"蛹 · 本地 AI 工作台",formNote:"Slint / Rust · 桌面逻辑像素",key:"foundations",title:"总览与基础",note:"真实窗口、设计 token 与生产图标资产"},
+    {form:"pupa",formTitle:"蛹 · 本地 AI 工作台",formNote:"Slint / Rust · 桌面逻辑像素",key:"conversation",title:"会话与执行",note:"外壳、时间线、工具过程、计划与问询"},
+    {form:"pupa",formTitle:"蛹 · 本地 AI 工作台",formNote:"Slint / Rust · 桌面逻辑像素",key:"system",title:"输入与系统反馈",note:"输入区、设置、弹窗与真实交互状态"},
+    {form:"servo",formTitle:"舵机 · 手工本地操作入口",formNote:"Ratatui · 终端行列与字重修饰",key:"terminal-base",title:"终端布局与基础",note:"启动帧、五段布局、颜色与底栏"},
+    {form:"servo",formTitle:"舵机 · 手工本地操作入口",formNote:"Ratatui · 终端行列与字重修饰",key:"terminal-system",title:"会话与系统",note:"转写、工具计划、输入与各类弹层"}
+  ];
+  const sheets = [
+    ["pupa","foundations","00-整体总览.svg","整体总览","真实窗口、功能分区与状态辨析","新线程 / 完成回合 / 输入空闲"],
+    ["pupa","foundations","01-基础规范.svg","基础规范","中性色、强调色、语义色与窗口度量","色彩 / 字阶 / 间距 / 圆角 / 布局"],
+    ["pupa","foundations","02-图标系统.svg","图标系统","30 个真实生产图标，按功能与状态分类","实心 / 线性 / 着色 / 光学尺寸"],
+    ["pupa","conversation","03-外壳与侧栏.svg","外壳与侧栏","窗口控制、工作区、线程、目录与分隔柄","行交互态 / 生命周期 / 多选 / 拖拽"],
+    ["pupa","conversation","04-会话时间线.svg","会话时间线","完整回合、Markdown、页脚与滚动跟随","空态 / 加载 / 状态胶囊 / 失败"],
+    ["pupa","conversation","05-过程与工具.svg","过程与工具","过程折叠、工具行、详情、补丁与子智能体","运行 / 完成 / 失败 / 展开"],
+    ["pupa","conversation","06-计划与问询.svg","计划与问询","计划胶囊、目标横幅与问询面板","步骤 / 目标 / 选项 / 其他与无偏好"],
+    ["pupa","system","07-输入区.svg","输入区","编辑卡、动作行、附件、队列与模型菜单","发送 / 停止 / 忙碌 / 录音 / 转写"],
+    ["pupa","system","08-设置与弹窗.svg","设置与弹窗","真实设置壳、主题卡、表单与反馈层级","选择 / 聚焦 / 错误 / 停用 / busy"],
+    ["pupa","system","09-交互状态与动效.svg","交互状态与动效","真实控件矩阵、键盘、动效与无障碍","Action / FormField / ThemeCheck / Switch"],
+    ["servo","terminal-base","00-整体总览.svg","整体总览","启动实帧、欢迎像素画与五段功能栈","新线程 / 横幅让位 / 调用形态"],
+    ["servo","terminal-base","01-基础规范.svg","基础规范","命名色、Rgb 面板、修饰与显示列","NO_COLOR / 文本宽度 / 终端能力"],
+    ["servo","terminal-base","02-布局与底栏.svg","布局与底栏","五段布局、活动行、输入行预算与收缩","通知 / 运行 / 审批 / 小宽度"],
+    ["servo","terminal-system","03-会话时间线.svg","会话时间线","条目、Markdown、差异、全展开与选区","流式 / 搜索 / 复制 / NO_COLOR"],
+    ["servo","terminal-system","04-工具与计划.svg","工具与计划","工具补丁、计划卡、轨迹页签与状态符","进行中 / 待执行 / 完成 / 待确认"],
+    ["servo","terminal-system","05-输入与弹层.svg","输入与弹层","输入区、弹层带、居中选择与任务中心","聚焦 / 只读 / 选择 / 分组 / 搜索"]
+  ];
+  const pupaBase = document.body.dataset.pupaBase || "";
+  const servoBase = document.body.dataset.servoBase || "";
+  const items = sheets.map((sheet, index) => {
+    const [form, group, file, title, summary, states] = sheet;
+    const number = form === "pupa" ? index : index - 10;
+    return {index,number,form,group,file,title:`${String(number).padStart(2,"0")} ${title}`,summary,states,src:(form === "pupa" ? pupaBase : servoBase) + file};
+  });
+  const library = document.getElementById("library");
+  const escapeHtml = (value) => String(value).replace(/[&<>"']/g,(char)=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[char]);
+  groups.forEach((group, groupIndex) => {
+    const section = document.createElement("section");
+    section.className = "form-section";
+    section.id = `${group.form}-${group.key}`;
+    if (groupIndex === 0 || groups[groupIndex - 1].form !== group.form) {
+      section.innerHTML = `<div class="form-head"><h2>${escapeHtml(group.formTitle)}</h2><p>${escapeHtml(group.formNote)}</p></div>`;
+    } else {
+      section.innerHTML = `<div class="form-head" style="border:0;padding:0"><h2 style="display:none">${escapeHtml(group.formTitle)}</h2></div>`;
+    }
+    const head = document.createElement("div");
+    head.className = "group-head";
+    head.innerHTML = `<span class="group-index">${String(groupIndex + 1).padStart(2,"0")}</span><h3>${escapeHtml(group.title)}</h3><p>${escapeHtml(group.note)}</p>`;
+    section.appendChild(head);
+    const cards = document.createElement("div");
+    cards.className = "cards";
+    items.filter(item => item.form === group.form && item.group === group.key).forEach(item => {
+      const article = document.createElement("article");
+      article.className = "sheet-card";
+      article.innerHTML = `
+        <button class="card-open" type="button" data-open-index="${item.index}" aria-label="打开 ${escapeHtml(item.title)}，支持拖动查看" aria-haspopup="dialog">
+          <span class="thumb"><img src="${escapeHtml(item.src)}" alt="" loading="${item.index < 3 ? "eager" : "lazy"}"></span>
+          <span class="card-body"><span class="sheet-no">${escapeHtml(item.form.toUpperCase())} / ${String(item.number).padStart(2,"0")}</span><h4>${escapeHtml(item.title.slice(3))}</h4><p>${escapeHtml(item.summary)}</p><span class="states">${escapeHtml(item.states)}</span></span>
+        </button>
+        <div class="card-footer"><span class="open-label">拖动查看大图 →</span><a class="source-link" href="${escapeHtml(item.src)}" target="_blank" rel="noopener" aria-label="打开 ${escapeHtml(item.title)} 原始 SVG">原始 SVG</a></div>`;
+      cards.appendChild(article);
+    });
+    section.appendChild(cards);
+    library.appendChild(section);
+  });
+  document.addEventListener("click", event => {
+    const trigger = event.target instanceof Element ? event.target.closest("[data-open-index]") : null;
+    if (!trigger) return;
+    const index = Number(trigger.dataset.openIndex);
+    if (window.WunderArtViewer && items[index]) {
+      window.WunderArtViewer.openGallery({items,index});
+    } else if (items[index]) {
+      window.open(items[index].src,"_blank","noopener");
+    }
+  });
+})();
+</script>
 </body>
 </html>

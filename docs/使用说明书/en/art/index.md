@@ -1,144 +1,146 @@
 ---
 title: Art Sheets
-summary: Ten interface design sheets for the Pupa desktop app (overview, foundations, icons, shell, timeline, process and tools, plan and inquiry, composer, settings and dialogs, states and motion), plus six for the Helm terminal app (overview, foundations, layout and footer, timeline, tools and plan, input and popups). Each sheet is annotated against the current implementation and can be checked directly.
+summary: Ten implementation-based interface sheets for the Pupa desktop app and six for the Helm terminal app, organized around real UI, functional structure, control states and constraints, with drag-to-pan and zoom in the browser.
 updated_at: 2026-10-25
 ---
 
 # Art Sheets
 
-These sheets are the interface baseline for the two local forms: the Pupa desktop app first as the main line, then the Helm terminal app. Every sheet carries its own sizes, colors, states and rules; when the code and a sheet disagree, check the running app first and then decide which side to change.
+These sheets focus on Pupa, the local AI workbench, while also covering Helm, the manual terminal entry. Code and actual rendering are the sources of truth; SVG is used for design changes, refactoring and acceptance checks. When a sheet and the implementation disagree, check the running UI instead of treating the sketch as reality.
 
-- Sources live in `docs/wunder美术设计稿`, split by form into the `蛹/` and `舵机/` folders; every sheet is a standalone SVG, and the 蛹 sheets embed the app icon so they still render when copied elsewhere
-- The page shows the SVGs directly and stays sharp at any zoom; the ten 蛹 sheets also have a [design index](/docs/art/) that browses them as thumbnails
-- The Pupa help manual embeds 1200px raster previews of the 蛹 sheets, so the Slint renderer needs no SVG pipeline; the 舵机 sheets target the terminal implementation and stay out of the in-app manual
+- Open the [unified art gallery](/docs/art/) for all 16 sheets. Sources live in `docs/wunder美术设计稿`, split into `蛹/` and `舵机/`.
+- Drag with the primary mouse button or one finger. Fit width, fit window, 100%, zoom and previous/next navigation are available. Arrow keys pan, `+/-` zoom, `0` resets and Esc closes.
+- Large images embedded on this page also pan directly. The normal wheel scrolls the document; Ctrl/Command + wheel zooms the image. Raw SVG links remain available without JavaScript.
+- Every sheet follows “real UI → functional structure → state presentation → dimensions and behavior”. Control interaction states and task lifecycle states are separate, and proposals are never drawn as current behavior.
+- The Pupa help manual embeds raster previews so no SVG renderer is needed. Helm sheets are not included in that manual.
 
 ## 00 Overview
 
-Whole-window baseline: 1462×866 logical pixels, a 240 sidebar, a 1000 reading column and a 154-high composer band. The sidebar, timeline and composer share one sheet so the layout can be compared at a glance.
+The whole-window baseline is 1462×866 logical pixels, with a 240 sidebar, a 1000 reading column and a 154 composer band. It separates navigation, conversation, execution, input and system feedback, and distinguishes a fresh thread from completed history with an idle composer.
 
 ![Overview design sheet](/docs/art/00-整体总览.svg)
 
-*00 Overview · window 1462×866 (reference screenshot 2558×1515 at 175% DPI)*
+*00 Overview · real window, functional zones and state distinctions*
 
 ## 01 Foundations
 
-Neutral, accent and semantic colors, the type scale, spacing, radii and the window layout baseline. The tokens map one-to-one to `frontend-slint/ui/design_tokens.slint`.
+Neutral, accent and semantic colors, type, spacing, radii and window metrics. Tokens map to `frontend-slint/ui/design_tokens.slint`; document annotations and product UI use independent scales.
 
 ![Foundations design sheet](/docs/art/01-基础规范.svg)
 
-*01 Foundations · color, type, spacing, radii*
+*01 Foundations · color, type, spacing, radii and metrics*
 
 ## 02 Icons
 
-Rules for redrawing the brand mark, tool icons, state icons and line icons. The app icon is the pupa; the bee mark stays only as an auxiliary channel and collaboration identifier.
+Thirty production icons grouped by navigation, conversation actions, input and status. Solid Font Awesome assets, repository line SVGs and code-drawn status nodes remain distinct; this is not a fictional unified line-icon redraw.
 
 ![Icons design sheet](/docs/art/02-图标系统.svg)
 
-*02 Icons · brand, tools, states and line icons*
+*02 Icons · production assets, sizes, color and states*
 
 ## 03 Shell and Sidebar
 
-Title bar, sidebar width, groups, workspace rows, thread rows, the working-directory toolbar, and the splitter in its rest, hover and drag states. The sidebar splitter shows no rail at rest and a 2×32 pill on hover.
+Title bar, sidebar, workspace/thread rows, working directory and splitter. Thread hover actions are rename, trajectory and archive, in that order. Row interactions, multi-select and task lifecycle appear in separate matrices.
 
 ![Shell and sidebar design sheet](/docs/art/03-外壳与侧栏.svg)
 
-*03 Shell and sidebar · title bar, sidebar, splitter*
+*03 Shell and sidebar · window, navigation, row states and lifecycle*
 
 ## 04 Timeline
 
-Reading column and scrolling, user messages, turn footers, the run-state capsule, Markdown fallback styles and the empty state. Streaming updates only the active tail block; finished blocks stay stable.
+One complete turn shows user input, process, assistant answer and footer in reading order. Markdown, status capsules, empty/loading/error states and follow scrolling are explained separately.
 
 ![Timeline design sheet](/docs/art/04-会话时间线.svg)
 
-*04 Timeline · messages, footers, state capsule*
+*04 Timeline · complete turns, content blocks, states and scrolling*
 
 ## 05 Process and Tools
 
-Process bar, thinking entries, tool rows, the expanded output panel, tool groups and subagent cards. The sheet covers icon sizes, fold budgets and indentation for every state.
+Process bars, tool rows, expanded output, tool groups, subagents and patch cards. Running/completed/failed execution states are separate from expanded/collapsed view state, using real 12px nodes and a 26px row rhythm.
 
 ![Process and tools design sheet](/docs/art/05-过程与工具.svg)
 
-*05 Process and tools · process bar, tool rows, subagents*
+*05 Process and tools · execution state, view state and details*
 
 ## 06 Plan and Inquiry
 
-Plan capsule, expanded card, goal banner and inquiry panel. Option rows include "no preference" and "other", and the inquiry panel has no separate submit button.
+Plan pill, explanation and steps, goal banner and inquiry panel. The expanded plan has no extra count header. Goal actions are edit, pause/resume and clear. Inquiry answers are submitted through Composer.
 
 ![Plan and inquiry design sheet](/docs/art/06-计划与问询.svg)
 
-*06 Plan and inquiry · plan card, goal banner, inquiry panel*
+*06 Plan and inquiry · steps, goals, options and quick answers*
 
 ## 07 Composer
 
-The 972×100 input card, the 30-high footer, attachment rows, recording, generating and disabled-send states, plus queue and model menu specs. The stop square is 10.5 and the send arrow is 16.
+A 972×100 editor card and a 30-high action row; attachments, branches and queued turns add height as needed. Send/stop is derived from draft, attachments, inquiry readiness, busy, generating and stopping, with recording, transcription, queue and model menus shown separately.
 
 ![Composer design sheet](/docs/art/07-输入区.svg)
 
-*07 Composer · input card, footer, stop and queue*
+*07 Composer · editor, actions, send/stop and popovers*
 
 ## 08 Settings and Dialogs
 
-Settings row anatomy, input and select controls, buttons, validation and hints, and the density and layering of dialogs.
+A real 1080×720 settings window with a 44 header, 260 navigation and 60 navigation items. General settings contain send key, language, four theme previews and font size. Controls, validation, Confirm/Modal/Info and Toast are grouped by purpose.
 
 ![Settings and dialogs design sheet](/docs/art/08-设置与弹窗.svg)
 
-*08 Settings and dialogs · rows, controls, validation*
+*08 Settings and dialogs · actual settings, controls and feedback*
 
 ## 09 States and Motion
 
-Row and input states, the motion timeline, performance limits, key bindings, accessibility feedback and breakpoints. This sheet also records which actions must not block during long lists and streaming output.
+State matrices come from real `Action`, `FormField`, `ThemeCheck` and system `Switch` behavior. Invented pressed colors, universal loading states and focus rings are not used to fill cells. Motion, keyboard, accessibility, responsive behavior and performance limits follow.
 
 ![States and motion design sheet](/docs/art/09-交互状态与动效.svg)
 
-*09 States and motion · states, timing, keys*
+*09 States and motion · actual controls, keys, feedback and degradation*
 
 ## Helm 00 Overview
 
-The full terminal frame and its five-band vertical stack: transcript, popup band, welcome banner band, activity line and composer, plus the entry modes. The Helm has no window pixels — every layout is budgeted in terminal rows and columns, and the 5-row composer is never squeezed.
+The startup frame and five-band stack: transcript, popup, welcome banner, activity and composer. Startup text belongs to the transcript. The welcome pixels come from current generated data rather than a placeholder mark.
 
 ![Helm overview design sheet](/docs/art/servo/00-整体总览.svg)
 
-*Helm 00 · full frame (100×30 example) and layout stack*
+*Helm 00 · startup frame, welcome pixels and layout contract*
 
 ## Helm 01 Foundations
 
-The semantic system of named colors plus weight modifiers, truecolor surfaces, NO_COLOR degradation, text-width rules, layout constants and the terminal capability ladder. Facts come from `crates/wunder-cli/tui/theme.rs`.
+Named colors, modifiers, truecolor surfaces, NO_COLOR, display columns and terminal capabilities. Ordinary popups and centered pickers keep their respective selection colors; the running indicator is documented as a local implementation.
 
 ![Helm foundations design sheet](/docs/art/servo/01-基础规范.svg)
 
-*Helm 01 · semantic colors, truecolor surfaces, degradation, baseline*
+*Helm 01 · semantic colors, surfaces, degradation and width*
 
 ## Helm 02 Layout and Footer
 
-Constraint order of the layout stack, a running frame, welcome-banner retirement rules, the activity-line state table, and the footer's composition and width-based shedding order.
+Five-band layout, a running frame, activity and footer shedding. The composer stays five rows high externally, while cloud errors, warnings and gap content can reduce the draft to one internally scrolling row.
 
-![Helm layout design sheet](/docs/art/servo/02-布局与底栏.svg)
+![Helm layout and footer design sheet](/docs/art/servo/02-布局与底栏.svg)
 
-*Helm 02 · layout stack, activity line, footer*
+*Helm 02 · layout stack, activity, input budget and footer shedding*
 
 ## Helm 03 Timeline
 
-Entry styles, the Markdown baseline, streaming rules, code and diff colors, the Ctrl+T expanded view, selection and search.
+Entry styles, Markdown, streaming, code and diff, the Ctrl+T expanded view, selection and search. Process information stays dim while content and action-required notices retain distinct weight.
 
 ![Helm timeline design sheet](/docs/art/servo/03-会话时间线.svg)
 
-*Helm 03 · entry styles, diff cards, expanded view*
+*Helm 03 · entries, diffs, expanded view and selection*
 
 ## Helm 04 Tools and Plan
 
-Tool lines and patch cards, plan-card states and ordering, trajectory view tabs, and the status-mark table. Process information is always secondary text; only status marks are allowed to speak up.
+Tool lines, patches, the plan card, trajectory tabs and status marks. The plan includes an “Updated Plan · n/m complete” header, shows at most three folded steps, and orders in-progress, pending and completed steps accordingly.
 
-![Helm tools design sheet](/docs/art/servo/04-工具与计划.svg)
+![Helm tools and plan design sheet](/docs/art/servo/04-工具与计划.svg)
 
-*Helm 04 · tool lines, plan card, trajectory view*
+*Helm 04 · tools, plan header, trajectory and status marks*
 
 ## Helm 05 Input and Popups
 
-The composer, the anchored popup band, the four centered modals, the thread center, motion and frame budget, and the brand mark.
+The composer, its anchored popup band, centered pickers and the full-screen thread center. Resume, approval and inquiry use centered choices; shortcuts and warnings use information panels. Containers do not share position or selection styling by assumption.
 
-![Helm input design sheet](/docs/art/servo/05-输入与弹层.svg)
+![Helm input and popups design sheet](/docs/art/servo/05-输入与弹层.svg)
 
-*Helm 05 · composer, modals, thread center*
+*Helm 05 · input, popups, centered choices and thread center*
 
 ## Maintenance
 
@@ -148,14 +150,16 @@ After editing an SVG, run once from the repository root:
 python scripts/sync_art.py
 ```
 
-It does three things in order:
+It performs three steps:
 
-1. Renders the 蛹 SVGs to 1200px PNGs under `frontend-slint/assets/help/art` for the desktop help
-2. Rebuilds the Chinese and English manual JSON from those PNGs
-3. Rebuilds the docs site and copies the SVGs to `web/docs/art` (蛹) and `web/docs/art/servo` (舵机), embedding the app icon as a data URI
+1. Renders the Pupa SVGs into 1200px PNGs under `frontend-slint/assets/help/art` for desktop help.
+2. Rebuilds the Chinese and English manual JSON from those images.
+3. Rebuilds the docs site, publishing SVGs to `web/docs/art` (Pupa) and `web/docs/art/servo` (Helm), copying the unified gallery and viewer assets, and embedding the app icon as a data URI in published SVGs.
 
-The web side takes effect after the site rebuild; the desktop app must be rebuilt because the previews are compiled into the binary with `include_bytes!`.
+The web side updates immediately after rebuilding. The desktop app must be recompiled because its previews are embedded with `include_bytes!`.
 
-When adding or removing a 蛹 sheet, update three places besides the artwork: `SHEETS` in `scripts/render_art_previews.py`, `ART_TOPICS` in `scripts/build_help_manual.py`, and the gallery at `docs/wunder美术设计稿/蛹/index.html`; add the section on this page too, then run the sync script. Do not edit the PNGs under `frontend-slint/assets/help/art` by hand.
+When adding or removing a Pupa sheet, update `SHEETS` in `scripts/render_art_previews.py`, `ART_TOPICS` in `scripts/build_help_manual.py`, the sheet data in `docs/wunder美术设计稿/index.html`, and this page. Do not edit generated PNGs manually.
 
-For a 舵机 sheet, sync this page's section and the file table in `docs/wunder美术设计稿/舵机/README.md`; no in-app assets are involved.
+For Helm changes, update the unified gallery data, this page and `docs/wunder美术设计稿/舵机/README.md`; no in-app assets are involved.
+
+The shared viewer lives in `docs/wunder美术设计稿/assets/art-viewer.js` and `art-viewer.css`. It loads only on the art documentation page, and old instances are destroyed during dynamic navigation. Every sheet should also pass XML/reference checks and Edge rendering at its original width.

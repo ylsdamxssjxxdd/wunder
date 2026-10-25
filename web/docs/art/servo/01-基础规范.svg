@@ -1,179 +1,53 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1560" viewBox="0 0 1600 1560" role="img" aria-label="舵机 终端 UI 基础规范">
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1480" viewBox="0 0 1600 1480" role="img" aria-label="舵机 终端 UI 基础规范">
   <title>01 基础规范 · 舵机 CLI UI Spec</title>
-  <style>
-    svg{font-family:'Microsoft YaHei UI','Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif;fill:#1F2329}
-    .mono{font-family:Consolas,'SFMono-Regular','Cascadia Mono',monospace}
-    .h1{font-size:30px;font-weight:700;letter-spacing:-.4px}
-    .sub{font-size:13px;fill:#7C7A75}
-    .kicker{font-size:11px;font-weight:600;letter-spacing:1.4px;fill:#E07A12}
-    .sect{font-size:16px;font-weight:700}
-    .sect-en{font-size:10px;font-weight:600;letter-spacing:1.6px;fill:#A8A39B}
-    .card-t{font-size:12px;font-weight:700}
-    .tok{font-size:11px;fill:#3D3D3D}
-    .note{font-size:11px;fill:#7C7A75}
-    .tiny{font-size:10px;fill:#8A8F99}
-    .line{stroke:#E8E6E3;stroke-width:1}
-    .card{fill:#FFFFFF;stroke:#DED9D1;stroke-width:1}
-    .accent{fill:#F58A24}
-    .term{fill:#131A24}
-    .t-fg{fill:#D8DEE6}
-    .t-dim{fill:#6E7A8A}
-    .t-cy{fill:#4FC1D9}
-    .t-gr{fill:#3FBF7F}
-    .t-rd{fill:#E06C61}
-    .t-yl{fill:#D7A65F}
-    .t-mg{fill:#C678DD}
-  </style>
+  <style>svg{font-family:'Microsoft YaHei UI','Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif;fill:#1F2329}.mono{font-family:Consolas,monospace}.h1{font-size:30px;font-weight:700}.sub{font-size:13px;fill:#6F747B}.kicker{font-size:11px;font-weight:700;letter-spacing:1.4px;fill:#D87616}.sect{font-size:18px;font-weight:700}.sect-note{font-size:12px;fill:#8A8F99}.card{fill:#FFF;stroke:#DED9D1}.card-t{font-size:14px;font-weight:700}.note{font-size:12px;fill:#6F747B}.tiny{font-size:11px;fill:#8A8F99}.chip{font-size:11px;font-weight:700;fill:#D87616}.ui14{font-size:14px}.ui13{font-size:13px}.ui12{font-size:12px}.tok{font-size:12px;fill:#3D3D3D}.term{fill:#131A24}.t-fg{fill:#D8DEE6}.t-dim{fill:#6E7A8A}.t-cy{fill:#4FC1D9}.t-gr{fill:#3FBF7F}.t-rd{fill:#E06C61}.t-yl{fill:#D7A65F}.t-mg{fill:#C678DD}</style>
+  <rect width="1600" height="1480" fill="#F5F3EF"/>
+  <g id="header"><text x="64" y="42" class="kicker">WUNDER / 舵机 · CLI UI SPEC</text><text x="64" y="84" class="h1">01　基础规范</text><text x="64" y="114" class="sub">语义由命名色与字重承载，面板使用明确的 Rgb 常量；稿面参考色只用于读图，不回写为另一套主题系统。</text><text x="1536" y="44" text-anchor="end" class="mono tiny">SHEET 01 / 05</text><text x="1536" y="84" text-anchor="end" class="mono ui12">COLOR · MODIFIER · WIDTH</text><line x1="64" y1="140" x2="1536" y2="140" stroke="#D8D5D0"/></g>
 
-  <rect width="1600" height="1560" fill="#F4F1EC"/>
+  <g id="color-contract">
+    <rect x="64" y="160" width="28" height="24" rx="6" fill="#FDF0DE"/><text x="78" y="177" text-anchor="middle" class="chip">01</text><text x="104" y="178" class="sect">颜色契约 · 命名色随主题，面板色按常量</text>
+    <rect x="64" y="202" width="724" height="400" rx="12" class="card"/><text x="88" y="232" class="card-t">命名色语义 · theme.rs</text><text x="764" y="232" text-anchor="end" class="tiny">参考终端渲染</text>
+    <rect x="88" y="252" width="676" height="36" rx="4" class="term"/><text x="102" y="275" class="mono ui13 t-cy" font-weight="bold">accent</text><text x="220" y="275" class="mono ui12 t-fg">Cyan + BOLD · 强调 / 问询 / 选中</text>
+    <rect x="88" y="294" width="676" height="36" rx="4" class="term"/><text x="102" y="317" class="mono ui13 t-gr">success</text><text x="220" y="317" class="mono ui12 t-fg">Green · 成功</text>
+    <rect x="88" y="336" width="676" height="36" rx="4" class="term"/><text x="102" y="359" class="mono ui13 t-rd" font-weight="bold">danger</text><text x="220" y="359" class="mono ui12 t-fg">Red + BOLD · 错误</text>
+    <rect x="88" y="378" width="676" height="36" rx="4" class="term"/><text x="102" y="401" class="mono ui13 t-yl" font-weight="bold">warning</text><text x="220" y="401" class="mono ui12 t-fg">Yellow + BOLD · 警告计数</text>
+    <rect x="88" y="420" width="676" height="36" rx="4" class="term"/><text x="102" y="443" class="mono ui13 t-mg">brand</text><text x="220" y="443" class="mono ui12 t-fg">Magenta · 品牌标记 ⚙</text>
+    <rect x="88" y="462" width="676" height="36" rx="4" class="term"/><text x="102" y="485" class="mono ui13 t-cy" font-weight="bold" text-decoration="underline">link</text><text x="220" y="485" class="mono ui12 t-fg">Cyan + BOLD + UNDERLINED</text>
+    <rect x="88" y="504" width="676" height="36" rx="4" class="term"/><text x="102" y="527" class="mono ui13 t-dim">secondary</text><text x="220" y="527" class="mono ui12 t-fg">无色相 + DIM · 全局次级基线</text>
+    <text x="88" y="574" class="note">正文默认保留终端前景色；需要行动时才使用 accent，过程信息保持 DIM。</text>
 
-  <g id="header">
-    <text x="80" y="52" class="kicker">WUNDER / 舵机 · CLI UI SPEC</text>
-    <text x="80" y="93" class="h1">01　基础规范</text>
-    <text x="80" y="120" class="sub">单一事实来源：crates/wunder-cli/tui/theme.rs。语义由「命名色 + 字重修饰」承载，面板底色是仅有的真彩色常量；终端主题变化时语义不变。</text>
-    <text x="1520" y="52" text-anchor="end" class="mono" font-size="11" fill="#8A8F99">SHEET 01 / 05</text>
+    <rect x="812" y="202" width="724" height="400" rx="12" class="card"/><text x="836" y="232" class="card-t">Rgb 面板与差异 · 不随命名色换族</text>
+    <rect x="836" y="252" width="200" height="54" rx="5" fill="#182430"/><text x="1056" y="272" class="tok">surface · Rgb(24,36,48)</text><text x="1056" y="294" class="tiny">输入表面 / 转写选区底</text>
+    <rect x="836" y="318" width="96" height="54" rx="5" fill="#1A2A36"/><rect x="940" y="318" width="96" height="54" rx="5" fill="#284A6A"/><text x="1056" y="338" class="tok">selected · popup / modal / picker</text><text x="1056" y="360" class="tiny">Rgb(26,42,54) · picker Rgb(40,74,106)</text>
+    <rect x="836" y="384" width="200" height="54" rx="5" fill="#161E32"/><text x="1056" y="404" class="tok">diff-hunk · Rgb(22,30,50)</text><text x="1056" y="426" class="tiny">差异行头，前景 Cyan</text>
+    <rect x="836" y="450" width="200" height="54" rx="5" fill="#12301F"/><text x="1056" y="470" class="tok">added · Rgb(18,48,31)</text><text x="1056" y="492" class="tiny">前景 Rgb(157,230,188)</text>
+    <rect x="836" y="516" width="200" height="54" rx="5" fill="#3A1818"/><text x="1056" y="536" class="tok">deleted · Rgb(58,24,24)</text><text x="1056" y="558" class="tiny">前景 Rgb(255,182,182)</text>
+    <text x="836" y="592" class="tiny">低色终端的近似映射由终端完成，稿面不虚构另一组 256 色值。</text>
   </g>
 
-  <!-- 语义色 -->
-  <g id="semantic">
-    <text x="80" y="176" class="sect">语义色</text>
-    <text x="160" y="176" class="sect-en">SEMANTIC COLORS · NAMED + WEIGHT</text>
-    <rect x="80" y="192" width="720" height="356" class="card"/>
-    <g class="mono" font-size="13">
-      <rect x="100" y="212" width="680" height="40" class="term" rx="4"/>
-      <text x="116" y="238" class="t-cy" font-weight="bold">accent　强调 · Cyan + BOLD</text>
-      <rect x="100" y="260" width="680" height="40" class="term" rx="4"/>
-      <text x="116" y="286" class="t-gr">success　成功 · Green</text>
-      <rect x="100" y="308" width="680" height="40" class="term" rx="4"/>
-      <text x="116" y="334" class="t-rd" font-weight="bold">danger　危险 · Red + BOLD</text>
-      <rect x="100" y="356" width="680" height="40" class="term" rx="4"/>
-      <text x="116" y="382" class="t-yl" font-weight="bold">warning　警告 · Yellow + BOLD</text>
-      <rect x="100" y="404" width="680" height="40" class="term" rx="4"/>
-      <text x="116" y="430" class="t-mg">brand　品牌 · Magenta</text>
-      <rect x="100" y="452" width="680" height="40" class="term" rx="4"/>
-      <text x="116" y="478" class="t-cy" font-weight="bold" text-decoration="underline">link　链接 · Cyan + BOLD + UNDERLINED</text>
-      <rect x="100" y="500" width="680" height="40" class="term" rx="4"/>
-      <text x="116" y="526" class="t-dim">secondary　次级文本 · DIM（无色相，全局基线）</text>
-    </g>
-    <text x="80" y="572" class="note">命名色（Cyan/Green/Red/Yellow/Magenta）由终端主题映射，本稿取一组参考渲染值；代码里只写命名色与修饰，不写死色值。</text>
+  <g id="modifier-degrade">
+    <rect x="64" y="636" width="28" height="24" rx="6" fill="#FDF0DE"/><text x="78" y="653" text-anchor="middle" class="chip">02</text><text x="104" y="654" class="sect">修饰与降级 · 色相可退，语义不能丢</text>
+    <rect x="64" y="678" width="724" height="304" rx="12" class="card"/><text x="88" y="708" class="card-t">Modifier 的职责</text>
+    <text x="88" y="740" class="mono ui13" font-weight="bold">BOLD</text><text x="250" y="740" class="note">强调、选中、进行中的步骤</text>
+    <text x="88" y="770" class="mono ui13" fill="#8A8F99">DIM</text><text x="250" y="770" class="note">次级文本、占位、完成步骤与过程回放</text>
+    <text x="88" y="800" class="mono ui13">REVERSED</text><text x="250" y="800" class="note">指针选区与部分选中选项，不依赖色相</text>
+    <text x="88" y="830" class="mono ui13" text-decoration="underline">UNDERLINED</text><text x="250" y="830" class="note">链接专用，不作为一般强调</text>
+    <text x="88" y="860" class="mono ui13" text-decoration="line-through">CROSSED_OUT</text><text x="250" y="860" class="note">计划完成步骤，与 DIM 一起使用</text>
+    <text x="88" y="890" class="mono ui13" font-style="italic">ITALIC</text><text x="250" y="890" class="note">计划说明行</text>
+    <text x="88" y="926" class="note">同一修饰保持同一语义；不要只用颜色弥补结构不清。</text><text x="88" y="954" class="tiny">NO_COLOR 时 theme::degrade 将 fg/bg 落回 Reset，但保留 add_modifier。</text>
+
+    <rect x="812" y="678" width="724" height="304" rx="12" class="card"/><text x="836" y="708" class="card-t">NO_COLOR 对照与运行点特例</text>
+    <rect x="836" y="730" width="316" height="142" rx="6" class="term"/><text x="852" y="758" class="mono ui13 t-cy" font-weight="bold">✔ 完成 · 强调</text><text x="852" y="788" class="mono ui13 t-rd" font-weight="bold">✘ 失败 · 危险</text><text x="852" y="818" class="mono ui13 t-dim">› 次级 · DIM</text><rect x="852" y="834" width="138" height="24" fill="#D8DEE6"/><text x="860" y="852" class="mono ui12" fill="#131A24" font-weight="bold">REVERSED 选区</text>
+    <rect x="1170" y="730" width="342" height="142" rx="6" fill="#3A3A3A"/><text x="1186" y="758" class="mono ui13" fill="#EEE" font-weight="bold">✔ 完成 · 强调</text><text x="1186" y="788" class="mono ui13" fill="#EEE" font-weight="bold">✘ 失败 · 危险</text><text x="1186" y="818" class="mono ui13" fill="#999">› 次级 · DIM</text><rect x="1186" y="834" width="138" height="24" fill="#D8DEE6"/><text x="1194" y="852" class="mono ui12" fill="#131A24" font-weight="bold">REVERSED 选区</text>
+    <text x="836" y="902" class="note">布局与文案不变；选区继续反色，差异前缀继续 DIM。</text><text x="836" y="930" class="note">运行呼吸点是局部实现：彩色时 cyan→白，NO_COLOR 时 Cyan+BOLD / DIM 每 560ms 交替。</text><text x="836" y="958" class="tiny">因此不能把“所有实现都只用 Reset”当成运行点的规则；事实来源需同时看 activity_indicator.rs。</text>
   </g>
 
-  <!-- 面板真彩色 -->
-  <g id="surfaces">
-    <text x="840" y="176" class="sect">面板真彩色</text>
-    <text x="960" y="176" class="sect-en">TRUECOLOR SURFACES · NOT THEMED</text>
-    <rect x="840" y="192" width="680" height="356" class="card"/>
-    <g font-size="11">
-      <rect x="860" y="212" width="200" height="76" fill="#182430" rx="4"/>
-      <text x="1072" y="232" class="tok">surface · Rgb(24,36,48)</text>
-      <text x="1072" y="250" class="tiny">输入区表面 / 转写选区底</text>
-      <text x="1072" y="268" class="tiny">composer_surface()</text>
-      <rect x="860" y="300" width="200" height="76" fill="#1A2A36" rx="4"/>
-      <text x="1072" y="320" class="tok">selected · Rgb(26,42,54)</text>
-      <text x="1072" y="338" class="tiny">弹层与模态选中行（配 Cyan+BOLD）</text>
-      <text x="1072" y="356" class="tiny">popup_selected / modal_selected</text>
-      <rect x="860" y="388" width="200" height="76" fill="#12301F" rx="4"/>
-      <rect x="860" y="398" width="180" height="14" fill="#9DE6BC" opacity="0.85"/>
-      <text x="1072" y="408" class="tok">diff-added · Rgb(18,48,31)</text>
-      <text x="1072" y="426" class="tiny">新增行底 · 前景 Rgb(157,230,188)</text>
-      <rect x="860" y="472" width="200" height="60" fill="#3A1818" rx="4"/>
-      <rect x="860" y="480" width="180" height="14" fill="#FFB6B6" opacity="0.85"/>
-      <text x="1072" y="490" class="tok">diff-deleted · Rgb(58,24,24)</text>
-      <text x="1072" y="508" class="tiny">删除行底 · 前景 Rgb(255,182,182)</text>
-    </g>
-    <text x="1072" y="532" class="tiny">hunk 行底 Rgb(22,30,50)，前景 Cyan；行号/前缀列 DIM。</text>
+  <g id="text-layout">
+    <rect x="64" y="1016" width="28" height="24" rx="6" fill="#FDF0DE"/><text x="78" y="1033" text-anchor="middle" class="chip">03</text><text x="104" y="1034" class="sect">文本宽度与行数基线</text>
+    <rect x="64" y="1058" width="724" height="254" rx="12" class="card"/><text x="88" y="1088" class="card-t">显示列，而不是字节数</text><text x="88" y="1118" class="note">等宽字体由用户终端决定，代码不指定字体家族。</text><text x="88" y="1144" class="note">Unicode 显示列测量：中文通常 2 列，截断补省略号。</text><text x="88" y="1170" class="note">Tab 在渲染前展开到 8 列制表位，选中与换行共用投影。</text><text x="88" y="1196" class="note">界面文案中英双语，键位提示与布局在两侧一致。</text><rect x="88" y="1218" width="676" height="70" rx="6" class="term"/><text x="104" y="1246" class="mono ui13 t-fg">示例：按显示列截断长标题…</text><text x="104" y="1272" class="mono ui13 t-cy" text-decoration="underline">https://example.local/spec</text>
+    <rect x="812" y="1058" width="724" height="254" rx="12" class="card"/><text x="836" y="1088" class="card-t">主布局常量</text><text x="836" y="1120" class="tok">转写地板</text><text x="1080" y="1120" class="mono note">8 / 6 行</text><text x="1280" y="1120" class="tiny">无弹层 / 有弹层</text><text x="836" y="1150" class="tok">弹层带</text><text x="1080" y="1150" class="mono note">min(n,7)+1</text><text x="1280" y="1150" class="tiny">含 1 行边框</text><text x="836" y="1180" class="tok">活动行</text><text x="1080" y="1180" class="mono note">1 行</text><text x="1280" y="1180" class="tiny">空闲保留</text><text x="836" y="1210" class="tok">输入区</text><text x="1080" y="1210" class="mono note">5 行</text><text x="1280" y="1210" class="tiny">外层高度固定</text><line x1="836" y1="1232" x2="1512" y2="1232" stroke="#E8E6E3"/><text x="836" y="1262" class="note">固定开销 14 行 = 转写地板 8 + 活动 1 + 输入 5。</text><text x="836" y="1290" class="tiny">欢迎横幅的可站立空间在此基础上计算。</text>
   </g>
 
-  <!-- 字重修饰 -->
-  <g id="modifiers">
-    <text x="80" y="628" class="sect">字重修饰语义</text>
-    <text x="220" y="628" class="sect-en">MODIFIERS CARRY MEANING</text>
-    <rect x="80" y="644" width="720" height="228" class="card"/>
-    <g font-size="12" fill="#3D3D3D">
-      <text x="104" y="674" class="mono" font-weight="bold">BOLD</text><text x="220" y="674">强调文本、选中行、进行中的计划步骤</text>
-      <text x="104" y="702" class="mono" fill="#8A8F99">DIM</text><text x="220" y="702">次级文本、思考与工具回放、占位、已完成步骤</text>
-      <text x="104" y="730" class="mono">REVERSED</text><text x="220" y="730">鼠标选区——无色终端也必须看得见的复制范围</text>
-      <text x="104" y="758" class="mono" text-decoration="underline">UNDERLINED</text><text x="220" y="758">仅链接；不用于一般强调</text>
-      <text x="104" y="786" class="mono" text-decoration="line-through">CROSSED_OUT</text><text x="220" y="786">计划已完成步骤（配 DIM），勾选后文字划线</text>
-      <text x="104" y="820" class="note">规则：一种修饰只承载一种语义；色相可以降级，修饰不可丢失。</text>
-    </g>
-  </g>
-
-  <!-- NO_COLOR -->
-  <g id="nocolor">
-    <text x="840" y="628" class="sect">NO_COLOR 降级</text>
-    <text x="980" y="628" class="sect-en">GRACEFUL DEGRADATION</text>
-    <rect x="840" y="644" width="680" height="228" class="card"/>
-    <g class="mono" font-size="12">
-      <rect x="860" y="664" width="320" height="120" fill="#182430" rx="4"/>
-      <text x="876" y="688" class="t-cy" font-weight="bold">✔ 完成 · Cyan</text>
-      <text x="876" y="712" class="t-rd">✘ 失败 · Red</text>
-      <text x="876" y="736" class="t-dim">› 次级 · DIM</text>
-      <text x="876" y="760" class="t-fg" fill="#FFFFFF">▮选区▮ · 反色</text>
-      <rect x="1196" y="664" width="304" height="120" fill="#3A3A3A" rx="4"/>
-      <text x="1212" y="688" fill="#EEEEEE" font-weight="bold">✔ 完成</text>
-      <text x="1212" y="712" fill="#EEEEEE">✘ 失败</text>
-      <text x="1212" y="736" fill="#999999">› 次级</text>
-      <text x="1212" y="760" fill="#EEEEEE">▮选区▮ · 反色</text>
-    </g>
-    <g font-size="11" fill="#3D3D3D">
-      <text x="860" y="812">· 色相整体落回终端默认前景/背景（Reset），BOLD / DIM / REVERSED 等修饰原样保留。</text>
-      <text x="860" y="832">· 选区保持 REVERSED，呼吸点退为 560 ms 亮/暗脉冲，宽度不变、布局不动。</text>
-      <text x="860" y="852" class="note">· 判定一次读取 NO_COLOR 并缓存；降级只影响颜色，不改变任何文案与结构。</text>
-    </g>
-  </g>
-
-  <!-- 文本与宽度 -->
-  <g id="text">
-    <text x="80" y="928" class="sect">文本与宽度</text>
-    <text x="200" y="928" class="sect-en">TEXT · WIDTH · I18N</text>
-    <rect x="80" y="944" width="720" height="220" class="card"/>
-    <g font-size="12" fill="#3D3D3D">
-      <text x="104" y="974">· 字体即用户终端的等宽字体；代码不指定字体，只按显示列宽排版。</text>
-      <text x="104" y="998">· 全部按 Unicode 显示列宽测量；中文占 2 列，截断按列计算并补省略号。</text>
-      <text x="104" y="1022">· 制表符在渲染前统一展开为 8 列制表位，保证换行测量与终端一致。</text>
-      <text x="104" y="1046">· 全部界面文案中英双语（locale 判定），键位提示两侧一致。</text>
-    </g>
-    <g class="mono" font-size="12">
-      <rect x="104" y="1064" width="672" height="80" class="term" rx="4"/>
-      <text x="120" y="1090" class="t-fg">简介：把「docs/报告.md」按章节拆分为三个线程。</text>
-      <text x="120" y="1112" class="t-cy" text-decoration="underline">https://example.local/docs</text>
-      <text x="120" y="1134" class="t-dim">任务标题超过 28 个显示列时截断…</text>
-    </g>
-  </g>
-
-  <!-- 布局基线 -->
-  <g id="baseline">
-    <text x="840" y="928" class="sect">布局基线</text>
-    <text x="950" y="928" class="sect-en">LAYOUT BASELINE · ROWS</text>
-    <rect x="840" y="944" width="680" height="220" class="card"/>
-    <g font-size="12" fill="#3D3D3D">
-      <text x="864" y="976" class="tok" font-weight="bold">常量</text><text x="1010" y="976" class="tok" font-weight="bold">值</text><text x="1100" y="976" class="tok" font-weight="bold">来源 / 说明</text>
-      <line x1="864" y1="986" x2="1496" y2="986" class="line"/>
-      <text x="864" y="1010" class="tok">输入区高度</text><text x="1010" y="1010" class="mono">5 行</text><text x="1100" y="1010" class="tiny">ui/layout.rs · 永不压缩</text>
-      <text x="864" y="1036" class="tok">活动行高度</text><text x="1010" y="1036" class="mono">1 行</text><text x="1100" y="1036" class="tiny">空闲为空但保留行位</text>
-      <text x="864" y="1062" class="tok">弹层高度</text><text x="1010" y="1062" class="mono">min(项数,7)+1</text><text x="1100" y="1062" class="tiny">含边框行</text>
-      <text x="864" y="1088" class="tok">转写地板</text><text x="1010" y="1088" class="mono">8 行 / 6 行</text><text x="1100" y="1088" class="tiny">无弹层 / 有弹层</text>
-      <text x="864" y="1114" class="tok">主布局固定开销</text><text x="1010" y="1114" class="mono">14 行</text><text x="1100" y="1114" class="tiny">低于该值横幅不站立</text>
-    </g>
-  </g>
-
-  <!-- 底部说明 -->
-  <g id="notes">
-    <text x="80" y="1216" class="sect">终端兼容阶梯</text>
-    <text x="210" y="1216" class="sect-en">CAPABILITY LADDER</text>
-    <rect x="80" y="1232" width="1440" height="128" class="card"/>
-    <g font-size="12" fill="#3D3D3D">
-      <text x="104" y="1262"><tspan font-weight="bold">真彩色终端</tspan>：面板底色与差异配色按 Rgb 原样渲染；运行点做 cyan→白呼吸（Rgb(92,188,255) → Rgb(232,248,255)）。</text>
-      <text x="104" y="1290"><tspan font-weight="bold">16/256 色终端</tspan>：真彩色回退为最接近的命名色；差异底色可读性优先，仍区分新增/删除/行头三种底。</text>
-      <text x="104" y="1318"><tspan font-weight="bold">NO_COLOR</tspan>：全部语义退为字重与反色；布局、文案、键位完全不变。差异前缀列 DIM 保留，方便逐行扫读。</text>
-      <text x="104" y="1346" class="note">帧调度与颜色无关：运行 48 ms 一帧，审批/问询待回应 90 ms 唤醒，空闲 10 s 保活帧。</text>
-    </g>
-  </g>
-
-  <g id="footer">
-    <line x1="80" y1="1500" x2="1520" y2="1500" class="line"/>
-    <text x="80" y="1522" class="tiny">事实来源：tui/theme.rs · activity_indicator.rs · line_utils.rs / text_tabs.rs · locale.rs。稿中色值为参考渲染，代码中只有命名色与 Rgb 常量。</text>
-    <text x="1520" y="1522" text-anchor="end" class="tiny">SVG · 1600 PX WIDE · 2026-10-25</text>
-  </g>
+  <g id="capability"><rect x="64" y="1346" width="28" height="24" rx="6" fill="#FDF0DE"/><text x="78" y="1363" text-anchor="middle" class="chip">04</text><text x="104" y="1364" class="sect">终端能力阶梯</text><rect x="64" y="1388" width="1472" height="50" rx="12" class="card"/><text x="88" y="1419" class="note">真彩色：Rgb 面板与差异原样呈现　·　16/256 色：由终端近似映射　·　NO_COLOR：语义由修饰与文本继续表达　·　运行帧 48ms / 待回应 90ms / 空闲保活 10s</text></g>
+  <g id="footer"><line x1="64" y1="1450" x2="1536" y2="1450" stroke="#D8D5D0"/><text x="64" y="1470" class="tiny">事实来源：tui/theme.rs · tui/activity_indicator.rs · tui/text_tabs.rs · tui/ui/layout.rs · tui/frame_scheduler.rs</text><text x="1536" y="1470" text-anchor="end" class="mono tiny">01 / 05 · 2026-10-25</text></g>
 </svg>

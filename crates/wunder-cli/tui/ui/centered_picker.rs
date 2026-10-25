@@ -136,7 +136,6 @@ pub(crate) fn draw(frame: &mut Frame, viewport: Rect, spec: &CenteredListSpec) {
         .iter()
         .map(|line| wrapped_line_count(line.text.as_str(), content_width))
         .collect();
-    let body_h: usize = body_heights.iter().sum();
     let note_h = spec
         .footer_note
         .as_ref()
@@ -149,35 +148,49 @@ pub(crate) fn draw(frame: &mut Frame, viewport: Rect, spec: &CenteredListSpec) {
     );
 
     let has_header = title_h + subtitle_h > 0;
-    let has_body = body_h > 0;
     let has_rows = !spec.rows.is_empty();
     let has_footer = note_h + hint_h > 0;
-    // 高度与下方 y 游标走同一套表达式：标题/副标题、一行空隙、正文、
-    // 一行空隙、可见行、一行空隙、底注与按键提示。
-    // 列表上下的空隙行同时承担滚动指示（codex 的做法）。
-    let gap_above_list = usize::from(has_rows && (has_header || has_body));
-    let gap_before_footer = usize::from(has_footer && (has_rows || has_body));
-
-    let fixed = 2
-        + title_h
-        + subtitle_h
-        + usize::from(has_header)
-        + body_h
-        + gap_above_list
-        + gap_before_footer
-        + note_h
-        + hint_h;
     let max_content_height = usize::from(viewport.height).saturating_sub(2);
-    let visible = if has_rows {
-        spec.max_visible_rows
-            .max(1)
-            .min(spec.rows.len())
-            .min(max_content_height.saturating_sub(fixed).max(1))
+    let rows_len = spec.rows.len();
+    let rows_wanted = if has_rows {
+        spec.max_visible_rows.max(1).min(rows_len)
     } else {
         0
     };
 
-    let height = fixed + visible;
+    // 高度与下方 y 游标走同一套表达式：标题/副标题、一行空隙、正文、
+    // 一行空隙、可见行、一行空隙、底注与按键提示。
+    // 列表上下的空隙行同时承担滚动指示（codex 的做法）。
+    let total_for = |body_lines: usize, rows: usize| -> usize {
+        let body_sum: usize = body_heights.iter().take(body_lines).sum();
+        let gap_above_list = usize::from(rows > 0 && (has_header || body_lines > 0));
+        let gap_before_footer = usize::from(has_footer && (rows > 0 || body_lines > 0));
+        2 + title_h
+            + subtitle_h
+            + usize::from(has_header)
+            + body_sum
+            + gap_above_list
+            + gap_before_footer
+            + note_h
+            + hint_h
+            + rows
+    };
+
+    // 短屏兜底：先截正文尾部（保留首行，提示与选项行不动），再压可见行数，
+    // 保证面板不超出视口、底部提示不被裁掉。
+    let mut body_keep = spec.body.len();
+    let mut visible = rows_wanted;
+    while total_for(body_keep, visible) > max_content_height {
+        if body_keep > 1 {
+            body_keep -= 1;
+        } else if visible > 1 {
+            visible -= 1;
+        } else {
+            break;
+        }
+    }
+
+    let height = total_for(body_keep, visible);
     let dialog = Rect {
         x: viewport.x + viewport.width.saturating_sub(width) / 2,
         y: viewport.y + viewport.height.saturating_sub(height as u16) / 2,
@@ -186,15 +199,16 @@ pub(crate) fn draw(frame: &mut Frame, viewport: Rect, spec: &CenteredListSpec) {
     };
     let content = paint_panel(frame, dialog);
 
-    let rows_len = spec.rows.len();
-    let selected = spec.selected.min(rows_len.saturating_sub(1));
-    let start = if selected < visible {
-        0
-    } else {
-        (selected + 1 - visible).min(rows_len - visible)
-    };
-    let has_above = start > 0;
-    let has_below = start + visible < rows_len;
+    let selected = has_rows.then(|| spec.selected.min(rows_len - 1));
+    let start = selected.map_or(0, |selected| {
+        if selected < visible {
+            0
+        } else {
+            (selected + 1 - visible).min(rows_len - visible)
+        }
+    });
+    let has_above = has_rows && start > 0;
+    let has_below = has_rows && start + visible < rows_len;
 
     let mut y = content.y;
     let paint_text = |frame: &mut Frame, y: u16, line: Line<'static>| {
@@ -227,15 +241,15 @@ pub(crate) fn draw(frame: &mut Frame, viewport: Rect, spec: &CenteredListSpec) {
     if has_header {
         y += 1;
     }
-    for (line, height) in spec.body.iter().zip(body_heights.iter()) {
+    for (line, line_height) in spec.body.iter().zip(body_heights.iter()).take(body_keep) {
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(line.text.clone(), line.style)))
                 .wrap(Wrap { trim: false }),
-            Rect::new(content.x, y, content.width, *height as u16),
+            Rect::new(content.x, y, content.width, *line_height as u16),
         );
-        y += *height as u16;
+        y += *line_height as u16;
     }
-    if has_rows && (has_header || has_body) {
+    if visible > 0 && (has_header || body_keep > 0) {
         y += 1;
     }
 
@@ -248,7 +262,6 @@ pub(crate) fn draw(frame: &mut Frame, viewport: Rect, spec: &CenteredListSpec) {
         .max()
         .unwrap_or(0);
     let prefix_width = 4 + gutter_width;
-    let content_width = content.width as usize;
     let desc_col = spec
         .rows
         .iter()
@@ -265,25 +278,28 @@ pub(crate) fn draw(frame: &mut Frame, viewport: Rect, spec: &CenteredListSpec) {
         })
         .max()
         .unwrap_or(prefix_width);
-    let show_description =
-        desc_col <= content_width && content_width.saturating_sub(desc_col) >= MIN_DESCRIPTION_WIDTH;
+    let show_description = desc_col <= content_width
+        && content_width.saturating_sub(desc_col) >= MIN_DESCRIPTION_WIDTH;
 
     let indicator_y_above = y.saturating_sub(1);
+    let layout = RowLayout {
+        prefix_width,
+        desc_col,
+        show_description,
+    };
     for (offset, row) in spec.rows.iter().skip(start).take(visible).enumerate() {
         paint_row(
             frame,
             content,
             y + offset as u16,
             row,
-            start + offset == selected,
-            prefix_width,
-            desc_col,
-            show_description,
+            Some(start + offset) == selected,
+            &layout,
         );
     }
     y += visible as u16;
     let indicator_y_below = y;
-    if has_footer && (has_rows || has_body) {
+    if has_footer && (visible > 0 || body_keep > 0) {
         y += 1;
     }
     if let Some(note) = spec.footer_note.as_deref() {
@@ -319,16 +335,19 @@ pub(crate) fn draw(frame: &mut Frame, viewport: Rect, spec: &CenteredListSpec) {
     }
 }
 
-fn paint_row(
-    frame: &mut Frame,
-    content: Rect,
-    y: u16,
-    row: &PickerRow,
-    selected: bool,
+/// 一行渲染所需的共享列度量：编号槽宽、描述列起点、描述列是否可见。
+struct RowLayout {
     prefix_width: usize,
     desc_col: usize,
     show_description: bool,
-) {
+}
+
+fn paint_row(frame: &mut Frame, content: Rect, y: u16, row: &PickerRow, selected: bool, layout: &RowLayout) {
+    let RowLayout {
+        prefix_width,
+        desc_col,
+        show_description,
+    } = *layout;
     let row_rect = Rect::new(content.x, y, content.width, 1);
     // 先铺行底：未选中行吃面板底色，选中行整行填充高亮。
     frame.render_widget(
@@ -538,3 +557,4 @@ mod tests {
         assert_eq!(truncate_with_ellipsis("你好世界", 5), "你好…");
     }
 }
+

@@ -12438,9 +12438,9 @@
       "keywords": [
         "art",
         "icons",
-        "bee mark",
+        "production assets",
         "pupa icon",
-        "line icons"
+        "status icons"
       ],
       "blocks": [
         {
@@ -12459,7 +12459,7 @@
           "kind": "lead",
           "spans": [
             {
-              "text": "Rules for the brand mark, tool icons, state icons and line icons. The app icon is the pupa; the bee mark stays only as an auxiliary channel and collaboration identifier.",
+              "text": "Thirty production icons grouped by purpose and state, preserving solid, line and code-drawn differences.",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -12471,7 +12471,7 @@
           "kind": "image",
           "src": "02-icons",
           "alt": "02 Icons",
-          "caption": "02 Icons · brand, tools, states and line icons"
+          "caption": "02 Icons · production assets, sizes, color and states"
         }
       ]
     },
@@ -16196,7 +16196,7 @@
       "topic": 20
     },
     {
-      "keyword": "bee mark",
+      "keyword": "production assets",
       "topic": 20
     },
     {
@@ -16204,7 +16204,7 @@
       "topic": 20
     },
     {
-      "keyword": "line icons",
+      "keyword": "status icons",
       "topic": 20
     },
     {
