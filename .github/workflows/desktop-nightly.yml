@@ -192,19 +192,19 @@ jobs:
             if ($meta.rg.version -ne $rgPin) {
               throw "supplement ripgrep is $($meta.rg.version), expected $rgPin; rebuild the Desktop Supplements release"
             }
-            if ($meta.node.architecture -ne 'x64') {
-              throw "supplement general Node is not x64: $($meta.node.architecture)"
+            if ($meta.node.architecture -ne 'ia32') {
+              throw "supplement Node is not ia32: $($meta.node.architecture)"
             }
-            if ($meta.remotion.bundler.architecture -ne 'x64' -or $meta.remotion.version -ne '4.0.538') {
+            if ($meta.remotion.bundler.architecture -ne 'ia32' -or $meta.remotion.version -ne '4.0.538') {
               throw "supplement Remotion runtime metadata is unexpected"
             }
             if (-not $zip.GetEntry('opt/node/node.exe') -or -not $zip.GetEntry('opt/remotion/bin/remotion.cmd')) {
-              throw 'supplement x64 Node/Remotion launcher is missing'
+              throw 'supplement Node/Remotion launcher is missing'
             }
           } finally {
             $zip.Dispose()
           }
-          Write-Host "supplement Playwright $pin with i386 driver, x64 Node/Remotion and ripgrep $rgPin verified"
+          Write-Host "supplement Playwright $pin with i386 driver, ia32 Node/Remotion and ripgrep $rgPin verified"
       - name: Build Windows installer
         shell: pwsh
         run: |
