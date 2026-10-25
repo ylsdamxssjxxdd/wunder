@@ -8,6 +8,7 @@ const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 's
 const PDF_EXTENSIONS = new Set(['pdf']);
 const AUDIO_EXTENSIONS = new Set(['mp3', 'wav', 'flac', 'aac', 'ogg', 'm4a']);
 const VIDEO_EXTENSIONS = new Set(['mp4', 'mov', 'avi', 'mkv', 'webm']);
+const MODEL_EXTENSIONS = new Set(['glb', 'gltf']);
 const DRAWIO_EXTENSIONS = new Set(['dio', 'drawio', 'drawio.xml']);
 const TEXT_EXTENSIONS = new Set([
   'txt',
@@ -220,6 +221,11 @@ const VIDEO_MIME_TYPES: Record<string, string> = {
   webm: 'video/webm'
 };
 
+const MODEL_MIME_TYPES: Record<string, string> = {
+  glb: 'model/gltf-binary',
+  gltf: 'model/gltf+json'
+};
+
 export type WorkspaceResourcePreviewKind =
   | 'image'
   | 'html'
@@ -227,6 +233,7 @@ export type WorkspaceResourcePreviewKind =
   | 'pdf'
   | 'audio'
   | 'video'
+  | 'model'
   | 'text'
   | 'onlyoffice'
   | 'drawio'
@@ -247,6 +254,7 @@ export const resolveWorkspaceResourcePreviewKind = (
   if (PDF_EXTENSIONS.has(extension)) return 'pdf';
   if (AUDIO_EXTENSIONS.has(extension)) return 'audio';
   if (VIDEO_EXTENSIONS.has(extension)) return 'video';
+  if (MODEL_EXTENSIONS.has(extension)) return 'model';
   return 'unsupported';
 };
 
@@ -269,6 +277,7 @@ export const resolveWorkspaceResourceMimeType = (
   if (kind === 'image') return IMAGE_MIME_TYPES[extension] || '';
   if (kind === 'audio') return AUDIO_MIME_TYPES[extension] || '';
   if (kind === 'video') return VIDEO_MIME_TYPES[extension] || '';
+  if (kind === 'model') return MODEL_MIME_TYPES[extension] || '';
   if (kind === 'pdf') return 'application/pdf';
   return '';
 };

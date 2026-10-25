@@ -53,7 +53,8 @@
         'is-html': previewKind === 'html',
         'is-svg': previewKind === 'svg',
         'is-audio': previewKind === 'audio',
-        'is-video': previewKind === 'video'
+        'is-video': previewKind === 'video',
+        'is-model': previewKind === 'model'
       }"
     >
       <div v-if="loading" class="workspace-files-preview-state">
@@ -92,6 +93,7 @@
         controls
         preload="metadata"
       ></video>
+      <ModelPreview v-else-if="previewKind === 'model'" :src="previewUrl" :active="visible" />
       <CodeMirrorEditor
         v-else
         :model-value="editable ? draft : content"
@@ -108,6 +110,7 @@
 import { computed, ref, watch } from 'vue';
 
 import CodeMirrorEditor from '@/components/common/CodeMirrorEditor.vue';
+import ModelPreview from '@/components/common/ModelPreview.vue';
 import ZoomableImagePreview from '@/components/common/ZoomableImagePreview.vue';
 import { useI18n } from '@/i18n';
 import type { WorkspaceResourcePreviewKind } from '@/utils/workspaceResourcePreview';
@@ -164,7 +167,7 @@ const handleDraftUpdate = (value: string) => {
 };
 
 const isEmbedded = computed(() =>
-  ['image', 'html', 'svg', 'pdf', 'audio', 'video'].includes(props.previewKind)
+  ['image', 'html', 'svg', 'pdf', 'audio', 'video', 'model'].includes(props.previewKind)
 );
 
 const handleVisibleChange = (nextVisible: boolean) => {

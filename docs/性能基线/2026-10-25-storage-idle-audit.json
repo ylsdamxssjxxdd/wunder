@@ -1,0 +1,222 @@
+{
+  "schema": 1,
+  "suite": "hive-api-experience",
+  "environment": {
+    "system": "Windows",
+    "release": "11",
+    "machine": "AMD64",
+    "logical_cpus": 32,
+    "physical_memory_bytes": 68341796864,
+    "runner_python": "3.12.10"
+  },
+  "workload": {
+    "cases": [
+      "idle_storage"
+    ],
+    "profile": "smoke",
+    "user_rounds": 100,
+    "model_requests_per_turn": 100,
+    "chunks": 8,
+    "interval_ms": 8,
+    "seed": 42,
+    "fixture_contract": "postgres-canonical-with-tools-v2",
+    "idle_observation_seconds": 600,
+    "idle_max_single_core_cpu_percent": 1.0
+  },
+  "execution": {
+    "mode": "compose-postgres-http-websocket",
+    "worker_threads": 4,
+    "engine": "29.2.1",
+    "compose": "5.1.0",
+    "runtime_image_id": "sha256:f21af1564714cc69951c2dc7e8ed13ba8d200664e7b2fc627f0dc9a09d4e3134",
+    "postgres_image_id": "sha256:fe03a7605299a34ddf5e4f285dff78c3d7190a576b3c6b46f2fcff69f4bffd54",
+    "capacity": "32 33462280192 x86_64 linux"
+  },
+  "samples": [
+    {
+      "status": "ok",
+      "metrics": {
+        "idle_observation_ms": [
+          599999.8371779948
+        ],
+        "idle_cpu_ms": [
+          630.0
+        ]
+      },
+      "assertions": 10,
+      "idle_storage": {
+        "process": {
+          "observation_ms": 599999.8371779948,
+          "cpu_ms": 630.0,
+          "single_core_cpu_percent": 0.10500002849385866,
+          "peak_rss_bytes": 214966272,
+          "rss_delta_bytes": -450560,
+          "samples": 5
+        },
+        "business_table_writes": {
+          "service_threads": {
+            "inserted": 0,
+            "updated": 0,
+            "deleted": 0
+          },
+          "service_thread_sessions": {
+            "inserted": 0,
+            "updated": 0,
+            "deleted": 0
+          },
+          "service_thread_records": {
+            "inserted": 0,
+            "updated": 0,
+            "deleted": 0
+          },
+          "service_thread_owners": {
+            "inserted": 0,
+            "updated": 0,
+            "deleted": 0
+          },
+          "service_thread_admissions": {
+            "inserted": 0,
+            "updated": 0,
+            "deleted": 0
+          },
+          "service_thread_items": {
+            "inserted": 0,
+            "updated": 0,
+            "deleted": 0
+          },
+          "service_thread_chat_heads": {
+            "inserted": 0,
+            "updated": 0,
+            "deleted": 0
+          },
+          "service_thread_display_state": {
+            "inserted": 0,
+            "updated": 0,
+            "deleted": 0
+          }
+        },
+        "history_query_activity": {
+          "service_statement_calls": 643,
+          "history_select_calls": 0,
+          "active_history_reads": 0,
+          "statistics_evictions": 0,
+          "audit_role_excluded": true
+        },
+        "total_business_writes": 0,
+        "requested_observation_seconds": 600,
+        "cpu_limit_single_core_percent": 1.0,
+        "counter_scope": "table-insert-update-delete",
+        "observation": "completed-request-no-http-no-websocket"
+      },
+      "case": "idle_storage",
+      "run": 0,
+      "warmup": false
+    }
+  ],
+  "captured_at_unix": 1792900938.7414975,
+  "compose_to_ready_ms": 6823.340000002645,
+  "artifacts": {
+    "server_sha256": "04022fcb0260cf53687c7291cdbfe7dd9989d175ed2ab6f29849e9fff972fefb"
+  },
+  "docker": {
+    "engine": "29.2.1",
+    "compose": "5.1.0",
+    "runtime_image_id": "sha256:f21af1564714cc69951c2dc7e8ed13ba8d200664e7b2fc627f0dc9a09d4e3134",
+    "postgres_image_id": "sha256:fe03a7605299a34ddf5e4f285dff78c3d7190a576b3c6b46f2fcff69f4bffd54",
+    "capacity": "32 33462280192 x86_64 linux"
+  },
+  "history_query_audit": {
+    "backend": "pg_stat_statements",
+    "service_role_probe_calls": 1,
+    "audit_role_probe_calls": 0,
+    "scope": "service-role-history-select-with",
+    "bounded_statistics": true
+  },
+  "idle_storage": {
+    "process": {
+      "observation_ms": 599999.8371779948,
+      "cpu_ms": 630.0,
+      "single_core_cpu_percent": 0.10500002849385866,
+      "peak_rss_bytes": 214966272,
+      "rss_delta_bytes": -450560,
+      "samples": 5
+    },
+    "business_table_writes": {
+      "service_threads": {
+        "inserted": 0,
+        "updated": 0,
+        "deleted": 0
+      },
+      "service_thread_sessions": {
+        "inserted": 0,
+        "updated": 0,
+        "deleted": 0
+      },
+      "service_thread_records": {
+        "inserted": 0,
+        "updated": 0,
+        "deleted": 0
+      },
+      "service_thread_owners": {
+        "inserted": 0,
+        "updated": 0,
+        "deleted": 0
+      },
+      "service_thread_admissions": {
+        "inserted": 0,
+        "updated": 0,
+        "deleted": 0
+      },
+      "service_thread_items": {
+        "inserted": 0,
+        "updated": 0,
+        "deleted": 0
+      },
+      "service_thread_chat_heads": {
+        "inserted": 0,
+        "updated": 0,
+        "deleted": 0
+      },
+      "service_thread_display_state": {
+        "inserted": 0,
+        "updated": 0,
+        "deleted": 0
+      }
+    },
+    "history_query_activity": {
+      "service_statement_calls": 643,
+      "history_select_calls": 0,
+      "active_history_reads": 0,
+      "statistics_evictions": 0,
+      "audit_role_excluded": true
+    },
+    "total_business_writes": 0,
+    "requested_observation_seconds": 600,
+    "cpu_limit_single_core_percent": 1.0,
+    "counter_scope": "table-insert-update-delete",
+    "observation": "completed-request-no-http-no-websocket"
+  },
+  "summary": {
+    "idle_storage": {
+      "runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "metrics": {
+        "idle_cpu_ms": {
+          "count": 1,
+          "p50": 630.0,
+          "p95": 630.0,
+          "maximum": 630.0
+        },
+        "idle_observation_ms": {
+          "count": 1,
+          "p50": 599999.8371779948,
+          "p95": 599999.8371779948,
+          "maximum": 599999.8371779948
+        }
+      }
+    }
+  },
+  "correctness_passed": true,
+  "passed": true
+}

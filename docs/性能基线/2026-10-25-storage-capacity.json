@@ -1,0 +1,69 @@
+{
+  "environment": {
+    "rows_per_business_table": 1000000,
+    "samples": 20,
+    "storage": "PostgreSQL"
+  },
+  "raw": {
+    "empty_startup_ms": [
+      51.6008,
+      49.4322,
+      59.0581,
+      65.6545,
+      57.4932,
+      60.0072,
+      68.616,
+      66.7052,
+      70.87169999999999,
+      59.107800000000005,
+      52.7402,
+      48.6156,
+      56.7041,
+      52.3872,
+      47.656400000000005,
+      49.1606,
+      48.9984,
+      51.6126,
+      74.161,
+      71.1007
+    ],
+    "large_startup_ms": [
+      64.3241,
+      59.3136,
+      53.182100000000005,
+      56.7533,
+      57.9833,
+      57.0486,
+      66.7169,
+      63.609399999999994,
+      55.3733,
+      75.2198,
+      56.5984,
+      50.7158,
+      67.84039999999999,
+      64.69550000000001,
+      53.856500000000004,
+      53.4078,
+      57.0075,
+      53.038799999999995,
+      51.7462,
+      51.3341
+    ]
+  },
+  "scenarios": {
+    "startup": {
+      "gates": {
+        "business_rows_unchanged": true,
+        "execution_history_tables_absent": true,
+        "index_oids_stable": true,
+        "partition_maintenance_inert": true
+      },
+      "metrics": {
+        "capacity_added_p95_ms": 0.0,
+        "storage_startup_p95_ms": 67.84039999999999
+      }
+    }
+  },
+  "shape": "server",
+  "version": "fixture-capacity"
+}

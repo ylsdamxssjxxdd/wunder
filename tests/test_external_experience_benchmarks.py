@@ -9,6 +9,7 @@ import time
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 DRIVER = Path(__file__).resolve().parents[1] / 'scripts' / 'experience-bench'
@@ -466,6 +467,68 @@ class IdleStorageTests(unittest.TestCase):
 
 
 class ModelTests(unittest.TestCase):
+    def test_nonstream_json_content_usage_and_default_mode(self):
+        model = Model(('127.0.0.1', 0), chunks=3, interval_ms=1)
+        thread = threading.Thread(target=model.serve_forever, daemon=True)
+        thread.start()
+        try:
+            url = 'http://127.0.0.1:{}/v1/chat/completions'.format(model.server_port)
+            for explicit in (True, False):
+                with self.subTest(explicit=explicit):
+                    key = 'fixture-json-' + ('explicit' if explicit else 'default')
+                    payload = dict(messages=[dict(role='user', content=[dict(type='text', text=key)])])
+                    if explicit:
+                        payload['stream'] = False
+                    request = Request(url, data=json.dumps(payload).encode(),
+                        headers={'Content-Type': 'application/json'})
+                    with urlopen(request, timeout=5) as response:
+                        self.assertEqual(response.headers.get_content_type(), 'application/json')
+                        content = response.read()
+                        self.assertEqual(len(content), int(response.headers['Content-Length']))
+                        result = json.loads(content)
+                    self.assertEqual(result['object'], 'chat.completion')
+                    self.assertEqual(result['choices'], [dict(index=0, message=dict(
+                        role='assistant', content=expected(3)), finish_reason='stop')])
+                    self.assertEqual(result['usage'], dict(prompt_tokens=32, completion_tokens=12, total_tokens=44))
+                    deadline = time.monotonic() + 1
+                    while not model.trace(key).get('completed') and time.monotonic() < deadline:
+                        time.sleep(.001)
+                    trace = model.trace(key)
+                    self.assertTrue(trace['completed'])
+                    self.assertEqual(trace['calls'], 1)
+                    self.assertLess(trace['request_unix_ns'], trace['first_unix_ns'])
+                    self.assertNotIn('messages', trace)
+        finally:
+            model.shutdown()
+            model.server_close()
+            thread.join(2)
+
+    def test_nonstream_rejects_bad_protocol_and_preserves_provider_failure(self):
+        model = Model(('127.0.0.1', 0), chunks=3, interval_ms=1)
+        thread = threading.Thread(target=model.serve_forever, daemon=True)
+        thread.start()
+        try:
+            url = 'http://127.0.0.1:{}/v1/chat/completions'.format(model.server_port)
+            cases = [('fixture invalid input', False, 400),
+                     ('fixture-invalid-stream', 0, 400),
+                     ('fixture-invalid-stream', 'false', 400),
+                     ('fixture-fail-json', False, 503)]
+            for text, stream, status in cases:
+                with self.subTest(status=status, stream=stream):
+                    request = Request(url, data=json.dumps(dict(stream=stream,
+                        messages=[dict(role='user', content=text)])).encode(),
+                        headers={'Content-Type': 'application/json'})
+                    with self.assertRaises(HTTPError) as caught:
+                        urlopen(request, timeout=5)
+                    with caught.exception as response:
+                        self.assertEqual(response.code, status)
+                        self.assertIn('error', json.loads(response.read()))
+            self.assertFalse(model.trace('fixture-fail-json')['completed'])
+        finally:
+            model.shutdown()
+            model.server_close()
+            thread.join(2)
+
     def test_sse_content_and_private_trace(self):
         model = Model(('127.0.0.1', 0), chunks=3, interval_ms=1)
         thread = threading.Thread(target=model.serve_forever, daemon=True)

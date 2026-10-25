@@ -1,0 +1,1029 @@
+{
+  "schema": 1,
+  "suite": "hive-api-experience",
+  "environment": {
+    "system": "Windows",
+    "release": "11",
+    "machine": "AMD64",
+    "logical_cpus": 32,
+    "physical_memory_bytes": 68341796864,
+    "runner_python": "3.12.10"
+  },
+  "workload": {
+    "cases": [
+      "login",
+      "session_catalog",
+      "stream",
+      "slow_consumer",
+      "cancel_resume",
+      "queue",
+      "parallel_threads",
+      "isolation",
+      "workspace",
+      "sandbox_files",
+      "large_chat",
+      "restart_recovery",
+      "storage_audit",
+      "idle_storage"
+    ],
+    "profile": "smoke",
+    "user_rounds": 30,
+    "model_requests_per_turn": 30,
+    "chunks": 8,
+    "interval_ms": 8,
+    "seed": 42,
+    "fixture_contract": "postgres-canonical-with-tools-v2",
+    "idle_observation_seconds": 12,
+    "idle_max_single_core_cpu_percent": 1.0
+  },
+  "execution": {
+    "mode": "compose-postgres-http-websocket",
+    "worker_threads": 4,
+    "engine": "29.2.1",
+    "compose": "5.1.0",
+    "runtime_image_id": "sha256:f21af1564714cc69951c2dc7e8ed13ba8d200664e7b2fc627f0dc9a09d4e3134",
+    "postgres_image_id": "sha256:fe03a7605299a34ddf5e4f285dff78c3d7190a576b3c6b46f2fcff69f4bffd54",
+    "capacity": "32 33462280192 x86_64 linux"
+  },
+  "samples": [
+    {
+      "status": "ok",
+      "metrics": {
+        "login_ms": [
+          37.408500007586554
+        ]
+      },
+      "assertions": 2,
+      "case": "login",
+      "run": 0,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "create_ms": [
+          18.836300005204976
+        ],
+        "catalog_ms": [
+          37.43049998593051
+        ],
+        "empty_bootstrap_ms": [
+          39.58670000429265
+        ]
+      },
+      "assertions": 4,
+      "response_bytes": 710,
+      "case": "session_catalog",
+      "run": 0,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "send_to_first_text_ms": [
+          464.18779999658
+        ],
+        "send_to_provider_ms": [
+          454.225905
+        ],
+        "send_to_terminal_ms": [
+          577.2562999918591
+        ],
+        "durable_read_ms": [
+          19.5811000012327
+        ],
+        "provider_to_first_ms": [
+          8.277476
+        ],
+        "provider_stream_ms": [
+          58.633219
+        ]
+      },
+      "assertions": 8,
+      "events": 17,
+      "deltas": 8,
+      "response_bytes": 3074,
+      "case": "stream",
+      "run": 0,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "send_to_first_text_ms": [
+          308.88679999043234
+        ],
+        "send_to_provider_ms": [
+          299.170613
+        ],
+        "send_to_terminal_ms": [
+          537.8496999910567
+        ],
+        "durable_read_ms": [
+          17.523899994557723
+        ],
+        "provider_to_first_ms": [
+          8.24691
+        ],
+        "provider_stream_ms": [
+          58.259227
+        ]
+      },
+      "assertions": 8,
+      "events": 17,
+      "deltas": 8,
+      "response_bytes": 3075,
+      "case": "slow_consumer",
+      "run": 0,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "send_to_first_text_ms": [
+          225.96799999882933
+        ],
+        "send_to_provider_ms": [
+          192.821982
+        ],
+        "send_to_terminal_ms": [
+          302.96570000064094
+        ],
+        "durable_read_ms": [
+          17.256000006454997
+        ],
+        "provider_to_first_ms": [
+          8.22308
+        ],
+        "provider_stream_ms": [
+          58.068413
+        ],
+        "cancel_ack_ms": [
+          29.133999996702187
+        ],
+        "cancel_to_settled_ms": [
+          43.84860000573099
+        ]
+      },
+      "assertions": 10,
+      "events": 17,
+      "deltas": 8,
+      "response_bytes": 4280,
+      "case": "cancel_resume",
+      "run": 0,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "enqueue_ms": [
+          49.25929999444634,
+          49.09149999730289
+        ],
+        "queue_read_ms": [
+          7.055499998386949
+        ],
+        "reorder_ms": [
+          10.093499993672594
+        ],
+        "queued_cancel_ms": [
+          39.64600000472274
+        ]
+      },
+      "assertions": 6,
+      "case": "queue",
+      "run": 0,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "batch_ms": [
+          3449.5456000004197
+        ],
+        "send_to_first_text_ms": [
+          281.54450000147335,
+          291.1011999967741
+        ],
+        "send_to_provider_ms": [
+          272.472955,
+          281.763674
+        ],
+        "send_to_terminal_ms": [
+          378.27329999709036,
+          384.94750000245403
+        ],
+        "durable_read_ms": [
+          16.81339999777265,
+          18.321899988222867
+        ],
+        "provider_to_first_ms": [
+          8.230059,
+          8.243935
+        ],
+        "provider_stream_ms": [
+          57.886486,
+          57.390171
+        ]
+      },
+      "assertions": 16,
+      "workers": 2,
+      "case": "parallel_threads",
+      "run": 0,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "cross_user_rejection_ms": [
+          6.4692000014474615,
+          4.651099996408448
+        ],
+        "anonymous_rejection_ms": [
+          1.996299994061701
+        ]
+      },
+      "assertions": 3,
+      "case": "isolation",
+      "run": 0,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "first_directory_page_ms": [
+          82.63109999825247
+        ],
+        "older_directory_page_ms": [
+          58.58319999242667
+        ],
+        "file_read_ms": [
+          21.3134999939939
+        ]
+      },
+      "assertions": 4,
+      "entries": 24,
+      "response_bytes": [
+        1991,
+        1992
+      ],
+      "case": "workspace",
+      "run": 0,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "sandbox_write_ms": [
+          56.45689999801107,
+          54.99459999555256,
+          55.69439999817405,
+          55.40850000397768
+        ],
+        "sandbox_read_ms": [
+          19.444900011876598,
+          18.967500000144355,
+          18.079000001307577,
+          17.336599994450808
+        ]
+      },
+      "assertions": 14,
+      "sandbox_files": {
+        "users": 2,
+        "containers_per_user": 2,
+        "concurrent_scopes": 4,
+        "successful_writes": 4,
+        "successful_reads": 4,
+        "local_history_files": 0
+      },
+      "case": "sandbox_files",
+      "run": 0,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "chat_bootstrap_ms": [
+          20.687900003395043
+        ],
+        "older_chat_page_ms": [
+          16.432699994766153
+        ],
+        "newer_chat_page_ms": [
+          16.028300000471063
+        ],
+        "body_read_ms": [
+          10.630799995851703
+        ]
+      },
+      "assertions": 84,
+      "rows": [
+        12,
+        12
+      ],
+      "response_bytes": [
+        46102,
+        42531,
+        45671,
+        1285
+      ],
+      "case": "large_chat",
+      "run": 0,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "send_to_first_text_ms": [
+          238.47190001106355
+        ],
+        "send_to_provider_ms": [
+          206.903444
+        ],
+        "send_to_terminal_ms": [
+          318.9901000005193
+        ],
+        "durable_read_ms": [
+          21.101399994222447
+        ],
+        "provider_to_first_ms": [
+          8.229461
+        ],
+        "provider_stream_ms": [
+          57.704918
+        ],
+        "restart_to_ready_ms": [
+          936.234599997988
+        ],
+        "restored_chat_read_ms": [
+          31.574600012390874
+        ]
+      },
+      "assertions": 11,
+      "events": 17,
+      "deltas": 8,
+      "response_bytes": 5280,
+      "case": "restart_recovery",
+      "run": 0,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "storage_audit_ms": [
+          324.42389999050647
+        ]
+      },
+      "assertions": 6,
+      "case": "storage_audit",
+      "run": 0,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "idle_observation_ms": [
+          12000.34196699562
+        ],
+        "idle_cpu_ms": [
+          0.0
+        ]
+      },
+      "assertions": 10,
+      "idle_storage": {
+        "process": {
+          "observation_ms": 12000.34196699562,
+          "cpu_ms": 0.0,
+          "single_core_cpu_percent": 0.0,
+          "peak_rss_bytes": 61079552,
+          "rss_delta_bytes": 0,
+          "samples": 5
+        },
+        "business_table_writes": {
+          "service_threads": {
+            "inserted": 0,
+            "updated": 0,
+            "deleted": 0
+          },
+          "service_thread_sessions": {
+            "inserted": 0,
+            "updated": 0,
+            "deleted": 0
+          },
+          "service_thread_records": {
+            "inserted": 0,
+            "updated": 0,
+            "deleted": 0
+          },
+          "service_thread_owners": {
+            "inserted": 0,
+            "updated": 0,
+            "deleted": 0
+          },
+          "service_thread_admissions": {
+            "inserted": 0,
+            "updated": 0,
+            "deleted": 0
+          },
+          "service_thread_items": {
+            "inserted": 0,
+            "updated": 0,
+            "deleted": 0
+          },
+          "service_thread_chat_heads": {
+            "inserted": 0,
+            "updated": 0,
+            "deleted": 0
+          },
+          "service_thread_display_state": {
+            "inserted": 0,
+            "updated": 0,
+            "deleted": 0
+          }
+        },
+        "history_query_activity": {
+          "service_statement_calls": 23,
+          "history_select_calls": 0,
+          "active_history_reads": 0,
+          "statistics_evictions": 0,
+          "audit_role_excluded": true
+        },
+        "total_business_writes": 0,
+        "requested_observation_seconds": 12,
+        "cpu_limit_single_core_percent": 1.0,
+        "counter_scope": "table-insert-update-delete",
+        "observation": "completed-request-no-http-no-websocket"
+      },
+      "case": "idle_storage",
+      "run": 0,
+      "warmup": false
+    }
+  ],
+  "captured_at_unix": 1792902258.243652,
+  "compose_to_ready_ms": 5232.277400005842,
+  "artifacts": {
+    "server_sha256": "5217db73d8badd5625b6ff568b5c51ee925067962b9c21a9760f9194f11b2186"
+  },
+  "docker": {
+    "engine": "29.2.1",
+    "compose": "5.1.0",
+    "runtime_image_id": "sha256:f21af1564714cc69951c2dc7e8ed13ba8d200664e7b2fc627f0dc9a09d4e3134",
+    "postgres_image_id": "sha256:fe03a7605299a34ddf5e4f285dff78c3d7190a576b3c6b46f2fcff69f4bffd54",
+    "capacity": "32 33462280192 x86_64 linux"
+  },
+  "sandbox_files": {
+    "users": 2,
+    "containers_per_user": 2,
+    "concurrent_scopes": 4,
+    "successful_writes": 4,
+    "successful_reads": 4,
+    "local_history_files": 0
+  },
+  "fixture": {
+    "generation_ms": 7427.7264999982435,
+    "user_turns": 30,
+    "model_requests": 900,
+    "model_actions": 1608,
+    "tool_calls": 708,
+    "items": 1638,
+    "rollout_records": 4267,
+    "storage_bytes": null
+  },
+  "postgres_storage": {
+    "canonical_records": 4355,
+    "canonical_logical_bytes": 6888448,
+    "admissions": 42,
+    "tool_metrics": 0,
+    "artifact_resources": 0,
+    "database_bytes": 26491927,
+    "relation_bytes": {
+      "service_threads": 90112,
+      "service_thread_sessions": 131072,
+      "service_thread_records": 10051584,
+      "service_thread_owners": 49152,
+      "service_thread_admissions": 196608,
+      "service_thread_items": 4366336,
+      "service_thread_chat_heads": 114688,
+      "service_thread_display_state": 32768,
+      "runtime_tool_metrics": 40960,
+      "runtime_artifact_resources": 32768
+    },
+    "invalid_ordinals": 0,
+    "projection_ahead": 0
+  },
+  "history_query_audit": {
+    "backend": "pg_stat_statements",
+    "service_role_probe_calls": 1,
+    "audit_role_probe_calls": 0,
+    "scope": "service-role-history-select-with",
+    "bounded_statistics": true
+  },
+  "idle_storage": {
+    "process": {
+      "observation_ms": 12000.34196699562,
+      "cpu_ms": 0.0,
+      "single_core_cpu_percent": 0.0,
+      "peak_rss_bytes": 61079552,
+      "rss_delta_bytes": 0,
+      "samples": 5
+    },
+    "business_table_writes": {
+      "service_threads": {
+        "inserted": 0,
+        "updated": 0,
+        "deleted": 0
+      },
+      "service_thread_sessions": {
+        "inserted": 0,
+        "updated": 0,
+        "deleted": 0
+      },
+      "service_thread_records": {
+        "inserted": 0,
+        "updated": 0,
+        "deleted": 0
+      },
+      "service_thread_owners": {
+        "inserted": 0,
+        "updated": 0,
+        "deleted": 0
+      },
+      "service_thread_admissions": {
+        "inserted": 0,
+        "updated": 0,
+        "deleted": 0
+      },
+      "service_thread_items": {
+        "inserted": 0,
+        "updated": 0,
+        "deleted": 0
+      },
+      "service_thread_chat_heads": {
+        "inserted": 0,
+        "updated": 0,
+        "deleted": 0
+      },
+      "service_thread_display_state": {
+        "inserted": 0,
+        "updated": 0,
+        "deleted": 0
+      }
+    },
+    "history_query_activity": {
+      "service_statement_calls": 23,
+      "history_select_calls": 0,
+      "active_history_reads": 0,
+      "statistics_evictions": 0,
+      "audit_role_excluded": true
+    },
+    "total_business_writes": 0,
+    "requested_observation_seconds": 12,
+    "cpu_limit_single_core_percent": 1.0,
+    "counter_scope": "table-insert-update-delete",
+    "observation": "completed-request-no-http-no-websocket"
+  },
+  "summary": {
+    "login": {
+      "runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "metrics": {
+        "login_ms": {
+          "count": 1,
+          "p50": 37.408500007586554,
+          "p95": 37.408500007586554,
+          "maximum": 37.408500007586554
+        }
+      }
+    },
+    "session_catalog": {
+      "runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "metrics": {
+        "catalog_ms": {
+          "count": 1,
+          "p50": 37.43049998593051,
+          "p95": 37.43049998593051,
+          "maximum": 37.43049998593051
+        },
+        "create_ms": {
+          "count": 1,
+          "p50": 18.836300005204976,
+          "p95": 18.836300005204976,
+          "maximum": 18.836300005204976
+        },
+        "empty_bootstrap_ms": {
+          "count": 1,
+          "p50": 39.58670000429265,
+          "p95": 39.58670000429265,
+          "maximum": 39.58670000429265
+        }
+      }
+    },
+    "stream": {
+      "runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "metrics": {
+        "durable_read_ms": {
+          "count": 1,
+          "p50": 19.5811000012327,
+          "p95": 19.5811000012327,
+          "maximum": 19.5811000012327
+        },
+        "provider_stream_ms": {
+          "count": 1,
+          "p50": 58.633219,
+          "p95": 58.633219,
+          "maximum": 58.633219
+        },
+        "provider_to_first_ms": {
+          "count": 1,
+          "p50": 8.277476,
+          "p95": 8.277476,
+          "maximum": 8.277476
+        },
+        "send_to_first_text_ms": {
+          "count": 1,
+          "p50": 464.18779999658,
+          "p95": 464.18779999658,
+          "maximum": 464.18779999658
+        },
+        "send_to_provider_ms": {
+          "count": 1,
+          "p50": 454.225905,
+          "p95": 454.225905,
+          "maximum": 454.225905
+        },
+        "send_to_terminal_ms": {
+          "count": 1,
+          "p50": 577.2562999918591,
+          "p95": 577.2562999918591,
+          "maximum": 577.2562999918591
+        }
+      }
+    },
+    "slow_consumer": {
+      "runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "metrics": {
+        "durable_read_ms": {
+          "count": 1,
+          "p50": 17.523899994557723,
+          "p95": 17.523899994557723,
+          "maximum": 17.523899994557723
+        },
+        "provider_stream_ms": {
+          "count": 1,
+          "p50": 58.259227,
+          "p95": 58.259227,
+          "maximum": 58.259227
+        },
+        "provider_to_first_ms": {
+          "count": 1,
+          "p50": 8.24691,
+          "p95": 8.24691,
+          "maximum": 8.24691
+        },
+        "send_to_first_text_ms": {
+          "count": 1,
+          "p50": 308.88679999043234,
+          "p95": 308.88679999043234,
+          "maximum": 308.88679999043234
+        },
+        "send_to_provider_ms": {
+          "count": 1,
+          "p50": 299.170613,
+          "p95": 299.170613,
+          "maximum": 299.170613
+        },
+        "send_to_terminal_ms": {
+          "count": 1,
+          "p50": 537.8496999910567,
+          "p95": 537.8496999910567,
+          "maximum": 537.8496999910567
+        }
+      }
+    },
+    "cancel_resume": {
+      "runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "metrics": {
+        "cancel_ack_ms": {
+          "count": 1,
+          "p50": 29.133999996702187,
+          "p95": 29.133999996702187,
+          "maximum": 29.133999996702187
+        },
+        "cancel_to_settled_ms": {
+          "count": 1,
+          "p50": 43.84860000573099,
+          "p95": 43.84860000573099,
+          "maximum": 43.84860000573099
+        },
+        "durable_read_ms": {
+          "count": 1,
+          "p50": 17.256000006454997,
+          "p95": 17.256000006454997,
+          "maximum": 17.256000006454997
+        },
+        "provider_stream_ms": {
+          "count": 1,
+          "p50": 58.068413,
+          "p95": 58.068413,
+          "maximum": 58.068413
+        },
+        "provider_to_first_ms": {
+          "count": 1,
+          "p50": 8.22308,
+          "p95": 8.22308,
+          "maximum": 8.22308
+        },
+        "send_to_first_text_ms": {
+          "count": 1,
+          "p50": 225.96799999882933,
+          "p95": 225.96799999882933,
+          "maximum": 225.96799999882933
+        },
+        "send_to_provider_ms": {
+          "count": 1,
+          "p50": 192.821982,
+          "p95": 192.821982,
+          "maximum": 192.821982
+        },
+        "send_to_terminal_ms": {
+          "count": 1,
+          "p50": 302.96570000064094,
+          "p95": 302.96570000064094,
+          "maximum": 302.96570000064094
+        }
+      }
+    },
+    "queue": {
+      "runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "metrics": {
+        "enqueue_ms": {
+          "count": 2,
+          "p50": 49.09149999730289,
+          "p95": 49.25929999444634,
+          "maximum": 49.25929999444634
+        },
+        "queue_read_ms": {
+          "count": 1,
+          "p50": 7.055499998386949,
+          "p95": 7.055499998386949,
+          "maximum": 7.055499998386949
+        },
+        "queued_cancel_ms": {
+          "count": 1,
+          "p50": 39.64600000472274,
+          "p95": 39.64600000472274,
+          "maximum": 39.64600000472274
+        },
+        "reorder_ms": {
+          "count": 1,
+          "p50": 10.093499993672594,
+          "p95": 10.093499993672594,
+          "maximum": 10.093499993672594
+        }
+      }
+    },
+    "parallel_threads": {
+      "runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "metrics": {
+        "batch_ms": {
+          "count": 1,
+          "p50": 3449.5456000004197,
+          "p95": 3449.5456000004197,
+          "maximum": 3449.5456000004197
+        },
+        "durable_read_ms": {
+          "count": 2,
+          "p50": 16.81339999777265,
+          "p95": 18.321899988222867,
+          "maximum": 18.321899988222867
+        },
+        "provider_stream_ms": {
+          "count": 2,
+          "p50": 57.390171,
+          "p95": 57.886486,
+          "maximum": 57.886486
+        },
+        "provider_to_first_ms": {
+          "count": 2,
+          "p50": 8.230059,
+          "p95": 8.243935,
+          "maximum": 8.243935
+        },
+        "send_to_first_text_ms": {
+          "count": 2,
+          "p50": 281.54450000147335,
+          "p95": 291.1011999967741,
+          "maximum": 291.1011999967741
+        },
+        "send_to_provider_ms": {
+          "count": 2,
+          "p50": 272.472955,
+          "p95": 281.763674,
+          "maximum": 281.763674
+        },
+        "send_to_terminal_ms": {
+          "count": 2,
+          "p50": 378.27329999709036,
+          "p95": 384.94750000245403,
+          "maximum": 384.94750000245403
+        }
+      }
+    },
+    "isolation": {
+      "runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "metrics": {
+        "anonymous_rejection_ms": {
+          "count": 1,
+          "p50": 1.996299994061701,
+          "p95": 1.996299994061701,
+          "maximum": 1.996299994061701
+        },
+        "cross_user_rejection_ms": {
+          "count": 2,
+          "p50": 4.651099996408448,
+          "p95": 6.4692000014474615,
+          "maximum": 6.4692000014474615
+        }
+      }
+    },
+    "workspace": {
+      "runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "metrics": {
+        "file_read_ms": {
+          "count": 1,
+          "p50": 21.3134999939939,
+          "p95": 21.3134999939939,
+          "maximum": 21.3134999939939
+        },
+        "first_directory_page_ms": {
+          "count": 1,
+          "p50": 82.63109999825247,
+          "p95": 82.63109999825247,
+          "maximum": 82.63109999825247
+        },
+        "older_directory_page_ms": {
+          "count": 1,
+          "p50": 58.58319999242667,
+          "p95": 58.58319999242667,
+          "maximum": 58.58319999242667
+        }
+      }
+    },
+    "sandbox_files": {
+      "runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "metrics": {
+        "sandbox_read_ms": {
+          "count": 4,
+          "p50": 18.079000001307577,
+          "p95": 19.444900011876598,
+          "maximum": 19.444900011876598
+        },
+        "sandbox_write_ms": {
+          "count": 4,
+          "p50": 55.40850000397768,
+          "p95": 56.45689999801107,
+          "maximum": 56.45689999801107
+        }
+      }
+    },
+    "large_chat": {
+      "runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "metrics": {
+        "body_read_ms": {
+          "count": 1,
+          "p50": 10.630799995851703,
+          "p95": 10.630799995851703,
+          "maximum": 10.630799995851703
+        },
+        "chat_bootstrap_ms": {
+          "count": 1,
+          "p50": 20.687900003395043,
+          "p95": 20.687900003395043,
+          "maximum": 20.687900003395043
+        },
+        "newer_chat_page_ms": {
+          "count": 1,
+          "p50": 16.028300000471063,
+          "p95": 16.028300000471063,
+          "maximum": 16.028300000471063
+        },
+        "older_chat_page_ms": {
+          "count": 1,
+          "p50": 16.432699994766153,
+          "p95": 16.432699994766153,
+          "maximum": 16.432699994766153
+        }
+      }
+    },
+    "restart_recovery": {
+      "runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "metrics": {
+        "durable_read_ms": {
+          "count": 1,
+          "p50": 21.101399994222447,
+          "p95": 21.101399994222447,
+          "maximum": 21.101399994222447
+        },
+        "provider_stream_ms": {
+          "count": 1,
+          "p50": 57.704918,
+          "p95": 57.704918,
+          "maximum": 57.704918
+        },
+        "provider_to_first_ms": {
+          "count": 1,
+          "p50": 8.229461,
+          "p95": 8.229461,
+          "maximum": 8.229461
+        },
+        "restart_to_ready_ms": {
+          "count": 1,
+          "p50": 936.234599997988,
+          "p95": 936.234599997988,
+          "maximum": 936.234599997988
+        },
+        "restored_chat_read_ms": {
+          "count": 1,
+          "p50": 31.574600012390874,
+          "p95": 31.574600012390874,
+          "maximum": 31.574600012390874
+        },
+        "send_to_first_text_ms": {
+          "count": 1,
+          "p50": 238.47190001106355,
+          "p95": 238.47190001106355,
+          "maximum": 238.47190001106355
+        },
+        "send_to_provider_ms": {
+          "count": 1,
+          "p50": 206.903444,
+          "p95": 206.903444,
+          "maximum": 206.903444
+        },
+        "send_to_terminal_ms": {
+          "count": 1,
+          "p50": 318.9901000005193,
+          "p95": 318.9901000005193,
+          "maximum": 318.9901000005193
+        }
+      }
+    },
+    "storage_audit": {
+      "runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "metrics": {
+        "storage_audit_ms": {
+          "count": 1,
+          "p50": 324.42389999050647,
+          "p95": 324.42389999050647,
+          "maximum": 324.42389999050647
+        }
+      }
+    },
+    "idle_storage": {
+      "runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "metrics": {
+        "idle_cpu_ms": {
+          "count": 1,
+          "p50": 0.0,
+          "p95": 0.0,
+          "maximum": 0.0
+        },
+        "idle_observation_ms": {
+          "count": 1,
+          "p50": 12000.34196699562,
+          "p95": 12000.34196699562,
+          "maximum": 12000.34196699562
+        }
+      }
+    }
+  },
+  "correctness_passed": true,
+  "passed": true
+}

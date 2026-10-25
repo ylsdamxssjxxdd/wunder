@@ -1,4 +1,4 @@
-"""Bounded deterministic SSE provider, used only by external experience tests."""
+"""Bounded deterministic completion provider for external experience tests."""
 import argparse
 from collections import OrderedDict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -77,13 +77,27 @@ class Handler(BaseHTTPRequestHandler):
             if isinstance(text, list):
                 text = ' '.join(p.get('text', '') for p in text if isinstance(p, dict))
             match = re.search(r'fixture-[a-z0-9-]{1,80}', text)
-            if not match or payload.get('stream') is not True:
+            streaming = payload.get('stream', False)
+            if not match or not isinstance(streaming, bool):
                 return self.reply(400, dict(error='fixture_protocol'))
             key = match.group(0)
             row = self.server.trace(key)
             self.server.trace(key, calls=row['calls']+1, request_unix_ns=time.time_ns(), completed=False)
             if 'fixture-fail-' in text:
                 return self.reply(503, dict(error=dict(message='fixture-unavailable')))
+            if not streaming:
+                # Use the same bounded text and token accounting as SSE. A
+                # normal JSON completion lets nonstream application requests
+                # exercise their actual provider and durable-history paths.
+                time.sleep(self.server.chunks * self.server.interval_ms / 1000)
+                self.server.trace(key, first_unix_ns=time.time_ns())
+                self.reply(200, dict(id='fixture-completion', object='chat.completion',
+                    created=int(time.time()), model='fixture-model', choices=[dict(index=0,
+                    message=dict(role='assistant', content=expected(self.server.chunks)),
+                    finish_reason='stop')], usage=dict(prompt_tokens=32,
+                    completion_tokens=self.server.chunks*4, total_tokens=32+self.server.chunks*4)))
+                self.server.trace(key, last_unix_ns=time.time_ns(), completed=True)
+                return
             self.send_response(200)
             self.send_header('Content-Type', 'text/event-stream')
             self.send_header('Connection', 'close')

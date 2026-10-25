@@ -33,6 +33,7 @@
         'is-svg': previewKind === 'svg',
         'is-audio': previewKind === 'audio',
         'is-video': previewKind === 'video',
+        'is-model': previewKind === 'model',
         'is-text': previewKind === 'text' || !isEmbedded
       }"
     >
@@ -59,6 +60,7 @@
           controls
           preload="metadata"
         ></video>
+        <ModelPreview v-else-if="previewKind === 'model'" :src="src" :active="visible" />
         <WorkspaceTextPreview
           v-else-if="previewKind === 'text'"
           :content="content"
@@ -75,6 +77,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 
+import ModelPreview from '@/components/common/ModelPreview.vue';
 import ZoomableImagePreview from '@/components/common/ZoomableImagePreview.vue';
 import WorkspaceTextPreview from '@/components/common/WorkspaceTextPreview.vue';
 import { useI18n } from '@/i18n';
@@ -110,7 +113,8 @@ const isEmbedded = computed(() =>
   props.previewKind === 'svg' ||
   props.previewKind === 'pdf' ||
   props.previewKind === 'audio' ||
-  props.previewKind === 'video'
+  props.previewKind === 'video' ||
+  props.previewKind === 'model'
 );
 
 const handleDialogVisibleChange = (nextVisible: boolean) => {

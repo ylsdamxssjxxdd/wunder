@@ -1353,7 +1353,7 @@ const quoteEntryToChat = (row: WorkspaceVisibleRow) => {
 
 // ------------------------------------------------------------------ preview
 
-type PreviewKind = 'text' | 'html' | 'image' | 'svg' | 'pdf' | 'audio' | 'video' | 'onlyoffice' | 'drawio' | 'unsupported';
+type PreviewKind = 'text' | 'html' | 'image' | 'svg' | 'pdf' | 'audio' | 'video' | 'model' | 'onlyoffice' | 'drawio' | 'unsupported';
 
 const preview = reactive({
   visible: false,

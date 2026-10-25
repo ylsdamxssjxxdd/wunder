@@ -33,12 +33,14 @@ Linux 将 CLI 文件名改为 `wunder-cli`。`WUNDER_HOME`、工作目录、配�
 服务存储改动可先运行以下隔离验收，使用已经构建的 Linux 二进制，不编译或重启现有服务：
 
 ```powershell
-python scripts/experience-bench/measure-hive.py --server-binary target/x86/release/wunder-server --output temp_dir/hive-storage-smoke --profile smoke --user-rounds 25 --model-rounds 10 --cases login,stream,queue,isolation,workspace,large_chat,restart_recovery,storage_audit,idle_storage
+python scripts/experience-bench/measure-hive.py --server-binary target/x86/release/wunder-server --output temp_dir/hive-storage-smoke --profile smoke --user-rounds 30 --model-rounds 30 --idle-seconds 600
 ```
 
 `storage_audit` 对本次独立 PostgreSQL 卷检查 canonical ordinal 连续性、展示水位不领先及 admission/指标/资源表，记录 canonical 逻辑字节、数据库字节和十个相关关系的物理字节；同时限定扫描该测试的应用数据目录，发现 SQLite、会话 JSONL 或本地 canonical 所有权标记即失败。工作区中的用户文件不属于该扫描范围。`restart_recovery` 只重启本次独立 Compose 项目的服务容器，核对重启前后 canonical 记录数量、ordinal 与内容摘要一致，再继续发送一轮。此驱动验证服务 HTTP/WebSocket 与持久化，不代替浏览器中展开工作过程、观察思考流及统计栏的实测。
 
-`idle_storage` 完成真实请求、关闭 WebSocket，等待所有准入轮次结束并静置 3 秒，随后无 HTTP 请求地观测 12 秒。采样只读取服务容器主进程的 CPU 累计时间与 RSS，单核平均 CPU 超过 1% 即失败；同时对八张 canonical、admission、展示业务表比较 insert/update/delete 计数，新增业务写入即失败。数据库检查本身的查询、自动清理与分析不属于这些计数，不能拿全库 WAL 或磁盘写入量替代。报告保留采样时长、CPU/RSS 和各表写入增量；此短窗口用于验收空闲线程，不能证明所有定时服务在长期运行中都没有开销。
+默认执行 14 个场景；`sandbox_files` 使用两个用户、两个容器作用域并发执行真实沙箱文件写入与读取，核对磁盘内容及作用域隔离，并检查沙箱数据目录未生成 SQLite 或会话 JSONL。
+
+`idle_storage` 完成真实请求、关闭 WebSocket，等待所有准入轮次结束并静置 3 秒，随后无 HTTP 请求地观测。`--idle-seconds 600` 用于十分钟验收；省略该选项时仅观测 12 秒，不能算作十分钟通过。采样只读取服务容器主进程的 CPU 累计时间与 RSS，单核平均 CPU 超过 1% 即失败；同时对八张 canonical、admission、展示业务表比较 insert/update/delete 计数，新增业务写入即失败。隔离测试数据库启用 `pg_stat_statements`，审计使用独立角色，核验服务角色的历史 SELECT 增量为零，并检查统计重置、淘汰与活动历史查询。生产部署不要求开启该扩展。报告只保留计数、采样时长及 CPU/RSS，不保存 SQL 或参数；PostgreSQL 自身维护和服务其他后台活动单独归因，不能拿全库 WAL 或磁盘写入量替代。
 
 每次使用新的 `--output`，报告为 `report.json`、`report.md`、`summary.csv`、逐次 `samples.jsonl`。原始合成数据保留在 `fixture/`，不入库。脚本完成后返回 0 表示通过，1 表示正确性失败、清理失败、基线不兼容或性能退化。
 

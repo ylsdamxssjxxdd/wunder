@@ -1613,6 +1613,8 @@ fn workspace_download_content_type(filename: &str) -> &'static str {
         Some("json") => "application/json",
         Some("html") | Some("htm") => "text/html; charset=utf-8",
         Some("csv") => "text/csv; charset=utf-8",
+        Some("glb") => "model/gltf-binary",
+        Some("gltf") => "model/gltf+json",
         _ => "application/octet-stream",
     }
 }
@@ -2091,6 +2093,14 @@ mod tests {
     fn workspace_download_content_type_detects_common_images() {
         assert_eq!(workspace_download_content_type("heart.png"), "image/png");
         assert_eq!(workspace_download_content_type("photo.JPG"), "image/jpeg");
+        assert_eq!(
+            workspace_download_content_type("scene.glb"),
+            "model/gltf-binary"
+        );
+        assert_eq!(
+            workspace_download_content_type("scene.GLTF"),
+            "model/gltf+json"
+        );
         assert_eq!(
             workspace_download_content_type("unknown.bin"),
             "application/octet-stream"

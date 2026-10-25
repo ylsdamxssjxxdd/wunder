@@ -6565,6 +6565,23 @@ body.desktop-shell-active .workspace-editor-shell {
   justify-content: center;
 }
 
+.workspace-dialog--file-preview .workspace-preview.is-model {
+  height: min(64vh, 620px);
+  overflow: hidden;
+}
+
+.workspace-dialog--file-preview .workspace-preview.is-model .model-preview {
+  height: 100%;
+}
+
+.messenger-image-preview-dialog .messenger-image-preview-body.is-model {
+  overflow: hidden;
+}
+
+.messenger-image-preview-dialog .messenger-image-preview-body.is-model .model-preview {
+  height: 100%;
+}
+
 .workspace-dialog--file-preview .workspace-preview-video {
   height: 100%;
 }

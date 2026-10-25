@@ -506,10 +506,21 @@ impl PostgresThreadLog<'_> {
         // Decode and search on the database side: serialized JSON can escape
         // Unicode/newlines and contains internal fields that are not message
         // content. Only bounded snippets and scalar lengths cross the wire.
+        // A complete display preview can reject a non-match before decoding its
+        // canonical body. Missing metadata, wrapped or truncated previews always
+        // fall through to full canonical search; preview text is never a hit.
         let rows = tx.query(
             "SELECT i.item_id,i.ordinal,octet_length(text.content) AS bytes,
                 substring(text.content FROM strpos(text.content,$2) FOR 256) AS snippet
-            FROM service_thread_items i
+            FROM (SELECT * FROM service_thread_items
+                WHERE thread_id=$1 AND visible AND CASE
+                    WHEN strpos(preview_json,$2)>0 THEN true
+                    WHEN octet_length(preview_json)<4096 THEN
+                        COALESCE(jsonb_typeof(preview_json::jsonb #> '{payload,content}'),'null')<>'string'
+                        OR (preview_json::jsonb #> '{payload,_content_bytes}') IS DISTINCT FROM
+                            to_jsonb(octet_length(preview_json::jsonb #>> '{payload,content}'))
+                        OR strpos(preview_json::jsonb #>> '{payload,content}',$2)>0
+                    ELSE true END) i
             JOIN service_thread_owners owner ON owner.thread_id=i.thread_id AND owner.user_id=$3
             JOIN service_thread_records r ON r.thread_id=i.thread_id AND r.ordinal=i.ordinal
             CROSS JOIN LATERAL (SELECT r.record_json::jsonb #> '{payload,payload}' AS item OFFSET 0) canonical

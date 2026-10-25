@@ -1,0 +1,831 @@
+{
+  "schema": 1,
+  "suite": "native-service-storage",
+  "environment": {
+    "system": "Windows",
+    "release": "11",
+    "machine": "AMD64",
+    "logical_cpus": 32,
+    "physical_memory_bytes": 68341796864,
+    "runner_python": "3.12.10"
+  },
+  "workload": {
+    "cases": [
+      "login",
+      "session_catalog",
+      "stream",
+      "slow_consumer",
+      "cancel_resume",
+      "queue",
+      "parallel_threads",
+      "isolation",
+      "workspace",
+      "large_chat",
+      "restart_recovery",
+      "nonstream",
+      "storage_audit"
+    ],
+    "profile": "smoke",
+    "user_rounds": 30,
+    "model_requests_per_turn": 30
+  },
+  "execution": {
+    "mode": "native-postgres-http-websocket",
+    "worker_threads": 4
+  },
+  "samples": [
+    {
+      "status": "ok",
+      "metrics": {
+        "login_ms": [
+          489.39980000432115
+        ]
+      },
+      "assertions": 2,
+      "case": "login",
+      "run": 0,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "create_ms": [
+          23.392999995849095
+        ],
+        "catalog_ms": [
+          35.40670000074897
+        ],
+        "empty_bootstrap_ms": [
+          39.14170000643935
+        ]
+      },
+      "assertions": 4,
+      "response_bytes": 710,
+      "case": "session_catalog",
+      "run": 0,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "send_to_first_text_ms": [
+          370.4361999989487
+        ],
+        "send_to_provider_ms": [
+          360.6984
+        ],
+        "send_to_terminal_ms": [
+          567.2549000009894
+        ],
+        "durable_read_ms": [
+          43.314800001098774
+        ],
+        "provider_to_first_ms": [
+          8.53
+        ],
+        "provider_stream_ms": [
+          59.3588
+        ]
+      },
+      "assertions": 8,
+      "events": 17,
+      "deltas": 8,
+      "response_bytes": 3071,
+      "case": "stream",
+      "run": 0,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "send_to_first_text_ms": [
+          329.4255999935558
+        ],
+        "send_to_provider_ms": [
+          319.9047
+        ],
+        "send_to_terminal_ms": [
+          557.7463999943575
+        ],
+        "durable_read_ms": [
+          42.68230000161566
+        ],
+        "provider_to_first_ms": [
+          8.6492
+        ],
+        "provider_stream_ms": [
+          59.3856
+        ]
+      },
+      "assertions": 8,
+      "events": 17,
+      "deltas": 8,
+      "response_bytes": 3071,
+      "case": "slow_consumer",
+      "run": 0,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "send_to_first_text_ms": [
+          260.3487000014866
+        ],
+        "send_to_provider_ms": [
+          250.8309
+        ],
+        "send_to_terminal_ms": [
+          431.3261000061175
+        ],
+        "durable_read_ms": [
+          39.43799999251496
+        ],
+        "provider_to_first_ms": [
+          8.5258
+        ],
+        "provider_stream_ms": [
+          59.7532
+        ],
+        "cancel_ack_ms": [
+          66.287800000282
+        ],
+        "cancel_to_settled_ms": [
+          100.19860000465997
+        ]
+      },
+      "assertions": 10,
+      "events": 17,
+      "deltas": 8,
+      "response_bytes": 4277,
+      "case": "cancel_resume",
+      "run": 0,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "enqueue_ms": [
+          89.57679999002721,
+          84.65540000179317
+        ],
+        "queue_read_ms": [
+          12.362399997073226
+        ],
+        "reorder_ms": [
+          21.49199999985285
+        ],
+        "queued_cancel_ms": [
+          98.45829999540001
+        ]
+      },
+      "assertions": 6,
+      "case": "queue",
+      "run": 0,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "batch_ms": [
+          3599.1123000130756
+        ],
+        "send_to_first_text_ms": [
+          306.85490000178106,
+          324.41040000412613
+        ],
+        "send_to_provider_ms": [
+          297.7105,
+          314.9529
+        ],
+        "send_to_terminal_ms": [
+          475.98040000593755,
+          492.7689000032842
+        ],
+        "durable_read_ms": [
+          40.009300006204285,
+          38.18289999617264
+        ],
+        "provider_to_first_ms": [
+          8.6256,
+          9.0349
+        ],
+        "provider_stream_ms": [
+          59.5443,
+          59.9788
+        ]
+      },
+      "assertions": 16,
+      "workers": 2,
+      "case": "parallel_threads",
+      "run": 0,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "cross_user_rejection_ms": [
+          10.900499997660518,
+          10.721400001784787
+        ],
+        "anonymous_rejection_ms": [
+          1.7822999943746254
+        ]
+      },
+      "assertions": 3,
+      "case": "isolation",
+      "run": 0,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "first_directory_page_ms": [
+          13.303300002007745
+        ],
+        "older_directory_page_ms": [
+          12.611999991349876
+        ],
+        "file_read_ms": [
+          10.007200005929917
+        ]
+      },
+      "assertions": 4,
+      "entries": 24,
+      "response_bytes": [
+        1991,
+        1992
+      ],
+      "case": "workspace",
+      "run": 0,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "chat_bootstrap_ms": [
+          55.11839999235235
+        ],
+        "older_chat_page_ms": [
+          45.291200003703125
+        ],
+        "newer_chat_page_ms": [
+          45.94649998762179
+        ],
+        "body_read_ms": [
+          20.383899987791665
+        ]
+      },
+      "assertions": 84,
+      "rows": [
+        12,
+        12
+      ],
+      "response_bytes": [
+        46105,
+        42531,
+        45674,
+        1285
+      ],
+      "case": "large_chat",
+      "run": 0,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "send_to_first_text_ms": [
+          241.1454999964917
+        ],
+        "send_to_provider_ms": [
+          232.0064
+        ],
+        "send_to_terminal_ms": [
+          415.4627999960212
+        ],
+        "durable_read_ms": [
+          42.690999995102175
+        ],
+        "provider_to_first_ms": [
+          8.5631
+        ],
+        "provider_stream_ms": [
+          59.6828
+        ],
+        "restart_to_ready_ms": [
+          565.5906000029063
+        ],
+        "restored_chat_read_ms": [
+          41.67550000420306
+        ]
+      },
+      "assertions": 11,
+      "events": 17,
+      "deltas": 8,
+      "response_bytes": 5269,
+      "case": "restart_recovery",
+      "run": 0,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "nonstream_ms": [
+          444.7202000010293
+        ],
+        "durable_read_ms": [
+          38.73810000368394
+        ]
+      },
+      "assertions": 4,
+      "case": "nonstream",
+      "run": 0,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "storage_audit_ms": [
+          198.09400000667665
+        ]
+      },
+      "assertions": 6,
+      "case": "storage_audit",
+      "run": 0,
+      "warmup": false
+    }
+  ],
+  "captured_at_unix": 1792902328.491908,
+  "artifacts": {
+    "server_sha256": "86d5630a7a656f96572ef113a8ae7c21ec57355696ad47de212fdf923c232526"
+  },
+  "fixture": {
+    "generation_ms": 21523.504700002377,
+    "user_turns": 30,
+    "model_requests": 900,
+    "model_actions": 1608,
+    "tool_calls": 708,
+    "items": 1638,
+    "rollout_records": 4267,
+    "storage_bytes": null
+  },
+  "nonstream_boundary": {
+    "api_chars": 127,
+    "history_chars": 128,
+    "api_trailing_newline": false,
+    "history_trailing_newline": true,
+    "equal_without_outer_whitespace": true,
+    "chat_rows": 1,
+    "history_matches_provider": true,
+    "contract": "Final API answer trims outer whitespace; canonical history preserves the exact provider text."
+  },
+  "postgres_storage": {
+    "canonical_records": 26170,
+    "canonical_logical_bytes": 41870417,
+    "admissions": 259,
+    "tool_metrics": 0,
+    "artifact_resources": 0,
+    "database_bytes": 98884631,
+    "relation_bytes": {
+      "service_threads": 180224,
+      "service_thread_sessions": 843776,
+      "service_thread_records": 59523072,
+      "service_thread_owners": 49152,
+      "service_thread_admissions": 557056,
+      "service_thread_items": 25198592,
+      "service_thread_chat_heads": 311296,
+      "service_thread_display_state": 65536,
+      "runtime_tool_metrics": 40960,
+      "runtime_artifact_resources": 32768
+    },
+    "invalid_ordinals": 0,
+    "projection_ahead": 0
+  },
+  "owned_processes_alive_before_cleanup": true,
+  "process_diagnostics": [],
+  "cleanup": "owned-processes-terminated",
+  "summary": {
+    "login": {
+      "runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "metrics": {
+        "login_ms": {
+          "count": 1,
+          "p50": 489.39980000432115,
+          "p95": 489.39980000432115,
+          "maximum": 489.39980000432115
+        }
+      }
+    },
+    "session_catalog": {
+      "runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "metrics": {
+        "catalog_ms": {
+          "count": 1,
+          "p50": 35.40670000074897,
+          "p95": 35.40670000074897,
+          "maximum": 35.40670000074897
+        },
+        "create_ms": {
+          "count": 1,
+          "p50": 23.392999995849095,
+          "p95": 23.392999995849095,
+          "maximum": 23.392999995849095
+        },
+        "empty_bootstrap_ms": {
+          "count": 1,
+          "p50": 39.14170000643935,
+          "p95": 39.14170000643935,
+          "maximum": 39.14170000643935
+        }
+      }
+    },
+    "stream": {
+      "runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "metrics": {
+        "durable_read_ms": {
+          "count": 1,
+          "p50": 43.314800001098774,
+          "p95": 43.314800001098774,
+          "maximum": 43.314800001098774
+        },
+        "provider_stream_ms": {
+          "count": 1,
+          "p50": 59.3588,
+          "p95": 59.3588,
+          "maximum": 59.3588
+        },
+        "provider_to_first_ms": {
+          "count": 1,
+          "p50": 8.53,
+          "p95": 8.53,
+          "maximum": 8.53
+        },
+        "send_to_first_text_ms": {
+          "count": 1,
+          "p50": 370.4361999989487,
+          "p95": 370.4361999989487,
+          "maximum": 370.4361999989487
+        },
+        "send_to_provider_ms": {
+          "count": 1,
+          "p50": 360.6984,
+          "p95": 360.6984,
+          "maximum": 360.6984
+        },
+        "send_to_terminal_ms": {
+          "count": 1,
+          "p50": 567.2549000009894,
+          "p95": 567.2549000009894,
+          "maximum": 567.2549000009894
+        }
+      }
+    },
+    "slow_consumer": {
+      "runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "metrics": {
+        "durable_read_ms": {
+          "count": 1,
+          "p50": 42.68230000161566,
+          "p95": 42.68230000161566,
+          "maximum": 42.68230000161566
+        },
+        "provider_stream_ms": {
+          "count": 1,
+          "p50": 59.3856,
+          "p95": 59.3856,
+          "maximum": 59.3856
+        },
+        "provider_to_first_ms": {
+          "count": 1,
+          "p50": 8.6492,
+          "p95": 8.6492,
+          "maximum": 8.6492
+        },
+        "send_to_first_text_ms": {
+          "count": 1,
+          "p50": 329.4255999935558,
+          "p95": 329.4255999935558,
+          "maximum": 329.4255999935558
+        },
+        "send_to_provider_ms": {
+          "count": 1,
+          "p50": 319.9047,
+          "p95": 319.9047,
+          "maximum": 319.9047
+        },
+        "send_to_terminal_ms": {
+          "count": 1,
+          "p50": 557.7463999943575,
+          "p95": 557.7463999943575,
+          "maximum": 557.7463999943575
+        }
+      }
+    },
+    "cancel_resume": {
+      "runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "metrics": {
+        "cancel_ack_ms": {
+          "count": 1,
+          "p50": 66.287800000282,
+          "p95": 66.287800000282,
+          "maximum": 66.287800000282
+        },
+        "cancel_to_settled_ms": {
+          "count": 1,
+          "p50": 100.19860000465997,
+          "p95": 100.19860000465997,
+          "maximum": 100.19860000465997
+        },
+        "durable_read_ms": {
+          "count": 1,
+          "p50": 39.43799999251496,
+          "p95": 39.43799999251496,
+          "maximum": 39.43799999251496
+        },
+        "provider_stream_ms": {
+          "count": 1,
+          "p50": 59.7532,
+          "p95": 59.7532,
+          "maximum": 59.7532
+        },
+        "provider_to_first_ms": {
+          "count": 1,
+          "p50": 8.5258,
+          "p95": 8.5258,
+          "maximum": 8.5258
+        },
+        "send_to_first_text_ms": {
+          "count": 1,
+          "p50": 260.3487000014866,
+          "p95": 260.3487000014866,
+          "maximum": 260.3487000014866
+        },
+        "send_to_provider_ms": {
+          "count": 1,
+          "p50": 250.8309,
+          "p95": 250.8309,
+          "maximum": 250.8309
+        },
+        "send_to_terminal_ms": {
+          "count": 1,
+          "p50": 431.3261000061175,
+          "p95": 431.3261000061175,
+          "maximum": 431.3261000061175
+        }
+      }
+    },
+    "queue": {
+      "runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "metrics": {
+        "enqueue_ms": {
+          "count": 2,
+          "p50": 84.65540000179317,
+          "p95": 89.57679999002721,
+          "maximum": 89.57679999002721
+        },
+        "queue_read_ms": {
+          "count": 1,
+          "p50": 12.362399997073226,
+          "p95": 12.362399997073226,
+          "maximum": 12.362399997073226
+        },
+        "queued_cancel_ms": {
+          "count": 1,
+          "p50": 98.45829999540001,
+          "p95": 98.45829999540001,
+          "maximum": 98.45829999540001
+        },
+        "reorder_ms": {
+          "count": 1,
+          "p50": 21.49199999985285,
+          "p95": 21.49199999985285,
+          "maximum": 21.49199999985285
+        }
+      }
+    },
+    "parallel_threads": {
+      "runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "metrics": {
+        "batch_ms": {
+          "count": 1,
+          "p50": 3599.1123000130756,
+          "p95": 3599.1123000130756,
+          "maximum": 3599.1123000130756
+        },
+        "durable_read_ms": {
+          "count": 2,
+          "p50": 38.18289999617264,
+          "p95": 40.009300006204285,
+          "maximum": 40.009300006204285
+        },
+        "provider_stream_ms": {
+          "count": 2,
+          "p50": 59.5443,
+          "p95": 59.9788,
+          "maximum": 59.9788
+        },
+        "provider_to_first_ms": {
+          "count": 2,
+          "p50": 8.6256,
+          "p95": 9.0349,
+          "maximum": 9.0349
+        },
+        "send_to_first_text_ms": {
+          "count": 2,
+          "p50": 306.85490000178106,
+          "p95": 324.41040000412613,
+          "maximum": 324.41040000412613
+        },
+        "send_to_provider_ms": {
+          "count": 2,
+          "p50": 297.7105,
+          "p95": 314.9529,
+          "maximum": 314.9529
+        },
+        "send_to_terminal_ms": {
+          "count": 2,
+          "p50": 475.98040000593755,
+          "p95": 492.7689000032842,
+          "maximum": 492.7689000032842
+        }
+      }
+    },
+    "isolation": {
+      "runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "metrics": {
+        "anonymous_rejection_ms": {
+          "count": 1,
+          "p50": 1.7822999943746254,
+          "p95": 1.7822999943746254,
+          "maximum": 1.7822999943746254
+        },
+        "cross_user_rejection_ms": {
+          "count": 2,
+          "p50": 10.721400001784787,
+          "p95": 10.900499997660518,
+          "maximum": 10.900499997660518
+        }
+      }
+    },
+    "workspace": {
+      "runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "metrics": {
+        "file_read_ms": {
+          "count": 1,
+          "p50": 10.007200005929917,
+          "p95": 10.007200005929917,
+          "maximum": 10.007200005929917
+        },
+        "first_directory_page_ms": {
+          "count": 1,
+          "p50": 13.303300002007745,
+          "p95": 13.303300002007745,
+          "maximum": 13.303300002007745
+        },
+        "older_directory_page_ms": {
+          "count": 1,
+          "p50": 12.611999991349876,
+          "p95": 12.611999991349876,
+          "maximum": 12.611999991349876
+        }
+      }
+    },
+    "large_chat": {
+      "runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "metrics": {
+        "body_read_ms": {
+          "count": 1,
+          "p50": 20.383899987791665,
+          "p95": 20.383899987791665,
+          "maximum": 20.383899987791665
+        },
+        "chat_bootstrap_ms": {
+          "count": 1,
+          "p50": 55.11839999235235,
+          "p95": 55.11839999235235,
+          "maximum": 55.11839999235235
+        },
+        "newer_chat_page_ms": {
+          "count": 1,
+          "p50": 45.94649998762179,
+          "p95": 45.94649998762179,
+          "maximum": 45.94649998762179
+        },
+        "older_chat_page_ms": {
+          "count": 1,
+          "p50": 45.291200003703125,
+          "p95": 45.291200003703125,
+          "maximum": 45.291200003703125
+        }
+      }
+    },
+    "restart_recovery": {
+      "runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "metrics": {
+        "durable_read_ms": {
+          "count": 1,
+          "p50": 42.690999995102175,
+          "p95": 42.690999995102175,
+          "maximum": 42.690999995102175
+        },
+        "provider_stream_ms": {
+          "count": 1,
+          "p50": 59.6828,
+          "p95": 59.6828,
+          "maximum": 59.6828
+        },
+        "provider_to_first_ms": {
+          "count": 1,
+          "p50": 8.5631,
+          "p95": 8.5631,
+          "maximum": 8.5631
+        },
+        "restart_to_ready_ms": {
+          "count": 1,
+          "p50": 565.5906000029063,
+          "p95": 565.5906000029063,
+          "maximum": 565.5906000029063
+        },
+        "restored_chat_read_ms": {
+          "count": 1,
+          "p50": 41.67550000420306,
+          "p95": 41.67550000420306,
+          "maximum": 41.67550000420306
+        },
+        "send_to_first_text_ms": {
+          "count": 1,
+          "p50": 241.1454999964917,
+          "p95": 241.1454999964917,
+          "maximum": 241.1454999964917
+        },
+        "send_to_provider_ms": {
+          "count": 1,
+          "p50": 232.0064,
+          "p95": 232.0064,
+          "maximum": 232.0064
+        },
+        "send_to_terminal_ms": {
+          "count": 1,
+          "p50": 415.4627999960212,
+          "p95": 415.4627999960212,
+          "maximum": 415.4627999960212
+        }
+      }
+    },
+    "nonstream": {
+      "runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "metrics": {
+        "durable_read_ms": {
+          "count": 1,
+          "p50": 38.73810000368394,
+          "p95": 38.73810000368394,
+          "maximum": 38.73810000368394
+        },
+        "nonstream_ms": {
+          "count": 1,
+          "p50": 444.7202000010293,
+          "p95": 444.7202000010293,
+          "maximum": 444.7202000010293
+        }
+      }
+    },
+    "storage_audit": {
+      "runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "metrics": {
+        "storage_audit_ms": {
+          "count": 1,
+          "p50": 198.09400000667665,
+          "p95": 198.09400000667665,
+          "maximum": 198.09400000667665
+        }
+      }
+    }
+  },
+  "correctness_passed": true,
+  "passed": true
+}

@@ -1,0 +1,103 @@
+{
+  "schema": 1,
+  "suite": "isolated-postgres-browser-review",
+  "environment": {
+    "system": "Windows",
+    "release": "11",
+    "machine": "AMD64",
+    "logical_cpus": 32,
+    "physical_memory_bytes": 68341796864,
+    "runner_python": "3.12.10"
+  },
+  "workload": {
+    "cases": [
+      "two_turn_browser"
+    ]
+  },
+  "execution": {
+    "mode": "chromium-built-hive-real-postgres-real-websocket",
+    "engine": "29.2.1",
+    "compose": "5.1.0",
+    "runtime_image_id": "sha256:f21af1564714cc69951c2dc7e8ed13ba8d200664e7b2fc627f0dc9a09d4e3134",
+    "postgres_image_id": "sha256:fe03a7605299a34ddf5e4f285dff78c3d7190a576b3c6b46f2fcff69f4bffd54",
+    "capacity": "32 33462280192 x86_64 linux"
+  },
+  "samples": [],
+  "captured_at_unix": 1792901303.1164296,
+  "frontend_build": {
+    "source": "current-worktree",
+    "file_count": 501,
+    "bytes": 25324067,
+    "sha256": "f2bf19f1a3bd6ed72ed29ac82b0897dc9ab29195e7d1ac92addbba09ec0059bb"
+  },
+  "compose_to_ready_ms": 5702.607999992324,
+  "artifacts": {
+    "server_sha256": "04022fcb0260cf53687c7291cdbfe7dd9989d175ed2ab6f29849e9fff972fefb"
+  },
+  "docker": {
+    "engine": "29.2.1",
+    "compose": "5.1.0",
+    "runtime_image_id": "sha256:f21af1564714cc69951c2dc7e8ed13ba8d200664e7b2fc627f0dc9a09d4e3134",
+    "postgres_image_id": "sha256:fe03a7605299a34ddf5e4f285dff78c3d7190a576b3c6b46f2fcff69f4bffd54",
+    "capacity": "32 33462280192 x86_64 linux"
+  },
+  "rounds": [
+    {
+      "round": 1,
+      "assistant_chars": 256,
+      "thought_chars": 335,
+      "stat_entries": 7,
+      "thought_dom_versions": 29,
+      "answer_dom_versions": 16
+    },
+    {
+      "round": 2,
+      "assistant_chars": 256,
+      "thought_chars": 335,
+      "stat_entries": 7,
+      "thought_dom_versions": 27,
+      "answer_dom_versions": 16
+    }
+  ],
+  "passed": true,
+  "checks": [
+    "current_frontend_build",
+    "current_frontend_assets",
+    "browser_actual_login",
+    "round_1_full_answer_no_duplicate",
+    "round_1_full_thought_no_duplicate",
+    "round_1_bottom_stats",
+    "round_1_single_user_assistant_slots",
+    "round_1_visible_thought_streaming",
+    "round_1_visible_answer_streaming",
+    "round_2_full_answer_no_duplicate",
+    "round_2_full_thought_no_duplicate",
+    "round_2_bottom_stats",
+    "round_2_single_user_assistant_slots",
+    "round_2_visible_thought_streaming",
+    "round_2_visible_answer_streaming",
+    "reload_answers_complete",
+    "reload_thoughts_complete",
+    "reload_stats_equal",
+    "reopen_history_complete",
+    "no_browser_runtime_errors"
+  ],
+  "browser": {
+    "engine": "chromium",
+    "version": "151.0.7922.34"
+  },
+  "storage_backend": "postgres",
+  "mock_transport": "real-provider-sse-with-reasoning",
+  "browser_errors": 0,
+  "notes": [
+    "Only isolated synthetic data; no HTTP/WebSocket interception.",
+    "Built frontend used without product changes."
+  ],
+  "cleanup": {
+    "compose_down_succeeded": true,
+    "mounted_owned_containers_remaining": 0,
+    "generated_sensitive_files_remaining": 0,
+    "browser_and_playwright_closed": true,
+    "frontend_child_exited": true
+  }
+}

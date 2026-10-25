@@ -1,6 +1,6 @@
 # 对齐 Codex 存储设计方案
 
-> 状态：本地形态采用 canonical JSONL + 分角色 SQLite；舰体服务形态采用 PostgreSQL canonical 记录、控制状态与可重建展示索引。两种实现共享持久化策略、线程身份、分页、恢复和流式契约。当前验收范围为单节点本机与 Docker 服务部署；各项完成状态以对应测试报告为准。实现不修复、迁移或清理旧数据库。
+> 状态：本地形态采用 canonical JSONL + 分角色 SQLite；舰体服务形态采用 PostgreSQL canonical 记录、控制状态与可重建展示索引。两种实现共享持久化策略、线程身份、分页、恢复和流式契约。2026-10-25 已完成本轮单节点服务验收：本机 13/13、Docker 14/14、浏览器 20/20，十分钟历史零写入/零查询；构建范围及原始证据见[服务存储验收报告](性能基线/2026-10-25-服务存储验收.md)。实现不修复、迁移或清理旧数据库。
 >
 > 依据：2026-10-21 核对的本地 Codex 参考源码快照。下文涉及 Codex 源码的路径均相对于参考工程的 `codex-rs/`；以 `crates/`、`frontend-slint/` 等开头的路径相对于 Wunder 仓库。参考快照未提供可确认的 Git 提交号，因此不标注虚构版本。
 
@@ -47,7 +47,7 @@
 
 舰体服务版的线程 canonical 记录、会话元数据、admission 与排队状态、replay 游标、展示索引、工具运行指标及产物资源元数据均写入 PostgreSQL；服务启动和文件工具执行均不得创建本地线程历史、状态、队列或日志 SQLite。工作区文件、附件和浏览器缓存仍按工作区目录保存。蛹与舵机继续使用本地 SQLite/JSONL。当前只验收单节点本机与 Docker 部署，不引入多节点共享存储或故障接管。压缩默认关闭，不能承诺固定压缩比例；Win7/Ubuntu 18.04 仅保留兼容性约束，本阶段不要求在对应真机上完成性能和空闲功耗验收。
 
-此前 SQLite 集成回归记录为 runtime lib 2058 项通过、4 项显式 ignore，以及 runtime 集成测试、蛹 `prompt_preview`、gateway 和固定 seed 跨根重放回归；这些属于当时源码及本地后端测试范围，不能表示当前工作区或全 PostgreSQL 服务已通过。PostgreSQL 测试须使用隔离 DSN，覆盖真实数据库的 admission、canonical 事务、分页展示、重建及连接池释放；不使用“PostgreSQL 后端搭配本地 SQLite”作为服务回归。原本的本地 canonical 根标识绑定与对应测试已移除。上线前验收以本机单节点服务和 Docker 单节点服务为准：验证启动、持久卷重开、历史读取、空闲稳定性、CPU、内存和容量快照；不把 Win7/Ubuntu 18.04 真机性能或整机功耗作为本阶段门槛。当前服务的逐项通过状态应由第 16 节对应命令及产出的报告证明，未运行项保持待验证。
+此前 SQLite 集成回归记录为 runtime lib 2058 项通过、4 项显式 ignore，以及 runtime 集成测试、蛹 `prompt_preview`、gateway 和固定 seed 跨根重放回归；这些属于当时源码及本地后端测试范围，不能表示当前工作区或全 PostgreSQL 服务已通过。PostgreSQL 测试须使用隔离 DSN，覆盖真实数据库的 admission、canonical 事务、分页展示、重建及连接池释放；不使用“PostgreSQL 后端搭配本地 SQLite”作为服务回归。原本的本地 canonical 根标识绑定与对应测试已移除。上线前验收以本机单节点服务和 Docker 单节点服务为准：验证启动、持久卷重开、历史读取、空闲稳定性、CPU、内存和容量快照；不把 Win7/Ubuntu 18.04 真机性能或整机功耗作为本阶段门槛。本轮已经执行的服务验收及构建差异已归档于[2026-10-25 服务存储验收](性能基线/2026-10-25-服务存储验收.md)；第 16 节保留可复现的执行门槛，不将未运行项或 ignore 项记为通过。
 
 压缩操作的业务结果（如 `done`、`fallback`、`skipped`）与完成条目的生命周期（`completed`、`failed`、`cancelled`）分别保存。可重开的聊天历史读取完成条目及其摘要元数据；模型上下文恢复则读取 `ResponseItem` 并应用 `Compacted` checkpoint。两者使用独立契约，避免摘要在重开时消失，或把工作过程事件误当成聊天正文。
 
@@ -622,7 +622,7 @@ thread_history 的删除/重建通过删除对应分区或重建新投影库完�
 
 ### 16.4 服务验收执行与证据
 
-以下为执行要求，命令列在方案中不代表已经通过。测试只连接单独配置的合成 PostgreSQL 数据库，不接触已有用户数据：
+以下为可复现的执行要求，命令本身不构成通过证据。本轮实际结果见[服务存储验收报告](性能基线/2026-10-25-服务存储验收.md)，其中分别列明构建、场景和限制。测试只连接单独配置的合成 PostgreSQL 数据库，不接触已有用户数据：
 
 | 验收层次 | 执行方式 | 通过证据 |
 | --- | --- | --- |
@@ -633,10 +633,10 @@ thread_history 的删除/重建通过删除对应分区或重建新投影库完�
 | 空闲与容量 | 任务结束、订阅断开后采样十分钟，并保存 canonical/admission/投影计数和水位、逻辑字节、关系字节、CPU/RSS；PostgreSQL 维护单独归因 | 历史追加与投影写入为 0，无历史轮询与本地历史文件；报告保留原始采样和环境规格，不用单次峰值或短 smoke 宣称稳定性能 |
 
 ```powershell
-python scripts/experience-bench/measure-hive.py --server-binary target/x86/release/wunder-server --output temp_dir/hive-storage-smoke --profile smoke --user-rounds 25 --model-rounds 10 --cases login,stream,queue,isolation,workspace,large_chat,restart_recovery,storage_audit
+python scripts/experience-bench/measure-hive.py --server-binary target/x86/release/wunder-server --output temp_dir/hive-storage-smoke --profile smoke --user-rounds 30 --model-rounds 30 --idle-seconds 600
 ```
 
-该命令读取已构建的 Linux 二进制及预先准备的运行镜像，不编译或重启已有服务。`storage_audit` 要求每个线程 `history_revision=count(*)=max(ordinal)+1`、最小 ordinal 为 0，展示水位不领先 canonical，并检查十个服务存储关系及应用目录中不存在 SQLite/会话 JSONL/本地根标识。重启前后 canonical 数量、序号和内容摘要须相同，且重开后可继续一轮。HTTP/WebSocket 驱动不能代替浏览器的流式绘制和工作过程去重验证。完整报告说明哪些项实际运行、失败或尚未验证，不把本地 SQLite 测试结果转记为服务结果。
+该命令读取已构建的 Linux 二进制及预先准备的运行镜像，不编译或重启已有服务。默认执行 14 个场景，包括真实沙箱文件工具和空闲观测；省略 `--idle-seconds` 时仅做 12 秒 smoke，不能充作十分钟验收。`storage_audit` 要求每个线程 `history_revision=count(*)=max(ordinal)+1`、最小 ordinal 为 0，展示水位不领先 canonical，并检查十个服务存储关系及应用目录中不存在 SQLite/会话 JSONL/本地根标识。重启前后 canonical 数量、序号和内容摘要须相同，且重开后可继续一轮。空闲场景在独立测试数据库启用 `pg_stat_statements`，用独立审计角色检查服务历史查询次数、统计重置与淘汰；只把计数写入报告，不要求生产部署开启该扩展。HTTP/WebSocket 驱动不能代替浏览器的流式绘制和工作过程去重验证。完整报告说明哪些项实际运行、失败或尚未验证，不把本地 SQLite 测试结果转记为服务结果。
 
 上述常规存储命令显式跳过百万行容量测试；容量测试须另行在隔离库中以可记录的 `WUNDER_CAPACITY_ROWS` 执行，不能让默认大负载混入日常正确性回归或把跳过结果记作容量通过。
 

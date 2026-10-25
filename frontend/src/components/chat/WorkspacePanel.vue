@@ -321,7 +321,8 @@
           'is-image': preview.type === 'image',
           'is-svg': preview.type === 'svg',
           'is-audio': preview.type === 'audio',
-          'is-video': preview.type === 'video'
+          'is-video': preview.type === 'video',
+          'is-model': preview.type === 'model'
         }"
       >
         <div v-if="preview.loading" class="workspace-empty">
@@ -353,6 +354,11 @@
             controls
             preload="metadata"
           ></video>
+          <ModelPreview
+            v-else-if="preview.embed && preview.type === 'model'"
+            :src="preview.url"
+            :active="preview.visible"
+          />
           <WorkspaceTextPreview
             v-else-if="preview.type === 'text'"
             :content="preview.content"
@@ -602,6 +608,7 @@ import {
 import DrawioEditorDialog from '@/components/chat/DrawioEditorDialog.vue';
 import OnlyOfficeEditorDialog from '@/components/chat/OnlyOfficeEditorDialog.vue';
 import CodeMirrorEditor from '@/components/common/CodeMirrorEditor.vue';
+import ModelPreview from '@/components/common/ModelPreview.vue';
 import WorkspaceTextPreview from '@/components/common/WorkspaceTextPreview.vue';
 import WorkspaceNewFileDialog, {
   type WorkspaceNewFileTemplate
@@ -1015,6 +1022,7 @@ const CODE_EXTENSIONS = new Set([
 const ARCHIVE_EXTENSIONS = new Set(['zip', 'rar', '7z', 'tar', 'gz', 'bz2']);
 const AUDIO_EXTENSIONS = new Set(['mp3', 'wav', 'flac', 'aac', 'ogg', 'm4a']);
 const VIDEO_EXTENSIONS = new Set(['mp4', 'mov', 'avi', 'mkv', 'webm']);
+const MODEL_EXTENSIONS = new Set(['glb', 'gltf']);
 const WORKSPACE_DOC_ICON_BASE = `${(import.meta.env.BASE_URL || '/').replace(/\/+$/, '/')}doc-icons`;
 const WORKSPACE_FOLDER_ICON = `${WORKSPACE_DOC_ICON_BASE}/folder.png`;
 const WORKSPACE_DEFAULT_FILE_ICON = `${WORKSPACE_DOC_ICON_BASE}/other.png`;
@@ -4047,7 +4055,8 @@ const openPreviewWithoutOnlyOffice = async (entry) => {
     IMAGE_EXTENSIONS.has(extension) ||
     PDF_EXTENSIONS.has(extension) ||
     AUDIO_EXTENSIONS.has(extension) ||
-    VIDEO_EXTENSIONS.has(extension);
+    VIDEO_EXTENSIONS.has(extension) ||
+    MODEL_EXTENSIONS.has(extension);
   if (!isMediaPreview && !canPreviewText) {
     state.preview.hint = resolvePreviewTooLargeHint();
     state.preview.content = t('workspace.preview.empty');
@@ -4085,7 +4094,8 @@ const openPreviewWithoutOnlyOffice = async (entry) => {
       IMAGE_EXTENSIONS.has(extension) ||
       PDF_EXTENSIONS.has(extension) ||
       AUDIO_EXTENSIONS.has(extension) ||
-      VIDEO_EXTENSIONS.has(extension)
+      VIDEO_EXTENSIONS.has(extension) ||
+      MODEL_EXTENSIONS.has(extension)
     ) {
       const response = await activeFileSystem.value.downloadFile(withFsParams(withWorkspacePreviewParams(entry)));
       let blob = response.data;
@@ -4121,6 +4131,10 @@ const openPreviewWithoutOnlyOffice = async (entry) => {
         }
         state.preview.embed = true;
         state.preview.type = 'video';
+        state.preview.url = URL.createObjectURL(blob);
+      } else if (MODEL_EXTENSIONS.has(extension)) {
+        state.preview.embed = true;
+        state.preview.type = 'model';
         state.preview.url = URL.createObjectURL(blob);
       } else {
         state.preview.embed = true;

@@ -1,0 +1,1008 @@
+{
+  "schema": 1,
+  "suite": "hive-api-experience",
+  "environment": {
+    "system": "Windows",
+    "release": "11",
+    "machine": "AMD64",
+    "logical_cpus": 32,
+    "physical_memory_bytes": 68341796864,
+    "runner_python": "3.12.10"
+  },
+  "workload": {
+    "cases": [
+      "login",
+      "session_catalog",
+      "stream",
+      "slow_consumer",
+      "cancel_resume",
+      "queue",
+      "parallel_threads",
+      "isolation",
+      "workspace",
+      "sandbox_files",
+      "large_chat",
+      "restart_recovery",
+      "storage_audit",
+      "idle_storage"
+    ],
+    "profile": "smoke",
+    "user_rounds": 30,
+    "model_requests_per_turn": 30,
+    "chunks": 8,
+    "interval_ms": 8,
+    "seed": 42,
+    "fixture_contract": "postgres-canonical-with-tools-v2",
+    "idle_observation_seconds": 600,
+    "idle_max_single_core_cpu_percent": 1.0
+  },
+  "execution": {
+    "mode": "compose-postgres-http-websocket",
+    "worker_threads": 4,
+    "engine": "29.2.1",
+    "compose": "5.1.0",
+    "runtime_image_id": "sha256:f21af1564714cc69951c2dc7e8ed13ba8d200664e7b2fc627f0dc9a09d4e3134",
+    "postgres_image_id": "sha256:fe03a7605299a34ddf5e4f285dff78c3d7190a576b3c6b46f2fcff69f4bffd54",
+    "capacity": "32 33462280192 x86_64 linux"
+  },
+  "samples": [
+    {
+      "status": "ok",
+      "metrics": {
+        "login_ms": [
+          46.79630001191981
+        ]
+      },
+      "assertions": 2,
+      "case": "login",
+      "run": 0,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "create_ms": [
+          26.24910000304226
+        ],
+        "catalog_ms": [
+          28.991500003030524
+        ],
+        "empty_bootstrap_ms": [
+          27.871500002220273
+        ]
+      },
+      "assertions": 4,
+      "response_bytes": 710,
+      "case": "session_catalog",
+      "run": 0,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "send_to_first_text_ms": [
+          448.695700004464
+        ],
+        "send_to_provider_ms": [
+          438.600554
+        ],
+        "send_to_terminal_ms": [
+          576.1540999956196
+        ],
+        "durable_read_ms": [
+          21.244999996270053
+        ],
+        "provider_to_first_ms": [
+          8.30826
+        ],
+        "provider_stream_ms": [
+          59.619816
+        ]
+      },
+      "assertions": 8,
+      "events": 17,
+      "deltas": 8,
+      "response_bytes": 3074,
+      "case": "stream",
+      "run": 0,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "send_to_first_text_ms": [
+          312.77330000011716
+        ],
+        "send_to_provider_ms": [
+          302.290411
+        ],
+        "send_to_terminal_ms": [
+          540.0122999999439
+        ],
+        "durable_read_ms": [
+          21.566399998846464
+        ],
+        "provider_to_first_ms": [
+          8.350356
+        ],
+        "provider_stream_ms": [
+          59.540216
+        ]
+      },
+      "assertions": 8,
+      "events": 17,
+      "deltas": 8,
+      "response_bytes": 3075,
+      "case": "slow_consumer",
+      "run": 0,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "send_to_first_text_ms": [
+          244.62110000604298
+        ],
+        "send_to_provider_ms": [
+          212.295255
+        ],
+        "send_to_terminal_ms": [
+          329.12900000519585
+        ],
+        "durable_read_ms": [
+          20.45189999626018
+        ],
+        "provider_to_first_ms": [
+          8.241739
+        ],
+        "provider_stream_ms": [
+          59.020139
+        ],
+        "cancel_ack_ms": [
+          39.67939999711234
+        ],
+        "cancel_to_settled_ms": [
+          59.411000009276904
+        ]
+      },
+      "assertions": 10,
+      "events": 17,
+      "deltas": 8,
+      "response_bytes": 4272,
+      "case": "cancel_resume",
+      "run": 0,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "enqueue_ms": [
+          63.88610000431072,
+          56.09389999881387
+        ],
+        "queue_read_ms": [
+          11.28249999601394
+        ],
+        "reorder_ms": [
+          14.584000004106201
+        ],
+        "queued_cancel_ms": [
+          48.91539999516681
+        ]
+      },
+      "assertions": 6,
+      "case": "queue",
+      "run": 0,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "batch_ms": [
+          3534.404000005452
+        ],
+        "send_to_first_text_ms": [
+          360.71150000498164,
+          368.1748999952106
+        ],
+        "send_to_provider_ms": [
+          351.793176,
+          359.350358
+        ],
+        "send_to_terminal_ms": [
+          465.4914999991888,
+          471.4569999923697
+        ],
+        "durable_read_ms": [
+          19.417000003159046,
+          19.281299988506362
+        ],
+        "provider_to_first_ms": [
+          8.23476,
+          8.247264
+        ],
+        "provider_stream_ms": [
+          58.479246,
+          58.605014
+        ]
+      },
+      "assertions": 16,
+      "workers": 2,
+      "case": "parallel_threads",
+      "run": 0,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "cross_user_rejection_ms": [
+          8.777299997746013,
+          7.3198000027332455
+        ],
+        "anonymous_rejection_ms": [
+          3.0375000060303137
+        ]
+      },
+      "assertions": 3,
+      "case": "isolation",
+      "run": 0,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "first_directory_page_ms": [
+          89.69639999850187
+        ],
+        "older_directory_page_ms": [
+          66.57710000581574
+        ],
+        "file_read_ms": [
+          25.67339999950491
+        ]
+      },
+      "assertions": 4,
+      "entries": 24,
+      "response_bytes": [
+        1988,
+        1989
+      ],
+      "case": "workspace",
+      "run": 0,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "sandbox_write_ms": [
+          78.38099999935366,
+          78.24390000314452,
+          77.22479999938514,
+          77.17619999311864
+        ],
+        "sandbox_read_ms": [
+          25.342499997350387,
+          25.698700002976693,
+          24.783999993815087,
+          24.97899999434594
+        ]
+      },
+      "assertions": 14,
+      "sandbox_files": {
+        "users": 2,
+        "containers_per_user": 2,
+        "concurrent_scopes": 4,
+        "successful_writes": 4,
+        "successful_reads": 4,
+        "local_history_files": 0
+      },
+      "case": "sandbox_files",
+      "run": 0,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "chat_bootstrap_ms": [
+          22.599200005060993
+        ],
+        "older_chat_page_ms": [
+          18.42759999271948
+        ],
+        "newer_chat_page_ms": [
+          17.2212000034051
+        ],
+        "body_read_ms": [
+          10.60229999711737
+        ]
+      },
+      "assertions": 84,
+      "rows": [
+        12,
+        12
+      ],
+      "response_bytes": [
+        46105,
+        42534,
+        45674,
+        1285
+      ],
+      "case": "large_chat",
+      "run": 0,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "send_to_first_text_ms": [
+          252.32800000230782
+        ],
+        "send_to_provider_ms": [
+          217.995317
+        ],
+        "send_to_terminal_ms": [
+          333.87970000330824
+        ],
+        "durable_read_ms": [
+          20.693099999334663
+        ],
+        "provider_to_first_ms": [
+          8.231191
+        ],
+        "provider_stream_ms": [
+          58.219544
+        ],
+        "restart_to_ready_ms": [
+          1184.022500005085
+        ],
+        "restored_chat_read_ms": [
+          49.3650999997044
+        ]
+      },
+      "assertions": 11,
+      "events": 17,
+      "deltas": 8,
+      "response_bytes": 5278,
+      "case": "restart_recovery",
+      "run": 0,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "storage_audit_ms": [
+          386.049799999455
+        ]
+      },
+      "assertions": 6,
+      "case": "storage_audit",
+      "run": 0,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "idle_observation_ms": [
+          600000.3989519901
+        ],
+        "idle_cpu_ms": [
+          550.0
+        ]
+      },
+      "assertions": 7,
+      "idle_storage": {
+        "process": {
+          "observation_ms": 600000.3989519901,
+          "cpu_ms": 550.0,
+          "single_core_cpu_percent": 0.09166660571570871,
+          "peak_rss_bytes": 62128128,
+          "rss_delta_bytes": -339968,
+          "samples": 5
+        },
+        "business_table_writes": {
+          "service_threads": {
+            "inserted": 0,
+            "updated": 0,
+            "deleted": 0
+          },
+          "service_thread_sessions": {
+            "inserted": 0,
+            "updated": 0,
+            "deleted": 0
+          },
+          "service_thread_records": {
+            "inserted": 0,
+            "updated": 0,
+            "deleted": 0
+          },
+          "service_thread_owners": {
+            "inserted": 0,
+            "updated": 0,
+            "deleted": 0
+          },
+          "service_thread_admissions": {
+            "inserted": 0,
+            "updated": 0,
+            "deleted": 0
+          },
+          "service_thread_items": {
+            "inserted": 0,
+            "updated": 0,
+            "deleted": 0
+          },
+          "service_thread_chat_heads": {
+            "inserted": 0,
+            "updated": 0,
+            "deleted": 0
+          },
+          "service_thread_display_state": {
+            "inserted": 0,
+            "updated": 0,
+            "deleted": 0
+          }
+        },
+        "total_business_writes": 0,
+        "requested_observation_seconds": 600,
+        "cpu_limit_single_core_percent": 1.0,
+        "counter_scope": "table-insert-update-delete",
+        "observation": "completed-request-no-http-no-websocket"
+      },
+      "case": "idle_storage",
+      "run": 0,
+      "warmup": false
+    }
+  ],
+  "captured_at_unix": 1792900203.1278155,
+  "compose_to_ready_ms": 4475.874800002202,
+  "artifacts": {
+    "server_sha256": "04022fcb0260cf53687c7291cdbfe7dd9989d175ed2ab6f29849e9fff972fefb"
+  },
+  "docker": {
+    "engine": "29.2.1",
+    "compose": "5.1.0",
+    "runtime_image_id": "sha256:f21af1564714cc69951c2dc7e8ed13ba8d200664e7b2fc627f0dc9a09d4e3134",
+    "postgres_image_id": "sha256:fe03a7605299a34ddf5e4f285dff78c3d7190a576b3c6b46f2fcff69f4bffd54",
+    "capacity": "32 33462280192 x86_64 linux"
+  },
+  "sandbox_files": {
+    "users": 2,
+    "containers_per_user": 2,
+    "concurrent_scopes": 4,
+    "successful_writes": 4,
+    "successful_reads": 4,
+    "local_history_files": 0
+  },
+  "fixture": {
+    "generation_ms": 8586.163200001465,
+    "user_turns": 30,
+    "model_requests": 900,
+    "model_actions": 1608,
+    "tool_calls": 708,
+    "items": 1638,
+    "rollout_records": 4267,
+    "storage_bytes": null
+  },
+  "postgres_storage": {
+    "canonical_records": 4355,
+    "canonical_logical_bytes": 6888593,
+    "admissions": 42,
+    "tool_metrics": 0,
+    "artifact_resources": 0,
+    "database_bytes": 26532887,
+    "relation_bytes": {
+      "service_threads": 98304,
+      "service_thread_sessions": 131072,
+      "service_thread_records": 10059776,
+      "service_thread_owners": 49152,
+      "service_thread_admissions": 196608,
+      "service_thread_items": 4349952,
+      "service_thread_chat_heads": 114688,
+      "service_thread_display_state": 65536,
+      "runtime_tool_metrics": 40960,
+      "runtime_artifact_resources": 32768
+    },
+    "invalid_ordinals": 0,
+    "projection_ahead": 0
+  },
+  "idle_storage": {
+    "process": {
+      "observation_ms": 600000.3989519901,
+      "cpu_ms": 550.0,
+      "single_core_cpu_percent": 0.09166660571570871,
+      "peak_rss_bytes": 62128128,
+      "rss_delta_bytes": -339968,
+      "samples": 5
+    },
+    "business_table_writes": {
+      "service_threads": {
+        "inserted": 0,
+        "updated": 0,
+        "deleted": 0
+      },
+      "service_thread_sessions": {
+        "inserted": 0,
+        "updated": 0,
+        "deleted": 0
+      },
+      "service_thread_records": {
+        "inserted": 0,
+        "updated": 0,
+        "deleted": 0
+      },
+      "service_thread_owners": {
+        "inserted": 0,
+        "updated": 0,
+        "deleted": 0
+      },
+      "service_thread_admissions": {
+        "inserted": 0,
+        "updated": 0,
+        "deleted": 0
+      },
+      "service_thread_items": {
+        "inserted": 0,
+        "updated": 0,
+        "deleted": 0
+      },
+      "service_thread_chat_heads": {
+        "inserted": 0,
+        "updated": 0,
+        "deleted": 0
+      },
+      "service_thread_display_state": {
+        "inserted": 0,
+        "updated": 0,
+        "deleted": 0
+      }
+    },
+    "total_business_writes": 0,
+    "requested_observation_seconds": 600,
+    "cpu_limit_single_core_percent": 1.0,
+    "counter_scope": "table-insert-update-delete",
+    "observation": "completed-request-no-http-no-websocket"
+  },
+  "summary": {
+    "login": {
+      "runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "metrics": {
+        "login_ms": {
+          "count": 1,
+          "p50": 46.79630001191981,
+          "p95": 46.79630001191981,
+          "maximum": 46.79630001191981
+        }
+      }
+    },
+    "session_catalog": {
+      "runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "metrics": {
+        "catalog_ms": {
+          "count": 1,
+          "p50": 28.991500003030524,
+          "p95": 28.991500003030524,
+          "maximum": 28.991500003030524
+        },
+        "create_ms": {
+          "count": 1,
+          "p50": 26.24910000304226,
+          "p95": 26.24910000304226,
+          "maximum": 26.24910000304226
+        },
+        "empty_bootstrap_ms": {
+          "count": 1,
+          "p50": 27.871500002220273,
+          "p95": 27.871500002220273,
+          "maximum": 27.871500002220273
+        }
+      }
+    },
+    "stream": {
+      "runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "metrics": {
+        "durable_read_ms": {
+          "count": 1,
+          "p50": 21.244999996270053,
+          "p95": 21.244999996270053,
+          "maximum": 21.244999996270053
+        },
+        "provider_stream_ms": {
+          "count": 1,
+          "p50": 59.619816,
+          "p95": 59.619816,
+          "maximum": 59.619816
+        },
+        "provider_to_first_ms": {
+          "count": 1,
+          "p50": 8.30826,
+          "p95": 8.30826,
+          "maximum": 8.30826
+        },
+        "send_to_first_text_ms": {
+          "count": 1,
+          "p50": 448.695700004464,
+          "p95": 448.695700004464,
+          "maximum": 448.695700004464
+        },
+        "send_to_provider_ms": {
+          "count": 1,
+          "p50": 438.600554,
+          "p95": 438.600554,
+          "maximum": 438.600554
+        },
+        "send_to_terminal_ms": {
+          "count": 1,
+          "p50": 576.1540999956196,
+          "p95": 576.1540999956196,
+          "maximum": 576.1540999956196
+        }
+      }
+    },
+    "slow_consumer": {
+      "runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "metrics": {
+        "durable_read_ms": {
+          "count": 1,
+          "p50": 21.566399998846464,
+          "p95": 21.566399998846464,
+          "maximum": 21.566399998846464
+        },
+        "provider_stream_ms": {
+          "count": 1,
+          "p50": 59.540216,
+          "p95": 59.540216,
+          "maximum": 59.540216
+        },
+        "provider_to_first_ms": {
+          "count": 1,
+          "p50": 8.350356,
+          "p95": 8.350356,
+          "maximum": 8.350356
+        },
+        "send_to_first_text_ms": {
+          "count": 1,
+          "p50": 312.77330000011716,
+          "p95": 312.77330000011716,
+          "maximum": 312.77330000011716
+        },
+        "send_to_provider_ms": {
+          "count": 1,
+          "p50": 302.290411,
+          "p95": 302.290411,
+          "maximum": 302.290411
+        },
+        "send_to_terminal_ms": {
+          "count": 1,
+          "p50": 540.0122999999439,
+          "p95": 540.0122999999439,
+          "maximum": 540.0122999999439
+        }
+      }
+    },
+    "cancel_resume": {
+      "runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "metrics": {
+        "cancel_ack_ms": {
+          "count": 1,
+          "p50": 39.67939999711234,
+          "p95": 39.67939999711234,
+          "maximum": 39.67939999711234
+        },
+        "cancel_to_settled_ms": {
+          "count": 1,
+          "p50": 59.411000009276904,
+          "p95": 59.411000009276904,
+          "maximum": 59.411000009276904
+        },
+        "durable_read_ms": {
+          "count": 1,
+          "p50": 20.45189999626018,
+          "p95": 20.45189999626018,
+          "maximum": 20.45189999626018
+        },
+        "provider_stream_ms": {
+          "count": 1,
+          "p50": 59.020139,
+          "p95": 59.020139,
+          "maximum": 59.020139
+        },
+        "provider_to_first_ms": {
+          "count": 1,
+          "p50": 8.241739,
+          "p95": 8.241739,
+          "maximum": 8.241739
+        },
+        "send_to_first_text_ms": {
+          "count": 1,
+          "p50": 244.62110000604298,
+          "p95": 244.62110000604298,
+          "maximum": 244.62110000604298
+        },
+        "send_to_provider_ms": {
+          "count": 1,
+          "p50": 212.295255,
+          "p95": 212.295255,
+          "maximum": 212.295255
+        },
+        "send_to_terminal_ms": {
+          "count": 1,
+          "p50": 329.12900000519585,
+          "p95": 329.12900000519585,
+          "maximum": 329.12900000519585
+        }
+      }
+    },
+    "queue": {
+      "runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "metrics": {
+        "enqueue_ms": {
+          "count": 2,
+          "p50": 56.09389999881387,
+          "p95": 63.88610000431072,
+          "maximum": 63.88610000431072
+        },
+        "queue_read_ms": {
+          "count": 1,
+          "p50": 11.28249999601394,
+          "p95": 11.28249999601394,
+          "maximum": 11.28249999601394
+        },
+        "queued_cancel_ms": {
+          "count": 1,
+          "p50": 48.91539999516681,
+          "p95": 48.91539999516681,
+          "maximum": 48.91539999516681
+        },
+        "reorder_ms": {
+          "count": 1,
+          "p50": 14.584000004106201,
+          "p95": 14.584000004106201,
+          "maximum": 14.584000004106201
+        }
+      }
+    },
+    "parallel_threads": {
+      "runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "metrics": {
+        "batch_ms": {
+          "count": 1,
+          "p50": 3534.404000005452,
+          "p95": 3534.404000005452,
+          "maximum": 3534.404000005452
+        },
+        "durable_read_ms": {
+          "count": 2,
+          "p50": 19.281299988506362,
+          "p95": 19.417000003159046,
+          "maximum": 19.417000003159046
+        },
+        "provider_stream_ms": {
+          "count": 2,
+          "p50": 58.479246,
+          "p95": 58.605014,
+          "maximum": 58.605014
+        },
+        "provider_to_first_ms": {
+          "count": 2,
+          "p50": 8.23476,
+          "p95": 8.247264,
+          "maximum": 8.247264
+        },
+        "send_to_first_text_ms": {
+          "count": 2,
+          "p50": 360.71150000498164,
+          "p95": 368.1748999952106,
+          "maximum": 368.1748999952106
+        },
+        "send_to_provider_ms": {
+          "count": 2,
+          "p50": 351.793176,
+          "p95": 359.350358,
+          "maximum": 359.350358
+        },
+        "send_to_terminal_ms": {
+          "count": 2,
+          "p50": 465.4914999991888,
+          "p95": 471.4569999923697,
+          "maximum": 471.4569999923697
+        }
+      }
+    },
+    "isolation": {
+      "runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "metrics": {
+        "anonymous_rejection_ms": {
+          "count": 1,
+          "p50": 3.0375000060303137,
+          "p95": 3.0375000060303137,
+          "maximum": 3.0375000060303137
+        },
+        "cross_user_rejection_ms": {
+          "count": 2,
+          "p50": 7.3198000027332455,
+          "p95": 8.777299997746013,
+          "maximum": 8.777299997746013
+        }
+      }
+    },
+    "workspace": {
+      "runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "metrics": {
+        "file_read_ms": {
+          "count": 1,
+          "p50": 25.67339999950491,
+          "p95": 25.67339999950491,
+          "maximum": 25.67339999950491
+        },
+        "first_directory_page_ms": {
+          "count": 1,
+          "p50": 89.69639999850187,
+          "p95": 89.69639999850187,
+          "maximum": 89.69639999850187
+        },
+        "older_directory_page_ms": {
+          "count": 1,
+          "p50": 66.57710000581574,
+          "p95": 66.57710000581574,
+          "maximum": 66.57710000581574
+        }
+      }
+    },
+    "sandbox_files": {
+      "runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "metrics": {
+        "sandbox_read_ms": {
+          "count": 4,
+          "p50": 24.97899999434594,
+          "p95": 25.698700002976693,
+          "maximum": 25.698700002976693
+        },
+        "sandbox_write_ms": {
+          "count": 4,
+          "p50": 77.22479999938514,
+          "p95": 78.38099999935366,
+          "maximum": 78.38099999935366
+        }
+      }
+    },
+    "large_chat": {
+      "runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "metrics": {
+        "body_read_ms": {
+          "count": 1,
+          "p50": 10.60229999711737,
+          "p95": 10.60229999711737,
+          "maximum": 10.60229999711737
+        },
+        "chat_bootstrap_ms": {
+          "count": 1,
+          "p50": 22.599200005060993,
+          "p95": 22.599200005060993,
+          "maximum": 22.599200005060993
+        },
+        "newer_chat_page_ms": {
+          "count": 1,
+          "p50": 17.2212000034051,
+          "p95": 17.2212000034051,
+          "maximum": 17.2212000034051
+        },
+        "older_chat_page_ms": {
+          "count": 1,
+          "p50": 18.42759999271948,
+          "p95": 18.42759999271948,
+          "maximum": 18.42759999271948
+        }
+      }
+    },
+    "restart_recovery": {
+      "runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "metrics": {
+        "durable_read_ms": {
+          "count": 1,
+          "p50": 20.693099999334663,
+          "p95": 20.693099999334663,
+          "maximum": 20.693099999334663
+        },
+        "provider_stream_ms": {
+          "count": 1,
+          "p50": 58.219544,
+          "p95": 58.219544,
+          "maximum": 58.219544
+        },
+        "provider_to_first_ms": {
+          "count": 1,
+          "p50": 8.231191,
+          "p95": 8.231191,
+          "maximum": 8.231191
+        },
+        "restart_to_ready_ms": {
+          "count": 1,
+          "p50": 1184.022500005085,
+          "p95": 1184.022500005085,
+          "maximum": 1184.022500005085
+        },
+        "restored_chat_read_ms": {
+          "count": 1,
+          "p50": 49.3650999997044,
+          "p95": 49.3650999997044,
+          "maximum": 49.3650999997044
+        },
+        "send_to_first_text_ms": {
+          "count": 1,
+          "p50": 252.32800000230782,
+          "p95": 252.32800000230782,
+          "maximum": 252.32800000230782
+        },
+        "send_to_provider_ms": {
+          "count": 1,
+          "p50": 217.995317,
+          "p95": 217.995317,
+          "maximum": 217.995317
+        },
+        "send_to_terminal_ms": {
+          "count": 1,
+          "p50": 333.87970000330824,
+          "p95": 333.87970000330824,
+          "maximum": 333.87970000330824
+        }
+      }
+    },
+    "storage_audit": {
+      "runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "metrics": {
+        "storage_audit_ms": {
+          "count": 1,
+          "p50": 386.049799999455,
+          "p95": 386.049799999455,
+          "maximum": 386.049799999455
+        }
+      }
+    },
+    "idle_storage": {
+      "runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "metrics": {
+        "idle_cpu_ms": {
+          "count": 1,
+          "p50": 550.0,
+          "p95": 550.0,
+          "maximum": 550.0
+        },
+        "idle_observation_ms": {
+          "count": 1,
+          "p50": 600000.3989519901,
+          "p95": 600000.3989519901,
+          "maximum": 600000.3989519901
+        }
+      }
+    }
+  },
+  "correctness_passed": true,
+  "passed": true
+}
