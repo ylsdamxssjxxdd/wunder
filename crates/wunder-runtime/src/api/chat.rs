@@ -107,17 +107,16 @@ struct SendMessageRequest {
     approval_mode: Option<String>,
     #[serde(default, alias = "reasoningEffort", alias = "reasoning_effort")]
     reasoning_effort: Option<String>,
-    /// When answering an inquiry, continue the existing user round instead
-    /// of opening a second root conversation bubble.
-    #[serde(default, alias = "rootUserRound", alias = "root_user_round")]
-    root_user_round: Option<i64>,
+    /// Existing inquiry turn settled by this new user round.
+    #[serde(default, alias = "inquiryTurnId", alias = "inquiry_turn_id")]
+    inquiry_turn_id: Option<String>,
 }
 
 pub(crate) struct ChatRequestOverrides {
     pub(crate) tool_call_mode: Option<String>,
     pub(crate) approval_mode: Option<String>,
     pub(crate) reasoning_effort: Option<String>,
-    pub(crate) root_user_round: Option<i64>,
+    pub(crate) inquiry_turn_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -299,7 +298,7 @@ async fn send_message(
             tool_call_mode: payload.tool_call_mode,
             approval_mode: payload.approval_mode,
             reasoning_effort: payload.reasoning_effort,
-            root_user_round: payload.root_user_round,
+            inquiry_turn_id: payload.inquiry_turn_id,
         },
     )
     .await?;
@@ -572,8 +571,13 @@ pub(crate) async fn build_chat_request(
     if let Some(effort) = request_reasoning_effort {
         selected_model_overrides.insert("reasoning_effort".to_string(), json!(effort));
     }
-    if let Some(round) = request_overrides.root_user_round.filter(|round| *round > 0) {
-        config_override_map.insert("__root_user_round".to_string(), json!(round));
+    if let Some(turn_id) = request_overrides
+        .inquiry_turn_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+    {
+        config_override_map.insert("__inquiry_turn_id".to_string(), json!(turn_id));
     }
     if let Some(selected_model) = selected_model_name.as_deref() {
         if !selected_model_overrides.is_empty() {
@@ -680,7 +684,7 @@ pub async fn build_native_chat_request(
     client_message_id: Option<String>,
     attachments: Vec<AttachmentPayload>,
     reasoning_effort: Option<String>,
-    root_user_round: Option<i64>,
+    inquiry_turn_id: Option<String>,
 ) -> anyhow::Result<WunderRequest> {
     build_chat_request(
         state,
@@ -704,7 +708,7 @@ pub async fn build_native_chat_request(
             tool_call_mode: None,
             approval_mode: None,
             reasoning_effort,
-            root_user_round,
+            inquiry_turn_id,
         },
     )
     .await

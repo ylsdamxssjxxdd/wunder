@@ -61,6 +61,7 @@
         v-for="(option, optionIndex) in question.options"
         :key="`o-${questionIndex}-${optionIndex}`"
         type="button"
+        :disabled="submitted"
         :class="[
           'inquiry-option',
           { 'is-active': isOptionActive(questionIndex, optionIndex) }
@@ -85,6 +86,7 @@
         <button
           type="button"
           class="inquiry-mark-btn"
+          :disabled="submitted"
           :aria-label="t('chat.inquiry.otherPlaceholder')"
           @click="focusOther(questionIndex)"
         >
@@ -99,6 +101,7 @@
           :value="answer(questionIndex).other"
           class="inquiry-other-input"
           type="text"
+          :disabled="submitted"
           :placeholder="t('chat.inquiry.otherPlaceholder')"
           @input="onOtherInput(questionIndex, $event)"
         />
@@ -106,6 +109,7 @@
           <button
             type="button"
             class="inquiry-pref-main"
+            :disabled="submitted"
             :class="{ 'is-active': answer(questionIndex).noPreference }"
             @click="markNoPreference(questionIndex)"
           >
@@ -114,6 +118,7 @@
           <button
             type="button"
             class="inquiry-pref-caret"
+            :disabled="submitted"
             :title="t('chat.inquiry.quickAnswer')"
             :aria-label="t('chat.inquiry.quickAnswer')"
             :aria-expanded="menuQuestion === questionIndex"
@@ -157,7 +162,10 @@ type AnswerState = { labels: number[]; other: string; noPreference: boolean };
 
 const props = defineProps<{ panel: InquiryPanelData | null }>();
 
-const emit = defineEmits<{ (event: 'update:selected', answers: InquiryAnswerDraft[]): void }>();
+const emit = defineEmits<{
+  (event: 'update:selected', answers: InquiryAnswerDraft[]): void;
+  (event: 'submit'): void;
+}>();
 
 const { t } = useI18n();
 
@@ -181,6 +189,7 @@ const page = ref(0);
 const showAll = ref(false);
 const menuQuestion = ref(-1);
 const states = ref<Record<number, AnswerState>>({});
+const submitted = ref(false);
 const otherRefs = new Map<number, HTMLInputElement>();
 
 const paging = computed(() => questions.value.length > 1);
@@ -238,7 +247,32 @@ const emitDraft = () => {
   emit('update:selected', payload);
 };
 
+const hasAnswer = (questionIndex: number): boolean => {
+  const draft = answer(questionIndex);
+  return draft.labels.length > 0 || Boolean(draft.other.trim()) || draft.noPreference;
+};
+
+/**
+ * Single-choice questions are a guided sequence: selecting an option moves to
+ * the next question, and the last selection submits the panel. True multiple
+ * choice questions stay on the page so the user can select more than one.
+ */
+const advanceAfterAnswer = (questionIndex: number) => {
+  if (questions.value[questionIndex]?.multiple === true) return;
+  if (!hasAnswer(questionIndex)) return;
+  if (questionIndex < questions.value.length - 1) {
+    page.value = questionIndex + 1;
+    showAll.value = false;
+    return;
+  }
+  if (questions.value.every((_question, index) => hasAnswer(index))) {
+    submitted.value = true;
+    emit('submit');
+  }
+};
+
 const toggleOption = (questionIndex: number, optionIndex: number) => {
+  if (submitted.value) return;
   const draft = answer(questionIndex);
   const multiple = questions.value[questionIndex]?.multiple === true;
   let labels: number[];
@@ -254,6 +288,7 @@ const toggleOption = (questionIndex: number, optionIndex: number) => {
   patchAnswer(questionIndex, { labels, noPreference: false });
   menuQuestion.value = -1;
   emitDraft();
+  advanceAfterAnswer(questionIndex);
 };
 
 const onOtherInput = (questionIndex: number, event: Event) => {
@@ -267,12 +302,15 @@ const focusOther = (questionIndex: number) => {
 };
 
 const markNoPreference = (questionIndex: number) => {
+  if (submitted.value) return;
   patchAnswer(questionIndex, { labels: [], other: '', noPreference: true });
   menuQuestion.value = -1;
   emitDraft();
+  advanceAfterAnswer(questionIndex);
 };
 
 const useRecommended = (questionIndex: number) => {
+  if (submitted.value) return;
   const options = questions.value[questionIndex]?.options || [];
   const indexes = options
     .map((option, index) => (option.recommended ? index : -1))
@@ -281,6 +319,7 @@ const useRecommended = (questionIndex: number) => {
   patchAnswer(questionIndex, { labels, other: '', noPreference: false });
   menuQuestion.value = -1;
   emitDraft();
+  advanceAfterAnswer(questionIndex);
 };
 
 const toggleMenu = (questionIndex: number) => {
@@ -294,6 +333,7 @@ const stepPage = (delta: number) => {
 
 const reset = () => {
   states.value = {};
+  submitted.value = false;
   otherRefs.clear();
   page.value = 0;
   showAll.value = false;

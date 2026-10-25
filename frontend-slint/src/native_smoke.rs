@@ -127,7 +127,7 @@ pub fn check_runtime(desktop: &NativeDesktop) -> Result<(), Box<dyn std::error::
         session_id: session.id.clone(),
         content: "native-cancel".into(),
         reasoning_effort: None,
-        root_user_round: None,
+        inquiry_turn_id: None,
         client_message_id: Some("native-cancel-before-start".into()),
         attachments: Vec::new(),
     })?;
@@ -159,7 +159,7 @@ fn check_queue_and_detach(desktop: &NativeDesktop) -> Result<(), Box<dyn std::er
         session_id: session.id.clone(),
         content: "native-queue-first".into(),
         reasoning_effort: None,
-        root_user_round: None,
+        inquiry_turn_id: None,
         client_message_id: None,
         attachments: Vec::new(),
     })?;
@@ -176,7 +176,7 @@ fn check_queue_and_detach(desktop: &NativeDesktop) -> Result<(), Box<dyn std::er
         session_id: session.id.clone(),
         content: "native-queue-second".into(),
         reasoning_effort: None,
-        root_user_round: None,
+        inquiry_turn_id: None,
         client_message_id: None,
         attachments: Vec::new(),
     })?;

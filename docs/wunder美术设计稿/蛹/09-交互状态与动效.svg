@@ -1,251 +1,66 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1680" viewBox="0 0 1600 1680" role="img" aria-label="蛹 桌面端交互状态与动效规范">
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1880" viewBox="0 0 1600 1880" role="img" aria-label="蛹 桌面端真实交互状态与动效规范">
   <title>09 交互状态与动效 · 蛹 Desktop UI Spec</title>
-  <defs>
-    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.2 4.2L19 7"/></symbol>
-    <symbol fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" id="i-spin" viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9"/></symbol>
-    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="i-x" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
-    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="i-arrow" viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></symbol>
-    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
-  </defs>
-  <style>
-    svg{font-family:'Microsoft YaHei UI','Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif;fill:#1F2329}
-    .mono{font-family:Consolas,'SFMono-Regular','Cascadia Mono',monospace}
-    .h1{font-size:30px;font-weight:700;letter-spacing:-.4px}
-    .sub{font-size:13px;fill:#7C7A75}
-    .kicker{font-size:11px;font-weight:600;letter-spacing:1.4px;fill:#E07A12}
-    .sect{font-size:16px;font-weight:700}
-    .sect-en{font-size:10px;font-weight:600;letter-spacing:1.6px;fill:#A8A39B}
-    .card{fill:#FFFFFF;stroke:#DED9D1;stroke-width:1}
-    .card-t{font-size:12px;font-weight:700}
-    .note{font-size:11px;fill:#7C7A75}
-    .tiny{font-size:10px;fill:#8A8F99}
-    .mono10{font-family:Consolas,monospace;font-size:10px;fill:#8A8F99}
-    .mono9{font-family:Consolas,monospace;font-size:9px;fill:#8A8F99}
-    .ui13{font-size:13px}.ui12{font-size:12px}.ui11{font-size:11px}.ui10{font-size:10px}
-    .muted{fill:#8A8F99}
-  </style>
+  <defs><symbol id="a-copy" viewBox="0 0 448 512"><path fill="currentColor" transform="translate(0 448) scale(1 -1)" d="M208 448H332Q352 448 366 434L434 366Q448 352 448 332V112Q447 92 434 78Q420 65 400 64H208Q188 65 174 78Q161 92 160 112V400Q161 420 174 434Q188 447 208 448ZM48 320H128V256H64V0H256V32H320V-16Q319-36 306-50Q292-63 272-64H48Q28-63 14-50Q1-36 0-16V272Q1 292 14 306Q28 319 48 320Z"/></symbol></defs>
+  <style>svg{font-family:'Microsoft YaHei UI','Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif;fill:#1F2329}.mono{font-family:Consolas,monospace}.h1{font-size:30px;font-weight:700}.sub{font-size:13px;fill:#6F747B}.kicker{font-size:11px;font-weight:700;letter-spacing:1.4px;fill:#D87616}.sect{font-size:18px;font-weight:700}.sect-note{font-size:12px;fill:#8A8F99}.card{fill:#FFF;stroke:#DED9D1}.card-t{font-size:14px;font-weight:700}.note{font-size:12px;fill:#6F747B}.tiny{font-size:11px;fill:#8A8F99}.chip{font-size:11px;font-weight:700;fill:#D87616}.ui14{font-size:14px}.ui13{font-size:13px}.ui12{font-size:12px}.ui11{font-size:11px}.muted{fill:#8A8F99}.secondary{fill:#3D3D3D}</style>
+  <rect width="1600" height="1880" fill="#F5F3EF"/>
+  <g id="header"><text x="64" y="42" class="kicker">WUNDER / 蛹 · DESKTOP UI SPEC</text><text x="64" y="84" class="h1">09　交互状态与动效</text><text x="64" y="114" class="sub">矩阵记录真实控件行为，不用虚构的按下色、统一加载态或焦点环填满表格；特殊组件在自己的分页展开。</text><text x="1536" y="44" text-anchor="end" class="mono tiny">SHEET 09 / 09</text><text x="1536" y="84" text-anchor="end" class="mono ui12">STATES · MOTION · A11Y</text><line x1="64" y1="140" x2="1536" y2="140" stroke="#D8D5D0"/></g>
 
-  <rect width="1600" height="1680" fill="#F4F1EC"/>
-  <g id="header">
-    <text x="80" y="52" class="kicker">WUNDER / 蛹 · DESKTOP UI SPEC</text>
-    <text x="80" y="93" class="h1">09　交互状态与动效</text>
-    <text x="80" y="120" class="sub">状态切换必须可预测：悬停只换底，聚焦只加 1px 橙边，长列表不做布局动画。</text>
-    <text x="1520" y="52" text-anchor="end" class="mono" font-size="11" fill="#8A8F99">SHEET 09 / 09</text>
-    <text x="1520" y="94" text-anchor="end" class="mono" font-size="12" fill="#3D3D3D">STATES · MOTION · A11Y · RESPONSIVE</text>
-    <line x1="80" y1="140" x2="1520" y2="140" stroke="#D8D5D0"/>
+  <g id="action-matrix">
+    <rect x="64" y="160" width="28" height="24" rx="6" fill="#FDF0DE"/><text x="78" y="177" text-anchor="middle" class="chip">01</text><text x="104" y="178" class="sect">Action 按钮 · 原生属性直接决定外观</text><text x="1536" y="177" text-anchor="end" class="sect-note">30px 高 · 图标按钮 30 宽 / 文字按钮默认 92 宽 · r8</text>
+    <rect x="64" y="202" width="1472" height="448" rx="12" class="card"/>
+    <text x="260" y="234" class="tiny">默认</text><text x="512" y="234" class="tiny">悬停</text><text x="764" y="234" class="tiny">键盘聚焦</text><text x="1016" y="234" class="tiny">选中</text><text x="1268" y="234" class="tiny">停用</text><line x1="88" y1="250" x2="1512" y2="250" stroke="#E8E6E3"/>
+    <text x="88" y="292" class="card-t">主要按钮</text><text x="88" y="314" class="tiny">primary=true</text>
+    <rect x="260" y="272" width="92" height="30" rx="8" fill="#F58A24"/><text x="306" y="292" text-anchor="middle" class="ui12" fill="#FFF">确认</text><rect x="512" y="272" width="92" height="30" rx="8" fill="#E07A12"/><text x="558" y="292" text-anchor="middle" class="ui12" fill="#FFF">确认</text><rect x="764" y="272" width="92" height="30" rx="8" fill="#F58A24" stroke="#F58A24"/><text x="810" y="292" text-anchor="middle" class="ui12" fill="#FFF">确认</text><rect x="1016" y="272" width="92" height="30" rx="8" fill="#F58A24"/><text x="1062" y="292" text-anchor="middle" class="ui12" fill="#FFF">确认</text><rect x="1268" y="272" width="92" height="30" rx="8" fill="#FCDDBD"/><text x="1314" y="292" text-anchor="middle" class="ui12" fill="#FFF">确认</text>
+    <text x="88" y="362" class="card-t">危险按钮</text><text x="88" y="384" class="tiny">danger=true</text>
+    <rect x="260" y="342" width="92" height="30" rx="8" fill="#D04A43"/><text x="306" y="362" text-anchor="middle" class="ui12" fill="#FFF">删除</text><rect x="512" y="342" width="92" height="30" rx="8" fill="#D04A43"/><text x="558" y="362" text-anchor="middle" class="ui12" fill="#FFF">删除</text><rect x="764" y="342" width="92" height="30" rx="8" fill="#D04A43" stroke="#F58A24"/><text x="810" y="362" text-anchor="middle" class="ui12" fill="#FFF">删除</text><rect x="1016" y="342" width="92" height="30" rx="8" fill="#D04A43"/><text x="1062" y="362" text-anchor="middle" class="ui12" fill="#FFF">删除</text><rect x="1268" y="342" width="92" height="30" rx="8" fill="#ECB7B4"/><text x="1314" y="362" text-anchor="middle" class="ui12" fill="#FFF">删除</text>
+    <text x="88" y="432" class="card-t">图标按钮</text><text x="88" y="454" class="tiny">show-label=false</text>
+    <rect x="260" y="412" width="30" height="30" rx="8" fill="transparent"/><use href="#a-copy" x="267" y="419" width="16" height="16" color="#8A8F99"/><rect x="512" y="412" width="30" height="30" rx="8" fill="#FDF0DE"/><use href="#a-copy" x="519" y="419" width="16" height="16" color="#8A8F99"/><rect x="764" y="412" width="30" height="30" rx="8" fill="transparent" stroke="#F58A24"/><use href="#a-copy" x="771" y="419" width="16" height="16" color="#8A8F99"/><rect x="1016" y="412" width="30" height="30" rx="8" fill="#FDF0DE"/><use href="#a-copy" x="1023" y="419" width="16" height="16" color="#8A8F99"/><rect x="1268" y="412" width="30" height="30" rx="8" fill="transparent"/><use href="#a-copy" x="1275" y="419" width="16" height="16" color="#8A8F99"/><text x="1320" y="432" class="tiny">无点击 / 无 Tooltip 触发</text>
+    <text x="88" y="502" class="card-t">普通文字按钮</text><text x="88" y="524" class="tiny">show-label=true</text>
+    <rect x="260" y="482" width="92" height="30" rx="8" fill="transparent"/><text x="306" y="502" text-anchor="middle" class="ui12">浏览</text><rect x="512" y="482" width="92" height="30" rx="8" fill="#FDF0DE"/><text x="558" y="502" text-anchor="middle" class="ui12">浏览</text><rect x="764" y="482" width="92" height="30" rx="8" fill="transparent" stroke="#F58A24"/><text x="810" y="502" text-anchor="middle" class="ui12">浏览</text><rect x="1016" y="482" width="92" height="30" rx="8" fill="#FDF0DE"/><text x="1062" y="502" text-anchor="middle" class="ui12">浏览</text><rect x="1268" y="482" width="92" height="30" rx="8" fill="transparent"/><text x="1314" y="502" text-anchor="middle" class="ui12">浏览</text><text x="1320" y="502" class="tiny">当前不额外灰化</text>
+    <line x1="88" y1="540" x2="1512" y2="540" stroke="#E8E6E3"/>
+    <text x="88" y="568" class="note">真实规则：primary/danger 的背景分支优先于 selected；普通 selected 与 hover 都是 accent-soft。</text><text x="88" y="594" class="note">focus 始终是 1px accent；在 accent 实心按钮上对比很弱，本页不改成虚构的 2px 深色环。</text><text x="88" y="620" class="tiny">primary/danger 停用只将底色透明化 60%，文字仍为白色；普通停用不自动降透明度，由 enabled 阻止交互。</text><text x="1512" y="620" text-anchor="end" class="tiny">没有通用 pressed 色或 loading 分支；模型保存等局部加载见分页 07</text>
   </g>
 
-  <!-- ================= BUTTON STATES ================= -->
-  <g id="button-states">
-    <rect x="80" y="178" width="6" height="16" rx="2" fill="#F58A24"/>
-    <text x="98" y="192" class="sect">按钮状态</text>
-    <text x="186" y="192" class="sect-en">BUTTON MATRIX</text>
+  <g id="form-matrix">
+    <rect x="64" y="684" width="28" height="24" rx="6" fill="#FDF0DE"/><text x="78" y="701" text-anchor="middle" class="chip">02</text><text x="104" y="702" class="sect">表单与选择控件 · 输入、勾选、开关不是一套状态色</text>
+    <rect x="64" y="726" width="724" height="332" rx="12" class="card"/><text x="88" y="756" class="card-t">FormField / ComboBox</text>
+    <text x="88" y="788" class="tiny">默认</text><rect x="176" y="770" width="270" height="36" rx="8" fill="#FFF" stroke="#D8D5D0"/><text x="186" y="793" class="ui12 muted">可编辑内容</text><text x="478" y="793" class="note">白底 + border-strong</text>
+    <text x="88" y="836" class="tiny">聚焦</text><rect x="176" y="818" width="270" height="36" rx="8" fill="#FFF" stroke="#F58A24"/><text x="186" y="841" class="ui12">正在输入</text><text x="478" y="841" class="note">1px accent</text>
+    <text x="88" y="884" class="tiny">错误</text><rect x="176" y="866" width="270" height="36" rx="8" fill="#FFF" stroke="#D04A43"/><text x="186" y="889" class="ui12">需要修正</text><text x="478" y="889" class="note" fill="#D04A43">danger 优先于焦点色</text>
+    <text x="88" y="932" class="tiny">只读</text><rect x="176" y="914" width="270" height="36" rx="8" fill="#F6F5F3" stroke="#E8E6E3"/><text x="186" y="937" class="ui12 muted">只读内容</text><text x="478" y="937" class="note">灰底 + muted 文本</text>
+    <text x="88" y="980" class="tiny">下拉停用</text><rect x="176" y="962" width="270" height="36" rx="8" fill="#F6F5F3" stroke="#E8E6E3"/><text x="186" y="985" class="ui12 muted">当前配置</text><text x="426" y="985" class="ui12 muted">⌄</text><text x="478" y="985" class="note">不能展开，当前值仍可读</text>
+    <text x="88" y="1028" class="tiny">选择器展开后：hover 用 Theme.hover，当前项用 accent-soft + accent-deep 文本。</text>
 
-    <rect x="80" y="220" width="720" height="430" rx="12" class="card"/>
-    <g>
-      <text x="102" y="248" class="ui10" fill="#8A8F99">默认</text>
-      <text x="210" y="248" class="ui10" fill="#8A8F99">悬停</text>
-      <text x="318" y="248" class="ui10" fill="#8A8F99">按下</text>
-      <text x="426" y="248" class="ui10" fill="#8A8F99">聚焦</text>
-      <text x="534" y="248" class="ui10" fill="#8A8F99">停用</text>
-      <text x="642" y="248" class="ui10" fill="#8A8F99">加载</text>
-      <line x1="102" y1="258" x2="778" y2="258" stroke="#E8E6E3"/>
-
-      <!-- primary -->
-      <text x="102" y="282" class="ui11" fill="#8A8F99">主要</text>
-      <rect x="102" y="292" width="92" height="30" rx="8" fill="#F58A24"/><text x="148" y="312" text-anchor="middle" class="ui12" fill="#FFFFFF">发送</text>
-      <rect x="210" y="292" width="92" height="30" rx="8" fill="#E07A12"/><text x="256" y="312" text-anchor="middle" class="ui12" fill="#FFFFFF">发送</text>
-      <rect x="318" y="292" width="92" height="30" rx="8" fill="#C96A0D"/><text x="364" y="312" text-anchor="middle" class="ui12" fill="#FFFFFF">发送</text>
-      <rect x="426" y="292" width="92" height="30" rx="8" fill="#F58A24" stroke="#1F2329" stroke-width="2"/><text x="472" y="312" text-anchor="middle" class="ui12" fill="#FFFFFF">发送</text>
-      <rect x="534" y="292" width="92" height="30" rx="8" fill="#F58A24" opacity=".4"/><text x="580" y="312" text-anchor="middle" class="ui12" fill="#FFFFFF">发送</text>
-      <rect x="642" y="292" width="92" height="30" rx="8" fill="#F58A24"/><g color="#FFFFFF"><use href="#i-spin" x="670" y="299" width="14" height="14"/></g><text x="704" y="312" text-anchor="middle" class="ui11" fill="#FFFFFF">发送中</text>
-
-      <!-- outline -->
-      <text x="102" y="350" class="ui11" fill="#8A8F99">描边</text>
-      <rect x="102" y="360" width="92" height="30" rx="8" fill="#FFFFFF" stroke="#D8D5D0"/><text x="148" y="380" text-anchor="middle" class="ui12">取消</text>
-      <rect x="210" y="360" width="92" height="30" rx="8" fill="#FDF0DE" stroke="#F58A24"/><text x="256" y="380" text-anchor="middle" class="ui12" fill="#E07A12">取消</text>
-      <rect x="318" y="360" width="92" height="30" rx="8" fill="#F1EFEC" stroke="#D8D5D0"/><text x="364" y="380" text-anchor="middle" class="ui12">取消</text>
-      <rect x="426" y="360" width="92" height="30" rx="8" fill="#FFFFFF" stroke="#F58A24" stroke-width="2"/><text x="472" y="380" text-anchor="middle" class="ui12">取消</text>
-      <rect x="534" y="360" width="92" height="30" rx="8" fill="#F6F5F3"/><text x="580" y="380" text-anchor="middle" class="ui12" fill="#8A8F99">取消</text>
-      <rect x="642" y="360" width="92" height="30" rx="8" fill="#FFFFFF" stroke="#D8D5D0"/><g color="#8A8F99"><use href="#i-spin" x="672" y="368" width="13" height="13"/></g><text x="704" y="380" text-anchor="middle" class="ui11" fill="#8A8F99">处理中</text>
-
-      <!-- icon -->
-      <text x="102" y="418" class="ui11" fill="#8A8F99">图标</text>
-      <rect x="102" y="428" width="30" height="30" rx="8" fill="transparent"/><use href="#i-arrow" x="109" y="435" width="16" height="16" color="#8A8F99"/>
-      <rect x="210" y="428" width="30" height="30" rx="8" fill="#FDF0DE"/><use href="#i-arrow" x="217" y="435" width="16" height="16" color="#F58A24"/>
-      <rect x="318" y="428" width="30" height="30" rx="8" fill="#F1EFEC"/><use href="#i-arrow" x="325" y="435" width="16" height="16" color="#3D3D3D"/>
-      <rect x="426" y="428" width="30" height="30" rx="8" fill="#FFFFFF" stroke="#F58A24" stroke-width="2"/><use href="#i-arrow" x="433" y="435" width="16" height="16" color="#F58A24"/>
-      <rect x="534" y="428" width="30" height="30" rx="8" fill="#F6F5F3"/><use href="#i-arrow" x="541" y="435" width="16" height="16" color="#D8D5D0"/>
-      <rect x="642" y="428" width="30" height="30" rx="8" fill="#FDF0DE"/><g color="#F58A24"><use href="#i-spin" x="649" y="435" width="16" height="16"/></g>
-
-      <!-- danger -->
-      <text x="102" y="486" class="ui11" fill="#8A8F99">危险</text>
-      <rect x="102" y="496" width="92" height="30" rx="8" fill="#D04A43"/><text x="148" y="516" text-anchor="middle" class="ui12" fill="#FFFFFF">删除</text>
-      <rect x="210" y="496" width="92" height="30" rx="8" fill="#B73F39"/><text x="256" y="516" text-anchor="middle" class="ui12" fill="#FFFFFF">删除</text>
-      <rect x="318" y="496" width="92" height="30" rx="8" fill="#9F3530"/><text x="364" y="516" text-anchor="middle" class="ui12" fill="#FFFFFF">删除</text>
-      <rect x="426" y="496" width="92" height="30" rx="8" fill="#D04A43" stroke="#1F2329" stroke-width="2"/><text x="472" y="516" text-anchor="middle" class="ui12" fill="#FFFFFF">删除</text>
-      <rect x="534" y="496" width="92" height="30" rx="8" fill="#D04A43" opacity=".4"/><text x="580" y="516" text-anchor="middle" class="ui12" fill="#FFFFFF">删除</text>
-      <rect x="642" y="496" width="92" height="30" rx="8" fill="#D04A43"/><g color="#FFFFFF"><use href="#i-spin" x="670" y="503" width="14" height="14"/></g><text x="704" y="516" text-anchor="middle" class="ui11" fill="#FFFFFF">删除中</text>
-    </g>
-    <line x1="102" y1="552" x2="778" y2="552" stroke="#E8E6E3"/>
-    <text x="102" y="574" class="note">悬停加深一级（accent → deep）；按下再加深，不使用位移或缩放。</text>
-    <text x="102" y="594" class="note">焦点：描边按钮 1px accent；实心按钮上的 1px 环对比不足，重构时改 2px 深色环或外偏移（本页为可见性放大）。</text>
-    <text x="102" y="614" class="note">加载态保留按钮宽度，图标换 14px 转圈；禁止再次触发。</text>
-    <text x="102" y="634" class="note">图标按钮 30×30，图标 15/16；危险按钮仅危险动词使用。</text>
+    <rect x="812" y="726" width="724" height="332" rx="12" class="card"/><text x="836" y="756" class="card-t">ThemeCheck 与系统 Switch</text>
+    <rect x="836" y="778" width="16" height="16" rx="4" fill="#F58A24"/><path d="m839 786 4 4 7-8" fill="none" stroke="#FFF" stroke-width="1.4"/><text x="862" y="792" class="ui12">选中</text><rect x="948" y="778" width="16" height="16" rx="4" fill="#FFF" stroke="#D8D5D0"/><text x="974" y="792" class="ui12">未选</text><rect x="1060" y="778" width="16" height="16" rx="4" fill="#F6F5F3" stroke="#E8E6E3"/><text x="1086" y="792" class="ui12 muted">停用</text>
+    <text x="836" y="824" class="note">勾选框 16px；选中 accent，hover 时 accent-deep；白勾 9px。</text><text x="836" y="850" class="tiny">未选 hover 使用 hover 底 + accent-secondary 边；停用使用只读灰底。</text><text x="836" y="876" class="tiny">当前没有独立的 2px 焦点环，本页不虚构。</text>
+    <line x1="836" y1="898" x2="1512" y2="898" stroke="#E8E6E3"/>
+    <rect x="836" y="920" width="46" height="26" rx="13" fill="#005FB8"/><circle cx="869" cy="933" r="10" fill="#FFF"/><text x="896" y="938" class="ui12">系统开启</text><rect x="1020" y="920" width="46" height="26" rx="13" fill="#FFF" stroke="#626261"/><circle cx="1033" cy="933" r="10" fill="#626261"/><text x="1080" y="938" class="ui12">系统关闭</text><rect x="1230" y="920" width="46" height="26" rx="13" fill="#C4C3C2"/><circle cx="1263" cy="933" r="10" fill="#FFF"/><text x="1290" y="938" class="ui12 muted">系统停用</text>
+    <text x="836" y="976" class="note">Switch 使用 Slint 标准控件：开启蓝 #005FB8，关闭深灰。</text><text x="836" y="1002" class="note">它不跟随 Theme.accent；不要改画成橙色开关冒充实机。</text><text x="836" y="1028" class="tiny">渲染基线：std-widgets Switch + 当前软件渲染器。</text>
   </g>
 
-  <!-- ================= ROW / INPUT STATES ================= -->
-  <g id="row-input">
-    <rect x="820" y="220" width="700" height="430" rx="12" class="card"/>
-    <text x="842" y="244" class="card-t">行与输入状态</text>
-    <text x="1498" y="244" text-anchor="end" class="mono10">instant / 1px focus</text>
+  <g id="motion-keyboard">
+    <rect x="64" y="1092" width="28" height="24" rx="6" fill="#FDF0DE"/><text x="78" y="1109" text-anchor="middle" class="chip">03</text><text x="104" y="1110" class="sect">动效与键盘 · 只动画必要反馈</text>
+    <rect x="64" y="1134" width="724" height="270" rx="12" class="card"/><text x="88" y="1164" class="card-t">时间预算</text>
+    <text x="88" y="1194" class="mono ui12">16–33ms</text><text x="220" y="1194" class="note">流式跟随、文本/工具增量合并</text><text x="88" y="1222" class="mono ui12">90ms</text><text x="220" y="1222" class="note">勾选淡入 / 待回应唤醒</text><text x="88" y="1250" class="mono ui12">110–150ms</text><text x="220" y="1250" class="note">队列落点、边缘柄与图标着色</text><text x="88" y="1278" class="mono ui12">1.2s</text><text x="220" y="1278" class="note">侧栏六点旋转与状态呼吸</text><text x="88" y="1306" class="mono ui12">1.48s</text><text x="220" y="1306" class="note">模型与 Dock 六点旋转</text><text x="88" y="1334" class="mono ui12">550ms / 1.6s</text><text x="300" y="1334" class="note">录音脉冲 / 复制反馈</text><text x="88" y="1372" class="tiny">折叠与长列表布局即时更新；不为高、宽和列表重排加动画。</text>
 
-    <text x="842" y="270" class="ui11" fill="#8A8F99">列表行</text>
-    <rect x="842" y="280" width="240" height="28" rx="8" fill="transparent"/><text x="856" y="298" class="ui13">默认</text>
-    <rect x="1096" y="280" width="240" height="28" rx="8" fill="#FDF0DE"/><text x="1110" y="298" class="ui13">悬停</text>
-    <rect x="842" y="316" width="240" height="28" rx="8" fill="#F1EFEC"/><text x="856" y="334" class="ui13">选中</text>
-    <rect x="1096" y="316" width="240" height="28" rx="8" fill="#F1EFEC"/><text x="1110" y="334" class="ui13" font-weight="600">激活</text>
-    <rect x="842" y="352" width="240" height="28" rx="8" fill="#FDF0DE" opacity=".55"/><text x="856" y="370" class="ui13">拖动预览</text>
-    <rect x="1096" y="352" width="240" height="28" rx="8" fill="transparent" opacity=".45"/><text x="1110" y="370" class="ui13">禁用</text>
-
-    <line x1="842" y1="396" x2="1498" y2="396" stroke="#E8E6E3"/>
-    <text x="842" y="420" class="ui11" fill="#8A8F99">输入</text>
-    <rect x="842" y="430" width="300" height="36" rx="8" fill="#FFFFFF" stroke="#D8D5D0"/><text x="854" y="453" class="ui11" fill="#8A8F99">默认占位</text>
-    <rect x="1152" y="430" width="300" height="36" rx="8" fill="#FFFFFF" stroke="#F58A24"/><text x="1164" y="453" class="ui11">聚焦内容</text>
-    <rect x="842" y="476" width="300" height="36" rx="8" fill="#F6F5F3" stroke="#E8E6E3"/><text x="854" y="499" class="ui11" fill="#8A8F99">只读</text>
-    <rect x="1152" y="476" width="300" height="36" rx="8" fill="#FFFFFF" stroke="#D04A43"/><text x="1164" y="499" class="ui11">错误：地址不可用</text>
-    <rect x="842" y="522" width="300" height="36" rx="8" fill="#F6F5F3" stroke="#E8E6E3"/><text x="854" y="545" class="ui11" fill="#8A8F99">停用</text>
-    <rect x="1152" y="522" width="300" height="36" rx="8" fill="#FFFFFF" stroke="#D04A43" stroke-width="2"/><text x="1164" y="545" class="ui11">聚焦 + 错误</text>
-
-    <line x1="842" y1="574" x2="1498" y2="574" stroke="#E8E6E3"/>
-    <text x="842" y="596" class="ui11" fill="#8A8F99">勾选 / 开关</text>
-    <rect x="842" y="606" width="18" height="18" rx="4" fill="#F58A24"/><use href="#i-check" x="846" y="610" width="10" height="10" color="#FFFFFF"/><text x="868" y="620" class="ui11">选中</text>
-    <rect x="914" y="606" width="18" height="18" rx="4" fill="#FFFFFF" stroke="#D8D5D0"/><text x="940" y="620" class="ui11">未选</text>
-    <rect x="986" y="606" width="18" height="18" rx="4" fill="#FDF0DE" stroke="#F58A24"/><text x="1012" y="620" class="ui11">悬停</text>
-    <rect x="1058" y="606" width="18" height="18" rx="4" fill="#F8FAFC" stroke="#F58A24" stroke-width="2"/><text x="1084" y="620" class="ui11">焦点</text>
-    <rect x="1130" y="606" width="18" height="18" rx="4" fill="#E9E8E5"/><text x="1156" y="620" class="ui11" fill="#8A8F99">停用</text>
-    <rect x="1216" y="602" width="46" height="26" rx="13" fill="#F58A24"/><circle cx="1249" cy="615" r="10" fill="#FFFFFF"/><text x="1272" y="620" class="ui11">开</text>
-    <rect x="1300" y="602" width="46" height="26" rx="13" fill="#E9E8E5"/><circle cx="1313" cy="615" r="10" fill="#FFFFFF"/><text x="1356" y="620" class="ui11">关</text>
-
-    <text x="842" y="638" class="tiny">行状态不改变行高；悬停即时换底，无过渡；拖拽落点 2px accent。</text>
+    <rect x="812" y="1134" width="724" height="270" rx="12" class="card"/><text x="836" y="1164" class="card-t">键盘与焦点</text>
+    <rect x="836" y="1180" width="90" height="24" rx="5" fill="#F6F5F3" stroke="#D8D5D0"/><text x="881" y="1196" text-anchor="middle" class="mono ui11">Tab</text><text x="940" y="1196" class="note">按界面顺序移动焦点</text>
+    <rect x="836" y="1212" width="120" height="24" rx="5" fill="#F6F5F3" stroke="#D8D5D0"/><text x="896" y="1228" text-anchor="middle" class="mono ui11">Enter / Space</text><text x="970" y="1228" class="note">激活按钮、选项或勾选</text>
+    <rect x="836" y="1244" width="90" height="24" rx="5" fill="#F6F5F3" stroke="#D8D5D0"/><text x="881" y="1260" text-anchor="middle" class="mono ui11">Esc</text><text x="940" y="1260" class="note">关闭弹层 / 取消编辑</text>
+    <rect x="836" y="1276" width="120" height="24" rx="5" fill="#F6F5F3" stroke="#D8D5D0"/><text x="896" y="1292" text-anchor="middle" class="mono ui11">Shift+Enter</text><text x="970" y="1292" class="note">编辑器换行</text>
+    <rect x="836" y="1308" width="120" height="24" rx="5" fill="#F6F5F3" stroke="#D8D5D0"/><text x="896" y="1324" text-anchor="middle" class="mono ui11">↑ / ↓</text><text x="970" y="1324" class="note">按条件召回已发送草稿</text>
+    <text x="836" y="1360" class="tiny">弹窗打开后焦点进入，关闭后回到触发元素；Tab 在模态内循环。</text><text x="836" y="1384" class="tiny">发送键遵循线程偏好：Enter / Ctrl+Enter / 仅按钮。</text>
   </g>
 
-  <!-- ================= MOTION ================= -->
-  <g id="motion">
-    <rect x="80" y="690" width="6" height="16" rx="2" fill="#F58A24"/>
-    <text x="98" y="704" class="sect">动效时长</text>
-    <text x="194" y="704" class="sect-en">MOTION TOKENS</text>
-
-    <rect x="80" y="732" width="720" height="300" rx="12" class="card"/>
-    <text x="102" y="756" class="card-t">时间表</text>
-    <text x="778" y="756" text-anchor="end" class="mono10">duration · easing</text>
-    <line x1="102" y1="768" x2="778" y2="768" stroke="#E8E6E3"/>
-    <g>
-      <text x="102" y="790" class="ui10" fill="#8A8F99">时长</text><text x="190" y="790" class="ui10" fill="#8A8F99">用途</text><text x="500" y="790" class="ui10" fill="#8A8F99">缓动</text>
-      <text x="102" y="814" class="mono" font-size="11">16ms</text><text x="190" y="814" class="ui11">流式跟随（连续 2 帧）</text><text x="500" y="814" class="mono" font-size="11" fill="#8A8F99">linear</text>
-      <text x="102" y="836" class="mono" font-size="11">33ms</text><text x="190" y="836" class="ui11">文本 / 工具尾随、分页</text><text x="500" y="836" class="mono" font-size="11" fill="#8A8F99">linear</text>
-      <text x="102" y="858" class="mono" font-size="11">90ms</text><text x="190" y="858" class="ui11">勾选淡入</text><text x="500" y="858" class="mono" font-size="11" fill="#8A8F99">ease-out</text>
-      <text x="102" y="880" class="mono" font-size="11">110ms</text><text x="190" y="880" class="ui11">队列插入线 / 拖拽落点</text><text x="500" y="880" class="mono" font-size="11" fill="#8A8F99">ease-out</text>
-      <text x="102" y="902" class="mono" font-size="11">120ms</text><text x="190" y="902" class="ui11">侧栏边缘柄淡入</text><text x="500" y="902" class="mono" font-size="11" fill="#8A8F99">ease-out</text>
-      <text x="102" y="924" class="mono" font-size="11">150ms</text><text x="190" y="924" class="ui11">图标着色 / 颜色过渡</text><text x="500" y="924" class="mono" font-size="11" fill="#8A8F99">ease-out</text>
-      <text x="102" y="946" class="mono" font-size="11">550ms</text><text x="190" y="946" class="ui11">录音脉冲描边（若启用）</text><text x="500" y="946" class="mono" font-size="11" fill="#8A8F99">ease-in-out</text>
-      <text x="102" y="968" class="mono" font-size="11">1.2s</text><text x="190" y="968" class="ui11">状态胶囊图标呼吸</text><text x="500" y="968" class="mono" font-size="11" fill="#8A8F99">ease-in-out</text>
-      <text x="102" y="990" class="mono" font-size="11">1.48s</text><text x="190" y="990" class="ui11">转圈（匀速）</text><text x="500" y="990" class="mono" font-size="11" fill="#8A8F99">linear</text>
-      <text x="102" y="1012" class="mono" font-size="11">1.6s</text><text x="190" y="1012" class="ui11">代码复制反馈“已复制”</text><text x="500" y="1012" class="mono" font-size="11" fill="#8A8F99">linear</text>
-    </g>
+  <g id="responsive-a11y">
+    <rect x="64" y="1438" width="28" height="24" rx="6" fill="#FDF0DE"/><text x="78" y="1455" text-anchor="middle" class="chip">04</text><text x="104" y="1456" class="sect">响应式与无障碍 · 先保住任务，再缩减装饰</text>
+    <rect x="64" y="1480" width="1472" height="214" rx="12" class="card"/>
+    <text x="88" y="1510" class="card-t">窗口断点</text><text x="88" y="1540" class="mono ui12">1024</text><text x="150" y="1540" class="note">最小窗口　</text><text x="270" y="1540" class="mono ui12">1100</text><text x="332" y="1540" class="note">dock 断点　</text><text x="454" y="1540" class="mono ui12">1180×740</text><text x="560" y="1540" class="note">preferred　</text><text x="690" y="1540" class="mono ui12">170–420</text><text x="782" y="1540" class="note">侧栏拖宽</text><text x="1512" y="1540" text-anchor="end" class="note">阅读列达到 1000 后留白，不继续拉长正文</text>
+    <line x1="88" y1="1562" x2="1512" y2="1562" stroke="#E8E6E3"/>
+    <text x="88" y="1590" class="card-t">必须保留</text><text x="200" y="1590" class="note">图标按钮 accessible-label；状态同时有图形与文案；原文复制完整；错误可感知。</text><text x="88" y="1618" class="note">输入、滚动、选择与复制不被流式输出阻塞；屏幕阅读器不逐字播报增量。</text><text x="88" y="1646" class="note">点击热区至少 24×24；装饰图标不进入焦点；隐藏内容不获得焦点。</text><text x="88" y="1674" class="tiny">性能红线：有界事件缓冲、历史虚拟化、只更新活动尾块、合并增量不丢字。</text><text x="1512" y="1674" text-anchor="end" class="tiny">装饰动画可降级，任务状态始终可达</text>
   </g>
 
-  <g id="motion-rules">
-    <rect x="820" y="732" width="700" height="300" rx="12" class="card"/>
-    <text x="842" y="756" class="card-t">动效原则</text>
-    <text x="1498" y="756" text-anchor="end" class="mono10">no layout animation</text>
-    <text x="842" y="782" class="note">1. 长列表只做颜色、透明度、位移；禁止高度/宽度/布局动画。</text>
-    <text x="842" y="804" class="note">2. 折叠与展开瞬时完成；用户不需要等待过场。</text>
-    <text x="842" y="826" class="note">3. 流式输出按帧合并；初始 16–33ms，绝不逐 token 重建列表。</text>
-    <text x="842" y="848" class="note">4. 动画期间不阻塞输入、滚动、复制与选择。</text>
-    <text x="842" y="870" class="note">5. 所有旋转转圈使用同一 1.48s 周期；状态呼吸 1.2s。</text>
-    <text x="842" y="892" class="note">6. 悬停不延迟、不弹跳；不使用缩放或阴影放大作为反馈。</text>
-    <text x="842" y="914" class="note">7. 错误出现即时，不淡入；错误消失可以瞬时。</text>
-    <text x="842" y="936" class="note">8. 保留 reduced-motion 余地：装饰动画可关，状态必须可达。</text>
-    <line x1="842" y1="954" x2="1498" y2="954" stroke="#E8E6E3"/>
-    <text x="842" y="966" class="card-t" font-size="11">性能红线</text>
-    <text x="842" y="986" class="note">• 事件缓冲有界；合并文本增量不丢字。</text>
-    <text x="842" y="1006" class="note">• 历史消息虚拟列表；只更新活动尾块。</text>
-    <text x="842" y="1026" class="note">• 禁止在 UI 线程重新解析整条长消息。</text>
-  </g>
-
-  <!-- ================= KEYBOARD / A11Y ================= -->
-  <g id="keyboard">
-    <rect x="80" y="1040" width="6" height="16" rx="2" fill="#F58A24"/>
-    <text x="98" y="1054" class="sect">键盘与无障碍</text>
-    <text x="214" y="1054" class="sect-en">KEYBOARD · ACCESSIBILITY</text>
-
-    <rect x="80" y="1082" width="720" height="220" rx="12" class="card"/>
-    <text x="102" y="1106" class="card-t">键位</text>
-    <g>
-      <rect x="102" y="1122" width="62" height="24" rx="5" fill="#F6F5F3" stroke="#D8D5D0"/><text x="133" y="1138" text-anchor="middle" class="mono" font-size="10">Tab</text><text x="176" y="1138" class="ui11">移动焦点</text>
-      <rect x="102" y="1156" width="106" height="24" rx="5" fill="#F6F5F3" stroke="#D8D5D0"/><text x="155" y="1172" text-anchor="middle" class="mono" font-size="10">Enter / Space</text><text x="220" y="1172" class="ui11">激活按钮 / 勾选</text>
-      <rect x="102" y="1190" width="62" height="24" rx="5" fill="#F6F5F3" stroke="#D8D5D0"/><text x="133" y="1206" text-anchor="middle" class="mono" font-size="10">Esc</text><text x="176" y="1206" class="ui11">关闭弹层 / 取消编辑</text>
-      <rect x="102" y="1224" width="62" height="24" rx="5" fill="#F6F5F3" stroke="#D8D5D0"/><text x="133" y="1240" text-anchor="middle" class="mono" font-size="10">↑ / ↓</text><text x="176" y="1240" class="ui11">召回历史消息（草稿为空时）</text>
-      <rect x="102" y="1258" width="94" height="24" rx="5" fill="#F6F5F3" stroke="#D8D5D0"/><text x="149" y="1274" text-anchor="middle" class="mono" font-size="10">Ctrl+Enter</text><text x="208" y="1274" class="ui11">备用发送（按线程偏好）</text>
-    </g>
-    <text x="450" y="1138" class="note">焦点顺序：标题栏按钮 → 侧栏 → 时间线可操作行 → 输入卡。</text>
-    <text x="450" y="1162" class="note">弹窗打开后焦点移入，关闭后回到触发元素。</text>
-    <text x="450" y="1186" class="note">弹窗内 Tab 循环；Esc 关闭非 busy 弹窗。</text>
-    <text x="450" y="1210" class="note">密码/密钥字段不可复制；输入不进入日志。</text>
-    <text x="450" y="1234" class="note">命令输入支持 Ctrl+C 中断与 Ctrl+V 粘贴。</text>
-    <text x="450" y="1258" class="note">焦点框 1px accent；不改变布局尺寸。</text>
-    <text x="450" y="1282" class="note">点击热区 ≥ 24×24；侧栏行 28、文件行 26。</text>
-  </g>
-
-  <g id="a11y">
-    <rect x="820" y="1082" width="700" height="220" rx="12" class="card"/>
-    <text x="842" y="1106" class="card-t">无障碍与反馈</text>
-    <text x="1498" y="1106" text-anchor="end" class="mono10">role · label · contrast</text>
-    <text x="842" y="1130" class="note">所有图标按钮必须有 accessible-label；纯装饰图标不进入焦点。</text>
-    <text x="842" y="1150" class="note">行、勾选、开关暴露 checked / selected 语义；状态不只靠颜色。</text>
-    <text x="842" y="1170" class="note">工具状态同时用图标 + 文案；错误同时用颜色 + 文本。</text>
-    <text x="842" y="1190" class="note">11px 仅用于辅助；正文 13–14；对比度按 4.5:1 目标。</text>
-    <text x="842" y="1210" class="note">流式输出不逐字播报；完成后再提供完整文本。</text>
-    <text x="842" y="1230" class="note">Toast 由 Rust 控制显隐；无自动计时器在前端复制。</text>
-    <text x="842" y="1250" class="note">错误横幅可关闭；确认弹窗默认焦点在“取消”。</text>
-    <text x="842" y="1270" class="note">长文本保留原文复制；降级展示不丢内容。</text>
-    <text x="842" y="1290" class="note">键盘焦点可见；禁止 outline: none 而不给替代。</text>
-  </g>
-
-  <!-- ================= RESPONSIVE / FEEDBACK ================= -->
-  <g id="responsive">
-    <rect x="80" y="1320" width="6" height="16" rx="2" fill="#F58A24"/>
-    <text x="98" y="1334" class="sect">响应式与反馈</text>
-    <text x="230" y="1334" class="sect-en">BREAKPOINTS · FEEDBACK</text>
-
-    <rect x="80" y="1362" width="1440" height="120" rx="12" class="card"/>
-    <text x="102" y="1386" class="card-t">断点</text>
-    <text x="102" y="1410" class="mono" font-size="11">1024</text><text x="152" y="1410" class="ui11">最小窗口</text>
-    <text x="252" y="1410" class="mono" font-size="11">1100</text><text x="302" y="1410" class="ui11">dock 断点</text>
-    <text x="402" y="1410" class="mono" font-size="11">1180</text><text x="452" y="1410" class="ui11">preferred</text>
-    <text x="552" y="1410" class="mono" font-size="11">170–420</text><text x="616" y="1410" class="ui11">侧栏可拖范围</text>
-    <text x="102" y="1432" class="mono" font-size="11">≤1000</text><text x="154" y="1432" class="ui11">阅读列</text>
-    <text x="262" y="1432" class="mono" font-size="11">650</text><text x="296" y="1432" class="ui11">工具 chip 窄态（108）</text>
-    <text x="530" y="1432" class="mono" font-size="11">164</text><text x="564" y="1432" class="ui11">工具名最大宽</text>
-    <text x="102" y="1456" class="note">窄于 1100：dock 收起，计划卡改为全宽上叠；侧栏低于 1024 不出现。</text>
-    <text x="102" y="1474" class="tiny">宽窗只增加留白，不拉伸正文；输入区与时间线共用同一条阅读列。</text>
-  </g>
-
-  <g id="feedback">
-    <rect x="80" y="1502" width="1440" height="126" rx="12" class="card"/>
-    <text x="102" y="1526" class="card-t">反馈层级</text>
-    <rect x="102" y="1540" width="300" height="40" rx="10" fill="#FFFFFF" stroke="#E8E6E3"/><use href="#i-check" x="114" y="1552" width="14" height="14" color="#F58A24"/><text x="136" y="1565" class="ui11">全局 Toast：操作成功 / 失败</text>
-    <rect x="422" y="1540" width="300" height="40" rx="10" fill="#FDECEC" stroke="#F1D2D0"/><use href="#i-x" x="434" y="1552" width="14" height="14" color="#D04A43"/><text x="456" y="1565" class="ui11" fill="#D04A43">行内错误：字段 / 面板</text>
-    <rect x="742" y="1540" width="300" height="40" rx="10" fill="#EFF6FF" stroke="#DBEAFE"/><circle cx="754" cy="1560" r="5" fill="#2563EB"/><text x="768" y="1565" class="ui11" fill="#2563EB">状态胶囊：进行中的任务</text>
-    <rect x="1062" y="1540" width="436" height="40" rx="10" fill="#F8FAFC" stroke="#E2E8F0"/><text x="1076" y="1565" class="ui11" fill="#64748B">页脚指标：结果解释 / 可复制</text>
-    <text x="102" y="1604" class="note">反馈优先级：行内错误 > 状态胶囊 > Toast；同一事件只出现一次。</text>
-    <text x="102" y="1622" class="tiny">Toast 不抢占焦点；错误不自动消失，直到用户处理或重试成功。</text>
-  </g>
-
-  <g id="footer">
-    <line x1="80" y1="1650" x2="1520" y2="1650" stroke="#D8D5D0"/>
-    <text x="80" y="1664" class="tiny">状态与动效的统一目标：让长任务始终可读、可中断、可恢复，而不牺牲输入与滚动的响应。</text>
-    <text x="1520" y="1664" text-anchor="end" class="mono tiny">09 / 09</text>
-  </g>
+  <g id="implementation-notes"><rect x="64" y="1728" width="1472" height="100" rx="12" class="card"/><text x="88" y="1758" class="card-t">实机差异记录 · 不是新的视觉提案</text><text x="88" y="1786" class="note">实心按钮 1px accent 焦点对比弱；普通停用按钮不统一灰化；ThemeCheck 没有独立焦点描边；Switch 使用系统蓝色。</text><text x="88" y="1812" class="tiny">后续若调整产品行为，应先改实现并重新渲染本页，不在设计稿里提前“修正”实机。</text><text x="1512" y="1812" text-anchor="end" class="tiny">组件级特殊状态见各自分页</text></g>
+  <g id="footer"><line x1="64" y1="1850" x2="1536" y2="1850" stroke="#D8D5D0"/><text x="64" y="1870" class="tiny">事实来源：components.slint · settings_page.slint · composer.slint · status_icon.slint · 当前 Slint 软件渲染帧</text><text x="1536" y="1870" text-anchor="end" class="mono tiny">09 / 09 · 2026-10-25</text></g>
 </svg>

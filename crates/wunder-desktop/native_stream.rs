@@ -132,7 +132,7 @@ async fn run(
             })
             .collect(),
         input.reasoning_effort,
-        input.root_user_round,
+        input.inquiry_turn_id,
     )
     .await?;
     request.config_overrides.get_or_insert_with(|| json!({}))["__local_open_lease"] = lease_proof;

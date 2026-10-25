@@ -1,160 +1,51 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1560" viewBox="0 0 1600 1560" role="img" aria-label="舵机 终端 UI 会话时间线">
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1680" viewBox="0 0 1600 1680" role="img" aria-label="舵机 终端 UI 会话时间线规范">
   <title>03 会话时间线 · 舵机 CLI UI Spec</title>
-  <style>
-    svg{font-family:'Microsoft YaHei UI','Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif;fill:#1F2329}
-    .mono{font-family:Consolas,'SFMono-Regular','Cascadia Mono',monospace}
-    .h1{font-size:30px;font-weight:700;letter-spacing:-.4px}
-    .sub{font-size:13px;fill:#7C7A75}
-    .kicker{font-size:11px;font-weight:600;letter-spacing:1.4px;fill:#E07A12}
-    .sect{font-size:16px;font-weight:700}
-    .sect-en{font-size:10px;font-weight:600;letter-spacing:1.6px;fill:#A8A39B}
-    .tok{font-size:11px;fill:#3D3D3D}
-    .note{font-size:11px;fill:#7C7A75}
-    .tiny{font-size:10px;fill:#8A8F99}
-    .line{stroke:#E8E6E3;stroke-width:1}
-    .card{fill:#FFFFFF;stroke:#DED9D1;stroke-width:1}
-    .accent{fill:#F58A24}
-    .term{fill:#131A24}
-    .t-fg{fill:#D8DEE6}
-    .t-dim{fill:#6E7A8A}
-    .t-cy{fill:#4FC1D9}
-    .t-gr{fill:#3FBF7F}
-    .t-rd{fill:#E06C61}
-    .sel{fill:#24405A}
-  </style>
+  <style>svg{font-family:'Microsoft YaHei UI','Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif;fill:#1F2329}.mono{font-family:Consolas,monospace}.h1{font-size:30px;font-weight:700}.sub{font-size:13px;fill:#6F747B}.kicker{font-size:11px;font-weight:700;letter-spacing:1.4px;fill:#D87616}.sect{font-size:18px;font-weight:700}.sect-note{font-size:12px;fill:#8A8F99}.card{fill:#FFF;stroke:#DED9D1}.card-t{font-size:14px;font-weight:700}.note{font-size:12px;fill:#6F747B}.tiny{font-size:11px;fill:#8A8F99}.chip{font-size:11px;font-weight:700;fill:#D87616}.ui14{font-size:14px}.ui13{font-size:13px}.ui12{font-size:12px}.tok{font-size:12px;fill:#3D3D3D}.term{fill:#131A24}.t-fg{fill:#D8DEE6}.t-dim{fill:#6E7A8A}.t-cy{fill:#4FC1D9}.t-gr{fill:#3FBF7F}.t-rd{fill:#E06C61}</style>
+  <rect width="1600" height="1680" fill="#F5F3EF"/>
+  <g id="header"><text x="64" y="42" class="kicker">WUNDER / 舵机 · CLI UI SPEC</text><text x="64" y="84" class="h1">03　会话时间线</text><text x="64" y="114" class="sub">转写区是唯一信息面；条目靠默认前景、DIM、accent 与 danger 分层，而不是靠气泡和卡片堆叠。</text><text x="1536" y="44" text-anchor="end" class="mono tiny">SHEET 03 / 05</text><text x="1536" y="84" text-anchor="end" class="mono ui12">LOG KIND · STREAM · SELECTION</text><line x1="64" y1="140" x2="1536" y2="140" stroke="#D8D5D0"/></g>
 
-  <rect width="1600" height="1560" fill="#F4F1EC"/>
-
-  <g id="header">
-    <text x="80" y="52" class="kicker">WUNDER / 舵机 · CLI UI SPEC</text>
-    <text x="80" y="93" class="h1">03　会话时间线</text>
-    <text x="80" y="120" class="sub">转写区是舵机的唯一信息面：条目靠字重分层而非卡片装饰，Markdown 是最低必要能力的全量渲染，流式逐行追加、成型即稳定。</text>
-    <text x="1520" y="52" text-anchor="end" class="mono" font-size="11" fill="#8A8F99">SHEET 03 / 05</text>
+  <g id="entry-styles">
+    <rect x="64" y="160" width="28" height="24" rx="6" fill="#FDF0DE"/><text x="78" y="177" text-anchor="middle" class="chip">01</text><text x="104" y="178" class="sect">条目样式 · LogKind 决定语义与修饰</text><text x="1536" y="177" text-anchor="end" class="sect-note">同一终端网格，文本内容不另造“状态卡”</text>
+    <rect x="64" y="202" width="1472" height="340" rx="12" class="card"/>
+    <g class="mono" font-size="13">
+      <rect x="88" y="226" width="1424" height="34" rx="4" class="term"/><text x="104" y="249" class="t-fg">用户消息回显 · 默认前景与字重</text><text x="1280" y="249" class="t-dim">LogKind::User</text>
+      <rect x="88" y="266" width="1424" height="34" rx="4" class="term"/><text x="104" y="289" class="t-fg">助手正文 · 默认前景，不额外加色</text><text x="1280" y="289" class="t-dim">LogKind::Assistant</text>
+      <rect x="88" y="306" width="1424" height="34" rx="4" class="term"/><text x="104" y="329" class="t-dim">思考条目 · DIM，流式推进，完成后仍保持 DIM</text><text x="1280" y="329" class="t-dim">LogKind::Reasoning</text>
+      <rect x="88" y="346" width="1424" height="34" rx="4" class="term"/><text x="104" y="369" class="t-dim">工具行 · DIM，一行一个调用与结果摘要</text><text x="1280" y="369" class="t-dim">LogKind::Tool</text>
+      <rect x="88" y="386" width="1424" height="34" rx="4" class="term"/><text x="104" y="409" class="t-dim">计划条目 · 标题 BOLD，步骤见分页 04</text><text x="1280" y="409" class="t-dim">LogKind::Plan</text>
+      <rect x="88" y="426" width="1424" height="34" rx="4" class="term"/><text x="104" y="449" class="t-cy" font-weight="bold">问询 / 授权 · Cyan+BOLD，只有需要行动时才强调</text><text x="1280" y="449" class="t-dim">LogKind::Inquiry</text>
+      <rect x="88" y="466" width="1424" height="34" rx="4" class="term"/><text x="104" y="489" class="t-rd" font-weight="bold">错误 · Red+BOLD，整条突出并跟随修复建议</text><text x="1280" y="489" class="t-dim">LogKind::Error</text>
+    </g>
+    <text x="88" y="524" class="note">普通信息继续使用 DIM；默认样式不是“清空样式”，而是保留终端默认前景与已有修饰。</text>
   </g>
 
-  <!-- 条目样式表 -->
-  <g id="entries">
-    <text x="80" y="176" class="sect">条目样式表</text>
-    <text x="200" y="176" class="sect-en">ENTRY STYLES · LogKind</text>
-    <rect x="80" y="192" width="720" height="330" class="card"/>
-    <g class="mono" font-size="12">
-      <rect x="100" y="212" width="680" height="34" class="term" rx="4"/>
-      <text x="116" y="234" class="t-fg">用户消息回显 · 默认样式</text>
-      <rect x="100" y="254" width="680" height="34" class="term" rx="4"/>
-      <text x="116" y="276" class="t-fg">助手输出 · 默认样式，正文不加色</text>
-      <rect x="100" y="296" width="680" height="34" class="term" rx="4"/>
-      <text x="116" y="318" class="t-dim">思考条目 · DIM，流式推进，完成后保持 DIM</text>
-      <rect x="100" y="338" width="680" height="34" class="term" rx="4"/>
-      <text x="116" y="360" class="t-dim">工具行 · DIM，一行一个调用，不与正文争注意力</text>
-      <rect x="100" y="380" width="680" height="34" class="term" rx="4"/>
-      <text x="116" y="402" class="t-dim">计划条目 · DIM，状态标记见 04</text>
-      <rect x="100" y="422" width="680" height="34" class="term" rx="4"/>
-      <text x="116" y="444" class="t-cy" font-weight="bold">问询 / 授权 · accent，需要用户行动时才允许发声</text>
-      <rect x="100" y="464" width="680" height="34" class="term" rx="4"/>
-      <text x="116" y="486" class="t-rd" font-weight="bold">错误 · danger，整条着色，紧跟修复建议</text>
-    </g>
-    <text x="80" y="548" class="note">默认样式不是「无样式」：它保留终端前景色与全部修饰，是正文与次级文本的对比基线。</text>
+  <g id="markdown-stream">
+    <rect x="64" y="576" width="28" height="24" rx="6" fill="#FDF0DE"/><text x="78" y="593" text-anchor="middle" class="chip">02</text><text x="104" y="594" class="sect">Markdown 与流式 · 结构逐步成型，已完成块稳定</text>
+    <rect x="64" y="618" width="724" height="282" rx="12" class="card"/><text x="88" y="648" class="card-t">Markdown 渲染基线</text><text x="88" y="678" class="note">段落、标题、列表、任务列表、引用与行内代码</text><text x="88" y="704" class="note">围栏/缩进代码、表格、分隔线、链接与语言着色</text><text x="88" y="730" class="note">标题靠空行和字重分层；列表前缀固定缩进。</text><text x="88" y="756" class="note">链接 Cyan+BOLD+UNDERLINED；表格按显示列对齐。</text><text x="88" y="782" class="note">无法识别的结构降级为纯文本，复制仍保留原文。</text><rect x="88" y="804" width="676" height="70" rx="6" class="term"/><text x="104" y="832" class="mono ui13 t-fg" font-weight="bold">章节标题</text><text x="104" y="858" class="mono ui13 t-dim">· 列表项　· 另一项　· [x] 已完成</text>
+    <rect x="812" y="618" width="724" height="282" rx="12" class="card"/><text x="836" y="648" class="card-t">流式与滚动契约</text><text x="836" y="678" class="note">逐事件追加，不用完整回复后补放打字动画。</text><text x="836" y="704" class="note">事件缓冲有界；追赶状态在活动行提示。</text><text x="836" y="730" class="note">思考与正文分开推进，只更新活动尾块。</text><text x="836" y="756" class="note">缓存保存逻辑行，每帧展开 Tab 与投影子选区。</text><text x="836" y="782" class="note">底部自动跟随；上滚锁定阅读位置，回底恢复。</text><text x="836" y="818" class="tiny">重排只发生在必要的宽度或内容变化，不做整屏闪烁刷新。</text><text x="836" y="850" class="tiny">Enter / Esc 可回底；Ctrl+T 使用同一条转写的全展开投影。</text>
   </g>
 
-  <!-- Markdown 能力 -->
-  <g id="markdown">
-    <text x="840" y="176" class="sect">Markdown 基线</text>
-    <text x="990" y="176" class="sect-en">LOWEST-CAPABLE RENDER</text>
-    <rect x="840" y="192" width="680" height="330" class="card"/>
-    <g font-size="12" fill="#3D3D3D">
-      <text x="864" y="222">支持：段落 · 标题 · 有序/无序/任务列表 · 引用 · 行内代码</text>
-      <text x="864" y="244">· 围栏代码块（带语言着色）· 缩进代码块（4 空格）· 表格（对齐）· 分隔线 · 链接</text>
-      <text x="864" y="274" class="tok" font-weight="bold">渲染约定</text>
-      <text x="864" y="300">· 标题不加色，靠空行与字重分层；列表前缀固定 2 列缩进</text>
-      <text x="864" y="324">· 任务列表：[x] / [ ] 原样保留为标记字符</text>
-      <text x="864" y="348">· 链接：URL 用 accent+下划线；自动链接的裸 URL 同样式</text>
-      <text x="864" y="372">· 表格按显示列宽对齐，中文单元格按 2 列宽计算</text>
-      <text x="864" y="396">· 无法识别的结构降级为纯文本，原始消息与复制内容永远完整</text>
-    </g>
-    <g class="mono" font-size="12">
-      <rect x="864" y="416" width="636" height="86" class="term" rx="4"/>
-      <text x="880" y="440" class="t-fg" font-weight="bold">章节标题（加粗分层，不加色）</text>
-      <text x="880" y="462" class="t-fg">· 列表项　· 另一项</text>
-      <text x="880" y="484" class="t-cy" text-decoration="underline">https://example.local/spec</text>
-    </g>
+  <g id="code-diff">
+    <rect x="64" y="934" width="28" height="24" rx="6" fill="#FDF0DE"/><text x="78" y="951" text-anchor="middle" class="chip">03</text><text x="104" y="952" class="sect">代码与差异 · 行头、新增、删除是三种不同表面</text>
+    <rect x="64" y="976" width="1472" height="230" rx="12" class="card"/>
+    <rect x="88" y="1000" width="1424" height="182" rx="6" class="term"/>
+    <text x="108" y="1028" class="mono ui13 t-dim">text · 代码块保持缩进，语言高亮不改变布局</text>
+    <rect x="108" y="1042" width="1384" height="26" fill="#161E32"/><text x="120" y="1061" class="mono ui13 t-cy" font-weight="bold">@@</text><text x="160" y="1061" class="mono ui13 t-dim">示例上下文 · hunk 行头 Rgb(22,30,50)</text>
+    <rect x="108" y="1074" width="1384" height="26" fill="#12301F"/><text x="120" y="1093" class="mono ui13" fill="#9DE6BC" font-weight="bold">+</text><text x="144" y="1093" class="mono ui13" fill="#9DE6BC">新增行 · 前景 Rgb(157,230,188)，底 Rgb(18,48,31)</text>
+    <rect x="108" y="1106" width="1384" height="26" fill="#3A1818"/><text x="120" y="1125" class="mono ui13" fill="#FFB6B6" font-weight="bold">−</text><text x="144" y="1125" class="mono ui13" fill="#FFB6B6">删除行 · 前景 Rgb(255,182,182)，底 Rgb(58,24,24)</text>
+    <text x="108" y="1162" class="mono ui13 t-dim">　上下文行 · 前缀列保持 DIM；NO_COLOR 时 Rgb 表面落回 Reset，修饰保留</text>
   </g>
 
-  <!-- 流式 -->
-  <g id="stream">
-    <text x="80" y="612" class="sect">流式规则</text>
-    <text x="180" y="612" class="sect-en">STREAMING CONTRACT</text>
-    <rect x="80" y="628" width="720" height="200" class="card"/>
-    <g font-size="12" fill="#3D3D3D">
-      <text x="104" y="658">· 逐事件追加，不做打字动画；缓冲有界，追赶模式在活动行提示。</text>
-      <text x="104" y="684">· 已完成的块保持稳定，只更新活动尾块；不做整屏重排。</text>
-      <text x="104" y="710">· 思考与正文分开流式：思考始终 DIM，正文按 Markdown 结构推进。</text>
-      <text x="104" y="736">· 渲染缓存按逻辑行存放；每帧只做制表符展开与选区投影。</text>
-      <text x="104" y="766" class="note">· 底部停留时自动跟随；上滚查看历史时位置锁定，Enter/Esc 回底。</text>
-    </g>
+  <g id="expanded-selection">
+    <rect x="64" y="1240" width="28" height="24" rx="6" fill="#FDF0DE"/><text x="78" y="1257" text-anchor="middle" class="chip">04</text><text x="104" y="1258" class="sect">全展开、选区与搜索 · 同一转写的不同投影</text>
+    <rect x="64" y="1282" width="1472" height="330" rx="12" class="card"/>
+    <rect x="88" y="1306" width="1424" height="176" rx="6" class="term"/>
+    <text x="108" y="1334" class="mono ui13 t-cy" font-weight="bold">全部卡片已展开 · 12 个过程条目</text><text x="520" y="1334" class="mono ui13 t-dim">ctrl+t/esc 关闭 · ↑↓ PgUp PgDn Home End 滚动</text>
+    <text x="108" y="1364" class="mono ui13 t-fg">[用户] 把示例配置里的超时统一改成 30 秒。</text><text x="108" y="1392" class="mono ui13 t-dim">[思考] 先定位全部相关配置项……</text><text x="108" y="1420" class="mono ui13 t-dim">[工具] grep timeout config/* → 6 处</text><text x="108" y="1448" class="mono ui13 t-dim">[计划] ✔ 定位配置　□ 批量修改　□ 验证</text><text x="108" y="1476" class="mono ui13 t-gr">[完成] 全部检查通过</text>
+    <text x="88" y="1514" class="card-t">选区与搜索的绘制顺序</text><text x="340" y="1514" class="note">搜索标记先画，指针选区后画；重叠时复制用户实际看到的选中文本。</text>
+    <rect x="88" y="1534" width="660" height="34" rx="4" class="term"/><text x="104" y="1557" class="mono ui13 t-fg">统一改为</text><rect x="190" y="1540" width="150" height="22" fill="#D8DEE6"/><text x="196" y="1557" class="mono ui13" fill="#131A24" font-weight="bold">30 秒为超时</text><text x="348" y="1557" class="mono ui13 t-fg">上限，其余保持不动。</text>
+    <rect x="772" y="1534" width="740" height="34" rx="4" fill="#D8DEE6"/><text x="788" y="1557" class="mono ui13" fill="#131A24" font-weight="bold">REVERSED 选区 · 不依赖色相 · 跨行按显示列投影</text>
+    <text x="88" y="1592" class="tiny">Ctrl+R 历史搜索接管底栏；复制成功反馈有到期时间，选区本身才是剪贴板来源。</text>
   </g>
-
-  <!-- 代码与差异 -->
-  <g id="diff">
-    <text x="840" y="612" class="sect">代码与差异</text>
-    <text x="980" y="612" class="sect-en">CODE · DIFF CARDS</text>
-    <rect x="840" y="628" width="680" height="200" class="card"/>
-    <g class="mono" font-size="12">
-      <rect x="860" y="648" width="640" height="160" class="term" rx="4"/>
-      <text x="876" y="672" class="t-dim">示例语言 · 代码块整块缩进，语法着色由 highlight 提供</text>
-      <text x="876" y="698" class="t-dim" font-weight="bold">@@ 示例上下文行 @@</text>
-      <rect x="876" y="708" width="608" height="20" fill="#12301F"/>
-      <text x="884" y="723" fill="#9DE6BC">+ 新增行：前景 Rgb(157,230,188)，底 Rgb(18,48,31)</text>
-      <rect x="876" y="730" width="608" height="20" fill="#3A1818"/>
-      <text x="884" y="745" fill="#FFB6B6">− 删除行：前景 Rgb(255,182,182)，底 Rgb(58,24,24)</text>
-      <rect x="876" y="752" width="608" height="20" fill="#161E32"/>
-      <text x="884" y="767" class="t-cy" font-weight="bold">@@ 行头：底 Rgb(22,30,50)，前景 Cyan，前缀列 DIM</text>
-      <text x="876" y="796" class="t-dim">（差异底色不随终端主题，是面板真彩色族）</text>
-    </g>
-  </g>
-
-  <!-- Ctrl+T 视图 -->
-  <g id="ctrlt">
-    <text x="80" y="892" class="sect">全展开视图 Ctrl+T</text>
-    <text x="300" y="892" class="sect-en">TRANSCRIPT VIEW</text>
-    <rect x="80" y="908" width="1440" height="250" class="card"/>
-    <rect x="96" y="924" width="1408" height="218" class="term" rx="6"/>
-    <g class="mono" font-size="12">
-      <text x="116" y="950" class="t-cy" font-weight="bold">全部卡片已展开 · 12 个过程条目</text>
-      <text x="116" y="972" class="t-dim">ctrl+t/esc 关闭 · ↑↓ PgUp PgDn Home End 滚动</text>
-      <text x="116" y="1000" class="t-fg">[用户] 把配置文件里的超时统一改成 30 秒。</text>
-      <text x="116" y="1026" class="t-dim">[思考] 需要先找出全部超时相关配置项……</text>
-      <text x="116" y="1052" class="t-dim">[工具] grep timeout config/* → 6 处</text>
-      <text x="116" y="1078" class="t-dim">[计划] ✔ 定位配置　□ 批量修改　□ 验证</text>
-      <text x="116" y="1104" class="t-fg">[助手] 已统一为 30 秒，共 6 处修改：……</text>
-      <text x="116" y="1130" class="t-gr">[完成] 全部检查通过</text>
-    </g>
-    <text x="80" y="1180" class="note">顶部 1 行状态规则 + 同一条转写的全展开投影；与主视图共享渲染缓存，只是折叠策略不同。</text>
-  </g>
-
-  <!-- 选区与搜索 -->
-  <g id="selection">
-    <text x="80" y="1232" class="sect">选区 · 搜索 · 复制</text>
-    <text x="280" y="1232" class="sect-en">SELECTION · SEARCH · COPY</text>
-    <rect x="80" y="1248" width="1440" height="150" class="card"/>
-    <g font-size="12" fill="#3D3D3D">
-      <text x="104" y="1278">· 选区用 REVERSED 反色而非色相；无色终端同样可见，拖拽即选，所见即所复制。</text>
-      <text x="104" y="1304">· 搜索标记先画、选区后画：同一格重叠时，复制到的就是用户看到选中的内容。</text>
-      <text x="104" y="1330">· 复制成功给一条有到期时间的反馈行，到期自动重绘清除；Ctrl+R 历史搜索接管底栏。</text>
-    </g>
-    <g class="mono" font-size="12">
-      <rect x="104" y="1344" width="680" height="34" class="term" rx="4"/>
-      <text x="116" y="1366" class="t-fg">统一改为</text>
-      <rect x="188" y="1351" width="92" height="20" fill="#D8DEE6"/>
-      <text x="192" y="1366" fill="#131A24" font-weight="bold">30 秒为超时</text>
-      <text x="292" y="1366" class="t-fg">上限，其余保持不动。</text>
-      <rect x="820" y="1344" width="700" height="34" fill="#D8DEE6" rx="4"/>
-      <text x="836" y="1366" fill="#131A24" font-weight="bold">REVERSED 选区（反色显示，跨行拖拽按显示列投影）</text>
-    </g>
-  </g>
-
-  <g id="footer-note">
-    <line x1="80" y1="1500" x2="1520" y2="1500" class="line"/>
-    <text x="80" y="1522" class="tiny">事实来源：tui/ui/transcript.rs · markdown_render.rs / markdown_stream.rs · highlight.rs · text_tabs.rs · scrollback.rs。差异配色常量与 theme.rs 一一对应。</text>
-    <text x="1520" y="1522" text-anchor="end" class="tiny">SVG · 1600 PX WIDE · 2026-10-25</text>
-  </g>
+  <g id="footer"><line x1="64" y1="1640" x2="1536" y2="1640" stroke="#D8D5D0"/><text x="64" y="1660" class="tiny">事实来源：tui/ui/transcript.rs · tui/markdown_render.rs · tui/markdown_stream.rs · tui/highlight.rs · tui/text_tabs.rs · tui/scrollback.rs</text><text x="1536" y="1660" text-anchor="end" class="mono tiny">03 / 05 · 2026-10-25</text></g>
 </svg>

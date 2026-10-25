@@ -706,6 +706,13 @@ function installMessengerControllerStateRefs(ctx: MessengerControllerContext): v
   ctx.autoStickToBottom = ref(true);
 
   ctx.agentInquirySelection = ref<AgentInquiryPanelAnswer[]>([]);
+  ctx.agentInquirySubmitLock = ref(false);
+  // A question panel can be republished as `pending` by a late thread-view
+  // refresh while its continuation is already being submitted. Keep a small
+  // client-side consumption fence keyed by the root turn and question set so
+  // that stale replay cannot reopen the same panel or accept a second click.
+  ctx.consumedAgentInquiryKeys = new Set<string>();
+  ctx.consumedAgentInquiryVersion = ref(0);
 
 
 
@@ -4849,8 +4856,39 @@ type WorldScreenshotCaptureOption = {
 type StartNewSessionOutcome = 'noop' | 'already_current' | 'opened';
 
 function installMessengerControllerMessagePanelsPresentation(ctx: MessengerControllerContext): void {
+  const inquiryKey = (message: Record<string, unknown>, panel: AgentInquiryPanelData): string => {
+      const root = String(
+          message.root_turn_id ?? message.rootTurnId ?? message.user_turn_id ??
+          message.userTurnId ?? message.item_id ?? message.id ??
+          message.user_round ?? message.userRound ?? ''
+      ).trim();
+      const questions = Array.isArray(panel.questions)
+          ? panel.questions.map((question) => ({
+              question: String(question?.question || ''),
+              multiple: question?.multiple === true,
+              options: Array.isArray(question?.options)
+                  ? question.options.map((option) => String(option?.label || ''))
+                  : []
+          }))
+          : [];
+      return `${root}:${JSON.stringify(questions)}`;
+  };
+  const rememberConsumedInquiry = (key: string): void => {
+      if (!key) return;
+      ctx.consumedAgentInquiryKeys.add(key);
+      ctx.consumedAgentInquiryVersion.value += 1;
+      // A bounded set prevents long lived messenger pages from retaining all
+      // historical question text.
+      while (ctx.consumedAgentInquiryKeys.size > 64) {
+          const first = ctx.consumedAgentInquiryKeys.values().next().value;
+          if (first === undefined) break;
+          ctx.consumedAgentInquiryKeys.delete(first);
+      }
+  };
   ctx.activeAgentInquiryPanel = computed<ActiveAgentInquiryPanel | null>(() => {
       void threadViewClock.value;
+      void ctx.consumedAgentInquiryVersion.value;
+      if (ctx.agentInquirySubmitLock?.value) return null;
       void ctx.chatStore.runtimeProjectionVersionBySession?.[ctx.chatStore.activeSessionId];
       if (!ctx.isAgentConversationActive.value)
           return null;
@@ -4862,7 +4900,7 @@ function installMessengerControllerMessagePanelsPresentation(ctx: MessengerContr
           if (String(message?.role || '') !== 'assistant')
               continue;
           const panel = (message?.questionPanel || null) as AgentInquiryPanelData | null;
-          if (panel?.status === 'pending') {
+          if (panel?.status === 'pending' && !ctx.consumedAgentInquiryKeys.has(inquiryKey(message || {}, panel))) {
               return {
                   message: message || {},
                   panel
@@ -4897,6 +4935,17 @@ function installMessengerControllerMessagePanelsPresentation(ctx: MessengerContr
                   item.labels.length > 0 || Boolean(item.other) || item.noPreference
           );
   };
+
+  ctx.submitAgentInquirySelection = () => {
+      if (ctx.agentInquirySubmitLock?.value) return;
+      // The child panel emits `update:selected` immediately before `submit`.
+      // Vue refs are synchronous here, so the regular send path sees the full
+      // answer set and opens one new user round for the reply.
+      void ctx.sendAgentMessage({});
+  };
+
+  ctx.markAgentInquiryConsumed = rememberConsumedInquiry;
+  ctx.resolveAgentInquiryKey = inquiryKey;
 
   ctx.buildAgentInquiryReply = (panel: AgentInquiryPanelData, answers: AgentInquiryPanelAnswer[]): string => {
       const questions = Array.isArray(panel?.questions) ? panel.questions : [];
@@ -13535,6 +13584,10 @@ function installMessengerControllerAgentMessageCommands(ctx: MessengerController
           chatDebugLog('messenger.send', 'blocked-send-during-interaction-lock', ctx.buildActiveSessionBusyDebugSnapshot());
           return;
       }
+      if (ctx.agentInquirySubmitLock?.value) {
+          chatDebugLog('messenger.send', 'inquiry-submit-duplicate-suppressed', {});
+          return;
+      }
       const content = String(payload?.content || '').trim();
       const attachments = Array.isArray(payload?.attachments) ? payload.attachments : [];
       const reasoningEffort = String(payload?.reasoningEffort || '').trim();
@@ -13546,15 +13599,24 @@ function installMessengerControllerAgentMessageCommands(ctx: MessengerController
       const activeInquiry = ctx.activeAgentInquiryPanel.value;
       const inquiryAnswers = ctx.agentInquirySelection.value;
       const hasInquirySelection = inquiryAnswers.length > 0;
-      const inquiryRootUserRound = activeInquiry
-          ? Number(
-              activeInquiry.message.user_round ??
-              activeInquiry.message.userRound ??
-              (activeInquiry.message.display as Record<string, unknown> | undefined)?.user_round ??
-              (activeInquiry.message.raw as Record<string, unknown> | undefined)?.user_round ??
-              0
-            )
-          : 0;
+      const inquiryKey = activeInquiry && typeof ctx.resolveAgentInquiryKey === 'function'
+          ? ctx.resolveAgentInquiryKey(activeInquiry.message, activeInquiry.panel)
+          : '';
+      if (activeInquiry && hasInquirySelection && ctx.consumedAgentInquiryKeys.has(inquiryKey)) {
+          chatDebugLog('messenger.send', 'inquiry-consumed-replay-suppressed', { inquiryKey });
+          return;
+      }
+      const submittingInquiry = Boolean(activeInquiry && hasInquirySelection);
+      const inquiryTurnId = activeInquiry
+          ? String(
+              activeInquiry.message.turn_id ??
+              activeInquiry.message.execution_turn_id ??
+              (activeInquiry.message.raw as Record<string, unknown> | undefined)?.turn_id ??
+              activeInquiry.message.root_turn_id ??
+              activeInquiry.message.rootTurnId ??
+              ''
+            ).trim()
+          : '';
       if (!content && attachments.length === 0 && !hasInquirySelection)
           return;
       const localCommand = ctx.parseAgentLocalCommand(content);
@@ -13580,6 +13642,10 @@ function installMessengerControllerAgentMessageCommands(ctx: MessengerController
       if (ctx.activeSessionOrchestrationLocked.value) {
           ElMessage.warning(ctx.t('orchestration.chat.lockedInMessenger'));
           return;
+      }
+      if (submittingInquiry) {
+          ctx.agentInquirySubmitLock.value = true;
+          ctx.markAgentInquiryConsumed(inquiryKey);
       }
       let finalContent = content;
       if (activeInquiry) {
@@ -13630,8 +13696,8 @@ function installMessengerControllerAgentMessageCommands(ctx: MessengerController
               attachments,
               suppressQueuedNotice: hasInquirySelection,
               approvalMode,
-              ...(activeInquiry && hasInquirySelection && Number.isSafeInteger(inquiryRootUserRound) && inquiryRootUserRound > 0
-                  ? { rootUserRound: inquiryRootUserRound }
+              ...(activeInquiry && inquiryTurnId
+                  ? { inquiryTurnId }
                   : {}),
               ...(reasoningEffort ? { reasoningEffort } : {})
           });
@@ -13646,6 +13712,13 @@ function installMessengerControllerAgentMessageCommands(ctx: MessengerController
           void ctx.loadRunningAgents({ force: true });
       }
       catch (error) {
+          if (submittingInquiry) {
+              ctx.consumedAgentInquiryKeys.delete(inquiryKey);
+              ctx.agentInquirySubmitLock.value = false;
+              if (activeInquiry) {
+                  ctx.chatStore.resolveInquiryPanel(activeInquiry.message, { status: 'pending' });
+              }
+          }
           ctx.setRuntimeStateOverride(targetAgentId, 'error', 8000);
           const failedRuntimeState = new Map(ctx.agentRuntimeStateMap.value);
           failedRuntimeState.set(targetAgentId, 'error');
@@ -13657,6 +13730,7 @@ function installMessengerControllerAgentMessageCommands(ctx: MessengerController
           ctx.agentSendForegroundLockSessionId.value = '';
           ctx.agentSendForegroundLockAgentId.value = '';
           ctx.agentInquirySelection.value = [];
+          ctx.agentInquirySubmitLock.value = false;
       }
   };
 

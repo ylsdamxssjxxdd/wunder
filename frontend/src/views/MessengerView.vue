@@ -143,6 +143,7 @@
               v-if="activeAgentInquiryPanel"
               :panel="activeAgentInquiryPanel.panel"
               @update:selected="handleAgentInquirySelection"
+              @submit="submitAgentInquirySelection"
             />
             <ToolApprovalComposer
               v-if="activeSessionApproval"
@@ -503,6 +504,7 @@ const drawioUserId = controller.drawioUserId;
 const drawioVisible = controller.drawioVisible;
 const enterSelectedAgentConversation = controller.enterSelectedAgentConversation;
 const handleAgentInquirySelection = controller.handleAgentInquirySelection;
+const submitAgentInquirySelection = controller.submitAgentInquirySelection;
 const handleMessageContentClick = controller.handleMessageContentClick;
 const handleMessageListScroll = controller.handleMessageListScroll;
 const handleResourcePreviewDownload = controller.handleResourcePreviewDownload;

@@ -903,7 +903,10 @@ impl PostgresSchemaStorage for PostgresStorage {
                 )?
                 .get::<_, bool>(0)
             {
-                anyhow::ensure!(lock_started.elapsed() < Duration::from_secs(120), "postgres schema lock deadline exceeded");
+                anyhow::ensure!(
+                    lock_started.elapsed() < Duration::from_secs(120),
+                    "postgres schema lock deadline exceeded"
+                );
                 std::thread::sleep(Duration::from_millis(25));
             }
             let mut conn = SchemaConnection(Some(conn));

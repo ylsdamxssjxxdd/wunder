@@ -268,12 +268,27 @@ export const chatCacheActions = {
       if (!message || message.role !== 'assistant') return;
       const panel = normalizeInquiryPanelState(message.questionPanel);
       if (!panel) return;
+      const status = normalizeInquiryPanelStatus(patch.status ?? panel.status);
       message.questionPanel = {
         ...panel,
-        status: normalizeInquiryPanelStatus(patch.status ?? panel.status),
+        status,
         selected: Array.isArray(patch.selected) ? patch.selected : panel.selected,
         answers: patch.answers ?? panel.answers
       };
+      // A resolved panel no longer owns the assistant turn.  The durable
+      // transition follows through the new user submission, but settle the
+      // local projection immediately so its status label cannot keep saying
+      // “inquiry” while the next turn is already running.
+      if (['answered', 'dismissed'].includes(status) &&
+          ['waiting', 'waiting_input', 'waiting_user_input'].includes(String(message.status || '').trim().toLowerCase())) {
+        message.status = 'completed';
+        message.state = 'final';
+        message.final = true;
+        message.streaming = false;
+        message.workflowStreaming = false;
+        message.reasoningStreaming = false;
+        message.stream_incomplete = false;
+      }
       this.scheduleSnapshot(true);
     },
 };

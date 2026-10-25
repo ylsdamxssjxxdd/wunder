@@ -2,14 +2,14 @@ use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::Line;
 use ratatui::text::Span;
-use ratatui::widgets::Clear;
 use ratatui::widgets::Paragraph;
 use ratatui::widgets::Wrap;
 use ratatui::Frame;
-use unicode_width::UnicodeWidthStr;
 
+use super::centered_picker;
 use crate::tui::theme;
 
+/// 快捷键与警告面板：与选择视图同一套居中对话框几何与 Panel 表面。
 pub(crate) fn draw_shortcuts_modal(
     frame: &mut Frame,
     area: Rect,
@@ -19,134 +19,25 @@ pub(crate) fn draw_shortcuts_modal(
     if area.width < 20 || area.height < 8 {
         return;
     }
-    let popup = centered_popup(area, lines.as_slice(), 24, 6);
-    frame.render_widget(Clear, popup);
-    let widget = Paragraph::new(to_modal_lines(lines)).wrap(Wrap { trim: false });
-    frame.render_widget(widget, popup);
-}
-
-pub(crate) fn draw_resume_modal(
-    frame: &mut Frame,
-    area: Rect,
-    rows: Vec<String>,
-    selected: usize,
-    _is_zh: bool,
-) {
-    if area.width < 20 || area.height < 8 {
-        return;
-    }
-    let modal_lines = rows
-        .into_iter()
-        .enumerate()
-        .map(|(index, row)| {
-            if index == selected {
-                format!("› {}. {row}", index + 1)
-            } else {
-                format!("  {}. {row}", index + 1)
-            }
-        })
-        .collect::<Vec<_>>();
-    let popup = centered_popup(area, modal_lines.as_slice(), 28, 6);
-    frame.render_widget(Clear, popup);
-    let widget = Paragraph::new(to_modal_lines(modal_lines)).wrap(Wrap { trim: false });
-    frame.render_widget(widget, popup);
-}
-
-pub(crate) fn draw_approval_modal(
-    frame: &mut Frame,
-    area: Rect,
-    input_area: Rect,
-    lines: Vec<String>,
-    _is_zh: bool,
-) {
-    if area.width < 24 || area.height < 8 {
-        return;
-    }
-    let popup = anchored_popup(area, input_area, lines.as_slice(), 56, 9);
-    frame.render_widget(Clear, popup);
-    let widget = Paragraph::new(to_modal_lines(lines)).wrap(Wrap { trim: false });
-    frame.render_widget(widget, popup);
-}
-
-pub(crate) fn draw_inquiry_modal(
-    frame: &mut Frame,
-    area: Rect,
-    input_area: Rect,
-    lines: Vec<String>,
-    _is_zh: bool,
-) {
-    if area.width < 24 || area.height < 8 {
-        return;
-    }
-    let popup = anchored_popup(area, input_area, lines.as_slice(), 56, 8);
-    frame.render_widget(Clear, popup);
-    let widget = Paragraph::new(to_modal_lines(lines)).wrap(Wrap { trim: false });
-    frame.render_widget(widget, popup);
-}
-
-fn centered_popup(area: Rect, lines: &[String], min_width: u16, min_height: u16) -> Rect {
-    let width = popup_width(lines, area.width, min_width);
-    let height = popup_height(lines, width, min_height, area.height);
-    Rect {
-        x: area.x + area.width.saturating_sub(width) / 2,
-        y: area.y + area.height.saturating_sub(height) / 2,
-        width,
-        height,
-    }
-}
-
-fn anchored_popup(
-    area: Rect,
-    anchor: Rect,
-    lines: &[String],
-    min_width: u16,
-    min_height: u16,
-) -> Rect {
-    let horizontal_bounds = if anchor.width > 0 { anchor } else { area };
-    let width = popup_width(lines, horizontal_bounds.width, min_width);
-    let height = popup_height(lines, width, min_height, area.height);
-    Rect {
-        x: horizontal_bounds.x + horizontal_bounds.width.saturating_sub(width) / 2,
-        y: anchor.y.saturating_sub(height),
-        width,
-        height,
-    }
-}
-
-/// A modal reserves one row per entry, but the entries are themselves wrapped into the
-/// popup's width, so a narrow terminal needs more rows than there are lines. Counting
-/// lines instead silently drops the tail of the list.
-fn popup_width(lines: &[String], bound: u16, min_width: u16) -> u16 {
-    let max_line_width = lines
-        .iter()
-        .map(String::as_str)
-        .map(UnicodeWidthStr::width)
-        .max()
-        .unwrap_or(0) as u16;
-    max_line_width
-        .saturating_add(2)
-        .max(min_width)
-        .min(bound.saturating_sub(2))
-        .max(1)
-}
-
-fn popup_height(lines: &[String], width: u16, min_height: u16, bound: u16) -> u16 {
+    let width = centered_picker::dialog_width(area);
+    let content_width = width.saturating_sub(4).max(1) as usize;
     let rows: usize = lines
         .iter()
         .map(|line| {
             if line.trim().is_empty() {
-                return 1;
+                1
+            } else {
+                textwrap::wrap(line.as_str(), content_width).len().max(1)
             }
-            textwrap::wrap(line.as_str(), usize::from(width).max(1))
-                .len()
-                .max(1)
         })
         .sum();
-    (rows as u16)
-        .saturating_add(2)
-        .max(min_height)
-        .min(bound.saturating_sub(2))
-        .max(1)
+    let height = (rows as u16).saturating_add(2).max(6);
+    let dialog = centered_picker::centered_surface_rect(area, width, height);
+    let content = centered_picker::paint_panel(frame, dialog);
+    frame.render_widget(
+        Paragraph::new(to_modal_lines(lines)).wrap(Wrap { trim: false }),
+        content,
+    );
 }
 
 fn to_modal_lines(lines: Vec<String>) -> Vec<Line<'static>> {
@@ -408,32 +299,6 @@ fn is_modal_section_heading(line: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn centered_popup_respects_minimum_size() {
-        let area = Rect::new(0, 0, 80, 24);
-        let popup = centered_popup(area, &["短文本".to_string()], 30, 8);
-        assert_eq!(popup.width, 30);
-        assert_eq!(popup.height, 8);
-        assert_eq!(popup.x, 25);
-    }
-
-    #[test]
-    fn anchored_popup_positions_above_anchor() {
-        let area = Rect::new(0, 0, 80, 24);
-        let anchor = Rect::new(10, 18, 60, 6);
-        let popup = anchored_popup(
-            area,
-            anchor,
-            &["工具：read_file".to_string(), "摘要：读取文件".to_string()],
-            52,
-            10,
-        );
-        assert_eq!(popup.y, 8);
-        assert_eq!(popup.height, 10);
-        assert!(popup.x >= anchor.x);
-        assert!(popup.width <= anchor.width.saturating_sub(2));
-    }
 
     #[test]
     fn to_modal_lines_keeps_selected_marker() {

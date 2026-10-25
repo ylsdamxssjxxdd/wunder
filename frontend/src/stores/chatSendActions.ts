@@ -635,8 +635,8 @@ export const chatSendActions = {
           ...(desktopToolCallMode ? { tool_call_mode: desktopToolCallMode } : {}),
           ...(approvalMode ? { approval_mode: approvalMode } : {}),
           ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
-          ...(Number.isSafeInteger(Number(options.rootUserRound ?? options.root_user_round)) && Number(options.rootUserRound ?? options.root_user_round) > 0
-            ? { root_user_round: Number(options.rootUserRound ?? options.root_user_round) }
+          ...(String(options.inquiryTurnId ?? options.inquiry_turn_id ?? '').trim()
+            ? { inquiry_turn_id: String(options.inquiryTurnId ?? options.inquiry_turn_id).trim() }
             : {})
         };
         chatDebugLog('chat.llm.request', 'submit-start', {

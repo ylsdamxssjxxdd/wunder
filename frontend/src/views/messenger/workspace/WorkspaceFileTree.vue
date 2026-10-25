@@ -93,6 +93,12 @@
           <span class="workspace-file-name">{{ row.name }}</span>
           <span v-if="row.pathHint" class="workspace-file-path">{{ row.pathHint }}</span>
           <span v-if="row.loading" class="workspace-files-spinner" aria-hidden="true"></span>
+          <span
+            v-else-if="archivingPath === row.path"
+            class="workspace-files-spinner"
+            :title="t('messenger.filesArea.archivingNote', { name: row.name })"
+            aria-hidden="true"
+          ></span>
           <button
             v-if="!readOnly"
             class="workspace-file-menu"
@@ -160,12 +166,14 @@ const props = withDefaults(
     /** 只读投影（互通远程节点）：隐藏写操作菜单，只留预览/展开。 */
     readOnly?: boolean;
     remote?: boolean;
+    /** 正在打包下载的目录路径：该行显示转圈，直到 zip 下载落地。 */
+    archivingPath?: string;
     /** 空态提示覆盖（远程投影与云端拖拽提示语义不同）。 */
     emptyHint?: string;
     /** 空态主文案覆盖（搜索结果等非目录语义）。 */
     emptyText?: string;
   }>(),
-  { readOnly: false, remote: false, emptyHint: '', emptyText: '' }
+  { readOnly: false, remote: false, archivingPath: '', emptyHint: '', emptyText: '' }
 );
 
 const emit = defineEmits<{

@@ -2590,7 +2590,7 @@ mod tests {
                 tool_call_mode: None,
                 approval_mode: None,
                 reasoning_effort: None,
-                root_user_round: None,
+                inquiry_turn_id: None,
             },
         )
         .await

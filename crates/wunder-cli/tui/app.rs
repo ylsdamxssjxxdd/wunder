@@ -35,6 +35,9 @@ use crate::runtime::CliRuntime;
 use crate::slash_command::{self, ParsedSlashCommand, SlashCommand};
 use crate::tui::command_center::{CommandCenterState, ThreadStatusFilter};
 use crate::tui::thread_registry::ThreadRegistry;
+use crate::tui::ui::centered_picker::{
+    BodyLine, CenteredListSpec, PickerRow, MAX_VISIBLE_ROWS,
+};
 
 const MAX_LOG_ENTRIES: usize = super::transcript::MAX_TRANSCRIPT_CELLS;
 const MAX_LOG_TOTAL_CHARS: usize = super::transcript::MAX_TRANSCRIPT_CHARS;
@@ -408,6 +411,8 @@ enum FocusArea {
 struct ResumePickerState {
     sessions: Vec<wunder_server::ThreadSnapshot>,
     selected: usize,
+    /// `/resume --all` 打开时列出所有工作区，标题下注明范围。
+    all_workspaces: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1596,13 +1601,31 @@ impl TuiApp {
         }
     }
 
-    pub fn remote_approval_modal_lines(&self) -> Option<Vec<String>> {
+    /// 互通审批只收 `y`/`n`：不做高亮行，正文说明与剩余时间在面板头部。
+    pub fn remote_approval_modal_spec(&self) -> Option<CenteredListSpec> {
         let approval = self.active_remote_approval.as_ref()?;
-        Some(crate::interlink_tunnel::remote_approval_lines(
+        let language = self.display_language.as_str();
+        let mut body = crate::interlink_tunnel::remote_approval_lines(
             approval,
             crate::interlink_tunnel::unix_now(),
             self.is_zh_language(),
-        ))
+        )
+        .into_iter()
+        .map(BodyLine::dim)
+        .collect::<Vec<_>>();
+        if let Some(first) = body.first_mut() {
+            first.style = super::theme::accent_text();
+        }
+        Some(CenteredListSpec {
+            title: crate::locale::tr(language, "互通审批", "Interlink approval"),
+            subtitle: None,
+            body,
+            rows: Vec::new(),
+            selected: 0,
+            footer_note: None,
+            footer_hint: None,
+            max_visible_rows: MAX_VISIBLE_ROWS,
+        })
     }
 
     fn decide_remote_approval(&mut self, decision: Decision) {
@@ -1892,26 +1915,49 @@ impl TuiApp {
         self.transcript_selected
     }
 
-    pub fn resume_picker_rows(&self) -> Option<(Vec<String>, usize)> {
+    /// codex 的居中选择面板：线程恢复列出标题、更新时间与线程短号，
+    /// 当前线程带 `(current)` 标记，底部给出按键提示。
+    pub fn resume_picker_spec(&self) -> Option<CenteredListSpec> {
         let picker = self.resume_picker.as_ref()?;
+        let language = self.display_language.as_str();
         let rows = picker
             .sessions
             .iter()
-            .map(|session| {
-                let current = if session.session_id == self.session_id {
-                    "*"
+            .enumerate()
+            .map(|(index, session)| {
+                let mut name = if session.title.trim().is_empty() {
+                    crate::locale::tr(language, "未命名线程", "Untitled thread")
                 } else {
-                    " "
+                    session.title.trim().to_string()
                 };
+                if session.session_id == self.session_id {
+                    name.push_str(&crate::locale::tr(language, "（当前）", " (current)"));
+                }
                 let when =
                     format_session_timestamp(session.updated_at.max(session.last_message_at));
-                format!(
-                    "{current} {}  {}  {}",
-                    session.session_id, when, session.title
-                )
+                let short_id: String = session.session_id.chars().take(8).collect();
+                PickerRow::numbered(index, name, Some(format!("{when} · {short_id}")))
             })
             .collect::<Vec<_>>();
-        Some((rows, picker.selected))
+        let scope = if picker.all_workspaces {
+            crate::locale::tr(language, "所有工作区", "all workspaces")
+        } else {
+            crate::locale::tr(language, "当前工作区", "this workspace")
+        };
+        Some(CenteredListSpec {
+            title: crate::locale::tr(language, "恢复线程", "Resume a thread"),
+            subtitle: Some(format!("{} · {scope}", picker.sessions.len())),
+            body: Vec::new(),
+            rows,
+            selected: picker.selected,
+            footer_note: None,
+            footer_hint: Some(crate::locale::tr(
+                language,
+                "enter 恢复 · esc 返回",
+                "enter resume · esc back",
+            )),
+            max_visible_rows: MAX_VISIBLE_ROWS,
+        })
     }
 
     /// The catalog's normalization is the authority; this adds only what the service cannot
@@ -2078,78 +2124,88 @@ impl TuiApp {
         self.watch_only_reason.as_deref()
     }
 
-    pub fn approval_modal_lines(&self) -> Option<Vec<String>> {
+    /// codex 的居中选择面板：审批把命令详情放在面板头部，三个选项带快捷键
+    /// 提示（`y`/`a`/`n`），`c` 与 `esc` 取消不占行，队列长度走底注。
+    pub fn approval_modal_spec(&self) -> Option<CenteredListSpec> {
         let request = self.active_approval.as_ref()?;
         let is_zh = self.is_zh_language();
-        let selected = self.approval_selected_index.min(2);
+        let language = self.display_language.as_str();
         let summary = summarize_modal_text(request.summary.as_str(), 110);
         let detail = summarize_modal_text(compact_json(&request.detail).as_str(), 120);
         let args = summarize_modal_text(compact_json(&request.args).as_str(), 120);
-        let prompt = approval_prompt_text(request, is_zh);
-        let option_labels = approval_option_labels(request, is_zh);
-        let patch_preview = if is_apply_patch_tool_name(request.tool.as_str()) {
-            format_apply_patch_approval_lines(&request.args, is_zh)
-        } else {
-            None
-        };
-        let mut lines = vec![prompt];
+        let mut body = vec![BodyLine::accent(approval_prompt_text(request, is_zh))];
         if !summary.trim().is_empty() {
-            lines.push(summary);
+            body.push(BodyLine::dim(summary));
         }
-        if !self.approval_queue.is_empty() {
-            lines.push(if is_zh {
-                format!("还有 {} 个待处理请求", self.approval_queue.len())
-            } else {
-                format!("{} more pending request(s)", self.approval_queue.len())
-            });
-        }
-        lines.push(String::new());
-        if let Some(preview) = patch_preview {
-            lines.extend(preview);
+        if is_apply_patch_tool_name(request.tool.as_str()) {
+            if let Some(preview) = format_apply_patch_approval_lines(&request.args, is_zh) {
+                body.extend(patch_preview_body_lines(preview));
+            }
         } else {
-            lines.push(request.tool.clone());
+            body.push(BodyLine::dim(request.tool.clone()));
             if !detail.trim().is_empty() && detail != "{}" && detail != "null" {
-                lines.push(detail);
+                body.push(BodyLine::dim(detail));
             }
             if !args.trim().is_empty() && args != "{}" && args != "null" {
-                lines.push(args);
+                body.push(BodyLine::dim(args));
             }
         }
-        lines.push(String::new());
-        for (index, label) in option_labels.iter().enumerate() {
-            lines.push(format!(
-                "{} {}. {}",
-                if index == selected { "›" } else { " " },
-                APPROVAL_PANEL_KEYS[index.min(APPROVAL_PANEL_KEYS.len() - 1)],
-                label
-            ));
-        }
-        // `c` cancels without a fourth row: it denies the request, the same
-        // answer codex's cancel sends.
-        lines.push(if is_zh {
-            "  c. 取消本次请求".to_string()
-        } else {
-            "  c. cancel this request".to_string()
-        });
-        Some(lines)
+        let rows = approval_option_labels(request, is_zh)
+            .iter()
+            .enumerate()
+            .map(|(index, label)| {
+                PickerRow::numbered(
+                    index,
+                    format!("{label} ({})", APPROVAL_PANEL_KEYS[index]),
+                    None,
+                )
+            })
+            .collect::<Vec<_>>();
+        Some(CenteredListSpec {
+            title: crate::locale::tr(language, "需要审批", "Approval required"),
+            subtitle: None,
+            body,
+            rows,
+            selected: self.approval_selected_index.min(2),
+            footer_note: if self.approval_queue.is_empty() {
+                None
+            } else {
+                Some(crate::locale::tr(
+                    language,
+                    &format!("还有 {} 个待处理请求", self.approval_queue.len()),
+                    &format!("{} more pending request(s)", self.approval_queue.len()),
+                ))
+            },
+            footer_hint: Some(crate::locale::tr(
+                language,
+                "enter 确认 · esc 取消",
+                "enter confirm · esc cancel",
+            )),
+            max_visible_rows: MAX_VISIBLE_ROWS,
+        })
     }
 
-    pub fn inquiry_modal_lines(&self) -> Option<Vec<String>> {
+    /// codex 的居中选择面板：问询把题目放头部，候选路线全局编号、描述列
+    /// 变暗、推荐项带标记；`左右` 在多题之间切换，`esc` 关闭。
+    pub fn inquiry_modal_spec(&self) -> Option<CenteredListSpec> {
         let panel = self.active_inquiry_panel.as_ref()?;
         let flat = panel.flat_routes();
         if flat.is_empty() {
             return None;
         }
+        let is_zh = self.is_zh_language();
+        let language = self.display_language.as_str();
         let selected = self.inquiry_selected_index.min(flat.len() - 1);
         let question_total = panel.questions.len();
-        let mut lines = Vec::new();
+        let mut body = Vec::new();
+        let mut rows = Vec::new();
         let mut global_index = 0usize;
         for (question_index, question) in panel.questions.iter().enumerate() {
             if !question.routes.is_empty() {
-                if !lines.is_empty() {
-                    lines.push(String::new());
+                if !body.is_empty() {
+                    body.push(BodyLine::dim(String::new()));
                 }
-                lines.push(if question_total > 1 {
+                let label = if question_total > 1 {
                     self.format_inquiry_question_label(
                         question_index,
                         question_total,
@@ -2157,30 +2213,39 @@ impl TuiApp {
                     )
                 } else {
                     question.question.clone()
-                });
-                lines.push(String::new());
+                };
+                body.push(BodyLine::accent(label));
             }
             for route in &question.routes {
-                let marker = if global_index == selected { "›" } else { " " };
-                let mut title = route.label.clone();
+                let mut name = route.label.clone();
                 if route.recommended {
-                    if self.is_zh_language() {
-                        title.push_str("（推荐）");
-                    } else {
-                        title.push_str(" (recommended)");
-                    }
+                    name.push_str(if is_zh { "（推荐）" } else { " (recommended)" });
                 }
-                let body = match route.description.as_deref() {
-                    Some(description) if !description.trim().is_empty() => {
-                        format!("{title}  {description}")
-                    }
-                    _ => title,
-                };
-                lines.push(format!("{marker} {}. {body}", global_index + 1));
+                rows.push(PickerRow::numbered(
+                    global_index,
+                    name,
+                    route
+                        .description
+                        .clone()
+                        .filter(|text| !text.trim().is_empty()),
+                ));
                 global_index += 1;
             }
         }
-        Some(lines)
+        Some(CenteredListSpec {
+            title: crate::locale::tr(language, "需要你的选择", "Your input is needed"),
+            subtitle: None,
+            body,
+            rows,
+            selected,
+            footer_note: None,
+            footer_hint: Some(crate::locale::tr(
+                language,
+                "enter 选择 · 左右 切换问题 · esc 关闭",
+                "enter select · left/right switch question · esc close",
+            )),
+            max_visible_rows: MAX_VISIBLE_ROWS,
+        })
     }
 
     fn format_inquiry_question_label(
@@ -3121,7 +3186,11 @@ impl TuiApp {
             .position(|session| session.session_id == self.session_id)
             .unwrap_or(0);
         self.shortcuts_visible = false;
-        self.resume_picker = Some(ResumePickerState { sessions, selected });
+        self.resume_picker = Some(ResumePickerState {
+            sessions,
+            selected,
+            all_workspaces,
+        });
         Ok(())
     }
 
@@ -5597,6 +5666,17 @@ impl TuiApp {
             KeyCode::End => {
                 if let Some(picker) = self.resume_picker.as_mut() {
                     picker.selected = picker.sessions.len().saturating_sub(1);
+                }
+            }
+            // codex 的列表键：数字直接高亮对应行，Enter 确认。
+            KeyCode::Char(ch)
+                if key.modifiers.is_empty() && ch.is_ascii_digit() && ch != '0' =>
+            {
+                if let Some(picker) = self.resume_picker.as_mut() {
+                    let index = (ch as usize).saturating_sub('1' as usize);
+                    if index < picker.sessions.len() {
+                        picker.selected = index;
+                    }
                 }
             }
             KeyCode::Enter => {
@@ -9299,6 +9379,28 @@ fn approval_prompt_text(request: &ApprovalRequest, is_zh: bool) -> String {
 
 /// The codex approval-panel keys, in the order the three options are listed.
 const APPROVAL_PANEL_KEYS: [char; 3] = ['y', 'a', 'n'];
+
+/// 补丁预览行按首标记着色：增删行沿用 diff 配色，其余保持 dim。
+fn patch_preview_body_lines(lines: Vec<String>) -> Vec<BodyLine> {
+    lines
+        .into_iter()
+        .map(|line| {
+            let style = match line.trim_start().chars().next() {
+                Some('+') | Some('A') => super::theme::success_text(),
+                Some('-') | Some('D') => super::theme::danger_text(),
+                Some('M') => super::theme::warning_text(),
+                Some('R') => super::theme::brand_text(),
+                _ if line.trim_start().starts_with("@@")
+                    || line.trim_start().starts_with("diff ") =>
+                {
+                    super::theme::accent_text()
+                }
+                _ => super::theme::secondary_text(),
+            };
+            BodyLine { text: line, style }
+        })
+        .collect()
+}
 
 /// Which answer a key sends. codex uses `y`/`a`/`n`/`c`; the engine only has
 /// three answers, so `c` denies like `n` but is reported as a cancellation.

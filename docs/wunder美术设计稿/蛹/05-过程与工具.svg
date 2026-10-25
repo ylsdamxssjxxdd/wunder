@@ -1,436 +1,69 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1900" viewBox="0 0 1600 1900" role="img" aria-label="蛹 桌面端过程与工具卡设计规范">
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1760" viewBox="0 0 1600 1760" role="img" aria-label="蛹 桌面端过程与工具规范">
   <title>05 过程与工具 · 蛹 Desktop UI Spec</title>
-  <defs>
-    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="p-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.2V12l3 2"/></symbol>
-    <symbol fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" id="p-spinner" viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9"/></symbol>
-    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="p-check" viewBox="0 0 24 24"><path d="m5 12.5 4.2 4.2L19 7"/></symbol>
-    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="p-error" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
-    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="p-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></symbol>
-    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="p-file" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6zM14 3v5h4"/></symbol>
-    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="p-pen" viewBox="0 0 24 24"><path d="m4 20 4.2-1 11-11a2.1 2.1 0 0 0-3-3l-11 11zM13.5 6.5l4 4"/></symbol>
-    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="p-folder" viewBox="0 0 24 24"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H9l2 2h7.5A2.5 2.5 0 0 1 21 9.5v7A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5z"/></symbol>
-    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="p-link" viewBox="0 0 24 24"><path d="M10 14a4.5 4.5 0 0 0 6.4 0l3-3a4.5 4.5 0 0 0-6.4-6.4L11 6.6"/><path d="M14 10a4.5 4.5 0 0 0-6.4 0l-3 3a4.5 4.5 0 0 0 6.4 6.4l2-2"/></symbol>
-    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="p-terminal" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="m7 9 3.5 3L7 15M13 15h4"/></symbol>
-    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="p-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6"/><path d="m15 15 5 5"/></symbol>
-    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="p-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3.5 9h17M3.5 15h17M12 3c2.6 2.4 4 5.5 4 9s-1.4 6.6-4 9c-2.6-2.4-4-5.5-4-9s1.4-6.6 4-9Z"/></symbol>
-    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="p-code" viewBox="0 0 24 24"><path d="m8 7-5 5 5 5M16 7l5 5-5 5M13.5 4l-3 16"/></symbol>
-    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="p-image" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2.5"/><circle cx="8.5" cy="9" r="1.6"/><path d="m4 18 5.5-5.5 4 4 2.5-2.5 4 4"/></symbol>
-    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="p-database" viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="7.5" ry="3"/><path d="M4.5 6v6c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3V6M4.5 12v6c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3v-6"/></symbol>
-    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="p-robot" viewBox="0 0 24 24"><rect x="4" y="7" width="16" height="12" rx="3"/><path d="M12 3v4M9 12h.01M15 12h.01M9 16h6M2 11v3M22 11v3"/></symbol>
-    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="p-stop" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="1.5" fill="currentColor" stroke="none"/></symbol>
-    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="p-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
-  </defs>
-  <style>
-    svg{font-family:'Microsoft YaHei UI','Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif;fill:#1F2329}
-    .mono{font-family:Consolas,'SFMono-Regular','Cascadia Mono',monospace}
-    .h1{font-size:30px;font-weight:700;letter-spacing:-.4px}
-    .sub{font-size:13px;fill:#7C7A75}
-    .kicker{font-size:11px;font-weight:600;letter-spacing:1.4px;fill:#E07A12}
-    .sect{font-size:16px;font-weight:700}
-    .sect-en{font-size:10px;font-weight:600;letter-spacing:1.6px;fill:#A8A39B}
-    .card{fill:#FFFFFF;stroke:#DED9D1;stroke-width:1}
-    .card-t{font-size:12px;font-weight:700}
-    .note{font-size:11px;fill:#7C7A75}
-    .tiny{font-size:10px;fill:#8A8F99}
-    .mono10{font-family:Consolas,monospace;font-size:10px;fill:#8A8F99}
-    .mono9{font-family:Consolas,monospace;font-size:9px;fill:#8A8F99}
-    .ui14{font-size:14px}.ui13{font-size:13px}.ui12{font-size:12px}.ui11{font-size:11px}.ui10{font-size:10px}
-    .muted{fill:#8A8F99}.soft{fill:#9BA0A8}.sub2{fill:#3D3D3D}
-  </style>
+  <style>svg{font-family:'Microsoft YaHei UI','Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif;fill:#1F2329}.mono{font-family:Consolas,monospace}.h1{font-size:30px;font-weight:700}.sub{font-size:13px;fill:#6F747B}.kicker{font-size:11px;font-weight:700;letter-spacing:1.4px;fill:#D87616}.sect{font-size:18px;font-weight:700}.sect-note{font-size:12px;fill:#8A8F99}.card{fill:#FFF;stroke:#DED9D1}.card-t{font-size:14px;font-weight:700}.note{font-size:12px;fill:#6F747B}.tiny{font-size:11px;fill:#8A8F99}.chip{font-size:11px;font-weight:700;fill:#D87616}.ui14{font-size:14px}.ui13{font-size:13px}.ui12{font-size:12px}.ui11{font-size:11px}.muted{fill:#8A8F99}.secondary{fill:#3D3D3D}</style>
+  <rect width="1600" height="1760" fill="#F5F3EF"/>
+  <g id="header"><text x="64" y="42" class="kicker">WUNDER / 蛹 · DESKTOP UI SPEC</text><text x="64" y="84" class="h1">05　过程与工具</text><text x="64" y="114" class="sub">先理解过程条的折叠行为，再看工具状态与详情；工具组、子智能体和补丁卡不共用错误的外观隐喻。</text><text x="1536" y="44" text-anchor="end" class="mono tiny">SHEET 05 / 09</text><text x="1536" y="84" text-anchor="end" class="mono ui12">PROCESS · TOOL · DETAIL</text><line x1="64" y1="140" x2="1536" y2="140" stroke="#D8D5D0"/></g>
 
-  <rect width="1600" height="1900" fill="#F4F1EC"/>
-  <g id="header">
-    <text x="80" y="52" class="kicker">WUNDER / 蛹 · DESKTOP UI SPEC</text>
-    <text x="80" y="93" class="h1">05　过程与工具</text>
-    <text x="80" y="120" class="sub">工作过程是会话的折叠史：过程条、思考条目、工具行、工具组与子智能体卡共享同一条 1px 时间线。</text>
-    <text x="1520" y="52" text-anchor="end" class="mono" font-size="11" fill="#8A8F99">SHEET 05 / 09</text>
-    <text x="1520" y="94" text-anchor="end" class="mono" font-size="12" fill="#3D3D3D">PROCESS · TOOL · SUBAGENT · PATCH</text>
-    <line x1="80" y1="140" x2="1520" y2="140" stroke="#D8D5D0"/>
+  <g id="process-view">
+    <rect x="64" y="160" width="28" height="24" rx="6" fill="#FDF0DE"/><text x="78" y="177" text-anchor="middle" class="chip">01</text><text x="104" y="178" class="sect">过程条 · 折叠是视图状态，不是任务状态</text><text x="1536" y="177" text-anchor="end" class="sect-note">工具行 26px · 过程最大高 420px · 展开即时</text>
+    <rect x="64" y="202" width="1472" height="360" rx="12" class="card"/>
+    <text x="88" y="232" class="card-t">折叠后 · 保留摘要</text><text x="812" y="232" class="card-t">展开后 · 查看步骤与输出</text>
+    <rect x="88" y="254" width="676" height="46" rx="6" fill="#FBFAF8"/><path d="m98 270 5 4-5 4" fill="none" stroke="#8A8F99" stroke-width="1.4"/><text x="118" y="278" class="ui13 secondary">工作过程 · 3 步</text><text x="230" y="278" class="ui12 muted">已完成</text><text x="740" y="278" text-anchor="end" class="tiny">点击整行展开</text>
+    <text x="88" y="332" class="note">过程条只显示步数和聚合状态；不在折叠时重复全部工具详情。</text><text x="88" y="360" class="note">完成后可展开复核，运行时可跟随最新步骤。</text><text x="88" y="396" class="tiny">更早过程按需分页；加载/失败使用页顶 30px 区域。</text><text x="88" y="430" class="tiny">展开/折叠不使用高度动画，避免长会话布局抖动。</text>
+    <line x1="788" y1="222" x2="788" y2="538" stroke="#E8E6E3"/>
+    <rect x="812" y="254" width="700" height="280" rx="6" fill="#FBFAF8"/>
+    <path d="m824 270 5 4-5 4" fill="none" stroke="#8A8F99" stroke-width="1.4" transform="rotate(90 827 274)"/><text x="844" y="278" class="ui13 secondary">工作过程 · 3 步</text><text x="956" y="278" class="ui12 muted">已完成</text>
+    <line x1="834" y1="292" x2="834" y2="510" stroke="#E2DFDA"/>
+    <circle cx="834" cy="316" r="6" fill="#FBFAF8" stroke="#9BA0A8"/><path d="m831 316 2 2 4-4" fill="none" stroke="#8A8F99"/><text x="854" y="322" class="ui13 muted">已思考</text><text x="918" y="322" class="ui12" fill="#9BA0A8">已确定处理步骤。</text>
+    <circle cx="834" cy="350" r="6" fill="#FBFAF8" stroke="#9BA0A8"/><path d="m831 350 2 2 4-4" fill="none" stroke="#8A8F99"/><text x="854" y="356" class="ui13 muted">读取文件</text><rect x="928" y="342" width="88" height="18" rx="6" fill="#F6F5F3"/><text x="935" y="355" class="ui12 muted">sample.txt</text><text x="1030" y="356" class="ui12" fill="#9BA0A8">读取示例内容</text><text x="1488" y="356" text-anchor="end" class="mono ui11 muted">1.8k token　19ms</text>
+    <circle cx="834" cy="384" r="6" fill="#FBFAF8" stroke="#9BA0A8"/><path d="m831 384 2 2 4-4" fill="none" stroke="#8A8F99"/><text x="854" y="390" class="ui13 muted">运行命令</text><text x="928" y="390" class="ui12" fill="#9BA0A8">check sample.txt</text><text x="1488" y="390" text-anchor="end" class="mono ui11 muted">1.2s</text>
+    <rect x="854" y="410" width="634" height="92" rx="8" fill="#FBFAF8" stroke="#E8E6E3"/><text x="866" y="432" class="ui11 muted" font-weight="700">输出</text><rect x="866" y="444" width="610" height="44" rx="6" fill="#F6F5F3"/><text x="878" y="462" class="mono ui11 secondary">$ check sample.txt</text><text x="878" y="482" class="mono ui11 secondary">2 checks passed</text><text x="1488" y="522" text-anchor="end" class="tiny">详情从 44px 缩进开始</text>
   </g>
 
-  <!-- ================= A PROCESS ================= -->
-  <g id="process">
-    <rect x="80" y="178" width="6" height="16" rx="2" fill="#F58A24"/>
-    <text x="98" y="192" class="sect">工作过程</text>
-    <text x="194" y="192" class="sect-en">PROCESS BAR · THOUGHT</text>
-    <text x="1520" y="192" text-anchor="end" class="note">折叠时 34px；展开时 40px + 过程体；无背景、无悬停</text>
-
-    <!-- collapsed -->
-    <g id="process-collapsed">
-      <circle cx="114" cy="240" r="8" fill="#FFFFFF" stroke="#E8E6E3"/>
-      <path d="M111.5 236.5 118 240l-6.5 3.5z" fill="#8A8F99"/>
-      <text x="132" y="244" class="ui13 sub2">工作过程 · 2 步</text>
-      <text x="243" y="244" class="ui12 muted">已完成</text>
-      <text x="296" y="244" class="ui12 soft">各步骤结果一致，可以收尾汇总。</text>
-      <text x="820" y="232" text-anchor="end" class="mono9">34px · 折叠</text>
-    </g>
-
-    <!-- expanded -->
-    <g id="process-expanded">
-      <rect x="80" y="270" width="720" height="330" rx="8" fill="transparent"/>
-      <circle cx="114" cy="290" r="8" fill="#FFFFFF" stroke="#E8E6E3"/>
-      <path d="M113.5 286.5 120 290l-6.5 3.5z" fill="#8A8F99" transform="rotate(90 116.5 290)"/>
-      <text x="132" y="294" class="ui13 sub2">工作过程 · 2 步</text>
-      <text x="243" y="294" class="ui12 muted">已完成</text>
-      <text x="820" y="282" text-anchor="end" class="mono9">40px · 展开</text>
-
-      <!-- connector -->
-      <line x1="93" y1="308" x2="93" y2="548" stroke="#E2DFDA"/>
-
-      <!-- thought fold header -->
-      <circle cx="93" cy="336" r="6" fill="none" stroke="#9BA0A8"/>
-      <path d="m90.4 336 1.8 1.8 3.5-3.8" fill="none" stroke="#8A8F99" stroke-width="1.2" stroke-linecap="round"/>
-      <text x="108" y="340" class="ui13 muted">已思考</text>
-      <text x="156" y="340" class="ui12 soft">各步骤结果一致，可以收尾汇总。</text>
-
-      <!-- thought body -->
-      <rect x="108" y="352" width="680" height="76" rx="8" fill="#FBFAF8" stroke="#E8E6E3"/>
-      <text x="118" y="372" class="ui12 muted">先核对两份材料的范围与时间口径，再按章节汇总。</text>
-      <text x="118" y="392" class="ui12 muted">发现一处重复表述，已合并；没有缺失项。</text>
-      <text x="118" y="412" class="ui12 muted">结论：可以收尾汇总，并给出下一步建议。</text>
-
-      <!-- tool row 1 -->
-      <use href="#p-check" x="87" y="443" width="12" height="12" color="#8A8F99"/>
-      <use href="#p-file" x="107" y="442" width="13" height="13" color="#8A8F99"/>
-      <text x="127" y="453" class="ui13 muted">读取文件</text>
-      <rect x="192" y="440" width="132" height="18" rx="6" fill="#F6F5F3"/>
-      <text x="199" y="453" class="ui12 muted">docs/outline.md</text>
-      <text x="336" y="453" class="ui12 soft">已读取 42 行</text>
-      <text x="760" y="453" text-anchor="end" class="mono" font-size="11" fill="#8A8F99">2.4k · 1.2s</text>
-
-      <!-- tool row 2 -->
-      <use href="#p-check" x="87" y="471" width="12" height="12" color="#8A8F99"/>
-      <use href="#p-pen" x="107" y="470" width="13" height="13" color="#8A8F99"/>
-      <text x="127" y="481" class="ui13 muted">写入文件</text>
-      <rect x="192" y="468" width="112" height="18" rx="6" fill="#F6F5F3"/>
-      <text x="199" y="481" class="ui12 muted">summary.md</text>
-      <text x="316" y="481" class="ui12 soft">已写入 18 行</text>
-      <text x="760" y="481" text-anchor="end" class="mono" font-size="11" fill="#8A8F99">3.1k · 1.6s</text>
-
-      <!-- pagination -->
-      <text x="108" y="522" class="ui11 muted">查看更早的过程</text>
-      <text x="760" y="522" text-anchor="end" class="ui11 muted">第 1 / 2 页</text>
-      <line x1="108" y1="540" x2="760" y2="540" stroke="#E8E6E3"/>
-      <text x="108" y="562" class="tiny">过程体视口高度 = min(420px, 时间线高度 × 0.64)；超过后内部滚动。</text>
-      <text x="108" y="580" class="tiny">子过程分页 <tspan class="mono">‹ 1 / 2 ›</tspan>；上一页/下一页 33ms 尾随。</text>
-    </g>
-
-    <!-- right spec -->
-    <rect x="840" y="216" width="680" height="384" rx="12" class="card"/>
-    <text x="862" y="240" class="card-t">过程条状态与结构</text>
-    <text x="1498" y="240" text-anchor="end" class="mono10">34 / 40px · transparent</text>
-    <g transform="translate(862,254)">
-      <!-- done -->
-      <circle cx="8" cy="8" r="8" fill="#FFFFFF" stroke="#E8E6E3"/><path d="M5.5 4.5 12 8l-6.5 3.5z" fill="#8A8F99"/><text x="24" y="12" class="ui13">工作过程 · 2 步</text><text x="140" y="12" class="ui12 muted">已完成</text><text x="570" y="12" text-anchor="end" class="mono9">DONE</text>
-      <!-- running -->
-      <g color="#F58A24" transform="translate(0,26)"><use href="#p-spinner" width="12" height="12"/></g><text x="24" y="38" class="ui13">工作过程 · 3 步</text><text x="140" y="38" class="ui12" fill="#F58A24">处理中</text><text x="570" y="38" text-anchor="end" class="mono9">RUNNING</text>
-      <!-- error -->
-      <g color="#D04A43" transform="translate(0,52)"><use href="#p-error" width="12" height="12"/></g><text x="24" y="64" class="ui13">工作过程 · 1 步</text><text x="140" y="64" class="ui12" fill="#D04A43">思考中断</text><text x="570" y="64" text-anchor="end" class="mono9">FAILED</text>
-    </g>
-    <line x1="862" y1="336" x2="1498" y2="336" stroke="#E8E6E3"/>
-    <text x="862" y="358" class="card-t" font-size="11">结构</text>
-    <text x="862" y="378" class="note">左侧 22px 槽：16×16 圆环 + 12px 三角；展开旋转 90°（无动画）。</text>
-    <text x="862" y="398" class="note">标签 13px #3D3D3D；摘要 12px #8A8F99，间距 8，单行省略。</text>
-    <text x="862" y="418" class="note">整行背景透明、无悬停；点击任意位置折叠/展开。</text>
-    <text x="862" y="438" class="note">展开体沿用 1px connector；工具行缩进 24，细节面板缩进 44。</text>
-    <text x="862" y="464" class="card-t" font-size="11">思考条目</text>
-    <text x="862" y="484" class="note">标签：正在思考… / 已思考 / 思考中断；颜色 #8A8F99。</text>
-    <text x="862" y="504" class="note">摘要 12px #9BA0A8；运行中显示尾部而不是头部。</text>
-    <text x="862" y="524" class="note">展开框：min(240, pref+16)，底 #FBFAF8，1px 边框，r8。</text>
-    <text x="862" y="544" class="note">正文 12px #8A8F99，内缩 10 / 8；33ms 尾随。</text>
-    <text x="862" y="570" class="note">动作：折叠/展开无过渡；流式工具输出只更新活动行。</text>
+  <g id="tool-states">
+    <rect x="64" y="596" width="28" height="24" rx="6" fill="#FDF0DE"/><text x="78" y="613" text-anchor="middle" class="chip">02</text><text x="104" y="614" class="sect">工具行 · 三种执行状态 + 独立展开态</text><text x="1536" y="613" text-anchor="end" class="sect-note">ProcessStatusIcon 固定 12px；失败只染状态节点</text>
+    <rect x="64" y="638" width="350" height="222" rx="12" class="card"/><text x="86" y="668" class="chip">RUNNING</text><text x="86" y="694" class="card-t">运行中</text><circle cx="98" cy="728" r="6" fill="none" stroke="#8A8F99" stroke-width="1.3" stroke-dasharray="29 8"/><text x="118" y="734" class="ui13 muted">运行命令</text><text x="86" y="770" class="note">280° 弧，统一时间轴旋转</text><text x="86" y="798" class="note">详情跟随尾部；33ms 合并刷新</text><text x="86" y="830" class="tiny">状态图标仍为 muted，不整行染橙</text>
+    <rect x="438" y="638" width="350" height="222" rx="12" class="card"/><text x="460" y="668" class="chip">COMPLETED</text><text x="460" y="694" class="card-t">已完成</text><circle cx="472" cy="728" r="6" fill="none" stroke="#9BA0A8"/><path d="m469 728 2 2 4-4" fill="none" stroke="#8A8F99"/><text x="492" y="734" class="ui13 muted">运行命令</text><text x="460" y="770" class="note">细灰环 + 1px 对勾</text><text x="460" y="798" class="note">结果摘要与耗时保留在同一行</text><text x="460" y="830" class="tiny">工具图标与名称仍用 muted</text>
+    <rect x="812" y="638" width="350" height="222" rx="12" class="card"/><text x="834" y="668" class="chip">FAILED</text><text x="834" y="694" class="card-t">失败</text><circle cx="846" cy="728" r="6" fill="none" stroke="#D04A43"/><path d="m843 725 6 6m0-6-6 6" stroke="#D04A43"/><text x="866" y="734" class="ui13 muted">读取文件</text><text x="834" y="770" class="note">细红环 + 交叉；错误详情在展开区</text><text x="834" y="798" class="note">错误不只靠颜色，图形与文案同时在场</text><text x="834" y="830" class="tiny">不把整个工具行涂成红色</text>
+    <rect x="1186" y="638" width="350" height="222" rx="12" class="card"/><text x="1208" y="668" class="chip">VIEW</text><text x="1208" y="694" class="card-t">展开 / 折叠</text><rect x="1208" y="710" width="306" height="34" rx="6" fill="#F6F5F3"/><path d="m1218 724 5 4-5 4" fill="none" stroke="#8A8F99"/><text x="1238" y="732" class="ui13 secondary">查看工具输出</text><text x="1208" y="770" class="note">行悬停 hover；目标芯片 selected</text><text x="1208" y="798" class="note">展开是 open，不改变执行状态</text><text x="1208" y="830" class="tiny">补丁与文本详情在标准行下方</text>
   </g>
 
-  <!-- ================= B TOOL ================= -->
-  <g id="tool">
-    <rect x="80" y="638" width="6" height="16" rx="2" fill="#F58A24"/>
-    <text x="98" y="652" class="sect">工具条目</text>
-    <text x="194" y="652" class="sect-en">TOOL ROW · 26PX</text>
-    <text x="1520" y="652" text-anchor="end" class="note">状态图标 12 · 工具图标 13 · 目标 chip 18 · 指标 11 Consolas</text>
+  <g id="detail-cards">
+    <rect x="64" y="894" width="28" height="24" rx="6" fill="#FDF0DE"/><text x="78" y="911" text-anchor="middle" class="chip">03</text><text x="104" y="912" class="sect">详情 · 文本输出与文件差异各有明确格式</text>
+    <rect x="64" y="936" width="724" height="386" rx="12" class="card"/><text x="88" y="966" class="card-t">工作流详情</text><text x="764" y="966" text-anchor="end" class="tiny">最大高 240 · 内部滚动</text>
+    <rect x="88" y="988" width="676" height="250" rx="8" fill="#FBFAF8" stroke="#E8E6E3"/>
+    <text x="102" y="1016" class="ui12" font-weight="600">执行摘要</text><text x="750" y="1016" text-anchor="end" class="ui11 muted">2 steps</text><rect x="102" y="1028" width="648" height="4" rx="2" fill="#F1EFEC"/><rect x="102" y="1028" width="452" height="4" rx="2" fill="#F58A24"/><text x="102" y="1052" class="ui11 muted">读取 42 行</text><text x="750" y="1052" text-anchor="end" class="mono tiny">70%</text>
+    <text x="102" y="1084" class="ui12" font-weight="600">分析</text><text x="750" y="1084" text-anchor="end" class="ui11 muted">3 items</text><rect x="102" y="1096" width="648" height="4" rx="2" fill="#3E9C7E"/><text x="102" y="1120" class="ui11 muted">合并重复段落</text>
+    <text x="102" y="1152" class="ui12" font-weight="600">写入</text><text x="750" y="1152" text-anchor="end" class="ui11 muted">1 file</text><rect x="102" y="1164" width="648" height="4" rx="2" fill="#F1EFEC"/><rect x="102" y="1164" width="324" height="4" rx="2" fill="#C98A2B"/><text x="102" y="1188" class="ui11 muted">summary.txt · 18 行</text><text x="102" y="1220" class="tiny">标题 12/600 · 元信息 11 · 比例条 4px</text>
+    <text x="88" y="1270" class="note">有结构数据时按 sections 渲染；无结构数据保留文本降级。</text><text x="88" y="1296" class="tiny">复制始终使用完整详情，而不是屏幕裁剪后的片段。</text>
 
-    <!-- anatomy -->
-    <g id="tool-anatomy">
-      <rect x="80" y="676" width="720" height="190" rx="12" class="card"/>
-      <text x="102" y="700" class="card-t">工具行 · 1× 裁切</text>
-      <text x="778" y="700" text-anchor="end" class="mono10">26px · 行宽 1000</text>
-      <g transform="translate(102,714)">
-        <line x1="8" y1="0" x2="8" y2="26" stroke="#E2DFDA"/>
-        <use href="#p-check" x="2" y="7" width="12" height="12" color="#8A8F99"/>
-        <use href="#p-file" x="22" y="6.5" width="13" height="13" color="#8A8F99"/>
-        <text x="42" y="17.5" class="ui13 muted">读取文件</text>
-        <rect x="112" y="4" width="150" height="18" rx="6" fill="#F6F5F3"/>
-        <text x="119" y="17" class="ui12 muted">docs/outline.md</text>
-        <text x="274" y="17.5" class="ui12 soft">已读取 42 行</text>
-        <text x="674" y="17.5" text-anchor="end" class="mono" font-size="11" fill="#8A8F99">2.4k · 1.2s</text>
-      </g>
-      <line x1="102" y1="800" x2="778" y2="800" stroke="#E8E6E3"/>
-      <text x="102" y="820" class="tiny">连接线 x=9.5；状态 12；工具 13；名称 ≤164。</text>
-      <text x="102" y="840" class="tiny">chip 18 高，宽 min(文本+14, 180)；窄于 650 时 108。</text>
-      <text x="102" y="858" class="tiny">chip 底 #F6F5F3，悬停 #F1EFEC；摘要 12 #9BA0A8；指标 11 Consolas。</text>
-    </g>
-
-    <!-- expanded demo -->
-    <g id="tool-expanded">
-      <rect x="80" y="878" width="720" height="154" rx="12" class="card"/>
-      <text x="102" y="902" class="card-t">展开态 · 输出面板</text>
-      <text x="778" y="902" text-anchor="end" class="mono10">max 240 · r8</text>
-      <line x1="95" y1="918" x2="95" y2="1008" stroke="#E2DFDA"/>
-      <use href="#p-check" x="89" y="925" width="12" height="12" color="#8A8F99"/>
-      <use href="#p-file" x="109" y="924" width="13" height="13" color="#8A8F99"/>
-      <text x="129" y="935" class="ui13 muted">读取文件</text>
-      <rect x="194" y="922" width="132" height="18" rx="6" fill="#F6F5F3"/>
-      <text x="201" y="935" class="ui12 muted">docs/outline.md</text>
-      <text x="338" y="935" class="ui12 soft">已读取 42 行</text>
-      <text x="778" y="935" text-anchor="end" class="mono" font-size="11" fill="#8A8F99">2.4k · 1.2s</text>
-      <rect x="124" y="950" width="654" height="64" rx="8" fill="#FFFFFF" stroke="#E8E6E3"/>
-      <text x="136" y="970" class="ui11" font-weight="700" fill="#8A8F99">输出</text>
-      <use href="#p-copy" x="748" y="958" width="16" height="16" color="#8A8F99"/>
-      <text x="136" y="992" class="mono" font-size="12" fill="#3D3D3D">1  目标与范围</text>
-      <text x="136" y="1008" class="mono" font-size="12" fill="#3D3D3D">2  材料与口径</text>
-      <text x="102" y="1022" class="tiny">面板内缩 10 / 8；输出头 11/700；复制钮 24×24 r7。</text>
-    </g>
-
-    <!-- state matrix -->
-    <g id="tool-states">
-      <rect x="840" y="676" width="680" height="356" rx="12" class="card"/>
-      <text x="862" y="700" class="card-t">工具状态矩阵</text>
-      <text x="1498" y="700" text-anchor="end" class="mono10">running / success / error / pending</text>
-
-      <g transform="translate(862,718)">
-        <!-- running -->
-        <g color="#F58A24"><use href="#p-spinner" width="12" height="12"/></g>
-        <use href="#p-terminal" x="20" y="-0.5" width="13" height="13" color="#8A8F99"/>
-        <text x="40" y="11" class="ui13 muted">运行命令</text>
-        <rect x="112" y="-3" width="132" height="18" rx="6" fill="#F6F5F3"/><text x="119" y="10" class="ui12 muted">cargo test</text>
-        <text x="254" y="11" class="ui12 soft">正在编译…</text>
-        <text x="610" y="11" text-anchor="end" class="mono" font-size="11" fill="#F58A24">RUNNING</text>
-        <!-- success -->
-        <use href="#p-check" y="28" width="12" height="12" color="#8A8F99"/>
-        <use href="#p-terminal" x="20" y="27.5" width="13" height="13" color="#8A8F99"/>
-        <text x="40" y="39" class="ui13 muted">运行命令</text>
-        <rect x="112" y="25" width="132" height="18" rx="6" fill="#F6F5F3"/><text x="119" y="38" class="ui12 muted">cargo test</text>
-        <text x="254" y="39" class="ui12 soft">239 passed</text>
-        <text x="610" y="39" text-anchor="end" class="mono" font-size="11" fill="#8A8F99">8.4k · 12.3s</text>
-        <!-- error -->
-        <g color="#D04A43"><use href="#p-error" y="56" width="12" height="12"/></g>
-        <use href="#p-terminal" x="20" y="55.5" width="13" height="13" color="#8A8F99"/>
-        <text x="40" y="67" class="ui13 muted">运行命令</text>
-        <rect x="112" y="53" width="132" height="18" rx="6" fill="#F6F5F3"/><text x="119" y="66" class="ui12 muted">cargo test</text>
-        <text x="254" y="67" class="ui12" fill="#D04A43">2 failed</text>
-        <text x="610" y="67" text-anchor="end" class="mono" font-size="11" fill="#8A8F99">8.4k · 12.3s</text>
-        <!-- pending -->
-        <use href="#p-clock" y="84" width="12" height="12" color="#C98A2B"/>
-        <use href="#p-globe" x="20" y="83.5" width="13" height="13" color="#8A8F99"/>
-        <text x="40" y="95" class="ui13 muted">搜索网页</text>
-        <rect x="112" y="81" width="132" height="18" rx="6" fill="#F6F5F3"/><text x="119" y="94" class="ui12 muted">关键字</text>
-        <text x="254" y="95" class="ui12 soft">等待可用槽位</text>
-        <text x="610" y="95" text-anchor="end" class="mono" font-size="11" fill="#C98A2B">PENDING</text>
-        <!-- hover chip -->
-        <use href="#p-check" y="112" width="12" height="12" color="#8A8F99"/>
-        <use href="#p-file" x="20" y="111.5" width="13" height="13" color="#8A8F99"/>
-        <text x="40" y="123" class="ui13 muted">读取文件</text>
-        <rect x="112" y="109" width="132" height="18" rx="6" fill="#F1EFEC"/><text x="119" y="122" class="ui12" fill="#3D3D3D">docs/outline.md</text>
-        <text x="254" y="123" class="ui12 soft">chip 悬停</text>
-        <text x="610" y="123" text-anchor="end" class="mono" font-size="11" fill="#8A8F99">2.4k · 1.2s</text>
-        <!-- narrow -->
-        <use href="#p-check" y="140" width="12" height="12" color="#8A8F99"/>
-        <use href="#p-search" x="20" y="139.5" width="13" height="13" color="#8A8F99"/>
-        <text x="40" y="151" class="ui13 muted">搜索文件</text>
-        <rect x="112" y="137" width="108" height="18" rx="6" fill="#F6F5F3"/><text x="119" y="150" class="ui12 muted">docs/…</text>
-        <text x="254" y="151" class="ui12 soft">窄窗口 chip 108</text>
-      </g>
-      <line x1="862" y1="890" x2="1498" y2="890" stroke="#E8E6E3"/>
-      <text x="862" y="912" class="note">状态图标 12px 圆环 1px；运行弧 280°（30ms / 9°）；失败环与叉 #D04A43。</text>
-      <text x="862" y="932" class="note">工具行背景透明；仅目标 chip 悬停变 #F1EFEC。点击行（除 chip）展开详情。</text>
-      <text x="862" y="952" class="note">摘要只在有空间时显示；无摘要时名称后直接接 chip。</text>
-      <text x="862" y="972" class="note">展开后左 44 / 右 24 / 上下 4/8；面板最大高 240，内部滚动。</text>
-      <text x="862" y="992" class="note">错误行不染色，仅状态图标与摘要着色；详情面板可含 diff / 代码。</text>
-      <text x="862" y="1012" class="note">工具名使用规范中文名；英文别名只在数据层，不进入 UI。</text>
-    </g>
+    <rect x="812" y="936" width="724" height="386" rx="12" class="card"/><text x="836" y="966" class="card-t">补丁差异卡</text><text x="1512" y="966" text-anchor="end" class="tiny">行号列 56 · 有界 200 行 / 卡</text>
+    <rect x="836" y="988" width="676" height="274" rx="12" fill="#FFF" stroke="#E8E6E3"/>
+    <text x="850" y="1014" class="ui14" font-weight="700">src/summary.rs</text><text x="988" y="1014" class="ui11 muted">修改</text><text x="1450" y="1014" text-anchor="end" class="ui12" fill="#1A8A5C" font-weight="600">+12</text><text x="1498" y="1014" text-anchor="end" class="ui12" fill="#D04A43" font-weight="600">−3</text>
+    <rect x="848" y="1026" width="652" height="24" rx="6" fill="#F5F4F2"/><text x="858" y="1043" class="ui13 secondary" font-weight="600">变更片段</text>
+    <rect x="848" y="1058" width="652" height="24" fill="#F5F4F2"/><text x="858" y="1075" class="mono ui11 muted">@@</text><text x="918" y="1075" class="mono ui11 muted">fn summarize(items) {</text>
+    <rect x="848" y="1082" width="652" height="24" fill="#EAF7F0"/><text x="894" y="1099" text-anchor="end" class="mono ui11 muted">41</text><line x1="904" y1="1082" x2="904" y2="1106" stroke="#E8E6E3"/><text x="912" y="1099" class="mono ui12" fill="#1A8A5C">+</text><text x="938" y="1099" class="mono ui12" fill="#14532D">let merged = merge(items);</text>
+    <rect x="848" y="1106" width="652" height="24" fill="#EAF7F0"/><text x="894" y="1123" text-anchor="end" class="mono ui11 muted">42</text><line x1="904" y1="1106" x2="904" y2="1130" stroke="#E8E6E3"/><text x="912" y="1123" class="mono ui12" fill="#1A8A5C">+</text><text x="938" y="1123" class="mono ui12" fill="#14532D">let digest = summarize(merged);</text>
+    <rect x="848" y="1130" width="652" height="24" fill="#FDECEC"/><text x="894" y="1147" text-anchor="end" class="mono ui11 muted">43</text><line x1="904" y1="1130" x2="904" y2="1154" stroke="#E8E6E3"/><text x="912" y="1147" class="mono ui12" fill="#D04A43">−</text><text x="938" y="1147" class="mono ui12" fill="#7F1D1D">let digest = items;</text>
+    <rect x="848" y="1154" width="652" height="24" fill="#FFF"/><text x="894" y="1171" text-anchor="end" class="mono ui11 muted">44</text><line x1="904" y1="1154" x2="904" y2="1178" stroke="#E8E6E3"/><text x="938" y="1171" class="mono ui12 secondary">return digest;</text>
+    <text x="850" y="1214" class="tiny">行高随文本；正文 12.5px Consolas；单行省略。</text><text x="850" y="1240" class="tiny">新增 / 删除同时用底色、+/− 与文字色表达。</text>
+    <text x="836" y="1296" class="note">卡片不嵌套滚动；由时间线外层滚动承载，避免详情越界。</text>
   </g>
 
-  <!-- ================= C GROUP / SUBAGENT ================= -->
   <g id="group-subagent">
-    <rect x="80" y="1068" width="6" height="16" rx="2" fill="#F58A24"/>
-    <text x="98" y="1082" class="sect">工具组与子智能体</text>
-    <text x="258" y="1082" class="sect-en">GROUP BAR · SUBAGENT</text>
+    <rect x="64" y="1356" width="28" height="24" rx="6" fill="#FDF0DE"/><text x="78" y="1373" text-anchor="middle" class="chip">04</text><text x="104" y="1374" class="sect">聚合与子智能体 · 外观跟随职责</text>
+    <rect x="64" y="1398" width="724" height="302" rx="12" class="card"/><text x="88" y="1428" class="card-t">工具组 · 只负责聚合</text><text x="764" y="1428" text-anchor="end" class="tiny">组头 30 / 展开 32</text>
+    <rect x="88" y="1450" width="676" height="32" rx="6" fill="#F6F5F3"/><path d="m98 1463 5 4-5 4" fill="none" stroke="#8A8F99"/><text x="118" y="1472" class="ui13 secondary">执行工具 3 次</text><text x="740" y="1472" text-anchor="end" class="ui12 muted">已处理</text>
+    <line x1="108" y1="1490" x2="108" y2="1610" stroke="#E2DFDA"/>
+    <circle cx="108" cy="1510" r="6" fill="#FFF" stroke="#9BA0A8"/><path d="m105 1510 2 2 4-4" fill="none" stroke="#8A8F99"/><text x="128" y="1516" class="ui13 muted">搜索文件</text><text x="740" y="1516" text-anchor="end" class="mono ui11 muted">1.2k · 0.8s</text>
+    <circle cx="108" cy="1544" r="6" fill="#FFF" stroke="#9BA0A8"/><path d="m105 1544 2 2 4-4" fill="none" stroke="#8A8F99"/><text x="128" y="1550" class="ui13 muted">读取文件</text><text x="740" y="1550" text-anchor="end" class="mono ui11 muted">2.4k · 1.2s</text>
+    <circle cx="108" cy="1578" r="6" fill="#FFF" stroke="#9BA0A8"/><path d="m105 1578 2 2 4-4" fill="none" stroke="#8A8F99"/><text x="128" y="1584" class="ui13 muted">写入文件</text><text x="740" y="1584" text-anchor="end" class="mono ui11 muted">3.1k · 1.6s</text>
+    <text x="88" y="1630" class="note">组内仍是标准 26px 工具行，共享一条 connector。</text><text x="88" y="1658" class="note">计数来自实际子行；工具组本身没有运行状态。</text><text x="88" y="1684" class="tiny">折叠摘要显示最近结果，没有结果就省略。</text>
 
-    <g id="group-card">
-      <rect x="80" y="1112" width="720" height="230" rx="12" class="card"/>
-      <text x="102" y="1136" class="card-t">工具组 · 折叠 / 展开</text>
-      <text x="778" y="1136" text-anchor="end" class="mono10">30 / 32px · r6</text>
-
-      <!-- collapsed -->
-      <path d="M110 1158.5 116 1162l-6.5 3.5z" fill="#8A8F99"/>
-      <text x="126" y="1166" class="ui12 muted">执行工具 3 次</text>
-      <text x="232" y="1166" class="ui12 muted">已处理</text>
-      <text x="778" y="1166" text-anchor="end" class="mono9">COLLAPSED</text>
-
-      <line x1="102" y1="1184" x2="778" y2="1184" stroke="#E8E6E3"/>
-
-      <!-- expanded -->
-      <path d="M110 1202.5 116 1206l-6.5 3.5z" fill="#3D3D3D" transform="rotate(90 113 1206)"/>
-      <text x="126" y="1210" class="ui13 sub2">执行工具 3 次</text>
-      <text x="778" y="1210" text-anchor="end" class="mono9">EXPANDED</text>
-      <line x1="131" y1="1220" x2="131" y2="1318" stroke="#E2DFDA"/>
-      <use href="#p-check" x="125" y="1229" width="12" height="12" color="#8A8F99"/>
-      <use href="#p-search" x="145" y="1228" width="13" height="13" color="#8A8F99"/>
-      <text x="165" y="1239" class="ui13 muted">搜索文件</text>
-      <rect x="228" y="1226" width="94" height="18" rx="6" fill="#F6F5F3"/><text x="235" y="1239" class="ui12 muted">docs/</text>
-      <text x="778" y="1239" text-anchor="end" class="mono" font-size="11" fill="#8A8F99">1.2k · 0.8s</text>
-      <use href="#p-check" x="125" y="1257" width="12" height="12" color="#8A8F99"/>
-      <use href="#p-file" x="145" y="1256" width="13" height="13" color="#8A8F99"/>
-      <text x="165" y="1267" class="ui13 muted">读取文件</text>
-      <rect x="228" y="1254" width="94" height="18" rx="6" fill="#F6F5F3"/><text x="235" y="1267" class="ui12 muted">outline.md</text>
-      <text x="778" y="1267" text-anchor="end" class="mono" font-size="11" fill="#8A8F99">2.4k · 1.2s</text>
-      <use href="#p-check" x="125" y="1285" width="12" height="12" color="#8A8F99"/>
-      <use href="#p-pen" x="145" y="1284" width="13" height="13" color="#8A8F99"/>
-      <text x="165" y="1295" class="ui13 muted">写入文件</text>
-      <rect x="228" y="1282" width="94" height="18" rx="6" fill="#F6F5F3"/><text x="235" y="1295" class="ui12 muted">summary.md</text>
-      <text x="778" y="1295" text-anchor="end" class="mono" font-size="11" fill="#8A8F99">3.1k · 1.6s</text>
-      <text x="102" y="1322" class="tiny">组头悬停 #F6F5F3；展开标题 13px #3D3D3D；组内行共用一条 connector。</text>
-    </g>
-
-    <g id="subagent-card">
-      <rect x="80" y="1356" width="720" height="136" rx="12" class="card"/>
-      <text x="102" y="1380" class="card-t">子智能体卡</text>
-      <text x="778" y="1380" text-anchor="end" class="mono10">r8 · 内边距 10 / 7</text>
-      <rect x="102" y="1396" width="674" height="42" rx="8" fill="#FBFAF8" stroke="#E8E6E3"/>
-      <g color="#8A8F99"><use href="#p-robot" x="114" y="1406" width="13" height="13"/></g>
-      <text x="136" y="1418" class="ui13" font-weight="600">资料整理</text>
-      <text x="210" y="1418" class="ui12" fill="#F58A24">运行中</text>
-      <text x="640" y="1418" text-anchor="end" class="ui12 muted">子智能体</text>
-      <circle cx="716" cy="1417" r="11" fill="transparent"/><use href="#p-stop" x="711" y="1412" width="10" height="10" color="#D04A43"/>
-      <text x="114" y="1434" class="ui12 muted">正在汇总三份材料的不同口径…</text>
-
-      <rect x="102" y="1448" width="674" height="34" rx="8" fill="#FBFAF8" stroke="#E8E6E3"/>
-      <g color="#8A8F99"><use href="#p-robot" x="114" y="1456" width="13" height="13"/></g>
-      <text x="136" y="1468" class="ui13" font-weight="600">资料整理</text>
-      <text x="210" y="1468" class="ui12" fill="#1A8A5C">已完成</text>
-      <text x="640" y="1468" text-anchor="end" class="ui12 muted">子智能体</text>
-      <text x="114" y="1490" class="ui10 muted">摘要：已合并重复段落，输出 3 条结论。</text>
-    </g>
-
-    <!-- notes -->
-    <g id="group-notes">
-      <rect x="840" y="1112" width="680" height="242" rx="12" class="card"/>
-      <text x="862" y="1136" class="card-t">组与子智能体的边界</text>
-      <text x="862" y="1160" class="note">工具组只做聚合，不拥有执行语义；计数来自实际子行数量。</text>
-      <text x="862" y="1182" class="note">GroupBar 30 高（展开 32），r6；折叠摘要 12px，展开标题 13px。</text>
-      <text x="862" y="1204" class="note">组展开后保持 1px connector 连续；组内工具行仍是标准 26px 行。</text>
-      <text x="862" y="1226" class="note">组收起时摘要显示最近一次结果；无结果则省略摘要。</text>
-      <text x="862" y="1248" class="note">子智能体是独立子线程：卡内只显示标题、状态、摘要与中断。</text>
-      <text x="862" y="1270" class="note">运行态显示中断按钮 22 圆；悬停底 #FDECEC，图标 10 #D04A43。</text>
-      <text x="862" y="1292" class="note">点击卡展开子线程详情；详情加载不阻塞主时间线。</text>
-      <text x="862" y="1314" class="note">子智能体卡不用工具行样式，避免与普通工具混淆。</text>
-      <text x="862" y="1340" class="mono10">MAX 8 FILES · 200 LINES / FILE · 240 DETAIL</text>
-    </g>
-
-    <!-- tool icon mapping -->
-    <g id="tool-icons">
-      <rect x="840" y="1362" width="680" height="130" rx="12" class="card"/>
-      <text x="862" y="1386" class="card-t">常用工具图标</text>
-      <text x="1498" y="1386" text-anchor="end" class="mono10">13px in row · 16px in menu</text>
-      <g color="#3D3D3D">
-        <use href="#p-terminal" x="862" y="1400" width="16" height="16"/><text x="884" y="1413" class="ui11">终端</text>
-        <use href="#p-search" x="962" y="1400" width="16" height="16"/><text x="984" y="1413" class="ui11">搜索</text>
-        <use href="#p-globe" x="1062" y="1400" width="16" height="16"/><text x="1084" y="1413" class="ui11">网页</text>
-        <use href="#p-code" x="1162" y="1400" width="16" height="16"/><text x="1184" y="1413" class="ui11">代码</text>
-        <use href="#p-file" x="1262" y="1400" width="16" height="16"/><text x="1284" y="1413" class="ui11">文件</text>
-        <use href="#p-folder" x="1362" y="1400" width="16" height="16"/><text x="1384" y="1413" class="ui11">目录</text>
-        <use href="#p-image" x="862" y="1430" width="16" height="16"/><text x="884" y="1443" class="ui11">图像</text>
-        <use href="#p-database" x="962" y="1430" width="16" height="16"/><text x="984" y="1443" class="ui11">数据</text>
-        <use href="#p-link" x="1062" y="1430" width="16" height="16"/><text x="1084" y="1443" class="ui11">链接</text>
-        <use href="#p-robot" x="1162" y="1430" width="16" height="16"/><text x="1184" y="1443" class="ui11">子智能体</text>
-        <use href="#p-clock" x="1262" y="1430" width="16" height="16"/><text x="1284" y="1443" class="ui11">等待</text>
-        <use href="#p-check" x="1362" y="1430" width="16" height="16"/><text x="1384" y="1443" class="ui11">完成</text>
-      </g>
-      <text x="862" y="1478" class="tiny">图标与名称同色；错误仅染状态图标，不染工具图标。</text>
-    </g>
+    <rect x="812" y="1398" width="724" height="302" rx="12" class="card"/><text x="836" y="1428" class="card-t">子智能体 · 独立工作单元</text><text x="1512" y="1428" text-anchor="end" class="tiny">不是普通工具行</text>
+    <rect x="836" y="1450" width="676" height="62" rx="8" fill="#FBFAF8" stroke="#E8E6E3"/><circle cx="856" cy="1472" r="7" fill="none" stroke="#F58A24" stroke-dasharray="30 10"/><text x="876" y="1476" class="ui13" font-weight="600">资料整理</text><text x="954" y="1476" class="ui12" fill="#F58A24">运行中</text><circle cx="1478" cy="1481" r="11" fill="#FDECEC"/><rect x="1474" y="1477" width="8" height="8" rx="1" fill="#D04A43"/><text x="850" y="1500" class="ui12 muted">正在汇总材料并核对结论…</text>
+    <rect x="836" y="1526" width="676" height="62" rx="8" fill="#FBFAF8" stroke="#E8E6E3"/><circle cx="856" cy="1548" r="7" fill="none" stroke="#1A8A5C"/><path d="m852 1548 3 3 6-6" fill="none" stroke="#1A8A5C"/><text x="876" y="1552" class="ui13" font-weight="600">资料整理</text><text x="954" y="1552" class="ui12" fill="#1A8A5C">已完成</text><text x="850" y="1576" class="ui12 muted">摘要：已合并重复段落，输出 3 条结论。</text>
+    <text x="836" y="1622" class="note">卡片只呈现标题、状态、摘要与可用操作。</text><text x="836" y="1648" class="note">运行时显示 22px 圆形中断按钮；点击卡查看子线程。</text><text x="836" y="1674" class="tiny">详情加载不阻塞主时间线；完成后不再显示中断。</text>
   </g>
-
-  <!-- ================= D PATCH / DETAIL ================= -->
-  <g id="patch-detail">
-    <rect x="80" y="1528" width="6" height="16" rx="2" fill="#F58A24"/>
-    <text x="98" y="1542" class="sect">差异与详情</text>
-    <text x="194" y="1542" class="sect-en">PATCH CARD · WORKFLOW DETAIL</text>
-    <text x="1520" y="1542" text-anchor="end" class="note">行号列 56 · 增删行底色 · 详情最多 240 高</text>
-
-    <g id="patch-card">
-      <rect x="80" y="1572" width="760" height="248" rx="12" fill="#FFFFFF" stroke="#E8E6E3"/>
-      <g color="#8A8F99"><use href="#p-file" x="96" y="1586" width="14" height="14"/></g>
-      <text x="116" y="1598" font-size="14" font-weight="700">src/summary.rs</text>
-      <text x="252" y="1598" class="ui11 muted">修改</text>
-      <text x="790" y="1598" text-anchor="end" font-size="12" font-weight="600" fill="#1A8A5C">+12</text>
-      <text x="824" y="1598" text-anchor="end" font-size="12" font-weight="600" fill="#D04A43">−3</text>
-      <rect x="92" y="1610" width="736" height="24" rx="6" fill="#F5F4F2"/>
-      <text x="102" y="1627" font-size="13" font-weight="600" fill="#3D3D3D">变更片段</text>
-      <text x="816" y="1627" text-anchor="end" class="mono9">HUNK 1 / 2</text>
-      <!-- header row -->
-      <rect x="92" y="1642" width="736" height="22" fill="#F5F4F2"/>
-      <text x="100" y="1657" class="mono" font-size="11" fill="#8A8F99">@@</text>
-      <text x="140" y="1657" class="mono" font-size="11" fill="#3D3D3D">fn summarize(items: &amp;[Item]) -&gt; Summary {</text>
-      <!-- add rows -->
-      <rect x="92" y="1664" width="736" height="22" fill="#EAF7F0"/>
-      <text x="100" y="1679" class="mono" font-size="11" fill="#8A8F99">41</text>
-      <line x1="148" y1="1664" x2="148" y2="1690" stroke="#E8E6E3"/>
-      <text x="156" y="1679" class="mono" font-size="11" fill="#14532D">+</text>
-      <text x="174" y="1679" class="mono" font-size="11" fill="#14532D">let merged = merge(items);</text>
-      <rect x="92" y="1686" width="736" height="22" fill="#EAF7F0"/>
-      <text x="100" y="1701" class="mono" font-size="11" fill="#8A8F99">42</text>
-      <line x1="148" y1="1686" x2="148" y2="1712" stroke="#E8E6E3"/>
-      <text x="156" y="1701" class="mono" font-size="11" fill="#14532D">+</text>
-      <text x="174" y="1701" class="mono" font-size="11" fill="#14532D">let digest = summarize(&amp;merged);</text>
-      <!-- delete row -->
-      <rect x="92" y="1708" width="736" height="22" fill="#FDECEC"/>
-      <text x="100" y="1723" class="mono" font-size="11" fill="#8A8F99">43</text>
-      <line x1="148" y1="1708" x2="148" y2="1734" stroke="#E8E6E3"/>
-      <text x="156" y="1723" class="mono" font-size="11" fill="#7F1D1D">−</text>
-      <text x="174" y="1723" class="mono" font-size="11" fill="#7F1D1D">let digest = items;</text>
-      <!-- context -->
-      <rect x="92" y="1730" width="736" height="22" fill="#FFFFFF"/>
-      <text x="100" y="1745" class="mono" font-size="11" fill="#8A8F99">44</text>
-      <line x1="148" y1="1730" x2="148" y2="1756" stroke="#E8E6E3"/>
-      <text x="174" y="1745" class="mono" font-size="11" fill="#3D3D3D">Summary::from(digest)</text>
-      <rect x="92" y="1752" width="736" height="22" fill="#FFFFFF"/>
-      <text x="100" y="1767" class="mono" font-size="11" fill="#8A8F99">45</text>
-      <line x1="148" y1="1752" x2="148" y2="1778" stroke="#E8E6E3"/>
-      <text x="174" y="1767" class="mono" font-size="11" fill="#3D3D3D">if digest.is_empty() { return Summary::default(); }</text>
-      <rect x="92" y="1774" width="736" height="22" fill="#FFFFFF"/>
-      <text x="100" y="1789" class="mono" font-size="11" fill="#8A8F99">46</text>
-      <line x1="148" y1="1774" x2="148" y2="1800" stroke="#E8E6E3"/>
-      <text x="174" y="1789" class="mono" font-size="11" fill="#3D3D3D">Ok(Summary::from(digest))</text>
-      <text x="92" y="1802" class="tiny">行号列 56 · 标记 18 · 正文 x82 · 12.5 Consolas · 增 #EAF7F0/#14532D · 删 #FDECEC/#7F1D1D。</text>
-    </g>
-
-    <g id="workflow-detail">
-      <rect x="860" y="1572" width="660" height="248" rx="12" class="card"/>
-      <text x="882" y="1596" class="card-t">工作流详情</text>
-      <text x="1498" y="1596" text-anchor="end" class="mono10">sections · ratio lines</text>
-      <text x="882" y="1620" class="ui12" font-weight="600">执行摘要</text>
-      <text x="1498" y="1620" text-anchor="end" class="ui10 muted">2 steps</text>
-      <rect x="882" y="1630" width="596" height="4" rx="2" fill="#F1EFEC"/><rect x="882" y="1630" width="420" height="4" rx="2" fill="#F58A24"/>
-      <text x="882" y="1650" class="ui11 muted">读取 42 行</text>
-      <text x="1498" y="1650" text-anchor="end" class="mono9">70%</text>
-      <text x="882" y="1672" class="ui12" font-weight="600">分析</text>
-      <text x="1498" y="1672" text-anchor="end" class="ui10 muted">3 items</text>
-      <rect x="882" y="1682" width="596" height="4" rx="2" fill="#F1EFEC"/><rect x="882" y="1682" width="596" height="4" rx="2" fill="#3E9C7E"/>
-      <text x="882" y="1702" class="ui11 muted">合并重复段落</text>
-      <text x="1498" y="1702" text-anchor="end" class="mono9">100%</text>
-      <text x="882" y="1724" class="ui12" font-weight="600">写入</text>
-      <text x="1498" y="1724" text-anchor="end" class="ui10 muted">1 file</text>
-      <rect x="882" y="1734" width="596" height="4" rx="2" fill="#F1EFEC"/><rect x="882" y="1734" width="298" height="4" rx="2" fill="#C98A2B"/>
-      <text x="882" y="1754" class="ui11 muted">summary.md · 18 行</text>
-      <text x="1498" y="1754" text-anchor="end" class="mono9">50%</text>
-      <line x1="882" y1="1768" x2="1498" y2="1768" stroke="#E8E6E3"/>
-      <text x="882" y="1788" class="tiny">区块标题 12/600；元信息 11 muted；行 12；比例条 4px 圆角 2。</text>
-      <text x="882" y="1804" class="tiny">详情最大 240 高，超出内滚；复制保留完整原文。</text>
-    </g>
-  </g>
-
-  <g id="footer">
-    <line x1="80" y1="1850" x2="1520" y2="1850" stroke="#D8D5D0"/>
-    <text x="80" y="1864" class="tiny">过程与工具共享同一时间线；所有展开/折叠瞬时生效，避免长会话中累积布局动画。</text>
-    <text x="1520" y="1864" text-anchor="end" class="mono tiny">05 / 09</text>
-  </g>
+  <g id="footer"><line x1="64" y1="1730" x2="1536" y2="1730" stroke="#D8D5D0"/><text x="64" y="1750" class="tiny">事实来源：tool_process.slint · status_icon.slint · workflow_detail.slint · patch_diff_card.slint · timeline.slint</text><text x="1536" y="1750" text-anchor="end" class="mono tiny">05 / 09 · 2026-10-25</text></g>
 </svg>

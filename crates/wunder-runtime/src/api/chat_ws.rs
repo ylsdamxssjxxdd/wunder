@@ -77,8 +77,8 @@ struct WsStartPayload {
     approval_mode: Option<String>,
     #[serde(default, alias = "reasoningEffort", alias = "reasoning_effort")]
     reasoning_effort: Option<String>,
-    #[serde(default, alias = "rootUserRound", alias = "root_user_round")]
-    root_user_round: Option<i64>,
+    #[serde(default, alias = "inquiryTurnId", alias = "inquiry_turn_id")]
+    inquiry_turn_id: Option<String>,
     #[serde(default)]
     session_id: Option<String>,
 }
@@ -459,7 +459,7 @@ async fn handle_ws(
                                 tool_call_mode: payload.tool_call_mode,
                                 approval_mode: payload.approval_mode,
                                 reasoning_effort: payload.reasoning_effort,
-                                root_user_round: payload.root_user_round,
+                                inquiry_turn_id: payload.inquiry_turn_id,
                             },
                         )
                         .await

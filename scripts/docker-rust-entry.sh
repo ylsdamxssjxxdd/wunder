@@ -65,6 +65,13 @@ binary_is_ready() {
     -type f -newer "${binary}" -print -quit 2>/dev/null | grep -q .
 }
 
+# 运行时包只被智能体执行命令的登录 shell 消费，而 docker 部署里命令工具
+# 统一在沙盒容器内执行（api 容器经 WUNDER_SANDBOX_ENDPOINT 委托），
+# 因此解包、profile 注册与 npm 离线缓存仅在 WUNDER_SERVER_MODE=sandbox 时进行。
+is_sandbox_container() {
+  [ "$(printf '%s' "${WUNDER_SERVER_MODE:-}" | tr '[:upper:]' '[:lower:]')" = "sandbox" ]
+}
+
 # 视频制作等技能需要的 Node/Remotion 运行时由 config/runtime 挂载提供，
 # 启动时解压到容器内固定路径；升级运行时只需替换运行时包并重启容器，不必重建镜像。
 ensure_runtime_bundle() {
@@ -196,11 +203,13 @@ ensure_scratch_dirs() {
 ensure_scratch_dirs
 
 run_binary() {
-  ensure_runtime_bundle
-  ensure_runtime_profile
-  ensure_npm_cache_bundle
   ensure_scratch_dirs
   ensure_playwright_browsers
+  if is_sandbox_container; then
+    ensure_runtime_bundle
+    ensure_runtime_profile
+    ensure_npm_cache_bundle
+  fi
   exec "${binary}"
 }
 

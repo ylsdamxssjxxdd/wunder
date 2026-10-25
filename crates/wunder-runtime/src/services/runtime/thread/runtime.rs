@@ -240,16 +240,17 @@ impl ThreadRuntime {
         }
         request.client_message_id =
             normalize_client_message_id(request.client_message_id.as_deref());
-        // The chat surface uses this private request override when a user is
-        // answering an inquiry. Capture it before stripping scheduler-owned
-        // fields so the continuation is admitted under the original root
-        // round and the waiting bubble can be settled by the new execution.
-        let inquiry_root_user_round = request
+        // An inquiry answer is a normal new user turn. The private id only
+        // tells the durable transcript which waiting turn to settle after the
+        // new admission succeeds; it must never become the new turn's root.
+        let inquiry_turn_id = request
             .config_overrides
             .as_ref()
-            .and_then(|value| value.get("__root_user_round"))
-            .and_then(Value::as_i64)
-            .filter(|round| *round > 0);
+            .and_then(|value| value.get("__inquiry_turn_id"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|id| !id.is_empty() && id.len() <= 256)
+            .map(ToOwned::to_owned);
         if let Some(overrides) = request
             .config_overrides
             .as_mut()
@@ -260,6 +261,7 @@ impl ThreadRuntime {
             overrides.remove("__queue_priority");
             overrides.remove("__thread_log_turn_id");
             overrides.remove("__thread_log_user_round");
+            overrides.remove("__inquiry_turn_id");
             overrides.remove("__root_user_round");
         }
         request.enforce_runtime_queue = true;
@@ -329,7 +331,7 @@ impl ThreadRuntime {
             "role": "user", "content": request.question,
             "client_message_id": request.client_message_id, "attachments": request.attachments,
             "meta": goal_meta,
-            "root_user_round": inquiry_root_user_round.or(root_user_round),
+            "root_user_round": root_user_round,
             "local_open_lease": request.config_overrides.as_ref().and_then(|v| v.get("__local_open_lease")),
         });
         let storage = self.user_store.storage_backend().clone();
@@ -348,6 +350,28 @@ impl ThreadRuntime {
         }
         let thread_turn_id = accepted["turn_id"].as_str().unwrap_or_default().to_string();
         let user_round = accepted["user_turn_index"].as_i64().unwrap_or(1);
+        if let Some(inquiry_turn_id) = inquiry_turn_id.as_deref() {
+            // The answer is already a durable, independent user round. Settle
+            // only a still-waiting turn; stale or already-settled ids are safe
+            // no-ops and must not block the user's new request.
+            if inquiry_turn_id != thread_turn_id {
+                let _ = self
+                    .orchestrator
+                    .committer
+                    .update_turn(
+                        &user_id,
+                        &session_id,
+                        inquiry_turn_id,
+                        "completed",
+                        "",
+                        &json!({
+                            "stop_reason": "inquiry_answered",
+                            "answered_by_turn_id": thread_turn_id,
+                        }),
+                    )
+                    .await;
+            }
+        }
         if let Some(tag) = goal_round_tag.as_ref() {
             // Goal-round admission: the transcript fact that consumes one
             // round of the cap. No revision bump, no goal-change event.

@@ -170,6 +170,21 @@ pub(crate) fn modal_selected() -> Style {
     )
 }
 
+/// 居中选择面板的表面底色：与 composer 同族的浅色叠层（codex 的 Panel surface）。
+pub(crate) fn panel_surface() -> Style {
+    composer_surface()
+}
+
+/// 居中选择列表的选中行：整行填充，必须明显盖过面板底色（codex 的 selection fill）。
+pub(crate) fn picker_selected() -> Style {
+    degrade(
+        Style::default()
+            .fg(Color::Cyan)
+            .bg(Color::Rgb(40, 74, 106))
+            .add_modifier(Modifier::BOLD),
+    )
+}
+
 /// The block a pointer drag leaves behind. Reversed video rather than a hue, because a
 /// colourless terminal must still see the selection it can copy.
 pub(crate) fn selection_mark() -> Style {

@@ -41,7 +41,7 @@
             <button
               class="workspace-files-action workspace-files-action--icon"
               type="button"
-              :disabled="busy"
+              :disabled="busy || archiving"
               :aria-busy="archiving || undefined"
               :title="t('messenger.filesArea.archiveCurrent')"
               :aria-label="t('messenger.filesArea.archiveCurrent')"
@@ -133,6 +133,7 @@
       :error="visibleFilesError"
       :selection-mode="!searchActive && selectionMode"
       :selected-paths="selectedList"
+      :archiving-path="archivingPath"
       :read-only="!searchActive && remoteInterlinkActive && !remoteWritable"
       :remote="!searchActive && remoteInterlinkActive"
       :empty-text="visibleEmptyText"
@@ -518,13 +519,12 @@ const uploadTarget = ref('');
 const uploadInputRef = ref<HTMLInputElement | null>(null);
 const busy = ref(false);
 const refreshing = ref(false);
-/** 服务端打包当前目录期间为 true：按钮转圈并在标题下挂一条状态说明。 */
+/** 服务端打包期间为 true：工具栏按钮转圈、标题下挂状态说明，并阻止重复发起。 */
 const archiving = ref(false);
-/** 当前目录的显示名（根目录用分组名），用于打包确认与打包中提示。 */
-const archiveTargetName = computed(() => {
-  const segment = uploadTarget.value.split('/').filter(Boolean).pop();
-  return segment || t('messenger.filesArea.group');
-});
+/** 正在打包的目录路径（目录行内联转圈用），空串表示无。 */
+const archivingPath = ref('');
+/** 打包中目标的显示名（根目录用分组名兜底），随打包开始写入、结束清空。 */
+const archiveTargetName = ref('');
 const dragActive = ref(false);
 const newFileDialog = reactive({ visible: false, directory: '' });
 let workspaceRefreshStop: (() => void) | null = null;
@@ -1003,24 +1003,41 @@ const enterSelectionMode = () => {
   selectionMode.value = true;
 };
 
-const handleDownloadCurrentDirectory = async () => {
-  if (remoteInterlinkActive.value || archiving.value) return;
+const archiveDirectoryName = (path: string): string =>
+  path.split('/').filter(Boolean).pop() || t('messenger.filesArea.group');
+
+/**
+ * 打包下载一个目录：工具栏按钮、右键菜单共用同一套交互——
+ * 先弹确认（含目标目录名与耗时提醒），确认后进入打包中状态
+ * （工具栏转圈 + 状态条 + 目录行内联转圈），失败时给统一错误提示。
+ */
+const archiveDirectory = async (path: string, title: string): Promise<void> => {
+  if (archiving.value) return;
+  const name = archiveDirectoryName(path);
   const confirmed = await mzConfirm({
-    title: t('messenger.filesArea.archiveCurrent'),
-    message: t('messenger.filesArea.archiveConfirm', { name: archiveTargetName.value }),
+    title,
+    message: t('messenger.filesArea.archiveConfirm', { name }),
     confirmText: t('common.download'),
     cancelText: t('common.cancel')
   });
   if (!confirmed) return;
   archiving.value = true;
+  archivingPath.value = normalizeWorkspaceRelativePath(path);
+  archiveTargetName.value = name;
   try {
-    await runAction(
-      () => downloadWorkspaceDirectoryArchive(uploadTarget.value),
-      t('messenger.filesArea.downloadFailed')
-    );
+    await downloadWorkspaceDirectoryArchive(path);
+  } catch (error) {
+    ElMessage.error(resolveWorkspaceErrorMessage(error, t('messenger.filesArea.archiveFailed')));
   } finally {
     archiving.value = false;
+    archivingPath.value = '';
+    archiveTargetName.value = '';
   }
+};
+
+const handleDownloadCurrentDirectory = async () => {
+  if (remoteInterlinkActive.value) return;
+  await archiveDirectory(uploadTarget.value, t('messenger.filesArea.archiveCurrent'));
 };
 
 const directoryRefresh = createWorkspaceDirectoryRefresh(tree, {
@@ -1153,10 +1170,7 @@ const runRowCommand = async (command: string, row: WorkspaceVisibleRow | null) =
       await handleCreateEntry('file', row);
       return;
     case 'archive-root':
-      await runAction(
-        () => downloadWorkspaceDirectoryArchive(uploadTarget.value),
-        t('messenger.filesArea.downloadFailed')
-      );
+      await archiveDirectory(uploadTarget.value, t('messenger.filesArea.archiveCurrent'));
       return;
     case 'clear':
       await handleClearWorkspace();
@@ -1176,10 +1190,7 @@ const runRowCommand = async (command: string, row: WorkspaceVisibleRow | null) =
       await runAction(() => downloadWorkspacePath(row.path), t('messenger.filesArea.downloadFailed'));
       return;
     case 'archive':
-      await runAction(
-        () => downloadWorkspaceDirectoryArchive(row.path),
-        t('messenger.filesArea.downloadFailed')
-      );
+      await archiveDirectory(row.path, t('messenger.filesArea.menu.archive'));
       return;
     case 'rename':
       await renameEntry(row);

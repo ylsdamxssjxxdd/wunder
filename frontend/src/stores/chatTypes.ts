@@ -267,9 +267,9 @@ export type SendMessageOptions = {
   /** Per-request reasoning override; `default`/empty follows the model config. */
   reasoningEffort?: string;
   reasoning_effort?: string;
-  /** Existing user round to continue when replying to an inquiry panel. */
-  rootUserRound?: number;
-  root_user_round?: number;
+  /** Waiting inquiry turn that this new user round resolves. */
+  inquiryTurnId?: string;
+  inquiry_turn_id?: string;
 };
 
 export type AppendLocalMessageOptions = {

@@ -1,142 +1,65 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1500" viewBox="0 0 1600 1500" role="img" aria-label="舵机 终端 UI 布局与底栏">
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1660" viewBox="0 0 1600 1660" role="img" aria-label="舵机 终端 UI 布局与底栏规范">
   <title>02 布局与底栏 · 舵机 CLI UI Spec</title>
-  <style>
-    svg{font-family:'Microsoft YaHei UI','Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif;fill:#1F2329}
-    .mono{font-family:Consolas,'SFMono-Regular','Cascadia Mono',monospace}
-    .h1{font-size:30px;font-weight:700;letter-spacing:-.4px}
-    .sub{font-size:13px;fill:#7C7A75}
-    .kicker{font-size:11px;font-weight:600;letter-spacing:1.4px;fill:#E07A12}
-    .sect{font-size:16px;font-weight:700}
-    .sect-en{font-size:10px;font-weight:600;letter-spacing:1.6px;fill:#A8A39B}
-    .card-t{font-size:12px;font-weight:700}
-    .tok{font-size:11px;fill:#3D3D3D}
-    .note{font-size:11px;fill:#7C7A75}
-    .tiny{font-size:10px;fill:#8A8F99}
-    .line{stroke:#E8E6E3;stroke-width:1}
-    .card{fill:#FFFFFF;stroke:#DED9D1;stroke-width:1}
-    .accent{fill:#F58A24}
-    .term{fill:#131A24}
-    .t-fg{fill:#D8DEE6}
-    .t-dim{fill:#6E7A8A}
-    .t-cy{fill:#4FC1D9}
-    .band-t{fill:#F4F1EC;stroke:#C9A26B;stroke-width:1;stroke-dasharray:4 3}
-    .bl{fill:none;stroke:#C9A26B;stroke-width:1}
-  </style>
+  <style>svg{font-family:'Microsoft YaHei UI','Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif;fill:#1F2329}.mono{font-family:Consolas,monospace}.h1{font-size:30px;font-weight:700}.sub{font-size:13px;fill:#6F747B}.kicker{font-size:11px;font-weight:700;letter-spacing:1.4px;fill:#D87616}.sect{font-size:18px;font-weight:700}.sect-note{font-size:12px;fill:#8A8F99}.card{fill:#FFF;stroke:#DED9D1}.card-t{font-size:14px;font-weight:700}.note{font-size:12px;fill:#6F747B}.tiny{font-size:11px;fill:#8A8F99}.chip{font-size:11px;font-weight:700;fill:#D87616}.ui14{font-size:14px}.ui13{font-size:13px}.ui12{font-size:12px}.tok{font-size:12px;fill:#3D3D3D}.term{fill:#131A24}.t-fg{fill:#D8DEE6}.t-dim{fill:#6E7A8A}.t-cy{fill:#4FC1D9}.t-yl{fill:#D7A65F}</style>
+  <rect width="1600" height="1660" fill="#F5F3EF"/>
+  <g id="header"><text x="64" y="42" class="kicker">WUNDER / 舵机 · CLI UI SPEC</text><text x="64" y="84" class="h1">02　布局与底栏</text><text x="64" y="114" class="sub">五段垂直栈决定外层结构；输入区内部再按通知、间隙、草稿和底栏分行，两个层级不能混写。</text><text x="1536" y="44" text-anchor="end" class="mono tiny">SHEET 02 / 05</text><text x="1536" y="84" text-anchor="end" class="mono ui12">STACK · ACTIVITY · FOOTER</text><line x1="64" y1="140" x2="1536" y2="140" stroke="#D8D5D0"/></g>
 
-  <rect width="1600" height="1500" fill="#F4F1EC"/>
-
-  <g id="header">
-    <text x="80" y="52" class="kicker">WUNDER / 舵机 · CLI UI SPEC</text>
-    <text x="80" y="93" class="h1">02　布局与底栏</text>
-    <text x="80" y="120" class="sub">五段垂直栈是唯一的框架结构；底栏是发现性的入口——键位提示按宽度阶梯收缩，任务中心与快捷键永远最后消失。</text>
-    <text x="1520" y="52" text-anchor="end" class="mono" font-size="11" fill="#8A8F99">SHEET 02 / 05</text>
+  <g id="stack-contract">
+    <rect x="64" y="160" width="28" height="24" rx="6" fill="#FDF0DE"/><text x="78" y="177" text-anchor="middle" class="chip">01</text><text x="104" y="178" class="sect">外层五段栈 · 约束顺序固定</text><text x="1536" y="177" text-anchor="end" class="sect-note">layout.rs：transcript → popup → banner → activity → input</text>
+    <rect x="64" y="202" width="1472" height="318" rx="12" class="card"/>
+    <rect x="88" y="226" width="340" height="66" rx="7" fill="#F6F5F3" stroke="#D8D5D0"/><text x="104" y="252" class="card-t">转写区</text><text x="104" y="278" class="tiny">Min(8) · 有弹层 Min(6)</text>
+    <rect x="88" y="300" width="340" height="36" rx="7" fill="#F6F5F3" stroke="#D8D5D0" stroke-dasharray="4 3"/><text x="104" y="324" class="note">弹层带（可选）min(n,7)+1</text>
+    <rect x="88" y="344" width="340" height="48" rx="7" fill="#F6F5F3" stroke="#D8D5D0"/><text x="104" y="366" class="note">欢迎横幅带 · 高度钳制到余量</text><text x="104" y="386" class="tiny">输入或会话推进后归零</text>
+    <rect x="88" y="400" width="340" height="28" rx="7" fill="#F6F5F3"/><text x="104" y="420" class="note">活动行 · 固定 1 行</text>
+    <rect x="88" y="436" width="340" height="60" rx="7" fill="#FDF0DE" stroke="#E0B77F"/><text x="104" y="462" class="card-t">输入区 · 固定 5 行</text><text x="104" y="486" class="tiny">内部行数另由 composer.rs 分配</text>
+    <text x="480" y="250" class="card-t">布局规则</text><text x="480" y="280" class="note">1. 转写区取得剩余空间，但不能低于地板。</text><text x="480" y="308" class="note">2. 弹层按实际项数申请，超过 7 项仍只取 7 + 1。</text><text x="480" y="336" class="note">3. 横幅只能使用剩余高度；不够时先压缩再消失。</text><text x="480" y="364" class="note">4. 活动行固定 1 行，空闲时为空但不让位。</text><text x="480" y="392" class="note">5. 输入区固定 5 行，通知不会增加外层高度。</text>
+    <line x1="480" y1="418" x2="1512" y2="418" stroke="#E8E6E3"/>
+    <text x="480" y="448" class="card-t">横幅余量</text><text x="610" y="448" class="mono note">屏高 −（弹层 + 1 + 5 + 8）</text><text x="480" y="478" class="tiny">固定开销 14 行；低于可容纳条件时不站立横幅，而不是裁掉输入底栏。</text><text x="480" y="502" class="tiny">极小终端最终受 Ratatui 区域约束，规范不承诺超出物理屏幕的“永不可压缩”。</text>
   </g>
 
-  <!-- 布局栈 -->
-  <g id="stack">
-    <text x="80" y="176" class="sect">布局栈</text>
-    <text x="160" y="176" class="sect-en">VERTICAL STACK</text>
-    <rect x="80" y="192" width="700" height="300" class="card"/>
-    <g font-size="11">
-      <rect x="120" y="216" width="300" height="70" class="band-t"/>
-      <text x="132" y="240" class="tok">转写区</text><text x="132" y="258" class="tiny">Min(8) · 有弹层 Min(6)</text>
-      <rect x="120" y="290" width="300" height="26" fill="#EDE9E3" stroke="#C9A26B" stroke-width="1" stroke-dasharray="4 3"/>
-      <text x="132" y="308" class="tiny">弹层带（可选）min(n,7)+1</text>
-      <rect x="120" y="320" width="300" height="40" class="band-t"/>
-      <text x="132" y="345" class="tiny">欢迎横幅带 · 自适应，先被压缩</text>
-      <rect x="120" y="364" width="300" height="18" fill="#EDE9E3" stroke="#C9A26B" stroke-width="1"/>
-      <text x="132" y="378" class="tiny">活动行 · 1</text>
-      <rect x="120" y="386" width="300" height="72" fill="#FDF0DE" stroke="#E0B77F" stroke-width="1"/>
-      <text x="132" y="412" class="tok" font-weight="bold">输入区 · 5 行</text>
-      <text x="132" y="430" class="tiny">草稿 3 行 + 间隙 + 底栏</text>
-      <text x="440" y="240" class="tok" font-weight="bold">约束顺序</text>
-      <text x="440" y="264" class="tiny">1. 转写区吃剩余空间</text>
-      <text x="440" y="284" class="tiny">2. 弹层带按项数申请</text>
-      <text x="440" y="304" class="tiny">3. 横幅带钳制到余量：</text>
-      <text x="440" y="324" class="tiny">余量 = 屏高 −（弹层+1+5+8）</text>
-      <text x="440" y="348" class="tiny">4. 活动行固定 1 行</text>
-      <text x="440" y="368" class="tiny">5. 输入区固定 5 行</text>
-      <text x="440" y="396" class="tiny">屏幕越矮，先牺牲横幅带，</text>
-      <text x="440" y="416" class="tiny">再牺牲弹层项数，输入区保底。</text>
-      <text x="440" y="444" class="note">主布局固定开销 14 行（转写地板+活动+输入）。</text>
+  <g id="running-frame">
+    <rect x="64" y="554" width="28" height="24" rx="6" fill="#FDF0DE"/><text x="78" y="571" text-anchor="middle" class="chip">02</text><text x="104" y="572" class="sect">运行帧 · 横幅已让位，通知挤占输入区内部行</text><text x="1536" y="571" text-anchor="end" class="sect-note">转写 / 活动 / 输入三段的实际关系</text>
+    <rect x="64" y="596" width="1472" height="452" rx="12" class="card"/>
+    <rect x="88" y="620" width="1424" height="404" rx="6" class="term"/>
+    <g class="mono" font-size="13">
+      <text x="108" y="650" class="t-fg">请把示例记录整理成一页摘要，并标出需要复核的项目。</text>
+      <text x="108" y="682" class="t-dim">› 已读取资料，正在整理章节结构…</text>
+      <text x="108" y="714" class="t-dim">› 工具 read notes/sample.txt → 完成 · 0.2 s</text>
+      <text x="108" y="746" class="t-dim">• 已更新计划 · 完成 1/3</text><text x="108" y="772" class="t-dim">　□ 汇总要点　□ 校验遗漏　✔ 收集资料</text>
+      <text x="108" y="810" class="t-fg">初步结果已生成，继续补充复核说明。</text>
+      <text x="108" y="850" class="t-dim">（转写区向上滚动；底部停留时跟随最新内容）</text>
+      <text x="108" y="896" class="t-cy" font-weight="bold">•</text><text x="128" y="896" class="t-dim">正在汇总记录… · 耗时 4.20 s</text>
     </g>
+    <rect x="88" y="908" width="1424" height="116" fill="#182430"/>
+    <text x="104" y="932" class="mono" font-size="13" fill="#D7A65F" font-weight="bold">云端连接失败 · 等待重试</text>
+    <text x="104" y="956" class="mono" font-size="13" fill="#D7A65F" font-weight="bold">3 项警告</text><text x="186" y="956" class="mono" font-size="13" fill="#6E7A8A"> · 查看并处理后再继续</text>
+    <rect x="674" y="964" width="252" height="22" fill="#D8DEE6"/><text x="800" y="981" text-anchor="middle" class="mono" font-size="13" fill="#131A24" font-weight="bold">查看过程 · Enter</text>
+    <text x="104" y="994" class="mono" font-size="13" fill="#4FC1D9" font-weight="bold">›</text><text x="124" y="994" class="mono" font-size="13" fill="#D8DEE6">继续补充格式要求。</text>
+    <text x="104" y="1018" class="mono" font-size="13" fill="#6E7A8A">示例目录　← 任务中心</text><text x="1496" y="1018" text-anchor="end" class="mono" font-size="13" fill="#6E7A8A">? 快捷键</text>
   </g>
 
-  <!-- 底栏 -->
-  <g id="footerbar">
-    <text x="840" y="176" class="sect">底栏构成与收缩</text>
-    <text x="1010" y="176" class="sect-en">FOOTER · PROGRESSIVE DISCLOSURE</text>
-    <rect x="840" y="192" width="680" height="300" class="card"/>
-    <g font-size="12" fill="#3D3D3D">
-      <text x="864" y="222" class="tok" font-weight="bold">构成（左 → 右）</text>
-      <text x="864" y="248">① label-only：任务标题 ≤28 列 · 模型名 · 工作目录 ≤28 列</text>
-      <text x="864" y="272">② 键位项：「← 任务中心」「? 快捷键」</text>
-      <text x="864" y="296">③ 右对齐上下文（可选）：分支、警告等</text>
-      <text x="864" y="328" class="tok" font-weight="bold">宽度不足时的收缩顺序</text>
-      <text x="864" y="354">先丢描述文字 → 保留键名 → 逐项整条丢弃 → label-only 最先没</text>
-      <text x="864" y="386" class="tok" font-weight="bold">两个入口永不收缩丢失</text>
-      <text x="864" y="412">「← 任务中心」与「? 快捷键」是发现性门禁，始终可见。</text>
-      <text x="864" y="444" class="note">运行中的提示行：耗时=x.xx s | 速度=x.xx token/s | 工具=n</text>
-      <text x="864" y="466" class="note">历史搜索时整条底栏被搜索态替换：query · Ctrl+R 更早 · Enter 采用 · Esc 取消</text>
-    </g>
+  <g id="activity-input-budget">
+    <rect x="64" y="1082" width="28" height="24" rx="6" fill="#FDF0DE"/><text x="78" y="1099" text-anchor="middle" class="chip">03</text><text x="104" y="1100" class="sect">活动行与输入行预算 · 状态提示各有唯一出口</text>
+    <rect x="64" y="1124" width="724" height="238" rx="12" class="card"/><text x="88" y="1154" class="card-t">活动行状态</text>
+    <text x="88" y="1184" class="mono ui13 t-cy" font-weight="bold">•</text><text x="116" y="1184" class="tok">运行中</text><text x="290" y="1184" class="note">呼吸点 + DIM 正文，48ms 帧</text>
+    <text x="88" y="1214" class="mono ui13 t-cy" font-weight="bold">!</text><text x="116" y="1214" class="tok">审批待确认</text><text x="290" y="1214" class="note">整行 accent + BOLD，90ms 唤醒</text>
+    <text x="88" y="1244" class="mono ui13 t-cy" font-weight="bold">?</text><text x="116" y="1244" class="tok">问询 / 恢复面板</text><text x="290" y="1244" class="note">整行 accent，提示选择与关闭</text>
+    <text x="88" y="1274" class="mono ui13 t-cy" font-weight="bold">^C</text><text x="116" y="1274" class="tok">第一次 Ctrl+C</text><text x="290" y="1274" class="note">限时提示再次按下退出</text>
+    <text x="88" y="1310" class="tiny">复制反馈也可占用间隙，并按到期时间安排下一帧清除。</text><text x="88" y="1338" class="tiny">空闲活动行保留 1 行，不把多个状态挤成闪烁横幅。</text>
+
+    <rect x="812" y="1124" width="724" height="238" rx="12" class="card"/><text x="836" y="1154" class="card-t">输入区内部 · 两种行数分配</text>
+    <text x="836" y="1184" class="card-t">无通知</text><text x="1000" y="1184" class="mono note">草稿 3 + 间隙 1 + 底栏 1 = 5</text><text x="836" y="1210" class="tiny">没有内容的间隙不申请行，草稿因此使用更多空间。</text>
+    <line x1="836" y1="1230" x2="1512" y2="1230" stroke="#E8E6E3"/>
+    <text x="836" y="1260" class="card-t">上方实帧</text><text x="1000" y="1260" class="mono note">云错误 1 + 警告 1 + 间隙 1 + 草稿 1 + 底栏 1 = 5</text><text x="836" y="1288" class="note">外层仍 5 行，但草稿只剩 1 行并内部滚动。</text><text x="836" y="1316" class="tiny">云错误先于警告；间隙不换行；底栏永远最后分配。</text><text x="836" y="1342" class="tiny">不要继续写成“任何情况下草稿固定 3 行”。</text>
   </g>
 
-  <!-- 对话中 mock -->
-  <g id="mock-running">
-    <text x="80" y="540" class="sect">对话中 · 横幅让位后的完整栈</text>
-    <text x="360" y="540" class="sect-en">RUNNING FRAME · 100 × 30</text>
-    <rect x="80" y="556" width="1080" height="500" class="card"/>
-    <rect x="96" y="572" width="1048" height="468" class="term" rx="6"/>
-    <g class="mono" font-size="12">
-      <text x="116" y="596" class="t-fg">把 docs 目录里所有 markdown 的标题抽出来汇总成一页。</text>
-      <text x="116" y="622" class="t-dim">› 已读取 12 个文件，正在整理章节结构…</text>
-      <text x="116" y="648" class="t-dim">› 工具 read docs/功能迭代.md → 完成</text>
-      <text x="116" y="674" class="t-dim">› 计划 □ 抽取标题　□ 汇总排序　✔ 已扫描目录</text>
-      <text x="116" y="700" class="t-fg">汇总如下，共 3 个文档、41 个标题：</text>
-      <text x="116" y="726" class="t-fg">1. 功能迭代（18）　2. 经验教训（12）　3. 对齐方案（11）</text>
-      <text x="116" y="756" class="t-dim">› 工具 读取 docs/对齐方案.md → 完成 · 0.1 s</text>
-      <text x="116" y="782" class="t-dim">› 计划 ✔ 抽取标题　✔ 汇总排序　□ 标注更新时间</text>
-      <text x="116" y="808" class="t-dim">（转写区继续向上滚动，底部停留时自动跟随）</text>
-      <!-- activity -->
-      <text x="116" y="900" class="t-cy" font-weight="bold">•</text>
-      <text x="130" y="900" class="t-dim">正在汇总标题… · 耗时 4.20 s</text>
-      <!-- composer -->
-      <rect x="116" y="916" width="1008" height="88" fill="#182430" rx="4"/>
-      <text x="128" y="940" class="t-cy" font-weight="bold">›</text>
-      <text x="146" y="940" class="t-fg">再补充：按更新日期倒序排列，标注每篇的更新时间。</text>
-      <text x="128" y="992" class="t-dim">把 docs 目录里…  ← 任务中心</text>
-      <text x="1104" y="992" text-anchor="end" class="t-dim">? 快捷键</text>
-    </g>
-    <g font-size="11" fill="#A8A39B">
-      <text x="1176" y="620">① 转写区：滚动到底跟随，</text>
-      <text x="1176" y="638">上滚即停；过程行 DIM。</text>
-      <text x="1176" y="892">② 活动行：运行态 = 呼吸点</text>
-      <text x="1176" y="910">+ 次级文本；等待审批/问询</text>
-      <text x="1176" y="928">时整行切换为 accent。</text>
-      <text x="1176" y="986">③ 输入区：表面色块唯一；</text>
-      <text x="1176" y="1004">底栏键位在输入卡内。</text>
-    </g>
+  <g id="footer-shrink">
+    <rect x="64" y="1396" width="28" height="24" rx="6" fill="#FDF0DE"/><text x="78" y="1413" text-anchor="middle" class="chip">04</text><text x="104" y="1414" class="sect">底栏收缩 · 先丢描述，再丢低优先级项，键名优先</text><text x="1536" y="1413" text-anchor="end" class="sect-note">build_footer_spans 按后续键位所需宽度预留空间</text>
+    <rect x="64" y="1438" width="1472" height="172" rx="12" class="card"/>
+    <text x="88" y="1468" class="mono tiny">100 COL</text><rect x="180" y="1450" width="1332" height="32" rx="4" class="term"/><text x="194" y="1472" class="mono ui13 t-dim">示例任务 · 标准模型 · 示例目录　</text><text x="520" y="1472" class="mono ui13 t-cy" font-weight="bold">←</text><text x="538" y="1472" class="mono ui13 t-dim">任务中心　</text><text x="650" y="1472" class="mono ui13 t-cy" font-weight="bold">?</text><text x="668" y="1472" class="mono ui13 t-dim">快捷键</text>
+    <text x="88" y="1512" class="mono tiny">64 COL</text><rect x="180" y="1494" width="1332" height="32" rx="4" class="term"/><text x="194" y="1516" class="mono ui13 t-dim">示例任务 · 示例目录…　</text><text x="444" y="1516" class="mono ui13 t-cy" font-weight="bold">←</text><text x="462" y="1516" class="mono ui13 t-dim">任务中心　</text><text x="574" y="1516" class="mono ui13 t-cy" font-weight="bold">?</text><text x="592" y="1516" class="mono ui13 t-dim">快捷键</text>
+    <text x="88" y="1556" class="mono tiny">32 COL</text><rect x="180" y="1538" width="1332" height="32" rx="4" class="term"/><text x="194" y="1560" class="mono ui13 t-cy" font-weight="bold">←</text><text x="212" y="1560" class="mono ui13 t-dim">任务中心　</text><text x="324" y="1560" class="mono ui13 t-cy" font-weight="bold">?</text><text x="342" y="1560" class="mono ui13 t-dim">快捷键</text>
+    <text x="88" y="1590" class="note">描述文字可截断为 …；label-only 项可跳过；后续快捷键键名在宽度允许时优先保留。右侧上下文不能共存时可单独占行；空结果回退 composer_hint_line。</text>
   </g>
-
-  <!-- 活动行状态 -->
-  <g id="activity">
-    <text x="80" y="1112" class="sect">活动行状态表</text>
-    <text x="220" y="1112" class="sect-en">ACTIVITY LINE · SINGLE OUTLET</text>
-    <rect x="80" y="1128" width="1440" height="186" class="card"/>
-    <g font-size="12" fill="#3D3D3D">
-      <text x="104" y="1156" class="tok" font-weight="bold">状态</text><text x="300" y="1156" class="tok" font-weight="bold">文案（zh）</text><text x="800" y="1156" class="tok" font-weight="bold">样式</text>
-      <line x1="104" y1="1166" x2="1496" y2="1166" class="line"/>
-      <text x="104" y="1190" class="tok">运行中</text><text x="300" y="1190" class="tok">• 正在执行…（含追赶/聚焦变体）</text><text x="800" y="1190" class="tok">呼吸点 cyan→白 · 正文 DIM</text>
-      <text x="104" y="1214" class="tok">审批待确认</text><text x="300" y="1214" class="tok">审批待确认 · Enter 确认 · Y/A/N 快速选择 · 待处理 n</text><text x="800" y="1214" class="tok">整行 accent + BOLD · 90 ms 唤醒</text>
-      <text x="104" y="1238" class="tok">问询面板打开</text><text x="300" y="1238" class="tok">路由面板已打开 · ↑↓ 选择 · Enter 发送 · Esc 关闭</text><text x="800" y="1238" class="tok">整行 accent</text>
-      <text x="104" y="1262" class="tok">会话恢复面板</text><text x="300" y="1262" class="tok">会话恢复面板已打开 · Enter 恢复 · Esc 取消</text><text x="800" y="1262" class="tok">整行 accent</text>
-      <text x="104" y="1286" class="tok">Ctrl+C 第一次</text><text x="300" y="1286" class="tok">再按一次 Ctrl+C 可退出当前终端会话</text><text x="800" y="1286" class="tok">整行 accent · 限时提示</text>
-    </g>
-  </g>
-
-  <g id="footer-note">
-    <line x1="80" y1="1440" x2="1520" y2="1440" class="line"/>
-    <text x="80" y="1462" class="tiny">事实来源：tui/ui/layout.rs · tui/ui/composer.rs（footer 收缩与右对齐）· tui/app.rs（activity_line / composer_footer_items / composer_hint_line）。示例文案为通用示例，落地以 i18n 资源为准。</text>
-    <text x="1520" y="1462" text-anchor="end" class="tiny">SVG · 1600 PX WIDE · 2026-10-25</text>
-  </g>
+  <g id="footer"><line x1="64" y1="1630" x2="1536" y2="1630" stroke="#D8D5D0"/><text x="64" y="1650" class="tiny">事实来源：tui/ui/layout.rs · tui/ui/composer.rs · tui/app.rs（activity / footer / notice 投影）</text><text x="1536" y="1650" text-anchor="end" class="mono tiny">02 / 05 · 2026-10-25</text></g>
 </svg>

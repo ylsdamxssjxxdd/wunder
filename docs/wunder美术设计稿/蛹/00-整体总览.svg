@@ -1,260 +1,123 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1246" viewBox="0 0 1600 1246" role="img" aria-label="蛹 桌面端整体界面总览">
-  <title>00 总览 · 蛹 Desktop UI Spec</title>
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1560" viewBox="0 0 1600 1560" role="img" aria-label="蛹 桌面端整体界面与功能分区">
+  <title>00 整体总览 · 蛹 Desktop UI Spec</title>
   <defs>
-    <filter id="winShadow" x="-10%" y="-10%" width="120%" height="130%">
-      <feDropShadow dx="0" dy="18" stdDeviation="26" flood-color="#2B1C0B" flood-opacity="0.16"/>
-    </filter>
-    <symbol id="o-monitor" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></symbol>
-    <symbol id="o-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></symbol>
-    <symbol id="o-folder" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H9l2 2h7.5A2.5 2.5 0 0 1 21 9.5v7A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5z"/></symbol>
-    <symbol id="o-folder-fill" viewBox="0 0 24 24"><path d="M3 7.3A2.3 2.3 0 0 1 5.3 5h4.2l2 2h7.2A2.3 2.3 0 0 1 21 9.3v7.4A2.3 2.3 0 0 1 18.7 19H5.3A2.3 2.3 0 0 1 3 16.7z" fill="currentColor"/></symbol>
-    <symbol id="o-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m5 12.5 4.2 4.2L19 7"/></symbol>
-    <symbol id="o-clock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.2V12l3 2"/></symbol>
-    <symbol id="o-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M2.5 12s3.4-6 9.5-6 9.5 6 9.5 6-3.4 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.6"/></symbol>
-    <symbol id="o-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></symbol>
-    <symbol id="o-hash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M9 3 7.5 21M16.5 3 15 21M4 8.5h16M3 15.5h16"/></symbol>
-    <symbol id="o-stopwatch" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="13.5" r="7.5"/><path d="M12 9.5v4l2.6 1.7M9.5 3h5M12 3v3"/></symbol>
-    <symbol id="o-gauge" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4.2 18a9 9 0 1 1 15.6 0M12 14l4-4.3"/><circle cx="12" cy="14.5" r="1.4" fill="currentColor" stroke="none"/></symbol>
-    <symbol id="o-layers" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="m12 3 9 5-9 5-9-5zM3 12l9 5 9-5M3 16l9 5 9-5"/></symbol>
-    <symbol id="o-bolt" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M13.5 2.5 5 14h6l-1 7.5L19 9.5h-6z"/></symbol>
-    <symbol id="o-wrench" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M14.7 6.3a4.5 4.5 0 0 0-6 6L3 18l3 3 5.7-5.7a4.5 4.5 0 0 0 6-6l-3 3-2.3-.7-.7-2.3z"/></symbol>
-    <symbol id="o-coins" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><ellipse cx="12" cy="7" rx="6.5" ry="2.6"/><path d="M5.5 7v5c0 1.4 2.9 2.6 6.5 2.6s6.5-1.2 6.5-2.6V7M5.5 12v5c0 1.4 2.9 2.6 6.5 2.6s6.5-1.2 6.5-2.6v-5"/></symbol>
-    <symbol id="o-brain" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M9.5 4.5A3 3 0 0 0 6.6 8 3.3 3.3 0 0 0 5 13.7a3.4 3.4 0 0 0 2.2 5.1A2.8 2.8 0 0 0 12 17V6.8a2.4 2.4 0 0 0-2.5-2.3ZM14.5 4.5A3 3 0 0 1 17.4 8a3.3 3.3 0 0 1 1.6 5.7 3.4 3.4 0 0 1-2.2 5.1A2.8 2.8 0 0 1 12 17V6.8a2.4 2.4 0 0 1 2.5-2.3Z"/></symbol>
-    <clipPath id="o-brain-clip"><path d="M184 0c30.9 0 56 25.1 56 56v400c0 30.9-25.1 56-56 56-28.9 0-52.7-21.9-55.7-50.1-5.2 1.4-10.7 2.1-16.3 2.1-35.3 0-64-28.7-64-64 0-7.4 1.3-14.6 3.6-21.2C21.4 367.4 0 338.2 0 304c0-31.9 18.7-59.5 45.8-72.3C37.1 220.8 32 207 32 192c0-30.7 21.6-56.3 50.4-62.6C80.8 123.9 80 118 80 112c0-29.9 20.6-55.1 48.3-62.1C131.3 21.9 155.1 0 184 0zM328 0c28.9 0 52.6 21.9 55.7 49.9 27.8 7 48.3 32.1 48.3 62.1 0 6-.8 11.9-2.4 17.4 28.8 6.2 50.4 31.9 50.4 62.6 0 15-5.1 28.8-13.8 39.7 27.1 12.8 45.8 40.4 45.8 72.3 0 34.2-21.4 63.4-51.6 74.8 2.3 6.6 3.6 13.8 3.6 21.2 0 35.3-28.7 64-64 64-5.6 0-11.1-.7-16.3-2.1-3 28.2-26.8 50.1-55.7 50.1-30.9 0-56-25.1-56-56V56c0-30.9 25.1-56 56-56z"/></clipPath>
-    <symbol id="o-brain-brand" viewBox="0 0 512 512"><path d="M184 0c30.9 0 56 25.1 56 56v400c0 30.9-25.1 56-56 56-28.9 0-52.7-21.9-55.7-50.1-5.2 1.4-10.7 2.1-16.3 2.1-35.3 0-64-28.7-64-64 0-7.4 1.3-14.6 3.6-21.2C21.4 367.4 0 338.2 0 304c0-31.9 18.7-59.5 45.8-72.3C37.1 220.8 32 207 32 192c0-30.7 21.6-56.3 50.4-62.6C80.8 123.9 80 118 80 112c0-29.9 20.6-55.1 48.3-62.1C131.3 21.9 155.1 0 184 0zM328 0c28.9 0 52.6 21.9 55.7 49.9 27.8 7 48.3 32.1 48.3 62.1 0 6-.8 11.9-2.4 17.4 28.8 6.2 50.4 31.9 50.4 62.6 0 15-5.1 28.8-13.8 39.7 27.1 12.8 45.8 40.4 45.8 72.3 0 34.2-21.4 63.4-51.6 74.8 2.3 6.6 3.6 13.8 3.6 21.2 0 35.3-28.7 64-64 64-5.6 0-11.1-.7-16.3-2.1-3 28.2-26.8 50.1-55.7 50.1-30.9 0-56-25.1-56-56V56c0-30.9 25.1-56 56-56z" fill="#8A8F99"/><g clip-path="url(#o-brain-clip)"><rect x="0" y="356" width="512" height="156" fill="#F58A24"/></g></symbol>
-    <symbol id="o-arrow-up" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M6 11l6-6 6 6"/></symbol>
-    <symbol id="o-upload" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M12 16V4M7 9l5-5 5 5M5 20h14"/></symbol>
-    <symbol id="o-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6"/><path d="m15 15 5 5"/></symbol>
-    <symbol id="o-zip" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M6 3h9l4 4v14H6zM15 3v5h4M10 3v3h3V3M10 8v3h3V8M10 13v3h3v-3"/></symbol>
-    <symbol id="o-list" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01"/></symbol>
-    <symbol id="o-refresh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M20 11a8 8 0 1 0-2.3 6M20 5v6h-6"/></symbol>
-    <symbol id="o-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="m9 6 6 6-6 6"/></symbol>
-    <symbol id="o-camera" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M4 8.5A2.5 2.5 0 0 1 6.5 6H9l1.5-2h3L15 6h2.5A2.5 2.5 0 0 1 20 8.5v7A2.5 2.5 0 0 1 17.5 18h-11A2.5 2.5 0 0 1 4 15.5z"/><circle cx="12" cy="12" r="3.3"/></symbol>
-    <symbol id="o-clip" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="m20 11.5-7.8 7.8a5 5 0 0 1-7-7l8.3-8.3a3.3 3.3 0 1 1 4.7 4.7l-8.3 8.3a1.7 1.7 0 0 1-2.4-2.4l7.6-7.6"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6L18 18M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 16 16"><path d="M8 2v12M2 8h12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 384 512"><path fill="currentColor" transform="translate(0 448) scale(1 -1)" d="M215 439Q205 448 192 448Q179 448 169 439L41 311Q32 301 32 288Q32 275 41 265Q51 256 64 256Q77 256 87 265L160 339V-32Q160-46 169-55Q178-64 192-64Q206-64 215-55Q224-46 224-32V339L297 265Q307 256 320 256Q333 256 343 265Q352 275 352 288Q352 301 343 311L215 439Z"/></symbol>
+    <symbol id="i-check" viewBox="0 0 448 512"><path fill="currentColor" transform="translate(0 448) scale(1 -1)" d="M439 343Q448 333 448 320Q448 307 439 297L183 41Q173 32 160 32Q147 32 137 41L9 169Q0 179 0 192Q0 205 9 215Q19 224 32 224Q45 224 55 215L160 109L393 343Q403 352 416 352Q429 352 439 343Z"/></symbol>
+    <symbol id="i-eye" viewBox="0 0 24 24"><path fill="currentColor" fill-rule="evenodd" d="M0 12C3 6 7 3 12 3s9 3 12 9c-3 6-7 9-12 9S3 18 0 12m6 0a6 6 0 1 0 12 0 6 6 0 0 0-12 0m3 0a3 3 0 1 0 6 0 3 3 0 0 0-6 0"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 448 512"><path fill="currentColor" transform="translate(0 448) scale(1 -1)" d="M208 448H332Q352 448 366 434L434 366Q448 352 448 332V112Q447 92 434 78Q420 65 400 64H208Q188 65 174 78Q161 92 160 112V400Q161 420 174 434Q188 447 208 448ZM48 320H128V256H64V0H256V32H320V-16Q319-36 306-50Q292-63 272-64H48Q28-63 14-50Q1-36 0-16V272Q1 292 14 306Q28 319 48 320Z"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 576 512"><path fill="currentColor" transform="translate(0 448) scale(1 -1)" d="M89 224L0 72V352Q1 379 19 397Q37 415 64 416H182Q208 416 227 397L253 371Q272 352 299 352H416Q443 351 461 333Q479 315 480 288V256H144Q108 255 89 224ZM116 208Q126 223 144 224H544Q562 223 572 208Q580 192 572 176L460-16Q450-31 432-32H32Q14-31 4-16Q-4 0 4 16L116 208Z"/></symbol>
+    <symbol id="i-brain" viewBox="0 0 512 512"><path fill="currentColor" d="M184 0c30.9 0 56 25.1 56 56v400c0 30.9-25.1 56-56 56-28.9 0-52.7-21.9-55.7-50.1-5.2 1.4-10.7 2.1-16.3 2.1-35.3 0-64-28.7-64-64 0-7.4 1.3-14.6 3.6-21.2C21.4 367.4 0 338.2 0 304c0-31.9 18.7-59.5 45.8-72.3C37.1 220.8 32 207 32 192c0-30.7 21.6-56.3 50.4-62.6C80.8 123.9 80 118 80 112c0-29.9 20.6-55.1 48.3-62.1C131.3 21.9 155.1 0 184 0zM328 0c28.9 0 52.6 21.9 55.7 49.9 27.8 7 48.3 32.1 48.3 62.1 0 6-.8 11.9-2.4 17.4 28.8 6.2 50.4 31.9 50.4 62.6 0 15-5.1 28.8-13.8 39.7 27.1 12.8 45.8 40.4 45.8 72.3 0 34.2-21.4 63.4-51.6 74.8 2.3 6.6 3.6 13.8 3.6 21.2 0 35.3-28.7 64-64 64-5.6 0-11.1-.7-16.3-2.1-3 28.2-26.8 50.1-55.7 50.1-30.9 0-56-25.1-56-56V56c0-30.9 25.1-56 56-56z"/></symbol>
+    <symbol id="i-monitor" viewBox="0 0 24 24"><path d="M3 5h18v12H3zM8 21h8M12 17v4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   </defs>
   <style>
-    svg{font-family:'Microsoft YaHei UI','Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif;fill:#1F2329}
-    .mono{font-family:Consolas,'SFMono-Regular','Cascadia Mono',monospace}
-    .h1{font-size:30px;font-weight:700;letter-spacing:-.4px}
-    .sub{font-size:13px;fill:#7C7A75}
-    .kicker{font-size:11px;font-weight:600;letter-spacing:1.4px;fill:#E07A12}
-    .ui14{font-size:14px}.ui13{font-size:13px}.ui12{font-size:12px}.ui11{font-size:11px}.ui10{font-size:10px}
-    .muted{fill:#8A8F99}.sub2{fill:#3D3D3D}.white{fill:#FFFFFF}
-    .num{font-size:9px;font-weight:700;fill:#FFFFFF}
-    .leg{font-size:11px;fill:#3D3D3D}.legk{font-size:10px;fill:#8A8F99}
-    .tiny{font-size:10px;fill:#8A8F99}
+    svg{font-family:'Microsoft YaHei UI','Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif;fill:#1F2329}.mono{font-family:Consolas,monospace}.h1{font-size:30px;font-weight:700}.sub{font-size:13px;fill:#6F747B}.kicker{font-size:11px;font-weight:700;letter-spacing:1.4px;fill:#D87616}.sect{font-size:18px;font-weight:700}.sect-note{font-size:12px;fill:#8A8F99}.card{fill:#FFF;stroke:#DED9D1}.card-t{font-size:14px;font-weight:700}.note{font-size:12px;fill:#6F747B}.tiny{font-size:11px;fill:#8A8F99}.ui14{font-size:14px}.ui13{font-size:13px}.ui12{font-size:12px}.ui11{font-size:11px}.muted{fill:#8A8F99}.secondary{fill:#3D3D3D}.chip{font-size:11px;font-weight:700;fill:#D87616}.sim{font-family:SimSun,serif}
   </style>
-
-  <rect width="1600" height="1246" fill="#F4F1EC"/>
+  <rect width="1600" height="1560" fill="#F5F3EF"/>
   <g id="header">
-    <text x="80" y="52" class="kicker">WUNDER / 蛹 · DESKTOP UI SPEC</text>
-    <text x="80" y="93" class="h1">00　整体总览</text>
-    <text x="80" y="120" class="sub">1462×866 窗口基准（参考截图按 175% DPI 折算的逻辑像素）；标题栏 28px，侧栏 240px，阅读列 1000px，输入区 154px。</text>
-    <text x="1542" y="52" text-anchor="end" class="mono" font-size="11" fill="#8A8F99">SHEET 00 / 09</text>
-    <text x="1542" y="94" text-anchor="end" class="mono" font-size="12" fill="#3D3D3D">OVERVIEW · ACTUAL SIZE 1462×866</text>
-    <line x1="80" y1="140" x2="1542" y2="140" stroke="#D8D5D0"/>
+    <text x="64" y="42" class="kicker">WUNDER / 蛹 · DESKTOP UI SPEC</text>
+    <text x="64" y="84" class="h1">00　整体总览</text>
+    <text x="64" y="114" class="sub">先看真实窗口，再理解功能分区，最后区分界面状态；所有产品样例按逻辑像素绘制。</text>
+    <text x="1536" y="44" text-anchor="end" class="mono tiny">SHEET 00 / 09</text>
+    <text x="1536" y="84" text-anchor="end" class="mono ui12">CURRENT IMPLEMENTATION · 1462×866</text>
+    <line x1="64" y1="140" x2="1536" y2="140" stroke="#D8D5D0"/>
   </g>
 
-  <!-- ================= WINDOW ================= -->
-  <g id="window" filter="url(#winShadow)">
-    <rect x="80" y="160" width="1462" height="866" fill="#FBFAF8" stroke="#D8D5D0"/>
+  <g id="real-window">
+    <rect x="64" y="160" width="28" height="24" rx="6" fill="#FDF0DE"/><text x="78" y="177" text-anchor="middle" class="chip">01</text>
+    <text x="104" y="178" class="sect">真实窗口 · 已完成回合</text>
+    <text x="1536" y="177" text-anchor="end" class="sect-note">标题栏 28 · 侧栏 240 · 阅读列 ≤1000 · 输入带 154</text>
 
-    <!-- titlebar -->
-    <g id="titlebar">
-      <rect x="80" y="160" width="1462" height="28" fill="#F6F5F3"/>
-      <line x1="80" y1="188" x2="1542" y2="188" stroke="#E8E6E3"/>
-      <image href="assets/app-icon.png" x="90" y="166" width="16" height="16"/>
-      <text x="114" y="179" class="ui12" font-weight="600">蛹 · 空闲</text>
-      <g stroke="#3D3D3D" stroke-width="1.5" fill="none">
-        <path d="M1441 174h10" stroke-linecap="round"/>
-        <rect x="1479" y="167" width="10" height="10" rx="1"/>
-        <path d="m1514 167 9 9M1523 167l-9 9" stroke-linecap="round"/>
-      </g>
-      <rect x="1428" y="160" width="38" height="28" fill="transparent"/>
-      <rect x="1466" y="160" width="38" height="28" fill="transparent"/>
-      <rect x="1504" y="160" width="38" height="28" fill="transparent"/>
-    </g>
+    <g id="window" transform="translate(0 6)">
+      <rect x="69" y="200" width="1462" height="866" fill="#FBFAF8" stroke="#D8D5D0"/>
+      <rect x="69" y="200" width="1462" height="28" fill="#F6F5F3"/>
+      <line x1="69" y1="228" x2="1531" y2="228" stroke="#E8E6E3"/>
+      <image href="assets/app-icon.png" x="79" y="206" width="16" height="16"/>
+      <text x="103" y="219" class="ui12" font-weight="600">蛹 · 空闲</text>
+      <g fill="none" stroke="#3D3D3D" stroke-width="1.8" stroke-linecap="round"><path d="M1437 214h10"/><rect x="1475" y="207" width="10" height="10"/><path d="m1512 207 10 10m0-10-10 10"/></g>
 
-    <!-- sidebar -->
-    <g id="sidebar">
-      <rect x="80" y="188" width="240" height="838" fill="#F6F5F3"/>
+      <rect x="69" y="228" width="240" height="838" fill="#F6F5F3"/>
+      <use href="#i-monitor" x="81" y="240" width="16" height="16" color="#8A8F99"/>
+      <text x="105" y="254" class="ui14" font-weight="600">本地</text><text x="137" y="254" class="ui11 muted">蛹</text>
+      <path d="m265 246 4 4 4-4" fill="none" stroke="#8A8F99" stroke-width="1.4"/>
+      <use href="#i-plus" x="288" y="242" width="14" height="14" color="#8A8F99"/>
+      <rect x="77" y="270" width="224" height="34" rx="12" fill="#F1EFEC"/>
+      <rect x="77" y="275" width="2" height="24" rx="1" fill="#F58A24"/>
+      <use href="#i-folder" x="89" y="278" width="18" height="18" color="#1F76AF"/>
+      <text x="116" y="292" class="ui14" font-weight="600">默认工作区</text><text x="258" y="292" class="ui11 muted">3</text>
+      <use href="#i-plus" x="280" y="280" width="12" height="12" color="#8A8F99"/>
+      <line x1="89" y1="304" x2="89" y2="390" stroke="#E8E6E3"/>
+      <use href="#i-check" x="85" y="319" width="10" height="10" color="#1A8A5C"/><text x="105" y="327" class="ui13 secondary">资料整理</text>
+      <rect x="81" y="338" width="220" height="28" rx="8" fill="#F1EFEC"/>
+      <use href="#i-check" x="85" y="347" width="10" height="10" color="#1A8A5C"/><text x="105" y="358" class="ui13">周报摘要</text>
+      <use href="#i-check" x="85" y="375" width="10" height="10" color="#1A8A5C"/><text x="105" y="386" class="ui13 secondary">数据核对</text>
 
-      <!-- device row -->
-      <g color="#8A8F99"><use href="#o-monitor" x="96" y="202" width="18" height="18"/></g>
-      <text x="122" y="216" class="ui14" font-weight="600">本地</text>
-      <text x="153" y="216" class="ui11 muted">蛹</text>
-      <g color="#8A8F99"><use href="#o-chevron" x="284" y="206" width="12" height="12"/></g>
-      <g color="#8A8F99"><use href="#o-plus" x="305" y="205" width="16" height="16"/></g>
+      <line x1="69" y1="694" x2="309" y2="694" stroke="#E8E6E3"/>
+      <text x="81" y="720" class="ui12 muted">工作目录</text>
+      <g fill="none" stroke="#8A8F99" stroke-width="1.4" stroke-linecap="round"><path d="M212 718v-9m-4 4 4-4 4 4M208 719h8M236 713a5 5 0 1 0 0 10 5 5 0 0 0 0-10m4 9 4 4M262 710h12v12h-12zM284 710h12m-12 5h12m-12 5h12"/></g>
+      <path d="m82 741 5 4-5 4" fill="none" stroke="#8A8F99" stroke-width="1.3"/>
+      <use href="#i-folder" x="94" y="737" width="14" height="14" color="#C08A2A"/><text x="114" y="750" class="ui13">notes</text>
+      <line x1="69" y1="1026" x2="309" y2="1026" stroke="#E8E6E3"/>
+      <circle cx="94" cy="1046" r="13" fill="#F58A24"/><text x="94" y="1050" text-anchor="middle" font-size="10" font-weight="700" fill="#FFF">U</text>
+      <text x="116" y="1051" class="ui14">设置</text>
 
-      <!-- workspace row -->
-      <rect x="88" y="224" width="224" height="34" rx="12" fill="#F1EFEC"/>
-      <rect x="88" y="229" width="2" height="24" rx="1" fill="#F58A24"/>
-      <rect x="97" y="230" width="22" height="22" rx="6" fill="#EAF2FE"/>
-      <g color="#3B82F6"><use href="#o-folder" x="99" y="232" width="18" height="18"/></g>
-      <text x="126" y="246" class="ui14" font-weight="600">默认工作区</text>
-      <text x="211" y="246" class="ui11 muted">3</text>
-      <g color="#8A8F99"><use href="#o-plus" x="228" y="237" width="12" height="12"/></g>
+      <rect x="309" y="228" width="1222" height="838" fill="#FBFAF8"/>
+      <text x="444" y="262" class="ui14">你好！我是你的智能体助手，有什么可以帮你？</text>
+      <rect x="1368" y="240" width="22" height="22" rx="6" fill="transparent"/><use href="#i-eye" x="1373" y="245" width="12" height="12" color="#8A8F99"/>
+      <rect x="1188" y="282" width="208" height="44" rx="12" fill="#F3F2F0"/>
+      <text x="1200" y="310" class="ui14">请汇总这份周报。</text>
 
-      <!-- threads -->
-      <line x1="104" y1="258" x2="104" y2="342" stroke="#E8E6E3"/>
-      <g>
-        <g color="#1A8A5C"><use href="#o-check" x="104" y="270" width="10" height="10"/></g><text x="124" y="278" class="ui13 sub2">新会话</text>
-        <g color="#1A8A5C"><use href="#o-check" x="104" y="298" width="10" height="10"/></g><text x="124" y="306" class="ui13 sub2">新会话</text>
-        <rect x="92" y="314" width="220" height="28" rx="8" fill="#F1EFEC"/>
-        <g color="#1A8A5C"><use href="#o-check" x="104" y="326" width="10" height="10"/></g><text x="124" y="334" class="ui13" font-weight="600">1</text>
-      </g>
+      <path d="m448 348 5 4-5 4" fill="none" stroke="#8A8F99" stroke-width="1.4"/>
+      <text x="468" y="356" class="ui13 secondary">工作过程 · 3 步</text><text x="580" y="356" class="ui12 muted">已完成</text>
+      <circle cx="448" cy="386" r="6" fill="none" stroke="#9BA0A8"/><path d="m445 386 2 2 4-4" fill="none" stroke="#8A8F99" stroke-width="1"/>
+      <text x="468" y="391" class="ui13 muted">已思考</text><text x="526" y="391" class="ui12" fill="#9BA0A8">已梳理内容结构，可以生成摘要。</text>
+      <rect x="464" y="410" width="932" height="72" rx="8" fill="#FBFAF8" stroke="#E8E6E3"/>
+      <text x="476" y="430" class="ui11 muted" font-weight="700">输出</text><use href="#i-copy" x="1368" y="419" width="14" height="14" color="#8A8F99"/>
+      <text x="476" y="463" class="mono ui12" fill="#3D3D3D">已完成内容梳理与结论核对。</text>
+      <text x="444" y="526" class="ui14">本周工作主要完成了资料整理、数据核对与结果汇总。</text>
+      <text x="444" y="562" class="ui14" font-weight="600">摘要</text>
+      <text x="444" y="600" class="ui14">1. 资料已按主题归类，重复内容已合并。</text>
+      <text x="444" y="636" class="ui14">2. 关键数据已完成交叉核对。</text>
+      <text x="444" y="672" class="ui14">如需调整详略或补充格式，可以直接继续说明。</text>
+      <g class="ui11" fill="#3D3D3D"><text x="444" y="704"># 第 1 个用户轮次　◷ 8.0s　◉ 42.8 token/s　▤ 12.3k　ϟ 2.4k　⌘ 3　● 0</text></g>
+      <use href="#i-copy" x="1378" y="694" width="12" height="12" color="#8A8F99"/>
 
-      <!-- files area -->
-      <g id="files">
-        <line x1="80" y1="679" x2="320" y2="679" stroke="#E8E6E3"/>
-        <text x="92" y="705" class="ui12 muted">工作目录</text>
-        <g color="#8A8F99" fill="none" stroke="currentColor" stroke-width="1.6">
-          <use href="#o-upload" x="196" y="690" width="14" height="14"/>
-          <use href="#o-search" x="220" y="690" width="14" height="14"/>
-          <use href="#o-zip" x="244" y="690" width="14" height="14"/>
-          <use href="#o-list" x="268" y="690" width="14" height="14"/>
-          <use href="#o-refresh" x="292" y="690" width="14" height="14"/>
-        </g>
-        <g color="#8A8F99"><use href="#o-chevron" x="92" y="720" width="10" height="10"/></g>
-        <g color="#C98A2B"><use href="#o-folder" x="106" y="718" width="14" height="14"/></g>
-        <text x="126" y="731" class="ui13">.temp</text>
-      </g>
-
-      <!-- settings -->
-      <line x1="80" y1="985" x2="320" y2="985" stroke="#E8E6E3"/>
-      <circle cx="107" cy="1008" r="13" fill="#3B82F6"/>
-      <text x="107" y="1012" text-anchor="middle" font-size="10" font-weight="700" fill="#FFFFFF">W</text>
-      <text x="130" y="1013" class="ui14">设置</text>
-      <rect x="244" y="998" width="62" height="20" rx="10" fill="#FDF0DE"/>
-      <text x="275" y="1012" text-anchor="middle" font-size="10" fill="#F58A24">额度 100</text>
-    </g>
-
-    <!-- sidebar splitter: rest paints nothing; the surface change is the edge -->
-    <!-- chat -->
-    <g id="chat">
-      <rect x="326" y="188" width="1216" height="838" fill="#FBFAF8"/>
-
-      <!-- greeting -->
-      <text x="458" y="210" class="ui14">我是 wunder，很高兴帮助你，试着把整理资料，分析数据，写文章等工作交给我吧~</text>
-      <g color="#8A8F99">
-        <rect x="1388" y="196" width="22" height="22" rx="6" fill="transparent"/>
-        <use href="#o-eye" x="1393" y="201" width="12" height="12"/>
-      </g>
-
-      <!-- user bubble: right-aligned to the reading column's 24px gutter -->
-      <rect x="1281" y="230" width="130" height="44" rx="12" fill="#F3F2F0"/>
-      <text x="1297" y="258" class="ui14">1</text>
-
-      <!-- process bar -->
-      <circle cx="467" cy="296" r="8" fill="#FFFFFF" stroke="#E8E6E3"/>
-      <path d="M464.5 292.5 471 296l-6.5 3.5z" fill="#8A8F99"/>
-      <text x="481" y="301" class="ui13" fill="#3D3D3D">工作过程 · 2 步</text>
-      <text x="580" y="301" class="ui12 muted">已完成</text>
-
-      <!-- thought entry -->
-      <circle cx="467" cy="321" r="6" fill="none" stroke="#9BA0A8" stroke-width="1"/>
-      <path d="m464.4 321 1.8 1.8 3.5-3.8" fill="none" stroke="#8A8F99" stroke-width="1.2" stroke-linecap="round"/>
-      <text x="487" y="326" class="ui13 muted">已思考</text>
-      <text x="530" y="326" class="ui12" fill="#9BA0A8">各步骤结果一致，可以收尾汇总。</text>
-
-      <!-- output card: transparent fill, 1px border; copy button is a ghost square -->
-      <rect x="478" y="342" width="932" height="61" rx="8" fill="#FBFAF8" stroke="#E8E6E3"/>
-      <text x="490" y="360" class="ui11" font-weight="700" fill="#8A8F99">输出</text>
-      <rect x="1377" y="349" width="22" height="22" rx="6" fill="#FFFFFF" stroke="#E8E6E3"/>
-      <g color="#8A8F99"><use href="#o-copy" x="1382" y="354" width="12" height="12"/></g>
-      <text x="490" y="394" class="ui13" fill="#3D3D3D">各步骤结果一致，可以收尾汇总。</text>
-
-      <!-- assistant body -->
-      <text x="458" y="443" class="ui14">本轮处理已完成，共执行 1 个模型轮次。以下是本次工作的整理结果。</text>
-      <text x="458" y="469" class="ui14">执行过程</text>
-      <text x="458" y="521" class="ui14">1. 汇总各步骤结果，形成初步结论。</text>
-      <text x="458" y="572" class="ui14">2. 复核输出内容，确认没有遗漏项。</text>
-      <text x="458" y="598" class="ui14">整体流程正常完成，结果已就绪。如需进一步处理，可以直接继续对话说明要求。</text>
-
-      <!-- turn footer -->
-      <g id="turn-stats" color="#3D3D3D">
-        <use href="#o-hash" x="458" y="625" width="12" height="12" color="#3D3D3D"/><text x="474" y="631" class="ui11">第 1 个用户轮次</text>
-        <use href="#o-stopwatch" x="563" y="625" width="12" height="12" color="#3D3D3D"/><text x="579" y="631" class="ui11">8.0s</text>
-        <use href="#o-gauge" x="610" y="625" width="12" height="12" color="#3D3D3D"/><text x="626" y="631" class="ui11">225.3 token/s</text>
-        <use href="#o-layers" x="711" y="625" width="12" height="12" color="#3D3D3D"/><text x="727" y="631" class="ui11">15.2k</text>
-        <use href="#o-bolt" x="767" y="625" width="12" height="12" color="#3D3D3D"/><text x="783" y="631" class="ui11">15.3k</text>
-        <use href="#o-wrench" x="822" y="625" width="12" height="12" color="#3D3D3D"/><text x="838" y="631" class="ui11">--</text>
-        <use href="#o-coins" x="861" y="625" width="12" height="12" color="#3D3D3D"/><text x="877" y="631" class="ui11">0</text>
-        <g color="#8A8F99"><use href="#o-copy" x="1394" y="625" width="12" height="12"/></g>
-      </g>
-    </g>
-
-    <!-- composer: 8 + 100 + 6 + 30 + 10, anchored to the window bottom -->
-    <g id="composer">
-      <rect x="448" y="880" width="972" height="100" rx="16" fill="#FFFFFF" stroke="#E8E6E3"/>
-      <text x="462" y="910" class="ui14" fill="#8A8F99">给 默认工作区 发送消息…（长按语音）</text>
-
-      <!-- action row: plus and send are flush with the input card edges -->
-      <rect x="448" y="989" width="24" height="24" rx="8" fill="#FFFFFF" stroke="#D8D5D0"/>
-      <g color="#3D3D3D"><use href="#o-plus" x="452" y="993" width="16" height="16"/></g>
-      <g color="#F58A24"><use href="#o-folder-fill" x="482" y="995" width="12" height="12"/></g>
-      <text x="500" y="1006" class="ui13">默认工作区</text>
-
-      <!-- model trigger: right-aligned against send -->
-      <use href="#o-brain-brand" x="1288" y="993" width="16" height="16"/>
-      <text x="1310" y="1006" class="ui13" font-weight="600">虚拟模型</text>
-      <g color="#8A8F99"><use href="#o-chevron" x="1368" y="997" width="10" height="10" transform="rotate(90 1373 1002)"/></g>
-
-      <!-- send: disabled fill in the idle state -->
-      <rect x="1392" y="987" width="28" height="28" rx="8" fill="#D8D5D0"/>
-      <g color="#FFFFFF"><use href="#o-arrow-up" x="1398" y="993" width="16" height="16"/></g>
-    </g>
-
-    <!-- callout markers -->
-    <g id="markers">
-      <g>
-        <circle cx="68" cy="176" r="9" fill="#F58A24"/><text x="68" y="179" text-anchor="middle" class="num">1</text>
-        <circle cx="68" cy="210" r="9" fill="#F58A24"/><text x="68" y="213" text-anchor="middle" class="num">2</text>
-        <circle cx="68" cy="250" r="9" fill="#F58A24"/><text x="68" y="253" text-anchor="middle" class="num">3</text>
-        <circle cx="68" cy="700" r="9" fill="#F58A24"/><text x="68" y="703" text-anchor="middle" class="num">4</text>
-        <circle cx="68" cy="1008" r="9" fill="#F58A24"/><text x="68" y="1011" text-anchor="middle" class="num">5</text>
-        <circle cx="1372" cy="207" r="9" fill="#F58A24"/><text x="1372" y="210" text-anchor="middle" class="num">6</text>
-        <circle cx="1269" cy="252" r="9" fill="#F58A24"/><text x="1269" y="255" text-anchor="middle" class="num">7</text>
-        <circle cx="441" cy="296" r="9" fill="#F58A24"/><text x="441" y="299" text-anchor="middle" class="num">8</text>
-        <circle cx="441" cy="373" r="9" fill="#F58A24"/><text x="441" y="376" text-anchor="middle" class="num">9</text>
-        <circle cx="441" cy="521" r="9" fill="#F58A24"/><text x="441" y="524" text-anchor="middle" class="num">10</text>
-        <circle cx="441" cy="631" r="9" fill="#F58A24"/><text x="441" y="634" text-anchor="middle" class="num">11</text>
-        <circle cx="425" cy="930" r="9" fill="#F58A24"/><text x="425" y="933" text-anchor="middle" class="num">12</text>
-        <circle cx="1265" cy="1001" r="9" fill="#F58A24"/><text x="1265" y="1004" text-anchor="middle" class="num">13</text>
-      </g>
+      <rect x="434" y="920" width="972" height="100" rx="16" fill="#FFF" stroke="#E8E6E3"/>
+      <text x="448" y="950" class="sim" font-size="14" fill="#8A8F99">给 默认工作区 发送消息…（长按语音）</text>
+      <rect x="434" y="1032" width="24" height="24" rx="8" fill="#FFF" stroke="#D8D5D0"/><use href="#i-plus" x="439" y="1037" width="14" height="14" color="#3D3D3D"/>
+      <use href="#i-folder" x="478" y="1038" width="12" height="12" color="#F58A24"/><text x="500" y="1049" class="ui12 secondary">默认工作区</text>
+      <use href="#i-brain" x="1232" y="1034" width="16" height="16" color="#8A8F99"/>
+      <text x="1254" y="1049" class="ui13" font-weight="600">标准模型</text><path d="m1352 1040 4 4 4-4" fill="none" stroke="#8A8F99" stroke-width="1.2"/>
+      <rect x="1378" y="1032" width="28" height="28" rx="8" fill="#D8D5D0"/><use href="#i-arrow" x="1384" y="1038" width="16" height="16" color="#FFF"/>
     </g>
   </g>
 
-  <!-- ================= LEGEND ================= -->
-  <g id="legend">
-    <rect x="80" y="1048" width="1462" height="148" rx="12" fill="#FFFFFF" stroke="#DED9D1"/>
-    <text x="102" y="1072" font-size="12" font-weight="700">结构索引</text>
-    <text x="102" y="1088" class="legk">窗口坐标以 1462×866 为基准，按参考截图 175% DPI 折算后 1:1 排版；各区块在后续分页展开状态与度量。</text>
-
-    <g transform="translate(102,1096)">
-      <circle cx="8" cy="8" r="8" fill="#F58A24"/><text x="8" y="11" text-anchor="middle" class="num">1</text><text x="24" y="8" class="leg" font-weight="600">标题栏</text><text x="24" y="20" class="legk">28px · 三键 38×28 · 蛹图标 16</text>
-      <circle cx="304" cy="8" r="8" fill="#F58A24"/><text x="304" y="11" text-anchor="middle" class="num">2</text><text x="320" y="8" class="leg" font-weight="600">设备切换</text><text x="320" y="20" class="legk">本地 / 云端</text>
-      <circle cx="606" cy="8" r="8" fill="#F58A24"/><text x="606" y="11" text-anchor="middle" class="num">3</text><text x="622" y="8" class="leg" font-weight="600">工作区与会话</text><text x="622" y="20" class="legk">34px / 28px 行</text>
-      <circle cx="908" cy="8" r="8" fill="#F58A24"/><text x="908" y="11" text-anchor="middle" class="num">4</text><text x="924" y="8" class="leg" font-weight="600">工作目录</text><text x="924" y="20" class="legk">树行 26px</text>
-      <circle cx="1210" cy="8" r="8" fill="#F58A24"/><text x="1210" y="11" text-anchor="middle" class="num">5</text><text x="1226" y="8" class="leg" font-weight="600">设置入口</text><text x="1226" y="20" class="legk">底栏 40px</text>
-
-      <circle cx="8" cy="42" r="8" fill="#F58A24"/><text x="8" y="45" text-anchor="middle" class="num">6</text><text x="24" y="42" class="leg" font-weight="600">欢迎语</text><text x="24" y="54" class="legk">14px · 眼形预览</text>
-      <circle cx="304" cy="42" r="8" fill="#F58A24"/><text x="304" y="45" text-anchor="middle" class="num">7</text><text x="320" y="42" class="leg" font-weight="600">用户气泡</text><text x="320" y="54" class="legk">#F3F2F0 · r12 · 宽随内容</text>
-      <circle cx="606" cy="42" r="8" fill="#F58A24"/><text x="606" y="45" text-anchor="middle" class="num">8</text><text x="622" y="42" class="leg" font-weight="600">工作过程</text><text x="622" y="54" class="legk">折叠 34px · 步骤史</text>
-      <circle cx="908" cy="42" r="8" fill="#F58A24"/><text x="908" y="45" text-anchor="middle" class="num">9</text><text x="924" y="42" class="leg" font-weight="600">输出卡</text><text x="924" y="54" class="legk">透明底 1px 描边 · 幽灵复制钮</text>
-      <circle cx="1210" cy="42" r="8" fill="#F58A24"/><text x="1210" y="45" text-anchor="middle" class="num">10</text><text x="1226" y="42" class="leg" font-weight="600">正文</text><text x="1226" y="54" class="legk">14px / 1.5 · 24 边距</text>
-
-      <circle cx="8" cy="76" r="8" fill="#F58A24"/><text x="8" y="79" text-anchor="middle" class="num">11</text><text x="24" y="76" class="leg" font-weight="600">回合指标</text><text x="24" y="88" class="legk">11px · 7 项</text>
-      <circle cx="304" cy="76" r="8" fill="#F58A24"/><text x="304" y="79" text-anchor="middle" class="num">12</text><text x="320" y="76" class="leg" font-weight="600">输入卡</text><text x="320" y="88" class="legk">100px · r16 · 972 宽</text>
-      <circle cx="606" cy="76" r="8" fill="#F58A24"/><text x="606" y="79" text-anchor="middle" class="num">13</text><text x="622" y="76" class="leg" font-weight="600">模型与发送</text><text x="622" y="88" class="legk">30px 行 · 发送 28 与卡右缘齐平</text>
-      <text x="908" y="76" class="legk">分隔柄：侧栏静止无条、轨迹详情 1px；悬停 2×32、拖动 2×40。</text>
-      <text x="908" y="88" class="legk">命中区 6–8px，不绘制整条宽色带；窗口最小 1024×700。</text>
+  <g id="functional-zones">
+    <rect x="64" y="1100" width="28" height="24" rx="6" fill="#FDF0DE"/><text x="78" y="1117" text-anchor="middle" class="chip">02</text>
+    <text x="104" y="1118" class="sect">功能分区 · 每个区域只承担一类任务</text>
+    <g>
+      <rect x="64" y="1142" width="280" height="154" rx="12" class="card"/><text x="84" y="1170" class="chip">A / CHROME</text><text x="84" y="1196" class="card-t">窗口与导航</text><text x="84" y="1222" class="note">窗口控制、设备与工作区</text><text x="84" y="1244" class="note">线程切换、文件与设置入口</text><text x="84" y="1274" class="tiny">对应分页 03</text>
+      <rect x="362" y="1142" width="280" height="154" rx="12" class="card"/><text x="382" y="1170" class="chip">B / CONVERSATION</text><text x="382" y="1196" class="card-t">会话阅读区</text><text x="382" y="1222" class="note">欢迎、用户消息、助手正文</text><text x="382" y="1244" class="note">回合指标与滚动位置</text><text x="382" y="1274" class="tiny">对应分页 04</text>
+      <rect x="660" y="1142" width="280" height="154" rx="12" class="card"/><text x="680" y="1170" class="chip">C / EXECUTION</text><text x="680" y="1196" class="card-t">执行过程区</text><text x="680" y="1222" class="note">思考、工具、输出与差异</text><text x="680" y="1244" class="note">计划、目标和问询位于输入带</text><text x="680" y="1274" class="tiny">对应分页 05 · 06</text>
+      <rect x="958" y="1142" width="280" height="154" rx="12" class="card"/><text x="978" y="1170" class="chip">D / INPUT</text><text x="978" y="1196" class="card-t">输入操作区</text><text x="978" y="1222" class="note">编辑、附件、队列与模型</text><text x="978" y="1244" class="note">发送和停止共享一个动作位</text><text x="978" y="1274" class="tiny">对应分页 07</text>
+      <rect x="1256" y="1142" width="280" height="154" rx="12" class="card"/><text x="1276" y="1170" class="chip">E / SYSTEM</text><text x="1276" y="1196" class="card-t">系统与反馈</text><text x="1276" y="1222" class="note">设置、弹窗、Toast 与快捷键</text><text x="1276" y="1244" class="note">控件状态不与任务状态混用</text><text x="1276" y="1274" class="tiny">对应分页 08 · 09</text>
     </g>
   </g>
 
-  <g id="footer">
-    <line x1="80" y1="1220" x2="1542" y2="1220" stroke="#D8D5D0"/>
-    <text x="80" y="1234" class="tiny">本页为默认空闲态；运行中标题变为「蛹 · 运行中 N 线程」，侧栏状态点与输入区随之切换。</text>
-    <text x="1542" y="1234" text-anchor="end" class="mono tiny">00 / 09</text>
+  <g id="state-distinction">
+    <rect x="64" y="1330" width="28" height="24" rx="6" fill="#FDF0DE"/><text x="78" y="1347" text-anchor="middle" class="chip">03</text>
+    <text x="104" y="1348" class="sect">状态辨析 · “没有生成中”不等于“没有内容”</text>
+    <rect x="64" y="1372" width="724" height="136" rx="12" class="card"/>
+    <rect x="84" y="1392" width="88" height="24" rx="12" fill="#F1EFEC"/><text x="128" y="1409" text-anchor="middle" class="ui11 secondary">新线程</text>
+    <text x="190" y="1410" class="card-t">空白时间线 + 活动卡 + 欢迎语</text>
+    <text x="84" y="1442" class="note">没有历史回合；输入为空时发送停用，标题仍可为“蛹 · 空闲”。</text>
+    <text x="84" y="1470" class="tiny">加载中时隐藏活动卡；真实空态不使用虚构消息填充。</text>
+    <rect x="812" y="1372" width="724" height="136" rx="12" class="card"/>
+    <rect x="832" y="1392" width="112" height="24" rx="12" fill="#EAF7F0"/><text x="888" y="1409" text-anchor="middle" class="ui11" fill="#1A8A5C">回合已完成</text>
+    <text x="960" y="1410" class="card-t">保留历史内容 + 输入恢复空闲</text>
+    <text x="832" y="1442" class="note">上方样例属于此态：有完成回合，但当前没有运行任务。</text>
+    <text x="832" y="1470" class="tiny">运行中由标题计数、过程状态、状态胶囊和停止动作共同表达。</text>
   </g>
+  <g id="footer"><line x1="64" y1="1530" x2="1536" y2="1530" stroke="#D8D5D0"/><text x="64" y="1550" class="tiny">事实来源：main.slint · window_chrome.slint · sidebar.slint · timeline.slint · composer.slint</text><text x="1536" y="1550" text-anchor="end" class="mono tiny">00 / 09 · 2026-10-25</text></g>
 </svg>

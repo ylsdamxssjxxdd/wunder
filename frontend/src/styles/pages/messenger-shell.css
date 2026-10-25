@@ -1344,7 +1344,7 @@ button.messenger-sidebar-workspace-row {
   color: var(--mz-primary);
 }
 
-/* 打包下载进行中的状态条：与远程提示条同形，取中性色。 */
+/* 打包下载进行中的状态条：与远程提示条同形，取中性色；出现时轻淡入。 */
 .workspace-files-busy-note {
   display: flex;
   flex-shrink: 0;
@@ -1356,6 +1356,18 @@ button.messenger-sidebar-workspace-row {
   background: var(--mz-hover, #f1efec);
   color: var(--mz-text-secondary);
   font-size: var(--mz-font-xs);
+  animation: workspace-files-note-in 0.18s ease-out;
+}
+
+@keyframes workspace-files-note-in {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 .workspace-files-busy-note span {

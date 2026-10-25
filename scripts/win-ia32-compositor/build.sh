@@ -92,8 +92,11 @@ command -v i686-w64-mingw32-gcc >/dev/null 2>&1 || {
 
 printf '%s\n' "[ia32] 工具链 $RUST_TOOLCHAIN / $RUST_TARGET"
 docker exec -e RUST_TOOLCHAIN="$RUST_TOOLCHAIN" -e RUST_TARGET="$RUST_TARGET" \
-  xw7build bash -lc '
+  xw7build bash -c '
 set -e
+# rustup/cargo 只在镜像 ENV PATH（/usr/local/cargo/bin）里，bash -l 会被
+# /etc/profile 重置 PATH 导致 rustup not found；用非登录 shell 并显式补上。
+export PATH="/usr/local/cargo/bin:$PATH"
 # win7 target 是 tier 3，没有预编译 std；不装 --target，靠 rust-src + build-std 现编
 rustup toolchain list | grep -q "$RUST_TOOLCHAIN" ||
   rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal

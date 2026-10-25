@@ -1542,18 +1542,28 @@ async fn inquiry_panel_numbers_routes_across_questions_and_answers_each_one() {
     );
     app.activate_inquiry_panel(panel, false);
 
-    let lines = app.inquiry_modal_lines().expect("modal lines");
+    let spec = app.inquiry_modal_spec().expect("modal spec");
     assert_eq!(
-        lines.first().map(String::as_str),
-        Some("Question 1/2: Pick a cadence")
+        spec.body.first().map(|line| line.text.as_str()),
+        Some("Question 1/2: Pick a cadence"),
+        "the question label leads the panel header"
     );
     assert!(
-        lines.iter().any(|line| line.starts_with("› 1. Fixed")),
-        "the recommended route starts highlighted: {lines:?}"
+        spec
+            .rows
+            .first()
+            .is_some_and(|row| row.name == "Fixed (recommended)"),
+        "the recommended route keeps its tag: {spec:?}"
+    );
+    assert_eq!(spec.selected, 0, "the recommended route starts highlighted");
+    assert_eq!(
+        spec.rows.len(),
+        4,
+        "the second question keeps the global numbering: {spec:?}"
     );
     assert!(
-        lines.iter().any(|line| line.ends_with("4. Rows")),
-        "the second question keeps the global numbering: {lines:?}"
+        spec.rows.last().is_some_and(|row| row.name == "Rows"),
+        "the last route lands in the flat list: {spec:?}"
     );
 
     // Global indexes map back to the question they came from; the untouched

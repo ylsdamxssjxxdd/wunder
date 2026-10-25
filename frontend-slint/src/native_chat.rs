@@ -188,8 +188,9 @@ struct InquiryQuestionState {
 /// toggle the web client's panel carries.
 #[derive(Clone, Default)]
 struct InquiryState {
-    /// Root user round that owns this panel; answers continue this round.
-    root_user_round: i64,
+    /// Durable turn id of the waiting panel. The answer is admitted as a new
+    /// user turn and uses this id only to settle the old waiting turn.
+    inquiry_turn_id: String,
     questions: Vec<InquiryQuestionState>,
     page: usize,
     expanded: bool,
@@ -214,6 +215,44 @@ impl InquiryState {
                 .questions
                 .iter()
                 .all(|question| Self::is_answered(question))
+    }
+
+    /// Stable client-side identity for one published panel. A late durable
+    /// refresh may replay the same pending payload after the answer was sent;
+    /// this key lets the native composer suppress that replay without keeping
+    /// the full panel alive indefinitely.
+    fn consumption_key(&self, session: &str) -> String {
+        let mut key = format!("{}:{}", session, self.inquiry_turn_id);
+        for question in &self.questions {
+            key.push('|');
+            key.push_str(&question.question);
+            key.push(if question.multiple { 'm' } else { 's' });
+            for option in &question.options {
+                key.push('|');
+                key.push_str(&option.label);
+            }
+        }
+        key
+    }
+
+    /// Advance the guided single-choice flow. Multiple-choice questions stay
+    /// on the current page so the user can finish the combination; the final
+    /// completed single-choice answer asks the caller to submit exactly once.
+    fn advance_after_answer(&mut self, index: usize) -> bool {
+        if self
+            .questions
+            .get(index)
+            .is_some_and(|question| question.multiple)
+            || !self.questions.get(index).is_some_and(Self::is_answered)
+        {
+            return false;
+        }
+        if index + 1 < self.questions.len() {
+            self.page = index + 1;
+            self.expanded = false;
+            return false;
+        }
+        self.ready()
     }
 
     fn toggle_option(&mut self, index: usize, option: usize) {
@@ -318,6 +357,15 @@ impl InquiryState {
 /// Project a `question_panel` payload into panel state. The tool already
 /// normalizes and bounds the payload; `None` means there is nothing to show.
 fn inquiry_from_payload(data: &Value) -> Option<InquiryState> {
+    // Durable replay carries the panel after its owning turn has been settled.
+    // Only pending panels belong in the interactive composer; answered or
+    // dismissed history must remain visible in the old bubble without reopening.
+    if matches!(
+        data.get("status").and_then(Value::as_str),
+        Some("answered" | "dismissed" | "completed")
+    ) {
+        return None;
+    }
     let questions: Vec<InquiryQuestionState> = data["questions"]
         .as_array()?
         .iter()
@@ -353,7 +401,7 @@ fn inquiry_from_payload(data: &Value) -> Option<InquiryState> {
         .take(4)
         .collect();
     (!questions.is_empty()).then_some(InquiryState {
-        root_user_round: 0,
+        inquiry_turn_id: String::new(),
         questions,
         page: 0,
         expanded: false,
@@ -414,6 +462,9 @@ struct State {
     /// Live 问询面板 per thread: the panel outlives the turn that published it,
     /// and an entry is dropped as soon as it is answered or dismissed.
     inquiries: std::collections::HashMap<String, InquiryState>,
+    /// Bounded replay fence for answered panels. The map itself is bounded by
+    /// the visible conversation list; keep only the most recent keys here.
+    consumed_inquiries: std::collections::VecDeque<String>,
     /// Submissions the engine parked for this window: one bounded subscriber
     /// each, drained on every tick so whichever turn actually started can take
     /// the live slot.
@@ -643,6 +694,7 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
         plans: std::collections::HashMap::new(),
         plan_sig: String::new(),
         inquiries: std::collections::HashMap::new(),
+        consumed_inquiries: std::collections::VecDeque::new(),
         parked: VecDeque::new(),
         queue_cache: Vec::new(),
         queue_generation: Arc::new(AtomicU64::new(0)),
@@ -1001,12 +1053,12 @@ fn restore_thread_extras(
     {
         if let Some(inquiry) = inquiry_from_payload(&panel) {
             let mut inquiry = inquiry;
-            inquiry.root_user_round = turns
+            inquiry.inquiry_turn_id = turns
                 .iter()
                 .rev()
                 .find(|turn| turn.question_panel.as_ref() == Some(&panel))
-                .map(|turn| turn.user.user_round)
-                .unwrap_or(0);
+                .map(|turn| turn.root_id.clone())
+                .unwrap_or_default();
             state.inquiries.insert(session.to_string(), inquiry);
         }
     }
@@ -1061,6 +1113,26 @@ fn publish_inquiry(app: &MainWindow, session: &str, state: &State) {
     app.set_inquiry_questions(ModelRc::new(VecModel::from(rows)));
 }
 
+fn inquiry_was_consumed(state: &State, key: &str) -> bool {
+    !key.is_empty() && state.consumed_inquiries.iter().any(|item| item == key)
+}
+
+fn remember_consumed_inquiry(state: &mut State, key: String) {
+    if key.is_empty() || inquiry_was_consumed(state, &key) {
+        return;
+    }
+    state.consumed_inquiries.push_back(key);
+    while state.consumed_inquiries.len() > 64 {
+        state.consumed_inquiries.pop_front();
+    }
+}
+
+fn forget_consumed_inquiry(state: &mut State, key: &str) {
+    if let Some(index) = state.consumed_inquiries.iter().position(|item| item == key) {
+        state.consumed_inquiries.remove(index);
+    }
+}
+
 /// One visible question row. `index` is the question's ordinal in the published
 /// panel (not the row position), which is what every callback addresses.
 fn inquiry_row(index: usize, question: &InquiryQuestionState) -> InquiryQuestion {
@@ -1103,16 +1175,20 @@ fn inquiry_interaction(
     state: &RefCell<State>,
     row: i32,
     change: &dyn Fn(&mut InquiryState, usize),
-) {
-    let Some(app) = weak.upgrade() else { return };
+) -> bool {
+    let Some(app) = weak.upgrade() else {
+        return false;
+    };
     let session = app.get_active_session_id().to_string();
     let mut current = state.borrow_mut();
     let Some(panel) = current.inquiries.get_mut(&session) else {
-        return;
+        return false;
     };
     let index = inquiry_question_index(panel, row);
     change(panel, index);
+    let submit = panel.advance_after_answer(index);
     publish_inquiry(&app, &session, &current);
+    submit
 }
 
 fn bind_inquiry(app: &MainWindow, state: Rc<RefCell<State>>) {
@@ -1121,27 +1197,42 @@ fn bind_inquiry(app: &MainWindow, state: Rc<RefCell<State>>) {
         let weak = weak.clone();
         let state = state.clone();
         move |row, option| {
-            inquiry_interaction(&weak, &state, row, &move |panel, index| {
+            let submit = inquiry_interaction(&weak, &state, row, &move |panel, index| {
                 panel.toggle_option(index, option.max(0) as usize)
             });
+            if submit {
+                if let Some(app) = weak.upgrade() {
+                    app.invoke_send_message();
+                }
+            }
         }
     });
     app.on_inquiry_no_preference({
         let weak = weak.clone();
         let state = state.clone();
         move |row| {
-            inquiry_interaction(&weak, &state, row, &|panel, index| {
+            let submit = inquiry_interaction(&weak, &state, row, &|panel, index| {
                 panel.toggle_no_preference(index)
             });
+            if submit {
+                if let Some(app) = weak.upgrade() {
+                    app.invoke_send_message();
+                }
+            }
         }
     });
     app.on_inquiry_use_recommended({
         let weak = weak.clone();
         let state = state.clone();
         move |row| {
-            inquiry_interaction(&weak, &state, row, &|panel, index| {
+            let submit = inquiry_interaction(&weak, &state, row, &|panel, index| {
                 panel.use_recommended(index)
             });
+            if submit {
+                if let Some(app) = weak.upgrade() {
+                    app.invoke_send_message();
+                }
+            }
         }
     });
     app.on_inquiry_other_edited({
@@ -1964,6 +2055,13 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
             .get(&session)
             .filter(|panel| panel.ready())
             .cloned();
+        let inquiry_key = answered
+            .as_ref()
+            .map(|panel| panel.consumption_key(&session))
+            .unwrap_or_default();
+        if answered.is_some() && inquiry_was_consumed(&state.borrow(), &inquiry_key) {
+            return;
+        }
         let content = match answered.as_ref() {
             Some(panel) => {
                 let reply = panel.reply();
@@ -2023,7 +2121,9 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
         // Only an answered panel was carried out by this turn. Ordinary
         // messages must leave an unanswered panel available to the user.
         if answered.is_some() {
-            state.borrow_mut().inquiries.remove(&session);
+            let mut current = state.borrow_mut();
+            current.inquiries.remove(&session);
+            remember_consumed_inquiry(&mut current, inquiry_key.clone());
         }
         publish_inquiry(&app, &session, &state.borrow());
         // An answered inquiry is a user reply even before the worker finishes
@@ -2073,10 +2173,10 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
                     content: content.clone(),
                     client_message_id: Some(client_message_id.clone()),
                     reasoning_effort,
-                    root_user_round: answered
+                    inquiry_turn_id: answered
                         .as_ref()
-                        .map(|panel| panel.root_user_round)
-                        .filter(|round| *round > 0),
+                        .map(|panel| panel.inquiry_turn_id.clone())
+                        .filter(|id| !id.is_empty()),
                     attachments,
                 })
             };
@@ -2168,6 +2268,7 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
                             }
                             if let Some(panel) = answered {
                                 let mut st = state.borrow_mut();
+                                forget_consumed_inquiry(&mut st, &inquiry_key);
                                 st.inquiries.entry(session.clone()).or_insert(panel);
                                 if same_thread {
                                     publish_inquiry(&app, &session, &st);
@@ -3246,11 +3347,17 @@ fn start_timer(app: &MainWindow, state: Rc<RefCell<State>>) {
                                 if state.inquiries.len() > 64 {
                                     state.inquiries.clear();
                                 }
-                                state.inquiries.insert(session.clone(), {
-                                    let mut panel = panel;
-                                    panel.root_user_round = active.user_round;
-                                    panel
-                                });
+                                let mut panel = panel;
+                                panel.inquiry_turn_id = event_data(&event)
+                                    .get("turn_id")
+                                    .and_then(Value::as_str)
+                                    .or_else(|| event.get("turn_id").and_then(Value::as_str))
+                                    .unwrap_or_default()
+                                    .to_string();
+                                let key = panel.consumption_key(&session);
+                                if !inquiry_was_consumed(&state, &key) {
+                                    state.inquiries.insert(session.clone(), panel);
+                                }
                                 app.set_title_inquiry_count(state.inquiries.len() as i32);
                                 if app.get_active_session_id() == session.as_str() {
                                     publish_inquiry(&app, &session, &state);

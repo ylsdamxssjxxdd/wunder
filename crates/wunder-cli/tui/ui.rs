@@ -1,3 +1,4 @@
+pub(crate) mod centered_picker;
 mod command_center;
 mod composer;
 mod layout;
@@ -15,13 +16,7 @@ pub fn draw(frame: &mut Frame, app: &mut TuiApp) {
     let is_zh = app.is_zh_language();
     if app.trajectory_view_open() {
         trajectory::draw(frame, frame.area(), app, is_zh);
-        if let Some(lines) = app.approval_modal_lines() {
-            modals::draw_approval_modal(frame, frame.area(), frame.area(), lines, is_zh);
-        } else if let Some(lines) = app.remote_approval_modal_lines() {
-            modals::draw_approval_modal(frame, frame.area(), frame.area(), lines, is_zh);
-        } else if let Some(lines) = app.inquiry_modal_lines() {
-            modals::draw_inquiry_modal(frame, frame.area(), frame.area(), lines, is_zh);
-        }
+        draw_blocking_choice(frame, app);
         return;
     }
     if let Some(view) = app.command_center_view() {
@@ -71,9 +66,7 @@ pub fn draw(frame: &mut Frame, app: &mut TuiApp) {
     app.set_mouse_regions(layout.transcript, layout.input);
     composer::draw_input(frame, layout.input, app, is_zh);
 
-    if let Some((rows, selected)) = app.resume_picker_rows() {
-        modals::draw_resume_modal(frame, frame.area(), rows, selected, is_zh);
-    }
+    draw_blocking_choice(frame, app);
 
     if app.shortcuts_visible() {
         modals::draw_shortcuts_modal(frame, frame.area(), app.shortcuts_lines(), is_zh);
@@ -82,13 +75,19 @@ pub fn draw(frame: &mut Frame, app: &mut TuiApp) {
     if let Some(lines) = app.warning_panel_lines(is_zh) {
         modals::draw_shortcuts_modal(frame, frame.area(), lines, is_zh);
     }
+}
 
-    if let Some(lines) = app.approval_modal_lines() {
-        modals::draw_approval_modal(frame, frame.area(), layout.input, lines, is_zh);
-    } else if let Some(lines) = app.remote_approval_modal_lines() {
-        modals::draw_approval_modal(frame, frame.area(), layout.input, lines, is_zh);
-    } else if let Some(lines) = app.inquiry_modal_lines() {
-        modals::draw_inquiry_modal(frame, frame.area(), layout.input, lines, is_zh);
+/// 审批、提问与线程恢复是打断了当前回合的三种选择，都以 codex 的
+/// 居中选择面板浮在整个视口中央；同一时刻至多一个在等待回答。
+fn draw_blocking_choice(frame: &mut Frame, app: &mut TuiApp) {
+    if let Some(spec) = app.resume_picker_spec() {
+        centered_picker::draw(frame, frame.area(), &spec);
+    } else if let Some(spec) = app.approval_modal_spec() {
+        centered_picker::draw(frame, frame.area(), &spec);
+    } else if let Some(spec) = app.remote_approval_modal_spec() {
+        centered_picker::draw(frame, frame.area(), &spec);
+    } else if let Some(spec) = app.inquiry_modal_spec() {
+        centered_picker::draw(frame, frame.area(), &spec);
     }
 }
 

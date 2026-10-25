@@ -10,6 +10,8 @@ on:
   push:
     paths:
       - 'packaging/**'
+      - 'scripts/win-ia32-compositor/**'
+      - 'scripts/linux-ubuntu18-compositor/**'
       - '.github/workflows/desktop-supplements.yml'
 
 # 补充包基本不变：构建输入（打包脚本/清单/requirements/Dockerfile）决定缓存键，
