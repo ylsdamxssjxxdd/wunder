@@ -240,6 +240,16 @@ impl ThreadRuntime {
         }
         request.client_message_id =
             normalize_client_message_id(request.client_message_id.as_deref());
+        // The chat surface uses this private request override when a user is
+        // answering an inquiry. Capture it before stripping scheduler-owned
+        // fields so the continuation is admitted under the original root
+        // round and the waiting bubble can be settled by the new execution.
+        let inquiry_root_user_round = request
+            .config_overrides
+            .as_ref()
+            .and_then(|value| value.get("__root_user_round"))
+            .and_then(Value::as_i64)
+            .filter(|round| *round > 0);
         if let Some(overrides) = request
             .config_overrides
             .as_mut()
@@ -250,6 +260,7 @@ impl ThreadRuntime {
             overrides.remove("__queue_priority");
             overrides.remove("__thread_log_turn_id");
             overrides.remove("__thread_log_user_round");
+            overrides.remove("__root_user_round");
         }
         request.enforce_runtime_queue = true;
         let agent_id = normalize_agent_id(request.agent_id.as_deref());
@@ -318,7 +329,7 @@ impl ThreadRuntime {
             "role": "user", "content": request.question,
             "client_message_id": request.client_message_id, "attachments": request.attachments,
             "meta": goal_meta,
-            "root_user_round": root_user_round,
+            "root_user_round": inquiry_root_user_round.or(root_user_round),
             "local_open_lease": request.config_overrides.as_ref().and_then(|v| v.get("__local_open_lease")),
         });
         let storage = self.user_store.storage_backend().clone();

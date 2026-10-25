@@ -634,7 +634,10 @@ export const chatSendActions = {
           ...(attachments.length > 0 ? { attachments } : {}),
           ...(desktopToolCallMode ? { tool_call_mode: desktopToolCallMode } : {}),
           ...(approvalMode ? { approval_mode: approvalMode } : {}),
-          ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {})
+          ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
+          ...(Number.isSafeInteger(Number(options.rootUserRound ?? options.root_user_round)) && Number(options.rootUserRound ?? options.root_user_round) > 0
+            ? { root_user_round: Number(options.rootUserRound ?? options.root_user_round) }
+            : {})
         };
         chatDebugLog('chat.llm.request', 'submit-start', {
           sessionId,

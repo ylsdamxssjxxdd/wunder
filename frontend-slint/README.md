@@ -55,12 +55,12 @@ powershell -ExecutionPolicy Bypass -File builders/build-win7-offline.ps1 -CargoC
 
 2026-09-23 完整原生 Win7 x86 Release 构建与 PE 门禁通过，产物约 76.6 MiB。该 32 位产物在当前 Windows 主机的隔离回归通过（`target/frontend-slint/native-win7-check-20260923-a/`）：聊天与全部已接入页面、配置重启回读，50,999 字节、184 次刷新、最大 UI 投影应用 1.010 ms、积压 30/128、峰值工作集约 70.6 MiB。无参数启动、重启及启动中关闭另经 `target/frontend-slint/native-win7-launch-20260923-a/` 验证，未创建 bridge 子进程或本机监听。**尚未在 Win7 真机执行**；编译、导入门禁及当前系统运行结果不能替代真机验证。
 
-Release 输出：`target/frontend-slint/dist/win7-x86/wunder-frontend-slint-0.1.0-win7-x86.exe`。构建脚本会检查最终 PE 是否为 i386，并拒绝 Win7 不支持的 WinRT/API Set 导入。
+Release 输出：`target/frontend-slint/dist/win7-x86/wunder-frontend-slint-0.2.0-win7-x86.exe`。构建脚本会检查最终 PE 是否为 i386，并拒绝 Win7 不支持的 WinRT/API Set 导入。
 
 ## 原生冒烟检查
 
 ```powershell
-wunder-frontend-slint-0.1.0-win7-x86.exe --smoke-check frontend-slint/artifacts/native
+wunder-frontend-slint-0.2.0-win7-x86.exe --smoke-check frontend-slint/artifacts/native
 ```
 
 它会生成 `smoke.txt` 和各页面的浅色截图，并通过真实指针事件验证侧边栏单击切换，再检查输入限制、会话隔离、任务切换、有界历史、新任务、专家编辑、模型编辑和默认项切换。
@@ -97,7 +97,7 @@ Rust 1.92 和 Cargo vendor 从同级 `Rust-builder/kylin-arm` 挂载，构建完
 
 ```bash
 bash frontend-slint/scripts/check-linux-arm64-appimage.sh \
-  target/slint/dist/linux-arm64/wunder-slint-0.1.0-linux-arm64.AppImage
+  target/slint/dist/linux-arm64/wunder-slint-0.2.0-linux-arm64.AppImage
 ```
 
 AppImage 启动时把 `WUNDER_TEMPD` 和 `WUNDER_WORK` 放到用户数据目录，不会写入只读的

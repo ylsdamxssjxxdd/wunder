@@ -723,6 +723,46 @@ async fn completed_inquiry_control_stays_pending_with_plan_after_reopen() {
 }
 
 #[tokio::test]
+async fn inquiry_continuation_replaces_waiting_head_for_chat_projection() {
+    let root = tempfile::tempdir().unwrap();
+    let db = SqliteStorage::new(root.path().join("state_1.sqlite").to_string_lossy().into_owned());
+    db.ensure_initialized().unwrap();
+    let admitted = db
+        .accept_thread_turn(USER, THREAD, &json!({"content":"Fixture question"}))
+        .unwrap();
+    let parent = admitted["turn_id"].as_str().unwrap().to_string();
+    super::test_support::freeze_thread(root.path(), USER, THREAD);
+    super::test_support::begin_turn(root.path(), USER, THREAD, &parent);
+    let inquiry = crate::services::thread_log::event_item(THREAD, "question_panel", &json!({
+        "turn_id": parent,
+        "questions": [{"question":"Fixture choice?","options":[{"label":"Option A"}]}]
+    })).unwrap();
+    db.append_thread_item(USER, &inquiry).unwrap();
+    db.update_thread_turn(USER, THREAD, &parent, "waiting_input", "question_panel", &json!({})).unwrap();
+
+    let child = db
+        .accept_thread_turn(USER, THREAD, &json!({"content":"Fixture answer", "root_user_round": 1}))
+        .unwrap();
+    let child_id = child["turn_id"].as_str().unwrap().to_string();
+    super::test_support::begin_turn(root.path(), USER, THREAD, &child_id);
+    let answer = crate::services::thread_log::event_item(THREAD, "llm_output", &json!({
+        "turn_id": child_id,
+        "model_round": 1,
+        "content":"Fixture completed answer"
+    })).unwrap();
+    db.append_thread_item(USER, &answer).unwrap();
+    db.update_thread_turn(USER, THREAD, &child_id, "completed", "", &json!({})).unwrap();
+
+    let page = db.thread_view_page(USER, THREAD, "chat", None, 10).unwrap();
+    let row = &page.chat[0];
+    assert_eq!(row.root_turn_id, parent);
+    assert_eq!(row.execution_turn_id, child_id);
+    assert_eq!(row.status, "completed");
+    assert_eq!(row.assistant.question_panel.as_ref().unwrap().status, "answered");
+    assert_eq!(page.runtime_status, "completed");
+}
+
+#[tokio::test]
 async fn private_completed_items_do_not_block_public_replay_pagination() {
     let root = tempfile::tempdir().unwrap();
     let store = LocalThreadStore::open(root.path()).unwrap();

@@ -1229,6 +1229,7 @@ async fn admit_turn(
         client_message_id,
         attachments,
         None,
+        None,
     )
     .await
     {

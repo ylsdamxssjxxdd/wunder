@@ -188,6 +188,8 @@ struct InquiryQuestionState {
 /// toggle the web client's panel carries.
 #[derive(Clone, Default)]
 struct InquiryState {
+    /// Root user round that owns this panel; answers continue this round.
+    root_user_round: i64,
     questions: Vec<InquiryQuestionState>,
     page: usize,
     expanded: bool,
@@ -351,6 +353,7 @@ fn inquiry_from_payload(data: &Value) -> Option<InquiryState> {
         .take(4)
         .collect();
     (!questions.is_empty()).then_some(InquiryState {
+        root_user_round: 0,
         questions,
         page: 0,
         expanded: false,
@@ -997,6 +1000,13 @@ fn restore_thread_extras(
         .find_map(|turn| turn.question_panel.clone())
     {
         if let Some(inquiry) = inquiry_from_payload(&panel) {
+            let mut inquiry = inquiry;
+            inquiry.root_user_round = turns
+                .iter()
+                .rev()
+                .find(|turn| turn.question_panel.as_ref() == Some(&panel))
+                .map(|turn| turn.user.user_round)
+                .unwrap_or(0);
             state.inquiries.insert(session.to_string(), inquiry);
         }
     }
@@ -2063,6 +2073,10 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
                     content: content.clone(),
                     client_message_id: Some(client_message_id.clone()),
                     reasoning_effort,
+                    root_user_round: answered
+                        .as_ref()
+                        .map(|panel| panel.root_user_round)
+                        .filter(|round| *round > 0),
                     attachments,
                 })
             };
@@ -3232,7 +3246,11 @@ fn start_timer(app: &MainWindow, state: Rc<RefCell<State>>) {
                                 if state.inquiries.len() > 64 {
                                     state.inquiries.clear();
                                 }
-                                state.inquiries.insert(session.clone(), panel);
+                                state.inquiries.insert(session.clone(), {
+                                    let mut panel = panel;
+                                    panel.root_user_round = active.user_round;
+                                    panel
+                                });
                                 app.set_title_inquiry_count(state.inquiries.len() as i32);
                                 if app.get_active_session_id() == session.as_str() {
                                     publish_inquiry(&app, &session, &state);

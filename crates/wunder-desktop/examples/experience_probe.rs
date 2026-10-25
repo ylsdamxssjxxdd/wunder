@@ -132,6 +132,7 @@ fn send(desktop: &NativeDesktop, session: &str, content: &str, id: &str) -> Resu
         content: content.into(),
         client_message_id: Some(id.into()),
         reasoning_effort: None,
+        root_user_round: None,
         attachments: Vec::new(),
     })
 }

@@ -136,6 +136,8 @@ pub struct NativeChatInput {
     pub content: String,
     pub client_message_id: Option<String>,
     pub reasoning_effort: Option<String>,
+    /// Existing user round to continue when this send answers an inquiry.
+    pub root_user_round: Option<i64>,
     /// Local UI attachments retain their original data URL until the shared
     /// runtime persists them into the workspace attachment store.
     pub attachments: Vec<NativeChatAttachment>,

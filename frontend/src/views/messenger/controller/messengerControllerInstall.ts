@@ -13546,6 +13546,15 @@ function installMessengerControllerAgentMessageCommands(ctx: MessengerController
       const activeInquiry = ctx.activeAgentInquiryPanel.value;
       const inquiryAnswers = ctx.agentInquirySelection.value;
       const hasInquirySelection = inquiryAnswers.length > 0;
+      const inquiryRootUserRound = activeInquiry
+          ? Number(
+              activeInquiry.message.user_round ??
+              activeInquiry.message.userRound ??
+              (activeInquiry.message.display as Record<string, unknown> | undefined)?.user_round ??
+              (activeInquiry.message.raw as Record<string, unknown> | undefined)?.user_round ??
+              0
+            )
+          : 0;
       if (!content && attachments.length === 0 && !hasInquirySelection)
           return;
       const localCommand = ctx.parseAgentLocalCommand(content);
@@ -13621,6 +13630,9 @@ function installMessengerControllerAgentMessageCommands(ctx: MessengerController
               attachments,
               suppressQueuedNotice: hasInquirySelection,
               approvalMode,
+              ...(activeInquiry && hasInquirySelection && Number.isSafeInteger(inquiryRootUserRound) && inquiryRootUserRound > 0
+                  ? { rootUserRound: inquiryRootUserRound }
+                  : {}),
               ...(reasoningEffort ? { reasoningEffort } : {})
           });
           if (ctx.chatStore.activeSessionId) {

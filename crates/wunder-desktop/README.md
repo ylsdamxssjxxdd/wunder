@@ -45,7 +45,7 @@ cargo tauri build -f desktop -c tauri.bundle.tmp.json --bundles nsis --no-sign -
 ## 产物路径
 
 - 可执行文件：`target/release/wunder-desktop.exe`
-- 安装包：`target/release/bundle/nsis/wunder-desktop_0.1.0_x64-setup.exe`
+- 安装包：`target/release/bundle/nsis/wunder-desktop_0.2.0_x64-setup.exe`
 - Tauri/Cargo 产物统一写入仓库根 `target/`
 
 ## Win7 x86 试构建（隔离实验）
