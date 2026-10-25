@@ -618,6 +618,7 @@ fn sample(
     );
     handshake("go")?;
     emit(json!({"event":"measurement_start"}));
+    let blocking_before = wunder_server::runtime_metrics::snapshot().blocking;
     let began = Instant::now();
     let mut m = Measurements::default();
     if let Some(d) = &desktop {
@@ -721,6 +722,35 @@ fn sample(
         drop(d);
     }
     let elapsed = began.elapsed().as_secs_f64() * 1000.0;
+    // Reuse production counters without adding a benchmark mode to the app.
+    // The interval includes correctness reads and concurrent background work;
+    // these totals locate expensive operations, not exclusive request spans.
+    let mut blocking = wunder_server::runtime_metrics::snapshot()
+        .blocking
+        .into_iter()
+        .filter_map(|after| {
+            let before = blocking_before
+                .iter()
+                .find(|before| before.kind == after.kind && before.label == after.label);
+            let calls = after.calls.saturating_sub(before.map_or(0, |b| b.calls));
+            (calls > 0).then(|| {
+                json!({
+                    "kind": after.kind, "label": after.label, "calls": calls,
+                    "total_queue_ms": (after.avg_queue_ms * after.calls as f64
+                        - before.map_or(0.0, |b| b.avg_queue_ms * b.calls as f64)).max(0.0),
+                    "total_exec_ms": (after.avg_exec_ms * after.calls as f64
+                        - before.map_or(0.0, |b| b.avg_exec_ms * b.calls as f64)).max(0.0),
+                })
+            })
+        })
+        .collect::<Vec<_>>();
+    ensure!(blocking.len() <= 256, "blocking diagnostic budget exceeded");
+    blocking.sort_by(|a, b| {
+        b["total_exec_ms"]
+            .as_f64()
+            .unwrap()
+            .total_cmp(&a["total_exec_ms"].as_f64().unwrap())
+    });
     if case == "recovery_seed" {
         fs::write(
             root.join("recovery.json"),
@@ -731,7 +761,8 @@ fn sample(
     }
     emit(
         json!({"event":"result","samples_ms":[elapsed],"startup_ms":startup_ms,
-        "check":{"assertions":m.checks,"metrics":m.values,"scope":"backend","model":"loopback-fixed-v1"}}),
+        "check":{"assertions":m.checks,"metrics":m.values,"scope":"backend","model":"loopback-fixed-v1",
+        "diagnostics":{"blocking":blocking}}}),
     );
     handshake("done")?;
     drop(desktop);

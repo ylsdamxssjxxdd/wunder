@@ -1,0 +1,87 @@
+# Used only by scripts/experience-bench/measure-hive.py with an owned env file.
+services:
+  server:
+    image: ${FIXTURE_IMAGE}
+    platform: linux/amd64
+    working_dir: /fixture/runtime
+    entrypoint: []
+    command: ["/fixture/server"]
+    volumes:
+      - ${FIXTURE_ROOT}:/fixture
+      - ${FIXTURE_BINARY}:/fixture/server:ro
+    ports:
+      - "127.0.0.1::18000"
+    environment:
+      WUNDER_CONFIG_PATH: /fixture/config.json
+      WUNDER_STORAGE_BACKEND: postgres
+      WUNDER_STORAGE_DATA_ROOT: /fixture/data
+      WUNDER_POSTGRES_DSN: postgresql://fixture:${FIXTURE_PASSWORD}@postgres:5432/fixture
+      WUNDER_HOST: 0.0.0.0
+      WUNDER_PORT: "18000"
+      WUNDER_WORKSPACE_ROOT: /fixture/workspaces
+      WUNDER_USER_TOOLS_ROOT: /fixture/user-tools
+      WUNDER_TEMP_DIR_ROOT: /fixture/files
+      WUNDER_VECTOR_KNOWLEDGE_ROOT: /fixture/vectors
+      WUNDER_SERVER_WORKER_THREADS: "4"
+      RUST_LOG: warn
+    depends_on:
+      postgres:
+        condition: service_healthy
+      model:
+        condition: service_started
+  sandbox:
+    image: ${FIXTURE_IMAGE}
+    platform: linux/amd64
+    working_dir: /tmp
+    entrypoint: []
+    command: ["/fixture/server"]
+    volumes:
+      - ${FIXTURE_BINARY}:/fixture/server:ro
+      - ${FIXTURE_ROOT}/config.json:/fixture/config.json:ro
+      - ${FIXTURE_ROOT}/workspaces:/fixture/workspaces
+      - ${FIXTURE_ROOT}/sandbox-data:/fixture/data
+    ports:
+      - "127.0.0.1::9001"
+    environment:
+      WUNDER_SERVER_MODE: sandbox
+      WUNDER_CONFIG_PATH: /fixture/config.json
+      WUNDER_STORAGE_BACKEND: postgres
+      WUNDER_STORAGE_DATA_ROOT: /fixture/data
+      WUNDER_POSTGRES_DSN: postgresql://fixture:${FIXTURE_PASSWORD}@postgres:5432/fixture
+      WUNDER_HOST: 0.0.0.0
+      WUNDER_PORT: "9001"
+      WUNDER_WORKSPACE_ROOT: /fixture/workspaces
+      WUNDER_SERVER_WORKER_THREADS: "4"
+      RUST_LOG: warn
+    depends_on:
+      postgres:
+        condition: service_healthy
+  postgres:
+    image: postgres:16
+    # Test-only instrumentation; production images/configuration are untouched.
+    command: ["postgres", "-c", "shared_preload_libraries=pg_stat_statements",
+              "-c", "compute_query_id=on", "-c", "pg_stat_statements.track=all",
+              "-c", "pg_stat_statements.track_utility=off", "-c", "pg_stat_statements.save=off"]
+    environment:
+      POSTGRES_DB: fixture
+      POSTGRES_USER: fixture_audit
+      POSTGRES_PASSWORD: ${FIXTURE_PASSWORD}
+    volumes:
+      - database:/var/lib/postgresql/data
+      - ${FIXTURE_ROOT}/postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U fixture_audit -d fixture"]
+      interval: 1s
+      timeout: 3s
+      retries: 60
+  model:
+    image: ${FIXTURE_IMAGE}
+    platform: linux/amd64
+    entrypoint: []
+    command: ["python3", "/driver/mock_model.py", "--chunks", "${FIXTURE_CHUNKS}"]
+    volumes:
+      - ${FIXTURE_DRIVER}:/driver:ro
+    ports:
+      - "127.0.0.1::18090"
+volumes:
+  database:

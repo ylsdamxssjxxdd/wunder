@@ -127,13 +127,19 @@ if [ -d "$WORK/npm-cache/_cacache" ]; then
 fi
 
 # ---------- 清单 ----------
-printf '%s\n' \
-  "NODE_VERSION=$NODE_VERSION" \
-  "REMOTION_VERSION=$REMOTION_VERSION" \
-  "REACT_VERSION=$REACT_VERSION" \
-  "EXTRA_DEPS=${EXTRA_DEPS:-}" \
-  "BROWSER=$browser_rel" \
-  > "$OUT_DIR/manifest.env"
+# manifest.env 可能还有 Blender 等其他运行时的条目：保留非本脚本条目，更新本脚本条目。
+{
+  if [ -f "$OUT_DIR/manifest.env" ]; then
+    grep -vE '^(NODE_VERSION|REMOTION_VERSION|REACT_VERSION|EXTRA_DEPS|BROWSER)=' "$OUT_DIR/manifest.env" || true
+  fi
+  printf '%s\n' \
+    "NODE_VERSION=$NODE_VERSION" \
+    "REMOTION_VERSION=$REMOTION_VERSION" \
+    "REACT_VERSION=$REACT_VERSION" \
+    "EXTRA_DEPS=${EXTRA_DEPS:-}" \
+    "BROWSER=$browser_rel"
+} > "$OUT_DIR/manifest.env.tmp"
+mv "$OUT_DIR/manifest.env.tmp" "$OUT_DIR/manifest.env"
 
 printf '%s\n' "[runtime] done"
 ls -lh "$OUT_DIR"/*.tar.gz | awk '{print "  " $9, $5}'

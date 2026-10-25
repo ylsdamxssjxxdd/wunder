@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>美术设计稿 | 使用说明书</title>
+  <meta name="description" content="蛹桌面端的十张界面设计稿：总览、基础规范、图标、外壳、时间线、过程与工具、计划与问询、输入区、设置与弹窗、交互状态与动效。每张都按 1:1 逻辑像素标注，可直接对照实现。">
+  <link rel="stylesheet" href="/docs/site.css?v=4aa263bfd7b3">
+  <script type="module" src="/docs/site.js?v=4aa263bfd7b3"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/art/index","language":"zh-CN","title":"美术设计稿","summary":"蛹桌面端的十张界面设计稿：总览、基础规范、图标、外壳、时间线、过程与工具、计划与问询、输入区、设置与弹窗、交互状态与动效。每张都按 1:1 逻辑像素标注，可直接对照实现。","updated_at":"2026-10-25","read_when":[],"source_docs":[],"tab":"界面","group":"美术","group_path":["美术"],"url":"/docs/zh-CN/art/","headings":[{"id":"section-1","level":1,"text":"美术设计稿"},{"id":"section-2","level":2,"text":"00 整体总览"},{"id":"section-3","level":2,"text":"01 基础规范"},{"id":"section-4","level":2,"text":"02 图标系统"},{"id":"section-5","level":2,"text":"03 外壳与侧栏"},{"id":"section-6","level":2,"text":"04 会话时间线"},{"id":"section-7","level":2,"text":"05 过程与工具"},{"id":"section-8","level":2,"text":"06 计划与问询"},{"id":"section-9","level":2,"text":"07 输入区"},{"id":"section-10","level":2,"text":"08 设置与弹窗"},{"id":"section-11","level":2,"text":"09 交互状态与动效"},{"id":"section-12","level":2,"text":"维护方式"}],"prev_slug":"zh-CN/surfaces/desktop-ui","next_slug":"zh-CN/capabilities/index","markdown":"# 美术设计稿\n\n这一组图是蛹桌面端的界面基线。每张图同时给出尺寸、间距、颜色和状态，代码以图为准；图与代码冲突时，先核对实机再决定改哪边。\n\n- 源文件在 `docs/wunder美术设计稿`，每张都是可单独打开的 SVG，图标已内嵌，单张拷走也能完整显示\n- 页面直接展示 SVG，可缩放；也可以打开[设计稿索引](/docs/art/)，按缩略图浏览全部十张\n- 蛹的帮助手册另外内嵌同一批图的位图预览，避免在 Slint 里引入 SVG 渲染链\n\n## 00 整体总览\n\n整窗基线：1462×866 逻辑像素，侧栏 240、阅读列 1000、输入区固定 154 高。侧栏、时间线、输入区放在同一张图里，方便对照布局。\n\n![整体总览设计稿](/docs/art/00-整体总览.svg)\n\n*00 整体总览 · 窗口 1462×866（参考截图 2558×1515，175% DPI）*\n\n## 01 基础规范\n\n中性色、强调色、语义色、字阶、间距尺度、圆角和窗口布局基线。颜色与尺寸 token 与 `frontend-slint/ui/design_tokens.slint` 一一对应。\n\n![基础规范设计稿](/docs/art/01-基础规范.svg)\n\n*01 基础规范 · 色彩、文字、间距、圆角*\n\n## 02 图标系统\n\n品牌图标、工具图标、状态图标和线性图标的重绘规则。应用图标是蛹；蜂标只保留为渠道与协作的辅助标识，不再出现在程序图标上。\n\n![图标系统设计稿](/docs/art/02-图标系统.svg)\n\n*02 图标系统 · 品牌、工具、状态与线性图标*\n\n## 03 外壳与侧栏\n\n标题栏、侧栏宽度、分组、工作区行、线程行、工作目录工具条，以及分隔柄在静止、悬停、拖拽三态下的尺寸。侧栏分隔柄静止时不画条，悬停显示 2×32 胶囊。\n\n![外壳与侧栏设计稿](/docs/art/03-外壳与侧栏.svg)\n\n*03 外壳与侧栏 · 标题栏、侧栏、分隔柄*\n\n## 04 会话时间线\n\n阅读列与滚动、用户消息、回合页脚、运行状态胶囊、Markdown 降级样式和空态。流式输出只更新活动尾块，历史块保持稳定。\n\n![会话时间线设计稿](/docs/art/04-会话时间线.svg)\n\n*04 会话时间线 · 消息、页脚、状态胶囊*\n\n## 05 过程与工具\n\n工作过程条、思考条目、工具行、展开后的输出面板、工具组和子智能体卡。各状态的图标、折叠预算与缩进关系都在图里。\n\n![过程与工具设计稿](/docs/art/05-过程与工具.svg)\n\n*05 过程与工具 · 过程条、工具行、子智能体*\n\n## 06 计划与问询\n\n计划胶囊、展开卡片、目标横幅和问询面板。选项行包含「无偏好」与「其他」，问询底部不设独立提交键。\n\n![计划与问询设计稿](/docs/art/06-计划与问询.svg)\n\n*06 计划与问询 · 计划卡、目标横幅、问询面板*\n\n## 07 输入区\n\n输入卡 972×100、底栏 30 高、附件行、录音中、生成中与发送停用等状态，以及队列和模型菜单的规格。停止方块 10.5，发送箭头 16。\n\n![输入区设计稿](/docs/art/07-输入区.svg)\n\n*07 输入区 · 输入卡、底栏、停止与队列*\n\n## 08 设置与弹窗\n\n设置行解剖、输入与选择控件、按钮、校验与提示，以及弹窗的密度和层级关系。\n\n![设置与弹窗设计稿](/docs/art/08-设置与弹窗.svg)\n\n*08 设置与弹窗 · 设置行、控件、校验*\n\n## 09 交互状态与动效\n\n行与输入状态、动效时间表、性能红线、键位、无障碍反馈和断点。长列表与流式输出期间哪些操作不能阻塞，也写在这一张。\n\n![交互状态与动效设计稿](/docs/art/09-交互状态与动效.svg)\n\n*09 交互状态与动效 · 状态、时间表、键位*\n\n## 维护方式\n\n改完 SVG 后在本仓库根目录运行一次：\n\n```bash\npython scripts/sync_art.py\n```\n\n它会依次完成三件事：\n\n1. 把 SVG 渲染成 1200px PNG，写到 `frontend-slint/assets/help/art`（蛹内嵌用）\n2. 用这些 PNG 重建蛹的中英手册 JSON\n3. 重建文档站，并把 SVG 复制到 `web/docs/art`；复制时自动把应用图标内嵌为 data URI\n\nWeb 端重建站点后即生效；蛹需要重新编译桌面程序，预览图是用 `include_bytes!` 编进二进制的。\n\n新增或删除分页时，除了图本身，还要同步三处：`scripts/render_art_previews.py` 的 `SHEETS`、`scripts/build_help_manual.py` 的 `ART_TOPICS`、以及画廊 `docs/wunder美术设计稿/index.html`；本页的章节也补上，然后再运行同步脚本。不要手改 `frontend-slint/assets/help/art` 里的 PNG。\n","source_path":"使用说明书/zh-CN/art/index.md"}</script>
+</body>
+</html>

@@ -12,6 +12,7 @@ mod cloud_threads;
 mod code_highlight;
 mod companion_pet;
 mod companion_sprite;
+mod completion_notice;
 mod cron_ui;
 mod demo;
 mod demo_entities;

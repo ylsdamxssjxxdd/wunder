@@ -14,33 +14,10 @@ use uuid::Uuid;
 
 const MAX_TRACKED_JOBS: usize = 8;
 
-/// Where the bulk writer should run. Built by each entry point from its own
-/// storage configuration.
-pub enum StressStorageTarget {
-    Local { storage_root: String },
-}
-
-impl StressStorageTarget {
-    /// Derive the target from storage config using the same backend
-    /// classification as `factory::build_storage`.
-    pub fn from_config(storage: &crate::config::StorageConfig) -> Result<Self, String> {
-        let backend = storage.backend.trim().to_lowercase();
-        let backend = if backend.is_empty() {
-            "sqlite"
-        } else {
-            backend.as_str()
-        };
-        match backend {
-            "sqlite" | "default" | "postgres" | "postgresql" | "pg" | "auto" => Ok(Self::Local {
-                storage_root: storage.data_root.clone(),
-            }),
-            other => Err(format!("unknown storage backend: {other}")),
-        }
-    }
-}
-
 pub struct StartStressJobRequest {
-    pub target: StressStorageTarget,
+    /// Injected thread store selects the active runtime profile. Service
+    /// generation uses PostgreSQL; embedded profiles retain local SQLite.
+    pub thread_store: Arc<crate::storage::RuntimeThreadStore>,
     pub user_id: String,
     /// Service session catalog used by the normal chat/session APIs. The
     /// canonical writer owns the thread history, while this catalog entry
@@ -136,7 +113,7 @@ pub fn validate_stress_params(user_rounds: i64, model_rounds_per_turn: i64) -> R
 /// progress is observable through `stress_job_status`.
 pub fn start_stress_thread_job(request: StartStressJobRequest) -> Result<Value, String> {
     let StartStressJobRequest {
-        target,
+        thread_store,
         user_id,
         user_store,
         user_rounds,
@@ -201,26 +178,26 @@ pub fn start_stress_thread_job(request: StartStressJobRequest) -> Result<Value, 
             crate::core::blocking::run_to_completion(
                 crate::core::blocking::BlockingKind::Db,
                 "stress_thread.generate",
-                move || match target {
-                    StressStorageTarget::Local { storage_root } => {
-                        let runtime = tokio::runtime::Builder::new_current_thread()
-                            .enable_all()
-                            .build()?;
-                        let store =
-                            crate::storage::thread_store::LocalThreadStore::open(storage_root)?;
-                        runtime.block_on(store.generate_stress_thread(
-                            &owner,
-                            &spec,
-                            |done_rounds, items_written| {
-                                update_progress(&job_for_progress, done_rounds, items_written);
-                                if let Some(orchestrator) = thread_updates.as_ref() {
-                                    // The writer invokes progress only after
-                                    // rollout, projection and admission commit.
-                                    orchestrator.notify_thread_committed(&session_for_progress, 0);
-                                }
-                            },
-                        ))
-                    }
+                move || {
+                    // Service stores bridge synchronous PostgreSQL operations
+                    // through block_in_place; a current-thread runtime panics.
+                    let runtime = tokio::runtime::Builder::new_multi_thread()
+                        .worker_threads(2)
+                        .max_blocking_threads(4)
+                        .enable_all()
+                        .build()?;
+                    runtime.block_on(thread_store.generate_stress_thread(
+                        &owner,
+                        &spec,
+                        |done_rounds, items_written| {
+                            update_progress(&job_for_progress, done_rounds, items_written);
+                            if let Some(orchestrator) = thread_updates.as_ref() {
+                                // The writer invokes progress only after its
+                                // canonical and admission records commit.
+                                orchestrator.notify_thread_committed(&session_for_progress, 0);
+                            }
+                        },
+                    ))
                 },
             )
             .await;

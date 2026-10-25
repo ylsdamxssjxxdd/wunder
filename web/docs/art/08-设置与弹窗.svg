@@ -1,0 +1,322 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1990" viewBox="0 0 1600 1990" role="img" aria-label="蛹 桌面端设置与弹窗设计规范">
+  <title>08 设置与弹窗 · 蛹 Desktop UI Spec</title>
+  <defs>
+    <filter id="dlgShadow" x="-20%" y="-20%" width="140%" height="160%">
+      <feDropShadow dx="0" dy="24" stdDeviation="24" flood-color="#000000" flood-opacity="0.22"/>
+    </filter>
+    <filter id="toastShadow" x="-20%" y="-20%" width="140%" height="180%">
+      <feDropShadow dx="0" dy="3" stdDeviation="12" flood-color="#000000" flood-opacity="0.10"/>
+    </filter>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="s-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4v-.2a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.6-1H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3A1.7 1.7 0 0 0 10 3v-.2h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="s-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.5"/><path d="M4.5 21a7.5 7.5 0 0 1 15 0"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="s-brain" viewBox="0 0 24 24"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="s-toolbox" viewBox="0 0 24 24"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M3 12h18M10 12v2h4v-2"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="s-robot" viewBox="0 0 24 24"><rect x="4" y="7" width="16" height="12" rx="3"/><path d="M12 3v4M9 12h.01M15 12h.01M9 16h6"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="s-paw" viewBox="0 0 24 24"><circle cx="7" cy="8" r="2"/><circle cx="12" cy="6" r="2"/><circle cx="17" cy="8" r="2"/><path d="M6 14a6 6 0 0 0 12 0c0-2-2-3-3.5-2.5A4 4 0 0 1 9.5 11.5C8 11 6 12 6 14Z"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="s-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.2V12l3 2"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="s-chip" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="s-plug" viewBox="0 0 24 24"><path d="M8 3v5M16 3v5M6 8h12v3a6 6 0 0 1-12 0zM12 17v4"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="s-book" viewBox="0 0 24 24"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H11v17H6.5A2.5 2.5 0 0 0 4 22zM20 5.5A2.5 2.5 0 0 0 17.5 3H13v17h4.5A2.5 2.5 0 0 1 20 22z"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="s-archive" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="5" rx="1.5"/><path d="M5 9v9a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9M9 13h6"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="s-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6"/><path d="m15 15 5 5"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="s-x" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="s-check" viewBox="0 0 24 24"><path d="m5 12.5 4.2 4.2L19 7"/></symbol>
+  </defs>
+  <style>
+    svg{font-family:'Microsoft YaHei UI','Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif;fill:#1F2329}
+    .mono{font-family:Consolas,'SFMono-Regular','Cascadia Mono',monospace}
+    .h1{font-size:30px;font-weight:700;letter-spacing:-.4px}
+    .sub{font-size:13px;fill:#7C7A75}
+    .kicker{font-size:11px;font-weight:600;letter-spacing:1.4px;fill:#E07A12}
+    .sect{font-size:16px;font-weight:700}
+    .sect-en{font-size:10px;font-weight:600;letter-spacing:1.6px;fill:#A8A39B}
+    .card{fill:#FFFFFF;stroke:#DED9D1;stroke-width:1}
+    .card-t{font-size:12px;font-weight:700}
+    .note{font-size:11px;fill:#7C7A75}
+    .tiny{font-size:10px;fill:#8A8F99}
+    .mono10{font-family:Consolas,monospace;font-size:10px;fill:#8A8F99}
+    .mono9{font-family:Consolas,monospace;font-size:9px;fill:#8A8F99}
+    .ui14{font-size:14px}.ui13{font-size:13px}.ui12{font-size:12px}.ui11{font-size:11px}.ui10{font-size:10px}
+    .muted{fill:#8A8F99}.sub2{fill:#3D3D3D}
+  </style>
+
+  <rect width="1600" height="1990" fill="#F4F1EC"/>
+  <g id="header">
+    <text x="80" y="52" class="kicker">WUNDER / 蛹 · DESKTOP UI SPEC</text>
+    <text x="80" y="93" class="h1">08　设置与弹窗</text>
+    <text x="80" y="120" class="sub">设置是覆盖在会话之上的内部窗口；默认即时保存，不设全局保存按钮。弹窗统一使用半透明遮罩。</text>
+    <text x="1520" y="52" text-anchor="end" class="mono" font-size="11" fill="#8A8F99">SHEET 08 / 09</text>
+    <text x="1520" y="94" text-anchor="end" class="mono" font-size="12" fill="#3D3D3D">SETTINGS · CONTROLS · DIALOGS</text>
+    <line x1="80" y1="140" x2="1520" y2="140" stroke="#D8D5D0"/>
+  </g>
+
+  <!-- ================= SETTINGS SHELL ================= -->
+  <g id="settings">
+    <rect x="80" y="178" width="6" height="16" rx="2" fill="#F58A24"/>
+    <text x="98" y="192" class="sect">设置面板</text>
+    <text x="194" y="192" class="sect-en">SETTINGS SHEET · 1080 × 720</text>
+
+    <!-- scrim hint -->
+    <rect x="60" y="206" width="1120" height="760" rx="4" fill="#000000" opacity=".18"/>
+    <g filter="url(#dlgShadow)">
+      <rect x="80" y="220" width="1080" height="720" rx="14" fill="#FFFFFF" stroke="#D8D5D0"/>
+    </g>
+
+    <!-- header -->
+    <text x="102" y="248" class="ui14" font-weight="600">设置</text>
+    <rect x="1108" y="230" width="28" height="28" rx="8" fill="#F6F5F3"/>
+    <use href="#s-x" x="1115" y="237" width="14" height="14" color="#3D3D3D"/>
+    <line x1="80" y1="264" x2="1160" y2="264" stroke="#E8E6E3"/>
+
+    <!-- nav -->
+    <rect x="80" y="264" width="260" height="676" fill="#F6F5F3"/>
+    <line x1="340" y1="264" x2="340" y2="940" stroke="#E8E6E3"/>
+    <rect x="96" y="280" width="228" height="30" rx="8" fill="#FFFFFF" stroke="#D8D5D0"/>
+    <use href="#s-search" x="106" y="289" width="12" height="12" color="#8A8F99"/>
+    <text x="126" y="299" class="ui11" fill="#8A8F99">搜索设置项</text>
+
+    <!-- nav items -->
+    <g>
+      <!-- selected general -->
+      <rect x="92" y="322" width="236" height="54" rx="12" fill="#F58A24"/>
+      <circle cx="116" cy="349" r="18" fill="#FFFFFF" opacity=".24"/>
+      <use href="#s-gear" x="108" y="341" width="16" height="16" color="#FFFFFF"/>
+      <text x="144" y="344" class="ui14" font-weight="600" fill="#FFFFFF">常规</text>
+      <text x="144" y="360" class="ui11" fill="#FFFFFF" opacity=".8">外观、语言与启动</text>
+
+      <circle cx="116" cy="403" r="18" fill="#F1EFEC"/><use href="#s-user" x="108" y="395" width="16" height="16" color="#8A8F99"/>
+      <text x="144" y="398" class="ui14" font-weight="600">账号</text><text x="144" y="414" class="ui11" fill="#8A8F99">登录与同步</text>
+      <circle cx="116" cy="457" r="18" fill="#F1EFEC"/><use href="#s-brain" x="108" y="449" width="16" height="16" color="#8A8F99"/>
+      <text x="144" y="452" class="ui14" font-weight="600">模型设置</text><text x="144" y="468" class="ui11" fill="#8A8F99">端点、参数与默认模型</text>
+      <circle cx="116" cy="511" r="18" fill="#F1EFEC"/><use href="#s-toolbox" x="108" y="503" width="16" height="16" color="#8A8F99"/>
+      <text x="144" y="506" class="ui14" font-weight="600">工具管理</text><text x="144" y="522" class="ui11" fill="#8A8F99">内置、MCP 与用户工具</text>
+      <circle cx="116" cy="565" r="18" fill="#F1EFEC"/><use href="#s-robot" x="108" y="557" width="16" height="16" color="#8A8F99"/>
+      <text x="144" y="560" class="ui14" font-weight="600">智能体设置</text><text x="144" y="576" class="ui11" fill="#8A8F99">提示词、头像与预设问题</text>
+      <circle cx="116" cy="619" r="18" fill="#F1EFEC"/><use href="#s-paw" x="108" y="611" width="16" height="16" color="#8A8F99"/>
+      <text x="144" y="614" class="ui14" font-weight="600">桌宠</text><text x="144" y="630" class="ui11" fill="#8A8F99">宠物与互动</text>
+      <circle cx="116" cy="673" r="18" fill="#F1EFEC"/><use href="#s-clock" x="108" y="665" width="16" height="16" color="#8A8F99"/>
+      <text x="144" y="668" class="ui14" font-weight="600">定时任务</text><text x="144" y="684" class="ui11" fill="#8A8F99">计划与执行记录</text>
+      <circle cx="116" cy="727" r="18" fill="#F1EFEC"/><use href="#s-chip" x="108" y="719" width="16" height="16" color="#8A8F99"/>
+      <text x="144" y="722" class="ui14" font-weight="600">记忆碎片</text><text x="144" y="738" class="ui11" fill="#8A8F99">长期记忆与归档</text>
+      <circle cx="116" cy="781" r="18" fill="#F1EFEC"/><use href="#s-plug" x="108" y="773" width="16" height="16" color="#8A8F99"/>
+      <text x="144" y="776" class="ui14" font-weight="600">渠道设置</text><text x="144" y="792" class="ui11" fill="#8A8F99">消息渠道与账号</text>
+      <circle cx="116" cy="835" r="18" fill="#F1EFEC"/><use href="#s-book" x="108" y="827" width="16" height="16" color="#8A8F99"/>
+      <text x="144" y="830" class="ui14" font-weight="600">提示词包</text><text x="144" y="846" class="ui11" fill="#8A8F99">语言与默认提示词</text>
+      <circle cx="116" cy="889" r="18" fill="#F1EFEC"/><use href="#s-archive" x="108" y="881" width="16" height="16" color="#8A8F99"/>
+      <text x="144" y="884" class="ui14" font-weight="600">归档线程</text><text x="144" y="900" class="ui11" fill="#8A8F99">已归档会话</text>
+    </g>
+
+    <!-- content -->
+    <text x="368" y="300" font-size="18" font-weight="700">常规</text>
+    <text x="368" y="322" class="ui11" fill="#8A8F99">外观、语言与启动行为；修改后即时保存。</text>
+
+    <!-- card 1 -->
+    <rect x="368" y="344" width="664" height="214" rx="12" fill="#FFFFFF" stroke="#E8E6E3"/>
+    <text x="388" y="370" class="ui11" font-weight="700">外观</text>
+    <text x="1012" y="370" text-anchor="end" class="ui10" fill="#8A8F99">即时保存</text>
+    <line x1="388" y1="384" x2="1012" y2="384" stroke="#E8E6E3"/>
+    <text x="388" y="408" class="ui13" font-weight="600">强调色</text>
+    <text x="388" y="424" class="ui11" fill="#8A8F99">只改变强调色族，中性色保持暖白。</text>
+    <rect x="728" y="396" width="44" height="30" rx="8" fill="#F58A24" stroke="#F58A24"/><text x="750" y="416" text-anchor="middle" class="ui10" fill="#FFFFFF">橙</text>
+    <rect x="780" y="396" width="44" height="30" rx="8" fill="#16AD8D"/>
+    <rect x="832" y="396" width="44" height="30" rx="8" fill="#2F7A5C"/>
+    <rect x="884" y="396" width="44" height="30" rx="8" fill="#C08A2A"/>
+    <rect x="936" y="396" width="44" height="30" rx="8" fill="#8F9AAD"/>
+    <rect x="988" y="396" width="24" height="30" rx="8" fill="#F1EFEC"/>
+    <text x="1000" y="416" text-anchor="middle" class="ui11" fill="#8A8F99">…</text>
+
+    <line x1="388" y1="444" x2="1012" y2="444" stroke="#E8E6E3"/>
+    <text x="388" y="468" class="ui13" font-weight="600">会话字号</text>
+    <text x="388" y="484" class="ui11" fill="#8A8F99">12–20px；影响正文与时间线。</text>
+    <rect x="900" y="452" width="112" height="34" rx="17" fill="#FFFFFF" stroke="#D8D5D0"/>
+    <text x="916" y="474" class="ui13" fill="#8A8F99">−</text>
+    <text x="956" y="474" text-anchor="middle" class="ui13" font-weight="600">14px</text>
+    <text x="996" y="474" class="ui13" fill="#8A8F99">+</text>
+
+    <line x1="388" y1="500" x2="1012" y2="500" stroke="#E8E6E3"/>
+    <text x="388" y="524" class="ui13" font-weight="600">界面密度</text>
+    <text x="388" y="540" class="ui11" fill="#8A8F99">紧凑列表与工具事件。</text>
+    <rect x="866" y="510" width="146" height="34" rx="8" fill="#F8FAFC" stroke="#D8D5D0"/>
+    <text x="882" y="532" class="ui11">跟随系统</text>
+    <use href="#s-check" x="994" y="523" width="10" height="10" color="#F58A24"/>
+
+    <!-- card 2 -->
+    <rect x="368" y="574" width="664" height="180" rx="12" fill="#FFFFFF" stroke="#E8E6E3"/>
+    <text x="388" y="600" class="ui11" font-weight="700">语言与启动</text>
+    <line x1="388" y1="614" x2="1012" y2="614" stroke="#E8E6E3"/>
+    <text x="388" y="638" class="ui13" font-weight="600">界面语言</text>
+    <rect x="888" y="622" width="124" height="34" rx="8" fill="#FFFFFF" stroke="#D8D5D0"/>
+    <text x="900" y="644" class="ui11">简体中文</text>
+    <text x="998" y="644" class="ui11" fill="#8A8F99">▾</text>
+    <line x1="388" y1="670" x2="1012" y2="670" stroke="#E8E6E3"/>
+    <text x="388" y="694" class="ui13" font-weight="600">开机启动</text>
+    <text x="388" y="710" class="ui11" fill="#8A8F99">登录后自动打开蛹。</text>
+    <rect x="966" y="682" width="46" height="26" rx="13" fill="#F58A24"/>
+    <circle cx="999" cy="695" r="10" fill="#FFFFFF"/>
+    <line x1="388" y1="726" x2="1012" y2="726" stroke="#E8E6E3"/>
+    <text x="388" y="740" class="ui13" font-weight="600">关闭时最小化到托盘</text>
+    <rect x="966" y="731" width="46" height="26" rx="13" fill="#E9E8E5"/>
+    <circle cx="979" cy="744" r="10" fill="#FFFFFF"/>
+
+    <text x="368" y="786" class="tiny">设置页没有全局保存；每个控件变更即提交。仅复杂表单保留局部“保存配置”。</text>
+    <text x="368" y="804" class="tiny">导航列固定 260；内容区 padding 24；卡片 r12、1px 边框，卡内 padding 16 / 14。</text>
+  </g>
+
+  <g id="settings-spec">
+    <rect x="1200" y="200" width="320" height="404" rx="12" class="card"/>
+    <text x="1222" y="224" class="card-t">设置规格</text>
+    <text x="1498" y="224" text-anchor="end" class="mono9">1080 × 720</text>
+    <text x="1222" y="248" class="note">外壳 min(1080, w−72) × min(720, h−56)，r14。</text>
+    <text x="1222" y="268" class="note">遮罩 #00000040；卡下阴影 blur 24 / #00000033。</text>
+    <text x="1222" y="288" class="note">头部 44 高；标题 14/600；关闭 28×28。</text>
+    <text x="1222" y="308" class="note">导航 260 宽，背景 #F6F5F3，右 1px 分隔。</text>
+    <text x="1222" y="328" class="note">搜索 30 高 r8；距顶 16，左右 16。</text>
+    <text x="1222" y="348" class="note">导航项 60 高 r12；选中 accent 底白字。</text>
+    <text x="1222" y="368" class="note">图标底 36 圆；图标 18；标题 14/600，副题 11。</text>
+    <text x="1222" y="388" class="note">悬停 #FDF0DE；选中不叠悬停。</text>
+    <text x="1222" y="414" class="note">内容区 padding 24，卡间距 14。</text>
+    <text x="1222" y="434" class="note">卡头 18/700 + 11 副题 + 1px 线。</text>
+    <text x="1222" y="454" class="note">行上下 padding 12，间距 12；行间 1px。</text>
+    <text x="1222" y="474" class="note">标签 13/600；说明 11 muted。</text>
+    <text x="1222" y="494" class="note">选择器 160 / 132 × 38；输入框 36 r8。</text>
+    <text x="1222" y="514" class="note">字号步进器 106×34 r17；滑块 132×34。</text>
+    <text x="1222" y="534" class="note">主题卡 110 高 r10；开关走系统 Switch。</text>
+    <text x="1222" y="560" class="note">无全局保存；即时提交偏好。</text>
+    <text x="1222" y="580" class="note">Esc 关闭；点击遮罩关闭；打开时焦点移入。</text>
+  </g>
+
+  <!-- ================= CONTROLS ================= -->
+  <g id="controls">
+    <rect x="80" y="1040" width="6" height="16" rx="2" fill="#F58A24"/>
+    <text x="98" y="1054" class="sect">控制件</text>
+    <text x="178" y="1054" class="sect-en">ROWS · INPUTS · BUTTONS</text>
+
+    <rect x="80" y="1080" width="720" height="220" rx="12" class="card"/>
+    <text x="102" y="1104" class="card-t">设置行 · 解剖</text>
+    <text x="778" y="1104" text-anchor="end" class="mono10">padding 12 / gap 12</text>
+    <text x="102" y="1134" class="ui13" font-weight="600">强调色</text>
+    <text x="102" y="1152" class="ui11" fill="#8A8F99">只改变强调色族；中性色保持暖白。</text>
+    <rect x="660" y="1124" width="128" height="34" rx="8" fill="#FFFFFF" stroke="#D8D5D0"/>
+    <text x="674" y="1146" class="ui11">跟随系统</text><text x="770" y="1146" class="ui11" fill="#8A8F99">▾</text>
+    <line x1="102" y1="1176" x2="778" y2="1176" stroke="#E8E6E3"/>
+    <text x="102" y="1200" class="ui13" font-weight="600">启动</text>
+    <text x="102" y="1218" class="ui11" fill="#8A8F99">登录后自动打开。</text>
+    <rect x="756" y="1190" width="46" height="26" rx="13" fill="#F58A24"/><circle cx="789" cy="1203" r="10" fill="#FFFFFF"/>
+    <line x1="102" y1="1238" x2="778" y2="1238" stroke="#E8E6E3"/>
+    <text x="102" y="1262" class="ui13" font-weight="600">字号</text>
+    <rect x="628" y="1248" width="150" height="34" rx="17" fill="#FFFFFF" stroke="#D8D5D0"/><text x="646" y="1270" class="ui13" fill="#8A8F99">−</text><text x="700" y="1270" text-anchor="middle" class="ui13" font-weight="600">14px</text><text x="760" y="1270" class="ui13" fill="#8A8F99">+</text>
+    <text x="102" y="1296" class="tiny">行：36 高（不含说明）；左侧标签，右侧控件，控件垂直居中。</text>
+
+    <rect x="820" y="1080" width="700" height="220" rx="12" class="card"/>
+    <text x="842" y="1104" class="card-t">输入与选择</text>
+    <text x="1498" y="1104" text-anchor="end" class="mono10">36 / 38 · r8</text>
+    <rect x="842" y="1122" width="160" height="38" rx="8" fill="#FFFFFF" stroke="#D8D5D0"/><text x="854" y="1146" class="ui11">简体中文</text><text x="978" y="1146" class="ui11" fill="#8A8F99">▾</text>
+    <rect x="1018" y="1122" width="160" height="38" rx="8" fill="#FFFFFF" stroke="#F58A24"/><text x="1030" y="1146" class="ui11">聚焦输入</text>
+    <rect x="842" y="1170" width="336" height="36" rx="8" fill="#FFFFFF" stroke="#D8D5D0"/><text x="854" y="1193" class="ui11" fill="#8A8F99">占位文本</text>
+    <rect x="842" y="1216" width="336" height="36" rx="8" fill="#FDECEC" stroke="#D04A43"/><text x="854" y="1239" class="ui11">错误：地址不可用</text>
+    <rect x="842" y="1262" width="16" height="16" rx="4" fill="#F58A24"/><use href="#s-check" x="845" y="1265" width="10" height="10" color="#FFFFFF"/><text x="866" y="1275" class="ui11">已勾选</text>
+    <rect x="940" y="1262" width="16" height="16" rx="4" fill="#FFFFFF" stroke="#D8D5D0"/><text x="964" y="1275" class="ui11">未勾选</text>
+    <rect x="1060" y="1262" width="46" height="26" rx="13" fill="#F58A24"/><circle cx="1093" cy="1275" r="10" fill="#FFFFFF"/><text x="1116" y="1276" class="ui11">开关开</text>
+    <rect x="1180" y="1262" width="46" height="26" rx="13" fill="#E9E8E5"/><circle cx="1193" cy="1275" r="10" fill="#FFFFFF"/><text x="1236" y="1276" class="ui11">开关关</text>
+    <text x="842" y="1296" class="tiny">输入框 36 高；选择器 38；错误仅换边框为 danger 并追加 10px 文案。</text>
+
+    <rect x="80" y="1320" width="720" height="140" rx="12" class="card"/>
+    <text x="102" y="1334" class="card-t">按钮</text>
+    <rect x="102" y="1352" width="92" height="30" rx="8" fill="#F58A24"/><text x="148" y="1372" text-anchor="middle" class="ui12" fill="#FFFFFF">主要</text>
+    <rect x="206" y="1352" width="92" height="30" rx="8" fill="#FDF0DE" stroke="#F58A24"/><text x="252" y="1372" text-anchor="middle" class="ui12" fill="#E07A12">次要</text>
+    <rect x="310" y="1352" width="92" height="30" rx="8" fill="#FFFFFF" stroke="#D8D5D0"/><text x="356" y="1372" text-anchor="middle" class="ui12">描边</text>
+    <rect x="414" y="1352" width="92" height="30" rx="8" fill="#D04A43"/><text x="460" y="1372" text-anchor="middle" class="ui12" fill="#FFFFFF">危险</text>
+    <rect x="518" y="1352" width="92" height="30" rx="8" fill="#D8D5D0"/><text x="564" y="1372" text-anchor="middle" class="ui12" fill="#FFFFFF">停用</text>
+    <rect x="622" y="1352" width="92" height="30" rx="8" fill="#F58A24" stroke="#1F2329" stroke-width="2"/><text x="668" y="1372" text-anchor="middle" class="ui12" fill="#FFFFFF">焦点</text>
+    <text x="102" y="1404" class="tiny">Action 高 30 r8；主按钮 accent / 白字；焦点 1px accent 描边；停用透明度或 #D8D5D0。</text>
+    <text x="102" y="1422" class="tiny">图标按钮 30×30，图标 15；带标签按钮宽度 92 或 72/96。</text>
+
+    <rect x="820" y="1320" width="700" height="140" rx="12" class="card"/>
+    <text x="842" y="1334" class="card-t">校验与提示</text>
+    <rect x="842" y="1350" width="220" height="30" rx="6" fill="#F6F5F3" stroke="#E8E6E3"/><text x="852" y="1370" class="ui11" fill="#8A8F99">搜索…</text>
+    <rect x="1082" y="1350" width="220" height="30" rx="6" fill="#FFFFFF" stroke="#D8D5D0"/><text x="1092" y="1370" class="ui11">Esc 取消</text>
+    <text x="842" y="1400" class="tiny">错误信息紧随控件，10–11px danger；不改容器高度以外的布局。</text>
+    <text x="842" y="1420" class="tiny">禁用控件保留文字可读性；只去掉交互与强调色。</text>
+  </g>
+
+  <!-- ================= DIALOGS ================= -->
+  <g id="dialogs">
+    <rect x="80" y="1490" width="6" height="16" rx="2" fill="#F58A24"/>
+    <text x="98" y="1504" class="sect">弹窗与浮层</text>
+    <text x="194" y="1504" class="sect-en">MODAL · CONFIRM · INFO · TOAST</text>
+
+    <!-- confirm -->
+    <g id="confirm">
+      <rect x="80" y="1530" width="400" height="160" rx="14" fill="#000000" opacity=".04"/>
+      <g filter="url(#dlgShadow)">
+        <rect x="80" y="1530" width="400" height="160" rx="14" fill="#FFFFFF" stroke="#E8E6E3"/>
+      </g>
+      <text x="104" y="1562" class="ui13" font-weight="700">确认归档该线程？</text>
+      <text x="104" y="1590" class="ui11" fill="#8A8F99" wrap="wrap">归档后将从当前列表移除，可在「归档线程」中恢复。</text>
+      <rect x="266" y="1640" width="72" height="30" rx="8" fill="#F58A24"/><text x="302" y="1660" text-anchor="middle" class="ui12" fill="#FFFFFF">取消</text>
+      <rect x="346" y="1640" width="112" height="30" rx="8" fill="#D04A43"/><text x="402" y="1660" text-anchor="middle" class="ui12" fill="#FFFFFF">确认归档</text>
+      <text x="80" y="1712" class="tiny">ConfirmDialog 400×160；危险确认用 danger，取消仍为主色逃生。</text>
+    </g>
+
+    <!-- modal -->
+    <g id="modal">
+      <g filter="url(#dlgShadow)">
+        <rect x="520" y="1530" width="420" height="220" rx="14" fill="#FFFFFF" stroke="#E8E6E3"/>
+      </g>
+      <text x="544" y="1562" class="ui13" font-weight="700">重命名线程</text>
+      <text x="544" y="1590" class="ui11" fill="#8A8F99">名称会同步到侧栏与窗口标题。</text>
+      <rect x="544" y="1604" width="372" height="36" rx="8" fill="#FFFFFF" stroke="#F58A24"/>
+      <text x="556" y="1627" class="ui12">资料整理与结论</text>
+      <rect x="748" y="1668" width="72" height="30" rx="8" fill="#F1EFEC"/><text x="784" y="1688" text-anchor="middle" class="ui12">取消</text>
+      <rect x="828" y="1668" width="88" height="30" rx="8" fill="#F58A24"/><text x="872" y="1688" text-anchor="middle" class="ui12" fill="#FFFFFF">保存</text>
+      <text x="544" y="1730" class="tiny">ModalDialog 420×220；遮罩 #00000040；卡片 r14；点击外部可关闭（busy 时禁止）。</text>
+    </g>
+
+    <!-- info -->
+    <g id="info">
+      <g filter="url(#dlgShadow)">
+        <rect x="980" y="1530" width="540" height="300" rx="14" fill="#FFFFFF" stroke="#E8E6E3"/>
+      </g>
+      <text x="1004" y="1562" class="ui13" font-weight="600">关于本线程的执行日志</text>
+      <rect x="1464" y="1542" width="28" height="28" rx="8" fill="#F6F5F3"/><use href="#s-x" x="1471" y="1549" width="14" height="14" color="#3D3D3D"/>
+      <line x1="1004" y1="1578" x2="1496" y2="1578" stroke="#E8E6E3"/>
+      <text x="1004" y="1604" class="ui11" fill="#8A8F99">共 12 条事件 · 只读</text>
+      <rect x="1004" y="1616" width="492" height="112" rx="8" fill="#FBFAF8" stroke="#E8E6E3"/>
+      <text x="1016" y="1638" class="mono" font-size="11" fill="#3D3D3D">12:04:21  request    model: 标准模型</text>
+      <text x="1016" y="1658" class="mono" font-size="11" fill="#3D3D3D">12:04:22  tool       读取文件 · 42 行</text>
+      <text x="1016" y="1678" class="mono" font-size="11" fill="#3D3D3D">12:04:24  tool       写入文件 · 18 行</text>
+      <text x="1016" y="1698" class="mono" font-size="11" fill="#3D3D3D">12:04:28  answer     完成</text>
+      <text x="1004" y="1758" class="ui11" fill="#8A8F99">实际 InfoDialog 为 720×620；此处裁切展示结构。</text>
+      <rect x="1394" y="1782" width="102" height="30" rx="8" fill="#F58A24"/><text x="1445" y="1802" text-anchor="middle" class="ui12" fill="#FFFFFF">关闭</text>
+      <text x="980" y="1852" class="tiny">InfoDialog 720×620；长文本区域垂直拉伸，底部右对齐关闭。</text>
+    </g>
+
+    <!-- toast + menu + tooltip + button matrix -->
+    <rect x="80" y="1806" width="480" height="40" rx="12" fill="#FFFFFF" stroke="#E8E6E3" filter="url(#toastShadow)"/>
+    <circle cx="96" cy="1826" r="7" fill="#FDF0DE"/><use href="#s-check" x="92" y="1822" width="8" height="8" color="#E07A12"/>
+    <text x="114" y="1830" class="ui12">设置已保存</text>
+    <text x="80" y="1868" class="tiny">Toast 480×40，r12，阴影 blur 12；12px 文本；错误底 #FFF7F5。</text>
+
+    <g filter="url(#toastShadow)">
+      <rect x="600" y="1760" width="220" height="150" rx="12" fill="#FFFFFF" stroke="#E8E6E3"/>
+    </g>
+    <text x="616" y="1784" class="ui12">打开工作区文件夹</text>
+    <text x="616" y="1812" class="ui12">复制路径</text>
+    <rect x="608" y="1818" width="204" height="28" rx="8" fill="#FDF0DE"/><text x="616" y="1836" class="ui12" fill="#E07A12">归档线程</text>
+    <text x="616" y="1864" class="ui12" fill="#D04A43">删除线程</text>
+    <text x="600" y="1932" class="tiny">上下文菜单 220 宽 r12；行 28–34；危险项仅文字变红。</text>
+
+    <g filter="url(#toastShadow)">
+      <rect x="1160" y="1878" width="170" height="30" rx="8" fill="#1F2329"/>
+    </g>
+    <text x="1172" y="1897" class="ui11" fill="#FFFFFF">切换模型</text>
+    <text x="1160" y="1926" class="tiny">Tooltip 深底白字，10–11px；不抢焦点。</text>
+
+  </g>
+
+  <g id="footer">
+    <line x1="80" y1="1958" x2="1520" y2="1958" stroke="#D8D5D0"/>
+    <text x="80" y="1972" class="tiny">弹窗均以 Keyboard Esc 关闭；确认类默认焦点在取消，危险确认不默认聚焦删除。</text>
+    <text x="1520" y="1972" text-anchor="end" class="mono tiny">08 / 09</text>
+  </g>
+</svg>

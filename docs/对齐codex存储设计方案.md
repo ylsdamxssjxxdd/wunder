@@ -1,6 +1,6 @@
 # 对齐 Codex 存储设计方案
 
-> 状态：核心链路已实施并通过当前 SQLite 集成回归；当前交付目标是单节点本机与 Docker 服务部署验收。canonical rollout、可重建 SQLite 历史投影、分角色状态库、lineage、分页正文读取、冷 zstd 与有界实时链路已落地。实现不修复、迁移或清理旧数据库。
+> 状态：本地形态采用 canonical JSONL + 分角色 SQLite；舰体服务形态采用 PostgreSQL canonical 记录、控制状态与可重建展示索引。两种实现共享持久化策略、线程身份、分页、恢复和流式契约。当前验收范围为单节点本机与 Docker 服务部署；各项完成状态以对应测试报告为准。实现不修复、迁移或清理旧数据库。
 >
 > 依据：2026-10-21 核对的本地 Codex 参考源码快照。下文涉及 Codex 源码的路径均相对于参考工程的 `codex-rs/`；以 `crates/`、`frontend-slint/` 等开头的路径相对于 Wunder 仓库。参考快照未提供可确认的 Git 提交号，因此不标注虚构版本。
 
@@ -8,17 +8,19 @@
 
 蛹是本地 AI 工作台。用户应当能够打开历史线程、继续对话、查看已完成的工作过程，同时让空闲线程停止写入，让长期历史通过合理分层和冷压缩降低占用。
 
-本次目标是复刻 Codex 当前分页历史模式的存储架构及其行为：**rollout 是执行历史真相源，SQLite 分别承载线程状态、可重建历史投影、诊断日志及独立业务状态；运行时流式事件与持久化历史分开。** 不能只把现有大表搬到 JSONL 文件，也不能保留旧写入链后再增加一份 rollout。
+本次目标是复刻 Codex 当前分页历史模式的存储架构及其行为：**canonical 执行记录是历史真相源，线程状态、可重建历史投影、诊断及独立业务状态各有职责；运行时流式事件与持久化历史分开。本地由 JSONL + SQLite 实现，舰体由 PostgreSQL 实现。** 不能只把现有大表搬到 JSONL 文件，也不能保留旧写入链后再增加一份 rollout。
 
 重构遵循以下边界：
 
-- 不兼容旧数据库、旧历史格式、旧游标、旧接口及旧缓存。新实现使用新的存储根目录；旧目录不自动读入、转换或删除。
+- 不兼容旧数据库、旧历史格式、旧游标、旧接口及旧缓存。本地使用新的存储根目录，服务验收使用隔离的 PostgreSQL 数据库或 schema；旧目录和旧数据库不自动读入、转换或删除。
 - 使用 Codex 的新分页历史模式作为唯一模式，不移植其 Legacy 历史模式、历史迁移器和已经移除的兼容分支。
 - 后端契约、执行链、模型上下文恢复、历史查询、线程轨迹、各端订阅、监控和压测同步重构，最终删除旧实现。
 - 用户消息、已完成回复、已完成中间条目与工具执行过程按持久化策略保留。**不采用“每个用户轮次固定两条记录”的方案。**
 - 不为了节省空间修改已冻结的线程 system prompt，也不在后续轮次重新注入长期记忆。
-- wunder-core 定义契约和策略，wunder-runtime 实现存储及执行；蛹、舵机、舰体复用同一套实现。
+- wunder-core 定义契约和策略，wunder-runtime 实现存储及执行；蛹、舵机复用本地实现，舰体通过 PostgreSQL 实现同一契约。
 - 不复制 Codex 的产品专属账户字段、已移除功能或不适用的执行器。Wunder 必需的多租户、权限和调度能力以明确标注的扩展承接，不能伪称 Codex 已实现这些能力。
+
+第 5–12 节中的 JSONL 文件、SQLite 配置、文件锁、跨库 saga 和冷 zstd 规则适用于蛹与舵机；canonical 类型、持久化策略、分页及在线事件契约适用于全部形态。舰体使用第 13 节的 PostgreSQL 实现，不在服务进程中创建本地历史、状态、队列或日志数据库。
 
 “完全对齐”以事实边界、数据模型、写入顺序、分页语义、恢复方式、压缩与维护行为为准；不要求 Wunder 的文件能被 Codex 直接打开，也不把数据库文件名中的历史版本数字当作架构本身。所有必要差异集中列于第 19 节，禁止实施时悄悄变回旧架构。
 
@@ -41,11 +43,11 @@
 
 ### 当前实施状态
 
-已完成并通过当前定向测试的部分包括 canonical JSONL writer、有限写入队列、增量历史投影、稀疏 ordinal/keyset 分页、正文分段读取、lineage/fork/revert、共享前缀引用保护、冷 zstd 读取与物化、模型上下文恢复、admission 生命周期、控制状态订阅，以及蛹、舵机、蜂巢和服务接口对 canonical cursor 的切换。删除和回退已采用跨 `state_1.sqlite`、`queue_1.sqlite` 与 rollout 文件的持久意图 saga：删除会保留可重试的删除/回收记录，回退会记录新根及队列边界后分阶段发布。回退进程中断后的首次命中该线程访问只检查该线程的持久标记并定向恢复，不会启动全库扫描、空闲定时器或后台重试循环。压测入口已复用生产 admission、canonical 元数据创建、writer、projector 与读取链路；合成线程现在冻结带初始记忆标记的合成 system prompt，并将同一快照写入 `SessionMeta.initial_memory`，每轮模型项带有初始上下文 token breakdown。它仍是明确标记的合成 profile，不读取真实用户记忆库或运行时配置，因此不宣称等同真实用户内容分布。
+本地实现已有定向测试记录，覆盖 canonical JSONL writer、有限写入队列、增量历史投影、稀疏 ordinal/keyset 分页、正文分段读取、lineage/fork/revert、共享前缀引用保护、冷 zstd 读取与物化、模型上下文恢复、admission 生命周期、控制状态订阅及 canonical cursor 接口。该记录不能作为服务全 PostgreSQL 实现的验收结果。本地删除和回退采用跨 `state_1.sqlite`、`queue_1.sqlite` 与 rollout 文件的持久意图 saga：删除会保留可重试的删除/回收记录，回退会记录新根及队列边界后分阶段发布。回退进程中断后的首次命中该线程访问只检查该线程的持久标记并定向恢复，不会启动全库扫描、空闲定时器或后台重试循环。压测入口复用各形态生产 admission、canonical 元数据创建、writer、projector 与读取链路；合成线程冻结带初始记忆标记的合成 system prompt，并将同一快照写入 `SessionMeta.initial_memory`，每轮模型项带有初始上下文 token breakdown。它仍是明确标记的合成 profile，不读取真实用户记忆库或运行时配置，因此不宣称等同真实用户内容分布。
 
-仍需单独验收的边界是：舰体 PostgreSQL 目前只承载控制面；canonical 文件仍由单节点执行器的单 writer 持有，并要求绑定持久卷。PostgreSQL schema 会绑定首次使用的持久 canonical 根标识，第二个独立根会被拒绝，`auto` 也不会退回 SQLite 绕过保护；这用于保护当前单节点部署。多节点 owner/sticky routing、共享 canonical 文件、迁移和故障接管不属于本阶段交付范围，保留为后续架构扩展。压缩默认关闭，不能承诺固定压缩比例；Win7/Ubuntu 18.04 仅保留兼容性约束，本阶段不要求在对应真机上完成性能和空闲功耗验收。
+舰体服务版的线程 canonical 记录、会话元数据、admission 与排队状态、replay 游标、展示索引、工具运行指标及产物资源元数据均写入 PostgreSQL；服务启动和文件工具执行均不得创建本地线程历史、状态、队列或日志 SQLite。工作区文件、附件和浏览器缓存仍按工作区目录保存。蛹与舵机继续使用本地 SQLite/JSONL。当前只验收单节点本机与 Docker 部署，不引入多节点共享存储或故障接管。压缩默认关闭，不能承诺固定压缩比例；Win7/Ubuntu 18.04 仅保留兼容性约束，本阶段不要求在对应真机上完成性能和空闲功耗验收。
 
-当前 SQLite 集成回归已通过：runtime lib 2058 项通过、4 项显式 ignore，全部 runtime 集成测试通过（包含压缩恢复、gateway、canonical 存储、线程生命周期、队列、服务路由和重开回归）；蛹 `prompt_preview` 通过，服务端 gateway 回归通过，固定 seed 跨根重放通过。压缩恢复同时验证了统一的输出预留、安全余量、工具定义和请求包络预算，避免压缩 guard 通过后最终 admission 再次拒绝。PostgreSQL 根绑定的真实数据库集成用例需要隔离 DSN 与 schema 权限，因此保持显式 ignore；它的无外部服务单元覆盖已通过。上线前验收以本机单节点服务和 Docker 单容器服务为准：验证启动、持久卷重开、历史读取、空闲稳定性、CPU、内存和容量快照；不把 Win7/Ubuntu 18.04 真机性能或整机功耗作为本阶段门槛。
+此前 SQLite 集成回归记录为 runtime lib 2058 项通过、4 项显式 ignore，以及 runtime 集成测试、蛹 `prompt_preview`、gateway 和固定 seed 跨根重放回归；这些属于当时源码及本地后端测试范围，不能表示当前工作区或全 PostgreSQL 服务已通过。PostgreSQL 测试须使用隔离 DSN，覆盖真实数据库的 admission、canonical 事务、分页展示、重建及连接池释放；不使用“PostgreSQL 后端搭配本地 SQLite”作为服务回归。原本的本地 canonical 根标识绑定与对应测试已移除。上线前验收以本机单节点服务和 Docker 单节点服务为准：验证启动、持久卷重开、历史读取、空闲稳定性、CPU、内存和容量快照；不把 Win7/Ubuntu 18.04 真机性能或整机功耗作为本阶段门槛。当前服务的逐项通过状态应由第 16 节对应命令及产出的报告证明，未运行项保持待验证。
 
 压缩操作的业务结果（如 `done`、`fallback`、`skipped`）与完成条目的生命周期（`completed`、`failed`、`cancelled`）分别保存。可重开的聊天历史读取完成条目及其摘要元数据；模型上下文恢复则读取 `ResponseItem` 并应用 `Compacted` checkpoint。两者使用独立契约，避免摘要在重开时消失，或把工作过程事件误当成聊天正文。
 
@@ -56,11 +58,11 @@
 | 当前职责 | 当前主要入口 | 目标 |
 | --- | --- | --- |
 | 综合存储接口选择 SQLite/PostgreSQL | `storage_backend.rs`、`storage/factory.rs` | 拆成 ThreadStore 与独立状态仓库，取消“一种后端承接一切”的假设 |
-| 会话正文、工具日志、过程块、变更补丁 | `orchestrator/event_stream.rs`、`execute.rs`、`tool_exec.rs`、`services/workspace.rs` | 所有执行历史统一进入 canonical rollout writer |
+| 会话正文、工具日志、过程块、变更补丁 | `orchestrator/event_stream.rs`、`execute.rs`、`tool_exec.rs`、`services/workspace.rs` | 所有执行历史统一经过 canonical 持久化入口：本地 rollout writer、服务 PostgreSQL writer |
 | 持久化完成后通知界面 | `orchestrator/thread_log_committer.rs` | 由 ThreadStore 完成 flush、投影和发布；取消旧块日志提交器 |
 | turn/item/block/change 与额外视图投影 | SQLite/PostgreSQL 的 `thread_log_store`、`thread_view_store` | 用 Codex 形态的已完成条目投影替换，不叠加第三套正文 |
 | 线程实时观察与补水 | `thread_change_hub.rs`、`thread_change_feeder.rs` | 分离临时流序号与持久化历史位置，使用事件唤醒 |
-| 监控、诊断与执行事实混存 | `monitor_store`、`tool_logs` 等 | 诊断进入独立 logs DB；轻量监控指标独立于完整正文 |
+| 监控、诊断与执行事实混存 | `monitor_store`、`tool_logs` 等 | 本地诊断进入独立 logs DB，服务指标使用 PostgreSQL；轻量监控指标独立于完整正文 |
 | 压测直接插入旧日志和视图表 | `storage/*/stress_thread.rs` | 走生产 writer、持久化策略与 projector |
 
 工作目录内容多寡可能影响其他扫描任务，但线程存储层不得依赖工作目录遍历维持自身状态。本文解决存储产生的无效写入和放大；整个应用空闲 CPU 仍需通过采样分解，不能仅凭数据库文件变化推断全部消耗来自 SQLite。
@@ -87,6 +89,8 @@ flowchart TD
     S[用户和业务状态] --> B[state / queue / goals / memories]
 ```
 
+以上图示为本地实现。舰体中 canonical writer 将相同语义记录提交到 PostgreSQL，展示索引与提交水位由数据库事务维护，详细边界见第 13 节。
+
 各层职责：
 
 | 新组件 | 归属 | 唯一职责 |
@@ -94,6 +98,7 @@ flowchart TD
 | `ThreadStore`、`ThreadHistoryReader`、`ThreadMetadataStore` 等窄契约 | wunder-core | 以 ThreadId 操作线程；不暴露文件路径和数据库连接 |
 | canonical 类型、持久化分类和输出限制 | wunder-core | 定义哪些语义记录可保存，保证各端规则一致 |
 | `LocalThreadStore` | wunder-runtime | 编排线程生命周期、writer、lineage、投影与查询 |
+| `PostgresThreadStore` 与服务专用仓库 | wunder-runtime | canonical、admission 与展示索引在 PostgreSQL 中以事务协调，复用相同核心契约 |
 | `RolloutRecorder`、reader、compression | wunder-runtime | 文件格式、顺序写入、读取及表示转换 |
 | `ThreadHistoryProjector` | wunder-runtime | 从已 flush 的 rollout 增量生成 SQLite 投影 |
 | `RuntimeState` 与专用仓库 | wunder-runtime | 线程元数据、目标、队列、记忆和诊断日志 |
@@ -110,7 +115,7 @@ crates/wunder-runtime/src/storage/
   rollout/                # recorder、policy adapter、reader、compression
   thread_history/         # projector、SQLite schema、分页查询
   runtime_state/          # state、logs、queue、goals、memories
-  control_plane/          # 舰体额外业务状态的 SQLite/PostgreSQL 实现
+  postgres/               # 舰体 canonical、admission、展示索引及业务状态
 ```
 
 ## 5. 数据目录与事实归属
@@ -119,14 +124,11 @@ crates/wunder-runtime/src/storage/
 
 ```text
 <storage_root>/
-  sessions/YYYY/MM/DD/rollout-<time>-<thread_id>[_<rollout_id>].jsonl
-  archived_sessions/...
-  state_1.sqlite
-  thread_history_1.sqlite
-  logs_1.sqlite
-  queue_1.sqlite
-  goals_1.sqlite
-  memories_1.sqlite
+  sessions/               # 本地 canonical JSONL / JSONL.zst
+  state_1.sqlite          # 本地权威线程与业务状态
+  thread_history_1.sqlite # 本地可重建历史投影
+  logs_1.sqlite           # 本地限额诊断及轻量指标
+  queue_1.sqlite          # 本地 admission / 排队控制状态
   attachments/             # 必须持久保存的独立资源，不塞入日志正文
   tool-results/            # 有配额和有效期的工具结果溢出资源
   .tmp/                    # 压缩、恢复等临时文件与维护标记
@@ -147,7 +149,9 @@ crates/wunder-runtime/src/storage/
 | 图片、附件和需独立保存的产物 | attachments | 缺失不能伪称恢复完整 | 所有权与引用决定 |
 | 临时流式尾部、进度和活动状态 | 进程内有界状态 | 进程崩溃可能丢失 | 活动执行期 |
 
-舰体在控制面之下为每个用户配置不透明的 namespace；不能使用用户输入拼接磁盘路径。所有 namespace、线程和资源解析先做权限校验。默认蛹仅使用自己的本地 namespace，不引入服务版账户依赖。
+舰体的 PostgreSQL 数据目录由数据库容器的独立持久卷管理，不属于服务应用的 `<storage_root>`。服务应用目录只保存工作区文件、独立附件/产物与运行缓存，不写入 `.sqlite`、会话 JSONL 或 canonical 根所有权标记。
+
+舰体在 PostgreSQL 控制面和线程表之下为每个用户配置不透明的 namespace；不能使用用户输入拼接磁盘路径。所有 namespace、线程和资源解析先做权限校验。默认蛹仅使用自己的本地 namespace，不引入服务版账户依赖。
 
 ## 6. canonical rollout 数据模型
 
@@ -165,13 +169,13 @@ crates/wunder-runtime/src/storage/
 | `HistoryPosition` | `(rollout_id, end_ordinal_exclusive, end_byte_offset)`，精确表达继承与截断边界 |
 | `history_revision` | 读取快照/当前 lineage 的校验凭据；不是另一个不断更新的正文版本表 |
 
-第一个 rollout 可使用与 ThreadId 相同的标识，但类型必须区分。投影内部以 RolloutId 为分区键；不能因上游 schema 某列名叫 `thread_id`，就错误地把稳定 ThreadId 当成物理历史身份。
+第一个 rollout 可使用与 ThreadId 相同的标识，但类型必须区分。本地投影以 RolloutId 为分区键；不能因上游 schema 某列名叫 `thread_id`，就错误地把稳定 ThreadId 当成物理历史身份。服务当前记录按 `(ThreadId, ordinal)` 索引，`service_threads.rollout_id` 校验历史身份，`history_revision` 保存下一条 ordinal；服务 `HistoryPosition.end_byte_offset` 使用相同的逻辑 ordinal，不表示本地文件字节地址。
 
 用户发送一条消息计一轮用户轮次；模型每发起一次模型调用计一轮模型轮次，一次调用可以包含一批工具调用，最终回复属于该调用的产物。统计器同时报告模型请求、工具调用和总执行动作，不把 Codex 的 turn、item、ResponseItem 行数直接当作 Wunder 的模型轮次。
 
 ### 6.2 记录封装与类型
 
-采用与 Codex 相同的逐行 JSON 封装思路：`timestamp`、`ordinal`、`type`、`payload`，UTF-8，一条完整记录以换行结束。数据格式版本在 session 元数据中声明，不为每个 token 附加一份公共元数据。
+本地采用与 Codex 相同的逐行 JSON 封装思路：时间戳、`ordinal`、`type`、`payload`，UTF-8，一条完整记录以换行结束。服务将相同 canonical JSON 保存在 PostgreSQL 记录行中，由事务保证完整记录边界，不附加文件换行或本地偏移。不为每个 token 附加一份公共元数据。
 
 核心持久化变体对齐上游：
 
@@ -399,7 +403,7 @@ queue 保存已接受但未消费的用户提交，goals 保存当前目标状�
 
 订阅流程必须处理“建立订阅期间又有新事件”的竞态：先登记有界订阅，获取持久化水位与活动快照，在同一逻辑边界之后继续发事件。完成条目通过 ItemId 原位替换临时条目，不能复制出两条回复。
 
-慢消费者落后时，不无限保留所有 token；返回 resync 标记并以活动条目当前内容快照续接。同一进程内的重连、切页及重新打开活动线程应能看到尚未完成的当前尾部。已完成内容通过 rollout/SQLite 恢复；进程崩溃前尚未落到完成态的 token 不保证恢复，必须明确显示执行已中断。
+慢消费者落后时，不无限保留所有 token；返回 resync 标记并以活动条目当前内容快照续接。同一进程内的重连、切页及重新打开活动线程应能看到尚未完成的当前尾部。已完成内容从 canonical 历史恢复：本地使用 rollout/SQLite，服务使用 PostgreSQL；进程崩溃前尚未落到完成态的 token 不保证恢复，必须明确显示执行已中断。
 
 临时尾部和输出环形缓冲均有字节上限。很长的单个未完成条目若超过在线快照预算，只能显式标识流式预览受限；完成态保留文本仍按 canonical 策略处理。不能一边说内存有界，一边为每个未完成条目无限增长快照。
 
@@ -411,7 +415,7 @@ queue 保存已接受但未消费的用户提交，goals 保存当前目标状�
 
 上下文 token 预算只决定发送给模型的内容；历史保留策略决定用户还能查看什么；zstd 压缩只改变物理表示。三者必须有独立类型、独立配置和独立指标，禁止用一次“压缩历史”同时隐含删记录、改提示词和压磁盘文件。
 
-长期记忆只在线程初始化时注入。恢复原线程读取已冻结的初始指令；重新打开、切换前端或重建 SQLite 投影不得触发再次注入。
+长期记忆只在线程初始化时注入。恢复原线程读取已冻结的初始指令；重新打开、切换前端或重建 SQLite/PostgreSQL 展示投影不得触发再次注入。
 
 ## 10. fork、revert 与线程生命周期
 
@@ -469,7 +473,7 @@ thread_history 的删除/重建通过删除对应分区或重建新投影库完�
 
 ## 12. 诊断日志、监控与空闲行为
 
-执行历史不再借 `thread_log_changes` 充当诊断。诊断写入 `logs_1.sqlite`，采用参考工程的可审计基线：
+执行历史不再借 `thread_log_changes` 充当诊断。本地诊断写入 `logs_1.sqlite`，采用参考工程的可审计基线；服务端指标与资源元数据使用第 13 节的 PostgreSQL 表，不启动以下 SQLite 维护器：
 
 | 策略 | 值与限制 |
 | --- | --- |
@@ -492,9 +496,37 @@ thread_history 的删除/重建通过删除对应分区或重建新投影库完�
 
 蛹和舵机默认本地 ThreadStore + 独立 SQLite 根目录，离线时可用。两者不能各维护一套 JSONL 格式、投影 schema 或 context 恢复器。蛹的 NativeDesktop façade 暴露分页读取、内容分段、活动快照和订阅；Slint 使用虚拟列表/限量加载，已完成块稳定，活动尾部按帧合并。
 
-舰体的蜂巢经服务端调用相同 runtime 语义。本阶段只支持单节点服务：服务器执行器拥有本地 canonical 文件和持久卷，单一 writer 负责同一根的追加；多实例不能同时 append 同一 rollout，也不能以数据库乐观锁替代文件 writer 所有权。当前启动会在 canonical 根首次创建并同步一个不可变随机标识，再将同一标识绑定到 PostgreSQL schema 的控制面元数据；同一 schema 连接到另一独立根时会在 schema 初始化前被拒绝，根标识缺失、损坏或不可访问也会作为部署失败返回，`auto` 不会以 SQLite 回退绕过它。本地根还持有进程级 `.canonical-store.lock`，阻止两个本地执行器同时打开同一根。本阶段通过本机进程或 Docker 单容器、挂载持久卷的重启测试验证该边界；共享根的分布式租约、owner 路由、迁移和故障接管留作后续扩展。
+### 13.1 舰体的数据库边界
 
-PostgreSQL 保留给舰体控制面和多租户治理：身份、权限、单位、智能体定义、配额、发布、远程索引和路由。它不能再作为“把本地 thread_logs 所有表换成 PG”的平替。若将来需要服务端集中保存 rollout，须先定义对象存储/共享文件系统的 append、条件写、锁、归档与备份语义；未完成前不声称文件型 Codex 设计天然支持多节点并发写。
+蜂巢是随舰体提供的云端 AI 工作台。服务进程通过 `RuntimeThreadStore::Postgres` 复用引擎的 canonical 类型、持久化策略和前端事件协议；所有数据库职责都由 PostgreSQL 承载。服务构建默认启用 `postgres-storage`，启动要求 PostgreSQL 可用；`auto` 在服务运行形态中仍表示 PostgreSQL，初始化失败直接报错，不切换到 SQLite。
+
+| 职责 | PostgreSQL 持久化位置 | 权威性与边界 |
+| --- | --- | --- |
+| 线程目录与冻结配置 | `service_threads`、`service_thread_sessions` | 线程身份、当前 rollout、冻结 system prompt/初始记忆；不依赖文件根目录 |
+| canonical 完成历史与模型上下文 | `service_thread_records` | 每条记录保存 canonical JSON、ordinal、类型与必要索引字段；是服务历史真相源 |
+| 用户所有权与 admission 生命周期 | `service_thread_owners`、`service_thread_admissions` | 用户轮次、幂等消息身份、排队/执行/终态和待接纳输入；非可丢弃展示缓存 |
+| 展示分页与工作过程 | `service_thread_items`、`service_thread_chat_heads`、`service_thread_display_state` | 有界预览、稳定 ItemId 和增量投影水位；全文从 canonical 读取；允许按 canonical 重建 |
+| 用户反馈与展示控制 | 专用反馈/控制字段 | 点赞/点踩不改写已完成的 canonical 正文 |
+| 工具运行指标与产物索引 | `runtime_tool_metrics`、`runtime_artifact_resources` | 仅保存有界统计和资源元数据；完整工具结果属于 canonical，文件字节属于工作区/资源服务 |
+| 身份、权限、配额、智能体及其他业务状态 | 对应 PostgreSQL 业务表 | 各表遵守所属能力的权限与生命周期，不混入线程正文 |
+
+主服务、独立 sandbox 文件工具和压测生成器必须连接同一配置的 PostgreSQL 后端。`PostgresStorage` 不持有本地存储根、`LocalThreadStore` 或 `RuntimeLogs`，不会创建 `state_1.sqlite`、`queue_1.sqlite`、`thread_history_1.sqlite`、`logs_1.sqlite`、会话 JSONL 或根标识文件。数据库连接和初始化状态共享有界连接池，线程 store 的缓存使用弱引用，避免循环强引用导致连接池退出后不能释放。后端直接调用也可按需初始化，无需依赖某个 API 的特殊调用顺序。
+
+### 13.2 提交、回放与恢复
+
+按 ThreadId 串行追加 canonical 记录。单个 PostgreSQL 事务锁定目标线程、确认当前 revision、分配连续 ordinal，写入规范记录、必要展示索引和投影水位后提交。提交成功才发布 durable cursor；在线 token tail 只经过有界内存通道，不写入永久 delta/block/change 表。PostgreSQL commit 是服务端的持久确认边界，本地文件 flush/sync 与跨 SQLite saga 规则不用于服务事务。
+
+服务端 fork 在一个 PostgreSQL 事务中按稳定身份顺序锁定源、目标线程，检查所有者、目标不存在及已结束的用户轮次边界。选中用户轮次的所有续接执行也必须结束，缺失终止事实或混入后续轮次的边界直接拒绝。通过数据库内 `INSERT SELECT` 独立复制 admission、canonical 前缀及展示索引，客户端不读取整段历史；目标获得新 ThreadId、新 rollout 和指向源线程的 parent 元数据，冻结 system prompt、初始记忆和能力快照原样继承。已提交的队列输入不复制，应用信封中的线程身份按结构重绑，正文保持完整。服务端的 prefix 属于目标自身，删除源线程不影响目标，不建立本地 `history_base` 文件引用。
+
+断线恢复按 canonical ordinal 和稳定 ItemId 分页，跳过模型上下文记录时允许游标稀疏。聊天正文、思考、工具过程、额度/上下文用量和轨迹都从同一批 canonical 完成记录投影；不同 API 不能各生成一个随机助手条目。展开工作过程按用户根轮次与执行轮次读取；完成态替换相同 ItemId 的在线尾部，不能把同一轮思考显示两遍。后续计量和用户反馈属于独立控制状态，不重复追加完整回复正文。
+
+服务重启直接从 PostgreSQL 读取 session/admission/canonical 状态，并按请求追赶该线程缺失的展示投影。重建使用有界批次和水位，不扫描全库，不为恢复在本地生成 JSONL。空闲线程不定时写入 heartbeat、正文或游标。数据库自身的 WAL、checkpoint、autovacuum 与连接维护需单独归因，不将数据库物理文件永不变化作为线程层的验收条件。
+
+### 13.3 单节点部署和运维
+
+本阶段只验收一个服务执行节点及一个 PostgreSQL 实例，可在本机或隔离 Docker Compose 中运行。PostgreSQL 数据卷负责数据库持久化，工作区/附件卷负责文件字节持久化；两者分别备份，引用与权限信息保存在数据库。JSONL 导出是用户显式触发的输出格式，不能反向成为服务运行的第二份权威历史；服务不启动本地 rollout 冷压缩任务。
+
+不设置本地 canonical 根标识与 PostgreSQL schema 的绑定，不维护文件 writer 租约。多节点调度、共享工作区、分布式执行所有权和故障接管不属于本阶段交付，也不能仅因改用 PostgreSQL 就宣称已支持。容量报告分别记录数据库总字节、相关表及索引字节、逻辑 canonical 字节和资源文件字节，不把本地 SQLite/WAL 字节填入 PostgreSQL 结果。
 
 远程 API 必须进行 tenant/owner/thread 权限校验后再取得 ThreadId 的 metadata、投影或资源。内部 RolloutId、文件位置、锁状态与 SQLite 错误不得直接作为外部 API 返回值。
 
@@ -508,7 +540,7 @@ PostgreSQL 保留给舰体控制面和多租户治理：身份、权限、单位
 | `crates/wunder-runtime/src/storage/{mod,backend,factory,sqlite,postgres}.rs` 的单 DB 装配 | 重建 | 按第 5、8、13 节分库与分角色装配 |
 | `storage/sqlite/schema.rs` 和 PostgreSQL 中的 `thread_logs`、`thread_items`、`thread_item_blocks`、`thread_log_changes`、旧 metrics/trajectory 表 | 移除 | 新 `thread_history` 是完整完成 item 投影，不复用旧字段或双写 |
 | `terminal_transcript_blocks` | 移除 | 终端正文不再另建永久块历史；完成工具条目/独立资源承接 |
-| `tool_logs`、`artifact_logs` 中与 canonical 执行历史同义的正文 | 移除或迁为资源元数据 | 工具调用和完成结果归 rollout；附件/产物只保留独立资源职责 |
+| `tool_logs`、`artifact_logs` 中与 canonical 执行历史同义的正文 | 移除或迁为资源元数据 | 工具调用和完成结果归 canonical；附件/产物只保留独立资源职责 |
 | `orchestrator/event_stream.rs` 的 TextTails/blocks/change 持久化 | 替换 | delta 只走临时有界通道；完成态交 canonical writer |
 | `execute.rs`、`tool_exec.rs` 分散的 append_chat/append_tool_log | 收敛 | 仅生成强类型 item，由统一 policy/writer 落盘 |
 | `orchestrator/thread_log_committer.rs` 与无界 per-session gate | 删除 | writer 生命周期和有界锁表管理串行性，完成后发布投影水位 |
@@ -539,7 +571,7 @@ PostgreSQL 保留给舰体控制面和多租户治理：身份、权限、单位
 | 6. 删除旧系统 | 删除旧 tables、DAO、view、changes/blocks、直插压测、兼容分支 | `rg` 和构建证明没有旧链路；干净新根端到端通过 |
 | 7. 性能验收 | 本机与 Docker 单节点服务基准、容量报告 | 达到第 16 节门槛并记录运行方式、版本、样本 |
 
-每个阶段使用全新测试根目录，测试结束删除临时根目录。因为不兼容旧格式，切换只发生在新存储根；不写“自动迁移成功”文案，也不在用户现有数据上试验 schema。
+每个阶段使用独立测试数据：本地为全新临时根，服务为隔离 PostgreSQL 数据库/schema 与工作区卷。测试只清理自己创建的资源。因为不兼容旧格式，切换发生在新的存储根或服务数据库；不写“自动迁移成功”文案，也不在用户现有数据上试验 schema。
 
 ## 16. 压测、验证与验收标准
 
@@ -547,7 +579,7 @@ PostgreSQL 保留给舰体控制面和多租户治理：身份、权限、单位
 
 旧压测的直接 bulk insert 会绕开 policy、writer、JSON 序列化、投影、读取、WAL 和 UI 页大小，无法代表用户。当前生成器已复用生产存储链，API、任务服务与生成器支持可选 `seed`；任务状态返回原请求的用户轮次、每轮模型请求数、请求 seed，以及实际用户轮次、模型请求数、模型动作数、工具调用数、完成条目数、rollout 记录数和最终 seed。同一 seed 用于复现语义负载，线程身份、轮次标识和时间戳仍独立生成。任务采用原子准入，最多一个运行作业、八条任务记录，只有实际 writer 返回后才结算终态，避免显示失败后仍在后台写入。
 
-压测任务完成态现在返回一个有界容量快照：只读取当前 revision rollout 的 raw/zstd 文件，以及 canonical 根内固定的 `state`、`queue`、`thread_history` SQLite 文件与各自 WAL；服务 JSON、CLI 和空闲探针使用同一字段。rollout 字节只归属本次生成线程的当前 revision；三类 SQLite/WAL 字节是该 canonical 根共享的当前物理占用，不能错误相加为单线程独占增量。快照不递归扫描根目录，读取失败只使 `storage_bytes` 缺席，不会把已经提交的生成任务改记为失败。生成器现已提供 `typical`、`complex`、`adversarial` 三种确定性场景，并由 API（`scenario` 字段，兼容 `profile` 别名）、CLI（`--profile`）和设置页选择；任务状态、CLI 报告和线程 capabilities/message_stats 同时记录场景。三种场景共享固定 seed 和总 item 上限：typical 使用较短上下文、较少工具和较短输出，complex 保持 `storage-stress-v1` 历史分布，adversarial 使用更密集工具、更大上下文及有界工具结果。当前实现不伪装成真实用户内容，也不把取消/断线等控制故障混入确定性负载；这些仍由独立生命周期测试覆盖。生成器已通过固定 seed 的跨根重放回归；默认 profile 会把冻结 system prompt、初始记忆快照和每轮 token breakdown 纳入存储样本。token breakdown 的分项相加等于 `estimated_input_tokens`；`message_tokens` 与 `estimated_input_tokens` 是总计字段，不重复参与分项求和。
+容量报告按后端分别采集。本地压测任务的有界快照读取当前 revision rollout 的 raw/zstd 文件，以及固定的 `state`、`queue`、`thread_history` SQLite 文件与各自 WAL。当前服务生成器返回 `storage_bytes=None`，由隔离验收驱动的 `storage_audit` 查询 PostgreSQL canonical 逻辑字节和相关关系物理字节，不能将未测量字段解释为 0，也不能拿本地文件大小填入服务结果。线程逻辑字节与共享库/表物理占用分别标注，不能错误相加为单线程独占增量。快照不递归扫描根目录，读取失败只使 `storage_bytes` 缺席，不会把已经提交的生成任务改记为失败。生成器现已提供 `typical`、`complex`、`adversarial` 三种确定性场景，并由 API（`scenario` 字段，兼容 `profile` 别名）、CLI（`--profile`）和设置页选择；任务状态、CLI 报告和线程 capabilities/message_stats 同时记录场景。三种场景共享固定 seed 和总 item 上限：typical 使用较短上下文、较少工具和较短输出，complex 保持 `storage-stress-v1` 历史分布，adversarial 使用更密集工具、更大上下文及有界工具结果。当前实现不伪装成真实用户内容，也不把取消/断线等控制故障混入确定性负载；这些仍由独立生命周期测试覆盖。固定 seed 的本地跨根重放回归不能替代服务数据库验证；默认 profile 会把冻结 system prompt、初始记忆快照和每轮 token breakdown 纳入存储样本。token breakdown 的分项相加等于 `estimated_input_tokens`；`message_tokens` 与 `estimated_input_tokens` 是总计字段，不重复参与分项求和。
 
 配置必须明确区分：用户轮次、每用户轮次的模型动作分布、工具类型、工具结果大小、文本长度、错误/中止比例和并发线程数。调用方输入“1000 用户轮次 × 1000 模型轮次”时不得暗中改成总次数；极端规模可因资源预算被明确拒绝或分批执行，但报告原请求和实际执行值。
 
@@ -561,35 +593,58 @@ PostgreSQL 保留给舰体控制面和多租户治理：身份、权限、单位
 
 测试数据使用中性合成文本、虚构标识和相对资源名，不能把真实工作目录、身份或密钥写入日志、报告或文档。
 
-开发机可运行 `cargo run -p wunder-runtime --features sqlite-storage --example storage_idle_probe -- 600`：在隔离临时根内固定 seed 生成 2×2 样本，重开并以有界分页核对完成历史和模型上下文，再保持恢复后的 writer 与运行时存活十分钟。服务版验收在本机进程和 Docker 单容器各执行一次，Docker 必须挂载持久数据卷并在容器重启后重新打开同一线程。验收记录 canonical rollout、thread_history/state/queue 数据库及 WAL 的文件集合、长度、修改时间、CPU、常驻内存和容量快照；SHM 与锁文件单列且不纳入历史文件静止 verdict。该检查用于确认单节点服务的部署、重开和空闲行为，不要求 Win7/Ubuntu 18.04 真机或多节点环境。
+本地存储层可运行 `cargo run -p wunder-runtime --features sqlite-storage --example storage_idle_probe -- 600`：在隔离临时根内固定 seed 生成 2×2 样本，重开并以有界分页核对完成历史和模型上下文，再保持恢复后的 writer 与运行时存活十分钟。服务版验收在本机进程和 Docker 单节点服务各执行一次，Docker 的 PostgreSQL 必须挂载持久卷，并在应用容器重启后重新打开同一线程。本地记录 canonical rollout、thread_history/state/queue 与 WAL 的文件集合、长度和修改时间；服务记录 PostgreSQL canonical/admission/投影水位、关系字节、CPU、常驻内存及工作区文件快照，并断言服务数据目录没有创建 SQLite/会话 JSONL。SHM、锁文件与 PostgreSQL 自身维护活动单列。该检查用于确认单节点服务的部署、重开和空闲行为，不要求 Win7/Ubuntu 18.04 真机或多节点环境。
 
 ### 16.2 必测场景
 
 - policy：每个持久化/临时分类、64 KiB command/MCP 规则、截断标记、秘密清理。
-- writer：容量 256、字节预算、背压、关闭、错误、并发同线程顺序和不同线程隔离。
-- 文件：UTF-8、完整换行前缀、空线程延迟创建、尾部截断、错误位置报告、压缩/物化。
-- projection：重放幂等、offset/ordinal、投影落后、SQLite 事务失败、删除投影后重建、分页和内容分段。
+- writer：本地容量 256、字节预算、背压、关闭、错误；本地和服务均验证并发同线程顺序和不同线程隔离。
+- 本地文件：UTF-8、完整换行前缀、空线程延迟创建、尾部截断、错误位置报告、压缩/物化。
+- projection：重放幂等、offset/ordinal、投影落后、SQLite/PostgreSQL 事务失败、删除投影后重建、分页和内容分段。
+- 服务数据库：真实 PostgreSQL 下的 admission 幂等、排队/撤回、模型上下文、反馈、工具指标、会话重开、canonical replay、投影水位与连接池释放；fork 必须验证冻结初始上下文、续接边界、源删除后的独立性、投影重建及并发目标冲突；主服务和 sandbox 均不创建本地 SQLite/会话 JSONL。
 - 读取：正反向 keyset pagination、筛选、轨迹、历史 revision、压缩读取、超长正文内存上限。
 - 流式：慢订阅者、订阅竞态、完成替换、进程内重连、崩溃前未完成尾部。
 - 生命周期：archive/unarchive、fork、revert、共享祖先删除保护、引用环/损坏引用、并发 close/resume。
 - 状态：冻结 system prompt、初始记忆只注入一次、模型上下文和显示历史分别恢复。
 - 运维：logs 限额/保留、维护锁、损坏库隔离、备份一致性、压缩中断和临时文件恢复。
-- 平台：本机单节点服务与 Docker 单容器服务的大历史打开、持久卷重启、路径/权限、文件替换、内存峰值、启动时延；Docker 使用与服务部署一致的持久数据卷。
+- 平台：本机单节点服务与 Docker 单节点服务的大历史打开、持久卷重启、路径/权限、内存峰值、启动时延；Docker 使用与服务部署一致的 PostgreSQL 持久卷和工作区卷。
 
 ### 16.3 定量验收
 
-不预先捏造“10 GB 会变成多少 MB”。每次基准报告必须列出 raw rollout、压缩 rollout、thread_history、state、logs、附件/工具资源、WAL 的实际字节及测试条件。重点门槛：
+不预先捏造“10 GB 会变成多少 MB”。本地基准报告列出 raw rollout、压缩 rollout、thread_history、state、logs、附件/工具资源与 WAL 的实际字节；服务报告列出 PostgreSQL canonical 逻辑字节、数据库/表/索引物理字节及独立资源字节。重点门槛：
 
 - writer 队列排空后的 10 分钟内，线程历史层追加数、投影事务数、历史轮询 SQL 数均为 0；日志维护等独立活动单独计数。
 - 任意历史页不扫描/反序列化整个线程；读取工作量随请求页大小和 lineage segment 数有界。
-- 典型/复杂样本重新打开后，用户消息、完成回复、完成中间条目、工具参数/已保留结果、turn 状态、轨迹顺序与 canonical rollout 一致。
-- 删除 `thread_history` 后的重建不改变 rollout 内容，且重建完成后的逻辑结果一致；任何不可恢复的权威业务状态不会被假装恢复。
+- 典型/复杂样本重新打开后，用户消息、完成回复、完成中间条目、工具参数/已保留结果、turn 状态、轨迹顺序与 canonical 历史一致。
+- 删除本地 `thread_history` 分区或服务 `service_thread_items`/`service_thread_chat_heads`/`service_thread_display_state` 的目标线程投影后，重建不改变 canonical 内容，完成后的逻辑结果一致；任何不可恢复的权威业务状态不会被假装恢复。
 - 压测使用生产 writer 与 projector；报告“生成请求”与“实际用户轮次/模型轮次/行动数”，不只报告插入行数。
 - 在本机与 Docker 服务环境中，典型和复杂 profile 的 CPU、常驻内存、容量快照、页面加载等待、活动流丢失/重同步次数记录首轮基线；后续回归不得明显超过基线。门槛按本机和容器规格分别记录，不把 Win7/Ubuntu 18.04 真机性能或多节点故障接管混入本阶段验收。
+
+### 16.4 服务验收执行与证据
+
+以下为执行要求，命令列在方案中不代表已经通过。测试只连接单独配置的合成 PostgreSQL 数据库，不接触已有用户数据：
+
+| 验收层次 | 执行方式 | 通过证据 |
+| --- | --- | --- |
+| PostgreSQL 存储契约 | 设置进程级 `WUNDER_TEST_POSTGRES_DSN` 后运行 `cargo test -p wunder-runtime --no-default-features --features postgres-storage --lib postgres_ -- --ignored --skip postgres_capacity_startup_preserves_business_rows_without_history_tables --test-threads=1`；DSN 不写入报告 | 输出实际执行的测试名与数量，覆盖 admission、canonical、分页、重建、fork、连接池释放；禁止把 ignore 数量计作通过 |
+| 本机服务 | 使用本轮构建二进制、隔离 PostgreSQL 和临时工作区启动服务，登录合成用户走 HTTP/WebSocket 会话、文件工具及重启恢复 | 记录源码/二进制标识、启动方式、数据库版本、请求结果、重启前后 canonical 指纹和应用目录审计 |
+| Docker 单节点服务 | 使用 `scripts/experience-bench/measure-hive.py` 的独立 Compose 项目及下列命令，数据库使用本次创建的持久卷 | 驱动退出 0，报告的每个场景有正确性证据；`storage_audit` 与 `restart_recovery` 均成功 |
+| 浏览器实际聊天 | 登录合成用户，新开线程并发送至少两轮消息；响应过程中展开聊天区域的工作过程，然后重开线程 | 思考在完成前连续增长，同一模型轮次只显示一条思考；完成后耗时、速度、上下文占用及额度字段按后端事实显示，重开后保持一致；零用量和不可用状态区分 |
+| 空闲与容量 | 任务结束、订阅断开后采样十分钟，并保存 canonical/admission/投影计数和水位、逻辑字节、关系字节、CPU/RSS；PostgreSQL 维护单独归因 | 历史追加与投影写入为 0，无历史轮询与本地历史文件；报告保留原始采样和环境规格，不用单次峰值或短 smoke 宣称稳定性能 |
+
+```powershell
+python scripts/experience-bench/measure-hive.py --server-binary target/x86/release/wunder-server --output temp_dir/hive-storage-smoke --profile smoke --user-rounds 25 --model-rounds 10 --cases login,stream,queue,isolation,workspace,large_chat,restart_recovery,storage_audit
+```
+
+该命令读取已构建的 Linux 二进制及预先准备的运行镜像，不编译或重启已有服务。`storage_audit` 要求每个线程 `history_revision=count(*)=max(ordinal)+1`、最小 ordinal 为 0，展示水位不领先 canonical，并检查十个服务存储关系及应用目录中不存在 SQLite/会话 JSONL/本地根标识。重启前后 canonical 数量、序号和内容摘要须相同，且重开后可继续一轮。HTTP/WebSocket 驱动不能代替浏览器的流式绘制和工作过程去重验证。完整报告说明哪些项实际运行、失败或尚未验证，不把本地 SQLite 测试结果转记为服务结果。
+
+上述常规存储命令显式跳过百万行容量测试；容量测试须另行在隔离库中以可记录的 `WUNDER_CAPACITY_ROWS` 执行，不能让默认大负载混入日常正确性回归或把跳过结果记作容量通过。
 
 ## 17. 可观测性与运行手册
 
 每个线程提供只读的健康摘要：当前 RolloutId、最后 flush ordinal、最后 projection ordinal、是否投影滞后、当前 lineage 深度、压缩状态、当前 writer 状态和最后可识别错误类别。面向用户的蛹只呈现可理解的“已保存/正在保存/历史索引待恢复/存储错误”；详细路径、内部错误和诊断 ID 限授权管理面。
+
+服务健康摘要以 PostgreSQL 已提交 canonical cursor、展示水位、admission 状态及错误类别为准，不制造文件 flush、lineage 深度或 zstd 状态。服务指标增加数据库事务耗时、连接池等待、canonical 逻辑字节和关系物理字节；数据库连接和工作区文件活动分别归因。
 
 关键指标包括：rollout 写入字节和耗时、flush 到 projection 延迟、投影批次数/条目数、重建耗时、分页查询行数/字节、临时订阅丢弃后重同步次数、压缩前后字节、logs 裁剪/回收与 SQLite busy 重试。指标标签不能使用无限基数的 ThreadId 或原始路径；单线程诊断通过按权限查询实现。
 
@@ -599,6 +654,8 @@ PostgreSQL 保留给舰体控制面和多租户治理：身份、权限、单位
 2. 隔离 logs：可丢弃诊断，保留备份供排障。
 3. 权威 state/queue/goals/memories 损坏：停止受影响能力、保留证据并提示恢复，而非自动空库继续。
 4. 历史原件损坏：保护原件、定位损坏范围、提供只读可恢复前缀和导出；不从投影反向伪造为原始 rollout。
+
+上述文件和独立 SQLite 操作仅用于本地形态。服务展示索引只按目标 ThreadId 从 PostgreSQL canonical 记录重建；权威 canonical/admission/业务表损坏时使用 PostgreSQL 备份恢复并停止受影响写入，不启动本地 SQLite fallback，也不从展示预览补造完整正文。服务数据库备份与资源文件备份分别执行并验证引用一致性。
 
 ## 18. 参考源码与可追溯依据
 
@@ -626,11 +683,12 @@ PostgreSQL 保留给舰体控制面和多租户治理：身份、权限、单位
 
 | 项目 | 决策 | 原因 |
 | --- | --- | --- |
-| canonical JSONL、SQLite completed-item projection、offset/ordinal、lineage、冷 zstd、诊断限额 | 对齐 | 这是参考工程的核心存储边界，直接解决当前重复写入和长历史分页问题 |
+| 本地 canonical JSONL、SQLite completed-item projection、offset/ordinal、lineage、冷 zstd、诊断限额 | 对齐 | 蛹与舵机直接复用参考工程的事实和投影边界 |
 | 旧历史兼容、Legacy history、迁移器 | 不实现 | 用户已授权不考虑兼容；保留会让新架构长期背负双路径 |
 | 新库版本名 | 语义对齐、编号独立 | 不能把 Codex 的 `state_5` 等迁移历史当作 Wunder 新 schema 的版本 |
 | 32 位进程的全局/线程字节预算、投影流式批次、内容分段 | Wunder 收紧 | 参考的某些读取实现可按剩余字节一次分配；Wunder 的目标平台要求明确防止地址空间耗尽 |
-| 多租户与 PostgreSQL 控制面 | Wunder 扩展 | 舰体需要该能力；本阶段服务部署限定为单节点，canonical 文件仍由本地单 writer 持有 |
+| 舰体全 PostgreSQL 存储 | Wunder 扩展 | canonical、admission、replay、展示索引、指标和业务状态均由 PostgreSQL 承载，复用相同语义契约；不声称 Codex 上游提供了此服务实现 |
+| 舰体 fork 的独立历史前缀 | Wunder 扩展 | PostgreSQL 事务内复制已结束用户轮次及其展示索引，继承冻结初始上下文，目标不依赖源线程寿命；本地仍对齐上游共享文件 lineage |
 | 多节点共享存储、owner 路由与故障接管 | 后续扩展 | 当前单节点交付不需要分布式租约、共享 rollout 或跨节点恢复协议 |
 | 权威业务 DB 的损坏处理 | Wunder 更保守 | 不能把当前目标、队列或记忆误当可由历史无损重建的缓存 |
 | 自动压缩 | 默认关闭 | 与参考 feature 默认值一致，避免在未知负载下制造后台 I/O；启用后遵循相同门槛和安全发布 |

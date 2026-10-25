@@ -48,6 +48,16 @@ export component HelpDocument inherits Rectangle {
                 border-width: box.border-width * 1px;
                 border-radius: box.radius * 1px;
             }
+            for img in HelpDocs.images : Image {
+                x: img.x * 1px;
+                y: img.y * 1px;
+                width: img.width * 1px;
+                height: img.height * 1px;
+                source: img.source;
+                image-fit: fill;
+                accessible-role: image;
+                accessible-label: img.alt;
+            }
             for mark in HelpDocs.matches : Rectangle {
                 x: mark.x * 1px;
                 y: mark.y * 1px;

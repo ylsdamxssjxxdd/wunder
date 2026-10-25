@@ -153,7 +153,7 @@ pub struct Orchestrator {
     lsp_manager: Arc<LspManager>,
     prompt_composer: Arc<PromptComposer>,
     storage: Arc<dyn StorageBackend>,
-    pub(crate) thread_store: Arc<crate::storage::thread_store::LocalThreadStore>,
+    pub(crate) thread_store: Arc<crate::storage::RuntimeThreadStore>,
     approval_registry: Arc<PendingApprovalRegistry>,
     command_sessions: Arc<CommandSessionBroker>,
     active_turns: Arc<ActiveTurnRegistry>,
@@ -214,7 +214,7 @@ impl Orchestrator {
         gateway: Arc<GatewayHub>,
         user_world: Arc<UserWorldService>,
         cron_wake_signal: Option<CronWakeSignal>,
-        thread_store: Arc<crate::storage::thread_store::LocalThreadStore>,
+        thread_store: Arc<crate::storage::RuntimeThreadStore>,
     ) -> Self {
         let change_hub = Arc::new(ThreadChangeHub::new());
         let committer = Arc::new(ThreadLogCommitter::new(

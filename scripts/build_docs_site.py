@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import html
 import json
 import re
@@ -23,6 +24,7 @@ ROOT_GENERATED_FILES = [
     "manifest.json",
     "search.json",
     "assets",
+    "art",
 ]
 LEGACY_OUTPUT_PATHS = [
     Path("diagrams"),
@@ -32,6 +34,8 @@ LOGO_SOURCE_PATH = REPO_ROOT / "images" / "eva01-head.svg"
 LOGO_TARGET_PATH = Path("assets") / "eva01-head.svg"
 DOCS_ASSET_SOURCE_DIR = DOCS_SOURCE_DIR / "assets"
 DOCS_ASSET_TARGET_PATH = Path("assets") / "manual"
+DESIGN_SOURCE_DIR = REPO_ROOT / "docs" / "wunder美术设计稿"
+DESIGN_TARGET_PATH = Path("art")
 FENCE_PATTERN = re.compile(r"^(```|~~~)")
 HEADING_PATTERN = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
 DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -490,6 +494,30 @@ def copy_docs_assets() -> None:
         shutil.copy2(source_path, target_path)
 
 
+def copy_design_assets() -> None:
+    """Ship the design sheets and the thumbnail index with the site.
+
+    Only the SVGs and their index are published. The sources keep a readable
+    `assets/app-icon.png` reference; the published copies embed that icon as a
+    data URI because browsers block external resources in SVG loaded via
+    `<img>`. Native help keeps its own raster previews instead.
+    """
+    if not DESIGN_SOURCE_DIR.exists():
+        raise FileNotFoundError(f"缺少美术设计稿目录: {DESIGN_SOURCE_DIR}")
+    icon_path = DESIGN_SOURCE_DIR / "assets" / "app-icon.png"
+    if not icon_path.is_file():
+        raise FileNotFoundError(f"缺少设计稿应用图标: {icon_path}")
+    icon_uri = "data:image/png;base64," + base64.b64encode(icon_path.read_bytes()).decode("ascii")
+    target_root = OUTPUT_DIR / DESIGN_TARGET_PATH
+    target_root.mkdir(parents=True, exist_ok=True)
+    for source_path in DESIGN_SOURCE_DIR.glob("*.svg"):
+        content = read_text(source_path).replace('href="assets/app-icon.png"', f'href="{icon_uri}"')
+        (target_root / source_path.name).write_text(content, encoding="utf-8", newline="\n")
+    index_path = DESIGN_SOURCE_DIR / "index.html"
+    if index_path.is_file():
+        shutil.copy2(index_path, target_root / index_path.name)
+
+
 def build() -> None:
     site_config = load_json(SITE_CONFIG_PATH)
     pages, page_order, resolved_languages = load_pages(site_config)
@@ -509,6 +537,7 @@ def build() -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     copy_site_assets()
     copy_docs_assets()
+    copy_design_assets()
     asset_version = compute_asset_version(OUTPUT_DIR / "site.js", OUTPUT_DIR / "site.css")
 
     for page in pages.values():

@@ -106,11 +106,8 @@ tests/preview
 scripts/blender
 !scripts/blender/build_eva_rig.py
 !scripts/blender/verify_eva_rig.py
-.codex-target-slint
-.codex-target-popover
-.codex-target-ime
-.cargo-target-goal-events
-.cargo-target-context-estimate
-.cargo-target-search-schema
+.codex*
+.cargo*
 temp
 config/runtime
+.cache*

@@ -241,7 +241,8 @@ impl Orchestrator {
             prepared.thread_user_round.expect("accepted round"),
         );
         let response = i18n::with_language(language, async {
-            self.execute_request(prepared, emitter).await
+            // Keep the full execution state out of transport/request futures.
+            Box::pin(self.execute_request(prepared, emitter)).await
         })
         .await?;
         Ok(response)
@@ -293,7 +294,7 @@ impl Orchestrator {
             let language = language.clone();
             long_task::spawn("orchestrator.request.runner", async move {
                 let _ = i18n::with_language(language, async {
-                    orchestrator.execute_request(prepared, emitter).await
+                    Box::pin(orchestrator.execute_request(prepared, emitter)).await
                 })
                 .await;
             })

@@ -33,7 +33,7 @@ import type {
 } from './chatRuntimeTypes';
 import { chatPerf } from '@/utils/chatPerf';
 import { normalizeChatPlan } from './chatPlan';
-import { presentChatInquiry, type ChatInquiryPanel } from './chatInquiry';
+import { extractChatInquiryPanel, presentChatInquiry, type ChatInquiryPanel } from './chatInquiry';
 
 // W4-L: guarded clock for the heavy-history metrics. `performance` is missing in
 // some non-browser hosts, and the recorder is inert while capture is off.
@@ -50,7 +50,7 @@ const ASSISTANT_BUBBLE_ID_PREFIX = 'tturn:';
 // Queue entries remain available to the composer projection so queue metadata
 // (position/ahead) survives replay, but they are explicitly non-tool records.
 const WORKFLOW_ITEM_KINDS = new Set([
-  'tool_call', 'approval', 'plan', 'compaction', 'compacted', 'compaction_summary', 'system_message', 'queue'
+  'tool_call', 'tool_result', 'question_panel', 'approval', 'plan', 'compaction', 'compacted', 'compaction_summary', 'system_message', 'queue'
 ]);
 
 // User-facing visibility. 'admin' is excluded per the v2 contract;
@@ -458,8 +458,18 @@ const buildAssistantBubble = (
   // incomplete row out of both the compact process timeline and the shared
   // workflow renderer; either a companion assistant `tool_calls` entry or a
   // later revision will make it renderable without a fabricated label.
+  // The question panel is durable workflow metadata used to reconstruct the
+  // composer control. It must stay in `workflows` for resolveQuestionPanel,
+  // but it is not a process/tool card: rendering it in the timeline makes the
+  // inquiry appear inside the tool list and leaves the composer empty.
+  // Question panels are an interaction surface owned by the composer.  Some
+  // writers persist them as a dedicated `question_panel` item, while older
+  // writers use a normal tool item whose function/event name is
+  // `question_panel`. Keep those records available to resolveQuestionPanel,
+  // but never expose them as a regular process/tool card: doing so duplicates
+  // the panel in the tool list and leaves the actionable control ambiguous.
   const renderableWorkflows = workflows.filter((item) =>
-    hasRenderableWorkflowIdentity(item, textItems)
+    !isQuestionPanelWorkflowItem(item) && hasRenderableWorkflowIdentity(item, textItems)
   );
   const records = renderableWorkflows
     .slice()
@@ -514,7 +524,13 @@ const buildAssistantBubble = (
       ...plan, item_id: planItem.itemId, revision: planItem.revision, created_seq: itemSeq(planItem)
     } };
   }
-  const panel = (latestTextItem?.raw.meta as Record<string, unknown> | undefined)?.panel as ChatInquiryPanel | undefined;
+  // The question tool result is a workflow item, not an assistant text row.
+  // In a live stream the assistant message that issued the call has no `meta`
+  // yet (the durable hand-off is appended after the tool result), so looking
+  // only at `latestTextItem.raw.meta.panel` makes the panel appear as a normal
+  // tool entry while the composer remains empty. Resolve the bounded panel
+  // from both the assistant metadata and the matching workflow payload.
+  const panel = resolveQuestionPanel(turn, latestTextItem, workflows);
   const questionPanel = presentChatInquiry(panel, turn.status);
   if (questionPanel) message.display = { ...(message.display ?? {}), questionPanel };
   if (resolved.cancelled) {
@@ -805,6 +821,57 @@ const resolveToolCallIdentity = (
     }
   }
   return { name: '', arguments: directArgs, functionName: '' };
+};
+
+/** Resolve a panel from the assistant item or its question tool result. */
+const resolveQuestionPanel = (
+  turn: ThreadTurnState,
+  latestTextItem: ThreadItemState | null,
+  workflows: ThreadItemState[]
+): ChatInquiryPanel | null => {
+  const candidates: ThreadItemState[] = [];
+  if (latestTextItem) candidates.push(latestTextItem);
+  candidates.push(...workflows.slice().sort((left, right) =>
+    itemSeq(right) - itemSeq(left) || (right.itemId < left.itemId ? -1 : right.itemId > left.itemId ? 1 : 0)
+  ));
+  for (const item of candidates) {
+    const panel = extractChatInquiryPanel(item.raw);
+    if (panel) return panel;
+  }
+  // A waiting turn can be reconstructed from a compact turn payload in older
+  // snapshots even when its assistant/tool item is not in the visible page.
+  return extractChatInquiryPanel(turn as unknown as Record<string, unknown>);
+};
+
+const QUESTION_PANEL_WORKFLOW_NAMES = new Set([
+  'question panel',
+  'ask panel',
+  '问询面板'
+]);
+
+/**
+ * Question-panel results are carried by different durable item kinds across
+ * protocol versions.  Detect the tool-name/event aliases before building the
+ * generic workflow record so the same item cannot render as a tool card and a
+ * composer control at once.
+ */
+const isQuestionPanelWorkflowItem = (item: ThreadItemState): boolean => {
+  if (item.kind === 'question_panel') return true;
+  const visit = (value: unknown, depth: number): boolean => {
+    if (!isPlainRecord(value) || depth > 3) return false;
+    for (const key of [
+      'tool', 'tool_name', 'toolName', 'tool_function_name', 'toolFunctionName',
+      'function_name', 'functionName', 'name', 'event_type', 'eventType',
+      'source_event_type', 'sourceEventType', 'event', 'action'
+    ]) {
+      const normalized = normalizeStatus(value[key]).replace(/[-_]+/g, ' ');
+      if (QUESTION_PANEL_WORKFLOW_NAMES.has(normalized)) {
+        return true;
+      }
+    }
+    return ['data', 'payload', 'result', 'meta'].some((key) => visit(value[key], depth + 1));
+  };
+  return visit(item.raw, 0);
 };
 
 export const buildWorkflowRecord = (

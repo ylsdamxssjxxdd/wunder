@@ -1,8 +1,7 @@
+use super::runtime_log_store::PostgresRuntimeLogStorage;
 use super::PostgresStorage;
 use crate::storage::StorageLifecycle;
 use anyhow::Result;
-use rusqlite::types::Value as SqlValue;
-use rusqlite::{params, params_from_iter};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
@@ -49,33 +48,37 @@ pub(super) trait PostgresLogStatsStorage {
 
 impl PostgresLogStatsStorage for PostgresStorage {
     fn get_user_chat_stats_impl(&self) -> Result<HashMap<String, HashMap<String, i64>>> {
-        crate::storage::runtime_logs::projected_chat_stats(self.canonical_threads()?.root())
+        self.ensure_initialized()?;
+        let _store = self.service_threads_ref()?;
+        let mut conn = self.conn()?;
+        let rows = conn.query(
+            "SELECT owner.user_id,COUNT(*)::BIGINT,
+                MAX((item.preview_json::jsonb->>'created_at_ms')::bigint)::DOUBLE PRECISION/1000
+             FROM service_thread_items item
+             JOIN service_thread_owners owner ON owner.thread_id=item.thread_id
+             WHERE item.visible AND item.preview_json::jsonb->>'kind' IN ('user_message','assistant_message')
+             GROUP BY owner.user_id",
+            &[],
+        )?;
+        let mut output = HashMap::new();
+        for row in rows {
+            let user: String = row.get(0);
+            let mut stats = HashMap::new();
+            stats.insert("chat_records".into(), row.get::<_, i64>(1));
+            stats.insert(
+                "last_time".into(),
+                row.get::<_, Option<f64>>(2).unwrap_or(0.0) as i64,
+            );
+            output.insert(user, stats);
+        }
+        Ok(output)
     }
 
     fn get_user_tool_stats_impl(&self) -> Result<HashMap<String, HashMap<String, i64>>> {
         self.ensure_initialized()?;
-        let logs = self.runtime_logs()?;
-        let conn = logs.connection();
-        let mut query = String::from(
-            "SELECT user_id, COUNT(*) as tool_records, MAX(created_time) as last_time FROM runtime_tool_metrics",
-        );
-        let mut filters = Vec::new();
-        filters.push("excluded = 0".to_owned());
-        if !filters.is_empty() {
-            query.push_str(" WHERE ");
-            query.push_str(&filters.join(" AND "));
-        }
-        query.push_str(" GROUP BY user_id");
-        let mut stmt = conn.prepare(&query)?;
-        let rows = stmt
-            .query_map([], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, i64>(1)?,
-                    row.get::<_, f64>(2).unwrap_or(0.0),
-                ))
-            })?
-            .collect::<std::result::Result<Vec<(String, i64, f64)>, _>>()?;
+        let mut conn = self.conn()?;
+        let rows = conn.query("SELECT user_id, COUNT(*)::BIGINT, MAX(created_time) FROM runtime_tool_metrics WHERE excluded=FALSE GROUP BY user_id", &[])?
+            .into_iter().map(|row| (row.get::<_, String>(0), row.get::<_, i64>(1), row.get::<_, Option<f64>>(2).unwrap_or(0.0))).collect::<Vec<_>>();
         let mut stats = HashMap::new();
         for (user_id, count, last_time) in rows {
             let cleaned = user_id.trim();
@@ -113,32 +116,25 @@ impl PostgresLogStatsStorage for PostgresStorage {
         until_time: Option<f64>,
     ) -> Result<HashMap<String, i64>> {
         self.ensure_initialized()?;
-        let mut query =
-            String::from("SELECT tool, COUNT(*) as tool_records FROM runtime_tool_metrics");
-        let mut params_list: Vec<SqlValue> = Vec::new();
-        let mut filters = Vec::new();
-        if let Some(since) = since_time.filter(|value| *value > 0.0) {
-            filters.push("created_time >= ?".to_string());
-            params_list.push(SqlValue::from(since));
+        let mut conn = self.conn()?;
+        let mut clauses = vec!["excluded=FALSE".to_owned()];
+        let mut values: Vec<Box<dyn tokio_postgres::types::ToSql + Sync + Send>> = Vec::new();
+        if let Some(since) = since_time.filter(|v| *v > 0.0) {
+            values.push(Box::new(since));
+            clauses.push(format!("created_time >= ${}", values.len()));
         }
-        if let Some(until) = until_time.filter(|value| *value > 0.0) {
-            filters.push("created_time <= ?".to_string());
-            params_list.push(SqlValue::from(until));
+        if let Some(until) = until_time.filter(|v| *v > 0.0) {
+            values.push(Box::new(until));
+            clauses.push(format!("created_time <= ${}", values.len()));
         }
-        filters.push("excluded = 0".to_owned());
-        if !filters.is_empty() {
-            query.push_str(" WHERE ");
-            query.push_str(&filters.join(" AND "));
-        }
-        query.push_str(" GROUP BY tool ORDER BY tool_records DESC");
-        let logs = self.runtime_logs()?;
-        let conn = logs.connection();
-        let mut stmt = conn.prepare(&query)?;
-        let rows = stmt
-            .query_map(params_from_iter(params_list.iter()), |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
-            })?
-            .collect::<std::result::Result<Vec<(String, i64)>, _>>()?;
+        let query = format!("SELECT tool, COUNT(*)::BIGINT FROM runtime_tool_metrics WHERE {} GROUP BY tool ORDER BY COUNT(*) DESC", clauses.join(" AND "));
+        let params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> =
+            values.iter().map(|v| &**v as _).collect();
+        let rows = conn
+            .query(&query, &params)?
+            .into_iter()
+            .map(|row| (row.get::<_, String>(0), row.get::<_, i64>(1)))
+            .collect::<Vec<_>>();
         let mut stats = HashMap::new();
         for (tool, count) in rows {
             let cleaned = tool.trim();
@@ -161,38 +157,33 @@ impl PostgresLogStatsStorage for PostgresStorage {
         if cleaned.is_empty() {
             return Ok(Vec::new());
         }
-        let mut query = String::from(
-            "SELECT session_id, user_id, COUNT(*) as tool_calls, MAX(created_time) as last_time FROM runtime_tool_metrics WHERE tool = ?",
-        );
-        let mut params_list: Vec<SqlValue> = vec![SqlValue::Text(cleaned.to_string())];
-        let mut filters = Vec::new();
-        if let Some(since) = since_time.filter(|value| *value > 0.0) {
-            filters.push("created_time >= ?".to_string());
-            params_list.push(SqlValue::from(since));
+        let mut conn = self.conn()?;
+        let mut clauses = vec!["tool=$1".to_owned(), "excluded=FALSE".to_owned()];
+        let mut values: Vec<Box<dyn tokio_postgres::types::ToSql + Sync + Send>> =
+            vec![Box::new(cleaned.to_owned())];
+        if let Some(since) = since_time.filter(|v| *v > 0.0) {
+            values.push(Box::new(since));
+            clauses.push(format!("created_time >= ${}", values.len()));
         }
-        if let Some(until) = until_time.filter(|value| *value > 0.0) {
-            filters.push("created_time <= ?".to_string());
-            params_list.push(SqlValue::from(until));
+        if let Some(until) = until_time.filter(|v| *v > 0.0) {
+            values.push(Box::new(until));
+            clauses.push(format!("created_time <= ${}", values.len()));
         }
-        filters.push("excluded = 0".to_owned());
-        if !filters.is_empty() {
-            query.push_str(" AND ");
-            query.push_str(&filters.join(" AND "));
-        }
-        query.push_str(" GROUP BY session_id, user_id ORDER BY last_time DESC");
-        let logs = self.runtime_logs()?;
-        let conn = logs.connection();
-        let mut stmt = conn.prepare(&query)?;
-        let rows = stmt
-            .query_map(params_from_iter(params_list.iter()), |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, i64>(2)?,
-                    row.get::<_, f64>(3).unwrap_or(0.0),
-                ))
-            })?
-            .collect::<std::result::Result<Vec<(String, String, i64, f64)>, _>>()?;
+        let query = format!("SELECT session_id,user_id,COUNT(*)::BIGINT,MAX(created_time) FROM runtime_tool_metrics WHERE {} GROUP BY session_id,user_id ORDER BY MAX(created_time) DESC", clauses.join(" AND "));
+        let params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> =
+            values.iter().map(|v| &**v as _).collect();
+        let rows = conn
+            .query(&query, &params)?
+            .into_iter()
+            .map(|row| {
+                (
+                    row.get::<_, String>(0),
+                    row.get::<_, String>(1),
+                    row.get::<_, i64>(2),
+                    row.get::<_, Option<f64>>(3).unwrap_or(0.0),
+                )
+            })
+            .collect::<Vec<_>>();
         let mut sessions = Vec::new();
         for (session_id, user_id, tool_calls, last_time) in rows {
             let cleaned_session = session_id.trim();
@@ -211,20 +202,10 @@ impl PostgresLogStatsStorage for PostgresStorage {
 
     fn get_log_usage_impl(&self) -> Result<u64> {
         self.ensure_initialized()?;
-        let logs = self.runtime_logs()?;
-        let conn = logs.connection();
-        let pages: i64 = conn.pragma_query_value(None, "page_count", |row| row.get(0))?;
-        let free: i64 = conn.pragma_query_value(None, "freelist_count", |row| row.get(0))?;
-        let size: i64 = conn.pragma_query_value(None, "page_size", |row| row.get(0))?;
-        let local_bytes = pages
-            .saturating_sub(free)
-            .max(0)
-            .saturating_mul(size.max(0)) as u64;
-        drop(conn);
         let mut control = self.conn()?;
         let control_bytes: i64 = control.query_one(
-            "SELECT COALESCE(pg_total_relation_size(to_regclass('monitor_sessions')),0) + COALESCE(pg_total_relation_size(to_regclass('stream_events')),0)", &[])? .get(0);
-        Ok(local_bytes.saturating_add(control_bytes.max(0) as u64))
+            "SELECT COALESCE(pg_total_relation_size(to_regclass('monitor_sessions')),0) + COALESCE(pg_total_relation_size(to_regclass('stream_events')),0) + COALESCE(pg_total_relation_size(to_regclass('runtime_tool_metrics')),0) + COALESCE(pg_total_relation_size(to_regclass('runtime_artifact_resources')),0)", &[])? .get(0);
+        Ok(control_bytes.max(0) as u64)
     }
 
     fn delete_logs_by_time_range_impl(
@@ -255,63 +236,96 @@ impl PostgresLogStatsStorage for PostgresStorage {
             let count=tx.execute(&format!("DELETE FROM {table} WHERE {time}>=$1 AND {time}<=$2 AND NOT EXISTS(SELECT 1 FROM protected_chat_sessions p WHERE p.session_id={table}.session_id)"), &[&start,&end])?;
             output.insert(table.to_owned(), count as i64);
         }
-        // The metric store is globally bounded. Fetch only protected session
-        // identities which actually have diagnostic rows in this time range.
-        let logs = self.runtime_logs()?;
-        let candidates = {
-            let conn = logs.connection();
-            let mut statement=conn.prepare("SELECT DISTINCT session_id FROM runtime_tool_metrics WHERE created_time>=?1 AND created_time<=?2")?;
-            let rows = statement.query_map(params![start, end], |r| r.get::<_, String>(0))?;
-            rows.collect::<rusqlite::Result<Vec<_>>>()?
-        };
-        let mut protected = Vec::new();
-        for batch in candidates.chunks(100) {
-            protected.extend(
-                tx.query(
-                    "SELECT session_id FROM protected_chat_sessions WHERE session_id=ANY($1)",
-                    &[&batch],
-                )?
-                .into_iter()
-                .map(|r| r.get::<_, String>(0)),
-            );
-        }
-        tx.commit()?;
-        let mut conn = logs.connection();
-        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-        tx.execute_batch("CREATE TEMP TABLE IF NOT EXISTS protected_metric_sessions(session_id TEXT PRIMARY KEY); DELETE FROM protected_metric_sessions;")?;
-        for session in protected {
-            tx.execute(
-                "INSERT OR IGNORE INTO protected_metric_sessions(session_id) VALUES(?1)",
-                [session],
-            )?;
-        }
-        let removed=tx.execute("DELETE FROM runtime_tool_metrics WHERE created_time>=?1 AND created_time<=?2 AND NOT EXISTS(SELECT 1 FROM protected_metric_sessions p WHERE p.session_id=runtime_tool_metrics.session_id)", params![start,end])?;
+        // Keep protection and deletion in one database transaction. A single
+        // anti-join replaces fetching every diagnostic session into memory.
+        let removed = tx.execute(
+            "DELETE FROM runtime_tool_metrics metric
+             WHERE created_time>=$1 AND created_time<=$2 AND NOT EXISTS(
+                SELECT 1 FROM protected_chat_sessions protected
+                WHERE protected.session_id=metric.session_id)",
+            &[&start, &end],
+        )?;
         tx.commit()?;
         output.insert("runtime_tool_metrics".into(), removed as i64);
         Ok(output)
     }
 
     fn delete_thread_logs_by_user_impl(&self, user_id: &str) -> Result<i64> {
-        super::super::canonical_thread_log::wait(
-            self.canonical_threads()?.delete_user_threads(user_id),
-        )?
+        let user_id = user_id.trim();
+        if user_id.is_empty() {
+            return Ok(0);
+        }
+        self.ensure_initialized()?;
+        let _store = self.service_threads_ref()?;
+        let mut conn = self.conn()?;
+        let mut removed = 0_i64;
+        let mut after: Option<String> = None;
+        // A bounded keyset batch locks owners in a stable order. Admissions
+        // use the same owner lock, so accepted bodies cannot survive deletion.
+        loop {
+            let mut tx = conn.transaction()?;
+            tx.batch_execute("SET LOCAL lock_timeout='2s'; SET LOCAL statement_timeout='8s'")?;
+            let ids = tx
+                .query(
+                    "SELECT thread_id FROM service_thread_owners WHERE user_id=$1
+                 AND ($2::text IS NULL OR thread_id>$2) ORDER BY thread_id LIMIT 100",
+                    &[&user_id, &after],
+                )?
+                .into_iter()
+                .map(|row| row.get::<_, String>(0))
+                .collect::<Vec<_>>();
+            if ids.is_empty() {
+                tx.commit()?;
+                break;
+            }
+            let next_after = ids.last().cloned();
+            for id in &ids {
+                super::PostgresAdmissionStore::lock_thread(&mut tx, id)?;
+            }
+            let ids = tx.query(
+                "SELECT thread_id FROM service_thread_owners WHERE user_id=$1 AND thread_id=ANY($2) ORDER BY thread_id FOR UPDATE",
+                &[&user_id, &ids],
+            )?.into_iter().map(|row| row.get::<_,String>(0)).collect::<Vec<_>>();
+            if ids.is_empty() {
+                tx.commit()?;
+                after = next_after;
+                continue;
+            }
+            tx.execute(
+                "DELETE FROM service_thread_admissions WHERE thread_id=ANY($1)",
+                &[&ids],
+            )?;
+            // Canonical records, session metadata and all display indexes have
+            // ON DELETE CASCADE, so the thread root is the sole history delete.
+            tx.execute(
+                "DELETE FROM service_threads WHERE thread_id=ANY($1)",
+                &[&ids],
+            )?;
+            tx.execute(
+                "DELETE FROM service_thread_owners WHERE user_id=$1 AND thread_id=ANY($2)",
+                &[&user_id, &ids],
+            )?;
+            tx.commit()?;
+            removed = removed.saturating_add(ids.len() as i64);
+            after = next_after;
+        }
+        Ok(removed)
     }
 
     fn delete_tool_logs_impl(&self, user_id: &str) -> Result<i64> {
-        self.runtime_logs()?.delete_tools(user_id, None)
+        self.delete_tool_metrics_impl(user_id, None)
     }
 
     fn delete_tool_logs_by_session_impl(&self, user_id: &str, session_id: &str) -> Result<i64> {
-        self.runtime_logs()?.delete_tools(user_id, Some(session_id))
+        self.delete_tool_metrics_impl(user_id, Some(session_id))
     }
 
     fn delete_artifact_logs_impl(&self, user_id: &str) -> Result<i64> {
-        self.runtime_logs()?.delete_artifacts(user_id, None)
+        self.delete_artifact_resources_impl(user_id, None)
     }
 
     fn delete_artifact_logs_by_session_impl(&self, user_id: &str, session_id: &str) -> Result<i64> {
-        self.runtime_logs()?
-            .delete_artifacts(user_id, Some(session_id))
+        self.delete_artifact_resources_impl(user_id, Some(session_id))
     }
 
     fn mark_deleted_session_log_grace_impl(

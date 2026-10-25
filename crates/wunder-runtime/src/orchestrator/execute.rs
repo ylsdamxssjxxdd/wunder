@@ -603,8 +603,9 @@ impl Orchestrator {
                     tools_payload,
                 );
                 let admission_compaction_needed = !request_budget.admitted();
-                let compaction_result = self
-                    .maybe_compact_messages(
+                // Large action futures get one allocation per action, so their
+                // state machines do not multiply the request's stack footprint.
+                let compaction_result = Box::pin(self.maybe_compact_messages(
                         &config,
                         &compaction_llm_config,
                         &user_id,
@@ -620,7 +621,7 @@ impl Orchestrator {
                         force_compaction_on_entry || admission_compaction_needed,
                         true,
                         super::memory::CompactionRunMode::AutoLoop,
-                    )
+                    ))
                     .await?;
                 messages = compaction_result.messages;
                 if compaction_result.model_context_replaced {
@@ -708,8 +709,7 @@ impl Orchestrator {
                 self.apply_agent_messages(agent_inbox.as_ref().expect("active inbox"),
                     &user_id, &session_id, &mut messages, &emitter, round_info, false).await?;
                 let (mut content, reasoning, usage, mut tool_calls_payload, round_speed, output) = loop {
-                    match self
-                        .call_llm(
+                    match Box::pin(self.call_llm(
                             &apply_context_window_limit_hint(
                                 &llm_config,
                                 merge_context_window_limit_hint(context_window_limit_hint, adaptive_recovery_limit_hint),
@@ -726,7 +726,7 @@ impl Orchestrator {
                             tools_payload,
                             empty_output_guard.config_override(&llm_config),
                             Some(question.as_str()),
-                        )
+                        ))
                         .await
                     {
                         Ok(response) => break response,
@@ -784,8 +784,7 @@ impl Orchestrator {
                                     adaptive_recovery_limit_hint,
                                 ),
                             );
-                            let compaction_result = self
-                                .maybe_compact_messages(
+                            let compaction_result = Box::pin(self.maybe_compact_messages(
                                     &config,
                                     &compaction_llm_config,
                                     &user_id,
@@ -801,7 +800,7 @@ impl Orchestrator {
                                     true,
                                     true,
                                     super::memory::CompactionRunMode::OverflowRecovery,
-                                )
+                                ))
                                 .await?;
                             let overflow_recovery_compaction_id =
                                 compaction_result.compaction_id.clone();
@@ -1369,8 +1368,7 @@ impl Orchestrator {
                     let mut outcomes = if executable_calls.is_empty() {
                         Vec::new()
                     } else {
-                        let outcomes = self
-                            .execute_tool_calls_parallel(
+                        let outcomes = Box::pin(self.execute_tool_calls_parallel(
                             executable_calls,
                             &tool_context,
                             &allowed_tool_names,
@@ -1379,7 +1377,7 @@ impl Orchestrator {
                             &emitter,
                             prepared.approval_tx.clone(),
                             round_info,
-                        )
+                        ))
                             .await;
                         tool_event_forwarder.flush().await;
                         outcomes?

@@ -150,6 +150,8 @@ ENTRIES = [
     ("tn_notice_body", "程序仍在后台运行。点击托盘图标恢复窗口，托盘右键菜单可截图或退出。", "Still running in the background. Click the tray icon to restore the window; right-click the tray menu to screenshot or quit."),
     ("tn_notice_ack", "知道了", "Got it"),
     ("tn_notice_quit", "退出程序", "Quit"),
+    ("cn_notice_title", "智能体任务完成", "Agent task completed"),
+    ("cn_notice_body", "智能体 {} 已完成任务", "Agent {} finished the task", ["name"]),
 
     # ---- window ----
     ("app_window_title", "蛹", "Pupa"),

@@ -3,27 +3,89 @@ use crate::state::{AppState, AppStateInitOptions};
 use axum::{routing::post, Json, Router};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-#[test]
-fn thread_lifecycle_stream_commits_file_and_terminal_before_final() {
-    // Debug builds of the full runner need more than Windows' default stack,
-    // including the thread that drives block_on. Keep this test-local.
-    std::thread::Builder::new()
-        .stack_size(16 * 1024 * 1024)
-        .spawn(|| {
-            tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(2)
-                .thread_stack_size(16 * 1024 * 1024)
-                .enable_all()
-                .build()
-                .unwrap()
-                .block_on(exercise_stream_lifecycle());
-        })
-        .unwrap()
-        .join()
+#[tokio::test]
+async fn request_execution_future_sizes_stay_within_stack_budget() {
+    let root = tempfile::tempdir().unwrap();
+    let mut config = Config::default();
+    config.server.mode = "cli".into();
+    config.storage.backend = "sqlite".into();
+    config.storage.data_root = root.path().join("data").to_string_lossy().into_owned();
+    config.workspace.root = root.path().join("workspace").to_string_lossy().into_owned();
+    let store = ConfigStore::new(root.path().join("config.yaml"));
+    store
+        .update(|current| *current = config.clone())
+        .await
         .unwrap();
+    let state = AppState::new_with_options(
+        store,
+        config,
+        AppStateInitOptions::cli_default().with_start_thread_runtime(false),
+    )
+    .unwrap();
+    let orchestrator = &state.kernel.orchestrator;
+    let request: WunderRequest = serde_json::from_value(json!({
+        "user_id":"fixture-user","session_id":"fixture-thread","question":"fixture input"
+    }))
+    .unwrap();
+    let prepared = PreparedRequest {
+        user_id: request.user_id.clone(),
+        workspace_id: "fixture-workspace".into(),
+        question: request.question.clone(),
+        client_message_id: None,
+        session_id: "fixture-thread".into(),
+        tool_names: None,
+        skip_tool_calls: false,
+        model_name: None,
+        config_overrides: None,
+        agent_prompt: None,
+        preview_skill: false,
+        agent_id: None,
+        stream: false,
+        attachments: None,
+        language: "en".into(),
+        allow_queue: false,
+        is_admin: true,
+        enforce_runtime_queue: false,
+        approval_tx: None,
+        thread_turn_id: Some(Uuid::new_v4()),
+        thread_user_round: Some(1),
+        thread_resume_from_seq: 0,
+    };
+    let emitter = EventEmitter::new(
+        prepared.session_id.clone(),
+        prepared.user_id.clone(),
+        None,
+        Some(state.storage.clone()),
+        state.monitor.clone(),
+        true,
+        None,
+    );
+    // Measure unpolled concrete futures, before any caller can hide their size
+    // behind a Box. A small task wrapper alone cannot protect a giant action's
+    // construction/poll frames on the Windows default stack.
+    let execution = orchestrator.execute_request(prepared, emitter);
+    let run = orchestrator.run(request.clone());
+    let stream = orchestrator.stream(request);
+    for (name, bytes, budget) in [
+        (
+            "execute_request",
+            std::mem::size_of_val(&execution),
+            128 * 1024,
+        ),
+        ("run", std::mem::size_of_val(&run), 64 * 1024),
+        ("stream", std::mem::size_of_val(&stream), 64 * 1024),
+    ] {
+        assert!(
+            bytes <= budget,
+            "{name} future uses {bytes} bytes; budget is {budget}"
+        );
+    }
 }
 
-async fn exercise_stream_lifecycle() {
+// Exercise the real runner on ordinary test/Tokio stacks. Increasing the stack
+// here would hide future-size regressions that crash the Windows service.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn thread_lifecycle_stream_commits_file_and_terminal_before_final() {
     let calls = Arc::new(AtomicUsize::new(0));
     let counter = calls.clone();
     let app = Router::new().route("/v1/chat/completions", post(move |Json(request): Json<Value>| {

@@ -126,17 +126,33 @@ export component WorkspaceFilesPanel inherits Rectangle {
                 }
                 if root.search-open : search-field := Rectangle {
                     height: 24px; horizontal-stretch: 1;
-                    border-radius: 6px; border-width: 1px; border-color: Theme.input-border;
+                    border-radius: 6px; border-width: 1px;
+                    border-color: search-input.has-focus ? Theme.accent : Theme.input-border;
                     background: Theme.input-bg;
                     init => { search-input.focus(); }
+                    // Raw TextInput like the composer row: the std LineEdit
+                    // restyles the compact field with its own chrome, a second
+                    // clear button and a taller native height.
+                    touch := TouchArea { clicked => { search-input.focus(); } }
                     HorizontalLayout {
-                        padding-left: 8px; padding-right: 4px; spacing: 4px;
-                        search-input := LineEdit {
-                            vertical-stretch: 1;
-                            placeholder-text: I18n.wf_search_placeholder;
-                            text <=> root.search-query;
-                            edited(text) => { root.search-edit(text); }
-                            accepted(text) => { root.search-accept(text); }
+                        padding-left: 8px; padding-right: 2px;
+                        Rectangle {
+                            horizontal-stretch: 1;
+                            search-input := TextInput {
+                                width: parent.width; height: parent.height;
+                                single-line: true;
+                                text <=> root.search-query;
+                                color: Theme.text; font-size: Theme.font-xs;
+                                vertical-alignment: center;
+                                edited() => { root.search-edit(root.search-query); }
+                                accepted() => { root.search-accept(root.search-query); }
+                            }
+                            if root.search-query == "" : Text {
+                                width: parent.width; height: parent.height;
+                                text: I18n.wf_search_placeholder;
+                                color: Theme.muted; font-size: Theme.font-xs;
+                                vertical-alignment: center;
+                            }
                         }
                         ToolButton {
                             glyph: @image-url("../assets/icons/xmark.svg");
@@ -149,7 +165,7 @@ export component WorkspaceFilesPanel inherits Rectangle {
             if root.selecting && !root.search-active : HorizontalLayout {
                 height: 26px; spacing: 6px;
                 Text {
-                    text: I18n.wf_selected_count(root.selected-count);
+                    text: I18n.wf_selected_count("\{root.selected-count}");
                     color: Theme.text-secondary; font-size: Theme.font-xs; vertical-alignment: center;
                 }
                 Rectangle { horizontal-stretch: 1; min-width: 0px; }
@@ -193,7 +209,7 @@ export component WorkspaceFilesPanel inherits Rectangle {
                     if root.offline : VerticalLayout {
                         alignment: center; spacing: 8px;
                         Text { text: I18n.wf_offline; color: Theme.muted; font-size: Theme.font-xs; horizontal-alignment: center; wrap: word-wrap; }
-                        HorizontalLayout { alignment: center; Button { text: I18n.wf_connect; clicked => { root.connect(); } Tooltip { text: @markdown("连接云端工作目录"); } } }
+                        HorizontalLayout { alignment: center; Button { text: I18n.wf_connect; clicked => { root.connect(); } Tooltip { text: @markdown("\{I18n.wf_connect_cloud}"); } } }
                     }
                     if root.rows.length == 0 && root.error != "" && !root.offline : VerticalLayout {
                         alignment: center; spacing: 8px;

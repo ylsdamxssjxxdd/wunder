@@ -9,6 +9,10 @@ export component WorkspaceAlignmentDemo inherits Window {
     in-out property <bool> empty: false;
     in-out property <bool> loading: false;
     in-out property <bool> folder-open: true;
+    // Working-directory toolbar demo states, driven from --load-data JSON
+    // when screenshotting: the search swap-in field and the multi-select bar.
+    in-out property <bool> search-demo: false;
+    in-out property <bool> select-demo: false;
     in-out property <float> split: 0.6;
     in-out property <string> active-path: "notes/sample.txt";
     in-out property <int> active-index: 1;
@@ -48,9 +52,18 @@ export component WorkspaceAlignmentDemo inherits Window {
         file-busy: root.loading;
         file-active-path: root.active-path;
         file-active-index: root.active-index;
-        file-rows: root.empty ? [] : root.folder-open ? [
+        file-search-open: root.search-demo;
+        file-search-query: root.search-demo ? "sample" : "";
+        file-search-active: root.search-demo;
+        file-selecting: root.select-demo;
+        file-selected-count: root.select-demo ? 1 : 0;
+        file-rows: root.search-demo ? [
+            {path: "notes", name: "notes", kind: 1},
+            {path: "notes/sample.txt", name: "sample.txt", kind: 0, size-text: "2 KB", icon: @image-url("../assets/icons/file-lines.svg")},
+            {path: "notes/sample.json", name: "sample.json", kind: 0, size-text: "850 B", icon: @image-url("../assets/icons/file-lines.svg")}
+        ] : root.empty ? [] : root.folder-open ? [
             {path: "notes", name: "notes", kind: 1, expanded: true},
-            {path: "notes/sample.txt", name: "sample.txt", kind: 0, depth: 1, size-text: "2 KB", icon: @image-url("../assets/icons/file-lines.svg")},
+            {path: "notes/sample.txt", name: "sample.txt", kind: 0, depth: 1, size-text: "2 KB", icon: @image-url("../assets/icons/file-lines.svg"), selected: root.select-demo},
             {path: "notes/sample.json", name: "sample.json", kind: 0, depth: 1, size-text: "850 B", icon: @image-url("../assets/icons/file-lines.svg")},
             {path: "assets", name: "assets", kind: 1},
             {path: "readme.txt", name: "readme.txt", kind: 0, icon: @image-url("../assets/icons/file-lines.svg")}

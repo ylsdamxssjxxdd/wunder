@@ -120,13 +120,22 @@ ensure_runtime_profile() {
   local target="${WUNDER_RUNTIME_DIR:-/opt/wunder-runtime}"
   [ -d "${target}/remotion/node_modules" ] || return 0
 
+  local blender_root="${target}/blender"
+  local path_line='case ":${PATH}:" in *":${WUNDER_RUNTIME_ROOT}/remotion/bin:"*) ;; *) export PATH="${WUNDER_RUNTIME_ROOT}/remotion/bin:${WUNDER_RUNTIME_ROOT}/node/bin:${PATH}" ;; esac'
+  local blender_line=""
+  if [ -d "${blender_root}/bin" ]; then
+    blender_line="export WUNDER_BLENDER_ROOT=${blender_root}"
+    path_line='case ":${PATH}:" in *":${WUNDER_RUNTIME_ROOT}/remotion/bin:"*) ;; *) export PATH="${WUNDER_RUNTIME_ROOT}/remotion/bin:${WUNDER_RUNTIME_ROOT}/node/bin:${WUNDER_BLENDER_ROOT}/bin:${PATH}" ;; esac'
+  fi
+
   local profile=/etc/profile.d/wunder-runtime.sh
   if ! {
     printf '%s\n' \
       "export WUNDER_RUNTIME_ROOT=${target}" \
-      "export WUNDER_REMOTION_ROOT=${target}/remotion" \
-      'case ":${PATH}:" in *":${WUNDER_RUNTIME_ROOT}/remotion/bin:"*) ;; *) export PATH="${WUNDER_RUNTIME_ROOT}/remotion/bin:${WUNDER_RUNTIME_ROOT}/node/bin:${PATH}" ;; esac' \
-      'export NODE_PATH="${WUNDER_REMOTION_ROOT}/node_modules:${NODE_PATH:-/usr/lib/node_modules:/usr/local/lib/node_modules}"'
+      "export WUNDER_REMOTION_ROOT=${target}/remotion"
+    [ -n "${blender_line}" ] && printf '%s\n' "${blender_line}"
+    printf '%s\n' "${path_line}"
+    printf '%s\n' 'export NODE_PATH="${WUNDER_REMOTION_ROOT}/node_modules:${NODE_PATH:-/usr/lib/node_modules:/usr/local/lib/node_modules}"'
   } > "${profile}" 2>/dev/null; then
     printf '%s\n' "[docker][runtime] cannot write ${profile}; login shells will miss the runtime PATH" >&2
   fi

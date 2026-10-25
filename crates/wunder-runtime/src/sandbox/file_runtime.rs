@@ -40,9 +40,16 @@ impl SandboxStorage {
         let config = config.storage.clone();
         blocking::run_db("sandbox.storage.initialize", move || {
             cache.initialize(|| {
-                let storage = storage::build_storage(&config)?;
-                storage.ensure_initialized()?;
-                Ok(storage)
+                let initialize=|| {
+                    let storage=storage::build_storage(&config)?;
+                    storage.ensure_initialized()?;
+                    Ok(storage)
+                };
+                if config.backend=="postgres" {
+                    // Connection/parser errors can echo DSN values. Keep the
+                    // tool-facing error actionable without exposing credentials.
+                    initialize().map_err(|_:anyhow::Error|anyhow::anyhow!("sandbox PostgreSQL storage is unavailable; check deployment connection settings"))
+                } else {initialize()}
             })
         })
         .await
@@ -272,23 +279,25 @@ fn configure_sandbox_file_tool_storage_from(
     config: &mut Config,
     env_lookup: &dyn Fn(&str) -> Option<String>,
 ) {
-    // The sandbox is an execution worker, not a canonical history executor.
-    // It must never open the service PostgreSQL control plane: doing so makes
-    // its private container root compete for the canonical-root identity and
-    // turns an ordinary file tool call into a deployment failure.  The file
-    // tools only need the local workspace/meta interfaces, so use a disposable
-    // SQLite state store below the worker's writable temp volume.
-    config.storage.backend = "sqlite".to_string();
-    config.storage.data_root = env_string_from(env_lookup, "WUNDER_SANDBOX_STORAGE_DATA_ROOT")
-        .or_else(|| {
-            env_string_from(env_lookup, "TMPDIR").map(|root| {
-                PathBuf::from(root)
-                    .join("wunder-sandbox-storage")
-                    .to_string_lossy()
-                    .into_owned()
-            })
-        })
-        .unwrap_or_else(|| "/tmp/wunder-sandbox-storage".to_string());
+    // Service sandboxes share the PostgreSQL control plane. Workspace files
+    // remain isolated by the container/workspace roots; no per-sandbox SQLite
+    // database is created.
+    config.storage.backend = "postgres".to_string();
+    config.storage.data_root = env_string_from(env_lookup, "WUNDER_STORAGE_DATA_ROOT")
+        .unwrap_or_else(|| "/app/config/data".to_string());
+    if let Some(dsn) = env_string_from(env_lookup, "WUNDER_POSTGRES_DSN") {
+        config.storage.postgres.dsn = dsn;
+    }
+    if let Some(timeout) = env_string_from(env_lookup, "WUNDER_POSTGRES_CONNECT_TIMEOUT_S")
+        .and_then(|value| value.parse::<u64>().ok())
+    {
+        config.storage.postgres.connect_timeout_s = timeout;
+    }
+    if let Some(pool) = env_string_from(env_lookup, "WUNDER_POSTGRES_POOL_SIZE")
+        .and_then(|value| value.parse::<usize>().ok())
+    {
+        config.storage.postgres.pool_size = pool;
+    }
 }
 
 fn env_string_from(env_lookup: &dyn Fn(&str) -> Option<String>, name: &str) -> Option<String> {
@@ -345,22 +354,22 @@ mod tests {
         let mut config = Config::default();
         configure_sandbox_file_tool_storage_from(&mut config, &|_| None);
 
-        assert_eq!(config.storage.backend, "sqlite");
-        assert_eq!(config.storage.data_root, "/tmp/wunder-sandbox-storage");
+        assert_eq!(config.storage.backend, "postgres");
+        assert_eq!(config.storage.data_root, "/app/config/data");
     }
 
     #[test]
-    fn sandbox_storage_root_can_be_overridden_without_using_service_root() {
+    fn sandbox_uses_service_storage_root() {
         let mut config = Config::default();
         configure_sandbox_file_tool_storage_from(&mut config, &|name| {
-            (name == "WUNDER_SANDBOX_STORAGE_DATA_ROOT").then(|| "/sandbox/state".to_string())
+            (name == "WUNDER_STORAGE_DATA_ROOT").then(|| "/sandbox/state".to_string())
         });
-        assert_eq!(config.storage.backend, "sqlite");
+        assert_eq!(config.storage.backend, "postgres");
         assert_eq!(config.storage.data_root, "/sandbox/state");
     }
 
     #[test]
-    fn sandbox_file_tool_ignores_service_postgres_configuration() {
+    fn sandbox_file_tool_uses_deployment_postgres_configuration() {
         let mut config = Config::default();
         configure_sandbox_file_tool_storage_from(&mut config, &|name| match name {
             "WUNDER_STORAGE_BACKEND" => Some("postgres".to_string()),
@@ -369,9 +378,9 @@ mod tests {
             "WUNDER_SANDBOX_STORAGE_DATA_ROOT" => Some("/tmp/sandbox-state".to_string()),
             _ => None,
         });
-        assert_eq!(config.storage.backend, "sqlite");
-        assert_eq!(config.storage.data_root, "/tmp/sandbox-state");
-        assert_ne!(
+        assert_eq!(config.storage.backend, "postgres");
+        assert_eq!(config.storage.data_root, "/app/config/data");
+        assert_eq!(
             config.storage.postgres.dsn,
             "postgresql://service.invalid/wunder"
         );
@@ -383,10 +392,7 @@ mod tests {
         configure_sandbox_file_tool_storage_from(&mut config, &|name| {
             (name == "TMPDIR").then(|| "/workspaces/.cache/tmp".to_string())
         });
-        assert_eq!(config.storage.backend, "sqlite");
-        assert_eq!(
-            config.storage.data_root,
-            "/workspaces/.cache/tmp/wunder-sandbox-storage"
-        );
+        assert_eq!(config.storage.backend, "postgres");
+        assert_eq!(config.storage.data_root, "/app/config/data");
     }
 }

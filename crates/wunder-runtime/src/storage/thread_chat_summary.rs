@@ -9,6 +9,11 @@ use serde_json::Value;
 pub(super) struct ChatSummary {
     pub user_item_id: Option<String>,
     pub assistant_item_id: Option<String>,
+    /// Latest durable question-panel event for this user turn.  The panel is
+    /// a visible control item rather than assistant prose, so it needs its
+    /// own identity in the compact chat checkpoint.
+    #[serde(default)]
+    pub question_panel_item_id: Option<String>,
     pub plan_item_id: Option<String>,
     pub reasoning_item_id: Option<String>,
     pub reasoning_count: i64,
@@ -67,6 +72,35 @@ pub(super) fn project_item(
         .map(serde_json::from_str)
         .transpose()?
         .unwrap_or_default();
+    apply_item(&mut summary, turn, id, kind, ordinal, visible, preview);
+    let encoded = serde_json::to_string(&summary)?;
+    if previous.as_deref() == Some(&encoded) {
+        return Ok(());
+    }
+    tx.execute(
+        "INSERT INTO thread_chat_checkpoints(rollout_id,root_turn_id,rollout_ordinal,summary_json)
+         VALUES(?1,?2,?3,?4)",
+        params![rollout, root, ordinal, encoded],
+    )?;
+    tx.execute(
+        "INSERT INTO thread_chat_heads(rollout_id,root_turn_id,rollout_ordinal,summary_json)
+         VALUES(?1,?2,?3,?4) ON CONFLICT(rollout_id,root_turn_id) DO UPDATE SET
+         rollout_ordinal=excluded.rollout_ordinal,summary_json=excluded.summary_json",
+        params![rollout, root, ordinal, encoded],
+    )?;
+    Ok(())
+}
+
+/// Shared compact projection semantics for local and service history.
+pub(super) fn apply_item(
+    summary: &mut ChatSummary,
+    turn: &str,
+    id: &str,
+    kind: &str,
+    ordinal: i64,
+    visible: bool,
+    preview: &Value,
+) {
     let payload = preview.get("payload").unwrap_or(preview);
     let body = if payload.get("item_id").and_then(Value::as_str).is_some()
         && payload.get("payload").is_some()
@@ -100,6 +134,7 @@ pub(super) fn project_item(
                     summary.reasoning_item_id = Some(id.into());
                 }
             }
+            "question_panel" => summary.question_panel_item_id = Some(id.into()),
             "plan" => summary.plan_item_id = Some(id.into()),
             _ => {}
         }
@@ -115,22 +150,6 @@ pub(super) fn project_item(
     {
         summary.workspace_change_seq = ordinal + 1;
     }
-    let encoded = serde_json::to_string(&summary)?;
-    if previous.as_deref() == Some(&encoded) {
-        return Ok(());
-    }
-    tx.execute(
-        "INSERT INTO thread_chat_checkpoints(rollout_id,root_turn_id,rollout_ordinal,summary_json)
-         VALUES(?1,?2,?3,?4)",
-        params![rollout, root, ordinal, encoded],
-    )?;
-    tx.execute(
-        "INSERT INTO thread_chat_heads(rollout_id,root_turn_id,rollout_ordinal,summary_json)
-         VALUES(?1,?2,?3,?4) ON CONFLICT(rollout_id,root_turn_id) DO UPDATE SET
-         rollout_ordinal=excluded.rollout_ordinal,summary_json=excluded.summary_json",
-        params![rollout, root, ordinal, encoded],
-    )?;
-    Ok(())
 }
 
 /// Upgrade only the accessed rollout, with bounded transactions and resumable
@@ -224,6 +243,9 @@ pub(super) fn read(conn: &Connection, rollout: &str, root: &str) -> Result<ChatS
         }
         if current.assistant_item_id.is_some() {
             result.assistant_item_id = current.assistant_item_id;
+        }
+        if current.question_panel_item_id.is_some() {
+            result.question_panel_item_id = current.question_panel_item_id;
         }
         if current.plan_item_id.is_some() {
             result.plan_item_id = current.plan_item_id;

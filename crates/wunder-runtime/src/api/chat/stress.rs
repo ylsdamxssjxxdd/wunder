@@ -62,11 +62,8 @@ async fn start_stress_thread(
 ) -> Result<Json<Value>, Response> {
     let resolved = resolve_user(&state, &headers, None).await?;
     require_admin(&resolved)?;
-    let config = state.config_store.get().await;
-    let target = stress_thread::StressStorageTarget::from_config(&config.storage)
-        .map_err(|message| error_response(StatusCode::BAD_REQUEST, message))?;
     stress_thread::start_stress_thread_job(StartStressJobRequest {
-        target,
+        thread_store: Arc::clone(&state.thread_store),
         user_id: resolved.user.user_id.clone(),
         user_store: Arc::clone(&state.user_store),
         user_rounds: payload.user_rounds,

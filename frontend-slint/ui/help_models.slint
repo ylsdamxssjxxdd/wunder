@@ -36,12 +36,23 @@ export struct HelpRect {
     radius: float,
 }
 
+// 美术图册的预览图：按排版后的绝对位置绘制，和文字共用同一套缩放坐标。
+export struct HelpImage {
+    x: float,
+    y: float,
+    width: float,
+    height: float,
+    source: image,
+    alt: string,
+}
+
 export global HelpDocs {
     in property <[HelpEntry]> contents;
     in property <[HelpEntry]> keyword-index;
     in property <[HelpEntry]> search-results;
     in property <[HelpTextRun]> runs;
     in property <[HelpRect]> decorations;
+    in property <[HelpImage]> images;
     in property <[HelpRect]> matches;
     in property <[HelpRect]> selection;
     in property <float> document-height: 600;

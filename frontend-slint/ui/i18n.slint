@@ -733,6 +733,8 @@ export global I18n {
     out property <string> tn_notice_body: zh ? "程序仍在后台运行。点击托盘图标恢复窗口，托盘右键菜单可截图或退出。" : "Still running in the background. Click the tray icon to restore the window; right-click the tray menu to screenshot or quit.";
     out property <string> tn_notice_ack: zh ? "知道了" : "Got it";
     out property <string> tn_notice_quit: zh ? "退出程序" : "Quit";
+    out property <string> cn_notice_title: zh ? "智能体任务完成" : "Agent task completed";
+    public pure function cn_notice_body(name: string) -> string { return zh ? "智能体 " + name + " 已完成任务" : "Agent " + name + " finished the task"; }
     out property <string> app_window_title: zh ? "蛹" : "Pupa";
     out property <string> wm_minimize: zh ? "最小化" : "Minimize";
     out property <string> wm_maximize: zh ? "最大化" : "Maximize";
@@ -904,7 +906,7 @@ export global I18n {
     out property <string> stc_agent: zh ? "智能体设置" : "Agent";
     out property <string> stc_agent_note: zh ? "内置智能体的提示词与工具" : "Built-in agent prompt and tools";
     out property <string> stc_pet: zh ? "桌宠" : "Companion";
-    out property <string> stc_pet_note: zh ? "形象库、显示方式与动画联动" : "Library, display mode and animation";
+    out property <string> stc_pet_note: zh ? "桌宠形象、缩放与气泡提示" : "Companion avatar, scale and bubble hints";
     out property <string> stc_cron: zh ? "定时任务" : "Scheduled tasks";
     out property <string> stc_cron_note: zh ? "按计划触发的任务与运行记录" : "Scheduled jobs and their runs";
     out property <string> stc_memory: zh ? "记忆碎片" : "Memories";
@@ -950,9 +952,6 @@ export global I18n {
     out property <string> sb_origin_cloud: zh ? "☁ 云端" : "Cloud";
     out property <string> sb_origin_device: zh ? "设备" : "Device";
     out property <string> stc_local_note: zh ? "以下内容都是本机设置，保存在本地配置中，不上传。" : "Everything here is local to this machine and is never uploaded.";
-    out property <string> stc_pet_tab: zh ? "形象库" : "Library";
-    out property <string> stc_pet_stage: zh ? "动态形象" : "Animation";
-    out property <string> stc_pet_note_short: zh ? "桌宠的显示、缩放与位置由桌宠窗口控制，此处管理形象库。" : "The companion window owns visibility, scale and position; this manages the library.";
     out property <string> stc_archives_empty: zh ? "还没有归档线程。" : "No archived threads yet.";
     out property <string> stc_runs_tab: zh ? "用量统计" : "Usage";
     out property <string> stc_archives_open: zh ? "查看" : "Open";
@@ -972,22 +971,21 @@ export global I18n {
     out property <string> stc_runs_duration: zh ? "累计运行" : "Total runtime";
     out property <string> stc_runs_tokens: zh ? "累计令牌" : "Total tokens";
     out property <string> stc_runs_calls: zh ? "工具调用" : "Tool calls";
-    out property <string> pet_show: zh ? "显示桌宠" : "Show companion";
-    out property <string> pet_show_note: zh ? "关闭后桌宠窗口隐藏，动画状态保留。" : "Hiding keeps the animation state; the window simply disappears.";
-    out property <string> pet_hints: zh ? "消息气泡" : "Message bubbles";
-    out property <string> pet_hints_note: zh ? "桌宠在任务完成或出错时显示提示气泡。" : "The companion shows a bubble when a task finishes or fails.";
-    out property <string> pet_scale: zh ? "缩放" : "Scale";
+    out property <string> pet_behavior: zh ? "桌宠行为" : "Companion behavior";
+    out property <string> pet_behavior_note: zh ? "开关即时保存，动画随线程运行状态联动。" : "Changes save instantly; animation follows thread state.";
+    out property <string> pet_show: zh ? "动画形象" : "Companion avatar";
+    out property <string> pet_show_note: zh ? "在桌面显示已选形象。" : "Show the selected companion on the desktop.";
+    out property <string> pet_hints: zh ? "形象消息提示" : "Message hints";
+    out property <string> pet_hints_note: zh ? "让形象显示必要的简短状态信息。" : "Let the companion show brief status hints.";
+    out property <string> pet_scale: zh ? "大小" : "Size";
     out property <string> pet_scale_note: zh ? "拖动滑块调整桌宠大小，范围 0.5–1.6。" : "Drag to resize the pet; range 0.5–1.6.";
     out property <string> pet_library_title: zh ? "形象库" : "Library";
-    out property <string> pet_library_subtitle: zh ? "选择要显示的桌宠形象。" : "Pick the companion to show.";
-    out property <string> pet_library_note: zh ? "选择后立即生效；可导入 .zip 形象包。" : "Selecting one applies at once; import a .zip package to add more.";
+    public pure function pet_library_subtitle(count: string) -> string { return zh ? "形象库共 " + count + " 个形象。" : "" + count + " companions in the library."; }
     out property <string> pet_library_empty: zh ? "还没有形象包，先导入一个。" : "No packages yet — import one to begin.";
-    out property <string> pet_open_library: zh ? "打开形象库" : "Open library";
-    out property <string> pet_import: zh ? "导入形象包" : "Import package";
+    out property <string> pet_import: zh ? "导入" : "Import";
     out property <string> pet_refresh: zh ? "刷新" : "Refresh";
-    out property <string> pet_use: zh ? "使用" : "Use";
+    out property <string> pet_use: zh ? "选用" : "Use";
     out property <string> pet_in_use: zh ? "当前" : "Current";
-    out property <string> pet_none_selected: zh ? "尚未选择形象" : "No companion selected";
     out property <string> cron_new_job: zh ? "新建任务" : "New task";
     out property <string> st_theme: zh ? "主题" : "Theme";
     out property <string> st_theme_light: zh ? "浅色（蜂巢基调）" : "Light (hive tone)";
@@ -1419,8 +1417,9 @@ export global I18n {
     out property <string> wf_searching: zh ? "搜索中…" : "Searching…";
     out property <string> wf_search_empty: zh ? "没有匹配的文件" : "No matching files";
     out property <string> wf_select: zh ? "多选" : "Select";
-    public pure function wf_selected_count(count: int) -> string { return zh ? "已选 \{count} 项" : "\{count} selected"; }
+    public pure function wf_selected_count(count: string) -> string { return zh ? "已选 " + count + " 项" : "" + count + " selected"; }
     out property <string> wf_batch_download: zh ? "批量下载" : "Download";
+    out property <string> wf_connect_cloud: zh ? "连接云端工作目录" : "Connect to the cloud workspace";
     out property <string> wf_empty: zh ? "当前目录没有文件" : "No files in this directory";
     out property <string> wf_empty_hint: zh ? "拖入文件，或新建目录和文件" : "Drop files here, or create a folder or file";
     out property <string> wf_offline: zh ? "连接云端后，这里显示你的云端工作目录" : "Sign in to the cloud to browse your workspace";

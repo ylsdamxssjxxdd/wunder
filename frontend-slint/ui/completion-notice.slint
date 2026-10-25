@@ -1,0 +1,58 @@
+import { Theme } from "theme.slint";
+
+// 任务完成系统提示：蜂巢「智能体任务完成」系统通知在蛹上的对等物。
+// 窗口由 Rust 侧（src/completion_notice.rs）创建、定位并定时收起，
+// 不与主窗口共享 globals；标题与正文按主窗口语言由 Rust 传入。
+// 点击提示打开对应会话，停留数秒后自动消失。
+export component CompletionNotice inherits Window {
+    no-frame: true;
+    always-on-top: true;
+    background: transparent;
+    in-out property <string> notice-title;
+    in-out property <string> notice-body;
+    callback open-requested();
+
+    width: 360px;
+    height: 88px;
+
+    Rectangle {
+        width: parent.width; height: parent.height;
+        background: Theme.panel;
+        border-width: 1px;
+        border-color: Theme.border;
+        border-radius: Theme.radius-md;
+
+        HorizontalLayout {
+            padding-left: 14px; padding-right: 14px;
+            padding-top: 12px; padding-bottom: 12px;
+            spacing: 12px;
+            Image {
+                width: 32px; height: 32px;
+                source: @image-url("../assets/app-icon.png");
+                image-fit: contain;
+            }
+            VerticalLayout {
+                spacing: 4px;
+                Text {
+                    text: root.notice-title;
+                    color: Theme.text;
+                    font-size: Theme.font-md;
+                    font-weight: 700;
+                    overflow: elide;
+                }
+                Text {
+                    text: root.notice-body;
+                    color: Theme.muted;
+                    font-size: Theme.font-sm;
+                    overflow: elide;
+                    wrap: word-wrap;
+                    vertical-alignment: center;
+                }
+            }
+        }
+        TouchArea {
+            mouse-cursor: pointer;
+            clicked => { root.open-requested(); }
+        }
+    }
+}

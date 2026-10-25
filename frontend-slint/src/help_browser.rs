@@ -2,7 +2,7 @@
 //! 排版成绝对定位的文本片段与装饰矩形，再绑定到 HelpDocs 全局状态。
 //! 视图层（help_*.slint）只做投影，不持有阅读状态，切页不丢进度。
 
-use crate::{HelpDocs, HelpEntry, HelpRect, HelpTextRun, HelpWindow};
+use crate::{HelpDocs, HelpEntry, HelpImage, HelpRect, HelpTextRun, HelpWindow};
 use parley::{
     Alignment, AlignmentOptions, FontContext, FontWeight, LayoutContext, LineHeight, StyleProperty,
 };
@@ -92,6 +92,14 @@ pub enum Block {
     Table { rows: Vec<TableRow> },
     Cards { cards: Vec<Card> },
     Code { rows: Vec<Vec<Span>> },
+    Image(ImageBlock),
+}
+
+#[derive(Deserialize)]
+pub struct ImageBlock {
+    pub src: String,
+    pub alt: String,
+    pub caption: String,
 }
 
 #[derive(Deserialize)]
@@ -178,6 +186,19 @@ impl Block {
                 visit(&c.summary);
             }),
             Self::Code { rows } => rows.iter().for_each(|row| visit(row)),
+            Self::Image(image) => {
+                let spans = [
+                    Span {
+                        text: image.alt.clone(),
+                        ..Default::default()
+                    },
+                    Span {
+                        text: image.caption.clone(),
+                        ..Default::default()
+                    },
+                ];
+                visit(&spans);
+            }
             Self::H1 { spans }
             | Self::H2 { spans }
             | Self::Paragraph { spans }
@@ -208,6 +229,7 @@ pub struct Hit {
 pub struct Document {
     pub runs: Vec<HelpTextRun>,
     pub rects: Vec<HelpRect>,
+    pub images: Vec<HelpImage>,
     pub hits: Vec<Hit>,
     pub text: String,
     pub height: f32,
@@ -294,12 +316,42 @@ impl Document {
 }
 
 // ---------------------------------------------------------------------------
+// 美术图册：预览图按需解码
+// ---------------------------------------------------------------------------
+
+/// 预览图随应用内嵌；键名由 scripts/build_help_manual.py 写入手册 JSON。
+fn art_preview(slug: &str) -> Option<&'static [u8]> {
+    Some(match slug {
+        "00-overview" => include_bytes!("../assets/help/art/00-overview.png"),
+        "01-foundations" => include_bytes!("../assets/help/art/01-foundations.png"),
+        "02-icons" => include_bytes!("../assets/help/art/02-icons.png"),
+        "03-shell-sidebar" => include_bytes!("../assets/help/art/03-shell-sidebar.png"),
+        "04-timeline" => include_bytes!("../assets/help/art/04-timeline.png"),
+        "05-process-tools" => include_bytes!("../assets/help/art/05-process-tools.png"),
+        "06-plan-inquiry" => include_bytes!("../assets/help/art/06-plan-inquiry.png"),
+        "07-composer" => include_bytes!("../assets/help/art/07-composer.png"),
+        "08-settings-dialogs" => include_bytes!("../assets/help/art/08-settings-dialogs.png"),
+        "09-states-motion" => include_bytes!("../assets/help/art/09-states-motion.png"),
+        _ => return None,
+    })
+}
+
+struct CachedImage {
+    slug: String,
+    image: slint::Image,
+    width: f32,
+    height: f32,
+}
+
+// ---------------------------------------------------------------------------
 // 排版器
 // ---------------------------------------------------------------------------
 
 pub struct Typesetter {
     fonts: FontContext,
     context: LayoutContext<usize>,
+    /// 只留最近一张预览图：手册一次只显示一页，缓存多张会白占解码内存。
+    image: Option<CachedImage>,
 }
 
 impl Typesetter {
@@ -313,7 +365,25 @@ impl Typesetter {
                 ..Default::default()
             },
             context: LayoutContext::new(),
+            image: None,
         }
+    }
+
+    fn image(&mut self, slug: &str) -> Option<(slint::Image, f32, f32)> {
+        if let Some(cached) = self.image.as_ref().filter(|cached| cached.slug == slug) {
+            return Some((cached.image.clone(), cached.width, cached.height));
+        }
+        let decoded = image::load_from_memory(art_preview(slug)?).ok()?.to_rgba8();
+        let (width, height) = decoded.dimensions();
+        let buffer = slint::SharedPixelBuffer::clone_from_slice(decoded.as_raw(), width, height);
+        let image = slint::Image::from_rgba8(buffer);
+        self.image = Some(CachedImage {
+            slug: slug.to_owned(),
+            image: image.clone(),
+            width: width as f32,
+            height: height as f32,
+        });
+        Some((image, width as f32, height as f32))
     }
 
     fn text(
@@ -686,6 +756,71 @@ impl Typesetter {
                     );
                     y += height + 12.0;
                 }
+                Block::Image(image) => {
+                    let (src, alt, caption) = (&image.src, &image.alt, &image.caption);
+                    y += 4.0;
+                    match self.image(src) {
+                        Some((source, image_width, image_height)) => {
+                            let height = (w * image_height / image_width.max(1.0)).round();
+                            doc.rects.push(rect(
+                                x - 1.0,
+                                y - 1.0,
+                                w + 2.0,
+                                height + 2.0,
+                                0xffffff,
+                                Some(0xe5e7eb),
+                                0.0,
+                            ));
+                            doc.images.push(HelpImage {
+                                x,
+                                y,
+                                width: w,
+                                height,
+                                source,
+                                alt: alt.clone().into(),
+                            });
+                            y += height + 8.0;
+                            if !caption.is_empty() {
+                                let caption_spans = [Span {
+                                    text: caption.clone(),
+                                    ..Default::default()
+                                }];
+                                y += self.text(
+                                    &mut doc,
+                                    &caption_spans,
+                                    x,
+                                    y,
+                                    w,
+                                    SIZE_SMALL * zoom,
+                                    0x5b6872,
+                                    false,
+                                    true,
+                                ) + 18.0;
+                            }
+                        }
+                        None => {
+                            let fallback = [Span {
+                                text: if alt.is_empty() {
+                                    format!("{src}（图片缺失）")
+                                } else {
+                                    format!("{alt}（图片缺失）")
+                                },
+                                ..Default::default()
+                            }];
+                            y += self.text(
+                                &mut doc,
+                                &fallback,
+                                x,
+                                y,
+                                w,
+                                SIZE_SMALL * zoom,
+                                0xb3261e,
+                                false,
+                                false,
+                            ) + 12.0;
+                        }
+                    }
+                }
             }
         }
         doc.height = y + 40.0;
@@ -854,6 +989,7 @@ impl Controller {
         docs.set_topic_title(topic.title.clone().into());
         docs.set_runs(model(self.document.runs.clone()));
         docs.set_decorations(model(self.document.rects.clone()));
+        docs.set_images(model(self.document.images.clone()));
         docs.set_document_height(self.document.height);
         self.update_selection(docs);
         self.find(docs, false);
@@ -1111,6 +1247,13 @@ mod tests {
                             assert!(ids.contains(&card.target.as_str()), "卡片目标不存在");
                         }
                     }
+                    if let Block::Image(image) = block {
+                        assert!(
+                            art_preview(&image.src).is_some(),
+                            "预览图资源不存在: {}",
+                            image.src
+                        );
+                    }
                     block.visit_text(&mut |spans| {
                         for span in spans {
                             if !span.href.is_empty() {
@@ -1136,6 +1279,23 @@ mod tests {
         assert!(doc.text.contains("本地 AI 工作台"));
         // 查找应命中中文文本。
         assert!(!doc.find("工作台").is_empty());
+    }
+
+    #[test]
+    fn art_sheet_images_typeset() {
+        crate::register_bundled_font().expect("注册内嵌字体");
+        let manual = Manual::load(true);
+        let topic = manual
+            .topics
+            .iter()
+            .find(|topic| topic.id == "art-overview")
+            .expect("缺少美术图册主题");
+        let mut typesetter = Typesetter::new();
+        let doc = typesetter.layout(topic, 800.0, 1.0, false);
+        assert_eq!(doc.images.len(), 1, "美术主题应带一张预览图");
+        assert!(doc.images[0].width > 700.0);
+        assert!(doc.images[0].height > 500.0);
+        assert!(doc.text.contains("1462×866"), "图注应进入可复制文本");
     }
 
     /// Slint 不会为「只由绑定产生」的属性变化执行 `changed`，所以正文列宽无法

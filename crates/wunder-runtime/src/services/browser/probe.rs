@@ -328,7 +328,8 @@ mod tests {
     fn chrome_linux64_supplement_is_recognized() {
         let bundled = PathBuf::from("supplement/opt/browser/chrome-linux64/chrome");
         let exists = |path: &Path| path == bundled.as_path();
-        let selected = select_fallback_executable(&[], &[PathBuf::from("supplement")], &[], &exists);
+        let selected =
+            select_fallback_executable(&[], &[PathBuf::from("supplement")], &[], &exists);
         assert_eq!(selected, Some(bundled));
     }
 

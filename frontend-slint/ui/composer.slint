@@ -487,12 +487,12 @@ export component StatusDock inherits Rectangle {
                                         : step.status == "in_progress" ? Theme.warning
                                         : #B6BCC6;
                                     if step.status == "completed" : Image {
-                                        x: 3.5px; y: 5.5px; width: 10px; height: 7px;
+                                        x: 4px; y: 4px; width: 10px; height: 10px;
                                         source: @image-url("../assets/icons/status-check.svg");
                                         colorize: Theme.success; image-fit: contain;
                                     }
                                     if step.status == "in_progress" : Image {
-                                        x: 5px; y: 4px; width: 7px; height: 9px;
+                                        x: 5px; y: 5px; width: 8px; height: 8px;
                                         source: @image-url("../assets/icons/status-pause.svg");
                                         colorize: Theme.warning; image-fit: contain;
                                     }
@@ -1825,7 +1825,14 @@ export component Composer inherits Rectangle {
                         ? (root.stopping ? Theme.border-strong : Theme.accent)
                         : (root.send-enabled ? (send-touch.has-hover ? Theme.accent-deep : Theme.accent) : Theme.border-strong);
                     Image {
-                        x: 6px; y: 6px; width: 16px; height: 16px;
+                        // The FA stop glyph is a full-bleed square; a 12px
+                        // contain box yields a 10.5px mark, matching the web
+                        // client's 12px font-size stop icon. The arrow keeps
+                        // the 16px box.
+                        x: root.stop-action ? 8px : 6px;
+                        y: root.stop-action ? 8px : 6px;
+                        width: root.stop-action ? 12px : 16px;
+                        height: root.stop-action ? 12px : 16px;
                         source: root.stop-action ? @image-url("../assets/icons/stop.svg") : @image-url("../assets/icons/arrow-up.svg");
                         colorize: #ffffff;
                         image-fit: contain;

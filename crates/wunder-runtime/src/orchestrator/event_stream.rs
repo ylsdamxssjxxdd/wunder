@@ -161,7 +161,9 @@ impl EventEmitter {
         if self.closed.load(AtomicOrdering::SeqCst) {
             return;
         }
-        let _ = queue.try_send(StreamSignal::Done);
+        // Completion cannot be discarded when a slow consumer fills the
+        // bounded queue. It must follow every preceding frame.
+        let _ = queue.send(StreamSignal::Done).await;
     }
 
     pub(super) async fn emit(&self, event_type: &str, data: Value) -> StreamEvent {
@@ -428,37 +430,42 @@ impl Orchestrator {
         mut queue_rx: mpsc::Receiver<StreamSignal>,
         event_tx: mpsc::Sender<StreamEvent>,
         emitter: EventEmitter,
-        runner: JoinHandle<()>,
+        mut runner: JoinHandle<()>,
     ) {
         let thread_runtime = self.thread_runtime.clone();
         long_task::spawn("orchestrator.stream_pump", async move {
-            let mut closed = false;
+            let mut runner_done = false;
             loop {
-                if !closed {
-                    match queue_rx.recv().await {
-                        Some(StreamSignal::Done) => {
-                            closed = true;
+                let signal = if runner_done {
+                    // The task can finish before the consumer drains its last
+                    // frames. Deliver them before closing the subscription.
+                    queue_rx.try_recv().ok()
+                } else {
+                    tokio::select! {
+                        signal = queue_rx.recv() => signal,
+                        _ = &mut runner => {
+                            runner_done = true;
                             continue;
                         }
-                        Some(StreamSignal::Event(event)) => {
-                            if event_tx.send(event).await.is_err() {
-                                emitter.close();
-                                break;
-                            }
-                        }
-                        None => {
-                            closed = true;
+                    }
+                };
+                match signal {
+                    // Done may precede resource cleanup, including another
+                    // completion signal. Continue draining while awaiting the
+                    // task so neither a busy loop nor a full queue can stall it.
+                    Some(StreamSignal::Done) => {}
+                    Some(StreamSignal::Event(event)) => {
+                        if event_tx.send(event).await.is_err() {
+                            emitter.close();
+                            break;
                         }
                     }
-                }
-                if closed && runner.is_finished() {
-                    break;
-                }
-                if closed && queue_rx.is_closed() {
-                    break;
-                }
-                if runner.is_finished() && queue_rx.is_empty() {
-                    break;
+                    None => {
+                        if !runner_done {
+                            let _ = (&mut runner).await;
+                        }
+                        break;
+                    }
                 }
             }
             let detach = thread_runtime.detach_subscriber(&session_id);

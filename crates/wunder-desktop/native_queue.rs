@@ -121,24 +121,18 @@ impl NativeDesktop {
 
     /// 撤下：取消一条还没开跑的轮次，返回原文供输入框回填。
     pub fn withdraw_queue_turn(&self, session_id: &str, queue_id: &str) -> Result<String> {
-        let content = self
-            .list_queue_turns(session_id)?
-            .into_iter()
-            .find(|row| row.queue_id == queue_id.trim())
-            .map(|row| row.content)
-            .unwrap_or_default();
         let state = self.state().clone();
         let user = self.user_id().to_string();
         let session = session_id.trim().to_string();
         let queue = queue_id.trim().to_string();
-        self.runtime.block_on(async move {
+        let result = self.runtime.block_on(async move {
             state
                 .kernel
                 .thread_runtime
                 .cancel_queued_task(&user, &session, &queue)
                 .await
         })?;
-        Ok(content)
+        Ok(result["content"].as_str().unwrap_or_default().to_string())
     }
 
     /// 拖拽排序：写回派发位次，返回重写后的顺序。

@@ -1,6 +1,6 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-10-24T02:01:03.188460+00:00",
+  "generated_at": "2026-10-25T02:12:55.785003+00:00",
   "site": {
     "name": "使用说明书",
     "description": "wunder is a multi-form agent workbench: Pupa (desktop) is the local AI workbench, Beehive (web) is the cloud AI workbench, Helm (cli) is the manual local entry point, and the Hull (server) is the user and agent management platform. / wunder 是多形态的智能体工作台：蛹（desktop）是本地 AI 工作台，蜂巢（web）是云端 AI 工作台，舵机（cli）是手工本地操作入口，舰体（server）是用户与智能体管理平台。",
@@ -323,6 +323,17 @@
                     "title": "蛹界面",
                     "summary": "本地 AI 工作台，个人用户的默认入口。主窗只有对话、设置两页，设置内 12 个分类，其余能力以面板和对话框呈现；含桌面侧独占能力与未开放入口。",
                     "url": "/docs/zh-CN/surfaces/desktop-ui/"
+                  }
+                ]
+              },
+              {
+                "group": "美术",
+                "pages": [
+                  {
+                    "slug": "zh-CN/art/index",
+                    "title": "美术设计稿",
+                    "summary": "蛹桌面端的十张界面设计稿：总览、基础规范、图标、外壳、时间线、过程与工具、计划与问询、输入区、设置与弹窗、交互状态与动效。每张都按 1:1 逻辑像素标注，可直接对照实现。",
+                    "url": "/docs/zh-CN/art/"
                   }
                 ]
               }
@@ -869,6 +880,17 @@
                     "url": "/docs/en/surfaces/desktop-ui/"
                   }
                 ]
+              },
+              {
+                "group": "Art",
+                "pages": [
+                  {
+                    "slug": "en/art/index",
+                    "title": "Art Sheets",
+                    "summary": "Ten interface design sheets for the Pupa desktop app, covering the overview, foundations, icons, shell, timeline, process and tools, plan and inquiry, composer, settings and dialogs, and interaction states. Each sheet is annotated in logical pixels and can be checked against the implementation directly.",
+                    "url": "/docs/en/art/"
+                  }
+                ]
               }
             ]
           },
@@ -1159,6 +1181,7 @@
     "zh-CN/surfaces/frontend",
     "zh-CN/surfaces/web-admin",
     "zh-CN/surfaces/desktop-ui",
+    "zh-CN/art/index",
     "zh-CN/capabilities/index",
     "zh-CN/capabilities/api-index",
     "zh-CN/concepts/core-goal",
@@ -1228,6 +1251,7 @@
     "en/surfaces/frontend",
     "en/surfaces/web-admin",
     "en/surfaces/desktop-ui",
+    "en/art/index",
     "en/capabilities/index",
     "en/capabilities/api-index",
     "en/concepts/core-goal",
@@ -1273,6 +1297,7 @@
     "manifest.json",
     "search.json",
     "assets",
+    "art",
     "zh-CN",
     "en"
   ],
@@ -3437,9 +3462,90 @@
         }
       ],
       "prev_slug": "zh-CN/surfaces/web-admin",
-      "next_slug": "zh-CN/capabilities/index",
+      "next_slug": "zh-CN/art/index",
       "source_path": "zh-CN/surfaces/desktop-ui.md",
       "output_path": "zh-CN/surfaces/desktop-ui/index.html"
+    },
+    "zh-CN/art/index": {
+      "slug": "zh-CN/art/index",
+      "language": "zh-CN",
+      "title": "美术设计稿",
+      "summary": "蛹桌面端的十张界面设计稿：总览、基础规范、图标、外壳、时间线、过程与工具、计划与问询、输入区、设置与弹窗、交互状态与动效。每张都按 1:1 逻辑像素标注，可直接对照实现。",
+      "updated_at": "2026-10-25",
+      "read_when": [],
+      "source_docs": [],
+      "tab": "界面",
+      "group": "美术",
+      "group_path": [
+        "美术"
+      ],
+      "url": "/docs/zh-CN/art/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "美术设计稿"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "00 整体总览"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "01 基础规范"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "02 图标系统"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "03 外壳与侧栏"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "04 会话时间线"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "05 过程与工具"
+        },
+        {
+          "id": "section-8",
+          "level": 2,
+          "text": "06 计划与问询"
+        },
+        {
+          "id": "section-9",
+          "level": 2,
+          "text": "07 输入区"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "08 设置与弹窗"
+        },
+        {
+          "id": "section-11",
+          "level": 2,
+          "text": "09 交互状态与动效"
+        },
+        {
+          "id": "section-12",
+          "level": 2,
+          "text": "维护方式"
+        }
+      ],
+      "prev_slug": "zh-CN/surfaces/desktop-ui",
+      "next_slug": "zh-CN/capabilities/index",
+      "source_path": "zh-CN/art/index.md",
+      "output_path": "zh-CN/art/index.html"
     },
     "zh-CN/capabilities/index": {
       "slug": "zh-CN/capabilities/index",
@@ -3467,7 +3573,7 @@
           "text": "核心能力"
         }
       ],
-      "prev_slug": "zh-CN/surfaces/desktop-ui",
+      "prev_slug": "zh-CN/art/index",
       "next_slug": "zh-CN/capabilities/api-index",
       "source_path": "zh-CN/capabilities/index.md",
       "output_path": "zh-CN/capabilities/index.html"
@@ -7703,9 +7809,90 @@
         }
       ],
       "prev_slug": "en/surfaces/web-admin",
-      "next_slug": "en/capabilities/index",
+      "next_slug": "en/art/index",
       "source_path": "en/surfaces/desktop-ui.md",
       "output_path": "en/surfaces/desktop-ui/index.html"
+    },
+    "en/art/index": {
+      "slug": "en/art/index",
+      "language": "en",
+      "title": "Art Sheets",
+      "summary": "Ten interface design sheets for the Pupa desktop app, covering the overview, foundations, icons, shell, timeline, process and tools, plan and inquiry, composer, settings and dialogs, and interaction states. Each sheet is annotated in logical pixels and can be checked against the implementation directly.",
+      "updated_at": "2026-10-25",
+      "read_when": [],
+      "source_docs": [],
+      "tab": "Surfaces",
+      "group": "Art",
+      "group_path": [
+        "Art"
+      ],
+      "url": "/docs/en/art/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Art Sheets"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "00 Overview"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "01 Foundations"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "02 Icons"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "03 Shell and Sidebar"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "04 Timeline"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "05 Process and Tools"
+        },
+        {
+          "id": "section-8",
+          "level": 2,
+          "text": "06 Plan and Inquiry"
+        },
+        {
+          "id": "section-9",
+          "level": 2,
+          "text": "07 Composer"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "08 Settings and Dialogs"
+        },
+        {
+          "id": "section-11",
+          "level": 2,
+          "text": "09 States and Motion"
+        },
+        {
+          "id": "section-12",
+          "level": 2,
+          "text": "Maintenance"
+        }
+      ],
+      "prev_slug": "en/surfaces/desktop-ui",
+      "next_slug": "en/capabilities/index",
+      "source_path": "en/art/index.md",
+      "output_path": "en/art/index.html"
     },
     "en/capabilities/index": {
       "slug": "en/capabilities/index",
@@ -7728,7 +7915,7 @@
           "text": "Core capabilities"
         }
       ],
-      "prev_slug": "en/surfaces/desktop-ui",
+      "prev_slug": "en/art/index",
       "next_slug": "en/capabilities/api-index",
       "source_path": "en/capabilities/index.md",
       "output_path": "en/capabilities/index.html"

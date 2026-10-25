@@ -137,13 +137,13 @@ pub(crate) fn refresh_page(app: &MainWindow) {
 fn on_toggle_enabled(weak: &slint::Weak<MainWindow>, value: bool) {
     let Some(app) = weak.upgrade() else { return };
     app.global::<PetSettingsState>().set_enabled(value);
-    apply_and_persist(&app, false);
+    apply_and_persist(&app);
 }
 
 fn on_toggle_hints(weak: &slint::Weak<MainWindow>, value: bool) {
     let Some(app) = weak.upgrade() else { return };
     app.global::<PetSettingsState>().set_hints(value);
-    apply_and_persist(&app, false);
+    apply_and_persist(&app);
 }
 
 fn on_set_scale(weak: &slint::Weak<MainWindow>, value: f32) {
@@ -152,7 +152,7 @@ fn on_set_scale(weak: &slint::Weak<MainWindow>, value: f32) {
     let state = app.global::<PetSettingsState>();
     state.set_scale(scale);
     state.set_scale_label(scale_label(scale).into());
-    apply_and_persist(&app, true);
+    apply_and_persist(&app);
 }
 
 fn on_select(weak: &slint::Weak<MainWindow>, id: String) {
@@ -168,13 +168,12 @@ fn on_select(weak: &slint::Weak<MainWindow>, id: String) {
     });
     state.set_selected_name(name.into());
     state.set_status("".into());
-    apply_and_persist(&app, false);
+    apply_and_persist(&app);
 }
 
 /// Persist the page's settings, then adopt the refreshed overlay state so the
-/// floating pet reflects the change at once. `sync_scale` also rewrites the
-/// entry override's scale, matching the web scale-sync on the settings slider.
-fn apply_and_persist(app: &MainWindow, sync_scale: bool) {
+/// floating pet reflects the change at once.
+fn apply_and_persist(app: &MainWindow) {
     let Some(api) = api().cloned() else { return };
     let state = app.global::<PetSettingsState>();
     let enabled = state.get_enabled();
@@ -183,21 +182,7 @@ fn apply_and_persist(app: &MainWindow, sync_scale: bool) {
     let selected = state.get_selected_id().to_string();
     let weak = app.as_weak();
     std::thread::spawn(move || {
-        let result = api
-            .save_companion_settings(enabled, &selected, scale, hints)
-            .and_then(|snapshot| {
-                if sync_scale && !selected.trim().is_empty() {
-                    let key = format!("desktop:{}", selected.trim());
-                    let show = snapshot
-                        .overrides
-                        .get(&key)
-                        .and_then(|entry| entry.show)
-                        .unwrap_or(true);
-                    api.save_companion_override(&key, show, scale)
-                } else {
-                    Ok(snapshot)
-                }
-            });
+        let result = api.save_companion_settings(enabled, &selected, scale, hints);
         let _ = weak.upgrade_in_event_loop(move |app| match result {
             Ok(snapshot) => crate::companion_pet::adopt(&app, snapshot),
             Err(_) => crate::companion_pet::sync(&app),
@@ -269,7 +254,9 @@ fn delete_companion(app: &MainWindow, id: String) {
     });
 }
 
-fn store_library(records: impl IntoIterator<Item = wunder_desktop::native::CompanionSummaryRecord>) {
+fn store_library(
+    records: impl IntoIterator<Item = wunder_desktop::native::CompanionSummaryRecord>,
+) {
     let items = records
         .into_iter()
         .map(|record| LibItem {
@@ -319,6 +306,7 @@ fn show_page(app: &MainWindow, page: i32) {
         .collect::<Vec<_>>();
     let state = app.global::<PetSettingsState>();
     state.set_companions(model(cards));
+    state.set_library_count(items.len() as i32);
     state.set_page(page);
     state.set_page_count(pages);
     state.set_page_label(page_label(page, pages).into());

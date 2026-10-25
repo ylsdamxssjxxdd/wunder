@@ -81,6 +81,15 @@ class ExperienceBenchmarkTests(unittest.TestCase):
         self.assertEqual(summary["pending_events_peak"]["unit"], "events")
         self.assertEqual(summary["startup_ready_ms"]["unit"], "ms")
 
+    def test_blocking_diagnostics_do_not_change_latency_samples(self):
+        sample = self.sample(12)
+        sample["check"]["diagnostics"] = dict(blocking=[dict(
+            kind="db", label="fixture.query", calls=5, total_queue_ms=0, total_exec_ms=8)])
+        BENCH.validate(sample, "startup")
+        metrics = BENCH.summarize([sample])["startup"]["metrics"]
+        self.assertEqual(set(metrics), {"startup_ready_ms"})
+        self.assertEqual(metrics["startup_ready_ms"]["p50"], 12)
+
     def test_resource_growth_excludes_warmup_and_marks_short_runs(self):
         series = [dict(since_start_ms=i*10000, rss_bytes=(999999 if i < 2 else i*1000),
                        handles=10+i, threads=4, private_bytes=None) for i in range(11)]

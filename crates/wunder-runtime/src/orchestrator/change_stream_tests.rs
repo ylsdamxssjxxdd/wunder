@@ -2,6 +2,120 @@ use super::*;
 use crate::state::{AppState, AppStateInitOptions};
 use event_stream::StreamSignal;
 
+#[tokio::test(flavor = "current_thread")]
+async fn cancellation_wakes_waiter_without_polling_and_keeps_source() {
+    let (state, _dir) = build_test_state("cancel_signal").await;
+    let session = "fixture-cancel-thread";
+    state
+        .monitor
+        .register(session, "fixture-owner", "", "fixture", false);
+    let waiter = state.kernel.orchestrator.wait_for_cancelled(session);
+    tokio::pin!(waiter);
+    // Poll explicitly: no wall-clock deadline and no timer advance can make
+    // a periodic-only implementation pass this check.
+    assert!(futures::poll!(waiter.as_mut()).is_pending());
+    state.monitor.cancel_with_source(session, "fixture-stop");
+    let error = match futures::poll!(waiter.as_mut()) {
+        std::task::Poll::Ready(error) => error,
+        std::task::Poll::Pending => panic!("cancellation did not wake immediately"),
+    };
+    assert_eq!(
+        error.to_payload()["detail"]["cancel_source"],
+        "fixture-stop"
+    );
+    let already_cancelled = state.kernel.orchestrator.wait_for_cancelled(session);
+    tokio::pin!(already_cancelled);
+    assert!(futures::poll!(already_cancelled.as_mut()).is_ready());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn stream_completion_waits_for_capacity_and_executor_cleanup() {
+    let (state, _dir) = build_test_state("stream_finish").await;
+    let (queue_tx, mut queue_rx) = mpsc::channel(1);
+    let emitter = EventEmitter::new(
+        "fixture-thread".into(),
+        "fixture-owner".into(),
+        Some(queue_tx.clone()),
+        None,
+        state.monitor.clone(),
+        false,
+        None,
+    );
+    queue_tx
+        .send(StreamSignal::Event(StreamEvent {
+            event: "fixture".into(),
+            data: json!({}),
+            id: None,
+            timestamp: None,
+        }))
+        .await
+        .unwrap();
+    let finishing = {
+        let emitter = emitter.clone();
+        tokio::spawn(async move { emitter.finish().await })
+    };
+    tokio::task::yield_now().await;
+    assert!(!finishing.is_finished());
+    assert!(matches!(
+        queue_rx.recv().await,
+        Some(StreamSignal::Event(_))
+    ));
+    finishing.await.unwrap();
+    assert!(matches!(queue_rx.recv().await, Some(StreamSignal::Done)));
+
+    let (event_tx, mut event_rx) = mpsc::channel(1);
+    let (cleanup_tx, cleanup_rx) = tokio::sync::oneshot::channel();
+    let runner = tokio::spawn(async move {
+        let _ = cleanup_rx.await;
+        // A manual operation can emit completion and then let its outer
+        // request finish. The pump must drain both bounded signals.
+        queue_tx.send(StreamSignal::Done).await.unwrap();
+        queue_tx.send(StreamSignal::Done).await.unwrap();
+    });
+    state.kernel.orchestrator.spawn_stream_pump(
+        "fixture-thread".into(),
+        queue_rx,
+        event_tx,
+        emitter,
+        runner,
+    );
+    // The pump must yield, and must keep the receiver open until cleanup ends.
+    tokio::time::timeout(Duration::from_secs(1), tokio::task::yield_now())
+        .await
+        .unwrap();
+    assert!(matches!(
+        event_rx.try_recv(),
+        Err(mpsc::error::TryRecvError::Empty)
+    ));
+    cleanup_tx.send(()).unwrap();
+    assert!(
+        tokio::time::timeout(Duration::from_secs(1), event_rx.recv())
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn child_tree_cancellation_wakes_nested_waiter_without_polling() {
+    let (state, _dir) = build_test_state("child_cancel_signal").await;
+    let child = state
+        .monitor
+        .register_child_run("fixture-child", "fixture-parent")
+        .unwrap();
+    let waiter = state
+        .kernel
+        .orchestrator
+        .wait_for_cancelled("fixture-child");
+    tokio::pin!(waiter);
+    assert!(futures::poll!(waiter.as_mut()).is_pending());
+    state
+        .monitor
+        .cancel_with_source("fixture-parent", "fixture-stop");
+    assert!(futures::poll!(waiter.as_mut()).is_ready());
+    drop(child);
+}
+
 async fn build_test_state(name: &str) -> (Arc<AppState>, tempfile::TempDir) {
     let root = tempfile::tempdir().unwrap();
     let mut config = Config::default();
@@ -529,6 +643,9 @@ async fn completed_output_projects_context_and_quota_stats_without_history_rewri
     .with_committer(state.kernel.orchestrator.committer.clone());
     let turn = start_turn(&state, "session-a", "user-a").await;
     emitter.bind_turn(&turn, 1);
+    // Production accounts for dispatch before llm_output. Emitting a completed
+    // body alone must not invent a provider request or its billable credit.
+    emitter.record_model_request(1);
 
     emitter
         .emit(

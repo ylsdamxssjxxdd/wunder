@@ -280,10 +280,16 @@ component FormCombo inherits VerticalLayout {
 component SettingRow inherits Rectangle {
     in property <string> label;
     in property <string> note: "";
+    // Optional muted glyph ahead of the labels (web settings row icon).
+    in property <image> row-icon;
     in property <bool> last: false;
     height: row.preferred-height + (root.last ? 0px : 1px);
     row := HorizontalLayout {
         padding-top: 12px; padding-bottom: 12px; spacing: 12px;
+        if root.row-icon.width > 0 : VerticalLayout {
+            alignment: center;
+            Image { width: 16px; height: 16px; source: root.row-icon; colorize: Theme.muted; }
+        }
         VerticalLayout {
             horizontal-stretch: 1; spacing: 3px;
             Text { text: root.label; color: Theme.text; font-size: Theme.font-md; font-weight: 600; }
@@ -864,7 +870,7 @@ export component SettingsPage inherits Rectangle {
                         }
                         SettingsNavItem {
                             visible: root.settings-category-flags[5];
-                            icon: @image-url("../assets/icons/bee.svg");
+                            icon: @image-url("../assets/icons/paw.svg");
                             title: I18n.stc_pet; subtitle: I18n.stc_pet_note;
                             selected: root.settings-tab == 4;
                             clicked => { root.settings-tab = 4;  }
@@ -1563,66 +1569,91 @@ export component SettingsPage inherits Rectangle {
                     if root.settings-tab == 4 : ScrollView { vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
                         VerticalLayout { padding: 24px; spacing: 16px; alignment: start; vertical-stretch: 1;
                             SettingsCard {
-                                SettingsCardHeader { title: I18n.stc_pet; subtitle: I18n.stc_pet_note; }
-                                SettingRow { label: I18n.pet_show; note: I18n.pet_show_note;
+                                SettingsCardHeader { title: I18n.pet_behavior; subtitle: I18n.pet_behavior_note; }
+                                SettingRow { row-icon: @image-url("../assets/icons/paw.svg"); label: I18n.pet_show; note: I18n.pet_show_note;
                                     Switch {
                                         checked: PetSettingsState.enabled;
                                         toggled => { PetSettingsState.toggle-enabled(self.checked); }
                                     }
                                 }
-                                SettingRow { label: I18n.pet_hints; note: I18n.pet_hints_note;
+                                SettingRow { row-icon: @image-url("../assets/icons/comment-dots.svg"); label: I18n.pet_hints; note: I18n.pet_hints_note;
                                     Switch {
                                         checked: PetSettingsState.hints;
                                         toggled => { PetSettingsState.toggle-hints(self.checked); }
                                     }
                                 }
-                                SettingRow { label: I18n.pet_scale; note: I18n.pet_scale_note; last: true;
+                                SettingRow { row-icon: @image-url("../assets/icons/fa-expand.svg"); label: I18n.pet_scale; note: I18n.pet_scale_note; last: true;
                                     HorizontalLayout { spacing: 10px; alignment: end;
+                                        Text { text: PetSettingsState.scale-label; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; }
                                         Slider {
                                             min-width: 150px; max-width: 220px; minimum: 0.5; maximum: 1.6; step: 0.1;
                                             value: PetSettingsState.scale;
                                             changed => { PetSettingsState.set-scale(self.value); }
                                         }
-                                        Text { text: PetSettingsState.scale-label; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; }
                                     }
                                 }
                             }
                             SettingsCard {
-                                SettingsCardHeader { title: I18n.pet_library_title; subtitle: I18n.pet_library_subtitle; }
-                                Rectangle { height: 12px; }
-                                HorizontalLayout { height: 34px; alignment: end; spacing: 8px;
-                                    Rectangle { horizontal-stretch: 1; }
+                                HorizontalLayout { spacing: 12px;
+                                    VerticalLayout {
+                                        horizontal-stretch: 1; spacing: 3px;
+                                        Text { text: I18n.pet_library_title; color: Theme.text; font-size: Theme.font-headline; font-weight: 700; }
+                                        Text { text: I18n.pet_library_subtitle(PetSettingsState.library-count); color: Theme.muted; font-size: Theme.font-xs; wrap: word-wrap; }
+                                    }
                                     Action { width: 84px; height: 30px; label: I18n.pet_refresh; show-label: true; enabled: !PetSettingsState.loading; clicked => { PetSettingsState.refresh(); } }
-                                    Action { width: 120px; height: 30px; label: I18n.pet_import; show-label: true; primary: true; clicked => { PetSettingsState.import-package(); } }
+                                    Action { width: 76px; height: 30px; label: I18n.pet_import; show-label: true; primary: true; clicked => { PetSettingsState.import-package(); } }
                                 }
-                                Rectangle { height: 10px; }
+                                Rectangle { height: 9px; }
+                                Rectangle { height: 1px; background: Theme.border; }
+                                Rectangle { height: 12px; }
                                 if PetSettingsState.companions.length == 0 : Text {
                                     height: 44px; text: I18n.pet_library_empty; color: Theme.muted; font-size: Theme.font-sm;
                                     vertical-alignment: center;
                                 }
-                                for companion in PetSettingsState.companions : Rectangle {
-                                    height: 58px;
-                                    Rectangle { y: parent.height - 1px; width: parent.width; height: 1px; background: Theme.border; }
-                                    Image {
-                                        x: 0px; y: 9px; width: 40px; height: 40px;
-                                        source: companion.preview; image-fit: contain;
-                                    }
-                                    Text { x: 50px; y: 9px; width: parent.width - 190px; height: 19px; text: companion.name; color: Theme.text; font-size: Theme.font-md; font-weight: 600; vertical-alignment: center; overflow: elide; }
-                                    Text { x: 50px; y: 29px; width: parent.width - 190px; height: 17px; text: companion.description; color: Theme.muted; font-size: Theme.font-xs; overflow: elide; }
-                                    if companion.id == PetSettingsState.selected-id : Rectangle {
-                                        x: parent.width - 148px; y: 17px; width: 62px; height: 24px; border-radius: 12px;
-                                        background: Theme.accent-soft;
-                                        Text { width: parent.width; height: parent.height; text: I18n.pet_in_use; color: Theme.accent; font-size: Theme.font-2xs; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
-                                    }
-                                    Action {
-                                        x: parent.width - 78px; y: 16px; width: 30px; height: 26px;
-                                        icon: @image-url("../assets/icons/trash.svg"); label: I18n.common_delete;
-                                        clicked => { PetSettingsState.delete(companion.id); }
-                                    }
-                                    pet-row := TouchArea {
-                                        x: 0px; y: 0px; width: parent.width - 86px; height: parent.height;
-                                        mouse-cursor: pointer;
-                                        clicked => { PetSettingsState.select(companion.id); }
+                                // 形象库网格：蜂巢同款 3 列卡片。绝对定位取 parent.width，
+                                // 不走布局约束，避免子项宽度反向依赖容器形成回路。
+                                if PetSettingsState.companions.length > 0 : Rectangle {
+                                    height: ((PetSettingsState.companions.length + 2) / 3) * 186px;
+                                    property <length> card-width: (self.width - 24px) / 3;
+                                    for companion[index] in PetSettingsState.companions : Rectangle {
+                                        x: Math.mod(index, 3) * (parent.card-width + 12px);
+                                        y: Math.floor(index / 3) * 186px;
+                                        width: parent.card-width;
+                                        height: 174px;
+                                        border-radius: Theme.radius-md;
+                                        border-width: 1px;
+                                        border-color: companion.id == PetSettingsState.selected-id ? Theme.accent : Theme.border;
+                                        background: companion.id == PetSettingsState.selected-id ? Theme.accent-soft : Theme.surface;
+                                        Image {
+                                            x: 12px; y: 12px; width: parent.width - 24px; height: 84px;
+                                            source: companion.preview; image-fit: contain;
+                                        }
+                                        Text {
+                                            x: 12px; y: 100px; width: parent.width - 24px; height: 20px;
+                                            text: companion.name; color: Theme.text; font-size: Theme.font-sm; font-weight: 600;
+                                            horizontal-alignment: center; overflow: elide; wrap: no-wrap;
+                                        }
+                                        Text {
+                                            x: 12px; y: 121px; width: parent.width - 24px; height: 17px;
+                                            text: companion.description; color: Theme.muted; font-size: Theme.font-2xs;
+                                            horizontal-alignment: center; overflow: elide; wrap: no-wrap;
+                                        }
+                                        pet-card := TouchArea {
+                                            mouse-cursor: pointer;
+                                            enabled: companion.id != PetSettingsState.selected-id;
+                                            clicked => { PetSettingsState.select(companion.id); }
+                                        }
+                                        Action {
+                                            x: parent.width - 36px; y: 8px; width: 26px; height: 26px;
+                                            icon: @image-url("../assets/icons/trash.svg"); label: I18n.common_delete;
+                                            clicked => { PetSettingsState.delete(companion.id); }
+                                        }
+                                        Action {
+                                            y: 142px; x: (parent.width - self.width) / 2; width: 76px; height: 26px;
+                                            label: companion.id == PetSettingsState.selected-id ? I18n.pet_in_use : I18n.pet_use;
+                                            enabled: companion.id != PetSettingsState.selected-id;
+                                            clicked => { PetSettingsState.select(companion.id); }
+                                        }
                                     }
                                 }
                                 if PetSettingsState.page-count > 1 : HorizontalLayout {

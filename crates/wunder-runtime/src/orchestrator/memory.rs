@@ -536,25 +536,24 @@ impl Orchestrator {
         let mut summary_failure_message: Option<String> = None;
         let mut summary_failure_retryable: Option<bool> = None;
         let mut summary_speed = crate::core::llm_speed::LlmSpeedSummary::default();
-        let summary_model_output = match self
-            .call_llm(
-                llm_config,
-                &summary_input,
-                user_id,
-                is_admin,
-                emitter,
-                session_id,
-                // Measure real summary decoding when the provider supports
-                // streaming, without publishing summary deltas as chat text.
-                run_mode == CompactionRunMode::Manual,
-                compaction_round,
-                false,
-                true,
-                None,
-                Some(summary_config),
-                None,
-            )
-            .await
+        let summary_model_output = match Box::pin(self.call_llm(
+            llm_config,
+            &summary_input,
+            user_id,
+            is_admin,
+            emitter,
+            session_id,
+            // Measure real summary decoding when the provider supports
+            // streaming, without publishing summary deltas as chat text.
+            run_mode == CompactionRunMode::Manual,
+            compaction_round,
+            false,
+            true,
+            None,
+            Some(summary_config),
+            None,
+        ))
+        .await
         {
             Ok((content, _, _, _, round_speed, _)) => {
                 summary_speed = round_speed;

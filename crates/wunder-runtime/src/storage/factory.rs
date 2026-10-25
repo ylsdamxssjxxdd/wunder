@@ -47,11 +47,10 @@ fn build_sqlite_storage(_config: &StorageConfig) -> Result<Arc<dyn StorageBacken
 
 #[cfg(feature = "postgres-storage")]
 fn build_postgres_storage(config: &StorageConfig) -> Result<Arc<dyn StorageBackend>> {
-    Ok(Arc::new(super::PostgresStorage::new_with_data_root(
+    Ok(Arc::new(super::PostgresStorage::new(
         config.postgres.dsn.clone(),
         config.postgres.connect_timeout_s,
         config.postgres.pool_size,
-        PathBuf::from(&config.data_root),
     )?))
 }
 

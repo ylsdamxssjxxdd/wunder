@@ -25,9 +25,7 @@ use crate::skills::{load_skills, SkillRegistry};
 use crate::storage::sqlite_state_database_path;
 #[cfg(any(feature = "sqlite-storage", test))]
 use crate::storage::SqliteStorage;
-#[cfg(any(feature = "sqlite-storage", test))]
-use crate::storage::StorageLifecycle;
-use crate::storage::{build_storage, StorageBackend};
+use crate::storage::{build_storage, StorageBackend, StorageLifecycle};
 use crate::throughput::ThroughputManager;
 use crate::user_store::UserStore;
 use crate::user_tools::{UserToolManager, UserToolStore};
@@ -226,7 +224,7 @@ pub struct AppState {
     pub throughput: ThroughputManager,
     pub benchmark: BenchmarkManager,
     pub storage: Arc<dyn StorageBackend>,
-    pub thread_store: Arc<crate::storage::thread_store::LocalThreadStore>,
+    pub thread_store: Arc<crate::storage::RuntimeThreadStore>,
     /// Per-user cloud call admission (concurrency slots + bounded queue).
     pub cloud_admission: Arc<crate::api::cloud::CloudAdmissionController>,
     /// Local cloud channel (login session, model synthesis, log reporting);
@@ -248,11 +246,72 @@ impl AppState {
         info!("[startup][app-state] point=new_begin total_ms=0.0");
         let runtime_profile = options.runtime_profile;
         let runtime_capabilities = options.resolve_capabilities(&config);
-        let storage = init_storage(&config)?;
-        let thread_store = Arc::new(
-            crate::storage::thread_store::LocalThreadStore::open(&config.storage.data_root)?
-                .with_compression_enabled(config.storage.thread_store.compression_enabled),
-        );
+        validate_profile_storage(runtime_profile, &config.storage.backend)?;
+        #[cfg(feature = "postgres-storage")]
+        let postgres_storage = if matches!(runtime_profile, AppRuntimeProfile::ServerDistributed)
+            && matches!(
+                config.storage.backend.trim().to_ascii_lowercase().as_str(),
+                "postgres" | "postgresql" | "pg" | "auto"
+            ) {
+            let pg = Arc::new(crate::storage::PostgresStorage::new(
+                config.storage.postgres.dsn.clone(),
+                config.storage.postgres.connect_timeout_s,
+                config.storage.postgres.pool_size,
+            )?);
+            pg.ensure_initialized()?;
+            Some(pg)
+        } else {
+            None
+        };
+        #[cfg(not(feature = "postgres-storage"))]
+        let postgres_storage: Option<Arc<()>> = None;
+        if matches!(runtime_profile, AppRuntimeProfile::ServerDistributed)
+            && !matches!(
+                config.storage.backend.trim().to_ascii_lowercase().as_str(),
+                "postgres" | "postgresql" | "pg" | "auto"
+            )
+        {
+            return Err(anyhow!(
+                "server runtime requires storage.backend=postgres; SQLite and automatic fallback are disabled"
+            ));
+        }
+        let storage: Arc<dyn StorageBackend> = if let Some(pg) = postgres_storage.clone() {
+            #[cfg(feature = "postgres-storage")]
+            {
+                pg as Arc<dyn StorageBackend>
+            }
+            #[cfg(not(feature = "postgres-storage"))]
+            {
+                let _ = pg;
+                unreachable!()
+            }
+        } else {
+            init_storage(&config)?
+        };
+        let thread_store = {
+            #[cfg(feature = "postgres-storage")]
+            if let Some(pg) = postgres_storage {
+                Arc::new(crate::storage::RuntimeThreadStore::postgres(
+                    pg.service_threads()?.clone(),
+                ))
+            } else {
+                Arc::new(crate::storage::RuntimeThreadStore::local(Arc::new(
+                    crate::storage::thread_store::LocalThreadStore::open(
+                        &config.storage.data_root,
+                    )?
+                    .with_compression_enabled(config.storage.thread_store.compression_enabled),
+                )))
+            }
+            #[cfg(not(feature = "postgres-storage"))]
+            {
+                Arc::new(crate::storage::RuntimeThreadStore::local(Arc::new(
+                    crate::storage::thread_store::LocalThreadStore::open(
+                        &config.storage.data_root,
+                    )?
+                    .with_compression_enabled(config.storage.thread_store.compression_enabled),
+                )))
+            }
+        };
         info!(
             "[startup][app-state] point=init_storage_done total_ms={:.1}",
             app_state_start.elapsed().as_secs_f64() * 1000.0
@@ -476,6 +535,18 @@ impl AppState {
     }
 }
 
+fn validate_profile_storage(profile: AppRuntimeProfile, backend: &str) -> Result<()> {
+    if profile.is_embedded()
+        && !matches!(
+            backend.trim().to_ascii_lowercase().as_str(),
+            "" | "sqlite" | "default"
+        )
+    {
+        return Err(anyhow!("embedded runtime requires storage.backend=sqlite; remote storage cannot be combined with local thread history"));
+    }
+    Ok(())
+}
+
 fn init_storage(config: &Config) -> Result<Arc<dyn StorageBackend>> {
     let backend = config.storage.backend.trim().to_lowercase();
     let backend = if backend.is_empty() {
@@ -521,12 +592,6 @@ fn finish_storage_auto<T>(
     match primary {
         Ok(storage) => Ok(storage),
         Err(err) => {
-            #[cfg(feature = "postgres-storage")]
-            if crate::storage::is_canonical_root_binding_failure(&err) {
-                return Err(err.context(
-                    "Postgres canonical root validation failed; use one active executor with the original persisted root",
-                ));
-            }
             warn!("Postgres 初始化失败，已回退到 SQLite: {err}");
             sqlite_fallback()
         }
@@ -547,21 +612,23 @@ mod tests {
     use super::{AppRuntimeCapabilities, AppRuntimeProfile, AppStateInitOptions};
     use wunder_core::config::Config;
 
-    #[cfg(feature = "postgres-storage")]
     #[test]
-    fn auto_storage_never_calls_sqlite_fallback_for_canonical_root_failure() {
-        let fallback_called = std::cell::Cell::new(false);
-        let primary = Err(
-            anyhow::Error::new(crate::storage::CanonicalRootBindingError)
-                .context("root binding rejected"),
+    fn embedded_storage_rejects_remote_backends_before_opening_local_history() {
+        for profile in [
+            AppRuntimeProfile::DesktopEmbedded,
+            AppRuntimeProfile::CliEmbedded,
+        ] {
+            for backend in ["postgres", "pg", "auto"] {
+                assert!(super::validate_profile_storage(profile, backend).is_err());
+            }
+            for backend in ["", "sqlite", "default"] {
+                assert!(super::validate_profile_storage(profile, backend).is_ok());
+            }
+        }
+        assert!(
+            super::validate_profile_storage(AppRuntimeProfile::ServerDistributed, "postgres")
+                .is_ok()
         );
-        let result = super::finish_storage_auto(primary, || {
-            fallback_called.set(true);
-            Ok(())
-        });
-        let error = result.unwrap_err();
-        assert!(crate::storage::is_canonical_root_binding_failure(&error));
-        assert!(!fallback_called.get());
     }
 
     #[test]

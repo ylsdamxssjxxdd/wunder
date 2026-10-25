@@ -30,9 +30,16 @@ ENTRIES = [
 # load-more and pull-open are desktop-specific.
 ENTRIES.extend([
     ("wf_title", "工作目录", "Working directory"),
-    ("wf_stats", "已用 {} · {} 个文件", "Used {} · {} files", ["used", "count"]),
-    ("wf_stats_dirs", "{} 个文件夹", "{} folders", ["count"]),
-    ("wf_stats_truncated", "统计为大目录下界", "Lower bound of a large directory"),
+    # Header toolbar: upload / search / download / multi-select / refresh.
+    ("wf_upload", "上传文件", "Upload files"),
+    ("wf_search", "搜索文件", "Search files"),
+    ("wf_search_placeholder", "搜索文件名", "Search file names"),
+    ("wf_searching", "搜索中…", "Searching…"),
+    ("wf_search_empty", "没有匹配的文件", "No matching files"),
+    ("wf_select", "多选", "Select"),
+    ("wf_selected_count", "已选 {} 项", "{} selected", ["count"]),
+    ("wf_batch_download", "批量下载", "Download"),
+    ("wf_connect_cloud", "连接云端工作目录", "Connect to the cloud workspace"),
     ("wf_empty", "当前目录没有文件", "No files in this directory"),
     ("wf_empty_hint", "拖入文件，或新建目录和文件", "Drop files here, or create a folder or file"),
     ("wf_offline", "连接云端后，这里显示你的云端工作目录", "Sign in to the cloud to browse your workspace"),
@@ -41,7 +48,6 @@ ENTRIES.extend([
     ("wf_reload", "重新加载", "Reload"),
     ("wf_more", "加载更多（剩余 {} 项）", "Load more ({} remaining)", ["count"]),
     ("wf_loading_dir", "加载中", "Loading"),
-    ("wf_open_hint", "点击文件拉取到本地工作区并打开；拖出即下载，拖入即上传", "Click a file to pull and open it; drag out to download, drag in to upload"),
     # Context menu (right-click), aligned with the web tree menus.
     ("wf_menu_open", "打开", "Open"),
     ("wf_menu_download", "下载", "Download"),

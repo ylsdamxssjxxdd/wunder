@@ -1,0 +1,370 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1780" viewBox="0 0 1600 1780" role="img" aria-label="蛹 桌面端计划与问询面板设计规范">
+  <title>06 计划与问询 · 蛹 Desktop UI Spec</title>
+  <defs>
+    <filter id="softShadow" x="-20%" y="-20%" width="140%" height="160%">
+      <feDropShadow dx="0" dy="8" stdDeviation="11" flood-color="#0F172A" flood-opacity="0.16"/>
+    </filter>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="q-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" id="q-pause" viewBox="0 0 24 24"><path d="M9 6v12M15 6v12"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="q-pen" viewBox="0 0 24 24"><path d="m4 20 4.2-1 11-11a2.1 2.1 0 0 0-3-3l-11 11zM13.5 6.5l4 4"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="q-trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6.5 7l.8 12a2 2 0 0 0 2 1.9h5.4a2 2 0 0 0 2-1.9l.8-12"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="q-x" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" id="q-check" viewBox="0 0 24 24"><path d="m5 12.5 4.2 4.2L19 7"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="q-left" viewBox="0 0 24 24"><path d="m15 6-6 6 6 6"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="q-right" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="q-up" viewBox="0 0 24 24"><path d="m6 15 6-6 6 6"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="q-expand" viewBox="0 0 24 24"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="q-spinner" viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9"/></symbol>
+  </defs>
+  <style>
+    svg{font-family:'Microsoft YaHei UI','Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif;fill:#1F2329}
+    .mono{font-family:Consolas,'SFMono-Regular','Cascadia Mono',monospace}
+    .h1{font-size:30px;font-weight:700;letter-spacing:-.4px}
+    .sub{font-size:13px;fill:#7C7A75}
+    .kicker{font-size:11px;font-weight:600;letter-spacing:1.4px;fill:#E07A12}
+    .sect{font-size:16px;font-weight:700}
+    .sect-en{font-size:10px;font-weight:600;letter-spacing:1.6px;fill:#A8A39B}
+    .card{fill:#FFFFFF;stroke:#DED9D1;stroke-width:1}
+    .card-t{font-size:12px;font-weight:700}
+    .note{font-size:11px;fill:#7C7A75}
+    .tiny{font-size:10px;fill:#8A8F99}
+    .mono10{font-family:Consolas,monospace;font-size:10px;fill:#8A8F99}
+    .mono9{font-family:Consolas,monospace;font-size:9px;fill:#8A8F99}
+    .ui15{font-size:15px}.ui14{font-size:14px}.ui13{font-size:13px}.ui12{font-size:12px}.ui11{font-size:11px}.ui10{font-size:10px}
+    .muted{fill:#8A8F99}.sub2{fill:#3D3D3D}
+  </style>
+
+  <rect width="1600" height="1780" fill="#F4F1EC"/>
+  <g id="header">
+    <text x="80" y="52" class="kicker">WUNDER / 蛹 · DESKTOP UI SPEC</text>
+    <text x="80" y="93" class="h1">06　计划与问询</text>
+    <text x="80" y="120" class="sub">计划胶囊与问询面板都叠在时间线与输入区之间；它们是运行时状态的投影，不是第二个状态源。</text>
+    <text x="1520" y="52" text-anchor="end" class="mono" font-size="11" fill="#8A8F99">SHEET 06 / 09</text>
+    <text x="1520" y="94" text-anchor="end" class="mono" font-size="12" fill="#3D3D3D">PLAN DOCK · GOAL BANNER · INQUIRY</text>
+    <line x1="80" y1="140" x2="1520" y2="140" stroke="#D8D5D0"/>
+  </g>
+
+  <!-- ================= A PLACEMENT + SPEC ================= -->
+  <g id="plan-placement">
+    <rect x="80" y="178" width="6" height="16" rx="2" fill="#F58A24"/>
+    <text x="98" y="192" class="sect">计划面板与层级</text>
+    <text x="242" y="192" class="sect-en">STATUS DOCK · STACK ORDER</text>
+
+    <rect x="80" y="212" width="780" height="310" rx="12" class="card"/>
+    <text x="102" y="236" class="card-t">位置关系 · 时间线 / 计划 / 目标 / 问询 / 输入</text>
+    <text x="838" y="236" text-anchor="end" class="mono10">z=30 · no scrim</text>
+    <rect x="100" y="248" width="740" height="254" rx="8" fill="#FBFAF8" stroke="#E8E6E3"/>
+
+    <!-- timeline hints -->
+    <rect x="120" y="266" width="560" height="24" rx="6" fill="#F3F2F0"/>
+    <text x="132" y="283" class="ui11 muted">时间线内容（可被计划卡覆盖）</text>
+    <rect x="120" y="300" width="460" height="10" rx="3" fill="#E8E6E3"/>
+    <rect x="120" y="318" width="520" height="10" rx="3" fill="#E8E6E3"/>
+    <rect x="120" y="336" width="380" height="10" rx="3" fill="#E8E6E3"/>
+
+    <!-- plan capsule -->
+    <g filter="url(#softShadow)">
+      <rect x="588" y="258" width="232" height="26" rx="13" fill="#FFFFFF" stroke="#0F172A1A"/>
+    </g>
+    <g color="#F58A24"><use href="#q-spinner" x="600" y="265" width="12" height="12"/></g>
+    <text x="618" y="276" class="ui12" fill="#4B5563">计划</text>
+    <text x="652" y="276" class="ui12" fill="#3D3D3D">汇总要点</text>
+    <text x="760" y="276" class="ui12" fill="#4B5563">2 / 4</text>
+    <use href="#q-up" x="796" y="267" width="10" height="10" color="#6B7280"/>
+
+    <!-- plan card overlay -->
+    <g filter="url(#softShadow)">
+      <rect x="400" y="294" width="420" height="148" rx="14" fill="#FFFFFF" stroke="#0F172A14"/>
+    </g>
+    <text x="416" y="316" class="ui12" fill="#4B5563">2 / 4</text>
+    <use href="#q-x" x="790" y="306" width="12" height="12" color="#6B7280"/>
+    <text x="416" y="338" class="ui11" fill="#6B7280">先梳理资料结构，再逐段汇总；完成后统一校验。</text>
+    <g>
+      <circle cx="424" cy="360" r="9" fill="none" stroke="#1A8A5C" stroke-width="1.6"/><use href="#q-check" x="417" y="353" width="14" height="14" color="#1A8A5C"/>
+      <text x="442" y="364" class="ui13" fill="#3F3F46">收集资料</text>
+      <circle cx="424" cy="386" r="9" fill="none" stroke="#C98A2B" stroke-width="1.6"/><rect x="421.4" y="382.9" width="1.7" height="6.2" rx="0.6" fill="#C98A2B"/><rect x="424.9" y="382.9" width="1.7" height="6.2" rx="0.6" fill="#C98A2B"/>
+      <text x="442" y="390" class="ui13" fill="#1F2329">汇总要点</text>
+      <circle cx="424" cy="412" r="9" fill="none" stroke="#B6BCC6" stroke-width="1.6"/><text x="442" y="416" class="ui13" fill="#3F3F46">校验遗漏</text>
+    </g>
+
+    <!-- goal banner -->
+    <rect x="100" y="452" width="740" height="42" rx="12" fill="#FDF1F6" stroke="#EFC6D7"/>
+    <g color="#9D2B5C"><use href="#q-target" x="114" y="466" width="14" height="14"/></g>
+    <text x="136" y="478" class="ui13" font-weight="700" fill="#9D2B5C">目标</text>
+    <text x="172" y="478" class="ui13" fill="#B8557F">·</text>
+    <text x="184" y="478" class="ui13" fill="#B8557F">第 2 轮</text>
+    <text x="238" y="478" class="ui13" fill="#7A2949">整理本轮资料，输出一份可复核的结论。</text>
+    <rect x="756" y="460" width="26" height="26" rx="8" fill="#FFFFFF" stroke="#EFC6D7"/>
+    <use href="#q-pause" x="762" y="466" width="14" height="14" color="#7D858F"/>
+    <rect x="788" y="460" width="26" height="26" rx="8" fill="#FFFFFF" stroke="#EFC6D7"/>
+    <use href="#q-pen" x="794" y="466" width="14" height="14" color="#7D858F"/>
+    <rect x="820" y="460" width="26" height="26" rx="8" fill="#FFFFFF" stroke="#EFC6D7"/>
+    <use href="#q-x" x="826" y="466" width="14" height="14" color="#7D858F"/>
+
+    <text x="102" y="506" class="tiny">下方依次为 InquiryPanel 与 Composer（本图省略）；计划卡向上覆盖时间线，无遮罩。</text>
+  </g>
+
+  <g id="plan-spec">
+    <rect x="880" y="212" width="640" height="300" rx="12" class="card"/>
+    <text x="902" y="236" class="card-t">胶囊与卡片规格</text>
+    <text x="1498" y="236" text-anchor="end" class="mono10">26 pill · ≤560 card</text>
+    <text x="902" y="260" class="card-t" font-size="11">胶囊</text>
+    <text x="902" y="280" class="note">高 26，圆角 13；白底；1px #0F172A1A；阴影 #0F172A10 / blur 8 / y 1。</text>
+    <text x="902" y="300" class="note">内边距 12–14，间距 6；运行中 12px 转圈；计数 12px。</text>
+    <text x="902" y="320" class="note">右侧 10px chevron；收起时向上，展开时向下。</text>
+    <text x="902" y="346" class="card-t" font-size="11">展开卡片</text>
+    <text x="902" y="366" class="note">宽 min(560, 容器)，高 min(28 + 说明 46 + 步骤×30, 360)。</text>
+    <text x="902" y="386" class="note">圆角 14；1px #0F172A14；阴影 #0F172A29 / blur 22 / y 8；裁剪。</text>
+    <text x="902" y="406" class="note">内边距 16 / 12；行距 2；说明最多 2 行；步骤行 30。</text>
+    <text x="902" y="426" class="note">右上关闭 22×22，r6；悬停底 #0F172A0F，图标转 #D04A43。</text>
+    <text x="902" y="452" class="card-t" font-size="11">行为</text>
+    <text x="902" y="472" class="note">只有 plan tool 有步骤时出现；点击外部关闭，无全窗遮罩。</text>
+    <text x="902" y="492" class="note">步骤状态来自运行时：pending / in_progress / completed。</text>
+  </g>
+
+  <!-- ================= A2 PLAN CARD ================= -->
+  <g id="plan-card">
+    <rect x="80" y="540" width="600" height="350" rx="12" class="card"/>
+    <text x="102" y="564" class="card-t">执行计划卡 · 展开</text>
+    <text x="658" y="564" text-anchor="end" class="mono10">560 × auto</text>
+
+    <g filter="url(#softShadow)">
+      <rect x="102" y="584" width="556" height="276" rx="14" fill="#FFFFFF" stroke="#0F172A14"/>
+    </g>
+    <text x="120" y="612" class="ui11" fill="#6B7280">2 / 4</text>
+    <rect x="620" y="596" width="22" height="22" rx="6" fill="#F8FAFC"/>
+    <use href="#q-x" x="625" y="601" width="12" height="12" color="#6B7280"/>
+    <text x="120" y="638" class="ui12" fill="#6B7280">先梳理资料结构，再逐段汇总；完成后统一校验。</text>
+    <text x="120" y="656" class="ui12" fill="#6B7280">若资料不足，先标记缺口，不阻塞当前结论。</text>
+    <line x1="120" y1="670" x2="638" y2="670" stroke="#0F172A12"/>
+
+    <!-- steps -->
+    <g>
+      <!-- completed -->
+      <circle cx="130" cy="692" r="9" fill="none" stroke="#1A8A5C" stroke-width="1.6"/>
+      <use href="#q-check" x="123" y="685" width="14" height="14" color="#1A8A5C"/>
+      <text x="150" y="697" class="ui14" fill="#3F3F46">收集资料</text>
+      <!-- in progress -->
+      <circle cx="130" cy="722" r="9" fill="none" stroke="#C98A2B" stroke-width="1.6"/>
+      <rect x="127.4" y="718.9" width="1.7" height="6.2" rx="0.6" fill="#C98A2B"/><rect x="130.9" y="718.9" width="1.7" height="6.2" rx="0.6" fill="#C98A2B"/>
+      <text x="150" y="727" class="ui14" fill="#1F2329" font-weight="600">汇总要点</text>
+      <text x="232" y="727" class="ui10" fill="#C98A2B">进行中</text>
+      <!-- pending hover -->
+      <rect x="112" y="738" width="534" height="30" rx="8" fill="#0F172A0A"/>
+      <circle cx="130" cy="753" r="9" fill="none" stroke="#B6BCC6" stroke-width="1.6"/>
+      <text x="150" y="758" class="ui14" fill="#3F3F46">校验遗漏</text>
+      <text x="620" y="758" text-anchor="end" class="ui10" fill="#9AA1AA">悬停</text>
+      <!-- pending -->
+      <circle cx="130" cy="783" r="9" fill="none" stroke="#B6BCC6" stroke-width="1.6"/>
+      <text x="150" y="788" class="ui14" fill="#3F3F46">输出结果</text>
+    </g>
+    <line x1="120" y1="806" x2="638" y2="806" stroke="#0F172A12"/>
+    <text x="120" y="832" class="tiny">步骤圆 18 / 描边 1.6；完成勾约 9×6；进行中暂停双条 5×6.2；待办无图标。</text>
+    <text x="120" y="850" class="tiny">步骤文字 14；进行中 #1F2329，其余 #3F3F46；行悬停 #0F172A0A。</text>
+  </g>
+
+  <!-- ================= A3 GOAL ================= -->
+  <g id="goal-banner">
+    <rect x="720" y="540" width="800" height="360" rx="12" class="card"/>
+    <text x="742" y="564" class="card-t">目标横幅 · 状态</text>
+    <text x="1498" y="564" text-anchor="end" class="mono10">42px · r12</text>
+
+    <!-- active -->
+    <rect x="742" y="584" width="756" height="42" rx="12" fill="#FDF1F6" stroke="#EFC6D7"/>
+    <use href="#q-target" x="756" y="598" width="14" height="14" color="#9D2B5C"/>
+    <text x="778" y="610" class="ui13" font-weight="700" fill="#9D2B5C">目标</text>
+    <text x="814" y="610" class="ui13" fill="#B8557F">·</text>
+    <text x="826" y="610" class="ui13" fill="#B8557F">第 2 轮</text>
+    <text x="880" y="610" class="ui13" fill="#7A2949">整理本轮资料，输出一份可复核的结论。</text>
+    <rect x="1398" y="592" width="26" height="26" rx="8" fill="#FFFFFF" stroke="#EFC6D7"/><use href="#q-pause" x="1404" y="598" width="14" height="14" color="#7D858F"/>
+    <rect x="1430" y="592" width="26" height="26" rx="8" fill="#FFFFFF" stroke="#EFC6D7"/><use href="#q-pen" x="1436" y="598" width="14" height="14" color="#7D858F"/>
+    <rect x="1462" y="592" width="26" height="26" rx="8" fill="#FFFFFF" stroke="#EFC6D7"/><use href="#q-x" x="1468" y="598" width="14" height="14" color="#7D858F"/>
+
+    <!-- paused -->
+    <rect x="742" y="640" width="756" height="42" rx="12" fill="#FDF1F6" stroke="#EFC6D7"/>
+    <use href="#q-target" x="756" y="654" width="14" height="14" color="#9D2B5C"/>
+    <text x="778" y="666" class="ui13" font-weight="700" fill="#9D2B5C">目标</text>
+    <text x="814" y="666" class="ui13" fill="#B8557F">·</text>
+    <text x="826" y="666" class="ui13" font-weight="700" fill="#C98A2B">已暂停</text>
+    <text x="880" y="666" class="ui13" fill="#7A2949">当前目标暂停，恢复后继续下一轮。</text>
+    <rect x="1462" y="648" width="26" height="26" rx="8" fill="#FFFFFF" stroke="#EFC6D7"/><use href="#q-pen" x="1468" y="654" width="14" height="14" color="#7D858F"/>
+
+    <!-- blocked -->
+    <rect x="742" y="696" width="756" height="42" rx="12" fill="#FDF1F6" stroke="#EFC6D7"/>
+    <use href="#q-target" x="756" y="710" width="14" height="14" color="#9D2B5C"/>
+    <text x="778" y="722" class="ui13" font-weight="700" fill="#9D2B5C">目标</text>
+    <text x="814" y="722" class="ui13" fill="#B8557F">·</text>
+    <text x="826" y="722" class="ui13" font-weight="700" fill="#D04A43">阻塞</text>
+    <text x="880" y="722" class="ui13" fill="#7A2949">等待外部依赖，暂不推进。</text>
+
+    <!-- editing -->
+    <rect x="742" y="752" width="756" height="42" rx="12" fill="#FDF1F6" stroke="#EFC6D7"/>
+    <text x="756" y="778" class="ui13" font-weight="700" fill="#9D2B5C">目标</text>
+    <text x="798" y="778" class="ui13" fill="#7A2949">整理本轮资料，输出一份可复核的结论。</text>
+    <text x="1452" y="778" class="ui10" fill="#9D2B5C" opacity=".7">Enter 保存</text>
+
+    <text x="742" y="818" class="tiny">42 高；底色 #FDF1F6；描边 #EFC6D7；内边距 16 / 8；间距 8。</text>
+    <text x="742" y="836" class="tiny">左侧靶心 14；标签 13/700；轮次 #B8557F；目标正文 13 #7A2949 单行省略。</text>
+    <text x="742" y="854" class="tiny">右侧三个 26×26 按钮：暂停 / 编辑 / 清除；悬停底 #FFE6EF、边 #E8B2C8。</text>
+    <text x="742" y="872" class="tiny">编辑态直接换成输入框；空内容取消编辑，不删除目标。</text>
+    <text x="742" y="890" class="tiny">elapsed 字段当前不渲染；只在数据层保留。</text>
+  </g>
+
+  <!-- ================= B INQUIRY ================= -->
+  <g id="inquiry">
+    <rect x="80" y="926" width="6" height="16" rx="2" fill="#F58A24"/>
+    <text x="98" y="940" class="sect">问询面板</text>
+    <text x="178" y="940" class="sect-en">INQUIRY · SINGLE PAGE / EXPANDED</text>
+    <text x="1520" y="940" text-anchor="end" class="note">宽度随阅读列 ≤1000；外高 10 + 卡 + 12；不使用提交按钮</text>
+
+    <rect x="80" y="968" width="980" height="440" rx="14" fill="#FFFFFF" stroke="#0F172A1A"/>
+    <text x="100" y="1002" class="ui15" font-weight="700">这轮希望优先处理哪一部分？</text>
+    <!-- page controls -->
+    <rect x="850" y="982" width="24" height="24" rx="6" fill="#F8FAFC" stroke="#E5E7EB"/>
+    <use href="#q-left" x="856" y="988" width="12" height="12" color="#4B5563"/>
+    <text x="890" y="999" text-anchor="middle" class="ui12" fill="#4B5563">1 / 3</text>
+    <rect x="906" y="982" width="24" height="24" rx="6" fill="#F8FAFC" stroke="#E5E7EB"/>
+    <use href="#q-right" x="912" y="988" width="12" height="12" color="#4B5563"/>
+    <rect x="942" y="982" width="24" height="24" rx="6" fill="#F8FAFC" stroke="#E5E7EB"/>
+    <use href="#q-expand" x="947" y="987" width="14" height="14" color="#4B5563"/>
+    <rect x="976" y="982" width="24" height="24" rx="6" fill="#F8FAFC" stroke="#E5E7EB"/>
+    <use href="#q-up" x="982" y="988" width="12" height="12" color="#4B5563"/>
+
+    <!-- Q1 options -->
+    <g>
+      <!-- option 1 selected + recommended -->
+      <rect x="100" y="1024" width="900" height="34" rx="8" fill="#F8FAFC"/>
+      <rect x="112" y="1032" width="18" height="18" rx="9" fill="#F58A24" stroke="#F58A24" stroke-width="1.5"/>
+      <use href="#q-check" x="116.5" y="1036" width="9" height="7" color="#FFFFFF"/>
+      <text x="142" y="1046" class="ui14" font-weight="600" fill="#E07A12">先汇总现有资料</text>
+      <rect x="270" y="1032" width="36" height="18" rx="9" fill="#0F172A12"/>
+      <text x="288" y="1045" text-anchor="middle" class="ui11" fill="#6B7280">推荐</text>
+      <text x="320" y="1046" class="ui13" fill="#6B7280">基于已收集的材料给出结论，不继续检索。</text>
+      <text x="972" y="1046" text-anchor="end" class="ui10" fill="#9AA1AA">已选</text>
+      <!-- option 2 hover -->
+      <rect x="100" y="1062" width="900" height="34" rx="8" fill="#0F172A0A"/>
+      <rect x="112" y="1070" width="18" height="18" rx="9" fill="#FFFFFF" stroke="#D1D5DB" stroke-width="1.5"/>
+      <text x="142" y="1084" class="ui14" font-weight="600">先补全缺失资料</text>
+      <text x="278" y="1084" class="ui13" fill="#6B7280">标记缺口并继续检索，耗时更长。</text>
+      <text x="972" y="1084" text-anchor="end" class="ui10" fill="#9AA1AA">悬停</text>
+      <!-- option 3 -->
+      <rect x="100" y="1100" width="900" height="34" rx="8" fill="transparent"/>
+      <rect x="112" y="1108" width="18" height="18" rx="9" fill="#FFFFFF" stroke="#D1D5DB" stroke-width="1.5"/>
+      <text x="142" y="1122" class="ui14" font-weight="600">先输出一版简版</text>
+      <text x="278" y="1122" class="ui13" fill="#6B7280">先给结论，再按反馈补充细节。</text>
+    </g>
+
+    <!-- other row -->
+    <rect x="100" y="1146" width="900" height="34" rx="8" fill="transparent"/>
+    <rect x="112" y="1154" width="18" height="18" rx="5" fill="#FFFFFF" stroke="#D1D5DB" stroke-width="1.5"/>
+    <text x="142" y="1168" class="ui13" fill="#6B7280">其他</text>
+    <text x="188" y="1168" class="ui13" fill="#9CA3AF">输入其他答案</text>
+    <line x1="188" y1="1174" x2="700" y2="1174" stroke="#D1D5DB"/>
+
+    <!-- no preference split · lives on the free-text row -->
+    <rect x="800" y="1150" width="90" height="26" rx="9" fill="#0F172A0D"/>
+    <text x="813" y="1167" class="ui13" font-weight="600" fill="#374151">无偏好</text>
+    <line x1="864" y1="1156" x2="864" y2="1170" stroke="#0F172A14"/>
+    <path d="M871 1161.5 875 1166l-4 4.5" fill="none" stroke="#6B7280" stroke-width="1.4" stroke-linecap="round"/>
+
+    <line x1="100" y1="1192" x2="999" y2="1192" stroke="#0F172A12"/>
+
+    <!-- Q2 expanded header -->
+    <text x="100" y="1220" class="ui12" fill="#6B7280">第 2 / 3 题 · 输出结构</text>
+    <!-- Q2 options -->
+    <rect x="100" y="1234" width="900" height="34" rx="8" fill="#0F172A0A"/>
+    <rect x="112" y="1242" width="18" height="18" rx="5" fill="#F58A24" stroke="#F58A24" stroke-width="1.5"/>
+    <use href="#q-check" x="116.5" y="1246" width="9" height="7" color="#FFFFFF"/>
+    <text x="142" y="1256" class="ui14" font-weight="600" fill="#E07A12">Markdown 报告</text>
+    <text x="282" y="1256" class="ui13" fill="#6B7280">标题、要点与结论分层呈现。</text>
+    <rect x="100" y="1272" width="900" height="34" rx="8" fill="transparent"/>
+    <rect x="112" y="1280" width="18" height="18" rx="5" fill="#FFFFFF" stroke="#D1D5DB" stroke-width="1.5"/>
+    <text x="142" y="1294" class="ui14" font-weight="600">表格摘要</text>
+    <text x="226" y="1294" class="ui13" fill="#6B7280">一行一项，便于对照。</text>
+
+    <line x1="100" y1="1320" x2="999" y2="1320" stroke="#0F172A12"/>
+    <text x="100" y="1346" class="ui11" fill="#6B7280">选好答案后按发送键提交</text>
+    <text x="100" y="1368" class="ui10" fill="#9AA1AA">当前页有答案时，发送键在草稿为空时也保持可用。</text>
+    <text x="972" y="1368" text-anchor="end" class="ui10" fill="#9AA1AA">1 / 3</text>
+  </g>
+
+  <g id="inquiry-spec">
+    <rect x="1080" y="968" width="440" height="440" rx="12" class="card"/>
+    <text x="1102" y="992" class="card-t">问询面板规格</text>
+    <text x="1498" y="992" text-anchor="end" class="mono10">≤1000 · r14</text>
+    <text x="1102" y="1016" class="note">外高 10 + 卡 + 12；卡宽随阅读列；白底，1px #0F172A1A。</text>
+    <text x="1102" y="1036" class="note">圆角 14；阴影 #0F172A12 / blur 18 / y 6；裁剪。</text>
+    <text x="1102" y="1056" class="note">内边距 18 / 14 / 14 / 12；标题 15/700。</text>
+    <text x="1102" y="1082" class="card-t" font-size="11">选项行</text>
+    <text x="1102" y="1102" class="note">高 34；圆角 8；悬停 #0F172A0A；单页不显示分隔线。</text>
+    <text x="1102" y="1122" class="note">标记 18：单选圆形，多选 r5；1.5px #D1D5DB。</text>
+    <text x="1102" y="1142" class="note">选中填 accent + 白勾 10×7；标签 14/600，最大 220。</text>
+    <text x="1102" y="1162" class="note">推荐徽 18 高 r9，bg #0F172A12，11px #6B7280。</text>
+    <text x="1102" y="1182" class="note">描述 13px #6B7280；块间 1px #0F172A12。</text>
+    <text x="1102" y="1208" class="card-t" font-size="11">无偏好 / 其他</text>
+    <text x="1102" y="1228" class="note">分裂胶囊 26 高 r9；选中 accent-soft；右侧 9px caret。</text>
+    <text x="1102" y="1248" class="note">菜单 132 宽 r10，阴影 blur 16；行 30 高 r7。</text>
+    <text x="1102" y="1268" class="note">其他行：复选框 + 下划线输入；占位 #9CA3AF。</text>
+    <text x="1102" y="1294" class="card-t" font-size="11">分页 / 展开</text>
+    <text x="1102" y="1314" class="note">翻页 24×24 r6；页码 12 #4B5563；边界禁用 #D1D5DB。</text>
+    <text x="1102" y="1334" class="note">展开为“全部问题”，问题头 24 高“第 1/3 题 · 问题”。</text>
+    <text x="1102" y="1358" class="note">没有提交/跳过/上一步按钮；答案由 Composer 发送。</text>
+    <text x="1102" y="1380" class="note">空草稿 + inquiry-ready 时发送键可用；纯选项即可成消息。</text>
+  </g>
+
+  <!-- ================= STATE CARDS ================= -->
+  <g id="states">
+    <rect x="80" y="1444" width="6" height="16" rx="2" fill="#F58A24"/>
+    <text x="98" y="1458" class="sect">状态速查</text>
+    <text x="194" y="1458" class="sect-en">STEP · OPTION · GOAL</text>
+
+    <g>
+      <rect x="80" y="1470" width="460" height="240" rx="12" class="card"/>
+      <text x="102" y="1494" class="card-t">计划步骤</text>
+      <g transform="translate(102,1512)">
+        <circle cx="9" cy="9" r="9" fill="none" stroke="#1A8A5C" stroke-width="1.6"/><use href="#q-check" x="2" y="2" width="14" height="14" color="#1A8A5C"/><text x="28" y="14" class="ui13">已完成</text><text x="360" y="14" text-anchor="end" class="mono9">#1A8A5C</text>
+        <circle cx="9" cy="39" r="9" fill="none" stroke="#C98A2B" stroke-width="1.6"/><rect x="6.4" y="35.9" width="1.7" height="6.2" rx="0.6" fill="#C98A2B"/><rect x="9.9" y="35.9" width="1.7" height="6.2" rx="0.6" fill="#C98A2B"/><text x="28" y="44" class="ui13">进行中</text><text x="360" y="44" text-anchor="end" class="mono9">#C98A2B</text>
+        <circle cx="9" cy="69" r="9" fill="none" stroke="#B6BCC6" stroke-width="1.6"/><text x="28" y="74" class="ui13">待开始</text><text x="360" y="74" text-anchor="end" class="mono9">#B6BCC6</text>
+        <rect x="-8" y="84" width="386" height="30" rx="8" fill="#0F172A0A"/><circle cx="9" cy="99" r="9" fill="none" stroke="#B6BCC6" stroke-width="1.6"/><text x="28" y="104" class="ui13">悬停</text><text x="360" y="104" text-anchor="end" class="mono9">#0F172A0A</text>
+      </g>
+      <text x="102" y="1634" class="tiny">步骤行 30；圆环 18；勾约 9×6、暂停双条 5×6.2；文字 14。</text>
+      <text x="102" y="1652" class="tiny">完成/进行中/待办只由 status 决定，不由颜色猜测。</text>
+      <text x="102" y="1674" class="tiny">长计划在 360 高处内部滚动；说明最多 2 行。</text>
+      <text x="102" y="1694" class="tiny">关闭后本次运行不再弹出，直到下一次 plan 更新。</text>
+    </g>
+
+    <g>
+      <rect x="560" y="1470" width="460" height="240" rx="12" class="card"/>
+      <text x="582" y="1494" class="card-t">问询选项</text>
+      <g transform="translate(582,1512)">
+        <rect width="300" height="30" rx="8" fill="transparent"/><rect x="8" y="6" width="18" height="18" rx="9" fill="#FFFFFF" stroke="#D1D5DB" stroke-width="1.5"/><text x="38" y="23" class="ui13">默认</text>
+        <rect y="36" width="300" height="30" rx="8" fill="#0F172A0A"/><rect x="8" y="42" width="18" height="18" rx="9" fill="#FFFFFF" stroke="#D1D5DB" stroke-width="1.5"/><text x="38" y="59" class="ui13">悬停</text>
+        <rect y="72" width="300" height="30" rx="8" fill="transparent"/><rect x="8" y="78" width="18" height="18" rx="9" fill="#F58A24"/><use href="#q-check" x="12" y="82" width="9" height="7" color="#FFFFFF"/><text x="38" y="95" class="ui13" fill="#E07A12" font-weight="600">已选（单选）</text>
+        <rect y="108" width="300" height="30" rx="8" fill="transparent"/><rect x="8" y="114" width="18" height="18" rx="5" fill="#F58A24"/><use href="#q-check" x="12" y="118" width="9" height="7" color="#FFFFFF"/><text x="38" y="131" class="ui13" fill="#E07A12" font-weight="600">已选（多选）</text>
+        <rect y="144" width="300" height="30" rx="8" fill="transparent"/><rect x="8" y="150" width="18" height="18" rx="9" fill="#FFFFFF" stroke="#E5E7EB" stroke-width="1.5"/><text x="38" y="167" class="ui13" fill="#9AA1AA">禁用</text>
+      </g>
+      <text x="582" y="1694" class="tiny">推荐徽与选中态独立；可选“推荐”但未选。</text>
+      <text x="582" y="1712" class="tiny">多选标记 r5；单选圆形；其余完全相同。</text>
+    </g>
+
+    <g>
+      <rect x="1040" y="1470" width="480" height="240" rx="12" class="card"/>
+      <text x="1062" y="1494" class="card-t">目标 / 无偏好</text>
+      <g transform="translate(1062,1512)">
+        <rect width="400" height="36" rx="10" fill="#FDF1F6" stroke="#EFC6D7"/><use href="#q-target" x="10" y="11" width="14" height="14" color="#9D2B5C"/><text x="32" y="23" class="ui12" font-weight="700" fill="#9D2B5C">目标</text><text x="64" y="23" class="ui12" fill="#B8557F">第 2 轮</text><text x="112" y="23" class="ui12" fill="#7A2949">当前目标正文…</text>
+        <rect y="46" width="400" height="36" rx="10" fill="#FDF1F6" stroke="#EFC6D7"/><use href="#q-target" x="10" y="57" width="14" height="14" color="#9D2B5C"/><text x="32" y="69" class="ui12" font-weight="700" fill="#9D2B5C">目标</text><text x="64" y="69" class="ui12" font-weight="700" fill="#D04A43">阻塞</text><text x="100" y="69" class="ui12" fill="#7A2949">等待外部依赖。</text>
+        <rect y="96" width="112" height="26" rx="9" fill="#0F172A0D"/><text x="12" y="113" class="ui12" font-weight="600" fill="#374151">无偏好</text><path d="M78 107.5 82 112l-4 4.5" fill="none" stroke="#6B7280" stroke-width="1.4" stroke-linecap="round"/>
+        <rect x="122" y="96" width="112" height="26" rx="9" fill="#FDF0DE" stroke="#F58A24"/><text x="134" y="113" class="ui12" font-weight="600" fill="#E07A12">无偏好</text><path d="M200 107.5 204 112l-4 4.5" fill="none" stroke="#E07A12" stroke-width="1.4" stroke-linecap="round"/>
+        <rect y="132" width="300" height="30" rx="7" fill="#FFFFFF" stroke="#0F172A14"/><text x="12" y="151" class="ui12">无偏好</text><text x="90" y="151" class="ui12">使用推荐</text>
+      </g>
+      <text x="1062" y="1694" class="tiny">目标横幅固定粉色语义；阻塞用 danger 文字，暂停用 warning。</text>
+      <text x="1062" y="1704" class="tiny">无偏好菜单行 30 高，选中项显示 check；菜单宽 132。</text>
+    </g>
+  </g>
+
+  <g id="footer">
+    <line x1="80" y1="1744" x2="1520" y2="1744" stroke="#D8D5D0"/>
+    <text x="80" y="1758" class="tiny">计划、目标与问询都由运行时投影；前端只负责显示与回传选择，不在本地推导状态。</text>
+    <text x="1520" y="1758" text-anchor="end" class="mono tiny">06 / 09</text>
+  </g>
+</svg>

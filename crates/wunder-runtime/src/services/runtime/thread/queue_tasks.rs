@@ -294,7 +294,13 @@ impl ThreadRuntime {
         )
         .await;
         self.wake().await;
-        Ok(json!({"ok": true, "queue_id": task.task_id, "cancelled": true}))
+        let content = task
+            .request_payload
+            .get("question")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .trim();
+        Ok(json!({"ok": true, "queue_id": task.task_id, "cancelled": true, "content": content}))
     }
 
     /// 拖拽排序：按给定的顺序重写派发位次（retry_at），未列出的条目保持原序垫后。
@@ -530,12 +536,13 @@ mod tests {
         assert_eq!(queue_ids(&items), vec!["task-b", "task-a"]);
         assert_eq!(items[0]["priority"], json!(1));
 
-        state
+        let withdrawn = state
             .kernel
             .thread_runtime
             .cancel_queued_task("user-a", "session-a", "task-a")
             .await
             .expect("withdraw");
+        assert_eq!(withdrawn["content"], "first");
         let items = list_items(&state, "user-a", "session-a").await;
         assert_eq!(queue_ids(&items), vec!["task-b"]);
     }

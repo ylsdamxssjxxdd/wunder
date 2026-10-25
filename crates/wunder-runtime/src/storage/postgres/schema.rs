@@ -21,16 +21,13 @@ fn schema_fingerprint() -> &'static str {
     })
 }
 
-fn schema_is_current(storage: &PostgresStorage, conn: &mut PgConn<'_>) -> Result<bool> {
+fn schema_is_current(conn: &mut PgConn<'_>) -> Result<bool> {
     if !conn
         .query_one("SELECT to_regclass('meta') IS NOT NULL", &[])?
         .get::<_, bool>(0)
     {
         return Ok(false);
     }
-    // Reject an independent canonical root before stale-schema maintenance
-    // can change a control plane belonging to another deployment.
-    storage.ensure_canonical_root_ownership(conn)?;
     Ok(conn
         .query_opt("SELECT value FROM meta WHERE key=$1", &[&SCHEMA_MARKER])?
         .is_some_and(|row| row.get::<_, String>(0) == schema_fingerprint()))
@@ -884,7 +881,7 @@ impl PostgresSchemaStorage for PostgresStorage {
                     continue;
                 }
             };
-            if schema_is_current(self, &mut conn)? {
+            if schema_is_current(&mut conn)? {
                 self.initialized.store(true, Ordering::SeqCst);
                 tracing::info!(
                     elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,
@@ -894,12 +891,23 @@ impl PostgresSchemaStorage for PostgresStorage {
             }
             // Serialize migrations across server replicas, without locking
             // application tables on the ordinary startup path.
-            conn.query_one(
-                "SELECT pg_advisory_lock(1937201, hashtext(current_schema()))",
-                &[],
-            )?;
+            // A blocking SELECT keeps its statement snapshot while waiting.
+            // CREATE INDEX CONCURRENTLY on the lock holder would then wait
+            // for that same snapshot, forming a migration deadlock. Each try
+            // must return before waiting outside PostgreSQL.
+            let lock_started = Instant::now();
+            while !conn
+                .query_one(
+                    "SELECT pg_try_advisory_lock(1937201, hashtext(current_schema()))",
+                    &[],
+                )?
+                .get::<_, bool>(0)
+            {
+                anyhow::ensure!(lock_started.elapsed() < Duration::from_secs(120), "postgres schema lock deadline exceeded");
+                std::thread::sleep(Duration::from_millis(25));
+            }
             let mut conn = SchemaConnection(Some(conn));
-            if schema_is_current(self, &mut conn)? {
+            if schema_is_current(&mut conn)? {
                 self.initialized.store(true, Ordering::SeqCst);
                 return Ok(());
             }
@@ -921,6 +929,33 @@ impl PostgresSchemaStorage for PostgresStorage {
                   updated_time DOUBLE PRECISION NOT NULL DEFAULT 0,
                   payload TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS runtime_tool_metrics (
+                  id BIGSERIAL PRIMARY KEY,
+                  user_id TEXT NOT NULL,
+                  session_id TEXT NOT NULL,
+                  tool TEXT NOT NULL,
+                  ok BOOLEAN NOT NULL,
+                  excluded BOOLEAN NOT NULL DEFAULT FALSE,
+                  created_time DOUBLE PRECISION NOT NULL,
+                  facts TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_runtime_tool_metrics_user_session_id
+                  ON runtime_tool_metrics (user_id, session_id, id DESC);
+                CREATE INDEX IF NOT EXISTS idx_runtime_tool_metrics_time
+                  ON runtime_tool_metrics (created_time);
+                CREATE INDEX IF NOT EXISTS idx_runtime_tool_metrics_tool_time
+                  ON runtime_tool_metrics (tool, excluded, created_time DESC);
+                CREATE TABLE IF NOT EXISTS runtime_artifact_resources (
+                  id BIGSERIAL PRIMARY KEY,
+                  user_id TEXT NOT NULL,
+                  session_id TEXT NOT NULL,
+                  created_time DOUBLE PRECISION NOT NULL,
+                  metadata TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_runtime_artifacts_user_session_id
+                  ON runtime_artifact_resources (user_id, session_id, id DESC);
+                CREATE INDEX IF NOT EXISTS idx_runtime_artifacts_time
+                  ON runtime_artifact_resources (created_time);
                 CREATE INDEX IF NOT EXISTS idx_monitor_sessions_status
                   ON monitor_sessions (status);
                 CREATE TABLE IF NOT EXISTS session_locks (
@@ -1960,7 +1995,6 @@ impl PostgresSchemaStorage for PostgresStorage {
                     self.ensure_cron_columns(&mut conn)?;
                     self.ensure_memory_fragment_columns(&mut conn)?;
                     self.ensure_performance_indexes(&mut conn)?;
-                    self.ensure_canonical_root_ownership(&mut conn)?;
                     tracing::info!(
                         elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,
                         "postgres schema indexes ready"

@@ -1,0 +1,240 @@
+//! Task-completion system notice, the desktop counterpart of the web
+//! `notifyAgentTaskCompleted`: when a thread this process observed in flight
+//! (running or pending) settles to a successful terminal state, a compact
+//! frameless toast above the taskbar announces it. Clicking the toast opens
+//! the main window on that session; the toast hides itself after a few
+//! seconds. Errors keep the pet's warning bubble as their channel — the web
+//! predicate only notifies on success.
+
+use crate::{CompletionNotice, I18n, MainWindow};
+use slint::{ComponentHandle, Model};
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::time::Duration;
+
+/// How long one notice stays on screen before hiding itself.
+const SHOW_DURATION: Duration = Duration::from_secs(4);
+/// Right/bottom margin from the work-area edge, matching the tray notice.
+const SCREEN_MARGIN: f64 = 24.0;
+
+thread_local! {
+    /// Last observed runtime kind per session, the desktop counterpart of the
+    /// web `agentRuntimeStateSnapshot`. The first sight of a session only
+    /// records its kind: a snapshot is history, never news, so a fresh start
+    /// cannot replay old completions.
+    static LAST_KIND: RefCell<HashMap<String, &'static str>> = RefCell::new(HashMap::new());
+    static NOTICE: RefCell<Option<CompletionNotice>> = RefCell::new(None);
+    static HIDE_TIMER: slint::Timer = slint::Timer::default();
+    /// The session the visible toast opens on click.
+    static OPEN_SESSION: RefCell<String> = RefCell::new(String::new());
+    /// Smoke runs drive full turns and compare screenshots, so their windows
+    /// must never pop a toast; `install_ready_without_pets` turns this off.
+    static ENABLED: RefCell<bool> = const { RefCell::new(true) };
+}
+
+/// Web `AgentRuntimeState` collapsed to what the completion predicate needs.
+/// 蛹 status strings classify like `runtime_status_kind`, with the transient
+/// submission state 请求中 kept inside the hot set: it opens a turn, it is not
+/// a settlement.
+fn status_kind(status: &str) -> &'static str {
+    if matches!(status, "pending" | "queued" | "waiting_input" | "waiting_user_input")
+        || status.starts_with("正在排队")
+        || status.starts_with("任务已排队")
+        || status.starts_with("等待")
+        || status.starts_with("请求中")
+    {
+        "hot"
+    } else if matches!(status, "running" | "streaming" | "executing")
+        || status.starts_with("正在")
+        || status.starts_with("目标")
+    {
+        "hot"
+    } else if matches!(status, "done" | "finished" | "completed" | "success")
+        || status.starts_with("任务完成")
+        || status.starts_with("输出已结束")
+    {
+        "done"
+    } else {
+        "other"
+    }
+}
+
+/// Web `shouldNotifyAgentTaskCompletion`: fire exactly when the previous
+/// snapshot was hot and the new kind is a successful terminal.
+fn completion_fires(previous: &str, next: &str) -> bool {
+    previous == "hot" && next == "done"
+}
+
+/// Observe one thread status transition.
+pub fn observe_status(app: &MainWindow, session: &str, status: &str) {
+    if !ENABLED.with(|slot| *slot.borrow()) {
+        return;
+    }
+    let next = status_kind(status);
+    let previous = LAST_KIND.with(|slot| {
+        let mut map = slot.borrow_mut();
+        map.insert(session.to_string(), next).unwrap_or("other")
+    });
+    if !completion_fires(previous, next) {
+        return;
+    }
+    let agent_name = agent_display_name(app, session);
+    show(app, session, &agent_name);
+}
+
+/// Resolve the agent display name the way the web `resolveAgentDisplayName`
+/// does: the bound agent's name, the default-agent label for the default key,
+/// and the raw id when the directory has not loaded.
+fn agent_display_name(app: &MainWindow, session: &str) -> String {
+    let agent_id = app
+        .get_conversations()
+        .iter()
+        .find(|row| row.id == session)
+        .map(|row| row.agent_id.to_string())
+        .unwrap_or_default();
+    let key = crate::navigation_ui::agent_key(Some(agent_id.as_str())).to_string();
+    if key == "__default__" {
+        return app.global::<I18n>().get_common_default_agent().to_string();
+    }
+    app.get_agents()
+        .iter()
+        .find(|agent| crate::navigation_ui::agent_key(Some(agent.id.as_str())) == key.as_str())
+        .map(|agent| agent.name.to_string())
+        .unwrap_or(agent_id)
+}
+
+/// Create once, update, position and schedule the toast. A notice arriving
+/// while one is on screen replaces it and restarts the clock, mirroring the
+/// web toast stack collapsing into the newest entry.
+fn show(app: &MainWindow, session: &str, agent_name: &str) {
+    let i18n = app.global::<I18n>();
+    let title = i18n.get_cn_notice_title().to_string();
+    let body = i18n
+        .invoke_cn_notice_body(slint::SharedString::from(agent_name))
+        .to_string();
+    let weak = NOTICE.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        if slot.is_none() {
+            let Ok(notice) = CompletionNotice::new() else {
+                return None;
+            };
+            let weak_app = app.as_weak();
+            notice.on_open_requested(move || {
+                if let Some(app) = weak_app.upgrade() {
+                    let session = OPEN_SESSION.with(|cell| cell.borrow().clone());
+                    open_session(&app, &session);
+                }
+                hide();
+            });
+            *slot = Some(notice);
+        }
+        slot.as_ref().map(|notice| notice.as_weak())
+    });
+    let Some(notice) = weak.and_then(|weak| weak.upgrade()) else {
+        return;
+    };
+    notice.set_notice_title(title.into());
+    notice.set_notice_body(body.into());
+    OPEN_SESSION.with(|cell| *cell.borrow_mut() = session.to_string());
+    let _ = notice.show();
+    position_above_taskbar(&notice);
+    let hide_weak = notice.as_weak();
+    HIDE_TIMER.with(|timer| {
+        timer.start(
+            slint::TimerMode::SingleShot,
+            SHOW_DURATION,
+            move || {
+                if let Some(notice) = hide_weak.upgrade() {
+                    let _ = notice.hide();
+                }
+            },
+        );
+    });
+}
+
+/// Reveal the main window on the notified session — the tray reveal plus the
+/// conversation selection.
+fn open_session(app: &MainWindow, session: &str) {
+    let _ = app.show();
+    crate::native_window::restore_and_focus(app.window());
+    app.window().request_redraw();
+    app.set_page(crate::DesktopPage::Messages);
+    if let Some(index) = app
+        .get_conversations()
+        .iter()
+        .position(|row| row.id == session)
+    {
+        app.invoke_select_conversation(index as i32);
+    }
+}
+
+/// Hide the visible toast, if any.
+fn hide() {
+    HIDE_TIMER.with(slint::Timer::stop);
+    NOTICE.with(|slot| {
+        if let Some(notice) = slot.borrow().as_ref() {
+            let _ = notice.hide();
+        }
+    });
+}
+
+/// Bottom-right of the work area, the same placement idea as the tray notice:
+/// above the taskbar on the primary monitor. Mapping is asynchronous, so the
+/// size is read on the next tick like `tray.rs` does.
+fn position_above_taskbar(notice: &CompletionNotice) {
+    let weak = notice.as_weak();
+    slint::Timer::single_shot(Duration::from_millis(50), move || {
+        let Some(notice) = weak.upgrade() else { return };
+        let Some(area) = crate::pet_window::work_area() else {
+            return;
+        };
+        // The work area is logical; the mapped window size is physical, so it
+        // comes back to logical units before the corner math.
+        let size = notice.window().size();
+        let scale = f64::from(notice.window().scale_factor().max(1.0));
+        let width = f64::from(size.width) / scale;
+        let height = f64::from(size.height) / scale;
+        let x = ((area.0 + area.2 - SCREEN_MARGIN - width).max(area.0 + SCREEN_MARGIN)) as f32;
+        let y = ((area.1 + area.3 - SCREEN_MARGIN - height).max(area.1 + SCREEN_MARGIN)) as f32;
+        notice
+            .window()
+            .set_position(slint::WindowPosition::Logical(
+                slint::LogicalPosition::new(x, y),
+            ));
+    });
+}
+
+/// Smoke runs must never pop toasts over their screenshot comparisons.
+pub fn set_enabled(enabled: bool) {
+    ENABLED.with(|slot| *slot.borrow_mut() = enabled);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn status_kinds_match_the_web_runtime_states() {
+        assert_eq!(status_kind("running"), "hot");
+        assert_eq!(status_kind("正在生成…"), "hot");
+        assert_eq!(status_kind("请求中"), "hot", "a submission is still hot");
+        assert_eq!(status_kind("任务已排队…"), "hot");
+        assert_eq!(status_kind("等待用户输入"), "hot");
+        assert_eq!(status_kind("输出已结束"), "done");
+        assert_eq!(status_kind("任务完成"), "done");
+        assert_eq!(status_kind("completed"), "done");
+        assert_eq!(status_kind("已停止"), "other", "cancelled is not completion");
+        assert_eq!(status_kind("执行失败"), "other", "errors keep the pet bubble");
+        assert_eq!(status_kind(""), "other");
+    }
+
+    #[test]
+    fn only_a_hot_to_done_transition_fires() {
+        assert!(!completion_fires("other", "done"), "first sight is history");
+        assert!(!completion_fires("hot", "hot"));
+        assert!(!completion_fires("hot", "other"));
+        assert!(completion_fires("hot", "done"));
+        assert!(!completion_fires("done", "done"), "no repeat notices");
+        assert!(!completion_fires("done", "hot"));
+    }
+}

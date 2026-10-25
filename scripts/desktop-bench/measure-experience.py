@@ -157,6 +157,9 @@ def render(report):
                 metric["p50"], metric["p95"], metric["maximum"]))
     if report.get("chat_report"):
         lines.extend(["", "100×100 日志打开的七项耗时与资源数据见 [聊天打开报告](chat-open/report.md)。"])
+    if any(s.get("check", {}).get("diagnostics", {}).get("blocking") for s in report.get("samples", [])):
+        lines.extend(["", "分段诊断见 report.json 的 samples[].check.diagnostics.blocking：记录测量窗口内各后台操作的调用次数、排队及执行累计毫秒。",
+                      "该窗口包含正确性读取与并发后台操作，累计时间可能重叠，不是单请求的独占阶段耗时；原计数器按整数毫秒累计，亚毫秒操作可能记为 0。"])
     if report.get("comparison"):
         c = report["comparison"]
         lines.extend(["", "基线兼容：{}；退化项：{}。".format(c["compatible"], len(c["regressions"]))])

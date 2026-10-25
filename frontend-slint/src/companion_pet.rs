@@ -22,10 +22,7 @@ use std::rc::Rc;
 use std::sync::mpsc::Receiver;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use wunder_desktop::{
-    native::clamp_companion_scale, CompanionAgentOverride, CompanionOverlayState,
-    CompanionPlacement, NativeDesktop,
-};
+use wunder_desktop::{CompanionOverlayState, CompanionPlacement, NativeDesktop};
 
 /// Web sprite box and screen inset.
 const BASE_WIDTH: f64 = 192.0;
@@ -36,8 +33,6 @@ const NAME_BUBBLE: Duration = Duration::from_millis(1800);
 const MESSAGE_HINT: Duration = Duration::from_millis(3200);
 const DRAG_SETTLE: Duration = Duration::from_millis(900);
 const HINT_MAX_CHARS: usize = 96;
-/// Web `scalePresets`, offered by the pet context menu.
-const SCALE_PRESETS: [f32; 6] = [0.5, 0.8, 1.0, 1.2, 1.4, 1.6];
 /// Icon payloads may carry any scale inside the web renderer clamp.
 const SCALE_MIN: f32 = 0.5;
 const SCALE_MAX: f32 = 1.8;
@@ -55,7 +50,6 @@ const MISSING_RETRY: Duration = Duration::from_millis(30_000);
 
 const MENU_OPEN_CHAT: u16 = 1;
 const MENU_TOGGLE_SHOW: u16 = 2;
-const MENU_SCALE_FIRST: u16 = 10;
 
 /// Sprite rows, named as the web state table names them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -320,9 +314,9 @@ impl Pet {
         }
         // The global pet is decoupled from agents, so it accepts the active
         // session's hint no matter which agent produced it.
-        let Some(hint) = hint.filter(|hint| {
-            self.spec.agent_id.is_empty() || hint.agent_id == self.spec.agent_id
-        }) else {
+        let Some(hint) = hint
+            .filter(|hint| self.spec.agent_id.is_empty() || hint.agent_id == self.spec.agent_id)
+        else {
             return;
         };
         match self.hint_signature.as_deref() {
@@ -478,9 +472,9 @@ pub fn forget(companion_id: &str) {
 
 /// The single desktop pet, projected the way the web `CompanionFloatingLayer`
 /// does it: it follows the globally selected companion from the pet settings
-/// page and is fully decoupled from the agent list. Positions and the local
-/// show/scale override are keyed by the entry key `desktop:<id>`, matching the
-/// web layer.
+/// page and is fully decoupled from the agent list. Positions are keyed by the
+/// entry key `desktop:<id>`, matching the web layer; visibility is the master
+/// switch alone, so hiding from the pet menu can always be undone in settings.
 fn project_specs(app: &MainWindow, state: &CompanionOverlayState) -> Vec<PetSpec> {
     let settings = app.global::<crate::PetSettingsState>();
     if !settings.get_enabled() {
@@ -491,14 +485,7 @@ fn project_specs(app: &MainWindow, state: &CompanionOverlayState) -> Vec<PetSpec
         return Vec::new();
     }
     let key = format!("desktop:{companion_id}");
-    let entry = state.overrides.get(&key).copied();
-    if !entry.and_then(|entry| entry.show).unwrap_or(true) {
-        return Vec::new();
-    }
-    let scale = entry
-        .and_then(|entry| entry.scale)
-        .unwrap_or(settings.get_scale())
-        .clamp(SCALE_MIN, SCALE_MAX);
+    let scale = settings.get_scale().clamp(SCALE_MIN, SCALE_MAX);
     let position = state
         .positions
         .get(&key)
@@ -793,17 +780,24 @@ fn set_timer(overlay: &mut Overlay, running: bool, app: &MainWindow) {
 /// all land through the same diff.
 fn tick(overlay: &Rc<RefCell<Overlay>>, app: &MainWindow) {
     let events = drain();
-    let mut open_chat: Option<String> = None;
+    let mut action = PendingAction::None;
     if !events.is_empty() {
         let mut guard = overlay.borrow_mut();
         for event in events {
-            if let Some(agent) = handle_event(&mut guard, event) {
-                open_chat = Some(agent);
+            if let Some(pending) = handle_event(&mut guard, event) {
+                action = pending;
             }
         }
     }
+    // The pet menu hides through the master switch: flip the settings switch
+    // before reprojecting, or the projection would re-present the pet at once.
+    if matches!(action, PendingAction::Hidden) {
+        app.global::<crate::PetSettingsState>().set_enabled(false);
+    }
     reproject(overlay, app);
-    let _ = open_chat;
+    if matches!(action, PendingAction::OpenChat) {
+        open_recent_session(app);
+    }
 }
 
 fn drain() -> Vec<PetEvent> {
@@ -823,9 +817,17 @@ fn drain() -> Vec<PetEvent> {
     events
 }
 
-/// Apply one native interaction. Returns the agent whose chat to open, which
-/// the caller invokes after releasing the overlay borrow.
-fn handle_event(overlay: &mut Overlay, event: PetEvent) -> Option<String> {
+/// Work the tick must do on the app after the overlay borrow is released.
+enum PendingAction {
+    None,
+    /// 打开会话: reveal the main window on the most recent conversation.
+    OpenChat,
+    /// The pet menu hid the pet.
+    Hidden,
+}
+
+/// Apply one native interaction, reporting what the app must do next.
+fn handle_event(overlay: &mut Overlay, event: PetEvent) -> Option<PendingAction> {
     match event {
         PetEvent::Clicked { id } => {
             let Some(pet) = overlay.pets.get_mut(&id) else {
@@ -867,22 +869,16 @@ fn handle_event(overlay: &mut Overlay, event: PetEvent) -> Option<String> {
             None
         }
         PetEvent::RightClicked { id, x, y } => {
-            let Some(pet) = overlay.pets.get(&id) else {
-                return None;
-            };
-            let items = menu_items(pet);
+            overlay.pets.get(&id)?;
             overlay.service.send(PetCommand::ShowMenu {
-                id: id.clone(),
+                id,
                 x,
                 y,
-                items,
+                items: menu_items(),
             });
             None
         }
         PetEvent::MenuSelected { id, code } => {
-            let Some(agent_id) = overlay.pets.get(&id).map(|pet| pet.spec.agent_id.clone()) else {
-                return None;
-            };
             if code == MENU_OPEN_CHAT {
                 let now = Instant::now();
                 if overlay
@@ -892,23 +888,21 @@ fn handle_event(overlay: &mut Overlay, event: PetEvent) -> Option<String> {
                     return None;
                 }
                 overlay.last_chat_open = Some(now);
-                return if agent_id.is_empty() { None } else { Some(agent_id) };
+                return Some(PendingAction::OpenChat);
             }
-            if code == MENU_TOGGLE_SHOW {
-                toggle(overlay, &id);
-            } else if code >= MENU_SCALE_FIRST {
-                let index = (code - MENU_SCALE_FIRST) as usize;
-                if let Some(scale) = SCALE_PRESETS.get(index).copied() {
-                    set_scale(overlay, &id, scale);
-                }
+            if code == MENU_TOGGLE_SHOW && overlay.pets.contains_key(&id) {
+                hide_pet(overlay, &id);
+                return Some(PendingAction::Hidden);
             }
             None
         }
     }
 }
 
-fn menu_items(pet: &Pet) -> Vec<PetMenuItem> {
-    let mut items = vec![
+/// The pet context menu: 打开会话 and 隐藏. Scaling lives on the settings
+/// slider alone, so the menu never grows a preset wall again.
+fn menu_items() -> Vec<PetMenuItem> {
+    vec![
         PetMenuItem {
             code: MENU_OPEN_CHAT,
             label: "打开会话".to_string(),
@@ -921,73 +915,45 @@ fn menu_items(pet: &Pet) -> Vec<PetMenuItem> {
             checked: false,
             separator: false,
         },
-        PetMenuItem {
-            code: 0,
-            label: String::new(),
-            checked: false,
-            separator: true,
-        },
-    ];
-    for (index, scale) in SCALE_PRESETS.iter().enumerate() {
-        items.push(PetMenuItem {
-            code: MENU_SCALE_FIRST + index as u16,
-            label: format!("{scale:.1}x"),
-            checked: (pet.spec.scale - *scale).abs() < 0.001,
-            separator: false,
-        });
-    }
-    items
+    ]
 }
 
-/// Hide this pet through the local override only, never the agent record. The
-/// override is keyed by the entry key, matching the web layer's `desktop:<id>`
-/// keys. The menu effect is immediate; the JSON write follows on a worker.
-fn toggle(overlay: &mut Overlay, key: &str) {
-    let show = overlay
-        .state
-        .overrides
-        .get(key)
-        .and_then(|entry| entry.show)
-        .unwrap_or(true);
-    let scale = overlay
-        .pets
-        .get(key)
-        .map(|pet| pet.spec.scale)
-        .unwrap_or(1.0);
-    let next_show = !show;
-    overlay.state.overrides.insert(
-        key.to_string(),
-        CompanionAgentOverride {
-            show: Some(next_show),
-            scale: Some(clamp_companion_scale(scale)),
-        },
-    );
-    let entry_key = key.to_string();
-    save_overlay(overlay, move |api| {
-        api.save_companion_override(&entry_key, next_show, scale)
-    });
-    if !show {
-        return;
-    }
+/// Hide the pet through the master switch the settings page shows, so the menu
+/// action can always be undone by turning 动画形象 back on. The in-memory state
+/// and the window are dropped at once; the JSON write follows on a worker and
+/// the settings switch is flipped by the tick before the next projection.
+fn hide_pet(overlay: &mut Overlay, key: &str) {
+    overlay.state.enabled = false;
     overlay.pets.remove(key);
     overlay.service.send(PetCommand::Dismiss {
         id: key.to_string(),
     });
+    let snapshot = overlay.state.clone();
+    save_overlay(overlay, move |api| {
+        api.save_companion_settings(
+            false,
+            &snapshot.selected_id,
+            snapshot.scale,
+            snapshot.message_hints,
+        )
+    });
 }
 
-/// Resize through the same local override, keeping the current visibility.
-fn set_scale(overlay: &mut Overlay, key: &str, scale: f32) {
-    overlay.state.overrides.insert(
-        key.to_string(),
-        CompanionAgentOverride {
-            show: Some(true),
-            scale: Some(clamp_companion_scale(scale)),
-        },
-    );
-    let entry_key = key.to_string();
-    save_overlay(overlay, move |api| {
-        api.save_companion_override(&entry_key, true, scale)
-    });
+/// 打开会话: raise the main window the way the tray icon does, land on the
+/// chat page, and open the most recent conversation when none is active. Rows
+/// locked by another live 蛹/舵机 are skipped so the reveal never reports
+/// THREAD_IN_USE before the user has chosen a conversation.
+fn open_recent_session(app: &MainWindow) {
+    let _ = app.show();
+    crate::native_window::restore_and_focus(app.window());
+    app.window().request_redraw();
+    app.set_page(crate::DesktopPage::Messages);
+    if !app.get_active_session_id().is_empty() {
+        return;
+    }
+    if let Some(index) = app.get_conversations().iter().position(|row| !row.locked) {
+        app.invoke_select_conversation(index as i32);
+    }
 }
 
 /// Persist one overlay mutation off the UI thread. The caller has already

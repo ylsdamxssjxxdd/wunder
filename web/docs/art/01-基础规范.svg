@@ -1,0 +1,241 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1630" viewBox="0 0 1600 1630" role="img" aria-label="蛹 桌面端 UI 基础规范">
+  <title>01 基础规范 · 蛹 Desktop UI Spec</title>
+  <style>
+    svg{font-family:'Microsoft YaHei UI','Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif;fill:#1F2329}
+    .mono{font-family:Consolas,'SFMono-Regular','Cascadia Mono',monospace}
+    .h1{font-size:30px;font-weight:700;letter-spacing:-.4px}
+    .sub{font-size:13px;fill:#7C7A75}
+    .kicker{font-size:11px;font-weight:600;letter-spacing:1.4px;fill:#E07A12}
+    .sect{font-size:16px;font-weight:700}
+    .sect-en{font-size:10px;font-weight:600;letter-spacing:1.6px;fill:#A8A39B}
+    .card-t{font-size:12px;font-weight:700}
+    .tok{font-size:10px;fill:#3D3D3D}
+    .hex{font-size:10px;fill:#8A8F99}
+    .note{font-size:11px;fill:#7C7A75}
+    .tiny{font-size:10px;fill:#8A8F99}
+    .line{stroke:#E8E6E3;stroke-width:1}
+    .dash{stroke:#D8D5D0;stroke-width:1;stroke-dasharray:3 3}
+    .card{fill:#FFFFFF;stroke:#DED9D1;stroke-width:1}
+    .ink{fill:#1F2329}.muted{fill:#7C7A75}
+    .accent{fill:#F58A24}
+  </style>
+
+  <rect width="1600" height="1630" fill="#F4F1EC"/>
+
+  <!-- header -->
+  <g id="header">
+    <text x="80" y="52" class="kicker">WUNDER / 蛹 · DESKTOP UI SPEC</text>
+    <text x="80" y="93" class="h1">01　基础规范</text>
+    <text x="80" y="120" class="sub">单一事实来源：frontend-slint/ui/design_tokens.slint。中性色不跟随主题，强调色只换色族。</text>
+    <text x="1520" y="52" text-anchor="end" class="mono" font-size="11" fill="#8A8F99">SHEET 01 / 09</text>
+    <text x="1520" y="94" text-anchor="end" class="mono" font-size="12" fill="#3D3D3D">v0.1.6 · 2026-10-25</text>
+    <line x1="80" y1="140" x2="1520" y2="140" stroke="#D8D5D0"/>
+  </g>
+
+  <!-- ============ COLOR ============ -->
+  <g id="color">
+    <rect x="80" y="180" width="6" height="16" rx="2" fill="#F58A24"/>
+    <text x="98" y="194" class="sect">颜色系统</text>
+    <text x="190" y="194" class="sect-en">COLOR TOKENS</text>
+    <text x="1520" y="194" text-anchor="end" class="note">页面底 #F4F1EC 仅用于本设计稿，不是产品 token</text>
+
+    <!-- neutrals -->
+    <g>
+      <rect x="80" y="214" width="720" height="404" rx="14" class="card"/>
+      <text x="102" y="241" class="card-t">中性色 · 蜂巢白壳</text>
+      <text x="102" y="258" class="tiny">不随强调色变化；暖底是 bug，不是主题</text>
+      <text x="778" y="241" text-anchor="end" class="mono tiny">Theme.text → activity-off</text>
+
+      <g>
+        <rect x="100" y="274" width="153" height="34" rx="4" fill="#1F2329"/><text x="100" y="325" class="mono tok">text</text><text x="253" y="325" text-anchor="end" class="mono hex">#1F2329</text>
+        <rect x="265" y="274" width="153" height="34" rx="4" fill="#3D3D3D"/><text x="265" y="325" class="mono tok">text-secondary</text><text x="418" y="325" text-anchor="end" class="mono hex">#3D3D3D</text>
+        <rect x="430" y="274" width="153" height="34" rx="4" fill="#8A8F99"/><text x="430" y="325" class="mono tok">muted</text><text x="583" y="325" text-anchor="end" class="mono hex">#8A8F99</text>
+        <rect x="595" y="274" width="153" height="34" rx="4" fill="#FBFAF8" stroke="#E8E6E3"/><text x="595" y="325" class="mono tok">panel</text><text x="748" y="325" text-anchor="end" class="mono hex">#FBFAF8</text>
+
+        <rect x="100" y="346" width="153" height="34" rx="4" fill="#FFFFFF" stroke="#E8E6E3"/><text x="100" y="397" class="mono tok">surface</text><text x="253" y="397" text-anchor="end" class="mono hex">#FFFFFF</text>
+        <rect x="265" y="346" width="153" height="34" rx="4" fill="#E8E6E3"/><text x="265" y="397" class="mono tok">border</text><text x="418" y="397" text-anchor="end" class="mono hex">#E8E6E3</text>
+        <rect x="430" y="346" width="153" height="34" rx="4" fill="#D8D5D0"/><text x="430" y="397" class="mono tok">border-strong</text><text x="583" y="397" text-anchor="end" class="mono hex">#D8D5D0</text>
+        <rect x="595" y="346" width="153" height="34" rx="4" fill="#F6F5F3" stroke="#E8E6E3"/><text x="595" y="397" class="mono tok">hover / sidebar</text><text x="748" y="397" text-anchor="end" class="mono hex">#F6F5F3</text>
+
+        <rect x="100" y="418" width="153" height="34" rx="4" fill="#F1EFEC"/><text x="100" y="469" class="mono tok">selected</text><text x="253" y="469" text-anchor="end" class="mono hex">#F1EFEC</text>
+        <rect x="265" y="418" width="153" height="34" rx="4" fill="#F3F2F0"/><text x="265" y="469" class="mono tok">timeline-bubble</text><text x="418" y="469" text-anchor="end" class="mono hex">#F3F2F0</text>
+        <rect x="430" y="418" width="153" height="34" rx="4" fill="#E2DFDA"/><text x="430" y="469" class="mono tok">timeline-line</text><text x="583" y="469" text-anchor="end" class="mono hex">#E2DFDA</text>
+        <rect x="595" y="418" width="153" height="34" rx="4" fill="#9BA0A8"/><text x="595" y="469" class="mono tok">entry-soft</text><text x="748" y="469" text-anchor="end" class="mono hex">#9BA0A8</text>
+
+        <rect x="100" y="490" width="153" height="34" rx="4" fill="#E9E8E5"/><text x="100" y="541" class="mono tok">activity-off</text><text x="253" y="541" text-anchor="end" class="mono hex">#E9E8E5</text>
+        <rect x="265" y="490" width="153" height="34" rx="4" fill="#FDF0DE" stroke="#EFDFC4"/><text x="265" y="541" class="mono tok">accent-soft</text><text x="418" y="541" text-anchor="end" class="mono hex">#FDF0DE</text>
+        <rect x="430" y="490" width="153" height="34" rx="4" fill="#F5F4F2"/><text x="430" y="541" class="mono tok">diff-header</text><text x="583" y="541" text-anchor="end" class="mono hex">#F5F4F2</text>
+        <rect x="595" y="490" width="153" height="34" rx="4" fill="#FDF1F6" stroke="#EFC6D7"/><text x="595" y="541" class="mono tok">goal-bg *</text><text x="748" y="541" text-anchor="end" class="mono hex">#FDF1F6</text>
+      </g>
+      <text x="102" y="582" class="tiny">* GoalBanner 使用局部粉色语义，未进入全局 token；重构时建议收敛为 warning/goal 专色。</text>
+    </g>
+
+    <!-- accent -->
+    <g>
+      <rect x="820" y="214" width="700" height="404" rx="14" class="card"/>
+      <text x="842" y="241" class="card-t">强调色 · 橙汁（默认）</text>
+      <text x="842" y="258" class="tiny">唯一会随用户偏好切换的色族；按钮、焦点、发送、选中指示</text>
+      <text x="1498" y="241" text-anchor="end" class="mono tiny">palette = terracotta</text>
+
+      <rect x="842" y="274" width="124" height="64" rx="6" fill="#F58A24"/><text x="842" y="348" class="mono tok">accent</text><text x="842" y="360" class="mono hex">#F58A24</text>
+      <rect x="976" y="274" width="124" height="64" rx="6" fill="#E07A12"/><text x="976" y="348" class="mono tok">accent-deep</text><text x="976" y="360" class="mono hex">#E07A12</text>
+      <rect x="1110" y="274" width="124" height="64" rx="6" fill="#FFC98A"/><text x="1110" y="348" class="mono tok">accent-secondary</text><text x="1110" y="360" class="mono hex">#FFC98A</text>
+      <rect x="1244" y="274" width="124" height="64" rx="6" fill="#FDF0DE" stroke="#EFDFC4"/><text x="1244" y="348" class="mono tok">accent-soft</text><text x="1244" y="360" class="mono hex">#FDF0DE</text>
+      <rect x="1378" y="274" width="120" height="64" rx="6" fill="#FDF0DE" stroke="#EFDFC4"/><text x="1378" y="348" class="mono tok">mine / bubble</text><text x="1378" y="360" class="mono hex">#FDF0DE</text>
+
+      <text x="842" y="390" class="card-t">可切换色族</text>
+      <text x="842" y="406" class="tiny">设置页提供前四项；minimal / tech-blue 为保留色族</text>
+
+      <g>
+        <rect x="842" y="420" width="104" height="38" rx="5" fill="#F58A24"/><text x="842" y="474" class="mono tok">terracotta</text><text x="842" y="486" class="mono hex">#F58A24</text>
+        <rect x="954" y="420" width="104" height="38" rx="5" fill="#16AD8D"/><text x="954" y="474" class="mono tok">hula-green</text><text x="954" y="486" class="mono hex">#16AD8D</text>
+        <rect x="1066" y="420" width="104" height="38" rx="5" fill="#2F7A5C"/><text x="1066" y="474" class="mono tok">forest</text><text x="1066" y="486" class="mono hex">#2F7A5C</text>
+        <rect x="1178" y="420" width="104" height="38" rx="5" fill="#C08A2A"/><text x="1178" y="474" class="mono tok">honey</text><text x="1178" y="486" class="mono hex">#C08A2A</text>
+        <rect x="1290" y="420" width="102" height="38" rx="5" fill="#8F9AAD"/><text x="1290" y="474" class="mono tok">minimal</text><text x="1290" y="486" class="mono hex">#8F9AAD</text>
+        <rect x="1402" y="420" width="96" height="38" rx="5" fill="#38BDF8"/><text x="1402" y="474" class="mono tok">tech-blue</text><text x="1402" y="486" class="mono hex">#38BDF8</text>
+      </g>
+
+      <line x1="842" y1="500" x2="1498" y2="500" class="line"/>
+      <text x="842" y="523" class="card-t">使用规则</text>
+      <text x="842" y="544" class="note">1　主按钮填充 accent，悬停 accent-deep；软底用 accent-soft。</text>
+      <text x="842" y="565" class="note">2　焦点框 = 1px accent，无外发光；图标可 colorize 为 accent。</text>
+      <text x="842" y="586" class="note">3　浅色底上的正文不用 accent，避免对比度不足。</text>
+    </g>
+
+    <!-- semantic -->
+    <g>
+      <rect x="80" y="636" width="1440" height="232" rx="14" class="card"/>
+      <text x="102" y="663" class="card-t">语义色 · 状态与差异</text>
+      <text x="1498" y="663" text-anchor="end" class="tiny">成功 / 警告 / 危险 / 信息 · 全部成对提供 soft 背景</text>
+
+      <rect x="102" y="682" width="160" height="28" rx="4" fill="#1A8A5C"/><text x="102" y="728" class="mono tok">success</text><text x="262" y="728" text-anchor="end" class="mono hex">#1A8A5C</text>
+      <rect x="278" y="682" width="160" height="28" rx="4" fill="#EAF7F0" stroke="#D6EBDD"/><text x="278" y="728" class="mono tok">success-bg</text><text x="438" y="728" text-anchor="end" class="mono hex">#EAF7F0</text>
+      <rect x="454" y="682" width="160" height="28" rx="4" fill="#C98A2B"/><text x="454" y="728" class="mono tok">warning</text><text x="614" y="728" text-anchor="end" class="mono hex">#C98A2B</text>
+      <rect x="630" y="682" width="160" height="28" rx="4" fill="#FBEAE5" stroke="#EED7CC"/><text x="630" y="728" class="mono tok">warning-bg</text><text x="790" y="728" text-anchor="end" class="mono hex">#FBEAE5</text>
+      <rect x="806" y="682" width="160" height="28" rx="4" fill="#D04A43"/><text x="806" y="728" class="mono tok">danger</text><text x="966" y="728" text-anchor="end" class="mono hex">#D04A43</text>
+      <rect x="982" y="682" width="160" height="28" rx="4" fill="#FDECEC" stroke="#F1D2D0"/><text x="982" y="728" class="mono tok">danger-bg</text><text x="1142" y="728" text-anchor="end" class="mono hex">#FDECEC</text>
+      <rect x="1158" y="682" width="160" height="28" rx="4" fill="#3B82F6"/><text x="1158" y="728" class="mono tok">info</text><text x="1318" y="728" text-anchor="end" class="mono hex">#3B82F6</text>
+      <rect x="1334" y="682" width="160" height="28" rx="4" fill="#3E9C7E"/><text x="1334" y="728" class="mono tok">thought</text><text x="1494" y="728" text-anchor="end" class="mono hex">#3E9C7E</text>
+
+      <line x1="102" y1="748" x2="1498" y2="748" class="line"/>
+      <text x="102" y="771" class="tiny">差异 / 时间线专色</text>
+      <rect x="102" y="784" width="120" height="24" rx="4" fill="#EAF7F0"/><text x="228" y="801" class="mono hex">diff-add-bg #EAF7F0</text>
+      <rect x="390" y="784" width="120" height="24" rx="4" fill="#FDECEC"/><text x="516" y="801" class="mono hex">diff-del-bg #FDECEC</text>
+      <rect x="678" y="784" width="120" height="24" rx="4" fill="#14532D"/><text x="804" y="801" class="mono hex">diff-add-text #14532D</text>
+      <rect x="966" y="784" width="120" height="24" rx="4" fill="#7F1D1D"/><text x="1092" y="801" class="mono hex">diff-del-text #7F1D1D</text>
+      <rect x="1254" y="784" width="120" height="24" rx="4" fill="#000000" opacity=".25"/><text x="1494" y="801" text-anchor="end" class="mono hex">overlay #00000040</text>
+      <text x="102" y="838" class="tiny">提示：warning-bg 在代码中偏粉，实际用于暂停/目标提示；错误横幅用 danger-bg。</text>
+    </g>
+  </g>
+
+  <!-- ============ TYPE ============ -->
+  <g id="typography">
+    <rect x="80" y="906" width="6" height="16" rx="2" fill="#F58A24"/>
+    <text x="98" y="920" class="sect">字体与字号</text>
+    <text x="206" y="920" class="sect-en">TYPE SCALE</text>
+    <text x="1520" y="920" text-anchor="end" class="note">用户可在 12–20px 间缩放会话字号；下列为 14px 基准</text>
+
+    <rect x="80" y="940" width="760" height="340" rx="14" class="card"/>
+    <text x="102" y="967" class="card-t">字阶</text>
+    <text x="818" y="967" text-anchor="end" class="mono tiny">font-scale = 1.0</text>
+    <line x1="102" y1="982" x2="818" y2="982" class="line"/>
+
+    <text x="102" y="1016" font-size="24" font-weight="600">Ag 汉字</text><text x="300" y="1016" class="mono tok">font-display</text><text x="470" y="1016" class="mono hex">24px</text><text x="540" y="1016" class="note">空态标题 / 大数字</text>
+    <text x="102" y="1056" font-size="18" font-weight="700">Ag 汉字</text><text x="300" y="1056" class="mono tok">font-headline</text><text x="470" y="1056" class="mono hex">18px</text><text x="540" y="1056" class="note">页面标题</text>
+    <text x="102" y="1094" font-size="16" font-weight="600">Ag 汉字</text><text x="300" y="1094" class="mono tok">font-xl</text><text x="470" y="1094" class="mono hex">16px</text><text x="540" y="1094" class="note">弹窗标题 / 头像首字</text>
+    <text x="102" y="1130" font-size="14" font-weight="400">Ag 汉字</text><text x="300" y="1130" class="mono tok">font-lg</text><text x="470" y="1130" class="mono hex">14px</text><text x="540" y="1130" class="note">正文 / 会话内容 / 输入框</text>
+    <text x="102" y="1164" font-size="13" font-weight="400">Ag 汉字</text><text x="300" y="1164" class="mono tok">font-md</text><text x="470" y="1164" class="mono hex">13px</text><text x="540" y="1164" class="note">按钮 / 行标题 / 过程标签</text>
+    <text x="102" y="1196" font-size="12" font-weight="400">Ag 汉字</text><text x="300" y="1196" class="mono tok">font-sm</text><text x="470" y="1196" class="mono hex">12px</text><text x="540" y="1196" class="note">说明 / 指标 / 菜单项</text>
+    <text x="102" y="1226" font-size="11" font-weight="400">Ag 汉字</text><text x="300" y="1226" class="mono tok">font-xs</text><text x="470" y="1226" class="mono hex">11px</text><text x="540" y="1226" class="note">辅助 / 计数 / 标签</text>
+    <text x="102" y="1254" font-size="10" font-weight="400">Ag 汉字</text><text x="300" y="1254" class="mono tok">font-2xs</text><text x="470" y="1254" class="mono hex">10px</text><text x="540" y="1254" class="note">徽标 / 极密信息</text>
+
+    <rect x="860" y="940" width="660" height="340" rx="14" class="card"/>
+    <text x="882" y="967" class="card-t">字体栈与规则</text>
+    <text x="882" y="996" font-size="14" font-weight="600">Microsoft YaHei UI</text>
+    <text x="882" y="1014" class="note">Windows 默认；回退 Microsoft YaHei → PingFang SC → Noto Sans SC。</text>
+    <text x="882" y="1044" font-size="13" font-weight="600">字重</text>
+    <text x="930" y="1044" class="note">400 正文　600 控件/标题　700 页面标题与数字</text>
+    <text x="882" y="1072" font-size="13" font-weight="600">行高</text>
+    <text x="930" y="1072" class="note">会话正文 1.5；卡片 1.35；单行控件垂直居中</text>
+    <text x="882" y="1100" font-size="13" font-weight="600">等宽</text>
+    <text x="930" y="1100" class="mono" font-size="13">Consolas 11–13px</text>
+    <text x="944" y="1118" class="note">diff 行、工具耗时、token 数、快捷键</text>
+    <line x1="882" y1="1140" x2="1498" y2="1140" class="line"/>
+    <text x="882" y="1166" class="card-t">排版红线</text>
+    <text x="882" y="1188" class="note">• 中文标题不使用 letter-spacing；英文全大写小标题才加 1.4–1.6px。</text>
+    <text x="882" y="1210" class="note">• 数字与单位之间留半角空格：8.0s、225.3 token/s。</text>
+    <text x="882" y="1232" class="note">• 单行省略用尾省略号；aria-label 保留完整文本。</text>
+    <text x="882" y="1254" class="note">• 正文列宽上限 1000px，左右各 24px；宽窗留白而不是拉长行宽。</text>
+  </g>
+
+  <!-- ============ SPACING / RADIUS / LAYOUT ============ -->
+  <g id="metrics">
+    <rect x="80" y="1310" width="6" height="16" rx="2" fill="#F58A24"/>
+    <text x="98" y="1324" class="sect">间距、圆角与布局</text>
+    <text x="264" y="1324" class="sect-en">SPACING · RADIUS · LAYOUT</text>
+
+    <rect x="80" y="1344" width="720" height="250" rx="14" class="card"/>
+    <text x="102" y="1371" class="card-t">间距尺度</text>
+    <text x="778" y="1371" text-anchor="end" class="mono tiny">space-1 … space-5 + 24</text>
+    <g>
+      <rect x="102" y="1390" width="4" height="4" fill="#F58A24"/><text x="116" y="1397" class="mono hex">4</text>
+      <rect x="176" y="1386" width="8" height="8" fill="#F58A24"/><text x="196" y="1397" class="mono hex">8</text>
+      <rect x="260" y="1382" width="12" height="12" fill="#F58A24"/><text x="282" y="1397" class="mono hex">12</text>
+      <rect x="344" y="1378" width="16" height="16" fill="#F58A24"/><text x="370" y="1397" class="mono hex">16</text>
+      <rect x="428" y="1374" width="20" height="20" fill="#F58A24"/><text x="458" y="1397" class="mono hex">20</text>
+      <rect x="512" y="1370" width="24" height="24" fill="#F58A24"/><text x="546" y="1397" class="mono hex">24</text>
+      <text x="620" y="1397" class="note">4 · 8 · 12–16 · 20–24</text>
+    </g>
+
+    <text x="102" y="1442" class="card-t">圆角</text>
+    <g>
+      <rect x="102" y="1456" width="44" height="36" rx="6" fill="#FDF0DE" stroke="#F58A24"/><text x="124" y="1508" text-anchor="middle" class="mono hex">6</text>
+      <rect x="170" y="1456" width="44" height="36" rx="8" fill="#FDF0DE" stroke="#F58A24"/><text x="192" y="1508" text-anchor="middle" class="mono hex">8</text>
+      <rect x="238" y="1456" width="44" height="36" rx="10" fill="#FDF0DE" stroke="#F58A24"/><text x="260" y="1508" text-anchor="middle" class="mono hex">10</text>
+      <rect x="306" y="1456" width="44" height="36" rx="12" fill="#FDF0DE" stroke="#F58A24"/><text x="328" y="1508" text-anchor="middle" class="mono hex">12</text>
+      <rect x="374" y="1456" width="44" height="36" rx="14" fill="#FDF0DE" stroke="#F58A24"/><text x="396" y="1508" text-anchor="middle" class="mono hex">14</text>
+      <rect x="442" y="1456" width="44" height="36" rx="16" fill="#FDF0DE" stroke="#F58A24"/><text x="464" y="1508" text-anchor="middle" class="mono hex">16</text>
+      <rect x="510" y="1459" width="66" height="30" rx="15" fill="#FDF0DE" stroke="#F58A24"/><text x="543" y="1508" text-anchor="middle" class="mono hex">pill</text>
+      <text x="610" y="1479" class="note">标签 6 · 按钮/行 8 · 卡片 12–14</text>
+      <text x="610" y="1497" class="note">输入卡 16 · 胶囊 = 高度/2</text>
+    </g>
+
+    <rect x="820" y="1344" width="700" height="250" rx="14" class="card"/>
+    <text x="842" y="1371" class="card-t">窗口布局基线</text>
+    <text x="1498" y="1371" text-anchor="end" class="mono tiny">min 1024 × 700 · preferred 1180 × 740</text>
+
+    <!-- mini window -->
+    <g transform="translate(842,1388)">
+      <rect width="420" height="186" rx="8" fill="#FBFAF8" stroke="#D8D5D0"/>
+      <rect width="420" height="18" rx="8" fill="#F6F5F3"/>
+      <rect y="18" width="70" height="168" fill="#F6F5F3"/>
+      <rect x="70" y="18" width="6" height="168" fill="#F4F1EC"/>
+      <rect x="76" y="18" width="344" height="168" fill="#FBFAF8"/>
+      <rect x="112" y="36" width="272" height="10" rx="3" fill="#E8E6E3"/>
+      <rect x="112" y="54" width="162" height="26" rx="6" fill="#F3F2F0"/>
+      <rect x="112" y="90" width="272" height="40" rx="6" fill="#FFFFFF" stroke="#E8E6E3"/>
+      <rect x="76" y="150" width="344" height="36" fill="#FBFAF8"/>
+      <rect x="112" y="154" width="272" height="28" rx="6" fill="#FFFFFF" stroke="#E8E6E3"/>
+      <text x="8" y="12" font-size="7" fill="#8A8F99">titlebar 28</text>
+      <text x="8" y="70" font-size="7" fill="#8A8F99">sidebar</text>
+      <text x="8" y="80" font-size="7" fill="#8A8F99">240</text>
+      <text x="182" y="86" text-anchor="middle" font-size="7" fill="#8A8F99">reading column ≤ 1000 · padding 24</text>
+      <text x="248" y="146" text-anchor="middle" font-size="7" fill="#8A8F99">composer 154</text>
+    </g>
+
+    <text x="1286" y="1410" class="mono tok">titlebar</text><text x="1498" y="1410" text-anchor="end" class="mono hex">28px</text>
+    <text x="1286" y="1430" class="mono tok">sidebar</text><text x="1498" y="1430" text-anchor="end" class="mono hex">240px (170–420)</text>
+    <text x="1286" y="1450" class="mono tok">column</text><text x="1498" y="1450" text-anchor="end" class="mono hex">≤ 1000px</text>
+    <text x="1286" y="1470" class="mono tok">gutter</text><text x="1498" y="1470" text-anchor="end" class="mono hex">24px</text>
+    <text x="1286" y="1490" class="mono tok">composer</text><text x="1498" y="1490" text-anchor="end" class="mono hex">154px</text>
+    <text x="1286" y="1510" class="mono tok">splitter</text><text x="1498" y="1510" text-anchor="end" class="mono hex">2px / 6–8 hit</text>
+    <text x="1286" y="1530" class="mono tok">dock breakpoint</text><text x="1498" y="1530" text-anchor="end" class="mono hex">1100px</text>
+    <text x="1286" y="1560" class="note">所有度量以逻辑像素计；高 DPI 由渲染层缩放。</text>
+  </g>
+
+  <g id="footer">
+    <line x1="80" y1="1610" x2="1520" y2="1610" stroke="#D8D5D0"/>
+    <text x="80" y="1626" class="tiny">WUNDER · 蛹 UI SPEC　|　事实来源：design_tokens.slint, theme.slint, i18n.slint, composer.slint, timeline.slint</text>
+    <text x="1520" y="1626" text-anchor="end" class="mono tiny">01 / 09</text>
+  </g>
+</svg>

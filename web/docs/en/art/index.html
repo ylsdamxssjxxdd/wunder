@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Art Sheets | 使用说明书</title>
+  <meta name="description" content="Ten interface design sheets for the Pupa desktop app, covering the overview, foundations, icons, shell, timeline, process and tools, plan and inquiry, composer, settings and dialogs, and interaction states. Each sheet is annotated in logical pixels and can be checked against the implementation directly.">
+  <link rel="stylesheet" href="/docs/site.css?v=4aa263bfd7b3">
+  <script type="module" src="/docs/site.js?v=4aa263bfd7b3"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"en/art/index","language":"en","title":"Art Sheets","summary":"Ten interface design sheets for the Pupa desktop app, covering the overview, foundations, icons, shell, timeline, process and tools, plan and inquiry, composer, settings and dialogs, and interaction states. Each sheet is annotated in logical pixels and can be checked against the implementation directly.","updated_at":"2026-10-25","read_when":[],"source_docs":[],"tab":"Surfaces","group":"Art","group_path":["Art"],"url":"/docs/en/art/","headings":[{"id":"section-1","level":1,"text":"Art Sheets"},{"id":"section-2","level":2,"text":"00 Overview"},{"id":"section-3","level":2,"text":"01 Foundations"},{"id":"section-4","level":2,"text":"02 Icons"},{"id":"section-5","level":2,"text":"03 Shell and Sidebar"},{"id":"section-6","level":2,"text":"04 Timeline"},{"id":"section-7","level":2,"text":"05 Process and Tools"},{"id":"section-8","level":2,"text":"06 Plan and Inquiry"},{"id":"section-9","level":2,"text":"07 Composer"},{"id":"section-10","level":2,"text":"08 Settings and Dialogs"},{"id":"section-11","level":2,"text":"09 States and Motion"},{"id":"section-12","level":2,"text":"Maintenance"}],"prev_slug":"en/surfaces/desktop-ui","next_slug":"en/capabilities/index","markdown":"# Art Sheets\n\nThese sheets are the interface baseline for the Pupa desktop app. Every sheet carries its own sizes, spacing, colors and states; when the code and a sheet disagree, check the running app first and then decide which side to change.\n\n- Sources live in `docs/wunder美术设计稿`; every sheet is a standalone SVG with the app icon embedded, so it still renders when copied elsewhere\n- The page shows the SVGs directly and stays sharp at any zoom; you can also open the [design index](/docs/art/) and browse all ten sheets as thumbnails\n- The Pupa help manual embeds 1200px raster previews of the same sheets, so the Slint renderer needs no SVG pipeline\n\n## 00 Overview\n\nWhole-window baseline: 1462×866 logical pixels, a 240 sidebar, a 1000 reading column and a 154-high composer band. The sidebar, timeline and composer share one sheet so the layout can be compared at a glance.\n\n![Overview design sheet](/docs/art/00-整体总览.svg)\n\n*00 Overview · window 1462×866 (reference screenshot 2558×1515 at 175% DPI)*\n\n## 01 Foundations\n\nNeutral, accent and semantic colors, the type scale, spacing, radii and the window layout baseline. The tokens map one-to-one to `frontend-slint/ui/design_tokens.slint`.\n\n![Foundations design sheet](/docs/art/01-基础规范.svg)\n\n*01 Foundations · color, type, spacing, radii*\n\n## 02 Icons\n\nRules for redrawing the brand mark, tool icons, state icons and line icons. The app icon is the pupa; the bee mark stays only as an auxiliary channel and collaboration identifier.\n\n![Icons design sheet](/docs/art/02-图标系统.svg)\n\n*02 Icons · brand, tools, states and line icons*\n\n## 03 Shell and Sidebar\n\nTitle bar, sidebar width, groups, workspace rows, thread rows, the working-directory toolbar, and the splitter in its rest, hover and drag states. The sidebar splitter shows no rail at rest and a 2×32 pill on hover.\n\n![Shell and sidebar design sheet](/docs/art/03-外壳与侧栏.svg)\n\n*03 Shell and sidebar · title bar, sidebar, splitter*\n\n## 04 Timeline\n\nReading column and scrolling, user messages, turn footers, the run-state capsule, Markdown fallback styles and the empty state. Streaming updates only the active tail block; finished blocks stay stable.\n\n![Timeline design sheet](/docs/art/04-会话时间线.svg)\n\n*04 Timeline · messages, footers, state capsule*\n\n## 05 Process and Tools\n\nProcess bar, thinking entries, tool rows, the expanded output panel, tool groups and subagent cards. The sheet covers icon sizes, fold budgets and indentation for every state.\n\n![Process and tools design sheet](/docs/art/05-过程与工具.svg)\n\n*05 Process and tools · process bar, tool rows, subagents*\n\n## 06 Plan and Inquiry\n\nPlan capsule, expanded card, goal banner and inquiry panel. Option rows include \"no preference\" and \"other\", and the inquiry panel has no separate submit button.\n\n![Plan and inquiry design sheet](/docs/art/06-计划与问询.svg)\n\n*06 Plan and inquiry · plan card, goal banner, inquiry panel*\n\n## 07 Composer\n\nThe 972×100 input card, the 30-high footer, attachment rows, recording, generating and disabled-send states, plus queue and model menu specs. The stop square is 10.5 and the send arrow is 16.\n\n![Composer design sheet](/docs/art/07-输入区.svg)\n\n*07 Composer · input card, footer, stop and queue*\n\n## 08 Settings and Dialogs\n\nSettings row anatomy, input and select controls, buttons, validation and hints, and the density and layering of dialogs.\n\n![Settings and dialogs design sheet](/docs/art/08-设置与弹窗.svg)\n\n*08 Settings and dialogs · rows, controls, validation*\n\n## 09 States and Motion\n\nRow and input states, the motion timeline, performance limits, key bindings, accessibility feedback and breakpoints. This sheet also records which actions must not block during long lists and streaming output.\n\n![States and motion design sheet](/docs/art/09-交互状态与动效.svg)\n\n*09 States and motion · states, timing, keys*\n\n## Maintenance\n\nAfter editing an SVG, run once from the repository root:\n\n```bash\npython scripts/sync_art.py\n```\n\nIt does three things in order:\n\n1. Renders the SVGs to 1200px PNGs under `frontend-slint/assets/help/art` for the desktop help\n2. Rebuilds the Chinese and English manual JSON from those PNGs\n3. Rebuilds the docs site and copies the SVGs to `web/docs/art`, embedding the app icon as a data URI\n\nThe web side takes effect after the site rebuild; the desktop app must be rebuilt because the previews are compiled into the binary with `include_bytes!`.\n\nWhen adding or removing a sheet, update three places besides the artwork: `SHEETS` in `scripts/render_art_previews.py`, `ART_TOPICS` in `scripts/build_help_manual.py`, and the gallery at `docs/wunder美术设计稿/index.html`; add the section on this page too, then run the sync script. Do not edit the PNGs under `frontend-slint/assets/help/art` by hand.\n","source_path":"使用说明书/en/art/index.md"}</script>
+</body>
+</html>

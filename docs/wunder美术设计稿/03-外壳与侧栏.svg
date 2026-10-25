@@ -1,0 +1,382 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1400" viewBox="0 0 1600 1400" role="img" aria-label="蛹 桌面端窗口外壳与侧栏设计规范">
+  <title>03 外壳与侧栏 · 蛹 Desktop UI Spec</title>
+  <defs>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="s-monitor" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="s-cloud" viewBox="0 0 24 24"><path d="M7 18h10a4 4 0 0 0 .5-8 6 6 0 0 0-11.4 1.2A4 4 0 0 0 7 18Z"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="s-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="s-chev" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="s-folder" viewBox="0 0 24 24"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H9l2 2h7.5A2.5 2.5 0 0 1 21 9.5v7A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5z"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="s-check" viewBox="0 0 24 24"><path d="m5 12.5 4.2 4.2L19 7"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="s-spinner" viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="s-question" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M9.5 9.2a2.6 2.6 0 1 1 3.7 2.4c-.8.4-1.2 1-1.2 1.9v.3"/><circle cx="12" cy="17" r="1" fill="currentColor" stroke="none"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="s-error" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="m9 9 6 6M15 9l-6 6"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="s-pause" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M10 9v6M14 9v6"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="s-upload" viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5M5 20h14"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="s-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6"/><path d="m15 15 5 5"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="s-zip" viewBox="0 0 24 24"><path d="M6 3h9l4 4v14H6zM15 3v5h4M10 3v3h3V3M10 8v3h3V8M10 13v3h3v-3"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="s-list" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="s-refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 6M20 5v6h-6"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="s-pen" viewBox="0 0 24 24"><path d="m4 20 4.2-1 11-11a2.1 2.1 0 0 0-3-3l-11 11zM13.5 6.5l4 4"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="s-trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6.5 7l.8 12a2 2 0 0 0 2 1.9h5.4a2 2 0 0 0 2-1.9l.8-12"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="s-file" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6zM14 3v5h4"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="s-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="s-min" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="s-max" viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="1.5"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="s-restore" viewBox="0 0 24 24"><rect x="4" y="8" width="12" height="12" rx="1"/><path d="M8 8V4h12v12h-4"/></symbol>
+  </defs>
+  <style>
+    svg{font-family:'Microsoft YaHei UI','Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif;fill:#1F2329}
+    .mono{font-family:Consolas,'SFMono-Regular','Cascadia Mono',monospace}
+    .h1{font-size:30px;font-weight:700;letter-spacing:-.4px}
+    .sub{font-size:13px;fill:#7C7A75}
+    .kicker{font-size:11px;font-weight:600;letter-spacing:1.4px;fill:#E07A12}
+    .sect{font-size:16px;font-weight:700}
+    .sect-en{font-size:10px;font-weight:600;letter-spacing:1.6px;fill:#A8A39B}
+    .card{fill:#FFFFFF;stroke:#DED9D1;stroke-width:1}
+    .card-t{font-size:12px;font-weight:700}
+    .note{font-size:11px;fill:#7C7A75}
+    .tiny{font-size:10px;fill:#8A8F99}
+    .mono10{font-family:Consolas,monospace;font-size:10px;fill:#8A8F99}
+    .mono9{font-family:Consolas,monospace;font-size:9px;fill:#8A8F99}
+    .ui14{font-size:14px}.ui13{font-size:13px}.ui12{font-size:12px}.ui11{font-size:11px}.ui10{font-size:10px}
+    .muted{fill:#8A8F99}.sub2{fill:#3D3D3D}
+    .accent{fill:#F58A24}.danger{fill:#D04A43}.success{fill:#1A8A5C}.warn{fill:#C98A2B}
+  </style>
+
+  <rect width="1600" height="1400" fill="#F4F1EC"/>
+  <g id="header">
+    <text x="80" y="52" class="kicker">WUNDER / 蛹 · DESKTOP UI SPEC</text>
+    <text x="80" y="93" class="h1">03　窗口外壳与侧栏</text>
+    <text x="80" y="120" class="sub">无边框窗口 + 28px 自绘标题栏；侧栏固定 240px，可拖至 170–420px，行状态即时切换。</text>
+    <text x="1520" y="52" text-anchor="end" class="mono" font-size="11" fill="#8A8F99">SHEET 03 / 09</text>
+    <text x="1520" y="94" text-anchor="end" class="mono" font-size="12" fill="#3D3D3D">SHELL · TITLEBAR · SIDEBAR</text>
+    <line x1="80" y1="140" x2="1520" y2="140" stroke="#D8D5D0"/>
+  </g>
+
+  <!-- ============ TITLEBAR ============ -->
+  <g id="titlebar">
+    <rect x="80" y="178" width="6" height="16" rx="2" fill="#F58A24"/>
+    <text x="98" y="192" class="sect">窗口外壳</text>
+    <text x="194" y="192" class="sect-en">FRAMELESS CHROME</text>
+    <text x="1520" y="192" text-anchor="end" class="note">no-frame · resize-border 6px · 标题栏 z=1000</text>
+
+    <!-- actual titlebar -->
+    <g id="titlebar-demo">
+      <rect x="80" y="210" width="1440" height="28" fill="#F6F5F3" stroke="#D8D5D0"/>
+      <line x1="80" y1="237" x2="1520" y2="237" stroke="#E8E6E3"/>
+      <!-- logo -->
+      <image href="assets/app-icon.png" x="90" y="216" width="14" height="14"/>
+      <text x="114" y="229" class="ui12" font-weight="600">蛹 · 空闲</text>
+      <rect x="1406" y="210" width="38" height="28" fill="#F1EFEC" opacity="0"/>
+      <g color="#3D3D3D">
+        <use href="#s-min" x="1419" y="217" width="14" height="14"/>
+        <use href="#s-max" x="1457" y="217" width="14" height="14"/>
+        <use href="#s-close" x="1495" y="217" width="14" height="14"/>
+      </g>
+      <!-- drag zone indicator -->
+      <line x1="80" y1="241" x2="1406" y2="241" stroke="#F58A24" stroke-dasharray="4 4" opacity=".55"/>
+      <text x="96" y="253" class="mono9">DRAG REGION · width − 114</text>
+      <text x="1498" y="253" text-anchor="end" class="mono9">3 × 38 × 28</text>
+    </g>
+
+    <!-- cards -->
+    <rect x="80" y="268" width="450" height="174" rx="12" class="card"/>
+    <text x="102" y="292" class="card-t">左端 · 2× 放大</text>
+    <text x="508" y="292" text-anchor="end" class="mono10">x=10 / 16×16</text>
+    <rect x="102" y="304" width="406" height="58" rx="6" fill="#F6F5F3" stroke="#E8E6E3"/>
+    <image href="assets/app-icon.png" x="114" y="315" width="32" height="32"/>
+    <text x="162" y="340" font-size="24" font-weight="600">蛹 · 空闲</text>
+    <text x="114" y="381" class="tiny">标题格式：空闲 / 运行中 N 线程 / 问询 N；12px · 600 · 单行省略。</text>
+
+    <rect x="550" y="268" width="460" height="174" rx="12" class="card"/>
+    <text x="572" y="292" class="card-t">右端 · 2× 状态</text>
+    <rect x="572" y="302" width="228" height="54" rx="4" fill="#F6F5F3" stroke="#E8E6E3"/>
+    <g color="#3D3D3D">
+      <use href="#s-min" x="588" y="316" width="28" height="28"/>
+      <use href="#s-max" x="664" y="316" width="28" height="28"/>
+      <use href="#s-close" x="740" y="316" width="28" height="28"/>
+    </g>
+    <g>
+      <rect x="572" y="366" width="70" height="42" rx="4" fill="#F1EFEC" stroke="#E8E6E3"/><use href="#s-min" x="596" y="380" width="20" height="20" color="#3D3D3D"/><text x="607" y="424" text-anchor="middle" class="tiny">min hover</text>
+      <rect x="650" y="366" width="70" height="42" rx="4" fill="#F1EFEC" stroke="#E8E6E3"/><use href="#s-max" x="674" y="380" width="20" height="20" color="#3D3D3D"/><text x="685" y="424" text-anchor="middle" class="tiny">max hover</text>
+      <rect x="728" y="366" width="70" height="42" rx="4" fill="#D04A43" stroke="#D04A43"/><use href="#s-close" x="752" y="380" width="20" height="20" color="#FFFFFF"/><text x="763" y="424" text-anchor="middle" class="tiny">close hover</text>
+      <rect x="806" y="366" width="70" height="42" rx="4" fill="#F6F5F3" stroke="#E8E6E3"/><use href="#s-restore" x="830" y="380" width="20" height="20" color="#3D3D3D"/><text x="841" y="424" text-anchor="middle" class="tiny">maximized</text>
+      <text x="898" y="380" class="tiny">悬停底 #F1EFEC</text>
+      <text x="898" y="396" class="tiny">关闭悬停 #D04A43</text>
+      <text x="898" y="412" class="tiny">图标 14 / 描边 1.8</text>
+    </g>
+
+    <rect x="1030" y="268" width="490" height="174" rx="12" class="card"/>
+    <text x="1052" y="292" class="card-t">行为与约束</text>
+    <text x="1052" y="316" class="note">• 整窗无圆角、无投影；最外层 1px #D8D5D0 边框。</text>
+    <text x="1052" y="338" class="note">• 拖拽区从 logo 右侧到窗口按钮前，位移 &gt; 4px 才移动窗口。</text>
+    <text x="1052" y="360" class="note">• 双击拖拽区切换最大化；按钮区不参与拖拽。</text>
+    <text x="1052" y="382" class="note">• 标题栏 z=1000，始终高于设置层与弹窗遮罩。</text>
+    <text x="1052" y="404" class="note">• 边角 6px 为系统 resize 命中区，不绘制可见控件。</text>
+  </g>
+
+  <!-- ============ SIDEBAR FULL ============ -->
+  <g id="sidebar">
+    <rect x="80" y="470" width="6" height="16" rx="2" fill="#F58A24"/>
+    <text x="98" y="484" class="sect">侧栏</text>
+    <text x="138" y="484" class="sect-en">SIDEBAR · 240PX</text>
+    <text x="1520" y="484" text-anchor="end" class="note">可拖动调整 170–420px；命中区 6px，静止无可见条、悬停 2×32、拖动 2×40 accent</text>
+
+    <g id="sidebar-full">
+      <rect x="80" y="500" width="240" height="760" fill="#F6F5F3" stroke="#D8D5D0"/>
+      <!-- device row -->
+      <g transform="translate(96,512)" color="#F58A24"><use href="#s-monitor" width="18" height="18"/></g>
+      <text x="122" y="526" class="ui14" font-weight="600">本地</text>
+      <text x="153" y="526" class="ui11 muted">蛹</text>
+      <use href="#s-chev" x="284" y="516" width="12" height="12" color="#8A8F99"/>
+      <use href="#s-plus" x="305" y="515" width="16" height="16" color="#8A8F99"/>
+
+      <!-- workspace selected -->
+      <rect x="88" y="544" width="224" height="34" rx="12" fill="#F1EFEC"/>
+      <rect x="88" y="549" width="2" height="24" rx="1" fill="#F58A24"/>
+      <rect x="99" y="550" width="22" height="22" rx="6" fill="#FDF0DE"/>
+      <g color="#C98A2B"><use href="#s-folder" x="101" y="552" width="18" height="18"/></g>
+      <text x="126" y="566" class="ui14" font-weight="600">默认工作区</text>
+      <text x="211" y="566" class="ui11 muted">7</text>
+      <use href="#s-plus" x="228" y="557" width="12" height="12" color="#8A8F99"/>
+
+      <!-- thread rows -->
+      <line x1="104" y1="580" x2="104" y2="774" stroke="#E8E6E3"/>
+      <!-- hover row with actions -->
+      <rect x="92" y="580" width="220" height="28" rx="8" fill="#FDF0DE"/>
+      <use href="#s-check" x="104" y="586" width="11" height="11" color="#1A8A5C"/>
+      <text x="126" y="599" class="ui13 sub2">新会话</text>
+      <g>
+        <rect x="222" y="584" width="20" height="20" rx="4" fill="#FFFFFF" stroke="#E8E6E3"/><use href="#s-plus" x="225" y="587" width="14" height="14" color="#8A8F99"/>
+        <rect x="246" y="584" width="20" height="20" rx="4" fill="#FFFFFF" stroke="#E8E6E3"/><use href="#s-pen" x="249" y="587" width="14" height="14" color="#8A8F99"/>
+        <rect x="270" y="584" width="20" height="20" rx="4" fill="#FFFFFF" stroke="#E8E6E3"/><use href="#s-trash" x="273" y="587" width="14" height="14" color="#8A8F99"/>
+      </g>
+      <!-- default -->
+      <use href="#s-check" x="104" y="614" width="11" height="11" color="#1A8A5C"/>
+      <text x="126" y="627" class="ui13 sub2">新会话</text>
+      <!-- active -->
+      <rect x="92" y="636" width="220" height="28" rx="8" fill="#F1EFEC"/>
+      <use href="#s-check" x="104" y="645" width="11" height="11" color="#1A8A5C"/>
+      <text x="126" y="655" class="ui13">1</text>
+      <!-- running + origin -->
+      <g color="#F58A24"><use href="#s-spinner" x="104" y="668" width="11" height="11"/></g>
+      <text x="126" y="683" class="ui13 sub2">整理数据</text>
+      <rect x="262" y="670" width="34" height="16" rx="8" fill="#FDF0DE"/>
+      <text x="279" y="681" text-anchor="middle" font-size="9" font-weight="600" fill="#E07A12">云端</text>
+      <!-- waiting -->
+      <g color="#F58A24"><use href="#s-question" x="104" y="696" width="11" height="11"/></g>
+      <text x="126" y="711" class="ui13 sub2">等待回答</text>
+      <text x="264" y="711" class="ui10 muted">问询</text>
+      <!-- error -->
+      <g color="#D04A43"><use href="#s-error" x="104" y="724" width="11" height="11"/></g>
+      <text x="126" y="739" class="ui13 sub2">任务失败</text>
+      <text x="264" y="739" class="ui10 muted">重试</text>
+      <!-- completed -->
+      <use href="#s-check" x="104" y="752" width="11" height="11" color="#1A8A5C"/>
+      <text x="126" y="767" class="ui13 sub2">汇总提纲</text>
+
+      <!-- files area -->
+      <line x1="80" y1="810" x2="320" y2="810" stroke="#E8E6E3"/>
+      <text x="92" y="835" class="ui12 muted">工作目录</text>
+      <g color="#8A8F99">
+        <use href="#s-upload" x="196" y="820" width="14" height="14"/>
+        <use href="#s-search" x="220" y="820" width="14" height="14"/>
+        <use href="#s-zip" x="244" y="820" width="14" height="14"/>
+        <use href="#s-list" x="268" y="820" width="14" height="14"/>
+        <use href="#s-refresh" x="292" y="820" width="14" height="14"/>
+      </g>
+      <use href="#s-chev" x="92" y="851" width="10" height="10" color="#8A8F99" transform="rotate(90 97 856)"/>
+      <g color="#C98A2B"><use href="#s-folder" x="106" y="849" width="14" height="14"/></g>
+      <text x="126" y="862" class="ui13">.temp</text>
+      <g color="#8A8F99"><use href="#s-file" x="118" y="875" width="14" height="14"/></g>
+      <text x="138" y="888" class="ui13">提纲.md</text>
+      <g color="#8A8F99"><use href="#s-file" x="118" y="901" width="14" height="14"/></g>
+      <text x="138" y="914" class="ui13">笔记.txt</text>
+      <use href="#s-chev" x="118" y="929" width="10" height="10" color="#8A8F99"/>
+      <g color="#C98A2B"><use href="#s-folder" x="132" y="927" width="14" height="14"/></g>
+      <text x="152" y="940" class="ui13">资料</text>
+      <text x="118" y="963" class="ui10 muted">加载更多（剩余 12 项）</text>
+
+      <!-- settings -->
+      <line x1="80" y1="1218" x2="320" y2="1218" stroke="#E8E6E3"/>
+      <circle cx="107" cy="1240" r="13" fill="#F58A24"/>
+      <text x="107" y="1244" text-anchor="middle" font-size="10" font-weight="700" fill="#FFFFFF">W</text>
+      <text x="130" y="1245" class="ui14">设置</text>
+      <rect x="244" y="1230" width="62" height="20" rx="10" fill="#FDF0DE"/>
+      <text x="275" y="1244" text-anchor="middle" font-size="10" fill="#F58A24">额度 100</text>
+      <!-- splitter annotation -->
+      <line x1="80" y1="810" x2="320" y2="810" stroke="#F58A24" stroke-dasharray="3 3" opacity=".7"/>
+    </g>
+
+    <!-- workspace row anatomy -->
+    <g id="workspace-anatomy">
+      <rect x="350" y="500" width="520" height="186" rx="12" class="card"/>
+      <text x="372" y="524" class="card-t">工作区行 · 2× 解剖</text>
+      <text x="848" y="524" text-anchor="end" class="mono10">240×34 → 480×68</text>
+      <g transform="translate(372,536) scale(2)">
+        <rect width="240" height="34" rx="12" fill="#F1EFEC"/>
+        <rect x="0" y="5" width="2" height="24" rx="1" fill="#F58A24"/>
+        <rect x="11" y="6" width="22" height="22" rx="6" fill="#FDF0DE"/>
+        <g transform="translate(13,8)" color="#C98A2B"><use href="#s-folder" width="18" height="18"/></g>
+        <text x="38" y="22" font-size="14" font-weight="600">默认工作区</text>
+        <text x="211" y="22" font-size="11" fill="#8A8F99">7</text>
+        <use href="#s-plus" x="228" y="13" width="12" height="12" color="#8A8F99"/>
+      </g>
+      <line x1="372" y1="616" x2="848" y2="616" stroke="#E8E6E3"/>
+      <text x="372" y="638" class="tiny">左色条 2×24 · 图标底 22×22 r6 · 名称 14/600 · 计数 11 muted · 行内边距 8 / 4</text>
+      <text x="372" y="658" class="tiny">选中 #F1EFEC；悬停 #FDF0DE；拖动预览 20 高、白底 + 1px accent。</text>
+      <text x="372" y="678" class="tiny">悬停动作带 74px，固定在行右侧；计数与动作带互斥显示。</text>
+    </g>
+
+    <!-- thread anatomy -->
+    <g id="thread-anatomy">
+      <rect x="350" y="702" width="520" height="170" rx="12" class="card"/>
+      <text x="372" y="726" class="card-t">线程行 · 2× 解剖</text>
+      <text x="848" y="726" text-anchor="end" class="mono10">240×28 → 480×56</text>
+      <g transform="translate(372,738) scale(2)">
+        <rect width="240" height="28" rx="8" fill="#FDF0DE"/>
+        <line x1="20" y1="0" x2="20" y2="28" stroke="#E8E6E3"/>
+        <use href="#s-check" x="12" y="8.5" width="11" height="11" color="#1A8A5C"/>
+        <text x="34" y="18" font-size="13" fill="#3D3D3D">新会话</text>
+        <rect x="156" y="4" width="20" height="20" rx="4" fill="#FFFFFF" stroke="#E8E6E3"/><use href="#s-pen" x="159" y="7" width="14" height="14" color="#8A8F99"/>
+        <rect x="182" y="4" width="20" height="20" rx="4" fill="#FFFFFF" stroke="#E8E6E3"/><use href="#s-trash" x="185" y="7" width="14" height="14" color="#8A8F99"/>
+      </g>
+      <line x1="372" y1="798" x2="848" y2="798" stroke="#E8E6E3"/>
+      <text x="372" y="820" class="tiny">连接线 x=20 · 1px #E8E6E3；文字左内边距 34（多选 56）/ 右 8。</text>
+      <text x="372" y="840" class="tiny">默认透明 · 悬停 #FDF0DE · 激活 #F1EFEC · 标题 13；来源徽标 16 高 r8。</text>
+      <text x="372" y="860" class="tiny">拖动落点缝 2px accent，y 动画 110ms ease-out；目标框透明度 100ms。</text>
+    </g>
+
+    <!-- file row anatomy -->
+    <g id="file-anatomy">
+      <rect x="350" y="892" width="520" height="170" rx="12" class="card"/>
+      <text x="372" y="916" class="card-t">文件树行 · 2× 解剖</text>
+      <text x="848" y="916" text-anchor="end" class="mono10">240×26 → 480×52</text>
+      <g transform="translate(372,928) scale(2)">
+        <rect width="240" height="26" rx="6" fill="#F1EFEC"/>
+        <use href="#s-chev" x="6" y="8" width="10" height="10" color="#8A8F99"/>
+        <g color="#C98A2B"><use href="#s-folder" x="20" y="6" width="14" height="14"/></g>
+        <text x="40" y="17" font-size="13">资料</text>
+        <use href="#s-list" x="214" y="7" width="12" height="12" color="#8A8F99"/>
+      </g>
+      <line x1="372" y1="988" x2="848" y2="988" stroke="#E8E6E3"/>
+      <text x="372" y="1010" class="tiny">缩进 6 + depth×12 · chevron 12 · 文件夹 14（#C98A2B）· 行高 26。</text>
+      <text x="372" y="1030" class="tiny">选中 #F1EFEC；悬停 #F6F5F3；尾部省略号 20×24，仅悬停显示。</text>
+    </g>
+
+    <!-- toolbar anatomy -->
+    <g id="toolbar-anatomy">
+      <rect x="350" y="1082" width="520" height="166" rx="12" class="card"/>
+      <text x="372" y="1106" class="card-t">工作目录工具条</text>
+      <text x="848" y="1106" text-anchor="end" class="mono10">5 actions · 26×24</text>
+      <g>
+        <rect x="372" y="1124" width="26" height="24" rx="6" fill="#F6F5F3"/><use href="#s-upload" x="378" y="1129" width="14" height="14" color="#3D3D3D"/>
+        <rect x="404" y="1124" width="26" height="24" rx="6" fill="transparent" stroke="#E8E6E3"/><use href="#s-search" x="410" y="1129" width="14" height="14" color="#8A8F99"/>
+        <rect x="436" y="1124" width="26" height="24" rx="6" fill="transparent"/><use href="#s-zip" x="442" y="1129" width="14" height="14" color="#8A8F99"/>
+        <rect x="468" y="1124" width="26" height="24" rx="6" fill="transparent"/><use href="#s-list" x="474" y="1129" width="14" height="14" color="#8A8F99"/>
+        <rect x="500" y="1124" width="26" height="24" rx="6" fill="transparent"/><use href="#s-refresh" x="506" y="1129" width="14" height="14" color="#8A8F99"/>
+        <text x="544" y="1140" class="tiny">悬停：底 #F6F5F3，图标 #1F2329</text>
+      </g>
+      <line x1="372" y1="1162" x2="848" y2="1162" stroke="#E8E6E3"/>
+      <text x="372" y="1184" class="tiny">搜索展开后为 24 高输入框（r6），替代标题行；Esc 取消，Enter 接受。</text>
+      <text x="372" y="1204" class="tiny">上传 / 下载 / 多选 / 刷新超出宽度时保持等距，不换行。</text>
+      <text x="372" y="1224" class="tiny">错误态在标题行下追加一行 11px danger，不挤占树视口。</text>
+    </g>
+
+    <!-- thread state matrix -->
+    <g id="thread-states">
+      <rect x="900" y="500" width="620" height="318" rx="12" class="card"/>
+      <text x="922" y="524" class="card-t">线程行状态矩阵</text>
+      <text x="1498" y="524" text-anchor="end" class="mono10">28px row · 13px title</text>
+
+      <g>
+        <!-- col 1 -->
+        <rect x="922" y="540" width="240" height="28" rx="8" fill="transparent"/><use href="#s-check" x="934" y="548" width="11" height="11" color="#1A8A5C"/><text x="956" y="559" class="ui13 sub2">默认</text>
+        <rect x="922" y="576" width="240" height="28" rx="8" fill="#FDF0DE"/><use href="#s-check" x="934" y="584" width="11" height="11" color="#1A8A5C"/><text x="956" y="595" class="ui13 sub2">悬停</text>
+        <rect x="922" y="612" width="240" height="28" rx="8" fill="#F1EFEC"/><use href="#s-check" x="934" y="620" width="11" height="11" color="#1A8A5C"/><text x="956" y="631" class="ui13">激活</text>
+        <rect x="922" y="648" width="240" height="28" rx="8" fill="transparent"/><g color="#F58A24"><use href="#s-spinner" x="934" y="656" width="11" height="11"/></g><text x="956" y="667" class="ui13 sub2">运行中</text><rect x="1160" y="654" width="34" height="16" rx="8" fill="#FDF0DE"/><text x="1177" y="665" text-anchor="middle" font-size="9" font-weight="600" fill="#E07A12">云端</text>
+        <!-- col 2 -->
+        <rect x="1180" y="540" width="240" height="28" rx="8" fill="transparent"/><g color="#F58A24"><use href="#s-question" x="1192" y="548" width="11" height="11"/></g><text x="1214" y="559" class="ui13 sub2">等待回答</text>
+        <rect x="1180" y="576" width="240" height="28" rx="8" fill="transparent"/><g color="#D04A43"><use href="#s-error" x="1192" y="584" width="11" height="11"/></g><text x="1214" y="595" class="ui13 sub2">任务失败</text>
+        <rect x="1180" y="612" width="240" height="28" rx="8" fill="#F1EFEC"/><rect x="1182" y="618" width="15" height="15" rx="4" fill="#F58A24"/><use href="#s-check" x="1185" y="621" width="9" height="9" color="#FFFFFF"/><text x="1208" y="631" class="ui13">多选 · 已勾选</text>
+        <rect x="1180" y="648" width="240" height="28" rx="8" fill="transparent"/><rect x="1182" y="654" width="15" height="15" rx="4" fill="#FFFFFF" stroke="#D8D5D0"/><text x="1208" y="667" class="ui13 sub2">多选 · 不可归档</text><text x="1400" y="667" text-anchor="end" class="ui10 muted" opacity=".45">40%</text>
+      </g>
+      <line x1="922" y1="692" x2="1498" y2="692" stroke="#E8E6E3"/>
+      <text x="922" y="714" class="tiny">动作带仅悬停显示：20×20 r4 方块，x=2/28/54，图标 14；删除悬停图标转 #D04A43。</text>
+      <text x="922" y="734" class="tiny">多选模式：左侧勾选框 15×15 r4，文字左内边距 56；底部 70px 批量栏。</text>
+      <text x="922" y="754" class="tiny">来源徽标：最大 72px，9–10px/600；悬停动作带出现时隐藏徽标。</text>
+      <text x="922" y="774" class="tiny">运行时状态与线程状态不同：运行中圆环 11px，6 点 1.2s 旋转。</text>
+      <text x="922" y="794" class="tiny">错误状态只改状态图标与文字，不整行染红；危险操作才用红底。</text>
+    </g>
+
+    <!-- workspace states -->
+    <g id="workspace-states">
+      <rect x="900" y="836" width="620" height="212" rx="12" class="card"/>
+      <text x="922" y="860" class="card-t">工作区行状态</text>
+      <text x="1498" y="860" text-anchor="end" class="mono10">34px · r12</text>
+      <g transform="translate(922,876) scale(1)">
+        <rect width="240" height="34" rx="12" fill="transparent"/><rect x="11" y="6" width="22" height="22" rx="6" fill="#F6F5F3"/><g transform="translate(13,8)" color="#C98A2B"><use href="#s-folder" width="18" height="18"/></g><text x="38" y="22" class="ui14">默认工作区</text><use href="#s-chev" x="198" y="12" width="10" height="10" color="#8A8F99"/><text x="218" y="22" class="ui10 muted">折叠</text>
+        <rect y="44" width="240" height="34" rx="12" fill="#FDF0DE"/><rect x="11" y="50" width="22" height="22" rx="6" fill="#FDF0DE"/><g transform="translate(13,52)" color="#C98A2B"><use href="#s-folder" width="18" height="18"/></g><text x="38" y="66" class="ui14">默认工作区</text><text x="200" y="66" class="ui10 muted">悬停</text>
+        <rect y="88" width="240" height="34" rx="12" fill="#F1EFEC"/><rect y="93" width="2" height="24" rx="1" fill="#F58A24"/><rect x="11" y="94" width="22" height="22" rx="6" fill="#FDF0DE"/><g transform="translate(13,96)" color="#C98A2B"><use href="#s-folder" width="18" height="18"/></g><text x="38" y="110" class="ui14" font-weight="600">默认工作区</text><text x="123" y="110" class="ui11 muted">7</text><use href="#s-plus" x="140" y="101" width="12" height="12" color="#8A8F99"/><text x="200" y="110" class="ui10 muted">选中</text>
+        <rect y="132" width="240" height="34" rx="12" fill="#FDF0DE" opacity=".55"/><rect x="11" y="138" width="22" height="22" rx="6" fill="#FDF0DE"/><g transform="translate(13,140)" color="#C98A2B"><use href="#s-folder" width="18" height="18"/></g><text x="38" y="154" class="ui14">默认工作区</text><text x="200" y="154" class="ui10 muted">拖动预览</text>
+      </g>
+      <text x="1180" y="896" class="tiny">默认：透明，箭头 12</text>
+      <text x="1180" y="940" class="tiny">悬停：accent-soft</text>
+      <text x="1180" y="984" class="tiny">选中：selected + 左色条</text>
+      <text x="1180" y="1028" class="tiny">拖动：20px 预览 + 2px 落点</text>
+    </g>
+
+    <!-- status dots and behaviors -->
+    <g id="status-dots">
+      <rect x="900" y="1062" width="620" height="150" rx="12" class="card"/>
+      <text x="922" y="1086" class="card-t">状态点映射</text>
+      <text x="1498" y="1086" text-anchor="end" class="mono10">11×11 容器 / 10×10 字形</text>
+      <g transform="translate(922,1098)">
+        <g color="#F58A24"><use href="#s-spinner" width="12" height="12"/></g><text x="20" y="10" class="ui11">运行</text>
+        <g color="#F58A24" transform="translate(90,0)"><use href="#s-question" width="12" height="12"/></g><text x="110" y="10" class="ui11">等待回答</text>
+        <g color="#C98A2B" transform="translate(202,0)"><use href="#s-pause" width="12" height="12"/></g><text x="222" y="10" class="ui11">排队/确认</text>
+        <g color="#1A8A5C" transform="translate(314,0)"><use href="#s-check" width="12" height="12"/></g><text x="334" y="10" class="ui11">完成</text>
+        <g color="#D04A43" transform="translate(398,0)"><use href="#s-error" width="12" height="12"/></g><text x="418" y="10" class="ui11">错误</text>
+        <g color="#8A8F99" transform="translate(482,0)"><use href="#s-pause" width="12" height="12"/></g><text x="502" y="10" class="ui11">空闲</text>
+      </g>
+      <line x1="922" y1="1128" x2="1498" y2="1128" stroke="#E8E6E3"/>
+      <g transform="translate(922,1146)">
+        <circle cx="10" cy="10" r="10" fill="#3CA976"/><text x="10" y="13.5" text-anchor="middle" font-size="8" fill="#FFFFFF">✓</text>
+        <text x="28" y="14" class="ui11">RuntimeBadge 20px</text>
+        <circle cx="162" cy="10" r="8" fill="#F58A24"/><text x="162" y="13.5" text-anchor="middle" font-size="7" fill="#FFFFFF">▶</text>
+        <text x="178" y="14" class="ui11">运行 #F58A24</text>
+        <circle cx="286" cy="10" r="8" fill="#8B6BD0"/><text x="286" y="13.5" text-anchor="middle" font-size="8" fill="#FFFFFF">?</text>
+        <text x="302" y="14" class="ui11">等待 #8B6BD0</text>
+        <circle cx="410" cy="10" r="8" fill="#CD4A60"/><text x="410" y="13.5" text-anchor="middle" font-size="8" fill="#FFFFFF">!</text>
+        <text x="426" y="14" class="ui11">错误 #CD4A60</text>
+      </g>
+      <text x="922" y="1192" class="tiny">RuntimeBadge 用于头像右下角，带 2px 白边；小号 16，大号 20。</text>
+    </g>
+
+    <!-- splitter anatomy -->
+    <g id="splitter">
+      <rect x="350" y="1266" width="530" height="74" rx="10" class="card"/>
+      <text x="366" y="1284" class="tiny" font-weight="700">分隔柄 · SPLITTER</text>
+      <line x1="540" y1="1293" x2="540" y2="1325" stroke="#E8E6E3"/>
+      <text x="540" y="1336" text-anchor="middle" class="tiny">静止 0 / 1px</text>
+      <rect x="620" y="1293" width="2" height="32" rx="1" fill="#F58A24"/>
+      <text x="621" y="1336" text-anchor="middle" class="tiny">悬停 2×32</text>
+      <rect x="700" y="1289" width="2" height="40" rx="1" fill="#F58A24"/>
+      <text x="701" y="1336" text-anchor="middle" class="tiny">拖动 2×40</text>
+      <text x="750" y="1304" class="tiny">侧栏无条 · 轨迹 1px</text>
+      <text x="750" y="1320" class="tiny">命中区 6 / 8px</text>
+    </g>
+
+    <!-- sidebar behavior notes -->
+    <g id="sidebar-behavior">
+      <rect x="900" y="1222" width="620" height="38" rx="10" class="card"/>
+      <text x="922" y="1246" class="tiny">交互：行悬停即时换底，无过渡；侧栏宽度与文件区比例持久化；双击分隔条恢复 0.6。</text>
+    </g>
+  </g>
+
+  <g id="footer">
+    <line x1="80" y1="1370" x2="1520" y2="1370" stroke="#D8D5D0"/>
+    <text x="80" y="1384" class="tiny">尺寸为逻辑像素；侧栏底栏「设置」行高 40，头像 26 圆，额度胶囊 60×20。</text>
+    <text x="1520" y="1384" text-anchor="end" class="mono tiny">03 / 09</text>
+  </g>
+</svg>

@@ -43,6 +43,8 @@ pub fn install_ready(app: &crate::MainWindow, runtime: Arc<NativeDesktop>) {
 /// Same wiring without the OS overlay thread: the native smoke runs compare
 /// screenshots of the main window, so no pet may float over them.
 pub fn install_ready_without_pets(app: &crate::MainWindow, runtime: Arc<NativeDesktop>) {
+    // Toast windows count as overlays for the screenshot comparisons.
+    crate::completion_notice::set_enabled(false);
     crate::native_chat::install(app, runtime.clone());
     crate::native_pages::install(app, runtime.clone());
     crate::activity_ui::install(app, runtime);

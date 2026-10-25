@@ -6,9 +6,109 @@ use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+/// Apply the same admission budget to local and service storage before either
+/// backend creates an owner or allocates a user round. Lease proofs authorize
+/// this submission only and must never become conversation history.
+pub(crate) fn prepare_input_json(input: &Value) -> Result<String> {
+    let mut body = input.clone();
+    let fields = body
+        .as_object_mut()
+        .ok_or_else(|| anyhow::anyhow!("accepted user input must be an object"))?;
+    fields.remove("local_open_lease");
+    if let Some(client) = fields
+        .get("client_message_id")
+        .filter(|value| !value.is_null())
+    {
+        if client.as_str().is_none_or(|value| value.len() > 256) {
+            bail!("client message identity must be a string of at most 256 bytes");
+        }
+    }
+    if let Some(round) = fields
+        .get("root_user_round")
+        .filter(|value| !value.is_null())
+    {
+        if round.as_i64().is_none_or(|round| round <= 0) {
+            bail!("continuation requires a positive root user round");
+        }
+    }
+    let content =
+        wunder_core::thread_view::message_content_text(&body["content"]).unwrap_or_default();
+    let attachments: Option<Vec<crate::schemas::AttachmentPayload>> = body
+        .get("attachments")
+        .filter(|value| !value.is_null())
+        .cloned()
+        .map(serde_json::from_value)
+        .transpose()?;
+    if crate::request_limits::measure_request_text_input_chars(&content, attachments.as_deref())
+        > crate::orchestrator_constants::MAX_USER_INPUT_TEXT_CHARS
+    {
+        bail!("accepted user input exceeds text limit");
+    }
+    // The user item is committed with lifecycle records in one append. A body
+    // admitted above the batch cap could never leave the queue successfully.
+    // Leave enough space for both its envelope and the lifecycle records.
+    let bytes = serde_json::to_vec(&body)?;
+    if bytes.len()
+        > super::rollout::ROLLOUT_MAX_RECORD_BYTES.min(super::rollout::ROLLOUT_MAX_APPEND_BYTES)
+            - 64 * 1024
+    {
+        bail!("accepted user input exceeds byte limit");
+    }
+    Ok(String::from_utf8(bytes)?)
+}
+
+/// Queue control contains a small whitelist, never another copy of the input
+/// body or an arbitrary runtime payload. Repeated updates preserve stop_reason.
+pub(crate) fn bounded_control_json(
+    previous: Option<&str>,
+    status: &str,
+    payload: &Value,
+) -> Result<Option<String>> {
+    let previous: Value = previous
+        .map(serde_json::from_str)
+        .transpose()?
+        .unwrap_or(Value::Null);
+    let mut control = serde_json::Map::new();
+    if status == "queued" {
+        if let Some(queued) = payload
+            .get("queued_input")
+            .or_else(|| previous.get("queued_input"))
+        {
+            let mut bounded = serde_json::Map::new();
+            if let Some(queue_id) = queued["queue_id"].as_str() {
+                bounded.insert("queue_id".into(), json!(bounded_text(queue_id, 256)));
+            }
+            if let Some(reason) = queued["reason"].as_str() {
+                bounded.insert("reason".into(), json!(bounded_text(reason, 1024)));
+            }
+            if let Some(priority) = queued["priority"].as_i64() {
+                bounded.insert("priority".into(), json!(priority));
+            }
+            if !bounded.is_empty() {
+                bounded.entry("queue_id").or_insert_with(|| json!(""));
+                bounded.entry("reason").or_insert_with(|| json!(""));
+                bounded.entry("priority").or_insert_with(|| json!(0));
+                control.insert("queued_input".into(), Value::Object(bounded));
+            }
+        }
+    }
+    if let Some(reason) = payload["stop_reason"]
+        .as_str()
+        .or_else(|| previous["stop_reason"].as_str())
+    {
+        control.insert("stop_reason".into(), json!(bounded_text(reason, 1024)));
+    }
+    if control.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(serde_json::to_string(&control)?))
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct TurnAdmissions {
     root: PathBuf,
+    pool: super::sqlite_pool::SqlitePool,
 }
 
 impl TurnAdmissions {
@@ -16,6 +116,7 @@ impl TurnAdmissions {
         std::fs::create_dir_all(root)?;
         let store = Self {
             root: root.to_owned(),
+            pool: super::sqlite_pool::SqlitePool::new(root.join("queue_1.sqlite")),
         };
         let conn = store.connect()?;
         conn.execute_batch("PRAGMA journal_mode=WAL;
@@ -35,11 +136,8 @@ impl TurnAdmissions {
         Ok(store)
     }
 
-    fn connect(&self) -> Result<Connection> {
-        let conn = Connection::open(self.root.join("queue_1.sqlite"))?;
-        conn.busy_timeout(Duration::from_secs(2))?;
-        conn.execute_batch("PRAGMA synchronous=NORMAL; PRAGMA cache_size=-1024;")?;
-        Ok(conn)
+    fn connect(&self) -> Result<super::sqlite_pool::ConnectionLease> {
+        self.pool.get()
     }
 
     fn canonical_thread_exists(&self, thread: &str) -> Result<bool> {
@@ -223,7 +321,7 @@ impl TurnAdmissions {
     }
 
     pub(crate) fn ensure_mutable(&self, thread: &str) -> Result<()> {
-        Self::check_mutation(&self.connect()?, thread)
+        Self::check_mutation(&*self.connect()?, thread)
     }
 
     fn check_mutation(conn: &Connection, thread: &str) -> Result<()> {
@@ -416,30 +514,7 @@ impl TurnAdmissions {
         if user.trim().is_empty() || thread.trim().is_empty() {
             bail!("missing thread identity");
         }
-        let mut body = input.clone();
-        if let Some(fields) = body.as_object_mut() {
-            fields.remove("local_open_lease");
-        }
-        let content =
-            wunder_core::thread_view::message_content_text(&body["content"]).unwrap_or_default();
-        let attachments: Option<Vec<crate::schemas::AttachmentPayload>> = body
-            .get("attachments")
-            .filter(|value| !value.is_null())
-            .cloned()
-            .map(serde_json::from_value)
-            .transpose()?;
-        if crate::request_limits::measure_request_text_input_chars(&content, attachments.as_deref())
-            > crate::orchestrator_constants::MAX_USER_INPUT_TEXT_CHARS
-        {
-            bail!("accepted user input exceeds text limit");
-        }
-        // Reserve envelope space so an admitted body can always become one
-        // ordinary canonical user record without exceeding its hard limit.
-        let input_bytes = serde_json::to_vec(&body)?;
-        if input_bytes.len() > super::rollout::ROLLOUT_MAX_RECORD_BYTES - 64 * 1024 {
-            bail!("accepted user input exceeds byte limit");
-        }
-        let body = String::from_utf8(input_bytes)?;
+        let body = prepare_input_json(input)?;
         let mut conn = self.connect()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         self.check_owner_row(&tx, user, thread)?;
@@ -545,17 +620,21 @@ impl TurnAdmissions {
     /// Lifecycle is monotonic: completed admissions are immutable and a stale
     /// queue notification cannot reclaim an execution that has started.
     pub(crate) fn can_transition(previous: &str, next: &str) -> bool {
-        if Self::is_terminal(previous) {
+        if !matches!(
+            previous,
+            "accepted" | "queued" | "running" | "waiting_input" | "waiting_approval"
+        ) {
             return false;
         }
         match next {
             "accepted" => previous == "accepted",
             "queued" => matches!(previous, "accepted" | "queued"),
-            _ => true,
+            "running" | "waiting_input" | "waiting_approval" => true,
+            _ => Self::is_terminal(next),
         }
     }
 
-    fn is_terminal(status: &str) -> bool {
+    pub(crate) fn is_terminal(status: &str) -> bool {
         matches!(
             status,
             "completed" | "failed" | "cancelled" | "interrupted" | "rejected" | "aborted"
@@ -593,43 +672,7 @@ impl TurnAdmissions {
         if !Self::can_transition(&previous, status) {
             return Ok(false);
         }
-        let mut control: Value = previous_control
-            .as_deref()
-            .map(serde_json::from_str)
-            .transpose()?
-            .unwrap_or_else(|| json!({}));
-        if status == "queued" {
-            if let Some(queued) = payload.get("queued_input") {
-                let mut bounded = serde_json::Map::new();
-                if let Some(queue_id) = queued["queue_id"].as_str() {
-                    bounded.insert("queue_id".into(), json!(bounded_text(queue_id, 256)));
-                }
-                if let Some(reason) = queued["reason"].as_str() {
-                    bounded.insert("reason".into(), json!(bounded_text(reason, 1024)));
-                }
-                if let Some(priority) = queued["priority"].as_i64() {
-                    bounded.insert("priority".into(), json!(priority));
-                }
-                if bounded.is_empty() {
-                    control.as_object_mut().unwrap().remove("queued_input");
-                } else {
-                    bounded.entry("queue_id").or_insert_with(|| json!(""));
-                    bounded.entry("reason").or_insert_with(|| json!(""));
-                    bounded.entry("priority").or_insert_with(|| json!(0));
-                    control["queued_input"] = Value::Object(bounded);
-                }
-            }
-        } else {
-            control.as_object_mut().unwrap().remove("queued_input");
-        }
-        if let Some(stop_reason) = payload["stop_reason"].as_str() {
-            control["stop_reason"] = json!(bounded_text(stop_reason, 1024));
-        }
-        let control = if control.as_object().is_none_or(|value| value.is_empty()) {
-            None
-        } else {
-            Some(serde_json::to_string(&control)?)
-        };
+        let control = bounded_control_json(previous_control.as_deref(), status, payload)?;
         let discard_input = committed;
         if previous == status && previous_control == control && !(discard_input && has_input) {
             return Ok(false);
@@ -713,6 +756,41 @@ fn bounded_text(value: &str, limit: usize) -> &str {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn shared_input_budget_covers_atomic_lifecycle_envelope() {
+        use serde_json::json;
+        let budget = super::super::rollout::ROLLOUT_MAX_APPEND_BYTES - 64 * 1024;
+        assert!(super::prepare_input_json(
+            &json!({"content":"question","metadata":"x".repeat(budget)})
+        )
+        .is_err());
+        assert!(super::prepare_input_json(
+            &json!({"content":"question","metadata":"x".repeat(budget-128)})
+        )
+        .is_ok());
+        assert!(super::prepare_input_json(&json!("invalid")).is_err());
+        for invalid in [json!(0), json!(-1), json!("1"), json!(1.5)] {
+            assert!(super::prepare_input_json(
+                &json!({"content":"question","root_user_round":invalid})
+            )
+            .is_err());
+        }
+        assert!(!super::TurnAdmissions::can_transition("running", "unknown"));
+        assert!(!super::TurnAdmissions::can_transition("unknown", "running"));
+        assert!(super::prepare_input_json(
+            &json!({"content":"question","client_message_id":"x".repeat(256)})
+        )
+        .is_ok());
+        assert!(super::prepare_input_json(
+            &json!({"content":"question","client_message_id":"x".repeat(257)})
+        )
+        .is_err());
+        assert!(
+            super::prepare_input_json(&json!({"content":"question","client_message_id":1}))
+                .is_err()
+        );
+    }
+
     use super::TurnAdmissions;
 
     #[test]

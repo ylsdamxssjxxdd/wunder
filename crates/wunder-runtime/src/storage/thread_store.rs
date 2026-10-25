@@ -46,7 +46,7 @@ const STRESS_ENVELOPE_BYTES: usize = 128;
 /// The assistant tool call payload and the tool result's `tool_call_id` are
 /// deliberately retained: providers require the pair to remain adjacent and
 /// addressable when a thread is resumed.
-fn compact_model_context_payload(payload: serde_json::Value) -> serde_json::Value {
+pub(crate) fn compact_model_context_payload(payload: serde_json::Value) -> serde_json::Value {
     let Some(map) = payload.as_object() else {
         return payload;
     };
@@ -100,7 +100,9 @@ fn compact_model_context_payload(payload: serde_json::Value) -> serde_json::Valu
     serde_json::Value::Object(compact)
 }
 
-fn compact_replayed_model_message(payload: serde_json::Value) -> Option<serde_json::Value> {
+pub(crate) fn compact_replayed_model_message(
+    payload: serde_json::Value,
+) -> Option<serde_json::Value> {
     // Reuse the history normalizer before the white-list projection so legacy
     // tool-call shapes and terminal calls retain their established replay
     // semantics. Empty terminal-only assistant rows are intentionally omitted.
@@ -170,7 +172,7 @@ impl StressRecordBatch {
 #[derive(Clone)]
 pub struct LocalThreadStore {
     root: Arc<PathBuf>,
-    state_path: Arc<PathBuf>,
+    state_pool: super::sqlite_pool::SqlitePool,
     history: ThreadHistoryStore,
     admissions_store: super::thread_admission::TurnAdmissions,
     registry: Arc<ThreadRegistry>,
@@ -262,8 +264,8 @@ impl LocalThreadStore {
         std::fs::create_dir_all(&root).context("create storage root")?;
         let root = root.canonicalize().context("resolve storage root")?;
         let registry = shared_registry(&root)?;
-        let state_path = root.join("state_1.sqlite");
-        let conn = connect(&state_path)?;
+        let state_pool = super::sqlite_pool::SqlitePool::new(root.join("state_1.sqlite"));
+        let conn = connect(&state_pool)?;
         conn.execute_batch("PRAGMA journal_mode=WAL;")?;
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS canonical_threads (
@@ -308,7 +310,7 @@ impl LocalThreadStore {
         )?;
         super::thread_mutation::initialize(&conn)?;
         Ok(Self {
-            state_path: Arc::new(state_path),
+            state_pool,
             history: ThreadHistoryStore::open(root.join("thread_history_1.sqlite"))?,
             admissions_store: super::thread_admission::TurnAdmissions::open(&root)?,
             registry,
@@ -355,11 +357,11 @@ impl LocalThreadStore {
         let mut after = String::new();
         let started = std::time::Instant::now();
         while report.examined < limit && started.elapsed() < Duration::from_secs(5 * 60 * 60) {
-            let state_path = self.state_path.clone();
+            let state_pool = self.state_pool.clone();
             let cursor = after.clone();
             let count = (limit - report.examined).min(64);
             let ids = db(move || {
-                let conn = connect(&state_path)?;
+                let conn = connect(&state_pool)?;
                 let mut query = conn.prepare("SELECT thread_id FROM canonical_threads WHERE thread_id>?1 ORDER BY thread_id LIMIT ?2")?;
                 let rows = query.query_map(params![cursor, count], |row| row.get::<_,String>(0))?;
                 Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
@@ -419,7 +421,7 @@ impl LocalThreadStore {
         &self,
         thread: &ThreadId,
     ) -> ThreadStoreResult<Vec<LineageSegment>> {
-        let state = self.state_path.clone();
+        let state = self.state_pool.clone();
         let root = self.root.clone();
         let thread = thread.clone();
         db(move || {
@@ -540,7 +542,7 @@ impl LocalThreadStore {
             }
             for id in ids {
                 let thread = ThreadId::new(id.clone())?;
-                let path = self.state_path.clone();
+                let path = self.state_pool.clone();
                 let check = id.clone();
                 let exists: bool = db(move || {
                     Ok(connect(&path)?.query_row(
@@ -604,7 +606,7 @@ impl LocalThreadStore {
     }
 
     pub(crate) async fn deletion_pending(&self, thread: &ThreadId) -> ThreadStoreResult<bool> {
-        let path = self.state_path.clone();
+        let path = self.state_pool.clone();
         let thread = thread.to_string();
         db(move || {
             Ok(connect(&path)?.query_row(
@@ -619,7 +621,7 @@ impl LocalThreadStore {
     /// Reclamation is explicit and journaled. No idle timer scans history or
     /// retries I/O. Keep each batch bounded even after repeated failed edits.
     async fn reclaim_pending_rollouts(&self, thread: &ThreadId) -> ThreadStoreResult<()> {
-        let path = self.state_path.clone();
+        let path = self.state_pool.clone();
         let root = self.root.clone();
         let history = self.history.clone();
         let thread = thread.to_string();
@@ -952,7 +954,7 @@ impl LocalThreadStore {
             build_tool_result_for_scenario, fill_template, iter_turn_plans_for_scenario,
             synthetic_initial_context_tokens, synthetic_initial_memory,
             synthetic_initial_system_prompt, user_prompts, validate_spec, Rng,
-            SYNTHETIC_PROFILE_ID,
+            StressTurnStatistics, StressUsageAccumulator, SYNTHETIC_PROFILE_ID,
         };
         validate_spec(spec)?;
         let thread = ThreadId::new(spec.session_id.clone())?;
@@ -1016,9 +1018,7 @@ impl LocalThreadStore {
         let mut records = 1_u64;
         let mut items = 0_i64;
         let mut tools = 0_i64;
-        let mut thread_input_tokens = 0_u64;
-        let mut thread_output_tokens = 0_u64;
-        let mut thread_reasoning_tokens = 0_u64;
+        let mut thread_usage = StressUsageAccumulator::default();
         for number in 1..=spec.user_rounds {
             let prompt = fill_template(rng.pick_str(user_prompts()), &mut rng, number);
             let admissions = self.admission_store()?;
@@ -1039,16 +1039,7 @@ impl LocalThreadStore {
                     .ok_or_else(|| anyhow!("accepted stress turn has no root turn id"))?,
             )?;
             let mut batch = StressRecordBatch::new();
-            // Keep the synthetic usage snapshots at the same semantic boundary
-            // as production: one observed response usage fact per model
-            // request, while display-only message statistics stay on the
-            // completed assistant item below.  Usage records are ignored by
-            // model-context reconstruction and therefore cannot pollute the
-            // next request's prompt.
-            let mut turn_input_tokens = 0_u64;
-            let mut turn_output_tokens = 0_u64;
-            let mut turn_reasoning_tokens = 0_u64;
-            let mut completed_turn_tool_calls = 0_u64;
+            let mut turn_statistics = StressTurnStatistics::default();
             self.push_stress_record(
                 &thread,
                 &mut batch,
@@ -1113,47 +1104,14 @@ impl LocalThreadStore {
                 let answer = build_answer_text(&mut rng, &prompt, number);
                 let reasoning =
                     build_reasoning_text(&mut rng, round.reasoning_tokens.unwrap_or_default());
-                let system_prompt_tokens =
-                    super::stress_model::synthetic_system_prompt_tokens(seed, spec.scenario);
-                let latest_user_tokens = (prompt.len() as u64).div_ceil(4).max(1);
-                let image_tokens = 0;
-                // Reasoning is generated output, so it is deliberately kept
-                // out of this input occupancy breakdown.  The field remains
-                // present for the shared projection contract and is zero for
-                // this request-side estimate.
-                let reasoning_tokens = 0;
-                let tool_call_tokens = (round.tool_count as u64) * 24;
-                let tool_call_id_tokens = (round.tool_count as u64) * 8;
-                let message_envelope_tokens = 8;
-                let fixed_protocol_tokens = 16;
-                // The generated input budget intentionally contains a large
-                // synthetic history component so long-thread pressure tests
-                // do not collapse into a short-message benchmark.
-                let accounted_tokens = system_prompt_tokens
-                    .saturating_add(latest_user_tokens)
-                    .saturating_add(image_tokens)
-                    .saturating_add(reasoning_tokens)
-                    .saturating_add(tool_call_tokens)
-                    .saturating_add(tool_call_id_tokens)
-                    .saturating_add(message_envelope_tokens)
-                    .saturating_add(fixed_protocol_tokens);
-                let history_tokens = round.input_tokens.saturating_sub(accounted_tokens);
-                let request_token_breakdown = serde_json::json!({
-                    "native_tool_tokens": 0,
-                    "system_prompt_tokens": system_prompt_tokens,
-                    "history_tokens": history_tokens,
-                    "latest_user_tokens": latest_user_tokens,
-                    "image_tokens": image_tokens,
-                    "reasoning_tokens": reasoning_tokens,
-                    "tool_call_tokens": tool_call_tokens,
-                    "tool_call_id_tokens": tool_call_id_tokens,
-                    "message_envelope_tokens": message_envelope_tokens,
-                    "fixed_protocol_tokens": fixed_protocol_tokens,
-                    "message_tokens": round.input_tokens,
-                    "estimated_input_tokens": round.input_tokens,
-                    "tool_count": round.tool_count as u64,
-                    "message_count": (index + 2) as u64,
-                });
+                let statistics = turn_statistics.record_model(
+                    &mut thread_usage,
+                    seed,
+                    spec.scenario,
+                    &prompt,
+                    &turn,
+                    &round,
+                );
                 // One bounded model round retains its actual invocation and
                 // result shapes, so pressure tests replay the same context
                 // protocol as production instead of only drawing UI rows.
@@ -1179,113 +1137,23 @@ impl LocalThreadStore {
                     "role":"assistant",
                     "content":answer,
                     "reasoning_content":reasoning,
-                    "request_token_breakdown": request_token_breakdown.clone(),
                 });
                 let has_tool_calls = !tool_calls.is_empty();
                 if has_tool_calls {
                     model_payload["tool_calls"] = serde_json::Value::Array(tool_calls);
                 }
-                let round_reasoning_tokens = round.reasoning_tokens.unwrap_or_default();
-                let round_total_tokens = round
-                    .input_tokens
-                    .saturating_add(round.answer_tokens)
-                    .saturating_add(round_reasoning_tokens);
-                turn_input_tokens = turn_input_tokens.saturating_add(round.input_tokens);
-                turn_output_tokens = turn_output_tokens.saturating_add(round.answer_tokens);
-                turn_reasoning_tokens =
-                    turn_reasoning_tokens.saturating_add(round_reasoning_tokens);
-                thread_input_tokens = thread_input_tokens.saturating_add(round.input_tokens);
-                thread_output_tokens = thread_output_tokens.saturating_add(round.answer_tokens);
-                thread_reasoning_tokens =
-                    thread_reasoning_tokens.saturating_add(round_reasoning_tokens);
-                let round_usage = serde_json::json!({
-                    "input_tokens": round.input_tokens,
-                    "output_tokens": round.answer_tokens,
-                    "total_tokens": round_total_tokens,
-                    "reasoning_tokens": round_reasoning_tokens,
-                    "estimated": true,
-                });
-                let cumulative_usage = serde_json::json!({
-                    "input_tokens": turn_input_tokens,
-                    "output_tokens": turn_output_tokens,
-                    "total_tokens": turn_input_tokens
-                        .saturating_add(turn_output_tokens)
-                        .saturating_add(turn_reasoning_tokens),
-                    "reasoning_tokens": turn_reasoning_tokens,
-                    "estimated": true,
-                });
-                let message_stats = serde_json::json!({
-                    "interaction_duration_s": round.prefill_duration_s
-                        + round.decode_duration_s
-                        + round.tool_duration_s.iter().sum::<f64>(),
-                    "usage": round_usage,
-                    "round_usage": cumulative_usage.clone(),
-                    "model_request_count": index as i64 + 1,
-                    "account_credits_consumed": 0,
-                    // The normal executor persists this assistant item before
-                    // executing its newly proposed calls.  Mirror that state:
-                    // report only calls already completed in this user turn.
-                    "toolCalls": completed_turn_tool_calls,
-                    "tool_calls": completed_turn_tool_calls,
-                    "contextTokens": round.input_tokens,
-                    "context_occupancy_tokens": round.input_tokens,
-                    "prefill_tokens": round.input_tokens,
-                    "decode_tokens": round.answer_tokens,
-                    "decode_duration_total_s": round.decode_duration_s,
-                    "avg_model_round_speed_tps": if round.decode_duration_s > 0.0 {
-                        round.answer_tokens as f64 / round.decode_duration_s
-                    } else {
-                        0.0
-                    },
-                    "visible_decode_tokens": round.answer_tokens,
-                    "visible_decode_duration_s": round.decode_duration_s,
-                    "visible_decode_speed_tps": if round.decode_duration_s > 0.0 {
-                        round.answer_tokens as f64 / round.decode_duration_s
-                    } else {
-                        0.0
-                    },
-                    "visible_decode_measured": true,
-                    "profile": SYNTHETIC_PROFILE_ID,
-                    "scenario": spec.scenario.as_str(),
-                });
                 let mut payload = model_payload.clone();
+                payload["request_token_breakdown"] = statistics.request_token_breakdown;
                 payload["model_round"] = serde_json::json!(index + 1);
                 payload["meta"] = serde_json::json!({
                     "type": if has_tool_calls { "tool_call" } else { "model_response" },
-                    "message_stats": message_stats,
+                    "message_stats": statistics.message_stats,
                 });
-                // A Usage record is the durable, replayable usage fact. Keep
-                // it separate from the completed UI item so model context
-                // reconstruction can skip it without dropping statistics.
                 self.push_stress_record(
                     &thread,
                     &mut batch,
                     &mut records,
-                    CanonicalRecord::Usage(UsageRecord {
-                        turn_id: Some(turn.clone()),
-                        input_tokens: round.input_tokens,
-                        output_tokens: round.answer_tokens,
-                        metadata: serde_json::json!({
-                            "total_tokens": round_total_tokens,
-                            "reasoning_tokens": round_reasoning_tokens,
-                            "estimated": true,
-                            "model": "stress-model",
-                            "model_round": index + 1,
-                            "response_id": format!("{turn}:response-{index}"),
-                            "profile": SYNTHETIC_PROFILE_ID,
-                            "turn_usage": cumulative_usage,
-                            "thread_usage": {
-                                "input_tokens": thread_input_tokens,
-                                "output_tokens": thread_output_tokens,
-                                "total_tokens": thread_input_tokens
-                                    .saturating_add(thread_output_tokens)
-                                    .saturating_add(thread_reasoning_tokens),
-                                "reasoning_tokens": thread_reasoning_tokens,
-                                "estimated": true,
-                            },
-                            "request_token_breakdown": request_token_breakdown,
-                        }),
-                    }),
+                    CanonicalRecord::Usage(statistics.usage),
                 )
                 .await?;
                 self.push_stress_record(
@@ -1356,7 +1224,7 @@ impl LocalThreadStore {
                     .await?;
                     items += 1;
                     tools += 1;
-                    completed_turn_tool_calls = completed_turn_tool_calls.saturating_add(1);
+                    turn_statistics.complete_tool(round.tool_duration_s[tool_index]);
                 }
             }
             self.push_stress_record(
@@ -1465,7 +1333,7 @@ impl LocalThreadStore {
     }
 
     async fn stored(&self, thread: &ThreadId) -> ThreadStoreResult<StoredThread> {
-        let path = self.state_path.clone();
+        let path = self.state_pool.clone();
         let root = self.root.clone();
         let id = thread.clone();
         db(move || load_thread(&path, &root, &id))
@@ -1647,7 +1515,7 @@ impl LocalThreadStore {
         })
         .await
         .map_err(unavailable)?;
-        let path = self.state_path.clone();
+        let path = self.state_pool.clone();
         let root = self.root.clone();
         let relative = target
             .strip_prefix(root.as_path())
@@ -1832,7 +1700,7 @@ impl LocalThreadStore {
             through_turn: through_turn.clone(),
             relative_path,
         };
-        let state = self.state_path.clone();
+        let state = self.state_pool.clone();
         db(move || {
             let mut conn = connect(&state)?;
             let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
@@ -1857,10 +1725,10 @@ impl LocalThreadStore {
     /// taking a filesystem lock on ordinary reads, and there is no startup
     /// scan, timer, or background retry loop.
     async fn recover_pending_revert_for_access(&self, thread: &ThreadId) -> ThreadStoreResult<()> {
-        let state = self.state_path.clone();
+        let state = self.state_pool.clone();
         let id = thread.clone();
         let state_pending =
-            db(move || Ok(super::thread_mutation::pending(&connect(&state)?, &id)?.is_some()))
+            db(move || Ok(super::thread_mutation::pending(&*connect(&state)?, &id)?.is_some()))
                 .await?;
         let queue_pending = if state_pending {
             false
@@ -1882,9 +1750,9 @@ impl LocalThreadStore {
     /// ownership lock. Each phase commits in one database; it is safe to retry
     /// after a process exit or a busy/error result in any later phase.
     pub(crate) async fn recover_pending_revert(&self, thread: &ThreadId) -> ThreadStoreResult<()> {
-        let state = self.state_path.clone();
+        let state = self.state_pool.clone();
         let id = thread.clone();
-        let pending = db(move || super::thread_mutation::pending(&connect(&state)?, &id)).await?;
+        let pending = db(move || super::thread_mutation::pending(&*connect(&state)?, &id)).await?;
         let Some(intent) = pending else {
             let admissions = self.admission_store().map_err(unavailable)?;
             let id = thread.to_string();
@@ -1897,7 +1765,7 @@ impl LocalThreadStore {
             .await?;
             return Ok(());
         };
-        let state = self.state_path.clone();
+        let state = self.state_pool.clone();
         let id = thread.to_string();
         let expected = intent.expected_rollout.to_string();
         let revision = intent.metadata.current_rollout_id.to_string();
@@ -1923,9 +1791,9 @@ impl LocalThreadStore {
                     message: "published revert has an active queue execution".into(),
                 });
             }
-            let state = self.state_path.clone();
+            let state = self.state_pool.clone();
             let id = thread.clone();
-            db(move || super::thread_mutation::remove(&connect(&state)?, &id)).await?;
+            db(move || super::thread_mutation::remove(&*connect(&state)?, &id)).await?;
             return Err(ThreadStoreError::Conflict {
                 message: "cannot revert a thread with an active turn".into(),
             });
@@ -1939,7 +1807,7 @@ impl LocalThreadStore {
         })
         .await
         .map_err(unavailable)?;
-        let state = self.state_path.clone();
+        let state = self.state_pool.clone();
         let switch = intent.clone();
         db(move || {
             let mut conn = connect(&state)?;
@@ -1973,9 +1841,9 @@ impl LocalThreadStore {
         let id = thread.to_string();
         let through = intent.through_turn.to_string();
         db(move || admissions.commit_revert(&id, &through, round)).await?;
-        let state = self.state_path.clone();
+        let state = self.state_pool.clone();
         let id = thread.clone();
-        db(move || super::thread_mutation::remove(&connect(&state)?, &id)).await?;
+        db(move || super::thread_mutation::remove(&*connect(&state)?, &id)).await?;
         let admissions = self.admission_store().map_err(unavailable)?;
         let id = thread.to_string();
         db(move || admissions.finish_revert(&id)).await?;
@@ -2082,7 +1950,7 @@ impl LocalThreadStore {
         let admissions = self.admission_store().map_err(unavailable)?;
         let thread = metadata.thread_id.to_string();
         db(move || admissions.ensure_mutable(&thread)).await?;
-        let path = self.state_path.clone();
+        let path = self.state_pool.clone();
         let root = self.root.clone();
         let metadata = metadata.clone();
         let descriptor = descriptor.clone();
@@ -2108,7 +1976,7 @@ impl LocalThreadStore {
         metadata: &ThreadMetadata,
         descriptor: &RolloutDescriptor,
     ) {
-        let path = self.state_path.clone();
+        let path = self.state_pool.clone();
         let root = self.root.clone();
         let history = self.history.clone();
         let admissions = self.admission_store().ok();
@@ -2181,7 +2049,7 @@ impl ThreadMetadataStore for LocalThreadStore {
         let receipt = match result {
             Ok(receipt) => receipt,
             Err(error) => {
-                let path = self.state_path.clone();
+                let path = self.state_pool.clone();
                 let history = self.history.clone();
                 let rollout = request.metadata.current_rollout_id.clone();
                 let descriptor = descriptor.clone();
@@ -2224,7 +2092,7 @@ impl ThreadMetadataStore for LocalThreadStore {
     ) -> ThreadStoreResult<Page<ThreadMetadata>> {
         query.page.validate(PageRequest::MAX_THREAD_LIMIT)?;
         let cursor: Option<DirectoryCursor> = query.page.cursor.as_ref().map(decode).transpose()?;
-        let path = self.state_path.clone();
+        let path = self.state_pool.clone();
         db(move || {
             let conn = connect(&path)?;
             let mut statement = conn.prepare("SELECT thread_id,rollout_id,status,created_at_ms,updated_at_ms,title,workspace_id,pinned FROM canonical_threads
@@ -2258,7 +2126,7 @@ impl ThreadMetadataStore for LocalThreadStore {
         // delete saga. Otherwise their queue mutation markers can block one
         // another and strand a thread between lifecycle operations.
         self.recover_pending_revert(thread_id).await?;
-        let path = self.state_path.clone();
+        let path = self.state_pool.clone();
         let thread = thread_id.to_string();
         // Persist intent before touching a separate database. The catalog is
         // retained until queue input is gone, and all removed file identities
@@ -2273,7 +2141,7 @@ impl ThreadMetadataStore for LocalThreadStore {
         let admissions = self.admission_store().map_err(unavailable)?;
         let thread = thread_id.to_string();
         db(move || admissions.delete_admissions(&thread)).await?;
-        let path = self.state_path.clone();
+        let path = self.state_pool.clone();
         let thread = thread_id.to_string();
         db(move || {
             let mut conn = connect(&path)?;
@@ -2294,7 +2162,7 @@ impl ThreadMetadataStore for LocalThreadStore {
             Ok(())
         }).await?;
         self.reclaim_pending_rollouts(thread_id).await?;
-        let path = self.state_path.clone();
+        let path = self.state_pool.clone();
         let thread = thread_id.to_string();
         // Keep queue ownership through physical deletion. If the final queue
         // cleanup fails it remains discoverable by user-wide delete and can
@@ -2380,7 +2248,7 @@ impl ThreadStore for LocalThreadStore {
         }
         // JSONL is committed already. A metadata refresh is best effort and
         // must not turn that success into a duplicate-producing append error.
-        let path = self.state_path.clone();
+        let path = self.state_pool.clone();
         let id = thread.clone();
         if receipt.written_records > 0 {
             if let Err(error) = db(move || {
@@ -3288,16 +3156,15 @@ fn archive_path(root: &Path, source: &Path, archived: bool) -> Result<PathBuf> {
     })
 }
 
-fn connect(path: &Path) -> Result<Connection> {
-    let conn = Connection::open(path)?;
-    conn.busy_timeout(Duration::from_secs(2))?;
-    conn.execute_batch(
-        "PRAGMA foreign_keys=ON; PRAGMA synchronous=NORMAL; PRAGMA cache_size=-1024;",
-    )?;
-    Ok(conn)
+fn connect(pool: &super::sqlite_pool::SqlitePool) -> Result<super::sqlite_pool::ConnectionLease> {
+    pool.get()
 }
 
-fn load_thread(path: &Path, root: &Path, id: &ThreadId) -> Result<Option<StoredThread>> {
+fn load_thread(
+    path: &super::sqlite_pool::SqlitePool,
+    root: &Path,
+    id: &ThreadId,
+) -> Result<Option<StoredThread>> {
     let conn = connect(path)?;
     let deleting: bool = conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM canonical_thread_deletions WHERE thread_id=?1)",
@@ -3610,7 +3477,7 @@ mod stress_batch_tests {
                 .unwrap(),
             vec![thread.to_string()]
         );
-        let pending: i64 = connect(&store.state_path).unwrap().query_row(
+        let pending: i64 = connect(&store.state_pool).unwrap().query_row(
             "SELECT COUNT(*) FROM canonical_pending_rollout_reclaims WHERE requested_by_thread_id=?1",
             [thread.as_str()], |row| row.get(0),
         ).unwrap();
@@ -3653,7 +3520,7 @@ mod stress_batch_tests {
             .unwrap();
         let thread = ThreadId::new(spec.session_id).unwrap();
         let rollout = store.stored(&thread).await.unwrap().descriptor.path;
-        let conn = connect(&store.state_path).unwrap();
+        let conn = connect(&store.state_pool).unwrap();
         conn.execute_batch("BEGIN IMMEDIATE").unwrap();
         assert!(store.delete_thread(&thread).await.is_err());
         assert!(!store.deletion_pending(&thread).await.unwrap());
@@ -3991,7 +3858,7 @@ mod stress_batch_tests {
             through_turn: turn,
             relative_path,
         };
-        let state = store.state_path.clone();
+        let state = store.state_pool.clone();
         db(move || {
             let mut conn = connect(&state)?;
             let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
@@ -4013,10 +3880,10 @@ mod stress_batch_tests {
             .unwrap()
             .revert_pending(thread.as_str())
             .unwrap());
-        let path = reopened.state_path.clone();
+        let path = reopened.state_pool.clone();
         let id = thread.to_string();
         assert!(!db(move || Ok(super::super::thread_mutation::pending(
-            &connect(&path)?,
+            &*connect(&path)?,
             &ThreadId::new(id)?
         )?
         .is_some()))

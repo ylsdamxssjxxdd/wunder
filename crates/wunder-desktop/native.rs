@@ -79,8 +79,8 @@ mod companion_overlay;
 #[path = "native_companions.rs"]
 mod companions;
 pub use companion_overlay::{
-    clamp_companion_scale, CompanionAgentOverride, CompanionOverlayState, CompanionPlacement,
-    COMPANION_SCALE_MAX, COMPANION_SCALE_MIN,
+    clamp_companion_scale, CompanionOverlayState, CompanionPlacement, COMPANION_SCALE_MAX,
+    COMPANION_SCALE_MIN, DEFAULT_COMPANION_SCALE,
 };
 #[path = "native_navigation.rs"]
 mod navigation;

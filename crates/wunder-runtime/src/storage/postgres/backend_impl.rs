@@ -102,18 +102,10 @@ impl ThreadLogStore for PostgresStorage {
         s: &str,
         q: &str,
     ) -> Result<wunder_core::thread_view::ThreadSearchPage> {
-        crate::storage::canonical_thread_log::CanonicalThreadLog::new(
-            self.canonical_threads()?.as_ref(),
-            self,
-        )
-        .thread_view_search(u, s, q)
+        super::thread_log_facade::PostgresThreadLog::new(self)?.thread_view_search(u, s, q)
     }
     fn pending_thread_view_rebuilds(&self) -> Result<Vec<(String, String, i64)>> {
-        crate::storage::canonical_thread_log::CanonicalThreadLog::new(
-            self.canonical_threads()?.as_ref(),
-            self,
-        )
-        .pending_thread_view_rebuilds()
+        super::thread_log_facade::PostgresThreadLog::new(self)?.pending_thread_view_rebuilds()
     }
     fn thread_view_window(
         &self,
@@ -125,11 +117,8 @@ impl ThreadLogStore for PostgresStorage {
         r: Option<&str>,
         l: usize,
     ) -> Result<wunder_core::thread_view::ThreadViewPage> {
-        crate::storage::canonical_thread_log::CanonicalThreadLog::new(
-            self.canonical_threads()?.as_ref(),
-            self,
-        )
-        .thread_view_window(u, s, k, b, a, r, l)
+        super::thread_log_facade::PostgresThreadLog::new(self)?
+            .thread_view_window(u, s, k, b, a, r, l)
     }
     fn thread_view_page(
         &self,
@@ -139,11 +128,7 @@ impl ThreadLogStore for PostgresStorage {
         b: Option<i64>,
         l: usize,
     ) -> Result<wunder_core::thread_view::ThreadViewPage> {
-        crate::storage::canonical_thread_log::CanonicalThreadLog::new(
-            self.canonical_threads()?.as_ref(),
-            self,
-        )
-        .thread_view_page(u, s, k, b, l)
+        super::thread_log_facade::PostgresThreadLog::new(self)?.thread_view_page(u, s, k, b, l)
     }
     fn thread_view_trajectory_page(
         &self,
@@ -153,11 +138,8 @@ impl ThreadLogStore for PostgresStorage {
         r: Option<&str>,
         l: usize,
     ) -> Result<wunder_core::thread_view::ThreadViewPage> {
-        crate::storage::canonical_thread_log::CanonicalThreadLog::new(
-            self.canonical_threads()?.as_ref(),
-            self,
-        )
-        .thread_view_trajectory_page(u, s, b, r, l)
+        super::thread_log_facade::PostgresThreadLog::new(self)?
+            .thread_view_trajectory_page(u, s, b, r, l)
     }
     fn thread_view_changes(
         &self,
@@ -165,11 +147,7 @@ impl ThreadLogStore for PostgresStorage {
         s: &str,
         a: i64,
     ) -> Result<wunder_core::thread_view::ThreadViewChanges> {
-        crate::storage::canonical_thread_log::CanonicalThreadLog::new(
-            self.canonical_threads()?.as_ref(),
-            self,
-        )
-        .thread_view_changes(u, s, a)
+        super::thread_log_facade::PostgresThreadLog::new(self)?.thread_view_changes(u, s, a)
     }
     fn thread_body_page(
         &self,
@@ -179,18 +157,10 @@ impl ThreadLogStore for PostgresStorage {
         r: i64,
         c: i64,
     ) -> Result<wunder_core::thread_view::ThreadBodyPage> {
-        crate::storage::canonical_thread_log::CanonicalThreadLog::new(
-            self.canonical_threads()?.as_ref(),
-            self,
-        )
-        .thread_body_page(u, s, id, r, c)
+        super::thread_log_facade::PostgresThreadLog::new(self)?.thread_body_page(u, s, id, r, c)
     }
     fn rebuild_thread_view_page(&self, u: &str, s: &str, a: i64) -> Result<(i64, bool)> {
-        crate::storage::canonical_thread_log::CanonicalThreadLog::new(
-            self.canonical_threads()?.as_ref(),
-            self,
-        )
-        .rebuild_thread_view_page(u, s, a)
+        super::thread_log_facade::PostgresThreadLog::new(self)?.rebuild_thread_view_page(u, s, a)
     }
     fn load_subagent_context(
         &self,
@@ -198,18 +168,11 @@ impl ThreadLogStore for PostgresStorage {
         session_id: &str,
         turns: i64,
     ) -> Result<Vec<Value>> {
-        crate::storage::canonical_thread_log::CanonicalThreadLog::new(
-            self.canonical_threads()?.as_ref(),
-            self,
-        )
-        .load_subagent_context(user_id, session_id, turns)
+        super::thread_log_facade::PostgresThreadLog::new(self)?
+            .load_subagent_context(user_id, session_id, turns)
     }
     fn thread_snapshot(&self, user_id: &str, session_id: &str) -> Result<Value> {
-        crate::storage::canonical_thread_log::CanonicalThreadLog::new(
-            self.canonical_threads()?.as_ref(),
-            self,
-        )
-        .thread_snapshot(user_id, session_id)
+        super::thread_log_facade::PostgresThreadLog::new(self)?.thread_snapshot(user_id, session_id)
     }
     fn thread_snapshot_window(
         &self,
@@ -217,11 +180,8 @@ impl ThreadLogStore for PostgresStorage {
         session_id: &str,
         window: &ThreadSnapshotWindow,
     ) -> Result<Value> {
-        crate::storage::canonical_thread_log::CanonicalThreadLog::new(
-            self.canonical_threads()?.as_ref(),
-            self,
-        )
-        .thread_snapshot_window(user_id, session_id, window)
+        super::thread_log_facade::PostgresThreadLog::new(self)?
+            .thread_snapshot_window(user_id, session_id, window)
     }
     fn find_thread_turn_id(
         &self,
@@ -229,18 +189,15 @@ impl ThreadLogStore for PostgresStorage {
         session_id: &str,
         user_turn_index: i64,
     ) -> Result<Option<String>> {
-        crate::storage::canonical_thread_log::CanonicalThreadLog::new(
-            self.canonical_threads()?.as_ref(),
-            self,
+        super::thread_log_facade::PostgresThreadLog::new(self)?.find_thread_turn_id(
+            user_id,
+            session_id,
+            user_turn_index,
         )
-        .find_thread_turn_id(user_id, session_id, user_turn_index)
     }
     fn accept_thread_turn(&self, user_id: &str, session_id: &str, input: &Value) -> Result<Value> {
-        crate::storage::canonical_thread_log::CanonicalThreadLog::new(
-            self.canonical_threads()?.as_ref(),
-            self,
-        )
-        .accept_thread_turn(user_id, session_id, input)
+        super::thread_log_facade::PostgresThreadLog::new(self)?
+            .accept_thread_turn(user_id, session_id, input)
     }
     fn update_thread_turn(
         &self,
@@ -251,11 +208,8 @@ impl ThreadLogStore for PostgresStorage {
         summary: &str,
         payload: &Value,
     ) -> Result<bool> {
-        crate::storage::canonical_thread_log::CanonicalThreadLog::new(
-            self.canonical_threads()?.as_ref(),
-            self,
-        )
-        .update_thread_turn(user_id, session_id, turn_id, status, summary, payload)
+        super::thread_log_facade::PostgresThreadLog::new(self)?
+            .update_thread_turn(user_id, session_id, turn_id, status, summary, payload)
     }
     fn list_thread_turn_ids_by_status(
         &self,
@@ -264,11 +218,8 @@ impl ThreadLogStore for PostgresStorage {
         status: &str,
         limit: usize,
     ) -> Result<Vec<String>> {
-        crate::storage::canonical_thread_log::CanonicalThreadLog::new(
-            self.canonical_threads()?.as_ref(),
-            self,
-        )
-        .list_thread_turn_ids_by_status(user_id, session_id, status, limit)
+        super::thread_log_facade::PostgresThreadLog::new(self)?
+            .list_thread_turn_ids_by_status(user_id, session_id, status, limit)
     }
     fn list_thread_changes_by_session(
         &self,
@@ -276,32 +227,19 @@ impl ThreadLogStore for PostgresStorage {
         after_seq: i64,
         limit: i64,
     ) -> Result<Vec<Value>> {
-        crate::storage::canonical_thread_log::CanonicalThreadLog::new(
-            self.canonical_threads()?.as_ref(),
-            self,
-        )
-        .list_thread_changes_by_session(session_id, after_seq, limit)
+        super::thread_log_facade::PostgresThreadLog::new(self)?
+            .list_thread_changes_by_session(session_id, after_seq, limit)
     }
     fn latest_thread_change_seq_by_session(&self, session_id: &str) -> Result<i64> {
-        crate::storage::canonical_thread_log::CanonicalThreadLog::new(
-            self.canonical_threads()?.as_ref(),
-            self,
-        )
-        .latest_thread_change_seq_by_session(session_id)
+        super::thread_log_facade::PostgresThreadLog::new(self)?
+            .latest_thread_change_seq_by_session(session_id)
     }
     fn delete_thread_log_by_session(&self, user_id: &str, session_id: &str) -> Result<i64> {
-        crate::storage::canonical_thread_log::CanonicalThreadLog::new(
-            self.canonical_threads()?.as_ref(),
-            self,
-        )
-        .delete_thread_log_by_session(user_id, session_id)
+        super::thread_log_facade::PostgresThreadLog::new(self)?
+            .delete_thread_log_by_session(user_id, session_id)
     }
     fn append_thread_item(&self, user_id: &str, payload: &Value) -> Result<()> {
-        crate::storage::canonical_thread_log::CanonicalThreadLog::new(
-            self.canonical_threads()?.as_ref(),
-            self,
-        )
-        .append_thread_item(user_id, payload)
+        super::thread_log_facade::PostgresThreadLog::new(self)?.append_thread_item(user_id, payload)
     }
     fn list_thread_visible_messages(
         &self,
@@ -310,11 +248,8 @@ impl ThreadLogStore for PostgresStorage {
         before_seq: Option<i64>,
         limit: i64,
     ) -> Result<Vec<Value>> {
-        crate::storage::canonical_thread_log::CanonicalThreadLog::new(
-            self.canonical_threads()?.as_ref(),
-            self,
-        )
-        .list_thread_visible_messages(user_id, session_id, before_seq, limit)
+        super::thread_log_facade::PostgresThreadLog::new(self)?
+            .list_thread_visible_messages(user_id, session_id, before_seq, limit)
     }
     fn load_thread_context_items(
         &self,
@@ -323,11 +258,12 @@ impl ThreadLogStore for PostgresStorage {
         limit: i64,
         include_internal: bool,
     ) -> Result<Vec<Value>> {
-        crate::storage::canonical_thread_log::CanonicalThreadLog::new(
-            self.canonical_threads()?.as_ref(),
-            self,
+        super::thread_log_facade::PostgresThreadLog::new(self)?.load_thread_context_items(
+            user_id,
+            session_id,
+            limit,
+            include_internal,
         )
-        .load_thread_context_items(user_id, session_id, limit, include_internal)
     }
     fn load_thread_execution_context(
         &self,
@@ -336,11 +272,8 @@ impl ThreadLogStore for PostgresStorage {
         turn_id: &str,
         limit: i64,
     ) -> Result<Vec<Value>> {
-        crate::storage::canonical_thread_log::CanonicalThreadLog::new(
-            self.canonical_threads()?.as_ref(),
-            self,
-        )
-        .load_thread_execution_context(user_id, session_id, turn_id, limit)
+        super::thread_log_facade::PostgresThreadLog::new(self)?
+            .load_thread_execution_context(user_id, session_id, turn_id, limit)
     }
     fn fork_thread_log(
         &self,
@@ -349,18 +282,15 @@ impl ThreadLogStore for PostgresStorage {
         target_session_id: &str,
         through_round: i64,
     ) -> Result<()> {
-        crate::storage::canonical_thread_log::CanonicalThreadLog::new(
-            self.canonical_threads()?.as_ref(),
-            self,
+        super::thread_log_facade::PostgresThreadLog::new(self)?.fork_thread_log(
+            user_id,
+            source_session_id,
+            target_session_id,
+            through_round,
         )
-        .fork_thread_log(user_id, source_session_id, target_session_id, through_round)
     }
     fn commit_thread_item(&self, user_id: &str, payload: &Value) -> Result<Option<Value>> {
-        crate::storage::canonical_thread_log::CanonicalThreadLog::new(
-            self.canonical_threads()?.as_ref(),
-            self,
-        )
-        .commit_thread_item(user_id, payload)
+        super::thread_log_facade::PostgresThreadLog::new(self)?.commit_thread_item(user_id, payload)
     }
     fn list_thread_turns(
         &self,
@@ -369,11 +299,8 @@ impl ThreadLogStore for PostgresStorage {
         before: Option<i64>,
         limit: i64,
     ) -> Result<Vec<Value>> {
-        crate::storage::canonical_thread_log::CanonicalThreadLog::new(
-            self.canonical_threads()?.as_ref(),
-            self,
-        )
-        .list_thread_turns(user_id, session_id, before, limit)
+        super::thread_log_facade::PostgresThreadLog::new(self)?
+            .list_thread_turns(user_id, session_id, before, limit)
     }
     fn get_thread_log_counts(
         &self,
@@ -381,29 +308,23 @@ impl ThreadLogStore for PostgresStorage {
         session_id: &str,
         include_internal: bool,
     ) -> Result<(i64, i64)> {
-        crate::storage::canonical_thread_log::CanonicalThreadLog::new(
-            self.canonical_threads()?.as_ref(),
-            self,
+        super::thread_log_facade::PostgresThreadLog::new(self)?.get_thread_log_counts(
+            user_id,
+            session_id,
+            include_internal,
         )
-        .get_thread_log_counts(user_id, session_id, include_internal)
     }
     fn latest_thread_user_round_by_session(&self, session_id: &str) -> Result<i64> {
-        crate::storage::canonical_thread_log::CanonicalThreadLog::new(
-            self.canonical_threads()?.as_ref(),
-            self,
-        )
-        .latest_thread_user_round_by_session(session_id)
+        super::thread_log_facade::PostgresThreadLog::new(self)?
+            .latest_thread_user_round_by_session(session_id)
     }
     fn thread_turn_tails(
         &self,
         user_id: &str,
         session_ids: &[String],
     ) -> Result<std::collections::HashMap<String, crate::storage::ThreadTurnTail>> {
-        crate::storage::canonical_thread_log::CanonicalThreadLog::new(
-            self.canonical_threads()?.as_ref(),
-            self,
-        )
-        .thread_turn_tails(user_id, session_ids)
+        super::thread_log_facade::PostgresThreadLog::new(self)?
+            .thread_turn_tails(user_id, session_ids)
     }
     fn get_thread_turn(
         &self,
@@ -414,11 +335,14 @@ impl ThreadLogStore for PostgresStorage {
         limit: i64,
         include_internal: bool,
     ) -> Result<Option<Value>> {
-        crate::storage::canonical_thread_log::CanonicalThreadLog::new(
-            self.canonical_threads()?.as_ref(),
-            self,
+        super::thread_log_facade::PostgresThreadLog::new(self)?.get_thread_turn(
+            user_id,
+            session_id,
+            turn_id,
+            after,
+            limit,
+            include_internal,
         )
-        .get_thread_turn(user_id, session_id, turn_id, after, limit, include_internal)
     }
     fn get_thread_turn_page(
         &self,
@@ -430,11 +354,7 @@ impl ThreadLogStore for PostgresStorage {
         limit: i64,
         include_internal: bool,
     ) -> Result<Option<Value>> {
-        crate::storage::canonical_thread_log::CanonicalThreadLog::new(
-            self.canonical_threads()?.as_ref(),
-            self,
-        )
-        .get_thread_turn_page(
+        super::thread_log_facade::PostgresThreadLog::new(self)?.get_thread_turn_page(
             user_id,
             session_id,
             turn_id,
@@ -451,11 +371,12 @@ impl ThreadLogStore for PostgresStorage {
         item_id: &str,
         include_internal: bool,
     ) -> Result<Option<Value>> {
-        crate::storage::canonical_thread_log::CanonicalThreadLog::new(
-            self.canonical_threads()?.as_ref(),
-            self,
+        super::thread_log_facade::PostgresThreadLog::new(self)?.get_thread_item(
+            user_id,
+            session_id,
+            item_id,
+            include_internal,
         )
-        .get_thread_item(user_id, session_id, item_id, include_internal)
     }
     fn set_thread_item_feedback(
         &self,
@@ -464,11 +385,8 @@ impl ThreadLogStore for PostgresStorage {
         item_id: &str,
         vote: &str,
     ) -> Result<Option<Value>> {
-        crate::storage::canonical_thread_log::CanonicalThreadLog::new(
-            self.canonical_threads()?.as_ref(),
-            self,
-        )
-        .set_thread_item_feedback(user_id, session_id, item_id, vote)
+        super::thread_log_facade::PostgresThreadLog::new(self)?
+            .set_thread_item_feedback(user_id, session_id, item_id, vote)
     }
     fn list_thread_changes(
         &self,
@@ -477,11 +395,8 @@ impl ThreadLogStore for PostgresStorage {
         after_seq: i64,
         limit: i64,
     ) -> Result<Vec<Value>> {
-        crate::storage::canonical_thread_log::CanonicalThreadLog::new(
-            self.canonical_threads()?.as_ref(),
-            self,
-        )
-        .list_thread_changes(user_id, session_id, after_seq, limit)
+        super::thread_log_facade::PostgresThreadLog::new(self)?
+            .list_thread_changes(user_id, session_id, after_seq, limit)
     }
 }
 

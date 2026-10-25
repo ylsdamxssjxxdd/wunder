@@ -182,6 +182,15 @@ pub fn event_item(session_id: &str, event_type: &str, data: &Value) -> Option<Va
             },
         ),
         "plan_update" => ("plan", "plan".into(), "completed"),
+        // Keep the structured inquiry durable even when the assistant output
+        // item was committed before the tool ran.  The panel is presentation
+        // state, not a model-context message, so it gets its own hidden-from-
+        // model timeline item and is reattached by the chat projection.
+        "question_panel" => (
+            "question_panel",
+            format!("question-panel-{model}"),
+            "completed",
+        ),
         // The item envelope uses the canonical lifecycle vocabulary. A
         // compaction's result (fallback/guard_only/skipped) is separate from
         // whether that operation completed and remains in its semantic body.
@@ -366,6 +375,25 @@ mod tests {
         assert_eq!(failed["kind"], "terminal");
         assert_eq!(failed["status"], "failed");
         assert_eq!(failed["content"], "upstream timeout");
+    }
+
+    #[test]
+    fn question_panel_is_a_durable_visible_control_item() {
+        let item = event_item(
+            "s",
+            "question_panel",
+            &json!({
+                "turn_id": "turn",
+                "model_round": 2,
+                "questions": [{"question":"Choose", "options":[{"label":"A"}]}],
+                "keep_open": true
+            }),
+        )
+        .expect("question panel item");
+        assert_eq!(item["kind"], "question_panel");
+        assert_eq!(item["status"], "completed");
+        assert_eq!(item["item_id"], "turn:question-panel-2");
+        assert_eq!(item["questions"][0]["options"][0]["label"], "A");
     }
 
     #[test]

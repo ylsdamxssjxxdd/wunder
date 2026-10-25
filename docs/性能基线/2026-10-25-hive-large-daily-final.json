@@ -1,0 +1,442 @@
+{
+  "schema": 1,
+  "suite": "hive-api-experience",
+  "environment": {
+    "system": "Windows",
+    "release": "11",
+    "machine": "AMD64",
+    "logical_cpus": 32,
+    "physical_memory_bytes": 68341796864,
+    "runner_python": "3.12.10"
+  },
+  "workload": {
+    "cases": [
+      "large_chat"
+    ],
+    "profile": "daily",
+    "user_rounds": 100,
+    "model_requests_per_turn": 100,
+    "chunks": 8,
+    "interval_ms": 8,
+    "seed": 42,
+    "fixture_contract": "postgres-canonical-with-tools-v2",
+    "idle_observation_seconds": 12,
+    "idle_max_single_core_cpu_percent": 1.0
+  },
+  "execution": {
+    "mode": "compose-postgres-http-websocket",
+    "worker_threads": 4,
+    "engine": "29.2.1",
+    "compose": "5.1.0",
+    "runtime_image_id": "sha256:f21af1564714cc69951c2dc7e8ed13ba8d200664e7b2fc627f0dc9a09d4e3134",
+    "postgres_image_id": "sha256:fe03a7605299a34ddf5e4f285dff78c3d7190a576b3c6b46f2fcff69f4bffd54",
+    "capacity": "32 33462280192 x86_64 linux"
+  },
+  "samples": [
+    {
+      "status": "ok",
+      "metrics": {
+        "chat_bootstrap_ms": [
+          51.44799999834504
+        ],
+        "older_chat_page_ms": [
+          26.535899989539757
+        ],
+        "newer_chat_page_ms": [
+          22.628000006079674
+        ],
+        "body_read_ms": [
+          17.627099994570017
+        ]
+      },
+      "assertions": 84,
+      "rows": [
+        12,
+        12
+      ],
+      "response_bytes": [
+        42423,
+        43091,
+        41992,
+        948
+      ],
+      "case": "large_chat",
+      "run": 0,
+      "warmup": true
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "chat_bootstrap_ms": [
+          25.846199991065077
+        ],
+        "older_chat_page_ms": [
+          21.6082999977516
+        ],
+        "newer_chat_page_ms": [
+          25.03889999934472
+        ],
+        "body_read_ms": [
+          14.319399997475557
+        ]
+      },
+      "assertions": 84,
+      "rows": [
+        12,
+        12
+      ],
+      "response_bytes": [
+        42423,
+        43091,
+        41992,
+        948
+      ],
+      "case": "large_chat",
+      "run": 1,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "chat_bootstrap_ms": [
+          25.84240000578575
+        ],
+        "older_chat_page_ms": [
+          20.114600003580563
+        ],
+        "newer_chat_page_ms": [
+          22.627500002272427
+        ],
+        "body_read_ms": [
+          14.331500002299435
+        ]
+      },
+      "assertions": 84,
+      "rows": [
+        12,
+        12
+      ],
+      "response_bytes": [
+        42423,
+        43091,
+        41992,
+        948
+      ],
+      "case": "large_chat",
+      "run": 2,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "chat_bootstrap_ms": [
+          27.543600008357316
+        ],
+        "older_chat_page_ms": [
+          23.431099994922988
+        ],
+        "newer_chat_page_ms": [
+          22.614800007431768
+        ],
+        "body_read_ms": [
+          14.053799997782335
+        ]
+      },
+      "assertions": 84,
+      "rows": [
+        12,
+        12
+      ],
+      "response_bytes": [
+        42423,
+        43091,
+        41992,
+        948
+      ],
+      "case": "large_chat",
+      "run": 3,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "chat_bootstrap_ms": [
+          25.094299999182113
+        ],
+        "older_chat_page_ms": [
+          24.644499993883073
+        ],
+        "newer_chat_page_ms": [
+          23.260499991010875
+        ],
+        "body_read_ms": [
+          12.217700001201592
+        ]
+      },
+      "assertions": 84,
+      "rows": [
+        12,
+        12
+      ],
+      "response_bytes": [
+        42423,
+        43091,
+        41992,
+        948
+      ],
+      "case": "large_chat",
+      "run": 4,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "chat_bootstrap_ms": [
+          26.39630000339821
+        ],
+        "older_chat_page_ms": [
+          22.497000012663193
+        ],
+        "newer_chat_page_ms": [
+          23.888100011390634
+        ],
+        "body_read_ms": [
+          13.129500002833083
+        ]
+      },
+      "assertions": 84,
+      "rows": [
+        12,
+        12
+      ],
+      "response_bytes": [
+        42423,
+        43091,
+        41992,
+        948
+      ],
+      "case": "large_chat",
+      "run": 5,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "chat_bootstrap_ms": [
+          26.254800002789125
+        ],
+        "older_chat_page_ms": [
+          23.14630000910256
+        ],
+        "newer_chat_page_ms": [
+          25.360299987369217
+        ],
+        "body_read_ms": [
+          13.57070000085514
+        ]
+      },
+      "assertions": 84,
+      "rows": [
+        12,
+        12
+      ],
+      "response_bytes": [
+        42423,
+        43091,
+        41992,
+        948
+      ],
+      "case": "large_chat",
+      "run": 6,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "chat_bootstrap_ms": [
+          26.504900000873022
+        ],
+        "older_chat_page_ms": [
+          23.644799992325716
+        ],
+        "newer_chat_page_ms": [
+          22.168199997395277
+        ],
+        "body_read_ms": [
+          14.702799991937354
+        ]
+      },
+      "assertions": 84,
+      "rows": [
+        12,
+        12
+      ],
+      "response_bytes": [
+        42423,
+        43091,
+        41992,
+        948
+      ],
+      "case": "large_chat",
+      "run": 7,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "chat_bootstrap_ms": [
+          25.663299995358102
+        ],
+        "older_chat_page_ms": [
+          23.89370001037605
+        ],
+        "newer_chat_page_ms": [
+          19.78290000988636
+        ],
+        "body_read_ms": [
+          12.210399989271536
+        ]
+      },
+      "assertions": 84,
+      "rows": [
+        12,
+        12
+      ],
+      "response_bytes": [
+        42423,
+        43091,
+        41992,
+        948
+      ],
+      "case": "large_chat",
+      "run": 8,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "chat_bootstrap_ms": [
+          23.789700004272163
+        ],
+        "older_chat_page_ms": [
+          21.174899986363016
+        ],
+        "newer_chat_page_ms": [
+          22.37310000055004
+        ],
+        "body_read_ms": [
+          13.60479999857489
+        ]
+      },
+      "assertions": 84,
+      "rows": [
+        12,
+        12
+      ],
+      "response_bytes": [
+        42423,
+        43091,
+        41992,
+        948
+      ],
+      "case": "large_chat",
+      "run": 9,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "chat_bootstrap_ms": [
+          25.56189999449998
+        ],
+        "older_chat_page_ms": [
+          38.60359999816865
+        ],
+        "newer_chat_page_ms": [
+          41.96240000601392
+        ],
+        "body_read_ms": [
+          15.507799995248206
+        ]
+      },
+      "assertions": 84,
+      "rows": [
+        12,
+        12
+      ],
+      "response_bytes": [
+        42423,
+        43091,
+        41992,
+        948
+      ],
+      "case": "large_chat",
+      "run": 10,
+      "warmup": false
+    }
+  ],
+  "captured_at_unix": 1792899535.514273,
+  "compose_to_ready_ms": 4187.192100012908,
+  "artifacts": {
+    "server_sha256": "4e956019c80a74a20d63dd4e77a3d8dd8d52719d3eece572139e6a51337a131f"
+  },
+  "docker": {
+    "engine": "29.2.1",
+    "compose": "5.1.0",
+    "runtime_image_id": "sha256:f21af1564714cc69951c2dc7e8ed13ba8d200664e7b2fc627f0dc9a09d4e3134",
+    "postgres_image_id": "sha256:fe03a7605299a34ddf5e4f285dff78c3d7190a576b3c6b46f2fcff69f4bffd54",
+    "capacity": "32 33462280192 x86_64 linux"
+  },
+  "fixture": {
+    "generation_ms": 102910.48550000414,
+    "user_turns": 100,
+    "model_requests": 10000,
+    "model_actions": 17954,
+    "tool_calls": 7954,
+    "items": 18054,
+    "rollout_records": 46409,
+    "storage_bytes": null
+  },
+  "summary": {
+    "large_chat": {
+      "runs": 10,
+      "successful_runs": 10,
+      "failed_runs": 0,
+      "metrics": {
+        "body_read_ms": {
+          "count": 10,
+          "p50": 13.60479999857489,
+          "p95": 15.507799995248206,
+          "maximum": 15.507799995248206
+        },
+        "chat_bootstrap_ms": {
+          "count": 10,
+          "p50": 25.84240000578575,
+          "p95": 27.543600008357316,
+          "maximum": 27.543600008357316
+        },
+        "newer_chat_page_ms": {
+          "count": 10,
+          "p50": 22.627500002272427,
+          "p95": 41.96240000601392,
+          "maximum": 41.96240000601392
+        },
+        "older_chat_page_ms": {
+          "count": 10,
+          "p50": 23.14630000910256,
+          "p95": 38.60359999816865,
+          "maximum": 38.60359999816865
+        }
+      }
+    }
+  },
+  "correctness_passed": true,
+  "passed": true,
+  "validation_context": {
+    "build": "Linux x86_64 release; wunder-server default postgres-storage; Rust 1.92.0",
+    "scope": "Isolated Compose HTTP/WebSocket and PostgreSQL; excludes browser rendering and production proxy",
+    "sampling": "Shared development environment with concurrent compilation; no OS cache eviction",
+    "canonical_count": "Includes SessionMeta; verified against database row count and next ordinal",
+    "comparison": "No speedup claim against older contracts or builds; raw previous reports retained"
+  }
+}

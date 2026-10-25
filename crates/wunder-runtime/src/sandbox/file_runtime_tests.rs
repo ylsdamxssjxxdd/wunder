@@ -107,48 +107,57 @@ async fn sqlite_cold_start_is_shared_and_user_container_paths_stay_isolated() {
     concurrent_file_tools(sqlite_config(dir.path()), dir.path().join("workspaces")).await;
 }
 
-#[tokio::test]
-async fn file_tool_uses_isolated_sqlite_when_service_env_selects_postgres() {
-    let dir = tempfile::tempdir().unwrap();
+#[test]
+fn file_tool_uses_deployment_postgres_without_a_local_fallback() {
     let mut config = Config::default();
+    let dir = tempfile::tempdir().unwrap();
     configure_sandbox_file_tool_storage_from(&mut config, &|name| match name {
-        "WUNDER_STORAGE_BACKEND" => Some("postgres".to_string()),
+        "WUNDER_STORAGE_BACKEND" => Some("sqlite".into()),
+        "WUNDER_POSTGRES_DSN" => {
+            Some("  host=fixture.invalid user=fixture dbname=fixture  ".into())
+        }
+        "WUNDER_POSTGRES_CONNECT_TIMEOUT_S" => Some("7".into()),
+        "WUNDER_POSTGRES_POOL_SIZE" => Some("3".into()),
         "WUNDER_STORAGE_DATA_ROOT" => Some(dir.path().join("service").display().to_string()),
-        "WUNDER_POSTGRES_DSN" => Some("postgresql://service.invalid/wunder".to_string()),
         "WUNDER_SANDBOX_STORAGE_DATA_ROOT" => {
             Some(dir.path().join("sandbox").display().to_string())
         }
         _ => None,
     });
-    assert_eq!(config.storage.backend, "sqlite");
-    let runtime = FileRuntime::default();
-    let workspace_root = dir.path().join("workspaces").join("user__c__1");
-    let context = SandboxContext {
-        workspace_root: workspace_root.clone(),
-        container_root: dir.path().join("workspaces"),
-        allow_commands: Arc::default(),
-    };
-    let request = serde_json::from_value(json!({
-        "user_id": "user",
-        "session_id": "thread",
-        "tool": "写入文件"
-    }))
-    .unwrap();
-    let result = execute_with_runtime(
-        &runtime,
-        config,
-        &request,
-        &context,
-        &json!({"path":"probe.txt", "content":"ok"}),
-    )
-    .await;
-    assert!(result.ok, "{}: {}", result.error, result.data);
+    assert_eq!(config.storage.backend, "postgres");
     assert_eq!(
-        tokio::fs::read_to_string(workspace_root.join("probe.txt"))
-            .await
-            .unwrap(),
-        "ok"
+        config.storage.postgres.dsn,
+        "host=fixture.invalid user=fixture dbname=fixture"
     );
+    assert_eq!(config.storage.postgres.connect_timeout_s, 7);
+    assert_eq!(config.storage.postgres.pool_size, 3);
+    assert_eq!(
+        config.storage.data_root,
+        dir.path().join("service").display().to_string()
+    );
+    assert!(!dir.path().join("service").exists());
+    assert!(!dir.path().join("sandbox").exists());
+}
+
+#[tokio::test]
+async fn unavailable_sandbox_postgres_reports_error_without_creating_sqlite() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut config = Config::default();
+    configure_sandbox_file_tool_storage_from(&mut config, &|name| match name {
+        "WUNDER_POSTGRES_DSN" => Some("host=invalid.invalid credential_marker=fixture".into()),
+        "WUNDER_STORAGE_DATA_ROOT" => Some(dir.path().join("data").display().to_string()),
+        _ => None,
+    });
+    let storage = Arc::new(SandboxStorage::default());
+    let error = match storage.get(&config).await {
+        Ok(_) => panic!("invalid deployment unexpectedly initialized"),
+        Err(error) => error,
+    };
+    assert!(error.contains("PostgreSQL storage is unavailable"));
+    assert!(!error.contains("credential_marker"));
+    assert!(!error.contains("invalid.invalid"));
+    assert!(!dir.path().join("data").exists());
+    assert!(storage.ready.get().is_none());
 }
 
 #[cfg(feature = "postgres-storage")]

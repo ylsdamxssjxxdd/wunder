@@ -149,6 +149,12 @@
                   "zh-CN/surfaces/web-admin",
                   "zh-CN/surfaces/desktop-ui"
                 ]
+              },
+              {
+                "group": "美术",
+                "pages": [
+                  "zh-CN/art/index"
+                ]
               }
             ]
           },
@@ -343,6 +349,12 @@
                   "en/surfaces/frontend",
                   "en/surfaces/web-admin",
                   "en/surfaces/desktop-ui"
+                ]
+              },
+              {
+                "group": "Art",
+                "pages": [
+                  "en/art/index"
                 ]
               }
             ]

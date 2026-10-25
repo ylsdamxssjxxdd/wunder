@@ -1,0 +1,706 @@
+{
+  "schema": 1,
+  "suite": "hive-api-experience",
+  "environment": {
+    "system": "Windows",
+    "release": "11",
+    "machine": "AMD64",
+    "logical_cpus": 32
+  },
+  "workload": {
+    "cases": [
+      "login",
+      "session_catalog",
+      "stream",
+      "slow_consumer",
+      "cancel_resume",
+      "queue",
+      "parallel_threads",
+      "isolation",
+      "workspace",
+      "large_chat",
+      "restart_recovery"
+    ],
+    "profile": "smoke",
+    "user_rounds": 100,
+    "model_requests_per_turn": 100,
+    "chunks": 8,
+    "interval_ms": 8,
+    "seed": 42
+  },
+  "execution": {
+    "mode": "compose-postgres-http-websocket",
+    "worker_threads": 4,
+    "engine": "29.2.1",
+    "compose": "5.1.0",
+    "runtime_image_id": "sha256:341e93ccb420d410d88306e51cb7d420de8cd90639be3681970e6da27bbcd579",
+    "postgres_image_id": "sha256:fe03a7605299a34ddf5e4f285dff78c3d7190a576b3c6b46f2fcff69f4bffd54",
+    "capacity": "32 33462280192 x86_64 linux"
+  },
+  "samples": [
+    {
+      "status": "ok",
+      "metrics": {
+        "login_ms": [
+          38.58699999545934
+        ]
+      },
+      "assertions": 2,
+      "case": "login",
+      "run": 0,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "create_ms": [
+          13.92199999827426
+        ],
+        "catalog_ms": [
+          77.39990000118269
+        ],
+        "empty_bootstrap_ms": [
+          66.04050000169082
+        ]
+      },
+      "assertions": 4,
+      "response_bytes": 710,
+      "case": "session_catalog",
+      "run": 0,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "send_to_first_text_ms": [
+          2017.4706999969203
+        ],
+        "send_to_terminal_ms": [
+          3113.530399998126
+        ],
+        "durable_read_ms": [
+          75.47239999985322
+        ],
+        "provider_to_first_ms": [
+          8.26796
+        ],
+        "provider_stream_ms": [
+          58.867441
+        ]
+      },
+      "assertions": 8,
+      "events": 16,
+      "deltas": 8,
+      "response_bytes": 3075,
+      "case": "stream",
+      "run": 0,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "send_to_first_text_ms": [
+          1950.4526999953669
+        ],
+        "send_to_terminal_ms": [
+          3083.84020000085
+        ],
+        "durable_read_ms": [
+          81.37110000097891
+        ],
+        "provider_to_first_ms": [
+          8.295023
+        ],
+        "provider_stream_ms": [
+          59.12194
+        ]
+      },
+      "assertions": 8,
+      "events": 17,
+      "deltas": 8,
+      "response_bytes": 3075,
+      "case": "slow_consumer",
+      "run": 0,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "send_to_first_text_ms": [
+          1521.289500000421
+        ],
+        "send_to_terminal_ms": [
+          2633.907100003853
+        ],
+        "durable_read_ms": [
+          79.9918999982765
+        ],
+        "provider_to_first_ms": [
+          8.222379
+        ],
+        "provider_stream_ms": [
+          58.504681
+        ],
+        "cancel_ack_ms": [
+          694.145399997069
+        ],
+        "cancel_to_settled_ms": [
+          753.5933999970439
+        ]
+      },
+      "assertions": 10,
+      "events": 16,
+      "deltas": 8,
+      "response_bytes": 4281,
+      "case": "cancel_resume",
+      "run": 0,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "enqueue_ms": [
+          368.13940000138246,
+          336.82930000213673
+        ],
+        "queue_read_ms": [
+          7.459199994627852
+        ],
+        "reorder_ms": [
+          11.646999999356922
+        ],
+        "queued_cancel_ms": [
+          1312.8687999997055
+        ]
+      },
+      "assertions": 6,
+      "case": "queue",
+      "run": 0,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "batch_ms": [
+          6331.960799994704
+        ],
+        "send_to_first_text_ms": [
+          2052.2409999975935,
+          1899.5778000025894
+        ],
+        "send_to_terminal_ms": [
+          3142.353600000206,
+          3053.497700006119
+        ],
+        "durable_read_ms": [
+          75.76929999777349,
+          83.06479999737348
+        ],
+        "provider_to_first_ms": [
+          8.232614,
+          8.257848
+        ],
+        "provider_stream_ms": [
+          59.297328,
+          58.563677
+        ]
+      },
+      "assertions": 16,
+      "workers": 2,
+      "case": "parallel_threads",
+      "run": 0,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "cross_user_rejection_ms": [
+          7.244899999932386,
+          6.063999993784819
+        ],
+        "anonymous_rejection_ms": [
+          2.8407999998307787
+        ]
+      },
+      "assertions": 3,
+      "case": "isolation",
+      "run": 0,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "first_directory_page_ms": [
+          91.266600000381
+        ],
+        "older_directory_page_ms": [
+          66.76380000135396
+        ],
+        "file_read_ms": [
+          28.099199997086544
+        ]
+      },
+      "assertions": 4,
+      "entries": 24,
+      "response_bytes": [
+        1985,
+        1989
+      ],
+      "case": "workspace",
+      "run": 0,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "chat_bootstrap_ms": [
+          119.4482999999309
+        ],
+        "older_chat_page_ms": [
+          97.695799995563
+        ],
+        "body_read_ms": [
+          90.22030000051018
+        ]
+      },
+      "assertions": 8,
+      "rows": [
+        12,
+        12
+      ],
+      "response_bytes": [
+        38925,
+        39554,
+        948
+      ],
+      "case": "large_chat",
+      "run": 0,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "send_to_first_text_ms": [
+          1662.9443000056199
+        ],
+        "send_to_terminal_ms": [
+          2766.581900003075
+        ],
+        "durable_read_ms": [
+          85.78239999769721
+        ],
+        "provider_to_first_ms": [
+          8.236788
+        ],
+        "provider_stream_ms": [
+          58.273456
+        ],
+        "restart_to_ready_ms": [
+          1098.6882000070182
+        ],
+        "restored_chat_read_ms": [
+          112.56619999767281
+        ]
+      },
+      "assertions": 9,
+      "events": 17,
+      "deltas": 8,
+      "response_bytes": 5280,
+      "case": "restart_recovery",
+      "run": 0,
+      "warmup": false
+    }
+  ],
+  "captured_at_unix": 1792853590.7377894,
+  "compose_to_ready_ms": 5014.378300002136,
+  "artifacts": {
+    "server_sha256": "0c07f75bcf0ac6d90f488f18f05aee1f2251f8ce641ef3ab607c54b916963627"
+  },
+  "docker": {
+    "engine": "29.2.1",
+    "compose": "5.1.0",
+    "runtime_image_id": "sha256:341e93ccb420d410d88306e51cb7d420de8cd90639be3681970e6da27bbcd579",
+    "postgres_image_id": "sha256:fe03a7605299a34ddf5e4f285dff78c3d7190a576b3c6b46f2fcff69f4bffd54",
+    "capacity": "32 33462280192 x86_64 linux"
+  },
+  "fixture": {
+    "generation_ms": 135231.34699999355,
+    "user_turns": 100,
+    "model_requests": 10000,
+    "model_actions": 17954,
+    "tool_calls": 7954,
+    "storage_bytes": {
+      "queue_bytes": 94208,
+      "queue_wal_bytes": 0,
+      "rollout_raw_bytes": 75711656,
+      "rollout_zstd_bytes": 0,
+      "state_bytes": 69632,
+      "state_wal_bytes": 0,
+      "thread_history_bytes": 113033216,
+      "thread_history_wal_bytes": 0,
+      "total_bytes": 188908712
+    }
+  },
+  "summary": {
+    "login": {
+      "runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "metrics": {
+        "login_ms": {
+          "count": 1,
+          "p50": 38.58699999545934,
+          "p95": 38.58699999545934,
+          "maximum": 38.58699999545934
+        }
+      }
+    },
+    "session_catalog": {
+      "runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "metrics": {
+        "catalog_ms": {
+          "count": 1,
+          "p50": 77.39990000118269,
+          "p95": 77.39990000118269,
+          "maximum": 77.39990000118269
+        },
+        "create_ms": {
+          "count": 1,
+          "p50": 13.92199999827426,
+          "p95": 13.92199999827426,
+          "maximum": 13.92199999827426
+        },
+        "empty_bootstrap_ms": {
+          "count": 1,
+          "p50": 66.04050000169082,
+          "p95": 66.04050000169082,
+          "maximum": 66.04050000169082
+        }
+      }
+    },
+    "stream": {
+      "runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "metrics": {
+        "durable_read_ms": {
+          "count": 1,
+          "p50": 75.47239999985322,
+          "p95": 75.47239999985322,
+          "maximum": 75.47239999985322
+        },
+        "provider_stream_ms": {
+          "count": 1,
+          "p50": 58.867441,
+          "p95": 58.867441,
+          "maximum": 58.867441
+        },
+        "provider_to_first_ms": {
+          "count": 1,
+          "p50": 8.26796,
+          "p95": 8.26796,
+          "maximum": 8.26796
+        },
+        "send_to_first_text_ms": {
+          "count": 1,
+          "p50": 2017.4706999969203,
+          "p95": 2017.4706999969203,
+          "maximum": 2017.4706999969203
+        },
+        "send_to_terminal_ms": {
+          "count": 1,
+          "p50": 3113.530399998126,
+          "p95": 3113.530399998126,
+          "maximum": 3113.530399998126
+        }
+      }
+    },
+    "slow_consumer": {
+      "runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "metrics": {
+        "durable_read_ms": {
+          "count": 1,
+          "p50": 81.37110000097891,
+          "p95": 81.37110000097891,
+          "maximum": 81.37110000097891
+        },
+        "provider_stream_ms": {
+          "count": 1,
+          "p50": 59.12194,
+          "p95": 59.12194,
+          "maximum": 59.12194
+        },
+        "provider_to_first_ms": {
+          "count": 1,
+          "p50": 8.295023,
+          "p95": 8.295023,
+          "maximum": 8.295023
+        },
+        "send_to_first_text_ms": {
+          "count": 1,
+          "p50": 1950.4526999953669,
+          "p95": 1950.4526999953669,
+          "maximum": 1950.4526999953669
+        },
+        "send_to_terminal_ms": {
+          "count": 1,
+          "p50": 3083.84020000085,
+          "p95": 3083.84020000085,
+          "maximum": 3083.84020000085
+        }
+      }
+    },
+    "cancel_resume": {
+      "runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "metrics": {
+        "cancel_ack_ms": {
+          "count": 1,
+          "p50": 694.145399997069,
+          "p95": 694.145399997069,
+          "maximum": 694.145399997069
+        },
+        "cancel_to_settled_ms": {
+          "count": 1,
+          "p50": 753.5933999970439,
+          "p95": 753.5933999970439,
+          "maximum": 753.5933999970439
+        },
+        "durable_read_ms": {
+          "count": 1,
+          "p50": 79.9918999982765,
+          "p95": 79.9918999982765,
+          "maximum": 79.9918999982765
+        },
+        "provider_stream_ms": {
+          "count": 1,
+          "p50": 58.504681,
+          "p95": 58.504681,
+          "maximum": 58.504681
+        },
+        "provider_to_first_ms": {
+          "count": 1,
+          "p50": 8.222379,
+          "p95": 8.222379,
+          "maximum": 8.222379
+        },
+        "send_to_first_text_ms": {
+          "count": 1,
+          "p50": 1521.289500000421,
+          "p95": 1521.289500000421,
+          "maximum": 1521.289500000421
+        },
+        "send_to_terminal_ms": {
+          "count": 1,
+          "p50": 2633.907100003853,
+          "p95": 2633.907100003853,
+          "maximum": 2633.907100003853
+        }
+      }
+    },
+    "queue": {
+      "runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "metrics": {
+        "enqueue_ms": {
+          "count": 2,
+          "p50": 336.82930000213673,
+          "p95": 368.13940000138246,
+          "maximum": 368.13940000138246
+        },
+        "queue_read_ms": {
+          "count": 1,
+          "p50": 7.459199994627852,
+          "p95": 7.459199994627852,
+          "maximum": 7.459199994627852
+        },
+        "queued_cancel_ms": {
+          "count": 1,
+          "p50": 1312.8687999997055,
+          "p95": 1312.8687999997055,
+          "maximum": 1312.8687999997055
+        },
+        "reorder_ms": {
+          "count": 1,
+          "p50": 11.646999999356922,
+          "p95": 11.646999999356922,
+          "maximum": 11.646999999356922
+        }
+      }
+    },
+    "parallel_threads": {
+      "runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "metrics": {
+        "batch_ms": {
+          "count": 1,
+          "p50": 6331.960799994704,
+          "p95": 6331.960799994704,
+          "maximum": 6331.960799994704
+        },
+        "durable_read_ms": {
+          "count": 2,
+          "p50": 75.76929999777349,
+          "p95": 83.06479999737348,
+          "maximum": 83.06479999737348
+        },
+        "provider_stream_ms": {
+          "count": 2,
+          "p50": 58.563677,
+          "p95": 59.297328,
+          "maximum": 59.297328
+        },
+        "provider_to_first_ms": {
+          "count": 2,
+          "p50": 8.232614,
+          "p95": 8.257848,
+          "maximum": 8.257848
+        },
+        "send_to_first_text_ms": {
+          "count": 2,
+          "p50": 1899.5778000025894,
+          "p95": 2052.2409999975935,
+          "maximum": 2052.2409999975935
+        },
+        "send_to_terminal_ms": {
+          "count": 2,
+          "p50": 3053.497700006119,
+          "p95": 3142.353600000206,
+          "maximum": 3142.353600000206
+        }
+      }
+    },
+    "isolation": {
+      "runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "metrics": {
+        "anonymous_rejection_ms": {
+          "count": 1,
+          "p50": 2.8407999998307787,
+          "p95": 2.8407999998307787,
+          "maximum": 2.8407999998307787
+        },
+        "cross_user_rejection_ms": {
+          "count": 2,
+          "p50": 6.063999993784819,
+          "p95": 7.244899999932386,
+          "maximum": 7.244899999932386
+        }
+      }
+    },
+    "workspace": {
+      "runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "metrics": {
+        "file_read_ms": {
+          "count": 1,
+          "p50": 28.099199997086544,
+          "p95": 28.099199997086544,
+          "maximum": 28.099199997086544
+        },
+        "first_directory_page_ms": {
+          "count": 1,
+          "p50": 91.266600000381,
+          "p95": 91.266600000381,
+          "maximum": 91.266600000381
+        },
+        "older_directory_page_ms": {
+          "count": 1,
+          "p50": 66.76380000135396,
+          "p95": 66.76380000135396,
+          "maximum": 66.76380000135396
+        }
+      }
+    },
+    "large_chat": {
+      "runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "metrics": {
+        "body_read_ms": {
+          "count": 1,
+          "p50": 90.22030000051018,
+          "p95": 90.22030000051018,
+          "maximum": 90.22030000051018
+        },
+        "chat_bootstrap_ms": {
+          "count": 1,
+          "p50": 119.4482999999309,
+          "p95": 119.4482999999309,
+          "maximum": 119.4482999999309
+        },
+        "older_chat_page_ms": {
+          "count": 1,
+          "p50": 97.695799995563,
+          "p95": 97.695799995563,
+          "maximum": 97.695799995563
+        }
+      }
+    },
+    "restart_recovery": {
+      "runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "metrics": {
+        "durable_read_ms": {
+          "count": 1,
+          "p50": 85.78239999769721,
+          "p95": 85.78239999769721,
+          "maximum": 85.78239999769721
+        },
+        "provider_stream_ms": {
+          "count": 1,
+          "p50": 58.273456,
+          "p95": 58.273456,
+          "maximum": 58.273456
+        },
+        "provider_to_first_ms": {
+          "count": 1,
+          "p50": 8.236788,
+          "p95": 8.236788,
+          "maximum": 8.236788
+        },
+        "restart_to_ready_ms": {
+          "count": 1,
+          "p50": 1098.6882000070182,
+          "p95": 1098.6882000070182,
+          "maximum": 1098.6882000070182
+        },
+        "restored_chat_read_ms": {
+          "count": 1,
+          "p50": 112.56619999767281,
+          "p95": 112.56619999767281,
+          "maximum": 112.56619999767281
+        },
+        "send_to_first_text_ms": {
+          "count": 1,
+          "p50": 1662.9443000056199,
+          "p95": 1662.9443000056199,
+          "maximum": 1662.9443000056199
+        },
+        "send_to_terminal_ms": {
+          "count": 1,
+          "p50": 2766.581900003075,
+          "p95": 2766.581900003075,
+          "maximum": 2766.581900003075
+        }
+      }
+    }
+  },
+  "correctness_passed": true,
+  "passed": true,
+  "verification_scope": {
+    "mode": "prebuilt-linux-release",
+    "source_rebuilt_this_task": false,
+    "note": "既有正式构建的驱动验收；不是当前工作区源码或稳定性能基线。执行期间有其他编译负载。"
+  }
+}

@@ -42,6 +42,7 @@ import { WindowChrome, WindowFrame } from "window_chrome.slint";
 export { Theme, DesktopPage, Conversation, WorkspaceCard, SidebarRow, CloudThreadCard, TextBlock, WorkflowLine, WorkflowSection, ToolWorkflowEntry, ProcessEntry, TimelineRow, TimelineCounts, TurnStatMetric, PatchCard, PatchLine, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, TrajRow, TrajSpan, TrajTick, TrajBoundary, TrajTiming, TrajSection, TrajTab, CronCard, CronRunCard, PromptPackCard, ChannelCatalogCard, ChannelBindingCard, ChannelLogCard, AvatarOption, AvatarColorChip, CompanionCard, PlanStep, InterlinkApproval, WorkspaceFileRow }
 export { AppTray } from "tray.slint";
 export { TrayNotice } from "tray-notice.slint";
+export { CompletionNotice } from "completion-notice.slint";
 export { HelpWindow } from "help_window.slint";
 export { ScreenshotOverlay } from "screenshot_overlay.slint";
 
@@ -1037,12 +1038,20 @@ export component MainWindow inherits Window {
                 file-drag(index) => { root.ws-file-drag(index); }
                 file-drop(event) => { root.ws-file-drop(event); }
             }
-            // Sidebar width drag handle: press and drag to resize, clamped so
-            // the tree never collapses or eats the chat area.
+            // Sidebar width drag handle: a 6px hit strip around a hairline
+            // marker. Only hover and drag earn the 2px accent pill; painting
+            // the whole strip would read as a divider, not an affordance.
             Rectangle {
                 width: 6px;
-                background: resize-touch.pressed ? Theme.accent
-                    : resize-touch.has-hover ? Theme.border-strong : transparent;
+                background: transparent;
+                Rectangle {
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                    width: resize-touch.has-hover || resize-touch.pressed ? 2px : 0px;
+                    height: resize-touch.pressed ? 40px : 32px;
+                    border-radius: 1px;
+                    background: Theme.accent;
+                }
                 resize-touch := TouchArea {
                     mouse-cursor: ew-resize;
                     // `mouse-x` is local to this handle. Resizing moves the

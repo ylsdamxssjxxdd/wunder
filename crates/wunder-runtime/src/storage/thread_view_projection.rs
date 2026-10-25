@@ -148,6 +148,60 @@ pub(crate) fn question_panel(
     })
 }
 
+/// Recover a question panel from the bounded durable item shape.  Depending on
+/// the writer/version it may live in assistant `meta.panel`, directly in a
+/// tool result, or under `data`/`payload` as the compact tool carrier.
+pub(crate) fn extract_question_panel(
+    payload: &Value,
+) -> Option<wunder_core::thread_view::ThreadQuestionPanel> {
+    fn visit(
+        value: &Value,
+        inherited_status: Option<&str>,
+        depth: usize,
+    ) -> Option<wunder_core::thread_view::ThreadQuestionPanel> {
+        if depth > 6 || !value.is_object() {
+            return None;
+        }
+        let status = value
+            .get("status")
+            .or_else(|| value.get("state"))
+            .and_then(Value::as_str)
+            .or(inherited_status);
+        if value.get("questions").and_then(Value::as_array).is_some() {
+            let mut panel = question_panel(value)?;
+            panel.status = match status
+                .unwrap_or("pending")
+                .trim()
+                .to_ascii_lowercase()
+                .as_str()
+            {
+                "answered" | "completed" => "answered",
+                "dismissed" | "cancelled" | "canceled" => "dismissed",
+                _ => "pending",
+            }
+            .into();
+            return Some(panel);
+        }
+        for key in [
+            "panel",
+            "question_panel",
+            "questionPanel",
+            "data",
+            "result",
+            "payload",
+            "meta",
+        ] {
+            if let Some(nested) = value.get(key) {
+                if let Some(panel) = visit(nested, status, depth + 1) {
+                    return Some(panel);
+                }
+            }
+        }
+        None
+    }
+    visit(payload, None, 0)
+}
+
 pub(crate) fn settle_question_panel(row: &mut ChatViewRow) {
     if let Some(panel) = row.assistant.question_panel.as_mut() {
         if matches!(
@@ -956,6 +1010,7 @@ pub(crate) fn upsert_subagent_card(cards: &mut Vec<Value>, card: Value) {
 mod tests {
     use super::*;
     use serde_json::json;
+    use wunder_core::thread_view::{ThreadQuestion, ThreadQuestionPanel};
 
     fn project(kind: &str, item: &Value) -> TrajectoryViewRow {
         trajectory(
@@ -1046,6 +1101,55 @@ mod tests {
         assert!(!is_compaction_system_message("system_message", &prompt));
         redact_internal_context(&mut prompt);
         assert!(prompt.get("content").is_none());
+    }
+
+    #[test]
+    fn question_panel_extraction_unwraps_carrier_and_preserves_status() {
+        let pending = extract_question_panel(&json!({
+            "action": "question_panel",
+            "state": "awaiting_input",
+            "data": {"questions": [{"question": "Choose", "options": [{"label": "A"}]}]}
+        }))
+        .expect("carrier panel");
+        assert_eq!(pending.status, "pending");
+        assert_eq!(pending.questions[0].options[0].label, "A");
+
+        let answered = extract_question_panel(&json!({
+            "data": {"state": "answered", "panel": {
+                "questions": [{"question": "Choose", "options": [{"label": "A"}]}]
+            }}
+        }))
+        .expect("answered panel");
+        assert_eq!(answered.status, "answered");
+    }
+
+    #[test]
+    fn question_panel_settles_from_terminal_turn_status() {
+        let mut row = ChatViewRow {
+            status: "cancelled".into(),
+            assistant: ViewMessage {
+                question_panel: Some(ThreadQuestionPanel {
+                    questions: vec![ThreadQuestion::default()],
+                    keep_open: true,
+                    status: "pending".into(),
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        settle_question_panel(&mut row);
+        assert_eq!(
+            row.assistant.question_panel.as_ref().unwrap().status,
+            "dismissed"
+        );
+
+        row.status = "completed".into();
+        row.assistant.question_panel.as_mut().unwrap().status = "pending".into();
+        settle_question_panel(&mut row);
+        assert_eq!(
+            row.assistant.question_panel.as_ref().unwrap().status,
+            "answered"
+        );
     }
 
     #[test]

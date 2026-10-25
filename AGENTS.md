@@ -49,4 +49,4 @@
 ## 环境工程
 - 本地版本 蛹和舵机 靠补充包预制运行环境，面向32位win7以及64位ubuntu18.04，包含chrome109 python3.8 rg git ffmpeg等组件
 
-- 服务版本 舰体 靠ubuntu22.04 docker镜像预制运行环境，部分可能频繁更新的组件，如remotion等放置于config\runtime，通过挂载到镜像中使用
+- 服务版本 舰体 靠ubuntu22.04 docker镜像预制运行环境，部分可能频繁更新的组件，如remotion、blender等放置于config\runtime，通过挂载到镜像中使用；blender来自Debian bookworm官方源（与运行镜像同glibc/Python基线，纯CPU渲染），x64与arm64双架构同版本

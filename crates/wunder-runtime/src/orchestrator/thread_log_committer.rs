@@ -1,6 +1,6 @@
 //! Runtime commit boundary: canonical rollout first, derived history second.
 use crate::core::blocking;
-use crate::storage::{thread_store::LocalThreadStore, StorageBackend};
+use crate::storage::{RuntimeThreadStore, StorageBackend};
 use anyhow::{bail, Result};
 use parking_lot::Mutex;
 use serde_json::{json, Value};
@@ -11,7 +11,7 @@ use wunder_core::thread_store::*;
 
 pub(crate) struct ThreadLogCommitter {
     storage: Arc<dyn StorageBackend>,
-    threads: Arc<LocalThreadStore>,
+    threads: Arc<RuntimeThreadStore>,
     hub: Arc<super::thread_change_hub::ThreadChangeHub>,
     gates: Mutex<HashMap<String, Weak<AsyncMutex<()>>>>,
 }
@@ -20,7 +20,7 @@ impl ThreadLogCommitter {
     pub fn new(
         storage: Arc<dyn StorageBackend>,
         hub: Arc<super::thread_change_hub::ThreadChangeHub>,
-        threads: Arc<LocalThreadStore>,
+        threads: Arc<RuntimeThreadStore>,
     ) -> Self {
         Self {
             storage,
@@ -116,7 +116,8 @@ impl ThreadLogCommitter {
         }
         let now = chrono::Utc::now().timestamp_millis();
         let rollout = RolloutId::new(uuid::Uuid::new_v4().to_string())?;
-        self.threads
+        let created = self
+            .threads
             .create_thread(CreateThreadRequest {
                 metadata: ThreadMetadata {
                     thread_id: thread.clone(),
@@ -129,7 +130,7 @@ impl ThreadLogCommitter {
                     pinned: false,
                 },
                 session_meta: SessionMeta {
-                    thread_id: thread,
+                    thread_id: thread.clone(),
                     rollout_id: rollout,
                     created_at_ms: now,
                     source: "runtime".into(),
@@ -140,8 +141,34 @@ impl ThreadLogCommitter {
                     capabilities: Value::Null,
                 },
             })
-            .await?;
-        Ok(prompt.to_owned())
+            .await;
+        match created {
+            Ok(_) => Ok(prompt.to_owned()),
+            Err(error @ ThreadStoreError::Conflict { .. }) => {
+                // Another process may freeze the same newly admitted thread
+                // after our initial read. Reuse only its valid owned snapshot.
+                let admissions = self.threads.admission_store()?;
+                let owner = user.to_owned();
+                let id = session.to_owned();
+                blocking::run_db("thread_store.freeze_owner", move || {
+                    admissions.check_owner(&owner, &id)
+                })
+                .await?;
+                let metadata = self.threads.get_thread(&thread).await;
+                let frozen = self.threads.session_meta(&thread).await;
+                match (metadata, frozen) {
+                    (Ok(metadata), Ok(frozen))
+                        if metadata.thread_id == thread
+                            && frozen.thread_id == thread
+                            && metadata.current_rollout_id == frozen.rollout_id =>
+                    {
+                        Ok(frozen.initial_system_prompt)
+                    }
+                    _ => Err(error.into()),
+                }
+            }
+            Err(error) => Err(error.into()),
+        }
     }
     pub(crate) async fn begin_turn(
         &self,
@@ -168,6 +195,17 @@ impl ThreadLogCommitter {
     ) -> Result<bool> {
         let gate = self.gate(session)?;
         let _gate = gate.lock().await;
+        if let Some(changed) = self
+            .threads
+            .update_service_turn(user, session, turn, status, _summary, payload)
+            .await?
+        {
+            if changed {
+                self.hub
+                    .publish(session, self.latest_position(session).await?);
+            }
+            return Ok(changed);
+        }
         let admissions = self.threads.admission_store()?;
         let owner = user.to_owned();
         let id = session.to_owned();
@@ -429,5 +467,141 @@ impl ThreadLogCommitter {
                 .publish(session, self.latest_position(session).await?);
         }
         Ok(changed)
+    }
+}
+
+#[cfg(all(test, feature = "postgres-storage"))]
+mod postgres_tests {
+    use super::*;
+    use crate::storage::{PostgresStorage, ThreadLogStore};
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore = "requires an isolated WUNDER_TEST_POSTGRES_DSN"]
+    async fn postgres_concurrent_prompt_freeze_reuses_the_winner() {
+        let storage = Arc::new(
+            PostgresStorage::new(std::env::var("WUNDER_TEST_POSTGRES_DSN").unwrap(), 5, 8).unwrap(),
+        );
+        let store = storage.service_threads().unwrap();
+        let session = format!("fixture-{}", uuid::Uuid::new_v4());
+        let first = ThreadLogCommitter::new(
+            storage.clone(),
+            Arc::new(super::super::thread_change_hub::ThreadChangeHub::new()),
+            Arc::new(RuntimeThreadStore::postgres(store.clone())),
+        );
+        let second = ThreadLogCommitter::new(
+            storage.clone(),
+            Arc::new(super::super::thread_change_hub::ThreadChangeHub::new()),
+            Arc::new(RuntimeThreadStore::postgres(store.clone())),
+        );
+        let (a, b) = tokio::join!(
+            first.freeze_session("fixture-user", &session, "fixture prompt a", ""),
+            second.freeze_session("fixture-user", &session, "fixture prompt b", "")
+        );
+        let a = a.unwrap();
+        let b = b.unwrap();
+        assert_eq!(a, b);
+        let thread = ThreadId::new(&session).unwrap();
+        let frozen = store.storage_session_meta(&thread).await.unwrap();
+        assert_eq!(frozen.initial_system_prompt, a);
+        assert!(first
+            .freeze_session(
+                "fixture-other-owner",
+                &session,
+                "different instructions",
+                ""
+            )
+            .await
+            .is_err());
+        assert_eq!(
+            first
+                .freeze_session("fixture-user", &session, "later instructions", "")
+                .await
+                .unwrap(),
+            a
+        );
+        // A frozen empty thread has exactly its initial SessionMeta record.
+        assert_eq!(first.latest_position(&session).await.unwrap(), 1);
+        store.delete_thread(&thread).await.unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore = "requires an isolated WUNDER_TEST_POSTGRES_DSN"]
+    async fn postgres_production_turn_committer_finalizes_atomically() {
+        let storage = Arc::new(
+            PostgresStorage::new(std::env::var("WUNDER_TEST_POSTGRES_DSN").unwrap(), 5, 4).unwrap(),
+        );
+        let service = storage.service_threads().unwrap();
+        let runtime = Arc::new(RuntimeThreadStore::postgres(service.clone()));
+        let hub = Arc::new(super::super::thread_change_hub::ThreadChangeHub::new());
+        let committer = ThreadLogCommitter::new(storage.clone(), hub.clone(), runtime);
+        let session = format!("fixture-{}", uuid::Uuid::new_v4());
+        committer
+            .freeze_session("fixture-user", &session, "fixed fixture instructions", "")
+            .await
+            .unwrap();
+        let accepted = committer
+            .accept_turn(
+                "fixture-user",
+                &session,
+                &json!({"content":"fixture question"}),
+            )
+            .await
+            .unwrap();
+        let turn = accepted["turn_id"].as_str().unwrap();
+        let mut wake = hub.subscribe(&session);
+        let before = committer.latest_position(&session).await.unwrap();
+        assert!(committer
+            .update_turn(
+                "fixture-user",
+                &session,
+                turn,
+                "failed",
+                "",
+                &json!({"error":"x".repeat(crate::storage::rollout::ROLLOUT_MAX_RECORD_BYTES)})
+            )
+            .await
+            .is_err());
+        assert_eq!(committer.latest_position(&session).await.unwrap(), before);
+        assert!(!wake.has_changed().unwrap());
+        let admissions = service.admission_store();
+        let id = session.clone();
+        let tid = turn.to_owned();
+        let state = blocking::run_db("fixture.turn", move || admissions.turn(&id, &tid))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(state["status"], "accepted");
+        assert!(committer
+            .update_turn(
+                "fixture-user",
+                &session,
+                turn,
+                "completed",
+                "",
+                &Value::Null
+            )
+            .await
+            .unwrap());
+        wake.changed().await.unwrap();
+        let cursor = *wake.borrow_and_update();
+        assert_eq!(cursor, committer.latest_position(&session).await.unwrap());
+        assert_eq!(cursor, before + 4);
+        assert!(!committer
+            .update_turn("fixture-user", &session, turn, "failed", "", &Value::Null)
+            .await
+            .unwrap());
+        assert!(!wake.has_changed().unwrap());
+        let state = storage
+            .get_thread_turn("fixture-user", &session, turn, 0, 100, true)
+            .unwrap()
+            .unwrap();
+        assert_eq!(state["status"], "completed");
+        assert_eq!(state["items"].as_array().unwrap().len(), 1);
+        let payload = service.admission_store().pending(&session, turn).unwrap();
+        assert!(payload.is_none());
+        service
+            .delete_thread(&ThreadId::new(session).unwrap())
+            .await
+            .unwrap();
     }
 }

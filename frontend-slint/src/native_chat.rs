@@ -1362,6 +1362,18 @@ fn refresh_chat(app: &MainWindow, state: Rc<RefCell<State>>, silent: bool) {
                     set_goal_clock(&app, active.map(|row| row.goal_seconds).unwrap_or(0));
                     app.set_goal_paused(active.is_some_and(|row| row.goal_paused));
                     update_active_thread_filter(&app, rows.iter().cloned());
+                    // Background transitions (another device, a goal round)
+                    // only surface through this poll: every row goes through
+                    // the completion gate before the projection replaces the
+                    // list. First sight only records, so startup replays
+                    // nothing.
+                    for row in rows.iter() {
+                        crate::completion_notice::observe_status(
+                            &app,
+                            row.id.as_str(),
+                            row.runtime_status.as_str(),
+                        );
+                    }
                     if !app.get_conversations().iter().eq(rows.iter().cloned()) {
                         app.set_conversations(ModelRc::new(VecModel::from(rows)));
                     }
@@ -2710,6 +2722,9 @@ fn set_session_status(app: &MainWindow, session: &str, status: &str) {
     // point update; the periodic catalogue poll is only a backstop, not the
     // path a live transition should wait for.
     crate::navigation_ui::update_thread_status(app, session, status);
+    // The hot→done completion gate must see every report, including repeated
+    // ones, so it sits outside the row-change branch above.
+    crate::completion_notice::observe_status(app, session, status);
 }
 
 // Keep the work-dock activity control in sync without inspecting message text.

@@ -12115,6 +12115,459 @@
       ]
     },
     {
+      "id": "art-overview",
+      "title": "00 整体总览",
+      "group": "美术",
+      "keywords": [
+        "美术",
+        "设计稿",
+        "整体总览",
+        "窗口布局"
+      ],
+      "blocks": [
+        {
+          "kind": "h1",
+          "spans": [
+            {
+              "text": "00 整体总览",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "lead",
+          "spans": [
+            {
+              "text": "蛹桌面端的整窗基线：1462×866 逻辑像素，侧栏 240、阅读列 1000、输入区固定 154 高。侧栏、时间线、输入区放在同一张图里，方便对照布局。",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "image",
+          "src": "00-overview",
+          "alt": "00 整体总览",
+          "caption": "00 整体总览 · 窗口 1462×866（参考截图 2558×1515，175% DPI）"
+        },
+        {
+          "kind": "tip",
+          "spans": [
+            {
+              "text": "设计稿源文件在 docs/wunder美术设计稿。改完 SVG 后运行 python scripts/render_art_previews.py，再运行 python scripts/build_help_manual.py 更新手册里的预览图。",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "art-foundations",
+      "title": "01 基础规范",
+      "group": "美术",
+      "keywords": [
+        "美术",
+        "基础规范",
+        "颜色",
+        "字阶",
+        "间距",
+        "圆角"
+      ],
+      "blocks": [
+        {
+          "kind": "h1",
+          "spans": [
+            {
+              "text": "01 基础规范",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "lead",
+          "spans": [
+            {
+              "text": "中性色、强调色、语义色、字阶、间距尺度、圆角和窗口布局基线；颜色与尺寸 token 与 design_tokens.slint 一一对应。",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "image",
+          "src": "01-foundations",
+          "alt": "01 基础规范",
+          "caption": "01 基础规范 · 色彩、文字、间距、圆角"
+        }
+      ]
+    },
+    {
+      "id": "art-icons",
+      "title": "02 图标系统",
+      "group": "美术",
+      "keywords": [
+        "美术",
+        "图标",
+        "蜂标",
+        "蛹图标",
+        "线性图标"
+      ],
+      "blocks": [
+        {
+          "kind": "h1",
+          "spans": [
+            {
+              "text": "02 图标系统",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "lead",
+          "spans": [
+            {
+              "text": "品牌图标、工具图标、状态图标和线性图标的重绘规则。应用图标是蛹；蜂标只保留为渠道与协作的辅助标识。",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "image",
+          "src": "02-icons",
+          "alt": "02 图标系统",
+          "caption": "02 图标系统 · 品牌、工具、状态与线性图标"
+        }
+      ]
+    },
+    {
+      "id": "art-shell",
+      "title": "03 外壳与侧栏",
+      "group": "美术",
+      "keywords": [
+        "美术",
+        "外壳",
+        "侧栏",
+        "标题栏",
+        "分隔柄"
+      ],
+      "blocks": [
+        {
+          "kind": "h1",
+          "spans": [
+            {
+              "text": "03 外壳与侧栏",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "lead",
+          "spans": [
+            {
+              "text": "标题栏、侧栏宽度、分组、工作区行、线程行、工作目录工具条，以及分隔柄在静止、悬停、拖拽三态下的尺寸。侧栏分隔柄静止时不画条，悬停显示 2×32 胶囊。",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "image",
+          "src": "03-shell-sidebar",
+          "alt": "03 外壳与侧栏",
+          "caption": "03 外壳与侧栏 · 标题栏、侧栏、分隔柄"
+        }
+      ]
+    },
+    {
+      "id": "art-timeline",
+      "title": "04 会话时间线",
+      "group": "美术",
+      "keywords": [
+        "美术",
+        "时间线",
+        "消息",
+        "回合页脚",
+        "状态胶囊"
+      ],
+      "blocks": [
+        {
+          "kind": "h1",
+          "spans": [
+            {
+              "text": "04 会话时间线",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "lead",
+          "spans": [
+            {
+              "text": "阅读列与滚动、用户消息、回合页脚、运行状态胶囊、Markdown 降级样式和空态。流式输出只更新活动尾块，历史块保持稳定。",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "image",
+          "src": "04-timeline",
+          "alt": "04 会话时间线",
+          "caption": "04 会话时间线 · 消息、页脚、状态胶囊"
+        }
+      ]
+    },
+    {
+      "id": "art-process",
+      "title": "05 过程与工具",
+      "group": "美术",
+      "keywords": [
+        "美术",
+        "过程",
+        "工具",
+        "思考",
+        "子智能体"
+      ],
+      "blocks": [
+        {
+          "kind": "h1",
+          "spans": [
+            {
+              "text": "05 过程与工具",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "lead",
+          "spans": [
+            {
+              "text": "工作过程条、思考条目、工具行、展开后的输出面板、工具组和子智能体卡；各状态的图标、折叠预算与缩进关系都在图里。",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "image",
+          "src": "05-process-tools",
+          "alt": "05 过程与工具",
+          "caption": "05 过程与工具 · 过程条、工具行、子智能体"
+        }
+      ]
+    },
+    {
+      "id": "art-plan",
+      "title": "06 计划与问询",
+      "group": "美术",
+      "keywords": [
+        "美术",
+        "计划",
+        "问询",
+        "目标",
+        "无偏好"
+      ],
+      "blocks": [
+        {
+          "kind": "h1",
+          "spans": [
+            {
+              "text": "06 计划与问询",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "lead",
+          "spans": [
+            {
+              "text": "计划胶囊、展开卡片、目标横幅和问询面板。选项行包含「无偏好」与「其他」，问询底部不设独立提交键。",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "image",
+          "src": "06-plan-inquiry",
+          "alt": "06 计划与问询",
+          "caption": "06 计划与问询 · 计划卡、目标横幅、问询面板"
+        }
+      ]
+    },
+    {
+      "id": "art-composer",
+      "title": "07 输入区",
+      "group": "美术",
+      "keywords": [
+        "美术",
+        "输入区",
+        "发送",
+        "停止",
+        "队列"
+      ],
+      "blocks": [
+        {
+          "kind": "h1",
+          "spans": [
+            {
+              "text": "07 输入区",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "lead",
+          "spans": [
+            {
+              "text": "输入卡 972×100、底栏 30 高、附件行、录音中、生成中与发送停用等状态，以及队列和模型菜单的规格。停止方块 10.5，发送箭头 16。",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "image",
+          "src": "07-composer",
+          "alt": "07 输入区",
+          "caption": "07 输入区 · 输入卡、底栏、停止与队列"
+        }
+      ]
+    },
+    {
+      "id": "art-settings",
+      "title": "08 设置与弹窗",
+      "group": "美术",
+      "keywords": [
+        "美术",
+        "设置",
+        "弹窗",
+        "控件",
+        "校验"
+      ],
+      "blocks": [
+        {
+          "kind": "h1",
+          "spans": [
+            {
+              "text": "08 设置与弹窗",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "lead",
+          "spans": [
+            {
+              "text": "设置行解剖、输入与选择控件、按钮、校验与提示，以及弹窗的密度和层级关系。",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "image",
+          "src": "08-settings-dialogs",
+          "alt": "08 设置与弹窗",
+          "caption": "08 设置与弹窗 · 设置行、控件、校验"
+        }
+      ]
+    },
+    {
+      "id": "art-motion",
+      "title": "09 交互状态与动效",
+      "group": "美术",
+      "keywords": [
+        "美术",
+        "交互",
+        "状态",
+        "动效",
+        "键位",
+        "断点"
+      ],
+      "blocks": [
+        {
+          "kind": "h1",
+          "spans": [
+            {
+              "text": "09 交互状态与动效",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "lead",
+          "spans": [
+            {
+              "text": "行与输入状态、动效时间表、性能红线、键位、无障碍反馈和断点；长列表与流式输出期间哪些操作不能阻塞，也写在这一张。",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "image",
+          "src": "09-states-motion",
+          "alt": "09 交互状态与动效",
+          "caption": "09 交互状态与动效 · 状态、时间表、键位"
+        }
+      ]
+    },
+    {
       "id": "interlink",
       "title": "三端互通",
       "group": "能力",
@@ -15355,168 +15808,308 @@
       "topic": 16
     },
     {
-      "keyword": "三端互通",
+      "keyword": "美术",
       "topic": 18
     },
     {
-      "keyword": "设备互通",
+      "keyword": "设计稿",
       "topic": 18
     },
     {
-      "keyword": "隧道",
+      "keyword": "整体总览",
       "topic": 18
     },
     {
-      "keyword": "远程",
+      "keyword": "窗口布局",
       "topic": 18
+    },
+    {
+      "keyword": "基础规范",
+      "topic": 19
+    },
+    {
+      "keyword": "颜色",
+      "topic": 19
+    },
+    {
+      "keyword": "字阶",
+      "topic": 19
+    },
+    {
+      "keyword": "间距",
+      "topic": 19
+    },
+    {
+      "keyword": "圆角",
+      "topic": 19
+    },
+    {
+      "keyword": "图标",
+      "topic": 20
+    },
+    {
+      "keyword": "蜂标",
+      "topic": 20
+    },
+    {
+      "keyword": "蛹图标",
+      "topic": 20
+    },
+    {
+      "keyword": "线性图标",
+      "topic": 20
+    },
+    {
+      "keyword": "外壳",
+      "topic": 21
+    },
+    {
+      "keyword": "标题栏",
+      "topic": 21
+    },
+    {
+      "keyword": "分隔柄",
+      "topic": 21
+    },
+    {
+      "keyword": "时间线",
+      "topic": 22
+    },
+    {
+      "keyword": "消息",
+      "topic": 22
+    },
+    {
+      "keyword": "回合页脚",
+      "topic": 22
+    },
+    {
+      "keyword": "状态胶囊",
+      "topic": 22
+    },
+    {
+      "keyword": "过程",
+      "topic": 23
+    },
+    {
+      "keyword": "思考",
+      "topic": 23
+    },
+    {
+      "keyword": "问询",
+      "topic": 24
+    },
+    {
+      "keyword": "无偏好",
+      "topic": 24
+    },
+    {
+      "keyword": "输入区",
+      "topic": 25
+    },
+    {
+      "keyword": "发送",
+      "topic": 25
+    },
+    {
+      "keyword": "停止",
+      "topic": 25
     },
     {
       "keyword": "设置",
-      "topic": 19
+      "topic": 26
+    },
+    {
+      "keyword": "弹窗",
+      "topic": 26
+    },
+    {
+      "keyword": "控件",
+      "topic": 26
+    },
+    {
+      "keyword": "校验",
+      "topic": 26
+    },
+    {
+      "keyword": "交互",
+      "topic": 27
+    },
+    {
+      "keyword": "状态",
+      "topic": 27
+    },
+    {
+      "keyword": "动效",
+      "topic": 27
+    },
+    {
+      "keyword": "键位",
+      "topic": 27
+    },
+    {
+      "keyword": "断点",
+      "topic": 27
+    },
+    {
+      "keyword": "三端互通",
+      "topic": 28
+    },
+    {
+      "keyword": "设备互通",
+      "topic": 28
+    },
+    {
+      "keyword": "隧道",
+      "topic": 28
+    },
+    {
+      "keyword": "远程",
+      "topic": 28
     },
     {
       "keyword": "语言",
-      "topic": 19
+      "topic": 29
     },
     {
       "keyword": "主题",
-      "topic": 19
+      "topic": 29
     },
     {
       "keyword": "云账号",
-      "topic": 19
+      "topic": 29
     },
     {
       "keyword": "偏好",
-      "topic": 19
+      "topic": 29
     },
     {
       "keyword": "模型",
-      "topic": 20
+      "topic": 30
     },
     {
       "keyword": "参数",
-      "topic": 20
+      "topic": 30
     },
     {
       "keyword": "默认模型",
-      "topic": 20
+      "topic": 30
     },
     {
       "keyword": "多模态参数",
-      "topic": 20
+      "topic": 30
     },
     {
       "keyword": "温度",
-      "topic": 20
+      "topic": 30
     },
     {
       "keyword": "轮次",
-      "topic": 21
+      "topic": 31
     },
     {
       "keyword": "工具调用",
-      "topic": 21
+      "topic": 31
     },
     {
       "keyword": "文件",
-      "topic": 22
+      "topic": 32
     },
     {
       "keyword": "工作区",
-      "topic": 22
+      "topic": 32
     },
     {
       "keyword": "本地",
-      "topic": 22
+      "topic": 32
     },
     {
       "keyword": "存储",
-      "topic": 22
+      "topic": 32
     },
     {
       "keyword": "导出",
-      "topic": 22
+      "topic": 32
     },
     {
       "keyword": "截图",
-      "topic": 23
+      "topic": 33
     },
     {
       "keyword": "录音",
-      "topic": 23
+      "topic": 33
     },
     {
       "keyword": "语音识别",
-      "topic": 23
+      "topic": 33
     },
     {
       "keyword": "语音合成",
-      "topic": 23
+      "topic": 33
     },
     {
       "keyword": "图像生成",
-      "topic": 23
+      "topic": 33
     },
     {
       "keyword": "视频生成",
-      "topic": 23
+      "topic": 33
     },
     {
       "keyword": "数据",
-      "topic": 24
+      "topic": 34
     },
     {
       "keyword": "隐私",
-      "topic": 24
+      "topic": 34
     },
     {
       "keyword": "SQLite",
-      "topic": 24
+      "topic": 34
     },
     {
       "keyword": "备份",
-      "topic": 24
+      "topic": 34
     },
     {
       "keyword": "存储位置",
-      "topic": 24
+      "topic": 34
     },
     {
       "keyword": "诊断",
-      "topic": 25
+      "topic": 35
     },
     {
       "keyword": "排查",
-      "topic": 25
+      "topic": 35
     },
     {
       "keyword": "常见问题",
-      "topic": 25
+      "topic": 35
     },
     {
       "keyword": "故障",
-      "topic": 25
+      "topic": 35
     },
     {
       "keyword": "FAQ",
-      "topic": 25
+      "topic": 35
     },
     {
       "keyword": "术语",
-      "topic": 26
+      "topic": 36
     },
     {
       "keyword": "名词",
-      "topic": 26
+      "topic": 36
     },
     {
       "keyword": "定义",
-      "topic": 26
+      "topic": 36
     },
     {
       "keyword": "概念",
-      "topic": 26
+      "topic": 36
     }
   ]
 }

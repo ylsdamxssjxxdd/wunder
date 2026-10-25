@@ -18,16 +18,70 @@ impl PostgresStorage {
         else {
             return Ok(());
         };
-        self.canonical_threads()?.admission_store()?.park_queued(
-            &record.user_id,
-            &record.session_id,
-            turn,
+        // Queue transitions are part of the service control plane.  Calling
+        // `LocalThreadStore::admission_store` here used to lazily create
+        // queue_1.sqlite even when the server was configured for PostgreSQL.
+        // Keep the transition idempotent and entirely in PostgreSQL instead.
+        self.ensure_initialized()?;
+        let mut conn = self.conn()?;
+        let mut tx = conn.transaction()?;
+        tx.execute(
+            "INSERT INTO service_thread_owners(thread_id,user_id,latest_user_round)
+             VALUES($1,$2,0)
+             ON CONFLICT(thread_id) DO UPDATE SET user_id=EXCLUDED.user_id
+             WHERE service_thread_owners.user_id=EXCLUDED.user_id",
+            &[&record.session_id, &record.user_id],
         )?;
+        let owner = tx
+            .query_opt(
+                "SELECT user_id FROM service_thread_owners WHERE thread_id=$1",
+                &[&record.session_id],
+            )?
+            .map(|row| row.get::<_, String>(0));
+        if owner.as_deref() != Some(record.user_id.as_str()) {
+            anyhow::bail!("thread owner mismatch");
+        }
+        tx.execute(
+            "UPDATE service_thread_admissions SET status='queued',updated_at_ms=$3
+             WHERE thread_id=$1 AND turn_id=$2 AND status='accepted'",
+            &[
+                &record.session_id,
+                &turn,
+                &chrono::Utc::now().timestamp_millis(),
+            ],
+        )?;
+        tx.commit()?;
         Ok(())
     }
 
     pub(super) fn ensure_queue_control_schema(&self, conn: &mut PgConn<'_>) -> Result<()> {
-        conn.batch_execute("ALTER TABLE agent_tasks ADD COLUMN IF NOT EXISTS priority BIGINT NOT NULL DEFAULT 0;
+        conn.batch_execute("CREATE TABLE IF NOT EXISTS service_thread_owners (
+                thread_id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                latest_user_round BIGINT NOT NULL DEFAULT 0,
+                mutation_pending TEXT
+            );
+            CREATE INDEX IF NOT EXISTS service_thread_owners_user
+              ON service_thread_owners(user_id, thread_id);
+            CREATE TABLE IF NOT EXISTS service_thread_admissions (
+                thread_id TEXT NOT NULL,
+                turn_id TEXT NOT NULL,
+                root_turn_id TEXT NOT NULL,
+                user_round BIGINT NOT NULL,
+                client_message_id TEXT,
+                status TEXT NOT NULL,
+                input_json TEXT,
+                control_json TEXT,
+                created_at_ms BIGINT NOT NULL,
+                updated_at_ms BIGINT NOT NULL,
+                PRIMARY KEY(thread_id, turn_id),
+                UNIQUE(thread_id, client_message_id)
+            );
+            CREATE INDEX IF NOT EXISTS service_thread_admission_status
+              ON service_thread_admissions(thread_id, status, user_round);
+            CREATE INDEX IF NOT EXISTS service_thread_admission_round
+              ON service_thread_admissions(thread_id, user_round);
+            ALTER TABLE agent_tasks ADD COLUMN IF NOT EXISTS priority BIGINT NOT NULL DEFAULT 0;
             ALTER TABLE session_locks ADD COLUMN IF NOT EXISTS suspended BIGINT NOT NULL DEFAULT 0;
             CREATE INDEX IF NOT EXISTS idx_agent_tasks_session_dispatch ON agent_tasks(session_id, status, priority DESC, retry_at);
             CREATE INDEX IF NOT EXISTS idx_agent_tasks_dispatch ON agent_tasks(status, priority DESC, retry_at, created_at, task_id)")?;

@@ -54,6 +54,7 @@ services:
       - MPLCONFIGDIR=/workspaces/.matplotlib
       - WUNDER_RUNTIME_SOURCE=${WUNDER_RUNTIME_SOURCE:-/run/wunder-runtime}
       - NODE_PATH=${NODE_PATH:-/opt/wunder-runtime/remotion/node_modules:/usr/lib/node_modules:/usr/local/lib/node_modules}
+      - WUNDER_BLENDER_ROOT=${WUNDER_BLENDER_ROOT:-/opt/wunder-runtime/blender}
       - NPM_CONFIG_REGISTRY=${NPM_CONFIG_REGISTRY:-https://registry.npmmirror.com}
       - NPM_CONFIG_CACHE=${NPM_CONFIG_CACHE:-/workspaces/.cache/npm}
       - NPM_CONFIG_FUND=false
@@ -145,6 +146,7 @@ services:
       - MPLCONFIGDIR=/workspaces/.matplotlib
       - WUNDER_RUNTIME_SOURCE=${WUNDER_RUNTIME_SOURCE:-/run/wunder-runtime}
       - NODE_PATH=${NODE_PATH:-/opt/wunder-runtime/remotion/node_modules:/usr/lib/node_modules:/usr/local/lib/node_modules}
+      - WUNDER_BLENDER_ROOT=${WUNDER_BLENDER_ROOT:-/opt/wunder-runtime/blender}
       - NPM_CONFIG_REGISTRY=${NPM_CONFIG_REGISTRY:-https://registry.npmmirror.com}
       - NPM_CONFIG_CACHE=${NPM_CONFIG_CACHE:-/workspaces/.cache/npm}
       - NPM_CONFIG_FUND=false
@@ -157,7 +159,6 @@ services:
       - WUNDER_WORKSPACE_ROOT=${WUNDER_WORKSPACE_ROOT:-/workspaces}
       - WUNDER_STORAGE_BACKEND=${WUNDER_STORAGE_BACKEND:-postgres}
       - WUNDER_STORAGE_DATA_ROOT=${WUNDER_STORAGE_DATA_ROOT:-/app/config/data}
-      - WUNDER_SANDBOX_STORAGE_DATA_ROOT=${WUNDER_SANDBOX_STORAGE_DATA_ROOT:-/tmp/wunder-sandbox-storage}
       - WUNDER_THREAD_STORE_COMPRESSION_ENABLED=${WUNDER_THREAD_STORE_COMPRESSION_ENABLED:-false}
       - WUNDER_POSTGRES_DSN=${WUNDER_POSTGRES_DSN:-postgresql://wunder:wunder@wunder-postgres:5432/wunder}
       - WUNDER_CONFIG_PATH=/run/wunder-sandbox-runtime.yaml

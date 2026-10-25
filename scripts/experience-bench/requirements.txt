@@ -1,0 +1,4 @@
+# Runner dependencies; mock provider uses only the Python standard library.
+psutil>=5.9,<8
+requests>=2.28,<3
+websocket-client>=1.6,<2

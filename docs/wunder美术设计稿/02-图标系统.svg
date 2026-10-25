@@ -1,0 +1,257 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1220" viewBox="0 0 1600 1220" role="img" aria-label="蛹 桌面端图标系统">
+  <title>02 图标系统 · 蛹 Desktop UI Spec</title>
+  <defs>
+    <g id="stroke" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"></g>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" id="i-bee" viewBox="0 0 24 24">
+      <ellipse cx="12" cy="13.5" rx="4.2" ry="5.6" fill="none" stroke="currentColor" stroke-width="1.7"/>
+      <path d="M8.6 10.4C6 8.9 3.2 10.2 3.4 12.7c.2 2.2 2.8 3.2 5.4 2.3M15.4 10.4c2.6-1.5 5.4-.2 5.2 2.3-.2 2.2-2.8 3.2-5.4 2.3" fill="none" stroke="currentColor" stroke-width="1.5"/>
+      <path d="M9.2 12.2h5.6M8.8 15.2h6.4" stroke="currentColor" stroke-width="1.3" opacity=".7"/>
+      <path d="M10.4 8.7 9.7 6.9M13.6 8.7l.7-1.8" stroke="currentColor" stroke-width="1.3"/>
+    </symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" id="i-monitor" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" id="i-cloud" viewBox="0 0 24 24"><path d="M7 18h10a4 4 0 0 0 .5-8 6 6 0 0 0-11.4 1.2A4 4 0 0 0 7 18Z"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" id="i-min" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" id="i-max" viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="1.5"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" id="i-chev-d" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" id="i-ellipsis" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.7" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.7" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1.7" fill="currentColor" stroke="none"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" id="i-folder" viewBox="0 0 24 24"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H9l2 2h7.5A2.5 2.5 0 0 1 21 9.5v7A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5z"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" id="i-folder-open" viewBox="0 0 24 24"><path d="M3 8V6.5A2.5 2.5 0 0 1 5.5 4H9l2 2h7a2 2 0 0 1 2 2v1"/><path d="M3.5 10h17.8a1.5 1.5 0 0 1 1.4 2l-2 5.2A2 2 0 0 1 18.8 19H5a2 2 0 0 1-2-2z"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6"/><path d="m15 15 5 5"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" id="i-pen" viewBox="0 0 24 24"><path d="m4 20 4.2-1 11-11a2.1 2.1 0 0 0-3-3l-11 11zM13.5 6.5l4 4M4 20h5"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6.5 7l.8 12a2 2 0 0 0 2 1.9h5.4a2 2 0 0 0 2-1.9l.8-12M10 11v6M14 11v6"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" id="i-archive" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="5" rx="1.5"/><path d="M5 9v9a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9M9 13h6"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.2 4.2L19 7"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" id="i-spinner" viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9" opacity=".95"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.2V12l3 2"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" id="i-stat-check" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="m8 12.2 2.7 2.7 5.3-5.6"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" id="i-stat-error" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="m9 9 6 6M15 9l-6 6"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" id="i-pause" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M10 9v6M14 9v6"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" id="i-question" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M9.5 9.2a2.6 2.6 0 1 1 3.7 2.4c-.8.4-1.2 1-1.2 1.9v.3"/><circle cx="12" cy="17" r="1" fill="currentColor" stroke="none"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" id="i-dot" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4" fill="currentColor" stroke="none"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" id="i-eye" viewBox="0 0 24 24"><path d="M2.5 12s3.4-6 9.5-6 9.5 6 9.5 6-3.4 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.6"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" id="i-arrow-up" viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" id="i-stop" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="1.8" fill="currentColor" stroke="none"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" id="i-clip" viewBox="0 0 24 24"><path d="m20 11.5-7.8 7.8a5 5 0 0 1-7-7l8.3-8.3a3.3 3.3 0 1 1 4.7 4.7l-8.3 8.3a1.7 1.7 0 0 1-2.4-2.4l7.6-7.6"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3M9 21h6"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" id="i-camera" viewBox="0 0 24 24"><path d="M4 8.5A2.5 2.5 0 0 1 6.5 6H9l1.5-2h3L15 6h2.5A2.5 2.5 0 0 1 20 8.5v7A2.5 2.5 0 0 1 17.5 18h-11A2.5 2.5 0 0 1 4 15.5z"/><circle cx="12" cy="12" r="3.3"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" id="i-brain" viewBox="0 0 24 24"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4M17.599 6.5a3 3 0 0 0 .399-1.375M6.003 5.125A3 3 0 0 0 6.401 6.5M3.477 10.896a4 4 0 0 1 .585-.396M19.938 10.5a4 4 0 0 1 .585.396M6 18a4 4 0 0 1-1.967-.516M19.967 17.484A4 4 0 0 1 18 18"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" id="i-command" viewBox="0 0 24 24"><path d="M9 6.5A2.5 2.5 0 1 0 6.5 9H17.5A2.5 2.5 0 1 0 15 6.5v11A2.5 2.5 0 1 0 17.5 15h-11A2.5 2.5 0 1 0 9 17.5z"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" id="i-shield" viewBox="0 0 24 24"><path d="M12 3 5 6v5.5c0 4.3 2.9 7.7 7 9.5 4.1-1.8 7-5.2 7-9.5V6z"/><path d="m9 12 2 2 4-4"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" id="i-hash" viewBox="0 0 24 24"><path d="M9 3 7.5 21M16.5 3 15 21M4 8.5h16M3 15.5h16"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" id="i-stopwatch" viewBox="0 0 24 24"><circle cx="12" cy="13.5" r="7.5"/><path d="M12 9.5v4l2.6 1.7M9.5 3h5M12 3v3M18.5 7.5l1.8-1.8"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" id="i-gauge" viewBox="0 0 24 24"><path d="M4.2 18a9 9 0 1 1 15.6 0"/><path d="m12 14 4-4.3"/><circle cx="12" cy="14.5" r="1.4" fill="currentColor" stroke="none"/><path d="M4.5 18h15"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" id="i-layers" viewBox="0 0 24 24"><path d="m12 3 9 5-9 5-9-5zM3 12l9 5 9-5M3 16l9 5 9-5"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" id="i-bolt" viewBox="0 0 24 24"><path d="M13.5 2.5 5 14h6l-1 7.5L19 9.5h-6z"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" id="i-wrench" viewBox="0 0 24 24"><path d="M14.7 6.3a4.5 4.5 0 0 0-6 6L3 18l3 3 5.7-5.7a4.5 4.5 0 0 0 6-6l-3 3-2.3-.7-.7-2.3z"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" id="i-coins" viewBox="0 0 24 24"><ellipse cx="12" cy="7" rx="6.5" ry="2.6"/><path d="M5.5 7v5c0 1.4 2.9 2.6 6.5 2.6s6.5-1.2 6.5-2.6V7M5.5 12v5c0 1.4 2.9 2.6 6.5 2.6s6.5-1.2 6.5-2.6v-5"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" id="i-terminal" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="m7 9 3.5 3L7 15M13 15h4"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" id="i-code" viewBox="0 0 24 24"><path d="m8 7-5 5 5 5M16 7l5 5-5 5M13.5 4l-3 16"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3.5 9h17M3.5 15h17M12 3c2.6 2.4 4 5.5 4 9s-1.4 6.6-4 9c-2.6-2.4-4-5.5-4-9s1.4-6.6 4-9Z"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" id="i-database" viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="7.5" ry="3"/><path d="M4.5 6v6c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3V6M4.5 12v6c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3v-6"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" id="i-image" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2.5"/><circle cx="8.5" cy="9" r="1.6"/><path d="m4 18 5.5-5.5 4 4 2.5-2.5 4 4"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" id="i-film" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 4v16M17 4v16M3 9h4M3 15h4M17 9h4M17 15h4M7 12h10"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" id="i-book" viewBox="0 0 24 24"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H11v17H6.5A2.5 2.5 0 0 0 4 22zM20 5.5A2.5 2.5 0 0 0 17.5 3H13v17h4.5A2.5 2.5 0 0 1 20 22z"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" id="i-wand" viewBox="0 0 24 24"><path d="m4 20 11-11M14 4l.8 2.2L17 7l-2.2.8L14 10l-.8-2.2L11 7l2.2-.8zM19 11l.6 1.4L21 13l-1.4.6L19 15l-.6-1.4L17 13l1.4-.6z"/></symbol>
+  </defs>
+
+  <rect width="1600" height="1220" fill="#F4F1EC"/>
+  <style>
+    svg{font-family:'Microsoft YaHei UI','Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif;fill:#1F2329}
+    .mono{font-family:Consolas,'SFMono-Regular','Cascadia Mono',monospace}
+    .h1{font-size:30px;font-weight:700;letter-spacing:-.4px}
+    .sub{font-size:13px;fill:#7C7A75}
+    .kicker{font-size:11px;font-weight:600;letter-spacing:1.4px;fill:#E07A12}
+    .sect{font-size:16px;font-weight:700}
+    .sect-en{font-size:10px;font-weight:600;letter-spacing:1.6px;fill:#A8A39B}
+    .card{fill:#FFFFFF;stroke:#DED9D1;stroke-width:1}
+    .note{font-size:11px;fill:#7C7A75}
+    .tiny{font-size:10px;fill:#8A8F99}
+    .icon-name{font-size:11px;font-weight:600;fill:#1F2329}
+    .icon-key{font-size:9px;fill:#9A958D}
+  </style>
+
+  <g id="header">
+    <text x="80" y="52" class="kicker">WUNDER / 蛹 · DESKTOP UI SPEC</text>
+    <text x="80" y="93" class="h1">02　图标系统</text>
+    <text x="80" y="120" class="sub">统一采用 24×24 画布、1.7px 圆头描边、currentColor 单色；状态符允许少量实心。</text>
+    <text x="1520" y="52" text-anchor="end" class="mono" font-size="11" fill="#8A8F99">SHEET 02 / 09</text>
+    <text x="1520" y="94" text-anchor="end" class="mono" font-size="12" fill="#3D3D3D">48 ICONS · 6 GROUPS</text>
+    <line x1="80" y1="140" x2="1520" y2="140" stroke="#D8D5D0"/>
+  </g>
+
+  <!-- principles -->
+  <g id="principles">
+    <rect x="80" y="166" width="1440" height="82" rx="12" class="card"/>
+    <g transform="translate(104,190)">
+      <rect width="24" height="24" rx="5" fill="#FDF0DE"/><image href="assets/app-icon.png" x="0" y="0" width="24" height="24"/>
+      <text x="36" y="12" class="icon-name">来源</text><text x="36" y="27" class="tiny">assets（icons + app-icon；FA 实心 + 线性混用）</text>
+    </g>
+    <line x1="396" y1="182" x2="396" y2="232" stroke="#E8E6E3"/>
+    <g transform="translate(424,190)">
+      <text x="0" y="12" class="icon-name">画布</text><text x="0" y="27" class="tiny">24×24 · 安全区 2px · 光学居中</text>
+    </g>
+    <line x1="716" y1="182" x2="716" y2="232" stroke="#E8E6E3"/>
+    <g transform="translate(744,190)">
+      <text x="0" y="12" class="icon-name">描边</text><text x="0" y="27" class="tiny">1.7px · round cap / join · 不描内阴影</text>
+    </g>
+    <line x1="1036" y1="182" x2="1036" y2="232" stroke="#E8E6E3"/>
+    <g transform="translate(1064,190)">
+      <text x="0" y="12" class="icon-name">着色</text><text x="0" y="27" class="tiny">全部 currentColor，禁止硬编码黑/白</text>
+    </g>
+    <line x1="1356" y1="182" x2="1356" y2="232" stroke="#E8E6E3"/>
+    <g transform="translate(1384,190)">
+      <text x="0" y="12" class="icon-name">尺寸</text><text x="0" y="27" class="tiny">12 / 13 / 14 / 16 / 18 / 20 / 26</text>
+    </g>
+  </g>
+
+  <!-- group titles and tiles -->
+  <g id="icons" color="#3D3D3D">
+    <!-- row 1 -->
+    <text x="96" y="292" class="sect" font-size="12">品牌与窗口</text><text x="196" y="292" class="sect-en">BRAND / CHROME</text>
+    <g>
+      <rect x="96" y="304" width="162" height="104" rx="10" fill="#FFFFFF" stroke="#E8E6E3"/>
+      <image href="assets/app-icon.png" x="164" y="322" width="26" height="26"/><text x="177" y="378" text-anchor="middle" class="icon-name">蛹图标</text><text x="177" y="392" text-anchor="middle" class="mono icon-key">app-icon / 16</text>
+      <rect x="274" y="304" width="162" height="104" rx="10" fill="#FFFFFF" stroke="#E8E6E3"/>
+      <use href="#i-monitor" x="342" y="322" width="26" height="26"/><text x="355" y="378" text-anchor="middle" class="icon-name">本地设备</text><text x="355" y="392" text-anchor="middle" class="mono icon-key">monitor / 18</text>
+      <rect x="452" y="304" width="162" height="104" rx="10" fill="#FFFFFF" stroke="#E8E6E3"/>
+      <use href="#i-cloud" x="520" y="322" width="26" height="26"/><text x="533" y="378" text-anchor="middle" class="icon-name">云端设备</text><text x="533" y="392" text-anchor="middle" class="mono icon-key">cloud / 18</text>
+      <rect x="630" y="304" width="162" height="104" rx="10" fill="#FFFFFF" stroke="#E8E6E3"/>
+      <use href="#i-min" x="698" y="322" width="26" height="26"/><text x="711" y="378" text-anchor="middle" class="icon-name">最小化</text><text x="711" y="392" text-anchor="middle" class="mono icon-key">minimize / 14</text>
+      <rect x="808" y="304" width="162" height="104" rx="10" fill="#FFFFFF" stroke="#E8E6E3"/>
+      <use href="#i-max" x="876" y="322" width="26" height="26"/><text x="889" y="378" text-anchor="middle" class="icon-name">最大化</text><text x="889" y="392" text-anchor="middle" class="mono icon-key">maximize / 14</text>
+      <rect x="986" y="304" width="162" height="104" rx="10" fill="#FFFFFF" stroke="#E8E6E3"/>
+      <use href="#i-close" x="1054" y="322" width="26" height="26"/><text x="1067" y="378" text-anchor="middle" class="icon-name">关闭</text><text x="1067" y="392" text-anchor="middle" class="mono icon-key">xmark / 14</text>
+      <rect x="1164" y="304" width="162" height="104" rx="10" fill="#FFFFFF" stroke="#E8E6E3"/>
+      <use href="#i-chev-d" x="1232" y="322" width="26" height="26"/><text x="1245" y="378" text-anchor="middle" class="icon-name">展开</text><text x="1245" y="392" text-anchor="middle" class="mono icon-key">chevron-down / 10–12</text>
+      <rect x="1342" y="304" width="162" height="104" rx="10" fill="#FFFFFF" stroke="#E8E6E3"/>
+      <use href="#i-ellipsis" x="1410" y="322" width="26" height="26"/><text x="1423" y="378" text-anchor="middle" class="icon-name">更多</text><text x="1423" y="392" text-anchor="middle" class="mono icon-key">ellipsis / 14</text>
+    </g>
+
+    <!-- row 2 -->
+    <text x="96" y="438" class="sect" font-size="12">侧栏与会话</text><text x="196" y="438" class="sect-en">SIDEBAR / THREADS</text>
+    <g>
+      <rect x="96" y="450" width="162" height="104" rx="10" fill="#FFFFFF" stroke="#E8E6E3"/>
+      <use href="#i-folder" x="164" y="468" width="26" height="26" color="#C98A2B"/><text x="177" y="524" text-anchor="middle" class="icon-name">工作区</text><text x="177" y="538" text-anchor="middle" class="mono icon-key">folder / 18</text>
+      <rect x="274" y="450" width="162" height="104" rx="10" fill="#FFFFFF" stroke="#E8E6E3"/>
+      <use href="#i-folder-open" x="342" y="468" width="26" height="26" color="#C98A2B"/><text x="355" y="524" text-anchor="middle" class="icon-name">展开目录</text><text x="355" y="538" text-anchor="middle" class="mono icon-key">folder-open / 14</text>
+      <rect x="452" y="450" width="162" height="104" rx="10" fill="#FFFFFF" stroke="#E8E6E3"/>
+      <use href="#i-plus" x="520" y="468" width="26" height="26"/><text x="533" y="524" text-anchor="middle" class="icon-name">新建</text><text x="533" y="538" text-anchor="middle" class="mono icon-key">plus / 16–22</text>
+      <rect x="630" y="450" width="162" height="104" rx="10" fill="#FFFFFF" stroke="#E8E6E3"/>
+      <use href="#i-search" x="698" y="468" width="26" height="26"/><text x="711" y="524" text-anchor="middle" class="icon-name">搜索</text><text x="711" y="538" text-anchor="middle" class="mono icon-key">search / 14</text>
+      <rect x="808" y="450" width="162" height="104" rx="10" fill="#FFFFFF" stroke="#E8E6E3"/>
+      <use href="#i-pen" x="876" y="468" width="26" height="26"/><text x="889" y="524" text-anchor="middle" class="icon-name">重命名</text><text x="889" y="538" text-anchor="middle" class="mono icon-key">pen / 14</text>
+      <rect x="986" y="450" width="162" height="104" rx="10" fill="#FFFFFF" stroke="#E8E6E3"/>
+      <use href="#i-trash" x="1054" y="468" width="26" height="26" color="#8A8F99"/><text x="1067" y="524" text-anchor="middle" class="icon-name">删除</text><text x="1067" y="538" text-anchor="middle" class="mono icon-key">trash / 14 · hover danger</text>
+      <rect x="1164" y="450" width="162" height="104" rx="10" fill="#FFFFFF" stroke="#E8E6E3"/>
+      <use href="#i-archive" x="1232" y="468" width="26" height="26"/><text x="1245" y="524" text-anchor="middle" class="icon-name">归档</text><text x="1245" y="538" text-anchor="middle" class="mono icon-key">archive / 14</text>
+      <rect x="1342" y="450" width="162" height="104" rx="10" fill="#FFFFFF" stroke="#E8E6E3"/>
+      <use href="#i-check" x="1410" y="468" width="26" height="26" color="#1A8A5C"/><text x="1423" y="524" text-anchor="middle" class="icon-name">完成 / 选中</text><text x="1423" y="538" text-anchor="middle" class="mono icon-key">check / 9–10</text>
+    </g>
+
+    <!-- row 3 -->
+    <text x="96" y="584" class="sect" font-size="12">运行状态</text><text x="196" y="584" class="sect-en">STATUS</text>
+    <g>
+      <rect x="96" y="596" width="162" height="104" rx="10" fill="#FFFFFF" stroke="#E8E6E3"/>
+      <use href="#i-spinner" x="164" y="614" width="26" height="26" color="#F58A24"/><text x="177" y="670" text-anchor="middle" class="icon-name">运行中</text><text x="177" y="684" text-anchor="middle" class="mono icon-key">spinner · 1.48s</text>
+      <rect x="274" y="596" width="162" height="104" rx="10" fill="#FFFFFF" stroke="#E8E6E3"/>
+      <use href="#i-clock" x="342" y="614" width="26" height="26" color="#C98A2B"/><text x="355" y="670" text-anchor="middle" class="icon-name">等待</text><text x="355" y="684" text-anchor="middle" class="mono icon-key">status-clock</text>
+      <rect x="452" y="596" width="162" height="104" rx="10" fill="#FFFFFF" stroke="#E8E6E3"/>
+      <use href="#i-stat-check" x="520" y="614" width="26" height="26" color="#1A8A5C"/><text x="533" y="670" text-anchor="middle" class="icon-name">成功</text><text x="533" y="684" text-anchor="middle" class="mono icon-key">status-check</text>
+      <rect x="630" y="596" width="162" height="104" rx="10" fill="#FFFFFF" stroke="#E8E6E3"/>
+      <use href="#i-stat-error" x="698" y="614" width="26" height="26" color="#D04A43"/><text x="711" y="670" text-anchor="middle" class="icon-name">失败</text><text x="711" y="684" text-anchor="middle" class="mono icon-key">status-error</text>
+      <rect x="808" y="596" width="162" height="104" rx="10" fill="#FFFFFF" stroke="#E8E6E3"/>
+      <use href="#i-pause" x="876" y="614" width="26" height="26" color="#8A8F99"/><text x="889" y="670" text-anchor="middle" class="icon-name">空闲 / 暂停</text><text x="889" y="684" text-anchor="middle" class="mono icon-key">status-pause</text>
+      <rect x="986" y="596" width="162" height="104" rx="10" fill="#FFFFFF" stroke="#E8E6E3"/>
+      <use href="#i-question" x="1054" y="614" width="26" height="26" color="#F58A24"/><text x="1067" y="670" text-anchor="middle" class="icon-name">等待回答</text><text x="1067" y="684" text-anchor="middle" class="mono icon-key">circle-question</text>
+      <rect x="1164" y="596" width="162" height="104" rx="10" fill="#FFFFFF" stroke="#E8E6E3"/>
+      <use href="#i-dot" x="1232" y="614" width="26" height="26" color="#F58A24"/><text x="1245" y="670" text-anchor="middle" class="icon-name">活跃点</text><text x="1245" y="684" text-anchor="middle" class="mono icon-key">dot / 6–8</text>
+      <rect x="1342" y="596" width="162" height="104" rx="10" fill="#FFFFFF" stroke="#E8E6E3"/>
+      <use href="#i-eye" x="1410" y="614" width="26" height="26"/><text x="1423" y="670" text-anchor="middle" class="icon-name">预览提示词</text><text x="1423" y="684" text-anchor="middle" class="mono icon-key">eye / 12</text>
+    </g>
+
+    <!-- row 4 -->
+    <text x="96" y="730" class="sect" font-size="12">输入与模型</text><text x="196" y="730" class="sect-en">COMPOSER</text>
+    <g>
+      <rect x="96" y="742" width="162" height="104" rx="10" fill="#FFFFFF" stroke="#E8E6E3"/>
+      <rect x="156" y="752" width="42" height="42" rx="10" fill="#F58A24"/><use href="#i-arrow-up" x="164" y="760" width="26" height="26" color="#FFFFFF"/><text x="177" y="816" text-anchor="middle" class="icon-name">发送</text><text x="177" y="830" text-anchor="middle" class="mono icon-key">arrow-up / 16</text>
+      <rect x="274" y="742" width="162" height="104" rx="10" fill="#FFFFFF" stroke="#E8E6E3"/>
+      <use href="#i-stop" x="342" y="760" width="26" height="26" color="#F58A24"/><text x="355" y="816" text-anchor="middle" class="icon-name">停止生成</text><text x="355" y="830" text-anchor="middle" class="mono icon-key">stop / 16</text>
+      <rect x="452" y="742" width="162" height="104" rx="10" fill="#FFFFFF" stroke="#E8E6E3"/>
+      <use href="#i-clip" x="520" y="760" width="26" height="26"/><text x="533" y="816" text-anchor="middle" class="icon-name">附件</text><text x="533" y="830" text-anchor="middle" class="mono icon-key">paperclip / 16</text>
+      <rect x="630" y="742" width="162" height="104" rx="10" fill="#FFFFFF" stroke="#E8E6E3"/>
+      <use href="#i-mic" x="698" y="760" width="26" height="26"/><text x="711" y="816" text-anchor="middle" class="icon-name">语音输入</text><text x="711" y="830" text-anchor="middle" class="mono icon-key">microphone / 16</text>
+      <rect x="808" y="742" width="162" height="104" rx="10" fill="#FFFFFF" stroke="#E8E6E3"/>
+      <use href="#i-camera" x="876" y="760" width="26" height="26"/><text x="889" y="816" text-anchor="middle" class="icon-name">截图</text><text x="889" y="830" text-anchor="middle" class="mono icon-key">camera / 16</text>
+      <rect x="986" y="742" width="162" height="104" rx="10" fill="#FFFFFF" stroke="#E8E6E3"/>
+      <use href="#i-brain" x="1054" y="760" width="26" height="26" color="#F58A24"/><text x="1067" y="816" text-anchor="middle" class="icon-name">模型 / 上下文</text><text x="1067" y="830" text-anchor="middle" class="mono icon-key">brain / 16</text>
+      <rect x="1164" y="742" width="162" height="104" rx="10" fill="#FFFFFF" stroke="#E8E6E3"/>
+      <use href="#i-command" x="1232" y="760" width="26" height="26"/><text x="1245" y="816" text-anchor="middle" class="icon-name">命令</text><text x="1245" y="830" text-anchor="middle" class="mono icon-key">command / 16</text>
+      <rect x="1342" y="742" width="162" height="104" rx="10" fill="#FFFFFF" stroke="#E8E6E3"/>
+      <use href="#i-shield" x="1410" y="760" width="26" height="26"/><text x="1423" y="816" text-anchor="middle" class="icon-name">审批模式</text><text x="1423" y="830" text-anchor="middle" class="mono icon-key">shield / 16</text>
+    </g>
+
+    <!-- row 5 -->
+    <text x="96" y="876" class="sect" font-size="12">工具与指标</text><text x="196" y="876" class="sect-en">TOOLS / TURN STATS</text>
+    <g>
+      <rect x="96" y="888" width="162" height="104" rx="10" fill="#FFFFFF" stroke="#E8E6E3"/>
+      <use href="#i-hash" x="164" y="906" width="26" height="26"/><text x="177" y="962" text-anchor="middle" class="icon-name">用户轮次</text><text x="177" y="976" text-anchor="middle" class="mono icon-key">hashtag / 12</text>
+      <rect x="274" y="888" width="162" height="104" rx="10" fill="#FFFFFF" stroke="#E8E6E3"/>
+      <use href="#i-stopwatch" x="342" y="906" width="26" height="26"/><text x="355" y="962" text-anchor="middle" class="icon-name">耗时</text><text x="355" y="976" text-anchor="middle" class="mono icon-key">stopwatch / 12</text>
+      <rect x="452" y="888" width="162" height="104" rx="10" fill="#FFFFFF" stroke="#E8E6E3"/>
+      <use href="#i-gauge" x="520" y="906" width="26" height="26"/><text x="533" y="962" text-anchor="middle" class="icon-name">生成速度</text><text x="533" y="976" text-anchor="middle" class="mono icon-key">gauge-high / 12</text>
+      <rect x="630" y="888" width="162" height="104" rx="10" fill="#FFFFFF" stroke="#E8E6E3"/>
+      <use href="#i-layers" x="698" y="906" width="26" height="26"/><text x="711" y="962" text-anchor="middle" class="icon-name">上下文占用</text><text x="711" y="976" text-anchor="middle" class="mono icon-key">layer-group / 12</text>
+      <rect x="808" y="888" width="162" height="104" rx="10" fill="#FFFFFF" stroke="#E8E6E3"/>
+      <use href="#i-bolt" x="876" y="906" width="26" height="26"/><text x="889" y="962" text-anchor="middle" class="icon-name">上下文消耗</text><text x="889" y="976" text-anchor="middle" class="mono icon-key">bolt / 12</text>
+      <rect x="986" y="888" width="162" height="104" rx="10" fill="#FFFFFF" stroke="#E8E6E3"/>
+      <use href="#i-wrench" x="1054" y="906" width="26" height="26"/><text x="1067" y="962" text-anchor="middle" class="icon-name">工具调用</text><text x="1067" y="976" text-anchor="middle" class="mono icon-key">wrench / 12</text>
+      <rect x="1164" y="888" width="162" height="104" rx="10" fill="#FFFFFF" stroke="#E8E6E3"/>
+      <use href="#i-coins" x="1232" y="906" width="26" height="26"/><text x="1245" y="962" text-anchor="middle" class="icon-name">额度</text><text x="1245" y="976" text-anchor="middle" class="mono icon-key">coins / 12</text>
+      <rect x="1342" y="888" width="162" height="104" rx="10" fill="#FFFFFF" stroke="#E8E6E3"/>
+      <use href="#i-copy" x="1410" y="906" width="26" height="26"/><text x="1423" y="962" text-anchor="middle" class="icon-name">复制</text><text x="1423" y="976" text-anchor="middle" class="mono icon-key">copy / 12–16</text>
+    </g>
+
+    <!-- row 6 -->
+    <text x="96" y="1022" class="sect" font-size="12">能力与分类</text><text x="196" y="1022" class="sect-en">CAPABILITIES</text>
+    <g>
+      <rect x="96" y="1034" width="162" height="104" rx="10" fill="#FFFFFF" stroke="#E8E6E3"/>
+      <use href="#i-terminal" x="164" y="1052" width="26" height="26"/><text x="177" y="1108" text-anchor="middle" class="icon-name">终端</text><text x="177" y="1122" text-anchor="middle" class="mono icon-key">terminal / 16</text>
+      <rect x="274" y="1034" width="162" height="104" rx="10" fill="#FFFFFF" stroke="#E8E6E3"/>
+      <use href="#i-code" x="342" y="1052" width="26" height="26"/><text x="355" y="1108" text-anchor="middle" class="icon-name">代码</text><text x="355" y="1122" text-anchor="middle" class="mono icon-key">code / 16</text>
+      <rect x="452" y="1034" width="162" height="104" rx="10" fill="#FFFFFF" stroke="#E8E6E3"/>
+      <use href="#i-globe" x="520" y="1052" width="26" height="26"/><text x="533" y="1108" text-anchor="middle" class="icon-name">浏览器 / 网络</text><text x="533" y="1122" text-anchor="middle" class="mono icon-key">globe / 16</text>
+      <rect x="630" y="1034" width="162" height="104" rx="10" fill="#FFFFFF" stroke="#E8E6E3"/>
+      <use href="#i-database" x="698" y="1052" width="26" height="26"/><text x="711" y="1108" text-anchor="middle" class="icon-name">数据</text><text x="711" y="1122" text-anchor="middle" class="mono icon-key">database / 16</text>
+      <rect x="808" y="1034" width="162" height="104" rx="10" fill="#FFFFFF" stroke="#E8E6E3"/>
+      <use href="#i-image" x="876" y="1052" width="26" height="26"/><text x="889" y="1108" text-anchor="middle" class="icon-name">图像</text><text x="889" y="1122" text-anchor="middle" class="mono icon-key">image / 16</text>
+      <rect x="986" y="1034" width="162" height="104" rx="10" fill="#FFFFFF" stroke="#E8E6E3"/>
+      <use href="#i-film" x="1054" y="1052" width="26" height="26"/><text x="1067" y="1108" text-anchor="middle" class="icon-name">视频</text><text x="1067" y="1122" text-anchor="middle" class="mono icon-key">film / 16</text>
+      <rect x="1164" y="1034" width="162" height="104" rx="10" fill="#FFFFFF" stroke="#E8E6E3"/>
+      <use href="#i-book" x="1232" y="1052" width="26" height="26"/><text x="1245" y="1108" text-anchor="middle" class="icon-name">知识 / 文档</text><text x="1245" y="1122" text-anchor="middle" class="mono icon-key">book-open / 16</text>
+      <rect x="1342" y="1034" width="162" height="104" rx="10" fill="#FFFFFF" stroke="#E8E6E3"/>
+      <use href="#i-wand" x="1410" y="1052" width="26" height="26"/><text x="1423" y="1108" text-anchor="middle" class="icon-name">技能</text><text x="1423" y="1122" text-anchor="middle" class="mono icon-key">wand-sparkles / 16</text>
+    </g>
+  </g>
+
+  <!-- usage strip -->
+  <g id="usage">
+    <rect x="80" y="1152" width="1440" height="40" rx="8" fill="#FFFFFF" stroke="#E8E6E3"/>
+    <g transform="translate(100,1162)" color="#8A8F99">
+      <use href="#i-copy" width="16" height="16" color="#8A8F99"/><text x="24" y="12" class="tiny">默认 #8A8F99</text>
+      <use href="#i-copy" x="140" width="16" height="16" color="#3D3D3D"/><text x="164" y="12" class="tiny">悬停/正文 #3D3D3D</text>
+      <use href="#i-copy" x="300" width="16" height="16" color="#F58A24"/><text x="324" y="12" class="tiny">激活/焦点 #F58A24</text>
+      <rect x="464" y="-3" width="22" height="22" rx="5" fill="#F58A24"/><use href="#i-copy" x="470" width="16" height="16" color="#FFFFFF"/><text x="494" y="12" class="tiny">主按钮上 #FFFFFF</text>
+      <use href="#i-trash" x="640" width="16" height="16" color="#D04A43"/><text x="664" y="12" class="tiny">危险操作 #D04A43</text>
+    </g>
+    <text x="1498" y="1177" text-anchor="end" class="tiny">尺寸：12 指标 · 14 行内按钮 · 16 工具栏 · 18 侧栏 · 26 空态</text>
+  </g>
+
+  <g id="footer">
+    <line x1="80" y1="1200" x2="1520" y2="1200" stroke="#D8D5D0"/>
+    <text x="80" y="1215" class="tiny">注：本页为统一化重绘，生产资产仍位于 frontend-slint/assets/icons；应用图标为 assets/app-icon.png（蛹），bee.svg 保留为渠道 / 协作辅助标记。</text>
+    <text x="1520" y="1215" text-anchor="end" class="mono tiny">02 / 09</text>
+  </g>
+</svg>

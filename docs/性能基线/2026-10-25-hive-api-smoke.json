@@ -1,0 +1,807 @@
+{
+  "schema": 1,
+  "suite": "hive-api-experience",
+  "environment": {
+    "system": "Windows",
+    "release": "11",
+    "machine": "AMD64",
+    "logical_cpus": 32,
+    "physical_memory_bytes": 68341796864,
+    "runner_python": "3.12.10"
+  },
+  "workload": {
+    "cases": [
+      "login",
+      "session_catalog",
+      "stream",
+      "slow_consumer",
+      "cancel_resume",
+      "queue",
+      "parallel_threads",
+      "isolation",
+      "workspace",
+      "large_chat",
+      "restart_recovery",
+      "storage_audit"
+    ],
+    "profile": "smoke",
+    "user_rounds": 100,
+    "model_requests_per_turn": 100,
+    "chunks": 8,
+    "interval_ms": 8,
+    "seed": 42,
+    "fixture_contract": "postgres-canonical-with-tools-v2"
+  },
+  "execution": {
+    "mode": "compose-postgres-http-websocket",
+    "worker_threads": 4,
+    "engine": "29.2.1",
+    "compose": "5.1.0",
+    "runtime_image_id": "sha256:f21af1564714cc69951c2dc7e8ed13ba8d200664e7b2fc627f0dc9a09d4e3134",
+    "postgres_image_id": "sha256:fe03a7605299a34ddf5e4f285dff78c3d7190a576b3c6b46f2fcff69f4bffd54",
+    "capacity": "32 33462280192 x86_64 linux"
+  },
+  "samples": [
+    {
+      "status": "ok",
+      "metrics": {
+        "login_ms": [
+          63.394699987838976
+        ]
+      },
+      "assertions": 2,
+      "case": "login",
+      "run": 0,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "create_ms": [
+          31.38490000856109
+        ],
+        "catalog_ms": [
+          37.648199999239296
+        ],
+        "empty_bootstrap_ms": [
+          36.7538999998942
+        ]
+      },
+      "assertions": 4,
+      "response_bytes": 710,
+      "case": "session_catalog",
+      "run": 0,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "send_to_first_text_ms": [
+          741.8808999937028
+        ],
+        "send_to_provider_ms": [
+          730.865339
+        ],
+        "send_to_terminal_ms": [
+          897.7078000025358
+        ],
+        "durable_read_ms": [
+          32.356600000639446
+        ],
+        "provider_to_first_ms": [
+          8.433141
+        ],
+        "provider_stream_ms": [
+          58.986236
+        ]
+      },
+      "assertions": 8,
+      "events": 17,
+      "deltas": 8,
+      "response_bytes": 3075,
+      "case": "stream",
+      "run": 0,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "send_to_first_text_ms": [
+          602.5557999964803
+        ],
+        "send_to_provider_ms": [
+          592.908105
+        ],
+        "send_to_terminal_ms": [
+          832.2066999971867
+        ],
+        "durable_read_ms": [
+          84.3925999943167
+        ],
+        "provider_to_first_ms": [
+          8.302304
+        ],
+        "provider_stream_ms": [
+          58.492848
+        ]
+      },
+      "assertions": 8,
+      "events": 17,
+      "deltas": 8,
+      "response_bytes": 3075,
+      "case": "slow_consumer",
+      "run": 0,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "send_to_first_text_ms": [
+          401.59270000003744
+        ],
+        "send_to_provider_ms": [
+          392.391979
+        ],
+        "send_to_terminal_ms": [
+          543.8354000070831
+        ],
+        "durable_read_ms": [
+          27.0532999857096
+        ],
+        "provider_to_first_ms": [
+          8.33178
+        ],
+        "provider_stream_ms": [
+          58.54631
+        ],
+        "cancel_ack_ms": [
+          60.664200005703606
+        ],
+        "cancel_to_settled_ms": [
+          87.05180000106338
+        ]
+      },
+      "assertions": 10,
+      "events": 17,
+      "deltas": 8,
+      "response_bytes": 4271,
+      "case": "cancel_resume",
+      "run": 0,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "enqueue_ms": [
+          102.13389999989886,
+          84.19529999082442
+        ],
+        "queue_read_ms": [
+          14.838699993561022
+        ],
+        "reorder_ms": [
+          23.623599990969524
+        ],
+        "queued_cancel_ms": [
+          107.37189999781549
+        ]
+      },
+      "assertions": 6,
+      "case": "queue",
+      "run": 0,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "batch_ms": [
+          3762.921400004416
+        ],
+        "send_to_first_text_ms": [
+          531.7625000025146,
+          536.2343999877339
+        ],
+        "send_to_provider_ms": [
+          522.938329,
+          527.946395
+        ],
+        "send_to_terminal_ms": [
+          667.9052999970736,
+          668.3456999890041
+        ],
+        "durable_read_ms": [
+          25.86680000240449,
+          25.6465999991633
+        ],
+        "provider_to_first_ms": [
+          8.291068,
+          8.294435
+        ],
+        "provider_stream_ms": [
+          58.146289,
+          58.270001
+        ]
+      },
+      "assertions": 16,
+      "workers": 2,
+      "case": "parallel_threads",
+      "run": 0,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "cross_user_rejection_ms": [
+          11.223900000914,
+          10.313699996913783
+        ],
+        "anonymous_rejection_ms": [
+          3.958700006478466
+        ]
+      },
+      "assertions": 3,
+      "case": "isolation",
+      "run": 0,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "first_directory_page_ms": [
+          180.5152999877464
+        ],
+        "older_directory_page_ms": [
+          191.18670000170823
+        ],
+        "file_read_ms": [
+          73.1303999928059
+        ]
+      },
+      "assertions": 4,
+      "entries": 24,
+      "response_bytes": [
+        1985,
+        1986
+      ],
+      "case": "workspace",
+      "run": 0,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "chat_bootstrap_ms": [
+          30.617999989772215
+        ],
+        "older_chat_page_ms": [
+          25.208900013240054
+        ],
+        "newer_chat_page_ms": [
+          25.753699999768287
+        ],
+        "body_read_ms": [
+          13.59309999679681
+        ]
+      },
+      "assertions": 84,
+      "rows": [
+        12,
+        12
+      ],
+      "response_bytes": [
+        42425,
+        43090,
+        41994,
+        948
+      ],
+      "case": "large_chat",
+      "run": 0,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "send_to_first_text_ms": [
+          538.5888000018895
+        ],
+        "send_to_provider_ms": [
+          527.122234
+        ],
+        "send_to_terminal_ms": [
+          687.8186999965692
+        ],
+        "durable_read_ms": [
+          24.91110000119079
+        ],
+        "provider_to_first_ms": [
+          8.333949
+        ],
+        "provider_stream_ms": [
+          58.101669
+        ],
+        "restart_to_ready_ms": [
+          1386.924699996598
+        ],
+        "restored_chat_read_ms": [
+          62.34200000471901
+        ]
+      },
+      "assertions": 11,
+      "events": 17,
+      "deltas": 8,
+      "response_bytes": 5280,
+      "case": "restart_recovery",
+      "run": 0,
+      "warmup": false
+    },
+    {
+      "status": "ok",
+      "metrics": {
+        "storage_audit_ms": [
+          541.27659999358
+        ]
+      },
+      "assertions": 6,
+      "case": "storage_audit",
+      "run": 0,
+      "warmup": false
+    }
+  ],
+  "captured_at_unix": 1792895133.2284117,
+  "compose_to_ready_ms": 6215.3915999952005,
+  "artifacts": {
+    "server_sha256": "546dc2bab8c25d6ddb4730924f111104bd95dc28da32a39f077244657cdb22e1"
+  },
+  "docker": {
+    "engine": "29.2.1",
+    "compose": "5.1.0",
+    "runtime_image_id": "sha256:f21af1564714cc69951c2dc7e8ed13ba8d200664e7b2fc627f0dc9a09d4e3134",
+    "postgres_image_id": "sha256:fe03a7605299a34ddf5e4f285dff78c3d7190a576b3c6b46f2fcff69f4bffd54",
+    "capacity": "32 33462280192 x86_64 linux"
+  },
+  "fixture": {
+    "generation_ms": 83703.97539999976,
+    "user_turns": 100,
+    "model_requests": 10000,
+    "model_actions": 17954,
+    "tool_calls": 7954,
+    "items": 18054,
+    "rollout_records": 46408,
+    "storage_bytes": null
+  },
+  "postgres_storage": {
+    "canonical_records": 46488,
+    "canonical_logical_bytes": 75586455,
+    "admissions": 112,
+    "tool_metrics": 0,
+    "artifact_resources": 0,
+    "database_bytes": 158129175,
+    "relation_bytes": {
+      "service_threads": 196608,
+      "service_thread_sessions": 131072,
+      "service_thread_records": 98795520,
+      "service_thread_owners": 49152,
+      "service_thread_admissions": 344064,
+      "service_thread_items": 46809088,
+      "service_thread_chat_heads": 163840,
+      "service_thread_display_state": 65536,
+      "runtime_tool_metrics": 40960,
+      "runtime_artifact_resources": 32768
+    },
+    "invalid_ordinals": 0,
+    "projection_ahead": 0
+  },
+  "summary": {
+    "login": {
+      "runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "metrics": {
+        "login_ms": {
+          "count": 1,
+          "p50": 63.394699987838976,
+          "p95": 63.394699987838976,
+          "maximum": 63.394699987838976
+        }
+      }
+    },
+    "session_catalog": {
+      "runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "metrics": {
+        "catalog_ms": {
+          "count": 1,
+          "p50": 37.648199999239296,
+          "p95": 37.648199999239296,
+          "maximum": 37.648199999239296
+        },
+        "create_ms": {
+          "count": 1,
+          "p50": 31.38490000856109,
+          "p95": 31.38490000856109,
+          "maximum": 31.38490000856109
+        },
+        "empty_bootstrap_ms": {
+          "count": 1,
+          "p50": 36.7538999998942,
+          "p95": 36.7538999998942,
+          "maximum": 36.7538999998942
+        }
+      }
+    },
+    "stream": {
+      "runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "metrics": {
+        "durable_read_ms": {
+          "count": 1,
+          "p50": 32.356600000639446,
+          "p95": 32.356600000639446,
+          "maximum": 32.356600000639446
+        },
+        "provider_stream_ms": {
+          "count": 1,
+          "p50": 58.986236,
+          "p95": 58.986236,
+          "maximum": 58.986236
+        },
+        "provider_to_first_ms": {
+          "count": 1,
+          "p50": 8.433141,
+          "p95": 8.433141,
+          "maximum": 8.433141
+        },
+        "send_to_first_text_ms": {
+          "count": 1,
+          "p50": 741.8808999937028,
+          "p95": 741.8808999937028,
+          "maximum": 741.8808999937028
+        },
+        "send_to_provider_ms": {
+          "count": 1,
+          "p50": 730.865339,
+          "p95": 730.865339,
+          "maximum": 730.865339
+        },
+        "send_to_terminal_ms": {
+          "count": 1,
+          "p50": 897.7078000025358,
+          "p95": 897.7078000025358,
+          "maximum": 897.7078000025358
+        }
+      }
+    },
+    "slow_consumer": {
+      "runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "metrics": {
+        "durable_read_ms": {
+          "count": 1,
+          "p50": 84.3925999943167,
+          "p95": 84.3925999943167,
+          "maximum": 84.3925999943167
+        },
+        "provider_stream_ms": {
+          "count": 1,
+          "p50": 58.492848,
+          "p95": 58.492848,
+          "maximum": 58.492848
+        },
+        "provider_to_first_ms": {
+          "count": 1,
+          "p50": 8.302304,
+          "p95": 8.302304,
+          "maximum": 8.302304
+        },
+        "send_to_first_text_ms": {
+          "count": 1,
+          "p50": 602.5557999964803,
+          "p95": 602.5557999964803,
+          "maximum": 602.5557999964803
+        },
+        "send_to_provider_ms": {
+          "count": 1,
+          "p50": 592.908105,
+          "p95": 592.908105,
+          "maximum": 592.908105
+        },
+        "send_to_terminal_ms": {
+          "count": 1,
+          "p50": 832.2066999971867,
+          "p95": 832.2066999971867,
+          "maximum": 832.2066999971867
+        }
+      }
+    },
+    "cancel_resume": {
+      "runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "metrics": {
+        "cancel_ack_ms": {
+          "count": 1,
+          "p50": 60.664200005703606,
+          "p95": 60.664200005703606,
+          "maximum": 60.664200005703606
+        },
+        "cancel_to_settled_ms": {
+          "count": 1,
+          "p50": 87.05180000106338,
+          "p95": 87.05180000106338,
+          "maximum": 87.05180000106338
+        },
+        "durable_read_ms": {
+          "count": 1,
+          "p50": 27.0532999857096,
+          "p95": 27.0532999857096,
+          "maximum": 27.0532999857096
+        },
+        "provider_stream_ms": {
+          "count": 1,
+          "p50": 58.54631,
+          "p95": 58.54631,
+          "maximum": 58.54631
+        },
+        "provider_to_first_ms": {
+          "count": 1,
+          "p50": 8.33178,
+          "p95": 8.33178,
+          "maximum": 8.33178
+        },
+        "send_to_first_text_ms": {
+          "count": 1,
+          "p50": 401.59270000003744,
+          "p95": 401.59270000003744,
+          "maximum": 401.59270000003744
+        },
+        "send_to_provider_ms": {
+          "count": 1,
+          "p50": 392.391979,
+          "p95": 392.391979,
+          "maximum": 392.391979
+        },
+        "send_to_terminal_ms": {
+          "count": 1,
+          "p50": 543.8354000070831,
+          "p95": 543.8354000070831,
+          "maximum": 543.8354000070831
+        }
+      }
+    },
+    "queue": {
+      "runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "metrics": {
+        "enqueue_ms": {
+          "count": 2,
+          "p50": 84.19529999082442,
+          "p95": 102.13389999989886,
+          "maximum": 102.13389999989886
+        },
+        "queue_read_ms": {
+          "count": 1,
+          "p50": 14.838699993561022,
+          "p95": 14.838699993561022,
+          "maximum": 14.838699993561022
+        },
+        "queued_cancel_ms": {
+          "count": 1,
+          "p50": 107.37189999781549,
+          "p95": 107.37189999781549,
+          "maximum": 107.37189999781549
+        },
+        "reorder_ms": {
+          "count": 1,
+          "p50": 23.623599990969524,
+          "p95": 23.623599990969524,
+          "maximum": 23.623599990969524
+        }
+      }
+    },
+    "parallel_threads": {
+      "runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "metrics": {
+        "batch_ms": {
+          "count": 1,
+          "p50": 3762.921400004416,
+          "p95": 3762.921400004416,
+          "maximum": 3762.921400004416
+        },
+        "durable_read_ms": {
+          "count": 2,
+          "p50": 25.6465999991633,
+          "p95": 25.86680000240449,
+          "maximum": 25.86680000240449
+        },
+        "provider_stream_ms": {
+          "count": 2,
+          "p50": 58.146289,
+          "p95": 58.270001,
+          "maximum": 58.270001
+        },
+        "provider_to_first_ms": {
+          "count": 2,
+          "p50": 8.291068,
+          "p95": 8.294435,
+          "maximum": 8.294435
+        },
+        "send_to_first_text_ms": {
+          "count": 2,
+          "p50": 531.7625000025146,
+          "p95": 536.2343999877339,
+          "maximum": 536.2343999877339
+        },
+        "send_to_provider_ms": {
+          "count": 2,
+          "p50": 522.938329,
+          "p95": 527.946395,
+          "maximum": 527.946395
+        },
+        "send_to_terminal_ms": {
+          "count": 2,
+          "p50": 667.9052999970736,
+          "p95": 668.3456999890041,
+          "maximum": 668.3456999890041
+        }
+      }
+    },
+    "isolation": {
+      "runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "metrics": {
+        "anonymous_rejection_ms": {
+          "count": 1,
+          "p50": 3.958700006478466,
+          "p95": 3.958700006478466,
+          "maximum": 3.958700006478466
+        },
+        "cross_user_rejection_ms": {
+          "count": 2,
+          "p50": 10.313699996913783,
+          "p95": 11.223900000914,
+          "maximum": 11.223900000914
+        }
+      }
+    },
+    "workspace": {
+      "runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "metrics": {
+        "file_read_ms": {
+          "count": 1,
+          "p50": 73.1303999928059,
+          "p95": 73.1303999928059,
+          "maximum": 73.1303999928059
+        },
+        "first_directory_page_ms": {
+          "count": 1,
+          "p50": 180.5152999877464,
+          "p95": 180.5152999877464,
+          "maximum": 180.5152999877464
+        },
+        "older_directory_page_ms": {
+          "count": 1,
+          "p50": 191.18670000170823,
+          "p95": 191.18670000170823,
+          "maximum": 191.18670000170823
+        }
+      }
+    },
+    "large_chat": {
+      "runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "metrics": {
+        "body_read_ms": {
+          "count": 1,
+          "p50": 13.59309999679681,
+          "p95": 13.59309999679681,
+          "maximum": 13.59309999679681
+        },
+        "chat_bootstrap_ms": {
+          "count": 1,
+          "p50": 30.617999989772215,
+          "p95": 30.617999989772215,
+          "maximum": 30.617999989772215
+        },
+        "newer_chat_page_ms": {
+          "count": 1,
+          "p50": 25.753699999768287,
+          "p95": 25.753699999768287,
+          "maximum": 25.753699999768287
+        },
+        "older_chat_page_ms": {
+          "count": 1,
+          "p50": 25.208900013240054,
+          "p95": 25.208900013240054,
+          "maximum": 25.208900013240054
+        }
+      }
+    },
+    "restart_recovery": {
+      "runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "metrics": {
+        "durable_read_ms": {
+          "count": 1,
+          "p50": 24.91110000119079,
+          "p95": 24.91110000119079,
+          "maximum": 24.91110000119079
+        },
+        "provider_stream_ms": {
+          "count": 1,
+          "p50": 58.101669,
+          "p95": 58.101669,
+          "maximum": 58.101669
+        },
+        "provider_to_first_ms": {
+          "count": 1,
+          "p50": 8.333949,
+          "p95": 8.333949,
+          "maximum": 8.333949
+        },
+        "restart_to_ready_ms": {
+          "count": 1,
+          "p50": 1386.924699996598,
+          "p95": 1386.924699996598,
+          "maximum": 1386.924699996598
+        },
+        "restored_chat_read_ms": {
+          "count": 1,
+          "p50": 62.34200000471901,
+          "p95": 62.34200000471901,
+          "maximum": 62.34200000471901
+        },
+        "send_to_first_text_ms": {
+          "count": 1,
+          "p50": 538.5888000018895,
+          "p95": 538.5888000018895,
+          "maximum": 538.5888000018895
+        },
+        "send_to_provider_ms": {
+          "count": 1,
+          "p50": 527.122234,
+          "p95": 527.122234,
+          "maximum": 527.122234
+        },
+        "send_to_terminal_ms": {
+          "count": 1,
+          "p50": 687.8186999965692,
+          "p95": 687.8186999965692,
+          "maximum": 687.8186999965692
+        }
+      }
+    },
+    "storage_audit": {
+      "runs": 1,
+      "successful_runs": 1,
+      "failed_runs": 0,
+      "metrics": {
+        "storage_audit_ms": {
+          "count": 1,
+          "p50": 541.27659999358,
+          "p95": 541.27659999358,
+          "maximum": 541.27659999358
+        }
+      }
+    }
+  },
+  "correctness_passed": true,
+  "passed": true,
+  "validation_context": {
+    "build": "Linux x86_64 release; wunder-server default features: postgres-storage; Rust 1.92.0",
+    "sampling": "One sample per scenario; shared development workspace and concurrent compilation; not a stable P95 baseline",
+    "history": "Prior failed smoke remains in temp_dir/hive-api-complete-v2; runtime conflict corrected before this run",
+    "comparison": "Fixture contract and runtime image changed; do not compare with 2026-10-24 smoke as an optimization ratio",
+    "scope": "Backend HTTP/WebSocket and isolated PostgreSQL; excludes browser rendering and production proxy"
+  }
+}

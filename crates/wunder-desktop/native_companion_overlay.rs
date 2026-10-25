@@ -1,10 +1,12 @@
-//! Persisted state for the native floating companions (desktop pets).
+//! Persisted state for the native floating companion (desktop pet).
 //!
-//! This mirrors the web layer's three localStorage keys — per-pet positions,
-//! per-agent show/scale overrides and the global message-hint switch — but
-//! lives in its own file next to the desktop settings so dragging a pet never
-//! rewrites runtime configuration. Keys are the web ones: positions are
-//! `agentId:scope:companionId`, overrides are keyed by agent id.
+//! This mirrors the web layer's companion settings — the master switch, the
+//! selected companion, the global scale, the message-hint switch and the
+//! per-entry drag positions — but lives in its own file next to the desktop
+//! settings so dragging a pet never rewrites runtime configuration. Position
+//! keys match the web ones: `desktop:<companionId>`. Visibility has a single
+//! source of truth (`enabled`), so a pet hidden from its context menu can
+//! always be brought back from the settings switch.
 
 use super::{now_ts, NativeDesktop};
 use anyhow::{Context, Result};
@@ -13,15 +15,18 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
-/// Web `resolveScaleValue`: the menu and the store clamp to 0.5..=1.6.
+/// Web `resolveScaleValue`: the settings slider clamps to 0.5..=1.6.
 pub const COMPANION_SCALE_MIN: f32 = 0.5;
 pub const COMPANION_SCALE_MAX: f32 = 1.6;
+
+/// Half size keeps the pet a compact desktop companion out of the box.
+pub const DEFAULT_COMPANION_SCALE: f32 = 0.5;
 
 pub fn clamp_companion_scale(value: f32) -> f32 {
     if value.is_finite() {
         value.clamp(COMPANION_SCALE_MIN, COMPANION_SCALE_MAX)
     } else {
-        1.0
+        DEFAULT_COMPANION_SCALE
     }
 }
 
@@ -33,24 +38,12 @@ pub struct CompanionPlacement {
     pub y: i32,
 }
 
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
-pub struct CompanionAgentOverride {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub show: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub scale: Option<f32>,
-}
-
 fn default_message_hints() -> bool {
     true
 }
 
 fn default_enabled() -> bool {
     true
-}
-
-fn default_scale() -> f32 {
-    1.0
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -67,15 +60,17 @@ pub struct CompanionOverlayState {
     /// Empty means nothing is selected, so no pet is projected.
     #[serde(default)]
     pub selected_id: String,
-    /// Web `settings.scale`: the global pet scale, overridable per entry.
+    /// Web `settings.scale`: the global pet scale.
     #[serde(default = "default_scale")]
     pub scale: f32,
     #[serde(default)]
     pub positions: HashMap<String, CompanionPlacement>,
     #[serde(default)]
-    pub overrides: HashMap<String, CompanionAgentOverride>,
-    #[serde(default)]
     pub updated_at: f64,
+}
+
+fn default_scale() -> f32 {
+    DEFAULT_COMPANION_SCALE
 }
 
 impl Default for CompanionOverlayState {
@@ -84,9 +79,8 @@ impl Default for CompanionOverlayState {
             message_hints: true,
             enabled: true,
             selected_id: String::new(),
-            scale: 1.0,
+            scale: DEFAULT_COMPANION_SCALE,
             positions: HashMap::new(),
-            overrides: HashMap::new(),
             updated_at: 0.0,
         }
     }
@@ -181,35 +175,6 @@ impl NativeDesktop {
         Ok(self.companion_overlay_state())
     }
 
-    /// Persist the local per-agent show/scale override, never the agent record.
-    pub fn save_companion_override(
-        &self,
-        agent_id: &str,
-        show: bool,
-        scale: f32,
-    ) -> Result<CompanionOverlayState> {
-        let scale = clamp_companion_scale(scale);
-        self.mutate_overlay(|state| {
-            state.overrides.insert(
-                agent_id.to_string(),
-                CompanionAgentOverride {
-                    show: Some(show),
-                    scale: Some(scale),
-                },
-            );
-        })?;
-        Ok(self.companion_overlay_state())
-    }
-
-    /// Forget the local menu override for one agent. Saving the agent settings
-    /// panel is an explicit intent, so the panel becomes authoritative again.
-    pub fn clear_companion_override(&self, agent_id: &str) -> Result<CompanionOverlayState> {
-        self.mutate_overlay(|state| {
-            state.overrides.remove(agent_id);
-        })?;
-        Ok(self.companion_overlay_state())
-    }
-
     fn mutate_overlay(&self, apply: impl FnOnce(&mut CompanionOverlayState)) -> Result<()> {
         let path = overlay_path(&self.desktop.settings_path);
         let _guard = self
@@ -235,24 +200,18 @@ mod tests {
     }
 
     #[test]
-    fn overlay_round_trips_positions_and_overrides() {
+    fn overlay_round_trips_positions() {
         let path = temp_path("wunder-companion-overlay-roundtrip");
         let mut state = CompanionOverlayState::default();
         state.positions.insert(
-            "agent-a:global:pet-a".to_string(),
+            "desktop:pet-a".to_string(),
             CompanionPlacement { x: 420, y: 96 },
-        );
-        state.overrides.insert(
-            "agent-a".to_string(),
-            CompanionAgentOverride {
-                show: Some(false),
-                scale: Some(1.2),
-            },
         );
         write_overlay(&path, &state).expect("write overlay");
         let loaded = read_overlay(&path);
         assert_eq!(loaded, state, "overlay must round-trip");
         assert!(loaded.message_hints);
+        assert!(loaded.enabled);
         let _ = fs::remove_dir_all(path.parent().unwrap());
     }
 
@@ -262,16 +221,34 @@ mod tests {
         fs::create_dir_all(path.parent().unwrap()).expect("create dir");
         fs::write(&path, "{").expect("write invalid overlay");
         let loaded = read_overlay(&path);
-        assert!(loaded.positions.is_empty() && loaded.overrides.is_empty());
+        assert!(loaded.positions.is_empty());
         assert!(loaded.message_hints, "hints default to on");
+        assert!(loaded.enabled, "the pet shows by default");
+        assert_eq!(loaded.scale, DEFAULT_COMPANION_SCALE, "half size default");
         let _ = fs::remove_dir_all(path.parent().unwrap());
     }
 
     #[test]
-    fn scale_is_clamped_to_the_web_menu_range() {
+    fn legacy_override_files_still_load() {
+        let path = temp_path("wunder-companion-overlay-legacy");
+        fs::create_dir_all(path.parent().unwrap()).expect("create dir");
+        fs::write(
+            &path,
+            r#"{"message_hints":true,"enabled":true,"selected_id":"pet-a","scale":1.0,
+                "positions":{},"overrides":{"desktop:pet-a":{"show":false}},"updated_at":1.0}"#,
+        )
+        .expect("write legacy overlay");
+        let loaded = read_overlay(&path);
+        assert_eq!(loaded.selected_id, "pet-a");
+        assert!(loaded.positions.is_empty(), "overrides are dropped");
+        let _ = fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn scale_is_clamped_to_the_settings_range() {
         assert_eq!(clamp_companion_scale(0.2), COMPANION_SCALE_MIN);
         assert_eq!(clamp_companion_scale(2.5), COMPANION_SCALE_MAX);
-        assert_eq!(clamp_companion_scale(f32::NAN), 1.0);
+        assert_eq!(clamp_companion_scale(f32::NAN), DEFAULT_COMPANION_SCALE);
         assert_eq!(clamp_companion_scale(1.35), 1.35);
     }
 }

@@ -1091,18 +1091,16 @@ impl Orchestrator {
         args: &Value,
         timeout: Option<Duration>,
     ) -> Result<Value, anyhow::Error> {
+        // The builtin dispatcher contains every tool branch. Isolate its state
+        // once per invocation, rather than embedding it in each timeout/guard.
+        let execution = Box::pin(crate::tools::execute_tool(tool_context, name, args));
         if let Some(timeout) = timeout {
-            match tokio::time::timeout(
-                timeout,
-                crate::tools::execute_tool(tool_context, name, args),
-            )
-            .await
-            {
+            match tokio::time::timeout(timeout, execution).await {
                 Ok(result) => result,
                 Err(_) => Err(anyhow!(TOOL_TIMEOUT_ERROR)),
             }
         } else {
-            crate::tools::execute_tool(tool_context, name, args).await
+            execution.await
         }
     }
 

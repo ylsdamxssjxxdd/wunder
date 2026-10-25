@@ -350,6 +350,7 @@ impl<'a> CanonicalThreadLog<'a> {
         for (kind, id) in [
             ("user_message", summary.user_item_id.as_deref()),
             ("assistant_message", summary.assistant_item_id.as_deref()),
+            ("question_panel", summary.question_panel_item_id.as_deref()),
             ("plan", summary.plan_item_id.as_deref()),
         ] {
             let Some(id) = id else { continue };
@@ -361,6 +362,10 @@ impl<'a> CanonicalThreadLog<'a> {
             let Some((raw, ordinal)) = item else { continue };
             let item = Self::item(raw, ordinal, session, false)?;
             let body = &item["payload"];
+            if kind == "question_panel" {
+                row.assistant.question_panel = p::extract_question_panel(body);
+                continue;
+            }
             if kind == "plan" {
                 row.plan = p::plan(body, item["item_id"].as_str().unwrap_or(""), 1, ordinal + 1);
                 continue;
@@ -395,8 +400,34 @@ impl<'a> CanonicalThreadLog<'a> {
                     message.feedback = Some(json!({"vote":vote}));
                 }
                 message.stats = p::finite_stats(body);
-                message.question_panel = body.pointer("/meta/panel").and_then(p::question_panel);
+                // The preferred location is assistant meta, but a completed
+                // tool result can be the only durable owner when the model
+                // item was committed before the question-panel hand-off.
+                message.question_panel = p::extract_question_panel(body);
                 row.assistant = message;
+            }
+        }
+        // Older/live writers may not be able to revise the already-completed
+        // assistant item with meta.panel. Recover the bounded panel directly
+        // from the latest visible question-panel tool result so the composer
+        // still gets an independent interaction surface after reload.
+        if row.assistant.question_panel.is_none() {
+            let mut statement = conn.prepare(
+                "SELECT preview_json,rollout_ordinal FROM thread_items
+                 WHERE rollout_id=?1 AND COALESCE(root_turn_id,turn_id)=?2
+                   AND visible=1 AND item_type IN ('tool_call','tool_result','question_panel')
+                 ORDER BY rollout_ordinal DESC LIMIT 64",
+            )?;
+            let rows = statement.query_map(params![rollout, root], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+            })?;
+            for row_value in rows {
+                let (raw, ordinal) = row_value?;
+                let item = Self::item(raw, ordinal, session, false)?;
+                if let Some(panel) = p::extract_question_panel(&item["payload"]) {
+                    row.assistant.question_panel = Some(panel);
+                    break;
+                }
             }
         }
         row.reasoning_count = summary.reasoning_count;

@@ -155,6 +155,7 @@ pub(crate) enum ThreadHistoryEventKind {
 #[derive(Debug, Clone)]
 pub(crate) struct ThreadHistoryStore {
     db_path: PathBuf,
+    pool: super::sqlite_pool::SqlitePool,
     scope: Option<(String, Vec<HistorySegment>)>,
 }
 
@@ -201,6 +202,7 @@ impl ThreadHistoryStore {
                 .with_context(|| format!("create thread history directory {}", parent.display()))?;
         }
         let store = Self {
+            pool: super::sqlite_pool::SqlitePool::new(db_path.clone()),
             db_path,
             scope: None,
         };
@@ -217,6 +219,7 @@ impl ThreadHistoryStore {
     pub(crate) fn scoped(&self, current: &str, segments: Vec<HistorySegment>) -> Self {
         Self {
             db_path: self.db_path.clone(),
+            pool: self.pool.clone(),
             scope: Some((current.to_owned(), segments)),
         }
     }
@@ -296,7 +299,7 @@ impl ThreadHistoryStore {
     }
 
     pub(crate) fn ensure_chat_summary(&self, rollout_id: &str) -> Result<()> {
-        super::thread_chat_summary::ensure_ready(&mut self.connect()?, rollout_id)
+        super::thread_chat_summary::ensure_ready(&mut *self.connect()?, rollout_id)
     }
 
     /// Returns the existing projection waterline without reading a rollout.
@@ -821,20 +824,14 @@ impl ThreadHistoryStore {
         Ok(events)
     }
 
-    fn connect(&self) -> Result<Connection> {
+    fn connect(&self) -> Result<super::sqlite_pool::ConnectionLease> {
         if self.scope.is_some() {
             return self.connect_read();
         }
-        let conn = Connection::open(&self.db_path)
-            .with_context(|| format!("open thread history database {}", self.db_path.display()))?;
-        conn.busy_timeout(Duration::from_secs(2))?;
-        conn.execute_batch(
-            "PRAGMA foreign_keys=ON; PRAGMA synchronous=NORMAL; PRAGMA cache_size=-1024;",
-        )?;
-        Ok(conn)
+        self.pool.get()
     }
 
-    fn connect_read(&self) -> Result<Connection> {
+    fn connect_read(&self) -> Result<super::sqlite_pool::ConnectionLease> {
         let conn = Connection::open_with_flags(
             &self.db_path,
             rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
@@ -843,7 +840,7 @@ impl ThreadHistoryStore {
         if let Some((current, segments)) = &self.scope {
             Self::apply_scope(&conn, current, segments)?;
         }
-        Ok(conn)
+        Ok(super::sqlite_pool::ConnectionLease::uncached(conn))
     }
 }
 
@@ -1193,7 +1190,7 @@ fn project_completed_item(
 
 /// A bounded summary lives alongside the completed item, never another body.
 /// Page reads do not have to parse megabytes of output to display one card.
-fn item_preview(item: &Value) -> Value {
+pub(super) fn item_preview(item: &Value) -> Value {
     fn bounded(value: &Value, budget: &mut usize, depth: usize) -> Value {
         if *budget < 16 || depth > 8 {
             return Value::Null;

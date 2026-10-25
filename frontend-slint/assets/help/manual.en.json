@@ -12332,6 +12332,459 @@
       ]
     },
     {
+      "id": "art-overview",
+      "title": "00 Overview",
+      "group": "Art",
+      "keywords": [
+        "art",
+        "design sheet",
+        "overview",
+        "window layout"
+      ],
+      "blocks": [
+        {
+          "kind": "h1",
+          "spans": [
+            {
+              "text": "00 Overview",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "lead",
+          "spans": [
+            {
+              "text": "Whole-window baseline for the Pupa desktop app: 1462×866 logical pixels, a 240 sidebar, a 1000 reading column and a 154-high composer band.",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "image",
+          "src": "00-overview",
+          "alt": "00 Overview",
+          "caption": "00 Overview · window 1462×866 (reference screenshot 2558×1515 at 175% DPI)"
+        },
+        {
+          "kind": "tip",
+          "spans": [
+            {
+              "text": "The sources live in docs/wunder美术设计稿. After editing an SVG run python scripts/render_art_previews.py, then python scripts/build_help_manual.py to refresh the manual.",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "art-foundations",
+      "title": "01 Foundations",
+      "group": "Art",
+      "keywords": [
+        "art",
+        "foundations",
+        "color",
+        "type scale",
+        "spacing",
+        "radii"
+      ],
+      "blocks": [
+        {
+          "kind": "h1",
+          "spans": [
+            {
+              "text": "01 Foundations",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "lead",
+          "spans": [
+            {
+              "text": "Neutral, accent and semantic colors, the type scale, spacing, radii and the window layout baseline; the tokens map to design_tokens.slint.",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "image",
+          "src": "01-foundations",
+          "alt": "01 Foundations",
+          "caption": "01 Foundations · color, type, spacing, radii"
+        }
+      ]
+    },
+    {
+      "id": "art-icons",
+      "title": "02 Icons",
+      "group": "Art",
+      "keywords": [
+        "art",
+        "icons",
+        "bee mark",
+        "pupa icon",
+        "line icons"
+      ],
+      "blocks": [
+        {
+          "kind": "h1",
+          "spans": [
+            {
+              "text": "02 Icons",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "lead",
+          "spans": [
+            {
+              "text": "Rules for the brand mark, tool icons, state icons and line icons. The app icon is the pupa; the bee mark stays only as an auxiliary channel and collaboration identifier.",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "image",
+          "src": "02-icons",
+          "alt": "02 Icons",
+          "caption": "02 Icons · brand, tools, states and line icons"
+        }
+      ]
+    },
+    {
+      "id": "art-shell",
+      "title": "03 Shell and Sidebar",
+      "group": "Art",
+      "keywords": [
+        "art",
+        "shell",
+        "sidebar",
+        "title bar",
+        "splitter"
+      ],
+      "blocks": [
+        {
+          "kind": "h1",
+          "spans": [
+            {
+              "text": "03 Shell and Sidebar",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "lead",
+          "spans": [
+            {
+              "text": "Title bar, sidebar width, groups, workspace rows, thread rows, the working-directory toolbar, and the splitter at rest, hover and drag. The sidebar splitter shows no rail at rest and a 2×32 pill on hover.",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "image",
+          "src": "03-shell-sidebar",
+          "alt": "03 Shell and Sidebar",
+          "caption": "03 Shell and sidebar · title bar, sidebar, splitter"
+        }
+      ]
+    },
+    {
+      "id": "art-timeline",
+      "title": "04 Timeline",
+      "group": "Art",
+      "keywords": [
+        "art",
+        "timeline",
+        "message",
+        "turn footer",
+        "state capsule"
+      ],
+      "blocks": [
+        {
+          "kind": "h1",
+          "spans": [
+            {
+              "text": "04 Timeline",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "lead",
+          "spans": [
+            {
+              "text": "Reading column and scrolling, user messages, turn footers, the run-state capsule, Markdown fallback styles and the empty state. Streaming updates only the active tail block.",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "image",
+          "src": "04-timeline",
+          "alt": "04 Timeline",
+          "caption": "04 Timeline · messages, footers, state capsule"
+        }
+      ]
+    },
+    {
+      "id": "art-process",
+      "title": "05 Process and Tools",
+      "group": "Art",
+      "keywords": [
+        "art",
+        "process",
+        "tools",
+        "thinking",
+        "subagent"
+      ],
+      "blocks": [
+        {
+          "kind": "h1",
+          "spans": [
+            {
+              "text": "05 Process and Tools",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "lead",
+          "spans": [
+            {
+              "text": "Process bar, thinking entries, tool rows, the expanded output panel, tool groups and subagent cards, including icon sizes, fold budgets and indentation.",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "image",
+          "src": "05-process-tools",
+          "alt": "05 Process and Tools",
+          "caption": "05 Process and tools · process bar, tool rows, subagents"
+        }
+      ]
+    },
+    {
+      "id": "art-plan",
+      "title": "06 Plan and Inquiry",
+      "group": "Art",
+      "keywords": [
+        "art",
+        "plan",
+        "inquiry",
+        "goal",
+        "no preference"
+      ],
+      "blocks": [
+        {
+          "kind": "h1",
+          "spans": [
+            {
+              "text": "06 Plan and Inquiry",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "lead",
+          "spans": [
+            {
+              "text": "Plan capsule, expanded card, goal banner and inquiry panel. Option rows include no preference and other, and the inquiry panel has no separate submit button.",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "image",
+          "src": "06-plan-inquiry",
+          "alt": "06 Plan and Inquiry",
+          "caption": "06 Plan and inquiry · plan card, goal banner, inquiry panel"
+        }
+      ]
+    },
+    {
+      "id": "art-composer",
+      "title": "07 Composer",
+      "group": "Art",
+      "keywords": [
+        "art",
+        "composer",
+        "send",
+        "stop",
+        "queue"
+      ],
+      "blocks": [
+        {
+          "kind": "h1",
+          "spans": [
+            {
+              "text": "07 Composer",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "lead",
+          "spans": [
+            {
+              "text": "The 972×100 input card, the 30-high footer, attachment rows, recording, generating and disabled-send states, plus queue and model menu specs. Stop square 10.5, send arrow 16.",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "image",
+          "src": "07-composer",
+          "alt": "07 Composer",
+          "caption": "07 Composer · input card, footer, stop and queue"
+        }
+      ]
+    },
+    {
+      "id": "art-settings",
+      "title": "08 Settings and Dialogs",
+      "group": "Art",
+      "keywords": [
+        "art",
+        "settings",
+        "dialogs",
+        "controls",
+        "validation"
+      ],
+      "blocks": [
+        {
+          "kind": "h1",
+          "spans": [
+            {
+              "text": "08 Settings and Dialogs",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "lead",
+          "spans": [
+            {
+              "text": "Settings row anatomy, input and select controls, buttons, validation and hints, and the density and layering of dialogs.",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "image",
+          "src": "08-settings-dialogs",
+          "alt": "08 Settings and Dialogs",
+          "caption": "08 Settings and dialogs · rows, controls, validation"
+        }
+      ]
+    },
+    {
+      "id": "art-motion",
+      "title": "09 States and Motion",
+      "group": "Art",
+      "keywords": [
+        "art",
+        "interaction",
+        "states",
+        "motion",
+        "keys",
+        "breakpoints"
+      ],
+      "blocks": [
+        {
+          "kind": "h1",
+          "spans": [
+            {
+              "text": "09 States and Motion",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "lead",
+          "spans": [
+            {
+              "text": "Row and input states, the motion timeline, performance limits, key bindings, accessibility feedback and breakpoints, including which actions must not block during streaming.",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            }
+          ]
+        },
+        {
+          "kind": "image",
+          "src": "09-states-motion",
+          "alt": "09 States and Motion",
+          "caption": "09 States and motion · states, timing, keys"
+        }
+      ]
+    },
+    {
       "id": "interlink",
       "title": "Interlink",
       "group": "Capabilities",
@@ -15703,164 +16156,308 @@
       "topic": 16
     },
     {
-      "keyword": "interlink",
+      "keyword": "art",
       "topic": 18
     },
     {
-      "keyword": "devices",
+      "keyword": "design sheet",
       "topic": 18
     },
     {
-      "keyword": "tunnel",
+      "keyword": "overview",
       "topic": 18
     },
     {
-      "keyword": "remote",
+      "keyword": "window layout",
       "topic": 18
+    },
+    {
+      "keyword": "foundations",
+      "topic": 19
+    },
+    {
+      "keyword": "color",
+      "topic": 19
+    },
+    {
+      "keyword": "type scale",
+      "topic": 19
+    },
+    {
+      "keyword": "spacing",
+      "topic": 19
+    },
+    {
+      "keyword": "radii",
+      "topic": 19
+    },
+    {
+      "keyword": "icons",
+      "topic": 20
+    },
+    {
+      "keyword": "bee mark",
+      "topic": 20
+    },
+    {
+      "keyword": "pupa icon",
+      "topic": 20
+    },
+    {
+      "keyword": "line icons",
+      "topic": 20
+    },
+    {
+      "keyword": "shell",
+      "topic": 21
+    },
+    {
+      "keyword": "title bar",
+      "topic": 21
+    },
+    {
+      "keyword": "splitter",
+      "topic": 21
+    },
+    {
+      "keyword": "timeline",
+      "topic": 22
+    },
+    {
+      "keyword": "message",
+      "topic": 22
+    },
+    {
+      "keyword": "turn footer",
+      "topic": 22
+    },
+    {
+      "keyword": "state capsule",
+      "topic": 22
+    },
+    {
+      "keyword": "process",
+      "topic": 23
+    },
+    {
+      "keyword": "thinking",
+      "topic": 23
+    },
+    {
+      "keyword": "plan",
+      "topic": 24
+    },
+    {
+      "keyword": "inquiry",
+      "topic": 24
+    },
+    {
+      "keyword": "no preference",
+      "topic": 24
+    },
+    {
+      "keyword": "composer",
+      "topic": 25
+    },
+    {
+      "keyword": "send",
+      "topic": 25
+    },
+    {
+      "keyword": "stop",
+      "topic": 25
     },
     {
       "keyword": "settings",
-      "topic": 19
+      "topic": 26
+    },
+    {
+      "keyword": "dialogs",
+      "topic": 26
+    },
+    {
+      "keyword": "controls",
+      "topic": 26
+    },
+    {
+      "keyword": "validation",
+      "topic": 26
+    },
+    {
+      "keyword": "interaction",
+      "topic": 27
+    },
+    {
+      "keyword": "states",
+      "topic": 27
+    },
+    {
+      "keyword": "motion",
+      "topic": 27
+    },
+    {
+      "keyword": "keys",
+      "topic": 27
+    },
+    {
+      "keyword": "breakpoints",
+      "topic": 27
+    },
+    {
+      "keyword": "interlink",
+      "topic": 28
+    },
+    {
+      "keyword": "devices",
+      "topic": 28
+    },
+    {
+      "keyword": "tunnel",
+      "topic": 28
+    },
+    {
+      "keyword": "remote",
+      "topic": 28
     },
     {
       "keyword": "language",
-      "topic": 19
+      "topic": 29
     },
     {
       "keyword": "theme",
-      "topic": 19
+      "topic": 29
     },
     {
       "keyword": "cloud account",
-      "topic": 19
+      "topic": 29
     },
     {
       "keyword": "preferences",
-      "topic": 19
+      "topic": 29
     },
     {
       "keyword": "models",
-      "topic": 20
+      "topic": 30
     },
     {
       "keyword": "parameters",
-      "topic": 20
+      "topic": 30
     },
     {
       "keyword": "default model",
-      "topic": 20
+      "topic": 30
     },
     {
       "keyword": "multimodal parameters",
-      "topic": 20
+      "topic": 30
     },
     {
       "keyword": "temperature",
-      "topic": 20
+      "topic": 30
     },
     {
       "keyword": "rounds",
-      "topic": 21
+      "topic": 31
     },
     {
       "keyword": "tool calls",
-      "topic": 21
+      "topic": 31
     },
     {
       "keyword": "files",
-      "topic": 22
+      "topic": 32
     },
     {
       "keyword": "workspace",
-      "topic": 22
+      "topic": 32
     },
     {
       "keyword": "local",
-      "topic": 22
+      "topic": 32
     },
     {
       "keyword": "storage",
-      "topic": 22
+      "topic": 32
     },
     {
       "keyword": "export",
-      "topic": 22
+      "topic": 32
     },
     {
       "keyword": "screenshot",
-      "topic": 23
+      "topic": 33
     },
     {
       "keyword": "recording",
-      "topic": 23
+      "topic": 33
     },
     {
       "keyword": "speech recognition",
-      "topic": 23
+      "topic": 33
     },
     {
       "keyword": "speech synthesis",
-      "topic": 23
+      "topic": 33
     },
     {
       "keyword": "image generation",
-      "topic": 23
+      "topic": 33
     },
     {
       "keyword": "video generation",
-      "topic": 23
+      "topic": 33
     },
     {
       "keyword": "data",
-      "topic": 24
+      "topic": 34
     },
     {
       "keyword": "privacy",
-      "topic": 24
+      "topic": 34
     },
     {
       "keyword": "SQLite",
-      "topic": 24
+      "topic": 34
     },
     {
       "keyword": "backup",
-      "topic": 24
+      "topic": 34
     },
     {
       "keyword": "storage location",
-      "topic": 24
+      "topic": 34
     },
     {
       "keyword": "diagnostics",
-      "topic": 25
+      "topic": 35
     },
     {
       "keyword": "troubleshooting",
-      "topic": 25
+      "topic": 35
     },
     {
       "keyword": "FAQ",
-      "topic": 25
+      "topic": 35
     },
     {
       "keyword": "failure",
-      "topic": 25
+      "topic": 35
     },
     {
       "keyword": "terminology",
-      "topic": 26
+      "topic": 36
     },
     {
       "keyword": "terms",
-      "topic": 26
+      "topic": 36
     },
     {
       "keyword": "definitions",
-      "topic": 26
+      "topic": 36
     },
     {
       "keyword": "concepts",
-      "topic": 26
+      "topic": 36
     }
   ]
 }

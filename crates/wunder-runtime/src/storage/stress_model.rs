@@ -8,6 +8,9 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
+mod stats;
+pub(crate) use stats::{StressTurnStatistics, StressUsageAccumulator};
+
 /// Hard cap protecting the live database from an unreasonable generation job.
 pub const MAX_USER_ROUNDS: i64 = 2000;
 pub const MAX_MODEL_ROUNDS: i64 = 2000;

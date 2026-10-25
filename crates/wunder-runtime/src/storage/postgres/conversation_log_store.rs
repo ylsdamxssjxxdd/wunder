@@ -1,3 +1,4 @@
+use super::runtime_log_store::PostgresRuntimeLogStorage;
 use super::PostgresStorage;
 use crate::storage::StorageLifecycle;
 use anyhow::Result;
@@ -18,18 +19,17 @@ pub(super) trait PostgresConversationLogStorage {
 impl PostgresConversationLogStorage for PostgresStorage {
     fn append_chat_impl(&self, user_id: &str, payload: &Value) -> Result<()> {
         self.ensure_initialized()?;
-        super::super::canonical_thread_log::wait(
-            self.canonical_threads()?
-                .append_chat_payload(user_id, payload),
-        )?
+        let store = self.service_threads_ref()?.clone();
+        super::super::canonical_thread_log::wait(store.append_chat_payload(user_id, payload))??;
+        Ok(())
     }
 
     fn append_tool_log_impl(&self, user_id: &str, payload: &Value) -> Result<()> {
-        self.runtime_logs()?.append_tool(user_id, payload)
+        self.append_tool_metric_impl(user_id, payload)
     }
 
     fn append_artifact_log_impl(&self, user_id: &str, payload: &Value) -> Result<()> {
-        self.runtime_logs()?.append_artifact(user_id, payload)
+        self.append_artifact_resource_impl(user_id, payload)
     }
 
     fn load_artifact_logs_impl(
@@ -38,7 +38,6 @@ impl PostgresConversationLogStorage for PostgresStorage {
         session_id: &str,
         limit: i64,
     ) -> Result<Vec<Value>> {
-        self.runtime_logs()?
-            .load_artifacts(user_id, session_id, limit)
+        self.load_artifact_resources_impl(user_id, session_id, limit)
     }
 }

@@ -1,5 +1,5 @@
-//! The production admission/freeze/begin/completion lifecycle, shared by both
-//! control-plane backends. Canonical PostgreSQL history needs no live server.
+//! Local admission/freeze/begin/completion lifecycle. The PostgreSQL service
+//! contract is verified against PostgreSQL in `postgres::thread_display`.
 use super::*;
 use serde_json::{json, Value};
 use wunder_core::thread_store::*;
@@ -238,19 +238,4 @@ fn sqlite_thread_lifecycle_and_recovery() {
             .into_owned(),
     );
     lifecycle_contract(&db, db.canonical_threads().unwrap());
-}
-
-#[cfg(feature = "postgres-storage")]
-#[test]
-fn postgres_canonical_thread_lifecycle_without_control_server() {
-    let root = tempfile::tempdir().unwrap();
-    let db = PostgresStorage::new_with_data_root(
-        "host=invalid.invalid user=fixture dbname=fixture".into(),
-        1,
-        1,
-        root.path().to_owned(),
-    )
-    .unwrap();
-    lifecycle_contract(&db, db.canonical_threads().unwrap());
-    assert!(!root.path().join("logs_1.sqlite").exists());
 }

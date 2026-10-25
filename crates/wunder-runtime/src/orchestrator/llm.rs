@@ -343,9 +343,12 @@ impl Orchestrator {
     }
 
     pub(super) async fn wait_for_cancelled(&self, session_id: &str) -> OrchestratorError {
-        let mut interval = tokio::time::interval(Duration::from_millis(200));
+        // Subscribe before checking the fence: a cancellation between the
+        // check and the await must remain visible. Signals are bounded hints;
+        // retain the slow check for administrative/legacy cancellation paths.
+        let mut subscription = self.monitor.run_signals.subscribe(session_id);
+        let child = self.monitor.child_run_token(session_id);
         loop {
-            interval.tick().await;
             if self.monitor.is_cancelled(session_id)
                 || self
                     .task_runtime
@@ -371,6 +374,21 @@ impl Orchestrator {
                     );
                 }
                 return OrchestratorError::cancelled(i18n::t("error.session_cancelled"));
+            }
+            tokio::select! {
+                _ = async {
+                    match &mut subscription {
+                        Some(signal) => { let _ = signal.receiver.changed().await; }
+                        None => std::future::pending().await,
+                    }
+                } => {},
+                _ = async {
+                    match &child {
+                        Some(token) => token.cancelled().await,
+                        None => std::future::pending().await,
+                    }
+                } => {},
+                _ = tokio::time::sleep(Duration::from_millis(200)) => {},
             }
         }
     }

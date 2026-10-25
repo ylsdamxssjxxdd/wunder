@@ -792,12 +792,22 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                     }
                 }
                 }
-            // resize handle
+            // resize handle: 1px rail at rest, 2px brand pill on hover/drag;
+            // the 8px hit area stays invisible so the panel edge does not read
+            // as a wide bar.
             if root.selected-index >= 0 : Rectangle {
                 x: parent.width - clamp(min(root.details-width, root.width - 280px), 320px, 440px);
                 y: 0px; height: parent.height;
-                width: 0px;
-                background: handle-touch.has-hover || root.details-dragging ? TrajTokens.border-2 : TrajTokens.border-1;
+                width: 1px;
+                background: TrajTokens.border-1;
+                Rectangle {
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                    width: handle-touch.has-hover || root.details-dragging ? 2px : 0px;
+                    height: root.details-dragging ? 40px : 32px;
+                    border-radius: 1px;
+                    background: TrajTokens.brand;
+                }
                 handle-touch := TouchArea {
                     x: -4px; width: 8px;
                     mouse-cursor: ew-resize;

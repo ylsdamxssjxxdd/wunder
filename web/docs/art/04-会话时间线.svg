@@ -1,0 +1,246 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1480" viewBox="0 0 1600 1480" role="img" aria-label="蛹 桌面端会话时间线设计规范">
+  <title>04 会话时间线 · 蛹 Desktop UI Spec</title>
+  <defs>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="t-eye" viewBox="0 0 24 24"><path d="M2.5 12s3.4-6 9.5-6 9.5 6 9.5 6-3.4 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.6"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="t-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="t-hash" viewBox="0 0 24 24"><path d="M9 3 7.5 21M16.5 3 15 21M4 8.5h16M3 15.5h16"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="t-stopwatch" viewBox="0 0 24 24"><circle cx="12" cy="13.5" r="7.5"/><path d="M12 9.5v4l2.6 1.7M9.5 3h5M12 3v3"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="t-gauge" viewBox="0 0 24 24"><path d="M4.2 18a9 9 0 1 1 15.6 0M12 14l4-4.3"/><circle cx="12" cy="14.5" r="1.4" fill="currentColor" stroke="none"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="t-layers" viewBox="0 0 24 24"><path d="m12 3 9 5-9 5-9-5zM3 12l9 5 9-5M3 16l9 5 9-5"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="t-bolt" viewBox="0 0 24 24"><path d="M13.5 2.5 5 14h6l-1 7.5L19 9.5h-6z"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="t-wrench" viewBox="0 0 24 24"><path d="M14.7 6.3a4.5 4.5 0 0 0-6 6L3 18l3 3 5.7-5.7a4.5 4.5 0 0 0 6-6l-3 3-2.3-.7-.7-2.3z"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="t-coins" viewBox="0 0 24 24"><ellipse cx="12" cy="7" rx="6.5" ry="2.6"/><path d="M5.5 7v5c0 1.4 2.9 2.6 6.5 2.6s6.5-1.2 6.5-2.6V7M5.5 12v5c0 1.4 2.9 2.6 6.5 2.6s6.5-1.2 6.5-2.6v-5"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="t-check" viewBox="0 0 24 24"><path d="m5 12.5 4.2 4.2L19 7"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" id="t-spinner" viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="t-tool" viewBox="0 0 24 24"><path d="M14.7 6.3a4.5 4.5 0 0 0-6 6L3 18l3 3 5.7-5.7a4.5 4.5 0 0 0 6-6l-3 3-2.3-.7-.7-2.3z"/></symbol>
+    <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="t-down" viewBox="0 0 24 24"><path d="M12 4v16M6 14l6 6 6-6"/></symbol>
+  </defs>
+  <style>
+    svg{font-family:'Microsoft YaHei UI','Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif;fill:#1F2329}
+    .mono{font-family:Consolas,'SFMono-Regular','Cascadia Mono',monospace}
+    .h1{font-size:30px;font-weight:700;letter-spacing:-.4px}
+    .sub{font-size:13px;fill:#7C7A75}
+    .kicker{font-size:11px;font-weight:600;letter-spacing:1.4px;fill:#E07A12}
+    .sect{font-size:16px;font-weight:700}
+    .sect-en{font-size:10px;font-weight:600;letter-spacing:1.6px;fill:#A8A39B}
+    .card{fill:#FFFFFF;stroke:#DED9D1;stroke-width:1}
+    .card-t{font-size:12px;font-weight:700}
+    .note{font-size:11px;fill:#7C7A75}
+    .tiny{font-size:10px;fill:#8A8F99}
+    .mono10{font-family:Consolas,monospace;font-size:10px;fill:#8A8F99}
+    .mono9{font-family:Consolas,monospace;font-size:9px;fill:#8A8F99}
+    .ui14{font-size:14px}.ui13{font-size:13px}.ui12{font-size:12px}.ui11{font-size:11px}.ui10{font-size:10px}
+    .muted{fill:#8A8F99}.soft{fill:#9BA0A8}.sub2{fill:#3D3D3D}
+  </style>
+
+  <rect width="1600" height="1480" fill="#F4F1EC"/>
+  <g id="header">
+    <text x="80" y="52" class="kicker">WUNDER / 蛹 · DESKTOP UI SPEC</text>
+    <text x="80" y="93" class="h1">04　会话时间线</text>
+    <text x="80" y="120" class="sub">阅读列上限 1000px、左右 24px；无卡片式外框，消息、过程、正文与页脚按垂直节奏排列。</text>
+    <text x="1520" y="52" text-anchor="end" class="mono" font-size="11" fill="#8A8F99">SHEET 04 / 09</text>
+    <text x="1520" y="94" text-anchor="end" class="mono" font-size="12" fill="#3D3D3D">TRANSCRIPT · MARKDOWN · TURN FOOTER</text>
+    <line x1="80" y1="140" x2="1520" y2="140" stroke="#D8D5D0"/>
+  </g>
+
+  <!-- ================= TRANSCRIPT ================= -->
+  <g id="transcript">
+    <rect x="80" y="190" width="1000" height="1170" fill="#FBFAF8" stroke="#D8D5D0"/>
+    <text x="80" y="180" class="mono10">READING COLUMN · 1000 × 1170</text>
+
+    <!-- greeting -->
+    <text x="104" y="222" class="ui14">我是 wunder，很高兴帮助你。把目标交给我，我会拆解任务、调用工具并交付结果。</text>
+    <rect x="1030" y="204" width="22" height="22" rx="6" fill="#F6F5F3"/>
+    <use href="#t-eye" x="1035" y="209" width="12" height="12" color="#8A8F99"/>
+    <text x="1056" y="240" text-anchor="end" class="mono9">PREVIEW PROMPT</text>
+
+    <!-- user bubble -->
+    <rect x="880" y="252" width="176" height="48" rx="12" fill="#F3F2F0"/>
+    <text x="896" y="282" class="ui14">1</text>
+
+    <!-- process bar collapsed -->
+    <circle cx="112" cy="334" r="8" fill="#FFFFFF" stroke="#E8E6E3"/>
+    <path d="M109.5 330.5 116 334l-6.5 3.5z" fill="#8A8F99"/>
+    <text x="130" y="338" class="ui13 sub2">工作过程 · 2 步</text>
+    <text x="241" y="338" class="ui12 muted">已完成</text>
+
+    <!-- fold entry -->
+    <circle cx="112" cy="368" r="6" fill="none" stroke="#9BA0A8"/>
+    <path d="m109.4 368 1.8 1.8 3.5-3.8" fill="none" stroke="#8A8F99" stroke-width="1.2" stroke-linecap="round"/>
+    <text x="128" y="372" class="ui13 muted">已思考</text>
+    <text x="178" y="372" class="ui12 soft">各步骤结果一致，可以收尾汇总。</text>
+
+    <!-- output card -->
+    <rect x="116" y="390" width="940" height="80" rx="8" fill="#FFFFFF" stroke="#E8E6E3"/>
+    <text x="128" y="411" class="ui11" font-weight="700" fill="#8A8F99">输出</text>
+    <rect x="1010" y="398" width="24" height="24" rx="7" fill="transparent"/>
+    <use href="#t-copy" x="1014" y="402" width="16" height="16" color="#8A8F99"/>
+    <text x="128" y="449" class="ui13 sub2">各步骤结果一致，可以收尾汇总。</text>
+
+    <!-- body -->
+    <text x="104" y="506" class="ui14">本轮处理已完成，共执行 1 个模型轮次。以下是本次工作的整理结果。</text>
+    <text x="104" y="536" class="ui14">执行过程</text>
+    <text x="104" y="578" class="ui14">1. 汇总各步骤结果，形成初步结论。</text>
+    <text x="104" y="610" class="ui14">2. 复核输出内容，确认没有遗漏项。</text>
+    <text x="104" y="640" class="ui14">整体流程正常完成，结果已就绪。如需进一步处理，请直接继续对话说明要求。</text>
+
+    <!-- code block -->
+    <rect x="104" y="664" width="952" height="112" rx="8" fill="#FDF0DE"/>
+    <text x="116" y="684" class="ui11 muted">rust</text>
+    <rect x="1028" y="672" width="16" height="16" rx="0" fill="transparent"/>
+    <use href="#t-copy" x="1028" y="673" width="14" height="14" color="#8A8F99"/>
+    <text x="116" y="710" class="mono" font-size="13" fill="#3D3D3D">fn summarize(items: &amp;[Item]) -&gt; Summary {</text>
+    <text x="132" y="730" class="mono" font-size="13" fill="#3D3D3D">let merged = merge(items);</text>
+    <text x="132" y="750" class="mono" font-size="13" fill="#3D3D3D">Summary::from(merged)</text>
+    <text x="116" y="770" class="mono" font-size="13" fill="#3D3D3D">}</text>
+
+    <!-- quote -->
+    <rect x="104" y="792" width="952" height="54" rx="8" fill="#FDF0DE"/>
+    <text x="118" y="814" class="ui13 muted">说明：这是引用块的降级样式；不支持富文本，但保留完整文本与复制内容。</text>
+    <text x="118" y="833" class="ui13 muted">行高 1.5，内缩 10 / 8。</text>
+
+    <!-- heading + bullets -->
+    <text x="104" y="884" font-size="17" font-weight="600">后续建议</text>
+    <text x="116" y="914" class="ui13 sub2">• 补充目标约束与验收标准，减少返工。</text>
+    <text x="116" y="936" class="ui13 sub2">• 需要结构化产出时，在消息里指定格式。</text>
+
+    <!-- turn footer -->
+    <g id="footer-stats" color="#1F2329">
+      <g transform="translate(104,968)">
+        <use href="#t-hash" width="12" height="12"/><text x="16" y="9.5" class="ui11">第 1 个用户轮次</text>
+        <use href="#t-stopwatch" x="122" width="12" height="12"/><text x="138" y="9.5" class="ui11">8.0s</text>
+        <use href="#t-gauge" x="186" width="12" height="12"/><text x="202" y="9.5" class="ui11">225.3 token/s</text>
+        <use href="#t-layers" x="316" width="12" height="12"/><text x="332" y="9.5" class="ui11">15.2k</text>
+        <use href="#t-bolt" x="382" width="12" height="12"/><text x="398" y="9.5" class="ui11">15.3k</text>
+        <use href="#t-wrench" x="456" width="12" height="12"/><text x="472" y="9.5" class="ui11">--</text>
+        <use href="#t-coins" x="506" width="12" height="12"/><text x="522" y="9.5" class="ui11">0</text>
+      </g>
+      <use href="#t-copy" x="1032" y="966" width="12" height="12" color="#8A8F99"/>
+    </g>
+
+    <!-- live turn -->
+    <rect x="880" y="1002" width="176" height="48" rx="12" fill="#F3F2F0"/>
+    <text x="896" y="1032" class="ui14">请继续</text>
+    <g color="#F58A24"><use href="#t-spinner" x="106" y="1078" width="12" height="12"/></g>
+    <text x="130" y="1089" class="ui13 sub2">工作过程 · 3 步</text>
+    <text x="241" y="1089" class="ui12" fill="#F58A24">处理中</text>
+    <line x1="113" y1="1100" x2="113" y2="1178" stroke="#E2DFDA"/>
+    <g color="#8A8F99"><use href="#t-spinner" x="107" y="1106" width="11" height="11"/></g>
+    <use href="#t-tool" x="125" y="1105" width="13" height="13" color="#8A8F99"/>
+    <text x="144" y="1116" class="ui13 muted">读取文件</text>
+    <rect x="208" y="1103" width="60" height="18" rx="6" fill="#F6F5F3"/>
+    <text x="215" y="1116" class="ui12 muted">docs</text>
+    <text x="280" y="1116" class="mono" font-size="11" fill="#8A8F99">12.3k token · 2.1s</text>
+    <circle cx="112" cy="1138" r="6" fill="none" stroke="#9BA0A8"/>
+    <text x="128" y="1142" class="ui13 muted">正在思考…</text>
+    <text x="202" y="1142" class="ui12 soft">对比两份材料的差异，准备收尾。</text>
+
+    <!-- scroll to bottom + ruler -->
+    <circle cx="1043" cy="1294" r="15" fill="#FFFFFF" fill-opacity=".4" stroke="#E8E6E3"/>
+    <use href="#t-down" x="1037" y="1288" width="12" height="12" color="#8A8F99"/>
+    <g>
+      <line x1="1072" y1="230" x2="1072" y2="1310" stroke="transparent"/>
+      <rect x="1068" y="300" width="6" height="2" rx="1" fill="#D8D5D0"/>
+      <rect x="1068" y="450" width="6" height="2" rx="1" fill="#D8D5D0"/>
+      <rect x="1068" y="600" width="6" height="2" rx="1" fill="#D8D5D0"/>
+      <rect x="1064" y="750" width="13" height="3" rx="1.5" fill="#F58A24"/>
+      <rect x="1068" y="900" width="6" height="2" rx="1" fill="#D8D5D0"/>
+      <rect x="1068" y="1050" width="6" height="2" rx="1" fill="#D8D5D0"/>
+      <rect x="1068" y="1200" width="6" height="2" rx="1" fill="#D8D5D0"/>
+    </g>
+    <text x="1078" y="1352" text-anchor="end" class="mono9">TURN RULER · hover 13×3 accent</text>
+  </g>
+
+  <!-- ================= RIGHT CARDS ================= -->
+  <g id="reading-card">
+    <rect x="1120" y="190" width="400" height="152" rx="12" class="card"/>
+    <text x="1142" y="214" class="card-t">阅读列与滚动</text>
+    <text x="1498" y="214" text-anchor="end" class="mono10">≤1000 · gutter 24</text>
+    <rect x="1142" y="230" width="356" height="42" rx="6" fill="#FBFAF8" stroke="#E8E6E3"/>
+    <rect x="1162" y="236" width="316" height="30" rx="4" fill="#FFFFFF" stroke="#E8E6E3"/>
+    <rect x="1182" y="242" width="276" height="18" rx="3" fill="#F3F2F0"/>
+    <text x="1142" y="292" class="tiny">宽窗居中留白，不拉伸行宽；左右各 24px。</text>
+    <text x="1142" y="310" class="tiny">滚动条始终隐藏；滚轮可用；自动跟随阈值 −32px。</text>
+    <text x="1142" y="328" class="tiny">回顶/回底圆钮 30，半透明白底，悬停不透明。</text>
+  </g>
+
+  <g id="bubble-card">
+    <rect x="1120" y="358" width="400" height="164" rx="12" class="card"/>
+    <text x="1142" y="382" class="card-t">用户消息</text>
+    <text x="1498" y="382" text-anchor="end" class="mono10">max min(70%, pref+24)</text>
+    <rect x="1210" y="398" width="200" height="48" rx="12" fill="#F3F2F0"/>
+    <text x="1222" y="428" class="ui14">请输入你的问题</text>
+    <line x1="1142" y1="462" x2="1498" y2="462" stroke="#E8E6E3"/>
+    <text x="1142" y="482" class="tiny">右对齐；内边距 x12 / y8；字号 14 / 行高 1.5；不显示头像、时间。</text>
+    <text x="1142" y="500" class="tiny">气泡底 #F3F2F0，圆角 12；复制使用回合页脚按钮。</text>
+  </g>
+
+  <g id="footer-card">
+    <rect x="1120" y="538" width="400" height="250" rx="12" class="card"/>
+    <text x="1142" y="562" class="card-t">回合页脚</text>
+    <text x="1498" y="562" text-anchor="end" class="mono10">11px · icon 12</text>
+    <g transform="translate(1142,576)" color="#1F2329">
+      <use href="#t-hash" width="12" height="12"/><text x="16" y="9.5" class="ui11">用户轮次</text>
+      <use href="#t-stopwatch" x="96" width="12" height="12"/><text x="112" y="9.5" class="ui11">耗时</text>
+      <use href="#t-gauge" x="166" width="12" height="12"/><text x="182" y="9.5" class="ui11">生成速度</text>
+      <use href="#t-layers" x="258" width="12" height="12"/><text x="274" y="9.5" class="ui11">上下文占用</text>
+      <use href="#t-bolt" x="16" y="28" width="12" height="12"/><text x="32" y="37.5" class="ui11">上下文消耗</text>
+      <use href="#t-wrench" x="132" y="28" width="12" height="12"/><text x="148" y="37.5" class="ui11">工具调用</text>
+      <use href="#t-coins" x="224" y="28" width="12" height="12"/><text x="240" y="37.5" class="ui11">额度</text>
+    </g>
+    <line x1="1142" y1="626" x2="1498" y2="626" stroke="#E8E6E3"/>
+    <text x="1142" y="648" class="card-t" font-size="11">运行状态胶囊（独占行，live 时只显示首个）</text>
+    <g transform="translate(1142,660)">
+      <rect width="92" height="22" rx="11" fill="#EFF6FF" stroke="#DBEAFE"/><circle cx="11" cy="11" r="3" fill="#2563EB"/><text x="20" y="15" class="ui10" fill="#2563EB" font-weight="600">处理中</text>
+      <rect x="102" width="92" height="22" rx="11" fill="#FEF2F2" stroke="#FEE2E2"/><circle cx="113" cy="11" r="3" fill="#DC2626"/><text x="122" y="15" class="ui10" fill="#DC2626" font-weight="600">任务失败</text>
+      <rect x="204" width="92" height="22" rx="11" fill="#FFF7ED" stroke="#FFEDD5"/><circle cx="215" cy="11" r="3" fill="#D97706"/><text x="224" y="15" class="ui10" fill="#D97706" font-weight="600">等待确认</text>
+    </g>
+    <text x="1142" y="710" class="tiny">胶囊 22 高；1px 同色 20% 描边；图标呼吸 1.2s（透明度 .58–1）。</text>
+    <text x="1142" y="730" class="tiny">右侧复制钮 22×22，圆角 6，悬停 #F1EFEC，图标 12。</text>
+    <text x="1142" y="750" class="tiny">页脚上方 +8 留白，下方 +4；无整宽分隔线。</text>
+    <text x="1142" y="770" class="tiny">速度 = 有效输出 token / 流式秒；无值显示 “-”。</text>
+  </g>
+
+  <g id="markdown-card">
+    <rect x="1120" y="804" width="400" height="242" rx="12" class="card"/>
+    <text x="1142" y="828" class="card-t">Markdown 降级样式</text>
+    <text x="1498" y="828" text-anchor="end" class="mono10">pure text fallback</text>
+    <text x="1142" y="854" font-size="22" font-weight="600">标题 H1</text>
+    <text x="1142" y="878" font-size="19" font-weight="600">标题 H2</text>
+    <text x="1142" y="900" font-size="17" font-weight="600">标题 H3</text>
+    <rect x="1142" y="912" width="356" height="52" rx="6" fill="#FDF0DE"/>
+    <text x="1152" y="931" class="ui11 muted">代码 · 13px Consolas</text>
+    <text x="1152" y="950" class="mono" font-size="11" fill="#3D3D3D">SELECT id, title FROM thread LIMIT 20;</text>
+    <rect x="1142" y="974" width="356" height="46" rx="6" fill="#FDF0DE"/>
+    <text x="1152" y="993" class="ui11 muted">引用 · 13px muted · 行高 1.5</text>
+    <text x="1152" y="1010" class="ui11 muted">保留原始文本，复制不丢内容。</text>
+    <text x="1142" y="1024" class="tiny">表格：单元格最小 150，1px 边框，头底 #FDF0DE，字 12，最大高 340。</text>
+    <text x="1142" y="1040" class="tiny">图片/公式/复杂 HTML 降级为可读文本、链接或占位提示。</text>
+  </g>
+
+  <g id="empty-card">
+    <rect x="1120" y="1050" width="400" height="290" rx="12" class="card"/>
+    <text x="1142" y="1074" class="card-t">空态与活动卡</text>
+    <text x="1498" y="1074" text-anchor="end" class="mono10">timeline empty</text>
+    <text x="1142" y="1100" class="ui13">你好！我是你的智能体助手。</text>
+    <rect x="1350" y="1084" width="22" height="22" rx="6" fill="#F6F5F3"/>
+    <use href="#t-eye" x="1355" y="1089" width="12" height="12" color="#8A8F99"/>
+    <rect x="1142" y="1120" width="356" height="98" rx="10" fill="#FFFFFF" stroke="#E8E6E3"/>
+    <text x="1156" y="1140" class="ui10 muted">近 7 天活跃</text>
+    <g transform="translate(1156,1150)">
+<rect x="0" y="0" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="6" y="0" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="12" y="0" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="18" y="0" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="24" y="0" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="30" y="0" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="36" y="0" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="42" y="0" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="48" y="0" width="4" height="4" rx="1" fill="#F58A24"/><rect x="54" y="0" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="60" y="0" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="66" y="0" width="4" height="4" rx="1" fill="#F58A24"/><rect x="72" y="0" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="78" y="0" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="84" y="0" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="90" y="0" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="96" y="0" width="4" height="4" rx="1" fill="#F7B575"/><rect x="102" y="0" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="108" y="0" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="114" y="0" width="4" height="4" rx="1" fill="#F7B575"/><rect x="120" y="0" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="126" y="0" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="132" y="0" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="138" y="0" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="144" y="0" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="150" y="0" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="156" y="0" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="162" y="0" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="168" y="0" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="174" y="0" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="180" y="0" width="4" height="4" rx="1" fill="#F58A24"/><rect x="186" y="0" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="192" y="0" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="198" y="0" width="4" height="4" rx="1" fill="#F58A24"/><rect x="204" y="0" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="210" y="0" width="4" height="4" rx="1" fill="#F7B575"/><rect x="216" y="0" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="222" y="0" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="228" y="0" width="4" height="4" rx="1" fill="#F7B575"/><rect x="234" y="0" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="240" y="0" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="246" y="0" width="4" height="4" rx="1" fill="#F7B575"/><rect x="252" y="0" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="258" y="0" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="264" y="0" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="270" y="0" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="276" y="0" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="282" y="0" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="288" y="0" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="294" y="0" width="4" height="4" rx="1" fill="#F58A24"/><rect x="300" y="0" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="306" y="0" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="312" y="0" width="4" height="4" rx="1" fill="#F58A24"/><rect x="0" y="6" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="6" y="6" width="4" height="4" rx="1" fill="#F58A24"/><rect x="12" y="6" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="18" y="6" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="24" y="6" width="4" height="4" rx="1" fill="#F58A24"/><rect x="30" y="6" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="36" y="6" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="42" y="6" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="48" y="6" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="54" y="6" width="4" height="4" rx="1" fill="#F7B575"/><rect x="60" y="6" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="66" y="6" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="72" y="6" width="4" height="4" rx="1" fill="#F7B575"/><rect x="78" y="6" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="84" y="6" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="90" y="6" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="96" y="6" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="102" y="6" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="108" y="6" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="114" y="6" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="120" y="6" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="126" y="6" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="132" y="6" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="138" y="6" width="4" height="4" rx="1" fill="#F58A24"/><rect x="144" y="6" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="150" y="6" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="156" y="6" width="4" height="4" rx="1" fill="#F58A24"/><rect x="162" y="6" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="168" y="6" width="4" height="4" rx="1" fill="#F7B575"/><rect x="174" y="6" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="180" y="6" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="186" y="6" width="4" height="4" rx="1" fill="#F7B575"/><rect x="192" y="6" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="198" y="6" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="204" y="6" width="4" height="4" rx="1" fill="#F7B575"/><rect x="210" y="6" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="216" y="6" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="222" y="6" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="228" y="6" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="234" y="6" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="240" y="6" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="246" y="6" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="252" y="6" width="4" height="4" rx="1" fill="#F58A24"/><rect x="258" y="6" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="264" y="6" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="270" y="6" width="4" height="4" rx="1" fill="#F58A24"/><rect x="276" y="6" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="282" y="6" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="288" y="6" width="4" height="4" rx="1" fill="#F58A24"/><rect x="294" y="6" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="300" y="6" width="4" height="4" rx="1" fill="#F7B575"/><rect x="306" y="6" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="312" y="6" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="0" y="12" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="6" y="12" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="12" y="12" width="4" height="4" rx="1" fill="#F7B575"/><rect x="18" y="12" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="24" y="12" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="30" y="12" width="4" height="4" rx="1" fill="#F7B575"/><rect x="36" y="12" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="42" y="12" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="48" y="12" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="54" y="12" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="60" y="12" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="66" y="12" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="72" y="12" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="78" y="12" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="84" y="12" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="90" y="12" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="96" y="12" width="4" height="4" rx="1" fill="#F58A24"/><rect x="102" y="12" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="108" y="12" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="114" y="12" width="4" height="4" rx="1" fill="#F58A24"/><rect x="120" y="12" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="126" y="12" width="4" height="4" rx="1" fill="#F7B575"/><rect x="132" y="12" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="138" y="12" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="144" y="12" width="4" height="4" rx="1" fill="#F7B575"/><rect x="150" y="12" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="156" y="12" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="162" y="12" width="4" height="4" rx="1" fill="#F7B575"/><rect x="168" y="12" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="174" y="12" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="180" y="12" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="186" y="12" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="192" y="12" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="198" y="12" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="204" y="12" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="210" y="12" width="4" height="4" rx="1" fill="#F58A24"/><rect x="216" y="12" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="222" y="12" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="228" y="12" width="4" height="4" rx="1" fill="#F58A24"/><rect x="234" y="12" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="240" y="12" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="246" y="12" width="4" height="4" rx="1" fill="#F58A24"/><rect x="252" y="12" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="258" y="12" width="4" height="4" rx="1" fill="#F7B575"/><rect x="264" y="12" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="270" y="12" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="276" y="12" width="4" height="4" rx="1" fill="#F7B575"/><rect x="282" y="12" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="288" y="12" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="294" y="12" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="300" y="12" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="306" y="12" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="312" y="12" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="0" y="18" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="6" y="18" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="12" y="18" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="18" y="18" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="24" y="18" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="30" y="18" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="36" y="18" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="42" y="18" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="48" y="18" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="54" y="18" width="4" height="4" rx="1" fill="#F58A24"/><rect x="60" y="18" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="66" y="18" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="72" y="18" width="4" height="4" rx="1" fill="#F58A24"/><rect x="78" y="18" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="84" y="18" width="4" height="4" rx="1" fill="#F7B575"/><rect x="90" y="18" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="96" y="18" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="102" y="18" width="4" height="4" rx="1" fill="#F7B575"/><rect x="108" y="18" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="114" y="18" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="120" y="18" width="4" height="4" rx="1" fill="#F7B575"/><rect x="126" y="18" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="132" y="18" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="138" y="18" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="144" y="18" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="150" y="18" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="156" y="18" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="162" y="18" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="168" y="18" width="4" height="4" rx="1" fill="#F58A24"/><rect x="174" y="18" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="180" y="18" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="186" y="18" width="4" height="4" rx="1" fill="#F58A24"/><rect x="192" y="18" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="198" y="18" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="204" y="18" width="4" height="4" rx="1" fill="#F58A24"/><rect x="210" y="18" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="216" y="18" width="4" height="4" rx="1" fill="#F7B575"/><rect x="222" y="18" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="228" y="18" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="234" y="18" width="4" height="4" rx="1" fill="#F7B575"/><rect x="240" y="18" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="246" y="18" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="252" y="18" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="258" y="18" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="264" y="18" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="270" y="18" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="276" y="18" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="282" y="18" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="288" y="18" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="294" y="18" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="300" y="18" width="4" height="4" rx="1" fill="#F58A24"/><rect x="306" y="18" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="312" y="18" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="0" y="24" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="6" y="24" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="12" y="24" width="4" height="4" rx="1" fill="#F58A24"/><rect x="18" y="24" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="24" y="24" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="30" y="24" width="4" height="4" rx="1" fill="#F58A24"/><rect x="36" y="24" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="42" y="24" width="4" height="4" rx="1" fill="#F7B575"/><rect x="48" y="24" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="54" y="24" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="60" y="24" width="4" height="4" rx="1" fill="#F7B575"/><rect x="66" y="24" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="72" y="24" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="78" y="24" width="4" height="4" rx="1" fill="#F7B575"/><rect x="84" y="24" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="90" y="24" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="96" y="24" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="102" y="24" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="108" y="24" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="114" y="24" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="120" y="24" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="126" y="24" width="4" height="4" rx="1" fill="#F58A24"/><rect x="132" y="24" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="138" y="24" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="144" y="24" width="4" height="4" rx="1" fill="#F58A24"/><rect x="150" y="24" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="156" y="24" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="162" y="24" width="4" height="4" rx="1" fill="#F58A24"/><rect x="168" y="24" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="174" y="24" width="4" height="4" rx="1" fill="#F7B575"/><rect x="180" y="24" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="186" y="24" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="192" y="24" width="4" height="4" rx="1" fill="#F7B575"/><rect x="198" y="24" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="204" y="24" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="210" y="24" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="216" y="24" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="222" y="24" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="228" y="24" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="234" y="24" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="240" y="24" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="246" y="24" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="252" y="24" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="258" y="24" width="4" height="4" rx="1" fill="#F58A24"/><rect x="264" y="24" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="270" y="24" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="276" y="24" width="4" height="4" rx="1" fill="#F58A24"/><rect x="282" y="24" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="288" y="24" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="294" y="24" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="300" y="24" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="306" y="24" width="4" height="4" rx="1" fill="#F7B575"/><rect x="312" y="24" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="0" y="30" width="4" height="4" rx="1" fill="#F7B575"/><rect x="6" y="30" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="12" y="30" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="18" y="30" width="4" height="4" rx="1" fill="#F7B575"/><rect x="24" y="30" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="30" y="30" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="36" y="30" width="4" height="4" rx="1" fill="#F7B575"/><rect x="42" y="30" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="48" y="30" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="54" y="30" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="60" y="30" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="66" y="30" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="72" y="30" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="78" y="30" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="84" y="30" width="4" height="4" rx="1" fill="#F58A24"/><rect x="90" y="30" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="96" y="30" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="102" y="30" width="4" height="4" rx="1" fill="#F58A24"/><rect x="108" y="30" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="114" y="30" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="120" y="30" width="4" height="4" rx="1" fill="#F58A24"/><rect x="126" y="30" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="132" y="30" width="4" height="4" rx="1" fill="#F7B575"/><rect x="138" y="30" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="144" y="30" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="150" y="30" width="4" height="4" rx="1" fill="#F7B575"/><rect x="156" y="30" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="162" y="30" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="168" y="30" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="174" y="30" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="180" y="30" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="186" y="30" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="192" y="30" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="198" y="30" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="204" y="30" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="210" y="30" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="216" y="30" width="4" height="4" rx="1" fill="#F58A24"/><rect x="222" y="30" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="228" y="30" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="234" y="30" width="4" height="4" rx="1" fill="#F58A24"/><rect x="240" y="30" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="246" y="30" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="252" y="30" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="258" y="30" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="264" y="30" width="4" height="4" rx="1" fill="#F7B575"/><rect x="270" y="30" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="276" y="30" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="282" y="30" width="4" height="4" rx="1" fill="#F7B575"/><rect x="288" y="30" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="294" y="30" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="300" y="30" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="306" y="30" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="312" y="30" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="0" y="36" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="6" y="36" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="12" y="36" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="18" y="36" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="24" y="36" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="30" y="36" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="36" y="36" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="42" y="36" width="4" height="4" rx="1" fill="#F58A24"/><rect x="48" y="36" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="54" y="36" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="60" y="36" width="4" height="4" rx="1" fill="#F58A24"/><rect x="66" y="36" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="72" y="36" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="78" y="36" width="4" height="4" rx="1" fill="#F58A24"/><rect x="84" y="36" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="90" y="36" width="4" height="4" rx="1" fill="#F7B575"/><rect x="96" y="36" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="102" y="36" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="108" y="36" width="4" height="4" rx="1" fill="#F7B575"/><rect x="114" y="36" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="120" y="36" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="126" y="36" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="132" y="36" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="138" y="36" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="144" y="36" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="150" y="36" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="156" y="36" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="162" y="36" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="168" y="36" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="174" y="36" width="4" height="4" rx="1" fill="#F58A24"/><rect x="180" y="36" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="186" y="36" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="192" y="36" width="4" height="4" rx="1" fill="#F58A24"/><rect x="198" y="36" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="204" y="36" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="210" y="36" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="216" y="36" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="222" y="36" width="4" height="4" rx="1" fill="#F7B575"/><rect x="228" y="36" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="234" y="36" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="240" y="36" width="4" height="4" rx="1" fill="#F7B575"/><rect x="246" y="36" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="252" y="36" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="258" y="36" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="264" y="36" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="270" y="36" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="276" y="36" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="282" y="36" width="4" height="4" rx="1" fill="#FDF0DE"/><rect x="288" y="36" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="294" y="36" width="4" height="4" rx="1" fill="#E9E8E5"/><rect x="300" y="36" width="4" height="4" rx="1" fill="#FAD9B4"/><rect x="306" y="36" width="4" height="4" rx="1" fill="#F58A24"/><rect x="312" y="36" width="4" height="4" rx="1" fill="#E9E8E5"/>
+    </g>
+    <text x="1142" y="1226" class="tiny">活动卡：53 列 × 7 行 · 格距 3 · 圆角 0.26×边 · 最大宽 880；上图为 4px 缩略。</text>
+    <text x="1142" y="1244" class="tiny">空态顺序：活动卡 → 18px → 欢迎语 → 消息行；加载中隐藏。</text>
+    <text x="1142" y="1262" class="tiny">欢迎语高度 = 文本高 + 12；右侧眼睛按钮 22×22，12px 图标。</text>
+    <text x="1142" y="1280" class="tiny">时间线为空且非加载时，才显示活动卡。</text>
+    <text x="1142" y="1300" class="tiny">流式输出时保持底部跟随；上滚 24px 解除，回到底部重新跟随。</text>
+    <text x="1142" y="1318" class="tiny">动画：文字/工具尾随 33ms；跟随 16ms 连续 2 帧；无其他过渡。</text>
+  </g>
+
+  <g id="footer">
+    <line x1="80" y1="1404" x2="1520" y2="1404" stroke="#D8D5D0"/>
+    <text x="80" y="1418" class="tiny">说明：时间线不使用分隔线；回合之间靠气泡留白、过程折叠与页脚分隔。历史消息限载并虚拟化。</text>
+    <text x="1520" y="1418" text-anchor="end" class="mono tiny">04 / 09</text>
+  </g>
+</svg>
