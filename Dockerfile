@@ -36,6 +36,19 @@ RUN apt-get update && apt-get install -y \
     libssl-dev clang \
   && apt-get clean && rm -rf /var/lib/apt/lists/*
 
+# Mainland mirrors for build-time downloads; apt and pip already use Tsinghua.
+ENV RUSTUP_DIST_SERVER=https://rsproxy.cn \
+    NPM_CONFIG_REGISTRY=https://registry.npmmirror.com \
+    PLAYWRIGHT_DOWNLOAD_HOST=https://cdn.npmmirror.com/binaries/playwright
+
+RUN mkdir -p /usr/local/cargo && printf '%s\n' \
+    '[source.crates-io]' \
+    'replace-with = "rsproxy-sparse"' \
+    '' \
+    '[source.rsproxy-sparse]' \
+    'registry = "sparse+https://rsproxy.cn/index/"' \
+    > /usr/local/cargo/config.toml
+
 RUN rustup component add rustfmt clippy
 RUN cargo install cargo-watch --version 8.4.0 --locked
 
@@ -214,6 +227,11 @@ RUN set -eux; \
     if find /ms-playwright -maxdepth 1 -type d -name 'chromium*' -print -quit 2>/dev/null | grep -q .; then \
       cp -a /ms-playwright/. "$WUNDER_PLAYWRIGHT_SEED_PATH"/; \
     fi
+
+# extra_mcp imports mcp.server.fastmcp, which the 2.x SDK removed in favour of
+# MCPServer; keep the v1 API the service is written against.
+RUN python3 -m pip install --break-system-packages "mcp<2" \
+  -i https://pypi.tuna.tsinghua.edu.cn/simple
 
 WORKDIR /workspaces
 

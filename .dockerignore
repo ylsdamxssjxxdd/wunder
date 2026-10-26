@@ -1,0 +1,14 @@
+.git
+.gitignore
+target
+**/target
+frontend-slint/target
+node_modules
+node_modules-*
+**/node_modules
+frontend/dist
+frontend/dist-desktop
+config/data
+docs
+images
+packaging
