@@ -1,13 +1,15 @@
 //! Typed slash commands. These never enter the model's ordinary user-message path.
 use super::NativeDesktop;
 use anyhow::{anyhow, Result};
-use serde_json::Value;
+use wunder_server::goal::{parse_goal_command, GoalCommand};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NativeChatCommand {
     Compact,
     GoalShow,
     GoalSet(String),
+    GoalEdit(String),
+    GoalInvalidEdit,
     GoalResume,
     GoalPause,
     GoalClear,
@@ -23,18 +25,14 @@ impl NativeChatCommand {
         let args = args.trim();
         Some(match name.to_ascii_lowercase().as_str() {
             "compact" => Self::Compact,
-            "goal" => match args
-                .split_whitespace()
-                .next()
-                .unwrap_or("")
-                .to_ascii_lowercase()
-                .as_str()
-            {
-                "" => Self::GoalShow,
-                "resume" => Self::GoalResume,
-                "pause" => Self::GoalPause,
-                "clear" => Self::GoalClear,
-                _ => Self::GoalSet(args.into()),
+            "goal" => match parse_goal_command(args) {
+                GoalCommand::Show => Self::GoalShow,
+                GoalCommand::Create { objective } => Self::GoalSet(objective),
+                GoalCommand::Edit { objective } => Self::GoalEdit(objective),
+                GoalCommand::InvalidEdit => Self::GoalInvalidEdit,
+                GoalCommand::Resume => Self::GoalResume,
+                GoalCommand::Pause => Self::GoalPause,
+                GoalCommand::Clear => Self::GoalClear,
             },
             "help" | "?" => Self::Help,
             "stop" | "cancel" => Self::Stop,
@@ -93,40 +91,23 @@ impl NativeDesktop {
                         .await?;
                     return Ok("正在压缩上下文…".into());
                 }
-                NativeChatCommand::GoalShow => wunder_server::goal::GoalCommand::Show,
-                NativeChatCommand::GoalSet(objective) => {
-                    wunder_server::goal::GoalCommand::Create { objective }
-                }
-                NativeChatCommand::GoalResume => wunder_server::goal::GoalCommand::Resume,
-                NativeChatCommand::GoalPause => wunder_server::goal::GoalCommand::Pause,
-                NativeChatCommand::GoalClear => wunder_server::goal::GoalCommand::Clear,
+                NativeChatCommand::GoalShow => GoalCommand::Show,
+                NativeChatCommand::GoalSet(objective) => GoalCommand::Create { objective },
+                NativeChatCommand::GoalEdit(objective) => GoalCommand::Edit { objective },
+                NativeChatCommand::GoalInvalidEdit => GoalCommand::InvalidEdit,
+                NativeChatCommand::GoalResume => GoalCommand::Resume,
+                NativeChatCommand::GoalPause => GoalCommand::Pause,
+                NativeChatCommand::GoalClear => GoalCommand::Clear,
                 _ => return Err(anyhow!("此命令应由界面处理")),
             };
-            let state = self.state();
-            let service = state.kernel.orchestrator.goal_handle();
-            let (_, goal_value) = wunder_server::goal::execute_goal_command(
-                service.as_ref(),
-                state.storage.clone(),
-                &user.user_id,
+            let outcome = wunder_server::api::chat_goal::native_session_goal_outcome(
+                self.state(),
+                &user,
                 session,
                 command,
             )
             .await?;
-            Ok(match goal_value {
-                Some(goal) => {
-                    let phase = goal.get("phase").and_then(Value::as_str).unwrap_or("");
-                    let objective = goal.get("objective").and_then(Value::as_str).unwrap_or("");
-                    let phase_label = match phase {
-                        "active" => "执行中",
-                        "complete" => "已完成",
-                        "paused" => "已暂停",
-                        "blocked" => "已阻塞",
-                        _ => phase,
-                    };
-                    format!("目标：{objective} · {phase_label}")
-                }
-                None => "当前会话没有目标，输入 /goal 加目标内容即可开始".into(),
-            })
+            Ok(outcome.message)
         })
     }
 }
@@ -158,7 +139,49 @@ mod tests {
     }
 
     #[test]
+    fn goal_visibility_distinguishes_complete_and_cleared_from_inactive() {
+        for phase in ["active", "paused", "blocked"] {
+            let goal = NativeGoal {
+                objective: "Fixture objective".into(),
+                phase: phase.into(),
+                activation: "disarmed".into(),
+                ..Default::default()
+            };
+            assert!(goal.visible());
+            assert!(!goal.active());
+        }
+        assert!(!NativeGoal::default().visible());
+        assert!(!NativeGoal {
+            objective: "Fixture objective".into(),
+            phase: "complete".into(),
+            ..Default::default()
+        }
+        .visible());
+    }
+
+    #[test]
     fn commands_match_web_and_preserve_objective() {
+        for objective in [
+            "示例目标",
+            "a示例目标",
+            "ab示例目标",
+            "🧪示例目标",
+            "pause fixture",
+            "clear fixture",
+        ] {
+            assert_eq!(
+                NativeChatCommand::parse(&format!("/goal {objective}")),
+                Some(NativeChatCommand::GoalSet(objective.into()))
+            );
+        }
+        assert_eq!(
+            NativeChatCommand::parse("/goal EDIT revised fixture"),
+            Some(NativeChatCommand::GoalEdit("revised fixture".into()))
+        );
+        assert_eq!(
+            NativeChatCommand::parse("/goal edit"),
+            Some(NativeChatCommand::GoalInvalidEdit)
+        );
         assert_eq!(
             NativeChatCommand::parse(" /GOAL example objective "),
             Some(NativeChatCommand::GoalSet("example objective".into()))

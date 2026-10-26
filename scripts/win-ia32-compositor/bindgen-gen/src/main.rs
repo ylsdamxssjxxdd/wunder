@@ -87,6 +87,13 @@ fn main() {
     if let Ok(target) = std::env::var("BINDGEN_TARGET") {
         builder = builder.clang_arg(format!("--target={}", target));
     }
+    // BINDGEN_EXTRA：额外 clang 参数（空白分隔）。mingw 的 malloc.h 会引用只有
+    // gcc 才带的 mm_malloc.h，clang 不搜 gcc 安装树，需调用方挂上 gcc 的 include。
+    if let Ok(extra) = std::env::var("BINDGEN_EXTRA") {
+        for arg in extra.split_whitespace() {
+            builder = builder.clang_arg(arg);
+        }
+    }
     for inc in &args[3..] {
         builder = builder.clang_arg(format!("-I{}", inc));
     }

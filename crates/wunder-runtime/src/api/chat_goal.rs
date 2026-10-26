@@ -35,6 +35,7 @@ pub struct GoalUpsertPayload {
 pub struct GoalMutationOutcome {
     pub goal: Option<Value>,
     pub user_round: Option<i64>,
+    pub message: String,
 }
 
 async fn get_session_goal(
@@ -151,7 +152,9 @@ pub async fn apply_goal_command(
     Ok(outcome.goal)
 }
 
-async fn native_session_goal_outcome(
+/// Execute a human goal control through the shared durable timeline and
+/// execution fence, retaining domain feedback for in-process callers.
+pub async fn native_session_goal_outcome(
     state: &Arc<AppState>,
     user: &crate::storage::UserAccountRecord,
     session_id: &str,
@@ -275,7 +278,7 @@ async fn native_session_goal_outcome(
                 .await?;
         }
     }
-    let (_, goal_value) = goal::command::execute_goal_command_while_controlled(
+    let (message, goal_value) = goal::command::execute_goal_command_while_controlled(
         goal_service(state).as_ref(),
         state.storage.clone(),
         user_id,
@@ -297,6 +300,7 @@ async fn native_session_goal_outcome(
     Ok(GoalMutationOutcome {
         goal: goal_value,
         user_round,
+        message,
     })
 }
 

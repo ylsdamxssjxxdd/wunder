@@ -48,6 +48,8 @@ struct TurnOutput {
     /// the history already occupies, so nothing is copied on send or settle.
     timeline: Rc<RefCell<crate::timeline::Timeline>>,
     state: String,
+    settlement_failed: bool,
+    terminal: bool,
     round: i64,
     /// Model round whose body block is currently open; a round change starts a
     /// new block instead of appending to the finished one.
@@ -77,6 +79,8 @@ impl TurnOutput {
             session,
             timeline,
             state: "请求中".into(),
+            settlement_failed: false,
+            terminal: false,
             round: 0,
             body_round: -1,
             user_round: 0,
@@ -89,7 +93,7 @@ impl TurnOutput {
     }
 
     fn failed(&self) -> bool {
-        matches!(self.state.as_str(), "执行失败" | "思考中断") || self.state.contains("失败")
+        self.settlement_failed || self.state == "已停止"
     }
 
     /// Upsert one tool entry and publish it to the timeline. The reducer calls
@@ -3121,7 +3125,7 @@ fn bind_goal(app: &MainWindow, state: Rc<RefCell<State>>) {
             &app,
             state_save.clone(),
             session,
-            NativeChatCommand::GoalSet(objective),
+            NativeChatCommand::GoalEdit(objective),
         );
     });
     let weak = app.as_weak();
@@ -3302,7 +3306,9 @@ fn start_timer(app: &MainWindow, state: Rc<RefCell<State>>) {
                         Ok(Some(event)) => event,
                         Ok(None) => break,
                         Err(error) => {
-                            active.state = error.into();
+                            app.set_status(error.into());
+                            active.state = "执行失败".into();
+                            active.settlement_failed = true;
                             done = true;
                             break;
                         }
@@ -3373,7 +3379,9 @@ fn start_timer(app: &MainWindow, state: Rc<RefCell<State>>) {
                         match apply_event(active, &mut timeline.borrow_mut(), &event) {
                             Ok(changed) => dirty |= changed,
                             Err(error) => {
-                                active.state = error;
+                                app.set_status(error.into());
+                                active.state = "执行失败".into();
+                                active.settlement_failed = true;
                                 done = true;
                             }
                         }
@@ -3386,7 +3394,9 @@ fn start_timer(app: &MainWindow, state: Rc<RefCell<State>>) {
                         queue::schedule_due(&mut state.queue_due, Duration::from_millis(0));
                     }
                     NativeChatEvent::Failed(error) => {
-                        active.state = error;
+                        app.set_status(error.into());
+                        active.state = "执行失败".into();
+                        active.settlement_failed = true;
                         done = true;
                         app.set_cloud_queue_position(-1);
                     }
@@ -3508,7 +3518,11 @@ fn apply_event(
     {
         return Ok(false);
     }
-    if active.state == "已停止" {
+    if active.state == "已停止"
+        || (active.terminal
+            && kind != "native_execution_started"
+            && (active.failed() || kind != "final"))
+    {
         return Ok(false);
     }
     if let Some(round) = data["user_round"]
@@ -3563,6 +3577,8 @@ fn apply_event(
             }
         }
         "native_execution_started" => {
+            active.terminal = false;
+            active.settlement_failed = false;
             if let Some(root) = data["root_turn_id"].as_str() {
                 timeline.set_process_root(root);
             }
@@ -3577,6 +3593,10 @@ fn apply_event(
             if let Some(root) = data["root_turn_id"].as_str() {
                 timeline.set_process_root(root);
             }
+            active.settlement_failed = matches!(
+                data["status"].as_str(),
+                Some("failed" | "error" | "rejected")
+            );
             active.state = match data["status"].as_str() {
                 Some("queued") => "正在排队",
                 Some("running") => "请求中",
@@ -3658,12 +3678,18 @@ fn apply_event(
             } else if kind == "final" {
                 timeline.set_user_round(active.user_round);
             }
-            if kind == "final" {
+            if kind == "final" && !active.terminal {
+                active.settlement_failed = false;
                 active.state = "任务完成".into();
             }
             return Ok(true);
         }
         "turn_terminal" => {
+            active.terminal = true;
+            active.settlement_failed = matches!(
+                data["status"].as_str(),
+                Some("failed" | "error" | "rejected")
+            );
             // A terminal event may be the only place a very short turn's
             // statistics arrive.
             if let Some(stats) = crate::turn_stats::message_stats(data) {
@@ -3677,7 +3703,7 @@ fn apply_event(
                 timeline.set_user_round(active.user_round);
             }
             active.state = match data["status"].as_str() {
-                Some("cancelled" | "canceled") => "已停止",
+                Some("cancelled" | "canceled" | "interrupted" | "stopped") => "已停止",
                 Some("failed" | "error" | "rejected") => "执行失败",
                 Some("waiting_input" | "waiting_user_input") => "等待用户输入",
                 _ => "任务完成",
@@ -3894,7 +3920,13 @@ fn apply_event(
             }
         }
         "error" | "queue_fail" => {
-            active.state = data["message"].as_str().unwrap_or("执行失败").into()
+            active.settlement_failed = data["will_retry"].as_bool() != Some(true);
+            active.state = if active.settlement_failed {
+                "执行失败"
+            } else {
+                "正在重试…"
+            }
+            .into();
         }
         _ => return Ok(false),
     }
@@ -4017,6 +4049,168 @@ fn format_count_i64(value: i64) -> String {
 #[cfg(test)]
 mod turn_tests {
     use super::*;
+
+    #[test]
+    fn cancelled_terminal_settles_open_tool_without_a_success_mark() {
+        let timeline = Rc::new(RefCell::new(crate::timeline::Timeline::new()));
+        let mut output = TurnOutput::new("fixture-session".into(), timeline.clone());
+        let mut live = timeline.borrow_mut();
+        live.begin_turn("fixture-root", "Fixture input");
+        apply_event(&mut output, &mut live, &serde_json::json!({
+            "event":"tool_call", "data":{"tool_call_id":"fixture-call","tool":"fixture_tool","args":{}}
+        })).unwrap();
+        apply_event(
+            &mut output,
+            &mut live,
+            &serde_json::json!({
+                "event":"turn_terminal", "data":{"status":"cancelled"}
+            }),
+        )
+        .unwrap();
+        live.finish(output.failed());
+        live.set_turn_status(&output.state, 1);
+        let rows: Vec<_> = live.model().iter().collect();
+        assert_eq!(output.state, "已停止");
+        assert!(rows
+            .iter()
+            .all(|row| row.status_kind != crate::timeline::STATUS_RUNNING));
+        assert!(rows.iter().any(|row| row.kind == crate::timeline::KIND_TOOL
+            && row.status_kind == crate::timeline::STATUS_FAILED));
+    }
+
+    #[test]
+    fn error_message_language_cannot_turn_failure_into_success() {
+        let timeline = Rc::new(RefCell::new(crate::timeline::Timeline::new()));
+        let mut output = TurnOutput::new("fixture-session".into(), timeline.clone());
+        let mut live = timeline.borrow_mut();
+        live.begin_turn("fixture-root", "Fixture input");
+        apply_event(
+            &mut output,
+            &mut live,
+            &serde_json::json!({
+                "event":"error", "data":{"message":"fixture transport error"}
+            }),
+        )
+        .unwrap();
+        assert!(output.failed());
+    }
+
+    #[test]
+    fn failed_terminal_rejects_late_output_without_reopening_the_turn() {
+        let timeline = Rc::new(RefCell::new(crate::timeline::Timeline::new()));
+        let mut output = TurnOutput::new("fixture-session".into(), timeline.clone());
+        let mut live = timeline.borrow_mut();
+        live.begin_turn("fixture-root", "Fixture input");
+        apply_event(
+            &mut output,
+            &mut live,
+            &serde_json::json!({
+                "event":"turn_terminal", "data":{"status":"failed"}
+            }),
+        )
+        .unwrap();
+        assert!(!apply_event(
+            &mut output,
+            &mut live,
+            &serde_json::json!({
+                "event":"final", "data":{"answer":"fixture late answer"}
+            })
+        )
+        .unwrap());
+        assert!(output.failed());
+        assert_eq!(output.state, "执行失败");
+    }
+
+    #[test]
+    fn completed_turn_does_not_invent_success_for_an_unreported_tool() {
+        let timeline = Rc::new(RefCell::new(crate::timeline::Timeline::new()));
+        let mut output = TurnOutput::new("fixture-session".into(), timeline.clone());
+        let mut live = timeline.borrow_mut();
+        live.begin_turn("fixture-root", "Fixture input");
+        apply_event(&mut output, &mut live, &serde_json::json!({
+            "event":"tool_call", "data":{"tool_call_id":"fixture-call","tool":"fixture_tool","args":{}}
+        })).unwrap();
+        apply_event(
+            &mut output,
+            &mut live,
+            &serde_json::json!({
+                "event":"turn_terminal", "data":{"status":"completed"}
+            }),
+        )
+        .unwrap();
+        live.finish(output.failed());
+        assert!(live
+            .model()
+            .iter()
+            .any(|row| row.kind == crate::timeline::KIND_TOOL
+                && row.status_kind == crate::timeline::STATUS_FAILED));
+        assert!(!output.failed());
+    }
+
+    #[test]
+    fn explicit_execution_start_allows_a_goal_successor_after_completion() {
+        let timeline = Rc::new(RefCell::new(crate::timeline::Timeline::new()));
+        let mut output = TurnOutput::new("fixture-session".into(), timeline.clone());
+        let mut live = timeline.borrow_mut();
+        live.begin_turn("fixture-root", "Fixture input");
+        apply_event(
+            &mut output,
+            &mut live,
+            &serde_json::json!({
+                "event":"turn_terminal", "data":{"status":"completed"}
+            }),
+        )
+        .unwrap();
+        assert!(apply_event(&mut output, &mut live, &serde_json::json!({
+            "event":"native_execution_started", "data":{"root_turn_id":"fixture-root","turn_id":"fixture-next"}
+        })).unwrap());
+        assert!(apply_event(
+            &mut output,
+            &mut live,
+            &serde_json::json!({
+                "event":"llm_output_delta", "data":{"model_round":1,"delta":"fixture next answer"}
+            })
+        )
+        .unwrap());
+        live.flush();
+        assert!(live
+            .model()
+            .iter()
+            .any(|row| row.text == "fixture next answer"));
+    }
+
+    #[test]
+    fn final_receipt_after_durable_terminal_keeps_answer_and_waiting_status() {
+        for status in ["completed", "waiting_input"] {
+            let timeline = Rc::new(RefCell::new(crate::timeline::Timeline::new()));
+            let mut output = TurnOutput::new("fixture-session".into(), timeline.clone());
+            let mut live = timeline.borrow_mut();
+            live.begin_turn("fixture-root", "Fixture input");
+            apply_event(
+                &mut output,
+                &mut live,
+                &serde_json::json!({
+                    "event":"turn_terminal", "data":{"status":status}
+                }),
+            )
+            .unwrap();
+            let expected = output.state.clone();
+            assert!(apply_event(
+                &mut output,
+                &mut live,
+                &serde_json::json!({
+                    "event":"final", "data":{"answer":"fixture final answer"}
+                })
+            )
+            .unwrap());
+            live.flush();
+            assert!(live
+                .model()
+                .iter()
+                .any(|row| row.text == "fixture final answer"));
+            assert_eq!(output.state, expected);
+        }
+    }
 
     #[test]
     fn runtime_reasoning_envelope_updates_the_live_process_before_body_or_final() {

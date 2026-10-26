@@ -107,12 +107,12 @@ Type: files; Name: "{app}\.wunder-home"
 
 [Code]
 const
-  ComponentCount = 6;
+  ComponentCount = 7;
   CComponentsShown = {#ComponentsShown};
 
 var
-  ComponentTasks: array[0..5] of String;
-  ComponentLabels: array[0..5] of String;
+  ComponentTasks: array[0..6] of String;
+  ComponentLabels: array[0..6] of String;
   SelectAllCheckBox: TNewCheckBox;
   UpdatingSelectAll: Boolean;
 
@@ -124,12 +124,14 @@ begin
   ComponentTasks[3] := 'ffmpeg';
   ComponentTasks[4] := 'browser';
   ComponentTasks[5] := 'r2';
+  ComponentTasks[6] := 'remotion';
   ComponentLabels[0] := 'Python';
   ComponentLabels[1] := 'Git';
   ComponentLabels[2] := 'ripgrep';
   ComponentLabels[3] := 'FFmpeg';
   ComponentLabels[4] := '内置浏览器';
   ComponentLabels[5] := 'radare2';
+  ComponentLabels[6] := 'Remotion 视频渲染（含 Node.js）';
   Result := True;
 end;
 
@@ -251,6 +253,25 @@ begin
     Delete(Result, Length(Result), 1);
 end;
 
+function ComponentDirAt(const Name: String; Index: Integer): String;
+begin
+  // One task can span several opt directories: the remotion checkbox installs
+  // both the Remotion runtime and the bundled Node.js runtime it launches.
+  if CompareText(Name, 'remotion') = 0 then
+  begin
+    case Index of
+      0: Result := 'node';
+      1: Result := 'remotion';
+    else
+      Result := '';
+    end;
+  end
+  else if Index = 0 then
+    Result := Name
+  else
+    Result := '';
+end;
+
 procedure AddAppToUserPath();
 var
   Current, Entry: String;
@@ -325,24 +346,27 @@ end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 var
-  I: Integer;
-  Existing: String;
-  Target: String;
+  I, D: Integer;
+  Dir, Existing, Target: String;
 begin
   if CurStep = ssInstall then
   begin
     Existing := '';
     for I := 0 to ComponentCount - 1 do
       if WizardIsTaskSelected(ComponentTasks[I]) then
-      begin
-        Target := ExpandConstant('{app}\opt\' + ComponentTasks[I]);
-        if DirExists(Target) then
+        for D := 0 to ComponentCount - 1 do
         begin
-          if Existing <> '' then
-            Existing := Existing + '、';
-          Existing := Existing + LabelFor(ComponentTasks[I]);
+          Dir := ComponentDirAt(ComponentTasks[I], D);
+          if Dir = '' then
+            Break;
+          if DirExists(ExpandConstant('{app}\opt\' + Dir)) then
+          begin
+            if Existing <> '' then
+              Existing := Existing + '、';
+            Existing := Existing + LabelFor(ComponentTasks[I]);
+            Break;
+          end;
         end;
-      end;
 
     if Existing <> '' then
     begin
@@ -356,19 +380,23 @@ begin
 
     for I := 0 to ComponentCount - 1 do
       if WizardIsTaskSelected(ComponentTasks[I]) then
-      begin
-        Target := ExpandConstant('{app}\opt\' + ComponentTasks[I]);
-        if DirExists(Target) then
+        for D := 0 to ComponentCount - 1 do
         begin
-          if not DelTree(Target, True, True, True) then
+          Dir := ComponentDirAt(ComponentTasks[I], D);
+          if Dir = '' then
+            Break;
+          Target := ExpandConstant('{app}\opt\' + Dir);
+          if DirExists(Target) then
           begin
-            MsgBox('无法清空目录：' + Target + #13#10#13#10 +
-              '请先关闭正在使用该组件的程序（心舰、舵机或 Python 任务）后重试。',
-              mbError, MB_OK);
-            Abort;
+            if not DelTree(Target, True, True, True) then
+            begin
+              MsgBox('无法清空目录：' + Target + #13#10#13#10 +
+                '请先关闭正在使用该组件的程序（心舰、舵机或组件进程）后重试。',
+                mbError, MB_OK);
+              Abort;
+            end;
           end;
         end;
-      end;
   end
   else if CurStep = ssPostInstall then
   begin
@@ -389,8 +417,8 @@ procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   Raw: AnsiString;
   Data: String;
-  Item: String;
-  P: Integer;
+  Item, Dir: String;
+  I, P: Integer;
 begin
   if CurUninstallStep <> usUninstall then
     Exit;
@@ -417,6 +445,12 @@ begin
     end;
     Item := Trim(Item);
     if IsKnownComponent(Item) then
-      DelTree(ExpandConstant('{app}\opt\' + Item), True, True, True);
+      for I := 0 to ComponentCount - 1 do
+      begin
+        Dir := ComponentDirAt(Item, I);
+        if Dir = '' then
+          Break;
+        DelTree(ExpandConstant('{app}\opt\' + Dir), True, True, True);
+      end;
   end;
 end;

@@ -945,7 +945,7 @@ export component GoalBanner inherits Rectangle {
                 text: I18n.cp_goal_blocked_tag; color: Theme.danger;
                 font-size: Theme.font-sm; font-weight: 700; vertical-alignment: center;
             }
-            if root.phase == "paused" || root.activation == "disarmed" : Text {
+            if root.phase == "paused" || (root.phase == "active" && root.activation == "disarmed") : Text {
                 text: I18n.cp_goal_paused_tag; color: Theme.warning;
                 font-size: Theme.font-sm; vertical-alignment: center;
             }

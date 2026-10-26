@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {beginThreadView,commitThreadView,threadViewSlots,threadViewPhase,threadViewCursor,applyThreadViewChanges,submitThreadView,failThreadView,clearThreadView,applyThreadViewTail,threadViewAtLatest,threadViewStatus,pauseThreadViewHistory,threadViewHistory,threadViewWindow,removeThreadViewTurnByClientMessageId} from '../../src/realtime/chat/threadViewStore';
+import {beginThreadView,commitThreadView,threadViewSlots,threadViewPhase,threadViewCursor,applyThreadViewChanges,submitThreadView,failThreadView,clearThreadView,applyThreadViewTail,threadViewAtLatest,threadViewStatus,pauseThreadViewHistory,threadViewHistory,threadViewWindow,removeThreadViewTurnByClientMessageId,applyBodyHydration} from '../../src/realtime/chat/threadViewStore';
 const row=(round:number,revision=1)=>({root_turn_id:`fixture-turn-${round}`,user_round:round,revision,status:'completed',user:{item_id:`fixture-user-${round}`,content:'fixture input'},assistant:{item_id:`fixture-answer-${round}`,content:'fixture answer'},workflow_count:0,failed_count:0});
 const page=(chat:any[],seq=1)=>({session_id:'fixture-thread',epoch:1,view_seq:seq,projection_state:'ready',thread_empty:chat.length===0,latest_round:chat.length,chat,trajectory:[],tiles:[],tile_level:0,next_before:1,has_more:false});
 const key='fixture-thread';
@@ -79,6 +79,21 @@ applyThreadViewChanges(key,{view_seq:100,runtime_status:'completed',rows:[]});
 applyThreadViewChanges(key,{view_seq:20,runtime_status:'running',rows:[{...row(1,20),status:'completed',assistant:{item_id:'fixture-answer-1',content:'fixture sealed'}}]});
 assert.equal(threadViewSlots(key)![0].assistant.content,'fixture sealed');assert.equal(threadViewStatus(key),'completed');assert.equal(threadViewCursor(key),100);
 console.log('thread view: durable tail baseline, duplicates, holes, UTF16, finite live tail and interleaved feeder delivery pass');
+
+// A user input is a complete body from the start, not a stream: its lazy read
+// must land while the turn still runs, and later bounded-row pushes must not
+// regress it back to the preview.
+clearThreadView(key);generation=beginThreadView(key);
+const fullUserText='用户输入'.repeat(800);
+const userBody={body_id:'fixture-turn-1:user|content',revision:1,bytes:new TextEncoder().encode(fullUserText).length};
+const runningUser={...row(1,1),status:'running',user:{item_id:'fixture-turn-1:user',content:fullUserText.slice(0,600),content_offset:fullUserText.length,body:userBody}};
+commitThreadView(key,page([runningUser],1),generation);
+assert.ok(threadViewSlots(key)![0].user.content.length<fullUserText.length);
+applyBodyHydration(key,'fixture-turn-1','user',`${userBody.body_id}@${userBody.revision}:user:fixture-turn-1`,fullUserText);
+assert.equal(threadViewSlots(key)![0].user.content,fullUserText);
+applyThreadViewChanges(key,{view_seq:2,rows:[{...runningUser,revision:2}]});
+assert.equal(threadViewSlots(key)![0].user.content,fullUserText);
+console.log('thread view: running user input hydrates its full body and survives bounded row pushes pass');
 
 clearThreadView(key);generation=beginThreadView(key);
 assert.equal(commitThreadView(key,{...page([row(15,300)],300),epoch:-1,projection_state:'source'},generation),true);
@@ -225,6 +240,44 @@ assert.equal(applyThreadViewHead(key,{epoch:1,view_seq:201,runtime_status:'compl
 assert.equal(threadViewStatus(key),'completed');
 assert.equal(threadViewActiveTurnId(key),'');
 console.log('thread view: detached catalog head advances without skipping transcript replay pass');
+
+clearThreadView(key); generation=beginThreadView(key);
+const settledTurn={...row(1,1),root_turn_id:'fixture-root-1',execution_turn_id:'fixture-execution-1',status:'running'};
+const newerTurn={...row(2,2),root_turn_id:'fixture-root-2',execution_turn_id:'fixture-execution-2',status:'queued'};
+commitThreadView(key,{...page([settledTurn,newerTurn]),runtime_status:'running',status_turn_id:'fixture-execution-1',active_turn_id:'fixture-execution-1'},generation);
+assert.equal(applyThreadViewHead(key,{epoch:1,view_seq:3,runtime_status:'completed',status_turn_id:'fixture-execution-1',active_turn_id:''}),true);
+const settledSlots=threadViewSlots(key)!;
+assert.equal(settledSlots.find(slot=>slot.rootTurnId==='fixture-root-1')?.assistant.state,'final');
+assert.equal(settledSlots.find(slot=>slot.rootTurnId==='fixture-root-2')?.assistant.state,'streaming');
+assert.equal(threadViewCursor(key),1);
+applyThreadViewChanges(key,{epoch:1,view_seq:2,runtime_status:'running',status_turn_id:'fixture-execution-1',active_turn_id:'fixture-execution-1',rows:[{...settledTurn,revision:2,assistant:{...settledTurn.assistant,content:'fixture delayed answer'}}]});
+assert.equal(threadViewSlots(key)![0].assistant.status,'completed');
+assert.equal(threadViewSlots(key)![0].assistant.content,'fixture delayed answer');
+assert.equal(applyThreadViewHead(key,{epoch:1,view_seq:4,runtime_status:'running',status_turn_id:'fixture-execution-2',active_turn_id:'fixture-execution-2'}),true);
+applyThreadViewChanges(key,{epoch:1,view_seq:3,rows:[{...settledTurn,revision:3}]});
+assert.equal(threadViewSlots(key)![0].assistant.status,'completed');
+applyThreadViewChanges(key,{epoch:1,view_seq:5,runtime_status:'running',status_turn_id:'fixture-continuation-1',active_turn_id:'fixture-continuation-1',rows:[{...settledTurn,revision:5,execution_turn_id:'fixture-continuation-1'}]});
+assert.equal(threadViewSlots(key)![0].assistant.status,'running');
+for (const terminal of ['completed','failed','cancelled','interrupted','rejected']) {
+  clearThreadView(key); generation=beginThreadView(key);
+  commitThreadView(key,{...page([settledTurn]),runtime_status:'running',status_turn_id:'fixture-execution-1',active_turn_id:'fixture-execution-1'},generation);
+  applyThreadViewHead(key,{epoch:1,view_seq:3,runtime_status:terminal,status_turn_id:'fixture-execution-1',active_turn_id:''});
+  assert.equal(threadViewSlots(key)![0].assistant.status,terminal);
+  clearThreadView(key); generation=beginThreadView(key);
+  commitThreadView(key,{...page([settledTurn]),runtime_status:'running',status_turn_id:'fixture-execution-1',active_turn_id:'fixture-execution-1'},generation);
+  applyThreadViewChanges(key,{epoch:1,view_seq:5,runtime_status:'running',status_turn_id:'fixture-continuation-1',active_turn_id:'fixture-continuation-1',rows:[{...settledTurn,revision:5,execution_turn_id:'fixture-continuation-1'}]});
+  assert.equal(applyThreadViewHead(key,{epoch:1,view_seq:6,runtime_status:terminal,status_turn_id:'fixture-root-1',active_turn_id:''}),true);
+  assert.equal(threadViewSlots(key)![0].assistant.status,'running');
+}
+console.log('thread view: terminal head identity settles only its matching bubble pass');
+
+clearThreadView(key); generation=beginThreadView(key);
+commitThreadView(key,{...page([settledTurn]),runtime_status:'running',status_turn_id:'fixture-execution-1',active_turn_id:'fixture-execution-1'},generation);
+applyThreadViewChanges(key,{epoch:1,view_seq:2,rows:[{...settledTurn,revision:2,status:'completed'}]});
+assert.equal(threadViewSlots(key)![0].assistant.status,'completed');
+assert.equal(threadViewHeadVersion(key),'1:1');
+applyThreadViewChanges(key,{epoch:1,view_seq:3,runtime_status:'completed',status_turn_id:'fixture-execution-1',active_turn_id:'',rows:[]});
+assert.equal(threadViewStatus(key),'completed');
 
 submitThreadView(key,'fixture-new-admission','input');
 assert.equal(threadViewStatus(key),'running');

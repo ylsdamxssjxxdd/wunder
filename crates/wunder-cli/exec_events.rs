@@ -149,10 +149,21 @@ impl ExecEventWriter {
                 None
             }
             "error" => {
-                self.saw_error = true;
+                self.saw_error = payload.get("will_retry").and_then(Value::as_bool) != Some(true);
                 let message = crate::error_display::format_error_message(payload)
                     .unwrap_or_else(|| compact(payload));
                 emit(json!({"type": "error", "message": message}));
+                None
+            }
+            "turn_terminal" => {
+                match payload.get("status").and_then(Value::as_str) {
+                    Some(
+                        "failed" | "error" | "rejected" | "cancelled" | "canceled" | "interrupted"
+                        | "stopped",
+                    ) => self.saw_error = true,
+                    Some("completed") => self.saw_error = false,
+                    _ => {}
+                }
                 None
             }
             "final" => self.finish_turn(payload),
@@ -164,6 +175,7 @@ impl ExecEventWriter {
     pub(crate) fn finish(&mut self, failure: Option<&str>) {
         self.close_message();
         self.close_open_commands();
+        self.close_open_tools();
         match failure {
             None => {
                 let mut body = json!({"type": "turn.completed"});
@@ -578,6 +590,10 @@ impl ExecEventWriter {
             let Some(view) = self.commands.view_for(&primary_id) else {
                 continue;
             };
+            self.open_items.retain(|(_, item)| item.id != id);
+            if let Some(call_id) = view.tool_call_id.as_deref() {
+                self.mark_call_closed(call_id);
+            }
             emit(json!({
                 "type": "item.completed",
                 "item": {
@@ -590,6 +606,20 @@ impl ExecEventWriter {
                     "error": view.error.or_else(|| Some("the turn ended before the command reported a status".to_string())),
                 },
             }));
+        }
+    }
+
+    fn close_open_tools(&mut self) {
+        for (call_id, item) in std::mem::take(&mut self.open_items) {
+            if self.call_is_closed(&call_id) {
+                continue;
+            }
+            self.mark_call_closed(&call_id);
+            emit(json!({"type":"item.completed", "item":{
+                "id":item.id, "item_type":item.item_type, "title":item.title,
+                "status":"failed", "ok":false, "output":item.output,
+                "error":"the turn ended before the tool reported a result"
+            }}));
         }
     }
 
@@ -742,6 +772,38 @@ mod tests {
             id: None,
             timestamp: None,
         }
+    }
+
+    #[test]
+    fn semantic_terminal_drives_exec_failure_and_unreported_tools_close() {
+        let mut writer = ExecEventWriter::new("fixture-thread");
+        writer.handle(&event(
+            "tool_call",
+            json!({"tool":"fixture_tool", "tool_call_id":"fixture-call", "args":{}}),
+        ));
+        writer.handle(&event("final", json!({"answer":"fixture partial answer"})));
+        writer.handle(&event("turn_terminal", json!({"status":"failed"})));
+        assert!(writer.saw_error());
+        writer.finish(Some("fixture failed"));
+        assert!(writer.open_items.is_empty());
+        assert!(writer.call_is_closed("fixture-call"));
+    }
+
+    #[test]
+    fn completed_exec_clears_a_recovered_error_and_does_not_leave_open_tools() {
+        let mut writer = ExecEventWriter::new("fixture-thread");
+        writer.handle(&event(
+            "tool_call",
+            json!({"tool":"fixture_tool", "tool_call_id":"fixture-call", "args":{}}),
+        ));
+        writer.handle(&event(
+            "error",
+            json!({"message":"fixture retry", "will_retry":true}),
+        ));
+        writer.handle(&event("turn_terminal", json!({"status":"completed"})));
+        assert!(!writer.saw_error());
+        writer.finish(None);
+        assert!(writer.open_items.is_empty());
     }
 
     #[test]

@@ -43,6 +43,43 @@ impl<'a> CanonicalThreadLog<'a> {
     fn admissions(&self) -> Result<super::thread_admission::TurnAdmissions> {
         self.threads.admission_store()
     }
+    fn execution_head(
+        conn: &Connection,
+        session: &str,
+        seq: i64,
+    ) -> Result<Option<ThreadExecutionHead>> {
+        let active: Option<String> = conn.query_row(
+            "SELECT turn_id FROM queue.canonical_turn_admissions WHERE thread_id=?1 AND status IN ('running','waiting_input','waiting_approval') ORDER BY user_round DESC,created_at_ms DESC LIMIT 1",
+            [session], |row| row.get(0),
+        ).optional()?;
+        let turn = if let Some(id) = active {
+            Self::turn(conn, session, &id)?
+        } else {
+            Self::turns(conn, session, None, None, 1)?.pop()
+        };
+        let Some(turn) = turn else { return Ok(None) };
+        let root = turn["root_turn_id"]
+            .as_str()
+            .or_else(|| turn["turn_id"].as_str())
+            .unwrap_or("");
+        let id: String = conn.query_row(
+            "SELECT turn_id FROM queue.canonical_turn_admissions WHERE thread_id=?1 AND root_turn_id=?2 ORDER BY created_at_ms DESC,rowid DESC LIMIT 1",
+            params![session, root], |row| row.get(0),
+        )?;
+        let current = Self::turn(conn, session, &id)?.unwrap_or(turn);
+        let status = current["status"].as_str().unwrap_or("").to_owned();
+        Ok(Some(ThreadExecutionHead {
+            active_turn_id: if super::thread_view_projection::is_running(&status) != 0 {
+                id.clone()
+            } else {
+                String::new()
+            },
+            status_turn_id: id,
+            runtime_status: status,
+            epoch: 1,
+            view_seq: seq,
+        }))
+    }
     fn check(&self, user: &str, session: &str) -> Result<()> {
         self.admissions()?.check_owner(user, session)
     }
@@ -473,28 +510,10 @@ impl ThreadLogStore for CanonicalThreadLog<'_> {
             thread_empty: Some(latest == 0),
             ..Default::default()
         };
-        let active:Option<String>=conn.query_row("SELECT turn_id FROM queue.canonical_turn_admissions WHERE thread_id=?1 AND status IN ('running','waiting_input','waiting_approval') ORDER BY user_round DESC,created_at_ms DESC LIMIT 1",[s],|r|r.get(0)).optional()?;
-        let head = if let Some(id) = active {
-            Self::turn(&conn, s, &id)?
-        } else {
-            Self::turns(&conn, s, None, None, 1)?.pop()
-        };
-        if let Some(head) = head.as_ref() {
-            let root = head["root_turn_id"]
-                .as_str()
-                .or_else(|| head["turn_id"].as_str())
-                .unwrap_or("");
-            let id: String=conn.query_row("SELECT turn_id FROM queue.canonical_turn_admissions WHERE thread_id=?1 AND root_turn_id=?2 ORDER BY created_at_ms DESC,rowid DESC LIMIT 1",params![s,root],|r|r.get(0))?;
-            let current = Self::turn(&conn, s, &id)?.unwrap_or_else(|| head.clone());
-            page.runtime_status = current["status"].as_str().unwrap_or("").into();
-            page.active_turn_id = if matches!(
-                page.runtime_status.as_str(),
-                "running" | "waiting_input" | "waiting_approval" | "accepted" | "queued"
-            ) {
-                id
-            } else {
-                String::new()
-            };
+        if let Some(head) = Self::execution_head(&conn, s, seq)? {
+            page.runtime_status = head.runtime_status;
+            page.status_turn_id = head.status_turn_id;
+            page.active_turn_id = head.active_turn_id;
         }
         if k == "chat" {
             let limit = limit.clamp(1, CHAT_PAGE_MAX);
@@ -569,6 +588,7 @@ impl ThreadLogStore for CanonicalThreadLog<'_> {
         let page = self.thread_view_page(u, s, "chat", None, CHAT_PAGE_MAX)?;
         Ok(ThreadViewChanges {
             runtime_status: page.runtime_status,
+            status_turn_id: page.status_turn_id,
             active_turn_id: page.active_turn_id,
             epoch: page.epoch,
             view_seq: page.view_seq,
@@ -1052,6 +1072,7 @@ impl ThreadLogStore for CanonicalThreadLog<'_> {
                         user_round: turn["user_turn_index"].as_i64().unwrap_or(0),
                         turn_status: turn["status"].as_str().unwrap_or("").into(),
                         change_seq: seq,
+                        runtime_head: Self::execution_head(&conn, s, seq)?,
                         ..Default::default()
                     },
                 );

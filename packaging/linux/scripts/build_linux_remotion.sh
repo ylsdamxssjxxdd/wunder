@@ -114,7 +114,9 @@ compositor_root="$output_root/remotion/node_modules/$compositor"
 if [[ "$(json_field remotion.browser.install)" == "True" || "$(json_field remotion.browser.install)" == "true" ]]; then
   (cd "$output_root/remotion" && "$node_bin" "$cli" browser ensure)
 fi
-browser="$(find "$output_root/remotion/node_modules/.remotion" -type f -name chrome-headless-shell -print -quit 2>/dev/null || true)"
+# amd64 重打包里的可执行文件叫 chrome-headless-shell，arm64 的叫 headless_shell。
+browser="$(find "$output_root/remotion/node_modules/.remotion" -type f \
+  \( -name chrome-headless-shell -o -name headless_shell \) -print -quit 2>/dev/null || true)"
 [[ -n "$browser" ]] || fail "Headless Shell was not installed"
 printf '%s\n' "${browser#"$output_root/remotion"/}" > "$output_root/remotion/browser-path"
 mkdir -p "$output_root/remotion/bin"

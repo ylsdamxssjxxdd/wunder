@@ -25,7 +25,7 @@ A companion package is a ZIP that holds exactly two things: a manifest and a spr
 - Size limits: the whole ZIP is at most 24 MB, and the single sprite-sheet file is at most 18 MB.
 - Import guards against path traversal inside the archive.
 
-Companion files live in one fixed companion directory (`config/data/companions/global`, overridable through `WUNDER_COMPANIONS_ROOT`); embedded forms such as the Pupa and the Helm pin this directory to their own data directory. The directory starts empty, so no companion package ships built in and an empty list is normal.
+Companion files live in one fixed companion directory (`config/data/companions/global`, overridable through `WUNDER_COMPANIONS_ROOT`); embedded forms such as the Pupa and the Helm pin this directory to their own data directory. The Pupa bundles two sample companion packages and releases them into its local library on first launch; the Beehive and the Bridge ship none, so an empty list there is normal.
 
 ## Sprite-Sheet Specification
 
@@ -47,7 +47,7 @@ Companion files live in one fixed companion directory (`config/data/companions/g
 
 | Form | Presentation |
 | --- | --- |
-| Pupa (Windows) | Native floating window: a Win32 layered window per pet, with dragging and the frame clock on a separate message thread that does not occupy the UI thread |
+| Pupa (Windows) | Native floating window: a Win32 layered window for the selected companion, with dragging and the frame clock on a separate message thread that does not occupy the UI thread |
 | Pupa (Linux) | No equivalent floating window; the desktop pet exists only on Windows |
 | Beehive | An in-page overlay that follows the chat state |
 | Bridge | A companion management panel: upload, edit, delete, and export global companions |
@@ -57,11 +57,11 @@ Companion files live in one fixed companion directory (`config/data/companions/g
 
 | Item | Range |
 | --- | --- |
-| Stored / menu scale | 0.5–1.6 (presets 0.5 / 0.8 / 1.0 / 1.2 / 1.4 / 1.6) |
-| Render scale | 0.5–1.8 |
+| Stored / settings-slider scale | 0.1–1.6 (step 0.1, default 0.5) |
+| Render scale | 0.1–1.8 |
 | Position | Clamped to the screen work area with margins kept; drag results are saved |
 
-The Pupa stores position, per-companion show / scale overrides, and the global message-hint switch in a local file; the Beehive stores them in the browser, so clearing browser data resets position and preferences.
+The Pupa stores the globally selected companion, the show switch, the scale, the message-hint switch and the position in a local file; the Beehive stores them in the browser, so clearing browser data resets position and preferences.
 
 ## Permissions
 
@@ -75,4 +75,4 @@ The Pupa stores position, per-companion show / scale overrides, and the global m
 - Users cannot upload a companion to the server from the Beehive; server-side companions are managed by administrators through the Bridge, and private imports stay in the local browser.
 - The Pupa on Linux has no desktop floating window — the overlay is a Win32 implementation with no Linux equivalent.
 - Companion animation does not affect task execution: the runtime state drives the animation, not the other way around.
-- The system ships no companion package; an administrator uploads them.
+- The Pupa ships sample companion packages; the Beehive and the Bridge's global library ship none, so an administrator uploads them.

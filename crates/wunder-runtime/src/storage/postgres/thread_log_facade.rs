@@ -1024,6 +1024,9 @@ impl<'a> PostgresThreadLog<'a> {
                 let active = crate::storage::thread_view_projection::is_running(&status) != 0;
                 wunder_core::thread_view::ThreadExecutionHead {
                     runtime_status: status,
+                    status_turn_id: row
+                        .get::<_, Option<String>>("head_turn")
+                        .unwrap_or_default(),
                     active_turn_id: if active {
                         row.get::<_, Option<String>>("head_turn")
                             .unwrap_or_default()

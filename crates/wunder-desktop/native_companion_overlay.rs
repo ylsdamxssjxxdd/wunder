@@ -15,8 +15,9 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
-/// Web `resolveScaleValue`: the settings slider clamps to 0.5..=1.6.
-pub const COMPANION_SCALE_MIN: f32 = 0.5;
+/// Settings slider range. The desktop pet may shrink to 0.1 (a minimal
+/// footprint) while the upper bound stays at the web value of 1.6.
+pub const COMPANION_SCALE_MIN: f32 = 0.1;
 pub const COMPANION_SCALE_MAX: f32 = 1.6;
 
 /// Half size keeps the pet a compact desktop companion out of the box.
@@ -246,7 +247,8 @@ mod tests {
 
     #[test]
     fn scale_is_clamped_to_the_settings_range() {
-        assert_eq!(clamp_companion_scale(0.2), COMPANION_SCALE_MIN);
+        assert_eq!(clamp_companion_scale(0.05), COMPANION_SCALE_MIN);
+        assert_eq!(clamp_companion_scale(0.15), 0.15);
         assert_eq!(clamp_companion_scale(2.5), COMPANION_SCALE_MAX);
         assert_eq!(clamp_companion_scale(f32::NAN), DEFAULT_COMPANION_SCALE);
         assert_eq!(clamp_companion_scale(1.35), 1.35);

@@ -33,8 +33,9 @@ const NAME_BUBBLE: Duration = Duration::from_millis(1800);
 const MESSAGE_HINT: Duration = Duration::from_millis(3200);
 const DRAG_SETTLE: Duration = Duration::from_millis(900);
 const HINT_MAX_CHARS: usize = 96;
-/// Icon payloads may carry any scale inside the web renderer clamp.
-const SCALE_MIN: f32 = 0.5;
+/// Icon payloads may carry any scale inside the renderer clamp; the lower
+/// bound matches the settings slider so a 0.1 pet draws at its stored size.
+const SCALE_MIN: f32 = 0.1;
 const SCALE_MAX: f32 = 1.8;
 /// Bubble clock, event drain and re-projection. The web layer polls on a
 /// 500 ms timer; 120 ms keeps a click reaction responsive while an idle
@@ -1054,7 +1055,8 @@ mod tests {
     #[test]
     fn scale_stays_inside_the_renderer_range() {
         let clamp = |value: f32| value.clamp(SCALE_MIN, SCALE_MAX);
-        assert_eq!(clamp(0.2), 0.5);
+        assert_eq!(clamp(0.05), 0.1);
+        assert_eq!(clamp(0.1), 0.1);
         assert_eq!(clamp(2.4), 1.8);
         assert_eq!(clamp(1.3), 1.3);
     }

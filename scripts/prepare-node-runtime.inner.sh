@@ -88,7 +88,8 @@ printf '%s\n' '{"name":"wunder-remotion-runtime","private":true}' > "$remotion_d
 
 # 浏览器路径写成相对 remotion 根目录的形式，避免依赖固定的挂载点。
 browser_rel=""
-browser_abs="$(find "$remotion_dir/node_modules/.remotion" -type f -name 'chrome-headless-shell' -print -quit 2>/dev/null || true)"
+# amd64 重打包里的可执行文件叫 chrome-headless-shell，arm64 的叫 headless_shell。
+browser_abs="$(find "$remotion_dir/node_modules/.remotion" -type f \( -name 'chrome-headless-shell' -o -name 'headless_shell' \) -print -quit 2>/dev/null || true)"
 if [ -n "$browser_abs" ]; then
   browser_rel="${browser_abs#"$remotion_dir"/}"
 fi

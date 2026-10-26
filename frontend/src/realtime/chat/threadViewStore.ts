@@ -11,10 +11,11 @@ import { reconcileThreadStream, LIVE_STREAM_MAX_CHARS } from './threadViewStream
 export interface ThreadBodyRef { body_id: string; revision: number; bytes: number }
 export interface ViewMessage { item_id: string; content: string; reasoning?: string; created_seq?: number; durable_seq?: number; content_offset?: number; reasoning_offset?: number; tail_offset?: number; body?: ThreadBodyRef; feedback?: unknown; stats?: unknown; tail?: string; failure?: string; attachments?: unknown[]; /** Full body text once the lazy read landed, plus the identity it belongs to. */ hydrated_content?: string; hydrated_body?: string; /** Contiguous local view of a stream; the durable row drops its middle. */ live_content?: string; live_offset?: number; question_panel?: ChatInquiryPanel | null }
 export interface ChatViewRow { root_turn_id: string; execution_turn_id?:string; user_round: number; client_message_id?: string; revision: number; status: string; stop_reason?: string | null; queued_input?: { queue_id: string; reason: string; priority: number } | null; user: ViewMessage; assistant: ViewMessage; workflow_count: number; workspace_change_seq?: number; reasoning_count?: number; reasoning_item_id?: string; process_activity?: ProcessActivity; failed_count: number; subagents?: any[]; plan?: ChatPlan | null }
-export interface ThreadViewPage { runtime_status?:string;active_turn_id?:string; session_id: string; epoch: number; view_seq: number; projection_state: string; degraded?: boolean; diagnostic?: string | null; thread_empty: boolean | null; latest_round: number; chat: ChatViewRow[]; trajectory: any[]; tiles: any[]; tile_level: number; next_before: number | null; has_more: boolean; next_after?: number | null; has_newer?: boolean }
+export interface ThreadViewPage { runtime_status?:string;status_turn_id?:string;active_turn_id?:string; session_id: string; epoch: number; view_seq: number; projection_state: string; degraded?: boolean; diagnostic?: string | null; thread_empty: boolean | null; latest_round: number; chat: ChatViewRow[]; trajectory: any[]; tiles: any[]; tile_level: number; next_before: number | null; has_more: boolean; next_after?: number | null; has_newer?: boolean }
 export type ViewPhase = 'opening' | 'ready' | 'verified_empty' | 'refreshing' | 'error';
 export interface ViewSlot { key: string; rootTurnId: string; user: Record<string, any>; assistant: Record<string, any> }
-interface Entry { key: string; phase: ViewPhase; epoch: number; seq: number; generation: number; rows: Map<string, ChatViewRow>; slots: Map<string, ViewSlot>; order: string[]; next: number | null; more: boolean; bytes: number; error: string; atLatest: boolean; latestRound: number; latestStatus: string; headSeq: number; activeTurnId: string; headAuthoritative: boolean; submissionHead?: { id: string; seq: number } }
+interface RowExecutionHead { turnId: string; status: string; seq: number }
+interface Entry { key: string; phase: ViewPhase; epoch: number; seq: number; generation: number; rows: Map<string, ChatViewRow>; slots: Map<string, ViewSlot>; rowHeads: Map<string, RowExecutionHead>; order: string[]; next: number | null; more: boolean; bytes: number; error: string; atLatest: boolean; latestRound: number; latestStatus: string; headSeq: number; activeTurnId: string; statusTurnId: string; headAuthoritative: boolean; submissionHead?: { id: string; seq: number } }
 const entries = new Map<string, Entry>();
 export const threadViewClock = shallowRef(0);
 const MAX_BYTES = 48 * 1024 * 1024;
@@ -23,7 +24,7 @@ let activeKey = '';
 let nextGeneration = 0;
 function entry(key: string): Entry {
   let e = entries.get(key);
-  if (!e) { e = { key, phase: 'opening', epoch: 0, seq: 0, generation: 0, rows: new Map(), slots: new Map(), order: [], next: null, more: false, bytes: 0, error: '', atLatest: true, latestRound: 0, latestStatus: 'idle', headSeq: -1, activeTurnId: '', headAuthoritative: false }; entries.set(key, e); }
+  if (!e) { e = { key, phase: 'opening', epoch: 0, seq: 0, generation: 0, rows: new Map(), slots: new Map(), rowHeads: new Map(), order: [], next: null, more: false, bytes: 0, error: '', atLatest: true, latestRound: 0, latestStatus: 'idle', headSeq: -1, activeTurnId: '', statusTurnId: '', headAuthoritative: false }; entries.set(key, e); }
   return e;
 }
 let tailTimer:ReturnType<typeof setTimeout>|null=null;
@@ -119,7 +120,7 @@ function mergeTail(previous: ViewMessage, next: ViewMessage): ViewMessage {
  * the ordinary Markdown pipeline (code blocks, tables, workspace links) instead
  * of collapsing into plain text behind an expand control.
  */
-type BodyRole = 'user' | 'assistant';
+export type BodyRole = 'user' | 'assistant';
 const LIVE_ROW_STATUSES = ['accepted','running','queued','waiting_input','waiting_approval'];
 const bodyToken = (message: ViewMessage | undefined): string =>
   message?.body ? `${message.body.body_id}@${message.body.revision}` : '';
@@ -153,7 +154,9 @@ function scheduleBodyHydration(e: Entry, id: string, role: BodyRole): void {
   const row = e.rows.get(id);
   const message = row?.[role];
   if (!row || !message?.body) return;
-  if (LIVE_ROW_STATUSES.includes(row.status)) {
+  // Only an assistant answer has a live window; a user input is complete the
+  // moment its body exists, so the stream guards must not skip its read.
+  if (role === 'assistant' && LIVE_ROW_STATUSES.includes(row.status)) {
     const retained = String(message.live_content || message.content || '').length;
     // Recover missed durable windows once, through the bounded body reader.
     if (retained >= LIVE_STREAM_MAX_CHARS - 1 || retained >= Number(message.content_offset || 0)) return;
@@ -167,7 +170,8 @@ function scheduleBodyHydration(e: Entry, id: string, role: BodyRole): void {
     token
   }).then((content) => applyBodyHydration(e.key, id, role, token, content));
 }
-function applyBodyHydration(key: string, id: string, role: BodyRole, expected: string, content: string | null): void {
+/** Write-back of a lazy body read; exported for the store regression fixtures. */
+export function applyBodyHydration(key: string, id: string, role: BodyRole, expected: string, content: string | null): void {
   if (!content) return;
   const e = entries.get(key);
   const row = e?.rows.get(id);
@@ -176,7 +180,10 @@ function applyBodyHydration(key: string, id: string, role: BodyRole, expected: s
   // A newer revision or another body already replaced the read target.
   if (!message?.body || `${bodyToken(message)}:${role}:${id}` !== expected) return;
   const units = utf16Units(content);
-  if (LIVE_ROW_STATUSES.includes(row.status)) {
+  // A running turn reconciles the assistant stream around its bounded preview.
+  // User input never streams: routing it through that join drops the read text
+  // and leaves the bubble at the 2 KB preview until the turn settles.
+  if (role === 'assistant' && LIVE_ROW_STATUSES.includes(row.status)) {
     const retained = String(message.live_content || '');
     const live = reconcileThreadStream({ content: retained.length > content.length ? retained : content }, message);
     row[role] = { ...message, ...live };
@@ -206,9 +213,24 @@ function carryLocalBody(row: ChatViewRow, previous: ChatViewRow | undefined): Ch
   // The durable row never carries local accumulation; re-attach it per role.
   return { ...row, user: keepLocalBody(previous.user, row.user), assistant: keepLocalBody(previous.assistant, row.assistant) };
 }
+function projectRowExecutionHead(e: Entry, row: ChatViewRow): ChatViewRow {
+  const turnId = row.execution_turn_id || row.root_turn_id;
+  let head = e.rowHeads.get(row.root_turn_id);
+  if (e.headAuthoritative && e.statusTurnId === turnId && row.revision <= e.headSeq) {
+    head = { turnId, status: e.latestStatus, seq: e.headSeq };
+    e.rowHeads.set(row.root_turn_id, head);
+  }
+  if (!head) return row;
+  if (head.turnId !== turnId || row.revision > head.seq) {
+    e.rowHeads.delete(row.root_turn_id);
+    return row;
+  }
+  return row.status === head.status ? row : { ...row, status: head.status };
+}
 function merge(e: Entry, row: ChatViewRow) {
   const old = e.rows.get(row.root_turn_id);
   if (old && old.revision >= row.revision) return;
+  row = projectRowExecutionHead(e, row);
   // Acceptance binds identity; dispatch decides ownership of parked input.
   const previous = old ?? e.rows.get(`pending:${row.client_message_id}`);
   if (row.status === 'accepted' && previous?.status === 'queued') row={...row,status:'queued'};
@@ -283,6 +305,7 @@ function bound(e: Entry, historical = false) {
   e.order.sort((a,b) => (e.rows.get(a)?.user_round ?? 0) - (e.rows.get(b)?.user_round ?? 0));
   const evictsOlder = !historical && e.order.length > MAX_ROWS;
   while (e.order.length > MAX_ROWS) { const id=historical ? e.order.pop()! : e.order.shift()!;e.rows.delete(id);e.slots.delete(id); if(historical)e.atLatest=false; else e.more=true; }
+  for (const id of e.rowHeads.keys()) if (!e.rows.has(id)) e.rowHeads.delete(id);
   // The other edge was evicted during forward navigation or a live append.
   // Its next read must start at the retained boundary, not the old page cursor.
   if ((evictsOlder || e.next === null) && e.order.length) e.next = e.rows.get(e.order[0])!.user_round;
@@ -305,19 +328,27 @@ export function threadViewHasNewerPage(key: string, page: ThreadViewPage, genera
 }
 /** State and transcript cursors are independent: old row revisions may fill
  * holes, but only a monotonic envelope can change the execution head. */
-function applyExecutionHead(e: Entry, payload: {view_seq:number;runtime_status?:string;active_turn_id?:string}, rows: ChatViewRow[]) {
+function applyExecutionHead(e: Entry, payload: {view_seq:number;runtime_status?:string;status_turn_id?:string;active_turn_id?:string}, rows: ChatViewRow[]) {
   if (payload.view_seq < e.headSeq) return;
+  if (!payload.runtime_status && e.headAuthoritative) return;
   if (payload.runtime_status) {
     e.latestStatus=payload.runtime_status;
+    e.statusTurnId=String(payload.status_turn_id || payload.active_turn_id || '');
     e.activeTurnId=String(payload.active_turn_id || '');
     e.headAuthoritative=true;
   } else if (!e.headAuthoritative) {
     // Source fixtures/legacy reads have no head. Once supplied, rows never own it again.
     const active=rows.find(r=>['running','waiting_input','waiting_approval'].includes(r.status))
       ?? rows.find(r=>r.status==='accepted') ?? rows.at(-1);
-    if(active) {e.latestStatus=active.status==='accepted'?'running':active.status;e.activeTurnId=active.execution_turn_id || active.root_turn_id;}
+    if(active) {e.latestStatus=active.status==='accepted'?'running':active.status;e.activeTurnId=active.execution_turn_id || active.root_turn_id;e.statusTurnId=e.activeTurnId;}
   }
   e.headSeq=payload.view_seq;
+  for (const row of e.rows.values()) {
+    const projected = projectRowExecutionHead(e, row);
+    if (projected === row) continue;
+    e.rows.set(row.root_turn_id, markRaw(projected));
+    e.slots.set(row.root_turn_id, materialize(projected));
+  }
 }
 const optimisticSubmissionOwnsExecutionHead = (e: Entry): boolean => {
   // Bridge only the terminal head observed when this submission was made.
@@ -379,7 +410,7 @@ export function commitThreadView(key: string, page: ThreadViewPage, generation?:
     const covered=new Set(page.chat.map(r=>r.root_turn_id));
     for(const id of e.order)if(!id.startsWith('pending:')&&!covered.has(id)){e.rows.delete(id);e.slots.delete(id);}
     e.order=e.order.filter(id=>e.rows.has(id));e.atLatest=true;
-    if(e.epoch && e.epoch!==page.epoch){e.rows.clear();e.slots.clear();e.order=[];e.headSeq=-1;e.headAuthoritative=false;e.activeTurnId='';}
+    if(e.epoch && e.epoch!==page.epoch){e.rows.clear();e.slots.clear();e.rowHeads.clear();e.order=[];e.headSeq=-1;e.headAuthoritative=false;e.activeTurnId='';e.statusTurnId='';}
     e.latestRound=Math.max(e.latestRound,page.latest_round);
   }
   for (const row of page.chat)if(!recovery||e.atLatest||e.rows.has(row.root_turn_id))merge(e,row);
@@ -391,7 +422,7 @@ export function commitThreadView(key: string, page: ThreadViewPage, generation?:
   e.phase=page.thread_empty === true && !e.rows.size ? 'verified_empty' : 'ready';
   bound(e,historical);notify();return true;
 }
-export function applyThreadViewChanges(key: string, payload: { runtime_status?:string;active_turn_id?:string;epoch?:number; view_seq: number; reset_required?: boolean; rows: ChatViewRow[] }): boolean {
+export function applyThreadViewChanges(key: string, payload: { runtime_status?:string;status_turn_id?:string;active_turn_id?:string;epoch?:number; view_seq: number; reset_required?: boolean; rows: ChatViewRow[] }): boolean {
   const e=entry(key);if(!payload || payload.reset_required || !Number.isSafeInteger(payload.view_seq) || !validRows(payload.rows) || (payload.epoch!==undefined && e.epoch && e.epoch!==payload.epoch)) return false;
   for(const row of payload.rows.filter(row => !isQueueOnlyCancelledRow(row))) {
     e.latestRound=Math.max(e.latestRound,row.user_round);

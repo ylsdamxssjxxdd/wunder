@@ -106,7 +106,7 @@ function Find-Supplement([string]$Root) {
 
 function Get-ZipSupplementInfo([string]$Path) {
   Add-Type -AssemblyName System.IO.Compression.FileSystem
-  $known = @("python", "git", "rg", "ffmpeg", "browser", "r2")
+  $known = @("python", "git", "rg", "ffmpeg", "browser", "r2", "node", "remotion")
   $bytes = @{}
   $files = @{}
   foreach ($name in $known) { $bytes[$name] = [int64]0; $files[$name] = 0 }
@@ -136,7 +136,7 @@ function Get-ZipSupplementInfo([string]$Path) {
 }
 
 function Get-DirectorySupplementInfo([string]$Path) {
-  $known = @("python", "git", "rg", "ffmpeg", "browser", "r2")
+  $known = @("python", "git", "rg", "ffmpeg", "browser", "r2", "node", "remotion")
   $bytes = @{}
   $files = @{}
   foreach ($name in $known) {
@@ -336,6 +336,14 @@ if (-not $CoreOnly) {
   $componentBytes = $info.Bytes
   $componentFiles = $info.Files
   $metadata = $info.Metadata
+  # The remotion task ships the Remotion runtime together with its bundled
+  # Node.js runtime (opt/remotion/bin/remotion.cmd launches ..\..\node\node.exe),
+  # so it is only offered when both opt/node and opt/remotion are present.
+  if (($componentFiles['node'] -gt 0) -and ($componentFiles['remotion'] -gt 0)) {
+    $available += 'remotion'
+  } elseif (($componentFiles['node'] -gt 0) -or ($componentFiles['remotion'] -gt 0)) {
+    Write-Host "[wunder-pack] supplement has only one of opt/node / opt/remotion; the remotion task is skipped"
+  }
 }
 
 $labels = Get-Content -LiteralPath (Join-Path $installerRoot "component-labels.json") -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -363,7 +371,9 @@ foreach ($name in @("desktop", "cli")) {
 if (-not $CoreOnly) {
   foreach ($name in $available) {
     $versionForLabel = Get-MetadataVersion $metadata $name
-    $label = Format-ComponentLabel $name $versionForLabel $componentBytes[$name]
+    $taskBytes = $componentBytes[$name]
+    if ($name -eq 'remotion') { $taskBytes = [int64]$componentBytes['node'] + [int64]$componentBytes['remotion'] }
+    $label = Format-ComponentLabel $name $versionForLabel $taskBytes
     $lines.Add(('Name: "{0}"; Description: "{1}"; Flags: unchecked' -f $name, $label))
   }
 }
@@ -374,8 +384,12 @@ $lines.Add(('Source: "{0}"; DestDir: "{{app}}\bin"; DestName: "wunder-cli.exe"; 
 $lines.Add(('Source: "{0}"; DestDir: "{{app}}"; DestName: ".wunder-home"; Flags: ignoreversion' -f $markerPath))
 if (-not $CoreOnly) {
   foreach ($name in $available) {
-    $source = Join-Path $supplementRoot "opt\$name\*"
-    $lines.Add(('Source: "{0}"; DestDir: "{{app}}\opt\{1}"; Flags: ignoreversion recursesubdirs createallsubdirs; Tasks: {1}' -f $source, $name))
+    $taskDirs = @($name)
+    if ($name -eq 'remotion') { $taskDirs = @('node', 'remotion') }
+    foreach ($dir in $taskDirs) {
+      $source = Join-Path $supplementRoot "opt\$dir\*"
+      $lines.Add(('Source: "{0}"; DestDir: "{{app}}\opt\{1}"; Flags: ignoreversion recursesubdirs createallsubdirs; Tasks: {2}' -f $source, $dir, $name))
+    }
   }
 }
 $generatedPath = Join-Path $stageRoot "payload.generated.iss"
@@ -413,13 +427,17 @@ $installer = Get-Item -LiteralPath $installerPath
 $installerHash = (Get-Sha256Hex $installerPath).ToLowerInvariant()
 
 $componentManifest = @()
-foreach ($name in $available) {
-  $componentManifest += [ordered]@{
-    name = $name
-    version = (Get-MetadataVersion $metadata $name)
-    bytes = $componentBytes[$name]
-    files = $componentFiles[$name]
-    defaultSelected = $false
+# The manifest inventories every opt directory that entered the installer; the
+# node and remotion directories both ship under the single remotion task.
+foreach ($name in @("python", "git", "rg", "ffmpeg", "browser", "r2", "node", "remotion")) {
+  if ($componentFiles[$name] -gt 0) {
+    $componentManifest += [ordered]@{
+      name = $name
+      version = (Get-MetadataVersion $metadata $name)
+      bytes = $componentBytes[$name]
+      files = $componentFiles[$name]
+      defaultSelected = $false
+    }
   }
 }
 

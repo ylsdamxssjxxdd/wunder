@@ -42,6 +42,49 @@ pub(super) enum SpecialLogEntry {
 }
 
 impl SpecialLogEntry {
+    pub(super) fn interrupt_pending(&mut self) -> bool {
+        match self {
+            Self::Tool(entry) if entry.status == GenericToolLogStatus::Pending => {
+                entry.status = GenericToolLogStatus::Failure;
+                entry.summary = Some(
+                    if entry.is_zh {
+                        "未收到工具结果"
+                    } else {
+                        "tool result unavailable"
+                    }
+                    .into(),
+                );
+                true
+            }
+            Self::Command(entry) if entry.status == CommandLogStatus::Pending => {
+                entry.status = CommandLogStatus::Completed;
+                entry.success = false;
+                entry.title = if entry.is_zh {
+                    "结果未知"
+                } else {
+                    "Result unavailable"
+                }
+                .into();
+                entry.metrics = None;
+                true
+            }
+            Self::Patch(entry) if entry.status == PatchLogStatus::Pending => {
+                entry.status = PatchLogStatus::Failure;
+                entry.summary = Some(
+                    if entry.is_zh {
+                        "未收到工具结果"
+                    } else {
+                        "tool result unavailable"
+                    }
+                    .into(),
+                );
+                true
+            }
+            Self::Exploring(group) => group.interrupt_pending(),
+            _ => false,
+        }
+    }
+
     pub(super) fn summary_text(&self) -> String {
         match self {
             Self::Art(entry) => entry.summary_text(),

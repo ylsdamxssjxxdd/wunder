@@ -1255,9 +1255,7 @@ impl Timeline {
         self.close_thinking(failed);
         self.close_body();
         self.close_batch();
-        if failed {
-            self.fail_running();
-        }
+        self.interrupt_running();
         self.settled = true;
         if let Some(footer) = self.ensure_footer() {
             let text = self
@@ -1276,10 +1274,10 @@ impl Timeline {
         }
     }
 
-    /// A cancelled or failed turn must never leave an entry spinning: every row
-    /// that was still running settles as failed. A child run is a work unit of
-    /// its own, so its card keeps the status the runtime reports for it.
-    fn fail_running(&mut self) {
+    /// A settled turn must never leave an unreported entry spinning: every row
+    /// that was still running settles as interrupted, never as successful. A child
+    /// run keeps the independent status that the runtime reports for it.
+    fn interrupt_running(&mut self) {
         for index in self.process_bar.saturating_add(1)..self.model.row_count() {
             let Some(row) = self.model.row_data(index) else {
                 continue;

@@ -35,7 +35,10 @@ pub fn parse_goal_command(raw_input: &str) -> GoalCommand {
         "edit" => return GoalCommand::InvalidEdit,
         _ => {}
     }
-    if input.len() >= 4 && input[..4].eq_ignore_ascii_case("edit") {
+    if input
+        .get(..4)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("edit"))
+    {
         let rest = &input[4..];
         if rest.starts_with(' ') || rest.starts_with('\t') {
             return GoalCommand::Edit {

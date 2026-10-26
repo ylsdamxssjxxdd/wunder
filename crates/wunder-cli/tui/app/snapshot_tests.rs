@@ -485,6 +485,177 @@ fn feed_stream_event(app: &mut TuiApp, event: &str, mut data: Value, seq: i64) {
     });
 }
 
+#[tokio::test]
+async fn transport_failure_survives_the_stream_done_marker() {
+    let root = TempRoot::new("status-transport");
+    let mut app = fixture_app(root.path()).await;
+    let session_id = app.session_id.clone();
+    app.handle_stream_message(StreamMessage::Error {
+        session_id: session_id.clone(),
+        error: "fixture transport error".into(),
+    });
+    app.handle_stream_message(StreamMessage::Done {
+        session_id: session_id.clone(),
+    });
+    assert_eq!(
+        app.live_thread_status(&session_id),
+        Some(wunder_server::ThreadStatus::Failed)
+    );
+    assert!(!app.busy);
+}
+
+#[tokio::test]
+async fn semantic_failed_terminal_survives_the_stream_done_marker() {
+    let root = TempRoot::new("status-terminal");
+    let mut app = fixture_app(root.path()).await;
+    let session_id = app.session_id.clone();
+    app.busy = true;
+    app.active_stream_sessions.insert(session_id.clone());
+    feed_stream_event(&mut app, "turn_terminal", json!({"status":"failed"}), 9001);
+    assert_eq!(
+        app.live_thread_status(&session_id),
+        Some(wunder_server::ThreadStatus::Failed)
+    );
+    app.handle_stream_message(StreamMessage::Done {
+        session_id: session_id.clone(),
+    });
+    assert_eq!(
+        app.live_thread_status(&session_id),
+        Some(wunder_server::ThreadStatus::Failed)
+    );
+    assert!(!app.busy);
+}
+
+#[tokio::test]
+async fn background_error_is_not_replaced_by_done_before_replay() {
+    let root = TempRoot::new("status-background");
+    let mut app = fixture_app(root.path()).await;
+    let session_id = "fixture-background".to_string();
+    app.handle_stream_message(StreamMessage::Error {
+        session_id: session_id.clone(),
+        error: "fixture transport error".into(),
+    });
+    app.handle_stream_message(StreamMessage::Done {
+        session_id: session_id.clone(),
+    });
+    assert_eq!(
+        app.live_thread_status(&session_id),
+        Some(wunder_server::ThreadStatus::Failed)
+    );
+    assert!(matches!(
+        app.pending_thread_terminals.get(&session_id),
+        Some(StreamMessage::Error { .. })
+    ));
+    assert_ne!(
+        app.live_thread_status(&app.session_id),
+        Some(wunder_server::ThreadStatus::Failed)
+    );
+}
+
+#[tokio::test]
+async fn waiting_terminal_is_preserved_and_new_submission_clears_old_failure() {
+    let root = TempRoot::new("status-restart");
+    let mut app = fixture_app(root.path()).await;
+    let session_id = app.session_id.clone();
+    app.handle_stream_message(StreamMessage::Error {
+        session_id: session_id.clone(),
+        error: "fixture error".into(),
+    });
+    app.thread_registry.set_status(
+        &session_id,
+        super::super::thread_registry::ThreadRunState::Working,
+    );
+    feed_stream_event(
+        &mut app,
+        "turn_terminal",
+        json!({"status":"waiting_input"}),
+        9201,
+    );
+    app.handle_stream_message(StreamMessage::Done {
+        session_id: session_id.clone(),
+    });
+    assert_eq!(
+        app.live_thread_status(&session_id),
+        Some(wunder_server::ThreadStatus::NeedsYou)
+    );
+    app.thread_registry.set_status(
+        &session_id,
+        super::super::thread_registry::ThreadRunState::Working,
+    );
+    app.handle_stream_message(StreamMessage::Done {
+        session_id: session_id.clone(),
+    });
+    assert_eq!(
+        app.live_thread_status(&session_id),
+        Some(wunder_server::ThreadStatus::Finished)
+    );
+}
+
+#[tokio::test]
+async fn stream_end_never_leaves_tool_cards_running() {
+    let root = TempRoot::new("status-tools");
+    let mut app = fixture_app(root.path()).await;
+    app.logs.clear();
+    let session_id = app.session_id.clone();
+    for (index, tool) in [
+        "fixture_tool",
+        "read_file",
+        "execute_command",
+        "apply_patch",
+    ]
+    .iter()
+    .enumerate()
+    {
+        feed_stream_event(
+            &mut app,
+            "tool_call",
+            json!({
+                "tool":tool, "tool_call_id":format!("fixture-call-{index}"),
+                "args":{"path":"fixture.txt","command":"fixture command",
+                    "input":"*** Begin Patch\n*** Add File: fixture.txt\n+fixture text\n*** End Patch"}
+            }),
+            9100 + index as i64,
+        );
+    }
+    app.handle_stream_message(StreamMessage::Done { session_id });
+    let cards: Vec<_> = app
+        .logs
+        .iter()
+        .filter(|entry| matches!(entry.kind, LogKind::Tool))
+        .collect();
+    assert!(!cards.is_empty());
+    for card in cards {
+        if let Some(special) = &card.special {
+            let rendered = special.render_lines_for_width(100, true);
+            let text = rendered
+                .iter()
+                .flat_map(|line| &line.spans)
+                .map(|span| span.content.as_ref())
+                .collect::<String>()
+                .to_lowercase();
+            assert!(
+                text.contains("failed") || text.contains("unavailable"),
+                "an unreported tool must show a non-success outcome: {text}"
+            );
+            assert!(
+                !rendered
+                    .iter()
+                    .flat_map(|line| &line.spans)
+                    .any(|span| span.content.trim()
+                        == crate::tui::activity_indicator::RUNNING_INDICATOR
+                        && (matches!(
+                            span.style.fg,
+                            Some(ratatui::style::Color::Rgb(..) | ratatui::style::Color::Cyan)
+                        ) && span
+                            .style
+                            .add_modifier
+                            .contains(ratatui::style::Modifier::BOLD))),
+                "a settled turn must not keep a tool spinner: {special:?}"
+            );
+        }
+    }
+}
+
 fn plain_lines(app: &mut TuiApp, index: usize, width: u16) -> String {
     app.render_entry_lines(index, false, width)
         .iter()
@@ -1549,8 +1720,7 @@ async fn inquiry_panel_numbers_routes_across_questions_and_answers_each_one() {
         "the question label leads the panel header"
     );
     assert!(
-        spec
-            .rows
+        spec.rows
             .first()
             .is_some_and(|row| row.name == "Fixed (recommended)"),
         "the recommended route keeps its tag: {spec:?}"

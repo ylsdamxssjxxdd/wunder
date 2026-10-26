@@ -229,6 +229,16 @@ async fn canonical_writer_reopens_through_backend_with_complete_chat_and_traject
         .unwrap();
     assert_eq!(chat.chat.len(), 1);
     assert_eq!(chat.runtime_status, "completed");
+    assert_eq!(chat.status_turn_id, turn.as_str());
+    assert!(chat.active_turn_id.is_empty());
+    let changes = backend.thread_view_changes(USER, THREAD, 0).unwrap();
+    assert_eq!(changes.status_turn_id, turn.as_str());
+    let tails = backend.thread_turn_tails(USER, &[THREAD.into()]).unwrap();
+    let head = tails[THREAD].runtime_head.as_ref().unwrap();
+    assert_eq!(head.status_turn_id, turn.as_str());
+    assert_eq!(head.runtime_status, "completed");
+    assert_eq!(head.view_seq, chat.view_seq);
+    assert!(head.active_turn_id.is_empty());
     assert_eq!(read_body(backend, "assistant-sample|content"), answer);
     let item = backend
         .get_thread_item(USER, THREAD, assistant_id.as_str(), false)
@@ -791,6 +801,45 @@ async fn inquiry_continuation_replaces_waiting_head_for_chat_projection() {
         "answered"
     );
     assert_eq!(page.runtime_status, "completed");
+    assert_eq!(page.status_turn_id, child_id);
+    let tails = db.thread_turn_tails(USER, &[THREAD.into()]).unwrap();
+    assert_eq!(
+        tails[THREAD].runtime_head.as_ref().unwrap().status_turn_id,
+        child_id
+    );
+}
+
+#[test]
+fn execution_head_keeps_older_running_turn_separate_from_newer_queued_input() {
+    let root = tempfile::tempdir().unwrap();
+    let db = SqliteStorage::new(
+        root.path()
+            .join("state_1.sqlite")
+            .to_string_lossy()
+            .into_owned(),
+    );
+    db.ensure_initialized().unwrap();
+    let active = db
+        .accept_thread_turn(USER, THREAD, &json!({"content":"fixture input"}))
+        .unwrap();
+    let active_id = active["turn_id"].as_str().unwrap();
+    super::test_support::freeze_thread(root.path(), USER, THREAD);
+    super::test_support::begin_turn(root.path(), USER, THREAD, active_id);
+    let queued = db
+        .accept_thread_turn(USER, THREAD, &json!({"content":"fixture next input"}))
+        .unwrap();
+    let queued_id = queued["turn_id"].as_str().unwrap();
+    db.update_thread_turn(USER, THREAD, queued_id, "queued", "", &json!({}))
+        .unwrap();
+    let page = db.thread_view_page(USER, THREAD, "chat", None, 10).unwrap();
+    let tails = db.thread_turn_tails(USER, &[THREAD.into()]).unwrap();
+    let head = tails[THREAD].runtime_head.as_ref().unwrap();
+    assert_eq!(head.runtime_status, "running");
+    assert_eq!(head.status_turn_id, active_id);
+    assert_eq!(head.active_turn_id, active_id);
+    assert_eq!(page.status_turn_id, head.status_turn_id);
+    assert_eq!(page.runtime_status, head.runtime_status);
+    assert_eq!(tails[THREAD].turn_status, "queued");
 }
 
 #[tokio::test]

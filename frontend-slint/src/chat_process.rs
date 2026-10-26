@@ -167,10 +167,7 @@ fn bind(app: &MainWindow, api: Arc<NativeDesktop>, child: bool, pending: Rc<Cell
             let Some(mut row) = model.row_data(index) else {
                 return true;
             };
-            if row.process_entries != entries {
-                return true;
-            }
-            if row.process_local && row.status_kind == crate::timeline::STATUS_RUNNING {
+            if !page_is_current(&row, &entries) {
                 return true;
             }
             row.process_loading = false;
@@ -316,6 +313,11 @@ fn apply_page(row: &mut TimelineRow, page: NativeProcessPage, direction: i32) {
     }
 }
 
+fn page_is_current(row: &TimelineRow, entries: &ModelRc<ProcessEntry>) -> bool {
+    row.process_entries == *entries
+        && !(row.process_local && row.status_kind == crate::timeline::STATUS_RUNNING)
+}
+
 fn stable_reasoning_item(id: &str) -> bool {
     let Some((_, round)) = id.rsplit_once(":text-") else {
         return false;
@@ -367,6 +369,102 @@ fn poll(mut receive: impl FnMut() -> bool + 'static) {
 mod tests {
     use super::*;
     use wunder_desktop::native::NativeProcessItem;
+
+    #[test]
+    fn terminal_history_invalidates_a_paged_running_tool() {
+        let old = TimelineRow {
+            id: "fixture-process".into(),
+            kind: crate::timeline::KIND_PROCESS,
+            process_root: "fixture-root".into(),
+            status_kind: crate::timeline::STATUS_RUNNING,
+            process_paged: true,
+            open: true,
+            process_entries: ModelRc::new(VecModel::from(vec![ProcessEntry {
+                id: "fixture-call".into(),
+                kind: crate::timeline::KIND_TOOL,
+                status_kind: crate::timeline::STATUS_RUNNING,
+                ..Default::default()
+            }])),
+            ..Default::default()
+        };
+        let previous = VecModel::from(vec![old.clone()]);
+        let mut next = vec![TimelineRow {
+            status_kind: crate::timeline::STATUS_DONE,
+            process_entries: ModelRc::default(),
+            ..old
+        }];
+        crate::timeline_text::restore_folds(&mut next, &previous);
+        assert!(next[0].open);
+        assert!(
+            !next[0].process_paged,
+            "the terminal row must request a fresh page"
+        );
+        assert!(!page_is_current(
+            &next[0],
+            &previous.row_data(0).unwrap().process_entries
+        ));
+        apply_page(
+            &mut next[0],
+            NativeProcessPage {
+                items: vec![NativeProcessItem {
+                    id: "fixture-call".into(),
+                    item_index: 0,
+                    state: "completed".into(),
+                    reasoning: String::new(),
+                    text: String::new(),
+                    tool: Some(wunder_desktop::native::NativeWorkflowEntry {
+                        id: "fixture-call".into(),
+                        state: "completed".into(),
+                        title: "fixture tool".into(),
+                        preview: String::new(),
+                        detail: String::new(),
+                        tokens: String::new(),
+                        duration: String::new(),
+                        sections: Vec::new(),
+                        patch_files: Vec::new(),
+                    }),
+                }],
+                first: Some(1),
+                last: Some(1),
+                has_older: false,
+                has_newer: false,
+            },
+            0,
+        );
+        assert_eq!(
+            next[0].process_entries.row_data(0).unwrap().status_kind,
+            crate::timeline::STATUS_DONE
+        );
+    }
+
+    #[test]
+    fn terminal_history_preserves_an_older_page_and_its_disclosures() {
+        let old = TimelineRow {
+            id: "fixture-process".into(),
+            kind: crate::timeline::KIND_PROCESS,
+            status_kind: crate::timeline::STATUS_RUNNING,
+            process_paged: true,
+            process_newer: true,
+            open: true,
+            process_entries: ModelRc::new(VecModel::from(vec![ProcessEntry {
+                id: "fixture-old-item".into(),
+                status_kind: crate::timeline::STATUS_DONE,
+                open: true,
+                ..Default::default()
+            }])),
+            ..Default::default()
+        };
+        let entries = old.process_entries.clone();
+        let previous = VecModel::from(vec![old.clone()]);
+        let mut next = vec![TimelineRow {
+            status_kind: crate::timeline::STATUS_DONE,
+            ..old
+        }];
+        crate::timeline_text::restore_folds(&mut next, &previous);
+        assert!(next[0].process_newer && next[0].process_paged && next[0].open);
+        assert_eq!(next[0].process_entries, entries);
+        assert!(next[0].process_entries.row_data(0).unwrap().open);
+    }
 
     #[test]
     fn pages_keep_local_folds_and_rebase_actions_after_history_refresh() {

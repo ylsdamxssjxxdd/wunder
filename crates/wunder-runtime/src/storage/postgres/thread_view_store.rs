@@ -339,6 +339,7 @@ impl PostgresThreadLog<'_> {
               WHERE thread_id=$1 ORDER BY user_round DESC,created_at_ms DESC,turn_id DESC LIMIT 1)
             ) heads ORDER BY priority DESC,user_round DESC,created_at_ms DESC,turn_id DESC LIMIT 1",&[&session])? {
             page.runtime_status=head.get(1);
+            page.status_turn_id=head.get(0);
             if p::is_running(&page.runtime_status)!=0 { page.active_turn_id=head.get(0); }
         }
         if kind == "chat" {
@@ -480,6 +481,7 @@ impl PostgresThreadLog<'_> {
         let page = self.thread_view_page(u, s, "chat", None, CHAT_PAGE_MAX)?;
         Ok(ThreadViewChanges {
             runtime_status: page.runtime_status,
+            status_turn_id: page.status_turn_id,
             active_turn_id: page.active_turn_id,
             epoch: page.epoch,
             view_seq: page.view_seq,
@@ -661,5 +663,67 @@ impl PostgresThreadLog<'_> {
         self.check_owner(u, s)?;
         thread_display::ensure_ready(self.storage, s)?;
         Ok((self.latest_thread_change_seq_by_session(s)?, false))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::storage::{postgres::PostgresStorage, ThreadLogStore};
+    use serde_json::{json, Value};
+
+    #[test]
+    #[ignore = "requires an isolated WUNDER_TEST_POSTGRES_DSN"]
+    fn postgres_execution_head_retains_status_identity_after_settlement() {
+        let storage =
+            PostgresStorage::new(std::env::var("WUNDER_TEST_POSTGRES_DSN").unwrap(), 5, 4).unwrap();
+        let store = storage.service_threads().unwrap();
+        let admissions = store.admission_store();
+        let owner = "fixture-owner";
+        let session = "fixture-thread";
+        let first = admissions
+            .accept(owner, session, &json!({"content":"fixture input"}))
+            .unwrap();
+        let first_id = first["turn_id"].as_str().unwrap();
+        admissions
+            .update_with_control(session, first_id, "running", false, &Value::Null)
+            .unwrap();
+        let next = admissions
+            .accept(owner, session, &json!({"content":"fixture next input"}))
+            .unwrap();
+        let next_id = next["turn_id"].as_str().unwrap();
+        admissions
+            .update_with_control(session, next_id, "queued", false, &Value::Null)
+            .unwrap();
+        let page = storage
+            .thread_view_page(owner, session, "chat", None, 12)
+            .unwrap();
+        let tails = storage.thread_turn_tails(owner, &[session.into()]).unwrap();
+        assert_eq!(page.runtime_status, "running");
+        assert_eq!(page.status_turn_id, first_id);
+        assert_eq!(
+            tails[session].runtime_head.as_ref().unwrap().status_turn_id,
+            first_id
+        );
+        admissions
+            .update_with_control(session, first_id, "completed", false, &Value::Null)
+            .unwrap();
+        admissions
+            .update_with_control(session, next_id, "running", false, &Value::Null)
+            .unwrap();
+        admissions
+            .update_with_control(session, next_id, "completed", false, &Value::Null)
+            .unwrap();
+        let page = storage
+            .thread_view_page(owner, session, "chat", None, 12)
+            .unwrap();
+        let changes = storage.thread_view_changes(owner, session, 0).unwrap();
+        let tails = storage.thread_turn_tails(owner, &[session.into()]).unwrap();
+        let head = tails[session].runtime_head.as_ref().unwrap();
+        assert_eq!(page.runtime_status, "completed");
+        assert_eq!(page.status_turn_id, next_id);
+        assert!(page.active_turn_id.is_empty());
+        assert_eq!(changes.status_turn_id, next_id);
+        assert_eq!(head.status_turn_id, next_id);
+        assert!(head.active_turn_id.is_empty());
     }
 }

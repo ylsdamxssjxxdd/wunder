@@ -1002,6 +1002,20 @@ fn payload_and_tool_projections_have_stable_shapes() {
 
 #[test]
 fn parse_goal_command_grammar() {
+    for objective in [
+        "示例目标",
+        "a示例目标",
+        "ab示例目标",
+        "🧪示例目标",
+        "pause fixture",
+    ] {
+        assert_eq!(
+            parse_goal_command(objective),
+            GoalCommand::Create {
+                objective: objective.into()
+            }
+        );
+    }
     assert_eq!(parse_goal_command(""), GoalCommand::Show);
     assert_eq!(parse_goal_command("   "), GoalCommand::Show);
     assert_eq!(parse_goal_command("clear"), GoalCommand::Clear);

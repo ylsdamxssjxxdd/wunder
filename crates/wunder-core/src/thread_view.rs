@@ -215,6 +215,8 @@ pub struct QueuedInput {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ThreadExecutionHead {
     pub runtime_status: String,
+    #[serde(default)]
+    pub status_turn_id: String,
     pub active_turn_id: String,
     pub epoch: i64,
     pub view_seq: i64,
@@ -223,6 +225,8 @@ pub struct ThreadExecutionHead {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ThreadViewPage {
     pub runtime_status: String,
+    #[serde(default)]
+    pub status_turn_id: String,
     pub active_turn_id: String,
     pub session_id: String,
     pub epoch: i64,
@@ -267,6 +271,8 @@ pub struct ThreadBodyPage {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ThreadViewChanges {
     pub runtime_status: String,
+    #[serde(default)]
+    pub status_turn_id: String,
     pub active_turn_id: String,
     pub epoch: i64,
     pub view_seq: i64,

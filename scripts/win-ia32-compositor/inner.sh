@@ -111,6 +111,8 @@ cat > "$VENDOR/wrapper.h" <<'EOF'
 EOF
 
 BINDINGS="$SYS/bindings/$RUST_TARGET.rs"
+# malloc.h → mm_malloc.h 只有交叉 gcc 提供，把 gcc 的私有 include 挂给 clang。
+BINDGEN_EXTRA="-isystem $(i686-w64-mingw32-gcc -print-file-name=include)" \
 BINDGEN_TARGET="$CLANG_TARGET" "$CARGO_TARGET_DIR/release/bindgen-gen" \
   "$VENDOR/wrapper.h" "$BINDINGS" "$WORK/i686/ffmpeg/include"
 

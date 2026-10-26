@@ -30,6 +30,19 @@ pub(crate) enum ThreadRunState {
     Finished,
 }
 
+impl ThreadRunState {
+    pub(crate) fn from_terminal(status: &str) -> Option<Self> {
+        match status {
+            "failed" | "error" | "rejected" => Some(Self::Failed),
+            "waiting_input" | "waiting_user_input" | "waiting_approval" => Some(Self::NeedsYou),
+            "completed" | "cancelled" | "canceled" | "interrupted" | "stopped" => {
+                Some(Self::Finished)
+            }
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct UnreadState {
     pub events: usize,
@@ -45,6 +58,7 @@ pub(crate) struct ThreadProjection {
     /// `last_seen_event_id` / `replay_from` 仅是 v1 兼容残留，不参与去重或排序。
     pub last_change_seq: i64,
     pub status: ThreadRunState,
+    terminal_status: Option<ThreadRunState>,
     pub unread: UnreadState,
     pub pending_events: VecDeque<StreamEvent>,
     pub needs_replay: bool,
@@ -65,6 +79,7 @@ impl ThreadProjection {
             last_seen_event_id: 0,
             last_change_seq: 0,
             status: ThreadRunState::Ready,
+            terminal_status: None,
             unread: UnreadState::default(),
             pending_events: VecDeque::new(),
             needs_replay: false,
@@ -309,7 +324,22 @@ impl ThreadRegistry {
     }
 
     pub(crate) fn set_status(&mut self, session_id: &str, status: ThreadRunState) {
-        self.projection_mut(session_id).status = status;
+        let projection = self.projection_mut(session_id);
+        if status == ThreadRunState::Working {
+            projection.terminal_status = None;
+        }
+        projection.status = status;
+    }
+
+    pub(crate) fn record_terminal(&mut self, session_id: &str, status: ThreadRunState) {
+        let projection = self.projection_mut(session_id);
+        projection.terminal_status = Some(status);
+        projection.status = status;
+    }
+
+    pub(crate) fn terminal_status(&self, session_id: &str) -> Option<ThreadRunState> {
+        self.projection(session_id)
+            .and_then(|projection| projection.terminal_status)
     }
 
     pub(crate) fn insert_stream(&mut self, session_id: String, receiver: Receiver<StreamMessage>) {

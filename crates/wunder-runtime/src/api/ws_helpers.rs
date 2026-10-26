@@ -450,7 +450,11 @@ pub(crate) async fn resume_thread_view(
                         ])
                     })
                     .collect::<Vec<_>>();
-                let runtime = (page.runtime_status.clone(), page.active_turn_id.clone());
+                let runtime = (
+                    page.runtime_status.clone(),
+                    page.status_turn_id.clone(),
+                    page.active_turn_id.clone(),
+                );
                 let changed = page.view_seq > after
                     || last_runtime.as_ref() != Some(&runtime)
                     || last_row_controls.as_ref() != Some(&row_controls);
@@ -606,7 +610,7 @@ pub(crate) async fn send_final_thread_view(
     })
     .await
     {
-        let mut data = json!({"runtime_status":page.runtime_status,"active_turn_id":page.active_turn_id,"epoch":page.epoch,"view_seq":page.view_seq,"rows":page.chat,"reset_required":page.projection_state!="ready"});
+        let mut data = json!({"runtime_status":page.runtime_status,"status_turn_id":page.status_turn_id,"active_turn_id":page.active_turn_id,"epoch":page.epoch,"view_seq":page.view_seq,"rows":page.chat,"reset_required":page.projection_state!="ready"});
         if serde_json::to_vec(&data)
             .map(|v| v.len() > 60 * 1024)
             .unwrap_or(true)

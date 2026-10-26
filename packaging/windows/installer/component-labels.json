@@ -6,5 +6,7 @@
   "rg": "ripgrep {version}",
   "ffmpeg": "FFmpeg {version}",
   "browser": "内置浏览器 Chrome {version}",
+  "r2": "radare2 {version}",
+  "remotion": "Remotion {version} 视频渲染（含 Node.js）",
   "approxSize": "（约 {size} MB）"
 }

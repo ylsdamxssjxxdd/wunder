@@ -363,6 +363,9 @@ jobs:
             -e WUNDER_SUPPLEMENT_NPM_REGISTRY=https://registry.npmjs.org \
             "wunder-remotion-ubuntu2204-${{ matrix.arch }}" \
             bash packaging/linux/scripts/build_linux_remotion.sh
+          # 容器内以 root 写挂载目录，产物落在工作区后归 root 所有；
+          # 交还 runner 所有权，否则后续注入 compositor 的 cp 会被拒绝。
+          sudo chown -R "$(id -u):$(id -g)" remotion-payload remotion-build
       - name: Inject Ubuntu 18.04 compositor (amd64)
         if: matrix.arch == 'amd64' && (steps.pack.outputs.cached != 'true' || github.event.inputs.force_rebuild == 'true')
         uses: actions/download-artifact@v4

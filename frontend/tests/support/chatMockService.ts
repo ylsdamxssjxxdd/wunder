@@ -151,9 +151,11 @@ export class ChatMockService {
   private runtimeHead() {
     // A user round stays hot while its latest execution turn is hot; settling the
     // root before the continuation exists would flash an idle head.
-    const active = this.turnGroups().map(group => group.at(-1)!)
+    const turns = this.turnGroups().map(group => group.at(-1)!);
+    const active = turns
       .find(turn => ['accepted', 'queued', 'running', 'waiting_input', 'waiting_approval'].includes(String(turn.status)));
-    return { runtime_status: active ? (active.status==='accepted'?'running':String(active.status)) : 'idle', active_turn_id: String(active?.turn_id ?? '') };
+    const head = active ?? turns.at(-1);
+    return { runtime_status: head ? (head.status==='accepted'?'running':String(head.status)) : 'idle', status_turn_id: String(head?.turn_id ?? ''), active_turn_id: String(active?.turn_id ?? '') };
   }
   private viewChanges() {
     return { epoch: 1, view_seq: this.changes.length, rows: this.viewRows().slice(-12), ...this.runtimeHead() };

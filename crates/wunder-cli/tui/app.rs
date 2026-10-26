@@ -35,9 +35,7 @@ use crate::runtime::CliRuntime;
 use crate::slash_command::{self, ParsedSlashCommand, SlashCommand};
 use crate::tui::command_center::{CommandCenterState, ThreadStatusFilter};
 use crate::tui::thread_registry::ThreadRegistry;
-use crate::tui::ui::centered_picker::{
-    BodyLine, CenteredListSpec, PickerRow, MAX_VISIBLE_ROWS,
-};
+use crate::tui::ui::centered_picker::{BodyLine, CenteredListSpec, PickerRow, MAX_VISIBLE_ROWS};
 
 const MAX_LOG_ENTRIES: usize = super::transcript::MAX_TRANSCRIPT_CELLS;
 const MAX_LOG_TOTAL_CHARS: usize = super::transcript::MAX_TRANSCRIPT_CHARS;
@@ -1966,6 +1964,15 @@ impl TuiApp {
     fn live_thread_status(&self, session_id: &str) -> Option<wunder_server::ThreadStatus> {
         use super::thread_registry::ThreadRunState;
         use wunder_server::ThreadStatus;
+        if let Some(terminal) = self.thread_registry.terminal_status(session_id) {
+            return Some(match terminal {
+                ThreadRunState::Failed => ThreadStatus::Failed,
+                ThreadRunState::NeedsYou => ThreadStatus::NeedsYou,
+                ThreadRunState::Finished => ThreadStatus::Finished,
+                ThreadRunState::Working => ThreadStatus::Working,
+                ThreadRunState::Ready => ThreadStatus::Ready,
+            });
+        }
         let queued_approvals = self.thread_registry.pending_approval_count(session_id)
             + if session_id == self.session_id.as_str() {
                 self.approval_queue.len() + usize::from(self.active_approval.is_some())
@@ -2219,7 +2226,11 @@ impl TuiApp {
             for route in &question.routes {
                 let mut name = route.label.clone();
                 if route.recommended {
-                    name.push_str(if is_zh { "（推荐）" } else { " (recommended)" });
+                    name.push_str(if is_zh {
+                        "（推荐）"
+                    } else {
+                        " (recommended)"
+                    });
                 }
                 rows.push(PickerRow::numbered(
                     global_index,
@@ -5669,9 +5680,7 @@ impl TuiApp {
                 }
             }
             // codex 的列表键：数字直接高亮对应行，Enter 确认。
-            KeyCode::Char(ch)
-                if key.modifiers.is_empty() && ch.is_ascii_digit() && ch != '0' =>
-            {
+            KeyCode::Char(ch) if key.modifiers.is_empty() && ch.is_ascii_digit() && ch != '0' => {
                 if let Some(picker) = self.resume_picker.as_mut() {
                     let index = (ch as usize).saturating_sub('1' as usize);
                     if index < picker.sessions.len() {
@@ -7038,6 +7047,7 @@ impl TuiApp {
                         })
                         .await;
                     frame_requester.schedule_frame();
+                    return;
                 }
             }
             let _ = tx
@@ -7864,6 +7874,10 @@ impl TuiApp {
             StreamMessage::Event { .. } => None,
         };
         if let Some((session_id, failed)) = terminal {
+            if failed {
+                self.thread_registry
+                    .record_terminal(&session_id, super::thread_registry::ThreadRunState::Failed);
+            }
             let has_pending = self
                 .thread_registry
                 .projection(&session_id)
@@ -7878,6 +7892,8 @@ impl TuiApp {
                     &session_id,
                     if failed {
                         super::thread_registry::ThreadRunState::Failed
+                    } else if let Some(status) = self.thread_registry.terminal_status(&session_id) {
+                        status
                     } else if self.thread_registry.projection(&session_id).is_some_and(
                         |projection| {
                             projection.status == super::thread_registry::ThreadRunState::NeedsYou
@@ -7888,7 +7904,14 @@ impl TuiApp {
                         super::thread_registry::ThreadRunState::Finished
                     },
                 );
-                self.pending_thread_terminals.insert(session_id, message);
+                if failed
+                    || !matches!(
+                        self.pending_thread_terminals.get(&session_id),
+                        Some(StreamMessage::Error { .. })
+                    )
+                {
+                    self.pending_thread_terminals.insert(session_id, message);
+                }
                 return;
             }
         }
@@ -7909,7 +7932,7 @@ impl TuiApp {
             StreamMessage::Error { session_id, error } => {
                 self.active_stream_sessions.remove(session_id.as_str());
                 self.thread_registry.remove_stream(session_id.as_str());
-                self.thread_registry.set_status(
+                self.thread_registry.record_terminal(
                     session_id.as_str(),
                     crate::tui::thread_registry::ThreadRunState::Failed,
                 );
@@ -7927,6 +7950,7 @@ impl TuiApp {
                 }
                 self.finalize_all_markdown_streams();
                 self.push_log(LogKind::Error, error.clone());
+                self.interrupt_pending_tools();
                 self.note_cloud_error(&error);
                 self.finalize_turn_metrics();
                 self.busy = false;
@@ -7950,7 +7974,9 @@ impl TuiApp {
                 self.thread_registry.remove_stream(session_id.as_str());
                 self.thread_registry.set_status(
                     session_id.as_str(),
-                    if self.active_inquiry_panel.is_some() {
+                    if let Some(status) = self.thread_registry.terminal_status(&session_id) {
+                        status
+                    } else if self.active_inquiry_panel.is_some() {
                         crate::tui::thread_registry::ThreadRunState::NeedsYou
                     } else {
                         crate::tui::thread_registry::ThreadRunState::Finished
@@ -7960,6 +7986,7 @@ impl TuiApp {
                     return;
                 }
                 self.finalize_all_markdown_streams();
+                self.interrupt_pending_tools();
                 self.maybe_emit_tool_only_final_summary();
                 if !self.stream_saw_output && !self.stream_saw_final {
                     self.push_log(
@@ -8000,6 +8027,30 @@ impl TuiApp {
             session_id: session_id.to_string(),
             error: "stream disconnected before completion".to_string(),
         });
+    }
+
+    fn interrupt_pending_tools(&mut self) {
+        let indices: std::collections::HashSet<_> = self
+            .tool_log_indices
+            .values()
+            .copied()
+            .chain(self.command_log_indices.values().copied())
+            .chain(self.pending_temp_tool_cells.iter().map(|cell| cell.index))
+            .collect();
+        let mut changed = false;
+        for index in indices {
+            if let Some(entry) = self.logs.get_mut(index) {
+                if let Some(special) = entry.special.as_mut() {
+                    if special.interrupt_pending() {
+                        entry.text = special.summary_text();
+                        changed = true;
+                    }
+                }
+            }
+        }
+        if changed {
+            self.invalidate_transcript_metrics();
+        }
     }
 
     fn notification_final_event(&self) -> FinalEvent {
@@ -8081,6 +8132,17 @@ impl TuiApp {
             .and_then(Value::as_str)
             .unwrap_or_else(|| event.event.as_str());
         match kind {
+            "turn_terminal" => {
+                let Some(status) = payload
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .and_then(super::thread_registry::ThreadRunState::from_terminal)
+                else {
+                    return;
+                };
+                self.thread_registry
+                    .record_terminal(&self.session_id, status);
+            }
             "llm_output_delta" => {
                 if let Some(reasoning_delta) =
                     payload.get("reasoning_delta").and_then(Value::as_str)
@@ -8341,6 +8403,15 @@ impl TuiApp {
 
     fn queue_background_event(&mut self, session_id: &str, event: StreamEvent) {
         let payload = event.data.get("data").unwrap_or(&event.data);
+        if event.event == "turn_terminal" {
+            if let Some(status) = payload
+                .get("status")
+                .and_then(Value::as_str)
+                .and_then(super::thread_registry::ThreadRunState::from_terminal)
+            {
+                self.thread_registry.record_terminal(session_id, status);
+            }
+        }
         if (event.event == "question_panel" && self.parse_inquiry_panel_state(payload).is_some())
             || (event.event == "tool_result"
                 && self.parse_inquiry_panel_from_tool_result(payload).is_some())

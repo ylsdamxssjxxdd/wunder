@@ -379,14 +379,6 @@ fn project_turn(root: &Value, items: &[Value]) -> Option<NativeChatTurn> {
     let input = items
         .iter()
         .find(|item| item["kind"] == "user_message" && item["turn_id"] == id)?;
-    // Goal controls are durable coordination records, not conversation turns.
-    // Keep them in the goal projection, as the web messenger does, instead of
-    // recreating a user bubble after a refresh or restart.
-    if input["meta"]["type"].as_str() == Some("goal_command")
-        || input["payload"]["meta"]["type"].as_str() == Some("goal_command")
-    {
-        return None;
-    }
     let mut user_payload = input["payload"].clone();
     user_payload["role"] = json!("user");
     user_payload["turn_id"] = json!(id);
@@ -661,18 +653,20 @@ mod tests {
     }
 
     #[test]
-    fn goal_command_round_is_not_projected_as_chat_message() {
+    fn goal_command_round_survives_full_chat_projection() {
         let root = json!({"turn_id":"fixture-goal", "status":"completed"});
         let items = vec![json!({
             "kind":"user_message",
             "turn_id":"fixture-goal",
             "payload":{
                 "role":"user",
-                "content":"/goal organize the workspace",
+                "content":"/goal Fixture objective",
                 "meta":{"type":"goal_command", "goal_command":true}
             }
         })];
-        assert!(project_turn(&root, &items).is_none());
+        let turn = project_turn(&root, &items).unwrap();
+        assert_eq!(turn.user.text, "/goal Fixture objective");
+        assert!(turn.assistant.text.is_empty());
     }
     #[test]
     fn replay_keeps_tool_request_usage_from_durable_result() {

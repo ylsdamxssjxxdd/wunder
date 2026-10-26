@@ -97,6 +97,7 @@ import { buildTimelinePatchView } from './toolTimelinePatch';
 import { buildTimelineStructuredView } from './toolTimelineStructured';
 import type { ToolWorkflowPatchView, ToolWorkflowStructuredView } from './toolWorkflowTypes';
 import { entryActivity, processActivityLabel, reasoningPreview, type ProcessActivity } from './timelineActivity';
+import { completeProcessRefresh, requestProcessRefresh, type ProcessRefreshGateState } from './processRefreshGate';
 
 type ProcessRow =
   | { kind: 'reasoning'; key: string; entry: TimelineReasoningEntry; modelRound?: number }
@@ -148,6 +149,7 @@ const patchViews = new Map<string, ToolWorkflowPatchView | null>();
 const structuredViews = new Map<string, ToolWorkflowStructuredView | null>();
 let loadAbort: AbortController | null = null;
 let reloadTimer: number | null = null;
+const refreshGate: ProcessRefreshGateState = { pending: false };
 
 const cacheKeyPrefix = computed(() => `turn-process:${props.sessionId}:${props.turnId}:`);
 const reasoningText = computed(() => String(props.reasoning || '').trim());
@@ -271,6 +273,9 @@ const toggle = (): void => {
   if (open.value && !loaded.value && !loading.value) {
     clearReloadTimer();
     void load();
+  } else if (open.value && loaded.value && refreshGate.pending) {
+    clearReloadTimer();
+    if (requestProcessRefresh(refreshGate, !loadAbort && !hasNewerItems.value)) void loadPage('refresh');
   }
 };
 
@@ -440,6 +445,10 @@ const loadPage = async (direction: ProcessPageDirection): Promise<void> => {
       loading.value = false;
       loadingMore.value = false;
       if (!pageError.value && !error.value) fillShortPage();
+      if (!pageError.value && !error.value && open.value && loaded.value &&
+          completeProcessRefresh(refreshGate, !hasNewerItems.value)) {
+        void loadPage('refresh');
+      }
     }
   }
 };
@@ -467,6 +476,7 @@ const handleProcessWheel = (event: WheelEvent): void => {
 
 const resetState = (): void => {
   clearReloadTimer();
+  refreshGate.pending = false;
   loadAbort?.abort();
   loadAbort = null;
   open.value = false;
@@ -577,11 +587,14 @@ watch(
 watch(
   () => [props.count, props.finalItemId, props.status, Boolean(props.reasoningStreaming)],
   () => {
-    if (!open.value || !loaded.value) return;
+    refreshGate.pending = true;
+    if (!open.value || (!loaded.value && !loadAbort)) return;
     clearReloadTimer();
     reloadTimer = window.setTimeout(() => {
       reloadTimer = null;
-      if (open.value) void loadPage('refresh');
+      if (requestProcessRefresh(refreshGate, open.value && loaded.value && !loadAbort && !hasNewerItems.value)) {
+        void loadPage('refresh');
+      }
     }, 600);
   }
 );
@@ -590,6 +603,7 @@ onBeforeUnmount(() => {
   if (anchorFrame !== null) window.cancelAnimationFrame(anchorFrame);
   if (fillFrame !== null) window.cancelAnimationFrame(fillFrame);
   clearReloadTimer();
+  refreshGate.pending = false;
   loadAbort?.abort();
 });
 

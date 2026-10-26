@@ -3975,7 +3975,18 @@ async fn run_agent_once(
     while let Some(item) = stream.next().await {
         let event = item.expect("infallible stream event");
         if event.event == "error" {
-            saw_error = true;
+            let payload = event.data.get("data").unwrap_or(&event.data);
+            saw_error = payload.get("will_retry").and_then(Value::as_bool) != Some(true);
+        } else if event.event == "turn_terminal" {
+            let payload = event.data.get("data").unwrap_or(&event.data);
+            match payload.get("status").and_then(Value::as_str) {
+                Some(
+                    "failed" | "error" | "rejected" | "cancelled" | "canceled" | "interrupted"
+                    | "stopped",
+                ) => saw_error = true,
+                Some("completed") => saw_error = false,
+                _ => {}
+            }
         }
         if let Some(final_payload) = renderer.render_event(&event)? {
             final_event = final_payload;

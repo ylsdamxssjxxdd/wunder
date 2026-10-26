@@ -410,6 +410,18 @@ pub fn restore_folds(rows: &mut [TimelineRow], previous: &VecModel<TimelineRow>)
         if let Some(previous) = old.get(&row.id) {
             row.open = previous.open;
             if row.kind == crate::timeline::KIND_PROCESS {
+                if previous.status_kind == crate::timeline::STATUS_RUNNING
+                    && row.status_kind != crate::timeline::STATUS_RUNNING
+                    && (previous.process_paged || previous.process_loading)
+                    && !previous.process_newer
+                {
+                    row.process_entries = ModelRc::new(VecModel::<crate::ProcessEntry>::default());
+                    row.process_paged = false;
+                    row.process_local = false;
+                    row.process_loading = false;
+                    row.process_error = false;
+                    continue;
+                }
                 row.process_entries = previous.process_entries.clone();
                 row.process_paged = previous.process_paged;
                 row.process_older = previous.process_older;

@@ -90,6 +90,25 @@ impl ExploringGroupEntry {
             .any(|child| child.status == ExploringChildStatus::Pending)
     }
 
+    pub(super) fn interrupt_pending(&mut self) -> bool {
+        let mut changed = false;
+        for child in &mut self.children {
+            if child.status == ExploringChildStatus::Pending {
+                child.status = ExploringChildStatus::Failure;
+                child.note = Some(
+                    if self.is_zh {
+                        "未收到工具结果"
+                    } else {
+                        "tool result unavailable"
+                    }
+                    .into(),
+                );
+                changed = true;
+            }
+        }
+        changed
+    }
+
     /// A group only takes the next read while it has room; beyond that a new card starts.
     pub(super) fn can_accept(&self) -> bool {
         self.children.len() < CHILDREN_LIMIT

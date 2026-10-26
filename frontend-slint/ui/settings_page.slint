@@ -1586,7 +1586,7 @@ export component SettingsPage inherits Rectangle {
                                     HorizontalLayout { spacing: 10px; alignment: end;
                                         Text { text: PetSettingsState.scale-label; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; }
                                         Slider {
-                                            min-width: 150px; max-width: 220px; minimum: 0.5; maximum: 1.6; step: 0.1;
+                                            min-width: 150px; max-width: 220px; minimum: 0.1; maximum: 1.6; step: 0.1;
                                             value: PetSettingsState.scale;
                                             changed => { PetSettingsState.set-scale(self.value); }
                                         }
