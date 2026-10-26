@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>lite video template</title>
+<style>
+  html, body { margin: 0; padding: 0; width: 1280px; height: 720px; overflow: hidden;
+               background: #0a0a1a; font-family: "Microsoft YaHei", "SimHei", sans-serif; }
+  #stage { position: relative; width: 1280px; height: 720px; }
+  .title { position: absolute; left: 96px; top: 260px; font-size: 84px; font-weight: 700;
+           color: #ffffff; opacity: 0; }
+  .subtitle { position: absolute; left: 100px; top: 380px; font-size: 44px;
+              color: #64c8ff; opacity: 0; }
+  .bar { position: absolute; left: 96px; bottom: 72px; width: 1088px; height: 6px;
+         background: rgba(255,255,255,0.15); border-radius: 3px; }
+  .bar i { display: block; height: 100%; width: 0; background: #8b5cf6; border-radius: 3px; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <canvas id="bg" width="1280" height="720" style="position:absolute;left:0;top:0"></canvas>
+  <div class="title" id="title">标题文字</div>
+  <div class="subtitle" id="subtitle">副标题 · 轻量渲染路线</div>
+  <div class="bar"><i id="progress"></i></div>
+</div>
+<script>
+// ---- render contract -------------------------------------------------------
+window.__video = { width: 1280, height: 720, fps: 30, duration: 6 };
+
+// ---- helpers ---------------------------------------------------------------
+function clamp01(x) { return x < 0 ? 0 : x > 1 ? 1 : x; }
+function lerp(a, b, t) { return a + (b - a) * t; }
+function easeOut(t) { return 1 - Math.pow(1 - clamp01(t), 3); }
+function easeInOut(t) { t = clamp01(t); return t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t + 2, 3) / 2; }
+// windowed progress: 0 before `start`, 1 after `start+len`
+function span(t, start, len) { return clamp01((t - start) / len); }
+
+// ---- scene -----------------------------------------------------------------
+var ctx = document.getElementById('bg').getContext('2d');
+function drawBackground(t) {
+  var g = ctx.createRadialGradient(640, 300, 80, 640, 360, 900);
+  g.addColorStop(0, '#141430');
+  g.addColorStop(1, '#000005');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, 1280, 720);
+  // slow drifting accent dot, purely time-driven
+  var x = 640 + Math.cos(t * 0.8) * 420;
+  var y = 360 + Math.sin(t * 1.1) * 220;
+  ctx.beginPath();
+  ctx.arc(x, y, 90, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(139,92,246,0.25)';
+  ctx.fill();
+}
+
+// ---- the one required function ----------------------------------------------
+window.seekTo = function (t) {
+  drawBackground(t);
+  var enter = easeOut(span(t, 0.4, 0.8));
+  var title = document.getElementById('title');
+  title.style.opacity = enter;
+  title.style.transform = 'translateY(' + lerp(40, 0, enter) + 'px)';
+  var enter2 = easeOut(span(t, 0.9, 0.8));
+  var sub = document.getElementById('subtitle');
+  sub.style.opacity = enter2;
+  sub.style.transform = 'translateY(' + lerp(30, 0, enter2) + 'px)';
+  document.getElementById('progress').style.width = (clamp01(t / window.__video.duration) * 100) + '%';
+};
+</script>
+</body>
+</html>

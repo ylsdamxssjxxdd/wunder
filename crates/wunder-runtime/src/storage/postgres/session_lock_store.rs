@@ -11,8 +11,10 @@ pub(super) trait PostgresSessionLockStorage {
         ttl_s: f64,
         max_sessions: i64,
     ) -> Result<SessionLockStatus>;
-    fn touch_session_lock_impl(&self, session_id: &str, ttl_s: f64) -> Result<()>;
-    fn release_session_lock_impl(&self, session_id: &str) -> Result<()>;
+    fn touch_session_lock_impl(&self, session_id: &str, lock_token: &str, ttl_s: f64)
+        -> Result<bool>;
+    fn release_session_lock_impl(&self, session_id: &str, lock_token: &str) -> Result<()>;
+    fn force_release_session_lock_impl(&self, session_id: &str) -> Result<()>;
     fn delete_session_locks_by_user_impl(&self, user_id: &str) -> Result<i64>;
     fn count_session_locks_impl(&self) -> Result<i64>;
     fn list_session_locks_by_user_impl(&self, user_id: &str) -> Result<Vec<SessionLockRecord>>;
@@ -38,6 +40,8 @@ impl PostgresSessionLockStorage for PostgresStorage {
         let ttl_s = _ttl_s.max(1.0);
         let now = Self::now_ts();
         let expires_at = now + ttl_s;
+        // 每次获得颁发一个不可预测的新代次，旧代次的心跳/释放随后全部失配。
+        let lock_token = uuid::Uuid::new_v4().simple().to_string();
 
         let mut conn = self.conn()?;
         let mut tx = conn.transaction()?;
@@ -45,13 +49,14 @@ impl PostgresSessionLockStorage for PostgresStorage {
         tx.execute("LOCK TABLE session_locks IN SHARE ROW EXCLUSIVE MODE", &[])?;
         tx.execute("DELETE FROM session_locks WHERE expires_at <= $1", &[&now])?;
         let inserted = tx.execute(
-            "INSERT INTO session_locks (session_id, user_id, agent_id, created_time, updated_time, expires_at) \
-             VALUES ($1, $2, $3, $4, $5, $6) \
+            "INSERT INTO session_locks (session_id, user_id, agent_id, lock_token, created_time, updated_time, expires_at) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7) \
              ON CONFLICT DO NOTHING",
             &[
                 &cleaned_session,
                 &cleaned_user,
                 &cleaned_agent,
+                &lock_token,
                 &now,
                 &now,
                 &expires_at,
@@ -84,27 +89,48 @@ impl PostgresSessionLockStorage for PostgresStorage {
             return Ok(SessionLockStatus::SystemBusy);
         }
         tx.commit()?;
-        Ok(SessionLockStatus::Acquired)
+        Ok(SessionLockStatus::Acquired { lock_token })
     }
 
-    fn touch_session_lock_impl(&self, _session_id: &str, _ttl_s: f64) -> Result<()> {
+    fn touch_session_lock_impl(
+        &self,
+        _session_id: &str,
+        _lock_token: &str,
+        _ttl_s: f64,
+    ) -> Result<bool> {
         self.ensure_initialized()?;
         let cleaned_session = _session_id.trim();
         if cleaned_session.is_empty() {
-            return Ok(());
+            return Ok(false);
         }
         let ttl_s = _ttl_s.max(1.0);
         let now = Self::now_ts();
         let expires_at = now + ttl_s;
         let mut conn = self.conn()?;
+        // WHERE 携带代次：过期被接管后，旧持有者的迟到心跳不再续期新持有者的行。
+        let changed = conn.execute(
+            "UPDATE session_locks SET updated_time = $1, expires_at = $2 WHERE session_id = $3 AND lock_token = $4",
+            &[&now, &expires_at, &cleaned_session, &_lock_token],
+        )?;
+        Ok(changed > 0)
+    }
+
+    fn release_session_lock_impl(&self, _session_id: &str, _lock_token: &str) -> Result<()> {
+        self.ensure_initialized()?;
+        let cleaned_session = _session_id.trim();
+        if cleaned_session.is_empty() {
+            return Ok(());
+        }
+        let mut conn = self.conn()?;
+        // WHERE 携带代次：旧持有者的迟到释放不会删除新持有者的行。
         conn.execute(
-            "UPDATE session_locks SET updated_time = $1, expires_at = $2 WHERE session_id = $3",
-            &[&now, &expires_at, &cleaned_session],
+            "DELETE FROM session_locks WHERE session_id = $1 AND lock_token = $2",
+            &[&cleaned_session, &_lock_token],
         )?;
         Ok(())
     }
 
-    fn release_session_lock_impl(&self, _session_id: &str) -> Result<()> {
+    fn force_release_session_lock_impl(&self, _session_id: &str) -> Result<()> {
         self.ensure_initialized()?;
         let cleaned_session = _session_id.trim();
         if cleaned_session.is_empty() {

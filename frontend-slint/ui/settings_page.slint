@@ -463,11 +463,11 @@ export component SettingsPage inherits Rectangle {
     callback create-model();
     callback discard-model-draft();
     callback move-model(int, int);
-    callback save-model();
     callback set-default-model(string);
     // The models tab edits the selected model in place: every editor draft
     // lives here and is wired two-way to the shell by main.slint.
     in-out property <bool> model-creating: false;
+    in property <string> model-save-error;
     in-out property <string> model-key-draft;
     in-out property <string> model-provider-draft;
     in-out property <string> model-name-draft;
@@ -849,7 +849,7 @@ export component SettingsPage inherits Rectangle {
                         }
                         SettingsNavItem {
                             visible: root.settings-category-flags[2];
-                            icon: @image-url("../assets/icons/robot.svg");
+                            icon: @image-url("../assets/icons/brain.svg");
                             title: I18n.stc_models; subtitle: I18n.stc_models_note;
                             selected: root.settings-tab == 1;
                             clicked => { root.settings-tab = 1; root.refresh(); }
@@ -863,7 +863,7 @@ export component SettingsPage inherits Rectangle {
                         }
                         SettingsNavItem {
                             visible: root.settings-category-flags[4];
-                            icon: @image-url("../assets/icons/fa-user.svg");
+                            icon: @image-url("../assets/icons/robot.svg");
                             title: I18n.stc_agent; subtitle: I18n.stc_agent_note;
                             selected: root.settings-tab == 3;
                             clicked => { root.settings-tab = 3;  }
@@ -1236,7 +1236,6 @@ export component SettingsPage inherits Rectangle {
                                     }
                                     // The former page-header actions live with the
                                     // form now that the title bar is gone.
-                                    Action { height: 32px; icon: @image-url("../assets/icons/save.svg"); label: I18n.st_models_save; show-label: true; primary: true; enabled: !root.loading && !root.saving && !root.cloud-locked && root.model-key-draft != "" && root.model-name-draft != "" && root.model-provider-draft != ""; clicked => { root.save-model(); } }
                                     Action { height: 32px; icon: @image-url("../assets/icons/fa-star.svg"); label: root.selected-is-default ? I18n.st_is_default : I18n.st_set_default; show-label: true; enabled: !root.loading && !root.saving && !root.model-creating && !root.cloud-locked && root.selected-key != "" && !root.selected-is-default; clicked => { root.set-default-model(root.selected-key); } }
                                     // While a new model is being created the same slot discards
                                     // the unsaved draft; a saved row keeps the delete confirmation.
@@ -1251,13 +1250,14 @@ export component SettingsPage inherits Rectangle {
                                         clicked => { if root.model-creating { root.discard-model-draft(); } else { root.model-delete-open = true; } }
                                     }
                                 }
+                                if root.model-save-error != "" : Text { text: root.model-save-error; color: Theme.danger; font-size: Theme.font-sm; wrap: word-wrap; }
                                 if root.cloud-locked : Text { height: 17px; text: I18n.st_cl_locked_note; color: Theme.muted; font-size: Theme.font-xs; overflow: elide; }
                                 ScrollView { vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
                                     VerticalLayout { alignment: start; spacing: 14px;
                                         SettingsCard {
                                             FormSectionHead { icon: @image-url("../assets/icons/gear.svg"); title: I18n.st_model_section_basic; }
                                             Rectangle { height: 4px; }
-                                            FormField { label: I18n.model_key_label; placeholder: I18n.model_key_placeholder; read-only: (!root.model-creating && root.selected-key != "") || root.cloud-locked; text <=> root.model-key-draft; }
+                                            FormField { label: I18n.model_key_label; placeholder: I18n.model_key_placeholder; read-only: (!root.model-creating && root.selected-key != "") || root.cloud-locked || root.saving; text <=> root.model-key-draft; }
                                             FormCombo {
                                                 label: I18n.st_model_type_label;
                                                 enabled: !root.cloud-locked;

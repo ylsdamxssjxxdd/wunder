@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS session_locks (
               session_id TEXT PRIMARY KEY,
               user_id TEXT NOT NULL,
               agent_id TEXT NOT NULL DEFAULT '',
+              lock_token TEXT NOT NULL DEFAULT '',
               created_time REAL NOT NULL,
               updated_time REAL NOT NULL,
               expires_at REAL NOT NULL

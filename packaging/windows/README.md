@@ -6,9 +6,7 @@
 - `opt/git`：给 `git clone`、`git status`、补丁应用与仓库操作使用的内置 Git
 - `opt/rg`：给 `search_content` 与命令行检索使用的内置 ripgrep
 - `opt/ffmpeg`：随包附带的静态 ffmpeg（`opt/ffmpeg/bin` 已由桌面运行时自动接入 `PATH`）
-- `opt/node`：Node.js 16.20.2（npm、npx），供命令行工具与视频工程使用；ia32 包内固定 32 位运行时，导入 64 位 Windows 时经 WOW64 同样可用
-- `opt/r2`：radare2 反汇编工具集（`opt/r2/bin` 已由桌面运行时自动接入 `PATH`）
-- `opt/browser`：（可选）用户自备的 Chrome 109 win32 浏览器，供 `browser_*` 工具开箱使用，详见「内置浏览器（可选）」
+- `opt/browser`：默认内置 Chrome 109 win32 浏览器，供 `browser_*` 工具开箱使用；可用 `-SkipBrowser` 跳过，详见「内置浏览器」
 
 补充包设计目标：**统一安装到 `WUNDER_HOME/opt`，蛹与舵机共用一份运行环境**。
 
@@ -21,7 +19,7 @@
 - 勾选舵机时，安装完成后 `{安装根}\bin` 会加入当前用户 `PATH`（重复安装不重复追加，卸载时只移除这一项）。新开终端可直接运行 `wunder-cli`；`desktop` 启动蛹，`wunder-desktop` 也可直接运行。
 - 开始菜单使用形态名称：蛹（桌面程序）与舵机（命令行）；桌面快捷方式随勾选“蛹”自动创建；卸载入口仍为“卸载心舰”。
 - 卸载器移除 `bin`、`.wunder-home`、安装时选择的组件目录和安装器写入的用户 `PATH` 项，保留用户数据。
-- 补充包仍可单独导入：在蛹设置中选择“导入补充包”，或手动解压到 `WUNDER_HOME`。两端自动识别共享 home 中的 `opt/python`、`opt/git`、`opt/rg`、`opt/ffmpeg`、`opt/node`、`opt/r2` 与 `opt/browser`。
+- 补充包仍可单独导入：在蛹设置中选择“导入补充包”，或手动解压到 `WUNDER_HOME`。两端自动识别共享 home 中的 `opt/python`、`opt/git`、`opt/rg`、`opt/ffmpeg` 与 `opt/browser`。
 
 ## 安装后的终端命令
 
@@ -55,12 +53,11 @@ Windows 安装包优先使用离线 SDK 的 `Rust-builder/win7/offline/tools/inn
   - Python 官方从 `3.9` 开始要求 Windows `8.1+`，因此 Win7 路线固定使用 `3.8`。
   - 当前脚本使用官方可下载的 embeddable 压缩包，便于安装到共享用户目录。
 - Playwright 驱动：Win7 包固定使用已验证的 `playwright==1.40.0` 与 Chrome 109 补充包组合。官方 `win32` wheel 内仍带 x64 的 `driver/node.exe`，构建脚本会下载固定 SHA256 的 Node 16.20.2 `win-x86`，替换该文件后再做 i386 PE 门禁。Node 16 不在 Node 官方的 Windows 7 支持矩阵内，桥接会设置 `NODE_SKIP_PLATFORM_CHECK=1`，仍需在真实 ia32 Win7 上验收。
-- 通用 Node：`opt/node` 固定为 Node 16.20.2 + npm/npx，ia32 包内是 32 位运行时（64 位 Windows 经 WOW64 运行），蛹与舵机的命令行工具直接使用。
 - Git：`MinGit 2.46.2`
   - Git for Windows FAQ 将 `2.46.2` 标为最后支持 Windows `7 / 8 / 8.1` 的版本。
   - `MinGit` 适合嵌入第三方桌面应用，体积比完整安装包更小。
 - ripgrep：`14.1.0`
-  - `14.1.1` 起的官方 Windows 二进制用 Rust 1.78+ 构建，静态导入 `bcryptprimitives.dll`（`ProcessPrng`）和 `api-ms-win-core-synch-l1-2-0.dll`（`WaitOnAddress`），这两个 DLL 从 Windows 8 才提供；在 32 位 Windows 7 上启动即崩溃，Git Bash 会报 `Segmentation fault`。
+  - `14.1.1` 起的官方 Windows 二进制用 Rust 1.78+ 构建，静态导入 `bcryptprimitives.dll`（`ProcessPrng`）和 `api-ms-win-core-synch-l1-2-0.dll`（`WaitOnAddress`），这两个 DLL 从 Windows 8 才提供；在 32 位 Windows 7 上启动即崩溃并报 `Segmentation fault`。
   - `14.1.0` 是最后一个仍能在 Windows 7 运行的官方版本。构建脚本会校验 SHA256、PE 架构和导入表；若以后要升级到 `14.1.1+`，必须用 Rust `<= 1.77.2` 自行重编，否则门禁会直接失败。
   - 代价：`14.1.1` 才修复了正则内层字面量优化可能漏匹配的问题（ripgrep #2884），`14.1.0` 仍带该缺陷；若搜索正确性必须包含该修复，只能用 Rust `<= 1.77.2` 自行重编 `14.1.1`。
 
@@ -112,17 +109,17 @@ opt/
   git/
   rg/
   ffmpeg/
-  node/
-  browser/        （可选，投喂 Chrome 109 压缩包后才会出现）
+  browser/        （默认自动准备 Chrome 109；可用 `-SkipBrowser` 跳过）
 README-win7-supplement.txt
 wunder-win7-supplement.json
 ```
 
-## 内置浏览器（可选）
+## 内置浏览器
 
-Win7 最高只支持到 Chrome 109（`109.0.5414.x`，最后一个支持 Windows 7 的 Chrome 版本）。补充包支持把用户自备的 Chrome 109 win32 浏览器目录打进包内，导入后蛹的 `browser_*` 工具开箱可用。
+Win7 最高只支持到 Chrome 109（`109.0.5414.x`，最后一个支持 Windows 7 的 Chrome 版本）。补充包默认自动准备 Chrome 109 win32 浏览器，导入后蛹的 `browser_*` 工具开箱可用。
 
 - 布局：浏览器解到补充包的 `opt/browser/`，默认要求存在 `opt/browser/chrome-win/chrome.exe`；`opt/browser/chrome.exe` 也是运行时认可的回退探测位置。若投喂的压缩包顶层只有一层包裹目录（如 `chrome-win/` 或 `chrome-win32/`），会保留其结构；若解开后找不到 `chrome-win/chrome.exe`，脚本会在解包结果中递归定位 `chrome.exe` 并重排到 `chrome-win/chrome.exe`，仍找不到则报错退出。ia32 档还会校验 `chrome.exe` 的 PE 架构必须是 32 位。
+- 浏览器来源优先级：`-BrowserArchivePath` 显式路径、清单 `browser.archivePath`、仓库中已有的 Chrome 109 缓存；都找不到时，构建脚本自动下载清单中固定版本并校验 SHA-256，再用 7-Zip 解包。若本机没有 7-Zip，请安装 7-Zip 或显式传入已解开的浏览器目录。
 - 投喂方式（二选一）：
   - 命令行参数（优先级更高）：
     ```powershell
@@ -131,9 +128,9 @@ Win7 最高只支持到 Chrome 109（`109.0.5414.x`，最后一个支持 Windows
       -BrowserArchivePath <本地目录>\chrome-109-win32.zip
     ```
   - 或在 `packaging/windows/scripts/win7-supplement-manifest.json` 的顶层 `browser.archivePath` 填入压缩包路径。
-  - `-BrowserArchivePath` 既接受 `.zip` 压缩包，也接受已解开的浏览器目录。不提供任何路径时行为与之前一致：包内不含浏览器，不报错。
+  - `-BrowserArchivePath` 既接受 `.zip` 压缩包，也接受已解开的浏览器目录；`-SkipBrowser` 可跳过内置浏览器。
 - 获取途径：Chrome 官方旧版离线安装包（win32 的 109.0.5414.x）或可信镜像；解出安装包内的 `chrome.7z`/`chrome-win` 目录即可投喂。浏览器二进制是否允许再分发由投喂者自行确认，本仓库不替使用者做合规结论。
-- CI 构建：`.github/workflows/desktop-supplements.yml` 的 build-win7-ia32 已默认投喂 Chromium 109.0.5414.120 win32（Hibbiki/chromium-win32 发布页 `v109.0.5414.120-r1070088` 的 `mini_installer.sync.exe`，pin 死 URL 并强制 SHA256 校验，浏览器 pin 以字面量并入 win7 缓存键，变更即触发重建）；本地手工构建仍走上面的 `-BrowserArchivePath`。
+- CI 构建：`.github/workflows/desktop-supplements.yml` 的 build-win7-ia32 已默认投喂 Chromium 109.0.5414.120 win32（Hibbiki/chromium-win32 发布页 `v109.0.5414.120-r1070088` 的 `mini_installer.sync.exe`，pin 死 URL 并强制 SHA256 校验，浏览器 pin 以字面量并入 win7 缓存键，变更即触发重建）；本地默认构建也使用同一份清单 URL/SHA-256 自动准备浏览器。
 - 运行时如何被发现：在蛹设置中导入补充包后，运行时会自动探测 `WUNDER_HOME/opt/browser/chrome-win/chrome.exe`（回退 `opt/browser/chrome.exe`），`browser_*` 工具直接使用，无需手工修改 `wunder.yaml`。
 
 ## 使用方式
@@ -147,14 +144,13 @@ Win7 最高只支持到 Chrome 109（`109.0.5414.x`，最后一个支持 Windows
    - `opt/git`
    - `opt/rg`
    - `opt/ffmpeg`
-   - `opt/node`
    - `opt/browser`（若打包时投喂了浏览器）
 4. 重新启动蛹或舵机。
 
 两端启动时会自动：
 
 - 从共享 home 探测补充包，不受程序安装目录和启动目录影响
-- 将共享 home 下的 `opt/python`、`opt/python/Scripts`、`opt/git/cmd`、`opt/git/bin`、`opt/rg`、`opt/rg/bin`、`opt/ffmpeg/bin`、`opt/node`（及其 `bin`）接入 `PATH`，重复导入不会重复累加
+- 将共享 home 下的 `opt/python`、`opt/python/Scripts`、`opt/git/cmd`、`opt/git/bin`、`opt/rg`、`opt/rg/bin`、`opt/ffmpeg/bin` 接入 `PATH`，重复导入不会重复累加
 
 这样桥接层与智能体工具调用就能优先命中内置 Python / Git / rg。
 

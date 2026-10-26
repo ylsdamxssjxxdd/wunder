@@ -4,6 +4,8 @@
 
 后端继续复用共享 AppState、SQLite、ThreadRuntime、工具权限与执行链路。默认数据目录是程序旁的 `WUNDER_TEMPD` 和 `WUNDER_WORK`，兼容已有桌面数据；模型供应商与外部工具自身仍按各自网络协议调用。
 
+同一安装位置只运行一个蛹：再次双击会呼出原有主窗口，包括最小化或隐藏到托盘的窗口，不重复启动后端；启动期间的呼出请求也会保留。不同目录的安装副本可独立运行，互不抢占窗口。实例标识使用规范化的程序路径；Linux AppImage 使用原始 AppImage 路径而非临时挂载路径。退出或进程崩溃后实例锁自动释放。该机制不开放 TCP/HTTP 端口，不影响隔离的冒烟检查。
+
 ## 运行与预览
 
 ```powershell
@@ -59,6 +61,14 @@ Release 输出：`target/frontend-slint/dist/win7-x86/wunder-frontend-slint-0.2.
 
 ## 原生冒烟检查
 
+模型配置采用约 500 ms 防抖自动保存，不需要点击保存按钮。基础字段填写完整后，新对话模型会立即同步到输入区；保存期间继续输入不会被旧回执覆盖，切换模型前会先落盘。删除默认模型时自动选取同类型的已启用本地模型；仅在没有候选时清空默认值。保存失败时保留输入并显示原因。
+
+模型生命周期专项回归使用独立 `WUNDER_HOME` 和共享模型配置，不访问日常配置：
+
+```powershell
+python frontend-slint/scripts/check-native.py --ui frontend-slint/target/debug/wunder-frontend-slint.exe --output target/model-settings-check --models-only
+```
+
 ```powershell
 wunder-frontend-slint-0.2.0-win7-x86.exe --smoke-check frontend-slint/artifacts/native
 ```
@@ -72,6 +82,14 @@ python frontend-slint/scripts/check-launch.py --ui frontend-slint/target/release
 ```
 
 脚本把 EXE 复制到隔离目录，验证不带参数即可启动、无子进程及监听、正常关闭、重启和启动中关闭。即使遗留配置启用了 LAN 发现，原生 UI 也不会启动本地控制监听。
+
+单实例与窗口唤醒专项回归（Windows，使用独立数据目录和两个不同安装位置）：
+
+```powershell
+python frontend-slint/scripts/check-single-instance.py --ui frontend-slint/target/debug/wunder-frontend-slint.exe --output target/frontend-slint/single-instance-check
+```
+
+覆盖启动中重复打开、连续呼出、最小化与隐藏恢复、前台焦点、多目录隔离、修改数据目录不绕过单实例，以及异常退出后重启；不访问日常配置。
 
 ## Linux AppImage 与交叉构建
 

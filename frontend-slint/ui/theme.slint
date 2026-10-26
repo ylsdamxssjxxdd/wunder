@@ -242,7 +242,7 @@ export struct AgentCard {
     preset-question-count: int
 }
 export struct ToolCard { name: string, description: string, category: string, enabled: bool, icon: string, tone: string }
-export struct ModelCard { key: string, provider: string, model: string, base-url: string, model-type: string, is-default: bool, is-cloud: bool,
+export struct ModelCard { key: string, provider: string, model: string, base-url: string, model-type: string, is-default: bool, is-cloud: bool, disabled: bool,
     temperature: string, timeout-s: string, max-output: string, thinking-token-budget: string, max-rounds: string, max-context: string,
     history-compaction-ratio: string, reasoning-effort: string, simulation-speed: string,
     support-vision: bool, support-hearing: bool, stream-include-usage: bool, tool-call-mode: string,
@@ -263,5 +263,4 @@ export struct ProfileCard { user-id: string, username: string, email: string, un
 // list and cloud-workspace browser) has been removed; the working-directory
 // panel owns cloud file operations now, so only the approval card is projected.
 export struct InterlinkApproval { approval-id: string, command-id: string, kind: string, level: string, risk: string, from-node: string, prompt: string }
-
 

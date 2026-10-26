@@ -1784,12 +1784,23 @@ impl Orchestrator {
         outcome: Result<(), &OrchestratorError>,
     ) {
         let round_usage = emitter.accumulated_usage();
+        // 手动压缩成功后、结清前停止可能已被受理：结清前再过一次取消闸
+        // （llm.rs:330-343），已取消的执行不得按完成结清。
+        let ensure_cancel_error;
+        let persist_rejected_cancel;
+        let mut outcome = outcome;
+        if outcome.is_ok() {
+            if let Err(err) = self.ensure_not_cancelled(session_id) {
+                ensure_cancel_error = err;
+                outcome = Err(&ensure_cancel_error);
+            }
+        }
         if let Some(turn) = round_info.thread_turn_id {
             let status = match outcome {
                 Ok(()) => "completed",
                 Err(err) => turn_terminal_status_for_error(err),
             };
-            if let Err(err) = self
+            match self
                 .committer
                 .update_turn(
                     user_id,
@@ -1801,7 +1812,31 @@ impl Orchestrator {
                 )
                 .await
             {
-                warn!("persist compaction terminal failed: {err}");
+                Ok(true) => {}
+                // 控制面拒绝完成写入即轮次已被取消结清（thread_admission.rs:622-635
+                // 终态不可逆）：改按取消语义结清，并尽力把轮次落为 cancelled。
+                Ok(false) => {
+                    if status == "completed" {
+                        persist_rejected_cancel =
+                            OrchestratorError::cancelled(i18n::t("error.session_cancelled"));
+                        outcome = Err(&persist_rejected_cancel);
+                        if let Err(err) = self
+                            .committer
+                            .update_turn(
+                                user_id,
+                                session_id,
+                                &turn.to_string(),
+                                "cancelled",
+                                "",
+                                &json!({"status":"cancelled","stop_reason":"manual_compaction"}),
+                            )
+                            .await
+                        {
+                            warn!("persist compaction cancel settlement failed: {err}");
+                        }
+                    }
+                }
+                Err(err) => warn!("persist compaction terminal failed: {err}"),
             }
         }
         match outcome {

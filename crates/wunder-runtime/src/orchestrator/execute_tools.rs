@@ -27,12 +27,13 @@ impl Orchestrator {
         emitter: &EventEmitter,
         limiter: &RequestLimiter,
         session_id: &str,
-        acquired: bool,
+        lock_token: Option<&str>,
         heartbeat_task: &mut Option<JoinHandle<()>>,
     ) {
         emitter.finish().await;
-        if acquired {
-            limiter.release(session_id).await;
+        // 只释放自己这一代锁：迟到完成不会删掉接管者的锁行。
+        if let Some(token) = lock_token {
+            limiter.release(session_id, token).await;
         }
         if let Some(handle) = heartbeat_task.take() {
             handle.abort();
@@ -201,6 +202,9 @@ impl Orchestrator {
         skip_auto_memory_extract: bool,
         llm_config: LlmModelConfig,
     ) -> Result<(), OrchestratorError> {
+        // 收尾前最后一道取消闸：停止已受理的执行不得再按完成结清（llm.rs:330-343）。
+        // 该错误由 execute.rs 的外层 match 路由进 finish_request_error 的取消结清。
+        self.ensure_not_cancelled(session_id)?;
         if let Some(thread_turn_id) = last_round_info.thread_turn_id {
             let status = if waiting_question_panel {
                 "waiting_input"
@@ -214,7 +218,8 @@ impl Orchestrator {
                 "status": status,
                 "stop_reason": stop_reason,
             });
-            self.committer
+            let accepted = self
+                .committer
                 .update_turn(
                     user_id,
                     session_id,
@@ -227,6 +232,13 @@ impl Orchestrator {
                 .map_err(|error| {
                     OrchestratorError::internal(format!("persist completed thread turn: {error}"))
                 })?;
+            // 控制面拒绝收尾写入即轮次已被取消结清（thread_admission.rs:622-635
+            // 终态不可逆）：不得再发完成帧、改监视器或提取记忆，按取消语义结清。
+            if !accepted {
+                return Err(OrchestratorError::cancelled(i18n::t(
+                    "error.session_cancelled",
+                )));
+            }
         }
         emit_turn_terminal_event(
             emitter,

@@ -1292,6 +1292,13 @@ impl MonitorState {
                     let Some(record) = sessions.get_mut(session_id) else {
                         return;
                     };
+                    // 终态记录不再改写为 cancelled：停止晚于完成/失败到达时，结清结果优先
+                    // （对应 runtime.rs:858-863 尾部补写的适用前提）。
+                    if record.status == Self::STATUS_FINISHED
+                        || record.status == Self::STATUS_ERROR
+                    {
+                        return;
+                    }
                     if record.cancel_source.is_none() && !normalized_source.is_empty() {
                         record.cancel_source = Some(normalized_source.to_string());
                     }

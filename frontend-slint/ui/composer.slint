@@ -94,8 +94,8 @@ component ModelPicker inherits Rectangle {
     }
 
     private property <float> fill: min(1.0, max(0.0, root.context-usage));
-    private property <color> usage-color: root.context-usage >= 0.9 ? Theme.danger
-        : root.context-usage >= 0.75 ? Theme.warning : Theme.accent;
+    private property <color> usage-color: root.context-usage >= 0.92 ? #DC2626
+        : root.context-usage >= 0.82 ? #EA580C : #F97316;
 
     trigger := Rectangle {
         x: 0px; y: 0px; width: parent.width; height: parent.height;
@@ -187,9 +187,7 @@ component ModelPicker inherits Rectangle {
                     horizontal-stretch: 1; min-width: 0px;
                     text: root.context-known
                         ? root.context-counts + " · " + round(root.fill * 100.0) + "%" : "—";
-                    color: !root.context-known ? Theme.text-secondary
-                        : root.context-usage >= 0.9 ? Theme.danger
-                        : root.context-usage >= 0.75 ? Theme.warning : Theme.text-secondary;
+                    color: !root.context-known ? Theme.text-secondary : root.usage-color;
                     font-size: Theme.font-xs;
                     horizontal-alignment: right; vertical-alignment: center; overflow: elide;
                 }
@@ -1757,7 +1755,7 @@ export component Composer inherits Rectangle {
                                     pick(hide, region) => { root.plus-open = false; root.screenshot(hide, region); }
                                 }
                             }
-                            // 终端: opens the supplement's Git Bash console.
+                            // 终端: opens a local terminal for the active workspace.
                             Rectangle {
                                 height: 34px; border-radius: Theme.radius-sm;
                                 background: term-row-touch.has-hover ? Theme.hover : transparent;

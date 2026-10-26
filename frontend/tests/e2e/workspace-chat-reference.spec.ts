@@ -94,6 +94,31 @@ test('quoting a workspace entry inserts only editable relative path text and pre
   expect(errors).toEqual([]);
 });
 
+test('dragging a workspace file icon inserts only its relative path', async ({ page }) => {
+  await mountWorkspace(page);
+  const input = page.getByTestId('chat-composer-input');
+  await input.fill('Fixture draft');
+  await expect(row(page, 'other.txt').locator('.workspace-file-icon-img')).toBeVisible();
+  const dragResult = await page.evaluate(() => {
+    const row = Array.from(document.querySelectorAll<HTMLElement>('.workspace-file-row'))
+      .find((element) => element.querySelector('.workspace-file-name')?.textContent?.trim() === 'other.txt');
+    const icon = row?.querySelector<HTMLImageElement>('.workspace-file-icon-img');
+    const composer = document.querySelector<HTMLElement>('.input-container--world');
+    if (!row || !icon || !composer) throw new Error('Missing workspace drag fixture');
+    const transfer = new DataTransfer();
+    icon.dispatchEvent(new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer: transfer }));
+    composer.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: transfer }));
+    composer.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: transfer }));
+    return {
+      iconDraggable: icon.draggable,
+      hasWorkspacePayload: Array.from(transfer.types).includes('application/x-wunder-workspace-entry')
+    };
+  });
+  expect(dragResult).toEqual({ iconDraggable: false, hasWorkspacePayload: true });
+  await expect(input).toHaveValue('Fixture draft\nother.txt');
+  await expect(page.locator('.workspace-quote-item, .upload-preview-item')).toHaveCount(0);
+});
+
 test('workspace menus dismiss outside stopped events and retain menu actions', async ({ page }) => {
   await mountWorkspace(page);
   await row(page, 'other.txt').click({ button: 'right' });

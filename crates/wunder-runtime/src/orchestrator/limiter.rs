@@ -20,18 +20,20 @@ impl RequestLimiter {
         }
     }
 
+    /// 成功时返回本次获得颁发的锁代次；后续心跳与释放都必须携带它，
+    /// 过期被接管后旧代次操作会在存储层失配为空操作。
     pub(super) async fn acquire(
         &self,
         session_id: &str,
         user_id: &str,
         agent_id: &str,
         allow_queue: bool,
-    ) -> Result<bool> {
+    ) -> Result<Option<String>> {
         let cleaned_session = session_id.trim();
         let cleaned_user = user_id.trim();
         let cleaned_agent = agent_id.trim();
         if cleaned_session.is_empty() || cleaned_user.is_empty() {
-            return Ok(false);
+            return Ok(None);
         }
         if !allow_queue {
             let storage = self.storage.clone();
@@ -45,7 +47,10 @@ impl RequestLimiter {
             })
             .await
             .map_err(|err| anyhow!("session lock acquire error: {err}"))?;
-            return Ok(matches!(status, SessionLockStatus::Acquired));
+            return Ok(match status {
+                SessionLockStatus::Acquired { lock_token } => Some(lock_token),
+                _ => None,
+            });
         }
         let retry_window = SESSION_LOCK_BUSY_RETRY_S.max(self.poll_interval_s);
         let user_deadline = Instant::now() + Duration::from_secs_f64(retry_window);
@@ -66,10 +71,10 @@ impl RequestLimiter {
             .await
             .map_err(|err| anyhow!("session lock acquire error: {err}"))?;
             match status {
-                SessionLockStatus::Acquired => return Ok(true),
+                SessionLockStatus::Acquired { lock_token } => return Ok(Some(lock_token)),
                 SessionLockStatus::UserBusy => {
                     if Instant::now() >= user_deadline {
-                        return Ok(false);
+                        return Ok(None);
                     }
                     tokio::time::sleep(Duration::from_secs_f64(self.poll_interval_s)).await;
                 }
@@ -96,35 +101,39 @@ impl RequestLimiter {
         }
     }
 
-    pub(super) async fn touch(&self, session_id: &str) {
+    /// 续期自己这一代执行锁；返回 false 表示锁已丢失（过期被接管或管理面清除）。
+    pub(super) async fn touch(&self, session_id: &str, lock_token: &str) -> bool {
         let cleaned_session = session_id.trim();
         if cleaned_session.is_empty() {
-            return;
+            return false;
         }
         let storage = self.storage.clone();
         let session_id = cleaned_session.to_string();
+        let token = lock_token.to_string();
         let ttl = self.lock_ttl_s;
         match blocking::run_db("orchestrator.limiter.touch", move || {
-            storage.touch_session_lock(&session_id, ttl)
+            storage.touch_session_lock(&session_id, &token, ttl)
         })
         .await
         {
-            Ok(()) => {}
+            Ok(kept) => kept,
             Err(err) => {
                 warn!("failed to touch session lock for {cleaned_session}: {err}");
+                false
             }
         }
     }
 
-    pub(super) async fn release(&self, session_id: &str) {
+    pub(super) async fn release(&self, session_id: &str, lock_token: &str) {
         let cleaned_session = session_id.trim();
         if cleaned_session.is_empty() {
             return;
         }
         let storage = self.storage.clone();
         let session_id = cleaned_session.to_string();
+        let token = lock_token.to_string();
         match blocking::run_db("orchestrator.limiter.release", move || {
-            storage.release_session_lock(&session_id)
+            storage.release_session_lock(&session_id, &token)
         })
         .await
         {

@@ -263,4 +263,11 @@ impl RuntimeAdmissions {
             Self::Postgres(a) => a.ids_by_status(t, status, limit),
         }
     }
+    pub fn settle_orphaned_turns(&self, t: &str) -> Result<usize> {
+        match self {
+            Self::Local(a) => a.settle_orphaned_turns(t),
+            #[cfg(feature = "postgres-storage")]
+            Self::Postgres(a) => a.settle_orphaned_turns(t),
+        }
+    }
 }

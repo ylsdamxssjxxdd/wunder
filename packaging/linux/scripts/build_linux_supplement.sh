@@ -3,7 +3,7 @@
 set -euo pipefail
 
 # Build the Linux Wunder supplement pack (opt/python + opt/git + opt/rg +
-# opt/ffmpeg + opt/node) for
+# opt/ffmpeg) for
 # amd64/arm64. The script must run inside an Ubuntu 18.04 container so every
 # binary matches the desktop release baseline (glibc 2.27); the arm64 pack is
 # produced by running the same script in the arm64 variant of the image.
@@ -67,7 +67,6 @@ emit(
     git=data["git"],
     rg=data["rg"],
     ffmpeg=data["ffmpeg"],
-    node=data["node"],
     browser=data.get("browser", {}),
     fonts=data.get("fonts", []),
     install=data["install"],
@@ -119,10 +118,6 @@ ffmpeg_flavor="$(json_field ffmpeg.flavor)"
 ffmpeg_archive_url="$(json_field "ffmpeg.archives.$arch.url")"
 ffmpeg_archive_file="$(json_field "ffmpeg.archives.$arch.fileName")"
 ffmpeg_archive_sha256="$(json_field "ffmpeg.archives.$arch.sha256")"
-node_version="$(json_field node.version)"
-node_archive_url="$(json_field "node.archives.$arch.url")"
-node_archive_file="$(json_field "node.archives.$arch.fileName")"
-node_archive_sha256="$(json_field "node.archives.$arch.sha256")"
 browser_enabled="$(json_field browser.install)"
 browser_version="$(json_field browser.version)"
 browser_archive_version="$(json_field "browser.archives.$arch.browserVersion")"
@@ -140,7 +135,6 @@ fi
 [[ -n "$python_archive_url" && "$python_archive_url" != "null" ]] || fail "no python archive for $arch"
 [[ -n "$rg_archive_url" && "$rg_archive_url" != "null" ]] || fail "no ripgrep archive for $arch"
 [[ -n "$ffmpeg_archive_url" && "$ffmpeg_archive_url" != "null" ]] || fail "no ffmpeg archive for $arch"
-[[ -n "$node_archive_url" && "$node_archive_url" != "null" ]] || fail "no Node archive for $arch"
 
 default_build_root="$repo_root/$(json_field default_build_root)"
 build_root="${WUNDER_SUPPLEMENT_BUILD_ROOT:-$default_build_root}"
@@ -160,10 +154,9 @@ python_root="$package_root/opt/python"
 git_root="$package_root/opt/git"
 rg_root="$package_root/opt/rg"
 ffmpeg_root="$package_root/opt/ffmpeg"
-node_root="$package_root/opt/node"
 browser_root="$package_root/opt/browser"
 rm -rf "$stage_dir"
-mkdir -p "$python_root" "$git_root" "$rg_root" "$ffmpeg_root" "$node_root"
+mkdir -p "$python_root" "$git_root" "$rg_root" "$ffmpeg_root"
 
 obtain_file() {
   # obtain_file <url> <destination> <expected-sha256>
@@ -336,60 +329,6 @@ ffmpeg_bin="$ffmpeg_root/bin/ffmpeg"
 mkdir -p "$ffmpeg_root/bin"
 gzip -dc "$downloads_dir/$ffmpeg_archive_file" > "$ffmpeg_bin"
 
-# ---------------------------------------------------------------------------
-# r2 (radare2): optional console disassembler toolkit. Distro debs target
-# newer glibc than Ubuntu 18.04, so no prebuilt archive ships in the manifest;
-# feed a hand-prepared payload via WUNDER_SUPPLEMENT_R2_ARCHIVE:
-#   - a static single-file r2 binary (staged as opt/r2/bin/radare2), or
-#   - a tarball/zip whose top-level dir is flattened into opt/r2 and must
-#     provide bin/radare2.
-# ---------------------------------------------------------------------------
-r2_archive="${WUNDER_SUPPLEMENT_R2_ARCHIVE:-}"
-if [[ -n "$r2_archive" ]]; then
-  require_file "$r2_archive"
-  r2_root="$package_root/opt/r2"
-  mkdir -p "$r2_root"
-  log "staging r2 from $r2_archive into $r2_root"
-  case "$r2_archive" in
-    *.tar.gz|*.tgz|*.zip)
-      r2_tmp="$build_root/r2-unpack-$$"
-      mkdir -p "$r2_tmp"
-      case "$r2_archive" in
-        *.tar.gz|*.tgz) tar -xzf "$r2_archive" -C "$r2_tmp" ;;
-        *.zip) "$python_bin" - "$r2_archive" "$r2_tmp" <<'R2ZIP'
-import sys, zipfile
-zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])
-R2ZIP
-      ;;
-      esac
-      r2_entries=("$r2_tmp"/*)
-      if [[ ${#r2_entries[@]} -eq 1 && -d "${r2_entries[0]}" ]]; then
-        cp -a "${r2_entries[0]}/." "$r2_root/"
-      else
-        cp -a "$r2_tmp/." "$r2_root/"
-      fi
-      if [[ ! -x "$r2_root/bin/radare2" ]]; then
-        # archive with no directory layout: accept a lone executable r2 binary
-        r2_lone=("$r2_tmp"/*)
-        [[ ${#r2_lone[@]} -eq 1 && -f "${r2_lone[0]}" ]] || fail "radare2 binary missing after staging: $r2_root/bin/radare2"
-        mkdir -p "$r2_root/bin"
-        cp -a "${r2_lone[0]}" "$r2_root/bin/radare2"
-        rm -f "$r2_root/radare2"
-      fi
-      rm -rf "$r2_tmp"
-      ;;
-    *)
-      # bare static binary: stage it directly under bin/
-      mkdir -p "$r2_root/bin"
-      cp -a "$r2_archive" "$r2_root/bin/radare2"
-      ;;
-  esac
-  chmod 0755 "$r2_root/bin/radare2"
-  [[ -f "$r2_root/bin/r2" ]] || ln -s radare2 "$r2_root/bin/r2"
-  log "r2 smoke: $("$r2_root/bin/radare2" -v 2>&1 | head -n 1)"
-else
-  log "WUNDER_SUPPLEMENT_R2_ARCHIVE not set; supplement ships without r2"
-fi
 chmod 0755 "$ffmpeg_bin"
 
 # A pinned Chromium-family archive is bundled for every Linux architecture so
@@ -414,38 +353,6 @@ else
   log "no bundled Chromium-family archive for $arch; Playwright/system-browser fallback remains available"
 fi
 
-log "staging Node.js $node_version"
-obtain_file "$node_archive_url" "$downloads_dir/$node_archive_file" "$node_archive_sha256"
-node_extract="$stage_dir/node-extract"
-mkdir -p "$node_extract"
-tar -xzf "$downloads_dir/$node_archive_file" -C "$node_extract"
-node_source="$(find "$node_extract" -mindepth 1 -maxdepth 1 -type d -name 'node-v*' -print -quit)"
-[[ -n "$node_source" ]] || fail "Node archive layout unexpected"
-cp -a "$node_source/." "$node_root/"
-rm -rf "$node_extract"
-node_bin="$node_root/bin/node"
-npm_cli="$node_root/lib/node_modules/npm/bin/npm-cli.js"
-[[ -x "$node_bin" && -f "$npm_cli" ]] || fail "Node/npm missing after staging: $node_root"
-echo "$(file -bL "$node_bin")" | grep -qi "$elf_machine" || fail "Node architecture mismatch"
-[[ "$("$node_bin" --version)" == "v$node_version" ]] || fail "Node smoke failed"
-
-# The official tarball may ship bin/npm and bin/npx as symlinks into npm's
-# library. Remove those links before creating relocatable wrappers; otherwise
-# redirecting the wrapper would overwrite npm-cli.js itself.
-rm -f "$node_root/bin/npm" "$node_root/bin/npx"
-cat > "$node_root/bin/npm" <<'EOF_NPM'
-#!/bin/sh
-here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-exec "$here/node" "$here/../lib/node_modules/npm/bin/npm-cli.js" "$@"
-EOF_NPM
-cat > "$node_root/bin/npx" <<'EOF_NPX'
-#!/bin/sh
-here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-exec "$here/node" "$here/../lib/node_modules/npm/bin/npx-cli.js" "$@"
-EOF_NPX
-chmod 0755 "$node_root/bin/npm" "$node_root/bin/npx"
-log "node smoke ok: $("$node_bin" --version), npm $("$node_bin" "$npm_cli" --version)"
-
 requirements_entries="$("$python_bin" - "$requirements_path" <<'PYEOF'
 import sys
 
@@ -468,7 +375,6 @@ Python packages: $(echo "$requirements_entries" | wc -l) pinned requirements (se
 Git: $git_flavor $git_version
 Ripgrep: $rg_flavor $rg_version
 FFmpeg: $ffmpeg_flavor $ffmpeg_version (opt/ffmpeg/bin/ffmpeg)
-Node.js: $node_version (opt/node/bin/node, npm, npx)
 Browser: $browser_version at opt/browser/$browser_executable_rel (when bundled)
 Browsers: Playwright Chromium in opt/python/ms-playwright (when bundled)
 
@@ -477,10 +383,9 @@ Usage:
 2. For manual installation, extract into WUNDER_HOME (default: ~/.wunder),
    including when the Pupa is distributed as an AppImage.
 3. Ensure the target now contains opt/python, opt/git, opt/rg, opt/ffmpeg
-   and opt/node (and opt/browser on amd64)
-   (plus opt/r2 when WUNDER_SUPPLEMENT_R2_ARCHIVE was provided).
+   (and opt/browser on amd64).
 4. Start the Pupa or Helm; both prepend the shared opt/python,
-    opt/git, opt/rg, opt/ffmpeg and opt/node to PATH automatically.
+   opt/git, opt/rg and opt/ffmpeg to PATH automatically.
 EOF
 
 python3 - "$manifest_json" "$arch" "$build_root" "$python_archive_url" "$git_tarball_url" "$rg_archive_url" "$ffmpeg_archive_url" "$requirements_path" "$package_root/wunder-linux-supplement.json" <<'PYEOF'
@@ -531,11 +436,6 @@ output = {
         "source": manifest["ffmpeg"]["source"],
         "url": ffmpeg_url,
     },
-    "node": {
-        "version": manifest["node"]["version"],
-        "architecture": arch,
-        "path": manifest["install"]["nodeRoot"] + "/bin/node",
-    },
     "browser": {
         "name": manifest.get("browser", {}).get("name", ""),
         "version": (manifest.get("browser", {}).get("archives", {}).get(arch, {}).get("browserVersion") or manifest.get("browser", {}).get("version", "")) if isinstance(manifest.get("browser", {}).get("archives", {}).get(arch), dict) else manifest.get("browser", {}).get("version", ""),
@@ -543,10 +443,6 @@ output = {
         "root": manifest["install"].get("browserRoot", "opt/browser"),
         "executable": (manifest["install"].get("browserRoot", "opt/browser") + "/" + ((manifest.get("browser", {}).get("archives", {}).get(arch, {}).get("executable") or manifest.get("browser", {}).get("executable", "")))) if os.path.isdir(os.path.join(os.path.dirname(destination), manifest["install"].get("browserRoot", "opt/browser"))) else None,
         "url": manifest.get("browser", {}).get("archives", {}).get(arch, {}).get("url") if isinstance(manifest.get("browser", {}).get("archives", {}).get(arch), dict) else None,
-    },
-    "r2": {
-        "version": manifest.get("r2", {}).get("version", ""),
-        "installed": bool(os.environ.get("WUNDER_SUPPLEMENT_R2_ARCHIVE")),
     },
     "install": manifest["install"],
 }
@@ -608,7 +504,7 @@ log "validated Python profile imports"
 "$rg_root/bin/rg" --version | head -n 1
 "$ffmpeg_bin" -version | head -n 1
 
-for staged_binary in "$python_bin" "$git_bin" "$rg_root/bin/rg" "$ffmpeg_bin" "$node_bin"; do
+for staged_binary in "$python_bin" "$git_bin" "$rg_root/bin/rg" "$ffmpeg_bin"; do
   # -L resolves aliases (opt/python/bin/python3 is a symlink to python3.8);
   # without it file reports "symbolic link to …" and no ELF at all.
   staged_machine="$(file -bL "$staged_binary")"

@@ -4,17 +4,18 @@
 //! requested transition (same rationale as the rcho workbench chrome).
 
 #[cfg(windows)]
-use windows_sys::Win32::Foundation::HWND;
+use windows_sys::Win32::Foundation::{HWND, RECT};
 #[cfg(windows)]
 use windows_sys::Win32::Graphics::Gdi::{
-    GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+    CreateRoundRectRgn, DeleteObject, GetMonitorInfoW, MonitorFromWindow, SetWindowRgn,
+    MONITORINFO, MONITOR_DEFAULTTONEAREST,
 };
 #[cfg(windows)]
 use windows_sys::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
 #[cfg(windows)]
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    BringWindowToTop, GetForegroundWindow, GetWindowThreadProcessId, IsIconic, IsZoomed,
-    SetForegroundWindow, ShowWindow, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE,
+    BringWindowToTop, GetClientRect, GetForegroundWindow, GetWindowThreadProcessId, IsIconic,
+    IsZoomed, SetForegroundWindow, ShowWindow, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE,
 };
 
 /// Starts the platform caption-drag for the custom title bar. Winit turns this
@@ -186,6 +187,50 @@ pub fn work_area(window: &slint::Window) -> Option<(i32, i32, i32, i32)> {
 pub fn work_area(_window: &slint::Window) -> Option<(i32, i32, i32, i32)> {
     None
 }
+
+/// Clip a frameless window to a rounded rectangle so its corners are truly
+/// absent instead of painted.
+///
+/// The software renderer presents through GDI, which carries no per-pixel
+/// alpha: an antialiased corner declared `transparent` in `.slint` is handed to
+/// the desktop as opaque black, so a rounded card on a translucent window shows
+/// four dark notches (most visible at the top-left). Clipping the HWND to the
+/// same rounded silhouette removes those pixels from the window entirely — the
+/// corner shows the desktop, and the region also drops the dead pixels from hit
+/// testing. GDI regions are hard-edged (no antialiasing), so `radius` is the
+/// physical corner radius and the caller keeps it small.
+#[cfg(windows)]
+pub fn apply_rounded_region(window: &slint::Window, radius: f32) {
+    let Some(hwnd) = native_hwnd(window) else { return };
+    let diameter = (radius.max(0.0) * 2.0).round() as i32;
+    if diameter <= 0 {
+        return;
+    }
+    unsafe {
+        let mut rect: RECT = std::mem::zeroed();
+        if GetClientRect(hwnd, &mut rect) == 0 {
+            return;
+        }
+        let width = rect.right - rect.left;
+        let height = rect.bottom - rect.top;
+        if width <= 0 || height <= 0 {
+            return;
+        }
+        // A GDI region treats the right/bottom edge as exclusive, so the shape
+        // is one pixel larger than the client rect to avoid shaving the border.
+        let region = CreateRoundRectRgn(0, 0, width + 1, height + 1, diameter, diameter);
+        if region == 0 {
+            return;
+        }
+        if SetWindowRgn(hwnd, region, 1) == 0 {
+            // Only a successful SetWindowRgn hands the region to the system.
+            DeleteObject(region);
+        }
+    }
+}
+
+#[cfg(not(windows))]
+pub fn apply_rounded_region(_window: &slint::Window, _radius: f32) {}
 
 #[cfg(windows)]
 fn native_hwnd(window: &slint::Window) -> Option<HWND> {

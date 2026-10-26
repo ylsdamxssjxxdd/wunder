@@ -97,7 +97,10 @@ export component WorkspaceFilesPanel inherits Rectangle {
                 }
                 if !root.search-open : Rectangle { horizontal-stretch: 1; min-width: 0px; }
                 if !root.search-open : ToolButton {
-                    glyph: @image-url("../assets/icons/upload.svg");
+                    // Same glyph as the cloud left rail's upload action
+                    // (fa-arrow-up-from-bracket), not fa-upload: the two read
+                    // differently at 14px and the rail must match the web.
+                    glyph: @image-url("../assets/icons/fa-arrow-up-from-bracket.svg");
                     tip: I18n.wf_upload;
                     actionable: root.writeable;
                     clicked => { root.upload(); }

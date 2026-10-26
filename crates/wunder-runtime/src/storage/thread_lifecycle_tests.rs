@@ -239,3 +239,36 @@ fn sqlite_thread_lifecycle_and_recovery() {
     );
     lifecycle_contract(&db, db.canonical_threads().unwrap());
 }
+
+#[test]
+fn sqlite_begin_turn_does_not_duplicate_the_user_message() {
+    let root = tempfile::tempdir().unwrap();
+    let db = SqliteStorage::new(
+        root.path()
+            .join("state_1.sqlite")
+            .to_string_lossy()
+            .into_owned(),
+    );
+    let store = db.canonical_threads().unwrap();
+    let input = json!({"content":"fixture input","client_message_id":"fixture-begin-once"});
+    let accepted = db.accept_thread_turn(USER, THREAD, &input).unwrap();
+    let turn = accepted["turn_id"].as_str().unwrap();
+    freeze(&store);
+    begin(&store, turn);
+    let first = db.thread_view_page(USER, THREAD, "chat", None, 12).unwrap();
+    let count = first
+        .chat
+        .iter()
+        .filter(|row| row.root_turn_id == turn)
+        .count();
+    // 重放执行开始（崩溃后重试派发/重复领取）不得再次物化用户消息。
+    begin(&store, turn);
+    let second = db.thread_view_page(USER, THREAD, "chat", None, 12).unwrap();
+    let count_after = second
+        .chat
+        .iter()
+        .filter(|row| row.root_turn_id == turn)
+        .count();
+    assert!(count >= 1);
+    assert_eq!(count, count_after);
+}

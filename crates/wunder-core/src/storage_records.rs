@@ -744,9 +744,11 @@ pub struct CronRunRecord {
     pub created_at: f64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// `lock_token` 是本次获得颁发的执行权代次：心跳与释放必须携带同一代次，
+/// 过期被接管后旧持有者的迟到操作不再作用于新持有者的锁行。
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionLockStatus {
-    Acquired,
+    Acquired { lock_token: String },
     UserBusy,
     SystemBusy,
 }

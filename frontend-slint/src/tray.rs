@@ -31,12 +31,7 @@ pub fn install(app: &MainWindow) {
     let weak = app.as_weak();
     tray.on_show_main_requested(move || {
         if let Some(app) = weak.upgrade() {
-            let _ = app.show();
-            // show() alone re-maps the HWND but leaves it behind the current
-            // foreground window; raise and focus it through Win32 directly.
-            crate::native_window::restore_and_focus(app.window());
-            app.window().request_redraw();
-            hide_notice();
+            show_main(&app);
         }
     });
     let weak = app.as_weak();
@@ -79,6 +74,13 @@ pub fn uninstall() {
     TRAY.with(|slot| {
         let _ = slot.borrow_mut().take();
     });
+}
+
+pub fn show_main(app: &MainWindow) {
+    let _ = app.show();
+    crate::native_window::restore_and_focus(app.window());
+    app.window().request_redraw();
+    hide_notice();
 }
 
 /// Hide the main window while retaining the live tray icon and event loop.

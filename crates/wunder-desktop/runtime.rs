@@ -57,8 +57,10 @@ pub struct DesktopSettings {
     pub git_path: String,
     #[serde(default)]
     pub rg_path: String,
-    /// Preferred command shell: "auto" (use Git Bash when Git is configured),
-    /// "bash", "cmd" or "powershell".
+    /// Preferred command shell. "auto" (or empty) uses the platform default
+    /// shell (PowerShell/cmd on Windows, bash on Unix); on Windows "cmd" or
+    /// "powershell" force that shell. The supplement no longer ships Git Bash,
+    /// so a "bash" preference falls back to the platform default.
     #[serde(default)]
     pub shell_mode: String,
     #[serde(default = "default_python_runtime_mode")]

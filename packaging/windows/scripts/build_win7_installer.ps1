@@ -106,7 +106,7 @@ function Find-Supplement([string]$Root) {
 
 function Get-ZipSupplementInfo([string]$Path) {
   Add-Type -AssemblyName System.IO.Compression.FileSystem
-  $known = @("python", "git", "rg", "ffmpeg", "browser", "r2", "node")
+  $known = @("python", "git", "rg", "ffmpeg", "browser")
   $bytes = @{}
   $files = @{}
   foreach ($name in $known) { $bytes[$name] = [int64]0; $files[$name] = 0 }
@@ -136,7 +136,7 @@ function Get-ZipSupplementInfo([string]$Path) {
 }
 
 function Get-DirectorySupplementInfo([string]$Path) {
-  $known = @("python", "git", "rg", "ffmpeg", "browser", "r2", "node")
+  $known = @("python", "git", "rg", "ffmpeg", "browser")
   $bytes = @{}
   $files = @{}
   foreach ($name in $known) {
@@ -321,12 +321,12 @@ if (-not $CoreOnly) {
   if ($supplementItem.PSIsContainer) {
     $supplementRoot = $supplementItem.FullName
     $info = Get-DirectorySupplementInfo $supplementRoot
-    foreach ($name in @("python", "git", "rg", "ffmpeg", "browser", "r2", "node")) {
+    foreach ($name in @("python", "git", "rg", "ffmpeg", "browser")) {
       if (Test-Path -LiteralPath (Join-Path $supplementRoot "opt\$name") -PathType Container) { $available += $name }
     }
   } else {
     $info = Get-ZipSupplementInfo $supplementItem.FullName
-    foreach ($name in @("python", "git", "rg", "ffmpeg", "browser", "r2", "node")) {
+    foreach ($name in @("python", "git", "rg", "ffmpeg", "browser")) {
       if ($info.Files[$name] -gt 0) { $available += $name }
     }
     if ($available.Count -eq 0) { throw "Supplement archive has no opt/<component> files: $supplementPath" }
@@ -415,7 +415,7 @@ $installerHash = (Get-Sha256Hex $installerPath).ToLowerInvariant()
 
 $componentManifest = @()
 # The manifest inventories every opt directory that entered the installer.
-foreach ($name in @("python", "git", "rg", "ffmpeg", "browser", "r2", "node")) {
+foreach ($name in @("python", "git", "rg", "ffmpeg", "browser")) {
   if ($componentFiles[$name] -gt 0) {
     $componentManifest += [ordered]@{
       name = $name

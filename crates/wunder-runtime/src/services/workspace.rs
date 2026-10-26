@@ -2201,8 +2201,9 @@ impl WorkspaceManager {
         }
         // Removing a thread from the user projection must not destroy its
         // durable audit history. Administrators remove logs explicitly through
-        // the monitor cleanup endpoint.
-        let _ = self.storage.release_session_lock(cleaned_session);
+        // the monitor cleanup endpoint. 数据销毁面显式强删锁行，与执行结束的
+        // 代次释放（release_session_lock）分开。
+        let _ = self.storage.force_release_session_lock(cleaned_session);
         let _ = self.delete_session_context_tokens(cleaned_user, cleaned_session);
         let _ = self.delete_session_reasoning_effort(cleaned_user, cleaned_session);
         let _ = self.delete_session_model_override(cleaned_user, cleaned_session);

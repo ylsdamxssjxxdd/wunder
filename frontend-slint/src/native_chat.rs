@@ -716,7 +716,7 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
     bind_history_paging(app, state.clone());
     bind_new_thread(app, state.clone());
     bind_send(app, state.clone());
-    // 加号菜单「终端」：优先呼出补充包的 Git Bash，缺失时交给系统终端。
+    // 加号菜单「终端」：呼出系统终端并进入当前工作区。
     let launch_weak = app.as_weak();
     let launch_desktop = state.borrow().desktop.clone();
     app.on_launch_terminal(move || {

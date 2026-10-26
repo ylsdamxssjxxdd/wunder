@@ -41,6 +41,78 @@ impl PostgresAdmissionStore {
         Ok(())
     }
 
+    /// 与 SQLite 侧 settle_orphaned_turns_in_tx 同语义：崩溃窗口孤儿（受理已提交、
+    /// 续程随进程死亡）在无存活会话锁、无存活任务且超过宽限期后落 interrupted
+    /// 终态。input_json 保留，已物化的用户气泡内容不丢失。
+    pub(crate) fn settle_orphaned_turns_in_tx(
+        tx: &mut PgTx<'_>,
+        thread: &str,
+        now_ms: i64,
+    ) -> Result<usize> {
+        if thread.trim().is_empty() {
+            return Ok(0);
+        }
+        let now_s = now_ms as f64 / 1000.0;
+        // 有存活会话锁的线程仍有执行在推进，不是孤儿。
+        let locked = tx
+            .query_one(
+                "SELECT EXISTS(SELECT 1 FROM session_locks WHERE session_id=$1 AND expires_at>$2)",
+                &[&thread, &now_s],
+            )?
+            .get::<_, bool>(0);
+        if locked {
+            return Ok(0);
+        }
+        let margin_ms = crate::storage::thread_admission::ORPHAN_SETTLE_MARGIN_MS;
+        let stale_before_ms = now_ms - margin_ms;
+        let task_fresh_s = now_s - margin_ms as f64 / 1000.0;
+        let candidates = tx.query(
+            "SELECT turn_id,control_json FROM service_thread_admissions
+             WHERE thread_id=$1 AND status IN ('accepted','queued','running') AND updated_at_ms<$2",
+            &[&thread, &stale_before_ms],
+        )?;
+        let mut settled = 0usize;
+        for row in candidates {
+            let turn: String = row.get(0);
+            let control: Option<String> = row.get(1);
+            // pending/retry 会被派发；刚刷新的 running 处于领取→执行交接窗口，视为存活。
+            let blocked = tx
+                .query_one(
+                    "SELECT EXISTS(SELECT 1 FROM agent_tasks
+                     WHERE thread_id=$1
+                       AND request_payload::jsonb->'config_overrides'->>'__thread_log_turn_id'=$2
+                       AND (status IN ('pending','retry') OR (status='running' AND updated_at>$3)))",
+                    &[&format!("thread_{thread}"), &turn, &task_fresh_s],
+                )?
+                .get::<_, bool>(0);
+            if blocked {
+                continue;
+            }
+            let control = bounded_control_json(
+                control.as_deref(),
+                "interrupted",
+                &json!({"stop_reason":"process_restart"}),
+            )?;
+            settled += tx.execute(
+                "UPDATE service_thread_admissions SET status='interrupted',control_json=$3,updated_at_ms=$4
+                 WHERE thread_id=$1 AND turn_id=$2 AND status IN ('accepted','queued','running')",
+                &[&thread, &turn, &control, &now_ms],
+            )? as usize;
+        }
+        Ok(settled)
+    }
+
+    /// 崩溃孤儿结算入口：单个事务（ advisory xact lock 串行化）。重复调用幂等。
+    pub(crate) fn settle_orphaned_turns(&self, thread: &str) -> Result<usize> {
+        let mut c = self.conn()?;
+        let mut tx = c.transaction()?;
+        Self::lock_thread(&mut tx, thread)?;
+        let settled =
+            Self::settle_orphaned_turns_in_tx(&mut tx, thread, chrono::Utc::now().timestamp_millis())?;
+        tx.commit()?;
+        Ok(settled)
+    }
+
     pub(super) fn owner_in_tx(
         tx: &mut PgTx<'_>,
         user: &str,
@@ -124,6 +196,8 @@ impl PostgresAdmissionStore {
         let mut c = self.conn()?;
         let mut tx = c.transaction()?;
         Self::lock_thread(&mut tx, thread)?;
+        // 受理新输入前先结算本线程的崩溃孤儿（同一事务原子生效）。
+        Self::settle_orphaned_turns_in_tx(&mut tx, thread, chrono::Utc::now().timestamp_millis())?;
         if Self::owner_in_tx(&mut tx, user, thread)?.is_none() {
             tx.execute("INSERT INTO service_thread_owners(thread_id,user_id,latest_user_round) VALUES($1,$2,0)", &[&thread, &user])?;
         }

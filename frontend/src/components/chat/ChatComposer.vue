@@ -1759,6 +1759,12 @@ const addWorkspaceFileReferences = (paths: string[]) => {
   focusComposerInputAtEnd();
 };
 
+const appendWorkspacePathsToComposer = (paths: string[]) => {
+  const normalized = Array.from(new Set(paths.map(path => normalizeWorkspacePath(path)).filter(Boolean)));
+  if (!normalized.length) return;
+  appendTextToComposer(normalized.join('\n'));
+};
+
 const readDirectoryEntries = (reader: DirectoryReaderLike): Promise<FileSystemEntryLike[]> =>
   new Promise((resolve) => {
     const entries: FileSystemEntryLike[] = [];
@@ -1895,7 +1901,7 @@ const handleDragEnter = (event) => {
     event.dataTransfer.dropEffect = composerBusy.value > 0
       ? 'none'
       : hasWorkspaceDragPaths(event.dataTransfer)
-        ? 'move'
+        ? 'copy'
         : 'copy';
   }
 };
@@ -1907,7 +1913,7 @@ const handleDragOver = (event) => {
     event.dataTransfer.dropEffect = composerBusy.value > 0
       ? 'none'
       : hasWorkspaceDragPaths(event.dataTransfer)
-        ? 'move'
+        ? 'copy'
         : 'copy';
   }
 };
@@ -1927,13 +1933,13 @@ const handleDrop = async (event) => {
   dragActive.value = false;
   const workspacePaths = readWorkspaceDragPaths(event.dataTransfer);
   if (workspacePaths.length) {
+    clearWorkspaceDragPaths();
     if (composerBusy.value > 0) {
       ElMessage.warning(chatBusyMessage.value);
       return;
     }
     closeComposerPanels();
-    addWorkspaceFileReferences(workspacePaths);
-    clearWorkspaceDragPaths();
+    appendWorkspacePathsToComposer(workspacePaths);
     ElMessage.success(t('chat.workspaceDrop.pathsInserted', { count: workspacePaths.length }));
     return;
   }

@@ -965,6 +965,7 @@ impl PostgresSchemaStorage for PostgresStorage {
                   session_id TEXT PRIMARY KEY,
                   user_id TEXT NOT NULL,
                   agent_id TEXT NOT NULL DEFAULT '',
+                  lock_token TEXT NOT NULL DEFAULT '',
                   created_time DOUBLE PRECISION NOT NULL,
                   updated_time DOUBLE PRECISION NOT NULL,
                   expires_at DOUBLE PRECISION NOT NULL

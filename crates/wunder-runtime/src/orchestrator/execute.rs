@@ -175,7 +175,7 @@ impl Orchestrator {
         emitter: EventEmitter,
     ) -> Result<WunderResponse, OrchestratorError> {
         let mut heartbeat_task: Option<JoinHandle<()>> = None;
-        let mut acquired = false;
+        let mut lock_token: Option<String> = None;
         let mut agent_inbox = None;
         let mut _scheduling_guard = None;
         let mut prepared = prepared;
@@ -221,16 +221,16 @@ impl Orchestrator {
         let result = async {
             // Execution exclusion belongs to a session; one agent can run independent tasks.
             let lock_agent_id = prepared.agent_id.clone().unwrap_or_default();
-            let ok = limiter
+            let Some(token) = limiter
                 .acquire(&session_id, &user_id, &lock_agent_id, prepared.allow_queue)
                 .await
-                .map_err(|err| OrchestratorError::internal(err.to_string()))?;
-            if !ok {
+                .map_err(|err| OrchestratorError::internal(err.to_string()))?
+            else {
                 return Err(OrchestratorError::user_busy(i18n::t(
                     "error.user_session_busy",
                 )));
-            }
-            acquired = true;
+            };
+            lock_token = Some(token);
             if prepared.enforce_runtime_queue {
                 let priority = prepared.config_overrides.as_ref().and_then(|value| value.get("__queue_priority")).and_then(Value::as_i64).unwrap_or(0) > 0;
                 _scheduling_guard = Some(self.scheduling.register(&session_id, prepared.is_admin || priority));
@@ -255,7 +255,7 @@ impl Orchestrator {
             // Stream events are durable across rounds; never clear them from the
             // request path because replay depends on a continuous event sequence.
             let heartbeat_limiter = limiter.clone();
-            if acquired {
+            if let Some(token) = lock_token.clone() {
                 let heartbeat_session = session_id.clone();
                 heartbeat_task = Some(long_task::spawn(
                     "orchestrator.execute.session_lock_heartbeat",
@@ -265,7 +265,13 @@ impl Orchestrator {
                             SESSION_LOCK_HEARTBEAT_S,
                         ))
                         .await;
-                        heartbeat_limiter.touch(&heartbeat_session).await;
+                        // 失权（过期被接管或管理面清除）后代次失配，心跳转为空操作；
+                        // 执行的可见副作用拦截由打开租约与停止语义（FV-04）负责。
+                        if !heartbeat_limiter.touch(&heartbeat_session, &token).await {
+                            warn!(
+                                "session lock for {heartbeat_session} is no longer held by this execution"
+                            );
+                        }
                     }
                     },
                 ));
@@ -2236,7 +2242,7 @@ impl Orchestrator {
                     &emitter,
                     &limiter,
                     &session_id,
-                    acquired,
+                    lock_token.as_deref(),
                     &mut heartbeat_task,
                 )
                 .await;
@@ -2279,7 +2285,7 @@ impl Orchestrator {
                     &emitter,
                     &limiter,
                     &session_id,
-                    acquired,
+                    lock_token.as_deref(),
                     &mut heartbeat_task,
                 )
                 .await;

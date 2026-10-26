@@ -1804,8 +1804,8 @@
     "zh-CN": "在工作区内执行 CLI 命令并返回 stdout/stderr。每次调用都在全新 shell 中执行；用 workdir 指定目录而非 cd。默认阻塞等待命令结束或达到 timeout_s（默认 120 秒），返回完整输出；仅对长时间运行的命令设置 run_in_background=true，此时返回 command_session_id，用命令会话工具轮询。请先提供 description（命令做什么，5–10 个词），再提供 content。不要用单独的 sleep 命令空等。workdir 仅接受工作区内的相对子目录。"
   },
   "tool.spec.exec.shell_bash": {
-    "en-US": "Shell environment: Git Bash (bash). Write POSIX commands: pipes, &&, ;, grep, sed, awk, find, ssh, ls, cat, head, tail, tar, curl, etc. Paths: use /c/... or forward-slash C:/... (avoid backslashes). To invoke cmd from bash, write `cmd //c ...`. Output is UTF-8. Do not use cmd or PowerShell syntax (e.g. dir, type, copy, del, set, %VAR%).",
-    "zh-CN": "Shell 环境：Git Bash（bash）。请编写 POSIX 命令：管道、&&、;、grep、sed、awk、find、ssh、ls、cat、head、tail、tar、curl 等。路径用 /c/... 或正斜杠 C:/...（避免反斜杠）。在 bash 中调用 cmd 请写成 `cmd //c ...`。输出为 UTF-8。不要使用 cmd 或 PowerShell 语法（如 dir、type、copy、del、set、%VAR%）。"
+    "en-US": "Shell environment: POSIX bash. Write POSIX commands: pipes, &&, ;, grep, sed, awk, find, ssh, ls, cat, head, tail, tar, curl, etc. On Windows use /c/... or forward-slash C:/... paths (avoid backslashes) and invoke cmd as `cmd //c ...`. Output is UTF-8. Do not use cmd or PowerShell syntax (e.g. dir, type, copy, del, set, %VAR%).",
+    "zh-CN": "Shell 环境：POSIX bash。请编写 POSIX 命令：管道、&&、;、grep、sed、awk、find、ssh、ls、cat、head、tail、tar、curl 等。在 Windows 上路径用 /c/... 或正斜杠 C:/...（避免反斜杠），调用 cmd 请写成 `cmd //c ...`。输出为 UTF-8。不要使用 cmd 或 PowerShell 语法（如 dir、type、copy、del、set、%VAR%）。"
   },
   "tool.spec.exec.shell_powershell": {
     "en-US": "Shell environment: PowerShell. Use PowerShell syntax (cmdlets, pipelines, $variables). Do not use cmd or bash syntax.",

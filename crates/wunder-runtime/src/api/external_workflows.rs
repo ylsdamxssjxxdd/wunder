@@ -365,25 +365,18 @@ async fn prepare_workflow_inner(
     let agent = resolve_target_agent(state.as_ref(), &user, request).await?;
     let run_id = format!("run_{}", Uuid::new_v4().simple());
     let admission_id = external_workflow_admission_id(&user.user_id);
-    let lock_status =
+    let admission_token =
         acquire_workflow_admission(&state, &admission_id, &user.user_id, &agent.agent_id).await?;
-    if !matches!(lock_status, SessionLockStatus::Acquired) {
-        return Err(error_with_code(
-            StatusCode::CONFLICT,
-            "EXTERNAL_WORKFLOW_BUSY",
-            "another external workflow is being prepared for this user".to_string(),
-        ));
-    }
     let active_run_id = match load_active_workflow(state.as_ref(), &user.user_id) {
         Ok(value) => value,
         Err(response) => {
-            release_workflow_admission(&state, &admission_id).await;
+            release_workflow_admission(&state, &admission_id, &admission_token).await;
             return Err(response);
         }
     };
     if active_run_id.is_some() {
         if let Err(err) = cancel_active_external_workflow(state.as_ref(), &user.user_id).await {
-            release_workflow_admission(&state, &admission_id).await;
+            release_workflow_admission(&state, &admission_id, &admission_token).await;
             return Err(err);
         }
     }
@@ -395,7 +388,7 @@ async fn prepare_workflow_inner(
     let session_id = match session_id {
         Ok(value) => value,
         Err(response) => {
-            release_workflow_admission(&state, &admission_id).await;
+            release_workflow_admission(&state, &admission_id, &admission_token).await;
             return Err(response);
         }
     };
@@ -403,25 +396,25 @@ async fn prepare_workflow_inner(
     // predecessor that is still unwinding from deleting or overwriting a successor's files.
     let base_scope = workflow_workspace_id(state.as_ref(), &user.user_id);
     if let Err(err) = state.workspace.ensure_user_root(&base_scope) {
-        release_workflow_admission(&state, &admission_id).await;
+        release_workflow_admission(&state, &admission_id, &admission_token).await;
         return Err(error_response(StatusCode::BAD_REQUEST, err.to_string()));
     }
     let workspace_id = state
         .workspace
         .scoped_external_run_workspace(&base_scope, &run_id);
     if let Err(err) = state.workspace.ensure_user_root(&workspace_id) {
-        release_workflow_admission(&state, &admission_id).await;
+        release_workflow_admission(&state, &admission_id, &admission_token).await;
         return Err(error_response(StatusCode::BAD_REQUEST, err.to_string()));
     }
     let input_files = match store_input_files(state.as_ref(), &workspace_id, files).await {
         Ok(value) => value,
         Err(response) => {
-            release_workflow_admission(&state, &admission_id).await;
+            release_workflow_admission(&state, &admission_id, &admission_token).await;
             return Err(response);
         }
     };
     if let Err(response) = ensure_output_dir(state.as_ref(), &workspace_id).await {
-        release_workflow_admission(&state, &admission_id).await;
+        release_workflow_admission(&state, &admission_id, &admission_token).await;
         return Err(response);
     }
     let started_at = now_ts();
@@ -465,7 +458,7 @@ async fn prepare_workflow_inner(
         })),
     };
     if let Err(err) = state.user_store.upsert_session_run(&record) {
-        release_workflow_admission(&state, &admission_id).await;
+        release_workflow_admission(&state, &admission_id, &admission_token).await;
         return Err(error_response(StatusCode::BAD_REQUEST, err.to_string()));
     }
     if let Err(err) = set_active_workflow(
@@ -474,10 +467,10 @@ async fn prepare_workflow_inner(
         active_run_id.as_deref(),
         &run_id,
     ) {
-        release_workflow_admission(&state, &admission_id).await;
+        release_workflow_admission(&state, &admission_id, &admission_token).await;
         return Err(err);
     }
-    release_workflow_admission(&state, &admission_id).await;
+    release_workflow_admission(&state, &admission_id, &admission_token).await;
     Ok(PreparedWorkflow {
         run_id,
         session_id,
@@ -1319,12 +1312,12 @@ async fn acquire_workflow_admission(
     admission_id: &str,
     user_id: &str,
     agent_id: &str,
-) -> Result<SessionLockStatus, Response> {
+) -> Result<String, Response> {
     let storage = state.storage.clone();
     let admission_id = admission_id.to_string();
     let user_id = user_id.to_string();
     let agent_id = format!("{ADMISSION_LOCK_AGENT_ID}:{agent_id}");
-    blocking::run_db("api.external_workflows.acquire_admission", move || {
+    let status = blocking::run_db("api.external_workflows.acquire_admission", move || {
         storage.try_acquire_session_lock(
             &admission_id,
             &user_id,
@@ -1334,14 +1327,23 @@ async fn acquire_workflow_admission(
         )
     })
     .await
-    .map_err(|err| error_response(StatusCode::SERVICE_UNAVAILABLE, err.to_string()))
+    .map_err(|err| error_response(StatusCode::SERVICE_UNAVAILABLE, err.to_string()))?;
+    match status {
+        SessionLockStatus::Acquired { lock_token } => Ok(lock_token),
+        _ => Err(error_with_code(
+            StatusCode::CONFLICT,
+            "EXTERNAL_WORKFLOW_BUSY",
+            "another external workflow is being prepared for this user".to_string(),
+        )),
+    }
 }
 
-async fn release_workflow_admission(state: &AppState, admission_id: &str) {
+async fn release_workflow_admission(state: &AppState, admission_id: &str, lock_token: &str) {
     let storage = state.storage.clone();
     let admission_id = admission_id.to_string();
+    let lock_token = lock_token.to_string();
     let _ = blocking::run_db("api.external_workflows.release_admission", move || {
-        storage.release_session_lock(&admission_id)
+        storage.release_session_lock(&admission_id, &lock_token)
     })
     .await;
 }

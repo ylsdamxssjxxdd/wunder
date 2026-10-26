@@ -7,7 +7,12 @@ import { Theme } from "theme.slint";
 export component CompletionNotice inherits Window {
     no-frame: true;
     always-on-top: true;
-    background: transparent;
+    // Opaque, deliberately: the software renderer presents through GDI, which
+    // drops the alpha channel, so `transparent` corners arrive on screen as
+    // opaque black. The rounded silhouette comes from the native window region
+    // (src/completion_notice.rs), and this colour is what the corner shows for
+    // the frame or two before that region lands.
+    background: Theme.panel;
     in-out property <string> notice-title;
     in-out property <string> notice-body;
     callback open-requested();

@@ -902,6 +902,13 @@ export component TimelineView inherits Rectangle {
         rows-column := VerticalLayout {
             width: root.column-width;
             x: (rows-scroll.visible-width - root.column-width) / 2;
+            // The web scrolls its transcript inside `.messenger-chat-body`,
+            // which owns `padding: 18px 20px 22px`; rows only add their own 6px.
+            // Without that inset the first block (the greeting on a fresh
+            // thread) was pinned to the pane's top edge. Keep the top inset
+            // here so a greeting, the loading line and the activity card all
+            // start from the same optical line as the cloud client.
+            padding-top: 18px;
             spacing: 0px; alignment: root.show-activity || root.loading ? center : start;
             if root.loading : Rectangle {
                 height: 76px;

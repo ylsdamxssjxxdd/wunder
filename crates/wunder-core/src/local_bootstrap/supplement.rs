@@ -7,7 +7,6 @@ pub enum Tool {
     Python,
     Git,
     Rg,
-    Node,
 }
 
 /// The shared home always wins. Older installations remain read-only fallbacks;
@@ -45,8 +44,6 @@ pub fn find_tool(roots: &[PathBuf], tool: Tool) -> Option<PathBuf> {
             "opt/ripgrep/bin/rg",
             "opt/ripgrep/rg",
         ],
-        Tool::Node if cfg!(windows) => &["opt/node/node.exe", "opt/node/bin/node.exe"],
-        Tool::Node => &["opt/node/bin/node", "opt/node/node"],
     };
     roots.iter().find_map(|root| {
         candidates
@@ -72,9 +69,6 @@ pub fn path_entries(roots: &[PathBuf]) -> Vec<PathBuf> {
         "opt/ripgrep/bin",
         "opt/ffmpeg",
         "opt/ffmpeg/bin",
-        "opt/r2/bin",
-        "opt/node",
-        "opt/node/bin",
     ];
     roots
         .iter()
@@ -91,8 +85,8 @@ pub fn path_entries(roots: &[PathBuf]) -> Vec<PathBuf> {
 /// Register the complete local supplement toolchain for child processes.
 ///
 /// PATH is kept as the primary command interface, while explicit variables
-/// make media and JavaScript runtime discovery deterministic for services that
-/// intentionally launch with a reduced environment.
+/// make media runtime discovery deterministic for services that intentionally
+/// launch with a reduced environment.
 pub fn configure_runtime_env(roots: &[PathBuf]) {
     prepend_tool_paths(roots);
     let first_file = |candidates: &[&str]| -> Option<PathBuf> {
@@ -103,19 +97,6 @@ pub fn configure_runtime_env(roots: &[PathBuf]) {
                 .find(|path| path.is_file())
         })
     };
-    if let Some(node) = first_file(if cfg!(windows) {
-        &["opt/node/node.exe", "opt/node/bin/node.exe"]
-    } else {
-        &["opt/node/bin/node", "opt/node/node"]
-    }) {
-        std::env::set_var("WUNDER_NODE_BIN", &node);
-        if let Some(parent) = node.parent() {
-            let npm_cli = parent.join("node_modules/npm/bin/npm-cli.js");
-            if npm_cli.is_file() {
-                std::env::set_var("WUNDER_NPM_BIN", &npm_cli);
-            }
-        }
-    }
     if let Some(ffmpeg) = first_file(if cfg!(windows) {
         &["opt/ffmpeg/bin/ffmpeg.exe", "opt/ffmpeg/ffmpeg.exe"]
     } else {

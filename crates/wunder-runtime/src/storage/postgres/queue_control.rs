@@ -83,6 +83,7 @@ impl PostgresStorage {
               ON service_thread_admissions(thread_id, user_round);
             ALTER TABLE agent_tasks ADD COLUMN IF NOT EXISTS priority BIGINT NOT NULL DEFAULT 0;
             ALTER TABLE session_locks ADD COLUMN IF NOT EXISTS suspended BIGINT NOT NULL DEFAULT 0;
+            ALTER TABLE session_locks ADD COLUMN IF NOT EXISTS lock_token TEXT NOT NULL DEFAULT '';
             CREATE INDEX IF NOT EXISTS idx_agent_tasks_session_dispatch ON agent_tasks(session_id, status, priority DESC, retry_at);
             CREATE INDEX IF NOT EXISTS idx_agent_tasks_dispatch ON agent_tasks(status, priority DESC, retry_at, created_at, task_id)")?;
         Ok(())

@@ -33,11 +33,8 @@ Redownload cached archives instead of reusing them.
 
 .PARAMETER PythonArchivePath / GitArchivePath / RgArchivePath / FfmpegArchivePath / BrowserArchivePath
 Use hand-prepared local archives instead of downloading. BrowserArchivePath
-also accepts an unpacked browser directory and is staged into opt/browser.
-
-.PARAMETER NodeArchivePath
-Use a prepared official Node Windows zip. The complete distribution is placed
-in opt/node so node, npm and npx are available to 蛹 and 舵机 command tools.
+overrides the automatic Chrome 109 cache/download flow and also accepts an
+unpacked browser directory staged into opt/browser.
 
 .PARAMETER BestEffort
 Install requirements package-by-package and continue past failures (records them).
@@ -72,11 +69,7 @@ param(
 
   [string]$FfmpegArchivePath = '',
 
-  [string]$R2ArchivePath = '',
-
   [string]$BrowserArchivePath = '',
-
-  [string]$NodeArchivePath = '',
 
   [switch]$SkipPrune,
   [switch]$SkipGitPrune,
@@ -146,6 +139,7 @@ function Get-DownloadedFile {
         Invoke-WebRequest -Uri $Url -OutFile $Destination -UseBasicParsing -MaximumRedirection 10
         break
       } catch {
+        Remove-Item -LiteralPath $Destination -Force -ErrorAction SilentlyContinue
         if ($attempt -ge 3) { Write-Warn "Invoke-WebRequest failed after $attempt attempts: $($_.Exception.Message)"; break }
         Write-Warn "download attempt $attempt failed: $($_.Exception.Message)"
         Start-Sleep -Seconds 2
@@ -157,6 +151,7 @@ function Get-DownloadedFile {
 
   $ok = (Test-Path -LiteralPath $Destination) -and ((Get-Item -LiteralPath $Destination).Length -gt 0)
   if (-not $ok) {
+    Remove-Item -LiteralPath $Destination -Force -ErrorAction SilentlyContinue
     $candidates = New-Object System.Collections.Generic.List[string]
     $sysCurl = Join-Path $env:SystemRoot 'System32\curl.exe'
     if (Test-Path -LiteralPath $sysCurl) { $candidates.Add($sysCurl) }
@@ -167,6 +162,7 @@ function Get-DownloadedFile {
       $curlProc = Start-Process -FilePath $candidate -ArgumentList @('-L', '--fail', '--retry', '3', '--retry-delay', '2', '-o', $Destination, $Url) -Wait -PassThru -NoNewWindow
       $ok = (Test-Path -LiteralPath $Destination) -and ((Get-Item -LiteralPath $Destination).Length -gt 0)
       if ($ok) { break }
+      Remove-Item -LiteralPath $Destination -Force -ErrorAction SilentlyContinue
     }
   }
   if (-not $ok) { Fail "download failed: $Url" }
@@ -338,6 +334,42 @@ function Expand-ZipEntry {
   }
 }
 
+function Resolve-SevenZipExecutable {
+  param([string]$RepoRoot)
+  $candidates = New-Object System.Collections.Generic.List[string]
+  foreach ($name in @('7z.exe', '7za.exe')) {
+    $command = Get-Command $name -ErrorAction SilentlyContinue
+    if ($command -and $command.Source) { $candidates.Add([string]$command.Source) }
+  }
+  $programFiles = [Environment]::GetFolderPath('ProgramFiles')
+  $programFilesX86 = [Environment]::GetEnvironmentVariable('ProgramFiles(x86)')
+  $pathCandidates = @()
+  if (-not [string]::IsNullOrWhiteSpace($programFiles)) { $pathCandidates += Join-Path $programFiles '7-Zip\7z.exe' }
+  if (-not [string]::IsNullOrWhiteSpace($programFilesX86)) { $pathCandidates += Join-Path $programFilesX86 '7-Zip\7z.exe' }
+  $pathCandidates += @(
+    (Join-Path $RepoRoot 'temp_dir\win7-gnu-lab\browser-109\sevenzip\node_modules\7zip-bin\win\x64\7za.exe'),
+    (Join-Path $RepoRoot 'temp_dir\win7-gnu-lab\browser-109\sevenzip\node_modules\7zip-bin\win\ia32\7za.exe')
+  )
+  foreach ($path in $pathCandidates) {
+    if (-not [string]::IsNullOrWhiteSpace($path)) { $candidates.Add($path) }
+  }
+  foreach ($candidate in $candidates) {
+    if (Test-Path -LiteralPath $candidate -PathType Leaf) { return (Resolve-Path -LiteralPath $candidate).Path }
+  }
+  Fail '7-Zip is required to unpack the automatically downloaded Chrome 109 archive; install 7-Zip or provide -BrowserArchivePath.'
+}
+
+function Invoke-SevenZipExtract {
+  param([string]$Executable, [string]$Archive, [string]$Destination, [switch]$Force7z)
+  if (Test-Path -LiteralPath $Destination) { Remove-Item -LiteralPath $Destination -Recurse -Force }
+  Ensure-Directory $Destination
+  $arguments = @('x')
+  if ($Force7z) { $arguments += '-t7z' }
+  $arguments += @($Archive, "-o$Destination", '-y')
+  & $Executable @arguments
+  if ($LASTEXITCODE -ne 0) { Fail "7-Zip extraction failed ($LASTEXITCODE): $Archive" }
+}
+
 function Expand-ZipFlatten {
   param([string]$Archive, [string]$Destination)
   $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ('wunder-supp-' + [guid]::NewGuid().ToString('N'))
@@ -361,15 +393,6 @@ function Expand-GzipFile {
       try { $gz.CopyTo($out) } finally { $out.Dispose() }
     } finally { $gz.Dispose() }
   } finally { $in.Dispose() }
-}
-
-function Expand-SevenZipSelfExtractor {
-  param([string]$Archive, [string]$Destination)
-  if (Test-Path -LiteralPath $Destination) { Remove-Item -LiteralPath $Destination -Recurse -Force }
-  Ensure-Directory $Destination
-  $arg = '-o"' + $Destination + '"'
-  $proc = Start-Process -FilePath $Archive -ArgumentList @($arg, '-y') -Wait -PassThru -NoNewWindow
-  if ($proc.ExitCode -ne 0) { Fail "7z self-extractor failed ($($proc.ExitCode)) for $Archive" }
 }
 
 function Install-BundledBrowser {
@@ -564,8 +587,6 @@ $pythonRoot = Join-Path $packRoot ([string](Get-PropertyValue -Object $layout -N
 $gitRoot    = Join-Path $packRoot ([string](Get-PropertyValue -Object $layout -Name 'gitRoot' -Default 'opt\git'))
 $rgRoot     = Join-Path $packRoot ([string](Get-PropertyValue -Object $layout -Name 'rgRoot' -Default 'opt\rg'))
 $ffmpegRoot = Join-Path $packRoot ([string](Get-PropertyValue -Object $layout -Name 'ffmpegRoot' -Default 'opt\ffmpeg'))
-$r2Root     = Join-Path $packRoot ([string](Get-PropertyValue -Object $layout -Name 'r2Root' -Default 'opt\r2'))
-$nodeRoot   = Join-Path $packRoot ([string](Get-PropertyValue -Object $layout -Name 'nodeRoot' -Default 'opt\node'))
 
 Write-Step "repo root : $repoRoot"
 Write-Step "build root: $buildRootEffective"
@@ -700,35 +721,6 @@ if (-not (Test-Path -LiteralPath $playwrightDriverNode)) {
 Assert-PeMachine -Path $playwrightDriverNode -Arch $Arch
 
 # ---------------------------------------------------------------------------
-# General Node.js
-# ---------------------------------------------------------------------------
-$nodeMeta = Get-PropertyValue -Object $manifest -Name 'node'
-if ($null -eq $nodeMeta) { Fail 'manifest node section is required' }
-$nodeVersion = [string](Get-PropertyValue -Object $nodeMeta -Name 'version' -Default '16.20.2')
-$nodeRuntimeArch = [string](Get-PropertyValue -Object $nodeMeta -Name 'runtimeArch' -Default 'x64')
-if ($nodeRuntimeArch -notin @('ia32', 'x64')) { Fail "manifest node.runtimeArch must be ia32 or x64" }
-$nodeArchiveMeta = Get-PropertyValue -Object (Get-PropertyValue -Object $nodeMeta -Name 'archives') -Name $nodeRuntimeArch
-if ($null -eq $nodeArchiveMeta) { Fail "manifest has no Node archive for runtime arch $nodeRuntimeArch" }
-$nodeArchive = $NodeArchivePath
-if ([string]::IsNullOrWhiteSpace($nodeArchive)) {
-  $nodeArchive = Join-Path $downDir ([string](Get-PropertyValue -Object $nodeArchiveMeta -Name 'fileName' -Default "node-v$nodeVersion-win-$nodeRuntimeArch.zip"))
-  Get-DownloadedFile -Url ([string](Get-PropertyValue -Object $nodeArchiveMeta -Name 'url')) -Destination $nodeArchive -Force:$RefreshDownloads | Out-Null
-} elseif (-not (Test-Path -LiteralPath $nodeArchive)) { Fail "node archive not found: $nodeArchive" }
-Assert-FileSha256 -Path $nodeArchive -Expected ([string](Get-PropertyValue -Object $nodeArchiveMeta -Name 'sha256' -Default ''))
-Write-Step "staging Node.js $nodeVersion into $nodeRoot"
-Expand-ZipFlatten -Archive $nodeArchive -Destination $nodeRoot
-$nodeExe = Join-Path $nodeRoot 'node.exe'
-$npmCmd = Join-Path $nodeRoot 'npm.cmd'
-$npxCmd = Join-Path $nodeRoot 'npx.cmd'
-if (-not (Test-Path -LiteralPath $nodeExe -PathType Leaf)) { Fail "node.exe missing after extraction: $nodeExe" }
-if (-not (Test-Path -LiteralPath $npmCmd -PathType Leaf)) { Fail "npm.cmd missing after extraction: $npmCmd" }
-if (-not (Test-Path -LiteralPath $npxCmd -PathType Leaf)) { Fail "npx.cmd missing after extraction: $npxCmd" }
-Assert-PeMachine -Path $nodeExe -Arch $nodeRuntimeArch
-$nodeSmoke = & $nodeExe '--version' 2>&1
-if (-not ("$nodeSmoke" -match ('^v' + [regex]::Escape($nodeVersion)))) { Fail "node smoke failed: $nodeSmoke" }
-Write-Step "node smoke ok: $nodeSmoke"
-
-# ---------------------------------------------------------------------------
 # Playwright browsers (manifest-driven; off for the Win7 pack)
 # ---------------------------------------------------------------------------
 $installBrowser = [bool](Get-PropertyValue -Object $pythonMeta -Name 'installBrowser' -Default $false)
@@ -758,14 +750,13 @@ $gitArchiveMeta = Get-PropertyValue -Object (Get-PropertyValue -Object $gitMeta 
 if ($null -ne $gitArchiveMeta) {
   $gitArchive = $GitArchivePath
   if ([string]::IsNullOrWhiteSpace($gitArchive)) {
-    $gitArchive = Join-Path $downDir ([string](Get-PropertyValue -Object $gitArchiveMeta -Name 'fileName' -Default 'PortableGit.7z.exe'))
+    $gitArchive = Join-Path $downDir ([string](Get-PropertyValue -Object $gitArchiveMeta -Name 'fileName' -Default 'MinGit.zip'))
     Get-DownloadedFile -Url ([string](Get-PropertyValue -Object $gitArchiveMeta -Name 'url')) -Destination $gitArchive -Force:$RefreshDownloads | Out-Null
   } elseif (-not (Test-Path -LiteralPath $gitArchive)) { Fail "git archive not found: $gitArchive" }
   Write-Step "staging Git $gitVersion into $gitRoot"
-  Expand-SevenZipSelfExtractor -Archive $gitArchive -Destination $gitRoot
+  Expand-ZipFlatten -Archive $gitArchive -Destination $gitRoot
 
-  # Slim the payload to what agents and Git Bash need: Git itself, Git Bash,
-  # git-lfs and Git Credential Manager stay; vim, the Perl runtime (only used
+  # Slim the payload to what agents need: git.exe, git-lfs and Git Credential
   # by interactive helpers like `git add -p`), the Tcl/Tk GUI stack (gitk and
   # git gui), scalar and all documentation trees go. Pruning here keeps the
   # supplement and every installer built from it small; the same tree is what
@@ -823,7 +814,10 @@ if ($null -ne $gitArchiveMeta) {
     }
   }
   }
-  $gitSmoke = & (Join-Path $gitRoot 'cmd\git.exe') '--version' 2>&1
+  $gitOut = [System.IO.Path]::GetTempFileName(); $gitErr = [System.IO.Path]::GetTempFileName()
+  Start-Process -FilePath (Join-Path $gitRoot 'cmd\git.exe') -ArgumentList '--version' -Wait -NoNewWindow -RedirectStandardOutput $gitOut -RedirectStandardError $gitErr | Out-Null
+  $gitSmoke = (Get-Content -LiteralPath $gitOut -Raw -ErrorAction SilentlyContinue)
+  Remove-Item -LiteralPath $gitOut, $gitErr -Force -ErrorAction SilentlyContinue
   if (-not ("$gitSmoke" -match '^git version')) { Fail "git smoke failed after prune: $gitSmoke" }
   Write-Step ("git smoke ok: $gitSmoke (pruned {0} files)" -f $prunedGitFiles)
 }
@@ -848,7 +842,10 @@ if ($null -ne $rgArchiveMeta) {
   if (-not (Test-Path -LiteralPath $rgExe -PathType Leaf)) { Fail "ripgrep executable missing after staging: $rgExe" }
   Assert-PeMachine -Path $rgExe -Arch $Arch
   Assert-Win7PeImports -Path $rgExe
-  $rgSmoke = & $rgExe '--version' 2>&1
+  $rgOut = [System.IO.Path]::GetTempFileName(); $rgErr = [System.IO.Path]::GetTempFileName()
+  Start-Process -FilePath $rgExe -ArgumentList '--version' -Wait -NoNewWindow -RedirectStandardOutput $rgOut -RedirectStandardError $rgErr | Out-Null
+  $rgSmoke = (Get-Content -LiteralPath $rgOut -Raw -ErrorAction SilentlyContinue)
+  Remove-Item -LiteralPath $rgOut, $rgErr -Force -ErrorAction SilentlyContinue
   if (-not ("$rgSmoke" -match ('^ripgrep\s+' + [regex]::Escape($rgVersion)))) {
     Fail "ripgrep smoke failed: $rgSmoke"
   }
@@ -875,56 +872,13 @@ if (-not $SkipFfmpeg) {
   }
 }
 
-# ---------------------------------------------------------------------------
-# r2 (radare2): console disassembler toolkit staged from the pinned release
-# zip. The zip keeps one top-level directory, which is flattened into opt
-# r2, so opt/r2/bin/radare2.exe matches the runtime PATH layout.
-# ---------------------------------------------------------------------------
-$r2Meta = Get-PropertyValue -Object $manifest -Name 'r2'
-$r2Version = [string](Get-PropertyValue -Object $r2Meta -Name 'version' -Default '')
-$r2Bundled = $false
-if ($null -ne $r2Meta) {
-  $r2ArchiveMeta = Get-PropertyValue -Object (Get-PropertyValue -Object $r2Meta -Name 'archives') -Name $Arch
-  if ($null -ne $r2ArchiveMeta) {
-    $r2Archive = $R2ArchivePath
-    if ([string]::IsNullOrWhiteSpace($r2Archive)) {
-      $r2Archive = Join-Path $downDir ([string](Get-PropertyValue -Object $r2ArchiveMeta -Name 'fileName' -Default 'radare2.zip'))
-      Get-DownloadedFile -Url ([string](Get-PropertyValue -Object $r2ArchiveMeta -Name 'url')) -Destination $r2Archive -Force:$RefreshDownloads | Out-Null
-    } elseif (-not (Test-Path -LiteralPath $r2Archive)) { Fail "r2 archive not found: $r2Archive" }
-    $r2Sha = [string](Get-PropertyValue -Object $r2ArchiveMeta -Name 'sha256' -Default '')
-    if (-not [string]::IsNullOrWhiteSpace($r2Sha)) { Assert-FileSha256 -Path $r2Archive -Expected $r2Sha }
-    $r2Layout = Get-PropertyValue -Object $r2Meta -Name 'layout'
-    $r2DestRel = [string](Get-PropertyValue -Object $r2Layout -Name 'dest' -Default 'opt\r2')
-    $r2ExpectedExe = [string](Get-PropertyValue -Object $r2Layout -Name 'expectedExe' -Default 'bin/radare2.exe')
-    $r2Target = Join-Path $packRoot $r2DestRel
-    New-Item -ItemType Directory -Force -Path $r2Target | Out-Null
-    Write-Step "staging r2 $r2Version into $r2Target"
-    $r2Tmp = Join-Path $stageDir ('r2-unpack-' + [IO.Path]::GetRandomFileName())
-    Expand-ZipInto -Archive $r2Archive -Destination $r2Tmp
-    $r2Inner = @(Get-ChildItem -LiteralPath $r2Tmp -Directory | Select-Object -First 1)
-    if ($r2Inner.Count -eq 1) {
-      Copy-Item -Path (Join-Path $r2Inner[0].FullName '*') -Destination $r2Target -Recurse -Force
-    } else {
-      Copy-Item -Path (Join-Path $r2Tmp '*') -Destination $r2Target -Recurse -Force
-    }
-    Remove-Item -LiteralPath $r2Tmp -Recurse -Force -ErrorAction SilentlyContinue
-    $r2Exe = Join-Path $r2Target ($r2ExpectedExe.Replace('/', '\'))
-    if (-not (Test-Path -LiteralPath $r2Exe -PathType Leaf)) { Fail "radare2 executable missing after staging: $r2Exe" }
-    Assert-PeMachine -Path $r2Exe -Arch $Arch
-    $r2Smoke = & $r2Exe '-v' 2>&1
-    if (-not ("$r2Smoke" -match 'radare2')) { Fail "r2 smoke failed: $r2Smoke" }
-    Write-Step "r2 smoke ok: $r2Smoke"
-    $r2Bundled = $true
-  } else {
-    Write-Step "r2 archive not defined for arch $Arch; supplement ships without r2"
-  }
-}
+
 
 # ---------------------------------------------------------------------------
-# Bundled browser (optional; hand-fed Chrome 109 win32, manifest browser section)
+# Bundled browser (Chrome 109 win32; explicit source, cache, or manifest download)
 # ---------------------------------------------------------------------------
 $browserMeta = Get-PropertyValue -Object $manifest -Name 'browser'
-$browserEnabled = [bool](Get-PropertyValue -Object $browserMeta -Name 'enabled' -Default $false)
+$browserEnabled = [bool](Get-PropertyValue -Object $browserMeta -Name 'enabled' -Default $false) -and (-not $SkipBrowser)
 $browserVersion = [string](Get-PropertyValue -Object $browserMeta -Name 'version' -Default '')
 $browserExeRel = [string](Get-PropertyValue -Object $browserMeta -Name 'expectedExe' -Default 'chrome-win/chrome.exe')
 $browserDestRel = [string](Get-PropertyValue -Object $browserMeta -Name 'dest' -Default 'opt\browser')
@@ -933,6 +887,37 @@ $browserSourceLeaf = ''
 if ($browserEnabled) {
   $browserSrc = $BrowserArchivePath
   if ([string]::IsNullOrWhiteSpace($browserSrc)) { $browserSrc = [string](Get-PropertyValue -Object $browserMeta -Name 'archivePath' -Default '') }
+  if ([string]::IsNullOrWhiteSpace($browserSrc)) {
+    $preparedCandidates = @(
+      (Join-Path $repoRoot 'temp_dir\win7-gnu-lab\browser-109\chrome-bin-out\Chrome-bin'),
+      (Join-Path $repoRoot 'temp_dir\win7-gnu-lab\browser-109\ci-sim\browser-src\unpacked\Chrome-bin')
+    )
+    $browserSrc = @($preparedCandidates | Where-Object { Test-Path -LiteralPath $_ -PathType Container } | Select-Object -First 1)[0]
+    if (-not [string]::IsNullOrWhiteSpace($browserSrc)) { Write-Step "using prepared browser $browserSrc" }
+  }
+  if ([string]::IsNullOrWhiteSpace($browserSrc)) {
+    $browserDownload = Get-PropertyValue -Object $browserMeta -Name 'download'
+    $browserArchiveName = [string](Get-PropertyValue -Object $browserDownload -Name 'fileName' -Default 'chromium-win32-mini-installer.exe')
+    $browserArchiveUrl = [string](Get-PropertyValue -Object $browserDownload -Name 'url' -Default '')
+    $browserArchiveSha = [string](Get-PropertyValue -Object $browserDownload -Name 'sha256' -Default '')
+    if ([string]::IsNullOrWhiteSpace($browserArchiveUrl)) { Fail 'browser.download.url is empty' }
+    $browserInstaller = Join-Path $downDir $browserArchiveName
+    Get-DownloadedFile -Url $browserArchiveUrl -Destination $browserInstaller -Force:$RefreshDownloads | Out-Null
+    Assert-FileSha256 -Path $browserInstaller -Expected $browserArchiveSha
+    $sevenZip = Resolve-SevenZipExecutable -RepoRoot $repoRoot
+    $browserExtractRoot = Join-Path $buildRootEffective 'browser-source'
+    $outerExtractRoot = Join-Path $browserExtractRoot 'installer'
+    $innerExtractRoot = Join-Path $browserExtractRoot 'unpacked'
+    Invoke-SevenZipExtract -Executable $sevenZip -Archive $browserInstaller -Destination $outerExtractRoot -Force7z
+    $innerArchive = @(Get-ChildItem -LiteralPath $outerExtractRoot -Recurse -File -Filter 'chrome.7z' | Select-Object -First 1)[0]
+    if ($null -eq $innerArchive) { Fail "chrome.7z not found after extracting browser installer: $browserInstaller" }
+    Invoke-SevenZipExtract -Executable $sevenZip -Archive $innerArchive.FullName -Destination $innerExtractRoot
+    $browserSrc = Join-Path $innerExtractRoot 'Chrome-bin'
+    if (-not (Test-Path -LiteralPath (Join-Path $browserSrc 'chrome.exe') -PathType Leaf)) {
+      Fail "chrome.exe not found after extracting browser installer: $browserInstaller"
+    }
+    Write-Step "downloaded and unpacked browser $browserVersion"
+  }
   if (-not [string]::IsNullOrWhiteSpace($browserSrc)) {
     if (-not (Test-Path -LiteralPath $browserSrc)) { Fail "browser archive not found: $browserSrc" }
     $browserRoot = Join-Path $packRoot $browserDestRel
@@ -940,8 +925,6 @@ if ($browserEnabled) {
     Install-BundledBrowser -Source $browserSrc -Destination $browserRoot -ExpectedExe $browserExeRel -Arch $Arch
     $browserBundled = $true
     $browserSourceLeaf = Split-Path -Leaf $browserSrc
-  } else {
-    Write-Step 'browser archivePath empty; supplement ships without a bundled browser'
   }
 } else {
   Write-Step 'bundled browser disabled in manifest (browser.enabled=false)'
@@ -972,23 +955,20 @@ Wunder Desktop Windows supplement (__ARCH__, profile: __PROFILE__)
 
 Contents:
   opt/python   Python __PYVER__ (embeddable) + pinned packages
-  opt/git      PortableGit __GITVER__
+  opt/git      MinGit __GITVER__
   opt/rg       ripgrep __RGVER__
   opt/ffmpeg   ffmpeg __FFVER__ (when bundled)
-  opt/r2       radare2 __R2VER__ (when bundled)
-  opt/node     Node.js __NODEVER__ (node, npm, npx)
   opt/browser  Chrome __BROWSERVER__ win32 at __BROWSEREXE__ (when bundled)
 
 Use Import supplement in the Pupa settings to install into WUNDER_HOME.
 For manual installation, close processes using this runtime and unpack into
 WUNDER_HOME (default: .wunder in your user home). The Pupa and Helm share
-opt/python, opt/git, opt/rg, opt/ffmpeg and opt/node, and prepend
+opt/python, opt/git, opt/rg and opt/ffmpeg, and prepend
 their bins to PATH.
 
 Browsers: __BROWSER__
 '@
-$readmeText = $readmeText.Replace('__ARCH__', $archLabel).Replace('__PROFILE__', $PythonProfile).Replace('__PYVER__', $pyVer).Replace('__GITVER__', $gitVersion).Replace('__RGVER__', $rgVersion).Replace('__FFVER__', $ffVersion).Replace('__R2VER__', $r2Version).Replace('__BROWSERVER__', $browserVersion).Replace('__BROWSEREXE__', $browserExeRel).Replace('__BROWSER__', $browserNote)
-$readmeText = $readmeText.Replace('__NODEVER__', $nodeVersion)
+$readmeText = $readmeText.Replace('__ARCH__', $archLabel).Replace('__PROFILE__', $PythonProfile).Replace('__PYVER__', $pyVer).Replace('__GITVER__', $gitVersion).Replace('__RGVER__', $rgVersion).Replace('__FFVER__', $ffVersion).Replace('__BROWSERVER__', $browserVersion).Replace('__BROWSEREXE__', $browserExeRel).Replace('__BROWSER__', $browserNote)
 Write-Utf8NoBom -Path (Join-Path $packRoot 'README-win7-supplement.txt') -Content $readmeText
 
 $metaObj = [ordered]@{
@@ -1007,8 +987,6 @@ $metaObj = [ordered]@{
   git           = [ordered]@{ version = $gitVersion }
   rg            = [ordered]@{ version = $rgVersion }
   ffmpeg        = [ordered]@{ version = $ffVersion; bundled = $ffmpegBundled }
-  r2            = [ordered]@{ version = $r2Version; bundled = $r2Bundled }
-  node          = [ordered]@{ version = $nodeVersion; architecture = $nodeRuntimeArch; path = 'opt/node/node.exe'; npm = 'opt/node/npm.cmd'; npx = 'opt/node/npx.cmd' }
   browser       = [ordered]@{
     installBrowser = $installBrowser
     installed = $browserInstalled

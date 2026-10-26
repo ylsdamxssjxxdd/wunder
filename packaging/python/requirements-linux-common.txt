@@ -1,3 +1,4 @@
+# AI生成
 # Slim Linux-friendly Python package set for Wunder Desktop supplement.
 # Mirrors requirements-win7-common.txt so agent-generated Python behaves the
 # same on Win7 and Linux; the only divergence is h5py (2.10.0 has no aarch64
@@ -6,6 +7,8 @@
 # database access, and static/HTML plotting (matplotlib, seaborn, pyecharts).
 
 aiosqlite==0.20.0
+# capstone: pinned 5.0.2. On win7 the ia32 supplement installs with
+# --only-binary=:all: on a 32-bit host, so pip selects the win32 wheel.
 capstone==5.0.2
 certifi==2024.8.30
 charset-normalizer==3.4.1
@@ -26,6 +29,7 @@ opencv-python-headless==4.5.5.64
 openpyxl==3.1.5
 packaging==26.0
 pandas==2.0.3
+pefile==2024.8.26
 pillow==10.4.0
 playwright==1.40.0
 pymysql==1.1.1

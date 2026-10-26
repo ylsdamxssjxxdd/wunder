@@ -1,6 +1,6 @@
 //! Entity actions in preview mode never persist configuration or credentials.
 use crate::{MainWindow, ModelCard};
-use slint::{ComponentHandle, Model, ModelRc, VecModel};
+use slint::{ComponentHandle, Model, ModelRc, Timer, TimerMode, VecModel};
 use std::{cell::RefCell, rc::Rc};
 
 thread_local! {
@@ -50,7 +50,13 @@ fn seed_models() -> Vec<ModelCard> {
 fn project_models(app: &MainWindow) {
     DEMO_MODELS.with(|models| {
         let models = models.borrow();
-        app.set_model_catalogue_count(models.len() as i32);
+        let selectable = models
+            .iter()
+            .filter(|model| model.model_type == "llm" && !model.model.is_empty())
+            .cloned()
+            .collect::<Vec<_>>();
+        app.set_model_catalogue_count(selectable.len() as i32);
+        app.set_composer_models(ModelRc::new(VecModel::from(selectable)));
         app.set_models(ModelRc::new(VecModel::from(models.clone())));
     });
 }
@@ -79,6 +85,33 @@ fn seed_agent() -> crate::AgentCard {
 }
 
 pub fn install(app: &MainWindow) {
+    let timer = Rc::new(Timer::default());
+    let weak = app.as_weak();
+    app.on_model_edited(move || {
+        let Some(app) = weak.upgrade() else { return };
+        let mut clean = app.get_selected_model_card();
+        clean.is_default = false;
+        clean.is_cloud = false;
+        clean.disabled = false;
+        let draft =
+            crate::entity_state::draft_model_card(&app, app.get_settings_model_key().as_str());
+        if app.get_model_projecting()
+            || draft.model.trim().is_empty()
+            || (draft == clean && app.get_model_token_draft().is_empty())
+        {
+            return;
+        }
+        let weak = app.as_weak();
+        timer.start(
+            TimerMode::SingleShot,
+            std::time::Duration::from_millis(500),
+            move || {
+                if let Some(app) = weak.upgrade() {
+                    app.invoke_save_model();
+                }
+            },
+        );
+    });
     crate::entity_state::bind_selection(app);
     app.set_agents(ModelRc::new(VecModel::from(vec![seed_agent()])));
     app.set_selected_agent(0);
@@ -493,14 +526,20 @@ mod tests {
         assert!(app.get_model_creating(), "切回应恢复创建态");
         assert_eq!(app.get_model_provider_draft().as_str(), "deepseek");
         assert_eq!(app.get_model_name_draft().as_str(), "draft-model");
-        assert_eq!(app.get_model_base_url_draft().as_str(), "https://example.invalid/v1");
+        assert_eq!(
+            app.get_model_base_url_draft().as_str(),
+            "https://example.invalid/v1"
+        );
 
         app.invoke_select_model(existing as i32);
         app.invoke_create_model();
         assert!(app.get_model_creating(), "再次添加应恢复草稿");
         assert_eq!(app.get_model_name_draft().as_str(), "draft-model");
         assert_eq!(
-            app.get_models().iter().filter(|entry| entry.key == "新模型").count(),
+            app.get_models()
+                .iter()
+                .filter(|entry| entry.key == "新模型")
+                .count(),
             1,
             "不得出现第二张新模型卡片"
         );

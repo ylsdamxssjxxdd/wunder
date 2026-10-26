@@ -28,7 +28,7 @@
 
 本地 SQLite 必须假设「进程可能被硬杀」：
 
-- 启动恢复扫描限定数量上限（4096），把 queued/waiting/running/cancelling 的残留会话清理为一致状态，回收会话锁与任务（`services/desktop_runtime_recovery.rs`，已实测）。
+- 启动恢复不在启动时清理任何锁、任务或监控记录（多实例共享同一运行态，清理会误伤存活实例）；崩溃残留由「会话锁活性仲裁 + 孤儿受理结算」按需自愈：派发/提交闸门只认存活锁，无锁无任务的非终态受理在打开线程或受理新输入时落 interrupted（`storage/thread_admission.rs` 的 settle_orphaned_turns，FV-02）。
 - 蛹与舵机不依赖舰体即可运行；互通隧道仅在存在云会话且会话 `interlink.enabled` 开关联动时启动，策略变更即拆隧道。
 - 数据目录收敛在 `WUNDER_HOME` → `~/.wunder`（工作区、temp、设置各有子路径），首启动不要求网络。
 

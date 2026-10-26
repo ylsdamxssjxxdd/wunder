@@ -503,6 +503,9 @@ pub trait MonitorStore {
 }
 
 /// Session concurrency lock storage.
+///
+/// `try_acquire_session_lock` 颁发一次性 `lock_token`；`touch`/`release` 只作用于
+/// 同代次行，过期被接管后旧持有者的迟到操作不会删除或续期新持有者的锁。
 pub trait SessionLockStore {
     fn try_acquire_session_lock(
         &self,
@@ -512,8 +515,12 @@ pub trait SessionLockStore {
         ttl_s: f64,
         max_sessions: i64,
     ) -> Result<SessionLockStatus>;
-    fn touch_session_lock(&self, session_id: &str, ttl_s: f64) -> Result<()>;
-    fn release_session_lock(&self, session_id: &str) -> Result<()>;
+    /// 续期自己这一代锁；返回 false 表示锁已丢失（过期被接管或被管理面清除）。
+    fn touch_session_lock(&self, session_id: &str, lock_token: &str, ttl_s: f64) -> Result<bool>;
+    /// 释放自己这一代锁；代次不匹配时不做任何事。
+    fn release_session_lock(&self, session_id: &str, lock_token: &str) -> Result<()>;
+    /// 管理面强删：销毁线程数据等场景显式清除任意代次的锁行，不是执行结束路径。
+    fn force_release_session_lock(&self, session_id: &str) -> Result<()>;
     fn delete_session_locks_by_user(&self, user_id: &str) -> Result<i64>;
     fn count_session_locks(&self) -> Result<i64>;
     fn list_session_locks_by_user(&self, user_id: &str) -> Result<Vec<SessionLockRecord>>;

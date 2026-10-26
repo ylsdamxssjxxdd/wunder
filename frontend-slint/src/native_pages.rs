@@ -1,10 +1,9 @@
 //! Native entity-page callbacks. All storage and configuration work runs off the UI thread.
 use crate::{AgentCard, MainWindow};
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
-use std::{cell::RefCell, rc::Rc, sync::Arc};
+use std::{rc::Rc, sync::Arc};
 use wunder_desktop::{
-    AgentRecord, CloudStatusView, DesktopSettings, ModelEdit, NativeDesktop, NativeProfile,
-    RuntimeToolStatus,
+    AgentRecord, CloudStatusView, DesktopSettings, NativeDesktop, NativeProfile, RuntimeToolStatus,
 };
 
 pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
@@ -927,6 +926,9 @@ fn bind_settings(app: &MainWindow, api: Arc<NativeDesktop>) {
     let weak = app.as_weak();
     app.on_create_model(move || {
         let Some(app) = weak.upgrade() else { return };
+        if crate::model_editor::defer_creation(&app) {
+            return;
+        }
         if app.get_saving() || app.get_settings_loading() {
             return;
         }
@@ -961,7 +963,7 @@ fn bind_settings(app: &MainWindow, api: Arc<NativeDesktop>) {
         model_catalogue().set(&app, rows);
         app.set_selected_model(0);
         crate::entity_state::apply_new_model_draft(&app, entry);
-        app.set_status("已创建新的模型草稿，请填写模型名称后保存".into());
+        app.set_status("已创建模型草稿，填写基础设置后自动保存".into());
     });
     let weak = app.as_weak();
     app.on_discard_model_draft(move || {
@@ -1108,6 +1110,9 @@ fn bind_settings(app: &MainWindow, api: Arc<NativeDesktop>) {
     let refresh_api = api.clone();
     app.on_refresh_settings(move || {
         let Some(app) = weak.upgrade() else { return };
+        if crate::model_editor::defer_refresh(&app) {
+            return;
+        }
         if app.get_settings_loading() || app.get_saving() {
             return;
         }
@@ -1122,7 +1127,6 @@ fn bind_settings(app: &MainWindow, api: Arc<NativeDesktop>) {
             let result = api.get_desktop_settings();
             let cloud = api.cloud_status();
             let _ = weak.upgrade_in_event_loop(move |app| {
-                app.set_settings_loading(false);
                 match result {
                     Ok(settings) => {
                         apply_settings(&app, settings);
@@ -1133,145 +1137,18 @@ fn bind_settings(app: &MainWindow, api: Arc<NativeDesktop>) {
                     Ok(status) => push_cloud_status(&app, status),
                     Err(_) => {}
                 }
+                app.set_settings_loading(false);
             });
         });
     });
-    let weak = app.as_weak();
-    let save_api = api.clone();
-    app.on_save_model(move || {
-        let Some(app) = weak.upgrade() else { return };
-        if app.get_saving() || app.get_settings_loading() || app.get_agents_loading() {
-            return;
-        }
-        app.set_saving(true);
-        // Bind editor drafts to locals first: ModelEdit borrows strings, and
-        // getter temporaries must not be dropped before the background task.
-        let key = app.get_model_key_draft().trim().to_string();
-        let provider = app.get_model_provider_draft().trim().to_string();
-        let model = app.get_model_name_draft().trim().to_string();
-        let base_url = app.get_model_base_url_draft().trim().to_string();
-        let api_key = app.get_model_token_draft().trim().to_string();
-        let model_type = app.get_model_type_draft().trim().to_string();
-        let temperature = app.get_model_temperature_draft().trim().to_string();
-        let timeout_s = app.get_model_timeout_draft().trim().to_string();
-        let max_output = app.get_model_max_output_draft().trim().to_string();
-        let thinking_token_budget = app.get_model_thinking_budget_draft().trim().to_string();
-        let max_rounds = app.get_model_max_rounds_draft().trim().to_string();
-        let max_context = app.get_model_max_context_draft().trim().to_string();
-        let history_compaction_ratio = app
-            .get_model_history_compaction_ratio_draft()
-            .trim()
-            .to_string();
-        let reasoning_effort = app.get_model_reasoning_effort_draft().trim().to_string();
-        let simulation_speed = app.get_model_simulation_speed_draft().trim().to_string();
-        let support_vision = app.get_model_support_vision_draft();
-        let support_hearing = app.get_model_support_hearing_draft();
-        let stream_include_usage = app.get_model_stream_include_usage_draft();
-        let tool_call_mode = app.get_model_tool_call_mode_draft().trim().to_string();
-        let tts_voice = app.get_model_tts_voice_draft().trim().to_string();
-        let tts_response_format = app.get_model_tts_format_draft().trim().to_string();
-        let tts_speed = app.get_model_tts_speed_draft().trim().to_string();
-        let tts_instructions = app.get_model_tts_instructions_draft().trim().to_string();
-        let asr_language = app.get_model_asr_language_draft().trim().to_string();
-        let asr_response_format = app.get_model_asr_format_draft().trim().to_string();
-        let asr_temperature = app.get_model_asr_temperature_draft().trim().to_string();
-        let asr_prompt = app.get_model_asr_prompt_draft().trim().to_string();
-        let image_size = app.get_model_image_size_draft().trim().to_string();
-        let image_output_format = app.get_model_image_format_draft().trim().to_string();
-        let image_steps = app.get_model_image_steps_draft().trim().to_string();
-        let image_guidance_scale = app.get_model_image_guidance_draft().trim().to_string();
-        let image_negative_prompt = app.get_model_image_negative_draft().trim().to_string();
-        let video_size = app.get_model_video_size_draft().trim().to_string();
-        let video_seconds = app.get_model_video_seconds_draft().trim().to_string();
-        let video_fps = app.get_model_video_fps_draft().trim().to_string();
-        let video_num_frames = app.get_model_video_num_frames_draft().trim().to_string();
-        let video_negative_prompt = app.get_model_video_negative_draft().trim().to_string();
-        let video_steps = app.get_model_video_steps_draft().trim().to_string();
-        let video_guidance_scale = app
-            .get_model_video_guidance_scale_draft()
-            .trim()
-            .to_string();
-        let video_guidance_scale_2 = app
-            .get_model_video_guidance_scale_2_draft()
-            .trim()
-            .to_string();
-        let video_boundary_ratio = app
-            .get_model_video_boundary_ratio_draft()
-            .trim()
-            .to_string();
-        let video_flow_shift = app.get_model_video_flow_shift_draft().trim().to_string();
-        let video_frame_interpolation = app.get_model_video_frame_interpolation_draft();
-        let video_sync_mode = app.get_model_video_sync_mode_draft();
-        let weak = weak.clone();
-        let api = save_api.clone();
-        run_background(move || {
-            let result = api.save_model(ModelEdit {
-                key: &key,
-                provider: &provider,
-                model: &model,
-                base_url: &base_url,
-                api_key: &api_key,
-                model_type: &model_type,
-                temperature: &temperature,
-                timeout_s: &timeout_s,
-                max_output: &max_output,
-                thinking_token_budget: &thinking_token_budget,
-                max_rounds: &max_rounds,
-                max_context: &max_context,
-                history_compaction_ratio: &history_compaction_ratio,
-                reasoning_effort: &reasoning_effort,
-                simulation_speed: &simulation_speed,
-                support_vision,
-                support_hearing,
-                stream_include_usage,
-                tool_call_mode: &tool_call_mode,
-                tts_voice: &tts_voice,
-                tts_response_format: &tts_response_format,
-                tts_speed: &tts_speed,
-                tts_instructions: &tts_instructions,
-                asr_language: &asr_language,
-                asr_response_format: &asr_response_format,
-                asr_temperature: &asr_temperature,
-                asr_prompt: &asr_prompt,
-                image_size: &image_size,
-                image_output_format: &image_output_format,
-                image_steps: &image_steps,
-                image_guidance_scale: &image_guidance_scale,
-                image_negative_prompt: &image_negative_prompt,
-                video_size: &video_size,
-                video_seconds: &video_seconds,
-                video_fps: &video_fps,
-                video_num_frames: &video_num_frames,
-                video_negative_prompt: &video_negative_prompt,
-                video_steps: &video_steps,
-                video_guidance_scale: &video_guidance_scale,
-                video_guidance_scale_2: &video_guidance_scale_2,
-                video_boundary_ratio: &video_boundary_ratio,
-                video_flow_shift: &video_flow_shift,
-                video_frame_interpolation,
-                video_sync_mode,
-            });
-            let _ = weak.upgrade_in_event_loop(move |app| {
-                app.set_saving(false);
-                match result {
-                    Ok(settings) => {
-                        app.set_model_token_draft("".into());
-                        // The saved row is now persisted; the unsaved draft
-                        // (if this was it) must not be re-inserted.
-                        crate::entity_state::clear_model_draft();
-                        apply_settings(&app, settings);
-                        crate::entity_state::restore_model(&app, &key);
-                        app.set_status("模型配置已保存到本地运行时".into());
-                    }
-                    Err(error) => show_error(&app, format!("无法保存模型配置：{error}")),
-                }
-            });
-        });
-    });
+    crate::model_editor::install(app, api.clone());
     let weak = app.as_weak();
     let delete_api = api.clone();
     app.on_delete_model(move |key| {
         let Some(app) = weak.upgrade() else { return };
+        if crate::model_editor::defer_delete(&app, key.to_string()) {
+            return;
+        }
         if app.get_saving() || app.get_settings_loading() || app.get_agents_loading() {
             return;
         }
@@ -1301,6 +1178,9 @@ fn bind_settings(app: &MainWindow, api: Arc<NativeDesktop>) {
     let default_api = api.clone();
     app.on_set_default_model(move |key| {
         let Some(app) = weak.upgrade() else { return };
+        if crate::model_editor::defer_default(&app, key.to_string()) {
+            return;
+        }
         if app.get_saving() || app.get_settings_loading() || app.get_agents_loading() {
             return;
         }
@@ -1359,7 +1239,7 @@ fn bind_settings(app: &MainWindow, api: Arc<NativeDesktop>) {
             .unwrap_or(-1);
         app.set_selected_model(selected);
         let keys: Vec<String> = rows.iter().map(|entry| entry.key.to_string()).collect();
-        app.set_models(model_from(rows));
+        model_catalogue().set(&app, rows);
         let weak = weak.clone();
         let api = order_api.clone();
         run_background(move || {
@@ -1425,6 +1305,8 @@ fn avatar_tone(color: &str) -> i32 {
 }
 
 pub(crate) fn apply_settings(app: &MainWindow, settings: DesktopSettings) {
+    let projecting = app.get_model_projecting();
+    app.set_model_projecting(true);
     let selected = app.get_settings_model_key();
     app.set_workspace_root(settings.workspace_root.into());
     app.set_runtime_language(settings.language.into());
@@ -1459,7 +1341,32 @@ pub(crate) fn apply_settings(app: &MainWindow, settings: DesktopSettings) {
         app,
         settings.models.into_iter().map(to_model_card).collect(),
     );
-    crate::entity_state::restore_model(app, &selected);
+    if !crate::model_editor::has_unsaved(app)
+        || (!app.get_model_creating()
+            && !app.get_models().iter().any(|model| model.key == selected))
+    {
+        crate::entity_state::restore_model(app, &selected);
+    }
+    let current = app.get_selected_model_key();
+    let inherited = app.get_selected_agent_model();
+    let models = app.get_composer_models();
+    let fallback = models
+        .iter()
+        .find(|model| model.is_default)
+        .or_else(|| models.iter().next());
+    if current.is_empty() {
+        if !models.iter().any(|model| model.key == inherited) {
+            app.set_selected_agent_model(fallback.map(|model| model.key).unwrap_or_default());
+        }
+    } else if models.iter().any(|model| model.key == current) {
+        select_model_key(app, &current);
+    } else {
+        select_model_key(
+            app,
+            fallback.map(|model| model.key).unwrap_or_default().as_str(),
+        );
+    }
+    app.set_model_projecting(projecting);
 }
 
 fn to_model_card(model: wunder_desktop::ModelRecord) -> crate::ModelCard {
@@ -1471,6 +1378,7 @@ fn to_model_card(model: wunder_desktop::ModelRecord) -> crate::ModelCard {
         base_url: model.base_url.into(),
         model_type: model.model_type.into(),
         is_default: model.is_default,
+        disabled: !model.enabled,
         // Synthesized cloud entries (`cloud/<id>`) carry the badge and stay
         // read-only in the editor; the shell also greys them in the picker
         // while the cloud session is missing or expired.
@@ -1546,23 +1454,25 @@ fn tool_status_text(status: &RuntimeToolStatus) -> String {
 }
 
 pub(crate) fn select_model_key(app: &MainWindow, key: &str) {
-    if let Some(index) = app.get_models().iter().position(|model| model.key == key) {
-        let model = app.get_models().row_data(index).unwrap_or_default();
-        // This helper is used by the composer and session restore. Keep the
-        // composer projection updated without routing through the settings
-        // editor selection callback.
-        app.set_selected_model_key(model.key);
-        app.set_selected_model_provider(model.provider);
-        app.set_selected_model_name(model.model);
-        app.set_selected_model_base_url(model.base_url);
-        app.set_selected_model_type(model.model_type);
-        app.set_selected_model_is_default(model.is_default);
-    }
+    let models = app.get_composer_models();
+    let model = models
+        .iter()
+        .find(|model| model.key == key)
+        .unwrap_or_default();
+    // This helper is used by the composer and session restore. Keep the
+    // composer projection updated without routing through the settings
+    // editor selection callback.
+    app.set_selected_model_key(model.key);
+    app.set_selected_model_provider(model.provider);
+    app.set_selected_model_name(model.model);
+    app.set_selected_model_base_url(model.base_url);
+    app.set_selected_model_type(model.model_type);
+    app.set_selected_model_is_default(model.is_default);
 }
 
 /// The model catalogue, kept natively so the settings projection and the
 /// composer's picker always render the same list from one source.
-pub(crate) struct ModelCatalogue(RefCell<Vec<crate::ModelCard>>);
+pub(crate) struct ModelCatalogue;
 
 thread_local! {
     /// One catalogue per UI thread. The native shell owns exactly one
@@ -1570,7 +1480,7 @@ thread_local! {
     /// modules that all already share that window; a thread-local keeps the
     /// list beside it instead of threading a handle through every settings
     /// callback.
-    static MODEL_CATALOGUE: Rc<ModelCatalogue> = Rc::new(ModelCatalogue(RefCell::new(Vec::new())));
+    static MODEL_CATALOGUE: Rc<ModelCatalogue> = Rc::new(ModelCatalogue);
 }
 
 /// The UI thread's model catalogue.
@@ -1585,14 +1495,27 @@ impl ModelCatalogue {
     /// before rebuilding.
     pub(crate) fn set(&self, app: &MainWindow, models: Vec<crate::ModelCard>) {
         let mut rows = models;
-        if let Some(draft) = crate::entity_state::model_draft_row() {
+        let active = app
+            .get_model_creating()
+            .then(|| app.get_selected_model_card());
+        if let Some(draft) = crate::entity_state::model_draft_row().or(active) {
             if !rows.iter().any(|entry| entry.key == draft.key) {
                 rows.insert(0, draft);
             }
         }
-        *self.0.borrow_mut() = rows;
-        app.set_model_catalogue_count(self.0.borrow().len() as i32);
-        let rows = self.0.borrow().clone();
+        let draft_key = crate::entity_state::active_model_draft_key(app);
+        let selectable = rows
+            .iter()
+            .filter(|model| {
+                model.model_type.eq_ignore_ascii_case("llm")
+                    && !model.disabled
+                    && !model.model.trim().is_empty()
+                    && draft_key.as_deref() != Some(model.key.as_str())
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        app.set_model_catalogue_count(selectable.len() as i32);
+        app.set_composer_models(model_from(selectable));
         app.set_models(model_from(rows));
     }
 }
@@ -1630,6 +1553,41 @@ mod tests {
     /// The backend default (`DEFAULT_AVATAR_COLOR` in `wunder-desktop`), which
     /// every unreadable preference falls back to.
     const DEFAULT_BRUSH: slint::Color = slint::Color::from_rgb_u8(0x3b, 0x82, 0xf6);
+
+    #[test]
+    fn composer_catalogue_includes_nondefault_llms_and_excludes_drafts_and_disabled_models() {
+        use slint::Model;
+        let _ui = crate::test_support::lock();
+        crate::register_bundled_font().expect("bundled font");
+        let app = crate::MainWindow::new().expect("window");
+        let card = |key: &str| crate::ModelCard {
+            key: key.into(),
+            model: "sample-model".into(),
+            model_type: "llm".into(),
+            ..Default::default()
+        };
+        let mut disabled = card("disabled-model");
+        disabled.disabled = true;
+        let mut embedding = card("embedding-model");
+        embedding.model_type = "embedding".into();
+        let draft = card("draft-model");
+        app.set_model_creating(true);
+        app.set_selected_model_card(draft.clone());
+        app.set_selected_model(0);
+        app.set_models(super::model_from(vec![draft]));
+        super::model_catalogue().set(&app, vec![card("extra-model"), disabled, embedding]);
+        assert_eq!(app.get_composer_models().row_count(), 1);
+        assert_eq!(
+            app.get_composer_models().row_data(0).unwrap().key,
+            "extra-model"
+        );
+        assert_eq!(app.get_model_catalogue_count(), 1);
+        assert_eq!(app.get_models().row_count(), 4);
+        super::select_model_key(&app, "extra-model");
+        assert_eq!(app.get_selected_model_key(), "extra-model");
+        super::select_model_key(&app, "missing-model");
+        assert!(app.get_selected_model_key().is_empty());
+    }
 
     #[test]
     fn profile_glyph_takes_the_first_name_character() {

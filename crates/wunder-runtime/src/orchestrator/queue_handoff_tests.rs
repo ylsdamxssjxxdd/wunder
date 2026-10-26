@@ -65,13 +65,14 @@ async fn queue_handoff_parks_original_turn_and_keeps_cancel_available() {
     .await
     .unwrap();
     assert!(!paused.is_finished());
-    assert_eq!(
-        state
-            .storage
-            .try_acquire_session_lock("session-b", "user-b", "agent-b", 60.0, 1)
-            .unwrap(),
-        SessionLockStatus::Acquired
-    );
+    let lock_b = match state
+        .storage
+        .try_acquire_session_lock("session-b", "user-b", "agent-b", 60.0, 1)
+        .unwrap()
+    {
+        SessionLockStatus::Acquired { lock_token } => lock_token,
+        other => panic!("expected acquired, got {other:?}"),
+    };
     assert_eq!(
         state
             .storage
@@ -79,7 +80,7 @@ async fn queue_handoff_parks_original_turn_and_keeps_cancel_available() {
             .unwrap(),
         SessionLockStatus::UserBusy
     );
-    state.storage.release_session_lock("session-b").unwrap();
+    state.storage.release_session_lock("session-b", &lock_b).unwrap();
     orchestrator.scheduling.grant_resume().unwrap();
     tokio::time::timeout(Duration::from_secs(5), paused)
         .await

@@ -1,7 +1,7 @@
 FROM ubuntu:18.04
 
 # Lean build image for the Linux supplement pack (opt/python, opt/git,
-# opt/rg, opt/ffmpeg and opt/node).
+# opt/rg and opt/ffmpeg).
 # Keeping this image on Ubuntu 18.04 preserves the desktop compatibility
 # baseline for the native tools. The arm64 variant is run under QEMU binfmt by
 # CI, so the single Dockerfile covers both architectures through the platform
@@ -20,7 +20,16 @@ ENV LANG=C.UTF-8 LC_ALL=C.UTF-8 PYTHONIOENCODING=utf-8
 # Pin the Ubuntu 18.04 archive mirrors explicitly. The current archive still
 # serves bionic metadata; keeping the standard endpoints also supports local
 # mirrors that cache the base image's original sources.
-RUN if [ "${TARGETARCH}" = "arm64" ]; then \
+#
+# The whole install must be idempotent: apt runs inside the QEMU-emulated arm64
+# image in CI, where a package blob occasionally arrives truncated and dpkg
+# aborts with "corrupted filesystem tarfile - corrupted package archive"
+# (apt exit 100), failing an otherwise healthy build. The apt options below
+# disable HTTP pipelining (the usual source of truncated blobs behind a proxy)
+# and retry individual fetches, and the loop re-runs update+install from a
+# cleaned cache so one bad blob cannot fail the image.
+RUN set -eux; \
+    if [ "${TARGETARCH}" = "arm64" ]; then \
       printf '%s\n' \
         "deb [trusted=yes] http://ports.ubuntu.com/ubuntu-ports bionic main universe multiverse restricted" \
         "deb [trusted=yes] http://ports.ubuntu.com/ubuntu-ports bionic-updates main universe multiverse restricted" \
@@ -32,19 +41,32 @@ RUN if [ "${TARGETARCH}" = "arm64" ]; then \
         "deb [trusted=yes] http://archive.ubuntu.com/ubuntu bionic-updates main universe multiverse restricted" \
         "deb [trusted=yes] http://security.ubuntu.com/ubuntu bionic-security main universe multiverse restricted" \
         > /etc/apt/sources.list; \
-    fi \
- && printf 'Acquire::Check-Valid-Until "false";\n' > /etc/apt/apt.conf.d/99no-check-valid \
- && apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Retries=5 update \
- && apt-get install -y --no-install-recommends \
-      build-essential ca-certificates curl file python3 unzip \
-      zlib1g-dev libcurl4-openssl-dev libexpat1-dev libssl-dev \
-      libnss3 libnspr4 libgbm1 libasound2 libxcb1 libx11-6 libxext6 \
-      libxrender1 libfontconfig1 libx11-xcb1 libxcomposite1 libxdamage1 \
-      libxfixes3 libxrandr2 libgtk-3-0 \
- && rm -rf /var/lib/apt/lists/* \
- && curl --version >/dev/null \
- && python3 --version \
- && gcc --version | head -n 1
+    fi; \
+    printf '%s\n' \
+      'Acquire::Check-Valid-Until "false";' \
+      'Acquire::Retries "5";' \
+      'Acquire::http::Pipeline-Depth "0";' \
+      > /etc/apt/apt.conf.d/99wunder-build; \
+    packages='build-essential ca-certificates curl file python3 unzip zlib1g-dev libcurl4-openssl-dev libexpat1-dev libssl-dev libnss3 libnspr4 libgbm1 libasound2 libxcb1 libx11-6 libxext6 libxrender1 libfontconfig1 libx11-xcb1 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgtk-3-0'; \
+    attempt=1; \
+    while :; do \
+      if apt-get update && apt-get install -y --no-install-recommends ${packages}; then \
+        break; \
+      fi; \
+      if [ "${attempt}" -ge 3 ]; then \
+        echo "apt install failed after ${attempt} attempts" >&2; \
+        exit 1; \
+      fi; \
+      attempt=$((attempt + 1)); \
+      echo "apt install failed, retrying (attempt ${attempt}/3) from a clean cache" >&2; \
+      apt-get clean; \
+      rm -rf /var/lib/apt/lists/*; \
+      dpkg --configure -a || true; \
+    done; \
+    rm -rf /var/lib/apt/lists/*; \
+    curl --version >/dev/null; \
+    python3 --version; \
+    gcc --version | head -n 1
 
 WORKDIR /app
 CMD ["bash"]

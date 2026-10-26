@@ -33,8 +33,8 @@ struct DesktopPythonSettings {
     rg_path: String,
     #[serde(default)]
     python_runtime_mode: String,
-    /// Shell preference: "auto" (default), "bash" (Git Bash), "cmd" or
-    /// "powershell".
+    /// Shell preference: "auto" (default), "cmd" or "powershell". The legacy
+    /// "bash" value now resolves to the platform default shell.
     #[serde(default)]
     shell_mode: String,
 }
@@ -108,7 +108,7 @@ pub fn resolve_python_runtime() -> Option<PythonRuntime> {
 
 pub fn resolve_desktop_command_env() -> DesktopCommandEnv {
     let command_overrides = resolve_desktop_command_overrides();
-    let shell = resolve_desktop_shell(command_overrides.git_bin.as_ref().map(PathBuf::as_path));
+    let shell = resolve_desktop_shell();
     DesktopCommandEnv {
         python_runtime: resolve_python_runtime(),
         command_overrides,
@@ -116,9 +116,13 @@ pub fn resolve_desktop_command_env() -> DesktopCommandEnv {
     }
 }
 
-/// Resolve the preferred command shell from desktop settings and the
-/// configured Git executable.
-fn resolve_desktop_shell(git_bin: Option<&Path>) -> command_utils::ShellLaunch {
+/// Resolve the preferred command shell from desktop settings.
+///
+/// Windows honors an explicit "cmd"/"powershell"; any other value (including
+/// "auto" and the legacy "bash"/"gitbash", which is no longer bundled) falls
+/// back to the platform default shell. Non-Windows always uses the platform
+/// default.
+fn resolve_desktop_shell() -> command_utils::ShellLaunch {
     let mode = read_desktop_python_settings()
         .map(|settings| settings.shell_mode.trim().to_ascii_lowercase())
         .unwrap_or_default();
@@ -126,31 +130,25 @@ fn resolve_desktop_shell(git_bin: Option<&Path>) -> command_utils::ShellLaunch {
     #[cfg(windows)]
     {
         use command_utils::{ShellKind, ShellLaunch};
-        let bash_shell = git_bin.and_then(command_utils::resolve_git_bash_shell);
         let explicit = match mode.as_str() {
-            "bash" | "gitbash" | "git_bash" | "git-bash" => Some(ShellKind::Bash),
             "cmd" | "cmd.exe" => Some(ShellKind::Cmd),
             "powershell" | "pwsh" | "powershell.exe" => Some(ShellKind::PowerShell),
+            // "auto" and legacy "bash"/"gitbash" requests resolve to the
+            // platform default; the Windows supplement no longer ships Git Bash.
             _ => None,
         };
         match explicit {
-            // Fall back to the platform shell when bash was requested but no
-            // bash executable ships with the configured Git.
-            Some(ShellKind::Bash) => {
-                bash_shell.unwrap_or_else(command_utils::platform_default_shell)
-            }
             Some(kind) => ShellLaunch {
                 kind,
                 ..Default::default()
             },
-            // Auto: prefer Git Bash when available, else the platform shell.
-            None => bash_shell.unwrap_or_else(command_utils::platform_default_shell),
+            None => command_utils::platform_default_shell(),
         }
     }
 
     #[cfg(not(windows))]
     {
-        let _ = (mode, git_bin);
+        let _ = mode;
         command_utils::platform_default_shell()
     }
 }
@@ -226,13 +224,6 @@ pub fn apply_desktop_command_env(cmd: &mut TokioCommand, env: &DesktopCommandEnv
     {
         if let Some(parent) = bin.parent() {
             prepend_path_env(cmd, "PATH", parent);
-        }
-    }
-    // Git Bash: prepend the POSIX toolchain PATH dirs last so usr/bin ends up
-    // first and the shell can locate bash, ls, grep, etc.
-    if env.shell.kind == command_utils::ShellKind::Bash {
-        for dir in env.shell.path_dirs.iter().rev() {
-            prepend_path_env(cmd, "PATH", dir);
         }
     }
 }

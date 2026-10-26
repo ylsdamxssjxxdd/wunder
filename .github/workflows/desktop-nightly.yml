@@ -196,16 +196,10 @@ jobs:
             if ($meta.rg.version -ne $rgPin) {
               throw "supplement ripgrep is $($meta.rg.version), expected $rgPin; rebuild the Desktop Supplements release"
             }
-            if ($meta.node.architecture -ne 'ia32') {
-              throw "supplement Node is not ia32: $($meta.node.architecture)"
-            }
-            if (-not $zip.GetEntry('opt/node/node.exe')) {
-              throw 'supplement Node runtime is missing'
-            }
           } finally {
             $zip.Dispose()
           }
-          Write-Host "supplement Playwright $pin with i386 driver, ia32 Node and ripgrep $rgPin verified"
+          Write-Host "supplement Playwright $pin with i386 driver and ripgrep $rgPin verified"
       - name: Build Windows installer
         shell: pwsh
         run: |

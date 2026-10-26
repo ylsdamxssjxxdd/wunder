@@ -15,6 +15,7 @@ pub struct ModelRecord {
     pub base_url: String,
     pub model_type: String,
     pub is_default: bool,
+    pub enabled: bool,
     /// Generation and multimodal parameters, projected as editor-ready
     /// strings (empty = unset) so the Slint list model stays plain data.
     pub temperature: String,
@@ -630,8 +631,8 @@ impl NativeDesktop {
         })
     }
 
-    /// Remove one model configuration. A default pointing at the removed key
-    /// is cleared so the runtime never resolves a dangling default.
+    /// Remove a model and promote an enabled local model of the same type
+    /// when its default is removed. Clear the default only if none remains.
     pub fn delete_model(&self, key: &str) -> Result<DesktopSettings> {
         let key = key.trim();
         if key.is_empty() {
@@ -645,7 +646,11 @@ impl NativeDesktop {
                 .ok_or_else(|| anyhow!("模型不存在"))?;
             let kind = entry.model_type.as_deref().unwrap_or("llm");
             if default_for(&config.llm, kind) == key {
-                clear_default(&mut config.llm, kind);
+                if let Some(fallback) = fallback_default(&config.llm, kind) {
+                    set_default(&mut config.llm, kind, fallback);
+                } else {
+                    clear_default(&mut config.llm, kind);
+                }
             }
             Ok(())
         })
@@ -919,6 +924,63 @@ fn set_default(llm: &mut LlmConfig, kind: &str, key: String) {
     }
 }
 
+fn fallback_default(llm: &LlmConfig, kind: &str) -> Option<String> {
+    llm.models
+        .iter()
+        .filter(|(key, model)| {
+            model.model_type.as_deref().unwrap_or("llm") == kind
+                && model.enable != Some(false)
+                && !key.starts_with("cloud/")
+                && model
+                    .model
+                    .as_deref()
+                    .is_some_and(|name| !name.trim().is_empty())
+        })
+        .map(|(key, _)| key)
+        .min()
+        .cloned()
+}
+
+#[cfg(test)]
+mod model_default_tests {
+    use super::fallback_default;
+    use wunder_server::config::{LlmConfig, LlmModelConfig};
+
+    #[test]
+    fn fallback_is_stable_enabled_local_and_same_type() {
+        let mut llm: LlmConfig = serde_json::from_value(serde_json::json!({
+            "models": {
+                "disabled-model": {"enable": false, "model": "sample-model"},
+                "cloud/remote-model": {"model": "sample-model"},
+                "embedding-model": {"model_type": "embedding", "model": "sample-model"},
+                "incomplete-model": {},
+                "z-model": {"model": "sample-model"},
+                "a-model": {"model_type": "llm", "model": "sample-model"}
+            }
+        }))
+        .expect("valid model fixture");
+        assert_eq!(fallback_default(&llm, "llm").as_deref(), Some("a-model"));
+        assert_eq!(
+            fallback_default(&llm, "embedding").as_deref(),
+            Some("embedding-model")
+        );
+        assert_eq!(fallback_default(&llm, "tts"), None);
+        llm.models.retain(|key, _| key == "disabled-model");
+        assert_eq!(fallback_default(&llm, "llm"), None);
+        llm.models.insert(
+            "remaining-model".into(),
+            LlmModelConfig {
+                model: Some("sample-model".into()),
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            fallback_default(&llm, "llm").as_deref(),
+            Some("remaining-model")
+        );
+    }
+}
+
 fn project(
     config: &Config,
     lan: LanSettings,
@@ -939,6 +1001,7 @@ fn project(
                 base_url: value.base_url.clone().unwrap_or_default(),
                 model_type: kind.into(),
                 is_default: default_for(&config.llm, kind) == key,
+                enabled: value.enable != Some(false),
                 temperature: value.temperature.map(format_number).unwrap_or_default(),
                 timeout_s: value.timeout_s.map(|v| v.to_string()).unwrap_or_default(),
                 max_output: value.max_output.map(|v| v.to_string()).unwrap_or_default(),

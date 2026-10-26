@@ -584,11 +584,14 @@ impl SessionLockStore for SqliteStorage {
     ) -> Result<SessionLockStatus> {
         self.try_acquire_session_lock_impl(session_id, user_id, agent_id, ttl_s, max_sessions)
     }
-    fn touch_session_lock(&self, session_id: &str, ttl_s: f64) -> Result<()> {
-        self.touch_session_lock_impl(session_id, ttl_s)
+    fn touch_session_lock(&self, session_id: &str, lock_token: &str, ttl_s: f64) -> Result<bool> {
+        self.touch_session_lock_impl(session_id, lock_token, ttl_s)
     }
-    fn release_session_lock(&self, session_id: &str) -> Result<()> {
-        self.release_session_lock_impl(session_id)
+    fn release_session_lock(&self, session_id: &str, lock_token: &str) -> Result<()> {
+        self.release_session_lock_impl(session_id, lock_token)
+    }
+    fn force_release_session_lock(&self, session_id: &str) -> Result<()> {
+        self.force_release_session_lock_impl(session_id)
     }
     fn delete_session_locks_by_user(&self, user_id: &str) -> Result<i64> {
         self.delete_session_locks_by_user_impl(user_id)

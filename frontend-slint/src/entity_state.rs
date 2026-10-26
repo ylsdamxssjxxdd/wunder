@@ -109,7 +109,7 @@ pub(crate) fn model_draft_row() -> Option<ModelCard> {
 
 /// The editor drafts projected onto a card. `fallback_key` keeps the list
 /// identity when the key field is blank.
-fn draft_model_card(app: &MainWindow, fallback_key: &str) -> ModelCard {
+pub(crate) fn draft_model_card(app: &MainWindow, fallback_key: &str) -> ModelCard {
     let key = app.get_model_key_draft().trim().to_string();
     ModelCard {
         key: if key.is_empty() {
@@ -208,6 +208,14 @@ pub fn bind_selection(app: &MainWindow) {
         else {
             return;
         };
+        if !app.get_model_projecting() && model.key == app.get_settings_model_key() {
+            return;
+        }
+        if !app.get_model_projecting()
+            && crate::model_editor::defer_selection(&app, model.key.to_string())
+        {
+            return;
+        }
         if app.get_model_creating() {
             // Re-selecting the draft row keeps its live edits.
             if index == app.get_selected_model() {
@@ -347,6 +355,8 @@ fn apply_model(app: &MainWindow, model: ModelCard) {
 }
 
 fn apply_model_with_creation_state(app: &MainWindow, model: ModelCard, creating: bool) {
+    let projecting = app.get_model_projecting();
+    app.set_model_projecting(true);
     app.set_selected_model_card(model.clone());
     app.set_settings_model_key(model.key.clone());
     app.set_settings_model_provider(model.provider.clone());
@@ -402,6 +412,8 @@ fn apply_model_with_creation_state(app: &MainWindow, model: ModelCard, creating:
     app.set_model_video_flow_shift_draft(model.video_flow_shift.clone());
     app.set_model_video_frame_interpolation_draft(model.video_frame_interpolation);
     app.set_model_video_sync_mode_draft(model.video_sync_mode);
+    crate::model_editor::rebase(app);
+    app.set_model_projecting(projecting);
     // Settings selection is intentionally separate from the composer's
     // per-thread model override. Opening a model row must not switch the
     // model shown below the composer.

@@ -37,7 +37,7 @@ jobs:
         shell: bash
         run: |
           win7_hash="${{ hashFiles('packaging/windows/scripts/build_win7_desktop_supplement.ps1', 'packaging/windows/scripts/win7-supplement-manifest.json', 'packaging/python/requirements-win7-common.txt', 'config/matplotlibrc', 'fonts/*') }}"
-          linux_hash="${{ hashFiles('packaging/linux/scripts/build_linux_supplement.sh', 'packaging/linux/scripts/linux-supplement-manifest.json', 'packaging/linux/scripts/r2-static-archives.json', 'packaging/python/requirements-linux-common.txt', 'packaging/docker/Dockerfile.ubuntu18-supplement', 'packaging/docker/Dockerfile.rust-builder-kylin-x86', 'config/matplotlibrc', 'fonts/*') }}"
+          linux_hash="${{ hashFiles('packaging/linux/scripts/build_linux_supplement.sh', 'packaging/linux/scripts/linux-supplement-manifest.json', 'packaging/python/requirements-linux-common.txt', 'packaging/docker/Dockerfile.ubuntu18-supplement', 'packaging/docker/Dockerfile.rust-builder-kylin-x86', 'config/matplotlibrc', 'fonts/*') }}"
           # 浏览器 pin（版本+SHA256 字面量）参与 win7 缓存键：来源变更即触发重建
           browser_pin='chromium-109.0.5414.120-r1070088-hibbiki-mini_installer.sync.exe-sha256-C1AABD6EEF38D759BBD92CA9516353D88C463A1E8389A875B4D12D53DB467F98'
           echo "win7_key=wunder-supplement-win7-ia32-v4-${win7_hash}-${browser_pin}" >> "$GITHUB_OUTPUT"
@@ -117,25 +117,6 @@ jobs:
           $zip = Get-ChildItem -Path supplement-dist -Filter 'wunder-supplement-win7-*.zip' | Select-Object -First 1
           if (-not $zip) { throw 'no supplement zip produced or restored' }
           Write-Host "pack: $($zip.Name) ($([math]::Round($zip.Length / 1MB, 1)) MB)"
-      - name: Verify 32-bit Node payload
-        shell: pwsh
-        run: |
-          # The ia32 pack must be 32-bit end to end: a 32-bit Windows host cannot
-          # start x64 node.exe, so node has to be i386.
-          Add-Type -AssemblyName System.IO.Compression.FileSystem
-          $zipPath = (Get-ChildItem -Path supplement-dist -Filter 'wunder-supplement-win7-*.zip' | Select-Object -First 1).FullName
-          $zip = [IO.Compression.ZipFile]::OpenRead($zipPath)
-          try {
-            foreach ($entryName in @('opt/node/node.exe', 'opt/node/npm.cmd', 'opt/node/npx.cmd')) {
-              if (-not $zip.GetEntry($entryName)) { throw "supplement entry missing: $entryName" }
-            }
-            $metaEntry = $zip.GetEntry('wunder-win7-supplement.json')
-            if (-not $metaEntry) { throw 'supplement metadata is missing' }
-            $reader = New-Object IO.StreamReader($metaEntry.Open(), [Text.Encoding]::UTF8)
-            try { $meta = $reader.ReadToEnd() | ConvertFrom-Json } finally { $reader.Dispose() }
-            if ($meta.node.architecture -ne 'ia32') { throw "Node architecture is not ia32: $($meta.node.architecture)" }
-          } finally { $zip.Dispose() }
-          Write-Host 'Windows supplement 32-bit Node payload verified'
       - uses: actions/upload-artifact@v4
         with:
           name: supplement-win7-ia32
@@ -183,19 +164,6 @@ jobs:
             cached=true
           fi
           echo "cached=$cached" >> "$GITHUB_OUTPUT"
-      - name: Download r2 static binary (amd64 only)
-        if: matrix.arch == 'amd64' && (steps.pack.outputs.cached != 'true' || github.event.inputs.force_rebuild == 'true')
-        shell: bash
-        run: |
-          set -euo pipefail
-          pin=packaging/linux/scripts/r2-static-archives.json
-          file="$(jq -r '.amd64.fileName' "$pin")"
-          sha="$(jq -r '.amd64.sha256' "$pin")"
-          mkdir -p r2-static
-          curl -fsSL --retry 3 -o "r2-static/$file" \
-            "${{ github.server_url }}/${{ github.repository }}/releases/download/${{ env.RELEASE_TAG }}/$file"
-          echo "$sha  r2-static/$file" | sha256sum -c -
-          echo "WUNDER_R2_ARCHIVE=/app/r2-static/$file" >> "$GITHUB_ENV"
       - name: Build Ubuntu 18.04 supplement
         if: steps.pack.outputs.cached != 'true' || github.event.inputs.force_rebuild == 'true'
         shell: bash
@@ -213,7 +181,6 @@ jobs:
             -e WUNDER_OUTPUT_DIR=/app/supplement-dist \
             -e WUNDER_SUPPLEMENT_BUILD_ROOT=/app/supplement-build \
             -e WUNDER_SUPPLEMENT_PYPI_INDEX=https://pypi.org/simple \
-            -e WUNDER_SUPPLEMENT_R2_ARCHIVE="${WUNDER_R2_ARCHIVE:-}" \
             "wunder-supplement-ubuntu1804-${{ matrix.arch }}" \
             bash packaging/linux/scripts/build_linux_supplement.sh
       - name: Verify pack exists
@@ -241,9 +208,7 @@ jobs:
           rm -rf "$work"
           mkdir -p "$work"
           tar -xzf "$pack" -C "$work"
-          test -x "$work/opt/node/bin/node"
           test -x "$work/opt/browser/$browser_rel"
-          check_elf "$work/opt/node/bin/node"
           check_elf "$work/opt/git/bin/git"
           check_elf "$work/opt/rg/bin/rg"
           check_elf "$work/opt/ffmpeg/bin/ffmpeg"
@@ -253,15 +218,11 @@ jobs:
           meta = json.load(open(sys.argv[1], encoding='utf-8'))
           arch = sys.argv[2]
           assert meta['arch'] == arch, meta['arch']
-          assert meta['node']['version'] == '16.20.2', meta['node']['version']
-          assert meta['node']['architecture'] == arch, meta['node']['architecture']
           assert meta['browser']['bundled'] is True
           print('Linux supplement metadata verified:', arch, 'browser', meta['browser']['version'])
           PY
           # 只有宿主架构与补充包一致时才做真实执行冒烟；x64 打包机只跑 amd64 包。
           if [ "$(uname -m)" = "$host_expect" ]; then
-            node_version="$("$work/opt/node/bin/node" --version)"
-            test "$node_version" = 'v16.20.2' || { echo "node smoke failed: $node_version" >&2; exit 1; }
             "$work/opt/rg/bin/rg" --version | head -n 1
             "$work/opt/ffmpeg/bin/ffmpeg" -version | head -n 1
             # Chrome 的 libc 依赖面来自目标机（Ubuntu 18.04），在打包机上跑通与否
@@ -321,7 +282,7 @@ jobs:
             gh release create "$RELEASE_TAG" \
               --repo "${GITHUB_REPOSITORY}" \
               --title "Wunder 补充包（Win7 32 位 / Linux x86_64 / Linux ARM64）" \
-              --notes "本地补充包。在蛹设置中导入，或手动解压到 WUNDER_HOME（默认用户主目录 .wunder），蛹与舵机共用 Python、Git、rg、ffmpeg、Node 运行环境。" \
+              --notes "本地补充包。在蛹设置中导入，或手动解压到 WUNDER_HOME（默认用户主目录 .wunder），蛹与舵机共用 Python、Git、rg、ffmpeg 运行环境。" \
             --latest=false --target "${GITHUB_SHA}"
           fi
           find release-assets -type f -maxdepth 2 -print0 | while IFS= read -r -d '' asset; do

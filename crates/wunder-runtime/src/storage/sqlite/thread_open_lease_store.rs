@@ -281,12 +281,12 @@ mod tests {
         let dir = tempdir().expect("tempdir");
         let path = dir.path().join("running.db");
         let storage = SqliteStorage::new(path.to_string_lossy().to_string());
-        assert_eq!(
+        assert!(matches!(
             storage
                 .try_acquire_session_lock("thread", "user", "agent", 30.0, 8)
                 .expect("execution lock"),
-            crate::storage::SessionLockStatus::Acquired
-        );
+            crate::storage::SessionLockStatus::Acquired { .. }
+        ));
         assert_eq!(
             storage
                 .try_acquire_thread_open_lease("thread", "user", "instance", "desktop", 30.0)

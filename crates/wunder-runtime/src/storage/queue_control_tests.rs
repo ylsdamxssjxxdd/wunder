@@ -88,12 +88,13 @@ fn verify_queue_control(storage: &dyn StorageBackend) {
         "cancelled"
     );
 
-    assert_eq!(
-        storage
-            .try_acquire_session_lock("lock-a", "user-a", "agent-a", 60.0, 1)
-            .unwrap(),
-        SessionLockStatus::Acquired
-    );
+    let token_a = match storage
+        .try_acquire_session_lock("lock-a", "user-a", "agent-a", 60.0, 1)
+        .unwrap()
+    {
+        SessionLockStatus::Acquired { lock_token } => lock_token,
+        other => panic!("expected acquired, got {other:?}"),
+    };
     assert!(storage
         .set_session_lock_suspended("lock-a", true, 1)
         .unwrap());
@@ -103,20 +104,21 @@ fn verify_queue_control(storage: &dyn StorageBackend) {
             .unwrap(),
         SessionLockStatus::UserBusy
     );
-    assert_eq!(
-        storage
-            .try_acquire_session_lock("lock-b", "user-a", "agent-a", 60.0, 1)
-            .unwrap(),
-        SessionLockStatus::Acquired
-    );
+    let token_b = match storage
+        .try_acquire_session_lock("lock-b", "user-a", "agent-a", 60.0, 1)
+        .unwrap()
+    {
+        SessionLockStatus::Acquired { lock_token } => lock_token,
+        other => panic!("expected acquired, got {other:?}"),
+    };
     assert!(!storage
         .set_session_lock_suspended("lock-a", false, 1)
         .unwrap());
-    storage.release_session_lock("lock-b").unwrap();
+    storage.release_session_lock("lock-b", &token_b).unwrap();
     assert!(storage
         .set_session_lock_suspended("lock-a", false, 1)
         .unwrap());
-    storage.release_session_lock("lock-a").unwrap();
+    storage.release_session_lock("lock-a", &token_a).unwrap();
 }
 
 #[test]

@@ -53,6 +53,7 @@ def main():
     parser.add_argument("--ui", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--reasoning-only", action="store_true")
+    parser.add_argument("--models-only", action="store_true")
     args = parser.parse_args()
     import psutil
     output = args.output.resolve()
@@ -77,7 +78,7 @@ def main():
     peak = 0
     try:
         with (output / "process.log").open("wb") as log:
-            mode = "--native-reasoning-smoke" if args.reasoning_only else "--native-smoke"
+            mode = "--native-model-smoke" if args.models_only else "--native-reasoning-smoke" if args.reasoning_only else "--native-smoke"
             process = subprocess.Popen([str(args.ui.resolve()), mode, str(output)],
                                        stdout=log, stderr=subprocess.STDOUT,
                                        env=runtime_env,
@@ -102,7 +103,7 @@ def main():
         report = (output / "smoke.txt").read_text(encoding="utf-8") if (output / "smoke.txt").exists() else "missing report"
         if process.returncode != 0 or not report.startswith("PASS"):
             raise RuntimeError(report)
-        if args.reasoning_only:
+        if args.reasoning_only or args.models_only:
             print(report.strip())
             return
         metrics = json.loads((output / "stream-metrics.json").read_text())

@@ -57,9 +57,12 @@
           :title="resolveRowTitle(row)"
           role="treeitem"
           :aria-expanded="row.kind === 'dir' ? row.expanded : undefined"
+          :draggable="canDragWorkspacePath(row)"
           @click.stop="emit('activate', row)"
           @dblclick.stop="emit('open', row)"
           @contextmenu.prevent.stop="openMenu(row, $event)"
+          @dragstart="handleRowDragStart($event, row)"
+          @dragend="handleRowDragEnd"
         >
           <input
             v-if="selectionMode"
@@ -88,6 +91,7 @@
             :src="rowIconPath(row)"
             alt=""
             aria-hidden="true"
+            draggable="false"
           />
           <i v-else :class="['workspace-file-icon', rowIconClass(row)]" aria-hidden="true"></i>
           <span class="workspace-file-name">{{ row.name }}</span>
@@ -145,6 +149,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
 import { useI18n } from '@/i18n';
 import { loadWorkspaceThemeIconResolver } from '@/components/chat/workspaceIcons';
+import { clearWorkspaceDragPaths, setWorkspaceDragPaths } from '@/components/chat/workspaceDrag';
 import {
   WORKSPACE_ROW_HEIGHT,
   WORKSPACE_ROW_OVERSCAN,
@@ -215,6 +220,26 @@ const bottomSpacer = computed(() =>
 const rowsStyle = computed(() => ({ minHeight: `${props.rows.length * WORKSPACE_ROW_HEIGHT}px` }));
 
 const spacerStyle = (height: number) => ({ height: `${height}px` });
+
+const canDragWorkspacePath = (row: WorkspaceVisibleRow): boolean =>
+  !props.readOnly && !props.remote && row.kind !== 'more' && Boolean(row.path);
+
+const handleRowDragStart = (event: DragEvent, row: WorkspaceVisibleRow) => {
+  if (!canDragWorkspacePath(row)) {
+    event.preventDefault();
+    return;
+  }
+  const paths = setWorkspaceDragPaths(event.dataTransfer, [row.path]);
+  if (!paths.length) {
+    event.preventDefault();
+    return;
+  }
+  if (event.dataTransfer) event.dataTransfer.effectAllowed = 'copy';
+};
+
+const handleRowDragEnd = () => {
+  clearWorkspaceDragPaths();
+};
 
 let scrollFrame = 0;
 const handleScroll = () => {

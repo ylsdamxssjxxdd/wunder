@@ -10,7 +10,6 @@ source_docs:
   - crates/wunder-desktop/args.rs
   - crates/wunder-desktop/native.rs
   - crates/wunder-desktop/runtime.rs
-  - crates/wunder-runtime/src/services/desktop_runtime_recovery.rs
 updated_at: 2026-10-16
 ---
 

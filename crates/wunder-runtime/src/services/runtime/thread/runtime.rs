@@ -684,6 +684,20 @@ impl ThreadRuntime {
             .await
     }
 
+    /// 崩溃窗口孤儿受理的结算入口（桌面打开线程成功路径触发）。只把
+    /// 无存活会话锁、无存活任务的非终态受理落 interrupted；存活执行
+    /// 与排队任务不受影响。返回值是本轮结算的条数。
+    pub async fn settle_thread_orphans(&self, session_id: &str) -> Result<usize> {
+        let session_id = session_id.trim();
+        if session_id.is_empty() {
+            return Ok(0);
+        }
+        self.orchestrator
+            .committer
+            .settle_thread_orphans(session_id)
+            .await
+    }
+
     async fn cancel_session_activity_inner(
         &self,
         user_id: &str,
@@ -1298,10 +1312,18 @@ impl ThreadRuntime {
         }
         if let Some(record) = self.monitor.get_record(cleaned_session) {
             let status = record.get("status").and_then(Value::as_str).unwrap_or("");
-            if status == crate::monitor::MonitorState::STATUS_RUNNING
-                || status == crate::monitor::MonitorState::STATUS_CANCELLING
-                || status == crate::monitor::MonitorState::STATUS_QUEUED
+            // queued/waiting 合法地不持有会话锁，仍按监控记录判忙。
+            if status == crate::monitor::MonitorState::STATUS_QUEUED
                 || status == crate::monitor::MonitorState::STATUS_WAITING
+            {
+                return false;
+            }
+            // 崩溃残留的 running/cancelling 记录不再单独判忙：执行必持会话锁
+            //（orchestrator/execute.rs:224-233，TTL=120s 心跳 5s），锁活性是唯一
+            // 仲裁；干净收尾先标 finished 再删锁行，存活执行不会被误判空闲。
+            if (status == crate::monitor::MonitorState::STATUS_RUNNING
+                || status == crate::monitor::MonitorState::STATUS_CANCELLING)
+                && self.holds_session_lock(cleaned_user, cleaned_session).await
             {
                 return false;
             }
@@ -1328,15 +1350,19 @@ impl ThreadRuntime {
         if cleaned_user.is_empty() || cleaned_session.is_empty() {
             return false;
         }
+        let locked = self.holds_session_lock(cleaned_user, cleaned_session).await;
         if let Some(record) = self.monitor.get_record(cleaned_session) {
             let status = record.get("status").and_then(Value::as_str).unwrap_or("");
-            if status == crate::monitor::MonitorState::STATUS_RUNNING
-                || status == crate::monitor::MonitorState::STATUS_CANCELLING
+            // 崩溃残留的 running/cancelling 记录只在锁存活时作数：执行必持会话锁
+            //（orchestrator/execute.rs:224-233），无锁即残留，不得永久挡住派发。
+            if locked
+                && (status == crate::monitor::MonitorState::STATUS_RUNNING
+                    || status == crate::monitor::MonitorState::STATUS_CANCELLING)
             {
                 return false;
             }
         }
-        !self.holds_session_lock(cleaned_user, cleaned_session).await
+        !locked
     }
 
     /// Persist the completed queue item and wake display subscribers after
@@ -2692,5 +2718,53 @@ mod tests {
             "queued"
         );
         assert_eq!(durable_queue_status("queue_fail", Some("")), "failed");
+    }
+
+    #[tokio::test]
+    async fn stale_running_monitor_records_are_arbitrated_by_session_lock_liveness() {
+        use crate::state::{AppState, AppStateInitOptions};
+        let root = tempfile::tempdir().unwrap();
+        let mut config = crate::config::Config::default();
+        config.storage.backend = "sqlite".into();
+        config.storage.data_root = root.path().join("data").to_string_lossy().into_owned();
+        config.workspace.root = root.path().join("workspace").to_string_lossy().into_owned();
+        let store = ConfigStore::new(root.path().join("config.yaml"));
+        store
+            .update(|current| *current = config.clone())
+            .await
+            .unwrap();
+        let state = AppState::new_with_options(
+            store,
+            config,
+            AppStateInitOptions::cli_default().with_start_thread_runtime(false),
+        )
+        .unwrap();
+        let runtime = &state.kernel.thread_runtime;
+        let user = "fixture-user";
+        let session = "fixture-thread";
+        assert!(runtime.is_session_available_for_submit(user, session).await);
+        assert!(runtime.is_session_idle(user, session).await);
+        // 崩溃残留：监控记录停在 running，但没有任何存活会话锁。
+        state.monitor.mark_running(session, None);
+        assert!(
+            runtime.is_session_available_for_submit(user, session).await,
+            "无锁的 running 残留不得挡住提交"
+        );
+        assert!(runtime.is_session_idle(user, session).await);
+        // 存活执行：running 记录 + 存活会话锁 → 仍然判忙。
+        let acquired = state
+            .storage
+            .try_acquire_session_lock(session, user, "fixture-agent", 120.0, 8)
+            .unwrap();
+        assert!(matches!(
+            acquired,
+            crate::storage::SessionLockStatus::Acquired { .. }
+        ));
+        assert!(!runtime.is_session_available_for_submit(user, session).await);
+        assert!(!runtime.is_session_idle(user, session).await);
+        // 干净收尾删除锁行后，残留的 running 记录不再挡住派发。
+        state.storage.force_release_session_lock(session).unwrap();
+        assert!(runtime.is_session_available_for_submit(user, session).await);
+        assert!(runtime.is_session_idle(user, session).await);
     }
 }

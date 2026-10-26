@@ -92,6 +92,18 @@ impl ThreadLogCommitter {
         }
         Ok(accepted)
     }
+    /// 崩溃孤儿结算经同一线程的提交闸串行：与 accept_turn 不会并发改写
+    /// 同一线程的受理行。打开线程的成功路径调用；返回值是本轮结算的条数。
+    pub(crate) async fn settle_thread_orphans(&self, session: &str) -> Result<usize> {
+        let gate = self.gate(session)?;
+        let _gate = gate.lock().await;
+        let admissions = self.threads.admission_store()?;
+        let thread = session.to_owned();
+        blocking::run_db("thread_store.settle_orphans", move || {
+            admissions.settle_orphaned_turns(&thread)
+        })
+        .await
+    }
     pub(crate) async fn freeze_session(
         &self,
         user: &str,

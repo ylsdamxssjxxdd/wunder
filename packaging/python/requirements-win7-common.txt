@@ -1,8 +1,11 @@
+# AI生成
 # Slim Win7-friendly Python package set for Wunder Desktop supplement.
 # Focus: networking, tables/dataframes, office document IO, lightweight image IO,
 # database access, and static/HTML plotting (matplotlib, seaborn, pyecharts).
 
 aiosqlite==0.20.0
+# capstone: pinned 5.0.2. The ia32 Win7 supplement installs with
+# --only-binary=:all: on a 32-bit host, so pip selects the win32 wheel.
 capstone==5.0.2
 certifi==2024.8.30
 charset-normalizer==3.4.1
@@ -24,6 +27,7 @@ opencv-python-headless==4.5.5.64
 openpyxl==3.1.5
 packaging==26.0
 pandas==2.0.3
+pefile==2024.8.26
 pillow==10.4.0
 # Win7 uses the validated Playwright 1.40 line with the Chrome 109 supplement.
 # Its win32 wheel still carries an x64 driver/node.exe, so the supplement build

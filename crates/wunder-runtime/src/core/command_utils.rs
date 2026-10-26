@@ -117,61 +117,6 @@ pub fn shell_display_name(shell: &ShellLaunch) -> String {
     }
 }
 
-/// Derive the Git for Windows install root from a git executable path.
-/// Handles `<root>/cmd/git.exe`, `<root>/bin/git.exe` and
-/// `<root>/mingw32/bin/git.exe` layouts.
-#[cfg(windows)]
-fn git_install_root(git_bin: &Path) -> Option<PathBuf> {
-    let bin_dir = git_bin.parent()?;
-    let dir_name = bin_dir
-        .file_name()
-        .and_then(|value| value.to_str())
-        .map(|value| value.to_ascii_lowercase())
-        .unwrap_or_default();
-    if dir_name == "cmd" || dir_name == "bin" {
-        return bin_dir.parent().map(Path::to_path_buf);
-    }
-    // Layout <root>/mingw32/bin/git.exe (or mingw64).
-    let flave_dir = bin_dir.parent()?;
-    let flave_name = flave_dir
-        .file_name()
-        .and_then(|value| value.to_str())
-        .map(|value| value.to_ascii_lowercase())
-        .unwrap_or_default();
-    if flave_name == "mingw32" || flave_name == "mingw64" {
-        return flave_dir.parent().map(Path::to_path_buf);
-    }
-    bin_dir.parent().map(Path::to_path_buf)
-}
-
-/// Resolve the Git Bash launcher from a git executable: locate bash and the
-/// PATH directories carrying the POSIX toolchain. Returns None when the Git
-/// distribution does not ship bash (e.g. a bare MinGit).
-#[cfg(windows)]
-pub fn resolve_git_bash_shell(git_bin: &Path) -> Option<ShellLaunch> {
-    let git_root = git_install_root(git_bin)?;
-    let bash_bin = [
-        git_root.join("bin").join("bash.exe"),
-        git_root.join("usr").join("bin").join("bash.exe"),
-        git_root.join("usr").join("bin").join("sh.exe"),
-    ]
-    .into_iter()
-    .find(|candidate| candidate.is_file())?;
-    let path_dirs = [
-        git_root.join("usr").join("bin"),
-        git_root.join("mingw32").join("bin"),
-        git_root.join("cmd"),
-    ]
-    .into_iter()
-    .filter(|candidate| candidate.is_dir())
-    .collect::<Vec<_>>();
-    Some(ShellLaunch {
-        kind: ShellKind::Bash,
-        bash_bin: Some(bash_bin),
-        path_dirs,
-    })
-}
-
 /// Prefix bash commands with `set -o pipefail` so a failing middle stage of a
 /// pipeline propagates its exit code instead of being masked by the last
 /// command's success. Commands that already manage pipefail are kept as-is.

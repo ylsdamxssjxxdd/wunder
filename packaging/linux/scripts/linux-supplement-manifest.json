@@ -9,29 +9,7 @@
     "gitRoot": "opt/git",
     "rgRoot": "opt/rg",
     "ffmpegRoot": "opt/ffmpeg",
-    "nodeRoot": "opt/node",
     "browserRoot": "opt/browser"
-  },
-  "node": {
-    "version": "16.20.2",
-    "source": "nodejs.org Linux tarball",
-    "archives": {
-      "amd64": {
-        "fileName": "node-v16.20.2-linux-x64.tar.gz",
-        "url": "https://nodejs.org/dist/v16.20.2/node-v16.20.2-linux-x64.tar.gz",
-        "sha256": "c9193e6c414891694759febe846f4f023bf48410a6924a8b1520c46565859665",
-        "elfMachine": "x86-64"
-      },
-      "arm64": {
-        "fileName": "node-v16.20.2-linux-arm64.tar.gz",
-        "url": "https://nodejs.org/dist/v16.20.2/node-v16.20.2-linux-arm64.tar.gz",
-        "sha256": "b6945fcc9ad220386bb814bfae7137189fd17297f2959a744105e1bee006035a",
-        "elfMachine": "AArch64"
-      }
-    },
-    "notes": [
-      "opt/node is the general-purpose Node runtime exposed to command tools; both architectures share the same Node major as the desktops so agent command tools behave identically."
-    ]
   },
   "browser": {
     "name": "Chromium-family offline browser",
@@ -110,7 +88,8 @@
       "h5py",
       "seaborn",
       "pyecharts",
-      "playwright"
+      "playwright",
+      "pefile"
     ],
     "archives": {
       "amd64": {
@@ -198,24 +177,6 @@
     "gitRoot": "opt/git",
     "rgRoot": "opt/rg",
     "ffmpegRoot": "opt/ffmpeg",
-    "nodeRoot": "opt/node",
     "browserRoot": "opt/browser"
-  },
-  "r2": {
-    "version": "6.2.4",
-    "flavor": "radare2 hand-prepared archive",
-    "source": "radareorg/radare2",
-    "notes": [
-      "radare2 console disassembler toolkit, staged into opt/r2 so the runtime prepends opt/r2/bin to PATH.",
-      "No prebuilt Linux archive ships in the manifest: distro debs target newer glibc than Ubuntu 18.04 (official 6.x needs glibc 2.35). Feed a hand-prepared payload via WUNDER_SUPPLEMENT_R2_ARCHIVE: a static single-file r2 binary (staged as opt/r2/bin/radare2 with an r2 symlink) or a tarball/zip flattened into opt/r2 providing bin/radare2; without it the supplement ships without r2."
-    ],
-    "layout": {
-      "dest": "opt/r2",
-      "expectedExe": "bin/radare2"
-    },
-    "archives": {
-      "amd64": null,
-      "arm64": null
-    }
   }
 }

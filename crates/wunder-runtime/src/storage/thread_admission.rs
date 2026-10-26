@@ -111,6 +111,13 @@ pub(crate) struct TurnAdmissions {
     pool: super::sqlite_pool::SqlitePool,
 }
 
+/// 孤儿受理结算宽限：非终态受理行必须比桌面打开租约 TTL（15s，见
+/// wunder-desktop/native.rs LOCAL_THREAD_LEASE_TTL）更旧，才可能是
+/// “受理已提交、续程随进程死亡”的残留。存活执行持有会话锁，且领取→执行
+/// 交接会立即刷新受理行/任务行的更新时间（runtime.rs claim 后 update_turn），
+/// 宽限把这些存活交接排除在结算窗口之外。
+pub(crate) const ORPHAN_SETTLE_MARGIN_MS: i64 = 15_000;
+
 impl TurnAdmissions {
     pub fn open(root: &Path) -> Result<Self> {
         std::fs::create_dir_all(root)?;
@@ -519,6 +526,9 @@ impl TurnAdmissions {
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         self.check_owner_row(&tx, user, thread)?;
         Self::check_mutation(&tx, thread)?;
+        // 受理新输入前先结算本线程的崩溃孤儿（同一 Immediate 事务原子生效）：
+        // 重放命中孤儿行时客户端收到的 created:false 对应一个已终态化的轮次。
+        Self::settle_orphaned_turns_in_tx(&tx, thread, chrono::Utc::now().timestamp_millis())?;
         if let Some(lease) = input
             .get("local_open_lease")
             .filter(|value| !value.is_null())
@@ -586,6 +596,97 @@ impl TurnAdmissions {
         tx.execute("INSERT INTO canonical_turn_admissions(thread_id,turn_id,root_turn_id,user_round,client_message_id,status,input_json,created_at_ms,updated_at_ms) VALUES(?1,?2,?3,?4,?5,'accepted',?6,?7,?7)",params![thread,turn,root,round,client,body,now])?;
         tx.commit()?;
         Ok(json!({"turn_id":turn,"root_turn_id":root,"user_turn_index":round,"created":true}))
+    }
+
+    /// 崩溃窗口孤儿结算：受理已提交但排队/执行续程随进程死亡的非终态受理，
+    /// 在本线程无存活会话锁、无存活任务且超过宽限期后落 interrupted 终态。
+    /// 在调用方事务内执行；session_locks/agent_tasks 与受理行同库
+    ///（queue_1.sqlite），表尚不存在（队列 schema 未初始化）等价于无锁无任务。
+    /// input_json 保留：已物化的用户气泡内容不随结算丢失。
+    pub(crate) fn settle_orphaned_turns_in_tx(
+        conn: &Connection,
+        thread: &str,
+        now_ms: i64,
+    ) -> Result<usize> {
+        if thread.trim().is_empty() {
+            return Ok(0);
+        }
+        let now_s = now_ms as f64 / 1000.0;
+        if Self::queue_table_exists(conn, "session_locks")?
+            && conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM session_locks WHERE session_id=?1 AND expires_at>?2)",
+                params![thread, now_s],
+                |row| row.get::<_, bool>(0),
+            )?
+        {
+            // 有存活会话锁的线程仍有执行在推进，不是孤儿。
+            return Ok(0);
+        }
+        let stale_before_ms = now_ms - ORPHAN_SETTLE_MARGIN_MS;
+        let task_fresh_s = now_s - ORPHAN_SETTLE_MARGIN_MS as f64 / 1000.0;
+        let has_tasks = Self::queue_table_exists(conn, "agent_tasks")?;
+        let candidates = {
+            let mut stmt = conn.prepare(
+                "SELECT turn_id,control_json FROM canonical_turn_admissions
+                 WHERE thread_id=?1 AND status IN ('accepted','queued','running') AND updated_at_ms<?2",
+            )?;
+            let rows = stmt
+                .query_map(params![thread, stale_before_ms], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            rows
+        };
+        let mut settled = 0usize;
+        for (turn, control) in candidates {
+            if has_tasks {
+                // agent_tasks.thread_id 形如 thread_<session>；受理与任务的链接是
+                // request_payload.config_overrides.__thread_log_turn_id。
+                // pending/retry 会被派发；刚刷新的 running 处于领取→执行交接窗口，视为存活。
+                // 崩溃残留的 running 行更新时间停在崩溃时刻，宽限后不再挡住结算。
+                let blocked: bool = conn.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM agent_tasks
+                     WHERE thread_id=?1
+                       AND json_extract(request_payload,'$.config_overrides.__thread_log_turn_id')=?2
+                       AND (status IN ('pending','retry') OR (status='running' AND updated_at>?3)))",
+                    params![format!("thread_{thread}"), turn, task_fresh_s],
+                    |row| row.get(0),
+                )?;
+                if blocked {
+                    continue;
+                }
+            }
+            let control = bounded_control_json(
+                control.as_deref(),
+                "interrupted",
+                &json!({"stop_reason":"process_restart"}),
+            )?;
+            settled += conn.execute(
+                "UPDATE canonical_turn_admissions SET status='interrupted',control_json=?3,updated_at_ms=?4
+                 WHERE thread_id=?1 AND turn_id=?2 AND status IN ('accepted','queued','running')",
+                params![thread, turn, control, now_ms],
+            )?;
+        }
+        Ok(settled)
+    }
+
+    /// 崩溃孤儿结算入口：单个 Immediate 事务。桌面打开线程成功路径与
+    /// accept 事务内（见 accept）都会触发；重复调用幂等（终态行不再命中候选）。
+    pub fn settle_orphaned_turns(&self, thread: &str) -> Result<usize> {
+        let mut conn = self.connect()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let settled =
+            Self::settle_orphaned_turns_in_tx(&tx, thread, chrono::Utc::now().timestamp_millis())?;
+        tx.commit()?;
+        Ok(settled)
+    }
+
+    fn queue_table_exists(conn: &Connection, name: &str) -> Result<bool> {
+        Ok(conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1)",
+            [name],
+            |row| row.get(0),
+        )?)
     }
 
     /// Parking a fresh accepted submission is a state transition, not another
@@ -1062,5 +1163,340 @@ mod tests {
             admissions.turn("target", turn).unwrap().unwrap()["status"],
             "completed"
         );
+    }
+
+    fn queue_conn(root: &std::path::Path) -> rusqlite::Connection {
+        rusqlite::Connection::open(root.join("queue_1.sqlite")).unwrap()
+    }
+
+    fn apply_queue_schema(root: &std::path::Path) {
+        queue_conn(root)
+            .execute_batch(include_str!("sqlite/schema_queue.sql"))
+            .unwrap();
+    }
+
+    fn backdate_admission(root: &std::path::Path, thread: &str, turn: &str, age_ms: i64) {
+        let backdated = chrono::Utc::now().timestamp_millis() - age_ms;
+        queue_conn(root)
+            .execute(
+                "UPDATE canonical_turn_admissions SET updated_at_ms=?3 WHERE thread_id=?1 AND turn_id=?2",
+                rusqlite::params![thread, turn, backdated],
+            )
+            .unwrap();
+    }
+
+    fn insert_session_lock(root: &std::path::Path, session: &str, ttl_s: f64) {
+        apply_queue_schema(root);
+        let now = chrono::Utc::now().timestamp_millis() as f64 / 1000.0;
+        queue_conn(root)
+            .execute(
+                "INSERT OR REPLACE INTO session_locks(session_id,user_id,agent_id,lock_token,created_time,updated_time,expires_at)
+                 VALUES(?1,'fixture-user','','',?2,?2,?3)",
+                rusqlite::params![session, now, now + ttl_s],
+            )
+            .unwrap();
+    }
+
+    fn expire_session_locks(root: &std::path::Path) {
+        let past = chrono::Utc::now().timestamp_millis() as f64 / 1000.0 - 3600.0;
+        queue_conn(root)
+            .execute(
+                "UPDATE session_locks SET expires_at=?1",
+                rusqlite::params![past],
+            )
+            .unwrap();
+    }
+
+    fn insert_agent_task(root: &std::path::Path, task_id: &str, session: &str, turn: &str, status: &str, age_s: f64) {
+        apply_queue_schema(root);
+        let now = chrono::Utc::now().timestamp_millis() as f64 / 1000.0;
+        let payload = serde_json::json!({"config_overrides":{"__thread_log_turn_id":turn}})
+            .to_string();
+        queue_conn(root)
+            .execute(
+                "INSERT INTO agent_tasks(task_id,thread_id,user_id,session_id,status,request_payload,retry_at,created_at,updated_at)
+                 VALUES(?1,?2,'fixture-user',?3,?4,?5,?6,?6,?7)",
+                rusqlite::params![
+                    task_id,
+                    format!("thread_{session}"),
+                    session,
+                    status,
+                    payload,
+                    now,
+                    now - age_s
+                ],
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn concurrent_duplicate_accepts_share_one_round_and_one_row() {
+        let root = tempfile::tempdir().unwrap();
+        // 两个实例共享同一 queue_1.sqlite，等价两个本地进程并发受理同键消息。
+        let first = TurnAdmissions::open(root.path()).unwrap();
+        let second = TurnAdmissions::open(root.path()).unwrap();
+        let input = serde_json::json!({"content":"sample","client_message_id":"msg-dup"});
+        let mut handles = Vec::new();
+        for admissions in [first.clone(), second.clone()] {
+            let input = input.clone();
+            handles.push(std::thread::spawn(move || {
+                (0..8)
+                    .map(|_| {
+                        admissions
+                            .accept("fixture-user", "fixture-thread", &input)
+                            .unwrap()
+                    })
+                    .collect::<Vec<_>>()
+            }));
+        }
+        let results: Vec<_> = handles
+            .into_iter()
+            .flat_map(|handle| handle.join().unwrap())
+            .collect();
+        assert_eq!(results.len(), 16);
+        assert_eq!(
+            results
+                .iter()
+                .filter(|accepted| accepted["created"] == true)
+                .count(),
+            1,
+            "同键并发受理只创建一次"
+        );
+        let turn = results[0]["turn_id"].as_str().unwrap();
+        assert!(results
+            .iter()
+            .all(|accepted| accepted["turn_id"] == turn && accepted["user_turn_index"] == 1));
+        let store = TurnAdmissions::open(root.path()).unwrap();
+        assert_eq!(store.latest_round("fixture-thread").unwrap(), 1);
+        let rows: i64 = queue_conn(root.path())
+            .query_row(
+                "SELECT COUNT(*) FROM canonical_turn_admissions WHERE thread_id='fixture-thread'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(rows, 1);
+    }
+
+    #[test]
+    fn replay_after_lost_response_returns_first_identity_without_new_round() {
+        let root = tempfile::tempdir().unwrap();
+        let admissions = TurnAdmissions::open(root.path()).unwrap();
+        let input = serde_json::json!({"content":"sample","client_message_id":"msg-retry"});
+        let accepted = admissions
+            .accept("fixture-user", "fixture-thread", &input)
+            .unwrap();
+        assert_eq!(accepted["created"], true);
+        // 客户端没收到受理结论（响应丢失）后重发同键。
+        let replay = admissions
+            .accept("fixture-user", "fixture-thread", &input)
+            .unwrap();
+        assert_eq!(replay["created"], false);
+        assert_eq!(replay["turn_id"], accepted["turn_id"]);
+        assert_eq!(replay["user_turn_index"], 1);
+        assert_eq!(admissions.latest_round("fixture-thread").unwrap(), 1);
+        let turn = accepted["turn_id"].as_str().unwrap();
+        assert_eq!(
+            admissions.pending("fixture-thread", turn).unwrap(),
+            Some(serde_json::json!({"content":"sample","client_message_id":"msg-retry"}))
+        );
+    }
+
+    #[test]
+    fn same_key_with_altered_content_keeps_the_first_write() {
+        let root = tempfile::tempdir().unwrap();
+        let admissions = TurnAdmissions::open(root.path()).unwrap();
+        let first = serde_json::json!({"content":"first","client_message_id":"msg-alter"});
+        let accepted = admissions
+            .accept("fixture-user", "fixture-thread", &first)
+            .unwrap();
+        let altered = serde_json::json!({"content":"altered","client_message_id":"msg-alter"});
+        let replay = admissions
+            .accept("fixture-user", "fixture-thread", &altered)
+            .unwrap();
+        assert_eq!(replay["created"], false);
+        let turn = accepted["turn_id"].as_str().unwrap();
+        // 先写者胜且可观察：存储正文不被替换。
+        assert_eq!(
+            admissions.pending("fixture-thread", turn).unwrap(),
+            Some(first)
+        );
+        assert_eq!(admissions.latest_round("fixture-thread").unwrap(), 1);
+    }
+
+    #[test]
+    fn restart_settles_crash_window_orphan_and_keeps_dedup_identity() {
+        let root = tempfile::tempdir().unwrap();
+        let admissions = TurnAdmissions::open(root.path()).unwrap();
+        let input = serde_json::json!({"content":"sample","client_message_id":"msg-orphan"});
+        let accepted = admissions
+            .accept("fixture-user", "fixture-thread", &input)
+            .unwrap();
+        let turn = accepted["turn_id"].as_str().unwrap().to_string();
+        // 崩溃窗口：受理已提交但进程在排队/执行前死亡。受理行时间停在崩溃时刻。
+        backdate_admission(root.path(), "fixture-thread", &turn, 60_000);
+        // 重启：新实例重开同一数据目录后结算。
+        let reopened = TurnAdmissions::open(root.path()).unwrap();
+        assert_eq!(reopened.settle_orphaned_turns("fixture-thread").unwrap(), 1);
+        let settled = reopened
+            .turn("fixture-thread", &turn)
+            .unwrap()
+            .unwrap();
+        assert_eq!(settled["status"], "interrupted");
+        assert_eq!(settled["stop_reason"], "process_restart");
+        // input_json 保留：已物化的用户气泡内容不随结算丢失。
+        assert_eq!(
+            reopened.pending("fixture-thread", &turn).unwrap(),
+            Some(input.clone())
+        );
+        // 重复结算幂等。
+        assert_eq!(reopened.settle_orphaned_turns("fixture-thread").unwrap(), 0);
+        // 宽限期保护：新鲜的非终态受理不被结算。
+        let fresh = reopened
+            .accept(
+                "fixture-user",
+                "fixture-thread",
+                &serde_json::json!({"content":"later","client_message_id":"msg-fresh"}),
+            )
+            .unwrap();
+        let fresh_turn = fresh["turn_id"].as_str().unwrap().to_string();
+        assert_eq!(reopened.settle_orphaned_turns("fixture-thread").unwrap(), 0);
+        assert_eq!(
+            reopened
+                .turn("fixture-thread", &fresh_turn)
+                .unwrap()
+                .unwrap()["status"],
+            "accepted"
+        );
+        // 轮次分配不因结算改变。
+        assert_eq!(reopened.latest_round("fixture-thread").unwrap(), 2);
+        // 响应丢失后的同键重发仍命中去重，返回已终态化的首轮身份。
+        let replay = reopened
+            .accept("fixture-user", "fixture-thread", &input)
+            .unwrap();
+        assert_eq!(replay["created"], false);
+        assert_eq!(replay["turn_id"].as_str().unwrap(), turn);
+        assert_eq!(reopened.latest_round("fixture-thread").unwrap(), 2);
+    }
+
+    #[test]
+    fn settle_respects_live_lock_and_live_or_unrelated_tasks() {
+        let root = tempfile::tempdir().unwrap();
+        let admissions = TurnAdmissions::open(root.path()).unwrap();
+        let accepted = admissions
+            .accept(
+                "fixture-user",
+                "fixture-thread",
+                &serde_json::json!({"content":"sample","client_message_id":"msg-guard"}),
+            )
+            .unwrap();
+        let turn = accepted["turn_id"].as_str().unwrap().to_string();
+        backdate_admission(root.path(), "fixture-thread", &turn, 60_000);
+        // 存活会话锁：执行仍在推进，不结算。
+        insert_session_lock(root.path(), "fixture-thread", 120.0);
+        assert_eq!(admissions.settle_orphaned_turns("fixture-thread").unwrap(), 0);
+        assert_eq!(
+            admissions
+                .turn("fixture-thread", &turn)
+                .unwrap()
+                .unwrap()["status"],
+            "accepted"
+        );
+        // 锁行过期（崩溃后心跳停止）后结算生效。
+        expire_session_locks(root.path());
+        // 但一个 pending 任务仍会驱动该轮，挡住结算。
+        insert_agent_task(root.path(), "task-guard-1", "fixture-thread", &turn, "pending", 60.0);
+        assert_eq!(admissions.settle_orphaned_turns("fixture-thread").unwrap(), 0);
+        // 刚领取的 running 任务（领取→执行交接窗口）同样挡住。
+        queue_conn(root.path())
+            .execute(
+                "UPDATE agent_tasks SET status='running', updated_at=?1",
+                rusqlite::params![chrono::Utc::now().timestamp_millis() as f64 / 1000.0],
+            )
+            .unwrap();
+        assert_eq!(admissions.settle_orphaned_turns("fixture-thread").unwrap(), 0);
+        // 崩溃残留的 running 行（更新时间停在宽限期之前）不再挡住。
+        queue_conn(root.path())
+            .execute(
+                "UPDATE agent_tasks SET updated_at=?1",
+                rusqlite::params![chrono::Utc::now().timestamp_millis() as f64 / 1000.0 - 60.0],
+            )
+            .unwrap();
+        assert_eq!(admissions.settle_orphaned_turns("fixture-thread").unwrap(), 1);
+        assert_eq!(
+            admissions
+                .turn("fixture-thread", &turn)
+                .unwrap()
+                .unwrap()["status"],
+            "interrupted"
+        );
+        // 链接到其他轮次的任务不影响本轮之外的结算语义：新孤儿照常结算。
+        let other = admissions
+            .accept(
+                "fixture-user",
+                "fixture-thread",
+                &serde_json::json!({"content":"later","client_message_id":"msg-other"}),
+            )
+            .unwrap();
+        let other_turn = other["turn_id"].as_str().unwrap().to_string();
+        backdate_admission(root.path(), "fixture-thread", &other_turn, 60_000);
+        insert_agent_task(root.path(), "task-guard-2", "fixture-thread", &turn, "pending", 0.0);
+        assert_eq!(admissions.settle_orphaned_turns("fixture-thread").unwrap(), 1);
+        assert_eq!(
+            admissions
+                .turn("fixture-thread", &other_turn)
+                .unwrap()
+                .unwrap()["status"],
+            "interrupted"
+        );
+        // 终态行永远不会被结算改动。
+        backdate_admission(root.path(), "fixture-thread", &turn, 120_000);
+        let terminal_before = admissions
+            .turn("fixture-thread", &turn)
+            .unwrap()
+            .unwrap();
+        assert_eq!(admissions.settle_orphaned_turns("fixture-thread").unwrap(), 0);
+        assert_eq!(
+            admissions
+                .turn("fixture-thread", &turn)
+                .unwrap()
+                .unwrap(),
+            terminal_before
+        );
+    }
+
+    #[test]
+    fn settle_inside_accept_is_atomic_with_dedup() {
+        let root = tempfile::tempdir().unwrap();
+        let admissions = TurnAdmissions::open(root.path()).unwrap();
+        let input = serde_json::json!({"content":"sample","client_message_id":"msg-atomic"});
+        let accepted = admissions
+            .accept("fixture-user", "fixture-thread", &input)
+            .unwrap();
+        let turn = accepted["turn_id"].as_str().unwrap().to_string();
+        backdate_admission(root.path(), "fixture-thread", &turn, 60_000);
+        // accept 事务内先结算孤儿再查重：新键受理成功后，孤儿已是 interrupted，
+        // 同键重放命中的是终态行。
+        let next = admissions
+            .accept(
+                "fixture-user",
+                "fixture-thread",
+                &serde_json::json!({"content":"next","client_message_id":"msg-next"}),
+            )
+            .unwrap();
+        assert_eq!(next["created"], true);
+        assert_eq!(next["user_turn_index"], 2);
+        assert_eq!(
+            admissions
+                .turn("fixture-thread", &turn)
+                .unwrap()
+                .unwrap()["status"],
+            "interrupted"
+        );
+        let replay = admissions
+            .accept("fixture-user", "fixture-thread", &input)
+            .unwrap();
+        assert_eq!(replay["created"], false);
+        assert_eq!(replay["user_turn_index"], 1);
     }
 }

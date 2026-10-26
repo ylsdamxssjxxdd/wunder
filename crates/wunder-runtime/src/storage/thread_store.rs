@@ -1893,8 +1893,6 @@ impl LocalThreadStore {
             RolloutRecorder::create(self.root.as_path(), target.to_string(), rollout.to_string())
                 .map_err(unavailable)?;
         let descriptor = recorder.descriptor().clone();
-        self.insert_thread_metadata(&metadata, &descriptor, Some(history_base.clone()))
-            .await?;
         let target_meta = SessionMeta {
             thread_id: target.clone(),
             rollout_id: rollout.clone(),
@@ -1906,6 +1904,8 @@ impl LocalThreadStore {
             history_base: Some(history_base.clone()),
             capabilities: source_meta.capabilities,
         };
+        // File-first, matching create_thread: an interrupted fork leaves only
+        // an unreferenced orphan file, never a cataloged target without a head.
         let result = recorder
             .append_records(vec![RolloutRecord {
                 timestamp_ms: now,
@@ -1922,7 +1922,17 @@ impl LocalThreadStore {
                 return Err(error);
             }
         };
-        shutdown.map_err(unavailable)?;
+        if let Err(error) = shutdown.map_err(unavailable) {
+            self.compensate_new_thread(&metadata, &descriptor).await;
+            return Err(error);
+        }
+        if let Err(error) = self
+            .insert_thread_metadata(&metadata, &descriptor, Some(history_base.clone()))
+            .await
+        {
+            self.compensate_new_thread(&metadata, &descriptor).await;
+            return Err(error);
+        }
         let target_stored = StoredThread {
             metadata: metadata.clone(),
             descriptor: descriptor.clone(),
@@ -2003,6 +2013,37 @@ impl LocalThreadStore {
             tracing::error!(%error,"failed to compensate newly created thread");
         }
     }
+
+    /// Compensation for an interrupted create, which never owns admission
+    /// rows. Every step is idempotent: catalog deletes no-op when the row was
+    /// never published and file removal tolerates a missing representation.
+    async fn compensate_new_thread_head(
+        &self,
+        metadata: &ThreadMetadata,
+        descriptor: &RolloutDescriptor,
+    ) {
+        let path = self.state_pool.clone();
+        let history = self.history.clone();
+        let rollout = descriptor.rollout_id.clone();
+        let descriptor = descriptor.clone();
+        let thread = metadata.thread_id.clone();
+        if let Err(error) = db(move || {
+            connect(&path)?.execute(
+                "DELETE FROM canonical_threads WHERE thread_id=?1",
+                [thread.as_str()],
+            )?;
+            connect(&path)?.execute(
+                "DELETE FROM canonical_rollouts WHERE rollout_id=?1",
+                [rollout.as_str()],
+            )?;
+            history.delete_rollout(rollout.as_str())?;
+            rollout_compression::remove_rollout_representations(&descriptor.path)
+        })
+        .await
+        {
+            tracing::error!(%error,"failed to compensate thread creation");
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -2034,8 +2075,9 @@ impl ThreadMetadataStore for LocalThreadStore {
         )
         .map_err(unavailable)?;
         let descriptor = recorder.descriptor().clone();
-        self.insert_thread_metadata(&request.metadata, &descriptor, None)
-            .await?;
+        // The SessionMeta head is durable before the catalog row exists. A
+        // crash between the two commits leaves only an unreferenced orphan
+        // file, never a cataloged thread whose rollout was never created.
         // Creation is an explicit history mutation. An empty directory listing
         // never calls this path or materializes a rollout.
         let result = recorder
@@ -2049,30 +2091,19 @@ impl ThreadMetadataStore for LocalThreadStore {
         let receipt = match result {
             Ok(receipt) => receipt,
             Err(error) => {
-                let path = self.state_pool.clone();
-                let history = self.history.clone();
-                let rollout = request.metadata.current_rollout_id.clone();
-                let descriptor = descriptor.clone();
-                let thread = request.metadata.thread_id.clone();
-                if let Err(cleanup) = db(move || {
-                    connect(&path)?.execute(
-                        "DELETE FROM canonical_threads WHERE thread_id=?1",
-                        [thread.as_str()],
-                    )?;
-                    connect(&path)?.execute(
-                        "DELETE FROM canonical_rollouts WHERE rollout_id=?1",
-                        [rollout.as_str()],
-                    )?;
-                    history.delete_rollout(rollout.as_str())?;
-                    rollout_compression::remove_rollout_representations(&descriptor.path)
-                })
-                .await
-                {
-                    tracing::error!(%cleanup,"failed to compensate thread creation after rollout append error");
-                }
+                self.compensate_new_thread_head(&request.metadata, &descriptor)
+                    .await;
                 return Err(unavailable(error));
             }
         };
+        if let Err(error) = self
+            .insert_thread_metadata(&request.metadata, &descriptor, None)
+            .await
+        {
+            self.compensate_new_thread_head(&request.metadata, &descriptor)
+                .await;
+            return Err(error);
+        }
         let stored = StoredThread {
             metadata: request.metadata.clone(),
             descriptor,
@@ -2202,6 +2233,25 @@ impl ThreadStore for LocalThreadStore {
         if stored.metadata.status == ThreadStatus::Archived {
             return Err(ThreadStoreError::Conflict {
                 message: "cannot append to an archived thread".into(),
+            });
+        }
+        // A catalog row is published only after its rollout's SessionMeta head
+        // is durable (file-first create/fork; revert prepares the suffix before
+        // switching the root). A missing rollout representation therefore means
+        // an interrupted legacy create or an external deletion; appending here
+        // would manufacture a headless history whose first record is not
+        // SessionMeta (the writer only validates a SessionMeta first record).
+        let rollout_path = stored.descriptor.path.clone();
+        let root = self.root.clone();
+        let rollout_exists = blocking::run_fs("thread_store.rollout_exists", move || {
+            let path = checked_rollout_path(&root, &rollout_path)?;
+            Ok(path.try_exists()? || rollout_compression::compressed_path(&path).try_exists()?)
+        })
+        .await
+        .map_err(unavailable)?;
+        if !rollout_exists {
+            return Err(ThreadStoreError::CorruptHistory {
+                message: "thread catalog references a rollout that was never created".into(),
             });
         }
         let writer = self.active_writer(&stored).await?;
@@ -4348,5 +4398,229 @@ mod stress_batch_tests {
         assert!(admissions
             .register_owner("user-b", "thread-sample")
             .is_err());
+    }
+
+    #[tokio::test]
+    async fn create_interrupted_after_head_write_leaves_orphan_and_retry_succeeds() {
+        let root = tempfile::tempdir().unwrap();
+        let store = LocalThreadStore::open(root.path()).unwrap();
+        let thread = ThreadId::new("fv03-retry-create").unwrap();
+        let crashed_rollout = RolloutId::new(uuid::Uuid::new_v4().to_string()).unwrap();
+        let now = Utc::now().timestamp_millis();
+        // Simulate the file-first create crashing after the SessionMeta head
+        // write but before the catalog commit.
+        let recorder = RolloutRecorder::create(
+            store.root(),
+            thread.to_string(),
+            crashed_rollout.to_string(),
+        )
+        .unwrap();
+        let orphan_path = recorder.descriptor().path.clone();
+        recorder
+            .append_records(vec![RolloutRecord {
+                timestamp_ms: now,
+                ordinal: 0,
+                record: CanonicalRecord::SessionMeta(SessionMeta {
+                    thread_id: thread.clone(),
+                    rollout_id: crashed_rollout,
+                    created_at_ms: now,
+                    source: "fv03".into(),
+                    initial_system_prompt: "synthetic prompt".into(),
+                    initial_memory: None,
+                    parent_thread_id: None,
+                    history_base: None,
+                    capabilities: json!({}),
+                }),
+            }])
+            .await
+            .unwrap();
+        recorder.shutdown().await.unwrap();
+        assert!(orphan_path.exists());
+        // The catalog was never published: the thread is absent for readers.
+        assert!(matches!(
+            store.get_thread(&thread).await.unwrap_err(),
+            ThreadStoreError::NotFound { .. }
+        ));
+        // A retry with a fresh rollout id succeeds, unaffected by the orphan.
+        let rollout = RolloutId::new(uuid::Uuid::new_v4().to_string()).unwrap();
+        let now = Utc::now().timestamp_millis();
+        store
+            .create_thread(CreateThreadRequest {
+                metadata: ThreadMetadata {
+                    thread_id: thread.clone(),
+                    current_rollout_id: rollout.clone(),
+                    status: ThreadStatus::Active,
+                    created_at_ms: now,
+                    updated_at_ms: now,
+                    title: Some("fv03".into()),
+                    workspace_id: None,
+                    pinned: false,
+                },
+                session_meta: SessionMeta {
+                    thread_id: thread.clone(),
+                    rollout_id: rollout.clone(),
+                    created_at_ms: now,
+                    source: "fv03".into(),
+                    initial_system_prompt: "synthetic prompt".into(),
+                    initial_memory: None,
+                    parent_thread_id: None,
+                    history_base: None,
+                    capabilities: json!({}),
+                },
+            })
+            .await
+            .unwrap();
+        let meta = store.session_meta(&thread).await.unwrap();
+        assert_eq!(meta.rollout_id, rollout);
+        // Appends continue after the durable SessionMeta head.
+        store
+            .append_canonical(
+                &thread,
+                vec![CanonicalRecord::Event(CanonicalEvent::TurnCompleted {
+                    turn_id: TurnId::new("fv03-turn").unwrap(),
+                    completed_at_ms: now,
+                })],
+            )
+            .await
+            .unwrap();
+        // The orphan stays on disk, unreferenced by the lineage catalog.
+        assert!(orphan_path.exists());
+        let segments = store.lineage_segments(&thread).await.unwrap();
+        assert_eq!(segments.len(), 1);
+        assert_ne!(segments[0].path, orphan_path);
+    }
+
+    #[tokio::test]
+    async fn catalog_row_without_rollout_file_is_detected_and_append_rejected() {
+        let root = tempfile::tempdir().unwrap();
+        let store = LocalThreadStore::open(root.path()).unwrap();
+        let thread = ThreadId::new("fv03-legacy-broken").unwrap();
+        let rollout = RolloutId::new(uuid::Uuid::new_v4().to_string()).unwrap();
+        let now = Utc::now().timestamp_millis();
+        let metadata = ThreadMetadata {
+            thread_id: thread.clone(),
+            current_rollout_id: rollout.clone(),
+            status: ThreadStatus::Active,
+            created_at_ms: now,
+            updated_at_ms: now,
+            title: Some("fv03".into()),
+            workspace_id: None,
+            pinned: false,
+        };
+        // Recreate the pre-fix crash outcome directly: the catalog row was
+        // committed but the rollout file was never written.
+        let recorder =
+            RolloutRecorder::create(store.root(), thread.to_string(), rollout.to_string())
+                .unwrap();
+        let descriptor = recorder.descriptor().clone();
+        drop(recorder);
+        store
+            .insert_thread_metadata(&metadata, &descriptor, None)
+            .await
+            .unwrap();
+        assert!(!descriptor.path.exists());
+        // Reads report the missing head instead of manufacturing content.
+        assert!(store.session_meta(&thread).await.is_err());
+        // Appends are rejected instead of silently writing a headless rollout.
+        let error = store
+            .append_canonical(
+                &thread,
+                vec![CanonicalRecord::Event(CanonicalEvent::TurnCompleted {
+                    turn_id: TurnId::new("fv03-turn").unwrap(),
+                    completed_at_ms: now,
+                })],
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(error, ThreadStoreError::CorruptHistory { .. }));
+        assert!(!descriptor.path.exists());
+        // The interrupted thread stays deletable for explicit cleanup.
+        store.delete_thread(&thread).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn fork_interrupted_after_head_write_leaves_orphan_and_retry_succeeds() {
+        let root = tempfile::tempdir().unwrap();
+        let store = LocalThreadStore::open(root.path()).unwrap();
+        let spec = super::super::stress_model::StressThreadSpec {
+            session_id: "fv03-fork-source".into(),
+            title: "sample".into(),
+            workspace_id: None,
+            user_rounds: 1,
+            model_rounds_per_turn: 1,
+            seed: None,
+            scenario: crate::storage::StressThreadScenario::Complex,
+        };
+        store
+            .generate_stress_thread("user-fv03", &spec, |_, _| {})
+            .await
+            .unwrap();
+        let source = ThreadId::new(spec.session_id.clone()).unwrap();
+        let target = ThreadId::new("fv03-fork-target").unwrap();
+        let turns = store
+            .list_turns(TurnListQuery {
+                thread_id: source.clone(),
+                cursor: None,
+                limit: 10,
+            })
+            .await
+            .unwrap();
+        let turn = turns
+            .entries
+            .iter()
+            .min_by_key(|entry| entry.rollout_ordinal)
+            .unwrap()
+            .turn_id
+            .clone();
+        // Simulate the file-first fork crashing after the target head write
+        // but before the catalog commit.
+        let segments = store.lineage_segments(&source).await.unwrap();
+        let base = find_completed_turn_boundary(&segments, &turn).unwrap();
+        let crashed_rollout = RolloutId::new(uuid::Uuid::new_v4().to_string()).unwrap();
+        let source_meta = store.session_meta(&source).await.unwrap();
+        let recorder = RolloutRecorder::create(
+            store.root(),
+            target.to_string(),
+            crashed_rollout.to_string(),
+        )
+        .unwrap();
+        let orphan_path = recorder.descriptor().path.clone();
+        let now = Utc::now().timestamp_millis();
+        recorder
+            .append_records(vec![RolloutRecord {
+                timestamp_ms: now,
+                ordinal: base.end_ordinal_exclusive,
+                record: CanonicalRecord::SessionMeta(SessionMeta {
+                    thread_id: target.clone(),
+                    rollout_id: crashed_rollout,
+                    created_at_ms: now,
+                    source: source_meta.source.clone(),
+                    initial_system_prompt: source_meta.initial_system_prompt.clone(),
+                    initial_memory: source_meta.initial_memory.clone(),
+                    parent_thread_id: Some(source.clone()),
+                    history_base: Some(base),
+                    capabilities: source_meta.capabilities.clone(),
+                }),
+            }])
+            .await
+            .unwrap();
+        recorder.shutdown().await.unwrap();
+        assert!(orphan_path.exists());
+        assert!(matches!(
+            store.get_thread(&target).await.unwrap_err(),
+            ThreadStoreError::NotFound { .. }
+        ));
+        // The retry through the public fork path succeeds and ignores the orphan.
+        store
+            .fork_through_turn(&source, &target, &turn)
+            .await
+            .unwrap();
+        let meta = store.session_meta(&target).await.unwrap();
+        assert_eq!(
+            meta.history_base.as_ref().unwrap().rollout_id,
+            store.get_thread(&source).await.unwrap().current_rollout_id
+        );
+        assert_eq!(store.lineage_segments(&target).await.unwrap().len(), 2);
+        assert!(orphan_path.exists());
     }
 }

@@ -649,6 +649,21 @@ impl NativeDesktop {
         })
     }
 
+    /// 打开线程成功后顺手结算崩溃孤儿受理（无存活锁与任务的非终态受理落
+    /// interrupted）。结算失败不阻断打开：下一次打开或提交仍会重试，
+    /// accept 事务内也有同一结算兜底。
+    fn settle_orphans_best_effort(&self, session_id: &str) {
+        if let Err(error) = self.runtime.block_on(
+            self.desktop
+                .state
+                .kernel
+                .thread_runtime
+                .settle_thread_orphans(session_id),
+        ) {
+            tracing::warn!(%error, session_id, "settle orphaned turns failed");
+        }
+    }
+
     fn ensure_thread_open(&self, session_id: &str) -> Result<()> {
         let session_id = session_id.trim();
         anyhow::ensure!(!session_id.is_empty(), "线程不存在");
@@ -691,6 +706,7 @@ impl NativeDesktop {
                     confirmed.insert(session_id.to_string(), Instant::now());
                 }
                 self.mark_thread_lease_used(session_id);
+                self.settle_orphans_best_effort(session_id);
                 return Ok(());
             }
             let mut leases = self
@@ -726,6 +742,7 @@ impl NativeDesktop {
                     confirmed.insert(session_id.to_string(), Instant::now());
                 }
                 self.mark_thread_lease_used(session_id);
+                self.settle_orphans_best_effort(session_id);
                 Ok(())
             }
             ThreadOpenLeaseStatus::Busy => Err(anyhow!(
@@ -1554,11 +1571,10 @@ impl NativeDesktop {
         ))
     }
 
-    /// Open a terminal at the active workspace. The bundled Git Bash is used
-    /// when present; a Windows system terminal is the reliable fallback for
-    /// installations without the optional Git supplement. Both launch paths
-    /// inherit the same augmented PATH so the local CLI and desktop commands
-    /// are immediately available alongside bundled tools.
+    /// Open a terminal at the active workspace. A system terminal is the only
+    /// launcher: the supplement no longer ships Git Bash, and the same
+    /// augmented PATH is applied so the local CLI and desktop commands are
+    /// immediately available alongside bundled tools.
     pub fn launch_terminal(&self, workspace_root: &str) -> Result<(), String> {
         let roots = wunder_server::local_bootstrap::supplement::roots(
             &self.desktop.wunder_home,
@@ -1575,18 +1591,6 @@ impl NativeDesktop {
         };
         let child_path = terminal_child_path(&roots, &self.desktop.app_dir)
             .map_err(|error| format!("构造终端 PATH 失败: {error}"))?;
-        if let Some(git_bash) = roots
-            .iter()
-            .map(|root| root.join("opt/git/git-bash.exe"))
-            .find(|path| path.is_file())
-        {
-            std::process::Command::new(git_bash)
-                .current_dir(&workdir)
-                .env("PATH", &child_path)
-                .spawn()
-                .map_err(|error| format!("启动终端失败: {error}"))?;
-            return Ok(());
-        }
 
         #[cfg(windows)]
         {
@@ -1618,7 +1622,8 @@ impl NativeDesktop {
         Ok(())
     }
 
-    /// Compatibility alias for native callers built against the former name.
+    /// Compatibility alias for native callers built against the former name;
+    /// it opens the same system terminal as `launch_terminal`.
     pub fn launch_git_bash(&self, workspace_root: &str) -> Result<(), String> {
         self.launch_terminal(workspace_root)
     }

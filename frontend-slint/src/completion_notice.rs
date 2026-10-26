@@ -16,6 +16,10 @@ use std::time::Duration;
 const SHOW_DURATION: Duration = Duration::from_secs(4);
 /// Right/bottom margin from the work-area edge, matching the tray notice.
 const SCREEN_MARGIN: f64 = 24.0;
+/// Card corner radius in logical pixels, mirroring `Theme.radius-md` in
+/// `ui/completion-notice.slint`. The window region has to match the card or the
+/// clipped silhouette and the painted border disagree at the corners.
+const CARD_RADIUS: f64 = 10.0;
 
 thread_local! {
     /// Last observed runtime kind per session, the desktop counterpart of the
@@ -150,6 +154,7 @@ fn show(app: &MainWindow, session: &str, agent_name: &str) {
     notice.set_notice_body(body.into());
     OPEN_SESSION.with(|cell| *cell.borrow_mut() = session.to_string());
     let _ = notice.show();
+    shape_notice(&notice);
     position_above_taskbar(&notice);
     let hide_weak = notice.as_weak();
     HIDE_TIMER.with(|timer| {
@@ -194,6 +199,10 @@ fn position_above_taskbar(notice: &CompletionNotice) {
     let weak = notice.as_weak();
     slint::Timer::single_shot(Duration::from_millis(50), move || {
         let Some(notice) = weak.upgrade() else { return };
+        // The client rect only exists once the window is mapped, so the rounded
+        // silhouette is (re)applied here; `show()` already tried it eagerly to
+        // keep the first frames from showing square corners.
+        shape_notice(&notice);
         let Some(area) = crate::pet_window::work_area() else {
             return;
         };
@@ -211,6 +220,14 @@ fn position_above_taskbar(notice: &CompletionNotice) {
                 x, y,
             )));
     });
+}
+
+/// Match the native window silhouette to the card's rounded corners. The
+/// software renderer cannot composite the transparent corner pixels, so without
+/// the region they reach the desktop as black notches.
+fn shape_notice(notice: &CompletionNotice) {
+    let scale = f64::from(notice.window().scale_factor().max(1.0));
+    crate::native_window::apply_rounded_region(notice.window(), (CARD_RADIUS * scale) as f32);
 }
 
 /// Smoke runs must never pop toasts over their screenshot comparisons.

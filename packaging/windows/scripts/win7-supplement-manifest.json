@@ -8,39 +8,21 @@
     "pythonRoot": "opt\\python",
     "gitRoot": "opt\\git",
     "rgRoot": "opt\\rg",
-    "ffmpegRoot": "opt\\ffmpeg",
-    "nodeRoot": "opt\\node"
-  },
-  "node": {
-    "version": "16.20.2",
-    "runtimeArch": "ia32",
-    "source": "nodejs.org Windows zip",
-    "archives": {
-      "ia32": {
-        "fileName": "node-v16.20.2-win-x86.zip",
-        "url": "https://nodejs.org/dist/v16.20.2/node-v16.20.2-win-x86.zip",
-        "sha256": "c9c0b774328374973d5af5d72c4c6ce3932a1988c7efd32d84c35ba4771df41a"
-      },
-      "x64": {
-        "fileName": "node-v16.20.2-win-x64.zip",
-        "url": "https://nodejs.org/dist/v16.20.2/node-v16.20.2-win-x64.zip",
-        "sha256": "f8bb35f6c08dc7bf14ac753509c06ed1a7ebf5b390cd3fbdc8f8c1aedd020ec3"
-      }
-    },
-    "notes": [
-      "opt/node is the general-purpose Node runtime exposed to command tools; the Playwright driver keeps a separate architecture-matched node.exe.",
-      "The ia32 pack ships a 32-bit Node runtime: a 32-bit Windows host cannot start x64 node.exe, so everything in this pack must be 32-bit.",
-      "x86 node.exe still runs on 64-bit Windows under WOW64, so this pack stays usable on a 64-bit host without carrying a second runtime."
-    ]
+    "ffmpegRoot": "opt\\ffmpeg"
   },
   "browser": {
     "enabled": true,
     "version": "109.0.5414",
     "source": "hand-prepared Chrome 109 win32 archive (last Chrome line supporting Windows 7)",
     "archivePath": "",
+    "download": {
+      "fileName": "chromium-109.0.5414.120-r1070088-mini_installer.sync.exe",
+      "url": "https://github.com/Hibbiki/chromium-win32/releases/download/v109.0.5414.120-r1070088/mini_installer.sync.exe",
+      "sha256": "C1AABD6EEF38D759BBD92CA9516353D88C463A1E8389A875B4D12D53DB467F98"
+    },
     "dest": "opt\\browser",
     "expectedExe": "chrome-win/chrome.exe",
-    "note": "Chrome 109 win32（最后一个支持 Windows 7 的 Chrome 版本）；archivePath 为空则跳过，包内不含浏览器；浏览器再分发合规性由投喂者自行确认"
+    "note": "Chrome 109 win32（最后一个支持 Windows 7 的 Chrome 版本）；显式 archivePath 优先，其次使用本地缓存，找不到时按 download 自动下载并解包；浏览器再分发合规性由投喂者自行确认"
   },
   "python": {
     "version": "3.8.10",
@@ -90,7 +72,8 @@
           "h5py",
           "seaborn",
           "pyecharts",
-          "playwright"
+          "playwright",
+          "pefile"
         ],
         "plotProbe": true
       }
@@ -103,7 +86,7 @@
       "The Playwright Python driver is pinned in requirements-win7-common.txt (a win32 wheel exists for CPython 3.8), but Chromium is NOT bundled: the Playwright Chromium build requires Windows 10+.",
       "Playwright 1.40's win32 wheel bundles an x64 Node runtime. The ia32 supplement installs the pinned Node 16.20.2 win-x86 runtime over driver/node.exe and validates the PE machine type before packaging.",
       "Node 16 is the minimum runtime supported by the Playwright 1.40 driver and is outside Node's official Windows 7 support matrix; the bridge sets NODE_SKIP_PLATFORM_CHECK=1 and Win7 compatibility must be verified on a real ia32 image.",
-      "The build never downloads a browser by itself (Playwright Chromium requires Windows 10+), but a hand-prepared Chrome 109 win32 archive can be staged into opt/browser via the top-level browser section or -BrowserArchivePath; whether the binaries may be redistributed is the feeder's own responsibility to confirm.",
+      "Playwright Chromium itself is not downloaded for Win7 because its supported browser build requires Windows 10+; the supplement instead prepares the pinned Chrome 109 win32 browser via the browser download section or -BrowserArchivePath, and redistribution compliance remains the feeder's responsibility.",
       "On Win7 the browser_* tools must drive a locally installed browser via mode/executable_path/channel; installBrowser stays false so the build never attempts to download Chromium.",
       "To ship a modern browser for Windows out of the box, add a Windows 10+ x64 supplement with installBrowser=true; the Win7 ia32 pack tops out at Chrome 109."
     ],
@@ -119,22 +102,22 @@
     }
   },
   "git": {
-    "version": "2.46.2.windows.1",
-    "flavor": "PortableGit",
+    "version": "2.46.2",
+    "flavor": "MinGit",
     "source": "git-for-windows",
     "notes": [
       "Git for Windows documents 2.46.2 as the last version supporting Windows 7 / 8 / 8.1.",
-      "PortableGit ships Git Bash (bash) plus the POSIX toolchain (curl, tar, which, ssh, gzip, less, etc.) so the agent command tool runs in a bash environment.",
-      "The PortableGit archive is a 7-Zip self-extracting executable; the build script extracts it silently with -o<dir> -y."
+      "MinGit is the intentionally minimal, non-interactive Git distribution: it ships git.exe and its supporting cast but no Git Bash (no bash.exe) and no POSIX toolchain, so the supplement stays small and the agent command tool never runs in a bundled bash on Windows.",
+      "The MinGit archive is a plain zip (git.exe under cmd/) that the build script extracts straight into opt/git."
     ],
     "archives": {
       "x64": {
-        "fileName": "PortableGit-2.46.2-64-bit.7z.exe",
-        "url": "https://mirrors.huaweicloud.com/git-for-windows/v2.46.2.windows.1/PortableGit-2.46.2-64-bit.7z.exe"
+        "fileName": "MinGit-2.46.2-64-bit.zip",
+        "url": "https://github.com/git-for-windows/git/releases/download/v2.46.2.windows.1/MinGit-2.46.2-64-bit.zip"
       },
       "ia32": {
-        "fileName": "PortableGit-2.46.2-32-bit.7z.exe",
-        "url": "https://mirrors.huaweicloud.com/git-for-windows/v2.46.2.windows.1/PortableGit-2.46.2-32-bit.7z.exe"
+        "fileName": "MinGit-2.46.2-32-bit.zip",
+        "url": "https://github.com/git-for-windows/git/releases/download/v2.46.2.windows.1/MinGit-2.46.2-32-bit.zip"
       }
     }
   },
@@ -176,26 +159,6 @@
       "ia32": {
         "fileName": "win32-ia32.gz",
         "url": "https://github.com/eugeneware/ffmpeg-static/releases/download/b4.4.1/win32-ia32.gz"
-      }
-    }
-  },
-  "r2": {
-    "version": "6.2.4",
-    "flavor": "radare2 release zip",
-    "source": "radareorg/radare2",
-    "notes": [
-      "radare2 console disassembler toolkit (r2, rabin2, radiff2, rafind2, rahash2 and friends).",
-      "The release zip has one top-level directory; staging flattens it into opt\\r2 so opt\\r2\\bin\\radare2.exe exists and the runtime can prepend it to PATH."
-    ],
-    "layout": {
-      "dest": "opt\\r2",
-      "expectedExe": "bin/radare2.exe"
-    },
-    "archives": {
-      "ia32": {
-        "fileName": "radare2-6.2.4-w32.zip",
-        "url": "https://github.com/radareorg/radare2/releases/download/6.2.4/radare2-6.2.4-w32.zip",
-        "sha256": "30a65b7ad8b37292345da185a708a4079158a1a5d94e434ad139e9a116a87518"
       }
     }
   }

@@ -25,9 +25,34 @@ impl SqliteSchemaStorage for SqliteStorage {
         };
         let tx = conn.transaction()?;
         tx.execute_batch(schema)?;
+        if matches!(self.database_role, DatabaseRole::Queue) {
+            // 存量 queue 库的列补建：CREATE TABLE IF NOT EXISTS 不会为旧表加列。
+            ensure_session_locks_column(&tx, "lock_token", "TEXT NOT NULL DEFAULT ''")?;
+            ensure_session_locks_column(&tx, "suspended", "INTEGER NOT NULL DEFAULT 0")?;
+        }
         tx.commit()?;
         *self.wal_anchor.lock() = Some(conn);
         self.initialized.store(true, Ordering::Release);
         Ok(())
     }
+}
+
+/// 为存量库补齐列；PRAGMA table_info 判定后幂等 ALTER，重复执行安全。
+fn ensure_session_locks_column(
+    tx: &rusqlite::Transaction<'_>,
+    column: &str,
+    ddl: &str,
+) -> Result<()> {
+    let mut statement = tx.prepare("PRAGMA table_info(session_locks)")?;
+    let exists = statement
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<rusqlite::Result<Vec<_>>>()?
+        .iter()
+        .any(|name| name == column);
+    if !exists {
+        tx.execute_batch(&format!(
+            "ALTER TABLE session_locks ADD COLUMN {column} {ddl}"
+        ))?;
+    }
+    Ok(())
 }

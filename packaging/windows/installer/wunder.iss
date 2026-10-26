@@ -107,12 +107,12 @@ Type: files; Name: "{app}\.wunder-home"
 
 [Code]
 const
-  ComponentCount = 7;
+  ComponentCount = 5;
   CComponentsShown = {#ComponentsShown};
 
 var
-  ComponentTasks: array[0..6] of String;
-  ComponentLabels: array[0..6] of String;
+  ComponentTasks: array[0..4] of String;
+  ComponentLabels: array[0..4] of String;
   SelectAllCheckBox: TNewCheckBox;
   UpdatingSelectAll: Boolean;
 
@@ -123,15 +123,11 @@ begin
   ComponentTasks[2] := 'rg';
   ComponentTasks[3] := 'ffmpeg';
   ComponentTasks[4] := 'browser';
-  ComponentTasks[5] := 'r2';
-  ComponentTasks[6] := 'node';
   ComponentLabels[0] := 'Python';
   ComponentLabels[1] := 'Git';
   ComponentLabels[2] := 'ripgrep';
   ComponentLabels[3] := 'FFmpeg';
   ComponentLabels[4] := '内置浏览器';
-  ComponentLabels[5] := 'radare2';
-  ComponentLabels[6] := 'Node.js 运行时';
   Result := True;
 end;
 

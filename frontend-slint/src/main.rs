@@ -23,6 +23,8 @@ mod file_icons;
 mod help_browser;
 mod hotkey;
 mod message_blocks;
+mod model_editor;
+mod model_editor_smoke;
 mod native_chat;
 mod native_interlink;
 mod native_markdown;
@@ -40,6 +42,7 @@ mod screen_capture;
 mod screenshot;
 mod settings_search;
 mod shutdown;
+mod single_instance;
 mod smoke;
 mod subagent_detail;
 mod thread_trajectory;
@@ -56,6 +59,19 @@ mod workspace_ui;
 static STARTUP_BOOT: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut arguments = std::env::args_os().skip(1);
+    let first_argument = arguments.next();
+    let mut instance = if matches!(
+        first_argument.as_deref().and_then(std::ffi::OsStr::to_str),
+        None | Some("--native" | "--demo")
+    ) {
+        match single_instance::claim()? {
+            single_instance::Launch::Primary(instance) => Some(instance),
+            single_instance::Launch::Activated => return Ok(()),
+        }
+    } else {
+        None
+    };
     wunder_desktop::install_local_home_env();
     let startup_boot = *STARTUP_BOOT.get_or_init(std::time::Instant::now);
     startup_log("process_begin", startup_boot);
@@ -64,8 +80,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     register_bundled_font()?;
     startup_log("font_ready", startup_boot);
 
-    let mut arguments = std::env::args_os().skip(1);
-    let first_argument = arguments.next();
     let app = MainWindow::new()?;
     startup_log("main_window_new", startup_boot);
     install_composer_popover_dismissal(&app);
@@ -121,7 +135,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if matches!(
         first_argument.as_deref().and_then(std::ffi::OsStr::to_str),
-        Some("--native-smoke" | "--native-restore" | "--native-reasoning-smoke")
+        Some("--native-smoke" | "--native-restore" | "--native-reasoning-smoke" | "--native-model-smoke")
     ) {
         let directory = std::path::PathBuf::from(
             arguments
@@ -136,6 +150,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let restoring = first_argument.as_deref() == Some(std::ffi::OsStr::new("--native-restore"));
         let reasoning =
             first_argument.as_deref() == Some(std::ffi::OsStr::new("--native-reasoning-smoke"));
+        let models = first_argument.as_deref() == Some(std::ffi::OsStr::new("--native-model-smoke"));
         if !restoring {
             args.workspace = Some(directory.join("workspace"));
         }
@@ -143,13 +158,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // The restore phase deliberately runs a read-only guard: the streaming
         // phase's guard writes probe fixtures, and a check that mutates the
         // store cannot prove what survived the restart.
-        if !restoring && !reasoning {
+        if !restoring && !reasoning && !models {
             native_smoke::check_runtime(&runtime)?;
         }
         native_runtime::install_ready_without_pets(&app, runtime.clone());
         app.show()?;
         startup_log("window_show_return", startup_boot);
-        return if reasoning {
+        return if models {
+            model_editor_smoke::run(&app, directory, runtime)
+        } else if reasoning {
             native_smoke::run_reasoning(&app, directory)
         } else if restoring {
             native_restore::run(&app, directory, runtime)
@@ -166,6 +183,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     app.show()?;
     startup_log("window_show_return", startup_boot);
     fit_and_center_main_window(&app);
+    if let Some(instance) = instance.as_mut() {
+        #[cfg(windows)]
+        instance.register_window(&app)?;
+        let weak = app.as_weak();
+        let pending = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        instance.listen(move || {
+            use std::sync::atomic::Ordering;
+            if pending.swap(true, Ordering::AcqRel) {
+                return;
+            }
+            let completed = pending.clone();
+            if weak
+                .upgrade_in_event_loop(move |app| {
+                    completed.store(false, Ordering::Release);
+                    tray::show_main(&app);
+                })
+                .is_err()
+            {
+                pending.store(false, Ordering::Release);
+            }
+        })?;
+    }
     app.run()?;
     Ok(())
 }
