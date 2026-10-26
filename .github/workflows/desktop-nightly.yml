@@ -142,7 +142,11 @@ jobs:
             missing=0
             if [ "$status" = "completed" ]; then
               if [ "$conclusion" != "success" ]; then
-                echo "supplement workflow concluded ${conclusion:-unknown}; refusing to package a stale supplement" >&2
+                # 只在失败分支多查一次链接，正常路径保持单次 API 调用。
+                run_url="$(gh run list --repo "${GITHUB_REPOSITORY}" \
+                  --workflow desktop-supplements.yml --commit "${GITHUB_SHA}" --limit 1 \
+                  --json url --jq '.[0].url // ""' 2>/dev/null || true)"
+                echo "supplement workflow concluded ${conclusion:-unknown}; refusing to package a stale supplement${run_url:+ (see $run_url)}" >&2
                 exit 1
               fi
               echo "supplement workflow completed successfully"
@@ -347,7 +351,11 @@ jobs:
             missing=0
             if [ "$status" = "completed" ]; then
               if [ "$conclusion" != "success" ]; then
-                echo "supplement workflow concluded ${conclusion:-unknown}; refusing to package a stale supplement" >&2
+                # 只在失败分支多查一次链接，正常路径保持单次 API 调用。
+                run_url="$(gh run list --repo "${GITHUB_REPOSITORY}" \
+                  --workflow desktop-supplements.yml --commit "${GITHUB_SHA}" --limit 1 \
+                  --json url --jq '.[0].url // ""' 2>/dev/null || true)"
+                echo "supplement workflow concluded ${conclusion:-unknown}; refusing to package a stale supplement${run_url:+ (see $run_url)}" >&2
                 exit 1
               fi
               echo "supplement workflow completed successfully"

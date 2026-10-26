@@ -117,12 +117,23 @@ jobs:
           bin=config/runtime/linux-x64/compositor-linux-x64-gnu/remotion
           test -x "$bin"
           max="$(readelf --version-info "$bin" | grep -o 'GLIBC_[0-9.]*' | sort -Vu | tail -1)"
-          test "$max" '<' 'GLIBC_2.28'
-          file "$bin" | grep -q 'ELF 64-bit.*x86-64'
+          echo "compositor max glibc: ${max:-none}"
+          # Ubuntu 18.04 ships glibc 2.27; version-sort so 2.27/2.4 compare numerically.
+          ceiling="$(printf '%s\n%s\n' 'GLIBC_2.27' "${max:-GLIBC_2.27}" | sort -V | tail -1)"
+          test "$ceiling" = 'GLIBC_2.27' || { echo "compositor requires $max, above the 18.04 baseline" >&2; exit 1; }
+          file -bL "$bin" | grep -q 'ELF 64-bit.*x86-64'
+      - name: Package compositor archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          # artifact 上传/下载不保留文件权限位，直接把目录传过去会让 remotion /
+          # ffmpeg 的可执行位丢掉；打成 tar.gz 后由接收端解包，权限随归档保留。
+          tar -C config/runtime/linux-x64 -czf compositor-linux-x64-gnu.tar.gz compositor-linux-x64-gnu
+          tar -tvzf compositor-linux-x64-gnu.tar.gz | head -5
       - uses: actions/upload-artifact@v4
         with:
           name: remotion-compositor-linux-x64-gnu
-          path: config/runtime/linux-x64/compositor-linux-x64-gnu
+          path: compositor-linux-x64-gnu.tar.gz
           if-no-files-found: error
           retention-days: 7
 
@@ -371,17 +382,31 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: remotion-compositor-linux-x64-gnu
-          path: remotion-compositor-linux-x64-gnu
+          path: compositor-archive
       - name: Replace amd64 compositor with Ubuntu 18.04 build
         if: matrix.arch == 'amd64' && (steps.pack.outputs.cached != 'true' || github.event.inputs.force_rebuild == 'true')
         shell: bash
         run: |
           set -euo pipefail
+          archive="$(find compositor-archive -name 'compositor-linux-x64-gnu.tar.gz' -print -quit)"
+          test -n "$archive" || { echo "compositor archive missing" >&2; exit 1; }
           target=remotion-payload/opt/remotion/node_modules/@remotion/compositor-linux-x64-gnu
           test -d "$target"
-          cp -a remotion-compositor-linux-x64-gnu/. "$target/"
+          work=compositor-extract
+          rm -rf "$work"
+          mkdir -p "$work"
+          tar -xzf "$archive" -C "$work"
+          test -x "$work/compositor-linux-x64-gnu/remotion"
+          # 覆盖二进制与共享库，保留 npm 包自带的 package.json 等元数据；
+          # 解开归档再拷，可执行位随 tar 恢复。
+          cp -a "$work/compositor-linux-x64-gnu/." "$target/"
+          rm -rf "$work"
           test -x "$target/remotion"
-          readelf --version-info "$target/remotion" | grep -o 'GLIBC_[0-9.]*' | sort -Vu | tail -1
+          test -x "$target/ffmpeg"
+          max="$(readelf --version-info "$target/remotion" | grep -o 'GLIBC_[0-9.]*' | sort -Vu | tail -1)"
+          echo "injected compositor max glibc: ${max:-none}"
+          ceiling="$(printf '%s\n%s\n' 'GLIBC_2.27' "${max:-GLIBC_2.27}" | sort -V | tail -1)"
+          test "$ceiling" = 'GLIBC_2.27' || { echo "injected compositor requires $max, above the 18.04 baseline" >&2; exit 1; }
       - name: Build Ubuntu 18.04 base supplement and merge Remotion
         if: steps.pack.outputs.cached != 'true' || github.event.inputs.force_rebuild == 'true'
         shell: bash
@@ -407,43 +432,76 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          pack="$(find supplement-dist -maxdepth 1 -name "wunder-supplement-linux-${{ matrix.arch }}.tar.gz" -print -quit)"
-          test -n "$pack" || { echo "expected wunder-supplement-linux-${{ matrix.arch }}.tar.gz"; exit 1; }
-          work="verify-${{ matrix.arch }}"
+          arch='${{ matrix.arch }}'
+          # 打包机是 x86_64，arm64 包里的二进制不能在本机执行，架构只能按 ELF 头校验。
+          case "$arch" in
+            amd64) elf_expect='x86-64';  host_expect='x86_64';  browser_rel='chrome-linux64/chrome' ;;
+            arm64) elf_expect='aarch64'; host_expect='aarch64'; browser_rel='chrome-linux/chrome' ;;
+            *) echo "unsupported arch: $arch" >&2; exit 1 ;;
+          esac
+          check_elf() {
+            test -f "$1" || { echo "supplement entry missing: $1" >&2; exit 1; }
+            desc="$(file -bL "$1")"
+            echo "$desc" | grep -qi "$elf_expect" || {
+              echo "wrong ELF architecture for $1 (expected $elf_expect): $desc" >&2
+              exit 1
+            }
+          }
+          pack="$(find supplement-dist -maxdepth 1 -name "wunder-supplement-linux-$arch.tar.gz" -print -quit)"
+          test -n "$pack" || { echo "expected wunder-supplement-linux-$arch.tar.gz" >&2; exit 1; }
+          work="verify-$arch"
           rm -rf "$work"
           mkdir -p "$work"
           tar -xzf "$pack" -C "$work"
           test -x "$work/opt/node/bin/node"
           test -x "$work/opt/remotion/bin/remotion"
           test -f "$work/opt/remotion/browser-path"
-          if [ '${{ matrix.arch }}' = 'amd64' ]; then
-            test -x "$work/opt/browser/chrome-linux64/chrome"
-            browser_version="$($work/opt/browser/chrome-linux64/chrome --version 2>/dev/null || true)"
-            echo "$browser_version"
-            echo "$browser_version" | grep -q '122\.'
-          else
-            test -x "$work/opt/browser/chrome-linux/chrome"
-            browser_version="$($work/opt/browser/chrome-linux/chrome --version 2>/dev/null || true)"
-            echo "$browser_version"
-            echo "$browser_version" | grep -Eq 'Chrom(e|ium).*([0-9]{3})\.'
-          fi
+          test -x "$work/opt/browser/$browser_rel"
+          check_elf "$work/opt/node/bin/node"
+          check_elf "$work/opt/git/bin/git"
+          check_elf "$work/opt/rg/bin/rg"
+          check_elf "$work/opt/ffmpeg/bin/ffmpeg"
+          check_elf "$work/opt/browser/$browser_rel"
           compositor='@remotion/compositor-linux-x64-gnu'
-          if [ '${{ matrix.arch }}' = 'arm64' ]; then compositor='@remotion/compositor-linux-arm64-gnu'; fi
-          test -d "$work/opt/remotion/node_modules/$compositor"
           esbuild_pkg='@esbuild/linux-x64'
-          if [ '${{ matrix.arch }}' = 'arm64' ]; then esbuild_pkg='@esbuild/linux-arm64'; fi
+          if [ "$arch" = 'arm64' ]; then
+            compositor='@remotion/compositor-linux-arm64-gnu'
+            esbuild_pkg='@esbuild/linux-arm64'
+          fi
+          test -d "$work/opt/remotion/node_modules/$compositor"
+          check_elf "$work/opt/remotion/node_modules/$compositor/remotion"
           test -x "$work/opt/remotion/node_modules/$esbuild_pkg/bin/esbuild"
-          node_version="$("$work/opt/node/bin/node" --version)"
-          test "$node_version" = 'v16.20.2'
-          python3 - "$work/wunder-linux-supplement.json" <<'PY'
+          python3 - "$work/wunder-linux-supplement.json" "$arch" <<'PY'
           import json, sys
           meta = json.load(open(sys.argv[1], encoding='utf-8'))
-          assert meta['node']['version'] == '16.20.2'
-          assert meta['remotion']['version'] == '4.0.538'
-          assert meta['remotion']['compositor'].startswith('@remotion/compositor-linux-')
+          arch = sys.argv[2]
+          compositor = '@remotion/compositor-linux-%s-gnu' % ('x64' if arch == 'amd64' else 'arm64')
+          assert meta['arch'] == arch, meta['arch']
+          assert meta['node']['version'] == '16.20.2', meta['node']['version']
+          assert meta['node']['architecture'] == arch, meta['node']['architecture']
+          assert meta['remotion']['version'] == '4.0.538', meta['remotion']['version']
+          assert meta['remotion']['compositor'] == compositor, meta['remotion']['compositor']
           assert meta['browser']['bundled'] is True
-          print('Linux supplement Node/Remotion metadata verified')
+          print('Linux supplement metadata verified:', arch, 'browser', meta['browser']['version'])
           PY
+          # 只有宿主架构与补充包一致时才做真实执行冒烟；x64 打包机只跑 amd64 包。
+          if [ "$(uname -m)" = "$host_expect" ]; then
+            node_version="$("$work/opt/node/bin/node" --version)"
+            test "$node_version" = 'v16.20.2' || { echo "node smoke failed: $node_version" >&2; exit 1; }
+            "$work/opt/rg/bin/rg" --version | head -n 1
+            "$work/opt/ffmpeg/bin/ffmpeg" -version | head -n 1
+            # Chrome 的 libc 依赖面来自目标机（Ubuntu 18.04），在打包机上跑通与否
+            # 不能代表目标机，因此版本只做比对、不作为失败条件。
+            browser_pin="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["browser"]["version"])' "$work/wunder-linux-supplement.json")"
+            browser_version="$("$work/opt/browser/$browser_rel" --version 2>/dev/null || true)"
+            echo "browser: ${browser_version:-<not runnable on this host>} (pin $browser_pin)"
+            if [ -n "$browser_version" ]; then
+              echo "$browser_version" | grep -qF "$browser_pin" || {
+                echo "browser version $browser_version does not match pin $browser_pin" >&2
+                exit 1
+              }
+            fi
+          fi
           ls -la "$pack"
       - uses: actions/upload-artifact@v4
         with:
