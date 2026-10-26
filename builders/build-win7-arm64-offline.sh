@@ -38,6 +38,11 @@ export PATH="$toolchain/bin:$mingw_root/portable-bin:$PATH"
 # frontend-slint's build.rs probes this dir for the windres that embeds the
 # exe icon resource (same variable the Windows-host win7 build exports).
 export WUNDER_WIN7_MINGW_BIN="$mingw_root/portable-bin"
+# CLI --config outranks every config file: cargo >=1.96 resolves its config
+# home from the passwd entry rather than HOME or CARGO_HOME, so a
+# developer-wide ~/.cargo/config.toml (mirror setups) would otherwise defeat
+# the vendored configuration written into the per-build cargo home.
+WUNDER_VENDORED_CONFIG=(--config 'source.crates-io.replace-with="vendored-sources"')
 export CARGO_HOME="$cargo_home"
 export CARGO_TARGET_DIR="$target_dir"
 export CARGO_NET_OFFLINE=true
@@ -79,7 +84,7 @@ cd "$repo_root"
 # build-std rebuilds std with the win7 vendor gating; --locked pins the
 # application dependency graph while std resolves from the shipped rust-src
 # against the same vendored registry.
-cargo -Z build-std=std,panic_abort build --locked --offline --release \
+cargo "${WUNDER_VENDORED_CONFIG[@]}" -Z build-std=std,panic_abort build --locked --offline --release \
   --manifest-path "$manifest" --bin wunder-frontend-slint \
   --target "$target" -j "${WUNDER_BUILD_JOBS:-2}"
 

@@ -111,6 +111,51 @@ docker run --rm --network host \
   bash builders/prepare-linux-amd64-runtime-sysroot.sh
 ```
 
+### kylin-x86：x86_64 主机原生离线 SDK
+
+没有 `kylin-arm` 源 SDK 时，可在 x86_64 主机上从零准备等价的 `Rust-builder/kylin-x86`，全部钉在 Ubuntu 18.04（glibc 2.27）：
+
+```bash
+# 1. 构建离线构建镜像（bionic + gcc-7/aarch64 交叉链/i686 mingw + 双 Rust 工具链）。
+#    rustup 走 USTC rust-static 镜像（pinned nightly 只有它还镜像）。
+docker build --platform linux/amd64 \
+  -f packaging/docker/Dockerfile.rust-builder-kylin-x86 \
+  -t wunder-rust-builder-kylin-x86:ubuntu18 .
+
+# 2. 生成 amd64/arm64 sysroot（bionic 运行库闭包 + 开发头文件，含 deb 缓存）。
+docker run --rm --network host --platform linux/amd64 \
+  -v /path/to/wunder:/workspace:ro -v /path/to/Rust-builder/kylin-x86:/output \
+  -w /workspace ubuntu:18.04 \
+  env WUNDER_OFFLINE_ROOT=/output/offline \
+  bash builders/prepare-kylin-x86-sysroots.sh
+
+# 3. 从镜像导出工具链、host tools 与元数据。
+docker run --rm --network none --platform linux/amd64 --entrypoint bash \
+  -e OUTPUT_PROFILE=/output -v /path/to/Rust-builder/kylin-x86:/output \
+  -v /path/to/wunder/builders:/scripts:ro \
+  wunder-rust-builder-kylin-x86:ubuntu18 /scripts/export-kylin-x86-sdk.sh
+
+# 4. cargo vendor（主 workspace + frontend-slint + rust-src 的 std 依赖三者并集；
+#    cargo vendor 会清空目标目录，必须各自 vendor 到临时目录后合并）。
+# 5. AppImage runtime（AppImageKit continuous 的 runtime-x86_64 / runtime-aarch64）。
+# 6. docker image save 到 offline/archives/builder-amd64-ubuntu18.docker.tar，
+#    再跑 check-kylin-x86-sdk.sh 门禁与 index-kylin-x86-sdk.py 索引。
+```
+
+x86_64 主机上离线构建蛹（AppImage 交由 `build-linux-amd64-appimage.sh`）：
+
+```bash
+WUNDER_OFFLINE_ROOT=/path/to/Rust-builder/kylin-x86/offline \
+WUNDER_BUILD_JOBS=$(nproc) bash builders/build-linux-amd64-offline.sh
+```
+
+注意：离线脚本通过 `--config 'source.crates-io.replace-with="vendored-sources"'` 传
+入 vendor 替换，因为 cargo ≥1.96 解析配置主目录依据 passwd 而非 `HOME`/`CARGO_HOME`，
+开发者全局 `~/.cargo/config.toml`（镜像源等）会压过写入 cargo-home 的配置文件。
+另外 smoke 门禁的 Win7 `-Z build-std` 探针要求 DW2 展开的 i686 MinGW（bionic 自带
+的是 SJLJ），与 kylin-arm 自带 portable MinGW 的原因相同；x86 主机的 Win7 发布
+仍走 Windows 侧 `build.bat` 或 kylin-arm 交叉路径。
+
 准备完成后，`linux-amd64-ubuntu18/root` 必须包含 `libX11.so.6`、`libXtst.so.6`、`libasound.so.2`、`libasound.so`、`libxcb.so.1`、`libxcb-xkb.so.1`、`libxkbcommon.so.0` 和 `libxkbcommon-x11.so.0`；其中 `libasound.so` 只用于交叉链接，AppImage 内容门禁验证其余运行库。
 
 `prepare-linux-arm64-runtime-sysroot.sh` 是 arm64 侧的同类一次性维护脚本，把 bionic arm64 的 X11/XCB/XKB/ALSA 运行库闭包和 `squashfs-tools`（含压缩依赖）装进 `linux-arm64-ubuntu18/root`；必须在 **aarch64 Ubuntu 18.04** 环境（如 `rcho-slint-arm64-ubuntu18` 镜像）执行并将 SDK 挂载为可写。准备完成后，ARM64 Desktop 构建的运行库和 `mksquashfs` 都可完全来自 SDK，不再要求主机安装这些包。

@@ -31,6 +31,11 @@ for tool in cc x86_64-linux-gnu-gcc-7 x86_64-linux-gnu-readelf x86_64-linux-gnu-
 export LD_LIBRARY_PATH="$sdk/usr/lib/aarch64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export WUNDER_AMD64_SDK_ROOT="$sdk"
 unset GCC_EXEC_PREFIX COMPILER_PATH LIBRARY_PATH
+# CLI --config outranks every config file: cargo >=1.96 resolves its config
+# home from the passwd entry rather than HOME or CARGO_HOME, so a
+# developer-wide ~/.cargo/config.toml (mirror setups) would otherwise defeat
+# the vendored configuration written into the per-build cargo home.
+WUNDER_VENDORED_CONFIG=(--config 'source.crates-io.replace-with="vendored-sources"')
 export CARGO_HOME="$cargo_home"
 export CARGO_TARGET_DIR="$target_dir"
 export CARGO_NET_OFFLINE=true
@@ -53,7 +58,7 @@ EOF
 
 cd "$repo_root"
 echo "[wunder-cli-linux-amd64] cargo: $(cargo --version)"
-cargo build --locked --offline --release -p wunder-cli --bin wunder-cli --target "$target" -j "${WUNDER_BUILD_JOBS:-2}"
+cargo "${WUNDER_VENDORED_CONFIG[@]}" build --locked --offline --release -p wunder-cli --bin wunder-cli --target "$target" -j "${WUNDER_BUILD_JOBS:-2}"
 
 binary="$target_dir/$target/release/wunder-cli"
 require_file "$binary"

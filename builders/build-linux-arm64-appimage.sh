@@ -102,6 +102,11 @@ directory = "$vendor_root"
 offline = true
 EOF
 
+# CLI --config outranks every config file: cargo >=1.96 resolves its config
+# home from the passwd entry rather than HOME or CARGO_HOME, so a
+# developer-wide ~/.cargo/config.toml (mirror setups) would otherwise defeat
+# the vendored configuration written into the per-build cargo home.
+WUNDER_VENDORED_CONFIG=(--config 'source.crates-io.replace-with="vendored-sources"')
 export CARGO_HOME="$cargo_home"
 export CARGO_TARGET_DIR="$target_dir"
 export CARGO_NET_OFFLINE=true
@@ -114,7 +119,7 @@ export RUSTFLAGS="${RUSTFLAGS:-} -C link-arg=--sysroot=$sysroot -C link-arg=-L$s
 echo "[wunder-slint-appimage] cargo: $(cargo --version)"
 echo "[wunder-slint-appimage] rustc: $(rustc --version)"
 echo "[wunder-slint-appimage] baseline: $(ldd --version | head -n 1)"
-cargo build --locked --offline --release --manifest-path "$manifest" --bin wunder-frontend-slint
+cargo "${WUNDER_VENDORED_CONFIG[@]}" build --locked --offline --release --manifest-path "$manifest" --bin wunder-frontend-slint
 
 phase=validation
 binary="$target_dir/release/wunder-frontend-slint"

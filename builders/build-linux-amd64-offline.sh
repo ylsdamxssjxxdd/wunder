@@ -46,6 +46,11 @@ for tool in cc x86_64-linux-gnu-readelf x86_64-linux-gnu-strip awk grep sed sort
   require_command "$tool"
 done
 
+# CLI --config outranks every config file: cargo >=1.96 resolves its config
+# home from the passwd entry rather than HOME or CARGO_HOME, so a
+# developer-wide ~/.cargo/config.toml (mirror setups) would otherwise defeat
+# the vendored configuration written into the per-build cargo home.
+WUNDER_VENDORED_CONFIG=(--config 'source.crates-io.replace-with="vendored-sources"')
 export CARGO_HOME="${CARGO_HOME:-$repo_root/target/linux-amd64-ubuntu18-slint/cargo-home}"
 export CARGO_TARGET_DIR="$target_dir"
 export CARGO_NET_OFFLINE=true
@@ -75,7 +80,7 @@ EOF
 echo "[wunder-slint-linux-amd64] cargo: $(cargo --version)"
 echo "[wunder-slint-linux-amd64] sysroot: $sdk"
 cd "$repo_root"
-cargo build --locked --offline --release --manifest-path "$manifest" \
+cargo "${WUNDER_VENDORED_CONFIG[@]}" build --locked --offline --release --manifest-path "$manifest" \
   --bin wunder-frontend-slint --target "$target" -j "${WUNDER_BUILD_JOBS:-2}"
 
 binary="$target_dir/$target/release/wunder-frontend-slint"
