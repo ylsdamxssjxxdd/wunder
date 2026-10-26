@@ -23,16 +23,33 @@ rust=/sdk/offline/rust/toolchains/nightly-2026-03-14-x86_64-unknown-linux-gnu
 readelf -h /sdk/offline/appimage-runtime/runtime-x86_64 | grep X86-64
 readelf -h /sdk/offline/appimage-runtime/runtime-aarch64 | grep AArch64
 # Win7 tier-3 must compile std from local rust-src, not the modern pc target.
+# The bionic mingw is SJLJ while Rust's i686 std needs DW2 unwinding, so link
+# through the portable DW2 archives shipped in the SDK, exactly like
+# builders/build-win7-x86-offline.sh does.
 mkdir -p win7/src cargo-home
 cp probe.rs win7/src/main.rs
 printf '[package]\nname="sdk-probe"\nversion="0.1.0"\nedition="2021"\n' > win7/Cargo.toml
-cat > cargo-home/config.toml <<'EOF'
+cat > rust-gcc <<'EOF'
+#!/bin/bash
+set -euo pipefail
+args=()
+for arg in "$@"; do
+  [[ "$arg" == "-lgcc_eh" || "$arg" == "-lgcc" ]] && continue
+  args+=("$arg")
+done
+exec i686-w64-mingw32-gcc "${args[@]}" \
+  /sdk/offline/mingw-i686-windows-gnu/rust-target/lib/libgcc_eh.a \
+  /sdk/offline/mingw-i686-windows-gnu/rust-target/lib/libgcc.a \
+  -lwinpthread
+EOF
+chmod +x rust-gcc
+cat > cargo-home/config.toml <<EOF
 [source.crates-io]
 replace-with="vendored-sources"
 [source.vendored-sources]
 directory="/sdk/offline/cargo-vendor-slint"
 [target.i686-win7-windows-gnu]
-linker="i686-w64-mingw32-gcc"
+linker="/tmp/sdk-smoke/rust-gcc"
 [net]
 offline=true
 EOF

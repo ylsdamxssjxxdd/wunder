@@ -152,9 +152,24 @@ WUNDER_BUILD_JOBS=$(nproc) bash builders/build-linux-amd64-offline.sh
 注意：离线脚本通过 `--config 'source.crates-io.replace-with="vendored-sources"'` 传
 入 vendor 替换，因为 cargo ≥1.96 解析配置主目录依据 passwd 而非 `HOME`/`CARGO_HOME`，
 开发者全局 `~/.cargo/config.toml`（镜像源等）会压过写入 cargo-home 的配置文件。
-另外 smoke 门禁的 Win7 `-Z build-std` 探针要求 DW2 展开的 i686 MinGW（bionic 自带
-的是 SJLJ），与 kylin-arm 自带 portable MinGW 的原因相同；x86 主机的 Win7 发布
-仍走 Windows 侧 `build.bat` 或 kylin-arm 交叉路径。
+
+Win7 x86 同样可以在 x86_64 主机离线交叉构建（蛹与舵机）：
+
+```bash
+WUNDER_OFFLINE_ROOT=/path/to/Rust-builder/kylin-x86/offline \
+WUNDER_BUILD_JOBS=$(nproc) bash builders/build-win7-x86-offline.sh
+WUNDER_OFFLINE_ROOT=/path/to/Rust-builder/kylin-x86/offline \
+WUNDER_BUILD_JOBS=$(nproc) bash builders/build-cli-win7-x86-offline.sh
+```
+
+这条链路依赖 `offline/mingw-i686-windows-gnu/` 的 portable MinGW：bionic 的
+`i686-w64-mingw32-gcc` 是 SJLJ 展开，而 Rust 的 `i686-windows-gnu` std 需要 DW2 的
+`_Unwind_Resume`，所以 rust-target/lib 里放 mingw-builds 7.3.0 posix-dwarf 的
+`libgcc_eh.a`/`libgcc.a`，`portable-bin` 用重定位包装器（`-B` 前缀 + 捆绑
+libisl/libmpc/libmpfr/libgmp）剔除 `-lgcc_eh/-lgcc` 后追加 DW2 存档和
+`-lwinpthread`。`libsynchronization.a` 是空存档：winapi 0.3.9 的 synchapi 特性在
+GNU 目标会请求它，Win7 下相关符号由 kernel32 提供，空存档即可通过链接且不引入
+`api-ms-win-*` 导入。产物仍需通过 PE 导入表门禁。
 
 准备完成后，`linux-amd64-ubuntu18/root` 必须包含 `libX11.so.6`、`libXtst.so.6`、`libasound.so.2`、`libasound.so`、`libxcb.so.1`、`libxcb-xkb.so.1`、`libxkbcommon.so.0` 和 `libxkbcommon-x11.so.0`；其中 `libasound.so` 只用于交叉链接，AppImage 内容门禁验证其余运行库。
 
