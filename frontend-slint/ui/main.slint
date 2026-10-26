@@ -1563,6 +1563,11 @@ export component MainWindow inherits Window {
 
     if root.dialog-open : InfoDialog {
         z: 250;
+        // Every in-window overlay starts below the title strip: the chrome
+        // paints above it (so the window stays draggable), and an overlay
+        // drawn from y=0 would lose its first 28px underneath it.
+        y: Theme.titlebar-height;
+        height: max(0px, parent.height - Theme.titlebar-height);
         title: root.dialog-title;
         message: root.dialog-text;
         close-label: I18n.info_ack;
@@ -1570,6 +1575,8 @@ export component MainWindow inherits Window {
     }
     if root.archive-detail-open : InfoDialog {
         z: 260;
+        y: Theme.titlebar-height;
+        height: max(0px, parent.height - Theme.titlebar-height);
         title: root.archive-detail-title;
         message: root.archive-detail-text;
         close-label: I18n.info_ack;
@@ -1577,6 +1584,12 @@ export component MainWindow inherits Window {
     }
     if root.traj-open : ThreadTrajectoryDialog {
         z: 250;
+        // The trajectory page carries its own top toolbar. It is a page, not a
+        // floating card, so it has to start exactly where the client area
+        // starts; otherwise the toolbar sits under the title strip and the
+        // back / toggle controls become unreachable.
+        y: Theme.titlebar-height;
+        height: max(0px, parent.height - Theme.titlebar-height);
         rows: root.traj-rows; spans: root.traj-spans; ticks: root.traj-ticks; boundaries: root.traj-boundaries;
         view-start: root.traj-view-start; view-width: root.traj-view-width;
         selection-active: root.traj-selection-active; selection-start: root.traj-selection-start; selection-end: root.traj-selection-end;
@@ -1616,6 +1629,8 @@ export component MainWindow inherits Window {
     }
     if root.subagent-open : SubagentDetailDialog {
         z: 250;
+        y: Theme.titlebar-height;
+        height: max(0px, parent.height - Theme.titlebar-height);
         title: root.subagent-title;
         status-kind: root.subagent-status-kind;
         running: root.subagent-running;
@@ -1633,6 +1648,8 @@ export component MainWindow inherits Window {
     }
     if root.ws-prompt-open : WorkspacePromptDialog {
         z: 250;
+        y: Theme.titlebar-height;
+        height: max(0px, parent.height - Theme.titlebar-height);
         prompt-title: root.ws-prompt-title;
         prompt-body: root.ws-prompt-body;
         input-visible: root.ws-prompt-input;
@@ -1645,6 +1662,8 @@ export component MainWindow inherits Window {
     }
     if root.thread-rename-open : WorkspacePromptDialog {
         z: 250;
+        y: Theme.titlebar-height;
+        height: max(0px, parent.height - Theme.titlebar-height);
         prompt-title: I18n.common_rename;
         prompt-body: I18n.sb_rename_body(root.thread-rename-title);
         input-visible: true;
@@ -1662,6 +1681,8 @@ export component MainWindow inherits Window {
     }
     if root.cron-delete-open : ConfirmDialog {
         z: 250;
+        y: Theme.titlebar-height;
+        height: max(0px, parent.height - Theme.titlebar-height);
         title: I18n.cron_delete_title;
         message: I18n.cron_delete_message;
         confirm-label: I18n.common_confirm_delete;
@@ -1672,6 +1693,8 @@ export component MainWindow inherits Window {
     }
     if root.agent-leave-confirm-open : ConfirmDialog {
         z: 250;
+        y: Theme.titlebar-height;
+        height: max(0px, parent.height - Theme.titlebar-height);
         title: I18n.ag_unsaved_title;
         message: I18n.ag_unsaved_confirm;
         confirm-label: I18n.common_discard;
@@ -1684,6 +1707,8 @@ export component MainWindow inherits Window {
     // confirmation, the actual archive happens after the user confirms.
     if root.thread-archive-open : ConfirmDialog {
         z: 250;
+        y: Theme.titlebar-height;
+        height: max(0px, parent.height - Theme.titlebar-height);
         title: I18n.ap_archive_thread;
         message: I18n.ap_archive_confirm;
         confirm-label: I18n.ap_archive_thread;
@@ -1773,6 +1798,8 @@ export component MainWindow inherits Window {
     }
     if root.archive-delete-open : ConfirmDialog {
         z: 270;
+        y: Theme.titlebar-height;
+        height: max(0px, parent.height - Theme.titlebar-height);
         title: I18n.common_delete;
         message: I18n.stc_archives_delete_confirm;
         confirm-label: I18n.common_confirm_delete;
@@ -1789,11 +1816,13 @@ export component MainWindow inherits Window {
 
     // Agent avatar dialog: window-root overlay driven by the AvatarDialogState
     // global, so any page can open it without property plumbing.
-    AvatarDialog { z: 260; }
+    AvatarDialog { z: 260; y: Theme.titlebar-height; height: max(0px, parent.height - Theme.titlebar-height); }
 
-    WorkspaceDialog { z: 270; }
+    WorkspaceDialog { z: 270; y: Theme.titlebar-height; height: max(0px, parent.height - Theme.titlebar-height); }
 
-    ToastHost { z: 300; width: root.width; height: 52px; x: 0px; }
+    // The toast floats clear of the title strip: the chrome paints above it,
+    // so a toast anchored at y=0 would lose its top edge under the strip.
+    ToastHost { z: 300; width: root.width; height: 52px; x: 0px; y: Theme.titlebar-height + 4px; }
 
     Timer { interval: 4200ms; running: ToastState.message != ""; triggered => { ToastState.message = ""; } }
 }

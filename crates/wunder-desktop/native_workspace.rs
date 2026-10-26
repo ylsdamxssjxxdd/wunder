@@ -333,12 +333,12 @@ impl NativeDesktop {
             if record.workspace_id == workspace_id {
                 continue;
             }
-            let other = PathBuf::from(&record.root_path);
+            let other = workspace_canonical(Path::new(&record.root_path));
             if paths_equal(&other, &root) {
                 report.occupied_by = Some(record.name);
-            } else if other.starts_with(&root) {
+            } else if workspace_contains(&root, &other) {
                 report.contains = Some(record.name);
-            } else if root.starts_with(&other) {
+            } else if workspace_contains(&other, &root) {
                 report.nested_in = Some(record.name);
             }
         }
@@ -362,11 +362,11 @@ impl NativeDesktop {
             if record.workspace_id == exclude_id {
                 continue;
             }
-            let other = PathBuf::from(&record.root_path);
+            let other = workspace_canonical(Path::new(&record.root_path));
             if paths_equal(&other, &root) {
                 bail!("该文件夹已被工作区「{}」使用", record.name);
             }
-            if other.starts_with(&root) || root.starts_with(&other) {
+            if workspace_contains(&root, &other) || workspace_contains(&other, &root) {
                 bail!("工作区文件夹不能嵌套其他工作区文件夹");
             }
         }
@@ -479,7 +479,10 @@ impl NativeDesktop {
         let target = if let Some(target) = self.chat_attachment_target(relative)? {
             target
         } else {
-            let root = PathBuf::from(root_path);
+            // Same root form as every other workspace entry point: a raw
+            // `PathBuf::from` here kept the caller's spelling and made the
+            // containment check reject perfectly valid nested files.
+            let root = normalize_root(root_path)?;
             if !root.is_dir() {
                 bail!(WORKSPACE_ROOT_MISSING);
             }
@@ -602,11 +605,12 @@ impl NativeDesktop {
         }
         let target = parent.join(&name);
         if target.exists() {
-            let existing = target.canonicalize()?;
-            if !existing.starts_with(&root) {
+            if !workspace_contains(&root, &target) {
                 bail!("路径超出当前工作区");
             }
-            if existing == source.canonicalize()? {
+            // Copying a file onto itself must not truncate it; compare the
+            // same identity the workspace uses elsewhere (casing, links).
+            if paths_equal(&target, source) {
                 return Ok(if directory.is_empty() {
                     name
                 } else {
@@ -1037,10 +1041,29 @@ fn probe_writable(root: &Path) -> bool {
     }
 }
 
+/// Canonical form used for the paths this module returns: symlinks and 8.3
+/// short names are resolved and the Windows `\\?\` verbatim prefix is
+/// stripped, matching what a workspace root goes through in `normalize_root`.
+/// Keeping one form on both sides is what a raw `canonicalize()` broke: it
+/// returned `\\?\C:\work\file` against a root of `C:\work`, so every nested
+/// entry looked like it escaped the workspace.
+fn workspace_canonical(path: &Path) -> PathBuf {
+    wunder_server::local_bootstrap::normalize_local_workspace_path(path)
+}
+
+/// Single containment decision for workspace entries. `is_within_root` already
+/// resolves symlinks, tolerates a not-yet-existing leaf through its nearest
+/// existing ancestor and folds Windows casing and verbatim prefixes, so callers
+/// must not reimplement the comparison with `starts_with`.
+fn workspace_contains(root: &Path, target: &Path) -> bool {
+    wunder_server::path_utils::is_within_root(root, target)
+}
+
 /// Resolve a workspace-relative resource path (Markdown image source) to a
 /// canonical file inside `root`. Rejects parent traversal, absolute paths
 /// outside the root and remote URLs.
 fn workspace_resource_target(root: &Path, source: &str) -> Result<PathBuf> {
+    let root = workspace_canonical(root);
     let source = source.strip_prefix("\\\\?\\").unwrap_or(source);
     if source.starts_with("\\\\") || source.starts_with("//") {
         bail!("不支持远程图片路径");
@@ -1054,18 +1077,18 @@ fn workspace_resource_target(root: &Path, source: &str) -> Result<PathBuf> {
         let target = url
             .to_file_path()
             .map_err(|_| anyhow!("无效本地图片路径"))?;
-        // Root comes in canonicalized; the URL target is plain, so align the
-        // two before the containment check (verbatim `\\?\` prefixes differ).
-        let target = target.canonicalize().unwrap_or(target);
-        let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
-        if !target.starts_with(&root) {
+        // Both sides go through the same canonical form: the URL target is
+        // plain while the root may arrive verbatim or plain, and a verbatim
+        // target never prefix-matches a plain root.
+        let target = workspace_canonical(&target);
+        if !workspace_contains(&root, &target) {
             bail!("路径超出当前工作区");
         }
         return Ok(target);
     } else {
         // Decode URL-escaped relative filenames before enforcing the boundary.
         let decoded = percent_decode_path(source)?.replace('\\', "/");
-        PathBuf::from(normalize_public_workspace_source(&decoded, root))
+        PathBuf::from(normalize_public_workspace_source(&decoded, &root))
     };
     if path
         .components()
@@ -1076,8 +1099,12 @@ fn workspace_resource_target(root: &Path, source: &str) -> Result<PathBuf> {
     if path.to_string_lossy().trim().is_empty() {
         bail!("无效的工作区路径");
     }
-    let target = root.join(&path).canonicalize()?;
-    if !target.starts_with(root) {
+    // Resolve the entry (it must exist), then hand back the plain canonical
+    // form so downstream callers never see a `\\?\` prefix. The containment
+    // test tolerates either spelling, but resolving first is what keeps a
+    // bogus or escaping source from being reported as "inside".
+    let target = workspace_canonical(&root.join(&path).canonicalize()?);
+    if !workspace_contains(&root, &target) {
         bail!("路径超出当前工作区");
     }
     Ok(target)
@@ -1240,7 +1267,11 @@ mod tests {
     #[test]
     fn image_paths_are_confined_for_relative_absolute_file_and_url_forms() {
         let directory = tempfile::tempdir().unwrap();
-        let root = directory.path().canonicalize().unwrap();
+        // Use the same form the workspace really stores (verbatim prefix
+        // stripped). A raw `canonicalize()` root hid the Windows mismatch
+        // between `\\?\C:\...` and `C:\...`, so the test passed while every
+        // nested entry was rejected at runtime.
+        let root = wunder_server::local_bootstrap::normalize_local_workspace_path(directory.path());
         let file = root.join("sample image.png");
         std::fs::write(&file, b"fixture").unwrap();
         let file_url = url::Url::from_file_path(&file).unwrap();
@@ -1252,7 +1283,7 @@ mod tests {
         ] {
             assert_eq!(
                 super::workspace_resource_target(&root, source).unwrap(),
-                file.canonicalize().unwrap()
+                wunder_server::local_bootstrap::normalize_local_workspace_path(&file)
             );
         }
         for source in [
@@ -1265,6 +1296,35 @@ mod tests {
         let outside = tempfile::NamedTempFile::new().unwrap();
         assert!(super::workspace_resource_target(&root, outside.path().to_str().unwrap()).is_err());
     }
+
+    #[test]
+    fn nested_entries_resolve_under_the_stored_plain_root() {
+        // Regression: a freshly seeded default workspace stores a plain root
+        // (`C:\...`, verbatim prefix stripped). Resolving an existing nested
+        // entry used to canonicalize only the target, compare `\\?\C:\...`
+        // against `C:\...` and reject it as "路径超出当前工作区".
+        let directory = tempfile::tempdir().unwrap();
+        let root = wunder_server::local_bootstrap::normalize_local_workspace_path(directory.path());
+        let nested = root.join("notes");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(nested.join("todo.md"), b"ok").unwrap();
+
+        let dir_target = super::workspace_resource_target(&root, "notes").unwrap();
+        assert!(dir_target.is_dir());
+        let file_target = super::workspace_resource_target(&root, "notes/todo.md").unwrap();
+        assert!(file_target.is_file());
+        // A verbatim spelling still counts as inside the same workspace.
+        let verbatim = nested.join("todo.md").canonicalize().unwrap();
+        assert!(super::workspace_contains(&root, &verbatim));
+        // Escaping entries stay rejected in both spellings.
+        assert!(super::workspace_resource_target(&root, "../escape.md").is_err());
+        let outside = tempfile::NamedTempFile::new().unwrap();
+        assert!(!super::workspace_contains(
+            &root,
+            &outside.path().canonicalize().unwrap()
+        ));
+    }
+
 
     #[test]
     fn normalize_choice_keeps_allowed_values_and_falls_back() {

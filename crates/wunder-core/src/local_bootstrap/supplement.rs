@@ -23,9 +23,6 @@ pub fn roots(home: &Path, app_dir: &Path, appimage_dir: Option<PathBuf>) -> Vec<
 }
 
 pub fn find_tool(roots: &[PathBuf], tool: Tool) -> Option<PathBuf> {
-    if matches!(tool, Tool::Node) && !can_run_bundled_remotion() {
-        return None;
-    }
     let candidates: &[&str] = match tool {
         Tool::Python if cfg!(windows) => &[
             "opt/python/python.exe",
@@ -76,40 +73,19 @@ pub fn path_entries(roots: &[PathBuf]) -> Vec<PathBuf> {
         "opt/ffmpeg",
         "opt/ffmpeg/bin",
         "opt/r2/bin",
+        "opt/node",
+        "opt/node/bin",
     ];
-    const REMOTION_DIRS: &[&str] = &["opt/node", "opt/node/bin", "opt/remotion/bin"];
     roots
         .iter()
         .flat_map(|root| {
-            let mut entries = BASE_DIRS
+            BASE_DIRS
                 .iter()
                 .map(|name| root.join(name))
-                .collect::<Vec<_>>();
-            if can_run_bundled_remotion() {
-                entries.extend(REMOTION_DIRS.iter().map(|name| root.join(name)));
-            }
-            entries
+                .collect::<Vec<_>>()
         })
         .filter(|path| path.is_dir())
         .collect()
-}
-
-/// The Win7 ia32 supplement intentionally contains a second, x64 Node and
-/// Remotion runtime. A 32-bit app under WoW64 may launch it, while a genuine
-/// 32-bit Windows installation cannot. Never put that runtime on PATH there.
-fn can_run_bundled_remotion() -> bool {
-    #[cfg(windows)]
-    {
-        ["PROCESSOR_ARCHITEW6432", "PROCESSOR_ARCHITECTURE"]
-            .iter()
-            .filter_map(|key| std::env::var(key).ok())
-            .map(|value| value.to_ascii_uppercase())
-            .any(|value| matches!(value.as_str(), "AMD64" | "IA64" | "ARM64"))
-    }
-    #[cfg(not(windows))]
-    {
-        true
-    }
 }
 
 /// Register the complete local supplement toolchain for child processes.
@@ -127,35 +103,16 @@ pub fn configure_runtime_env(roots: &[PathBuf]) {
                 .find(|path| path.is_file())
         })
     };
-    if can_run_bundled_remotion() {
-        if let Some(node) = first_file(if cfg!(windows) {
-            &["opt/node/node.exe", "opt/node/bin/node.exe"]
-        } else {
-            &["opt/node/bin/node", "opt/node/node"]
-        }) {
-            std::env::set_var("WUNDER_NODE_BIN", &node);
-            if let Some(parent) = node.parent() {
-                let npm_cli = parent.join("node_modules/npm/bin/npm-cli.js");
-                if npm_cli.is_file() {
-                    std::env::set_var("WUNDER_NPM_BIN", &npm_cli);
-                }
-            }
-        }
-    }
-    if can_run_bundled_remotion() {
-        if let Some(remotion_root) = roots
-            .iter()
-            .map(|root| root.join("opt/remotion"))
-            .find(|path| path.join("node_modules").is_dir())
-        {
-            std::env::set_var("WUNDER_REMOTION_ROOT", &remotion_root);
-            let remotion_modules = remotion_root.join("node_modules");
-            let mut node_paths = vec![remotion_modules];
-            if let Some(existing) = std::env::var_os("NODE_PATH") {
-                node_paths.extend(std::env::split_paths(&existing));
-            }
-            if let Ok(node_path) = std::env::join_paths(node_paths) {
-                std::env::set_var("NODE_PATH", node_path);
+    if let Some(node) = first_file(if cfg!(windows) {
+        &["opt/node/node.exe", "opt/node/bin/node.exe"]
+    } else {
+        &["opt/node/bin/node", "opt/node/node"]
+    }) {
+        std::env::set_var("WUNDER_NODE_BIN", &node);
+        if let Some(parent) = node.parent() {
+            let npm_cli = parent.join("node_modules/npm/bin/npm-cli.js");
+            if npm_cli.is_file() {
+                std::env::set_var("WUNDER_NPM_BIN", &npm_cli);
             }
         }
     }

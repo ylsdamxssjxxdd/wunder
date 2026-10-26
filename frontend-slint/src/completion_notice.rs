@@ -37,8 +37,10 @@ thread_local! {
 /// submission state 请求中 kept inside the hot set: it opens a turn, it is not
 /// a settlement.
 fn status_kind(status: &str) -> &'static str {
-    if matches!(status, "pending" | "queued" | "waiting_input" | "waiting_user_input")
-        || status.starts_with("正在排队")
+    if matches!(
+        status,
+        "pending" | "queued" | "waiting_input" | "waiting_user_input"
+    ) || status.starts_with("正在排队")
         || status.starts_with("任务已排队")
         || status.starts_with("等待")
         || status.starts_with("请求中")
@@ -80,6 +82,17 @@ pub fn observe_status(app: &MainWindow, session: &str, status: &str) {
     }
     let agent_name = agent_display_name(app, session);
     show(app, session, &agent_name);
+}
+
+pub fn reset_status(session: &str, status: &str) {
+    LAST_KIND.with(|slot| {
+        slot.borrow_mut()
+            .insert(session.to_string(), status_kind(status));
+    });
+}
+
+pub(crate) fn retain_sessions(mut keep: impl FnMut(&str) -> bool) {
+    LAST_KIND.with(|slot| slot.borrow_mut().retain(|session, _| keep(session)));
 }
 
 /// Resolve the agent display name the way the web `resolveAgentDisplayName`
@@ -140,15 +153,11 @@ fn show(app: &MainWindow, session: &str, agent_name: &str) {
     position_above_taskbar(&notice);
     let hide_weak = notice.as_weak();
     HIDE_TIMER.with(|timer| {
-        timer.start(
-            slint::TimerMode::SingleShot,
-            SHOW_DURATION,
-            move || {
-                if let Some(notice) = hide_weak.upgrade() {
-                    let _ = notice.hide();
-                }
-            },
-        );
+        timer.start(slint::TimerMode::SingleShot, SHOW_DURATION, move || {
+            if let Some(notice) = hide_weak.upgrade() {
+                let _ = notice.hide();
+            }
+        });
     });
 }
 
@@ -198,9 +207,9 @@ fn position_above_taskbar(notice: &CompletionNotice) {
         let y = ((area.1 + area.3 - SCREEN_MARGIN - height).max(area.1 + SCREEN_MARGIN)) as f32;
         notice
             .window()
-            .set_position(slint::WindowPosition::Logical(
-                slint::LogicalPosition::new(x, y),
-            ));
+            .set_position(slint::WindowPosition::Logical(slint::LogicalPosition::new(
+                x, y,
+            )));
     });
 }
 
@@ -223,8 +232,16 @@ mod tests {
         assert_eq!(status_kind("输出已结束"), "done");
         assert_eq!(status_kind("任务完成"), "done");
         assert_eq!(status_kind("completed"), "done");
-        assert_eq!(status_kind("已停止"), "other", "cancelled is not completion");
-        assert_eq!(status_kind("执行失败"), "other", "errors keep the pet bubble");
+        assert_eq!(
+            status_kind("已停止"),
+            "other",
+            "cancelled is not completion"
+        );
+        assert_eq!(
+            status_kind("执行失败"),
+            "other",
+            "errors keep the pet bubble"
+        );
         assert_eq!(status_kind(""), "other");
     }
 

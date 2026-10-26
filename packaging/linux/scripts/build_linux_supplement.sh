@@ -3,7 +3,7 @@
 set -euo pipefail
 
 # Build the Linux Wunder supplement pack (opt/python + opt/git + opt/rg +
-# opt/ffmpeg) for
+# opt/ffmpeg + opt/node) for
 # amd64/arm64. The script must run inside an Ubuntu 18.04 container so every
 # binary matches the desktop release baseline (glibc 2.27); the arm64 pack is
 # produced by running the same script in the arm64 variant of the image.
@@ -15,7 +15,6 @@ set -euo pipefail
 #   WUNDER_SUPPLEMENT_BUILD_ROOT  build root (downloads/stage/dist below it)
 #   WUNDER_SUPPLEMENT_PYPI_INDEX  pip index (default: manifest default)
 #   WUNDER_SUPPLEMENT_REQUIREMENTS  requirements file override
-#   WUNDER_REMOTION_PAYLOAD         directory containing opt/node and opt/remotion
 #
 # Output: <output_dir>/<packageName>-linux-<arch>.tar.gz with opt/ at the
 # archive root, plus README-linux-supplement.txt and the manifest JSON.
@@ -69,7 +68,6 @@ emit(
     rg=data["rg"],
     ffmpeg=data["ffmpeg"],
     node=data["node"],
-    remotion=data["remotion"],
     browser=data.get("browser", {}),
     fonts=data.get("fonts", []),
     install=data["install"],
@@ -122,8 +120,9 @@ ffmpeg_archive_url="$(json_field "ffmpeg.archives.$arch.url")"
 ffmpeg_archive_file="$(json_field "ffmpeg.archives.$arch.fileName")"
 ffmpeg_archive_sha256="$(json_field "ffmpeg.archives.$arch.sha256")"
 node_version="$(json_field node.version)"
-remotion_version="$(json_field remotion.version)"
-remotion_compositor_package="$(json_field "remotion.compositorPackages.$arch")"
+node_archive_url="$(json_field "node.archives.$arch.url")"
+node_archive_file="$(json_field "node.archives.$arch.fileName")"
+node_archive_sha256="$(json_field "node.archives.$arch.sha256")"
 browser_enabled="$(json_field browser.install)"
 browser_version="$(json_field browser.version)"
 browser_archive_version="$(json_field "browser.archives.$arch.browserVersion")"
@@ -141,7 +140,7 @@ fi
 [[ -n "$python_archive_url" && "$python_archive_url" != "null" ]] || fail "no python archive for $arch"
 [[ -n "$rg_archive_url" && "$rg_archive_url" != "null" ]] || fail "no ripgrep archive for $arch"
 [[ -n "$ffmpeg_archive_url" && "$ffmpeg_archive_url" != "null" ]] || fail "no ffmpeg archive for $arch"
-[[ -n "$remotion_compositor_package" && "$remotion_compositor_package" != "null" ]] || fail "no Remotion compositor for $arch"
+[[ -n "$node_archive_url" && "$node_archive_url" != "null" ]] || fail "no Node archive for $arch"
 
 default_build_root="$repo_root/$(json_field default_build_root)"
 build_root="${WUNDER_SUPPLEMENT_BUILD_ROOT:-$default_build_root}"
@@ -162,12 +161,9 @@ git_root="$package_root/opt/git"
 rg_root="$package_root/opt/rg"
 ffmpeg_root="$package_root/opt/ffmpeg"
 node_root="$package_root/opt/node"
-remotion_root="$package_root/opt/remotion"
 browser_root="$package_root/opt/browser"
-remotion_payload="${WUNDER_REMOTION_PAYLOAD:-}"
-[[ -n "$remotion_payload" && -d "$remotion_payload/opt/node" && -d "$remotion_payload/opt/remotion" ]] || fail "WUNDER_REMOTION_PAYLOAD must contain opt/node and opt/remotion"
 rm -rf "$stage_dir"
-mkdir -p "$python_root" "$git_root" "$rg_root" "$ffmpeg_root" "$node_root" "$remotion_root"
+mkdir -p "$python_root" "$git_root" "$rg_root" "$ffmpeg_root" "$node_root"
 
 obtain_file() {
   # obtain_file <url> <destination> <expected-sha256>
@@ -397,7 +393,7 @@ fi
 chmod 0755 "$ffmpeg_bin"
 
 # A pinned Chromium-family archive is bundled for every Linux architecture so
-# Remotion and browser tools have a deterministic offline browser.
+# the browser tools have a deterministic offline browser.
 browser_bundled=false
 if [[ "$browser_enabled" = "True" || "$browser_enabled" = "true" ]] && [[ -n "$browser_archive_url" && "$browser_archive_url" != "null" ]]; then
   log "staging Chrome $browser_version"
@@ -418,15 +414,37 @@ else
   log "no bundled Chromium-family archive for $arch; Playwright/system-browser fallback remains available"
 fi
 
-log "merging Remotion payload from $remotion_payload"
-cp -a "$remotion_payload/opt/node/." "$node_root/"
-cp -a "$remotion_payload/opt/remotion/." "$remotion_root/"
+log "staging Node.js $node_version"
+obtain_file "$node_archive_url" "$downloads_dir/$node_archive_file" "$node_archive_sha256"
+node_extract="$stage_dir/node-extract"
+mkdir -p "$node_extract"
+tar -xzf "$downloads_dir/$node_archive_file" -C "$node_extract"
+node_source="$(find "$node_extract" -mindepth 1 -maxdepth 1 -type d -name 'node-v*' -print -quit)"
+[[ -n "$node_source" ]] || fail "Node archive layout unexpected"
+cp -a "$node_source/." "$node_root/"
+rm -rf "$node_extract"
 node_bin="$node_root/bin/node"
-remotion_compositor_root="$remotion_root/node_modules/$remotion_compositor_package"
-[[ -x "$node_bin" ]] || fail "Node binary missing from Remotion payload"
-[[ -f "$remotion_compositor_root/ffmpeg" ]] || fail "Remotion compositor missing from payload"
-remotion_cli="$remotion_root/node_modules/@remotion/cli/remotion-cli.js"
-[[ -f "$remotion_cli" ]] || fail "Remotion CLI missing from payload"
+npm_cli="$node_root/lib/node_modules/npm/bin/npm-cli.js"
+[[ -x "$node_bin" && -f "$npm_cli" ]] || fail "Node/npm missing after staging: $node_root"
+echo "$(file -bL "$node_bin")" | grep -qi "$elf_machine" || fail "Node architecture mismatch"
+[[ "$("$node_bin" --version)" == "v$node_version" ]] || fail "Node smoke failed"
+
+# The official tarball may ship bin/npm and bin/npx as symlinks into npm's
+# library. Remove those links before creating relocatable wrappers; otherwise
+# redirecting the wrapper would overwrite npm-cli.js itself.
+rm -f "$node_root/bin/npm" "$node_root/bin/npx"
+cat > "$node_root/bin/npm" <<'EOF_NPM'
+#!/bin/sh
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+exec "$here/node" "$here/../lib/node_modules/npm/bin/npm-cli.js" "$@"
+EOF_NPM
+cat > "$node_root/bin/npx" <<'EOF_NPX'
+#!/bin/sh
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+exec "$here/node" "$here/../lib/node_modules/npm/bin/npx-cli.js" "$@"
+EOF_NPX
+chmod 0755 "$node_root/bin/npm" "$node_root/bin/npx"
+log "node smoke ok: $("$node_bin" --version), npm $("$node_bin" "$npm_cli" --version)"
 
 requirements_entries="$("$python_bin" - "$requirements_path" <<'PYEOF'
 import sys
@@ -451,7 +469,6 @@ Git: $git_flavor $git_version
 Ripgrep: $rg_flavor $rg_version
 FFmpeg: $ffmpeg_flavor $ffmpeg_version (opt/ffmpeg/bin/ffmpeg)
 Node.js: $node_version (opt/node/bin/node, npm, npx)
-Remotion: $remotion_version with $remotion_compositor_package (opt/remotion/bin/remotion)
 Browser: $browser_version at opt/browser/$browser_executable_rel (when bundled)
 Browsers: Playwright Chromium in opt/python/ms-playwright (when bundled)
 
@@ -459,11 +476,11 @@ Usage:
 1. Use Import supplement in the Pupa settings, or close processes using this runtime.
 2. For manual installation, extract into WUNDER_HOME (default: ~/.wunder),
    including when the Pupa is distributed as an AppImage.
-3. Ensure the target now contains opt/python, opt/git, opt/rg, opt/ffmpeg,
-   opt/node and opt/remotion (and opt/browser on amd64)
+3. Ensure the target now contains opt/python, opt/git, opt/rg, opt/ffmpeg
+   and opt/node (and opt/browser on amd64)
    (plus opt/r2 when WUNDER_SUPPLEMENT_R2_ARCHIVE was provided).
 4. Start the Pupa or Helm; both prepend the shared opt/python,
-    opt/git, opt/rg, opt/ffmpeg, opt/node and opt/remotion to PATH automatically.
+    opt/git, opt/rg, opt/ffmpeg and opt/node to PATH automatically.
 EOF
 
 python3 - "$manifest_json" "$arch" "$build_root" "$python_archive_url" "$git_tarball_url" "$rg_archive_url" "$ffmpeg_archive_url" "$requirements_path" "$package_root/wunder-linux-supplement.json" <<'PYEOF'
@@ -518,13 +535,6 @@ output = {
         "version": manifest["node"]["version"],
         "architecture": arch,
         "path": manifest["install"]["nodeRoot"] + "/bin/node",
-    },
-    "remotion": {
-        "version": manifest["remotion"]["version"],
-        "root": manifest["install"]["remotionRoot"],
-        "cli": manifest["install"]["remotionRoot"] + "/bin/remotion",
-        "compositor": manifest["remotion"]["compositorPackages"][arch],
-        "browserPath": manifest["install"]["remotionRoot"] + "/browser-path",
     },
     "browser": {
         "name": manifest.get("browser", {}).get("name", ""),
@@ -598,7 +608,7 @@ log "validated Python profile imports"
 "$rg_root/bin/rg" --version | head -n 1
 "$ffmpeg_bin" -version | head -n 1
 
-for staged_binary in "$python_bin" "$git_bin" "$rg_root/bin/rg" "$ffmpeg_bin" "$node_bin" "$remotion_compositor_root/ffmpeg"; do
+for staged_binary in "$python_bin" "$git_bin" "$rg_root/bin/rg" "$ffmpeg_bin" "$node_bin"; do
   # -L resolves aliases (opt/python/bin/python3 is a symlink to python3.8);
   # without it file reports "symbolic link to …" and no ELF at all.
   staged_machine="$(file -bL "$staged_binary")"

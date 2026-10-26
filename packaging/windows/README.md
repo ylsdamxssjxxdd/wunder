@@ -6,8 +6,7 @@
 - `opt/git`：给 `git clone`、`git status`、补丁应用与仓库操作使用的内置 Git
 - `opt/rg`：给 `search_content` 与命令行检索使用的内置 ripgrep
 - `opt/ffmpeg`：随包附带的静态 ffmpeg（`opt/ffmpeg/bin` 已由桌面运行时自动接入 `PATH`）
-- `opt/node`：供 64 位 Windows 使用的 x64 Node.js 16.20.2、npm、npx；ia32 主机不会启动这份 Node
-- `opt/remotion`：Remotion 4.0.538、CLI、React 19.2.3、x64 esbuild/compositor；导入到 64 位 Windows 后可运行
+- `opt/node`：Node.js 16.20.2（npm、npx），供命令行工具与视频工程使用；ia32 包内固定 32 位运行时，导入 64 位 Windows 时经 WOW64 同样可用
 - `opt/r2`：radare2 反汇编工具集（`opt/r2/bin` 已由桌面运行时自动接入 `PATH`）
 - `opt/browser`：（可选）用户自备的 Chrome 109 win32 浏览器，供 `browser_*` 工具开箱使用，详见「内置浏览器（可选）」
 
@@ -22,7 +21,7 @@
 - 勾选舵机时，安装完成后 `{安装根}\bin` 会加入当前用户 `PATH`（重复安装不重复追加，卸载时只移除这一项）。新开终端可直接运行 `wunder-cli`；`desktop` 启动蛹，`wunder-desktop` 也可直接运行。
 - 开始菜单使用形态名称：蛹（桌面程序）与舵机（命令行）；桌面快捷方式随勾选“蛹”自动创建；卸载入口仍为“卸载心舰”。
 - 卸载器移除 `bin`、`.wunder-home`、安装时选择的组件目录和安装器写入的用户 `PATH` 项，保留用户数据。
-- 补充包仍可单独导入：在蛹设置中选择“导入补充包”，或手动解压到 `WUNDER_HOME`。两端自动识别共享 home 中的 `opt/python`、`opt/git`、`opt/rg`、`opt/ffmpeg`、`opt/node`、`opt/remotion`、`opt/r2` 与 `opt/browser`。
+- 补充包仍可单独导入：在蛹设置中选择“导入补充包”，或手动解压到 `WUNDER_HOME`。两端自动识别共享 home 中的 `opt/python`、`opt/git`、`opt/rg`、`opt/ffmpeg`、`opt/node`、`opt/r2` 与 `opt/browser`。
 
 ## 安装后的终端命令
 
@@ -56,7 +55,7 @@ Windows 安装包优先使用离线 SDK 的 `Rust-builder/win7/offline/tools/inn
   - Python 官方从 `3.9` 开始要求 Windows `8.1+`，因此 Win7 路线固定使用 `3.8`。
   - 当前脚本使用官方可下载的 embeddable 压缩包，便于安装到共享用户目录。
 - Playwright 驱动：Win7 包固定使用已验证的 `playwright==1.40.0` 与 Chrome 109 补充包组合。官方 `win32` wheel 内仍带 x64 的 `driver/node.exe`，构建脚本会下载固定 SHA256 的 Node 16.20.2 `win-x86`，替换该文件后再做 i386 PE 门禁。Node 16 不在 Node 官方的 Windows 7 支持矩阵内，桥接会设置 `NODE_SKIP_PLATFORM_CHECK=1`，仍需在真实 ia32 Win7 上验收。
-- 通用 Node/Remotion：`opt/node` 固定为 x64 Node 16.20.2，`opt/remotion` 固定为 Remotion 4.0.538、React 19.2.3、x64 esbuild 与 `@remotion/compositor-win32-x64-msvc`。同一个 ia32 补充包导入 64 位 Windows 后可以使用它；真实 32 位 Windows 不加载这份运行时，视频技能走 Pillow + FFmpeg。
+- 通用 Node：`opt/node` 固定为 Node 16.20.2 + npm/npx，ia32 包内是 32 位运行时（64 位 Windows 经 WOW64 运行），蛹与舵机的命令行工具直接使用。
 - Git：`MinGit 2.46.2`
   - Git for Windows FAQ 将 `2.46.2` 标为最后支持 Windows `7 / 8 / 8.1` 的版本。
   - `MinGit` 适合嵌入第三方桌面应用，体积比完整安装包更小。
@@ -113,6 +112,7 @@ opt/
   git/
   rg/
   ffmpeg/
+  node/
   browser/        （可选，投喂 Chrome 109 压缩包后才会出现）
 README-win7-supplement.txt
 wunder-win7-supplement.json
@@ -147,13 +147,14 @@ Win7 最高只支持到 Chrome 109（`109.0.5414.x`，最后一个支持 Windows
    - `opt/git`
    - `opt/rg`
    - `opt/ffmpeg`
+   - `opt/node`
    - `opt/browser`（若打包时投喂了浏览器）
 4. 重新启动蛹或舵机。
 
 两端启动时会自动：
 
 - 从共享 home 探测补充包，不受程序安装目录和启动目录影响
-- 将共享 home 下的 `opt/python`、`opt/python/Scripts`、`opt/git/cmd`、`opt/git/bin`、`opt/rg`、`opt/rg/bin`、`opt/ffmpeg/bin` 接入 `PATH`，重复导入不会重复累加
+- 将共享 home 下的 `opt/python`、`opt/python/Scripts`、`opt/git/cmd`、`opt/git/bin`、`opt/rg`、`opt/rg/bin`、`opt/ffmpeg/bin`、`opt/node`（及其 `bin`）接入 `PATH`，重复导入不会重复累加
 
 这样桥接层与智能体工具调用就能优先命中内置 Python / Git / rg。
 

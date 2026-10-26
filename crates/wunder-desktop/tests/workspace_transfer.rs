@@ -71,8 +71,11 @@ fn isolated_args(root: &std::path::Path) -> Result<DesktopArgs, std::io::Error> 
 fn make_folder(root: &std::path::Path, name: &str) -> String {
     let path = root.join(name);
     std::fs::create_dir_all(&path).expect("folder");
-    path.canonicalize()
-        .expect("canonical")
+    // Production stores workspace roots in the plain canonical form (no
+    // Windows `\\?\` prefix). Returning a raw `canonicalize()` here kept the
+    // verbatim spelling and hid the containment mismatch that rejected every
+    // nested entry at runtime.
+    wunder_server::local_bootstrap::normalize_local_workspace_path(&path)
         .to_string_lossy()
         .into_owned()
 }
@@ -346,6 +349,15 @@ fn default_workspace_lands_in_the_user_workspace_folder() -> Result<(), Box<dyn 
     );
     let user_dir = root.parent().expect("user directory");
     assert!(user_dir.is_dir());
+    // The seeded root must be immediately usable: entry resolution compares it
+    // with resolved children, so a `\\?\` spelling here made every nested
+    // entry fail with "路径超出当前工作区".
+    runtime.workspace_local_mkdir(&default.root_path, "notes")?;
+    runtime.workspace_local_write(&default.root_path, "notes/readme.md")?;
+    let resolved = runtime.workspace_local_resolve(&default.root_path, "notes/readme.md")?;
+    assert!(resolved.is_file());
+    let listing = runtime.workspace_local_listing(&default.root_path, "notes", 0)?;
+    assert!(listing.entries.iter().any(|entry| entry.name == "readme.md"));
     Ok(())
 }
 

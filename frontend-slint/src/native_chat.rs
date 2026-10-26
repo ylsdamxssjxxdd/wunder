@@ -31,6 +31,8 @@ pub(crate) use observer::project_history;
 #[path = "native_chat_queue.rs"]
 mod queue;
 use queue::{drain_entry, EntrySignal, ParkedTurn, Recall};
+#[path = "native_chat_status.rs"]
+mod status;
 
 struct Active {
     stream: NativeStream,
@@ -488,6 +490,7 @@ struct State {
 
 thread_local! {
     static CHAT_STATE: RefCell<std::rc::Weak<RefCell<State>>> = RefCell::new(std::rc::Weak::new());
+    static SESSION_STATUSES: RefCell<status::StatusProjection> = RefCell::new(status::StatusProjection::default());
     static INITIAL_HISTORY: RefCell<Option<(String, Vec<wunder_desktop::native::NativeChatTurn>, i64, Option<i64>, bool)>> = RefCell::new(None);
     /// The goal elapsed label needs a one-second cadence only while a goal is
     /// actively running.  Keeping this guard on the Slint thread prevents a
@@ -1384,6 +1387,7 @@ fn refresh_chat(app: &MainWindow, state: Rc<RefCell<State>>, silent: bool) {
     if !silent {
         app.set_chat_loading(true);
     }
+    let read_revision = SESSION_STATUSES.with(|slot| slot.borrow().revision());
     std::thread::spawn(move || {
         let result = desktop.list_sessions(None).and_then(|mut items| {
             if items.is_empty() {
@@ -1402,7 +1406,7 @@ fn refresh_chat(app: &MainWindow, state: Rc<RefCell<State>>, silent: bool) {
             }
             match result {
                 Ok(items) => {
-                    let rows = items
+                    let mut rows = items
                         .into_iter()
                         .take(100)
                         .map(|item| {
@@ -1441,6 +1445,13 @@ fn refresh_chat(app: &MainWindow, state: Rc<RefCell<State>>, silent: bool) {
                             }
                         })
                         .collect::<Vec<_>>();
+                    let local_statuses = CHAT_STATE.with(|slot| {
+                        slot.borrow()
+                            .upgrade()
+                            .map(|state| local_status_overrides(&state.borrow()))
+                            .unwrap_or_default()
+                    });
+                    reconcile_catalogue_statuses(&app, &mut rows, read_revision, &local_statuses);
                     let active = rows
                         .iter()
                         .find(|row| row.id == app.get_active_session_id());
@@ -1467,18 +1478,6 @@ fn refresh_chat(app: &MainWindow, state: Rc<RefCell<State>>, silent: bool) {
                     set_goal_clock(&app, active.map(|row| row.goal_seconds).unwrap_or(0));
                     app.set_goal_paused(active.is_some_and(|row| row.goal_paused));
                     update_active_thread_filter(&app, rows.iter().cloned());
-                    // Background transitions (another device, a goal round)
-                    // only surface through this poll: every row goes through
-                    // the completion gate before the projection replaces the
-                    // list. First sight only records, so startup replays
-                    // nothing.
-                    for row in rows.iter() {
-                        crate::completion_notice::observe_status(
-                            &app,
-                            row.id.as_str(),
-                            row.runtime_status.as_str(),
-                        );
-                    }
                     if !app.get_conversations().iter().eq(rows.iter().cloned()) {
                         app.set_conversations(ModelRc::new(VecModel::from(rows)));
                     }
@@ -1529,6 +1528,70 @@ fn refresh_chat(app: &MainWindow, state: Rc<RefCell<State>>, silent: bool) {
             }
         });
     });
+}
+
+fn reconcile_catalogue_statuses(
+    app: &MainWindow,
+    rows: &mut [Conversation],
+    read_revision: u64,
+    local_statuses: &[(String, String)],
+) {
+    for row in rows.iter_mut() {
+        let local_status = local_statuses
+            .iter()
+            .find(|(session, _)| session == row.id.as_str())
+            .map(|(_, status)| status.as_str());
+        let (status, accepted) = SESSION_STATUSES.with(|slot| {
+            slot.borrow_mut().reconcile(
+                row.id.as_str(),
+                row.runtime_status.as_str(),
+                read_revision,
+                local_status,
+            )
+        });
+        row.runtime_status = status.into();
+        if accepted {
+            crate::completion_notice::observe_status(
+                app,
+                row.id.as_str(),
+                row.runtime_status.as_str(),
+            );
+        }
+    }
+    SESSION_STATUSES.with(|slot| {
+        slot.borrow_mut().retain(|session| {
+            rows.iter().any(|row| row.id == session)
+                || local_statuses.iter().any(|(id, _)| id == session)
+        });
+    });
+    crate::completion_notice::retain_sessions(|session| {
+        rows.iter().any(|row| row.id == session)
+            || local_statuses.iter().any(|(id, _)| id == session)
+    });
+}
+
+fn local_status_overrides(state: &State) -> Vec<(String, String)> {
+    let mut statuses: Vec<(String, String)> = Vec::new();
+    let mut upsert = |session: &str, status: &str| {
+        if let Some((_, current)) = statuses.iter_mut().find(|(id, _)| id == session) {
+            *current = status.to_string();
+        } else {
+            statuses.push((session.to_string(), status.to_string()));
+        }
+    };
+    if let Some(cancelling) = state.cancelling_submission.as_ref() {
+        upsert(&cancelling.session, "已停止");
+    }
+    if let Some(submitting) = state.submitting.as_ref() {
+        upsert(&submitting.session, "请求中");
+    }
+    for parked in &state.parked {
+        upsert(&parked.session, "任务已排队…");
+    }
+    if let Some(active) = state.active.as_ref() {
+        upsert(&active.output.session, active.output.state.as_str());
+    }
+    statuses
 }
 
 fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
@@ -2134,9 +2197,10 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
         // the lease round-trip. Project its bubble now when this thread has no
         // foreground run. A normal interjection still uses its queue path so
         // it cannot overwrite another live reducer's timeline state.
-        let optimistic = answered.is_some() && state.borrow().active.is_none();
+        let idle_before_submit = state.borrow().active.is_none();
+        let optimistic = answered.is_some() && idle_before_submit;
         let submission_cancelled = Arc::new(AtomicBool::new(false));
-        if state.borrow().active.is_none() {
+        if idle_before_submit {
             state.borrow_mut().submitting = Some(PendingSubmission {
                 session: session.clone(),
                 client_message_id: client_message_id.clone(),
@@ -2162,6 +2226,11 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
             app.set_activity_running(true);
             app.set_stopping(false);
             app.set_follow_output(true);
+        }
+        if idle_before_submit {
+            // This is the ordering fence for a directory request that began
+            // before the user submitted. A busy thread keeps its live running
+            // status until the engine confirms that the new request queued.
             set_session_status(&app, &session, "请求中");
         }
         let desktop = state.borrow().desktop.clone();
@@ -2247,6 +2316,9 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
                     let stream = match result {
                         Ok(stream) => stream,
                         Err(error) => {
+                            let can_restore_status = owns_submission
+                                && state.borrow().active.is_none()
+                                && state.borrow().parked.is_empty();
                             // Give the composer back what the failed send
                             // consumed, unless the user already typed on.
                             if same_thread {
@@ -2296,8 +2368,14 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
                                     publish_timeline_passive(&app, &live);
                                     app.set_busy(previous_busy);
                                     app.set_activity_running(previous_activity_running);
-                                    set_session_status(&app, &session, &previous_session_status);
                                 }
+                            }
+                            if can_restore_status {
+                                crate::completion_notice::reset_status(
+                                    &session,
+                                    &previous_session_status,
+                                );
+                                set_session_status(&app, &session, &previous_session_status);
                             }
                             app.set_status(format!("无法发送：{error}").into());
                             return;
@@ -2826,6 +2904,7 @@ fn bind_queue(app: &MainWindow, state: Rc<RefCell<State>>) {
 
 // Mutate just the matching thread row. Runtime state must not wait for catalogue polling.
 fn set_session_status(app: &MainWindow, session: &str, status: &str) {
+    SESSION_STATUSES.with(|slot| slot.borrow_mut().record_local(session, status));
     let rows = app.get_conversations();
     if let Some(index) = rows.iter().position(|row| row.id == session) {
         if let Some(mut row) = rows.row_data(index) {

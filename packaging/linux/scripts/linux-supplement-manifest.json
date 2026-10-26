@@ -10,7 +10,6 @@
     "rgRoot": "opt/rg",
     "ffmpegRoot": "opt/ffmpeg",
     "nodeRoot": "opt/node",
-    "remotionRoot": "opt/remotion",
     "browserRoot": "opt/browser"
   },
   "node": {
@@ -29,29 +28,9 @@
         "sha256": "b6945fcc9ad220386bb814bfae7137189fd17297f2959a744105e1bee006035a",
         "elfMachine": "AArch64"
       }
-    }
-  },
-  "remotion": {
-    "version": "4.0.538",
-    "reactVersion": "19.2.3",
-    "esbuildVersion": "0.28.1",
-    "packages": {
-      "@remotion/cli": "4.0.538",
-      "remotion": "4.0.538",
-      "react": "19.2.3",
-      "react-dom": "19.2.3"
-    },
-    "compositorPackages": {
-      "amd64": "@remotion/compositor-linux-x64-gnu",
-      "arm64": "@remotion/compositor-linux-arm64-gnu"
-    },
-    "browser": {
-      "install": true,
-      "pathFile": "browser-path"
     },
     "notes": [
-      "The CLI installs Studio, bundler, renderer and the matching native compositor. It is staged with the same Node major as the Docker runtime.",
-      "The package includes Remotion's Chrome Headless Shell so Studio and renderer commands work offline; Playwright Chromium remains available separately for browser tools."
+      "opt/node is the general-purpose Node runtime exposed to command tools; both architectures share the same Node major as the desktops so agent command tools behave identically."
     ]
   },
   "browser": {
@@ -86,11 +65,8 @@
   },
   "runtime": {
     "baseMinimumGlibc": "2.17",
-    "compositorMinimumGlibc": "2.27",
     "browserMinimumGlibc": "2.17",
-    "remotionMinimumGlibc": "2.27",
-    "baseBuilder": "ubuntu:18.04",
-    "remotionBuilder": "ubuntu:22.04"
+    "baseBuilder": "ubuntu:18.04"
   },
   "python": {
     "version": "3.8.18",
@@ -223,7 +199,6 @@
     "rgRoot": "opt/rg",
     "ffmpegRoot": "opt/ffmpeg",
     "nodeRoot": "opt/node",
-    "remotionRoot": "opt/remotion",
     "browserRoot": "opt/browser"
   },
   "r2": {

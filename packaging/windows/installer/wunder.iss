@@ -124,14 +124,14 @@ begin
   ComponentTasks[3] := 'ffmpeg';
   ComponentTasks[4] := 'browser';
   ComponentTasks[5] := 'r2';
-  ComponentTasks[6] := 'remotion';
+  ComponentTasks[6] := 'node';
   ComponentLabels[0] := 'Python';
   ComponentLabels[1] := 'Git';
   ComponentLabels[2] := 'ripgrep';
   ComponentLabels[3] := 'FFmpeg';
   ComponentLabels[4] := '内置浏览器';
   ComponentLabels[5] := 'radare2';
-  ComponentLabels[6] := 'Remotion 视频渲染（含 Node.js）';
+  ComponentLabels[6] := 'Node.js 运行时';
   Result := True;
 end;
 
@@ -255,18 +255,7 @@ end;
 
 function ComponentDirAt(const Name: String; Index: Integer): String;
 begin
-  // One task can span several opt directories: the remotion checkbox installs
-  // both the Remotion runtime and the bundled Node.js runtime it launches.
-  if CompareText(Name, 'remotion') = 0 then
-  begin
-    case Index of
-      0: Result := 'node';
-      1: Result := 'remotion';
-    else
-      Result := '';
-    end;
-  end
-  else if Index = 0 then
+  if Index = 0 then
     Result := Name
   else
     Result := '';

@@ -10,8 +10,6 @@ on:
   push:
     paths:
       - 'packaging/**'
-      - 'scripts/win-ia32-compositor/**'
-      - 'scripts/linux-ubuntu18-compositor/**'
       - '.github/workflows/desktop-supplements.yml'
 
 # 补充包基本不变：构建输入（打包脚本/清单/requirements/Dockerfile）决定缓存键，
@@ -38,107 +36,16 @@ jobs:
       - id: keys
         shell: bash
         run: |
-          win7_hash="${{ hashFiles('packaging/windows/scripts/build_win7_desktop_supplement.ps1', 'packaging/windows/scripts/remotion-ia32-compositor.ps1', 'packaging/windows/scripts/win7-supplement-manifest.json', 'packaging/python/requirements-win7-common.txt', 'config/matplotlibrc', 'fonts/*') }}"
-          linux_hash="${{ hashFiles('packaging/linux/scripts/build_linux_supplement.sh', 'packaging/linux/scripts/build_linux_remotion.sh', 'packaging/linux/scripts/linux-supplement-manifest.json', 'packaging/linux/scripts/r2-static-archives.json', 'packaging/python/requirements-linux-common.txt', 'packaging/docker/Dockerfile.ubuntu18-supplement', 'packaging/docker/Dockerfile.ubuntu22-remotion', 'packaging/docker/Dockerfile.rust-builder-kylin-x86', 'scripts/linux-ubuntu18-compositor/**', 'scripts/win-ia32-compositor/vendor/**', 'config/matplotlibrc', 'fonts/*') }}"
+          win7_hash="${{ hashFiles('packaging/windows/scripts/build_win7_desktop_supplement.ps1', 'packaging/windows/scripts/win7-supplement-manifest.json', 'packaging/python/requirements-win7-common.txt', 'config/matplotlibrc', 'fonts/*') }}"
+          linux_hash="${{ hashFiles('packaging/linux/scripts/build_linux_supplement.sh', 'packaging/linux/scripts/linux-supplement-manifest.json', 'packaging/linux/scripts/r2-static-archives.json', 'packaging/python/requirements-linux-common.txt', 'packaging/docker/Dockerfile.ubuntu18-supplement', 'packaging/docker/Dockerfile.rust-builder-kylin-x86', 'config/matplotlibrc', 'fonts/*') }}"
           # 浏览器 pin（版本+SHA256 字面量）参与 win7 缓存键：来源变更即触发重建
           browser_pin='chromium-109.0.5414.120-r1070088-hibbiki-mini_installer.sync.exe-sha256-C1AABD6EEF38D759BBD92CA9516353D88C463A1E8389A875B4D12D53DB467F98'
-          echo "win7_key=wunder-supplement-win7-ia32-v3-${win7_hash}-${browser_pin}" >> "$GITHUB_OUTPUT"
-          echo "linux_amd64_key=wunder-supplement-linux-amd64-v2-${linux_hash}" >> "$GITHUB_OUTPUT"
-          echo "linux_arm64_key=wunder-supplement-linux-arm64-v2-${linux_hash}" >> "$GITHUB_OUTPUT"
-
-  # Remotion 只发布 x64 compositor，ia32 包必须自带自编产物。这里用与 wunder
-  # 相同的 Win7 工具链（nightly + i686-win7-windows-gnu + build-std）构建，
-  # 按构建脚本哈希缓存，二进制不进仓库。
-  build-compositor:
-    runs-on: ubuntu-latest
-    timeout-minutes: 90
-    steps:
-      - uses: actions/checkout@v4
-      - name: Compositor cache key
-        id: keys
-        shell: bash
-        run: |
-          hash="${{ hashFiles('scripts/win-ia32-compositor/**') }}"
-          echo "key=wunder-compositor-ia32-v1-${hash}" >> "$GITHUB_OUTPUT"
-      - name: Restore cached compositor
-        id: cache
-        uses: actions/cache@v4
-        with:
-          path: config/runtime/win-ia32/compositor-win32-ia32
-          key: ${{ steps.keys.outputs.key }}
-      - name: Build 32-bit compositor
-        if: steps.cache.outputs.cache-hit != 'true'
-        shell: bash
-        run: bash scripts/win-ia32-compositor/build.sh
-      - name: Verify compositor
-        shell: bash
-        run: |
-          set -euo pipefail
-          dir=config/runtime/win-ia32/compositor-win32-ia32
-          for f in remotion.exe ffmpeg.exe ffprobe.exe avcodec-61.dll swscale-8.dll; do
-            [ -f "$dir/$f" ] || { echo "compositor payload missing: $f" >&2; exit 1; }
-          done
-          python3 - "$dir/remotion.exe" <<'PY'
-          import struct, sys
-          data = open(sys.argv[1], 'rb').read()
-          pe = struct.unpack_from('<I', data, 0x3C)[0]
-          machine = struct.unpack_from('<H', data, pe + 4)[0]
-          dllchar = struct.unpack_from('<H', data, pe + 22)[0]
-          assert machine == 0x014C, f'not a 32-bit PE: 0x{machine:04X}'
-          assert dllchar & 0x20, 'LARGE_ADDRESS_AWARE not set'
-          print(f'compositor PE ok: i386, large-address-aware')
-          PY
-      - uses: actions/upload-artifact@v4
-        with:
-          name: remotion-compositor-ia32
-          path: config/runtime/win-ia32/compositor-win32-ia32
-          if-no-files-found: error
-          retention-days: 7
-
-  # Ubuntu 18.04 cannot run the npm Linux compositor (it is linked against
-  # glibc 2.35). Rebuild the same Remotion source with the existing 18.04
-  # Rust builder, then inject only the native payload into the amd64 pack.
-  build-linux-compositor:
-    runs-on: ubuntu-latest
-    timeout-minutes: 120
-    steps:
-      - uses: actions/checkout@v4
-      - name: Build Ubuntu 18.04 compositor
-        shell: bash
-        run: |
-          set -euo pipefail
-          docker build -f packaging/docker/Dockerfile.rust-builder-kylin-x86 \
-            -t wunder-rust-builder-kylin-x86:ubuntu18 .
-          bash scripts/linux-ubuntu18-compositor/build.sh
-      - name: Verify compositor ABI
-        shell: bash
-        run: |
-          set -euo pipefail
-          bin=config/runtime/linux-x64/compositor-linux-x64-gnu/remotion
-          test -x "$bin"
-          max="$(readelf --version-info "$bin" | grep -o 'GLIBC_[0-9.]*' | sort -Vu | tail -1)"
-          echo "compositor max glibc: ${max:-none}"
-          # Ubuntu 18.04 ships glibc 2.27; version-sort so 2.27/2.4 compare numerically.
-          ceiling="$(printf '%s\n%s\n' 'GLIBC_2.27' "${max:-GLIBC_2.27}" | sort -V | tail -1)"
-          test "$ceiling" = 'GLIBC_2.27' || { echo "compositor requires $max, above the 18.04 baseline" >&2; exit 1; }
-          file -bL "$bin" | grep -q 'ELF 64-bit.*x86-64'
-      - name: Package compositor archive
-        shell: bash
-        run: |
-          set -euo pipefail
-          # artifact 上传/下载不保留文件权限位，直接把目录传过去会让 remotion /
-          # ffmpeg 的可执行位丢掉；打成 tar.gz 后由接收端解包，权限随归档保留。
-          tar -C config/runtime/linux-x64 -czf compositor-linux-x64-gnu.tar.gz compositor-linux-x64-gnu
-          tar -tvzf compositor-linux-x64-gnu.tar.gz | head -5
-      - uses: actions/upload-artifact@v4
-        with:
-          name: remotion-compositor-linux-x64-gnu
-          path: compositor-linux-x64-gnu.tar.gz
-          if-no-files-found: error
-          retention-days: 7
+          echo "win7_key=wunder-supplement-win7-ia32-v4-${win7_hash}-${browser_pin}" >> "$GITHUB_OUTPUT"
+          echo "linux_amd64_key=wunder-supplement-linux-amd64-v3-${linux_hash}" >> "$GITHUB_OUTPUT"
+          echo "linux_arm64_key=wunder-supplement-linux-arm64-v3-${linux_hash}" >> "$GITHUB_OUTPUT"
 
   build-win7-ia32:
-    needs: [prepare, build-compositor]
+    needs: [prepare]
     runs-on: windows-latest
     timeout-minutes: 150
     steps:
@@ -189,12 +96,6 @@ jobs:
           & $7z x (Join-Path (Get-Location) 'browser-src\installer\chrome.7z') '-obrowser-src\unpacked' -y
           if ($LASTEXITCODE -ne 0) { throw "7z inner extract failed ($LASTEXITCODE)" }
           if (-not (Test-Path -LiteralPath 'browser-src\unpacked\Chrome-bin\chrome.exe')) { throw 'chrome.exe missing after extraction' }
-      - name: Download 32-bit compositor
-        if: steps.pack.outputs.cached != 'true' || github.event.inputs.force_rebuild == 'true'
-        uses: actions/download-artifact@v4
-        with:
-          name: remotion-compositor-ia32
-          path: compositor-src
       - name: Build Win7 ia32 supplement
         if: steps.pack.outputs.cached != 'true' || github.event.inputs.force_rebuild == 'true'
         shell: pwsh
@@ -205,7 +106,6 @@ jobs:
             -PythonProfile common `
             -BuildRoot (Join-Path (Get-Location) 'supplement-build') `
             -BrowserArchivePath (Join-Path (Get-Location) 'browser-src\unpacked\Chrome-bin') `
-            -RemotionCompositorPath (Join-Path (Get-Location) 'compositor-src') `
             -PythonPackageIndexUrl https://pypi.org/simple
           # The build script reports failure by throwing, and the next step
           # asserts the pack exists; $LASTEXITCODE is never populated here
@@ -217,18 +117,16 @@ jobs:
           $zip = Get-ChildItem -Path supplement-dist -Filter 'wunder-supplement-win7-*.zip' | Select-Object -First 1
           if (-not $zip) { throw 'no supplement zip produced or restored' }
           Write-Host "pack: $($zip.Name) ($([math]::Round($zip.Length / 1MB, 1)) MB)"
-      - name: Verify 32-bit Node and Remotion payload
+      - name: Verify 32-bit Node payload
         shell: pwsh
         run: |
           # The ia32 pack must be 32-bit end to end: a 32-bit Windows host cannot
-          # start x64 node.exe, so node, esbuild, the rspack native binding and
-          # the compositor all have to be i386.
+          # start x64 node.exe, so node has to be i386.
           Add-Type -AssemblyName System.IO.Compression.FileSystem
           $zipPath = (Get-ChildItem -Path supplement-dist -Filter 'wunder-supplement-win7-*.zip' | Select-Object -First 1).FullName
           $zip = [IO.Compression.ZipFile]::OpenRead($zipPath)
           try {
-            foreach ($entryName in @('opt/node/node.exe', 'opt/node/npm.cmd', 'opt/node/npx.cmd', 'opt/remotion/bin/remotion.cmd',
-                                     'opt/remotion/node_modules/@rspack/binding-win32-ia32-msvc/package.json')) {
+            foreach ($entryName in @('opt/node/node.exe', 'opt/node/npm.cmd', 'opt/node/npx.cmd')) {
               if (-not $zip.GetEntry($entryName)) { throw "supplement entry missing: $entryName" }
             }
             $metaEntry = $zip.GetEntry('wunder-win7-supplement.json')
@@ -236,65 +134,8 @@ jobs:
             $reader = New-Object IO.StreamReader($metaEntry.Open(), [Text.Encoding]::UTF8)
             try { $meta = $reader.ReadToEnd() | ConvertFrom-Json } finally { $reader.Dispose() }
             if ($meta.node.architecture -ne 'ia32') { throw "Node architecture is not ia32: $($meta.node.architecture)" }
-            if ($meta.remotion.bundler.architecture -ne 'ia32') { throw "Remotion bundler architecture is not ia32: $($meta.remotion.bundler.architecture)" }
-            if ($meta.remotion.version -ne '4.0.538') { throw "unexpected Remotion version: $($meta.remotion.version)" }
           } finally { $zip.Dispose() }
-          Write-Host 'Windows supplement 32-bit Node/Remotion payload verified'
-      - name: Verify 32-bit Remotion compositor
-        shell: pwsh
-        run: |
-          # Remotion has no ia32 compositor upstream: the pack must carry our build,
-          # the renderer branch that resolves it, and the x264 thread cap.
-          Add-Type -AssemblyName System.IO.Compression.FileSystem
-          $zipPath = (Get-ChildItem -Path supplement-dist -Filter 'wunder-supplement-win7-*.zip' | Select-Object -First 1).FullName
-          $zip = [IO.Compression.ZipFile]::OpenRead($zipPath)
-          try {
-            foreach ($entryName in @(
-              'opt/remotion/node_modules/@remotion/compositor-win32-ia32-msvc/remotion.exe',
-              'opt/remotion/node_modules/@remotion/compositor-win32-ia32-msvc/package.json',
-              'opt/remotion/node_modules/@esbuild/win32-ia32/esbuild.exe'
-            )) {
-              if (-not $zip.GetEntry($entryName)) { throw "ia32 payload entry missing: $entryName" }
-            }
-            $execEntry = $zip.GetEntry('opt/remotion/node_modules/@remotion/renderer/dist/compositor/get-executable-path.js')
-            if (-not $execEntry) { throw 'renderer get-executable-path.js missing' }
-            $reader = New-Object IO.StreamReader($execEntry.Open(), [Text.Encoding]::UTF8)
-            try { $execSource = $reader.ReadToEnd() } finally { $reader.Dispose() }
-            if ($execSource -notmatch 'compositor-win32-ia32-msvc') {
-              throw 'renderer has no ia32 compositor branch'
-            }
-            $prespawnEntry = $zip.GetEntry('opt/remotion/node_modules/@remotion/renderer/dist/prespawn-ffmpeg.js')
-            if (-not $prespawnEntry) { throw 'renderer prespawn-ffmpeg.js missing' }
-            $reader2 = New-Object IO.StreamReader($prespawnEntry.Open(), [Text.Encoding]::UTF8)
-            try { $prespawnSource = $reader2.ReadToEnd() } finally { $reader2.Dispose() }
-            if ($prespawnSource -notmatch 'wunder x264 thread cap') {
-              throw 'x264 thread cap missing from the ia32 pack'
-            }
-            # open-browser.js must not announce a 4096MB GPU budget to a 32-bit
-            # renderer: the compositor then fails to allocate raster buffers and
-            # every captured frame is an empty, background-only image.
-            $browserEntry = $zip.GetEntry('opt/remotion/node_modules/@remotion/renderer/dist/open-browser.js')
-            if (-not $browserEntry) { throw 'renderer open-browser.js missing' }
-            $reader3 = New-Object IO.StreamReader($browserEntry.Open(), [Text.Encoding]::UTF8)
-            try { $browserSource = $reader3.ReadToEnd() } finally { $reader3.Dispose() }
-            if ($browserSource -notmatch 'wunder ia32: a 32-bit renderer') {
-              throw 'ia32 GPU memory budget override missing (frames would capture empty)'
-            }
-            # The compositor must really be 32-bit and LARGE_ADDRESS_AWARE.
-            $exeEntry = $zip.GetEntry('opt/remotion/node_modules/@remotion/compositor-win32-ia32-msvc/remotion.exe')
-            $stream = $exeEntry.Open()
-            try {
-              $buffer = New-Object byte[] 4096
-              $read = $stream.Read($buffer, 0, 4096)
-            } finally { $stream.Dispose() }
-            if ($read -lt 1024) { throw 'remotion.exe header too small' }
-            $peOffset = [BitConverter]::ToInt32($buffer, 0x3C)
-            $machine = [BitConverter]::ToUInt16($buffer, $peOffset + 4)
-            $dllChar = [BitConverter]::ToUInt16($buffer, $peOffset + 22)
-            if ($machine -ne 0x014C) { throw ('ia32 compositor is not i386: 0x{0:X4}' -f $machine) }
-            if (($dllChar -band 0x20) -eq 0) { throw 'ia32 compositor is not LARGE_ADDRESS_AWARE' }
-          } finally { $zip.Dispose() }
-          Write-Host 'Windows supplement 32-bit Remotion compositor verified'
+          Write-Host 'Windows supplement 32-bit Node payload verified'
       - uses: actions/upload-artifact@v4
         with:
           name: supplement-win7-ia32
@@ -303,7 +144,7 @@ jobs:
           retention-days: 7
 
   build-linux:
-    needs: [prepare, build-linux-compositor]
+    needs: [prepare]
     strategy:
       fail-fast: false
       matrix:
@@ -355,59 +196,7 @@ jobs:
             "${{ github.server_url }}/${{ github.repository }}/releases/download/${{ env.RELEASE_TAG }}/$file"
           echo "$sha  r2-static/$file" | sha256sum -c -
           echo "WUNDER_R2_ARCHIVE=/app/r2-static/$file" >> "$GITHUB_ENV"
-      - name: Build Remotion payload in Ubuntu 22.04
-        if: steps.pack.outputs.cached != 'true' || github.event.inputs.force_rebuild == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          docker build --platform "${{ matrix.platform }}" \
-            -f packaging/docker/Dockerfile.ubuntu22-remotion \
-            -t "wunder-remotion-ubuntu2204-${{ matrix.arch }}" .
-          rm -rf remotion-payload
-          mkdir -p remotion-payload remotion-build
-          docker run --rm --platform "${{ matrix.platform }}" \
-            -v "$GITHUB_WORKSPACE:/app" \
-            -w /app \
-            -e ARCH="${{ matrix.arch }}" \
-            -e WUNDER_REMOTION_OUTPUT=/app/remotion-payload/opt \
-            -e WUNDER_REMOTION_BUILD_ROOT=/app/remotion-build \
-            -e WUNDER_SUPPLEMENT_NPM_REGISTRY=https://registry.npmjs.org \
-            "wunder-remotion-ubuntu2204-${{ matrix.arch }}" \
-            bash packaging/linux/scripts/build_linux_remotion.sh
-          # 容器内以 root 写挂载目录，产物落在工作区后归 root 所有；
-          # 交还 runner 所有权，否则后续注入 compositor 的 cp 会被拒绝。
-          sudo chown -R "$(id -u):$(id -g)" remotion-payload remotion-build
-      - name: Inject Ubuntu 18.04 compositor (amd64)
-        if: matrix.arch == 'amd64' && (steps.pack.outputs.cached != 'true' || github.event.inputs.force_rebuild == 'true')
-        uses: actions/download-artifact@v4
-        with:
-          name: remotion-compositor-linux-x64-gnu
-          path: compositor-archive
-      - name: Replace amd64 compositor with Ubuntu 18.04 build
-        if: matrix.arch == 'amd64' && (steps.pack.outputs.cached != 'true' || github.event.inputs.force_rebuild == 'true')
-        shell: bash
-        run: |
-          set -euo pipefail
-          archive="$(find compositor-archive -name 'compositor-linux-x64-gnu.tar.gz' -print -quit)"
-          test -n "$archive" || { echo "compositor archive missing" >&2; exit 1; }
-          target=remotion-payload/opt/remotion/node_modules/@remotion/compositor-linux-x64-gnu
-          test -d "$target"
-          work=compositor-extract
-          rm -rf "$work"
-          mkdir -p "$work"
-          tar -xzf "$archive" -C "$work"
-          test -x "$work/compositor-linux-x64-gnu/remotion"
-          # 覆盖二进制与共享库，保留 npm 包自带的 package.json 等元数据；
-          # 解开归档再拷，可执行位随 tar 恢复。
-          cp -a "$work/compositor-linux-x64-gnu/." "$target/"
-          rm -rf "$work"
-          test -x "$target/remotion"
-          test -x "$target/ffmpeg"
-          max="$(readelf --version-info "$target/remotion" | grep -o 'GLIBC_[0-9.]*' | sort -Vu | tail -1)"
-          echo "injected compositor max glibc: ${max:-none}"
-          ceiling="$(printf '%s\n%s\n' 'GLIBC_2.27' "${max:-GLIBC_2.27}" | sort -V | tail -1)"
-          test "$ceiling" = 'GLIBC_2.27' || { echo "injected compositor requires $max, above the 18.04 baseline" >&2; exit 1; }
-      - name: Build Ubuntu 18.04 base supplement and merge Remotion
+      - name: Build Ubuntu 18.04 supplement
         if: steps.pack.outputs.cached != 'true' || github.event.inputs.force_rebuild == 'true'
         shell: bash
         run: |
@@ -423,7 +212,6 @@ jobs:
             -e ARCH="${{ matrix.arch }}" \
             -e WUNDER_OUTPUT_DIR=/app/supplement-dist \
             -e WUNDER_SUPPLEMENT_BUILD_ROOT=/app/supplement-build \
-            -e WUNDER_REMOTION_PAYLOAD=/app/remotion-payload \
             -e WUNDER_SUPPLEMENT_PYPI_INDEX=https://pypi.org/simple \
             -e WUNDER_SUPPLEMENT_R2_ARCHIVE="${WUNDER_R2_ARCHIVE:-}" \
             "wunder-supplement-ubuntu1804-${{ matrix.arch }}" \
@@ -454,33 +242,19 @@ jobs:
           mkdir -p "$work"
           tar -xzf "$pack" -C "$work"
           test -x "$work/opt/node/bin/node"
-          test -x "$work/opt/remotion/bin/remotion"
-          test -f "$work/opt/remotion/browser-path"
           test -x "$work/opt/browser/$browser_rel"
           check_elf "$work/opt/node/bin/node"
           check_elf "$work/opt/git/bin/git"
           check_elf "$work/opt/rg/bin/rg"
           check_elf "$work/opt/ffmpeg/bin/ffmpeg"
           check_elf "$work/opt/browser/$browser_rel"
-          compositor='@remotion/compositor-linux-x64-gnu'
-          esbuild_pkg='@esbuild/linux-x64'
-          if [ "$arch" = 'arm64' ]; then
-            compositor='@remotion/compositor-linux-arm64-gnu'
-            esbuild_pkg='@esbuild/linux-arm64'
-          fi
-          test -d "$work/opt/remotion/node_modules/$compositor"
-          check_elf "$work/opt/remotion/node_modules/$compositor/remotion"
-          test -x "$work/opt/remotion/node_modules/$esbuild_pkg/bin/esbuild"
           python3 - "$work/wunder-linux-supplement.json" "$arch" <<'PY'
           import json, sys
           meta = json.load(open(sys.argv[1], encoding='utf-8'))
           arch = sys.argv[2]
-          compositor = '@remotion/compositor-linux-%s-gnu' % ('x64' if arch == 'amd64' else 'arm64')
           assert meta['arch'] == arch, meta['arch']
           assert meta['node']['version'] == '16.20.2', meta['node']['version']
           assert meta['node']['architecture'] == arch, meta['node']['architecture']
-          assert meta['remotion']['version'] == '4.0.538', meta['remotion']['version']
-          assert meta['remotion']['compositor'] == compositor, meta['remotion']['compositor']
           assert meta['browser']['bundled'] is True
           print('Linux supplement metadata verified:', arch, 'browser', meta['browser']['version'])
           PY
@@ -547,7 +321,7 @@ jobs:
             gh release create "$RELEASE_TAG" \
               --repo "${GITHUB_REPOSITORY}" \
               --title "Wunder 补充包（Win7 32 位 / Linux x86_64 / Linux ARM64）" \
-              --notes "本地补充包。在蛹设置中导入，或手动解压到 WUNDER_HOME（默认用户主目录 .wunder），蛹与舵机共用 Python、Git、rg、ffmpeg 运行环境。" \
+              --notes "本地补充包。在蛹设置中导入，或手动解压到 WUNDER_HOME（默认用户主目录 .wunder），蛹与舵机共用 Python、Git、rg、ffmpeg、Node 运行环境。" \
             --latest=false --target "${GITHUB_SHA}"
           fi
           find release-assets -type f -maxdepth 2 -print0 | while IFS= read -r -d '' asset; do

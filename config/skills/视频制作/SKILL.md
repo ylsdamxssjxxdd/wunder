@@ -17,7 +17,7 @@ description: "创建、修改、预览、调试和导出程序化视频。适用
 ## 工具协同
 
 - 使用 `执行命令` 或命令会话运行 `npm`、`npx remotion`、媒体探测、测试和渲染命令，工作目录必须是用户项目目录。
-- Linux 使用补充包中的 Node 16、Remotion 4 和对应架构 compositor；amd64 自带 Chrome for Testing 122，arm64 自带 Chromium 120，Remotion 与 browser 工具分别优先使用 `opt/browser/chrome-linux64/chrome` 或 `opt/browser/chrome-linux/chrome`。补充包运行时会为 compositor 的 FFmpeg 共享库设置 `LD_LIBRARY_PATH`。
+- 先确认运行环境是否已提供 Node 与 Remotion：舰体沙盒使用 `config/runtime` 挂载的 Node/Remotion 运行时；蛹与舵机使用补充包中的 Node 16，并需要项目自行安装 Remotion 依赖。浏览器优先使用补充包内置的 `opt/browser/chrome-linux64/chrome`（amd64）或 `opt/browser/chrome-linux/chrome`（arm64）；Windows 使用 `opt/browser/chrome-win/chrome.exe`。
 - 使用 `读取文件`、`搜索内容`、`列出文件`检查项目和素材；不要把技能目录当作项目目录，也不要把素材复制进技能包。
 - 浏览器启用时只使用单一 `browser` 工具：`navigate` → `observe_refs`/`observe_text` → 交互或 `wait` → `screenshot`。导航后旧 ref 失效，必须重新观察；批处理最多 10 步。
 - Studio 使用 `http(s)` 地址；如果运行时策略阻止本机地址，说明原因并提供准确 URL，不要绕过安全限制。

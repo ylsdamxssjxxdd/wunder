@@ -1,8 +1,7 @@
 FROM ubuntu:18.04
 
-# Lean build image for the Linux base supplement pack (opt/python, opt/git,
-# opt/rg and opt/ffmpeg). Remotion is assembled in the separate
-# Dockerfile.ubuntu22-remotion image and merged into the finished pack.
+# Lean build image for the Linux supplement pack (opt/python, opt/git,
+# opt/rg, opt/ffmpeg and opt/node).
 # Keeping this image on Ubuntu 18.04 preserves the desktop compatibility
 # baseline for the native tools. The arm64 variant is run under QEMU binfmt by
 # CI, so the single Dockerfile covers both architectures through the platform

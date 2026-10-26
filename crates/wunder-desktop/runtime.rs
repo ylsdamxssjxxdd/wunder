@@ -1681,9 +1681,13 @@ fn migrate_local_workspaces(state: &AppState, user_id: &str, legacy_root: &Path)
             });
             if stale && !occupied {
                 fs::create_dir_all(&workspace_dir)?;
-                let root = workspace_dir
-                    .canonicalize()
-                    .unwrap_or_else(|_| workspace_dir.clone());
+                // Store the same plain, canonical spelling every workspace
+                // entry point compares against. A raw `canonicalize()` keeps
+                // the Windows `\\?\` verbatim prefix and the identity check
+                // then rejects every nested file in the workspace.
+                let root = wunder_server::local_bootstrap::normalize_local_workspace_path(
+                    &workspace_dir,
+                );
                 let mut record = first.clone();
                 record.root_path = root.to_string_lossy().into_owned();
                 record.updated_at = now_ts();
@@ -1696,9 +1700,12 @@ fn migrate_local_workspaces(state: &AppState, user_id: &str, legacy_root: &Path)
         }
         None => {
             fs::create_dir_all(&workspace_dir)?;
-            let root = workspace_dir
-                .canonicalize()
-                .unwrap_or_else(|_| workspace_dir.clone());
+            // Plain canonical spelling (no Windows `\\?\` prefix), matching
+            // what `normalize_local_workspace_path` produces for every stored
+            // root and every containment check.
+            let root = wunder_server::local_bootstrap::normalize_local_workspace_path(
+                &workspace_dir,
+            );
             let now = now_ts();
             let record = wunder_server::storage::WorkspaceRecord {
                 workspace_id: format!("ws_{}", uuid::Uuid::new_v4().simple()),

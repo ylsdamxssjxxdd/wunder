@@ -9,8 +9,7 @@
     "gitRoot": "opt\\git",
     "rgRoot": "opt\\rg",
     "ffmpegRoot": "opt\\ffmpeg",
-    "nodeRoot": "opt\\node",
-    "remotionRoot": "opt\\remotion"
+    "nodeRoot": "opt\\node"
   },
   "node": {
     "version": "16.20.2",
@@ -33,45 +32,6 @@
       "The ia32 pack ships a 32-bit Node runtime: a 32-bit Windows host cannot start x64 node.exe, so everything in this pack must be 32-bit.",
       "x86 node.exe still runs on 64-bit Windows under WOW64, so this pack stays usable on a 64-bit host without carrying a second runtime."
     ]
-  },
-  "remotion": {
-    "version": "4.0.538",
-    "runtimeRoot": "opt\\remotion",
-    "packages": {
-      "@remotion/cli": "4.0.538",
-      "remotion": "4.0.538",
-      "react": "19.2.3",
-      "react-dom": "19.2.3"
-    },
-    "bundler": {
-      "version": "0.28.1",
-      "package": "esbuild",
-      "nativePackages": {
-        "ia32": "@esbuild/win32-ia32",
-        "x64": "@esbuild/win32-x64"
-      },
-      "notes": [
-        "The native esbuild package is architecture-specific; the ia32 pack must carry @esbuild/win32-ia32, which npm only installs when the runtime it runs under is 32-bit."
-      ]
-    },
-    "notes": [
-      "The runtime is a production-only npm installation used for the bundled remotion command and offline project bootstrap.",
-      "Remotion publishes @remotion/compositor-win32-x64-msvc only. The ia32 pack therefore injects a locally compiled @remotion/compositor-win32-ia32-msvc, the renderer branch that resolves it, and an x264 thread cap, so a 32-bit host can render instead of only editing projects."
-    ],
-    "compositor": {
-      "ia32": {
-        "package": "@remotion/compositor-win32-ia32-msvc",
-        "version": "4.0.538",
-        "source": "scripts/win-ia32-compositor/build.sh",
-        "toolchain": "nightly-2026-03-14 + i686-win7-windows-gnu + -Z build-std=std,panic_abort",
-        "ffmpeg": "7.1 shared libraries built with i686-w64-mingw32 GCC (msvcrt) + static x264",
-        "notes": [
-          "Built from remotion/packages/compositor so the 32-bit binary matches the renderer version.",
-          "Emits a Win7-safe PE: no Win10-era imports, LARGE_ADDRESS_AWARE set (4GB address space).",
-          "x264 thread cap is applied by the renderer patch: >=4K uses 6 threads, >=1440p uses 8; measured peaks without it were 3716MB (4K, encoder OOM) versus 2289MB with the cap."
-        ]
-      }
-    }
   },
   "browser": {
     "enabled": true,
