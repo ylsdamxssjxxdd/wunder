@@ -369,34 +369,15 @@ impl NativeDesktop {
         if !(1..=MAX_BATCH_THREADS).contains(&count) {
             return Err(anyhow!("压测线程个数必须在 1..={MAX_BATCH_THREADS}"));
         }
-        let workspace_id = workspace_id
-            .map(str::trim)
-            .filter(|id| !id.is_empty())
-            .map(str::to_owned);
-        if let Some(workspace_id) = workspace_id.as_deref() {
-            if self
-                .state()
-                .storage
-                .get_workspace(self.user_id(), workspace_id)?
-                .is_none()
-            {
-                return Err(anyhow!("工作区不存在"));
-            }
-        }
         // Settings can be opened before the workspace selector has projected
         // its first frame. Generated local threads must still belong to a
         // work area, otherwise the workspace tree quite correctly hides them.
-        let workspace_id = match workspace_id {
-            Some(workspace_id) => workspace_id,
-            None => self
-                .state()
-                .storage
-                .list_workspaces(self.user_id())?
-                .into_iter()
-                .next()
-                .map(|workspace| workspace.workspace_id)
-                .ok_or_else(|| anyhow!("工作区不存在"))?,
-        };
+        let workspace_id = wunder_server::resolve_stress_workspace(
+            self.state().storage.as_ref(),
+            self.user_id(),
+            workspace_id,
+        )
+        .map_err(|message| anyhow!("{message}"))?;
         let user_id = self.user_id().to_string();
         let db_path = self.runtime.block_on(async {
             let config = self.state().config_store.get().await;

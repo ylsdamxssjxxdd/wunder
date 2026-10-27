@@ -1,14 +1,21 @@
 # AI生成
 # Slim Linux-friendly Python package set for Wunder Desktop supplement.
 # Mirrors requirements-win7-common.txt so agent-generated Python behaves the
-# same on Win7 and Linux; the only divergence is h5py (2.10.0 has no aarch64
-# wheel, 3.10.0 is the newest release still shipping cp38 + aarch64 wheels).
+# same on Win7 and Linux. Two intentional divergences, both forced by missing
+# wheels rather than by preference: h5py (2.10.0 has no aarch64 wheel, 3.10.0 is
+# the newest release still shipping cp38 + aarch64 wheels) and capstone (5.0.1
+# is the only version with a usable 32-bit Windows DLL, but it has no aarch64
+# Linux wheel).
 # Focus: networking, tables/dataframes, office document IO, lightweight image IO,
 # database access, and static/HTML plotting (matplotlib, seaborn, pyecharts).
 
 aiosqlite==0.20.0
-# capstone: pinned 5.0.2. On win7 the ia32 supplement installs with
-# --only-binary=:all: on a 32-bit host, so pip selects the win32 wheel.
+# capstone: stays on 5.0.2 here. The 5.0.2 problem is Windows-only (its
+# py3-none-win32 wheel ships an x86-64 capstone.dll, see
+# requirements-win7-common.txt); the Linux wheels are fine. 5.0.1 cannot be used
+# on this side either: it publishes no manylinux aarch64 wheel, so the arm64
+# supplement would fall back to building the sdist. 5.0.1 vs 5.0.2 is a patch
+# level difference with the same 5.0 API.
 capstone==5.0.2
 certifi==2024.8.30
 charset-normalizer==3.4.1

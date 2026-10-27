@@ -1,0 +1,17 @@
+FROM wunder-slint-arm64-ubuntu18:latest AS tooling
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN sed -i 's@http://ports.ubuntu.com/ubuntu-ports@http://mirrors.tuna.tsinghua.edu.cn/ubuntu-ports@g' /etc/apt/sources.list \
+    && apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Retries=3 update \
+    && apt-get install -y --no-install-recommends bash ca-certificates curl git python3 cmake ninja-build nasm libssl-dev clang libclang-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+FROM tooling
+COPY ci /opt/offline-ci
+RUN mkdir -p /opt/offline-sdk /ci-cache /workspace
+
+ENV WUNDER_OFFLINE_ROOT=/opt/offline-sdk \
+    CARGO_NET_OFFLINE=true \
+    PATH=/opt/offline-sdk/rust/toolchains/1.92.0-aarch64-unknown-linux-gnu/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+WORKDIR /workspace
+CMD ["bash"]

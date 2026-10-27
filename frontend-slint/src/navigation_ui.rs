@@ -422,6 +422,7 @@ fn rebuild_rows(app: &MainWindow) {
                             thread_id: thread.id.clone(),
                             title: thread.title.clone(),
                             status: thread.status.clone(),
+                            phase: crate::runtime_phase::Phase::of(thread.status.as_str()).code(),
                             active: app.get_cloud_chat_active()
                                 && app.get_cloud_active_thread_id() == thread.id,
                             payload: index as i32,
@@ -457,6 +458,7 @@ fn rebuild_rows(app: &MainWindow) {
                 thread_id: "".into(),
                 title: "".into(),
                 status: "".into(),
+                phase: -1,
                 active: false,
                 payload: wi as i32,
                 origin: "".into(),
@@ -507,6 +509,7 @@ fn rebuild_rows(app: &MainWindow) {
                     thread_id: conv.id.clone(),
                     title: conv.title.clone(),
                     status: conv.runtime_status.clone(),
+                    phase: conv.runtime_phase,
                     active: conv.id == active,
                     payload: ci as i32,
                     origin: conv.origin.clone(),
@@ -530,11 +533,21 @@ fn rebuild_rows(app: &MainWindow) {
 /// snapshot of the conversation list, so a live transition (running, waiting,
 /// done) must be patched into the matching row here; waiting for the next
 /// catalogue rebuild is what left entries stale until a thread switch.
-pub(crate) fn update_thread_status(app: &MainWindow, session: &str, status: &str) {
-    patch_thread_status(&app.get_sidebar_rows(), session, status);
+pub(crate) fn update_thread_status(
+    app: &MainWindow,
+    session: &str,
+    status: &str,
+    phase: crate::runtime_phase::Phase,
+) {
+    patch_thread_status(&app.get_sidebar_rows(), session, status, phase);
 }
 
-fn patch_thread_status(rows: &ModelRc<SidebarRow>, session: &str, status: &str) -> bool {
+fn patch_thread_status(
+    rows: &ModelRc<SidebarRow>,
+    session: &str,
+    status: &str,
+    phase: crate::runtime_phase::Phase,
+) -> bool {
     let Some(index) = rows
         .iter()
         .position(|row| row.kind == 1 && row.thread_id.as_str() == session)
@@ -544,10 +557,11 @@ fn patch_thread_status(rows: &ModelRc<SidebarRow>, session: &str, status: &str) 
     let Some(mut row) = rows.row_data(index) else {
         return false;
     };
-    if row.status.as_str() == status {
+    if row.status.as_str() == status && row.phase == phase.code() {
         return false;
     }
     row.status = status.into();
+    row.phase = phase.code();
     rows.set_row_data(index, row);
     true
 }
@@ -572,6 +586,7 @@ fn cloud_row(app: &MainWindow) -> SidebarRow {
         thread_id: "".into(),
         title: "".into(),
         status: "".into(),
+        phase: -1,
         active: false,
         payload: -1,
         origin: "".into(),
@@ -1136,6 +1151,7 @@ mod tests {
             thread_id: id.into(),
             title: id.into(),
             status: status.into(),
+            phase: crate::runtime_phase::Phase::of(status).code(),
             active: false,
             payload: 0,
             origin: "".into(),
@@ -1158,14 +1174,16 @@ mod tests {
                 ..thread_row("a", "idle")
             },
         ]));
-        assert!(patch_thread_status(&rows, "a", "正在生成…"));
+        let running = crate::runtime_phase::Phase::Running;
+        assert!(patch_thread_status(&rows, "a", "正在生成…", running));
         assert_eq!(rows.row_data(0).unwrap().status, "正在生成…");
+        assert_eq!(rows.row_data(0).unwrap().phase, running.code());
         assert_eq!(rows.row_data(1).unwrap().status, "任务完成");
         // Cloud rows carry their own status pipeline and stay untouched.
         assert_eq!(rows.row_data(2).unwrap().status, "idle");
         // A repeated or unknown update changes nothing and reports so.
-        assert!(!patch_thread_status(&rows, "a", "正在生成…"));
-        assert!(!patch_thread_status(&rows, "gone", "正在生成…"));
+        assert!(!patch_thread_status(&rows, "a", "正在生成…", running));
+        assert!(!patch_thread_status(&rows, "gone", "正在生成…", running));
     }
 
     #[test]

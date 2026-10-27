@@ -1,11 +1,12 @@
 //! Rebuildable SQLite projection for canonical rollout JSONL.
 //!
 //! A rollout file remains the source of truth.  This module only stores
-//! completed turn and item projections so history can be paged without
-//! scanning every JSONL line at open time.  Callers must invoke projection
+//! completed turn metadata, bounded previews and verified body locators so
+//! history can be paged without duplicating canonical bodies. Callers invoke projection
 //! only after the recorder's flush barrier; the projection may lag a rollout,
 //! but must never get ahead of it.
 
+use super::thread_history_body::{item_digest, ItemBodyReader, ItemBodyRef, ITEM_BODY_COLUMNS};
 use anyhow::{anyhow, bail, Context, Result};
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
@@ -80,8 +81,7 @@ pub(crate) struct ThreadHistoryPageRequest {
     pub before: Option<ThreadHistoryCursor>,
 }
 
-/// A completed item retained for history display. `item_json` is the complete
-/// canonical item projection, not a preview or a mutable live tail.
+/// A completed item hydrated from its canonical record, not a persisted copy.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ThreadHistoryItem {
     pub rollout_id: String,
@@ -105,7 +105,7 @@ pub(crate) struct ThreadHistoryPage {
 }
 
 /// Completed/running turn metadata.  The full display body stays in
-/// `thread_items.item_json`; this structure is for bounded trajectory reads.
+/// the canonical rollout; this structure is for bounded trajectory reads.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ThreadHistoryTurn {
     pub rollout_id: String,
@@ -167,6 +167,18 @@ pub(crate) struct HistorySegment {
 }
 
 impl ThreadHistoryStore {
+    #[cfg(test)]
+    fn persist_test_source(&self, rollout_id: &str, jsonl: &[u8]) -> Result<()> {
+        let root = self.db_path.parent().unwrap();
+        fs::create_dir_all(root.join("sessions"))?;
+        let relative = format!("sessions/{rollout_id}.jsonl");
+        fs::write(root.join(&relative), jsonl)?;
+        let conn = Connection::open(root.join("state_1.sqlite"))?;
+        conn.execute_batch("CREATE TABLE IF NOT EXISTS canonical_rollouts(rollout_id TEXT PRIMARY KEY,rollout_path TEXT NOT NULL);")?;
+        conn.execute("INSERT INTO canonical_rollouts(rollout_id,rollout_path) VALUES(?1,?2) ON CONFLICT(rollout_id) DO UPDATE SET rollout_path=excluded.rollout_path",params![rollout_id,relative])?;
+        Ok(())
+    }
+
     pub(crate) fn delete_rollout(&self, rollout_id: &str) -> Result<()> {
         let mut conn = self.connect()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -191,6 +203,7 @@ impl ThreadHistoryStore {
             [rollout_id],
         )?;
         tx.commit()?;
+        conn.execute_batch("PRAGMA incremental_vacuum(256);")?;
         Ok(())
     }
     /// Opens or creates an independent projection database.  It must not point
@@ -206,8 +219,9 @@ impl ThreadHistoryStore {
             db_path,
             scope: None,
         };
-        let conn = store.connect()?;
+        let mut conn = store.connect()?;
         conn.execute_batch("PRAGMA journal_mode=WAL;")?;
+        super::thread_history_migration::migrate(&mut conn, &store.db_path)?;
         initialize_schema(&conn)?;
         Ok(store)
     }
@@ -258,7 +272,8 @@ impl ThreadHistoryStore {
                     .unwrap_or_default()
             ))
         };
-        let items=segments.iter().map(|s|condition("rollout_ordinal",s).map(|c|format!("SELECT {current} AS rollout_id,turn_id,root_turn_id,item_id,item_type,created_at_ms,rollout_ordinal,item_json,preview_json,visible FROM main.thread_items WHERE {c}"))).collect::<Result<Vec<_>>>()?.join(" UNION ALL ");
+        conn.execute_batch("DROP VIEW IF EXISTS temp.thread_items;")?;
+        let items=segments.iter().map(|s|condition("rollout_ordinal",s).map(|c|format!("SELECT {current} AS rollout_id,turn_id,root_turn_id,item_id,item_type,created_at_ms,rollout_ordinal,rollout_id AS source_rollout_id,record_byte_offset,record_byte_length,item_bytes,item_digest,preview_json,visible,message_context FROM main.thread_items WHERE {c}"))).collect::<Result<Vec<_>>>()?.join(" UNION ALL ");
         let turns=segments.iter().map(|s|condition("COALESCE(start_ordinal,end_ordinal,0)",s).map(|c|{
             let end=s.end_ordinal.map(|v|v.to_string()).unwrap_or(i64::MAX.to_string());
             format!("SELECT {current} AS rollout_id,turn_id,root_turn_id,CASE WHEN end_ordinal>={end} THEN 'running' ELSE status END AS status,error_json,started_at_ms,CASE WHEN end_ordinal>={end} THEN NULL ELSE completed_at_ms END AS completed_at_ms,duration_ms,first_user_item_id,final_agent_item_id,start_rollout_byte_offset,end_rollout_byte_offset,start_ordinal,CASE WHEN end_ordinal>={end} THEN NULL ELSE end_ordinal END AS end_ordinal,updated_at_ordinal FROM main.thread_turns WHERE {c}")
@@ -316,12 +331,14 @@ impl ThreadHistoryStore {
     /// This operation performs all item/turn writes and the new waterline in
     /// one SQLite transaction.  On a projection error nothing from this call
     /// is committed; a later retry resumes from the previous byte boundary.
+    #[cfg(test)]
     pub(crate) fn project_jsonl_bytes(
         &self,
         rollout_id: &str,
         jsonl: &[u8],
     ) -> Result<ProjectionProgress> {
         validate_id("rollout_id", rollout_id)?;
+        self.persist_test_source(rollout_id, jsonl)?;
         let conn = self.connect()?;
         let current = load_state(&conn, rollout_id)?;
         let start = usize::try_from(current.next_rollout_byte_offset)
@@ -441,7 +458,13 @@ impl ThreadHistoryStore {
                             .map_err(|_| anyhow!("rollout byte offset cannot fit in u64"))?,
                     )
                     .ok_or_else(|| anyhow!("rollout byte offset overflow"))?;
-                project_envelope(&tx, rollout_id, &envelope, record_offset)?;
+                project_envelope(
+                    &tx,
+                    rollout_id,
+                    &envelope,
+                    record_offset,
+                    (next_offset - offset) as u64,
+                )?;
                 next_ordinal = envelope
                     .ordinal
                     .checked_add(1)
@@ -512,7 +535,7 @@ impl ThreadHistoryStore {
         if let Some(turn_id) = turn_id {
             validate_id("turn_id", turn_id)?;
         }
-        let mut connection = self.connect()?;
+        let mut connection = self.connect_read()?;
         let conn = connection.transaction()?;
         let state = load_state(&conn, rollout_id)?;
         if let Some(cursor) = request.before.as_ref() {
@@ -526,33 +549,34 @@ impl ThreadHistoryStore {
         }
 
         let limit = request.limit.clamp(1, THREAD_HISTORY_PAGE_MAX);
+        let mut bodies = ItemBodyReader::for_connection(&conn)?;
         let fetch = i64::try_from(limit + 1).expect("thread history page maximum fits i64");
         let (mut items, budget_limited) = if let Some(cursor) = request.before.as_ref() {
             let ordinal = i64::try_from(cursor.rollout_ordinal)
                 .map_err(|_| anyhow!("history cursor ordinal exceeds SQLite integer range"))?;
-            let mut statement = conn.prepare(
-                "SELECT turn_id,root_turn_id,item_id,item_type,created_at_ms,rollout_ordinal,item_json
+            let mut statement = conn.prepare(&format!(
+                "SELECT turn_id,root_turn_id,item_id,item_type,created_at_ms,rollout_ordinal,{ITEM_BODY_COLUMNS}
                  FROM thread_items
                  WHERE rollout_id=?1
                    AND (rollout_ordinal < ?2 OR (rollout_ordinal = ?2 AND item_id < ?3))
                    AND (?5 IS NULL OR turn_id=?5)
                  ORDER BY rollout_ordinal DESC,item_id DESC
-                 LIMIT ?4",
-            )?;
+                 LIMIT ?4"
+            ))?;
             let rows =
                 statement.query(params![rollout_id, ordinal, cursor.item_id, fetch, turn_id])?;
-            let projected = collect_item_page(rows, rollout_id)?;
+            let projected = collect_item_page(rows, rollout_id, &mut bodies)?;
             projected
         } else {
-            let mut statement = conn.prepare(
-                "SELECT turn_id,root_turn_id,item_id,item_type,created_at_ms,rollout_ordinal,item_json
+            let mut statement = conn.prepare(&format!(
+                "SELECT turn_id,root_turn_id,item_id,item_type,created_at_ms,rollout_ordinal,{ITEM_BODY_COLUMNS}
                  FROM thread_items
                  WHERE rollout_id=?1 AND (?3 IS NULL OR turn_id=?3)
                  ORDER BY rollout_ordinal DESC,item_id DESC
-                 LIMIT ?2",
-            )?;
+                 LIMIT ?2"
+            ))?;
             let rows = statement.query(params![rollout_id, fetch, turn_id])?;
-            let projected = collect_item_page(rows, rollout_id)?;
+            let projected = collect_item_page(rows, rollout_id, &mut bodies)?;
             projected
         };
 
@@ -588,13 +612,17 @@ impl ThreadHistoryStore {
     ) -> Result<Option<ThreadHistoryItem>> {
         validate_id("rollout_id", rollout_id)?;
         validate_id("item_id", item_id)?;
-        let conn = self.connect()?;
-        let mut statement = conn.prepare(
-            "SELECT turn_id,root_turn_id,item_id,item_type,created_at_ms,rollout_ordinal,item_json
-             FROM thread_items WHERE rollout_id=?1 AND item_id=?2 LIMIT 1",
-        )?;
+        let conn = self.connect_read()?;
+        let mut statement = conn.prepare(&format!(
+            "SELECT turn_id,root_turn_id,item_id,item_type,created_at_ms,rollout_ordinal,{ITEM_BODY_COLUMNS}
+             FROM thread_items WHERE rollout_id=?1 AND item_id=?2 LIMIT 1"
+        ))?;
         let rows = statement.query(params![rollout_id, item_id])?;
-        let mut projected = collect_items(rows, rollout_id)?;
+        let mut projected = collect_items(
+            rows,
+            rollout_id,
+            &mut ItemBodyReader::for_connection(&conn)?,
+        )?;
         Ok(projected.pop())
     }
 
@@ -786,21 +814,26 @@ impl ThreadHistoryStore {
                     end_rollout_byte_offset,start_ordinal,end_ordinal,updated_at_ordinal
              FROM thread_turns WHERE rollout_id=?1 AND turn_id=?2 LIMIT 1",
         )?;
-        let mut items = snapshot.prepare(
-            "SELECT turn_id,root_turn_id,item_id,item_type,created_at_ms,rollout_ordinal,item_json
-             FROM thread_items WHERE rollout_id=?1 AND item_id=?2 LIMIT 1",
-        )?;
+        let mut items = snapshot.prepare(&format!(
+            "SELECT turn_id,root_turn_id,item_id,item_type,created_at_ms,rollout_ordinal,{ITEM_BODY_COLUMNS}
+             FROM thread_items WHERE rollout_id=?1 AND item_id=?2 LIMIT 1"
+        ))?;
+        let mut bodies = ItemBodyReader::for_connection(&snapshot)?;
         let mut events = Vec::with_capacity(references.len());
         let mut bytes = 0;
         for (kind, ordinal, id) in references {
             let kind = if kind == 1 {
-                let size:i64=snapshot.query_row("SELECT length(CAST(item_json AS BLOB)) FROM thread_items WHERE rollout_id=?1 AND item_id=?2",params![rollout_id,id],|r|r.get(0))?;
+                let size: i64 = snapshot.query_row(
+                    "SELECT item_bytes FROM thread_items WHERE rollout_id=?1 AND item_id=?2",
+                    params![rollout_id, id],
+                    |r| r.get(0),
+                )?;
                 if bytes + size > 16 * 1024 * 1024 && !events.is_empty() {
                     break;
                 }
                 bytes += size;
                 let rows = items.query(params![rollout_id, id])?;
-                let item = collect_items(rows, rollout_id)?
+                let item = collect_items(rows, rollout_id, &mut bodies)?
                     .pop()
                     .ok_or_else(|| anyhow!("projected history event item disappeared"))?;
                 ThreadHistoryEventKind::ItemCompleted(item)
@@ -837,11 +870,35 @@ impl ThreadHistoryStore {
             rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
         )?;
         conn.busy_timeout(Duration::from_secs(2))?;
+        prepare_item_view(&conn)?;
         if let Some((current, segments)) = &self.scope {
             Self::apply_scope(&conn, current, segments)?;
         }
         Ok(super::sqlite_pool::ConnectionLease::uncached(conn))
     }
+}
+
+pub(super) fn prepare_item_view(conn: &Connection) -> Result<()> {
+    conn.execute_batch("CREATE TEMP VIEW thread_items AS SELECT *,rollout_id AS source_rollout_id FROM main.thread_items;")?;
+    Ok(())
+}
+
+pub(super) fn message_context(item: &Value, kind: &str) -> bool {
+    let payload = item.get("payload").unwrap_or(item);
+    let body = if payload.get("item_id").and_then(Value::as_str).is_some()
+        && payload.get("payload").is_some_and(Value::is_object)
+    {
+        &payload["payload"]
+    } else {
+        payload
+    };
+    matches!(kind, "user_message" | "assistant_message" | "agent_message")
+        || (kind == "tool_result" && body["role"] == "tool")
+        || (kind == "configuration"
+            && body["role"] == "system"
+            && body
+                .pointer("/meta/replacement_history")
+                .is_some_and(Value::is_array))
 }
 
 fn initialize_schema(conn: &Connection) -> Result<()> {
@@ -878,7 +935,11 @@ fn initialize_schema(conn: &Connection) -> Result<()> {
             item_type TEXT NOT NULL,
             created_at_ms INTEGER NOT NULL,
             rollout_ordinal INTEGER NOT NULL,
-            item_json TEXT NOT NULL,
+            record_byte_offset INTEGER NOT NULL,
+            record_byte_length INTEGER NOT NULL,
+            item_bytes INTEGER NOT NULL,
+            item_digest BLOB NOT NULL,
+            message_context INTEGER NOT NULL DEFAULT 0,
             preview_json TEXT NOT NULL DEFAULT '{}',
             visible INTEGER NOT NULL DEFAULT 1,
             PRIMARY KEY (rollout_id, item_id)
@@ -956,6 +1017,7 @@ fn project_envelope(
     rollout_id: &str,
     envelope: &RolloutEnvelope,
     byte_offset: u64,
+    byte_length: u64,
 ) -> Result<()> {
     let event_kind = canonical_kind(envelope);
     match event_kind.as_deref() {
@@ -969,12 +1031,14 @@ fn project_envelope(
         Some("turn_failed") => {
             project_turn_finished(tx, rollout_id, envelope, byte_offset, "failed")
         }
-        Some("item_completed") => project_completed_item(tx, rollout_id, envelope, byte_offset),
+        Some("item_completed") => {
+            project_completed_item(tx, rollout_id, envelope, byte_offset, byte_length)
+        }
         _ => Ok(()),
     }
 }
 
-fn is_completed_item(envelope: &RolloutEnvelope) -> bool {
+pub(super) fn is_completed_item(envelope: &RolloutEnvelope) -> bool {
     canonical_kind(envelope).as_deref() == Some("item_completed")
 }
 
@@ -1067,6 +1131,7 @@ fn project_completed_item(
     rollout_id: &str,
     envelope: &RolloutEnvelope,
     byte_offset: u64,
+    byte_length: u64,
 ) -> Result<()> {
     let body = event_body(envelope);
     let item = completed_item(body)?;
@@ -1091,7 +1156,7 @@ fn project_completed_item(
         .or_else(|| event_time_ms(body, envelope))
         .unwrap_or_default();
     let ordinal = sqlite_i64(envelope.ordinal)?;
-    let item_json = serde_json::to_string(item)?;
+    let (item_bytes, digest) = item_digest(item)?;
     let preview = item_preview(item);
     let preview_json = serde_json::to_string(&preview)?;
     let payload = item.get("payload").unwrap_or(item);
@@ -1120,8 +1185,8 @@ fn project_completed_item(
     }
     let inserted = tx.execute(
         "INSERT OR IGNORE INTO thread_items
-             (rollout_id,turn_id,root_turn_id,item_id,item_type,created_at_ms,rollout_ordinal,item_json,preview_json,visible)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+             (rollout_id,turn_id,root_turn_id,item_id,item_type,created_at_ms,rollout_ordinal,record_byte_offset,record_byte_length,item_bytes,item_digest,preview_json,visible,message_context)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)",
         params![
             rollout_id,
             turn_id,
@@ -1130,20 +1195,22 @@ fn project_completed_item(
             item_type,
             created_at_ms,
             ordinal,
-            item_json,
+            sqlite_i64(byte_offset)?,
+            sqlite_i64(byte_length)?,
+            i64::try_from(item_bytes)?,
+            digest,
             preview_json,
             visible,
+            message_context(item, item_type),
         ],
     )?;
     if inserted == 0 {
-        let existing: String = tx.query_row(
-            "SELECT item_json FROM thread_items WHERE rollout_id=?1 AND item_id=?2",
+        let existing: Vec<u8> = tx.query_row(
+            "SELECT item_digest FROM thread_items WHERE rollout_id=?1 AND item_id=?2",
             params![rollout_id, item_id],
             |row| row.get(0),
         )?;
-        let existing: Value = serde_json::from_str(&existing)
-            .context("existing thread history item has invalid JSON")?;
-        if existing != *item {
+        if existing != digest {
             bail!(
                 "rollout {rollout_id} completed item {item_id} conflicts with its immutable projection"
             );
@@ -1339,7 +1406,7 @@ fn ensure_turn_for_item(
     Ok(())
 }
 
-fn completed_item(body: &Value) -> Result<&Value> {
+pub(super) fn completed_item(body: &Value) -> Result<&Value> {
     match body.get("item") {
         Some(Value::String(raw)) => {
             // A string item is not a valid canonical display item.  Keeping
@@ -1383,7 +1450,7 @@ fn canonical_kind(envelope: &RolloutEnvelope) -> Option<String> {
     }
 }
 
-fn event_body(envelope: &RolloutEnvelope) -> &Value {
+pub(super) fn event_body(envelope: &RolloutEnvelope) -> &Value {
     let outer = normalize_kind(&envelope.record_type);
     if matches!(outer.as_deref(), Some("event_msg" | "event_message"))
         || (outer.as_deref() == Some("event") && envelope.payload.get("event").is_some())
@@ -1455,7 +1522,7 @@ fn event_time_ms(value: &Value, envelope: &RolloutEnvelope) -> Option<i64> {
         .or_else(|| value_to_ms(&envelope.timestamp))
 }
 
-fn read_bounded_line(reader: &mut impl BufRead, output: &mut Vec<u8>) -> Result<bool> {
+pub(super) fn read_bounded_line(reader: &mut impl BufRead, output: &mut Vec<u8>) -> Result<bool> {
     let start = output.len();
     loop {
         let available = reader.fill_buf()?;
@@ -1537,32 +1604,39 @@ fn trim_line_ending(line: &[u8]) -> &[u8] {
     line.strip_suffix(b"\r").unwrap_or(line)
 }
 
-fn collect_items(rows: rusqlite::Rows<'_>, rollout_id: &str) -> Result<Vec<ThreadHistoryItem>> {
-    collect_item_page(rows, rollout_id).map(|(items, _)| items)
+fn collect_items(
+    rows: rusqlite::Rows<'_>,
+    rollout_id: &str,
+    bodies: &mut ItemBodyReader,
+) -> Result<Vec<ThreadHistoryItem>> {
+    collect_item_page(rows, rollout_id, bodies).map(|(items, _)| items)
 }
 
 fn collect_item_page(
     mut rows: rusqlite::Rows<'_>,
     rollout_id: &str,
+    bodies: &mut ItemBodyReader,
 ) -> Result<(Vec<ThreadHistoryItem>, bool)> {
     let mut items = Vec::new();
     let mut bytes = 0usize;
     while let Some(row) = rows.next()? {
-        let item_json: String = row.get(6)?;
-        if bytes.saturating_add(item_json.len()) > 16 * 1024 * 1024 && !items.is_empty() {
+        let reference = ItemBodyRef::from_row(row, 6)?;
+        if bytes.saturating_add(reference.item_bytes) > 16 * 1024 * 1024 && !items.is_empty() {
             return Ok((items, true));
         }
-        bytes += item_json.len();
+        bytes += reference.item_bytes;
+        let item_id: String = row.get(2)?;
+        let ordinal = sqlite_u64_required(row.get(5)?)?;
+        let item_json = bodies.read(&reference, ordinal, &item_id)?;
         items.push(ThreadHistoryItem {
             rollout_id: rollout_id.to_owned(),
             turn_id: row.get(0)?,
             root_turn_id: row.get(1)?,
-            item_id: row.get(2)?,
+            item_id,
             item_type: row.get(3)?,
             created_at_ms: row.get(4)?,
-            rollout_ordinal: sqlite_u64_required(row.get(5)?)?,
-            item_json: serde_json::from_str(&item_json)
-                .context("thread history item contains invalid JSON")?,
+            rollout_ordinal: ordinal,
+            item_json,
         });
     }
     Ok((items, false))
@@ -1773,6 +1847,36 @@ mod tests {
     }
 
     #[test]
+    fn large_canonical_bodies_do_not_expand_the_index_and_keep_full_unicode_text() {
+        let (directory, store) = store();
+        let content = format!("{}needle-tail", "fixture 中🙂 ".repeat(160_000));
+        let rollout = line(
+            0,
+            "item_completed",
+            json!({"turn_id":"fixture-turn","item":{
+            "item_id":"fixture-body","turn_id":"fixture-turn","kind":"assistant_message",
+            "created_at_ms":1,"payload":{"role":"assistant","content":content}}}),
+        );
+        store
+            .project_jsonl_bytes("fixture-rollout", rollout.as_bytes())
+            .unwrap();
+        let item = store.read_item("fixture-rollout", "fixture-body").unwrap();
+        assert_eq!(item.item_json["payload"]["content"], content);
+        let conn = Connection::open(store.db_path()).unwrap();
+        conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+            .unwrap();
+        let index_bytes = fs::metadata(store.db_path()).unwrap().len();
+        assert!(index_bytes * 10 < rollout.len() as u64);
+        assert_eq!(
+            fs::read_to_string(directory.path().join("sessions/fixture-rollout.jsonl")).unwrap(),
+            rollout
+        );
+        let path = directory.path().join("sessions/fixture-rollout.jsonl");
+        fs::write(&path, rollout.replace("needle-tail", "edited-tail")).unwrap();
+        assert!(store.read_item("fixture-rollout", "fixture-body").is_err());
+    }
+
+    #[test]
     fn forward_event_pages_preserve_sparse_ordinals_across_appends() {
         let (_directory, store) = store();
         let mut rollout = line(
@@ -1865,6 +1969,9 @@ mod tests {
         }
         let path = directory.path().join("rollout.jsonl");
         fs::write(&path, &bytes).expect("write canonical rollout");
+        store
+            .persist_test_source("rollout-canonical", &bytes)
+            .unwrap();
         let progress = store
             .project_file_batch(&path, "rollout-canonical", bytes.len() as u64)
             .expect("project canonical file");
@@ -1916,6 +2023,7 @@ mod tests {
     fn byte_limited_history_pages_keep_an_exclusive_cursor() {
         let (_directory, store) = store();
         let content = "x".repeat(6 * 1024 * 1024);
+        let mut source = String::new();
         for ordinal in 0..3 {
             let bytes = line(
                 ordinal,
@@ -1923,6 +2031,10 @@ mod tests {
                 json!({"turn_id":"turn-large","item":{"id":format!("item-{ordinal}"),"type":"assistant_message","content":content}}),
             );
             // Each projection call starts at the previously consumed prefix.
+            source.push_str(&bytes);
+            store
+                .persist_test_source("rollout-large", source.as_bytes())
+                .unwrap();
             let state = store.projection_state("rollout-large").unwrap();
             store
                 .project_chunk("rollout-large", state, bytes.as_bytes())

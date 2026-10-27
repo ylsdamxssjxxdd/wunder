@@ -2,7 +2,8 @@
 use wunder_desktop::native::NativeWorkflowEntry;
 
 use crate::{
-    Conversation, DraftRecall, InquiryOption, InquiryQuestion, MainWindow, PlanStep, TimelineRow,
+    runtime_phase::Phase, Conversation, DraftRecall, InquiryOption, InquiryQuestion, MainWindow,
+    PlanStep, TimelineRow,
 };
 use serde_json::Value;
 use slint::{ComponentHandle, Model, ModelRc, Timer, TimerMode, VecModel};
@@ -49,7 +50,12 @@ struct TurnOutput {
     /// Shared with `State::timeline`: the live turn appends to the same model
     /// the history already occupies, so nothing is copied on send or settle.
     timeline: Rc<RefCell<crate::timeline::Timeline>>,
-    state: String,
+    /// Status phrase shown to the reader. Written only through [`Self::set_state`],
+    /// which carries the phase, so no phrase can reach a view unclassified.
+    status_text: String,
+    /// What the thread is doing, decided by the event that moved it. Views and
+    /// the window title read this instead of re-parsing the phrase.
+    phase: Phase,
     settlement_failed: bool,
     terminal: bool,
     round: i64,
@@ -80,7 +86,8 @@ impl TurnOutput {
         Self {
             session,
             timeline,
-            state: "请求中".into(),
+            status_text: "请求中".into(),
+            phase: Phase::Running,
             settlement_failed: false,
             terminal: false,
             round: 0,
@@ -95,7 +102,25 @@ impl TurnOutput {
     }
 
     fn failed(&self) -> bool {
-        self.settlement_failed || self.state == "已停止"
+        self.settlement_failed || self.phase == Phase::Error
+    }
+
+    /// Move the turn to a status. The phase is mandatory: a new phrase cannot
+    /// compile without saying what it means, and the debug build rejects a
+    /// phrase that the shared table would read differently.
+    fn set_state(&mut self, text: impl Into<String>, phase: Phase) {
+        self.status_text = text.into();
+        self.phase = phase;
+        debug_assert_eq!(
+            Phase::of(&self.status_text),
+            phase,
+            "status phrase {:?} disagrees with the declared phase",
+            self.status_text
+        );
+    }
+
+    fn state(&self) -> &str {
+        self.status_text.as_str()
     }
 
     /// Upsert one tool entry and publish it to the timeline. The reducer calls
@@ -963,12 +988,9 @@ fn plan_current(steps: &[(String, String)]) -> (String, i32) {
 /// its checklist. Returns the plan signature so the caller can persist it
 /// (plus the session plan) without recomputing.
 fn publish_activity(app: &MainWindow, active: &TurnOutput, last_sig: &str) -> String {
-    // Terminal states stop the spinner; plan data stays for the next turn.
-    let idle = matches!(
-        active.state.as_str(),
-        "任务完成" | "已停止" | "执行失败" | "思考中断" | "等待用户输入"
-    );
-    app.set_activity_running(!idle);
+    // The spinner follows the phase: every live phase keeps it turning, and a
+    // settled one stops it. Plan data stays for the next turn.
+    app.set_activity_running(active.phase.live());
     let total = active.plan_steps.len() as i32;
     let done = active
         .plan_steps
@@ -1426,6 +1448,7 @@ fn refresh_chat(app: &MainWindow, state: Rc<RefCell<State>>, silent: bool) {
                                 consumed_tokens: format_count_i64(item.consumed_tokens).into(),
                                 tool_calls: item.tool_calls.to_string().into(),
                                 quota_used: format_count_i64(item.quota_used).into(),
+                                runtime_phase: Phase::of(item.runtime_status.as_str()).code(),
                                 runtime_status: item.runtime_status.into(),
                                 locked: item.locked,
                                 goal_active,
@@ -1550,11 +1573,14 @@ fn reconcile_catalogue_statuses(
             )
         });
         row.runtime_status = status.into();
+        // A durable phrase reaches this process as text; classify it once here
+        // so every view keeps reading the phase.
+        row.runtime_phase = Phase::of(row.runtime_status.as_str()).code();
         if accepted {
             crate::completion_notice::observe_status(
                 app,
                 row.id.as_str(),
-                row.runtime_status.as_str(),
+                Phase::from_code(row.runtime_phase),
             );
         }
     }
@@ -1589,7 +1615,7 @@ fn local_status_overrides(state: &State) -> Vec<(String, String)> {
         upsert(&parked.session, "任务已排队…");
     }
     if let Some(active) = state.active.as_ref() {
-        upsert(&active.output.session, active.output.state.as_str());
+        upsert(&active.output.session, active.output.state());
     }
     statuses
 }
@@ -1882,10 +1908,7 @@ fn is_untouched_thread(row: &Conversation, workspace_id: Option<&str>) -> bool {
     in_scope
         && row.consumed_tokens == "0"
         && row.tool_calls == "0"
-        && !matches!(
-            runtime_status_kind(row.runtime_status.as_str()),
-            "running" | "pending"
-        )
+        && !Phase::of(row.runtime_status.as_str()).live()
 }
 
 // The workspace's single draft thread, derived from the list itself instead of
@@ -1946,6 +1969,7 @@ fn bind_new_thread(app: &MainWindow, state: Rc<RefCell<State>>) {
                             consumed_tokens: format_count_i64(session.consumed_tokens).into(),
                             tool_calls: session.tool_calls.to_string().into(),
                             quota_used: format_count_i64(session.quota_used).into(),
+                            runtime_phase: Phase::of(session.runtime_status.as_str()).code(),
                             runtime_status: session.runtime_status.into(),
                             locked: session.locked,
                             ..Default::default()
@@ -2209,11 +2233,11 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
         }
         let previous_busy = app.get_busy();
         let previous_activity_running = app.get_activity_running();
-        let previous_session_status = app
+        let (previous_session_status, previous_session_phase) = app
             .get_conversations()
             .iter()
             .find(|row| row.id == session)
-            .map(|row| row.runtime_status.to_string())
+            .map(|row| (row.runtime_status.to_string(), row.runtime_phase))
             .unwrap_or_default();
         if optimistic {
             let timeline = state.borrow().timeline.clone();
@@ -2231,7 +2255,7 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
             // This is the ordering fence for a directory request that began
             // before the user submitted. A busy thread keeps its live running
             // status until the engine confirms that the new request queued.
-            set_session_status(&app, &session, "请求中");
+            set_session_status(&app, &session, "请求中", Phase::Running);
         }
         let desktop = state.borrow().desktop.clone();
         let send_order = Arc::clone(&send_lock);
@@ -2373,9 +2397,14 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
                             if can_restore_status {
                                 crate::completion_notice::reset_status(
                                     &session,
-                                    &previous_session_status,
+                                    Phase::from_code(previous_session_phase),
                                 );
-                                set_session_status(&app, &session, &previous_session_status);
+                                set_session_status(
+                                    &app,
+                                    &session,
+                                    &previous_session_status,
+                                    Phase::from_code(previous_session_phase),
+                                );
                             }
                             app.set_status(format!("无法发送：{error}").into());
                             return;
@@ -2425,7 +2454,7 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
                         app.set_activity_running(true);
                         app.set_stopping(false);
                         app.set_follow_output(true);
-                        set_session_status(&app, &session, "请求中");
+                        set_session_status(&app, &session, "请求中", Phase::Running);
                     }
                     // A fresh turn starts without a stale queue banner.
                     app.set_cloud_queue_position(-1);
@@ -2903,13 +2932,15 @@ fn bind_queue(app: &MainWindow, state: Rc<RefCell<State>>) {
 }
 
 // Mutate just the matching thread row. Runtime state must not wait for catalogue polling.
-fn set_session_status(app: &MainWindow, session: &str, status: &str) {
+fn set_session_status(app: &MainWindow, session: &str, status: &str, phase: Phase) {
     SESSION_STATUSES.with(|slot| slot.borrow_mut().record_local(session, status));
     let rows = app.get_conversations();
     if let Some(index) = rows.iter().position(|row| row.id == session) {
         if let Some(mut row) = rows.row_data(index) {
-            if row.runtime_status != status {
+            // The phrase is free-form; the phase is what every view reads.
+            if row.runtime_status != status || row.runtime_phase != phase.code() {
                 row.runtime_status = status.into();
+                row.runtime_phase = phase.code();
                 rows.set_row_data(index, row);
                 update_active_thread_filter_model(app, &rows);
                 crate::navigation_ui::project(app);
@@ -2919,10 +2950,10 @@ fn set_session_status(app: &MainWindow, session: &str, status: &str) {
     // The sidebar tree snapshots the conversation list, so it needs its own
     // point update; the periodic catalogue poll is only a backstop, not the
     // path a live transition should wait for.
-    crate::navigation_ui::update_thread_status(app, session, status);
+    crate::navigation_ui::update_thread_status(app, session, status, phase);
     // The hot→done completion gate must see every report, including repeated
     // ones, so it sits outside the row-change branch above.
-    crate::completion_notice::observe_status(app, session, status);
+    crate::completion_notice::observe_status(app, session, phase);
 }
 
 // Keep the work-dock activity control in sync without inspecting message text.
@@ -2933,13 +2964,16 @@ fn update_active_thread_filter(app: &MainWindow, rows: impl IntoIterator<Item = 
     let mut running_count = 0;
     let mut running = false;
     for row in rows {
-        let status = runtime_status_kind(row.runtime_status.as_str());
-        if status == "running" {
-            running = true;
-            running_count += 1;
-            count += 1;
-        } else if status == "pending" {
-            count += 1;
+        // The phase decides what the reader sees in the title; a queued thread
+        // counts as work in flight but not as a running one.
+        match Phase::from_code(row.runtime_phase) {
+            Phase::Running => {
+                running = true;
+                running_count += 1;
+                count += 1;
+            }
+            Phase::Pending | Phase::Inquiry => count += 1,
+            _ => {}
         }
     }
     app.set_active_thread_count(count);
@@ -2960,30 +2994,6 @@ fn update_active_thread_filter_model(app: &MainWindow, rows: &ModelRc<Conversati
     update_active_thread_filter(app, rows.iter());
 }
 
-fn runtime_status_kind(status: &str) -> &'static str {
-    if matches!(
-        status,
-        "pending" | "queued" | "waiting_input" | "waiting_user_input"
-    ) || status.starts_with("正在排队")
-        || status.starts_with("任务已排队")
-        || status.starts_with("等待")
-    {
-        "pending"
-    } else if matches!(status, "done" | "finished" | "completed" | "success")
-        || status.starts_with("任务完成")
-        || status.starts_with("输出已结束")
-    {
-        "done"
-    } else if matches!(status, "running" | "streaming" | "executing")
-        || status.starts_with("正在")
-        || status.starts_with("目标")
-    {
-        "running"
-    } else {
-        "idle"
-    }
-}
-
 fn bind_stop(app: &MainWindow, state: Rc<RefCell<State>>) {
     let weak = app.as_weak();
     app.on_stop_generation(move || {
@@ -3001,7 +3011,7 @@ fn bind_stop(app: &MainWindow, state: Rc<RefCell<State>>) {
         // `current` guard lives to the end of this closure, hence the status is
         // handed out of the block instead of reprojected while it is held — a
         // second `borrow_mut`/`borrow` here aborts the process.
-        let mut stopped: Option<(String, String)> = None;
+        let mut stopped: Option<(String, String, Phase)> = None;
         let mut stopped_submission = false;
         {
             let mut current = state.borrow_mut();
@@ -3026,20 +3036,24 @@ fn bind_stop(app: &MainWindow, state: Rc<RefCell<State>>) {
             if let Some(active) = current.active.as_mut() {
                 app.set_stopping(true);
                 active.stream.cancel();
-                active.state = "已停止".into();
+                active.set_state("已停止", Phase::Error);
                 active.timeline.borrow_mut().flush();
-                stopped = Some((active.session.clone(), active.state.clone()));
+                stopped = Some((
+                    active.session.clone(),
+                    active.state().to_string(),
+                    active.phase,
+                ));
             }
         }
-        if let Some((stopped_session, stopped_status)) = stopped {
-            set_session_status(&app, &stopped_session, &stopped_status);
+        if let Some((stopped_session, stopped_status, stopped_phase)) = stopped {
+            set_session_status(&app, &stopped_session, &stopped_status, stopped_phase);
             app.set_status("正在停止…".into());
         } else if stopped_submission || app.get_busy() || app.get_goal_active() {
             app.set_stopping(true);
             if stopped_submission {
                 app.set_busy(false);
                 app.set_activity_running(false);
-                set_session_status(&app, &session, "已停止");
+                set_session_status(&app, &session, "已停止", Phase::Error);
             }
             let desktop = state.borrow().desktop.clone();
             let cancel_session = session.clone();
@@ -3324,7 +3338,7 @@ fn start_timer(app: &MainWindow, state: Rc<RefCell<State>>) {
                 app.set_stopping(false);
                 app.set_follow_output(true);
                 app.set_activity_running(true);
-                set_session_status(&app, &session, "正在生成…");
+                set_session_status(&app, &session, "正在生成…", Phase::Running);
                 queue::schedule_due(&mut state.queue_due, Duration::from_millis(0));
             }
             if parked_moved || queue::due_arrived(&mut state.queue_due) {
@@ -3386,7 +3400,7 @@ fn start_timer(app: &MainWindow, state: Rc<RefCell<State>>) {
                         Ok(None) => break,
                         Err(error) => {
                             app.set_status(error.into());
-                            active.state = "执行失败".into();
+                            active.set_state("执行失败", Phase::Error);
                             active.settlement_failed = true;
                             done = true;
                             break;
@@ -3412,7 +3426,10 @@ fn start_timer(app: &MainWindow, state: Rc<RefCell<State>>) {
                                 app.set_cloud_queue_position(
                                     position.clamp(0, i32::MAX as i64) as i32
                                 );
-                                active.state = format!("模型请求正在排队 · 前方 {position} 个任务");
+                                active.set_state(
+                                    format!("模型请求正在排队 · 前方 {position} 个任务"),
+                                    Phase::Pending,
+                                );
                             }
                         } else if app.get_cloud_queue_position() >= 0 {
                             app.set_cloud_queue_position(-1);
@@ -3459,14 +3476,14 @@ fn start_timer(app: &MainWindow, state: Rc<RefCell<State>>) {
                             Ok(changed) => dirty |= changed,
                             Err(error) => {
                                 app.set_status(error.into());
-                                active.state = "执行失败".into();
+                                active.set_state("执行失败", Phase::Error);
                                 active.settlement_failed = true;
                                 done = true;
                             }
                         }
                     }
                     NativeChatEvent::Queued => {
-                        active.state = "任务已排队…".into();
+                        active.set_state("任务已排队…", Phase::Pending);
                         dirty = true;
                         // Another device (or a goal round) held the thread, so
                         // this turn went into the queue after all: show it.
@@ -3474,7 +3491,7 @@ fn start_timer(app: &MainWindow, state: Rc<RefCell<State>>) {
                     }
                     NativeChatEvent::Failed(error) => {
                         app.set_status(error.into());
-                        active.state = "执行失败".into();
+                        active.set_state("执行失败", Phase::Error);
                         active.settlement_failed = true;
                         done = true;
                         app.set_cloud_queue_position(-1);
@@ -3493,11 +3510,11 @@ fn start_timer(app: &MainWindow, state: Rc<RefCell<State>>) {
                 // cells, never the whole history.
                 let mut live = timeline.borrow_mut();
                 live.flush();
-                live.set_turn_status(&active.state, active.user_round);
+                live.set_turn_status(active.state(), active.user_round);
                 publish_timeline(&app, &live);
                 app.set_stream_bytes(live.body_text().len().min(i32::MAX as usize) as i32);
                 drop(live);
-                set_session_status(&app, &active.session, &active.state);
+                set_session_status(&app, &active.session, active.state(), active.phase);
                 // Status dock: capsule state plus plan progress and file
                 // stats; the session plan cache only moves when the plan did.
                 let sig = publish_activity(&app, active, &last_plan_sig);
@@ -3510,19 +3527,19 @@ fn start_timer(app: &MainWindow, state: Rc<RefCell<State>>) {
                 new_plan_sig = Some(sig);
             }
             if done {
-                if active.state == "正在生成…" {
-                    active.state = "输出已结束".into();
+                if active.state() == "正在生成…" {
+                    active.set_state("输出已结束", Phase::Done);
                 }
                 let failed = active.failed();
                 // Markdown is intentionally parsed once, after the terminal
                 // event; the frozen block keeps its parsed form from here on.
                 let mut live = timeline.borrow_mut();
                 live.finish(failed);
-                live.set_turn_status(&active.state, active.user_round);
+                live.set_turn_status(active.state(), active.user_round);
                 live.flush();
                 publish_timeline(&app, &live);
                 drop(live);
-                set_session_status(&app, &active.session, &active.state);
+                set_session_status(&app, &active.session, active.state(), active.phase);
                 app.set_stopping(false);
                 // Idle stops the capsule spinner; the plan attributes stay and
                 // reappear with the next turn's flush.
@@ -3597,7 +3614,7 @@ fn apply_event(
     {
         return Ok(false);
     }
-    if active.state == "已停止"
+    if active.phase == Phase::Error
         || (active.terminal
             && kind != "native_execution_started"
             && (active.failed() || kind != "final"))
@@ -3651,7 +3668,7 @@ fn apply_event(
                 .or_else(|| data["reasoning_delta"].as_str())
             {
                 timeline.append_reasoning(delta)?;
-                active.state = "正在思考…".into();
+                active.set_state("正在思考…", Phase::Running);
                 return Ok(true);
             }
         }
@@ -3666,7 +3683,7 @@ fn apply_event(
             active.round = 0;
             active.body_round = -1;
             timeline.close_segments();
-            active.state = "目标继续执行…".into();
+            active.set_state("目标继续执行…", Phase::Running);
         }
         "native_execution_status" => {
             if let Some(root) = data["root_turn_id"].as_str() {
@@ -3676,15 +3693,16 @@ fn apply_event(
                 data["status"].as_str(),
                 Some("failed" | "error" | "rejected")
             );
-            active.state = match data["status"].as_str() {
-                Some("queued") => "正在排队",
-                Some("running") => "请求中",
-                Some("cancelled" | "interrupted") => "已停止",
-                Some("failed") => "执行失败",
-                Some("waiting_input" | "waiting_user_input") => "等待用户输入",
-                _ => "目标继续执行…",
-            }
-            .into();
+            // The phase comes from the engine status, not from the phrase.
+            let (text, phase) = match data["status"].as_str() {
+                Some("queued") => ("正在排队", Phase::Pending),
+                Some("running") => ("请求中", Phase::Running),
+                Some("cancelled" | "interrupted") => ("已停止", Phase::Error),
+                Some("failed") => ("执行失败", Phase::Error),
+                Some("waiting_input" | "waiting_user_input") => ("等待用户输入", Phase::Inquiry),
+                _ => ("目标继续执行…", Phase::Running),
+            };
+            active.set_state(text, phase);
         }
         "native_stats" => {
             // Background/native replay emits a compact stats snapshot as a
@@ -3709,7 +3727,7 @@ fn apply_event(
             // Admission of a model call: the answer block belongs to a new
             // round, so the previous segments settle here.
             timeline.close_segments();
-            active.state = "模型响应中".into();
+            active.set_state("模型响应中", Phase::Running);
             return Ok(true);
         }
         "llm_output_delta" | "delta" => {
@@ -3719,7 +3737,7 @@ fn apply_event(
                 .filter(|value| !value.is_empty())
             {
                 timeline.append_reasoning(reasoning)?;
-                active.state = "正在思考…".into();
+                active.set_state("正在思考…", Phase::Running);
                 changed = true;
             }
             if let Some(delta) = data["delta"].as_str() {
@@ -3731,7 +3749,7 @@ fn apply_event(
                     active.body_round = active.round;
                 }
                 timeline.append_body(delta)?;
-                active.state = "正在生成…".into();
+                active.set_state("正在生成…", Phase::Running);
                 return Ok(true);
             }
             return Ok(changed);
@@ -3759,7 +3777,7 @@ fn apply_event(
             }
             if kind == "final" && !active.terminal {
                 active.settlement_failed = false;
-                active.state = "任务完成".into();
+                active.set_state("任务完成", Phase::Done);
             }
             return Ok(true);
         }
@@ -3781,27 +3799,32 @@ fn apply_event(
             } else {
                 timeline.set_user_round(active.user_round);
             }
-            active.state = match data["status"].as_str() {
-                Some("cancelled" | "canceled" | "interrupted" | "stopped") => "已停止",
-                Some("failed" | "error" | "rejected") => "执行失败",
-                Some("waiting_input" | "waiting_user_input") => "等待用户输入",
-                _ => "任务完成",
-            }
-            .into();
+            let (text, phase) = match data["status"].as_str() {
+                Some("cancelled" | "canceled" | "interrupted" | "stopped") => {
+                    ("已停止", Phase::Error)
+                }
+                Some("failed" | "error" | "rejected") => ("执行失败", Phase::Error),
+                Some("waiting_input" | "waiting_user_input") => ("等待用户输入", Phase::Inquiry),
+                _ => ("任务完成", Phase::Done),
+            };
+            active.set_state(text, phase);
         }
         "queued" | "queue_update" => {
-            active.state = data["queue_ahead"]
-                .as_i64()
-                .map(|ahead| format!("模型请求正在排队 · 前方 {ahead} 个任务"))
-                .unwrap_or_else(|| "模型请求正在排队".into());
+            active.set_state(
+                data["queue_ahead"]
+                    .as_i64()
+                    .map(|ahead| format!("模型请求正在排队 · 前方 {ahead} 个任务"))
+                    .unwrap_or_else(|| "模型请求正在排队".into()),
+                Phase::Pending,
+            );
         }
-        "queue_start" => active.state = "正在生成…".into(),
+        "queue_start" => active.set_state("正在生成…", Phase::Running),
         "compaction" | "compaction_completed" | "compaction_start" | "compaction_progress" => {
             let summary = data["summary_text"].as_str().unwrap_or("上下文压缩中…");
             let running = matches!(kind, "compaction_start" | "compaction_progress")
                 || matches!(data["status"].as_str(), Some("running"));
             if running {
-                active.state = "上下文压缩中…".into();
+                active.set_state("上下文压缩中…", Phase::Running);
             }
             active.upsert_workflow(
                 timeline,
@@ -3821,7 +3844,7 @@ fn apply_event(
                 ),
             );
         }
-        "queue_finish" => active.state = "任务完成".into(),
+        "queue_finish" => active.set_state("任务完成", Phase::Done),
         "plan_update" => {
             // The plan tool publishes the whole checklist each time, so a
             // wholesale replace is correct. Bounded: a runaway plan must not
@@ -3847,7 +3870,7 @@ fn apply_event(
         "tool_call" | "tool_start" | "tool_result" | "tool_output" => {
             let pending = matches!(kind, "tool_call" | "tool_start");
             if pending {
-                active.state = "正在执行工具…".into();
+                active.set_state("正在执行工具…", Phase::Running);
             }
             let id = data
                 .get("tool_call_id")
@@ -3892,13 +3915,28 @@ fn apply_event(
         | "command_session_exit"
         | "command_session_summary" => {
             // The runtime streams a running shell command as command_session_*
-            // frames (id in `command_session_id`, one per `command_index`). Fold
-            // them into one live workflow row so the output grows while the
-            // command runs instead of appearing only with the settled result.
+            // frames (id in `command_session_id`, one per `command_index`). They
+            // describe the command the model already called, so they patch that
+            // call's workflow row: keying them by the stream instead produced a
+            // second row for the very same invocation. The scoped emitter stamps
+            // `tool_call_id` on every frame, so live stdout grows the entry that
+            // `tool_call`/`tool_result` own. A detached session without that id
+            // keeps its own row.
             let session = data["command_session_id"].as_str().unwrap_or("");
             if !session.is_empty() {
                 let index = data["command_index"].as_i64().unwrap_or(0);
+                // Output accumulation stays per streamed command; only the row
+                // identity is shared.
                 let key = format!("{session}#{index}");
+                let id = data["tool_call_id"]
+                    .as_str()
+                    .map(str::trim)
+                    .filter(|id| !id.is_empty())
+                    .unwrap_or(key.as_str());
+                let tool = data["tool_display_name"]
+                    .as_str()
+                    .or_else(|| data["tool_runtime_name"].as_str())
+                    .unwrap_or(crate::timeline_text::COMMAND_TOOL);
                 let mut output = active.command_output_text(&key);
                 if let Some(delta) = data["delta"].as_str() {
                     output = active.append_command_output(&key, delta);
@@ -3938,8 +3976,8 @@ fn apply_event(
                 active.upsert_workflow(
                     timeline,
                     NativeWorkflowEntry::from_payload(
-                        key.as_str(),
-                        "execute_command",
+                        id,
+                        tool,
                         lines.join("\n"),
                         if terminal {
                             if failed {
@@ -3953,7 +3991,7 @@ fn apply_event(
                         &command_payload,
                     ),
                 );
-                active.state = "正在执行工具…".into();
+                active.set_state("正在执行工具…", Phase::Running);
             }
         }
         "subagent_run" => {
@@ -4000,12 +4038,12 @@ fn apply_event(
         }
         "error" | "queue_fail" => {
             active.settlement_failed = data["will_retry"].as_bool() != Some(true);
-            active.state = if active.settlement_failed {
-                "执行失败"
+            let (text, phase) = if active.settlement_failed {
+                ("执行失败", Phase::Error)
             } else {
-                "正在重试…"
-            }
-            .into();
+                ("正在重试…", Phase::Running)
+            };
+            active.set_state(text, phase);
         }
         _ => return Ok(false),
     }
@@ -4147,9 +4185,9 @@ mod turn_tests {
         )
         .unwrap();
         live.finish(output.failed());
-        live.set_turn_status(&output.state, 1);
+        live.set_turn_status(output.state(), 1);
         let rows: Vec<_> = live.model().iter().collect();
-        assert_eq!(output.state, "已停止");
+        assert_eq!(output.state(), "已停止");
         assert!(rows
             .iter()
             .all(|row| row.status_kind != crate::timeline::STATUS_RUNNING));
@@ -4197,7 +4235,7 @@ mod turn_tests {
         )
         .unwrap());
         assert!(output.failed());
-        assert_eq!(output.state, "执行失败");
+        assert_eq!(output.state(), "执行失败");
     }
 
     #[test]
@@ -4273,7 +4311,7 @@ mod turn_tests {
                 }),
             )
             .unwrap();
-            let expected = output.state.clone();
+            let expected = output.state().to_string();
             assert!(apply_event(
                 &mut output,
                 &mut live,
@@ -4287,7 +4325,7 @@ mod turn_tests {
                 .model()
                 .iter()
                 .any(|row| row.text == "fixture final answer"));
-            assert_eq!(output.state, expected);
+            assert_eq!(output.state(), expected);
         }
     }
 
@@ -4636,6 +4674,72 @@ mod turn_tests {
         assert_eq!(rows[8].process_idx, crate::timeline::NO_PROCESS);
     }
 
+    /// One `execute_command` call streams its stdout over `command_session_*`
+    /// frames. They describe that call, so the work process must show one entry
+    /// — not the command plus a separate command session.
+    #[test]
+    fn one_command_invocation_streams_into_a_single_process_entry() {
+        let timeline = Rc::new(RefCell::new(crate::timeline::Timeline::new()));
+        let mut output = TurnOutput::new("fixture-session".into(), timeline.clone());
+        timeline
+            .borrow_mut()
+            .begin_turn("fixture-root", "Fixture input");
+        let reduce = |output: &mut TurnOutput, event: Value| {
+            let mut live = timeline.borrow_mut();
+            apply_event(output, &mut live, &event).unwrap()
+        };
+        reduce(&mut output, json!({"event":"tool_call","data":{
+            "tool_call_id":"fixture-call","tool":"执行命令","tool_display_name":"执行命令",
+            "args":{"content":"fixture-command"}
+        }}));
+        for event in [
+            json!({"event":"command_session_start","data":{
+                "tool_call_id":"fixture-call","tool_display_name":"执行命令",
+                "command_session_id":"fixture-stream","command_index":0,
+                "command":"fixture-command","status":"running"
+            }}),
+            json!({"event":"command_session_delta","data":{
+                "tool_call_id":"fixture-call","tool_display_name":"执行命令",
+                "command_session_id":"fixture-stream","command_index":0,
+                "command":"fixture-command","delta":"fixture output\n"
+            }}),
+            json!({"event":"command_session_exit","data":{
+                "tool_call_id":"fixture-call","tool_display_name":"执行命令",
+                "command_session_id":"fixture-stream","command_index":0,
+                "command":"fixture-command","exit_code":0,"status":"exited"
+            }}),
+            json!({"event":"tool_result","data":{
+                "tool_call_id":"fixture-call","tool":"执行命令","tool_display_name":"执行命令",
+                "args":{"content":"fixture-command"},
+                "result":{"ok":true,"data":{"stdout":"fixture output\n","exit_code":0}}
+            }}),
+        ] {
+            reduce(&mut output, event);
+        }
+
+        let live = timeline.borrow();
+        let rows: Vec<_> = live.model().iter().collect();
+        let tools: Vec<_> = rows
+            .iter()
+            .filter(|row| row.kind == crate::timeline::KIND_TOOL)
+            .collect();
+        assert_eq!(tools.len(), 1, "one invocation, one entry");
+        assert_eq!(tools[0].tool_name, "执行命令");
+        assert_eq!(tools[0].status_kind, crate::timeline::STATUS_DONE);
+        let bar = rows
+            .iter()
+            .find(|row| row.kind == crate::timeline::KIND_PROCESS)
+            .expect("the work process bar");
+        assert_eq!(
+            bar.process_entries
+                .iter()
+                .filter(|entry| entry.kind == crate::timeline::KIND_TOOL)
+                .count(),
+            1,
+            "the process holds one command step"
+        );
+    }
+
     /// A stopped turn keeps the partial answer and marks the tail, and later
     /// events never reopen it.
     #[test]
@@ -4672,7 +4776,7 @@ mod turn_tests {
             &json!({"event":"turn_terminal","data":{"status":"cancelled"}}),
         )
         .unwrap();
-        assert_eq!(output.state, "已停止");
+        assert_eq!(output.state(), "已停止");
         let before = live.row_count();
         assert!(!apply_event(
             &mut output,

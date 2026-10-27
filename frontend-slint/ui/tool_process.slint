@@ -6,7 +6,7 @@ import { ToolIcons } from "tool_icons.slint";
 import { WorkflowDetail } from "workflow_detail.slint";
 import { PatchDiffCard } from "patch_diff_card.slint";
 import { MarkdownBlock } from "markdown.slint";
-import { Button, ListView, ScrollView } from "std-widgets.slint";
+import { ListView, ScrollView } from "std-widgets.slint";
 
 component ProcessEntryCard inherits Rectangle {
     in property <ProcessEntry> entry;
@@ -178,8 +178,10 @@ export component ToolProcess inherits Rectangle {
     callback copy-text(string);
     callback open-resource(string);
     // Grow naturally for a few entries; long processes keep their own scroll.
-    // There is no "later" pager button (the tail auto-follows); only the
-    // "earlier" strip above the list can add height.
+    // There is no "later" pager button (the tail auto-follows), and no
+    // "earlier" button either: scrolling past the top loads the older page,
+    // so the list is the only control the reader needs. Only a failed load
+    // keeps a strip, because retrying needs an explicit target.
     height: min(root.viewport-limit, root.viewport-height + page-top.height);
     Timer {
         interval: 33ms;
@@ -205,16 +207,30 @@ export component ToolProcess inherits Rectangle {
     private property <bool> scroll-pending: true;
     private property <bool> page-pending: false;
     private property <int> count: root.entries.length;
+    // Row that the reader is holding when an older page is asked for: after
+    // the page lands, that same row must stay where it was on screen.
+    private property <length> anchor-y: 0px;
+    private property <length> anchor-height: 0px;
+    // Previous scroll offset, so one flick past the top asks for the older
+    // page exactly once instead of once per scroll notification.
+    private property <length> last-content-y: 0px;
+    // Set while an older page is in flight: the list must hold the reader's
+    // row instead of following the tail, even when the tail was in view.
+    private property <bool> anchor-hold: false;
     changed count => { root.scroll-pending = true; }
+    changed failed => { if (root.failed) { root.anchor-hold = false; } }
     Timer {
         interval: 33ms; running: root.scroll-pending;
         triggered => {
             root.scroll-pending = false;
             if root.page-pending && root.revision < 0 {
-                process-list.content-y = min(0px, process-list.visible-height - process-list.content-height);
+                // An older page was prepended: shift by the height it added so
+                // the anchored row keeps its place.
+                process-list.content-y = root.anchor-y - max(0px, process-list.content-height - root.anchor-height);
+                root.anchor-hold = false;
             } else if root.page-pending && root.revision > 0 && root.has-newer {
                 process-list.content-y = 0px;
-            } else if root.follow-tail && root.entries.length > 0 {
+            } else if root.follow-tail && !root.anchor-hold && root.entries.length > 0 {
                 process-list.content-y = min(0px, process-list.visible-height - process-list.content-height);
             } else if root.page-pending && root.revision > 0 {
                 process-list.content-y = 0px;
@@ -237,21 +253,50 @@ export component ToolProcess inherits Rectangle {
         }
         scrolled => {
             root.follow-tail = self.visible-height - self.content-height - self.content-y >= -32px;
+            // Reaching the top is the request for the older page.
+            if root.has-older && !root.loading && !root.failed
+                && self.content-y >= -4px && root.last-content-y < -4px {
+                root.anchor-y = self.content-y;
+                root.anchor-height = self.content-height;
+                root.anchor-hold = true;
+                root.page(-1);
+            }
+            root.last-content-y = self.content-y;
         }
     }
+    // Retry is the one pager affordance left: a failed load cannot be asked
+    // for again by scrolling, because the reader is already at the top.
     page-top := Rectangle {
         x: 24px; y: 0px; width: parent.width - 48px;
-        height: root.has-older || (!root.paged && root.loading) || root.failed ? 30px : 0px;
-        if root.has-older || root.failed : Button {
-            height: 26px; width: min(220px, parent.width);
-            text: root.failed ? I18n.tl_process_retry : I18n.tl_process_earlier;
-            enabled: !root.loading;
-            clicked => { root.page(root.failed ? 0 : -1); }
+        height: root.failed ? 20px : 0px;
+        border-radius: Theme.radius-tag;
+        background: retry-hit.has-hover ? Theme.hover : transparent;
+        accessible-role: button;
+        accessible-label: I18n.tl_process_retry;
+        accessible-action-default => { root.page(0); }
+        Text {
+            width: parent.width; height: parent.height;
+            text: I18n.tl_process_retry; color: Theme.danger; font-size: Theme.font-xs;
+            horizontal-alignment: center; vertical-alignment: center;
         }
-        if root.loading : Text {
-            x: parent.width - self.preferred-width; height: parent.height;
+        retry-hit := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { root.page(0); }
+        }
+    }
+    // Loading a page is reported in place, without taking layout height: the
+    // reader's scroll position must not jump while the page is in flight.
+    if root.loading : Rectangle {
+        x: (parent.width - loading-label.preferred-width - 16px) / 2;
+        y: 3px;
+        width: loading-label.preferred-width + 16px; height: 18px;
+        border-radius: Theme.radius-tag;
+        background: Theme.panel;
+        border-width: 1px; border-color: Theme.border;
+        loading-label := Text {
+            width: parent.width; height: parent.height;
             text: I18n.tl_process_loading; color: Theme.muted; font-size: Theme.font-xs;
-            vertical-alignment: center;
+            horizontal-alignment: center; vertical-alignment: center;
         }
     }
 }

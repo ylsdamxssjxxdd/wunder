@@ -3,6 +3,7 @@
 //! The application APIs keep their transport DTOs, but never own a second
 //! history database. Reads are bounded SQLite snapshots; mutations enter the
 //! same ThreadStore writer used by the executor.
+use super::thread_history_body::{ItemBodyReader, ItemBodyRef, ITEM_BODY_COLUMNS};
 use super::{
     thread_history::*, thread_store::LocalThreadStore, MetaStore, ThreadLogStore, ThreadTurnTail,
 };
@@ -12,7 +13,6 @@ use serde_json::{json, Value};
 use std::{collections::HashMap, future::Future, time::Duration};
 use wunder_core::{storage_backend::ThreadSnapshotWindow, thread_store::*, thread_view::*};
 
-const BODY: &str = "CASE WHEN json_type(item_json,'$.payload.item_id')='text' AND json_type(item_json,'$.payload.payload')='object' THEN json_extract(item_json,'$.payload.payload') ELSE json_extract(item_json,'$.payload') END";
 pub(crate) const VISIBLE: &str = "visible=1";
 
 pub(crate) struct CanonicalThreadLog<'a> {
@@ -93,6 +93,7 @@ impl<'a> CanonicalThreadLog<'a> {
             rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
         )?;
         conn.busy_timeout(Duration::from_secs(2))?;
+        super::thread_history::prepare_item_view(&conn)?;
         conn.execute(
             "ATTACH DATABASE ?1 AS state",
             [root.join("state_1.sqlite").to_string_lossy().as_ref()],
@@ -266,7 +267,6 @@ impl<'a> CanonicalThreadLog<'a> {
             return Ok(vec![]);
         };
         let order = if after.is_some() { "ASC" } else { "DESC" };
-        let column = if summary { "preview_json" } else { "item_json" };
         let root = if turn.is_some() {
             "AND COALESCE(root_turn_id,turn_id)=?2"
         } else {
@@ -275,25 +275,43 @@ impl<'a> CanonicalThreadLog<'a> {
         let message_filter = if !messages {
             String::new()
         } else if internal {
-            format!("AND (item_type IN ('user_message','assistant_message','agent_message') OR (item_type='tool_result' AND json_extract({BODY},'$.role')='tool') OR (item_type='configuration' AND json_extract({BODY},'$.role')='system' AND json_type({BODY},'$.meta.replacement_history')='array'))")
+            "AND message_context=1".to_owned()
         } else {
             "AND item_type IN ('user_message','assistant_message','agent_message')".to_owned()
         };
-        let sql=format!("SELECT {column},rollout_ordinal FROM thread_items WHERE rollout_id=?1 {root} AND (?3 IS NULL OR rollout_ordinal<?3) AND (?4 IS NULL OR rollout_ordinal>?4) {} {message_filter} ORDER BY rollout_ordinal {order} LIMIT ?5",
+        let sql=format!("SELECT preview_json,rollout_ordinal,item_id,{ITEM_BODY_COLUMNS} FROM thread_items WHERE rollout_id=?1 {root} AND (?3 IS NULL OR rollout_ordinal<?3) AND (?4 IS NULL OR rollout_ordinal>?4) {} {message_filter} ORDER BY rollout_ordinal {order} LIMIT ?5",
             if internal {String::new()}else{format!("AND {VISIBLE}")});
         let mut stmt = conn.prepare(&sql)?;
         let rows = stmt.query_map(
             params![rollout, turn, before, after, limit.clamp(1, 501)],
-            |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)),
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, String>(2)?,
+                    ItemBodyRef::from_row(row, 3)?,
+                ))
+            },
         )?;
         let mut bytes = 0;
         let mut output = Vec::new();
+        let mut bodies = ItemBodyReader::for_connection(conn)?;
         for row in rows {
-            let (raw, ordinal) = row?;
-            if bytes + raw.len() > 16 * 1024 * 1024 && !output.is_empty() {
+            let (preview, ordinal, id, reference) = row?;
+            let size = if summary {
+                preview.len()
+            } else {
+                reference.item_bytes
+            };
+            if bytes + size > 16 * 1024 * 1024 && !output.is_empty() {
                 break;
             }
-            bytes += raw.len();
+            bytes += size;
+            let raw = if summary {
+                preview
+            } else {
+                serde_json::to_string(&bodies.read(&reference, u64::try_from(ordinal)?, &id)?)?
+            };
             output.push(Self::item(raw, ordinal, session, internal)?);
         }
         Ok(output)
@@ -667,24 +685,46 @@ impl ThreadLogStore for CanonicalThreadLog<'_> {
             return Ok(ThreadSearchPage::default());
         }
         let deadline = std::time::Instant::now() + Duration::from_millis(300);
-        conn.progress_handler(1000, Some(move || std::time::Instant::now() > deadline));
-        let mut stmt=conn.prepare(&format!("SELECT item_id,rollout_ordinal,substr(json_extract(({BODY}),'$.content'),1,256) FROM thread_items WHERE rollout_id=?1 AND {VISIBLE} AND instr(json_extract(({BODY}),'$.content'),?2)>0 ORDER BY rollout_ordinal DESC LIMIT 21"))?;
-        let mut hits = stmt
-            .query_map(params![rollout, q], |r| {
-                let id: String = r.get(0)?;
-                Ok(ThreadSearchHit {
+        let mut stmt=conn.prepare(&format!("SELECT item_id,rollout_ordinal,{ITEM_BODY_COLUMNS} FROM thread_items WHERE rollout_id=?1 AND {VISIBLE} ORDER BY rollout_ordinal DESC LIMIT 8193"))?;
+        let mut rows = stmt.query([rollout])?;
+        let mut bodies = ItemBodyReader::for_connection(&conn)?;
+        let mut hits = Vec::new();
+        let mut bytes = 0usize;
+        let mut scanned = 0usize;
+        let mut more = false;
+        while let Some(row) = rows.next()? {
+            let id: String = row.get(0)?;
+            let ordinal: i64 = row.get(1)?;
+            let reference = ItemBodyRef::from_row(row, 2)?;
+            if scanned >= 8192
+                || bytes.saturating_add(reference.item_bytes) > 64 * 1024 * 1024
+                || std::time::Instant::now() > deadline
+            {
+                more = true;
+                break;
+            }
+            scanned += 1;
+            bytes += reference.item_bytes;
+            let raw = bodies.read(&reference, u64::try_from(ordinal)?, &id)?;
+            let item = Self::item(serde_json::to_string(&raw)?, ordinal, s, false)?;
+            let content = message_content_text(&item["payload"]["content"]).unwrap_or_default();
+            if content.contains(q) {
+                hits.push(ThreadSearchHit {
                     body: BodyRef {
                         body_id: format!("{id}|content"),
                         revision: 1,
-                        bytes: 0,
+                        bytes: content.len(),
                     },
                     item_id: id,
-                    cursor: r.get(1)?,
-                    snippet: r.get::<_, Option<String>>(2)?.unwrap_or_default(),
-                })
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        let more = hits.len() > 20;
+                    cursor: ordinal,
+                    snippet: preview(&content, 256),
+                });
+                if hits.len() > 20 {
+                    more = true;
+                    break;
+                }
+            }
+        }
         hits.truncate(20);
         Ok(ThreadSearchPage {
             hits,
@@ -1157,13 +1197,20 @@ impl ThreadLogStore for CanonicalThreadLog<'_> {
         self.check(u, s)?;
         let conn = self.connection(Some(s))?;
         let rollout = Self::rollout(&conn, s)?;
-        let sql=format!("SELECT item_json,rollout_ordinal FROM thread_items WHERE rollout_id=?1 AND item_id=?2 {}",if internal{String::new()}else{format!("AND {VISIBLE}")});
+        let sql=format!("SELECT {ITEM_BODY_COLUMNS},rollout_ordinal FROM thread_items WHERE rollout_id=?1 AND item_id=?2 {}",if internal{String::new()}else{format!("AND {VISIBLE}")});
         let mut result = conn
             .query_row(&sql, params![rollout, id], |r| {
-                Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+                Ok((ItemBodyRef::from_row(r, 0)?, r.get::<_, i64>(5)?))
             })
             .optional()?
-            .map(|(raw, ordinal)| Self::item(raw, ordinal, s, internal))
+            .map(|(reference, ordinal)| {
+                let raw = ItemBodyReader::for_connection(&conn)?.read(
+                    &reference,
+                    u64::try_from(ordinal)?,
+                    id,
+                )?;
+                Self::item(serde_json::to_string(&raw)?, ordinal, s, internal)
+            })
             .transpose()?;
         if let Some(item) = result.as_mut() {
             if let Some(vote) = self

@@ -2,6 +2,7 @@
 
 use super::SqliteStorage;
 use crate::storage::stress_model::{validate_spec, StressThreadSpec, StressThreadStats};
+use crate::storage::WorkspaceStore;
 use anyhow::Result;
 
 impl SqliteStorage {
@@ -16,11 +17,41 @@ impl SqliteStorage {
     ) -> Result<StressThreadStats> {
         validate_spec(spec)?;
         let store = self.canonical_threads()?.clone();
-        crate::storage::canonical_thread_log::wait(store.generate_stress_thread(
+        let stats = crate::storage::canonical_thread_log::wait(store.generate_stress_thread(
             user_id,
             spec,
             move |done, items| progress(done, items),
-        ))?
+        ))??;
+        // Canonical history alone is not an openable thread: every session list
+        // (蛹's work area, the thread APIs, restart discovery) reads the
+        // `chat_sessions` catalog. Register that row only after the history
+        // committed, so a failed generation never leaves a session that opens
+        // onto nothing, and a completed one is reachable instead of merely
+        // present on disk.
+        let workspace_id = match spec
+            .workspace_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+        {
+            Some(workspace_id) => Some(workspace_id.to_string()),
+            // A generated thread must belong to a work area, otherwise the
+            // workspace tree quite correctly hides it.
+            None => self
+                .list_workspaces(user_id)?
+                .into_iter()
+                .next()
+                .map(|workspace| workspace.workspace_id),
+        };
+        let record = crate::services::stress_thread::stress_session_record(
+            user_id,
+            &stats.session_id,
+            &spec.title,
+            workspace_id.as_deref(),
+        );
+        crate::services::stress_thread::register_stress_session(self, &record)
+            .map_err(|error| anyhow::anyhow!("压测线程已写入，但会话目录登记失败: {error}"))?;
+        Ok(stats)
     }
 }
 
@@ -28,6 +59,7 @@ impl SqliteStorage {
 mod tests {
     use super::*;
     use crate::storage::stress_model::MAX_USER_ROUNDS;
+    use crate::storage::ChatSessionStore;
     use rusqlite::Connection;
     use serde_json::Value;
     use std::io::{BufRead, BufReader};
@@ -282,5 +314,76 @@ mod tests {
             .generate_stress_thread("sample-user", &spec, |_, _| {})
             .is_err());
         assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
+    }
+
+    /// A generated thread must be reachable, not just present: the work area
+    /// lists `chat_sessions`, so the catalog row is what makes it openable.
+    #[test]
+    fn a_generated_thread_is_registered_in_its_work_area() {
+        let (_root, storage) = fixture();
+        let spec = spec(2, 2);
+        let stats = storage
+            .generate_stress_thread("sample-user", &spec, |_, _| {})
+            .unwrap();
+        let (sessions, total) = storage
+            .list_chat_sessions_by_workspace(
+                "sample-user",
+                "sample-workspace",
+                Some("active"),
+                0,
+                10,
+            )
+            .unwrap();
+        assert_eq!(total, 1);
+        assert_eq!(sessions[0].session_id, stats.session_id);
+        assert_eq!(sessions[0].title, spec.title);
+        assert_eq!(
+            sessions[0].workspace_id.as_deref(),
+            Some("sample-workspace"),
+            "the thread belongs to the work area that asked for it"
+        );
+    }
+
+    /// A caller without a work area (舵机, or a settings page opened before the
+    /// workspace selector projected its first frame) still yields a thread the
+    /// work area can show, instead of a workspace-less row nothing lists.
+    #[test]
+    fn a_thread_without_a_work_area_lands_in_the_first_one() {
+        let (_root, storage) = fixture();
+        let now = 1_700_000_000.0;
+        storage
+            .upsert_workspace(&wunder_core::storage_records::WorkspaceRecord {
+                workspace_id: "fallback-workspace".into(),
+                user_id: "sample-user".into(),
+                name: "Sample work area".into(),
+                root_path: "D:\\sample-workspace".into(),
+                icon: String::new(),
+                color: String::new(),
+                sort_index: 0,
+                created_at: now,
+                updated_at: now,
+            })
+            .unwrap();
+        let mut spec = spec(1, 1);
+        spec.workspace_id = None;
+        let stats = storage
+            .generate_stress_thread("sample-user", &spec, |_, _| {})
+            .unwrap();
+        let (sessions, _) = storage
+            .list_chat_sessions_by_workspace(
+                "sample-user",
+                "fallback-workspace",
+                Some("active"),
+                0,
+                10,
+            )
+            .unwrap();
+        assert_eq!(
+            sessions
+                .iter()
+                .filter(|session| session.session_id == stats.session_id)
+                .count(),
+            1
+        );
     }
 }

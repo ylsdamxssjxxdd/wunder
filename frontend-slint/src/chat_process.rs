@@ -11,15 +11,6 @@ use std::{
 };
 use wunder_desktop::{native::NativeProcessPage, NativeDesktop};
 
-#[derive(Default)]
-struct Cursor {
-    first: Option<i64>,
-    last: Option<i64>,
-    busy: bool,
-    retry: i32,
-    entries: ModelRc<ProcessEntry>,
-}
-
 pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
     let pending = Rc::new(Cell::new(0usize));
     bind(app, api.clone(), false, pending.clone());
@@ -44,8 +35,19 @@ fn session(app: &MainWindow, child: bool) -> String {
     }
 }
 
+/// A page edge as a durable cursor. `-1` means "this edge is unknown", which
+/// the read turns into an absent cursor: the reader then gets the newest page
+/// instead of a page that cannot be continued.
+fn page_edge(index: i32) -> Option<i64> {
+    (index >= 0).then_some(index as i64)
+}
+
 fn bind(app: &MainWindow, api: Arc<NativeDesktop>, child: bool, pending: Rc<Cell<usize>>) {
-    let cursors = Rc::new(RefCell::new(HashMap::<(String, String), Cursor>::new()));
+    // One read in flight per (thread, process). The page edges themselves live
+    // on the row, so a page always continues from what is actually loaded —
+    // re-creating the view used to drop the cursor and re-read the latest page,
+    // which made the "earlier" control look dead.
+    let inflight = Rc::new(RefCell::new(HashSet::<(String, String)>::new()));
     let weak = app.as_weak();
     let callback = move |payload: i32, direction: i32| {
         let Some(app) = weak.upgrade() else { return };
@@ -72,45 +74,38 @@ fn bind(app: &MainWindow, api: Arc<NativeDesktop>, child: bool, pending: Rc<Cell
         let target = session(&app, child);
         let root = row.process_root.to_string();
         let key = (target.clone(), root.clone());
-        let mut held = cursors.borrow_mut();
-        // A switched thread has no retained page state. Prune both axes rather
-        // than growing a cache as the user visits more conversations.
-        held.retain(|(session_id, root_id), _| {
-            session_id == &target && model.iter().any(|row| row.process_root == root_id.as_str())
-        });
-        if pending.get() >= 4 {
-            return;
-        }
-        let cursor = held.entry(key.clone()).or_default();
-        // The main transcript model is stable across navigation; its process
-        // child model identifies the actual loaded page, including A → B → A.
-        if cursor.entries != row.process_entries {
-            *cursor = Cursor {
-                entries: row.process_entries.clone(),
-                ..Default::default()
-            };
-        }
-        let direction = if row.process_error && direction == 0 {
-            cursor.retry
+        // A retry repeats the page the reader asked for: an older page stays an
+        // older page after a failed read, and a live tail refresh stays one.
+        let direction = if direction == 0 && row.process_error && row.process_paged {
+            if row.process_newer {
+                1
+            } else if row.process_older {
+                -1
+            } else {
+                0
+            }
         } else {
             direction
         };
-        if cursor.busy || (direction == 0 && row.process_paged && !row.process_error) {
+        if direction == 0 && row.process_paged && !row.process_error {
             return;
         }
         if direction == 2 && row.process_newer {
             return;
         }
         let (before, after) = match direction {
-            -1 if row.process_older => (cursor.first, None),
-            1 if row.process_newer => (None, cursor.last),
+            -1 if row.process_older => (page_edge(row.process_first), None),
+            1 if row.process_newer => (None, page_edge(row.process_last)),
             -1 | 1 => return,
             _ => (None, None),
         };
-        cursor.busy = true;
-        cursor.retry = direction;
+        if pending.get() >= 4 {
+            return;
+        }
+        if !inflight.borrow_mut().insert(key.clone()) {
+            return;
+        }
         pending.set(pending.get() + 1);
-        drop(held);
         let entries = row.process_entries.clone();
         // Background tail refreshes keep the existing layout and scroll anchor.
         row.process_loading = direction != 2;
@@ -135,7 +130,7 @@ fn bind(app: &MainWindow, api: Arc<NativeDesktop>, child: bool, pending: Rc<Cell
             let _ = tx.send(result);
         });
         let weak = app.as_weak();
-        let cursors = cursors.clone();
+        let inflight = inflight.clone();
         let pending = pending.clone();
         poll(move || {
             let result = match rx.try_recv() {
@@ -144,13 +139,7 @@ fn bind(app: &MainWindow, api: Arc<NativeDesktop>, child: bool, pending: Rc<Cell
                 Err(_) => Err(anyhow::anyhow!("process reader stopped")),
             };
             pending.set(pending.get().saturating_sub(1));
-            if let Some(cursor) = cursors
-                .borrow_mut()
-                .get_mut(&key)
-                .filter(|cursor| cursor.entries == entries)
-            {
-                cursor.busy = false;
-            }
+            inflight.borrow_mut().remove(&key);
             let Some(app) = weak.upgrade() else {
                 return true;
             };
@@ -173,7 +162,6 @@ fn bind(app: &MainWindow, api: Arc<NativeDesktop>, child: bool, pending: Rc<Cell
             row.process_loading = false;
             match result {
                 Ok(page) => {
-                    let (page_first, page_last) = (page.first, page.last);
                     apply_page(&mut row, page, direction);
                     for reason in model.iter().filter(|reason| {
                         reason.kind == crate::timeline::KIND_REASON
@@ -184,15 +172,10 @@ fn bind(app: &MainWindow, api: Arc<NativeDesktop>, child: bool, pending: Rc<Cell
                             crate::timeline_text::process_entry(&reason),
                         );
                     }
-                    if let Some(cursor) = cursors.borrow_mut().get_mut(&key) {
-                        cursor.first = page_first;
-                        cursor.last = page_last;
-                        cursor.entries = row.process_entries.clone();
-                    }
                 }
-                Err(_) => {
-                    row.process_error = true;
-                }
+                // A failed tail refresh is retried by the live timer; only a
+                // read the reader asked for is worth a retry strip.
+                Err(_) => row.process_error = direction != 2,
             }
             model.set_row_data(index, row);
             true
@@ -206,6 +189,7 @@ fn bind(app: &MainWindow, api: Arc<NativeDesktop>, child: bool, pending: Rc<Cell
 }
 
 fn apply_page(row: &mut TimelineRow, page: NativeProcessPage, direction: i32) {
+    let (page_first, page_last) = (page.first, page.last);
     let previous: HashMap<_, _> = row
         .process_entries
         .iter()
@@ -302,6 +286,10 @@ fn apply_page(row: &mut TimelineRow, page: NativeProcessPage, direction: i32) {
     row.process_local = false;
     row.process_older = page.has_older;
     row.process_newer = page.has_newer;
+    // The page carries its own exclusive edges; keeping them on the row is what
+    // makes the next read continue this page instead of restarting at the tail.
+    row.process_first = page_first.unwrap_or(-1) as i32;
+    row.process_last = page_last.unwrap_or(-1) as i32;
     row.process_error = false;
     // Sign tells the viewport which edge to retain after changing pages.
     if direction != 2 {

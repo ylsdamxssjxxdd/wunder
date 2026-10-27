@@ -14,7 +14,6 @@ ENTRIES = [
     ("tl_status_running", "处理中", "Processing"),
     ("tl_process_loading", "正在加载…", "Loading…"),
     ("tl_process_retry", "加载失败，重试", "Loading failed. Retry"),
-    ("tl_process_earlier", "查看更早的过程", "Earlier steps"),
     # ---- end-of-turn metrics: labels double as the row tooltips ----
     ("tl_stat_round", "用户轮次", "User round"),
     ("tl_user_round", "第 {} 个用户轮次", "User round {}", ["round"]),

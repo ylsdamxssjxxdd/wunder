@@ -1,0 +1,7 @@
+.env
+__pycache__/
+data/
+rust-builder/
+images/*.tar.gz
+images/SHA256SUMS
+images/manifest.json

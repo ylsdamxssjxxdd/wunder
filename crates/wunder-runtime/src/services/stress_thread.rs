@@ -109,6 +109,79 @@ pub fn validate_stress_params(user_rounds: i64, model_rounds_per_turn: i64) -> R
     Ok(())
 }
 
+/// Resolve the work area a generated thread belongs to.
+///
+/// The generator writes canonical history straight through the thread store,
+/// but every session list (sidebar, thread APIs, restart discovery) reads the
+/// `chat_sessions` catalog and filters it by work area. A thread without one
+/// therefore exists on disk while being invisible in the UI, so an unset choice
+/// falls back to the user's first work area instead of writing a workspace-less
+/// row.
+pub fn resolve_stress_workspace(
+    storage: &dyn crate::storage::StorageBackend,
+    user_id: &str,
+    requested: Option<&str>,
+) -> Result<String, String> {
+    let requested = requested.map(str::trim).filter(|id| !id.is_empty());
+    if let Some(workspace_id) = requested {
+        let known = storage
+            .get_workspace(user_id, workspace_id)
+            .map_err(|error| error.to_string())?;
+        return match known {
+            Some(_) => Ok(workspace_id.to_string()),
+            None => Err("工作区不存在".to_string()),
+        };
+    }
+    storage
+        .list_workspaces(user_id)
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .next()
+        .map(|workspace| workspace.workspace_id)
+        .ok_or_else(|| "工作区不存在".to_string())
+}
+
+/// The catalog row that makes a generated thread openable.
+///
+/// One definition keeps every entry point (HTTP job, 舵机, 蛹) writing the same
+/// shape: an active session of the launching user in its work area.
+pub fn stress_session_record(
+    user_id: &str,
+    session_id: &str,
+    title: &str,
+    workspace_id: Option<&str>,
+) -> crate::storage::ChatSessionRecord {
+    let now = now_ts();
+    crate::storage::ChatSessionRecord {
+        session_id: session_id.to_string(),
+        user_id: user_id.trim().to_string(),
+        title: title.to_string(),
+        status: "active".to_string(),
+        created_at: now,
+        updated_at: now,
+        last_message_at: now,
+        agent_id: None,
+        workspace_id: workspace_id.map(str::to_string),
+        tool_overrides: Vec::new(),
+        parent_session_id: None,
+        parent_message_id: None,
+        spawn_label: None,
+        spawned_by: None,
+    }
+}
+
+/// Persist one generated thread in the session catalog. Called after the
+/// canonical write commits, so a failed generation never leaves a session that
+/// opens onto missing history.
+pub fn register_stress_session(
+    storage: &dyn crate::storage::StorageBackend,
+    record: &crate::storage::ChatSessionRecord,
+) -> Result<(), String> {
+    storage
+        .upsert_chat_session(record)
+        .map_err(|error| error.to_string())
+}
+
 /// Launch one generation job. Returns the job/session identifiers immediately;
 /// progress is observable through `stress_job_status`.
 pub fn start_stress_thread_job(request: StartStressJobRequest) -> Result<Value, String> {
@@ -208,24 +281,13 @@ pub fn start_stress_thread_job(request: StartStressJobRequest) -> Result<Value, 
                 // This keeps a failed generation from appearing as a usable
                 // chat session while allowing ordinary session/history APIs to
                 // rediscover completed stress threads after a process restart.
-                let now = now_ts();
                 let catalog_user_id = job.lock().user_id.clone();
-                let record = crate::storage::ChatSessionRecord {
-                    session_id: stats.session_id.clone(),
-                    user_id: catalog_user_id,
-                    title: catalog_title,
-                    status: "active".to_string(),
-                    created_at: now,
-                    updated_at: now,
-                    last_message_at: now,
-                    agent_id: None,
-                    workspace_id: catalog_workspace_id,
-                    tool_overrides: Vec::new(),
-                    parent_session_id: None,
-                    parent_message_id: None,
-                    spawn_label: None,
-                    spawned_by: None,
-                };
+                let record = stress_session_record(
+                    &catalog_user_id,
+                    &stats.session_id,
+                    &catalog_title,
+                    catalog_workspace_id.as_deref(),
+                );
                 let catalog_result =
                     crate::core::blocking::run_db("stress_thread.catalog", move || {
                         user_store.upsert_chat_session(&record)

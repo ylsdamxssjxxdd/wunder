@@ -4,9 +4,14 @@
 # database access, and static/HTML plotting (matplotlib, seaborn, pyecharts).
 
 aiosqlite==0.20.0
-# capstone: pinned 5.0.2. The ia32 Win7 supplement installs with
-# --only-binary=:all: on a 32-bit host, so pip selects the win32 wheel.
-capstone==5.0.2
+# capstone: pinned 5.0.1 on purpose. 5.0.2 is the release where upstream
+# published a py3-none-win32 wheel whose capstone/lib/capstone.dll is actually
+# an x86-64 image (both the win32 and win_amd64 wheels carry the same 0x8664
+# DLL), so the ia32 supplement ended up with a library no 32-bit Python can
+# load. 5.0.3 and later ship no win32 wheel at all. 5.0.1 keeps the same 5.0
+# API with a real i386 DLL; the supplement build additionally gates every PE
+# file in the pack against the target architecture.
+capstone==5.0.1
 certifi==2024.8.30
 charset-normalizer==3.4.1
 contourpy==1.1.1

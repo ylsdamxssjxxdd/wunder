@@ -37,6 +37,7 @@ mod navigation_ui;
 mod os_drag;
 mod pet_settings;
 mod pet_window;
+mod runtime_phase;
 mod runtime_settings;
 mod screen_capture;
 mod screenshot;

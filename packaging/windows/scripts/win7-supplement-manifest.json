@@ -108,7 +108,8 @@
     "notes": [
       "Git for Windows documents 2.46.2 as the last version supporting Windows 7 / 8 / 8.1.",
       "MinGit is the intentionally minimal, non-interactive Git distribution: it ships git.exe and its supporting cast but no Git Bash (no bash.exe) and no POSIX toolchain, so the supplement stays small and the agent command tool never runs in a bundled bash on Windows.",
-      "The MinGit archive is a plain zip (git.exe under cmd/) that the build script extracts straight into opt/git."
+      "The MinGit archive is a plain zip (git.exe under cmd/) that the build script extracts straight into opt/git.",
+      "MinGit still bundles the .NET/Avalonia Git Credential Manager UI, scalar, tig, vim/perl and the Tcl/Tk helpers; the stage prune removes all of them (about 37 MB) and leaves git.exe, its native DLLs, the MSYS runtime under usr/bin and the shell scripts under mingw32/libexec. etc/gitconfig is rewritten from 'helper = manager' to 'helper = wincred' at the same time so HTTPS push keeps a credential helper."
     ],
     "archives": {
       "x64": {

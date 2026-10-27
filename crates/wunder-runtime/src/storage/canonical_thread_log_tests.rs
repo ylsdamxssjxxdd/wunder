@@ -165,7 +165,7 @@ async fn canonical_writer_reopens_through_backend_with_complete_chat_and_traject
         .begin_turn(USER, &thread, &turn, "sample-model")
         .await
         .unwrap();
-    let answer = "sample answer 中🙂\n".repeat(9_000);
+    let answer = format!("{}fixture-search-tail", "sample answer 中🙂\n".repeat(9_000));
     let tool_output = "sample tool output 中🙂\n".repeat(8_000);
     let assistant_id = ItemId::new("assistant-sample").unwrap();
     let tool_id = ItemId::new("tool-sample").unwrap();
@@ -245,6 +245,13 @@ async fn canonical_writer_reopens_through_backend_with_complete_chat_and_traject
         .unwrap()
         .unwrap();
     assert_eq!(item["payload"]["content"], answer);
+    let search = backend
+        .thread_view_search(USER, THREAD, "fixture-search-tail")
+        .unwrap();
+    assert!(search
+        .hits
+        .iter()
+        .any(|hit| hit.item_id == assistant_id.as_str()));
     let trajectory = backend
         .thread_view_trajectory_page(USER, THREAD, None, Some(turn.as_str()), 20)
         .unwrap();

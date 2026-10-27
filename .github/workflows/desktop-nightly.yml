@@ -196,10 +196,47 @@ jobs:
             if ($meta.rg.version -ne $rgPin) {
               throw "supplement ripgrep is $($meta.rg.version), expected $rgPin; rebuild the Desktop Supplements release"
             }
+            # 发布前最后一道架构检查：release 上的包可能来自旧构建缓存，而打包脚本
+            # 的门禁只保护「本次构建」。任何 32 位包里混入 x64/arm64 的 exe/dll/pyd
+            # 都只能在目标机上才炸（capstone.dll 就是这么混进来的）。
+            # 注意 ZipArchiveEntry 的流不支持 Seek，所以只顺序读头部 8 KB 再解析。
+            $foreign = New-Object System.Collections.Generic.List[string]
+            $peCount = 0
+            foreach ($entry in $zip.Entries) {
+              if ($entry.FullName -notmatch '\.(exe|dll|pyd|node)$') { continue }
+              $stream = $entry.Open()
+              try {
+                $head = New-Object byte[] 8192
+                $read = 0
+                while ($read -lt $head.Length) {
+                  $chunk = $stream.Read($head, $read, $head.Length - $read)
+                  if ($chunk -le 0) { break }
+                  $read += $chunk
+                }
+              } finally {
+                $stream.Dispose()
+              }
+              if ($read -lt 64 -or $head[0] -ne 0x4d -or $head[1] -ne 0x5a) { continue }
+              $peOffset = [BitConverter]::ToInt32($head, 0x3c)
+              if ($peOffset -le 0 -or ($peOffset + 6) -gt $read) { continue }
+              if ($head[$peOffset] -ne 0x50 -or $head[$peOffset + 1] -ne 0x45) { continue }
+              $peCount++
+              $machine = [BitConverter]::ToUInt16($head, $peOffset + 4)
+              if ($machine -ne 0x014c) {
+                $foreign.Add(('0x{0:x4} {1}' -f $machine, $entry.FullName))
+              }
+            }
+            if ($foreign.Count -gt 0) {
+              throw "supplement has $($foreign.Count) non-i386 PE file(s): $($foreign -join '; '); rebuild the Desktop Supplements release"
+            }
+            foreach ($retired in @('opt/node/', 'opt/remotion/')) {
+              $stale = $zip.Entries | Where-Object { $_.FullName.StartsWith($retired) } | Select-Object -First 1
+              if ($stale) { throw "supplement still contains retired component $retired ($($stale.FullName))" }
+            }
           } finally {
             $zip.Dispose()
           }
-          Write-Host "supplement Playwright $pin with i386 driver and ripgrep $rgPin verified"
+          Write-Host "supplement Playwright $pin with i386 driver and ripgrep $rgPin verified; $peCount PE files all i386, no retired node/remotion tree"
       - name: Build Windows installer
         shell: pwsh
         run: |

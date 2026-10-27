@@ -450,6 +450,7 @@ pub(super) fn install(app: &MainWindow, state: Rc<RefCell<State>>) {
                         &app,
                         &session,
                         latest.assistant.stats_status.as_str(),
+                        crate::runtime_phase::Phase::of(latest.assistant.stats_status.as_str()),
                     );
                 }
             }
@@ -966,6 +967,8 @@ fn blank_row(kind: i32, id: String) -> TimelineRow {
         process_local: false,
         process_older: false,
         process_newer: false,
+        process_first: -1,
+        process_last: -1,
         process_loading: false,
         process_error: false,
         process_revision: 0,

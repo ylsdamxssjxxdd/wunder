@@ -56,6 +56,7 @@ pub fn install(app: &MainWindow) {
             thread_id: "t1".into(),
             title: "检查示例文件".into(),
             status: "done".into(),
+            phase: 4,
             active: true,
             payload: 0,
             archivable: true,
@@ -67,6 +68,7 @@ pub fn install(app: &MainWindow) {
             thread_id: "t2".into(),
             title: "整理示例内容".into(),
             status: "idle".into(),
+            phase: 0,
             payload: 1,
             archivable: true,
             ..Default::default()
@@ -87,6 +89,7 @@ pub fn install(app: &MainWindow) {
             thread_id: "t3".into(),
             title: "读取示例资料".into(),
             status: "running".into(),
+            phase: 2,
             payload: 2,
             origin: "device:demo".into(),
             ..Default::default()
@@ -375,6 +378,8 @@ fn fixture_row(kind: i32, index: usize, text: &str) -> TimelineRow {
         process_local: false,
         process_older: false,
         process_newer: false,
+        process_first: -1,
+        process_last: -1,
         process_loading: false,
         process_error: false,
         process_revision: 0,

@@ -55,7 +55,12 @@ Windows 安装包优先使用离线 SDK 的 `Rust-builder/win7/offline/tools/inn
 - Playwright 驱动：Win7 包固定使用已验证的 `playwright==1.40.0` 与 Chrome 109 补充包组合。官方 `win32` wheel 内仍带 x64 的 `driver/node.exe`，构建脚本会下载固定 SHA256 的 Node 16.20.2 `win-x86`，替换该文件后再做 i386 PE 门禁。Node 16 不在 Node 官方的 Windows 7 支持矩阵内，桥接会设置 `NODE_SKIP_PLATFORM_CHECK=1`，仍需在真实 ia32 Win7 上验收。
 - Git：`MinGit 2.46.2`
   - Git for Windows FAQ 将 `2.46.2` 标为最后支持 Windows `7 / 8 / 8.1` 的版本。
-  - `MinGit` 适合嵌入第三方桌面应用，体积比完整安装包更小。
+  - `MinGit` 适合嵌入第三方桌面应用，体积比完整安装包更小（不含 Git Bash 与 POSIX 工具链，`git.exe` 位于 `cmd/`）。
+  - `MinGit` 默认仍带一批智能体用不到的东西，构建的剪裁阶段会一并移除：Git Credential Manager 的 .NET/Avalonia UI（含 `SkiaSharp`、`Microsoft.Identity.*`、`msalruntime` 等，约 25 MB）、`scalar`、`tig`、`gitk`/`git gui`、vim/perl 与 Tcl/Tk 运行时、各语言文档树。剪裁后 `opt/git` 约 58 MB，保留 `git.exe`、原生依赖 DLL、`usr/bin` 下的 MSYS 运行时（shell 脚本用）和 `mingw32/libexec/git-core` 下的脚本。
+  - 剪裁同时把 `etc/gitconfig` 的 `credential.helper` 从 `manager` 改为 `wincred`，并删除 MinGit 原带的、指向本机 `C:/Program Files/Git/etc/gitconfig` 的 `[include]` 段：否则装过 Git for Windows 的机器会重新启用已被删除的凭据管理器。
+- capstone：`5.0.1`
+  - `5.0.2` 的 `py3-none-win32` wheel 里 `capstone/lib/capstone.dll` 实际是 x86-64 镜像（上游打包错误，`win32` 与 `win_amd64` 两个 wheel 携带同一个 0x8664 DLL），32 位 Python 无法加载；`5.0.3` 起不再发布 win32 wheel。`5.0.1` 是同系列 API 且带真正的 i386 DLL。
+  - 该问题暴露的是「逐个组件自己声明架构」不可靠：补充包在打包前会对 `opt/` 下所有 `exe/dll/pyd/node` 做一次全量 PE 架构门禁，出现与目标架构不符的文件直接构建失败。
 - ripgrep：`14.1.0`
   - `14.1.1` 起的官方 Windows 二进制用 Rust 1.78+ 构建，静态导入 `bcryptprimitives.dll`（`ProcessPrng`）和 `api-ms-win-core-synch-l1-2-0.dll`（`WaitOnAddress`），这两个 DLL 从 Windows 8 才提供；在 32 位 Windows 7 上启动即崩溃并报 `Segmentation fault`。
   - `14.1.0` 是最后一个仍能在 Windows 7 运行的官方版本。构建脚本会校验 SHA256、PE 架构和导入表；若以后要升级到 `14.1.1+`，必须用 Rust `<= 1.77.2` 自行重编，否则门禁会直接失败。
@@ -94,6 +99,25 @@ powershell -ExecutionPolicy Bypass -File packaging/windows/scripts/build_win7_de
   -GitArchivePath C:\cache\MinGit-2.46.2-32-bit.zip `
   -RgArchivePath C:\cache\ripgrep-14.1.0-i686-pc-windows-msvc.zip
 ```
+
+### 剪裁与两步式构建
+
+每次构建都会在打包前跑一次剪裁（`prune-supplement-stage.py`，PS 脚本只是它的调用方）：删除各 wheel 的 `tests`/`testdata`、与目标架构不符的 PE 文件（ia32 包里不允许出现 x64/arm64 的 exe/dll/pyd）、以及 MinGit 里智能体用不到的部分。随后依次执行：
+
+- `git` 冒烟：用包内 `cmd\git.exe` 在临时仓库里 `init` / `commit` / `log`，验证 MSYS 运行时与 shell 脚本仍然可用。
+- PE 架构门禁：扫描 `opt/` 下全部 PE 文件，出现一个不符架构的直接失败。
+- 压缩打包。
+
+有些构建环境（例如在带批量删除保护的 agent 运行时里执行）会拦截 `python.exe` 子进程的批量删除，剪裁步骤会被拒绝。这类主机用两步式构建：
+
+```powershell
+# 第一步：只做落位，跳过剪裁（末尾 PE 门禁会失败并提示下一步）
+...build_win7_desktop_supplement.ps1 -Arch ia32 -SkipPrune
+# 第二步：仅剪裁 + 冒烟 + 门禁 + 重新打包
+...build_win7_desktop_supplement.ps1 -Arch ia32 -PruneOnly
+```
+
+`-PruneOnly` 不重新下载、不重装 Python 包，直接用现有 stage，几十秒即可产出干净的压缩包。
 
 ## 默认输出目录
 

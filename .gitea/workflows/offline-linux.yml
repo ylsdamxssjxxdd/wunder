@@ -1,0 +1,42 @@
+name: Offline Linux Release
+
+on:
+  push:
+    branches:
+      - "**"
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  linux:
+    runs-on: linux-offline-arm64
+    timeout-minutes: 1440
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        arch: [arm64, amd64]
+    steps:
+      - name: Checkout from local Gitea
+        env:
+          CI_REPOSITORY: ${{ github.repository }}
+          CI_COMMIT: ${{ github.sha }}
+          CI_REF: ${{ github.ref }}
+          CI_TOKEN: ${{ github.token }}
+        run: python3 /opt/offline-ci/checkout.py
+      - name: Build offline Linux desktop and CLI
+        env:
+          ARCH: ${{ matrix.arch }}
+          CI_REPOSITORY: ${{ github.repository }}
+        run: bash packaging/gitea/ci/build.sh
+      - name: Publish build outputs to local Releases
+        env:
+          ARCH: ${{ matrix.arch }}
+          CI_REPOSITORY: ${{ github.repository }}
+          CI_COMMIT: ${{ github.sha }}
+          CI_TOKEN: ${{ github.token }}
+        run: python3 /opt/offline-ci/publish.py release-assets

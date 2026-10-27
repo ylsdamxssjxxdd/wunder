@@ -6116,11 +6116,6 @@
   "en": "Loading failed. Retry"
  },
  {
-  "key": "tl_process_earlier",
-  "zh": "查看更早的过程",
-  "en": "Earlier steps"
- },
- {
   "key": "tl_stat_round",
   "zh": "用户轮次",
   "en": "User round"

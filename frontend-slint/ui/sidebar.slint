@@ -71,12 +71,15 @@ export global WorkspaceVisual {
 // Compact thread glyphs keep the 28px tree rhythm while distinguishing phases.
 component StatusDot inherits Rectangle {
     in property <string> status;
+    // Phase decided by the backend (`runtime_phase::Phase`), -1 when the row
+    // is not a thread. A live phase always wins over the phrase table.
+    in property <int> phase: -1;
     width: 11px; height: 11px;
-    private property <bool> inquiry: status == "waiting_input" || status == "waiting_user_input"
+    private property <bool> inquiry: root.phase == 3 || status == "waiting_input" || status == "waiting_user_input"
         || status.starts-with("等待用户输入") || status.starts-with("等待回答");
     private property <bool> approval: status == "waiting_approval"
         || status.starts-with("等待确认") || status.starts-with("等待审批");
-    private property <string> state: RuntimeStatus.normalize(status);
+    private property <string> state: RuntimeStatus.state-of(root.phase, root.status);
     private property <color> tint: root.inquiry ? Theme.accent : root.approval || root.state == "pending" ? Theme.warning
         : root.state == "error" ? Theme.danger : root.state == "done" ? Theme.success
         : root.state == "running" ? Theme.accent : Theme.muted;
@@ -139,6 +142,7 @@ component ThreadRow inherits ContextMenuArea {
         StatusDot {
             y: (parent.height - self.height) / 2;
             status: data.status;
+            phase: data.phase;
         }
         Text {
             vertical-alignment: center;

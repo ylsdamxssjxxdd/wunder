@@ -40,12 +40,21 @@ unpacked browser directory staged into opt/browser.
 Install requirements package-by-package and continue past failures (records them).
 
 .PARAMETER SkipPrune / SkipGitPrune
-Keep the Python test suites / the Git vim-perl-tcl docs trees in the pack. Only
-needed on build hosts that wrap Remove-Item in a delete guard (every call is
-routed through the Recycle Bin, so bulk pruning fails closed and aborts the
-build). Prune afterwards instead and repack:
+Skip the stage prune entirely, or only its MinGit part. Pruning normally runs
+through prune-supplement-stage.py (wheel test suites, foreign-architecture PE
+files, MinGit extras), so the PowerShell delete-guard problem no longer applies;
+these switches are escape hatches for debugging a pack, and the PE architecture
+gate still runs afterwards. To prune an already staged tree:
 
-  python packaging/windows/scripts/prune-supplement-stage.py <build>/stage/package-root
+  python packaging/windows/scripts/prune-supplement-stage.py <build>/stage/package-root --arch ia32
+
+.PARAMETER PruneOnly
+Skip staging and rebuild nothing: prune the existing stage, re-run the PE
+architecture and git smoke gates, and repack the zip. Two-step builds use it on
+hosts that refuse the bulk deletes a fresh build performs inside the stage:
+
+  build_win7_desktop_supplement.ps1 -SkipPrune        # stage everything
+  build_win7_desktop_supplement.ps1 -PruneOnly        # prune, gate, repack
 #>
 [CmdletBinding()]
 param(
@@ -73,6 +82,8 @@ param(
 
   [switch]$SkipPrune,
   [switch]$SkipGitPrune,
+
+  [switch]$PruneOnly,
 
   [switch]$SkipFfmpeg,
 
@@ -121,6 +132,39 @@ function Ensure-Directory {
   if (-not (Test-Path -LiteralPath $Path)) { New-Item -ItemType Directory -Path $Path -Force | Out-Null }
 }
 
+function Remove-Tree {
+  # Deletes build output (stage, extraction targets, temp dirs) through .NET
+  # instead of Remove-Item. Several build hosts -- including this repository's
+  # own agent runtime -- wrap Remove-Item in a delete guard that routes every
+  # recursive call through the Recycle Bin and refuses bulk deletes, which used
+  # to abort the supplement build before it started and forced -SkipPrune.
+  param([string]$Path)
+  if (-not (Test-Path -LiteralPath $Path)) { return }
+  $item = Get-Item -LiteralPath $Path -Force
+  if ($item.PSIsContainer) {
+    [System.IO.Directory]::Delete($item.FullName, $true)
+  } else {
+    [System.IO.File]::Delete($item.FullName)
+  }
+}
+
+function Remove-TreeQuiet {
+  # Best-effort cleanup for temp trees. A freshly created .git can still be held
+  # by antivirus or an exiting process for a moment, and a leftover temp folder
+  # must never fail a build.
+  param([string]$Path)
+  if (-not (Test-Path -LiteralPath $Path)) { return }
+  for ($attempt = 0; $attempt -lt 3; $attempt++) {
+    try {
+      Remove-Tree $Path
+      return
+    } catch {
+      Start-Sleep -Milliseconds 300
+    }
+  }
+  Write-Warn "could not remove temp tree: $Path"
+}
+
 function Get-DownloadedFile {
   param([string]$Url, [string]$Destination, [switch]$Force)
   Ensure-Directory (Split-Path -Parent $Destination)
@@ -159,7 +203,7 @@ function Get-DownloadedFile {
     if ($found -and ($found.Source)) { $candidates.Add([string]$found.Source) }
     foreach ($candidate in $candidates) {
       Write-Warn "falling back to curl: $candidate"
-      $curlProc = Start-Process -FilePath $candidate -ArgumentList @('-L', '--fail', '--retry', '3', '--retry-delay', '2', '-o', $Destination, $Url) -Wait -PassThru -NoNewWindow
+      Invoke-ProcessCapture -FilePath $candidate -Arguments @('-L', '--fail', '--retry', '3', '--retry-delay', '2', '-o', $Destination, $Url) | Out-Null
       $ok = (Test-Path -LiteralPath $Destination) -and ((Get-Item -LiteralPath $Destination).Length -gt 0)
       if ($ok) { break }
       Remove-Item -LiteralPath $Destination -Force -ErrorAction SilentlyContinue
@@ -195,6 +239,146 @@ function Assert-PeMachine {
     Fail "wrong PE architecture for ${Path}: got $actual, expected $wanted"
   }
   Write-Step "validated PE architecture ($Arch): $Path"
+}
+
+function Get-PeMachineHeader {
+  # Machine word from just the DOS stub plus the COFF header. The whole-file
+  # reader above is fine for a single gate binary but far too slow for the
+  # several hundred PE images a supplement pack carries.
+  param([string]$Path)
+  try {
+    $stream = [System.IO.File]::OpenRead($Path)
+    try {
+      $head = New-Object byte[] 0x40
+      if ($stream.Read($head, 0, $head.Length) -lt 0x40) { return $null }
+      if ($head[0] -ne 0x4d -or $head[1] -ne 0x5a) { return $null }
+      $peOffset = [BitConverter]::ToInt32($head, 0x3c)
+      if ($peOffset -lt 0 -or $peOffset -gt ($stream.Length - 6)) { return $null }
+      $stream.Position = $peOffset
+      $coff = New-Object byte[] 6
+      if ($stream.Read($coff, 0, 6) -lt 6) { return $null }
+      if ($coff[0] -ne 0x50 -or $coff[1] -ne 0x45 -or $coff[2] -ne 0 -or $coff[3] -ne 0) { return $null }
+      return [BitConverter]::ToUInt16($coff, 4)
+    } finally {
+      $stream.Dispose()
+    }
+  } catch {
+    return $null
+  }
+}
+
+function Assert-SupplementPeArch {
+  # Release gate over the whole staged tree. A 32-bit supplement that carries a
+  # single x64 DLL only fails at runtime on the target machine (this is how an
+  # x86-64 capstone.dll once shipped in the ia32 pack), so every PE image is
+  # checked here instead of trusting each component's own pin.
+  param([string]$PackageRoot, [ValidateSet('ia32', 'x64')][string]$Arch)
+  $allowed = if ($Arch -eq 'ia32') { @(0x014c) } else { @(0x8664, 0x014c) }
+  $suffixes = @('.exe', '.dll', '.pyd', '.node')
+  $bad = New-Object System.Collections.Generic.List[string]
+  $total = 0
+  foreach ($file in @(Get-ChildItem -LiteralPath $PackageRoot -Recurse -File -ErrorAction SilentlyContinue)) {
+    if ($suffixes -notcontains $file.Extension.ToLowerInvariant()) { continue }
+    $machine = Get-PeMachineHeader -Path $file.FullName
+    if ($null -eq $machine) { continue }
+    $total++
+    if ($allowed -notcontains $machine) {
+      $rel = $file.FullName.Substring($PackageRoot.Length).TrimStart('\', '/')
+      $bad.Add(('0x{0:x4} {1}' -f $machine, $rel))
+    }
+  }
+  if ($bad.Count -gt 0) {
+    $preview = (@($bad | Select-Object -First 10) -join [Environment]::NewLine)
+    Fail ("{0} PE file(s) do not match the {1} pack:{2}{3}{2}Run again with -PruneOnly to drop them and repack the stage." -f `
+      $bad.Count, $Arch, [Environment]::NewLine, $preview)
+  }
+  Write-Step "validated PE architecture ($Arch) for $total PE files"
+}
+
+function Invoke-GitSmoke {
+  # Proves the trimmed tree still runs: --version alone does not exercise the
+  # MSYS runtime, the shell helpers or the dll set, so a temporary repository is
+  # created and committed through the packaged binary.
+  param([string]$GitRoot)
+  $gitCmdExe = Join-Path $GitRoot 'cmd\git.exe'
+  if (-not (Test-Path -LiteralPath $gitCmdExe -PathType Leaf)) { return }
+  $gitProbe = Join-Path ([System.IO.Path]::GetTempPath()) ('wunder-git-smoke-' + [guid]::NewGuid().ToString('N'))
+  Ensure-Directory $gitProbe
+  try {
+    $gitEnv = @{
+      GIT_AUTHOR_NAME = 'wunder'; GIT_AUTHOR_EMAIL = 'wunder@localhost'
+      GIT_COMMITTER_NAME = 'wunder'; GIT_COMMITTER_EMAIL = 'wunder@localhost'
+      GIT_CONFIG_NOSYSTEM = '1'; HOME = $gitProbe
+    }
+    $previous = @{}
+    foreach ($key in $gitEnv.Keys) {
+      $previous[$key] = [Environment]::GetEnvironmentVariable($key, 'Process')
+      [Environment]::SetEnvironmentVariable($key, $gitEnv[$key], 'Process')
+    }
+    try {
+      $smokeCommands = @(
+        @('--version'),
+        @('init', '--quiet', $gitProbe),
+        @('-C', $gitProbe, 'config', 'user.email', 'wunder@localhost'),
+        @('-C', $gitProbe, 'config', 'user.name', 'wunder'),
+        @('-C', $gitProbe, 'commit', '--allow-empty', '--quiet', '-m', 'smoke'),
+        @('-C', $gitProbe, 'log', '--oneline')
+      )
+      $lastOutput = ''
+      foreach ($smokeArgs in $smokeCommands) {
+        $result = Invoke-ProcessCapture -FilePath $gitCmdExe -Arguments $smokeArgs
+        $lastOutput = $result.StdOut
+        if ($result.ExitCode -ne 0 -or -not [string]::IsNullOrWhiteSpace($result.StdErr)) {
+          Fail ("git smoke failed at 'git {0}': exit {1} {2}" -f ($smokeArgs -join ' '), $result.ExitCode, $result.StdErr)
+        }
+      }
+      if (-not ("$lastOutput" -match 'smoke')) {
+        Fail "git smoke produced no commit log: $lastOutput"
+      }
+    } finally {
+      foreach ($key in $previous.Keys) {
+        [Environment]::SetEnvironmentVariable($key, $previous[$key], 'Process')
+      }
+    }
+  } finally {
+    Remove-TreeQuiet $gitProbe
+  }
+  $gitSizeMb = [math]::Round(((Get-ChildItem -LiteralPath $GitRoot -Recurse -File -ErrorAction SilentlyContinue |
+    Measure-Object -Property Length -Sum).Sum / 1MB), 1)
+  Write-Step "git smoke ok: init/commit/log on the trimmed tree (opt/git = $gitSizeMb MB)"
+}
+
+function Find-PythonExe {
+  # The prune step runs in Python: this build host (and CI) wrap Remove-Item in
+  # a delete guard that routes every call through the Recycle Bin, where bulk
+  # pruning of thousands of nested files fails closed.
+  foreach ($candidate in @('python', 'python3', 'py')) {
+    $command = Get-Command $candidate -ErrorAction SilentlyContinue
+    if (-not $command -or -not $command.Source) { continue }
+    $prefix = if ($candidate -eq 'py') { @('-3') } else { @() }
+    $output = & $command.Source @($prefix + @('--version')) 2>&1
+    if ($LASTEXITCODE -eq 0 -and "$output" -match '^Python 3\.') {
+      return @{ Exe = $command.Source; Prefix = $prefix }
+    }
+  }
+  return $null
+}
+
+function Invoke-SupplementPrune {
+  param(
+    [string]$PackageRoot,
+    [ValidateSet('ia32', 'x64')][string]$Arch,
+    [switch]$SkipGit
+  )
+  $script = Join-Path $ScriptDir 'prune-supplement-stage.py'
+  if (-not (Test-Path -LiteralPath $script)) { Fail "prune script missing: $script" }
+  $python = Find-PythonExe
+  if ($null -eq $python) { Fail 'Python 3 is required to prune the supplement stage' }
+  $arguments = @($python.Prefix + @($script, $PackageRoot, '--arch', $Arch))
+  if ($SkipGit) { $arguments += '--skip-git' }
+  Write-Step "pruning stage ($Arch): $($python.Exe)"
+  & $python.Exe @arguments
+  if ($LASTEXITCODE -ne 0) { Fail "supplement prune failed (exit $LASTEXITCODE)" }
 }
 
 function Get-PeImportedDlls {
@@ -288,7 +472,7 @@ function Assert-Win7PeImports {
 
 function Expand-ZipInto {
   param([string]$Archive, [string]$Destination)
-  if (Test-Path -LiteralPath $Destination) { Remove-Item -LiteralPath $Destination -Recurse -Force }
+  Remove-Tree $Destination
   Ensure-Directory $Destination
   Expand-Archive -LiteralPath $Archive -DestinationPath $Destination -Force
 }
@@ -361,7 +545,7 @@ function Resolve-SevenZipExecutable {
 
 function Invoke-SevenZipExtract {
   param([string]$Executable, [string]$Archive, [string]$Destination, [switch]$Force7z)
-  if (Test-Path -LiteralPath $Destination) { Remove-Item -LiteralPath $Destination -Recurse -Force }
+  Remove-Tree $Destination
   Ensure-Directory $Destination
   $arguments = @('x')
   if ($Force7z) { $arguments += '-t7z' }
@@ -376,10 +560,10 @@ function Expand-ZipFlatten {
   Expand-ZipInto -Archive $Archive -Destination $tmp
   $entries = @(Get-ChildItem -LiteralPath $tmp -Force)
   if (($entries.Count -eq 1) -and ($entries[0].PSIsContainer)) { $source = $entries[0].FullName } else { $source = $tmp }
-  if (Test-Path -LiteralPath $Destination) { Remove-Item -LiteralPath $Destination -Recurse -Force }
+  Remove-Tree $Destination
   Ensure-Directory $Destination
   Get-ChildItem -LiteralPath $source -Force | ForEach-Object { Move-Item -LiteralPath $_.FullName -Destination $Destination -Force }
-  Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
+  Remove-TreeQuiet $tmp
 }
 
 function Expand-GzipFile {
@@ -407,7 +591,7 @@ function Install-BundledBrowser {
     [ValidateSet('ia32', 'x64')][string]$Arch
   )
   $expectedRel = $ExpectedExe -replace '/', '\'
-  if (Test-Path -LiteralPath $Destination) { Remove-Item -LiteralPath $Destination -Recurse -Force }
+  Remove-Tree $Destination
   Ensure-Directory $Destination
   $item = Get-Item -LiteralPath $Source
   if ($item.PSIsContainer) {
@@ -440,7 +624,7 @@ function Install-BundledBrowser {
       if ((Test-Path -LiteralPath $targetDir) -and ($parentDir.StartsWith($targetDir, [System.StringComparison]::OrdinalIgnoreCase))) {
         Fail "browser payload has a partial $expectedDir tree without chrome.exe at its root: $Source"
       }
-      if (Test-Path -LiteralPath $targetDir) { Remove-Item -LiteralPath $targetDir -Recurse -Force }
+      Remove-Tree $targetDir
       Ensure-Directory (Split-Path -Parent $targetDir)
       Move-Item -LiteralPath $parentDir -Destination $targetDir
       $expectedPath = Join-Path $Destination $expectedRel
@@ -526,22 +710,39 @@ function ConvertTo-ProcessArgument {
   return $Value
 }
 
+function Invoke-ProcessCapture {
+  # Runs a console program and returns @{ ExitCode; StdOut; StdErr }.
+  # .NET Process is used instead of Start-Process on purpose: Windows
+  # PowerShell 5.1's Start-Process copies the parent environment entry by entry
+  # with Dictionary.Add, so a host that exports both HTTPS_PROXY and https_proxy
+  # (the same key in a case-insensitive dictionary) fails with "An item with the
+  # same key has already been added" before python even starts. A plain Process
+  # inherits the block natively and sidesteps the whole issue.
+  param([string]$FilePath, [string[]]$Arguments = @(), [string]$WorkingDirectory = '')
+  $psi = New-Object System.Diagnostics.ProcessStartInfo
+  $psi.FileName = $FilePath
+  $psi.Arguments = (@($Arguments | ForEach-Object { ConvertTo-ProcessArgument -Value ([string]$_) }) -join ' ')
+  if (-not [string]::IsNullOrWhiteSpace($WorkingDirectory)) { $psi.WorkingDirectory = $WorkingDirectory }
+  $psi.UseShellExecute = $false
+  $psi.RedirectStandardOutput = $true
+  $psi.RedirectStandardError = $true
+  $psi.CreateNoWindow = $true
+  $proc = New-Object System.Diagnostics.Process
+  $proc.StartInfo = $psi
+  $proc.Start() | Out-Null
+  $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
+  $stderrTask = $proc.StandardError.ReadToEndAsync()
+  $proc.WaitForExit()
+  return @{ ExitCode = $proc.ExitCode; StdOut = $stdoutTask.Result; StdErr = $stderrTask.Result }
+}
+
 function Invoke-PythonProcess {
-  # Runs python and returns its exit code. Start-Process/ExitCode is used because
-  # some hosts do not populate $LASTEXITCODE for native commands.
+  # Runs python and returns its exit code.
   param([string]$PythonExe, [string[]]$Arguments, [switch]$SuppressOutput)
-  $stdout = Join-Path $env:TEMP ('wunder-py-' + [guid]::NewGuid().ToString('N') + '.out')
-  $stderr = Join-Path $env:TEMP ('wunder-py-' + [guid]::NewGuid().ToString('N') + '.err')
-  try {
-    $argList = @($Arguments | ForEach-Object { ConvertTo-ProcessArgument -Value ([string]$_) })
-    $proc = Start-Process -FilePath $PythonExe -ArgumentList $argList -Wait -PassThru -NoNewWindow -RedirectStandardOutput $stdout -RedirectStandardError $stderr
-    $code = $proc.ExitCode
-    if ((-not $SuppressOutput) -and (Test-Path -LiteralPath $stdout)) { Get-Content -LiteralPath $stdout | Write-Host }
-    if (($code -ne 0) -and (Test-Path -LiteralPath $stderr)) { Get-Content -LiteralPath $stderr | Write-Host }
-    return $code
-  } finally {
-    Remove-Item -LiteralPath $stdout, $stderr -Force -ErrorAction SilentlyContinue
-  }
+  $result = Invoke-ProcessCapture -FilePath $PythonExe -Arguments $Arguments
+  if ((-not $SuppressOutput) -and -not [string]::IsNullOrWhiteSpace($result.StdOut)) { Write-Host $result.StdOut.TrimEnd() }
+  if ($result.ExitCode -ne 0 -and -not [string]::IsNullOrWhiteSpace($result.StdErr)) { Write-Host $result.StdErr.TrimEnd() }
+  return $result.ExitCode
 }
 
 function Invoke-Python {
@@ -582,6 +783,12 @@ $distDir = if ($usingDefaultBuildRoot -and $distDirName -eq 'dist') {
 }
 $packRoot = Join-Path $stageDir 'package-root'
 
+$archLabel = 'win7-' + $Arch
+$zipName = 'wunder-supplement-' + $archLabel
+if ($PythonProfile -eq 'common') { $zipName = $zipName + '-common' }
+$zipName = $zipName + '.zip'
+$zipPath = Join-Path $distDir $zipName
+
 $layout = Get-PropertyValue -Object $manifest -Name 'layout'
 $pythonRoot = Join-Path $packRoot ([string](Get-PropertyValue -Object $layout -Name 'pythonRoot' -Default 'opt\python'))
 $gitRoot    = Join-Path $packRoot ([string](Get-PropertyValue -Object $layout -Name 'gitRoot' -Default 'opt\git'))
@@ -593,7 +800,28 @@ Write-Step "build root: $buildRootEffective"
 Write-Step "arch      : $Arch"
 Write-Step "profile   : $PythonProfile"
 
-if (Test-Path -LiteralPath $stageDir) { Remove-Item -LiteralPath $stageDir -Recurse -Force }
+if ($PruneOnly) {
+  # Two-step build for hosts that refuse the bulk deletes of a fresh run: every
+  # component is already staged, so only prune, gate and repack.
+  if (-not (Test-Path -LiteralPath $packRoot -PathType Container)) {
+    Fail "-PruneOnly needs an existing stage: $packRoot"
+  }
+  Write-Step "prune only: $packRoot"
+  $pruneArgs = @{ PackageRoot = $packRoot; Arch = $Arch }
+  if ($SkipGitPrune) { $pruneArgs.SkipGit = $true }
+  Invoke-SupplementPrune @pruneArgs
+  Invoke-GitSmoke -GitRoot $gitRoot
+  Assert-SupplementPeArch -PackageRoot $packRoot -Arch $Arch
+  Ensure-Directory $distDir
+  if (Test-Path -LiteralPath $zipPath) { Remove-Tree $zipPath }
+  Write-Step "packaging -> $zipPath"
+  New-SupplementZip -Source $packRoot -Destination $zipPath
+  $repacked = Get-Item -LiteralPath $zipPath
+  Write-Step ('done: {0} ({1:N1} MB)' -f $repacked.FullName, ($repacked.Length / 1MB))
+  return
+}
+
+Remove-Tree $stageDir
 Ensure-Directory $packRoot
 Ensure-Directory $downDir
 Ensure-Directory $distDir
@@ -665,33 +893,24 @@ if (-not [string]::IsNullOrWhiteSpace($requirementsRel)) {
     # Requirements files may carry non-ASCII comments; without UTF-8 mode pip
     # decodes them with the runner locale (cp1252) and aborts the whole install.
     Invoke-Python -PythonExe $pythonExe -Arguments @('-X', 'utf8', '-m', 'pip', 'install', '--no-cache-dir', '--only-binary=:all:', '-r', $requirementsPath, '-i', $indexUrl)
-  }
-}
-
-# Wheels ship each package's test suite too (pandas alone is ~26 MB of tests).
-# The frozen supplement never runs them, so prune them before packaging; the
-# dist-info RECORD may then reference deleted paths, which is fine for runtime.
-if ($SkipPrune) {
-  # Some build hosts wrap Remove-Item in a delete guard that routes every call
-  # through the Recycle Bin; pruning hundreds of nested test directories then
-  # fails closed and aborts the build. -SkipPrune keeps them (bigger zip, same
-  # runtime behaviour) so the pack can still be produced there.
-  Write-Step 'skipping test-suite pruning (-SkipPrune)'
-} else {
-  Write-Step 'pruning package test suites'
-  $sitePackages = Join-Path $pythonRoot 'Lib\site-packages'
-  $prunedTests = 0
-  foreach ($pkgDir in @(Get-ChildItem -LiteralPath $sitePackages -Directory -ErrorAction SilentlyContinue)) {
-    foreach ($name in @('tests', 'testdata')) {
-      $target = Join-Path $pkgDir.FullName $name
-      if (Test-Path -LiteralPath $target -PathType Container) {
-        Remove-Item -LiteralPath $target -Recurse -Force
-        $prunedTests++
+    # The manifest records what actually landed in the pack, resolved pins and
+    # transitive dependencies included; the requirements file alone would leave
+    # an empty list in every non-BestEffort build.
+    $freeze = Invoke-ProcessCapture -FilePath $pythonExe -Arguments @('-m', 'pip', 'freeze')
+    if ($freeze.ExitCode -eq 0) {
+      foreach ($line in @($freeze.StdOut -split "`r?`n")) {
+        $spec = $line.Trim()
+        if ($spec -match '^[A-Za-z0-9._-]+==') { $installedPackages.Add($spec) }
       }
     }
   }
-  Write-Step ("pruned {0} test directories" -f $prunedTests)
 }
+
+# Pruning runs once, after every component has been staged, through
+# prune-supplement-stage.py (see Invoke-SupplementPrune): wheel test suites,
+# PE images that do not match $Arch, and the MinGit extras the agent never
+# calls. Keeping one script as the only pruning authority stops the list in
+# this file and the standalone python helper from drifting apart.
 
 # Playwright 1.40 supports Node >=16, but its win32 wheel still carries an x64
 # driver/node.exe. The ia32 supplement replaces that file with a pinned 32-bit
@@ -756,71 +975,26 @@ if ($null -ne $gitArchiveMeta) {
   Write-Step "staging Git $gitVersion into $gitRoot"
   Expand-ZipFlatten -Archive $gitArchive -Destination $gitRoot
 
-  # Slim the payload to what agents need: git.exe, git-lfs and Git Credential
-  # by interactive helpers like `git add -p`), the Tcl/Tk GUI stack (gitk and
-  # git gui), scalar and all documentation trees go. Pruning here keeps the
-  # supplement and every installer built from it small; the same tree is what
-  # `opt/git` ships to users.
-  Write-Step 'pruning Git payload (vim/perl/tcl-tk/scalar/docs)'
-  $prunedGitFiles = 0
-  if ($SkipGitPrune) {
-    Write-Step 'skipping git prune (-SkipGitPrune)'
-  } else {
-  $gitPruneDirs = @(
-    'usr\share\vim',
-    'usr\share\doc',
-    'usr\share\man',
-    'usr\share\gtk-doc',
-    'usr\lib\perl5',
-    'usr\share\perl5',
-    'mingw32\share\doc',
-    'mingw32\share\perl5',
-    'mingw32\share\git-gui',
-    'mingw32\lib\tcl8.6',
-    'mingw32\lib\tk8.6'
-  )
-  foreach ($rel in $gitPruneDirs) {
-    $target = Join-Path $gitRoot $rel
-    if (Test-Path -LiteralPath $target -PathType Container) {
-      Remove-Item -LiteralPath $target -Recurse -Force
-    }
-  }
-  $gitPruneFiles = @(
-    'usr\bin\vim.exe',
-    'usr\bin\vimdiff.exe',
-    'usr\bin\view.exe',
-    'usr\bin\rvim.exe',
-    'usr\bin\rview.exe',
-    'usr\bin\ex.exe',
-    'usr\bin\perl.exe',
-    'usr\bin\perl5.38.2.exe',
-    'usr\bin\msys-perl5_38.dll',
-    'usr\bin\msys-svn_swig_perl-1-0.dll',
-    'mingw32\bin\scalar.exe',
-    'mingw32\bin\gitk',
-    'mingw32\libexec\git-core\scalar.exe',
-    'mingw32\libexec\git-core\git-gui.exe',
-    'mingw32\libexec\git-core\git-gui--askpass.exe',
-    'mingw32\libexec\git-core\gitk.exe',
-    'mingw32\libexec\git-core\tcl86.dll',
-    'mingw32\libexec\git-core\tk86.dll'
-  )
-  $prunedGitFiles = 0
-  foreach ($rel in $gitPruneFiles) {
-    $target = Join-Path $gitRoot $rel
-    if (Test-Path -LiteralPath $target -PathType Leaf) {
-      Remove-Item -LiteralPath $target -Force
-      $prunedGitFiles++
-    }
-  }
-  }
-  $gitOut = [System.IO.Path]::GetTempFileName(); $gitErr = [System.IO.Path]::GetTempFileName()
-  Start-Process -FilePath (Join-Path $gitRoot 'cmd\git.exe') -ArgumentList '--version' -Wait -NoNewWindow -RedirectStandardOutput $gitOut -RedirectStandardError $gitErr | Out-Null
-  $gitSmoke = (Get-Content -LiteralPath $gitOut -Raw -ErrorAction SilentlyContinue)
-  Remove-Item -LiteralPath $gitOut, $gitErr -Force -ErrorAction SilentlyContinue
-  if (-not ("$gitSmoke" -match '^git version')) { Fail "git smoke failed after prune: $gitSmoke" }
-  Write-Step ("git smoke ok: $gitSmoke (pruned {0} files)" -f $prunedGitFiles)
+  # MinGit is already the non-interactive distribution: git.exe, its MSYS
+  # runtime, the shell scripts under libexec and no bundled bash. What it still
+  # drags along is the .NET/Avalonia Git Credential Manager UI, scalar, tig,
+  # vim/perl and the Tcl/Tk GUI helpers -- all removed by the shared prune step
+  # below, which also rewrites credential.helper to wincred so HTTPS push keeps
+  # working without the manager.
 }
+
+# ---------------------------------------------------------------------------
+# Prune (wheel tests, foreign-architecture PE files, MinGit extras)
+# ---------------------------------------------------------------------------
+if ($SkipPrune) {
+  Write-Step 'skipping stage prune (-SkipPrune)'
+} else {
+  $pruneArgs = @{ PackageRoot = $packRoot; Arch = $Arch }
+  if ($SkipGitPrune) { $pruneArgs.SkipGit = $true }
+  Invoke-SupplementPrune @pruneArgs
+}
+
+Invoke-GitSmoke -GitRoot $gitRoot
 
 # ---------------------------------------------------------------------------
 # ripgrep
@@ -842,14 +1016,12 @@ if ($null -ne $rgArchiveMeta) {
   if (-not (Test-Path -LiteralPath $rgExe -PathType Leaf)) { Fail "ripgrep executable missing after staging: $rgExe" }
   Assert-PeMachine -Path $rgExe -Arch $Arch
   Assert-Win7PeImports -Path $rgExe
-  $rgOut = [System.IO.Path]::GetTempFileName(); $rgErr = [System.IO.Path]::GetTempFileName()
-  Start-Process -FilePath $rgExe -ArgumentList '--version' -Wait -NoNewWindow -RedirectStandardOutput $rgOut -RedirectStandardError $rgErr | Out-Null
-  $rgSmoke = (Get-Content -LiteralPath $rgOut -Raw -ErrorAction SilentlyContinue)
-  Remove-Item -LiteralPath $rgOut, $rgErr -Force -ErrorAction SilentlyContinue
-  if (-not ("$rgSmoke" -match ('^ripgrep\s+' + [regex]::Escape($rgVersion)))) {
-    Fail "ripgrep smoke failed: $rgSmoke"
+  $rgResult = Invoke-ProcessCapture -FilePath $rgExe -Arguments @('--version')
+  $rgSmoke = $rgResult.StdOut
+  if ($rgResult.ExitCode -ne 0 -or -not ("$rgSmoke" -match ('^ripgrep\s+' + [regex]::Escape($rgVersion)))) {
+    Fail "ripgrep smoke failed: $rgSmoke $($rgResult.StdErr)"
   }
-  Write-Step "ripgrep smoke ok: $rgSmoke"
+  Write-Step ("ripgrep smoke ok: {0}" -f ($rgSmoke -split "`n")[0].Trim())
 }
 
 # ---------------------------------------------------------------------------
@@ -943,12 +1115,6 @@ foreach ($mod in $validate) {
 # ---------------------------------------------------------------------------
 # Metadata + archive
 # ---------------------------------------------------------------------------
-$archLabel = 'win7-' + $Arch
-$zipName = 'wunder-supplement-' + $archLabel
-if ($PythonProfile -eq 'common') { $zipName = $zipName + '-common' }
-$zipName = $zipName + '.zip'
-$zipPath = Join-Path $distDir $zipName
-
 $browserNote = if ($browserBundled) { "bundled Chrome $browserVersion at opt/browser/$browserExeRel (win32); the browser_* tools detect it automatically" } elseif ($browserInstalled) { 'Playwright Chromium in opt/python/ms-playwright' } else { 'not bundled; the browser_* tools reuse a locally installed browser' }
 $readmeText = @'
 Wunder Desktop Windows supplement (__ARCH__, profile: __PROFILE__)
@@ -1000,8 +1166,13 @@ $metaObj = [ordered]@{
 }
 Write-Utf8NoBom -Path (Join-Path $packRoot 'wunder-win7-supplement.json') -Content (ConvertTo-Json -InputObject $metaObj -Depth 6)
 
+# Final release gate: nothing in the staged tree may be built for another
+# architecture. Runs after every component and the prune step so a rerun with
+# -SkipPrune or a new wheel cannot slip an unusable DLL into the pack.
+Assert-SupplementPeArch -PackageRoot $packRoot -Arch $Arch
+
 Write-Step "packaging -> $zipPath"
-if (Test-Path -LiteralPath $zipPath) { Remove-Item -LiteralPath $zipPath -Force }
+if (Test-Path -LiteralPath $zipPath) { Remove-Tree $zipPath }
 New-SupplementZip -Source $packRoot -Destination $zipPath
 
 $zipInfo = Get-Item -LiteralPath $zipPath

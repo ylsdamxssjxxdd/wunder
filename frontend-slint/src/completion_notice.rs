@@ -6,6 +6,7 @@
 //! seconds. Errors keep the pet's warning bubble as their channel — the web
 //! predicate only notifies on success.
 
+use crate::runtime_phase::Phase;
 use crate::{CompletionNotice, I18n, MainWindow};
 use slint::{ComponentHandle, Model};
 use std::cell::RefCell;
@@ -37,31 +38,13 @@ thread_local! {
 }
 
 /// Web `AgentRuntimeState` collapsed to what the completion predicate needs.
-/// 蛹 status strings classify like `runtime_status_kind`, with the transient
-/// submission state 请求中 kept inside the hot set: it opens a turn, it is not
-/// a settlement.
-fn status_kind(status: &str) -> &'static str {
-    if matches!(
-        status,
-        "pending" | "queued" | "waiting_input" | "waiting_user_input"
-    ) || status.starts_with("正在排队")
-        || status.starts_with("任务已排队")
-        || status.starts_with("等待")
-        || status.starts_with("请求中")
-    {
-        "hot"
-    } else if matches!(status, "running" | "streaming" | "executing")
-        || status.starts_with("正在")
-        || status.starts_with("目标")
-    {
-        "hot"
-    } else if matches!(status, "done" | "finished" | "completed" | "success")
-        || status.starts_with("任务完成")
-        || status.starts_with("输出已结束")
-    {
-        "done"
-    } else {
-        "other"
+/// The live phase already says whether the thread is working, so this file no
+/// longer keeps a phrase table of its own.
+fn kind_of(phase: Phase) -> &'static str {
+    match phase {
+        Phase::Done => "done",
+        Phase::Pending | Phase::Running | Phase::Inquiry => "hot",
+        Phase::Idle | Phase::Error => "other",
     }
 }
 
@@ -72,11 +55,11 @@ fn completion_fires(previous: &str, next: &str) -> bool {
 }
 
 /// Observe one thread status transition.
-pub fn observe_status(app: &MainWindow, session: &str, status: &str) {
+pub fn observe_status(app: &MainWindow, session: &str, phase: Phase) {
     if !ENABLED.with(|slot| *slot.borrow()) {
         return;
     }
-    let next = status_kind(status);
+    let next = kind_of(phase);
     let previous = LAST_KIND.with(|slot| {
         let mut map = slot.borrow_mut();
         map.insert(session.to_string(), next).unwrap_or("other")
@@ -88,10 +71,10 @@ pub fn observe_status(app: &MainWindow, session: &str, status: &str) {
     show(app, session, &agent_name);
 }
 
-pub fn reset_status(session: &str, status: &str) {
+pub fn reset_status(session: &str, phase: Phase) {
     LAST_KIND.with(|slot| {
         slot.borrow_mut()
-            .insert(session.to_string(), status_kind(status));
+            .insert(session.to_string(), kind_of(phase));
     });
 }
 
@@ -240,26 +223,30 @@ mod tests {
     use super::*;
 
     #[test]
-    fn status_kinds_match_the_web_runtime_states() {
-        assert_eq!(status_kind("running"), "hot");
-        assert_eq!(status_kind("正在生成…"), "hot");
-        assert_eq!(status_kind("请求中"), "hot", "a submission is still hot");
-        assert_eq!(status_kind("任务已排队…"), "hot");
-        assert_eq!(status_kind("等待用户输入"), "hot");
-        assert_eq!(status_kind("输出已结束"), "done");
-        assert_eq!(status_kind("任务完成"), "done");
-        assert_eq!(status_kind("completed"), "done");
+    fn status_phases_match_the_web_runtime_states() {
+        assert_eq!(kind_of(Phase::of("running")), "hot");
+        assert_eq!(kind_of(Phase::of("正在生成…")), "hot");
         assert_eq!(
-            status_kind("已停止"),
+            kind_of(Phase::of("请求中")),
+            "hot",
+            "a submission is still hot"
+        );
+        assert_eq!(kind_of(Phase::of("任务已排队…")), "hot");
+        assert_eq!(kind_of(Phase::of("等待用户输入")), "hot");
+        assert_eq!(kind_of(Phase::of("输出已结束")), "done");
+        assert_eq!(kind_of(Phase::of("任务完成")), "done");
+        assert_eq!(kind_of(Phase::of("completed")), "done");
+        assert_eq!(
+            kind_of(Phase::of("已停止")),
             "other",
             "cancelled is not completion"
         );
         assert_eq!(
-            status_kind("执行失败"),
+            kind_of(Phase::of("执行失败")),
             "other",
             "errors keep the pet bubble"
         );
-        assert_eq!(status_kind(""), "other");
+        assert_eq!(kind_of(Phase::of("")), "other");
     }
 
     #[test]

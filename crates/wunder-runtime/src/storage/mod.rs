@@ -40,6 +40,8 @@ pub(crate) mod test_support;
 pub(crate) mod thread_admission;
 mod thread_chat_summary;
 pub(crate) mod thread_history;
+mod thread_history_body;
+mod thread_history_migration;
 #[cfg(test)]
 mod thread_lifecycle_tests;
 pub(crate) mod thread_mutation;

@@ -141,6 +141,9 @@ fn blank(kind: i32, id: String) -> TimelineRow {
         process_local: false,
         process_older: false,
         process_newer: false,
+        // Unknown page edges; a loaded page writes its own cursors.
+        process_first: -1,
+        process_last: -1,
         process_loading: false,
         process_error: false,
         process_revision: 0,
@@ -1092,6 +1095,17 @@ impl Timeline {
         let (target, patch) = crate::timeline_text::tool_target(entry);
         if let Some(tool) = self.tools.iter().find(|tool| tool.id == entry.id) {
             let index = tool.index;
+            // A tool entry settles once. Trailing frames of a command that was
+            // handed to the background, or an out-of-order replay, must not pull
+            // a settled entry back into the running state.
+            if pending
+                && self
+                    .model
+                    .row_data(index)
+                    .is_some_and(|row| row.status_kind != STATUS_RUNNING)
+            {
+                return;
+            }
             let patch = tool.patch;
             let group = tool.group;
             let summary = crate::timeline_text::tool_summary(entry);
@@ -2657,6 +2671,43 @@ mod tests {
         assert_eq!(tool_b.group_idx, groups[1].group_idx);
         assert_eq!(tool_b.status_kind, STATUS_RUNNING);
         assert_eq!(groups[1].summary, "second call");
+    }
+
+    /// A command handed to the background keeps streaming after its call frame
+    /// settled. Those trailing frames must not reopen the settled entry, and a
+    /// command stream folded into its own call must not add a second entry.
+    #[test]
+    fn a_settled_tool_entry_never_returns_to_running() {
+        let mut timeline = Timeline::new();
+        timeline.begin_turn("live", "Fixture input");
+        let mut entry = NativeWorkflowEntry {
+            id: "call-1".into(),
+            title: "执行命令".into(),
+            preview: "check".into(),
+            detail: "done".into(),
+            state: "completed".into(),
+            tokens: String::new(),
+            duration: String::new(),
+            sections: Vec::new(),
+            patch_files: Vec::new(),
+        };
+        timeline.upsert_tool(&entry);
+        entry.state = "running".into();
+        entry.detail = "still running".into();
+        timeline.upsert_tool(&entry);
+
+        let rows: Vec<_> = timeline.model().iter().collect();
+        assert_eq!(
+            rows.iter().filter(|row| row.kind == KIND_TOOL).count(),
+            1,
+            "one invocation, one entry"
+        );
+        let row = rows
+            .iter()
+            .find(|row| row.id == "tool-call-1")
+            .expect("tool row");
+        assert_eq!(row.status_kind, STATUS_DONE);
+        assert_eq!(row.detail.as_str(), "done");
     }
 
     /// The live turn is keyed by the session and a durable turn by its root

@@ -36,7 +36,9 @@ jobs:
       - id: keys
         shell: bash
         run: |
-          win7_hash="${{ hashFiles('packaging/windows/scripts/build_win7_desktop_supplement.ps1', 'packaging/windows/scripts/win7-supplement-manifest.json', 'packaging/python/requirements-win7-common.txt', 'config/matplotlibrc', 'fonts/*') }}"
+          # prune-supplement-stage.py 决定包内保留哪些文件（wheel 测试目录、异架构 PE、
+          # MinGit 多余组件），它的内容变化同样必须触发重建。
+          win7_hash="${{ hashFiles('packaging/windows/scripts/build_win7_desktop_supplement.ps1', 'packaging/windows/scripts/prune-supplement-stage.py', 'packaging/windows/scripts/win7-supplement-manifest.json', 'packaging/python/requirements-win7-common.txt', 'config/matplotlibrc', 'fonts/*') }}"
           linux_hash="${{ hashFiles('packaging/linux/scripts/build_linux_supplement.sh', 'packaging/linux/scripts/linux-supplement-manifest.json', 'packaging/python/requirements-linux-common.txt', 'packaging/docker/Dockerfile.ubuntu18-supplement', 'packaging/docker/Dockerfile.rust-builder-kylin-x86', 'config/matplotlibrc', 'fonts/*') }}"
           # 浏览器 pin（版本+SHA256 字面量）参与 win7 缓存键：来源变更即触发重建
           browser_pin='chromium-109.0.5414.120-r1070088-hibbiki-mini_installer.sync.exe-sha256-C1AABD6EEF38D759BBD92CA9516353D88C463A1E8389A875B4D12D53DB467F98'
@@ -50,6 +52,12 @@ jobs:
     timeout-minutes: 150
     steps:
       - uses: actions/checkout@v4
+      # 剪裁阶段通过 python3 执行（批量删除在 PowerShell 的删除保护下会失败），
+      # 版本固定到 runner 上的 3.12，避免回落到 Microsoft Store 的占位 python。
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
       - name: Restore cached supplement
         id: cache
         uses: actions/cache@v4
@@ -107,9 +115,8 @@ jobs:
             -BuildRoot (Join-Path (Get-Location) 'supplement-build') `
             -BrowserArchivePath (Join-Path (Get-Location) 'browser-src\unpacked\Chrome-bin') `
             -PythonPackageIndexUrl https://pypi.org/simple
-          # The build script reports failure by throwing, and the next step
-          # asserts the pack exists; $LASTEXITCODE is never populated here
-          # because the script runs python through Start-Process.
+          # 脚本以 throw 报错（内置 PE 架构门禁），下一步再断言产物存在；这里不读
+          # $LASTEXITCODE：子进程改为 .NET Process 后它仍不代表脚本的执行结果。
           Copy-Item -Path (Join-Path (Get-Location) 'supplement-build\dist\*.zip') -Destination supplement-dist -Force
       - name: Verify pack exists
         shell: pwsh

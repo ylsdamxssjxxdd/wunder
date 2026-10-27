@@ -1507,9 +1507,12 @@ impl ModelCatalogue {
         let selectable = rows
             .iter()
             .filter(|model| {
+                // Only the type, the disabled flag and an unsaved draft keep a
+                // row out of the picker. A blank model name is still a usable
+                // chat entry — the seeded 虚拟模型 carries no name and the
+                // runtime resolves it from the provider.
                 model.model_type.eq_ignore_ascii_case("llm")
                     && !model.disabled
-                    && !model.model.trim().is_empty()
                     && draft_key.as_deref() != Some(model.key.as_str())
             })
             .cloned()
@@ -1570,19 +1573,30 @@ mod tests {
         disabled.disabled = true;
         let mut embedding = card("embedding-model");
         embedding.model_type = "embedding".into();
+        // The seeded 虚拟模型 has no model name; it is still a chat entry.
+        let mut nameless = card("虚拟模型");
+        nameless.model = "".into();
         let draft = card("draft-model");
         app.set_model_creating(true);
         app.set_selected_model_card(draft.clone());
         app.set_selected_model(0);
         app.set_models(super::model_from(vec![draft]));
-        super::model_catalogue().set(&app, vec![card("extra-model"), disabled, embedding]);
-        assert_eq!(app.get_composer_models().row_count(), 1);
+        super::model_catalogue().set(
+            &app,
+            vec![card("extra-model"), disabled, embedding, nameless],
+        );
+        assert_eq!(app.get_composer_models().row_count(), 2);
         assert_eq!(
             app.get_composer_models().row_data(0).unwrap().key,
             "extra-model"
         );
-        assert_eq!(app.get_model_catalogue_count(), 1);
-        assert_eq!(app.get_models().row_count(), 4);
+        assert_eq!(
+            app.get_composer_models().row_data(1).unwrap().key,
+            "虚拟模型",
+            "a blank model name does not hide the entry"
+        );
+        assert_eq!(app.get_model_catalogue_count(), 2);
+        assert_eq!(app.get_models().row_count(), 5);
         super::select_model_key(&app, "extra-model");
         assert_eq!(app.get_selected_model_key(), "extra-model");
         super::select_model_key(&app, "missing-model");

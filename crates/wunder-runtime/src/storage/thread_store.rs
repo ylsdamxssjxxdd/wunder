@@ -181,6 +181,7 @@ pub struct LocalThreadStore {
 }
 
 struct ThreadRegistry {
+    history_init: Mutex<()>,
     // A bounded active writer retains its gate, preventing two open handles
     // for the same root from accidentally creating independent thread locks.
     gates: Mutex<HashMap<String, Weak<AsyncMutex<()>>>>,
@@ -211,6 +212,7 @@ fn shared_registry(root: &Path) -> Result<Arc<ThreadRegistry>> {
         .open(root.join(".canonical-store.lock"))?;
     owner.try_lock().map_err(|_|anyhow!("canonical storage root already belongs to another process; each server node requires its own root and thread routing"))?;
     let registry = Arc::new(ThreadRegistry {
+        history_init: Mutex::new(()),
         gates: Mutex::default(),
         writers: Mutex::default(),
         admissions: OnceLock::new(),
@@ -257,7 +259,7 @@ struct DirectoryCursor {
 }
 
 impl LocalThreadStore {
-    /// Startup-only schema initialization; performs no history scan or replay.
+    /// Startup schema initialization and one-time compact-index migration.
     /// Call this constructor on the application's initialization worker.
     pub fn open(root: impl AsRef<Path>) -> Result<Self> {
         let root = root.as_ref().to_path_buf();
@@ -309,9 +311,13 @@ impl LocalThreadStore {
                 ON canonical_pending_rollout_reclaims(requested_by_thread_id,created_at_ms,rollout_id);",
         )?;
         super::thread_mutation::initialize(&conn)?;
+        let history = {
+            let _initialization = registry.history_init.lock();
+            ThreadHistoryStore::open(root.join("thread_history_1.sqlite"))?
+        };
         Ok(Self {
             state_pool,
-            history: ThreadHistoryStore::open(root.join("thread_history_1.sqlite"))?,
+            history,
             admissions_store: super::thread_admission::TurnAdmissions::open(&root)?,
             registry,
             root: Arc::new(root),
@@ -2855,7 +2861,7 @@ fn position(stored: &StoredThread, receipt: AppendReceipt) -> HistoryPosition {
     }
 }
 
-fn checked_rollout_path(root: &Path, path: &Path) -> Result<PathBuf> {
+pub(super) fn checked_rollout_path(root: &Path, path: &Path) -> Result<PathBuf> {
     // Canonicalize the nearest existing ancestor too: a compressed rollout's
     // logical plain path and a not-yet-created archive target do not exist.
     // On Windows mixing a verbatim canonical parent with a non-verbatim
@@ -3430,7 +3436,7 @@ mod stress_batch_tests {
         let history = Connection::open(root.path().join("thread_history_1.sqlite")).unwrap();
         history
             .execute(
-                "UPDATE thread_items SET item_json='{' WHERE item_id=?1",
+                "UPDATE thread_items SET record_byte_offset=record_byte_offset+1 WHERE item_id=?1",
                 [item.as_str()],
             )
             .unwrap();
@@ -4082,6 +4088,10 @@ mod stress_batch_tests {
             inherited
         );
         store.archive_thread(&branch).await.unwrap();
+        assert_eq!(
+            store.read_item(&branch, &inherited).await.unwrap().item.item_id,
+            inherited
+        );
         store.unarchive_thread(&branch).await.unwrap();
         store.delete_thread(&branch).await.unwrap();
         assert!(

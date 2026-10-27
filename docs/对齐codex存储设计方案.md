@@ -1,8 +1,10 @@
 # 对齐 Codex 存储设计方案
 
-> 状态：本地形态采用 canonical JSONL + 分角色 SQLite；舰体服务形态采用 PostgreSQL canonical 记录、控制状态与可重建展示索引。两种实现共享持久化策略、线程身份、分页、恢复和流式契约。2026-10-25 已完成本轮单节点服务验收：本机 13/13、Docker 14/14、浏览器 20/20，十分钟历史零写入/零查询；构建范围及原始证据见[服务存储验收报告](性能基线/2026-10-25-服务存储验收.md)。实现不修复、迁移或清理旧数据库。
+> 状态：本地形态采用 canonical JSONL + 分角色 SQLite；舰体服务形态采用 PostgreSQL canonical 记录、控制状态与可重建展示索引。两种实现共享持久化策略、线程身份、分页、恢复和流式契约。2026-10-25 已完成本轮单节点服务验收：本机 13/13、Docker 14/14、浏览器 20/20，十分钟历史零写入/零查询；构建范围及原始证据见[服务存储验收报告](性能基线/2026-10-25-服务存储验收.md)。除当前格式本地历史库的定向瘦身外，不修复、导入或清理旧架构数据库。
 >
-> 依据：2026-10-21 核对的本地 Codex 参考源码快照。下文涉及 Codex 源码的路径均相对于参考工程的 `codex-rs/`；以 `crates/`、`frontend-slint/` 等开头的路径相对于 Wunder 仓库。参考快照未提供可确认的 Git 提交号，因此不标注虚构版本。
+> 依据：2026-10-27 重新核对的本地 Codex 参考源码快照。下文涉及 Codex 源码的路径均相对于参考工程的 `codex-rs/`；以 `crates/`、`frontend-slint/` 等开头的路径相对于 Wunder 仓库。参考快照未提供可确认的 Git 提交号，因此不标注虚构版本。
+>
+> 2026-10-27 本地磁盘优化：保留 canonical JSONL 权威与分页语义，但不再照搬参考工程完整 `item_json` 投影，改为日志位置、校验值和有界预览。仅当前格式本地历史库支持核验后自动瘦身与空间回收；本文旧版“不迁移”约束仍适用于更早的单体库及其他旧架构。舰体 PostgreSQL 不受本轮改造影响。
 
 ## 1. 目标与重构边界
 
@@ -12,7 +14,7 @@
 
 重构遵循以下边界：
 
-- 不兼容旧数据库、旧历史格式、旧游标、旧接口及旧缓存。本地使用新的存储根目录，服务验收使用隔离的 PostgreSQL 数据库或 schema；旧目录和旧数据库不自动读入、转换或删除。
+- 不兼容更早的旧数据库、旧历史格式、旧游标、旧接口及旧缓存。当前格式本地历史库仅执行核验后的轻量索引迁移，不删除原始记录；旧架构目录不自动读入、转换或删除，服务验收使用隔离的 PostgreSQL 数据库或 schema。
 - 使用 Codex 的新分页历史模式作为唯一模式，不移植其 Legacy 历史模式、历史迁移器和已经移除的兼容分支。
 - 后端契约、执行链、模型上下文恢复、历史查询、线程轨迹、各端订阅、监控和压测同步重构，最终删除旧实现。
 - 用户消息、已完成回复、已完成中间条目与工具执行过程按持久化策略保留。**不采用“每个用户轮次固定两条记录”的方案。**
@@ -29,7 +31,7 @@
 | 已核实的事实 | 对 Wunder 的约束 |
 | --- | --- |
 | rollout JSONL 保存规范执行记录，是历史内容的权威来源 | 历史正文不能以 SQLite 中的另一套会话日志为准 |
-| `thread_history_1.sqlite` 的 `thread_items.item_json` 保存完整的已完成条目投影 | 不能宣称 Codex 的 SQLite 只保存偏移或轻量索引；这份为分页服务的正文副本是设计的一部分 |
+| 参考快照的 `state/thread_history_migrations/0001_thread_history.sql` 保存完整 `item_json` | 不能宣称 Codex 只有轻量索引；Wunder 本地改用日志偏移、长度、校验值及预览，是明确的磁盘优化差异 |
 | 同一 rollout 可以同时包含模型上下文用的 `ResponseItem` 与展示用的 `ItemCompleted` | 不能承诺“所有正文只保存一次”；应消除无用途的重复，保留上游明确需要的语义表示 |
 | 文本、推理、命令输出等 delta 主要是临时事件，完成态才进入历史 | 不再把 token 变化持久化成块、补丁和可重放 changes 表 |
 | command/MCP 的完成条目有特定 64 KiB 持久化限制 | 不等于所有工具结果、所有模型上下文和全部记录都有统一 64 KiB 上限 |
@@ -323,7 +325,11 @@ CREATE TABLE thread_items (
     rollout_ordinal INTEGER NOT NULL,
     created_at_ms INTEGER NOT NULL,
     item_type TEXT NOT NULL,
-    item_json TEXT NOT NULL,
+    record_byte_offset INTEGER NOT NULL,
+    record_byte_length INTEGER NOT NULL,
+    item_bytes INTEGER NOT NULL,
+    item_digest BLOB NOT NULL,
+    preview_json TEXT NOT NULL,
     updated_at_ordinal INTEGER NOT NULL,
     PRIMARY KEY (rollout_id, turn_id, item_id)
 );
@@ -342,7 +348,7 @@ CREATE TABLE thread_history_projection_state (
 );
 ```
 
-`item_json` 是完整的 canonical 展示条目，允许包含正文。`item_type`、时间与 ordinal 是供过滤分页的少量结构化字段，不再并存 `payload_json`、`body_json`、block payload、change payload 和 trajectory payload 多套同义正文。
+本地只保存记录定位、SHA-256 及有界预览，不保存完整正文。分页、可见性和模型消息分类在轻量索引中完成；需要完整条目时按位置读取 canonical 记录并校验身份、长度与摘要。fork 的临时视图同时携带真实来源 rollout，不能把子线程身份当作正文来源。SQLite 中不再并存 `item_json`、`payload_json`、`body_json`、block payload、change payload 和 trajectory payload 多套同义正文。
 
 已有表也叫 `thread_items` 不代表可以保留其旧语义。本次采用全新 schema，不追加一层兼容视图把旧块日志继续伪装成新历史。
 
@@ -455,7 +461,7 @@ queue 保存已接受但未消费的用户提交，goals 保存当前目标状�
 
 新实现默认关闭自动压缩，与参考工程 `LocalThreadStoreCompression` 的默认状态一致。启用时在启动或显式维护请求触发一次有运行标记保护的扫描；它不是常驻循环。用户设置自动压缩后，界面显示最近一次扫描、候选数、压缩前后字节数、失败数和下次可扫描时间；不要用估算比例承诺节省量。
 
-压缩仅改变磁盘表示，逻辑 `ordinal`、未压缩 byte offset、Lineage 和 SQLite 投影均不变。压缩文件的随机读取代价高于普通 JSONL，thread_history 是常规分页读取路径；遇到投影缺失可按需流式解压重建，不能为了单页查询永久解压整个历史或把全部文件放进内存。
+压缩仅改变磁盘表示，逻辑 `ordinal`、未压缩 byte offset、Lineage 和 SQLite 索引均不变。预览分页只读轻量索引；完整条目、正文分段、搜索、模型上下文和显式重建按需读取原件。冷文件在单次读取操作中复用临时解码快照，不向持久目录发布额外正文副本，也不把全部历史放进内存；冷压缩的随机读取代价高于普通 JSONL，不默认开启自动压缩。
 
 压缩实现须保留目标文件权限与时间属性，失败清理临时文件。Windows 7 不使用需要较新系统 API 的文件锁捷径；在支持范围内使用 Rust/Win32 可用的原子创建、重命名和句柄关闭顺序。目标机实测后才可对替换语义作更强承诺。
 
@@ -683,7 +689,9 @@ python scripts/experience-bench/measure-hive.py --server-binary target/x86/relea
 
 | 项目 | 决策 | 原因 |
 | --- | --- | --- |
-| 本地 canonical JSONL、SQLite completed-item projection、offset/ordinal、lineage、冷 zstd、诊断限额 | 对齐 | 蛹与舵机直接复用参考工程的事实和投影边界 |
+| 本地 canonical JSONL、offset/ordinal、lineage、冷 zstd、诊断限额 | 对齐 | 蛹与舵机共享事实和生命周期边界 |
+| 本地 completed-item SQLite 投影 | Wunder 磁盘优化 | 不保存参考工程的完整 `item_json`，只留日志位置、校验值及预览；完整正文按需读取 |
+| 当前格式本地历史库瘦身 | 定向迁移 | 核验全部已有正文后切换轻量表并回收文件空间；失败保留旧正文，不导入更早单体库 |
 | 旧历史兼容、Legacy history、迁移器 | 不实现 | 用户已授权不考虑兼容；保留会让新架构长期背负双路径 |
 | 新库版本名 | 语义对齐、编号独立 | 不能把 Codex 的 `state_5` 等迁移历史当作 Wunder 新 schema 的版本 |
 | 32 位进程的全局/线程字节预算、投影流式批次、内容分段 | Wunder 收紧 | 参考的某些读取实现可按剩余字节一次分配；Wunder 的目标平台要求明确防止地址空间耗尽 |

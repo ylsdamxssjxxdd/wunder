@@ -5,6 +5,10 @@ use crate::{PatchCard, PatchLine, ProcessEntry, TimelineRow, WorkflowLine, Workf
 use slint::{ModelRc, VecModel};
 use wunder_desktop::native::{NativePatchFile, NativeWorkflowEntry, NativeWorkflowSection};
 
+/// The canonical name of the shell tool. Aliases and streamed command frames
+/// all resolve to it, so one invocation can never read as two different tools.
+pub const COMMAND_TOOL: &str = "执行命令";
+
 /// Tool display names (§7.3 C). Built-in runtime tools are already named in
 /// Chinese; this maps the English aliases so the timeline reads the same
 /// whichever name the event carried.
@@ -21,7 +25,7 @@ pub fn tool_label(tool: &str) -> String {
             "网页搜索"
         }
         "web_fetch" | "web_fetch_tool" | "web fetch" | "webfetch" | "网页抓取" => "网页抓取",
-        "execute_command" | "run_command" | "shell" => "运行命令",
+        "execute_command" | "run_command" | "shell" | "运行命令" => COMMAND_TOOL,
         "command_session" => "命令会话",
         "question_panel" | "ask_panel" => "问询面板",
         "update_plan" | "plan_update" => "计划面板",
@@ -75,7 +79,7 @@ pub fn target_of(title: &str, detail: &str, sections: &[NativeWorkflowSection]) 
     }
     if matches!(
         title.trim(),
-        "execute_command" | "运行命令" | "command_session"
+        "execute_command" | "运行命令" | "执行命令" | "command_session"
     ) {
         return (String::new(), patch);
     }
@@ -554,6 +558,19 @@ mod tests {
         entry.preview.clear();
         assert_eq!(tool_summary(&entry), "");
         assert_eq!(tool_target(&entry).0, "");
+    }
+
+    #[test]
+    fn command_aliases_share_one_display_name() {
+        for alias in [
+            "execute_command",
+            "run_command",
+            "shell",
+            "运行命令",
+            "执行命令",
+        ] {
+            assert_eq!(tool_label(alias), COMMAND_TOOL, "{alias}");
+        }
     }
 
     #[test]

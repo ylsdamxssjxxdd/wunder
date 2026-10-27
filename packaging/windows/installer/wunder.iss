@@ -95,6 +95,12 @@ Type: filesandordirs; Name: "{app}\bin\resources"
 ; Older local builds created an empty sessions folder; sessions now live in
 ; SQLite. Only remove it when the user has not put anything there.
 Type: dirifempty; Name: "{app}\sessions"
+; The Remotion component (opt/node + opt/remotion) left the supplement matrix,
+; so upgrades must not keep the old Node DLLs around: nothing in the runtime
+; resolves them any more, and a stale 64-bit Node library inside a 32-bit pack
+; only shows up when something tries to load it.
+Type: filesandordirs; Name: "{app}\opt\node"
+Type: filesandordirs; Name: "{app}\opt\remotion"
 
 [Run]
 Filename: "{app}\bin\wunder-desktop.exe"; Description: "启动蛹"; Flags: nowait postinstall skipifsilent; Tasks: desktop
@@ -102,6 +108,10 @@ Filename: "{app}\bin\wunder-desktop.exe"; Description: "启动蛹"; Flags: nowai
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}\bin"
 Type: files; Name: "{app}\.wunder-home"
+; Same retired component tree as in [InstallDelete]: installers that wrote it
+; never recorded it in the component list, so uninstall would leave it behind.
+Type: filesandordirs; Name: "{app}\opt\node"
+Type: filesandordirs; Name: "{app}\opt\remotion"
 
 #include "payload.generated.iss"
 

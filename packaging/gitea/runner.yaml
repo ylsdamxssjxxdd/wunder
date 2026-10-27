@@ -1,0 +1,29 @@
+log:
+  level: info
+runner:
+  file: /data/.runner
+  capacity: 1
+  timeout: 24h
+  envs:
+    CI_SERVER_URL: http://gitea:3000
+    WUNDER_OFFLINE_ROOT: /opt/offline-sdk
+    WUNDER_BUILD_JOBS: "4"
+    CARGO_BUILD_JOBS: "4"
+    WUNDER_SQUASHFS_PROCESSORS: "2"
+  labels:
+    - linux-offline-arm64:docker://wunder-offline-builder:20261027-arm64-mounted
+cache:
+  enabled: false
+container:
+  network: offline-gitea-ci
+  privileged: false
+  options: --volume offline-gitea-build-cache:/ci-cache --volume offline-gitea-sdk:/opt/offline-sdk:ro
+  valid_volumes:
+    - offline-gitea-build-cache
+    - offline-gitea-sdk
+  docker_host: "-"
+  force_pull: false
+  force_rebuild: false
+health_check:
+  enabled: true
+  min_free_disk_space_mb: 10240
