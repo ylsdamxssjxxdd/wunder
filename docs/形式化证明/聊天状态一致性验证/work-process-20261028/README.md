@@ -14,16 +14,17 @@
 
 ## 模型与结论
 
-权威源在 `../models/ProcessIdentity.*`、`../models/ProcessDelivery.*`。runner 复制到仓库外，生成只把 `Fixed = FALSE` 改为 `TRUE` 的对照配置；不删除原不变量。
+权威源在 `../models/ProcessIdentity.*`、`../models/ProcessDelivery.*`、`../models/ThreadHead.*`。runner 复制到仓库外；前两组生成只把 `Fixed = FALSE` 改为 `TRUE` 的对照配置，ThreadHead 使用独立固定模型和固定配置；均不删除原不变量。
 
 | 模型 | 修复前穷举 | 反例 | 修复后 |
 | --- | --- | --- | --- |
 | ProcessIdentity | 9 状态、6 转移 | 已完成思考被前缀合并覆盖；旧增量回滚；旧快照回滚，共 3 类 | 同组 4 条不变量通过 |
 | ProcessDelivery | 12 状态、9 转移 | 首次刷新期限后移；运行工具不可见；逆序完成改变顺序，共 3 类 | 同组 6 条不变量通过 |
+| ThreadHead | 9 状态、9 转移 | 传输收尾误报完成、终态气泡未同步、迟到运行快照重开，共 5 类 | `TypeOK` 与 4 条业务不变量通过 |
 
 `ProcessDelivery` 保留 `SettledToolAgreement`、`NoFabricatedSuccess`；此前 `ProcessRefreshFixed` 的三条不变量继续保留，独立基线复验为 39 状态、无反例。这里不是用新模型替换旧证明。
 
-归档分别见 `identity/`、`delivery/` 的 summary、stories、总图与编号反例图。蓝色边框表示编号路径；绿色框表示“被修复或因修复新增”的对照差异，不表示框内旧错误状态正确。判断以同名规则、stories 的修复后目标和 `chartStatus.wrong = 0` 为准。图已人工查看。
+归档分别见 `identity/`、`delivery/` 的 summary、stories、总图与编号反例图；ThreadHead 的独立证据见 [终态与传输收尾续验证](../thread-head-20261028/README.md)。蓝色边框表示编号路径；绿色框表示“被修复或因修复新增”的对照差异，不表示框内旧错误状态正确。判断以同名规则、stories 的修复后目标和 `chartStatus.wrong = 0` 为准。图已人工查看。
 
 | 编号与规则 | 编号步骤 | 复现 / 修复 | 图与 Mermaid |
 | --- | --- | --- | --- |

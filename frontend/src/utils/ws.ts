@@ -124,6 +124,7 @@ const isTerminalEventType = (
   const normalized = normalizeEventType(eventType);
   if (
     normalized === 'final' ||
+    normalized === 'transport_final' ||
     normalized === 'error' ||
     normalized === 'queue_finish' ||
     normalized === 'queue_fail' ||

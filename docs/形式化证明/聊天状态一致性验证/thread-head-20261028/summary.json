@@ -1,0 +1,86 @@
+{
+  "view": "customer",
+  "second": {
+    "role": "fix",
+    "label": "the fix",
+    "lacks": []
+  },
+  "modelStates": 9,
+  "modelTransitions": 9,
+  "chartStates": 6,
+  "chartTransitions": 8,
+  "chartStatus": {
+    "works": 1,
+    "wrong": 0,
+    "fixed": 5,
+    "mixed": 0,
+    "after": 0,
+    "worse": 0
+  },
+  "mixedStatus": [
+    "传输已收尾，气泡仍运行，却提示完成",
+    "传输已收尾，气泡继续运行"
+  ],
+  "classes": [
+    {
+      "n": 1,
+      "end": "线程完成，气泡仍运行",
+      "invariant": "ImmediateTerminalAgreement",
+      "rule": "A completed thread entry must not coexist with its still-running bubble.",
+      "cause": "目录只推进线程头，没有同时更新对应气泡",
+      "readerSteps": 2,
+      "modelSteps": 3,
+      "counterexamples": 1,
+      "fix": "线程与气泡完成"
+    },
+    {
+      "n": 2,
+      "end": "传输已收尾，气泡仍运行，却提示完成",
+      "invariant": "NoUnverifiedSuccess",
+      "rule": "A request transport close has no execution identity and cannot announce success.",
+      "cause": "无轮次身份的传输收尾被当作任务完成",
+      "readerSteps": 2,
+      "modelSteps": 3,
+      "counterexamples": 2,
+      "fix": "传输已收尾，气泡继续运行"
+    },
+    {
+      "n": 3,
+      "end": "传输已收尾，气泡仍运行，却提示完成",
+      "invariant": "ImmediateTerminalAgreement",
+      "rule": "A completed thread entry must not coexist with its still-running bubble.",
+      "cause": "无轮次身份的传输收尾被当作任务完成",
+      "readerSteps": 3,
+      "modelSteps": 4,
+      "counterexamples": 1,
+      "fix": "传输已收尾，气泡继续运行"
+    },
+    {
+      "n": 4,
+      "end": "线程与气泡运行",
+      "invariant": "TerminalDoesNotReopen",
+      "rule": "A terminal row for the same execution cannot return to running on a late snapshot.",
+      "cause": "同轮次迟到运行快照重新打开终态",
+      "readerSteps": 4,
+      "modelSteps": 5,
+      "counterexamples": 1,
+      "fix": "线程与气泡完成"
+    },
+    {
+      "n": 5,
+      "end": "传输已收尾，气泡仍运行，却提示完成",
+      "invariant": "TerminalDoesNotReopen",
+      "rule": "A terminal row for the same execution cannot return to running on a late snapshot.",
+      "cause": "无轮次身份的传输收尾被当作任务完成",
+      "readerSteps": 5,
+      "modelSteps": 6,
+      "counterexamples": 1,
+      "fix": "传输已收尾，气泡继续运行"
+    }
+  ],
+  "uncited": {
+    "scratch/ThreadHead.tla": [],
+    "scratch/ThreadHeadFixed.tla": []
+  },
+  "brokenProperties": []
+}

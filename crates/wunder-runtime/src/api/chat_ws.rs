@@ -726,20 +726,12 @@ async fn handle_ws(
                                             )
                                             .await;
                                         }
-                                        // v2 durable content is delivered only by
-                                        // the feeder, so the send stream carries no
-                                        // terminal frame of its own. Without one
-                                        // the client can only settle this request
-                                        // through its idle reconcile timer, which
-                                        // keeps the send controller alive and can
-                                        // leave the session watcher unmounted after
-                                        // a feeder overflow. Emit one best-effort
-                                        // terminal frame after the feeder stops so
-                                        // the client resolves the request, runs its
-                                        // settlement path, and mounts the long-lived
-                                        // watch from its durable cursor.
+                                        // The preceding thread_view_change owns the
+                                        // visible turn state. This event only closes
+                                        // the request transport so it must not be
+                                        // interpreted as a turn completion.
                                         let final_event = StreamEvent {
-                                            event: "final".into(),
+                                            event: "transport_final".into(),
                                             data: json!({
                                                 "session_id": session_id_cleanup,
                                             }),

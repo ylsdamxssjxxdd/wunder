@@ -63,7 +63,7 @@ import type { ThemePalette, UserAppearancePreferences } from '@/utils/userPrefer
 import { invalidateAllUserToolsCaches, invalidateUserSkillsCache, invalidateUserToolsCatalogCache, invalidateUserToolsSummaryCache, loadUserSkillsCache, loadUserToolsCatalogCache, loadUserToolsSummaryCache } from '@/utils/userToolsCache';
 import { emitUserToolsUpdated, onUserToolsUpdated } from '@/utils/userToolsEvents';
 
-import { claimAgentRuntimeAgentCompletion, claimAgentRuntimeCompletion, emitWorkspaceRefresh, onAgentRuntimeRefresh, onWorkspaceRefresh } from '@/utils/workspaceEvents';
+import { claimAgentRuntimeCompletion, emitWorkspaceRefresh, onAgentRuntimeRefresh, onWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { createWorkspaceHydrationBatch } from '@/utils/workspaceHydrationBatch';
 import { extractWorkspaceRefreshPaths, isWorkspacePathAffected } from '@/utils/workspaceRefresh';
 import { bindWorkspaceImagePreviewState, getFilenameFromHeaders, hydrateWorkspaceResourceErrorDiagnostics, markWorkspaceImageCardError, normalizeWorkspaceImageResponseBlob, resetWorkspaceImageCardState, resolveWorkspaceResourceErrorDiagnostics, saveObjectUrlAsFile, scheduleWorkspaceLoadingLabel } from '@/utils/workspaceResourceCards';
@@ -74,7 +74,7 @@ import { installActiveChatRealtimeRecovery } from '@/views/messenger/activeChatR
 import { isAgentAlreadyOpen } from '@/views/messenger/agentOpenState';
 import { resolveAgentConfiguredAbilityNames, resolveAgentOverviewAbilityCounts } from '@/views/messenger/agentOverviewAbilities';
 import { buildDefaultAgentOverviewSource } from '@/views/messenger/agentOverviewCards';
-import { NON_SUCCESS_TERMINAL_STATUS, TERMINAL_SESSION_RUNTIME_STATUS_SET, WAITING_SESSION_RUNTIME_STATUS_SET, hasAgentTerminalSettlementEvidence, isWaitingMessengerRuntimeStatus, resolveAgentRuntimeStateFromSignals, resolveAgentRuntimeTerminalStateFromSessionStatus, shouldNotifyAgentTaskCompletion, shouldPreserveMissingAgentRuntimeState, shouldSettleAgentRuntimeFromTerminalSession, shouldSettleAgentSessionsFromRuntimeState } from '@/views/messenger/agentRuntimeState';
+import { TERMINAL_SESSION_RUNTIME_STATUS_SET, WAITING_SESSION_RUNTIME_STATUS_SET, hasAgentTerminalSettlementEvidence, isWaitingMessengerRuntimeStatus, resolveAgentRuntimeStateFromSignals, resolveAgentRuntimeTerminalStateFromSessionStatus, shouldNotifyAgentTaskCompletion, shouldPreserveMissingAgentRuntimeState, shouldSettleAgentRuntimeFromTerminalSession, shouldSettleAgentSessionsFromRuntimeState } from '@/views/messenger/agentRuntimeState';
 import { resolveAgentSelectionAfterRemoval } from '@/views/messenger/agentSelection';
 import { scheduleMessengerBootstrapBackgroundTasks, settleMessengerBootstrapTasks, shouldUseNonBlockingDesktopMessageBootstrap, splitMessengerBootstrapTasks } from '@/views/messenger/bootstrap';
 import { buildAgentApprovalOptions, normalizeAgentApprovalMode, useComposerApprovalMode } from '@/views/messenger/composerApprovalMode';
@@ -11304,7 +11304,6 @@ function installMessengerControllerLifecycleReactiveEffects(ctx: MessengerContro
           summary: ctx.sessionHub.activeSection === 'agents' || ctx.showAgentRightDock.value
       });
       ctx.stopWorkspaceRefreshListener = onWorkspaceRefresh(ctx.handleWorkspaceResourceRefresh);
-      ctx.completedAgentNoticeSuppression ??= new Map<string, number>();
       const completedTurnNoticeKeys = new Set<string>();
       ctx.stopAgentRuntimeRefreshListener = onAgentRuntimeRefresh((detail) => {
           // A terminal durable frame is authoritative for this acknowledgement.
@@ -11328,9 +11327,6 @@ function installMessengerControllerLifecycleReactiveEffects(ctx: MessengerContro
               // "Task completed" only speaks for a completed turn; a stopped or
               // failed turn must not announce success.
               if (terminalStatus !== 'completed') {
-                  // The aggregate poll settles the same turn without knowing how
-                  // it ended, so silence its fallback toast for this round.
-                  if (agentId) ctx.completedAgentNoticeSuppression.set(agentId, Date.now() + 10_000);
                   continue;
               }
               if (!sessionId || !turnId || !agentId ||
@@ -11339,7 +11335,6 @@ function installMessengerControllerLifecycleReactiveEffects(ctx: MessengerContro
                   continue;
               }
               completedTurnNoticeKeys.add(noticeKey);
-              ctx.completedAgentNoticeSuppression.set(agentId, Date.now() + 10_000);
               void ctx.notifyAgentTaskCompleted(agentId);
           }
           void ctx.loadRunningAgents({ force: true });
@@ -11697,11 +11692,6 @@ function installMessengerControllerLifecycleRuntimeMeta(ctx: MessengerController
       const agentId = resolveAgentIdForRuntimeSession(targetSessionId, sessionAgentMap);
       if (!agentId)
           return;
-      // The aggregate path has no turn identity, so a round that ended by being
-      // stopped or rejected must never be announced as finished by it either.
-      if (NON_SUCCESS_TERMINAL_STATUS.has(String(runtimeStatus ?? '').toLowerCase())) {
-          ctx.completedAgentNoticeSuppression.set(agentId, Date.now() + 10_000);
-      }
       const currentRuntimeSessionId = String(agentRuntimeSessionSnapshot.get(agentId) || '').trim();
       if (currentRuntimeSessionId && currentRuntimeSessionId !== targetSessionId) {
           return;
@@ -12452,11 +12442,6 @@ type WorldScreenshotCaptureOption = {
 type StartNewSessionOutcome = 'noop' | 'already_current' | 'opened';
 
 function installMessengerControllerAgentRuntimeSignals(ctx: MessengerControllerContext): void {
-  // Durable terminal frames can acknowledge a task before the aggregate
-  // running-agent poll observes idle. The lifecycle controller records that
-  // acknowledgement here so the later running → idle edge cannot show a
-  // second toast.
-  ctx.completedAgentNoticeSuppression ??= new Map<string, number>();
   ctx.hasCronTask = (agentId: unknown): boolean => ctx.cronAgentIds.value.has(ctx.normalizeAgentId(agentId));
 
   ctx.normalizeRuntimeState = (state: unknown, pendingQuestion = false): AgentRuntimeState => normalizeAssistantMessageRuntimeState(state, pendingQuestion) as AgentRuntimeState;
@@ -12628,19 +12613,8 @@ function installMessengerControllerAgentRuntimeSignals(ctx: MessengerControllerC
       ElMessage.success(message);
   };
 
-  ctx.shouldNotifyAgentCompletion = (previousState: AgentRuntimeState, nextState: AgentRuntimeState): boolean => {
-      return shouldNotifyAgentTaskCompletion({ previousState, nextState });
-  };
-
   ctx.handleAgentRuntimeStateUpdate = (stateMap: Map<string, AgentRuntimeState>) => {
       const reconciledStateMap = new Map(stateMap);
-      // Once a thread has a durable execution head, its per-turn terminal
-      // events own notices. Aggregate idle/done has no turn identity and
-      // cannot distinguish a previous completion from a new send or a stop.
-      const durableNoticeAgentIds = new Set<string>();
-      for (const [sessionId, agentId] of ctx.buildSessionAgentMap()) {
-          if (threadViewOwnsExecution(sessionId)) durableNoticeAgentIds.add(agentId);
-      }
       if (ctx.agentRuntimeStateHydrated) {
           const keys = new Set<string>([
               ...Array.from(ctx.agentRuntimeStateSnapshot.keys()),
@@ -12673,17 +12647,6 @@ function installMessengerControllerAgentRuntimeSignals(ctx: MessengerControllerC
               if (preserveMissing || preserveActiveTurn) reconciledStateMap.set(agentId, nextState);
               if (previousState === nextState)
                   return;
-              if (!durableNoticeAgentIds.has(agentId) && ctx.shouldNotifyAgentCompletion(previousState, nextState)) {
-                  const suppressionUntil = Number(ctx.completedAgentNoticeSuppression.get(agentId) || 0);
-                  if (suppressionUntil > Date.now()) {
-                      ctx.completedAgentNoticeSuppression.delete(agentId);
-                      return;
-                  }
-                  ctx.completedAgentNoticeSuppression.delete(agentId);
-                  if (claimAgentRuntimeAgentCompletion(agentId)) {
-                      void ctx.notifyAgentTaskCompleted(agentId);
-                  }
-              }
           });
       }
       ctx.agentRuntimeStateSnapshot = new Map(reconciledStateMap);

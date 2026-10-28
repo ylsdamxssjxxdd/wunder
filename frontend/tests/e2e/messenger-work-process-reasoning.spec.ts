@@ -21,6 +21,7 @@ test('export-shaped running reload keeps completed thoughts still and never repo
       await expect(bubble.locator('.tl-entry-head')).toHaveCount(1);
       await expect(page.getByTestId('chat-composer-send')).toHaveAttribute('data-mode','stop');
       service.replayPrematureCompletion(turn);
+      service.replayTransportFinal();
       await page.waitForTimeout(200);
       await expect(page.locator('.el-message--success')).toHaveCount(0);
       await expect(page.getByTestId('chat-composer-send')).toHaveAttribute('data-mode','stop');

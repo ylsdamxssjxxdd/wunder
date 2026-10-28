@@ -50,6 +50,11 @@ export class ChatMockService {
     for(const sub of this.subscriptions)this.send(sub,'thread_change',{cursor:this.changes.length+1,change_type:'turn_status',turn_id:turn.turn_id,revision:1,
       payload:{turn_id:turn.turn_id,status:'completed'}});
   }
+  replayTransportFinal() {
+    for (const sub of this.subscriptions.filter(candidate => !candidate.display)) {
+      this.send(sub, 'transport_final', {});
+    }
+  }
   holdNext = false;
   autoCompactNext = false;
   duplicateNext = false;

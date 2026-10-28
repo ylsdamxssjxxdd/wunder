@@ -954,6 +954,7 @@ fn is_workflow_event(event_type: &str) -> bool {
             | "queue_finish"
             | "queue_fail"
             | "final"
+            | "transport_final"
             | "turn_terminal"
             | "thread_status"
             | "thread_closed"

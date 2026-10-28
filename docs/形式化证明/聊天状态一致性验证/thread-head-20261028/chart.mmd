@@ -1,0 +1,42 @@
+---
+config:
+  markdownAutoWrap: false
+  state:
+    useMaxWidth: false
+---
+stateDiagram-v2
+  %% second model (fix): the fix
+  classDef plainFixed fill:#f4f6f7,stroke:#1e8449,stroke-width:4px,color:#145a32
+  classDef group0 fill:#d6eaf8,stroke:#6b757c,color:#1b2631
+  classDef group0Fixed fill:#d6eaf8,stroke:#1e8449,stroke-width:4px,color:#145a32
+  classDef group1 fill:#fdebd0,stroke:#7f7668,color:#1b2631
+  classDef group1Fixed fill:#fdebd0,stroke:#1e8449,stroke-width:4px,color:#145a32
+  state "Legend" as legend {
+    state "发送与执行" as legendGroup0
+    state "已知线程完成" as legendGroup1
+    state "Fixed or new with the fix" as legendFixed
+  }
+  class legendGroup0 group0
+  class legendGroup1 group1
+  class legendFixed plainFixed
+  state "传输已收尾，气泡仍运行，却提示完成" as s0
+  state "传输已收尾，气泡继续运行" as s1
+  state "尚未发送" as s2
+  state "线程与气泡完成" as s3
+  state "线程与气泡运行" as s4
+  state "线程完成，气泡仍运行" as s5
+  [*] --> s2
+  s2 --> s4 : 受理后提交展示窗
+  s4 --> s0 : 请求传输先收尾
+  s4 --> s5 : 目录先返回完成态
+  s5 --> s3 : 展示帧稍后到达
+  s3 --> s4 : 同轮次迟到运行快照到达
+  s4 --> s1 : with the fix, 请求传输先收尾
+  s4 --> s3 : with the fix, 目录先返回完成态
+  s0 --> s0 : 目录先返回完成态 or 展示帧稍后到达 or<br/>同轮次迟到运行快照到达
+  class s0 plainFixed
+  class s1 plainFixed
+  class s2 group0
+  class s3 group1Fixed
+  class s4 group0Fixed
+  class s5 group1Fixed

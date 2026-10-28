@@ -173,6 +173,41 @@ test('production send callback binds its pending pair and settles from server tu
   }
 });
 
+test('request final without a durable terminal head cannot settle an authoritative running bubble', async () => {
+  const { chat, eventDetails, cleanup } = await setup();
+  const { chatWsClient } = await import('../../src/stores/chatWatcher');
+  const { clearSessionWatcher } = await import('../../src/stores/chatRuntimeControls');
+  const originalRequest = chatWsClient.request;
+  const running: ChatViewRow = {
+    root_turn_id: 'fixture-transport-turn', execution_turn_id: 'fixture-transport-turn', user_round: 1, revision: 4,
+    status: 'running', user: { item_id: 'fixture-transport-user', content: 'Fixture input' },
+    assistant: { item_id: 'fixture-transport-answer', content: '' }, workflow_count: 1, failed_count: 0
+  };
+  chatWsClient.request = (async (options: any) => {
+    const request = typeof options.message === 'function' ? options.message() : options.message;
+    if (request.type !== 'start') {
+      return new Promise(resolve => options.signal?.addEventListener('abort', () => resolve(undefined), { once: true }));
+    }
+    options.onEvent('thread_view_change', JSON.stringify({
+      epoch: 1, view_seq: 4, runtime_status: 'running', status_turn_id: 'fixture-transport-turn',
+      active_turn_id: 'fixture-transport-turn', rows: [{ ...running, client_message_id: request.payload.client_message_id }]
+    }));
+    assert.equal(chat.isSessionBusy(key), true);
+    options.onEvent('final', JSON.stringify({ session_id: key }));
+    assert.equal(chat.isSessionBusy(key), true);
+    assert.deepEqual(eventDetails.flatMap(detail => detail?.completedTurns ?? []), []);
+  }) as any;
+  try {
+    await chat.sendMessage('Fixture input');
+    assert.equal(chat.sessionRuntimeStatus(key), 'running');
+    assert.equal(chat.isSessionBusy(key), true);
+  } finally {
+    clearSessionWatcher();
+    chatWsClient.request = originalRequest;
+    cleanup();
+  }
+});
+
 test('view lifecycle refreshes on interaction, completion, failure and stop without replay refresh storms', async () => {
   const { events, eventDetails, applyView, cleanup } = await setup();
   const row = (status: string, revision: number): ChatViewRow => ({

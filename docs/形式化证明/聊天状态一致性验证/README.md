@@ -1,14 +1,14 @@
 # 聊天状态一致性验证
 
-2026-10-28 续验：蛹与蜂巢的工作过程实时性、模型条目身份、稳定顺序和恢复证据见 [工作过程验证](./work-process-20261028/README.md)。下面的 600 ms 描述是 2026-10-26 历史快照；当前改为不重置首次期限的 120 ms 合并刷新，并增加有界实时条目投影，不再等待工具完成才展示。
+2026-10-28 续验：蛹与蜂巢的工作过程实时性、模型条目身份、稳定顺序和恢复证据见 [工作过程验证](./work-process-20261028/README.md)。本轮又验证了蜂巢请求传输收尾、持久线程终态通知和迟到运行快照的交错，证据见 [ThreadHead 终态证据](./thread-head-20261028/README.md)。下面的 600 ms 描述是 2026-10-26 历史快照；当前改为不重置首次期限的 120 ms 合并刷新，并增加有界实时条目投影，不再等待工具完成才展示。
 
 验证日期：2026-10-26。对象：蜂巢聊天展示链路。蛹原生前端与舵机的补充审计、模型和回归见 `../蛹与舵机状态一致性验证/README.md`；舰桥尚未完成同等审计，各端范围不同，不能相互替代。
 
 ## 结论与范围
 
-不能证明旧实现的线程条目、气泡和工具条目始终一致：TLC 找到了两个反例，真实 store 与 Vue 组件回放均复现。修复后，在相同有界模型中保持原规则重新检查，两个反例均消失；真实组件回放、SQLite 契约测试、启用 PostgreSQL feature 的独立数据库测试、WebSocket 唤醒测试和前端回归通过。
+不能证明旧实现的线程条目、气泡和工具条目始终一致：TLC 找到了完成头先到和在途刷新被吞掉两个反例，后续续验又找到身份回退、实时工具不可见、传输收尾误报完成和迟到运行快照重开等有限交错，真实 store、Vue 组件和浏览器回放均覆盖了对应路径。修复后，在相同有界模型中保持原规则重新检查，已归档模型的反例均消失；真实组件回放、SQLite 契约测试、启用 PostgreSQL feature 的独立数据库测试、WebSocket 唤醒测试和前端回归通过。
 
-这是对指定事件交错的安全性和条件收敛验证，不是整个运行时的形式化证明，也不是毫秒级端到端时延保证。网络不送达、请求永久不返回、后台暂停、任意数量并发轮次及其他前端不在模型内。过程读取失败时显示错误，不用无限自动重试伪装收敛；仍保留原 600 ms 合并刷新窗口，另加请求和渲染耗时。
+这是对指定事件交错的安全性和条件收敛验证，不是整个运行时的形式化证明，也不是毫秒级端到端时延保证。网络不送达、请求永久不返回、后台暂停、任意数量并发轮次及其他前端不在模型内。过程读取失败时显示错误，不用无限自动重试伪装收敛；当前实现保留首次 120 ms 合并刷新期限，并通过有界实时条目投影及时展示运行中的工具和思考。
 
 ## 反例一：目录完成头先到
 
@@ -21,7 +21,7 @@
 
 修复：在核心 DTO、SQLite 与 PostgreSQL 展示页/变更/目录头和 WebSocket 最终帧中携带 `status_turn_id`。它表示状态所属的执行轮次，终态仍保留；`active_turn_id` 仍只表示活动轮次。前端按执行身份和水位投影匹配行，不猜测最后一个运行气泡，不推进正文重放游标；有界行级状态水位阻止迟到旧行重新打开气泡，更新的执行身份可以正常续跑。
 
-证据：`head/bug-1.png`、`head/bug-1.mmd`、`head/chart.png`、`head/chart.mmd`、`head/stories.md`、`head/summary.json`。
+证据：历史完成头反例见 `head/`；本轮传输收尾、终态通知和迟到快照续验见 `thread-head-20261028/` 的 `bug-1` 至 `bug-5`、`chart`、`stories.md` 和 `summary.json`。
 
 ## 反例二：终态刷新被在途读取吞掉
 
@@ -49,7 +49,7 @@
 
 ## 模型与代码的对应
 
-`ThreadHead.tla` 和 `ProcessRefresh.tla` 描述修复前交错；其中代码行号对应修复前版本 `4df81500eefaf10668c3aaf6697e68e47fd46c2a`。`*Fixed.tla` 只改变所提修复的状态转移，使用同一配置和同一不变量，不削弱规则。
+`ThreadHead.tla`、`ProcessRefresh.tla` 和工作过程模型描述修复前交错；其中代码行号对应各自归档时的实现快照。`*Fixed.tla` 只改变所提修复的状态转移，使用同一配置和同一不变量，不削弱规则。`ThreadHead` 的独立续验证收录在 `thread-head-20261028/`，固定配置同时检查 `TypeOK`、`ImmediateTerminalAgreement`、`NoUnverifiedSuccess`、`TerminalDoesNotReopen` 和 `SameCutAgreement`。
 
 - 线程模型固定一个已绑定执行轮次，将服务端完成头作为外部输入；不建模完整目录传输、所有排队与续跑组合。其他轮次隔离、迟到行内容保留、新执行身份和失败/取消通过实际 store 回归补充验证。
 - 工具模型固定一个可见工具、一次在途读取和有限结构事件；假设最新页可读、HTTP 成功且结果已提交。延时回调只作为事件顺序，不代表真实时钟。模型将读取结束后的 dirty 消费拆为两个系统步骤；生产代码在同一 `finally` 中连续执行。
@@ -60,8 +60,11 @@
 TLC/Java 在环境中可用后，从仓库根目录执行；工作产物写到仓库外的临时目录。`$skill` 指向本机 statechart 技能目录，`$scratch` 是新临时输出目录。
 
 ```powershell
+python scripts/check_work_process_formal.py --statechart "$skill/scripts/statechart.mjs" --out "$scratch/work-process"
+
+# 需要单独查看 ThreadHead 状态图时：
 $model = 'docs/形式化证明/聊天状态一致性验证/models'
-node "$skill/scripts/statechart.mjs" from-spec "$model/ThreadHead.tla" --fixed "$model/ThreadHeadFixed.tla" --map "$model/ThreadHeadDelivery.map.mjs" --expect-broken ImmediateTerminalAgreement --out "$scratch/head" --png
+node "$skill/scripts/statechart.mjs" from-spec "$model/ThreadHead.tla" --fixed "$model/ThreadHeadFixed.tla" --map "$model/ThreadHeadDelivery.map.mjs" --expect-broken ImmediateTerminalAgreement,NoUnverifiedSuccess,TerminalDoesNotReopen --out "$scratch/head" --png
 node "$skill/scripts/statechart.mjs" from-spec "$model/ProcessRefresh.tla" --fixed "$model/ProcessRefreshFixed.tla" --map "$model/ProcessRefreshDelivery.map.mjs" --expect-broken SettledToolAgreement --out "$scratch/process" --cover --png
 node frontend/scripts/regression/status-consistency-replay.mjs
 cd frontend
