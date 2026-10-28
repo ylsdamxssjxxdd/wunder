@@ -1,0 +1,79 @@
+TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)
+Running breadth-first search Model-Checking with fp 91 and seed 3696736249724780693 with 1 worker on 32 cores with 14484MB heap and 64MB offheap memory [pid: 18940] (Windows 11 10.0 amd64, Eclipse Adoptium 21.0.12.1 x86_64, MSBDiskFPSet, DiskStateQueue).
+Parsing file Checkpoint.tla
+Parsing file Naturals.tla
+Parsing file TLC.tla
+Parsing file Sequences.tla
+Parsing file FiniteSets.tla
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Checkpoint
+Starting... (2026-10-27 17:57:33)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-10-27 17:57:33.
+Error: Invariant NoLateCheckpoint is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ applied = FALSE
+/\ late = FALSE
+/\ status = "running"
+/\ phase = "generating"
+/\ durable = FALSE
+/\ gate = "none"
+/\ restarted = FALSE
+
+State 2: <SummaryReady line 10, col 5 to line 12, col 68 of module Checkpoint>
+/\ applied = FALSE
+/\ late = FALSE
+/\ status = "running"
+/\ phase = "ready"
+/\ durable = FALSE
+/\ gate = "none"
+/\ restarted = FALSE
+
+State 3: <AcquireCheckpoint line 15, col 5 to line 18, col 62 of module Checkpoint>
+/\ applied = FALSE
+/\ late = FALSE
+/\ status = "running"
+/\ phase = "checking"
+/\ durable = FALSE
+/\ gate = "none"
+/\ restarted = FALSE
+
+State 4: <CheckRunning line 21, col 5 to line 25, col 68 of module Checkpoint>
+/\ applied = FALSE
+/\ late = FALSE
+/\ status = "running"
+/\ phase = "writing"
+/\ durable = FALSE
+/\ gate = "none"
+/\ restarted = FALSE
+
+State 5: <Stop line 53, col 5 to line 57, col 67 of module Checkpoint>
+/\ applied = FALSE
+/\ late = FALSE
+/\ status = "cancelled"
+/\ phase = "writing"
+/\ durable = FALSE
+/\ gate = "none"
+/\ restarted = FALSE
+
+State 6: <PersistCheckpoint line 33, col 5 to line 35, col 53 of module Checkpoint>
+/\ applied = FALSE
+/\ late = TRUE
+/\ status = "cancelled"
+/\ phase = "committed"
+/\ durable = TRUE
+/\ gate = "none"
+/\ restarted = FALSE
+
+Model checking completed. No error has been found.
+  Estimates of the probability that TLC did not check all reachable states
+  because two distinct states had the same fingerprint:
+  calculated (optimistic):  val = 3.5E-17
+52 states generated, 20 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 8.
+The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 3 and the 95th percentile is 3).
+Finished in 00s at (2026-10-27 17:57:33)

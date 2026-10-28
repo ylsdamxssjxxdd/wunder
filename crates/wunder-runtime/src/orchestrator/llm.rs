@@ -27,6 +27,7 @@ enum LlmFailureKind {
     Other,
     ContextWindow,
     Unavailable,
+    Permanent,
 }
 
 const LLM_UNAVAILABLE_MIN_RETRIES: u32 = 5;
@@ -1281,6 +1282,7 @@ impl Orchestrator {
                 Err(OrchestratorError::context_window_exceeded(message))
             }
             LlmFailureKind::Unavailable => Err(OrchestratorError::llm_unavailable(message)),
+            LlmFailureKind::Permanent => Err(OrchestratorError::llm_request_rejected(message)),
             LlmFailureKind::Other => Err(OrchestratorError::internal(message)),
         }
     }
@@ -1298,6 +1300,51 @@ fn classify_llm_failure(message: &str) -> LlmFailureKind {
 }
 
 fn classify_llm_error(error: &anyhow::Error) -> LlmFailureKind {
+    if let Some(failure) = error
+        .chain()
+        .find_map(|source| source.downcast_ref::<crate::llm::LlmHttpError>())
+    {
+        if matches!(failure.status, 400 | 413 | 422)
+            && (failure.kind == Some(crate::llm::ProviderFailureKind::ContextWindow)
+                || (matches!(
+                    failure.kind,
+                    None | Some(crate::llm::ProviderFailureKind::InvalidRequest)
+                ) && is_context_window_error_text(&failure.to_string())))
+        {
+            return LlmFailureKind::ContextWindow;
+        }
+        return if failure.retryable() {
+            LlmFailureKind::Unavailable
+        } else {
+            LlmFailureKind::Permanent
+        };
+    }
+    if let Some(failure) = error
+        .chain()
+        .find_map(|source| source.downcast_ref::<crate::llm::LlmPayloadError>())
+    {
+        match failure.kind {
+            Some(crate::llm::ProviderFailureKind::InvalidRequest)
+                if is_context_window_error_text(&failure.to_string()) =>
+            {
+                return LlmFailureKind::ContextWindow
+            }
+            Some(crate::llm::ProviderFailureKind::InvalidRequest) => {
+                return LlmFailureKind::Permanent
+            }
+            Some(crate::llm::ProviderFailureKind::Permanent) => return LlmFailureKind::Permanent,
+            Some(crate::llm::ProviderFailureKind::ContextWindow) => {
+                return LlmFailureKind::ContextWindow
+            }
+            Some(crate::llm::ProviderFailureKind::Transient) => return LlmFailureKind::Unavailable,
+            None => {}
+        }
+    }
+    if error.is::<crate::services::cloud::CloudSessionExpired>()
+        || error.is::<crate::services::cloud::CloudQuotaInsufficient>()
+    {
+        return LlmFailureKind::Permanent;
+    }
     let message = error.to_string();
     if is_context_window_error_text(&message) {
         return LlmFailureKind::ContextWindow;
@@ -1361,6 +1408,10 @@ fn is_llm_unavailable_error_text(message: &str) -> bool {
         "504 gateway timeout",
         "empty response",
         "without payload",
+        "without a completed response",
+        "llm stream invalid utf-8",
+        "llm stream ended with incomplete utf-8",
+        "llm stream json parse failed",
         "without content",
         "without content, reasoning, or tool calls",
         "did not return a displayable final answer",
@@ -1371,7 +1422,12 @@ fn is_llm_unavailable_error_text(message: &str) -> bool {
 }
 
 fn resolve_llm_max_attempts(failure_kind: LlmFailureKind) -> u32 {
-    if matches!(failure_kind, LlmFailureKind::Unavailable) {
+    if matches!(
+        failure_kind,
+        LlmFailureKind::Permanent | LlmFailureKind::ContextWindow
+    ) {
+        1
+    } else if matches!(failure_kind, LlmFailureKind::Unavailable) {
         DEFAULT_LLM_MAX_ATTEMPTS.max(LLM_UNAVAILABLE_MIN_RETRIES.saturating_add(1))
     } else {
         DEFAULT_LLM_MAX_ATTEMPTS
@@ -1396,6 +1452,7 @@ fn llm_retry_reason(failure_kind: LlmFailureKind) -> &'static str {
         LlmFailureKind::ContextWindow => "context_window",
         LlmFailureKind::Unavailable => "llm_unavailable",
         LlmFailureKind::Other => "provider_error",
+        LlmFailureKind::Permanent => "request_rejected",
     }
 }
 
@@ -1753,10 +1810,86 @@ mod tests {
             resolve_llm_max_attempts(LlmFailureKind::Other),
             DEFAULT_LLM_MAX_ATTEMPTS
         );
+        assert_eq!(resolve_llm_max_attempts(LlmFailureKind::ContextWindow), 1);
+        assert_eq!(resolve_llm_max_attempts(LlmFailureKind::Permanent), 1);
+    }
+
+    #[test]
+    fn typed_http_status_takes_precedence_over_error_body_and_outer_context() {
+        for status in [400, 401, 403, 404, 422] {
+            let error = anyhow::Error::new(crate::llm::LlmHttpError::new(
+                status,
+                r#"{"error":{"message":"upstream timeout 429"}}"#,
+            ))
+            .context("503 service unavailable");
+            assert_eq!(super::classify_llm_error(&error), LlmFailureKind::Permanent);
+        }
+        let error = anyhow::Error::new(crate::llm::LlmHttpError::new(
+            400,
+            r#"{"error":{"message":"context length exceeded"}}"#,
+        ));
         assert_eq!(
-            resolve_llm_max_attempts(LlmFailureKind::ContextWindow),
-            DEFAULT_LLM_MAX_ATTEMPTS
+            super::classify_llm_error(&error),
+            LlmFailureKind::ContextWindow
         );
+        let error = anyhow::Error::new(crate::llm::LlmHttpError::new(
+            429,
+            r#"{"error":{"code":"insufficient_quota"}}"#,
+        ));
+        assert_eq!(super::classify_llm_error(&error), LlmFailureKind::Permanent);
+    }
+
+    #[test]
+    fn typed_payload_failure_codes_survive_context_wrapping() {
+        for (payload, expected) in [
+            (
+                json!({"error":{"code":"invalid_api_key","message":"timeout 429 context length exceeded"}}),
+                LlmFailureKind::Permanent,
+            ),
+            (
+                json!({"error":{"type":"authentication_error","message":"context length exceeded"}}),
+                LlmFailureKind::Permanent,
+            ),
+            (
+                json!({"type":"error","code":"rate_limit_exceeded","message":"context length exceeded"}),
+                LlmFailureKind::Unavailable,
+            ),
+            (
+                json!({"type":"response.failed","response":{"error":{"code":"server_error"}}}),
+                LlmFailureKind::Unavailable,
+            ),
+            (
+                json!({"error":{"code":"context_length_exceeded","type":"invalid_request_error"}}),
+                LlmFailureKind::ContextWindow,
+            ),
+            (
+                json!({"error":{"code":"unrecognized_fixture","type":"overloaded_error"}}),
+                LlmFailureKind::Unavailable,
+            ),
+            (
+                json!({"error":{"type":"invalid_request_error","message":"context length exceeded"}}),
+                LlmFailureKind::ContextWindow,
+            ),
+            (
+                json!({"error":{"type":"invalid_request_error","message":"invalid fixture field"}}),
+                LlmFailureKind::Permanent,
+            ),
+        ] {
+            let error =
+                anyhow::Error::new(crate::llm::LlmPayloadError::from_payload(&payload).unwrap())
+                    .context("provider failure wrapped by caller");
+            assert_eq!(super::classify_llm_error(&error), expected, "{payload}");
+        }
+        for message in [
+            "LLM stream invalid UTF-8",
+            "LLM stream ended with incomplete UTF-8",
+            "LLM stream json parse failed",
+        ] {
+            assert_eq!(
+                super::classify_llm_error(&anyhow::anyhow!(message)),
+                LlmFailureKind::Unavailable
+            );
+        }
     }
 
     #[test]

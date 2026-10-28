@@ -57,7 +57,7 @@ ENTRIES = [
     # cron_page.slint
     ("cron_create", "新建定时任务", "New scheduled task"),
     ("cron_empty", "暂无定时任务", "No scheduled tasks"),
-    ("cron_subtitle", "查看与管理智能体定时任务", "View and manage agent scheduled tasks"),
+    ("cron_subtitle", "在指定工作区中按时执行任务", "Run scheduled tasks in a selected workspace"),
     # main.slint preview turn / shared labels
     ("main_preview_prompt", "整理工作目录并说明结果", "Organize the work folder and report"),
     ("main_preview_answer", "已完成目录检查，并整理了可以继续使用的文件。", "Directory checked and usable files organized."),

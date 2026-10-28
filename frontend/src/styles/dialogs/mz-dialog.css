@@ -46,8 +46,8 @@
   width: 22px;
   height: 22px;
   border-radius: 50%;
-  background: var(--ui-accent-soft, #f6e9e3);
-  color: var(--ui-accent, #c96443);
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent-ink);
   font-size: 11px;
   line-height: 1;
 }
@@ -155,9 +155,9 @@
 }
 
 .mz-dialog-input:focus {
-  border-color: var(--ui-accent, #c96443);
+  border-color: var(--ui-accent-ink);
   background: #ffffff;
-  box-shadow: 0 0 0 3px rgba(var(--ui-accent-rgb, 201, 100, 67), 0.14);
+  box-shadow: 0 0 0 3px rgba(var(--ui-accent-rgb), 0.14);
 }
 
 .mz-dialog-error {
@@ -195,14 +195,14 @@
 }
 
 .mz-dialog-btn.is-primary {
-  border-color: var(--ui-accent, #c96443);
-  background: var(--ui-accent, #c96443);
+  border-color: var(--ui-accent-ink);
+  background: var(--ui-accent-ink);
   color: #ffffff;
 }
 
 .mz-dialog-btn.is-primary:hover {
-  border-color: var(--ui-accent-hover, #b55637);
-  background: var(--ui-accent-hover, #b55637);
+  border-color: var(--ui-accent-hover);
+  background: var(--ui-accent-hover);
   color: #ffffff;
 }
 
@@ -217,7 +217,7 @@
 }
 
 .mz-dialog-btn:focus-visible {
-  outline: 2px solid rgba(var(--ui-accent-rgb, 201, 100, 67), 0.45);
+  outline: 2px solid rgba(var(--ui-accent-rgb), 0.45);
   outline-offset: 1px;
 }
 

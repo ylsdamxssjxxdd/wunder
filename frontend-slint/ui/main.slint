@@ -198,9 +198,7 @@ export component MainWindow inherits Window {
     in-out property <string> cloud-greeting;
     in-out property <bool> busy: false;
     in-out property <bool> command-pending: false;
-    // The composer's terminal entry opens a local terminal for the active
-    // workspace; chat itself stays in the main transcript and composer.
-    callback launch-terminal();
+    callback launch-cli();
     in-out property <string> command-feedback;
     changed command-feedback => {
         if root.command-feedback.starts-with("命令执行失败") {
@@ -309,6 +307,7 @@ export component MainWindow inherits Window {
     in-out property <[ToolResource]> tools-bases;
     in-out property <[ToolCard]> tools-server-tools;
     in-out property <[FileCard]> tools-files;
+    in-out property <[WorkspaceFileRow]> tools-file-rows;
     in-out property <[FileCard]> tools-all-files;
     in-out property <string> tools-search;
     in-out property <string> tools-file-path;
@@ -433,6 +432,7 @@ export component MainWindow inherits Window {
     in-out property <[ToolCard]> tools: [];
     in-out property <bool> cron-loading: false;
     in-out property <[CronCard]> cron-jobs: [];
+    in-out property <int> cron-selected: -1;
     in-out property <[PromptPackCard]> prompt-packs: [];
     in-out property <[string]> prompt-pack-names: [];
     in-out property <string> prompt-active;
@@ -446,7 +446,7 @@ export component MainWindow inherits Window {
     in-out property <bool> prompt-preview-loading: false;
     in-out property <bool> cron-delete-open: false;
     in-out property <string> cron-delete-pending;
-    in-out property <[string]> cron-agent-names: [I18n.common_default_agent];
+    in-out property <[string]> cron-workspace-names: [];
     in-out property <bool> cron-editor-open: false;
     in-out property <bool> cron-editor-saving: false;
     in-out property <string> cron-edit-id;
@@ -454,10 +454,11 @@ export component MainWindow inherits Window {
     in-out property <string> cron-edit-name;
     in-out property <string> cron-edit-at;
     in-out property <string> cron-edit-every;
+    in-out property <int> cron-edit-interval-unit: 0;
     in-out property <string> cron-edit-cron;
     in-out property <string> cron-edit-tz;
     in-out property <string> cron-edit-message;
-    in-out property <int> cron-edit-agent: 0;
+    in-out property <int> cron-edit-workspace: -1;
     in-out property <bool> cron-edit-delete-after: false;
     in-out property <bool> cron-edit-enabled: true;
     in-out property <bool> cron-runs-open: false;
@@ -1216,9 +1217,8 @@ export component MainWindow inherits Window {
                             }
                             composer := Composer {
                                 draft <=> root.draft; busy: root.command-pending || root.session-loading || root.creating-session || (root.chat-loading && !root.busy) || (root.cloud-chat-active && root.cloud-thread-busy);
-                            launch-terminal => { root.launch-terminal(); }
+                            launch-cli => { root.launch-cli(); }
                             send-key: root.runtime-send-key;
-                            interrupt => { }
                             context-usage: root.context-usage; context-known: root.context-known; context-counts: root.context-counts; reasoning-effort <=> root.reasoning-effort;
                             models: root.cloud-chat-active ? root.cloud-thread-models : root.composer-models;
                             // The local built-in agent owns the saved quick prompts; a
@@ -1471,7 +1471,7 @@ export component MainWindow inherits Window {
         tools-skills: root.tools-skills; tools-knowledge: root.tools-knowledge;
         tools-servers: root.tools-servers; tools-skill-resources: root.tools-skill-resources;
         tools-bases: root.tools-bases; tools-server-tools: root.tools-server-tools;
-        tools-files: root.tools-files; tools-search <=> root.tools-search;
+        tools-files: root.tools-files; tools-file-rows: root.tools-file-rows; tools-search <=> root.tools-search;
         tools-file-path <=> root.tools-file-path; tools-content <=> root.tools-content;
         tools-directory: root.tools-directory; tools-has-more: root.tools-has-more;
         refresh-tools => { root.refresh-tools(); }
@@ -1481,13 +1481,14 @@ export component MainWindow inherits Window {
         search-tool-files(query) => { root.search-tool-files(query); }
         tool-manager-action(kind, id, value) => { root.tool-manager-action(kind, id, value); }
 
-        cron-loading: root.cron-loading; cron-jobs: root.cron-jobs;
-        cron-agent-names <=> root.cron-agent-names;
+        cron-loading: root.cron-loading; cron-jobs: root.cron-jobs; cron-selected <=> root.cron-selected;
+        cron-workspace-names <=> root.cron-workspace-names;
         cron-editor-open <=> root.cron-editor-open; cron-editor-saving <=> root.cron-editor-saving;
         cron-edit-kind <=> root.cron-editor-kind; cron-edit-name <=> root.cron-edit-name;
+        cron-edit-interval-unit <=> root.cron-edit-interval-unit;
         cron-edit-at <=> root.cron-edit-at; cron-edit-every <=> root.cron-edit-every;
         cron-edit-cron <=> root.cron-edit-cron; cron-edit-tz <=> root.cron-edit-tz;
-        cron-edit-message <=> root.cron-edit-message; cron-edit-agent <=> root.cron-edit-agent;
+        cron-edit-message <=> root.cron-edit-message; cron-edit-workspace <=> root.cron-edit-workspace;
         cron-edit-delete-after <=> root.cron-edit-delete-after; cron-edit-enabled <=> root.cron-edit-enabled;
         cron-runs-open <=> root.cron-runs-open; cron-runs-loading: root.cron-runs-loading;
         cron-runs-title: root.cron-runs-title; cron-runs: root.cron-runs;
@@ -1814,7 +1815,7 @@ export component MainWindow inherits Window {
                 }
                 Text { text: I18n.pm_preview_hint; color: Theme.muted; font-size: Theme.font-2xs; overflow: elide; }
                 if root.prompt-preview-loading : Text { height: 40px; text: I18n.common_loading; color: Theme.muted; font-size: Theme.font-sm; horizontal-alignment: center; vertical-alignment: center; }
-                TextEditBase { vertical-stretch: 1; text: root.prompt-preview; read-only: true; wrap: word-wrap; foreground: Theme.text; font-size: Theme.font-xs; background: Theme.panel; border-width: 1px; border-color: Theme.border; border-radius: Theme.radius-sm; scroll-view-padding: 8px; selection-background-color: Theme.accent; selection-foreground-color: white; }
+                TextEditBase { vertical-stretch: 1; text: root.prompt-preview; read-only: true; wrap: word-wrap; foreground: Theme.text; font-size: Theme.font-xs; background: Theme.panel; border-width: 1px; border-color: Theme.border; border-radius: Theme.radius-sm; scroll-view-padding: 8px; selection-background-color: Theme.accent-ink; selection-foreground-color: white; }
             }
         }
     }

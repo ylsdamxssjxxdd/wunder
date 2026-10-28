@@ -149,7 +149,15 @@ pub async fn handle_cron_action(
             _ => {}
         }
     }
-    let scoped_agent_id = resolve_scoped_agent_id(agent_id, payload.job.as_ref());
+    let scoped_agent_id = if payload
+        .job
+        .as_ref()
+        .is_some_and(|job| job.workspace_id.is_some())
+    {
+        None
+    } else {
+        resolve_scoped_agent_id(agent_id, payload.job.as_ref())
+    };
     let now = now_ts();
     match action.as_str() {
         "status" => {
@@ -167,26 +175,15 @@ pub async fn handle_cron_action(
                 })
                 .await?
             };
-            let user_jobs = {
+            let summary = {
                 let storage = storage.clone();
                 let cleaned_user = user_id.trim().to_string();
-                run_cron_db("cron.status.list_user_jobs", move || {
-                    storage.list_cron_jobs(&cleaned_user, true)
+                let agent_id = scoped_agent_id.clone();
+                run_cron_db("cron.status.summarize_user_jobs", move || {
+                    storage.summarize_cron_jobs(&cleaned_user, agent_id.as_deref(), now)
                 })
                 .await?
             };
-            let scoped_jobs = filter_jobs_by_agent_scope(user_jobs, scoped_agent_id.as_deref());
-            let user_total_jobs = scoped_jobs.len();
-            let user_enabled_jobs = scoped_jobs.iter().filter(|job| job.enabled).count();
-            let user_running_jobs = scoped_jobs
-                .iter()
-                .filter(|job| cron_job_is_running(job, now))
-                .count();
-            let user_next_run_at = scoped_jobs
-                .iter()
-                .filter(|job| job.enabled)
-                .filter_map(|job| job.next_run_at)
-                .min_by(f64::total_cmp);
             Ok(json!({
                 "action": "status",
                 "scheduler": {
@@ -206,26 +203,24 @@ pub async fn handle_cron_action(
                     "now_text": format_ts(Some(now)),
                 },
                 "user_jobs": {
-                    "total": user_total_jobs,
-                    "enabled": user_enabled_jobs,
-                    "running": user_running_jobs,
-                    "next_run_at": user_next_run_at,
-                    "next_run_at_text": format_ts(user_next_run_at),
+                    "total": summary.total,
+                    "enabled": summary.enabled,
+                    "running": summary.running,
+                    "next_run_at": summary.next_run_at,
+                    "next_run_at_text": format_ts(summary.next_run_at),
                 }
             }))
         }
         "list" => {
-            let storage = storage.clone();
-            let cleaned = user_id.trim().to_string();
-            let jobs = run_cron_db("cron.action.list_jobs", move || {
-                storage.list_cron_jobs(&cleaned, true)
-            })
-            .await?;
-            let jobs = filter_jobs_by_agent_scope(jobs, scoped_agent_id.as_deref());
-            let items = jobs.iter().map(cron_job_to_value).collect::<Vec<_>>();
-            Ok(
-                json!({ "action": "list", "jobs": items, "scheduler": { "enabled": config.cron.enabled } }),
+            list_cron_jobs_page(
+                storage,
+                user_id,
+                scoped_agent_id.as_deref(),
+                200,
+                0,
+                config.cron.enabled,
             )
+            .await
         }
         "get" => {
             let job_id = payload
@@ -251,7 +246,33 @@ pub async fn handle_cron_action(
             Ok(json!({ "action": "get", "job": cron_job_to_value(&job) }))
         }
         "add" => {
-            let input = payload.job.ok_or_else(|| anyhow!("job required"))?;
+            let mut input = payload.job.ok_or_else(|| anyhow!("job required"))?;
+            let dedupe_key = input
+                .dedupe_key
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(|value| value.to_string());
+            let existing = if let Some(key) = dedupe_key.as_ref() {
+                let storage = storage.clone();
+                let cleaned_user = user_id.trim().to_string();
+                let key = key.clone();
+                run_cron_db("cron.action.get_job_by_dedupe", move || {
+                    storage.get_cron_job_by_dedupe_key(&cleaned_user, &key)
+                })
+                .await?
+                .filter(|record| cron_job_matches_agent_scope(record, scoped_agent_id.as_deref()))
+            } else {
+                None
+            };
+            let workspace_session = prepare_cron_workspace(
+                storage.clone(),
+                user_id,
+                &mut input,
+                existing.as_ref().map(|record| record.session_id.as_str()),
+                now,
+            )
+            .await?;
             let job_session_id = input
                 .session_id
                 .as_ref()
@@ -259,49 +280,43 @@ pub async fn handle_cron_action(
                 .filter(|value| !value.is_empty())
                 .or_else(|| session_id.map(|value| value.to_string()))
                 .ok_or_else(|| anyhow!(i18n::t("error.session_not_found")))?;
-            let dedupe_key = input
-                .dedupe_key
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(|value| value.to_string());
-            if let Some(key) = dedupe_key.as_ref() {
-                let storage = storage.clone();
-                let cleaned_user = user_id.trim().to_string();
-                let key = key.clone();
-                let existing = {
+            if let Some(mut record) = existing {
+                let expected = record.clone();
+                if input.workspace_id.is_some() {
+                    record.agent_id = None;
+                }
+                apply_job_patch(
+                    &mut record,
+                    &input,
+                    job_session_id.as_str(),
+                    scoped_agent_id.as_deref(),
+                    now,
+                    true,
+                )?;
+                if let Some(session) = workspace_session {
                     let storage = storage.clone();
-                    run_cron_db("cron.action.get_job_by_dedupe", move || {
-                        storage.get_cron_job_by_dedupe_key(&cleaned_user, &key)
-                    })
-                    .await?
-                };
-                if let Some(mut record) = existing.filter(|record| {
-                    cron_job_matches_agent_scope(record, scoped_agent_id.as_deref())
-                }) {
-                    apply_job_patch(
-                        &mut record,
-                        &input,
-                        job_session_id.as_str(),
-                        scoped_agent_id.as_deref(),
-                        now,
-                        true,
-                    )?;
-                    let storage = storage.clone();
-                    let record_clone = record.clone();
-                    run_cron_db("cron.action.upsert_job", move || {
-                        storage.upsert_cron_job(&record_clone)
+                    run_cron_db("cron.action.dedupe_workspace_session", move || {
+                        storage.upsert_chat_session(&session)
                     })
                     .await?;
-                    if let Some(signal) = wake_signal.clone() {
-                        signal.notify();
-                    }
-                    return Ok(json!({
-                        "action": "update",
-                        "job": cron_job_to_value(&record),
-                        "deduped": true
-                    }));
                 }
+                let storage = storage.clone();
+                let record_clone = record.clone();
+                run_cron_db("cron.action.upsert_job", move || {
+                    if !storage.compare_and_swap_cron_job(&expected, Some(&record_clone), None)? {
+                        return Err(anyhow!("Scheduled task changed; reload and retry."));
+                    }
+                    Ok(())
+                })
+                .await?;
+                if let Some(signal) = wake_signal.clone() {
+                    signal.notify();
+                }
+                return Ok(json!({
+                    "action": "update",
+                    "job": cron_job_to_value(&record),
+                    "deduped": true
+                }));
             }
             let record = build_job_record(
                 user_id,
@@ -310,6 +325,13 @@ pub async fn handle_cron_action(
                 now,
                 input,
             )?;
+            if let Some(session) = workspace_session {
+                let storage = storage.clone();
+                run_cron_db("cron.action.create_workspace_session", move || {
+                    storage.upsert_chat_session(&session)
+                })
+                .await?;
+            }
             let storage = storage.clone();
             let record_clone = record.clone();
             run_cron_db("cron.action.upsert_job", move || {
@@ -322,7 +344,7 @@ pub async fn handle_cron_action(
             Ok(json!({ "action": "add", "job": cron_job_to_value(&record) }))
         }
         "update" => {
-            let input = payload.job.ok_or_else(|| anyhow!("job required"))?;
+            let mut input = payload.job.ok_or_else(|| anyhow!("job required"))?;
             let job_id = input
                 .job_id
                 .as_deref()
@@ -341,8 +363,20 @@ pub async fn handle_cron_action(
             let Some(mut record) = existing else {
                 return Err(anyhow!(i18n::t("error.task_not_found")));
             };
+            let expected = record.clone();
             if !cron_job_matches_agent_scope(&record, scoped_agent_id.as_deref()) {
                 return Err(anyhow!(i18n::t("error.task_not_found")));
+            }
+            let workspace_session = prepare_cron_workspace(
+                storage.clone(),
+                user_id,
+                &mut input,
+                Some(&record.session_id),
+                now,
+            )
+            .await?;
+            if input.workspace_id.is_some() {
+                record.agent_id = None;
             }
             let fallback_session_id = record.session_id.clone();
             let job_session_id = input
@@ -359,10 +393,20 @@ pub async fn handle_cron_action(
                 now,
                 false,
             )?;
+            if let Some(session) = workspace_session {
+                let storage = storage.clone();
+                run_cron_db("cron.action.update_workspace_session", move || {
+                    storage.upsert_chat_session(&session)
+                })
+                .await?;
+            }
             let storage = storage.clone();
             let record_clone = record.clone();
             run_cron_db("cron.action.upsert_job", move || {
-                storage.upsert_cron_job(&record_clone)
+                if !storage.compare_and_swap_cron_job(&expected, Some(&record_clone), None)? {
+                    return Err(anyhow!("Scheduled task changed; reload and retry."));
+                }
+                Ok(())
             })
             .await?;
             if let Some(signal) = wake_signal.clone() {
@@ -390,6 +434,7 @@ pub async fn handle_cron_action(
             let Some(mut record) = existing else {
                 return Err(anyhow!(i18n::t("error.task_not_found")));
             };
+            let expected = record.clone();
             if !cron_job_matches_agent_scope(&record, scoped_agent_id.as_deref()) {
                 return Err(anyhow!(i18n::t("error.task_not_found")));
             }
@@ -408,13 +453,15 @@ pub async fn handle_cron_action(
                 );
             } else {
                 record.next_run_at = None;
-                clear_cron_job_lease(&mut record);
             }
             record.updated_at = now;
             let storage = storage.clone();
             let record_clone = record.clone();
             run_cron_db("cron.action.upsert_job", move || {
-                storage.upsert_cron_job(&record_clone)
+                if !storage.compare_and_swap_cron_job(&expected, Some(&record_clone), None)? {
+                    return Err(anyhow!("Scheduled task changed; reload and retry."));
+                }
+                Ok(())
             })
             .await?;
             if let Some(signal) = wake_signal.clone() {
@@ -479,6 +526,7 @@ pub async fn handle_cron_action(
             let Some(mut record) = existing else {
                 return Err(anyhow!(i18n::t("error.task_not_found")));
             };
+            let expected = record.clone();
             if !cron_job_matches_agent_scope(&record, scoped_agent_id.as_deref()) {
                 return Err(anyhow!(i18n::t("error.task_not_found")));
             }
@@ -506,10 +554,17 @@ pub async fn handle_cron_action(
             let record_for_upsert = record.clone();
             let record_for_response = record.clone();
             let storage_for_upsert = storage.clone();
-            run_cron_db("cron.action.run.upsert_job", move || {
-                storage_for_upsert.upsert_cron_job(&record_for_upsert)
+            let claimed = run_cron_db("cron.action.run.claim_job", move || {
+                storage_for_upsert.compare_and_swap_cron_job(
+                    &expected,
+                    Some(&record_for_upsert),
+                    None,
+                )
             })
             .await?;
+            if !claimed {
+                return Err(anyhow!("Scheduled task changed; reload and retry."));
+            }
             if let Some(signal) = wake_signal.clone() {
                 signal.notify();
             }
@@ -540,6 +595,33 @@ pub async fn handle_cron_action(
         }
         _ => Err(anyhow!("unsupported action: {}", payload.action)),
     }
+}
+
+pub async fn list_cron_jobs_page(
+    storage: Arc<dyn StorageBackend>,
+    user_id: &str,
+    agent_id: Option<&str>,
+    limit: i64,
+    offset: i64,
+    scheduler_enabled: bool,
+) -> Result<Value> {
+    let user_id = user_id.trim().to_string();
+    let agent_id = normalize_agent_id(agent_id);
+    let limit = limit.clamp(1, 200);
+    let offset = offset.max(0);
+    run_cron_db("cron.list.page", move || {
+        let mut jobs = storage.list_cron_jobs_page(&user_id, true, agent_id.as_deref(), limit + 1, offset)?;
+        let has_more = jobs.len() > limit as usize;
+        jobs.truncate(limit as usize);
+        let sessions = jobs.iter().map(|job| job.session_id.clone()).collect::<Vec<_>>();
+        let bindings = storage.cron_workspace_bindings(&user_id, &sessions)?;
+        let items = jobs.iter().map(|job| {
+            let mut item = cron_job_to_value(job);
+            item["workspace_id"] = json!(bindings.get(&job.session_id).cloned().flatten().unwrap_or_else(|| "__cloud__".to_string()));
+            item
+        }).collect::<Vec<_>>();
+        Ok(json!({"action": "list", "jobs": items, "has_more": has_more, "limit": limit, "offset": offset, "scheduler": {"enabled": scheduler_enabled}}))
+    }).await
 }
 
 pub async fn list_cron_runs(
@@ -621,13 +703,7 @@ fn build_job_record(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(|value| value.to_string());
-    let job_id = input
-        .job_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|value| value.to_string())
-        .unwrap_or_else(|| Uuid::new_v4().simple().to_string());
+    let job_id = Uuid::new_v4().simple().to_string();
     let next_run_at = if enabled {
         compute_next_run_at(
             &schedule_kind,
@@ -777,7 +853,6 @@ fn apply_job_patch(
         );
     } else {
         record.next_run_at = None;
-        clear_cron_job_lease(record);
     }
     Ok(())
 }
@@ -833,6 +908,12 @@ fn normalize_schedule_input(schedule: &CronScheduleInput) -> Result<NormalizedSc
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
                 .map(|value| value.to_string());
+            if tz
+                .as_deref()
+                .is_some_and(|value| Tz::from_str(value).is_err())
+            {
+                return Err(anyhow!("invalid schedule.tz"));
+            }
             Ok((kind, None, None, Some(expr.to_string()), tz))
         }
         _ => Err(anyhow!("unsupported schedule kind")),
@@ -958,7 +1039,7 @@ fn compute_next_cron(expr: Option<&str>, tz: Option<&str>, now: f64) -> Option<f
     let expr = expr.and_then(|value| normalize_cron_expr(value).ok())?;
     let schedule = Schedule::from_str(&expr).ok()?;
     let now_ms = (now * 1000.0) as i64;
-    let base = DateTime::<Utc>::from_timestamp_millis(now_ms)? + chrono::Duration::seconds(1);
+    let base = DateTime::<Utc>::from_timestamp_millis(now_ms)?;
     if let Some(tz) = tz {
         if let Ok(tz) = Tz::from_str(tz) {
             let base_tz = base.with_timezone(&tz);
@@ -1085,7 +1166,7 @@ fn cron_job_matches_lease(
             record.runner_id.as_deref() == Some(runner_id)
                 && record.run_token.as_deref() == Some(run_token)
         }
-        (None, None) => true,
+        (None, None) => record.runner_id.is_none() && record.run_token.is_none(),
         _ => false,
     }
 }
@@ -1167,6 +1248,72 @@ fn normalize_agent_id(agent_id: Option<&str>) -> Option<String> {
         .map(|value| value.to_string())
 }
 
+async fn prepare_cron_workspace(
+    storage: Arc<dyn StorageBackend>,
+    user_id: &str,
+    input: &mut CronJobInput,
+    fallback_session_id: Option<&str>,
+    now: f64,
+) -> Result<Option<ChatSessionRecord>> {
+    let Some(workspace_id) = input.workspace_id.as_deref().map(str::trim) else {
+        return Ok(None);
+    };
+    let workspace_id = workspace_id.to_string();
+    let cleaned_user = user_id.to_string();
+    let fallback_session_id = fallback_session_id.map(str::to_string);
+    let (workspace_id, previous) = run_cron_db("cron.action.resolve_workspace", move || {
+        let workspace_id = if workspace_id == "__cloud__" {
+            if !storage.list_workspaces(&cleaned_user)?.is_empty() {
+                return Err(anyhow!("请选择工作区"));
+            }
+            None
+        } else {
+            storage
+                .get_workspace(&cleaned_user, &workspace_id)?
+                .ok_or_else(|| anyhow!("工作区不存在"))?;
+            Some(workspace_id)
+        };
+        let previous = fallback_session_id
+            .map(|session_id| storage.get_chat_session(&cleaned_user, &session_id))
+            .transpose()?
+            .flatten();
+        Ok((workspace_id, previous))
+    })
+    .await?;
+    if let Some(session) = previous {
+        if session.workspace_id == workspace_id
+            && normalize_agent_id(session.agent_id.as_deref()).is_none()
+            && !session.status.eq_ignore_ascii_case("archived")
+        {
+            input.session_id = Some(session.session_id);
+            input.agent_id = None;
+            return Ok(None);
+        }
+    }
+    let session_id = format!("cron_{}", Uuid::new_v4().simple());
+    input.session_id = Some(session_id.clone());
+    input.agent_id = None;
+    Ok(Some(ChatSessionRecord {
+        session_id,
+        user_id: user_id.to_string(),
+        title: input
+            .name
+            .clone()
+            .unwrap_or_else(|| DEFAULT_SESSION_TITLE.to_string()),
+        status: "active".to_string(),
+        created_at: now,
+        updated_at: now,
+        last_message_at: now,
+        agent_id: None,
+        workspace_id,
+        tool_overrides: Vec::new(),
+        parent_session_id: None,
+        parent_message_id: None,
+        spawn_label: None,
+        spawned_by: None,
+    }))
+}
+
 fn resolve_cron_session_routing(
     storage: &dyn StorageBackend,
     job: &CronJobRecord,
@@ -1216,19 +1363,6 @@ fn cron_job_matches_agent_scope(record: &CronJobRecord, scoped_agent_id: Option<
     match scoped_agent_id {
         Some(agent_id) => record.agent_id.as_deref() == Some(agent_id),
         None => true,
-    }
-}
-
-fn filter_jobs_by_agent_scope(
-    jobs: Vec<CronJobRecord>,
-    scoped_agent_id: Option<&str>,
-) -> Vec<CronJobRecord> {
-    match scoped_agent_id {
-        Some(agent_id) => jobs
-            .into_iter()
-            .filter(|job| job.agent_id.as_deref() == Some(agent_id))
-            .collect(),
-        None => jobs,
     }
 }
 
@@ -1965,7 +2099,9 @@ impl CronRuntime {
                 updated_at: now,
                 last_message_at: now,
                 agent_id: agent_id.map(|value| value.to_string()),
-                workspace_id: None,
+                workspace_id: parent
+                    .as_ref()
+                    .and_then(|session| session.workspace_id.clone()),
                 tool_overrides: parent
                     .as_ref()
                     .map(|p| p.tool_overrides.clone())
@@ -1980,6 +2116,11 @@ impl CronRuntime {
         }
         if record.parent_session_id.is_none() && parent_session_id.is_some() {
             record.parent_session_id = parent_session_id.map(|value| value.to_string());
+        }
+        if let Some(workspace_id) = record.workspace_id.as_deref() {
+            self.storage
+                .get_workspace(&user.user_id, workspace_id)?
+                .ok_or_else(|| anyhow!("工作区不存在"))?;
         }
         let agent_record = resolve_agent_record(
             &self.user_store,
@@ -2029,7 +2170,7 @@ impl CronRuntime {
             session_id: Some(cleaned_session.to_string()),
             agent_id: record.agent_id.clone(),
             workspace_container_id: Some(agent_record.sandbox_container_id),
-            workspace_id: None,
+            workspace_id: record.workspace_id.clone(),
             model_name: resolve_chat_model_name(&self.config, Some(&agent_record)),
             language: None,
             config_overrides: Some(json!({"security": {"approval_mode": approval_mode}})),
@@ -2150,99 +2291,107 @@ fn persist_cron_run_and_update_job_with_limits(
     now: f64,
     max_consecutive_failures: usize,
 ) -> Result<()> {
-    let Some(mut record) = storage.get_cron_job(&job.user_id, &job.job_id)? else {
-        return Ok(());
-    };
-    if !cron_job_matches_lease(&record, job.runner_id.as_deref(), job.run_token.as_deref()) {
-        return Ok(());
-    }
-    let run_record = CronRunRecord {
-        run_id: Uuid::new_v4().simple().to_string(),
-        job_id: job.job_id.clone(),
-        user_id: job.user_id.clone(),
-        session_id: Some(job.session_id.clone()),
-        agent_id: job.agent_id.clone(),
-        trigger,
-        status: status.clone(),
-        summary,
-        error: error_msg.clone(),
-        duration_ms,
-        created_at: now,
-    };
-    storage.insert_cron_run(&run_record)?;
-    if job.delete_after_run && status == "ok" {
-        let _ = storage.delete_cron_job(&job.user_id, &job.job_id);
-        return Ok(());
-    }
-    let is_ok = status == "ok";
-    let is_error = status == "error";
-    clear_cron_job_lease(&mut record);
-    record.last_run_at = Some(start_ts);
-    record.last_status = Some(status);
-    record.last_error = error_msg;
-    record.updated_at = now;
-    if is_ok {
-        record.consecutive_failures = 0;
-        record.auto_disabled_reason = None;
-    } else if is_error {
-        record.consecutive_failures = record.consecutive_failures.saturating_add(1);
-    }
-    let mut next_run_at = None;
-    if record.enabled {
-        next_run_at = compute_next_run_at(
-            &record.schedule_kind,
-            record.schedule_at.as_deref(),
-            record.schedule_every_ms,
-            record.schedule_cron.as_deref(),
-            record.schedule_tz.as_deref(),
-            record.created_at,
-            now,
-        );
-    }
-    if record.schedule_kind.eq_ignore_ascii_case("at") {
-        next_run_at = None;
-    }
-    record.next_run_at = next_run_at;
-    if record.schedule_kind.eq_ignore_ascii_case("at") {
-        record.enabled = false;
-        if !is_ok {
-            let reason = record
-                .last_error
-                .as_deref()
-                .unwrap_or("one-shot task failed");
-            record.auto_disabled_reason = Some(truncate_text(
-                &format!("one-shot disabled: {reason}"),
+    for _attempt in 0..8 {
+        let Some(mut record) = storage.get_cron_job(&job.user_id, &job.job_id)? else {
+            return Ok(());
+        };
+        if !cron_job_matches_lease(&record, job.runner_id.as_deref(), job.run_token.as_deref()) {
+            return Ok(());
+        }
+        let expected = record.clone();
+        let run_record = CronRunRecord {
+            run_id: Uuid::new_v4().simple().to_string(),
+            job_id: job.job_id.clone(),
+            user_id: job.user_id.clone(),
+            session_id: Some(job.session_id.clone()),
+            agent_id: job.agent_id.clone(),
+            trigger: trigger.clone(),
+            status: status.clone(),
+            summary: summary.clone(),
+            error: error_msg.clone(),
+            duration_ms,
+            created_at: now,
+        };
+        if record.delete_after_run && status == "ok" {
+            if storage.compare_and_swap_cron_job(&expected, None, Some(&run_record))? {
+                return Ok(());
+            }
+            continue;
+        }
+        let is_ok = status == "ok";
+        let is_error = status == "error";
+        clear_cron_job_lease(&mut record);
+        record.last_run_at = Some(start_ts);
+        record.last_status = Some(status.clone());
+        record.last_error = error_msg.clone();
+        record.updated_at = now;
+        if is_ok {
+            record.consecutive_failures = 0;
+            record.auto_disabled_reason = None;
+        } else if is_error {
+            record.consecutive_failures = record.consecutive_failures.saturating_add(1);
+        }
+        let mut next_run_at = None;
+        if record.enabled {
+            next_run_at = compute_next_run_at(
+                &record.schedule_kind,
+                record.schedule_at.as_deref(),
+                record.schedule_every_ms,
+                record.schedule_cron.as_deref(),
+                record.schedule_tz.as_deref(),
+                record.created_at,
+                now,
+            );
+        }
+        if record.schedule_kind.eq_ignore_ascii_case("at") {
+            next_run_at = None;
+        }
+        record.next_run_at = next_run_at;
+        if record.schedule_kind.eq_ignore_ascii_case("at") {
+            record.enabled = false;
+            if !is_ok {
+                let reason = record
+                    .last_error
+                    .as_deref()
+                    .unwrap_or("one-shot task failed");
+                record.auto_disabled_reason = Some(truncate_text(
+                    &format!("one-shot disabled: {reason}"),
+                    AUTO_DISABLED_REASON_MAX_CHARS,
+                ));
+            }
+        }
+        let max_consecutive_failures = max_consecutive_failures.max(1) as i64;
+        if is_error && record.consecutive_failures >= max_consecutive_failures {
+            record.enabled = false;
+            record.next_run_at = None;
+            let reason = record.last_error.as_deref().unwrap_or("unknown error");
+            let reason = truncate_text(
+                &format!(
+                    "auto disabled after {max_consecutive_failures} consecutive failures: {reason}"
+                ),
                 AUTO_DISABLED_REASON_MAX_CHARS,
-            ));
+            );
+            record.auto_disabled_reason = Some(reason);
+        } else if is_error && record.enabled {
+            let backoff_ms = compute_error_backoff_ms(record.consecutive_failures);
+            let backoff_next = now + backoff_ms as f64 / 1000.0;
+            record.next_run_at = Some(
+                record
+                    .next_run_at
+                    .map(|next_run_at| next_run_at.max(backoff_next))
+                    .unwrap_or(backoff_next),
+            );
+        }
+        if storage.compare_and_swap_cron_job(&expected, Some(&record), Some(&run_record))? {
+            return Ok(());
         }
     }
-    let max_consecutive_failures = max_consecutive_failures.max(1) as i64;
-    if is_error && record.consecutive_failures >= max_consecutive_failures {
-        record.enabled = false;
-        record.next_run_at = None;
-        let reason = record.last_error.as_deref().unwrap_or("unknown error");
-        let reason = truncate_text(
-            &format!(
-                "auto disabled after {max_consecutive_failures} consecutive failures: {reason}"
-            ),
-            AUTO_DISABLED_REASON_MAX_CHARS,
-        );
-        record.auto_disabled_reason = Some(reason);
-    } else if is_error && record.enabled {
-        let backoff_ms = compute_error_backoff_ms(record.consecutive_failures);
-        let backoff_next = now + backoff_ms as f64 / 1000.0;
-        record.next_run_at = Some(
-            record
-                .next_run_at
-                .map(|next_run_at| next_run_at.max(backoff_next))
-                .unwrap_or(backoff_next),
-        );
-    }
-    storage.upsert_cron_job(&record)?;
-    Ok(())
+    Err(anyhow!(
+        "Scheduled task completion conflicted with concurrent changes"
+    ))
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, Default)]
 pub struct CronJobInput {
     #[serde(default)]
     pub job_id: Option<String>,
@@ -2268,6 +2417,8 @@ pub struct CronJobInput {
     pub session_id: Option<String>,
     #[serde(default)]
     pub agent_id: Option<String>,
+    #[serde(default)]
+    pub workspace_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -2439,6 +2590,99 @@ mod tests {
     use crate::storage::*;
     use serde_json::json;
 
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn disabling_job_preserves_active_lease_and_records_completion() {
+        let (_runtime, state, _directory) = runtime_fixture().await;
+        let now = now_ts_test();
+        let mut job = build_job("bound", "main", now);
+        super::assign_cron_job_lease(
+            &mut job,
+            "fixture_runner".into(),
+            "fixture_token".into(),
+            now,
+            now + 60.0,
+        );
+        state.storage.upsert_cron_job(&job).unwrap();
+        super::handle_cron_action(
+            state.config_store.get().await,
+            state.storage.clone(),
+            None,
+            None,
+            state.user_store.clone(),
+            state.user_tool_manager.clone(),
+            state.skills.clone(),
+            "cron_user",
+            None,
+            None,
+            super::CronActionRequest {
+                action: "disable".into(),
+                job: Some(super::CronJobInput {
+                    job_id: Some(job.job_id.clone()),
+                    ..Default::default()
+                }),
+            },
+        )
+        .await
+        .unwrap();
+        let disabled = state
+            .storage
+            .get_cron_job("cron_user", &job.job_id)
+            .unwrap()
+            .unwrap();
+        assert!(!disabled.enabled);
+        assert_eq!(disabled.run_token, job.run_token);
+        assert_eq!(state.storage.count_running_cron_jobs(now).unwrap(), 1);
+        super::persist_cron_run_and_update_job(
+            state.storage.as_ref(),
+            job.clone(),
+            "timer".into(),
+            "ok".into(),
+            None,
+            None,
+            now,
+            1,
+            now + 1.0,
+        )
+        .unwrap();
+        let completed = state
+            .storage
+            .get_cron_job("cron_user", &job.job_id)
+            .unwrap()
+            .unwrap();
+        assert!(!completed.enabled);
+        assert!(completed.running_at.is_none());
+        assert!(completed.next_run_at.is_none());
+        assert_eq!(
+            state
+                .storage
+                .list_cron_runs("cron_user", &job.job_id, 10)
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn cron_next_run_does_not_skip_the_immediate_next_second() {
+        let now = 1_700_000_000.25;
+        assert_eq!(
+            super::compute_next_cron(Some("* * * * * *"), None, now),
+            Some(1_700_000_001.0)
+        );
+    }
+
+    #[test]
+    fn cron_rejects_unknown_timezone() {
+        let input = super::CronScheduleInput {
+            kind: "cron".into(),
+            cron: Some("0 * * * *".into()),
+            tz: Some("Invalid/Fixture".into()),
+            at: None,
+            every_ms: None,
+        };
+        assert!(super::normalize_schedule_input(&input).is_err());
+    }
+
     #[test]
     fn cron_partial_config_keeps_scheduler_enabled() {
         let config: crate::config::CronConfig =
@@ -2539,6 +2783,201 @@ mod tests {
         agent.agent_id = "agent_a".into();
         state.user_store.upsert_user_agent(&agent).unwrap();
         (runtime, state, dir)
+    }
+
+    #[tokio::test]
+    async fn cron_workspace_routes_main_and_isolated_requests_and_rejects_foreign_roots() {
+        let (runtime, state, directory) = runtime_fixture().await;
+        let now = now_ts_test();
+        let root = directory.path().join("project");
+        std::fs::create_dir_all(&root).unwrap();
+        state
+            .storage
+            .upsert_workspace(&crate::storage::WorkspaceRecord {
+                workspace_id: "fixture-project".into(),
+                user_id: "cron_user".into(),
+                name: "Fixture".into(),
+                root_path: root.to_string_lossy().into_owned(),
+                icon: "folder".into(),
+                color: "blue".into(),
+                sort_index: 0,
+                created_at: now,
+                updated_at: now,
+            })
+            .unwrap();
+        let mut input: super::CronJobInput =
+            serde_json::from_value(json!({"workspace_id": "fixture-project"})).unwrap();
+        let session = super::prepare_cron_workspace(
+            state.storage.clone(),
+            "cron_user",
+            &mut input,
+            None,
+            now,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(session.workspace_id.as_deref(), Some("fixture-project"));
+        assert!(session.agent_id.is_none());
+        assert_ne!(session.session_id, "bound");
+        state.storage.upsert_chat_session(&session).unwrap();
+        let main = runtime
+            .build_request("cron_user", &session.session_id, None, "fixture", None)
+            .await
+            .unwrap();
+        assert_eq!(main.workspace_id.as_deref(), Some("fixture-project"));
+        let isolated = runtime
+            .build_request(
+                "cron_user",
+                "fixture-isolated",
+                None,
+                "fixture",
+                Some(&session.session_id),
+            )
+            .await
+            .unwrap();
+        assert_eq!(isolated.workspace_id.as_deref(), Some("fixture-project"));
+        assert!(super::prepare_cron_workspace(
+            state.storage.clone(),
+            "cron_user",
+            &mut input,
+            Some(&session.session_id),
+            now
+        )
+        .await
+        .unwrap()
+        .is_none());
+        assert!(super::prepare_cron_workspace(
+            state.storage.clone(),
+            "other-fixture-user",
+            &mut input,
+            None,
+            now
+        )
+        .await
+        .is_err());
+        let mut cloud: super::CronJobInput =
+            serde_json::from_value(json!({"workspace_id": "__cloud__"})).unwrap();
+        assert!(super::prepare_cron_workspace(
+            state.storage.clone(),
+            "cron_user",
+            &mut cloud,
+            None,
+            now
+        )
+        .await
+        .is_err());
+        let cloud_session = super::prepare_cron_workspace(
+            state.storage.clone(),
+            "cloud-fixture-user",
+            &mut cloud,
+            None,
+            now,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert!(cloud_session.workspace_id.is_none());
+        let mut missing: super::CronJobInput =
+            serde_json::from_value(json!({"workspace_id": "missing-workspace"})).unwrap();
+        assert!(super::prepare_cron_workspace(
+            state.storage.clone(),
+            "cron_user",
+            &mut missing,
+            None,
+            now
+        )
+        .await
+        .is_err());
+    }
+
+    #[tokio::test]
+    async fn cron_workspace_retry_keeps_binding_and_switch_creates_a_new_thread() {
+        let (runtime, state, directory) = runtime_fixture().await;
+        let now = now_ts_test();
+        for workspace_id in ["fixture-one", "fixture-two"] {
+            let root = directory.path().join(workspace_id);
+            std::fs::create_dir_all(&root).unwrap();
+            state
+                .storage
+                .upsert_workspace(&crate::storage::WorkspaceRecord {
+                    workspace_id: workspace_id.into(),
+                    user_id: "cron_user".into(),
+                    name: workspace_id.into(),
+                    root_path: root.to_string_lossy().into_owned(),
+                    icon: "folder".into(),
+                    color: "blue".into(),
+                    sort_index: 0,
+                    created_at: now,
+                    updated_at: now,
+                })
+                .unwrap();
+        }
+        let action = |action: &str, job: serde_json::Value| {
+            super::handle_cron_action(
+                runtime.config.clone(),
+                runtime.storage.clone(),
+                Some(runtime.orchestrator.clone()),
+                Some(runtime.wake_signal.clone()),
+                runtime.user_store.clone(),
+                runtime.user_tool_manager.clone(),
+                runtime.skills.clone(),
+                "cron_user",
+                Some("bound"),
+                Some("agent_a"),
+                super::CronActionRequest {
+                    action: action.into(),
+                    job: Some(serde_json::from_value(job).unwrap()),
+                },
+            )
+        };
+        let input = json!({
+            "name": "fixture schedule", "workspace_id": "fixture-one",
+            "dedupe_key": "fixture-retry", "session": "main",
+            "schedule": {"kind": "every", "every_ms": 60000},
+            "payload": {"message": "fixture message"}
+        });
+        let added = action("add", input.clone()).await.unwrap();
+        let job_id = added["job"]["job_id"].as_str().unwrap();
+        let first = state
+            .storage
+            .get_cron_job("cron_user", job_id)
+            .unwrap()
+            .unwrap();
+        assert!(first.agent_id.is_none());
+        assert_ne!(first.session_id, "bound");
+        let retried = action("add", input).await.unwrap();
+        assert_eq!(retried["job"]["job_id"], job_id);
+        let retry = state
+            .storage
+            .get_cron_job("cron_user", job_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(retry.session_id, first.session_id);
+        action(
+            "update",
+            json!({"job_id": job_id, "workspace_id": "fixture-two"}),
+        )
+        .await
+        .unwrap();
+        let switched = state
+            .storage
+            .get_cron_job("cron_user", job_id)
+            .unwrap()
+            .unwrap();
+        assert_ne!(switched.session_id, first.session_id);
+        let original = state
+            .storage
+            .get_chat_session("cron_user", &first.session_id)
+            .unwrap()
+            .unwrap();
+        let current = state
+            .storage
+            .get_chat_session("cron_user", &switched.session_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(original.workspace_id.as_deref(), Some("fixture-one"));
+        assert_eq!(current.workspace_id.as_deref(), Some("fixture-two"));
     }
 
     #[tokio::test]
@@ -2843,6 +3282,7 @@ mod tests {
                     dedupe_key: None,
                     session_id: None,
                     agent_id: None,
+                    workspace_id: None,
                 }),
             },
         )

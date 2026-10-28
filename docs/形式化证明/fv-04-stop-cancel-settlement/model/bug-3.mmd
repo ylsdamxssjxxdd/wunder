@@ -1,0 +1,44 @@
+---
+config:
+  markdownAutoWrap: false
+  state:
+    useMaxWidth: false
+---
+stateDiagram-v2
+  %% second model (fix): the fix
+  classDef works fill:#f4f6f7,stroke:#566573,color:#1b2631
+  classDef wrong fill:#fdedec,stroke:#c0392b,color:#7b241c
+  classDef fixed fill:#e9f7ef,stroke:#1e8449,color:#145a32
+  classDef mixed fill:#fdebd0,stroke:#d35400,color:#7e5109
+  classDef after fill:#ffffff,stroke:#808b96,color:#566573
+  classDef worse fill:#f4ecf7,stroke:#7d3c98,color:#4a235a
+  classDef worksPath fill:#f4f6f7,stroke:#1f3a93,stroke-width:4px,color:#1b2631
+  classDef wrongPath fill:#fdedec,stroke:#1f3a93,stroke-width:4px,color:#7b241c
+  classDef fixedPath fill:#e9f7ef,stroke:#1f3a93,stroke-width:4px,color:#145a32
+  classDef mixedPath fill:#fdebd0,stroke:#1f3a93,stroke-width:4px,color:#7e5109
+  classDef afterPath fill:#ffffff,stroke:#1f3a93,stroke-width:4px,color:#566573
+  classDef worsePath fill:#f4ecf7,stroke:#1f3a93,stroke-width:4px,color:#4a235a
+  state "Legend" as legend {
+    state "规则成立" as legendWorks
+    state "状态失配" as legendWrong
+  }
+  class legendWorks works
+  class legendWrong wrong
+  state "轮次终态：已停止<br/>监视器：停止中，取消已可见<br/>终态帧：未发<br/>外部命令：已结束<br/>停止管线：命令已结束" as s0
+  state "轮次终态：已停止<br/>监视器：停止中，取消已可见<br/>终态帧：未发<br/>外部命令：运行中<br/>停止管线：轮次已取消" as s1
+  state "轮次终态：已停止<br/>监视器：已停止，取消已可见<br/>终态帧：停止，目标结局：中止<br/>外部命令：已结束<br/>停止管线：命令已结束" as s2
+  state "轮次终态：执行中<br/>监视器：停止中，取消已可见<br/>终态帧：未发<br/>外部命令：运行中<br/>停止管线：已受理（取消可见）" as s3
+  state "轮次终态：执行中<br/>监视器：执行中<br/>终态帧：未发<br/>外部命令：运行中<br/>停止管线：已请求" as s4
+  state "轮次终态：执行中<br/>监视器：执行中<br/>终态帧：未发<br/>外部命令：运行中<br/>停止管线：未发起" as s5
+  [*] --> s5
+  s5 --> s4 : 1. 用户按下停止
+  s4 --> s3 : 2. 停止受理：执行围栏置位，监视器进入停止中
+  s3 --> s1 : 3. 持久控制面把活跃轮次写为已停止
+  s1 --> s0 : 4. 外部命令进程被熔断并杀掉
+  s0 --> s2 : 5. 执行体在检查点看到取消，按已停止结清
+  class s0 worksPath
+  class s1 worksPath
+  class s2 wrongPath
+  class s3 worksPath
+  class s4 worksPath
+  class s5 worksPath

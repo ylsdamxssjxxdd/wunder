@@ -274,7 +274,7 @@ const resolveModelTags = (item: ComposerModelOption): Array<{
 }
 
 .composer-model-row.is-active {
-  color: var(--mz-primary, #c96443);
+  color: var(--mz-primary, var(--ui-accent-ink));
 }
 
 .composer-model-row:disabled {
@@ -283,7 +283,7 @@ const resolveModelTags = (item: ComposerModelOption): Array<{
 }
 
 .composer-model-row:focus-visible {
-  outline: 2px solid var(--mz-primary-soft, #dfac9a);
+  outline: 2px solid var(--mz-primary);
   outline-offset: -2px;
 }
 
@@ -293,7 +293,7 @@ const resolveModelTags = (item: ComposerModelOption): Array<{
   justify-content: center;
   flex-shrink: 0;
   width: 12px;
-  color: var(--mz-primary, #c96443);
+  color: var(--mz-primary, var(--ui-accent-ink));
   font-size: 10px;
 }
 
@@ -342,8 +342,8 @@ const resolveModelTags = (item: ComposerModelOption): Array<{
 }
 
 .composer-model-tag--default {
-  background: var(--mz-primary-tint, #f6e9e3);
-  color: var(--mz-primary, #c96443);
+  background: var(--mz-primary-tint, var(--ui-accent-soft));
+  color: var(--mz-primary, var(--ui-accent-ink));
 }
 
 .composer-model-state {
@@ -362,7 +362,7 @@ const resolveModelTags = (item: ComposerModelOption): Array<{
   width: 100%;
   border: 0;
   background: transparent;
-  color: var(--mz-primary, #c96443);
+  color: var(--mz-primary, var(--ui-accent-ink));
   font: inherit;
   font-size: 12px;
   cursor: pointer;
@@ -372,7 +372,7 @@ const resolveModelTags = (item: ComposerModelOption): Array<{
   width: 12px;
   height: 12px;
   border: 2px solid rgba(31, 35, 41, 0.14);
-  border-top-color: var(--mz-primary, #c96443);
+  border-top-color: var(--mz-primary, var(--ui-accent-ink));
   border-radius: 50%;
   animation: composer-model-state-spin 640ms linear infinite;
 }
@@ -460,18 +460,18 @@ const resolveModelTags = (item: ComposerModelOption): Array<{
 }
 
 .composer-model-effort-item:hover {
-  border-color: var(--mz-primary-soft, #dfac9a);
+  border-color: var(--mz-primary-soft, var(--ui-accent-secondary));
 }
 
 .composer-model-effort-item.is-active {
   border-color: transparent;
-  background: var(--mz-primary-tint, #f6e9e3);
-  color: var(--mz-primary, #c96443);
+  background: var(--mz-primary-tint, var(--ui-accent-soft));
+  color: var(--mz-primary, var(--ui-accent-ink));
   font-weight: 600;
 }
 
 .composer-model-effort-item:focus-visible {
-  outline: 2px solid var(--mz-primary-soft, #dfac9a);
+  outline: 2px solid var(--mz-primary);
   outline-offset: 1px;
 }
 </style>

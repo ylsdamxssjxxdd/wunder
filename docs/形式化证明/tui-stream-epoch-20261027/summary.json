@@ -1,0 +1,48 @@
+{
+  "view": "customer",
+  "second": {
+    "role": "fix",
+    "label": "the fix",
+    "lacks": []
+  },
+  "modelStates": 72,
+  "modelTransitions": 116,
+  "chartStates": 3,
+  "chartTransitions": 4,
+  "chartStatus": {
+    "works": 2,
+    "wrong": 0,
+    "fixed": 1,
+    "mixed": 0,
+    "after": 0,
+    "worse": 0
+  },
+  "mixedStatus": [],
+  "cover": {
+    "drawn": true,
+    "states": 3,
+    "transitions": 4,
+    "leftOutStates": [],
+    "leftOutTransitions": []
+  },
+  "classes": [
+    {
+      "n": 1,
+      "end": "第 2 轮有事件未显示",
+      "invariant": "EveryArrivedEventRenders",
+      "rule": "Every transport event that arrives in its stream is rendered once.",
+      "cause": "传输事件编号在每轮重新开始，旧实现却把去重窗口保留到线程结束",
+      "readerSteps": 3,
+      "modelSteps": 4,
+      "counterexamples": 27,
+      "lastSteps": [
+        "收到并投影一条流事件"
+      ],
+      "startsHere": false,
+      "fix": "第 2 轮已显示全部到达事件"
+    }
+  ],
+  "codeLike": [],
+  "uncited": {},
+  "brokenProperties": []
+}

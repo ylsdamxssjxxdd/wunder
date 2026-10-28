@@ -80,9 +80,9 @@ component StatusDot inherits Rectangle {
     private property <bool> approval: status == "waiting_approval"
         || status.starts-with("等待确认") || status.starts-with("等待审批");
     private property <string> state: RuntimeStatus.state-of(root.phase, root.status);
-    private property <color> tint: root.inquiry ? Theme.accent : root.approval || root.state == "pending" ? Theme.warning
+    private property <color> tint: root.inquiry ? Theme.accent-ink : root.approval || root.state == "pending" ? Theme.warning
         : root.state == "error" ? Theme.danger : root.state == "done" ? Theme.success
-        : root.state == "running" ? Theme.accent : Theme.muted;
+        : root.state == "running" ? Theme.accent-ink : Theme.muted;
     if root.state != "running" : Image {
         width: 10px; height: 10px; image-fit: contain; colorize: root.tint;
         source: root.inquiry ? @image-url("../assets/icons/fa-circle-question.svg")
@@ -164,7 +164,7 @@ component ThreadRow inherits ContextMenuArea {
             origin-chip-text := Text {
                 x: 6px; width: parent.width - 12px; height: parent.height;
                 text: data.origin == "cloud" ? I18n.sb_origin_cloud : I18n.sb_origin_device;
-                color: Theme.accent;
+                color: Theme.accent-ink;
                 font-size: Theme.font-2xs; font-weight: 600;
                 horizontal-alignment: center; vertical-alignment: center; overflow: elide;
             }
@@ -399,7 +399,7 @@ export component Sidebar inherits Rectangle {
                         Image {
                             width: 100%; height: 100%;
                             source: WorkspaceVisual.icon(root.cloud-active ? "cloud" : "monitor");
-                            colorize: root.cloud-active ? Theme.accent : Theme.muted;
+                            colorize: root.cloud-active ? Theme.accent-ink : Theme.muted;
                         }
                     }
                     Text {
@@ -444,7 +444,7 @@ export component Sidebar inherits Rectangle {
                     y: (parent.height - self.height) / 2;
                     width: 14px; height: 14px;
                     source: @image-url("../assets/icons/fa-plus.svg");
-                    colorize: ws-add-touch.has-hover ? Theme.accent : Theme.muted;
+                    colorize: ws-add-touch.has-hover ? Theme.accent-ink : Theme.muted;
                 }
                 ws-add-touch := TouchArea {
                     mouse-cursor: pointer;
@@ -538,7 +538,7 @@ export component Sidebar inherits Rectangle {
                                 Image {
                                     x: 4px; y: 4px; width: 14px; height: 14px;
                                     source: @image-url("../assets/icons/fa-plus.svg");
-                                    colorize: ws-thread-touch.has-hover ? Theme.accent : Theme.muted;
+                                    colorize: ws-thread-touch.has-hover ? Theme.accent-ink : Theme.muted;
                                 }
                                 ws-thread-touch := TouchArea {
                                     mouse-cursor: pointer;
@@ -653,7 +653,7 @@ export component Sidebar inherits Rectangle {
                                 Image {
                                     x: 2px; y: 2px; width: 18px; height: 18px;
                                     source: WorkspaceVisual.icon("cloud"); image-fit: contain;
-                                    colorize: row.expanded ? Theme.accent : Theme.muted;
+                                    colorize: row.expanded ? Theme.accent-ink : Theme.muted;
                                 }
                             }
                             Text {
@@ -669,7 +669,7 @@ export component Sidebar inherits Rectangle {
                             Image {
                                 x: 4px; y: 4px; width: 14px; height: 14px;
                                 source: @image-url("../assets/icons/fa-plus.svg");
-                                colorize: cloud-new-touch.has-hover ? Theme.accent : Theme.muted;
+                                colorize: cloud-new-touch.has-hover ? Theme.accent-ink : Theme.muted;
                             }
                             cloud-new-touch := TouchArea {
                                 mouse-cursor: pointer;
@@ -935,7 +935,7 @@ export component Sidebar inherits Rectangle {
                         Text {
                             width: 100%; height: 100%;
                             text: root.cloud-quota-expired ? I18n.st_cl_quota_expired : root.cloud-quota-text;
-                            color: root.cloud-quota-expired || root.cloud-quota-warn ? Theme.danger : Theme.accent;
+                            color: root.cloud-quota-expired || root.cloud-quota-warn ? Theme.danger : Theme.accent-ink;
                             font-size: Theme.font-xs; font-weight: 700;
                             horizontal-alignment: center; vertical-alignment: center; overflow: elide;
                         }
@@ -1006,7 +1006,7 @@ export component Sidebar inherits Rectangle {
                         y: (parent.height - 12px) / 2;
                         width: 12px; height: 12px;
                         source: @image-url("../assets/icons/check.svg");
-                        colorize: Theme.accent;
+                        colorize: Theme.accent-ink;
                     }
                 }
                 local-device-option := TouchArea {
@@ -1025,7 +1025,7 @@ export component Sidebar inherits Rectangle {
                         y: (parent.height - 16px) / 2;
                         width: 16px; height: 16px;
                         source: WorkspaceVisual.icon("cloud");
-                        colorize: Theme.accent;
+                        colorize: Theme.accent-ink;
                     }
                     Text {
                         height: parent.height;
@@ -1044,7 +1044,7 @@ export component Sidebar inherits Rectangle {
                         y: (parent.height - 12px) / 2;
                         width: 12px; height: 12px;
                         source: @image-url("../assets/icons/check.svg");
-                        colorize: Theme.accent;
+                        colorize: Theme.accent-ink;
                     }
                 }
                 cloud-device-option := TouchArea {
@@ -1068,7 +1068,7 @@ export component Sidebar inherits Rectangle {
         z: 200;
         border-radius: Theme.radius-sm;
         border-width: 1px;
-        border-color: Theme.accent;
+        border-color: Theme.accent-ink;
         background: Theme.surface;
         Text {
             x: 8px; width: parent.width - 16px; height: parent.height;

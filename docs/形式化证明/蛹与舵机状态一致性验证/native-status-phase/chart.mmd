@@ -1,0 +1,75 @@
+---
+config:
+  markdownAutoWrap: false
+  state:
+    useMaxWidth: false
+---
+stateDiagram-v2
+  %% second model (fix): the fix
+  classDef plainFixed fill:#f4f6f7,stroke:#1e8449,stroke-width:4px,color:#145a32
+  classDef group0 fill:#e8f4ea,stroke:#747a75,color:#1b2631
+  classDef group0Fixed fill:#e8f4ea,stroke:#1e8449,stroke-width:4px,color:#145a32
+  classDef group1 fill:#fde8e8,stroke:#7f7474,color:#1b2631
+  classDef group1Fixed fill:#fde8e8,stroke:#1e8449,stroke-width:4px,color:#145a32
+  state "Legend" as legend {
+    state "标题与任务一致" as legendGroup0
+    state "标题与任务不符" as legendGroup1
+    state "Fixed or new with the fix" as legendFixed
+  }
+  class legendGroup0 group0
+  class legendGroup1 group1
+  class legendFixed plainFixed
+  state "任务在排队，标题显示排队" as s0
+  state "任务在排队，标题显示空闲" as s1
+  state "任务已失败，标题显示空闲" as s2
+  state "任务已失败，标题显示错误" as s3
+  state "任务已答复，标题显示完成" as s4
+  state "任务正在跑，标题显示空闲" as s5
+  state "任务正在跑，标题显示运行中" as s6
+  state "没有任务，标题显示空闲" as s7
+  [*] --> s7
+  s7 --> s5 : 发送消息，请求被受理 or 模型响应开始 or<br/>开始压缩上下文
+  s7 --> s6 : 引擎接手这条请求 or 模型开始思考<br/>#160;<br/>with the fix, 发送消息，请求被受理
+  s7 --> s1 : 请求进入模型队列
+  s7 --> s4 : 任务完成
+  s7 --> s2 : 任务失败
+  s5 --> s6 : 引擎接手这条请求 or 模型开始思考
+  s5 --> s1 : 请求进入模型队列
+  s5 --> s4 : 任务完成
+  s5 --> s2 : 任务失败
+  s6 --> s5 : 发送消息，请求被受理 or 模型响应开始 or<br/>开始压缩上下文
+  s6 --> s1 : 请求进入模型队列
+  s6 --> s4 : 任务完成
+  s6 --> s2 : 任务失败
+  s1 --> s5 : 发送消息，请求被受理 or 模型响应开始 or<br/>开始压缩上下文
+  s1 --> s6 : 引擎接手这条请求 or 模型开始思考
+  s1 --> s4 : 任务完成
+  s1 --> s2 : 任务失败
+  s4 --> s5 : 发送消息，请求被受理 or 模型响应开始 or<br/>开始压缩上下文
+  s4 --> s6 : 引擎接手这条请求 or 模型开始思考
+  s4 --> s1 : 请求进入模型队列
+  s4 --> s2 : 任务失败
+  s2 --> s5 : 发送消息，请求被受理 or 模型响应开始 or<br/>开始压缩上下文
+  s2 --> s6 : 引擎接手这条请求 or 模型开始思考
+  s2 --> s1 : 请求进入模型队列
+  s2 --> s4 : 任务完成
+  s7 --> s0 : with the fix, 请求进入模型队列
+  s7 --> s3 : with the fix, 任务失败
+  s6 --> s0 : with the fix, 请求进入模型队列
+  s6 --> s3 : with the fix, 任务失败
+  s0 --> s6 : with the fix, 发送消息，请求被受理,<br/>引擎接手这条请求, 模型开始思考, 模型响应开始, or<br/>开始压缩上下文
+  s0 --> s4 : with the fix, 任务完成
+  s0 --> s3 : with the fix, 任务失败
+  s4 --> s0 : with the fix, 请求进入模型队列
+  s4 --> s3 : with the fix, 任务失败
+  s3 --> s6 : with the fix, 发送消息，请求被受理,<br/>引擎接手这条请求, 模型开始思考, 模型响应开始, or<br/>开始压缩上下文
+  s3 --> s0 : with the fix, 请求进入模型队列
+  s3 --> s4 : with the fix, 任务完成
+  class s0 group0Fixed
+  class s1 group1Fixed
+  class s2 group1Fixed
+  class s3 group0Fixed
+  class s4 group0
+  class s5 group1Fixed
+  class s6 group0
+  class s7 group0

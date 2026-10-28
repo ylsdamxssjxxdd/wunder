@@ -96,7 +96,7 @@ const statusIconClass = computed(() => {
   --avatar-size: 36px;
   --agent-avatar-bg: var(--ui-accent-soft);
   --agent-avatar-border: rgba(var(--ui-accent-rgb), 0.26);
-  --agent-avatar-color: var(--ui-accent-deep);
+  --agent-avatar-color: var(--ui-accent-ink);
   --agent-avatar-status-bg: #f3f4f6;
   --agent-avatar-status-color: #6b7280;
   --agent-avatar-status-ring: rgba(107, 114, 128, 0.28);
@@ -261,7 +261,7 @@ const statusIconClass = computed(() => {
 }
 
 .messenger-agent-avatar.state-running {
-  --agent-avatar-status-bg: var(--ui-accent);
+  --agent-avatar-status-bg: var(--ui-accent-ink);
   --agent-avatar-status-color: #ffffff;
   --agent-avatar-status-ring: rgba(var(--ui-accent-rgb), 0.45);
 }

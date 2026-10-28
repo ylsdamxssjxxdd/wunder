@@ -298,7 +298,7 @@ async fn completed_response_and_failure_detail_remain_separate_durable_items() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn concurrent_emits_keep_change_cursor_order_in_queue() {
     let (state, _dir) = build_test_state("change_stream_order").await;
-    let (queue_tx, mut queue_rx) = mpsc::channel::<StreamSignal>(STREAM_EVENT_QUEUE_SIZE);
+    let (queue_tx, mut queue_rx) = mpsc::channel::<StreamSignal>(512);
     let emitter = EventEmitter::new(
         "session-a".into(),
         "user-a".into(),
@@ -541,6 +541,86 @@ async fn live_text_deltas_never_append_completed_history() {
         .get_thread_item("user-a", "session-a", &format!("{turn}:text-1"), true)
         .unwrap()
         .is_none());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn work_process_stream_admits_tools_before_results_with_stable_order() {
+    let (state, _dir) = build_test_state("process_order").await;
+    let (queue_tx, mut queue_rx) = mpsc::channel::<StreamSignal>(32);
+    let emitter = EventEmitter::new(
+        "fixture-thread".into(),
+        "fixture-owner".into(),
+        Some(queue_tx),
+        None,
+        state.monitor.clone(),
+        false,
+        None,
+    );
+    emitter.bind_turn("fixture-turn", 1);
+    for (event, data) in [
+        ("llm_request", json!({"model_round":1})),
+        (
+            "llm_output",
+            json!({"model_round":1,"reasoning":"Fixture thought"}),
+        ),
+        (
+            "tool_call",
+            json!({"model_round":1,"tool_call_id":"fixture-first","tool":"read_file","args":{"path":"fixture.txt"}}),
+        ),
+        (
+            "tool_call",
+            json!({"model_round":1,"tool_call_id":"fixture-second","tool":"read_file"}),
+        ),
+        (
+            "tool_result",
+            json!({"model_round":1,"tool_call_id":"fixture-second","tool":"read_file","ok":true}),
+        ),
+        (
+            "tool_result",
+            json!({"model_round":1,"tool_call_id":"fixture-first","tool":"read_file","ok":true}),
+        ),
+    ] {
+        emitter.emit(event, data).await;
+    }
+    let mut items = Vec::new();
+    while let Ok(StreamSignal::Event(event)) = queue_rx.try_recv() {
+        if event.event == "thread_process_item" {
+            items.push(event.data["data"].clone());
+        }
+    }
+    assert_eq!(items.len(), 5);
+    assert_eq!(items[1]["status"], "running");
+    assert_eq!(items[1]["item_id"], items[4]["item_id"]);
+    assert_eq!(items[2]["item_id"], items[3]["item_id"]);
+    assert_eq!(
+        items[1]["payload"]["process_seq"],
+        items[4]["payload"]["process_seq"]
+    );
+    assert!(
+        items[1]["payload"]["process_seq"].as_i64().unwrap()
+            < items[2]["payload"]["process_seq"].as_i64().unwrap()
+    );
+    assert!(items
+        .iter()
+        .all(|item| serde_json::to_vec(item).unwrap().len() < 8192));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn work_process_observers_receive_running_tools_and_thought_tails_without_durable_completion() {
+    let (state, _dir) = build_test_state("process_observer").await;
+    let mut observer = state.kernel.orchestrator.change_hub.subscribe_live("fixture-thread");
+    let emitter = EventEmitter::new("fixture-thread".into(), "fixture-owner".into(), None, None,
+        state.monitor.clone(), false, None).with_committer(state.kernel.orchestrator.committer.clone());
+    emitter.bind_turn("fixture-turn", 1);
+    emitter.emit("llm_output_delta", json!({"model_round":1,"reasoning_delta":"Fixture thought"})).await;
+    emitter.emit("tool_call", json!({"model_round":1,"tool_call_id":"fixture-call","tool":"read_file"})).await;
+    let tail = observer.try_recv().unwrap();
+    let tool = observer.try_recv().unwrap();
+    assert_eq!(tail.event, "thread_item_tail");
+    assert_eq!(tail.data["data"]["text"], "Fixture thought");
+    assert_eq!(tool.event, "thread_process_item");
+    assert_eq!(tool.data["data"]["status"], "running");
+    assert_eq!(tool.data["data"]["item_id"], "fixture-turn:tool-fixture-call");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

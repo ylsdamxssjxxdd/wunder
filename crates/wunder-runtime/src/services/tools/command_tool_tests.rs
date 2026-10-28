@@ -8,6 +8,81 @@ use crate::{
     workspace::WorkspaceManager,
 };
 
+#[tokio::test]
+#[cfg(feature = "sqlite-storage")]
+async fn local_command_timeout_preserves_side_effect_and_requires_verification() {
+    let root = tempfile::tempdir().unwrap();
+    let storage: Arc<dyn StorageBackend> = Arc::new(SqliteStorage::new(
+        root.path()
+            .join("state.sqlite3")
+            .to_string_lossy()
+            .into_owned(),
+    ));
+    storage.ensure_initialized().unwrap();
+    let workspace = Arc::new(WorkspaceManager::new(
+        root.path().join("workspace").to_string_lossy().as_ref(),
+        storage.clone(),
+        0,
+        &HashMap::new(),
+    ));
+    let lsp_manager = LspManager::new(workspace.clone());
+    let mut config = Config::default();
+    config.server.mode = "cli".into();
+    config.security.allow_commands = vec!["*".into()];
+    let skills = SkillRegistry::default();
+    let http = reqwest::Client::new();
+    let context = ToolContext {
+        user_id: "fixture-user",
+        session_id: "fixture-thread",
+        workspace_id: "fixture-user",
+        agent_id: None,
+        user_round: None,
+        model_round: None,
+        is_admin: true,
+        storage,
+        orchestrator: None,
+        monitor: None,
+        workspace: workspace.clone(),
+        lsp_manager,
+        config: &config,
+        skills: &skills,
+        gateway: None,
+        user_world: None,
+        cron_wake_signal: None,
+        user_tool_manager: None,
+        user_tool_bindings: None,
+        user_tool_store: None,
+        request_config_overrides: None,
+        allow_roots: None,
+        read_roots: None,
+        command_sessions: None,
+        event_emitter: None,
+        http: &http,
+    };
+    let command = if cfg!(windows) {
+        "powershell -NoProfile -Command \"Add-Content -LiteralPath probe.txt -Value once; Start-Sleep -Seconds 5\""
+    } else {
+        "printf 'once\\n' >> probe.txt; sleep 5"
+    };
+    let result = execute_command(
+        &context,
+        &json!({"content":command,"timeout_s":2,"run_in_background":false}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(result["ok"], false);
+    assert_eq!(result["error_meta"]["code"], "TOOL_EXEC_TIMEOUT");
+    assert_eq!(result["error_meta"]["retryable"], false);
+    assert_eq!(result["data"]["execution_outcome"], "unknown");
+    let content =
+        std::fs::read_to_string(workspace.workspace_root("fixture-user").join("probe.txt"))
+            .unwrap();
+    assert_eq!(content.lines().collect::<Vec<_>>(), vec!["once"]);
+    let remote = build_sandbox_command_result(json!({"timed_out":true,"exit_code":-1}));
+    assert_eq!(remote["error_meta"]["retryable"], false);
+    assert_eq!(remote["data"]["execution_outcome"], "unknown");
+}
+
 #[test]
 fn model_sandbox_poll_contains_each_output_once() {
     let result = compact_sandbox_poll_result(json!({

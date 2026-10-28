@@ -1325,7 +1325,6 @@ mod tests {
         ));
     }
 
-
     #[test]
     fn normalize_choice_keeps_allowed_values_and_falls_back() {
         assert_eq!(

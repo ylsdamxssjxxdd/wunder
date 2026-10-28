@@ -5,6 +5,27 @@
 use std::path::Path;
 use wunder_desktop::{args::DesktopArgs, NativeCronJobEdit, NativeDesktop};
 
+fn runtime_guard() -> std::sync::MutexGuard<'static, ()> {
+    static FIXTURE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    FIXTURE_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+}
+
+struct IsolatedRuntime {
+    runtime: NativeDesktop,
+    _directory: tempfile::TempDir,
+    _guard: std::sync::MutexGuard<'static, ()>,
+}
+
+impl std::ops::Deref for IsolatedRuntime {
+    type Target = NativeDesktop;
+
+    fn deref(&self) -> &Self::Target {
+        &self.runtime
+    }
+}
+
 fn prepare_runtime(directory: &Path) -> std::io::Result<()> {
     let config = directory.join("runtime/config");
     std::fs::create_dir_all(&config)?;
@@ -20,23 +41,30 @@ fn prepare_runtime(directory: &Path) -> std::io::Result<()> {
                            "support_vision": false}}}
     });
     std::fs::write(
+        config.join("wunder.yaml"),
+        serde_json::to_vec(&serde_json::json!({"llm": settings["llm"]}))?,
+    )?;
+    std::fs::write(
         config.join("desktop.settings.json"),
         serde_json::to_vec(&settings)?,
     )?;
     Ok(())
 }
 
-fn start_isolated() -> Result<NativeDesktop, Box<dyn std::error::Error>> {
+fn start_isolated() -> Result<IsolatedRuntime, Box<dyn std::error::Error>> {
+    let guard = runtime_guard();
     let directory = tempfile::tempdir()?;
     prepare_runtime(directory.path())?;
     let mut args = DesktopArgs::native_defaults();
     args.temp_root = Some(directory.path().join("runtime").canonicalize()?);
     args.workspace = Some(directory.path().join("workspace"));
+    std::env::set_var("WUNDER_HOME", directory.path().join("runtime"));
     let runtime = NativeDesktop::start_with_args(args)?;
-    // Keep the tempdir alive for the whole test by leaking it; the isolated
-    // runtime owns open files inside it.
-    std::mem::forget(directory);
-    Ok(runtime)
+    Ok(IsolatedRuntime {
+        runtime,
+        _directory: directory,
+        _guard: guard,
+    })
 }
 
 fn future_at(minutes: i64) -> String {
@@ -45,7 +73,7 @@ fn future_at(minutes: i64) -> String {
         .to_string()
 }
 
-fn base_edit() -> NativeCronJobEdit {
+fn base_edit(runtime: &NativeDesktop) -> NativeCronJobEdit {
     NativeCronJobEdit {
         job_id: String::new(),
         name: "contract-job".into(),
@@ -55,7 +83,9 @@ fn base_edit() -> NativeCronJobEdit {
         cron_expr: String::new(),
         timezone: String::new(),
         message: "契约测试消息".into(),
-        agent_id: String::new(),
+        workspace_id: runtime.list_workspaces().expect("workspaces")[0]
+            .workspace_id
+            .clone(),
         delete_after_run: false,
         enabled: true,
     }
@@ -64,7 +94,7 @@ fn base_edit() -> NativeCronJobEdit {
 #[test]
 fn cron_create_list_update_toggle_delete_roundtrip() {
     let runtime = start_isolated().expect("isolated runtime");
-    let created = runtime.save_cron_job(&base_edit()).expect("create");
+    let created = runtime.save_cron_job(&base_edit(&runtime)).expect("create");
     assert!(!created.id.is_empty());
     assert!(created.enabled);
     assert_eq!(created.schedule_kind, "at");
@@ -80,35 +110,35 @@ fn cron_create_list_update_toggle_delete_roundtrip() {
     // Validation rejections stay at the façade boundary.
     let past = NativeCronJobEdit {
         schedule_at: "2020-01-01 00:00".into(),
-        ..base_edit()
+        ..base_edit(&runtime)
     };
     assert!(runtime.save_cron_job(&past).is_err(), "past time accepted");
     let empty_message = NativeCronJobEdit {
         message: "  ".into(),
-        ..base_edit()
+        ..base_edit(&runtime)
     };
     assert!(runtime.save_cron_job(&empty_message).is_err());
     let empty_name = NativeCronJobEdit {
         name: String::new(),
-        ..base_edit()
+        ..base_edit(&runtime)
     };
     assert!(runtime.save_cron_job(&empty_name).is_err());
     let bad_interval = NativeCronJobEdit {
         schedule_kind: "every".into(),
         every_s: 0,
-        ..base_edit()
+        ..base_edit(&runtime)
     };
     assert!(runtime.save_cron_job(&bad_interval).is_err());
     let bad_cron = NativeCronJobEdit {
         schedule_kind: "cron".into(),
         schedule_at: String::new(),
         cron_expr: String::new(),
-        ..base_edit()
+        ..base_edit(&runtime)
     };
     assert!(runtime.save_cron_job(&bad_cron).is_err());
     let unknown_kind = NativeCronJobEdit {
         schedule_kind: "yearly".into(),
-        ..base_edit()
+        ..base_edit(&runtime)
     };
     assert!(runtime.save_cron_job(&unknown_kind).is_err());
 
@@ -118,7 +148,7 @@ fn cron_create_list_update_toggle_delete_roundtrip() {
             job_id: created.id.clone(),
             name: "contract-updated".into(),
             enabled: false,
-            ..base_edit()
+            ..base_edit(&runtime)
         })
         .expect("update");
     assert_eq!(updated.id, created.id);
@@ -126,12 +156,14 @@ fn cron_create_list_update_toggle_delete_roundtrip() {
     assert!(!updated.enabled);
     let missing = NativeCronJobEdit {
         job_id: "missing-cron-job".into(),
-        ..base_edit()
+        ..base_edit(&runtime)
     };
     assert!(runtime.save_cron_job(&missing).is_err());
 
     runtime.toggle_cron_job(&created.id, true).expect("toggle");
-    assert!(runtime.get_cron_job(&created.id).expect("get").enabled);
+    let enabled = runtime.get_cron_job(&created.id).expect("get");
+    assert!(enabled.enabled);
+    assert_ne!(enabled.next_run, "未计划");
 
     // Run records stay empty until an execution settles; the listing itself
     // must work for an unknown id without panicking.
@@ -154,7 +186,7 @@ fn cron_expression_normalizes_five_fields() {
         schedule_at: String::new(),
         cron_expr: "0 9 * * *".into(),
         name: "contract-cron".into(),
-        ..base_edit()
+        ..base_edit(&runtime)
     };
     let created = runtime.save_cron_job(&edit).expect("create cron");
     assert_eq!(created.schedule_kind, "cron");
@@ -170,15 +202,56 @@ fn cron_every_rejects_out_of_range_interval() {
     let too_small = NativeCronJobEdit {
         schedule_kind: "every".into(),
         every_s: 0,
-        ..base_edit()
+        ..base_edit(&runtime)
     };
     assert!(runtime.save_cron_job(&too_small).is_err());
     let too_large = NativeCronJobEdit {
         schedule_kind: "every".into(),
         every_s: 200_000,
-        ..base_edit()
+        ..base_edit(&runtime)
     };
     assert!(runtime.save_cron_job(&too_large).is_err());
+}
+
+#[test]
+fn cron_requires_an_owned_workspace_and_preserves_its_thread_binding() {
+    let runtime = start_isolated().expect("isolated runtime");
+    let workspace_id = runtime.list_workspaces().expect("workspaces")[0]
+        .workspace_id
+        .clone();
+    let edit = base_edit(&runtime);
+    assert!(runtime
+        .save_cron_job(&NativeCronJobEdit {
+            workspace_id: String::new(),
+            ..edit.clone()
+        })
+        .is_err());
+    assert!(runtime
+        .save_cron_job(&NativeCronJobEdit {
+            workspace_id: "missing-workspace".into(),
+            ..edit.clone()
+        })
+        .is_err());
+    let created = runtime.save_cron_job(&edit).expect("create");
+    assert_eq!(created.workspace_id, workspace_id);
+    let listed = runtime.list_cron_jobs().expect("list");
+    assert_eq!(
+        listed
+            .iter()
+            .find(|job| job.id == created.id)
+            .unwrap()
+            .workspace_id,
+        workspace_id
+    );
+    let updated = runtime
+        .save_cron_job(&NativeCronJobEdit {
+            job_id: created.id.clone(),
+            message: "updated fixture".into(),
+            ..edit
+        })
+        .expect("update");
+    assert_eq!(updated.workspace_id, workspace_id);
+    runtime.delete_cron_job(&created.id).expect("delete");
 }
 
 /// Minimal OpenAI-compatible SSE mock so the manual run settles deterministically.
@@ -189,27 +262,44 @@ fn start_mock_model() -> u16 {
     std::thread::spawn(move || {
         for stream in listener.incoming() {
             let Ok(mut stream) = stream else { continue };
+            stream
+                .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                .unwrap();
+            let mut request = Vec::new();
             let mut buffer = [0u8; 8192];
-            let _ = stream.read(&mut buffer);
-            let delta = "契约测试输出。";
-            let body = format!(
-                "data: {{\"choices\":[{{\"index\":0,\"delta\":{{\"content\":\"{delta}\"}},\"finish_reason\":null}}]}}
-
-                 data: {{\"choices\":[{{\"index\":0,\"delta\":{{}},\"finish_reason\":\"stop\"}}]}}
-
-                 data: [DONE]
-
-"
+            loop {
+                let Ok(count) = stream.read(&mut buffer) else {
+                    break;
+                };
+                if count == 0 || request.len() + count > 4 * 1024 * 1024 {
+                    break;
+                }
+                request.extend_from_slice(&buffer[..count]);
+                if let Some(header_end) = request.windows(4).position(|bytes| bytes == b"\r\n\r\n")
+                {
+                    let headers = String::from_utf8_lossy(&request[..header_end]);
+                    let length = headers
+                        .lines()
+                        .find_map(|line| {
+                            let (name, value) = line.split_once(':')?;
+                            name.eq_ignore_ascii_case("content-length")
+                                .then(|| value.trim().parse::<usize>().ok())
+                                .flatten()
+                        })
+                        .unwrap_or(0);
+                    if request.len() >= header_end + 4 + length {
+                        break;
+                    }
+                }
+            }
+            let body = concat!(
+                "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Fixture result.\"},\"finish_reason\":null}]}\n\n",
+                "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+                "data: [DONE]\n\n"
             );
             let response = format!(
-                "HTTP/1.1 200 OK
-Content-Type: text/event-stream
-Content-Length: {}
-Connection: close
-
-{}",
-                body.len(),
-                body
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(), body
             );
             let _ = stream.write_all(response.as_bytes());
             let _ = stream.flush();
@@ -220,6 +310,7 @@ Connection: close
 
 #[test]
 fn cron_manual_run_records_a_run_entry() {
+    let _guard = runtime_guard();
     let port = start_mock_model();
     let directory = tempfile::tempdir().expect("tempdir");
     let config = directory.path().join("runtime/config");
@@ -239,6 +330,11 @@ fn cron_manual_run_records_a_run_entry() {
                            "support_vision": false}}}
     });
     std::fs::write(
+        config.join("wunder.yaml"),
+        serde_json::to_vec(&serde_json::json!({"llm": settings["llm"]})).expect("model config"),
+    )
+    .expect("model config file");
+    std::fs::write(
         config.join("desktop.settings.json"),
         serde_json::to_vec(&settings).expect("settings"),
     )
@@ -252,12 +348,12 @@ fn cron_manual_run_records_a_run_entry() {
             .expect("canonical"),
     );
     args.workspace = Some(directory.path().join("workspace"));
-    std::mem::forget(directory);
+    std::env::set_var("WUNDER_HOME", directory.path().join("runtime"));
     let runtime = NativeDesktop::start_with_args(args).expect("isolated runtime");
     let edit = NativeCronJobEdit {
         name: "contract-run-now".into(),
         schedule_at: future_at(30),
-        ..base_edit()
+        ..base_edit(&runtime)
     };
     let created = runtime.save_cron_job(&edit).expect("create");
     let queued = runtime.run_cron_job_now(&created.id).expect("run now");
@@ -282,6 +378,7 @@ fn cron_manual_run_records_a_run_entry() {
 /// GET /v1/models/<model> with an OpenAI-style context_length field.
 #[test]
 fn model_context_probe_reads_context_length() {
+    let _guard = runtime_guard();
     use std::io::{Read, Write};
     let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind mock");
     let port = listener.local_addr().expect("addr").port();
@@ -313,6 +410,11 @@ fn model_context_probe_reads_context_length() {
                            "support_vision": false}}}
     });
     std::fs::write(
+        config.join("wunder.yaml"),
+        serde_json::to_vec(&serde_json::json!({"llm": settings["llm"]})).expect("model config"),
+    )
+    .expect("model config file");
+    std::fs::write(
         config.join("desktop.settings.json"),
         serde_json::to_vec(&settings).expect("settings"),
     )
@@ -326,7 +428,7 @@ fn model_context_probe_reads_context_length() {
             .expect("canonical"),
     );
     args.workspace = Some(directory.path().join("workspace"));
-    std::mem::forget(directory);
+    std::env::set_var("WUNDER_HOME", directory.path().join("runtime"));
     let runtime = NativeDesktop::start_with_args(args).expect("isolated runtime");
 
     let outcome = runtime

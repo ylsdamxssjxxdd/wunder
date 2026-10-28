@@ -146,6 +146,7 @@
       @exit-selection="handleExitSelection"
       @retry="handleRetry"
       @command="handleRowCommand"
+      @move="handleTreeMove"
     />
 
     <div v-if="!remoteInterlinkActive && uploadTasks.length" class="workspace-files-uploads">
@@ -249,6 +250,7 @@ import {
   resolveWorkspaceResourcePreviewKind
 } from '@/utils/workspaceResourcePreview';
 import { saveObjectUrlAsFile } from '@/utils/workspaceResourceCards';
+import { hasWorkspaceDragPaths } from '@/components/chat/workspaceDrag';
 import { mzConfirm, mzPrompt } from '@/utils/mzDialog';
 import WorkspaceNewFileDialog, {
   type WorkspaceNewFileTemplate
@@ -843,6 +845,9 @@ const handleDrop = async (event: DragEvent) => {
   if (remoteInterlinkActive.value) return;
   const transfer = event.dataTransfer;
   if (!transfer) return;
+  // 工作区内部拖拽是「移动条目」，不是上传。树上的 drop 已 stopPropagation，
+  // 这里再兜一层：拖起的条目松手在面板空白处时，不能被当成文件落盘。
+  if (hasWorkspaceDragPaths(transfer)) return;
   const collected: File[] = [];
   let sawDirectory = false;
 
@@ -1243,6 +1248,58 @@ const renameEntry = async (row: WorkspaceVisibleRow) => {
       ElMessage.error(resolveWorkspaceErrorMessage(error, t('common.requestFailed')));
     }
   } finally {
+    if (isCurrentWorkspace(request)) busy.value = false;
+  }
+};
+
+/**
+ * 树内拖拽移动：把拖起的条目移进目标目录。
+ * 目标目录展开时刷新它；源条目已从树里移除，不必再刷源目录。
+ */
+const handleTreeMove = async (payload: { paths: string[]; targetDir: string }) => {
+  const targetDir = String(payload?.targetDir || '').trim();
+  const sources = (Array.isArray(payload?.paths) ? payload.paths : [])
+    .map((path) => String(path || '').trim())
+    .filter(Boolean);
+  if (!targetDir || !sources.length) return;
+  const request = directoryAbort;
+  const moves: Array<{ from: string; to: string }> = [];
+  let hitSameDir = false;
+  for (const from of sources) {
+    const name = from.split('/').pop() || '';
+    if (!name) continue;
+    const to = joinWorkspacePath(targetDir, name);
+    if (to === from) {
+      hitSameDir = true;
+      continue;
+    }
+    moves.push({ from, to });
+  }
+  if (!moves.length) {
+    if (hitSameDir) ElMessage.info(t('workspace.move.sameDir'));
+    return;
+  }
+  busy.value = true;
+  const moved: string[] = [];
+  try {
+    for (const move of moves) {
+      if (remoteInterlinkActive.value) {
+        await remoteMutation('workspace.move', { path: move.from, destination: move.to });
+      } else {
+        await moveWorkspacePath(move.from, move.to);
+      }
+      moved.push(move.from);
+    }
+    if (!isCurrentWorkspace(request)) return;
+    if (moved.length) await refreshDirectory(targetDir);
+    ElMessage.success(t('workspace.move.success'));
+  } catch (error) {
+    if (isCurrentWorkspace(request) && ((error as { response?: unknown })?.response || error instanceof Error)) {
+      ElMessage.error(resolveWorkspaceErrorMessage(error, t('workspace.move.failed')));
+    }
+  } finally {
+    // 批量中途失败也要把已移动的条目从原位置摘掉，避免树里留下幽灵行。
+    if (moved.length) removePaths(moved);
     if (isCurrentWorkspace(request)) busy.value = false;
   }
 };

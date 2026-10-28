@@ -265,6 +265,9 @@ export interface TrajectoryPageRow extends RawRecord {
   stats?: unknown
   subagent?: unknown
   diagnostics?: unknown
+  /** Bounded call/answer previews that ride the row; the body stays lazy. */
+  args_preview?: string | null
+  result_preview?: string | null
   detail?: unknown
 }
 
@@ -322,6 +325,10 @@ export function trajectoryPageTurns(rows: readonly TrajectoryPageRow[]): unknown
       created_time: row.started_at, updated_time: row.completed_at,
       payload: { content: row.summary, tool: row.tool_name, label: row.tool_name,
         ...(isSubagent ? {} : { task: row.summary }),
+        // The row owns bounded previews so the ledger can show what a tool was
+        // called with and what it returned without hydrating every body.
+        ...(row.args_preview ? { args: row.args_preview } : {}),
+        ...(row.result_preview ? { result: row.result_preview } : {}),
         model_round: row.model_round, message_stats: row.stats,
         runtime: row.subagent, diagnostics: row.diagnostics } })
   }
@@ -427,6 +434,11 @@ function contextFallbackText(payload: RawRecord): string {
 }
 
 function summarizeToolResult(payload: RawRecord): string {
+  // Command tools answer with `results[].stdout/stderr` (or one record), not a
+  // text field. Without this the ledger row printed the tool name and nothing
+  // else, and the result tab was empty although the command had run.
+  const command = commandOutput(payload)
+  if (command) return command
   const data = payload.data
   if (typeof data === 'string') return data
   if (isRecord(data)) {
@@ -436,6 +448,31 @@ function summarizeToolResult(payload: RawRecord): string {
   }
   const fallback = payload.result ?? payload.output ?? payload.content
   return contentToText(fallback)
+}
+
+function commandOutput(payload: RawRecord): string {
+  const data = payload.data
+  if (!isRecord(data)) return ''
+  const list = Array.isArray(data.results) && data.results.length > 0 ? data.results : [data]
+  const parts: string[] = []
+  for (const entry of list) {
+    if (!isRecord(entry)) continue
+    const stdout = typeof entry.stdout === 'string' ? entry.stdout : ''
+    const stderr = typeof entry.stderr === 'string' ? entry.stderr : ''
+    const exit = typeof entry.returncode === 'number' ? entry.returncode
+      : typeof entry.exit_code === 'number' ? entry.exit_code : null
+    if (!stdout.trim() && !stderr.trim() && exit === null) continue
+    const lines: string[] = []
+    const command = typeof entry.command === 'string' && entry.command.trim() ? entry.command
+      : typeof entry.cmd === 'string' && entry.cmd.trim() ? entry.cmd : ''
+    if (command) lines.push(`$ ${command}`)
+    for (const body of [stdout, stderr]) {
+      if (body.trim()) lines.push(body.replace(/\s+$/, ''))
+    }
+    if (exit !== null && exit !== 0) lines.push(`(exit ${exit})`)
+    if (lines.length > 0) parts.push(lines.join('\n'))
+  }
+  return parts.join('\n\n').trim()
 }
 
 function firstNonEmptyText(...values: unknown[]): string {

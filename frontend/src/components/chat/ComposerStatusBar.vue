@@ -65,7 +65,7 @@ const displayName = computed(
 
 .composer-status-icon {
   flex-shrink: 0;
-  color: var(--mz-primary, #c96443);
+  color: var(--mz-primary, var(--ui-accent-ink));
   font-size: 12px;
 }
 

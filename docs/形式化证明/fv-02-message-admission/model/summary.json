@@ -1,0 +1,73 @@
+{
+  "view": "customer",
+  "second": {
+    "role": "fix",
+    "label": "the fix",
+    "lacks": []
+  },
+  "modelStates": 27859,
+  "modelTransitions": 127037,
+  "chartStates": 33427,
+  "chartTransitions": 159573,
+  "chartStatus": {
+    "works": 13107,
+    "wrong": 0,
+    "fixed": 20320,
+    "mixed": 0,
+    "after": 0,
+    "worse": 0
+  },
+  "mixedStatus": [],
+  "cover": {
+    "drawn": false,
+    "why": "no step in TLC's graph is a reader action"
+  },
+  "classes": [
+    {
+      "n": 1,
+      "end": "消息 K1：已受理，第 1 轮<br/>消息 K2：未受理<br/>执行进程存活<br/>重启后的恢复已完成<br/>已分配用户轮次：1",
+      "invariant": "OrphanedInputSettles",
+      "rule": "规则4：孤儿轮次必须被结算——重启恢复完成且系统沉寂后，不允许存在 无存活任务、无存活执行锁的非终态受理（它永远不会再被驱动）。 变更点：crates/wunder-desktop/runtime.rs:358-363 的启动序列（无孤儿结算）。",
+      "cause": "受理落库与排队/执行之间没有崩溃恢复：孤儿轮次停留在非终态，没有任何动作再驱动或结算它",
+      "readerSteps": 3,
+      "modelSteps": 4,
+      "counterexamples": 3920,
+      "lastSteps": [
+        "进程重启，拉起队列循环",
+        "消息 K1执行完成，受理行终态化并释放会话锁",
+        "消息 K2执行完成，受理行终态化并释放会话锁",
+        "撤下消息 K1：受理行终态化为已取消",
+        "撤下消息 K2：受理行终态化为已取消",
+        "消息 K1进入持久队列（受理行转排队中）",
+        "消息 K2进入持久队列（受理行转排队中）"
+      ],
+      "startsHere": false,
+      "fix": "same states, but the rule holds"
+    },
+    {
+      "n": 2,
+      "end": "消息 K1：排队中，第 1 轮（排队任务待派发）<br/>消息 K2：已受理，第 2 轮<br/>执行进程存活<br/>监控记录停留在「运行中」（崩溃残留）<br/>重启后的恢复已完成<br/>已分配用户轮次：2",
+      "invariant": "QueuedInputNotStarved",
+      "rule": null,
+      "cause": "崩溃残留的「运行中」监控记录永久挡住派发：重启后排队中的已受理输入不会再被执行，也不被结算",
+      "readerSteps": 7,
+      "modelSteps": 8,
+      "counterexamples": 640,
+      "lastSteps": [
+        "进程重启，拉起队列循环",
+        "消息 K1执行完成，受理行终态化并释放会话锁",
+        "消息 K2执行完成，受理行终态化并释放会话锁",
+        "消息 K1进入持久队列（受理行转排队中）",
+        "消息 K2进入持久队列（受理行转排队中）"
+      ],
+      "startsHere": false,
+      "fix": "same states, but the rule holds"
+    }
+  ],
+  "codeLike": [],
+  "uncited": {
+    "docs\\形式化证明\\fv-02-message-admission\\MessageAdmission.tla": [],
+    "docs\\形式化证明\\fv-02-message-admission\\MessageAdmissionFixed.tla": []
+  },
+  "brokenProperties": []
+}

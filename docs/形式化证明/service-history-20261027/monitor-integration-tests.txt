@@ -1,0 +1,11 @@
+running 7 tests
+test coalesces_consecutive_context_usage_events ... ok
+test coalesces_progress_events_with_same_stage ... ok
+test delta_events_persist_without_any_debug_flag ... ok
+test llm_request_events_are_always_summarized ... ok
+test persisted_record_keeps_facts_without_execution_events ... ok
+test register_records_explicit_user_input_events ... ok
+test session_event_queue_is_bounded ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.37s
+

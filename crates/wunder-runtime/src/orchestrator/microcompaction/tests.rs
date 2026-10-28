@@ -264,4 +264,41 @@ async fn local_reduction_persists_canonical_checkpoint_without_rewriting_chat_hi
         tokens
     )
     .is_none());
+    let second_turn_id = second_turn.to_string();
+    orchestrator
+        .committer
+        .update_turn(
+            "user",
+            "session",
+            &second_turn_id,
+            "cancelled",
+            "",
+            &json!({}),
+        )
+        .await
+        .unwrap();
+    let before = orchestrator
+        .workspace
+        .load_execution_history("user", "session", "", 0)
+        .unwrap();
+    assert!(orchestrator
+        .try_microcompact_messages(
+            &messages,
+            "user",
+            "session",
+            &emitter,
+            RoundInfo::new(2, 1),
+            tokens,
+            tokens
+        )
+        .await
+        .is_none());
+    assert_eq!(
+        orchestrator
+            .workspace
+            .load_execution_history("user", "session", "", 0)
+            .unwrap(),
+        before
+    );
+    assert_eq!(messages[0], json!({"role":"system", "content":"frozen"}));
 }

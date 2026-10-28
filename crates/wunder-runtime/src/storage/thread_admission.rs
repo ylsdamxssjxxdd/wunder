@@ -15,6 +15,7 @@ pub(crate) fn prepare_input_json(input: &Value) -> Result<String> {
         .as_object_mut()
         .ok_or_else(|| anyhow::anyhow!("accepted user input must be an object"))?;
     fields.remove("local_open_lease");
+    fields.remove("inquiry_turn_id");
     if let Some(client) = fields
         .get("client_message_id")
         .filter(|value| !value.is_null())
@@ -57,6 +58,45 @@ pub(crate) fn prepare_input_json(input: &Value) -> Result<String> {
     Ok(String::from_utf8(bytes)?)
 }
 
+pub(crate) fn inquiry_turn_id(input: &Value) -> Result<Option<String>> {
+    let Some(value) = input
+        .get("inquiry_turn_id")
+        .filter(|value| !value.is_null())
+    else {
+        return Ok(None);
+    };
+    let value = value
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("inquiry turn identity must be a string"))?
+        .trim();
+    if value.is_empty() || value.len() > 256 {
+        bail!("invalid inquiry turn identity");
+    }
+    if input
+        .get("root_user_round")
+        .is_some_and(|value| !value.is_null())
+    {
+        bail!("inquiry answer must start an independent user round");
+    }
+    Ok(Some(value.to_owned()))
+}
+
+pub(crate) fn can_settle_inquiry(previous: &Value, payload: &Value) -> bool {
+    if payload["stop_reason"].as_str() != Some("inquiry_answered") {
+        return true;
+    }
+    previous["status"].as_str() == Some("waiting_input")
+        && previous["answered_by_turn_id"].as_str().is_some()
+        && previous["answered_by_turn_id"] == payload["answered_by_turn_id"]
+}
+
+pub(crate) fn inquiry_answer_control(turn: &str) -> Result<String> {
+    if turn.trim().is_empty() || turn.len() > 256 {
+        bail!("invalid inquiry answer turn identity");
+    }
+    Ok(serde_json::to_string(&json!({"answered_by_turn_id":turn}))?)
+}
+
 /// Queue control contains a small whitelist, never another copy of the input
 /// body or an arbitrary runtime payload. Repeated updates preserve stop_reason.
 pub(crate) fn bounded_control_json(
@@ -69,6 +109,12 @@ pub(crate) fn bounded_control_json(
         .transpose()?
         .unwrap_or(Value::Null);
     let mut control = serde_json::Map::new();
+    if let Some(answer) = previous["answered_by_turn_id"].as_str() {
+        control.insert(
+            "answered_by_turn_id".into(),
+            json!(bounded_text(answer, 256)),
+        );
+    }
     if status == "queued" {
         if let Some(queued) = payload
             .get("queued_input")
@@ -521,6 +567,7 @@ impl TurnAdmissions {
         if user.trim().is_empty() || thread.trim().is_empty() {
             bail!("missing thread identity");
         }
+        let inquiry_turn_id = inquiry_turn_id(input)?;
         let body = prepare_input_json(input)?;
         let mut conn = self.connect()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -578,6 +625,33 @@ impl TurnAdmissions {
                 );
             }
         }
+        if let Some(inquiry_turn_id) = inquiry_turn_id.as_deref() {
+            let previous_control: Option<String> = tx.query_row(
+                "SELECT control_json FROM canonical_turn_admissions WHERE thread_id=?1 AND turn_id=?2",
+                params![thread, inquiry_turn_id], |row| row.get(0),
+            ).optional()?.flatten();
+            if let Some(control) = previous_control {
+                let control: Value = serde_json::from_str(&control)?;
+                if let Some(answer) = control["answered_by_turn_id"].as_str() {
+                    let existing: (String, i64) = tx.query_row(
+                        "SELECT root_turn_id,user_round FROM canonical_turn_admissions WHERE thread_id=?1 AND turn_id=?2",
+                        params![thread, answer], |row| Ok((row.get(0)?, row.get(1)?)),
+                    )?;
+                    return Ok(
+                        json!({"turn_id":answer,"root_turn_id":existing.0,"user_turn_index":existing.1,"created":false}),
+                    );
+                }
+            }
+            let waiting: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM canonical_turn_admissions
+                 WHERE thread_id=?1 AND turn_id=?2 AND status='waiting_input')",
+                params![thread, inquiry_turn_id],
+                |row| row.get(0),
+            )?;
+            if !waiting {
+                bail!("inquiry is no longer waiting for input");
+            }
+        }
         let turn = uuid::Uuid::new_v4().to_string();
         let parent = input.get("root_user_round").and_then(Value::as_i64);
         let (root, round) = if let Some(round) = parent {
@@ -594,6 +668,18 @@ impl TurnAdmissions {
         };
         let now = chrono::Utc::now().timestamp_millis();
         tx.execute("INSERT INTO canonical_turn_admissions(thread_id,turn_id,root_turn_id,user_round,client_message_id,status,input_json,created_at_ms,updated_at_ms) VALUES(?1,?2,?3,?4,?5,'accepted',?6,?7,?7)",params![thread,turn,root,round,client,body,now])?;
+        if let Some(inquiry_turn_id) = inquiry_turn_id.as_deref() {
+            let control = inquiry_answer_control(&turn)?;
+            let updated = tx.execute(
+                "UPDATE canonical_turn_admissions
+                 SET control_json=?3,updated_at_ms=?4
+                 WHERE thread_id=?1 AND turn_id=?2 AND status='waiting_input'",
+                params![thread, inquiry_turn_id, control, now],
+            )?;
+            if updated != 1 {
+                bail!("inquiry is no longer waiting for input");
+            }
+        }
         tx.commit()?;
         Ok(json!({"turn_id":turn,"root_turn_id":root,"user_turn_index":round,"created":true}))
     }
@@ -770,6 +856,15 @@ impl TurnAdmissions {
         let Some((previous, previous_control, has_input)) = previous else {
             return Ok(false);
         };
+        let mut inquiry_state: Value = previous_control
+            .as_deref()
+            .map(serde_json::from_str)
+            .transpose()?
+            .unwrap_or_else(|| json!({}));
+        inquiry_state["status"] = json!(previous);
+        if !can_settle_inquiry(&inquiry_state, payload) {
+            return Ok(false);
+        }
         if !Self::can_transition(&previous, status) {
             return Ok(false);
         }
@@ -809,7 +904,7 @@ impl TurnAdmissions {
         row.map(|(mut turn, control)| {
             if let Some(control) = control {
                 let control: Value = serde_json::from_str(&control)?;
-                for key in ["queued_input", "stop_reason"] {
+                for key in ["queued_input", "stop_reason", "answered_by_turn_id"] {
                     if let Some(value) = control.get(key) {
                         turn[key] = value.clone();
                     }
@@ -857,6 +952,98 @@ fn bounded_text(value: &str, limit: usize) -> &str {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn inquiry_concurrent_clients_share_one_durable_consumption_identity() {
+        let root = tempfile::tempdir().unwrap();
+        let admissions = super::TurnAdmissions::open(root.path()).unwrap();
+        let waiting = admissions
+            .accept(
+                "fixture-user",
+                "fixture-thread",
+                &serde_json::json!({"content":"fixture question"}),
+            )
+            .unwrap();
+        let turn = waiting["turn_id"].as_str().unwrap().to_owned();
+        admissions
+            .update("fixture-thread", &turn, "waiting_input", false)
+            .unwrap();
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let clients = (0..2).map(|index| {
+            let store = super::TurnAdmissions::open(root.path()).unwrap();
+            let barrier = barrier.clone();
+            let turn = turn.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                store.accept("fixture-user", "fixture-thread", &serde_json::json!({"content":"fixture answer", "client_message_id":format!("fixture-client-{index}"), "inquiry_turn_id":turn})).unwrap()
+            })
+        }).collect::<Vec<_>>();
+        let answers = clients
+            .into_iter()
+            .map(|client| client.join().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(answers[0]["turn_id"], answers[1]["turn_id"]);
+        assert_eq!(
+            answers
+                .iter()
+                .filter(|answer| answer["created"] == true)
+                .count(),
+            1
+        );
+        assert_eq!(admissions.latest_round("fixture-thread").unwrap(), 2);
+        assert!(!admissions.update_with_control("fixture-thread", &turn, "completed", false, &serde_json::json!({"stop_reason":"inquiry_answered", "answered_by_turn_id":"fixture-forged"})).unwrap());
+    }
+
+    #[test]
+    fn inquiry_answer_is_consumed_once_across_distinct_clients_and_reopen() {
+        let root = tempfile::tempdir().unwrap();
+        let admissions = super::TurnAdmissions::open(root.path()).unwrap();
+        let waiting = admissions
+            .accept(
+                "fixture-user",
+                "fixture-thread",
+                &serde_json::json!({"content":"fixture question"}),
+            )
+            .unwrap();
+        let waiting_id = waiting["turn_id"].as_str().unwrap();
+        admissions
+            .update("fixture-thread", waiting_id, "waiting_input", false)
+            .unwrap();
+        let input = serde_json::json!({"content":"fixture answer", "client_message_id":"fixture-client-a", "inquiry_turn_id":waiting_id});
+        let first = admissions
+            .accept("fixture-user", "fixture-thread", &input)
+            .unwrap();
+        let reopened = super::TurnAdmissions::open(root.path()).unwrap();
+        let replay = reopened.accept("fixture-user", "fixture-thread", &serde_json::json!({"content":"fixture answer", "client_message_id":"fixture-client-b", "inquiry_turn_id":waiting_id})).unwrap();
+        assert_eq!(first["turn_id"], replay["turn_id"]);
+        assert_eq!(replay["created"], false);
+        assert_eq!(reopened.latest_round("fixture-thread").unwrap(), 2);
+        assert_eq!(first["root_turn_id"], first["turn_id"]);
+    }
+
+    #[test]
+    fn inquiry_answer_rejects_nonwaiting_and_other_thread_targets() {
+        let root = tempfile::tempdir().unwrap();
+        let admissions = super::TurnAdmissions::open(root.path()).unwrap();
+        let accepted = admissions
+            .accept(
+                "fixture-user",
+                "fixture-thread",
+                &serde_json::json!({"content":"fixture input"}),
+            )
+            .unwrap();
+        let turn = accepted["turn_id"].as_str().unwrap();
+        for thread in ["fixture-thread", "fixture-other-thread"] {
+            assert!(admissions
+                .accept(
+                    "fixture-user",
+                    thread,
+                    &serde_json::json!({"content":"fixture answer", "inquiry_turn_id":turn})
+                )
+                .is_err());
+        }
+        assert_eq!(admissions.latest_round("fixture-thread").unwrap(), 1);
+    }
+
     #[test]
     fn shared_input_budget_covers_atomic_lifecycle_envelope() {
         use serde_json::json;
@@ -1207,11 +1394,18 @@ mod tests {
             .unwrap();
     }
 
-    fn insert_agent_task(root: &std::path::Path, task_id: &str, session: &str, turn: &str, status: &str, age_s: f64) {
+    fn insert_agent_task(
+        root: &std::path::Path,
+        task_id: &str,
+        session: &str,
+        turn: &str,
+        status: &str,
+        age_s: f64,
+    ) {
         apply_queue_schema(root);
         let now = chrono::Utc::now().timestamp_millis() as f64 / 1000.0;
-        let payload = serde_json::json!({"config_overrides":{"__thread_log_turn_id":turn}})
-            .to_string();
+        let payload =
+            serde_json::json!({"config_overrides":{"__thread_log_turn_id":turn}}).to_string();
         queue_conn(root)
             .execute(
                 "INSERT INTO agent_tasks(task_id,thread_id,user_id,session_id,status,request_payload,retry_at,created_at,updated_at)
@@ -1338,10 +1532,7 @@ mod tests {
         // 重启：新实例重开同一数据目录后结算。
         let reopened = TurnAdmissions::open(root.path()).unwrap();
         assert_eq!(reopened.settle_orphaned_turns("fixture-thread").unwrap(), 1);
-        let settled = reopened
-            .turn("fixture-thread", &turn)
-            .unwrap()
-            .unwrap();
+        let settled = reopened.turn("fixture-thread", &turn).unwrap().unwrap();
         assert_eq!(settled["status"], "interrupted");
         assert_eq!(settled["stop_reason"], "process_restart");
         // input_json 保留：已物化的用户气泡内容不随结算丢失。
@@ -1394,19 +1585,29 @@ mod tests {
         backdate_admission(root.path(), "fixture-thread", &turn, 60_000);
         // 存活会话锁：执行仍在推进，不结算。
         insert_session_lock(root.path(), "fixture-thread", 120.0);
-        assert_eq!(admissions.settle_orphaned_turns("fixture-thread").unwrap(), 0);
         assert_eq!(
-            admissions
-                .turn("fixture-thread", &turn)
-                .unwrap()
-                .unwrap()["status"],
+            admissions.settle_orphaned_turns("fixture-thread").unwrap(),
+            0
+        );
+        assert_eq!(
+            admissions.turn("fixture-thread", &turn).unwrap().unwrap()["status"],
             "accepted"
         );
         // 锁行过期（崩溃后心跳停止）后结算生效。
         expire_session_locks(root.path());
         // 但一个 pending 任务仍会驱动该轮，挡住结算。
-        insert_agent_task(root.path(), "task-guard-1", "fixture-thread", &turn, "pending", 60.0);
-        assert_eq!(admissions.settle_orphaned_turns("fixture-thread").unwrap(), 0);
+        insert_agent_task(
+            root.path(),
+            "task-guard-1",
+            "fixture-thread",
+            &turn,
+            "pending",
+            60.0,
+        );
+        assert_eq!(
+            admissions.settle_orphaned_turns("fixture-thread").unwrap(),
+            0
+        );
         // 刚领取的 running 任务（领取→执行交接窗口）同样挡住。
         queue_conn(root.path())
             .execute(
@@ -1414,7 +1615,10 @@ mod tests {
                 rusqlite::params![chrono::Utc::now().timestamp_millis() as f64 / 1000.0],
             )
             .unwrap();
-        assert_eq!(admissions.settle_orphaned_turns("fixture-thread").unwrap(), 0);
+        assert_eq!(
+            admissions.settle_orphaned_turns("fixture-thread").unwrap(),
+            0
+        );
         // 崩溃残留的 running 行（更新时间停在宽限期之前）不再挡住。
         queue_conn(root.path())
             .execute(
@@ -1422,12 +1626,12 @@ mod tests {
                 rusqlite::params![chrono::Utc::now().timestamp_millis() as f64 / 1000.0 - 60.0],
             )
             .unwrap();
-        assert_eq!(admissions.settle_orphaned_turns("fixture-thread").unwrap(), 1);
         assert_eq!(
-            admissions
-                .turn("fixture-thread", &turn)
-                .unwrap()
-                .unwrap()["status"],
+            admissions.settle_orphaned_turns("fixture-thread").unwrap(),
+            1
+        );
+        assert_eq!(
+            admissions.turn("fixture-thread", &turn).unwrap().unwrap()["status"],
             "interrupted"
         );
         // 链接到其他轮次的任务不影响本轮之外的结算语义：新孤儿照常结算。
@@ -1440,8 +1644,18 @@ mod tests {
             .unwrap();
         let other_turn = other["turn_id"].as_str().unwrap().to_string();
         backdate_admission(root.path(), "fixture-thread", &other_turn, 60_000);
-        insert_agent_task(root.path(), "task-guard-2", "fixture-thread", &turn, "pending", 0.0);
-        assert_eq!(admissions.settle_orphaned_turns("fixture-thread").unwrap(), 1);
+        insert_agent_task(
+            root.path(),
+            "task-guard-2",
+            "fixture-thread",
+            &turn,
+            "pending",
+            0.0,
+        );
+        assert_eq!(
+            admissions.settle_orphaned_turns("fixture-thread").unwrap(),
+            1
+        );
         assert_eq!(
             admissions
                 .turn("fixture-thread", &other_turn)
@@ -1451,16 +1665,13 @@ mod tests {
         );
         // 终态行永远不会被结算改动。
         backdate_admission(root.path(), "fixture-thread", &turn, 120_000);
-        let terminal_before = admissions
-            .turn("fixture-thread", &turn)
-            .unwrap()
-            .unwrap();
-        assert_eq!(admissions.settle_orphaned_turns("fixture-thread").unwrap(), 0);
+        let terminal_before = admissions.turn("fixture-thread", &turn).unwrap().unwrap();
         assert_eq!(
-            admissions
-                .turn("fixture-thread", &turn)
-                .unwrap()
-                .unwrap(),
+            admissions.settle_orphaned_turns("fixture-thread").unwrap(),
+            0
+        );
+        assert_eq!(
+            admissions.turn("fixture-thread", &turn).unwrap().unwrap(),
             terminal_before
         );
     }
@@ -1487,10 +1698,7 @@ mod tests {
         assert_eq!(next["created"], true);
         assert_eq!(next["user_turn_index"], 2);
         assert_eq!(
-            admissions
-                .turn("fixture-thread", &turn)
-                .unwrap()
-                .unwrap()["status"],
+            admissions.turn("fixture-thread", &turn).unwrap().unwrap()["status"],
             "interrupted"
         );
         let replay = admissions

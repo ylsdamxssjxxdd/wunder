@@ -1,0 +1,74 @@
+{
+  "view": "customer",
+  "second": {
+    "role": "fix",
+    "label": "the fix",
+    "lacks": []
+  },
+  "modelStates": 9,
+  "modelTransitions": 6,
+  "chartStates": 24,
+  "chartTransitions": 24,
+  "chartStatus": {
+    "works": 6,
+    "wrong": 0,
+    "fixed": 18,
+    "mixed": 0,
+    "after": 0,
+    "worse": 0
+  },
+  "mixedStatus": [],
+  "classes": [
+    {
+      "n": 1,
+      "end": "Save returned, original objective retained",
+      "invariant": "BannerSaveUpdatesGoal",
+      "rule": "Saving the replacement objective through the goal banner updates the durable objective. frontend-slint/src/native_chat.rs:3124; crates/wunder-desktop/native_commands.rs:96",
+      "cause": null,
+      "readerSteps": 2,
+      "modelSteps": 3,
+      "counterexamples": 1,
+      "lastSteps": [
+        "Banner save returns"
+      ],
+      "startsHere": false,
+      "fix": "Save changed objective: control acquired"
+    },
+    {
+      "n": 2,
+      "end": "Active goal, command missing after reload",
+      "invariant": "CreateHasDurableCommand",
+      "rule": "A successful initial goal command remains visible after reloading its user turn. crates/wunder-desktop/native_commands.rs:107 (baseline); crates/wunder-runtime/src/api/chat_goal.rs:226",
+      "cause": null,
+      "readerSteps": 2,
+      "modelSteps": 3,
+      "counterexamples": 1,
+      "lastSteps": [
+        "Goal creation returns"
+      ],
+      "startsHere": false,
+      "fix": "Create goal: control acquired"
+    },
+    {
+      "n": 3,
+      "end": "Paused banner, executor still running",
+      "invariant": "PauseFencesExecutor",
+      "rule": "Returning from a human pause command has fenced the previous executor. crates/wunder-runtime/src/services/goal/command.rs:193; crates/wunder-runtime/src/api/chat_goal.rs:201",
+      "cause": null,
+      "readerSteps": 2,
+      "modelSteps": 3,
+      "counterexamples": 1,
+      "lastSteps": [
+        "Pause command returns"
+      ],
+      "startsHere": false,
+      "fix": "Pause goal: control acquired"
+    }
+  ],
+  "codeLike": [],
+  "uncited": {
+    "GoalControl.tla": [],
+    "GoalControlFixed.tla": []
+  },
+  "brokenProperties": []
+}

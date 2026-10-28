@@ -1,0 +1,83 @@
+{
+  "view": "customer",
+  "second": {
+    "role": "fix",
+    "label": "the fix",
+    "lacks": []
+  },
+  "modelStates": 6,
+  "modelTransitions": 5,
+  "chartStates": 6,
+  "chartTransitions": 7,
+  "chartStatus": {
+    "works": 1,
+    "wrong": 0,
+    "fixed": 5,
+    "mixed": 0,
+    "after": 0,
+    "worse": 0
+  },
+  "mixedStatus": [],
+  "cover": {
+    "drawn": true,
+    "states": 6,
+    "transitions": 8,
+    "leftOutStates": [],
+    "leftOutTransitions": [
+      "工具超时，却建议可直接重试 --> 命令已写入，尚未返回: 调用者按建议重试"
+    ]
+  },
+  "chartGroups": [
+    {
+      "name": "保守恢复契约",
+      "color": "#d6eaf8",
+      "states": 3
+    },
+    {
+      "name": "危险重试建议",
+      "color": "#fdebd0",
+      "states": 2
+    }
+  ],
+  "mixedGroups": [
+    "命令已写入，尚未返回"
+  ],
+  "classes": [
+    {
+      "n": 1,
+      "end": "工具超时，却建议可直接重试",
+      "invariant": "UnknownNeverAdvertisedRetryable",
+      "rule": "A timed out, unverified side effect must not be advertised as safe to retry.",
+      "cause": null,
+      "readerSteps": 1,
+      "modelSteps": 2,
+      "counterexamples": 2,
+      "lastSteps": [
+        "等待超时并返回错误建议"
+      ],
+      "startsHere": false,
+      "fix": "工具超时，明确结果未知并要求核对"
+    },
+    {
+      "n": 2,
+      "end": "未核对结果，副作用重复发生",
+      "invariant": "NoUnverifiedDuplicate",
+      "rule": "A client following the advice must not repeat a completed side effect without verification.",
+      "cause": null,
+      "readerSteps": 3,
+      "modelSteps": 4,
+      "counterexamples": 1,
+      "lastSteps": [
+        "调用者按建议重试"
+      ],
+      "startsHere": false,
+      "fix": "工具超时，明确结果未知并要求核对"
+    }
+  ],
+  "codeLike": [],
+  "uncited": {
+    "models/ToolTimeout.tla": [],
+    "external-scratch/ToolTimeoutFixed.tla": []
+  },
+  "brokenProperties": []
+}

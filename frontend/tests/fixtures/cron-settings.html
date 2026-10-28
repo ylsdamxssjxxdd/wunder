@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Scheduled task settings fixture</title>
+    <style>
+      body { margin: 0; }
+      #app { height: 100vh; padding: 24px; box-sizing: border-box; }
+    </style>
+  </head>
+  <body>
+    <div id="app" class="messenger-view"></div>
+    <script type="module">
+      import { createApp } from 'vue';
+      import 'element-plus/dist/index.css';
+      import '/src/styles/main.css';
+      import { installElementPlus } from '/src/plugins/elementPlus';
+      import AgentCronPanel from '/src/components/messenger/AgentCronPanel.vue';
+
+      const app = createApp(AgentCronPanel, { agentId: 'ignored-agent-context' });
+      installElementPlus(app);
+      app.mount('#app');
+    </script>
+  </body>
+</html>

@@ -193,7 +193,7 @@ struct ThreadRegistry {
 
 struct ActiveThreadWriter {
     recorder: RolloutRecorder,
-    _owner: File,
+    _owner: Arc<File>,
     _gate: Arc<AsyncMutex<()>>,
 }
 
@@ -210,7 +210,9 @@ fn shared_registry(root: &Path) -> Result<Arc<ThreadRegistry>> {
         .read(true)
         .write(true)
         .open(root.join(".canonical-store.lock"))?;
-    owner.try_lock().map_err(|_|anyhow!("canonical storage root already belongs to another process; each server node requires its own root and thread routing"))?;
+    owner
+        .try_lock_shared()
+        .context("canonical storage root is held exclusively by another process")?;
     let registry = Arc::new(ThreadRegistry {
         history_init: Mutex::new(()),
         gates: Mutex::default(),
@@ -221,6 +223,27 @@ fn shared_registry(root: &Path) -> Result<Arc<ThreadRegistry>> {
     });
     roots.insert(root.to_owned(), Arc::downgrade(&registry));
     Ok(registry)
+}
+
+fn initialization_lock(root: &Path) -> Result<File> {
+    let lock = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(root.join(".canonical-init.lock"))?;
+    let started = std::time::Instant::now();
+    loop {
+        match lock.try_lock() {
+            Ok(()) => return Ok(lock),
+            Err(std::fs::TryLockError::WouldBlock)
+                if started.elapsed() < Duration::from_secs(10) =>
+            {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            Err(error) => return Err(anyhow!("canonical storage initialization is busy: {error}")),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -266,6 +289,7 @@ impl LocalThreadStore {
         std::fs::create_dir_all(&root).context("create storage root")?;
         let root = root.canonicalize().context("resolve storage root")?;
         let registry = shared_registry(&root)?;
+        let _initialization = initialization_lock(&root)?;
         let state_pool = super::sqlite_pool::SqlitePool::new(root.join("state_1.sqlite"));
         let conn = connect(&state_pool)?;
         conn.execute_batch("PRAGMA journal_mode=WAL;")?;
@@ -661,6 +685,17 @@ impl LocalThreadStore {
         turn: &TurnId,
         model: &str,
     ) -> ThreadStoreResult<()> {
+        self.materialize_turn(user, thread, turn, model, true).await
+    }
+
+    pub(crate) async fn materialize_turn(
+        &self,
+        user: &str,
+        thread: &ThreadId,
+        turn: &TurnId,
+        model: &str,
+        activate: bool,
+    ) -> ThreadStoreResult<()> {
         self.recover_pending_revert_for_access(thread).await?;
         let admissions = self.admission_store().map_err(unavailable)?;
         let owner = user.to_owned();
@@ -728,7 +763,12 @@ impl LocalThreadStore {
         let id = thread.to_string();
         let turn = turn.to_string();
         db(move || {
-            admissions.update(&id, &turn, "running", true)?;
+            let status = if activate {
+                "running"
+            } else {
+                admitted["status"].as_str().unwrap_or_default()
+            };
+            admissions.update(&id, &turn, status, true)?;
             Ok(())
         })
         .await
@@ -1392,7 +1432,7 @@ impl LocalThreadStore {
                 message: "active thread writer limit reached".into(),
             });
         }
-        let owner = self.owner_lock(thread).await?;
+        let owner = Arc::new(self.owner_lock(thread).await?);
         let writer = Arc::new(ActiveThreadWriter {
             recorder: RolloutRecorder::resume_with_budget(
                 stored.descriptor.clone(),
@@ -1403,6 +1443,7 @@ impl LocalThreadStore {
                     })
                     .clone(),
                 self.registry._root_owner.clone(),
+                owner.clone(),
             )
             .map_err(unavailable)?,
             _owner: owner,
@@ -2051,6 +2092,10 @@ impl LocalThreadStore {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "thread_store_process_tests.rs"]
+mod process_tests;
 
 #[async_trait::async_trait]
 impl ThreadMetadataStore for LocalThreadStore {
@@ -4089,7 +4134,12 @@ mod stress_batch_tests {
         );
         store.archive_thread(&branch).await.unwrap();
         assert_eq!(
-            store.read_item(&branch, &inherited).await.unwrap().item.item_id,
+            store
+                .read_item(&branch, &inherited)
+                .await
+                .unwrap()
+                .item
+                .item_id,
             inherited
         );
         store.unarchive_thread(&branch).await.unwrap();
@@ -4520,8 +4570,7 @@ mod stress_batch_tests {
         // Recreate the pre-fix crash outcome directly: the catalog row was
         // committed but the rollout file was never written.
         let recorder =
-            RolloutRecorder::create(store.root(), thread.to_string(), rollout.to_string())
-                .unwrap();
+            RolloutRecorder::create(store.root(), thread.to_string(), rollout.to_string()).unwrap();
         let descriptor = recorder.descriptor().clone();
         drop(recorder);
         store

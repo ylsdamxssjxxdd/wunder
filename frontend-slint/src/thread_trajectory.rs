@@ -416,6 +416,9 @@ fn content_to_text(value: &Value) -> String {
 }
 
 fn summarize_tool_result(payload: &Value) -> String {
+    if let Some(text) = command_output(payload) {
+        return text;
+    }
     if let Some(data) = payload.get("data") {
         match data {
             Value::String(text) => return text.clone(),
@@ -437,6 +440,56 @@ fn summarize_tool_result(payload: &Value) -> String {
         .or_else(|| payload.get("output"))
         .or_else(|| payload.get("content"));
     fallback.map(content_to_text).unwrap_or_default()
+}
+
+/// Command tools answer with `results[].stdout/stderr` instead of one text
+/// field. Without this branch the ledger printed the tool name ("执行命令") and
+/// nothing else, and the result tab was empty even though the command ran.
+fn command_output(payload: &Value) -> Option<String> {
+    let data = payload.get("data")?;
+    let records: Vec<&Value> = match data.get("results").and_then(Value::as_array) {
+        Some(list) if !list.is_empty() => list.iter().collect(),
+        _ => vec![data],
+    };
+    let mut out = String::new();
+    for record in records {
+        let stdout = record.get("stdout").and_then(Value::as_str).unwrap_or("");
+        let stderr = record.get("stderr").and_then(Value::as_str).unwrap_or("");
+        let exit = record
+            .get("returncode")
+            .or_else(|| record.get("exit_code"))
+            .and_then(Value::as_i64);
+        if stdout.trim().is_empty() && stderr.trim().is_empty() && exit.is_none() {
+            continue;
+        }
+        if !out.is_empty() {
+            out.push_str("\n\n");
+        }
+        if let Some(command) = record
+            .get("command")
+            .or_else(|| record.get("cmd"))
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+        {
+            out.push_str("$ ");
+            out.push_str(command);
+            out.push('\n');
+        }
+        for body in [stdout, stderr] {
+            if !body.trim().is_empty() {
+                out.push_str(body.trim_end());
+                out.push('\n');
+            }
+        }
+        if let Some(code) = exit.filter(|code| *code != 0) {
+            out.push_str(&format!("(exit {code})"));
+        }
+        if out.chars().count() > 8_000 {
+            break;
+        }
+    }
+    let text = out.trim_end();
+    (!text.is_empty()).then(|| text.to_string())
 }
 
 fn add_usage_source<'a>(value: Option<&'a Value>, sources: &mut Vec<&'a Value>) {
@@ -714,6 +767,15 @@ fn parse_view_page(page: &Value) -> SnapshotModel {
         });
         if let Some(stats) = row.get("stats").filter(|value| value.is_object()) {
             payload["message_stats"] = stats.clone();
+        }
+        // Bounded previews ride the row so the ledger shows what a tool was
+        // called with and what it answered; the immutable body still backs the
+        // detail tabs and replaces these once it lands.
+        if let Some(args) = row.get("args_preview").and_then(Value::as_str) {
+            payload["args"] = Value::String(args.to_string());
+        }
+        if let Some(result) = row.get("result_preview").and_then(Value::as_str) {
+            payload["result"] = Value::String(result.to_string());
         }
         if kind == KIND_SYSTEM {
             payload["meta"] = json!({"type":"system_prompt"});
@@ -2673,6 +2735,10 @@ fn project_details(app: &MainWindow, state: &State, model: &SnapshotModel, texts
         title: tab_title(texts, TAB_OVERVIEW).into(),
         kind: TAB_OVERVIEW,
     }];
+    // Tool details read the same in every surface: overview, what was called,
+    // what came back, and the contract the model had to satisfy. The raw event
+    // dump was the odd one out (舰桥/蜂巢 never offered it), and timing already
+    // rides the overview, so neither earns a tab here.
     if cell.kind == KIND_TOOL || cell.kind == KIND_SUBTOOL {
         tabs.push(TrajTab {
             title: tab_title(texts, TAB_PARAMS).into(),
@@ -2682,23 +2748,22 @@ fn project_details(app: &MainWindow, state: &State, model: &SnapshotModel, texts
             title: tab_title(texts, TAB_RESULT).into(),
             kind: TAB_RESULT,
         });
-        if cell.schema_detail.is_some() {
+        tabs.push(TrajTab {
+            title: tab_title(texts, TAB_SCHEMA).into(),
+            kind: TAB_SCHEMA,
+        });
+    } else {
+        if cell.metrics.is_some() {
             tabs.push(TrajTab {
-                title: tab_title(texts, TAB_SCHEMA).into(),
-                kind: TAB_SCHEMA,
+                title: tab_title(texts, TAB_TIMING).into(),
+                kind: TAB_TIMING,
             });
         }
-    }
-    if cell.metrics.is_some() {
         tabs.push(TrajTab {
-            title: tab_title(texts, TAB_TIMING).into(),
-            kind: TAB_TIMING,
+            title: tab_title(texts, TAB_RAW).into(),
+            kind: TAB_RAW,
         });
     }
-    tabs.push(TrajTab {
-        title: tab_title(texts, TAB_RAW).into(),
-        kind: TAB_RAW,
-    });
 
     let mut overview: Vec<TrajTiming> = Vec::new();
     let mut sections: Vec<TrajSection> = Vec::new();
@@ -2773,12 +2838,17 @@ fn project_details(app: &MainWindow, state: &State, model: &SnapshotModel, texts
             }
         }
         TAB_SCHEMA => {
-            if let Some(schema) = &cell.schema_detail {
-                sections.push(TrajSection {
-                    title: "Schema".into(),
-                    body: bounded_body(schema).into(),
-                });
-            }
+            // The tab is always offered for a tool so the field set matches the
+            // other surfaces; a tool the catalog no longer resolves says so
+            // instead of hiding the question.
+            let body = cell
+                .schema_detail
+                .clone()
+                .unwrap_or_else(|| label(zh, "不可用", "Not available").to_string());
+            sections.push(TrajSection {
+                title: "Schema".into(),
+                body: bounded_body(&body).into(),
+            });
         }
         _ => {
             let number = request_number_of(model, selected as usize);
@@ -4533,7 +4603,6 @@ mod tests {
         assert_eq!(usage.think, Some(12.0));
     }
 
-
     #[test]
     fn aligns_with_web_trajectory_rules() {
         // 与 web 端 trajectoryModel 同一条规则集：会话写入器覆盖后的 payload
@@ -4609,5 +4678,52 @@ mod tests {
         assert_eq!(rows.len(), MAX_VIEW_ROWS);
         assert_eq!(rows.first().unwrap()["created_seq"], 600);
         assert_eq!(rows.last().unwrap()["created_seq"], 1099);
+    }
+
+    #[test]
+    fn command_tool_rows_show_the_command_and_its_output() {
+        // The ledger row used to print the tool name and nothing else, so a
+        // finished command looked like it never reported anything.
+        let model = parse_view_page(&json!({ "trajectory": [
+            {"item_id":"u", "user_round":1, "root_turn_id":"r", "turn_id":"r",
+                "created_seq":1, "kind":"user_message", "summary":"跑一下构建"},
+            {"item_id":"t", "user_round":1, "root_turn_id":"r", "turn_id":"r",
+                "created_seq":2, "kind":"tool_call", "model_round":1, "tool_name":"执行命令",
+                "summary":"执行命令", "args_preview":"cargo build --quiet",
+                "result_preview":"Finished dev profile [unoptimized + debuginfo] target(s)"}
+        ]}));
+        let state = State::default();
+        let texts = Texts::new(true);
+        let rows = build_rows(&state, &model, &texts);
+        let tool = rows
+            .iter()
+            .find(|row| row.kind == KIND_TOOL)
+            .expect("tool row");
+        assert_eq!(tool.text, "执行命令");
+        assert_eq!(tool.arguments, "cargo build --quiet");
+        assert_eq!(
+            tool.result,
+            "Finished dev profile [unoptimized + debuginfo] target(s)"
+        );
+    }
+
+    #[test]
+    fn command_output_reads_stdout_instead_of_falling_through() {
+        let payload =
+            json!({"data": {"exit_code": 0, "stdout": "test result: ok. 12 passed", "stderr": ""}});
+        assert_eq!(
+            command_output(&payload).as_deref(),
+            Some("test result: ok. 12 passed")
+        );
+        // A failing batch keeps the command line, stderr and the exit code.
+        let failed = json!({"data": {"results": [
+            {"command": "cargo test", "stdout": "", "stderr": "boom", "exit_code": 2}
+        ]}});
+        let text = command_output(&failed).expect("command text");
+        assert!(text.contains("$ cargo test"), "{text}");
+        assert!(text.contains("boom"), "{text}");
+        assert!(text.contains("(exit 2)"), "{text}");
+        // Structured, non-command results are not mistaken for command output.
+        assert!(command_output(&json!({"data": {"entries": []}})).is_none());
     }
 }

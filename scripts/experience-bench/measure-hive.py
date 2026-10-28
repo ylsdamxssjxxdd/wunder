@@ -22,8 +22,8 @@ from mock_model import expected
 
 IDLE_STORAGE_TABLES = (
     'service_threads', 'service_thread_sessions', 'service_thread_records',
-    'service_thread_owners', 'service_thread_admissions', 'service_thread_items',
-    'service_thread_chat_heads', 'service_thread_display_state')
+    'service_thread_owners', 'service_thread_admissions', 'service_thread_items_v2',
+    'service_thread_chat_heads_v2', 'service_thread_display_state_v2')
 IDLE_SAMPLE_SECONDS = 12
 IDLE_MAX_SAMPLE_SECONDS = 3600
 IDLE_MAX_CPU_PERCENT = 1.0  # One fully occupied CPU core is 100%.
@@ -711,15 +711,15 @@ class HiveSuite:
             'database_bytes',pg_database_size(current_database()),
             'relation_bytes',(SELECT json_object_agg(name,pg_total_relation_size(name::regclass)) FROM
               (VALUES ('service_threads'),('service_thread_sessions'),('service_thread_records'),
-                ('service_thread_owners'),('service_thread_admissions'),('service_thread_items'),
-                ('service_thread_chat_heads'),('service_thread_display_state'),
+                ('service_thread_owners'),('service_thread_admissions'),('service_thread_items_v2'),
+                ('service_thread_chat_heads_v2'),('service_thread_display_state_v2'),
                 ('runtime_tool_metrics'),('runtime_artifact_resources')) AS relations(name)),
             'invalid_ordinals',(SELECT count(*) FROM service_threads t LEFT JOIN
               (SELECT thread_id,count(*) AS records,min(ordinal) AS first,max(ordinal)+1 AS next
                  FROM service_thread_records GROUP BY thread_id) r ON r.thread_id=t.thread_id
               WHERE COALESCE(r.records,0)<>t.history_revision OR COALESCE(r.next,0)<>t.history_revision
                 OR COALESCE(r.first,0)<>0),
-            'projection_ahead',(SELECT count(*) FROM service_thread_display_state p
+            'projection_ahead',(SELECT count(*) FROM service_thread_display_state_v2 p
               JOIN service_threads t USING(thread_id) WHERE p.next_ordinal>t.history_revision))""")
         require(audit['canonical_records'] > 0 and audit['admissions'] > 0, 'postgres_history_missing')
         require(audit['canonical_logical_bytes'] > 0 and audit['database_bytes'] > 0,

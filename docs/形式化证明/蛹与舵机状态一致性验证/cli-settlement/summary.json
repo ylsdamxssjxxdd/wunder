@@ -1,0 +1,66 @@
+{
+  "view": "customer",
+  "second": {
+    "role": "fix",
+    "label": "the fix",
+    "lacks": []
+  },
+  "modelStates": 4,
+  "modelTransitions": 3,
+  "chartStates": 6,
+  "chartTransitions": 5,
+  "chartStatus": {
+    "works": 3,
+    "wrong": 0,
+    "fixed": 3,
+    "mixed": 0,
+    "after": 0,
+    "worse": 0
+  },
+  "mixedStatus": [],
+  "cover": {
+    "drawn": true,
+    "states": 6,
+    "transitions": 5,
+    "leftOutStates": [],
+    "leftOutTransitions": []
+  },
+  "classes": [
+    {
+      "n": 1,
+      "end": "订阅已结束<br/>线程已完成，工具转圈",
+      "invariant": "FailedOutcomePreserved",
+      "rule": "Draining a failed execution's stream must not report a finished thread. Mutators: tui/app.rs:7948, :8302, :8337.",
+      "cause": "执行失败终态被忽略，订阅结束又被当成成功，工具未结清",
+      "readerSteps": 3,
+      "modelSteps": 4,
+      "counterexamples": 1,
+      "lastSteps": [
+        "订阅结束，结算展示"
+      ],
+      "startsHere": false,
+      "fix": "执行已失败，订阅待结束<br/>线程失败，工具转圈"
+    },
+    {
+      "n": 2,
+      "end": "订阅已结束<br/>线程已完成，工具转圈",
+      "invariant": "SettledToolAgreement",
+      "rule": "After stream completion a tool without a result is interrupted, never spinning or successful. Mutators: tui/app.rs:7948, :8192, :8254.",
+      "cause": "执行失败终态被忽略，订阅结束又被当成成功，工具未结清",
+      "readerSteps": 3,
+      "modelSteps": 4,
+      "counterexamples": 1,
+      "lastSteps": [
+        "订阅结束，结算展示"
+      ],
+      "startsHere": false,
+      "fix": "执行已失败，订阅待结束<br/>线程失败，工具转圈"
+    }
+  ],
+  "codeLike": [],
+  "uncited": {
+    "audit/CliSettlement.tla": [],
+    "audit/CliSettlementFixed.tla": []
+  },
+  "brokenProperties": []
+}

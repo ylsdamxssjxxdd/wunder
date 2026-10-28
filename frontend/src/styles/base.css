@@ -4,51 +4,64 @@
   --dark-border: #e3e3e3;
   --dark-text: #18181c;
   --dark-muted: #808080;
-  /* 默认强调色 = 方案 §11.1 的暖色赤陶系 token（--mz-primary / -hover / -soft / -tint）。
+  /* 默认强调色 = 橙汁（amber），色值逐项对齐蛹 frontend-slint/ui/design_tokens.slint
+     的 terracotta 色板：accent #F58A24 / deep #E07A12 / secondary #FFC98A / soft #FDF0DE。
+     橙汁以蛹为准，蜂巢只按自身变量名映射，不另立色值。
      这里是全站唯一在 :root 上生效的强调色来源；配套变量按同一色阶推导：
-     soft 阶梯 = tint↔soft 的等距混色，gradient-* 为同族中间值（§11.1 不做渐变，
-     仅保留变量以兼容遗留样式），disabled 取浅暖灰。 */
-  --ui-accent: #c96443;
-  --ui-accent-rgb: 201, 100, 67;
-  --ui-accent-secondary: #dfac9a;
-  --ui-accent-secondary-rgb: 223, 172, 154;
-  --ui-accent-deep: #b55637;
+     soft 阶梯 = soft→accent 的等距混色（与蛹的 soft 锚点连续），
+     gradient-* 为同族中间值，disabled 取浅暖灰。 */
+  --ui-accent: #f58a24;
+  --ui-accent-rgb: 245, 138, 36;
+  --ui-accent-secondary: #ffc98a;
+  --ui-accent-secondary-rgb: 255, 201, 138;
+  --ui-accent-deep: #e07a12;
+  /* 前景强调色（WCAG AA）。品牌色 #F58A24 在白底只有 2.46:1、在橙汁 soft 底
+     只有 2.19:1，不能承载文字、图标、实心按钮底或焦点环。行业标准做法是把
+     「品牌色」与「前景色」拆开：--ui-accent 只用于浅底着色、渐变和装饰性
+     填充；凡有信息含义的前景一律用 --ui-accent-ink（白底 5.05:1、橙汁 soft
+     底 4.50:1、白字反白 5.05:1）。新增前景用法接 ink，不要直接接 accent。 */
+  --ui-accent-ink: #aa580b;
+  --ui-accent-ink-rgb: 170, 88, 11;
+  --ui-accent-ink-hover: #954d0a;
   --user-edit-caret: var(--ui-accent-deep);
   --user-edit-selection-bg: rgba(var(--ui-accent-rgb), 0.24);
   --user-edit-cursor:
     url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='24' viewBox='0 0 16 24'%3E%3Cpath d='M5 2.5h6M8 2.5v19M5 21.5h6' fill='none' stroke='%230f172a' stroke-width='4' stroke-linecap='round'/%3E%3Cpath d='M5 2.5h6M8 2.5v19M5 21.5h6' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E")
       8 12,
     text;
-  --ui-accent-soft: #f6e9e3;
-  --ui-accent-soft-2: #f0dad1;
-  --ui-accent-soft-3: #fbf4f1;
-  --ui-accent-soft-4: #ebcbbf;
-  --ui-accent-soft-5: #e5bbac;
-  --ui-accent-gradient-start: #ebcbbf;
-  --ui-accent-gradient-mid: #d4886f;
-  --ui-accent-hover: #b55637;
+  --ui-accent-soft: #fdf0de;
+  --ui-accent-soft-2: #fce3c7;
+  --ui-accent-soft-3: #fef7ee;
+  --ui-accent-soft-4: #fbd7b1;
+  --ui-accent-soft-5: #fac999;
+  --ui-accent-gradient-start: #fbd7b1;
+  --ui-accent-gradient-mid: #f8af68;
+  --ui-accent-hover: var(--ui-accent-ink-hover);
   --ui-accent-disabled: #e3ddd9;
-  --ui-accent-link-hover: #b55637;
+  --ui-accent-link-hover: var(--ui-accent-ink-hover);
   --accent: var(--ui-accent);
 }
 
 :root[data-user-accent='eva-orange'] {
-  /* 默认色板，与 :root 保持一致（§11.1 暖色赤陶系）。 */
-  --ui-accent: #c96443;
-  --ui-accent-rgb: 201, 100, 67;
-  --ui-accent-secondary: #dfac9a;
-  --ui-accent-secondary-rgb: 223, 172, 154;
-  --ui-accent-deep: #b55637;
-  --ui-accent-soft: #f6e9e3;
-  --ui-accent-soft-2: #f0dad1;
-  --ui-accent-soft-3: #fbf4f1;
-  --ui-accent-soft-4: #ebcbbf;
-  --ui-accent-soft-5: #e5bbac;
-  --ui-accent-gradient-start: #ebcbbf;
-  --ui-accent-gradient-mid: #d4886f;
-  --ui-accent-hover: #b55637;
+  /* 默认色板，与 :root 保持一致；橙汁的色值来源是蛹的 terracotta。 */
+  --ui-accent: #f58a24;
+  --ui-accent-rgb: 245, 138, 36;
+  --ui-accent-secondary: #ffc98a;
+  --ui-accent-secondary-rgb: 255, 201, 138;
+  --ui-accent-deep: #e07a12;
+  /* 前景强调色：用途与对比度说明见 :root 的 --ui-accent-ink。 */  --ui-accent-ink: #aa580b;
+  --ui-accent-ink-rgb: 170, 88, 11;
+  --ui-accent-ink-hover: #954d0a;
+  --ui-accent-soft: #fdf0de;
+  --ui-accent-soft-2: #fce3c7;
+  --ui-accent-soft-3: #fef7ee;
+  --ui-accent-soft-4: #fbd7b1;
+  --ui-accent-soft-5: #fac999;
+  --ui-accent-gradient-start: #fbd7b1;
+  --ui-accent-gradient-mid: #f8af68;
+  --ui-accent-hover: var(--ui-accent-ink-hover);
   --ui-accent-disabled: #e3ddd9;
-  --ui-accent-link-hover: #b55637;
+  --ui-accent-link-hover: var(--ui-accent-ink-hover);
 }
 
 :root[data-user-accent='claw-orange'] {
@@ -57,6 +70,10 @@
   --ui-accent-secondary: #ff7a2e;
   --ui-accent-secondary-rgb: 255, 122, 46;
   --ui-accent-deep: #e05200;
+  /* 前景强调色：用途与对比度说明见 :root 的 --ui-accent-ink。 */
+  --ui-accent-ink: #be4c0c;
+  --ui-accent-ink-rgb: 190, 76, 12;
+  --ui-accent-ink-hover: #a7430b;
   --ui-accent-soft: #fff3e6;
   --ui-accent-soft-2: #fff0e0;
   --ui-accent-soft-3: #fff7f1;
@@ -64,9 +81,9 @@
   --ui-accent-soft-5: #ffe3cc;
   --ui-accent-gradient-start: #ff9a5f;
   --ui-accent-gradient-mid: #ff5c00;
-  --ui-accent-hover: #e05200;
+  --ui-accent-hover: var(--ui-accent-ink-hover);
   --ui-accent-disabled: #ffc7a1;
-  --ui-accent-link-hover: #cc4a00;
+  --ui-accent-link-hover: var(--ui-accent-ink-hover);
 }
 
 :root[data-user-accent='hula-green'] {
@@ -75,6 +92,10 @@
   --ui-accent-secondary: #5dcbb0;
   --ui-accent-secondary-rgb: 93, 203, 176;
   --ui-accent-deep: #0e8d72;
+  /* 前景强调色：用途与对比度说明见 :root 的 --ui-accent-ink。 */
+  --ui-accent-ink: #107d66;
+  --ui-accent-ink-rgb: 16, 125, 102;
+  --ui-accent-ink-hover: #0e6e5a;
   --ui-accent-soft: #e7f7f2;
   --ui-accent-soft-2: #e4f6f0;
   --ui-accent-soft-3: #effbf7;
@@ -82,9 +103,9 @@
   --ui-accent-soft-5: #d4efe7;
   --ui-accent-gradient-start: #8ce3cf;
   --ui-accent-gradient-mid: #29c7a2;
-  --ui-accent-hover: #109a7d;
+  --ui-accent-hover: var(--ui-accent-ink-hover);
   --ui-accent-disabled: #a8e0d3;
-  --ui-accent-link-hover: #0b7e67;
+  --ui-accent-link-hover: var(--ui-accent-ink-hover);
 }
 
 /* 森林：深绿强调色，页面表面只带极浅的绿调。 */
@@ -94,6 +115,10 @@
   --ui-accent-secondary: #7fb39a;
   --ui-accent-secondary-rgb: 127, 179, 154;
   --ui-accent-deep: #24614a;
+  /* 前景强调色：用途与对比度说明见 :root 的 --ui-accent-ink。 */
+  --ui-accent-ink: #2f7a5c;
+  --ui-accent-ink-rgb: 47, 122, 92;
+  --ui-accent-ink-hover: #296a50;
   --ui-accent-soft: #e9f2ee;
   --ui-accent-soft-2: #dfeae4;
   --ui-accent-soft-3: #f3f8f5;
@@ -101,9 +126,9 @@
   --ui-accent-soft-5: #c2dccf;
   --ui-accent-gradient-start: #a8cdb9;
   --ui-accent-gradient-mid: #4e9b76;
-  --ui-accent-hover: #24614a;
+  --ui-accent-hover: var(--ui-accent-ink-hover);
   --ui-accent-disabled: #cfdcd5;
-  --ui-accent-link-hover: #1f5540;
+  --ui-accent-link-hover: var(--ui-accent-ink-hover);
 }
 
 /* 蜜蜂：琥珀金强调色，表面带浅蜜糖底。 */
@@ -113,6 +138,10 @@
   --ui-accent-secondary: #e0bd77;
   --ui-accent-secondary-rgb: 224, 189, 119;
   --ui-accent-deep: #9c6f1f;
+  /* 前景强调色：用途与对比度说明见 :root 的 --ui-accent-ink。 */
+  --ui-accent-ink: #8e661f;
+  --ui-accent-ink-rgb: 142, 102, 31;
+  --ui-accent-ink-hover: #7c591b;
   --ui-accent-soft: #f8f0dd;
   --ui-accent-soft-2: #f4e8cf;
   --ui-accent-soft-3: #fbf6ea;
@@ -120,9 +149,9 @@
   --ui-accent-soft-5: #e8d1a3;
   --ui-accent-gradient-start: #e6c489;
   --ui-accent-gradient-mid: #cf9c3d;
-  --ui-accent-hover: #a87c26;
+  --ui-accent-hover: var(--ui-accent-ink-hover);
   --ui-accent-disabled: #e6d6b4;
-  --ui-accent-link-hover: #8f651b;
+  --ui-accent-link-hover: var(--ui-accent-ink-hover);
 }
 
 :root[data-user-accent='minimal'] {
@@ -131,6 +160,10 @@
   --ui-accent-secondary: #b5bfce;
   --ui-accent-secondary-rgb: 181, 191, 206;
   --ui-accent-deep: #9ba6ba;
+  /* 前景强调色：用途与对比度说明见 :root 的 --ui-accent-ink。 */
+  --ui-accent-ink: #637087;
+  --ui-accent-ink-rgb: 99, 112, 135;
+  --ui-accent-ink-hover: #576276;
   --ui-accent-soft: #f3f4f6;
   --ui-accent-soft-2: #f5f6f7;
   --ui-accent-soft-3: #f6f7f8;
@@ -138,9 +171,9 @@
   --ui-accent-soft-5: #e9edf1;
   --ui-accent-gradient-start: #dde2ea;
   --ui-accent-gradient-mid: #c2cad8;
-  --ui-accent-hover: #a5afc2;
+  --ui-accent-hover: var(--ui-accent-ink-hover);
   --ui-accent-disabled: #cfd5de;
-  --ui-accent-link-hover: #8b95a9;
+  --ui-accent-link-hover: var(--ui-accent-ink-hover);
 }
 
 :root[data-user-accent='tech-blue'] {
@@ -149,6 +182,10 @@
   --ui-accent-secondary: #7c9cff;
   --ui-accent-secondary-rgb: 124, 156, 255;
   --ui-accent-deep: #0ea5e9;
+  /* 前景强调色：用途与对比度说明见 :root 的 --ui-accent-ink。 */
+  --ui-accent-ink: #0b77a7;
+  --ui-accent-ink-rgb: 11, 119, 167;
+  --ui-accent-ink-hover: #0a6892;
   --ui-accent-soft: #e7f7ff;
   --ui-accent-soft-2: #dff3ff;
   --ui-accent-soft-3: #f1f9ff;
@@ -156,9 +193,9 @@
   --ui-accent-soft-5: #cae9ff;
   --ui-accent-gradient-start: #6edbff;
   --ui-accent-gradient-mid: #4f8dff;
-  --ui-accent-hover: #22acee;
+  --ui-accent-hover: var(--ui-accent-ink-hover);
   --ui-accent-disabled: #9ed9f4;
-  --ui-accent-link-hover: #0284c7;
+  --ui-accent-link-hover: var(--ui-accent-ink-hover);
 }
 
 /* 单一浅色基调：B6 移除了深浅切换（data-user-theme），把原本挂在

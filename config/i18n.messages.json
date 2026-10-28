@@ -1,4 +1,8 @@
 {
+  "cron.workspace.cloud": {
+    "en-US": "Cloud workspace",
+    "zh-CN": "云端工作区"
+  },
   "attachment.default_name": {
     "en-US": "File",
     "zh-CN": "文件"
@@ -2636,8 +2640,8 @@
     "zh-CN": "要加载的已挂载技能准确名称。用户点名技能或请求命中技能时，必须先调用本工具。"
   },
   "tool.spec.skill_call.description": {
-    "en-US": "Load a mounted skill. If the user names a skill or the task matches its Frontmatter, call this first; do not list/search files or run commands first. action=manifest returns compact metadata and one bounded resource-index page. action=read returns one bounded resource page; continue with its cursor, or choose a path/section and line window. Follow the loaded workflow.",
-    "zh-CN": "加载已挂载技能（默认读取 SKILL.md）。用户点名技能或任务命中其 Frontmatter 时，本工具必须是第一条工具调用；不要先列目录、搜索文件或执行命令。action=manifest 只返回精简元数据和一页有界资源索引；action=read 返回一页有界资源内容，可使用返回 cursor 续读，或选择 path/section 与行窗口。加载后按技能流程执行。"
+    "en-US": "Load a mounted skill. If the user names a skill or the task matches its Frontmatter, call this first; do not list/search files or run commands first. The default call returns the SKILL.md body together with the skill's resource index, so one call is normally enough; only keep calling with cursor when the reply reports truncated=true. action=read fetches one bounded page of a resource (path/section/line window); action=manifest returns metadata and an index page only when the index itself is too large. Follow the loaded workflow.",
+    "zh-CN": "加载已挂载技能。用户点名技能或任务命中其 Frontmatter 时，本工具必须是第一条工具调用；不要先列目录、搜索文件或执行命令。默认调用一次即返回 SKILL.md 正文和该技能的资源索引，通常不需要再次调用；仅当返回 truncated=true 时才用 cursor 续读。action=read 读取某个资源的一页有界内容（可用于 path/section/行窗口）；action=manifest 仅在资源索引过大时单独取索引页。加载后按技能流程执行。"
   },
   "tool.spec.search.args.file_pattern": {
     "en-US": "Optional. Glob pattern to filter files, e.g., *.cpp or src/**.ts.",

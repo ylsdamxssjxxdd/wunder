@@ -65,6 +65,8 @@ ENTRIES = [
     ("st_name_invalid", "名称不能为空且不能超过 80 个字符", "Name cannot be empty and must be at most 80 characters"),
     ("st_agent_name_invalid", "智能体名称不能为空且不能超过 80 个字符", "Agent name cannot be empty and must be at most 80 characters"),
     ("st_exec_interval_range", "执行间隔必须在 1..86400 秒之间", "Interval must be between 1 and 86400 seconds"),
+    ("st_cron_interval_range", "重复周期必须为正整数，且不超过 1 天", "Repeat interval must be a positive integer of at most 1 day"),
+    ("st_cron_workspace_required", "请选择工作区", "Select a workspace"),
     ("st_exec_message_empty", "执行消息不能为空", "Message cannot be empty"),
     ("st_channel_type_required", "请选择渠道类型", "Pick a channel type"),
     ("st_members_required", "请至少选择 1 名初始成员", "Pick at least 1 initial member"),

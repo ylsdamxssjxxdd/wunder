@@ -7,6 +7,10 @@ use serde_json::Value;
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct ChatSummary {
+    #[serde(default)]
+    pub process_count: i64,
+    #[serde(default)]
+    pub assistant_process_text: bool,
     pub user_item_id: Option<String>,
     pub assistant_item_id: Option<String>,
     /// Latest durable question-panel event for this user turn.  The panel is
@@ -23,17 +27,17 @@ pub(super) struct ChatSummary {
 
 pub(super) fn initialize(conn: &Connection) -> Result<()> {
     conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS thread_chat_heads (
+        "CREATE TABLE IF NOT EXISTS thread_chat_heads_v2 (
             rollout_id TEXT NOT NULL, root_turn_id TEXT NOT NULL,
             rollout_ordinal INTEGER NOT NULL, summary_json TEXT NOT NULL,
             PRIMARY KEY(rollout_id,root_turn_id)
          );
-         CREATE TABLE IF NOT EXISTS thread_chat_checkpoints (
+         CREATE TABLE IF NOT EXISTS thread_chat_checkpoints_v2 (
             rollout_id TEXT NOT NULL, root_turn_id TEXT NOT NULL,
             rollout_ordinal INTEGER NOT NULL, summary_json TEXT NOT NULL,
             PRIMARY KEY(rollout_id,root_turn_id,rollout_ordinal)
          );
-         CREATE TABLE IF NOT EXISTS thread_chat_projection_state (
+         CREATE TABLE IF NOT EXISTS thread_chat_projection_state_v2 (
             rollout_id TEXT PRIMARY KEY NOT NULL, next_ordinal INTEGER NOT NULL
          );",
     )?;
@@ -42,7 +46,7 @@ pub(super) fn initialize(conn: &Connection) -> Result<()> {
 
 pub(super) fn save_position(conn: &Connection, rollout: &str, next: i64) -> Result<()> {
     conn.execute(
-        "INSERT INTO thread_chat_projection_state(rollout_id,next_ordinal) VALUES(?1,?2)
+        "INSERT INTO thread_chat_projection_state_v2(rollout_id,next_ordinal) VALUES(?1,?2)
          ON CONFLICT(rollout_id) DO UPDATE SET next_ordinal=excluded.next_ordinal",
         params![rollout, next],
     )?;
@@ -62,7 +66,7 @@ pub(super) fn project_item(
 ) -> Result<()> {
     let previous: Option<String> = tx
         .query_row(
-            "SELECT summary_json FROM thread_chat_heads WHERE rollout_id=?1 AND root_turn_id=?2",
+            "SELECT summary_json FROM thread_chat_heads_v2 WHERE rollout_id=?1 AND root_turn_id=?2",
             params![rollout, root],
             |row| row.get(0),
         )
@@ -78,12 +82,12 @@ pub(super) fn project_item(
         return Ok(());
     }
     tx.execute(
-        "INSERT INTO thread_chat_checkpoints(rollout_id,root_turn_id,rollout_ordinal,summary_json)
+        "INSERT INTO thread_chat_checkpoints_v2(rollout_id,root_turn_id,rollout_ordinal,summary_json)
          VALUES(?1,?2,?3,?4)",
         params![rollout, root, ordinal, encoded],
     )?;
     tx.execute(
-        "INSERT INTO thread_chat_heads(rollout_id,root_turn_id,rollout_ordinal,summary_json)
+        "INSERT INTO thread_chat_heads_v2(rollout_id,root_turn_id,rollout_ordinal,summary_json)
          VALUES(?1,?2,?3,?4) ON CONFLICT(rollout_id,root_turn_id) DO UPDATE SET
          rollout_ordinal=excluded.rollout_ordinal,summary_json=excluded.summary_json",
         params![rollout, root, ordinal, encoded],
@@ -114,6 +118,13 @@ pub(super) fn apply_item(
     };
     if visible {
         summary.workflow_count += i64::from(kind != "user_message");
+        let stable = super::thread_view_projection::stable_answer(id, turn, kind);
+        let content = body.get("content").and_then(Value::as_str).unwrap_or("");
+        summary.process_count += i64::from(
+            matches!(kind, "tool_call" | "compaction")
+                || super::thread_view_projection::is_compaction_system_message(kind, body)
+                || (stable && !content.trim().is_empty()),
+        );
         match kind {
             "user_message" => summary.user_item_id = Some(id.into()),
             "assistant_message" => {
@@ -121,6 +132,7 @@ pub(super) fn apply_item(
                     && !super::thread_view_projection::has_tool_calls(payload)
                 {
                     summary.assistant_item_id = Some(id.into());
+                    summary.assistant_process_text = stable && !content.trim().is_empty();
                 }
                 let reasoning = body
                     .get("reasoning")
@@ -131,6 +143,7 @@ pub(super) fn apply_item(
                     && !reasoning.trim().is_empty()
                 {
                     summary.reasoning_count += 1;
+                    summary.process_count += 1;
                     summary.reasoning_item_id = Some(id.into());
                 }
             }
@@ -162,7 +175,7 @@ pub(super) fn apply_item(
 pub(super) fn ensure_ready(conn: &mut Connection, rollout: &str) -> Result<()> {
     let (through, position): (i64,i64) = conn.query_row(
         "SELECT p.next_rollout_ordinal,COALESCE(c.next_ordinal,0) FROM thread_history_projection_state p
-         LEFT JOIN thread_chat_projection_state c ON c.rollout_id=p.rollout_id WHERE p.rollout_id=?1",
+         LEFT JOIN thread_chat_projection_state_v2 c ON c.rollout_id=p.rollout_id WHERE p.rollout_id=?1",
         [rollout], |row| Ok((row.get(0)?,row.get(1)?)),
     ).optional()?.unwrap_or_default();
     if position >= through {
@@ -174,7 +187,7 @@ pub(super) fn ensure_ready(conn: &mut Connection, rollout: &str) -> Result<()> {
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let position: i64 = tx
             .query_row(
-                "SELECT next_ordinal FROM thread_chat_projection_state WHERE rollout_id=?1",
+                "SELECT next_ordinal FROM thread_chat_projection_state_v2 WHERE rollout_id=?1",
                 [rollout],
                 |row| row.get(0),
             )
@@ -237,7 +250,7 @@ pub(super) fn read(conn: &Connection, rollout: &str, root: &str) -> Result<ChatS
     // Scoped views return at most one checkpoint per lineage segment. Global
     // ordinals order those segments; each checkpoint counts only its own file.
     let mut statement = conn.prepare(
-        "SELECT summary_json FROM thread_chat_heads WHERE rollout_id=?1 AND root_turn_id=?2 ORDER BY rollout_ordinal",
+        "SELECT summary_json FROM thread_chat_heads_v2 WHERE rollout_id=?1 AND root_turn_id=?2 ORDER BY rollout_ordinal",
     )?;
     let rows = statement.query_map(params![rollout, root], |row| row.get::<_, String>(0))?;
     let mut result = ChatSummary::default();
@@ -248,6 +261,7 @@ pub(super) fn read(conn: &Connection, rollout: &str, root: &str) -> Result<ChatS
         }
         if current.assistant_item_id.is_some() {
             result.assistant_item_id = current.assistant_item_id;
+            result.assistant_process_text = current.assistant_process_text;
         }
         if current.question_panel_item_id.is_some() {
             result.question_panel_item_id = current.question_panel_item_id;
@@ -260,6 +274,7 @@ pub(super) fn read(conn: &Connection, rollout: &str, root: &str) -> Result<ChatS
         }
         result.reasoning_count += current.reasoning_count;
         result.workflow_count += current.workflow_count;
+        result.process_count += current.process_count;
         result.workspace_change_seq = result
             .workspace_change_seq
             .max(current.workspace_change_seq);
@@ -281,6 +296,27 @@ mod tests {
         }}})
         .to_string()
             + "\n"
+    }
+
+    #[test]
+    fn process_count_excludes_internal_records_and_the_current_answer() {
+        let mut summary = ChatSummary::default();
+        for (ordinal, (id, kind, body)) in [
+            ("fixture-root:model-1", "model_call", json!({})),
+            ("fixture-root:text-1", "assistant_message", json!({"content":"Fixture print", "reasoning":"Fixture thought", "tool_calls":[{}]})),
+            ("fixture-root:tool-first", "tool_call", json!({"tool":"fixture_tool"})),
+            ("fixture-root:text-2", "assistant_message", json!({"content":"Fixture answer", "reasoning":"Fixture next"})),
+            ("fixture-root:plan", "plan", json!({})),
+            ("fixture-import", "assistant_message", json!({"content":"Fixture duplicate", "tool_calls":[{}]})),
+        ].into_iter().enumerate() {
+            apply_item(&mut summary,"fixture-root",id,kind,ordinal as i64,true,&body);
+        }
+        assert_eq!(summary.workflow_count, 6);
+        assert_eq!(
+            summary.process_count - i64::from(summary.assistant_process_text),
+            4
+        );
+        assert_eq!(summary.reasoning_count, 2);
     }
 
     #[test]
@@ -557,19 +593,19 @@ mod tests {
         // Simulate a resumable old-data upgrade interrupted after checkpoint 127.
         let checkpoint: String = conn
             .query_row(
-                "SELECT summary_json FROM thread_chat_checkpoints
+                "SELECT summary_json FROM thread_chat_checkpoints_v2
             WHERE rollout_id='fixture-rollout' AND rollout_ordinal=127",
                 [],
                 |row| row.get(0),
             )
             .unwrap();
         conn.execute(
-            "DELETE FROM thread_chat_checkpoints WHERE rollout_ordinal>=128",
+            "DELETE FROM thread_chat_checkpoints_v2 WHERE rollout_ordinal>=128",
             [],
         )
         .unwrap();
         conn.execute(
-            "UPDATE thread_chat_heads SET rollout_ordinal=127,summary_json=?1",
+            "UPDATE thread_chat_heads_v2 SET rollout_ordinal=127,summary_json=?1",
             [checkpoint],
         )
         .unwrap();
@@ -583,8 +619,8 @@ mod tests {
         // Old databases have no summaries at all. Populate only this rollout,
         // and prove that the upgrade leaves the log projection unchanged.
         conn.execute_batch(
-            "DELETE FROM thread_chat_heads; DELETE FROM thread_chat_checkpoints;
-            DELETE FROM thread_chat_projection_state;",
+            "DELETE FROM thread_chat_heads_v2; DELETE FROM thread_chat_checkpoints_v2;
+            DELETE FROM thread_chat_projection_state_v2;",
         )
         .unwrap();
         let before: i64 = conn
@@ -609,7 +645,7 @@ mod tests {
         assert_eq!(before, after);
         store.delete_rollout("fixture-rollout").unwrap();
         let count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM thread_chat_heads", [], |row| {
+            .query_row("SELECT COUNT(*) FROM thread_chat_heads_v2", [], |row| {
                 row.get(0)
             })
             .unwrap();

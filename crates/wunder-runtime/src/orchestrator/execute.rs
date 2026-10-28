@@ -58,7 +58,9 @@ fn resolve_observation_token_budgets<'a>(
         .min(OBSERVATION_TURN_TARGET_TOKENS)
         .min(OBSERVATION_TURN_MAX_TOKENS);
     let cap_sum = per_result.iter().copied().fold(0_i64, i64::saturating_add);
-    // 8k is the content target and 12k is a soft content ceiling. A very
+    // The target is the content goal for one batch (16k) and the max is a soft
+    // ceiling (20k), sized so a single large tool result such as a skill load
+    // is not clipped below what that tool already promised to return. A very
     // large batch or a full context still needs one minimal protocol
     // envelope per result; this reserve may exceed either soft limit. This
     // allocation is not an admission guarantee for the complete next request.
@@ -2322,8 +2324,8 @@ mod observation_budget_tests {
     fn observation_budgets_allocate_the_whole_batch_before_rendering() {
         for (count, expected_each, expected_total) in [
             (1, 6_000, 6_000),
-            (2, 4_000, 8_000),
-            (20, 400, 8_000),
+            (2, 6_000, 12_000),
+            (20, 800, 16_000),
             // Protocol envelopes are mandatory, even beyond the soft content
             // ceiling. Do not omit a result to make this count appear bounded.
             (100, OBSERVATION_MIN_TOKEN_BUDGET, 25_600),
@@ -2355,11 +2357,13 @@ mod observation_budget_tests {
             1_000,
             Some(8_192),
         );
-        assert_eq!(budgets.per_result, [512, 3_744, 3_744]);
-        assert_eq!(budgets.total_tokens, OBSERVATION_TURN_TARGET_TOKENS);
+        // Caps sum to 10_512, below the 16k content target, so every tool keeps
+        // its full per-tool budget.
+        assert_eq!(budgets.per_result, [512, 6_000, 4_000]);
+        assert_eq!(budgets.total_tokens, 10_512);
 
         let uneven = document_budgets(3);
-        assert_eq!(uneven.per_result, [2_667, 2_667, 2_666]);
+        assert_eq!(uneven.per_result, [5_334, 5_333, 5_333]);
         let empty = document_budgets(0);
         assert!(empty.per_result.is_empty());
         assert_eq!(empty.total_tokens, 0);

@@ -507,7 +507,156 @@ pub(crate) fn trajectory(
         )
         .then(|| crate::services::thread_log::diagnostics::project(item, status))
         .flatten(),
+        args_preview: is_tool_kind(kind)
+            .then(|| tool_args_preview(item))
+            .flatten(),
+        result_preview: is_tool_kind(kind)
+            .then(|| tool_result_preview(item))
+            .flatten(),
     }
+}
+
+fn is_tool_kind(kind: &str) -> bool {
+    matches!(kind, "tool_call" | "tool_result" | "tool")
+}
+
+/// Collapse a multi-line payload into the single ledger line without losing the
+/// first signal: the row is one line tall, so a preview that starts with blank
+/// lines from a formatted command output would look empty.
+fn single_line(text: &str) -> String {
+    text.split('\n')
+        .map(str::trim_end)
+        .filter(|line| !line.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// The argument a reader needs to recognise a call, not the whole JSON bag.
+/// Command tools put it in `command`, file tools in `path`, and the rest fall
+/// back to the serialized object so nothing is hidden.
+fn tool_args_preview(item: &Value) -> Option<String> {
+    let args = item.get("args").or_else(|| item.get("arguments"))?;
+    let preferred = [
+        "command", "cmd", "path", "query", "pattern", "url", "skill", "action", "code",
+    ]
+    .iter()
+    .find_map(|key| args.get(*key).and_then(Value::as_str))
+    .filter(|value| !value.trim().is_empty());
+    let text = match preferred {
+        Some(value) => value.to_owned(),
+        None => match args {
+            Value::String(text) => text.clone(),
+            value => serde_json::to_string(value).unwrap_or_default(),
+        },
+    };
+    let text = single_line(&text);
+    let text = text.trim();
+    (!text.is_empty()).then(|| preview(text, 200))
+}
+
+/// Command tools answer with `{results:[{command,stdout,stderr,exit_code}]}`,
+/// not one text field; without this branch the ledger row showed the tool name
+/// and nothing else, and the reader had to open the entry to learn what ran.
+fn command_output(item: &Value) -> Option<String> {
+    let data = item.get("data")?;
+    let records: Vec<&Value> = match data.get("results").and_then(Value::as_array) {
+        Some(list) if !list.is_empty() => list.iter().collect(),
+        _ => vec![data],
+    };
+    let mut out = String::new();
+    for record in records {
+        let stdout = record.get("stdout").and_then(Value::as_str).unwrap_or("");
+        let stderr = record.get("stderr").and_then(Value::as_str).unwrap_or("");
+        let exit = record
+            .get("returncode")
+            .or_else(|| record.get("exit_code"))
+            .and_then(Value::as_i64);
+        if stdout.trim().is_empty() && stderr.trim().is_empty() && exit.is_none() {
+            continue;
+        }
+        if !out.is_empty() {
+            out.push_str("  ⋯  ");
+        }
+        if let Some(command) = record
+            .get("command")
+            .or_else(|| record.get("cmd"))
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+        {
+            out.push_str(command);
+            out.push_str(": ");
+        }
+        let body = single_line(&[stdout, stderr].join("\n"));
+        if !body.trim().is_empty() {
+            out.push_str(&body);
+        }
+        if let Some(code) = exit.filter(|code| *code != 0) {
+            out.push_str(&format!(" (exit {code})"));
+        }
+        if out.chars().count() > 400 {
+            break;
+        }
+    }
+    (!out.trim().is_empty()).then_some(out)
+}
+
+/// Resolve the builtin tool schema a persisted event points at.
+///
+/// Tool payloads carry a `schema_ref` (catalog version + hash) instead of the
+/// document itself: the catalog holds kilobytes per tool, and every ledger row
+/// would otherwise repeat it. The lazy detail body is read once per opened
+/// entry, so that is the right place to spend one lookup — 蛹, 舰桥 and 蜂巢 all
+/// render `tool_schema` when the body carries it.
+pub(crate) fn attach_tool_schema(payload: &mut Value) {
+    if payload.get("tool_schema").is_some() || payload.get("schema").is_some() {
+        return;
+    }
+    let Some(reference) = payload.get("schema_ref") else {
+        return;
+    };
+    let (Some(schema_ref), Some(catalog), Some(hash)) = (
+        reference.get("schema_ref").and_then(Value::as_str),
+        reference.get("catalog_version").and_then(Value::as_str),
+        reference.get("schema_hash").and_then(Value::as_str),
+    ) else {
+        return;
+    };
+    let Some(spec) = crate::tools::resolve_builtin_tool_schema(schema_ref, catalog, hash) else {
+        return;
+    };
+    let document = crate::tools::tool_schema_document(&spec);
+    if let Some(object) = payload.as_object_mut() {
+        object.insert("tool_schema".into(), document);
+    }
+}
+
+fn tool_result_preview(item: &Value) -> Option<String> {
+    if let Some(text) = command_output(item) {
+        return Some(preview(&single_line(&text), 240));
+    }
+    let data = item.get("data");
+    let text = ["result", "output", "content", "text", "summary"]
+        .iter()
+        .find_map(|key| data.and_then(|data| data.get(*key)).and_then(Value::as_str))
+        .map(str::to_owned)
+        .or_else(|| {
+            // A failed tool reports nothing in `data`; its message is the result.
+            item.get("error").and_then(Value::as_str).map(str::to_owned)
+        })
+        .or_else(|| {
+            ["result", "output", "content"]
+                .iter()
+                .find_map(|key| item.get(*key).and_then(Value::as_str))
+                .map(str::to_owned)
+        })
+        .or_else(|| {
+            // Structured results (file listings, search hits) have no text body.
+            data.filter(|data| data.is_object() || data.is_array())
+                .map(|data| serde_json::to_string(data).unwrap_or_default())
+        })?;
+    let text = single_line(&text);
+    let text = text.trim();
+    (!text.is_empty()).then(|| preview(text, 240))
 }
 
 /// Actual execution time is distinct from canonical admission/commit time.
@@ -1045,6 +1194,46 @@ mod tests {
             0.0,
             1.0,
         )
+    }
+
+    #[test]
+    fn command_rows_carry_the_command_and_its_stdout() {
+        // Command tools answer with `results[].stdout`, not a text field; the
+        // ledger row used to show only the tool name because of it.
+        let row = project(
+            "tool_result",
+            &json!({
+                "tool": "执行命令",
+                "args": {"command": "cargo build --quiet", "timeout_ms": 30000},
+                "data": {"exit_code": 0, "stdout": "Finished dev profile", "stderr": ""},
+            }),
+        );
+        assert_eq!(row.args_preview.as_deref(), Some("cargo build --quiet"));
+        assert_eq!(row.result_preview.as_deref(), Some("Finished dev profile"));
+    }
+
+    #[test]
+    fn failed_command_rows_keep_the_exit_code() {
+        let row = project(
+            "tool_result",
+            &json!({
+                "tool": "执行命令",
+                "args": {"command": "cargo test"},
+                "data": {"results": [
+                    {"command": "cargo test", "stdout": "", "stderr": "boom", "exit_code": 2}
+                ]},
+            }),
+        );
+        let preview = row.result_preview.expect("result preview");
+        assert!(preview.contains("boom"), "{preview}");
+        assert!(preview.contains("(exit 2)"), "{preview}");
+    }
+
+    #[test]
+    fn non_tool_rows_carry_no_tool_previews() {
+        let row = project("user_message", &json!({"content": "hi"}));
+        assert!(row.args_preview.is_none());
+        assert!(row.result_preview.is_none());
     }
 
     #[test]

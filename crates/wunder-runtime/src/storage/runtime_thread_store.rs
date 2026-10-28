@@ -78,6 +78,21 @@ impl RuntimeThreadStore {
             Backend::Postgres { store, .. } => store.begin_turn(user, t, turn, model).await,
         }
     }
+    pub(crate) async fn materialize_terminal_turn(
+        &self,
+        user: &str,
+        thread: &ThreadId,
+        turn: &TurnId,
+    ) -> ThreadStoreResult<()> {
+        match &self.inner {
+            Backend::Local(store) => store.materialize_turn(user, thread, turn, "", false).await,
+            #[cfg(feature = "postgres-storage")]
+            Backend::Postgres { .. } => Err(ThreadStoreError::Conflict {
+                message: "service terminal materialization requires its lifecycle transaction"
+                    .into(),
+            }),
+        }
+    }
     /// Service lifecycle state and canonical records share a database
     /// transaction. `None` retains the local rollout-first commit boundary.
     pub(crate) async fn update_service_turn(

@@ -218,6 +218,7 @@ impl Orchestrator {
             "hidden": true,
             COMPACTION_REPLACEMENT_HISTORY_META_KEY: entries,
         });
+        self.ensure_not_cancelled(session_id).ok()?;
         if let Err(error) = self
             .try_append_chat(
                 user_id,

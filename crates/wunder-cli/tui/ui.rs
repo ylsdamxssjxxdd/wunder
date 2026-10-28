@@ -7,9 +7,6 @@ mod popup;
 mod transcript;
 
 use super::app::TuiApp;
-use ratatui::layout::Rect;
-use ratatui::text::Text;
-use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
 pub fn draw(frame: &mut Frame, app: &mut TuiApp) {
@@ -29,25 +26,14 @@ pub fn draw(frame: &mut Frame, app: &mut TuiApp) {
     }
     let popup_view = app.popup_view();
     let activity_visible = app.activity_visible();
-    let banner_rows = app.banner_reserved_rows(frame.area());
     let layout = layout::build_layout(
         frame.area(),
         popup_view.lines.len(),
         activity_visible,
-        banner_rows,
+        app.composer_height(frame.area().width, frame.area().height),
     );
 
     transcript::draw(frame, layout.transcript, layout.transcript, app, is_zh);
-
-    if let Some(band) = layout.banner {
-        if let Some(pose) = app.paint_banner(frame.area()) {
-            let offset = band.width.saturating_sub(pose.width) / 2;
-            frame.render_widget(
-                Paragraph::new(Text::from(pose.lines)),
-                Rect::new(band.x + offset, band.y, pose.width, band.height),
-            );
-        }
-    }
 
     if let Some(popup_area) = layout.popup {
         popup::draw(

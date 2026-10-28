@@ -1,0 +1,520 @@
+{
+  "date": "2026-10-28",
+  "scope": "isolated-linux-amd64-compose-postgres-synthetic-sse",
+  "limits": {
+    "accounts": 2000,
+    "api_workers": 8,
+    "postgres_connections": 64,
+    "active_task_ceiling": 300,
+    "preparation_and_admission_slots": 8,
+    "config_sync_slots": 8,
+    "cached_statements_per_connection": 256
+  },
+  "exclusions": [
+    "real-inference",
+    "password-login-burst",
+    "production-arm",
+    "long-duration-stability",
+    "large-tool-output",
+    "multi-replica-capacity"
+  ],
+  "notes": {
+    "memory": "Docker usage, not RSS; sampled, not instantaneous",
+    "model_peak": "cumulative within model process",
+    "deployment": "Compare code within the same storage path",
+    "contention": "Not a pinned idle host; not a production SLA"
+  },
+  "baseline_volume": {
+    "passed": true,
+    "binary": {
+      "server_sha256": "0c657f769aec4f84a52d48751dc3e07ead589a335f822bfd1526a436e360d2bd"
+    },
+    "workspace_storage": "volume",
+    "closed_before_cleanup": 0,
+    "stages": [
+      {
+        "concurrency": 100,
+        "completed": 100,
+        "queued": 0,
+        "elapsed_s": 3.106935271003749,
+        "errors": {},
+        "first_text_ms": {
+          "samples": 100,
+          "p50_ms": 1391.9532280124258,
+          "p95_ms": 2213.543366000522,
+          "maximum_ms": 2224.6578269987367
+        },
+        "completed_ms": {
+          "samples": 100,
+          "p50_ms": 2294.776343012927,
+          "p95_ms": 2852.3843250004575,
+          "maximum_ms": 2867.832871997962
+        },
+        "durable_checks": {
+          "passed": 100
+        },
+        "model_calls": 100,
+        "model_peak": 46,
+        "monitor": {
+          "samples": 3,
+          "p95_ms": 57.29088099906221,
+          "maximum_ms": 57.29088099906221
+        },
+        "monitor_failures": 0
+      },
+      {
+        "concurrency": 500,
+        "completed": 500,
+        "queued": 0,
+        "elapsed_s": 14.020282074023271,
+        "errors": {},
+        "first_text_ms": {
+          "samples": 500,
+          "p50_ms": 6808.039515017299,
+          "p95_ms": 12189.717058005044,
+          "maximum_ms": 12466.689781023888
+        },
+        "completed_ms": {
+          "samples": 500,
+          "p50_ms": 7981.773499021074,
+          "p95_ms": 12816.886286018416,
+          "maximum_ms": 13085.077757015824
+        },
+        "durable_checks": {
+          "passed": 500
+        },
+        "model_calls": 500,
+        "model_peak": 46,
+        "monitor": {
+          "samples": 13,
+          "p95_ms": 102.69938499550335,
+          "maximum_ms": 102.69938499550335
+        },
+        "monitor_failures": 0
+      },
+      {
+        "concurrency": 2000,
+        "completed": 2000,
+        "queued": 0,
+        "elapsed_s": 54.41396721199271,
+        "errors": {},
+        "first_text_ms": {
+          "samples": 2000,
+          "p50_ms": 26671.067791001406,
+          "p95_ms": 47679.786741995485,
+          "maximum_ms": 49722.443429986015
+        },
+        "completed_ms": {
+          "samples": 2000,
+          "p50_ms": 27806.37434500386,
+          "p95_ms": 48768.78946600482,
+          "maximum_ms": 50374.05940500321
+        },
+        "durable_checks": {
+          "passed": 2000
+        },
+        "model_calls": 2000,
+        "model_peak": 46,
+        "monitor": {
+          "samples": 51,
+          "p95_ms": 106.47530300775543,
+          "maximum_ms": 124.63485400076024
+        },
+        "monitor_failures": 0
+      }
+    ],
+    "aggregate_phase_metrics": [],
+    "runtime_diagnostics": null,
+    "log_tail_diagnostics": {
+      "scope": "last-2000-log-lines",
+      "validation_failures": 0,
+      "queue_timeouts": 0,
+      "execution_timeouts": 0,
+      "missing_threads": 0
+    },
+    "resource_samples": 24,
+    "sampled_server_resource_peaks": {
+      "docker_memory_mib": 673.7,
+      "single_core_cpu_percent": 471.53,
+      "pids": 92
+    }
+  },
+  "final_volume": {
+    "passed": true,
+    "binary": {
+      "server_sha256": "497eb991e3582a319d5983944dccda00a056f9e56eddc5ea4465550fa99ecfe7"
+    },
+    "workspace_storage": "volume",
+    "closed_before_cleanup": 0,
+    "stages": [
+      {
+        "concurrency": 100,
+        "completed": 100,
+        "queued": 0,
+        "elapsed_s": 1.9526086539844982,
+        "errors": {},
+        "first_text_ms": {
+          "samples": 100,
+          "p50_ms": 992.858162993798,
+          "p95_ms": 1213.7753689894453,
+          "maximum_ms": 1238.6811070027761
+        },
+        "completed_ms": {
+          "samples": 100,
+          "p50_ms": 1706.9854319852311,
+          "p95_ms": 1833.8744879874866,
+          "maximum_ms": 1850.3981329849921
+        },
+        "durable_checks": {
+          "passed": 100
+        },
+        "model_calls": 100,
+        "model_peak": 100,
+        "monitor": {
+          "samples": 2,
+          "p95_ms": 138.85744399158284,
+          "maximum_ms": 138.85744399158284
+        },
+        "monitor_failures": 0
+      },
+      {
+        "concurrency": 500,
+        "completed": 500,
+        "queued": 0,
+        "elapsed_s": 7.285212249000324,
+        "errors": {},
+        "first_text_ms": {
+          "samples": 500,
+          "p50_ms": 3508.701965009095,
+          "p95_ms": 6042.806086014025,
+          "maximum_ms": 6216.277609026292
+        },
+        "completed_ms": {
+          "samples": 500,
+          "p50_ms": 4463.307090016315,
+          "p95_ms": 6659.5863130060025,
+          "maximum_ms": 6821.438143000705
+        },
+        "durable_checks": {
+          "passed": 500
+        },
+        "model_calls": 500,
+        "model_peak": 100,
+        "monitor": {
+          "samples": 7,
+          "p95_ms": 89.35843399376608,
+          "maximum_ms": 89.35843399376608
+        },
+        "monitor_failures": 0
+      },
+      {
+        "concurrency": 2000,
+        "completed": 2000,
+        "queued": 0,
+        "elapsed_s": 27.130987679993268,
+        "errors": {},
+        "first_text_ms": {
+          "samples": 2000,
+          "p50_ms": 13658.046766999178,
+          "p95_ms": 23796.71873699408,
+          "maximum_ms": 24771.345796005335
+        },
+        "completed_ms": {
+          "samples": 2000,
+          "p50_ms": 14575.26280300226,
+          "p95_ms": 24657.402954995632,
+          "maximum_ms": 25367.182960006176
+        },
+        "durable_checks": {
+          "passed": 2000
+        },
+        "model_calls": 2000,
+        "model_peak": 100,
+        "monitor": {
+          "samples": 25,
+          "p95_ms": 75.65738999983296,
+          "maximum_ms": 99.4665730104316
+        },
+        "monitor_failures": 0
+      }
+    ],
+    "aggregate_phase_metrics": [
+      {
+        "label": "chat.admit",
+        "calls": 2600,
+        "avg_ms": 81.58,
+        "max_ms": 275
+      },
+      {
+        "label": "chat.admit.wait",
+        "calls": 2600,
+        "avg_ms": 9178.51,
+        "max_ms": 20607
+      },
+      {
+        "label": "chat.prepare",
+        "calls": 2600,
+        "avg_ms": 15.03,
+        "max_ms": 42
+      },
+      {
+        "label": "chat.prepare.wait",
+        "calls": 2600,
+        "avg_ms": 1464.8,
+        "max_ms": 3588
+      }
+    ],
+    "runtime_diagnostics": {
+      "metrics_present": true,
+      "backend_queue_timeouts": 0,
+      "display_queue_timeouts": 679,
+      "execution_timeouts": 0,
+      "join_errors": 0
+    },
+    "log_tail_diagnostics": {
+      "scope": "last-2000-log-lines",
+      "validation_failures": 0,
+      "queue_timeouts": 0,
+      "execution_timeouts": 0,
+      "missing_threads": 0
+    },
+    "resource_samples": 18,
+    "sampled_server_resource_peaks": {
+      "docker_memory_mib": 773.8,
+      "single_core_cpu_percent": 638.43,
+      "pids": 112
+    }
+  },
+  "final_bind": {
+    "passed": true,
+    "binary": {
+      "server_sha256": "497eb991e3582a319d5983944dccda00a056f9e56eddc5ea4465550fa99ecfe7"
+    },
+    "workspace_storage": "bind",
+    "closed_before_cleanup": 0,
+    "stages": [
+      {
+        "concurrency": 100,
+        "completed": 100,
+        "queued": 0,
+        "elapsed_s": 6.117320176010253,
+        "errors": {},
+        "first_text_ms": {
+          "samples": 100,
+          "p50_ms": 3197.0535370055586,
+          "p95_ms": 5367.50267399475,
+          "maximum_ms": 5461.915082007181
+        },
+        "completed_ms": {
+          "samples": 100,
+          "p50_ms": 3793.8893279933836,
+          "p95_ms": 5949.412835005205,
+          "maximum_ms": 6037.298665003618
+        },
+        "durable_checks": {
+          "passed": 100
+        },
+        "model_calls": 100,
+        "model_peak": 18,
+        "monitor": {
+          "samples": 7,
+          "p95_ms": 17.833382007665932,
+          "maximum_ms": 17.833382007665932
+        },
+        "monitor_failures": 0
+      },
+      {
+        "concurrency": 500,
+        "completed": 500,
+        "queued": 200,
+        "elapsed_s": 26.476564776996383,
+        "errors": {},
+        "first_text_ms": {
+          "samples": 500,
+          "p50_ms": 13211.90739198937,
+          "p95_ms": 25119.204768008785,
+          "maximum_ms": 26024.89595298539
+        },
+        "completed_ms": {
+          "samples": 500,
+          "p50_ms": 13795.368483988568,
+          "p95_ms": 25141.8876349926,
+          "maximum_ms": 26042.539986985503
+        },
+        "durable_checks": {
+          "passed": 500
+        },
+        "model_calls": 500,
+        "model_peak": 24,
+        "monitor": {
+          "samples": 26,
+          "p95_ms": 22.477621998405084,
+          "maximum_ms": 25.621704990044236
+        },
+        "monitor_failures": 0
+      },
+      {
+        "concurrency": 2000,
+        "completed": 2000,
+        "queued": 1661,
+        "elapsed_s": 107.11155272499309,
+        "errors": {},
+        "first_text_ms": {
+          "samples": 2000,
+          "p50_ms": 50871.17254297482,
+          "p95_ms": 100777.45629797573,
+          "maximum_ms": 105645.68939298624
+        },
+        "completed_ms": {
+          "samples": 2000,
+          "p50_ms": 50892.27262197528,
+          "p95_ms": 100800.05301698111,
+          "maximum_ms": 105663.33977199974
+        },
+        "durable_checks": {
+          "passed": 2000
+        },
+        "model_calls": 2000,
+        "model_peak": 24,
+        "monitor": {
+          "samples": 104,
+          "p95_ms": 40.163271012715995,
+          "maximum_ms": 43.12705900520086
+        },
+        "monitor_failures": 0
+      }
+    ],
+    "aggregate_phase_metrics": [
+      {
+        "label": "chat.admit",
+        "calls": 2600,
+        "avg_ms": 27.13,
+        "max_ms": 74
+      },
+      {
+        "label": "chat.admit.wait",
+        "calls": 2600,
+        "avg_ms": 4214.6,
+        "max_ms": 7131
+      },
+      {
+        "label": "chat.prepare",
+        "calls": 2600,
+        "avg_ms": 23.27,
+        "max_ms": 147
+      },
+      {
+        "label": "chat.prepare.wait",
+        "calls": 2600,
+        "avg_ms": 3416.6,
+        "max_ms": 6103
+      }
+    ],
+    "runtime_diagnostics": {
+      "metrics_present": true,
+      "backend_queue_timeouts": 0,
+      "display_queue_timeouts": 0,
+      "execution_timeouts": 0,
+      "join_errors": 0
+    },
+    "log_tail_diagnostics": {
+      "scope": "last-2000-log-lines",
+      "validation_failures": 0,
+      "queue_timeouts": 0,
+      "execution_timeouts": 0,
+      "missing_threads": 0
+    },
+    "resource_samples": 38,
+    "sampled_server_resource_peaks": {
+      "docker_memory_mib": 627.7,
+      "single_core_cpu_percent": 483.46,
+      "pids": 92
+    }
+  },
+  "final_volume_repeat": {
+    "passed": true,
+    "binary": {
+      "server_sha256": "497eb991e3582a319d5983944dccda00a056f9e56eddc5ea4465550fa99ecfe7"
+    },
+    "workspace_storage": "volume",
+    "closed_before_cleanup": 0,
+    "stages": [
+      {
+        "concurrency": 2000,
+        "completed": 2000,
+        "queued": 0,
+        "elapsed_s": 24.88157684999169,
+        "errors": {},
+        "first_text_ms": {
+          "samples": 2000,
+          "p50_ms": 12847.71407500375,
+          "p95_ms": 21821.404371992685,
+          "maximum_ms": 22726.868536992697
+        },
+        "completed_ms": {
+          "samples": 2000,
+          "p50_ms": 13752.516845997889,
+          "p95_ms": 22690.210133994697,
+          "maximum_ms": 23319.897614012007
+        },
+        "durable_checks": {
+          "passed": 2000
+        },
+        "model_calls": 2000,
+        "model_peak": 90,
+        "monitor": {
+          "samples": 24,
+          "p95_ms": 76.92500998382457,
+          "maximum_ms": 276.51464100927114
+        },
+        "monitor_failures": 0
+      }
+    ],
+    "aggregate_phase_metrics": [
+      {
+        "label": "chat.admit",
+        "calls": 2000,
+        "avg_ms": 76.0,
+        "max_ms": 172
+      },
+      {
+        "label": "chat.admit.wait",
+        "calls": 2000,
+        "avg_ms": 10018.61,
+        "max_ms": 18603
+      },
+      {
+        "label": "chat.prepare",
+        "calls": 2000,
+        "avg_ms": 13.66,
+        "max_ms": 61
+      },
+      {
+        "label": "chat.prepare.wait",
+        "calls": 2000,
+        "avg_ms": 2081.63,
+        "max_ms": 3395
+      }
+    ],
+    "runtime_diagnostics": {
+      "metrics_present": true,
+      "backend_queue_timeouts": 0,
+      "display_queue_timeouts": 348,
+      "execution_timeouts": 0,
+      "join_errors": 0
+    },
+    "log_tail_diagnostics": {
+      "scope": "last-2000-log-lines",
+      "validation_failures": 0,
+      "queue_timeouts": 0,
+      "execution_timeouts": 0,
+      "missing_threads": 0
+    },
+    "resource_samples": 14,
+    "sampled_server_resource_peaks": {
+      "docker_memory_mib": 664.5,
+      "single_core_cpu_percent": 644.84,
+      "pids": 116
+    }
+  }
+}

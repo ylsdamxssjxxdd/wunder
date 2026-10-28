@@ -1,0 +1,23 @@
+import { GoalBanner } from "../../../frontend-slint/ui/composer.slint";
+import { Theme } from "../../../frontend-slint/ui/theme.slint";
+export component GoalPreview inherits Window {
+    width: 720px;
+    height: 530px;
+    background: #ffffff;
+    VerticalLayout {
+        padding: 20px;
+        spacing: 10px;
+        Text { text: "目标状态渲染检查（真实 GoalBanner 组件）"; font-size: 18px; color: Theme.text; }
+        Text { text: "执行中 / armed"; color: Theme.text; }
+        GoalBanner { objective: "示例目标：完成通用检查"; phase: "active"; activation: "armed"; rounds: "1 / 8"; }
+        Text { text: "已暂停 / disarmed"; color: Theme.text; }
+        GoalBanner { objective: "示例目标：完成通用检查"; phase: "paused"; activation: "disarmed"; paused: true; }
+        Text { text: "已阻塞 / disarmed"; color: Theme.text; }
+        GoalBanner { objective: "示例目标：等待补充信息"; phase: "blocked"; activation: "disarmed"; }
+        Text { text: "持久态 active，进程已解除激活"; color: Theme.text; }
+        GoalBanner { objective: "示例目标：重新打开线程"; phase: "active"; activation: "disarmed"; }
+        Text { text: "编辑长目标"; color: Theme.text; }
+        GoalBanner { objective: "示例目标"; phase: "paused"; activation: "disarmed"; paused: true; editing: true; edit-draft: "修订后的示例目标：校验编辑、暂停、继续和清除边界"; }
+        Text { text: "完成与清除：主窗口根据 visible 隐藏目标条（由 Rust 回归验证）"; color: Theme.text; wrap: word-wrap; }
+    }
+}

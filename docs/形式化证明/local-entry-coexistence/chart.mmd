@@ -1,0 +1,365 @@
+---
+config:
+  markdownAutoWrap: false
+  state:
+    useMaxWidth: false
+---
+stateDiagram-v2
+  %% second model (fix): the fix
+  classDef works fill:#f4f6f7,stroke:#566573,color:#1b2631
+  classDef wrong fill:#fdedec,stroke:#c0392b,color:#7b241c
+  classDef fixed fill:#e9f7ef,stroke:#1e8449,color:#145a32
+  classDef mixed fill:#fdebd0,stroke:#d35400,color:#7e5109
+  classDef after fill:#ffffff,stroke:#808b96,color:#566573
+  classDef worse fill:#f4ecf7,stroke:#7d3c98,color:#4a235a
+  classDef worksPath fill:#f4f6f7,stroke:#1f3a93,stroke-width:4px,color:#1b2631
+  classDef wrongPath fill:#fdedec,stroke:#1f3a93,stroke-width:4px,color:#7b241c
+  classDef fixedPath fill:#e9f7ef,stroke:#1f3a93,stroke-width:4px,color:#145a32
+  classDef mixedPath fill:#fdebd0,stroke:#1f3a93,stroke-width:4px,color:#7e5109
+  classDef afterPath fill:#ffffff,stroke:#1f3a93,stroke-width:4px,color:#566573
+  classDef worsePath fill:#f4ecf7,stroke:#1f3a93,stroke-width:4px,color:#4a235a
+  state "Legend" as legend {
+    state "Works today" as legendWorks
+    state "Fixed or new with the fix" as legendFixed
+  }
+  class legendWorks works
+  class legendFixed fixed
+  state "已启动：无<br/>启动被拦：无<br/>任务甲：无<br/>任务乙：无<br/>排空中的写入：0" as s0
+  state "已启动：舵机乙<br/>启动被拦：无<br/>任务甲：无<br/>任务乙：无<br/>排空中的写入：0" as s1
+  state "已启动：舵机乙<br/>启动被拦：无<br/>任务甲：无<br/>任务乙：舵机乙<br/>排空中的写入：0" as s2
+  state "已启动：舵机乙<br/>启动被拦：无<br/>任务甲：舵机乙<br/>任务乙：无<br/>排空中的写入：0" as s3
+  state "已启动：舵机乙<br/>启动被拦：无<br/>任务甲：舵机乙<br/>任务乙：舵机乙<br/>排空中的写入：0" as s4
+  state "已启动：舵机乙<br/>启动被拦：舵机甲<br/>任务甲：无<br/>任务乙：无<br/>排空中的写入：0" as s5
+  state "已启动：舵机乙<br/>启动被拦：舵机甲<br/>任务甲：无<br/>任务乙：舵机乙<br/>排空中的写入：0" as s6
+  state "已启动：舵机乙<br/>启动被拦：舵机甲<br/>任务甲：舵机乙<br/>任务乙：无<br/>排空中的写入：0" as s7
+  state "已启动：舵机乙<br/>启动被拦：舵机甲<br/>任务甲：舵机乙<br/>任务乙：舵机乙<br/>排空中的写入：0" as s8
+  state "已启动：舵机乙<br/>启动被拦：蛹<br/>任务甲：无<br/>任务乙：无<br/>排空中的写入：0" as s9
+  state "已启动：舵机乙<br/>启动被拦：蛹<br/>任务甲：无<br/>任务乙：舵机乙<br/>排空中的写入：0" as s10
+  state "已启动：舵机乙<br/>启动被拦：蛹<br/>任务甲：舵机乙<br/>任务乙：无<br/>排空中的写入：0" as s11
+  state "已启动：舵机乙<br/>启动被拦：蛹<br/>任务甲：舵机乙<br/>任务乙：舵机乙<br/>排空中的写入：0" as s12
+  state "已启动：舵机乙<br/>启动被拦：蛹、舵机甲<br/>任务甲：无<br/>任务乙：无<br/>排空中的写入：0" as s13
+  state "已启动：舵机乙<br/>启动被拦：蛹、舵机甲<br/>任务甲：无<br/>任务乙：舵机乙<br/>排空中的写入：0" as s14
+  state "已启动：舵机乙<br/>启动被拦：蛹、舵机甲<br/>任务甲：舵机乙<br/>任务乙：无<br/>排空中的写入：0" as s15
+  state "已启动：舵机乙<br/>启动被拦：蛹、舵机甲<br/>任务甲：舵机乙<br/>任务乙：舵机乙<br/>排空中的写入：0" as s16
+  state "已启动：舵机甲<br/>启动被拦：无<br/>任务甲：无<br/>任务乙：无<br/>排空中的写入：0" as s17
+  state "已启动：舵机甲<br/>启动被拦：无<br/>任务甲：无<br/>任务乙：舵机甲<br/>排空中的写入：0" as s18
+  state "已启动：舵机甲<br/>启动被拦：无<br/>任务甲：舵机甲<br/>任务乙：无<br/>排空中的写入：0" as s19
+  state "已启动：舵机甲<br/>启动被拦：无<br/>任务甲：舵机甲<br/>任务乙：舵机甲<br/>排空中的写入：0" as s20
+  state "已启动：舵机甲<br/>启动被拦：舵机乙<br/>任务甲：无<br/>任务乙：无<br/>排空中的写入：0" as s21
+  state "已启动：舵机甲<br/>启动被拦：舵机乙<br/>任务甲：无<br/>任务乙：舵机甲<br/>排空中的写入：0" as s22
+  state "已启动：舵机甲<br/>启动被拦：舵机乙<br/>任务甲：舵机甲<br/>任务乙：无<br/>排空中的写入：0" as s23
+  state "已启动：舵机甲<br/>启动被拦：舵机乙<br/>任务甲：舵机甲<br/>任务乙：舵机甲<br/>排空中的写入：0" as s24
+  state "已启动：舵机甲<br/>启动被拦：蛹<br/>任务甲：无<br/>任务乙：无<br/>排空中的写入：0" as s25
+  state "已启动：舵机甲<br/>启动被拦：蛹<br/>任务甲：无<br/>任务乙：舵机甲<br/>排空中的写入：0" as s26
+  state "已启动：舵机甲<br/>启动被拦：蛹<br/>任务甲：舵机甲<br/>任务乙：无<br/>排空中的写入：0" as s27
+  state "已启动：舵机甲<br/>启动被拦：蛹<br/>任务甲：舵机甲<br/>任务乙：舵机甲<br/>排空中的写入：0" as s28
+  state "已启动：舵机甲<br/>启动被拦：蛹、舵机乙<br/>任务甲：无<br/>任务乙：无<br/>排空中的写入：0" as s29
+  state "已启动：舵机甲<br/>启动被拦：蛹、舵机乙<br/>任务甲：无<br/>任务乙：舵机甲<br/>排空中的写入：0" as s30
+  state "已启动：舵机甲<br/>启动被拦：蛹、舵机乙<br/>任务甲：舵机甲<br/>任务乙：无<br/>排空中的写入：0" as s31
+  state "已启动：舵机甲<br/>启动被拦：蛹、舵机乙<br/>任务甲：舵机甲<br/>任务乙：舵机甲<br/>排空中的写入：0" as s32
+  state "已启动：舵机甲、舵机乙<br/>启动被拦：无<br/>任务甲：无<br/>任务乙：无<br/>排空中的写入：0" as s33
+  state "已启动：舵机甲、舵机乙<br/>启动被拦：无<br/>任务甲：无<br/>任务乙：舵机乙<br/>排空中的写入：0" as s34
+  state "已启动：舵机甲、舵机乙<br/>启动被拦：无<br/>任务甲：无<br/>任务乙：舵机甲<br/>排空中的写入：0" as s35
+  state "已启动：舵机甲、舵机乙<br/>启动被拦：无<br/>任务甲：舵机乙<br/>任务乙：无<br/>排空中的写入：0" as s36
+  state "已启动：舵机甲、舵机乙<br/>启动被拦：无<br/>任务甲：舵机乙<br/>任务乙：舵机乙<br/>排空中的写入：0" as s37
+  state "已启动：舵机甲、舵机乙<br/>启动被拦：无<br/>任务甲：舵机乙<br/>任务乙：舵机甲<br/>排空中的写入：0" as s38
+  state "已启动：舵机甲、舵机乙<br/>启动被拦：无<br/>任务甲：舵机甲<br/>任务乙：无<br/>排空中的写入：0" as s39
+  state "已启动：舵机甲、舵机乙<br/>启动被拦：无<br/>任务甲：舵机甲<br/>任务乙：舵机乙<br/>排空中的写入：0" as s40
+  state "已启动：舵机甲、舵机乙<br/>启动被拦：无<br/>任务甲：舵机甲<br/>任务乙：舵机甲<br/>排空中的写入：0" as s41
+  state "已启动：舵机甲、舵机乙<br/>启动被拦：蛹<br/>任务甲：无<br/>任务乙：无<br/>排空中的写入：0" as s42
+  state "已启动：舵机甲、舵机乙<br/>启动被拦：蛹<br/>任务甲：无<br/>任务乙：舵机乙<br/>排空中的写入：0" as s43
+  state "已启动：舵机甲、舵机乙<br/>启动被拦：蛹<br/>任务甲：无<br/>任务乙：舵机甲<br/>排空中的写入：0" as s44
+  state "已启动：舵机甲、舵机乙<br/>启动被拦：蛹<br/>任务甲：舵机乙<br/>任务乙：无<br/>排空中的写入：0" as s45
+  state "已启动：舵机甲、舵机乙<br/>启动被拦：蛹<br/>任务甲：舵机乙<br/>任务乙：舵机乙<br/>排空中的写入：0" as s46
+  state "已启动：舵机甲、舵机乙<br/>启动被拦：蛹<br/>任务甲：舵机甲<br/>任务乙：无<br/>排空中的写入：0" as s47
+  state "已启动：舵机甲、舵机乙<br/>启动被拦：蛹<br/>任务甲：舵机甲<br/>任务乙：舵机甲<br/>排空中的写入：0" as s48
+  state "已启动：蛹<br/>启动被拦：无<br/>任务甲：无<br/>任务乙：无<br/>排空中的写入：0" as s49
+  state "已启动：蛹<br/>启动被拦：无<br/>任务甲：无<br/>任务乙：蛹<br/>排空中的写入：0" as s50
+  state "已启动：蛹<br/>启动被拦：无<br/>任务甲：蛹<br/>任务乙：无<br/>排空中的写入：0" as s51
+  state "已启动：蛹<br/>启动被拦：无<br/>任务甲：蛹<br/>任务乙：蛹<br/>排空中的写入：0" as s52
+  state "已启动：蛹<br/>启动被拦：舵机乙<br/>任务甲：无<br/>任务乙：无<br/>排空中的写入：0" as s53
+  state "已启动：蛹<br/>启动被拦：舵机乙<br/>任务甲：无<br/>任务乙：蛹<br/>排空中的写入：0" as s54
+  state "已启动：蛹<br/>启动被拦：舵机乙<br/>任务甲：蛹<br/>任务乙：无<br/>排空中的写入：0" as s55
+  state "已启动：蛹<br/>启动被拦：舵机乙<br/>任务甲：蛹<br/>任务乙：蛹<br/>排空中的写入：0" as s56
+  state "已启动：蛹<br/>启动被拦：舵机甲<br/>任务甲：无<br/>任务乙：无<br/>排空中的写入：0" as s57
+  state "已启动：蛹<br/>启动被拦：舵机甲<br/>任务甲：无<br/>任务乙：蛹<br/>排空中的写入：0" as s58
+  state "已启动：蛹<br/>启动被拦：舵机甲<br/>任务甲：蛹<br/>任务乙：无<br/>排空中的写入：0" as s59
+  state "已启动：蛹<br/>启动被拦：舵机甲<br/>任务甲：蛹<br/>任务乙：蛹<br/>排空中的写入：0" as s60
+  state "已启动：蛹<br/>启动被拦：舵机甲、舵机乙<br/>任务甲：无<br/>任务乙：无<br/>排空中的写入：0" as s61
+  state "已启动：蛹<br/>启动被拦：舵机甲、舵机乙<br/>任务甲：无<br/>任务乙：蛹<br/>排空中的写入：0" as s62
+  state "已启动：蛹<br/>启动被拦：舵机甲、舵机乙<br/>任务甲：蛹<br/>任务乙：无<br/>排空中的写入：0" as s63
+  state "已启动：蛹<br/>启动被拦：舵机甲、舵机乙<br/>任务甲：蛹<br/>任务乙：蛹<br/>排空中的写入：0" as s64
+  state "已启动：蛹、舵机乙<br/>启动被拦：无<br/>任务甲：无<br/>任务乙：无<br/>排空中的写入：0" as s65
+  state "已启动：蛹、舵机乙<br/>启动被拦：无<br/>任务甲：无<br/>任务乙：舵机乙<br/>排空中的写入：0" as s66
+  state "已启动：蛹、舵机乙<br/>启动被拦：无<br/>任务甲：无<br/>任务乙：蛹<br/>排空中的写入：0" as s67
+  state "已启动：蛹、舵机乙<br/>启动被拦：无<br/>任务甲：舵机乙<br/>任务乙：无<br/>排空中的写入：0" as s68
+  state "已启动：蛹、舵机乙<br/>启动被拦：无<br/>任务甲：舵机乙<br/>任务乙：舵机乙<br/>排空中的写入：0" as s69
+  state "已启动：蛹、舵机乙<br/>启动被拦：无<br/>任务甲：舵机乙<br/>任务乙：蛹<br/>排空中的写入：0" as s70
+  state "已启动：蛹、舵机乙<br/>启动被拦：无<br/>任务甲：蛹<br/>任务乙：无<br/>排空中的写入：0" as s71
+  state "已启动：蛹、舵机乙<br/>启动被拦：无<br/>任务甲：蛹<br/>任务乙：舵机乙<br/>排空中的写入：0" as s72
+  state "已启动：蛹、舵机乙<br/>启动被拦：无<br/>任务甲：蛹<br/>任务乙：蛹<br/>排空中的写入：0" as s73
+  state "已启动：蛹、舵机乙<br/>启动被拦：舵机甲<br/>任务甲：无<br/>任务乙：无<br/>排空中的写入：0" as s74
+  state "已启动：蛹、舵机乙<br/>启动被拦：舵机甲<br/>任务甲：无<br/>任务乙：舵机乙<br/>排空中的写入：0" as s75
+  state "已启动：蛹、舵机乙<br/>启动被拦：舵机甲<br/>任务甲：无<br/>任务乙：蛹<br/>排空中的写入：0" as s76
+  state "已启动：蛹、舵机乙<br/>启动被拦：舵机甲<br/>任务甲：舵机乙<br/>任务乙：无<br/>排空中的写入：0" as s77
+  state "已启动：蛹、舵机乙<br/>启动被拦：舵机甲<br/>任务甲：舵机乙<br/>任务乙：舵机乙<br/>排空中的写入：0" as s78
+  state "已启动：蛹、舵机乙<br/>启动被拦：舵机甲<br/>任务甲：蛹<br/>任务乙：无<br/>排空中的写入：0" as s79
+  state "已启动：蛹、舵机乙<br/>启动被拦：舵机甲<br/>任务甲：蛹<br/>任务乙：蛹<br/>排空中的写入：0" as s80
+  state "已启动：蛹、舵机甲<br/>启动被拦：无<br/>任务甲：无<br/>任务乙：无<br/>排空中的写入：0" as s81
+  state "已启动：蛹、舵机甲<br/>启动被拦：无<br/>任务甲：无<br/>任务乙：舵机甲<br/>排空中的写入：0" as s82
+  state "已启动：蛹、舵机甲<br/>启动被拦：无<br/>任务甲：无<br/>任务乙：蛹<br/>排空中的写入：0" as s83
+  state "已启动：蛹、舵机甲<br/>启动被拦：无<br/>任务甲：舵机甲<br/>任务乙：无<br/>排空中的写入：0" as s84
+  state "已启动：蛹、舵机甲<br/>启动被拦：无<br/>任务甲：舵机甲<br/>任务乙：舵机甲<br/>排空中的写入：0" as s85
+  state "已启动：蛹、舵机甲<br/>启动被拦：无<br/>任务甲：舵机甲<br/>任务乙：蛹<br/>排空中的写入：0" as s86
+  state "已启动：蛹、舵机甲<br/>启动被拦：无<br/>任务甲：蛹<br/>任务乙：无<br/>排空中的写入：0" as s87
+  state "已启动：蛹、舵机甲<br/>启动被拦：无<br/>任务甲：蛹<br/>任务乙：舵机甲<br/>排空中的写入：0" as s88
+  state "已启动：蛹、舵机甲<br/>启动被拦：无<br/>任务甲：蛹<br/>任务乙：蛹<br/>排空中的写入：0" as s89
+  state "已启动：蛹、舵机甲<br/>启动被拦：舵机乙<br/>任务甲：无<br/>任务乙：无<br/>排空中的写入：0" as s90
+  state "已启动：蛹、舵机甲<br/>启动被拦：舵机乙<br/>任务甲：无<br/>任务乙：舵机甲<br/>排空中的写入：0" as s91
+  state "已启动：蛹、舵机甲<br/>启动被拦：舵机乙<br/>任务甲：无<br/>任务乙：蛹<br/>排空中的写入：0" as s92
+  state "已启动：蛹、舵机甲<br/>启动被拦：舵机乙<br/>任务甲：舵机甲<br/>任务乙：无<br/>排空中的写入：0" as s93
+  state "已启动：蛹、舵机甲<br/>启动被拦：舵机乙<br/>任务甲：舵机甲<br/>任务乙：舵机甲<br/>排空中的写入：0" as s94
+  state "已启动：蛹、舵机甲<br/>启动被拦：舵机乙<br/>任务甲：蛹<br/>任务乙：无<br/>排空中的写入：0" as s95
+  state "已启动：蛹、舵机甲<br/>启动被拦：舵机乙<br/>任务甲：蛹<br/>任务乙：蛹<br/>排空中的写入：0" as s96
+  state "已启动：蛹、舵机甲、舵机乙<br/>启动被拦：无<br/>任务甲：无<br/>任务乙：无<br/>排空中的写入：0" as s97
+  state "已启动：蛹、舵机甲、舵机乙<br/>启动被拦：无<br/>任务甲：无<br/>任务乙：舵机乙<br/>排空中的写入：0" as s98
+  state "已启动：蛹、舵机甲、舵机乙<br/>启动被拦：无<br/>任务甲：无<br/>任务乙：舵机甲<br/>排空中的写入：0" as s99
+  state "已启动：蛹、舵机甲、舵机乙<br/>启动被拦：无<br/>任务甲：无<br/>任务乙：蛹<br/>排空中的写入：0" as s100
+  state "已启动：蛹、舵机甲、舵机乙<br/>启动被拦：无<br/>任务甲：舵机乙<br/>任务乙：无<br/>排空中的写入：0" as s101
+  state "已启动：蛹、舵机甲、舵机乙<br/>启动被拦：无<br/>任务甲：舵机乙<br/>任务乙：舵机乙<br/>排空中的写入：0" as s102
+  state "已启动：蛹、舵机甲、舵机乙<br/>启动被拦：无<br/>任务甲：舵机乙<br/>任务乙：舵机甲<br/>排空中的写入：0" as s103
+  state "已启动：蛹、舵机甲、舵机乙<br/>启动被拦：无<br/>任务甲：舵机乙<br/>任务乙：蛹<br/>排空中的写入：0" as s104
+  state "已启动：蛹、舵机甲、舵机乙<br/>启动被拦：无<br/>任务甲：舵机甲<br/>任务乙：无<br/>排空中的写入：0" as s105
+  state "已启动：蛹、舵机甲、舵机乙<br/>启动被拦：无<br/>任务甲：舵机甲<br/>任务乙：舵机乙<br/>排空中的写入：0" as s106
+  state "已启动：蛹、舵机甲、舵机乙<br/>启动被拦：无<br/>任务甲：舵机甲<br/>任务乙：舵机甲<br/>排空中的写入：0" as s107
+  state "已启动：蛹、舵机甲、舵机乙<br/>启动被拦：无<br/>任务甲：舵机甲<br/>任务乙：蛹<br/>排空中的写入：0" as s108
+  state "已启动：蛹、舵机甲、舵机乙<br/>启动被拦：无<br/>任务甲：蛹<br/>任务乙：无<br/>排空中的写入：0" as s109
+  state "已启动：蛹、舵机甲、舵机乙<br/>启动被拦：无<br/>任务甲：蛹<br/>任务乙：舵机乙<br/>排空中的写入：0" as s110
+  state "已启动：蛹、舵机甲、舵机乙<br/>启动被拦：无<br/>任务甲：蛹<br/>任务乙：舵机甲<br/>排空中的写入：0" as s111
+  state "已启动：蛹、舵机甲、舵机乙<br/>启动被拦：无<br/>任务甲：蛹<br/>任务乙：蛹<br/>排空中的写入：0" as s112
+  [*] --> s0
+  s0 --> s49 : 打开本地入口
+  s0 --> s17 : 打开本地入口
+  s0 --> s1 : 打开本地入口
+  s49 --> s57 : 打开本地入口
+  s49 --> s53 : 打开本地入口
+  s49 --> s51 : 领取线程写入权
+  s49 --> s50 : 领取线程写入权
+  s17 --> s25 : 打开本地入口
+  s17 --> s21 : 打开本地入口
+  s17 --> s19 : 领取线程写入权
+  s17 --> s18 : 领取线程写入权
+  s1 --> s9 : 打开本地入口
+  s1 --> s5 : 打开本地入口
+  s1 --> s3 : 领取线程写入权
+  s1 --> s2 : 领取线程写入权
+  s49 --> s81 : 打开本地入口
+  s49 --> s65 : 打开本地入口
+  s57 --> s61 : 打开本地入口
+  s57 --> s59 : 领取线程写入权
+  s57 --> s58 : 领取线程写入权
+  s53 --> s55 : 领取线程写入权
+  s53 --> s54 : 领取线程写入权
+  s51 --> s52 : 领取线程写入权
+  s25 --> s29 : 打开本地入口
+  s25 --> s27 : 领取线程写入权
+  s25 --> s26 : 领取线程写入权
+  s17 --> s33 : 打开本地入口
+  s21 --> s23 : 领取线程写入权
+  s21 --> s22 : 领取线程写入权
+  s19 --> s20 : 领取线程写入权
+  s9 --> s13 : 打开本地入口
+  s9 --> s11 : 领取线程写入权
+  s9 --> s10 : 领取线程写入权
+  s5 --> s7 : 领取线程写入权
+  s5 --> s6 : 领取线程写入权
+  s3 --> s4 : 领取线程写入权
+  s81 --> s84 : 领取线程写入权
+  s81 --> s82 : 领取线程写入权
+  s65 --> s68 : 领取线程写入权
+  s65 --> s66 : 领取线程写入权
+  s57 --> s74 : 打开本地入口
+  s61 --> s63 : 领取线程写入权
+  s61 --> s62 : 领取线程写入权
+  s59 --> s60 : 领取线程写入权
+  s53 --> s90 : 打开本地入口
+  s55 --> s56 : 领取线程写入权
+  s25 --> s42 : 打开本地入口
+  s29 --> s31 : 领取线程写入权
+  s29 --> s30 : 领取线程写入权
+  s27 --> s28 : 领取线程写入权
+  s81 --> s87 : 领取线程写入权
+  s81 --> s83 : 领取线程写入权
+  s33 --> s36 : 领取线程写入权
+  s33 --> s34 : 领取线程写入权
+  s23 --> s24 : 领取线程写入权
+  s13 --> s15 : 领取线程写入权
+  s13 --> s14 : 领取线程写入权
+  s11 --> s12 : 领取线程写入权
+  s7 --> s8 : 领取线程写入权
+  s65 --> s71 : 领取线程写入权
+  s65 --> s67 : 领取线程写入权
+  s33 --> s39 : 领取线程写入权
+  s33 --> s35 : 领取线程写入权
+  s81 --> s97 : 打开本地入口
+  s90 --> s93 : 领取线程写入权
+  s90 --> s91 : 领取线程写入权
+  s84 --> s85 : 领取线程写入权
+  s74 --> s77 : 领取线程写入权
+  s74 --> s75 : 领取线程写入权
+  s68 --> s69 : 领取线程写入权
+  s63 --> s64 : 领取线程写入权
+  s42 --> s45 : 领取线程写入权
+  s42 --> s43 : 领取线程写入权
+  s31 --> s32 : 领取线程写入权
+  s90 --> s95 : 领取线程写入权
+  s90 --> s92 : 领取线程写入权
+  s87 --> s89 : 领取线程写入权
+  s36 --> s37 : 领取线程写入权
+  s15 --> s16 : 领取线程写入权
+  s42 --> s47 : 领取线程写入权
+  s42 --> s44 : 领取线程写入权
+  s74 --> s79 : 领取线程写入权
+  s74 --> s76 : 领取线程写入权
+  s71 --> s73 : 领取线程写入权
+  s39 --> s41 : 领取线程写入权
+  s97 --> s101 : 领取线程写入权
+  s97 --> s98 : 领取线程写入权
+  s93 --> s94 : 领取线程写入权
+  s77 --> s78 : 领取线程写入权
+  s97 --> s105 : 领取线程写入权
+  s97 --> s99 : 领取线程写入权
+  s45 --> s46 : 领取线程写入权
+  s95 --> s96 : 领取线程写入权
+  s97 --> s109 : 领取线程写入权
+  s97 --> s100 : 领取线程写入权
+  s47 --> s48 : 领取线程写入权
+  s79 --> s80 : 领取线程写入权
+  s101 --> s102 : 领取线程写入权
+  s105 --> s107 : 领取线程写入权
+  s109 --> s112 : 领取线程写入权
+  s87 --> s88 : with the fix, 领取线程写入权
+  s84 --> s86 : with the fix, 领取线程写入权
+  s71 --> s72 : with the fix, 领取线程写入权
+  s68 --> s70 : with the fix, 领取线程写入权
+  s39 --> s40 : with the fix, 领取线程写入权
+  s36 --> s38 : with the fix, 领取线程写入权
+  s109 --> s111 : with the fix, 领取线程写入权
+  s109 --> s110 : with the fix, 领取线程写入权
+  s105 --> s108 : with the fix, 领取线程写入权
+  s105 --> s106 : with the fix, 领取线程写入权
+  s101 --> s104 : with the fix, 领取线程写入权
+  s101 --> s103 : with the fix, 领取线程写入权
+  class s0 works
+  class s1 works
+  class s2 works
+  class s3 works
+  class s4 works
+  class s5 fixed
+  class s6 fixed
+  class s7 fixed
+  class s8 fixed
+  class s9 fixed
+  class s10 fixed
+  class s11 fixed
+  class s12 fixed
+  class s13 fixed
+  class s14 fixed
+  class s15 fixed
+  class s16 fixed
+  class s17 works
+  class s18 works
+  class s19 works
+  class s20 works
+  class s21 fixed
+  class s22 fixed
+  class s23 fixed
+  class s24 fixed
+  class s25 fixed
+  class s26 fixed
+  class s27 fixed
+  class s28 fixed
+  class s29 fixed
+  class s30 fixed
+  class s31 fixed
+  class s32 fixed
+  class s33 works
+  class s34 works
+  class s35 works
+  class s36 works
+  class s37 works
+  class s38 fixed
+  class s39 works
+  class s40 fixed
+  class s41 works
+  class s42 fixed
+  class s43 fixed
+  class s44 fixed
+  class s45 fixed
+  class s46 fixed
+  class s47 fixed
+  class s48 fixed
+  class s49 works
+  class s50 works
+  class s51 works
+  class s52 works
+  class s53 fixed
+  class s54 fixed
+  class s55 fixed
+  class s56 fixed
+  class s57 fixed
+  class s58 fixed
+  class s59 fixed
+  class s60 fixed
+  class s61 fixed
+  class s62 fixed
+  class s63 fixed
+  class s64 fixed
+  class s65 works
+  class s66 works
+  class s67 works
+  class s68 works
+  class s69 works
+  class s70 fixed
+  class s71 works
+  class s72 fixed
+  class s73 works
+  class s74 fixed
+  class s75 fixed
+  class s76 fixed
+  class s77 fixed
+  class s78 fixed
+  class s79 fixed
+  class s80 fixed
+  class s81 works
+  class s82 works
+  class s83 works
+  class s84 works
+  class s85 works
+  class s86 fixed
+  class s87 works
+  class s88 fixed
+  class s89 works
+  class s90 fixed
+  class s91 fixed
+  class s92 fixed
+  class s93 fixed
+  class s94 fixed
+  class s95 fixed
+  class s96 fixed
+  class s97 works
+  class s98 works
+  class s99 works
+  class s100 works
+  class s101 works
+  class s102 works
+  class s103 fixed
+  class s104 fixed
+  class s105 works
+  class s106 fixed
+  class s107 works
+  class s108 fixed
+  class s109 works
+  class s110 fixed
+  class s111 fixed
+  class s112 works

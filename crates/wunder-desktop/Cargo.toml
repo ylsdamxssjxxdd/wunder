@@ -52,6 +52,9 @@ url.workspace = true
 uuid.workspace = true
 wunder-runtime = { path = "../wunder-runtime", default-features = false }
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.52", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Threading"] }
+
 [dev-dependencies]
 tempfile.workspace = true
 zip.workspace = true

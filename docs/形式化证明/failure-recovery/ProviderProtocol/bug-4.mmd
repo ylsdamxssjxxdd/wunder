@@ -1,0 +1,37 @@
+---
+title: "ProviderProtocol, bug 4"
+config:
+  markdownAutoWrap: false
+  state:
+    useMaxWidth: false
+---
+stateDiagram-v2
+  %% second model (fix): the fix
+  classDef plainFixed fill:#f4f6f7,stroke:#1e8449,stroke-width:4px,color:#145a32
+  classDef group0 fill:#d6eaf8,stroke:#6b757c,color:#1b2631
+  classDef group0Path fill:#d6eaf8,stroke:#1f3a93,stroke-width:4px,color:#1b2631
+  classDef group1 fill:#fdebd0,stroke:#7f7668,color:#1b2631
+  classDef group1Fixed fill:#fdebd0,stroke:#1e8449,stroke-width:4px,color:#145a32
+  state "Legend" as legend {
+    state "协议验证中" as legendGroup0
+    state "响应已结清" as legendGroup1
+    state "Fixed or new with the fix" as legendFixed
+  }
+  class legendGroup0 group0
+  class legendGroup1 group1
+  class legendFixed plainFixed
+  state "永久拒绝含误导正文：收到响应" as s0
+  state "永久拒绝含误导正文：识别为故障" as s1
+  state "永久拒绝含误导正文：请求已结清，明确永久拒绝" as s2
+  state "永久拒绝含误导正文：请求已结清，错误触发上下文恢复" as s3
+  state "永久拒绝含误导正文：读取分块完成" as s4
+  [*] --> s0
+  s0 --> s4 : 1. 按网络分块读取字节
+  s4 --> s1 : 2. 验证编码和错误封装
+  s1 --> s3 : 3. 错误码优先分类
+  s1 --> s2 : with the fix, 错误码优先分类
+  class s0 group0Path
+  class s1 group0Path
+  class s2 group1Fixed
+  class s3 group1Fixed
+  class s4 group0Path

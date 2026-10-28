@@ -7427,6 +7427,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "uuid",
+ "windows-sys 0.52.0",
  "wunder-runtime",
  "zip 0.6.6",
 ]

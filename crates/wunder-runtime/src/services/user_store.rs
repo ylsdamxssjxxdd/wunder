@@ -745,33 +745,14 @@ impl UserStore {
         &self,
         token: &str,
     ) -> Result<Option<AuthenticatedUserToken>> {
-        let record = self.storage.get_user_token(token)?;
-        let Some(record) = record else {
-            return Ok(None);
-        };
         let now = now_ts();
-        if record.expires_at <= now {
-            let _ = self.storage.delete_user_token(&record.token);
-            return Ok(None);
-        }
-        let Some(user) = self.storage.get_user_account(&record.user_id)? else {
+        let Some((record, user)) = self.storage.token_auth_snapshot(token, now)? else {
             return Ok(None);
         };
-        if self
-            .storage
-            .get_user_session_scope(&record.user_id, &record.session_scope)?
-            .is_some_and(|scope| record.created_at + 0.000_001 < scope.last_login_at)
-        {
-            let _ = self.storage.delete_user_token(&record.token);
-            return Ok(None);
-        }
         if let Some(family) = record.family_id.as_deref() {
             if !self.session_device_active(family, &record.user_id)? {
                 return Ok(None);
             }
-        }
-        if user.status.trim().to_lowercase() != "active" {
-            return Ok(None);
         }
         if self.should_touch_token_at(&record.token, record.last_used_at, now) {
             let _ = self.storage.touch_user_token(&record.token, now);

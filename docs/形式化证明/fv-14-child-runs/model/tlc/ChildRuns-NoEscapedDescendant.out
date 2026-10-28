@@ -1,0 +1,58 @@
+TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)
+Running breadth-first search Model-Checking with fp 70 and seed -5409914069794730236 with 1 worker on 32 cores with 14484MB heap and 64MB offheap memory [pid: 21584] (Windows 11 10.0 amd64, Eclipse Adoptium 21.0.12.1 x86_64, MSBDiskFPSet, DiskStateQueue).
+Parsing file ChildRuns.tla
+Parsing file Naturals.tla
+Parsing file TLC.tla
+Parsing file Sequences.tla
+Parsing file FiniteSets.tla
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module ChildRuns
+Starting... (2026-10-27 18:02:25)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-10-27 18:02:25.
+Error: Invariant NoEscapedDescendant is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ generation = 0
+/\ ancestorCancelled = FALSE
+/\ lateRelease = FALSE
+/\ guard = 0
+/\ dispatched = FALSE
+/\ escaped = FALSE
+/\ worker = "none"
+/\ reused = FALSE
+/\ stopped = FALSE
+
+State 2: <CancelAncestor line 11, col 5 to line 14, col 80 of module ChildRuns>
+/\ generation = 0
+/\ ancestorCancelled = TRUE
+/\ lateRelease = FALSE
+/\ guard = 0
+/\ dispatched = FALSE
+/\ escaped = FALSE
+/\ worker = "none"
+/\ reused = FALSE
+/\ stopped = TRUE
+
+State 3: <DispatchFromSibling line 17, col 5 to line 22, col 68 of module ChildRuns>
+/\ generation = 1
+/\ ancestorCancelled = TRUE
+/\ lateRelease = FALSE
+/\ guard = 1
+/\ dispatched = TRUE
+/\ escaped = TRUE
+/\ worker = "running"
+/\ reused = FALSE
+/\ stopped = TRUE
+
+Model checking completed. No error has been found.
+  Estimates of the probability that TLC did not check all reachable states
+  because two distinct states had the same fingerprint:
+  calculated (optimistic):  val = 3.8E-18
+19 states generated, 14 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 7.
+The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 3 and the 95th percentile is 3).
+Finished in 00s at (2026-10-27 18:02:25)

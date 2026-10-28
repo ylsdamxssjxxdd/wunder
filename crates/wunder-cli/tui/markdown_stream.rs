@@ -672,6 +672,33 @@ mod tests {
     }
 
     #[test]
+    fn long_mixed_width_lines_match_the_completed_render_at_every_width() {
+        let source = (1..=45)
+            .map(|index| {
+                format!(
+                    "ROW-{index:03}: 中英文混排 mixed text {} end-{index:03}\n",
+                    "sample value 中文 ".repeat(5)
+                )
+            })
+            .collect::<String>();
+        for width in [19, 43, 58, 70, 88, 98, 118] {
+            let mut collector = MarkdownStreamCollector::new(Some(width));
+            let mut actual = Vec::new();
+            for delta in source.split_inclusive('\n') {
+                collector.push_delta(delta);
+                actual.extend(collector.commit_complete_lines());
+            }
+            actual.extend(collector.finalize_and_drain());
+            let mut expected = Vec::new();
+            markdown::append_markdown(&source, Some(width), &mut expected);
+            assert_eq!(
+                actual, expected,
+                "mixed-width stream drift at width {width}"
+            );
+        }
+    }
+
+    #[test]
     fn property_streamed_lines_equal_one_shot_render() {
         let patterns: Vec<(&str, fn(&str) -> Vec<usize>)> = vec![
             ("per-line", line_splits),

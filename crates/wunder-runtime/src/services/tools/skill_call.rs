@@ -15,8 +15,13 @@ use std::path::{Path, PathBuf};
 
 pub(crate) const SKILL_ROOT_PLACEHOLDER: &str = "{{SKILL_ROOT}}";
 const DEFAULT_READ_LINE_LIMIT: usize = 160;
-const MAX_READ_LINE_LIMIT: usize = 400;
+const MAX_READ_LINE_LIMIT: usize = 800;
 const MAX_READ_BYTES: usize = 64 * 1024;
+/// First-page budget for `load`: wide enough that a normal SKILL.md is fully
+/// delivered in the same call as its resource index, so the model never pays a
+/// separate manifest round-trip before it can start the workflow.
+const DEFAULT_LOAD_LINE_LIMIT: usize = MAX_READ_LINE_LIMIT;
+const DEFAULT_LOAD_BYTES: usize = 48 * 1024;
 const MAX_MANIFEST_ITEMS: usize = 64;
 const DEFAULT_READ_BYTES: usize = 16 * 1024;
 const MAX_SECTION_SCAN_BYTES: usize = 256 * 1024;
@@ -144,10 +149,12 @@ pub(crate) async fn execute_skill_call(context: &ToolContext<'_>, args: &Value) 
             .as_deref()
             .map(str::trim)
             .filter(|value| !value.is_empty())
-            .unwrap_or("manifest")
+            .unwrap_or("load")
             .to_ascii_lowercase()
     };
     match action.as_str() {
+        // Default path: SKILL.md body and the resource index in a single call.
+        "load" => load_skill(&spec, payload),
         "manifest" => Ok(build_model_tool_success(
             "skill_manifest",
             "completed",
@@ -164,8 +171,56 @@ pub(crate) async fn execute_skill_call(context: &ToolContext<'_>, args: &Value) 
             read_skill_resource(&spec, &read_payload)
         }
         other => Err(anyhow!(format!(
-            "unsupported skill action `{other}`; use manifest or read"
+            "unsupported skill action `{other}`; use load, read or manifest"
         ))),
+    }
+}
+
+/// One-shot skill load: bounded `SKILL.md` window plus the compact resource
+/// index, so a single tool call is enough to start the workflow.
+fn load_skill(spec: &SkillSpec, mut payload: SkillCallArgs) -> Result<Value> {
+    payload.full = false;
+    if payload
+        .path
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_none()
+    {
+        payload.path = Some("SKILL.md".to_string());
+    }
+    payload.line_limit.get_or_insert(DEFAULT_LOAD_LINE_LIMIT);
+    payload.bytes_limit.get_or_insert(DEFAULT_LOAD_BYTES);
+    let mut result = read_skill_resource(spec, &payload)?;
+    merge_skill_index(&mut result, &spec.name, &build_skill_manifest(spec, None)?);
+    if let Some(object) = result.as_object_mut() {
+        object.insert("action".to_string(), json!("skill_load"));
+        object.insert(
+            "summary".to_string(),
+            json!(format!("Skill {} loaded.", spec.name)),
+        );
+    }
+    Ok(result)
+}
+
+/// Fold the manifest's discovery fields into an already-read resource payload.
+/// Index paging keeps a separate cursor key so it cannot be mistaken for the
+/// content cursor of the resource window.
+fn merge_skill_index(result: &mut Value, spec_name: &str, manifest: &Value) {
+    let Some(data) = result.get_mut("data").and_then(Value::as_object_mut) else {
+        return;
+    };
+    data.insert("name".to_string(), json!(spec_name));
+    for key in ["summary", "version", "entrypoints", "resource_index"] {
+        if let Some(value) = manifest.get(key) {
+            data.insert(key.to_string(), value.clone());
+        }
+    }
+    if manifest.get("index_scan_limited") == Some(&Value::Bool(true)) {
+        data.insert("index_scan_limited".to_string(), Value::Bool(true));
+    }
+    if let Some(cursor) = manifest.get("next_cursor").and_then(Value::as_str) {
+        data.insert("index_next_cursor".to_string(), json!(cursor));
     }
 }
 
@@ -901,11 +956,59 @@ mod tests {
             .expect("skill call should succeed");
 
         assert_eq!(result["ok"], true);
-        assert_eq!(result["action"], "skill_manifest");
+        assert_eq!(result["action"], "skill_load");
         assert_eq!(result["data"]["name"], "draft_skill");
         assert_eq!(result["data"]["summary"], "draft description");
         assert_eq!(result["data"]["resource_index"], json!(["SKILL.md"]));
-        assert!(result["data"].get("content").is_none());
+        // The default call must already carry the SKILL.md body.
+        assert!(result["data"]["content"]
+            .as_str()
+            .is_some_and(|content| content.contains("Use .")));
+        assert_eq!(result["data"]["truncated"], false);
+    }
+
+    #[test]
+    fn load_skill_returns_body_and_index_without_extra_call() {
+        let dir = tempdir().expect("tempdir");
+        let root = dir.path();
+        std::fs::write(
+            root.join("SKILL.md"),
+            "---\nname: demo\ndescription: demo skill\nversion: 1.2.0\n---\n# Demo\nRun {{SKILL_ROOT}}/scripts/run.py\n",
+        )
+        .expect("write skill");
+        std::fs::create_dir_all(root.join("scripts")).expect("create scripts");
+        let spec = SkillSpec {
+            name: "demo".to_string(),
+            description: "demo skill".to_string(),
+            path: root.join("SKILL.md").to_string_lossy().to_string(),
+            input_schema: json!({}),
+            frontmatter: "name: demo\ndescription: demo skill\nversion: 1.2.0\n".to_string(),
+            root: root.to_path_buf(),
+            entrypoint: None,
+        };
+
+        let result = load_skill(&spec, SkillCallArgs {
+            name: Some("demo".to_string()),
+            skill_name: None,
+            action: None,
+            path: None,
+            section: None,
+            start_line: None,
+            line_limit: None,
+            bytes_limit: None,
+            cursor: None,
+            manifest_cursor: None,
+            full: false,
+        })
+        .expect("load skill");
+
+        assert_eq!(result["action"], "skill_load");
+        assert_eq!(result["data"]["path"], "SKILL.md");
+        assert_eq!(result["data"]["version"], "1.2.0");
+        assert_eq!(result["data"]["resource_index"], json!(["SKILL.md", "scripts/"]));
+        let content = result["data"]["content"].as_str().expect("content");
+        assert!(content.contains("# Demo"));
+        assert!(content.contains("./scripts/run.py"));
     }
 
     #[test]

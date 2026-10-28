@@ -123,6 +123,7 @@ impl Orchestrator {
         } else {
             let input = json!({"role":"user", "content":question, "attachments":attachments,
                 "client_message_id":client_message_id,
+                "inquiry_turn_id":request.config_overrides.as_ref().and_then(|fields| fields.get("__inquiry_turn_id")),
                 "local_open_lease":request.config_overrides.as_ref().and_then(|v| v.get("__local_open_lease"))});
             let accepted = self
                 .committer
@@ -393,6 +394,73 @@ fn is_default_agent_alias(agent_id: Option<&str>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn direct_inquiry_answer_settles_waiting_turn_and_deduplicates_other_clients() {
+        use crate::state::{AppState, AppStateInitOptions};
+        let root = tempfile::tempdir().unwrap();
+        let mut config = Config::default();
+        config.storage.backend = "sqlite".into();
+        config.storage.data_root = root.path().join("data").to_string_lossy().into_owned();
+        config.workspace.root = root.path().join("workspace").to_string_lossy().into_owned();
+        let store = ConfigStore::new(root.path().join("config.yaml"));
+        store
+            .update(|current| *current = config.clone())
+            .await
+            .unwrap();
+        let state = AppState::new_with_options(
+            store,
+            config,
+            AppStateInitOptions::cli_default().with_start_thread_runtime(false),
+        )
+        .unwrap();
+        let orchestrator = &state.kernel.orchestrator;
+        let waiting = orchestrator
+            .committer
+            .accept_turn(
+                "fixture-user",
+                "fixture-thread",
+                &json!({"content":"fixture question"}),
+            )
+            .await
+            .unwrap();
+        let turn = waiting["turn_id"].as_str().unwrap();
+        orchestrator
+            .committer
+            .update_turn(
+                "fixture-user",
+                "fixture-thread",
+                turn,
+                "waiting_input",
+                "",
+                &json!({}),
+            )
+            .await
+            .unwrap();
+        let mut request: WunderRequest = serde_json::from_value(json!({"user_id":"fixture-user", "session_id":"fixture-thread", "question":"fixture answer", "client_message_id":"fixture-client-a", "config_overrides":{"__inquiry_turn_id":turn}})).unwrap();
+        let prepared = orchestrator.prepare_request(request.clone()).await.unwrap();
+        assert_ne!(prepared.thread_turn_id.unwrap().to_string(), turn);
+        assert_eq!(prepared.thread_user_round, Some(2));
+        assert_eq!(
+            state
+                .thread_store
+                .admission_store()
+                .unwrap()
+                .turn("fixture-thread", turn)
+                .unwrap()
+                .unwrap()["status"],
+            "completed"
+        );
+        request.client_message_id = Some("fixture-client-b".into());
+        assert!(orchestrator.prepare_request(request).await.is_err());
+        assert_eq!(
+            state
+                .storage
+                .latest_thread_user_round_by_session("fixture-thread")
+                .unwrap(),
+            2
+        );
+    }
 
     #[test]
     fn validate_request_text_input_size_accepts_limit_boundary() {

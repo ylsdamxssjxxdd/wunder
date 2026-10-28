@@ -1,0 +1,18 @@
+---
+config:
+  markdownAutoWrap: false
+  state:
+    useMaxWidth: false
+---
+stateDiagram-v2
+  %% second model (fix): the fix
+  classDef plainFixed fill:#f4f6f7,stroke:#1e8449,stroke-width:4px,color:#145a32
+  state "Legend" as legend {
+    state "Fixed or new with the fix" as legendFixed
+  }
+  class legendFixed plainFixed
+  state "只能点按钮，这一页没有续读位置" as s0
+  [*] --> s0
+  s0 --> s0 : with the fix, 点「查看更早的过程」<br/>[PressButton] cannot happen at<br/>step 2
+  s0 --> s0 : 1. 展开工作过程 [Open]<br/>2. 点「查看更早的过程」 [PressButton]
+  class s0 plainFixed

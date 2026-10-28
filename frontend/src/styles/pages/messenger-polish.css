@@ -28,14 +28,15 @@
 }
 
 :root[data-user-accent='eva-orange'] .messenger-view {
+  /* 橙汁：暖白层以蛹的 soft #FDF0DE 为落点，收在暖橙而不是赤陶粉。 */
   --messenger-polish-panel-bg:
-    linear-gradient(180deg, rgba(255, 251, 247, 0.94), rgba(255, 243, 235, 0.78));
+    linear-gradient(180deg, rgba(254, 251, 246, 0.94), rgba(253, 240, 222, 0.78));
   --messenger-polish-panel-bg-soft:
-    linear-gradient(180deg, rgba(255, 252, 249, 0.78), rgba(255, 244, 237, 0.6));
+    linear-gradient(180deg, rgba(255, 252, 248, 0.78), rgba(253, 243, 228, 0.6));
   --messenger-polish-shell-overlay:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.24), rgba(255, 247, 241, 0.08));
+    linear-gradient(180deg, rgba(255, 255, 255, 0.24), rgba(254, 247, 238, 0.08));
   --messenger-polish-inner-surface:
-    linear-gradient(180deg, rgba(255, 250, 245, 0.72), rgba(255, 245, 237, 0.78));
+    linear-gradient(180deg, rgba(254, 250, 244, 0.72), rgba(253, 242, 228, 0.78));
 }
 
 :root[data-user-accent='hula-green'] .messenger-view {
@@ -220,7 +221,7 @@
   align-items: center;
   justify-content: center;
   background: linear-gradient(180deg, rgba(var(--ui-accent-rgb), 0.16), rgba(var(--ui-accent-rgb), 0.08));
-  color: var(--ui-accent-deep);
+  color: var(--ui-accent-ink);
   box-shadow: inset 0 0 0 1px rgba(var(--ui-accent-rgb), 0.12);
 }
 
@@ -410,7 +411,7 @@
   justify-content: center;
   background: linear-gradient(180deg, rgba(var(--ui-accent-rgb), 0.14), rgba(var(--ui-accent-rgb), 0.08));
   box-shadow: inset 0 0 0 1px rgba(var(--ui-accent-rgb), 0.12);
-  color: var(--ui-accent-deep);
+  color: var(--ui-accent-ink);
   flex: 0 0 auto;
 }
 

@@ -1,0 +1,75 @@
+{
+  "view": "customer",
+  "second": {
+    "role": "fix",
+    "label": "the fix",
+    "lacks": []
+  },
+  "modelStates": 9,
+  "modelTransitions": 64,
+  "chartStates": 8,
+  "chartTransitions": 37,
+  "chartStatus": {
+    "works": 3,
+    "wrong": 0,
+    "fixed": 5,
+    "mixed": 0,
+    "after": 0,
+    "worse": 0
+  },
+  "mixedStatus": [],
+  "chartGroups": [
+    {
+      "name": "标题与任务一致",
+      "color": "#e8f4ea",
+      "states": 5
+    },
+    {
+      "name": "标题与任务不符",
+      "color": "#fde8e8",
+      "states": 3
+    }
+  ],
+  "mixedGroups": [],
+  "classes": [
+    {
+      "n": 1,
+      "end": "任务已失败，标题显示空闲",
+      "invariant": "FailureShowsError",
+      "rule": "A settled failure must read as a failure, not as an idle thread.",
+      "cause": "这条状态的文字没有被标题的判定认识，正在跑的任务被读成了空闲",
+      "readerSteps": 1,
+      "modelSteps": 2,
+      "counterexamples": 1,
+      "lastSteps": [
+        "任务失败"
+      ],
+      "startsHere": false,
+      "fix": "任务已失败，标题显示错误"
+    },
+    {
+      "n": 2,
+      "end": "任务正在跑，标题显示空闲",
+      "invariant": "LiveNeverIdle",
+      "rule": "A thread that is still working must never look idle. The reader's sentence: while the work process says a request is running, the window must not say 空闲.",
+      "cause": "这条状态的文字没有被标题的判定认识，正在跑的任务被读成了空闲",
+      "readerSteps": 1,
+      "modelSteps": 2,
+      "counterexamples": 4,
+      "lastSteps": [
+        "发送消息，请求被受理",
+        "开始压缩上下文",
+        "模型响应开始",
+        "请求进入模型队列"
+      ],
+      "startsHere": false,
+      "fix": "任务正在跑，标题显示运行中"
+    }
+  ],
+  "codeLike": [],
+  "uncited": {
+    "docs/形式化证明/蛹与舵机状态一致性验证/models/NativeStatusPhase.tla": [],
+    "docs/形式化证明/蛹与舵机状态一致性验证/models/NativeStatusPhaseFixed.tla": []
+  },
+  "brokenProperties": []
+}

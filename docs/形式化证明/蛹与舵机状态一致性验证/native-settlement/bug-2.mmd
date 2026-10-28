@@ -1,0 +1,41 @@
+---
+config:
+  markdownAutoWrap: false
+  state:
+    useMaxWidth: false
+---
+stateDiagram-v2
+  %% second model (fix): the fix
+  classDef works fill:#f4f6f7,stroke:#566573,color:#1b2631
+  classDef wrong fill:#fdedec,stroke:#c0392b,color:#7b241c
+  classDef fixed fill:#e9f7ef,stroke:#1e8449,color:#145a32
+  classDef mixed fill:#fdebd0,stroke:#d35400,color:#7e5109
+  classDef after fill:#ffffff,stroke:#808b96,color:#566573
+  classDef worse fill:#f4ecf7,stroke:#7d3c98,color:#4a235a
+  classDef worksPath fill:#f4f6f7,stroke:#1f3a93,stroke-width:4px,color:#1b2631
+  classDef wrongPath fill:#fdedec,stroke:#1f3a93,stroke-width:4px,color:#7b241c
+  classDef fixedPath fill:#e9f7ef,stroke:#1f3a93,stroke-width:4px,color:#145a32
+  classDef mixedPath fill:#fdebd0,stroke:#1f3a93,stroke-width:4px,color:#7e5109
+  classDef afterPath fill:#ffffff,stroke:#1f3a93,stroke-width:4px,color:#566573
+  classDef worsePath fill:#f4ecf7,stroke:#1f3a93,stroke-width:4px,color:#4a235a
+  state "Legend" as legend {
+    state "规则成立" as legendWorks
+    state "修复后旧错误不可达或新增正确状态" as legendFixed
+  }
+  class legendWorks works
+  class legendFixed fixed
+  state "失败后收到迟到回复<br/>气泡失败，工具转圈" as s0
+  state "失败后收到迟到回复<br/>气泡完成，工具转圈" as s1
+  state "工具运行<br/>气泡运行，工具转圈" as s2
+  state "收到失败终态<br/>气泡失败，工具转圈" as s3
+  state "轮次开始<br/>气泡运行，尚无工具" as s4
+  [*] --> s4
+  s4 --> s2 : 1. 开始工具调用
+  s2 --> s3 : 2. 收到失败终态
+  s3 --> s1 : 3. 迟到最终回复
+  s3 --> s0 : with the fix, 迟到最终回复
+  class s0 fixedPath
+  class s1 fixedPath
+  class s2 worksPath
+  class s3 worksPath
+  class s4 worksPath

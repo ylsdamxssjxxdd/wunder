@@ -72,6 +72,8 @@ mod context;
 mod empty_output_guard;
 #[cfg(all(test, feature = "sqlite-storage"))]
 mod empty_output_tests;
+#[cfg(all(test, feature = "sqlite-storage"))]
+mod failure_recovery_tests;
 mod error;
 mod event_stream;
 mod execute;

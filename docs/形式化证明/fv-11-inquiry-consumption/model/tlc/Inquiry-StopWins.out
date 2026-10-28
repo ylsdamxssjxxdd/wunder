@@ -1,0 +1,1001 @@
+TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)
+Running breadth-first search Model-Checking with fp 75 and seed -5983465262718757897 with 1 worker on 32 cores with 14484MB heap and 64MB offheap memory [pid: 50516] (Windows 11 10.0 amd64, Eclipse Adoptium 21.0.12.1 x86_64, MSBDiskFPSet, DiskStateQueue).
+Parsing file Inquiry.tla
+Parsing file Naturals.tla
+Parsing file FiniteSets.tla
+Parsing file TLC.tla
+Parsing file Sequences.tla
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Inquiry
+Starting... (2026-10-27 17:57:19)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-10-27 17:57:19.
+Error: Invariant StopWins is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ pending = {}
+/\ online = TRUE
+/\ crashed = FALSE
+/\ attempted = {}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "waiting"
+/\ replayed = {}
+/\ answers = {}
+
+State 2: <Stop line 40, col 5 to line 42, col 88 of module Inquiry>
+/\ pending = {}
+/\ online = TRUE
+/\ crashed = FALSE
+/\ attempted = {}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "cancelled"
+/\ replayed = {}
+/\ answers = {}
+
+State 3: <Submit line 12, col 5 to line 22, col 54 of module Inquiry>
+/\ pending = {"a"}
+/\ online = TRUE
+/\ crashed = FALSE
+/\ attempted = {"a"}
+/\ claim = "none"
+/\ late = TRUE
+/\ status = "cancelled"
+/\ replayed = {}
+/\ answers = {"a"}
+
+Error: Invariant StopWins is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ pending = {}
+/\ online = TRUE
+/\ crashed = FALSE
+/\ attempted = {}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "waiting"
+/\ replayed = {}
+/\ answers = {}
+
+State 2: <Stop line 40, col 5 to line 42, col 88 of module Inquiry>
+/\ pending = {}
+/\ online = TRUE
+/\ crashed = FALSE
+/\ attempted = {}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "cancelled"
+/\ replayed = {}
+/\ answers = {}
+
+State 3: <Submit line 12, col 5 to line 22, col 54 of module Inquiry>
+/\ pending = {"b"}
+/\ online = TRUE
+/\ crashed = FALSE
+/\ attempted = {"b"}
+/\ claim = "none"
+/\ late = TRUE
+/\ status = "cancelled"
+/\ replayed = {}
+/\ answers = {"b"}
+
+Error: Invariant StopWins is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ pending = {}
+/\ online = TRUE
+/\ crashed = FALSE
+/\ attempted = {}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "waiting"
+/\ replayed = {}
+/\ answers = {}
+
+State 2: <Submit line 12, col 5 to line 22, col 54 of module Inquiry>
+/\ pending = {"a"}
+/\ online = TRUE
+/\ crashed = FALSE
+/\ attempted = {"a"}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "waiting"
+/\ replayed = {}
+/\ answers = {"a"}
+
+State 3: <Stop line 40, col 5 to line 42, col 88 of module Inquiry>
+/\ pending = {"a"}
+/\ online = TRUE
+/\ crashed = FALSE
+/\ attempted = {"a"}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "cancelled"
+/\ replayed = {}
+/\ answers = {"a"}
+
+State 4: <Submit line 12, col 5 to line 22, col 54 of module Inquiry>
+/\ pending = {"a", "b"}
+/\ online = TRUE
+/\ crashed = FALSE
+/\ attempted = {"a", "b"}
+/\ claim = "none"
+/\ late = TRUE
+/\ status = "cancelled"
+/\ replayed = {}
+/\ answers = {"a", "b"}
+
+Error: Invariant StopWins is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ pending = {}
+/\ online = TRUE
+/\ crashed = FALSE
+/\ attempted = {}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "waiting"
+/\ replayed = {}
+/\ answers = {}
+
+State 2: <Submit line 12, col 5 to line 22, col 54 of module Inquiry>
+/\ pending = {"b"}
+/\ online = TRUE
+/\ crashed = FALSE
+/\ attempted = {"b"}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "waiting"
+/\ replayed = {}
+/\ answers = {"b"}
+
+State 3: <Stop line 40, col 5 to line 42, col 88 of module Inquiry>
+/\ pending = {"b"}
+/\ online = TRUE
+/\ crashed = FALSE
+/\ attempted = {"b"}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "cancelled"
+/\ replayed = {}
+/\ answers = {"b"}
+
+State 4: <Submit line 12, col 5 to line 22, col 54 of module Inquiry>
+/\ pending = {"a", "b"}
+/\ online = TRUE
+/\ crashed = FALSE
+/\ attempted = {"a", "b"}
+/\ claim = "none"
+/\ late = TRUE
+/\ status = "cancelled"
+/\ replayed = {}
+/\ answers = {"a", "b"}
+
+Error: Invariant StopWins is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ pending = {}
+/\ online = TRUE
+/\ crashed = FALSE
+/\ attempted = {}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "waiting"
+/\ replayed = {}
+/\ answers = {}
+
+State 2: <Submit line 12, col 5 to line 22, col 54 of module Inquiry>
+/\ pending = {"a"}
+/\ online = TRUE
+/\ crashed = FALSE
+/\ attempted = {"a"}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "waiting"
+/\ replayed = {}
+/\ answers = {"a"}
+
+State 3: <Replay line 25, col 5 to line 28, col 77 of module Inquiry>
+/\ pending = {"a"}
+/\ online = TRUE
+/\ crashed = FALSE
+/\ attempted = {"a"}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "waiting"
+/\ replayed = {"a"}
+/\ answers = {"a"}
+
+State 4: <Stop line 40, col 5 to line 42, col 88 of module Inquiry>
+/\ pending = {"a"}
+/\ online = TRUE
+/\ crashed = FALSE
+/\ attempted = {"a"}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "cancelled"
+/\ replayed = {"a"}
+/\ answers = {"a"}
+
+State 5: <Submit line 12, col 5 to line 22, col 54 of module Inquiry>
+/\ pending = {"a", "b"}
+/\ online = TRUE
+/\ crashed = FALSE
+/\ attempted = {"a", "b"}
+/\ claim = "none"
+/\ late = TRUE
+/\ status = "cancelled"
+/\ replayed = {"a"}
+/\ answers = {"a", "b"}
+
+Error: Invariant StopWins is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ pending = {}
+/\ online = TRUE
+/\ crashed = FALSE
+/\ attempted = {}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "waiting"
+/\ replayed = {}
+/\ answers = {}
+
+State 2: <Submit line 12, col 5 to line 22, col 54 of module Inquiry>
+/\ pending = {"b"}
+/\ online = TRUE
+/\ crashed = FALSE
+/\ attempted = {"b"}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "waiting"
+/\ replayed = {}
+/\ answers = {"b"}
+
+State 3: <Replay line 25, col 5 to line 28, col 77 of module Inquiry>
+/\ pending = {"b"}
+/\ online = TRUE
+/\ crashed = FALSE
+/\ attempted = {"b"}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "waiting"
+/\ replayed = {"b"}
+/\ answers = {"b"}
+
+State 4: <Stop line 40, col 5 to line 42, col 88 of module Inquiry>
+/\ pending = {"b"}
+/\ online = TRUE
+/\ crashed = FALSE
+/\ attempted = {"b"}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "cancelled"
+/\ replayed = {"b"}
+/\ answers = {"b"}
+
+State 5: <Submit line 12, col 5 to line 22, col 54 of module Inquiry>
+/\ pending = {"a", "b"}
+/\ online = TRUE
+/\ crashed = FALSE
+/\ attempted = {"a", "b"}
+/\ claim = "none"
+/\ late = TRUE
+/\ status = "cancelled"
+/\ replayed = {"b"}
+/\ answers = {"a", "b"}
+
+Error: Invariant StopWins is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ pending = {}
+/\ online = TRUE
+/\ crashed = FALSE
+/\ attempted = {}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "waiting"
+/\ replayed = {}
+/\ answers = {}
+
+State 2: <Stop line 40, col 5 to line 42, col 88 of module Inquiry>
+/\ pending = {}
+/\ online = TRUE
+/\ crashed = FALSE
+/\ attempted = {}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "cancelled"
+/\ replayed = {}
+/\ answers = {}
+
+State 3: <Crash line 45, col 5 to line 47, col 70 of module Inquiry>
+/\ pending = {}
+/\ online = FALSE
+/\ crashed = TRUE
+/\ attempted = {}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "cancelled"
+/\ replayed = {}
+/\ answers = {}
+
+State 4: <Restart line 50, col 5 to line 52, col 88 of module Inquiry>
+/\ pending = {}
+/\ online = TRUE
+/\ crashed = TRUE
+/\ attempted = {}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "cancelled"
+/\ replayed = {}
+/\ answers = {}
+
+State 5: <Submit line 12, col 5 to line 22, col 54 of module Inquiry>
+/\ pending = {"a"}
+/\ online = TRUE
+/\ crashed = TRUE
+/\ attempted = {"a"}
+/\ claim = "none"
+/\ late = TRUE
+/\ status = "cancelled"
+/\ replayed = {}
+/\ answers = {"a"}
+
+Error: Invariant StopWins is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ pending = {}
+/\ online = TRUE
+/\ crashed = FALSE
+/\ attempted = {}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "waiting"
+/\ replayed = {}
+/\ answers = {}
+
+State 2: <Stop line 40, col 5 to line 42, col 88 of module Inquiry>
+/\ pending = {}
+/\ online = TRUE
+/\ crashed = FALSE
+/\ attempted = {}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "cancelled"
+/\ replayed = {}
+/\ answers = {}
+
+State 3: <Crash line 45, col 5 to line 47, col 70 of module Inquiry>
+/\ pending = {}
+/\ online = FALSE
+/\ crashed = TRUE
+/\ attempted = {}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "cancelled"
+/\ replayed = {}
+/\ answers = {}
+
+State 4: <Restart line 50, col 5 to line 52, col 88 of module Inquiry>
+/\ pending = {}
+/\ online = TRUE
+/\ crashed = TRUE
+/\ attempted = {}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "cancelled"
+/\ replayed = {}
+/\ answers = {}
+
+State 5: <Submit line 12, col 5 to line 22, col 54 of module Inquiry>
+/\ pending = {"b"}
+/\ online = TRUE
+/\ crashed = TRUE
+/\ attempted = {"b"}
+/\ claim = "none"
+/\ late = TRUE
+/\ status = "cancelled"
+/\ replayed = {}
+/\ answers = {"b"}
+
+Error: Invariant StopWins is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ pending = {}
+/\ online = TRUE
+/\ crashed = FALSE
+/\ attempted = {}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "waiting"
+/\ replayed = {}
+/\ answers = {}
+
+State 2: <Submit line 12, col 5 to line 22, col 54 of module Inquiry>
+/\ pending = {"a"}
+/\ online = TRUE
+/\ crashed = FALSE
+/\ attempted = {"a"}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "waiting"
+/\ replayed = {}
+/\ answers = {"a"}
+
+State 3: <Stop line 40, col 5 to line 42, col 88 of module Inquiry>
+/\ pending = {"a"}
+/\ online = TRUE
+/\ crashed = FALSE
+/\ attempted = {"a"}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "cancelled"
+/\ replayed = {}
+/\ answers = {"a"}
+
+State 4: <Crash line 45, col 5 to line 47, col 70 of module Inquiry>
+/\ pending = {}
+/\ online = FALSE
+/\ crashed = TRUE
+/\ attempted = {"a"}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "cancelled"
+/\ replayed = {}
+/\ answers = {"a"}
+
+State 5: <Restart line 50, col 5 to line 52, col 88 of module Inquiry>
+/\ pending = {}
+/\ online = TRUE
+/\ crashed = TRUE
+/\ attempted = {"a"}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "cancelled"
+/\ replayed = {}
+/\ answers = {"a"}
+
+State 6: <Submit line 12, col 5 to line 22, col 54 of module Inquiry>
+/\ pending = {"b"}
+/\ online = TRUE
+/\ crashed = TRUE
+/\ attempted = {"a", "b"}
+/\ claim = "none"
+/\ late = TRUE
+/\ status = "cancelled"
+/\ replayed = {}
+/\ answers = {"a", "b"}
+
+Error: Invariant StopWins is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ pending = {}
+/\ online = TRUE
+/\ crashed = FALSE
+/\ attempted = {}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "waiting"
+/\ replayed = {}
+/\ answers = {}
+
+State 2: <Submit line 12, col 5 to line 22, col 54 of module Inquiry>
+/\ pending = {"b"}
+/\ online = TRUE
+/\ crashed = FALSE
+/\ attempted = {"b"}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "waiting"
+/\ replayed = {}
+/\ answers = {"b"}
+
+State 3: <Stop line 40, col 5 to line 42, col 88 of module Inquiry>
+/\ pending = {"b"}
+/\ online = TRUE
+/\ crashed = FALSE
+/\ attempted = {"b"}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "cancelled"
+/\ replayed = {}
+/\ answers = {"b"}
+
+State 4: <Crash line 45, col 5 to line 47, col 70 of module Inquiry>
+/\ pending = {}
+/\ online = FALSE
+/\ crashed = TRUE
+/\ attempted = {"b"}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "cancelled"
+/\ replayed = {}
+/\ answers = {"b"}
+
+State 5: <Restart line 50, col 5 to line 52, col 88 of module Inquiry>
+/\ pending = {}
+/\ online = TRUE
+/\ crashed = TRUE
+/\ attempted = {"b"}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "cancelled"
+/\ replayed = {}
+/\ answers = {"b"}
+
+State 6: <Submit line 12, col 5 to line 22, col 54 of module Inquiry>
+/\ pending = {"a"}
+/\ online = TRUE
+/\ crashed = TRUE
+/\ attempted = {"a", "b"}
+/\ claim = "none"
+/\ late = TRUE
+/\ status = "cancelled"
+/\ replayed = {}
+/\ answers = {"a", "b"}
+
+Error: Invariant StopWins is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ pending = {}
+/\ online = TRUE
+/\ crashed = FALSE
+/\ attempted = {}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "waiting"
+/\ replayed = {}
+/\ answers = {}
+
+State 2: <Crash line 45, col 5 to line 47, col 70 of module Inquiry>
+/\ pending = {}
+/\ online = FALSE
+/\ crashed = TRUE
+/\ attempted = {}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "waiting"
+/\ replayed = {}
+/\ answers = {}
+
+State 3: <Restart line 50, col 5 to line 52, col 88 of module Inquiry>
+/\ pending = {}
+/\ online = TRUE
+/\ crashed = TRUE
+/\ attempted = {}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "waiting"
+/\ replayed = {}
+/\ answers = {}
+
+State 4: <Submit line 12, col 5 to line 22, col 54 of module Inquiry>
+/\ pending = {"a"}
+/\ online = TRUE
+/\ crashed = TRUE
+/\ attempted = {"a"}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "waiting"
+/\ replayed = {}
+/\ answers = {"a"}
+
+State 5: <Stop line 40, col 5 to line 42, col 88 of module Inquiry>
+/\ pending = {"a"}
+/\ online = TRUE
+/\ crashed = TRUE
+/\ attempted = {"a"}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "cancelled"
+/\ replayed = {}
+/\ answers = {"a"}
+
+State 6: <Submit line 12, col 5 to line 22, col 54 of module Inquiry>
+/\ pending = {"a", "b"}
+/\ online = TRUE
+/\ crashed = TRUE
+/\ attempted = {"a", "b"}
+/\ claim = "none"
+/\ late = TRUE
+/\ status = "cancelled"
+/\ replayed = {}
+/\ answers = {"a", "b"}
+
+Error: Invariant StopWins is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ pending = {}
+/\ online = TRUE
+/\ crashed = FALSE
+/\ attempted = {}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "waiting"
+/\ replayed = {}
+/\ answers = {}
+
+State 2: <Crash line 45, col 5 to line 47, col 70 of module Inquiry>
+/\ pending = {}
+/\ online = FALSE
+/\ crashed = TRUE
+/\ attempted = {}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "waiting"
+/\ replayed = {}
+/\ answers = {}
+
+State 3: <Restart line 50, col 5 to line 52, col 88 of module Inquiry>
+/\ pending = {}
+/\ online = TRUE
+/\ crashed = TRUE
+/\ attempted = {}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "waiting"
+/\ replayed = {}
+/\ answers = {}
+
+State 4: <Submit line 12, col 5 to line 22, col 54 of module Inquiry>
+/\ pending = {"b"}
+/\ online = TRUE
+/\ crashed = TRUE
+/\ attempted = {"b"}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "waiting"
+/\ replayed = {}
+/\ answers = {"b"}
+
+State 5: <Stop line 40, col 5 to line 42, col 88 of module Inquiry>
+/\ pending = {"b"}
+/\ online = TRUE
+/\ crashed = TRUE
+/\ attempted = {"b"}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "cancelled"
+/\ replayed = {}
+/\ answers = {"b"}
+
+State 6: <Submit line 12, col 5 to line 22, col 54 of module Inquiry>
+/\ pending = {"a", "b"}
+/\ online = TRUE
+/\ crashed = TRUE
+/\ attempted = {"a", "b"}
+/\ claim = "none"
+/\ late = TRUE
+/\ status = "cancelled"
+/\ replayed = {}
+/\ answers = {"a", "b"}
+
+Error: Invariant StopWins is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ pending = {}
+/\ online = TRUE
+/\ crashed = FALSE
+/\ attempted = {}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "waiting"
+/\ replayed = {}
+/\ answers = {}
+
+State 2: <Submit line 12, col 5 to line 22, col 54 of module Inquiry>
+/\ pending = {"a"}
+/\ online = TRUE
+/\ crashed = FALSE
+/\ attempted = {"a"}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "waiting"
+/\ replayed = {}
+/\ answers = {"a"}
+
+State 3: <Replay line 25, col 5 to line 28, col 77 of module Inquiry>
+/\ pending = {"a"}
+/\ online = TRUE
+/\ crashed = FALSE
+/\ attempted = {"a"}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "waiting"
+/\ replayed = {"a"}
+/\ answers = {"a"}
+
+State 4: <Stop line 40, col 5 to line 42, col 88 of module Inquiry>
+/\ pending = {"a"}
+/\ online = TRUE
+/\ crashed = FALSE
+/\ attempted = {"a"}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "cancelled"
+/\ replayed = {"a"}
+/\ answers = {"a"}
+
+State 5: <Crash line 45, col 5 to line 47, col 70 of module Inquiry>
+/\ pending = {}
+/\ online = FALSE
+/\ crashed = TRUE
+/\ attempted = {"a"}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "cancelled"
+/\ replayed = {"a"}
+/\ answers = {"a"}
+
+State 6: <Restart line 50, col 5 to line 52, col 88 of module Inquiry>
+/\ pending = {}
+/\ online = TRUE
+/\ crashed = TRUE
+/\ attempted = {"a"}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "cancelled"
+/\ replayed = {"a"}
+/\ answers = {"a"}
+
+State 7: <Submit line 12, col 5 to line 22, col 54 of module Inquiry>
+/\ pending = {"b"}
+/\ online = TRUE
+/\ crashed = TRUE
+/\ attempted = {"a", "b"}
+/\ claim = "none"
+/\ late = TRUE
+/\ status = "cancelled"
+/\ replayed = {"a"}
+/\ answers = {"a", "b"}
+
+Error: Invariant StopWins is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ pending = {}
+/\ online = TRUE
+/\ crashed = FALSE
+/\ attempted = {}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "waiting"
+/\ replayed = {}
+/\ answers = {}
+
+State 2: <Submit line 12, col 5 to line 22, col 54 of module Inquiry>
+/\ pending = {"b"}
+/\ online = TRUE
+/\ crashed = FALSE
+/\ attempted = {"b"}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "waiting"
+/\ replayed = {}
+/\ answers = {"b"}
+
+State 3: <Replay line 25, col 5 to line 28, col 77 of module Inquiry>
+/\ pending = {"b"}
+/\ online = TRUE
+/\ crashed = FALSE
+/\ attempted = {"b"}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "waiting"
+/\ replayed = {"b"}
+/\ answers = {"b"}
+
+State 4: <Stop line 40, col 5 to line 42, col 88 of module Inquiry>
+/\ pending = {"b"}
+/\ online = TRUE
+/\ crashed = FALSE
+/\ attempted = {"b"}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "cancelled"
+/\ replayed = {"b"}
+/\ answers = {"b"}
+
+State 5: <Crash line 45, col 5 to line 47, col 70 of module Inquiry>
+/\ pending = {}
+/\ online = FALSE
+/\ crashed = TRUE
+/\ attempted = {"b"}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "cancelled"
+/\ replayed = {"b"}
+/\ answers = {"b"}
+
+State 6: <Restart line 50, col 5 to line 52, col 88 of module Inquiry>
+/\ pending = {}
+/\ online = TRUE
+/\ crashed = TRUE
+/\ attempted = {"b"}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "cancelled"
+/\ replayed = {"b"}
+/\ answers = {"b"}
+
+State 7: <Submit line 12, col 5 to line 22, col 54 of module Inquiry>
+/\ pending = {"a"}
+/\ online = TRUE
+/\ crashed = TRUE
+/\ attempted = {"a", "b"}
+/\ claim = "none"
+/\ late = TRUE
+/\ status = "cancelled"
+/\ replayed = {"b"}
+/\ answers = {"a", "b"}
+
+Error: Invariant StopWins is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ pending = {}
+/\ online = TRUE
+/\ crashed = FALSE
+/\ attempted = {}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "waiting"
+/\ replayed = {}
+/\ answers = {}
+
+State 2: <Crash line 45, col 5 to line 47, col 70 of module Inquiry>
+/\ pending = {}
+/\ online = FALSE
+/\ crashed = TRUE
+/\ attempted = {}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "waiting"
+/\ replayed = {}
+/\ answers = {}
+
+State 3: <Restart line 50, col 5 to line 52, col 88 of module Inquiry>
+/\ pending = {}
+/\ online = TRUE
+/\ crashed = TRUE
+/\ attempted = {}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "waiting"
+/\ replayed = {}
+/\ answers = {}
+
+State 4: <Submit line 12, col 5 to line 22, col 54 of module Inquiry>
+/\ pending = {"a"}
+/\ online = TRUE
+/\ crashed = TRUE
+/\ attempted = {"a"}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "waiting"
+/\ replayed = {}
+/\ answers = {"a"}
+
+State 5: <Replay line 25, col 5 to line 28, col 77 of module Inquiry>
+/\ pending = {"a"}
+/\ online = TRUE
+/\ crashed = TRUE
+/\ attempted = {"a"}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "waiting"
+/\ replayed = {"a"}
+/\ answers = {"a"}
+
+State 6: <Stop line 40, col 5 to line 42, col 88 of module Inquiry>
+/\ pending = {"a"}
+/\ online = TRUE
+/\ crashed = TRUE
+/\ attempted = {"a"}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "cancelled"
+/\ replayed = {"a"}
+/\ answers = {"a"}
+
+State 7: <Submit line 12, col 5 to line 22, col 54 of module Inquiry>
+/\ pending = {"a", "b"}
+/\ online = TRUE
+/\ crashed = TRUE
+/\ attempted = {"a", "b"}
+/\ claim = "none"
+/\ late = TRUE
+/\ status = "cancelled"
+/\ replayed = {"a"}
+/\ answers = {"a", "b"}
+
+Error: Invariant StopWins is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ pending = {}
+/\ online = TRUE
+/\ crashed = FALSE
+/\ attempted = {}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "waiting"
+/\ replayed = {}
+/\ answers = {}
+
+State 2: <Crash line 45, col 5 to line 47, col 70 of module Inquiry>
+/\ pending = {}
+/\ online = FALSE
+/\ crashed = TRUE
+/\ attempted = {}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "waiting"
+/\ replayed = {}
+/\ answers = {}
+
+State 3: <Restart line 50, col 5 to line 52, col 88 of module Inquiry>
+/\ pending = {}
+/\ online = TRUE
+/\ crashed = TRUE
+/\ attempted = {}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "waiting"
+/\ replayed = {}
+/\ answers = {}
+
+State 4: <Submit line 12, col 5 to line 22, col 54 of module Inquiry>
+/\ pending = {"b"}
+/\ online = TRUE
+/\ crashed = TRUE
+/\ attempted = {"b"}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "waiting"
+/\ replayed = {}
+/\ answers = {"b"}
+
+State 5: <Replay line 25, col 5 to line 28, col 77 of module Inquiry>
+/\ pending = {"b"}
+/\ online = TRUE
+/\ crashed = TRUE
+/\ attempted = {"b"}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "waiting"
+/\ replayed = {"b"}
+/\ answers = {"b"}
+
+State 6: <Stop line 40, col 5 to line 42, col 88 of module Inquiry>
+/\ pending = {"b"}
+/\ online = TRUE
+/\ crashed = TRUE
+/\ attempted = {"b"}
+/\ claim = "none"
+/\ late = FALSE
+/\ status = "cancelled"
+/\ replayed = {"b"}
+/\ answers = {"b"}
+
+State 7: <Submit line 12, col 5 to line 22, col 54 of module Inquiry>
+/\ pending = {"a", "b"}
+/\ online = TRUE
+/\ crashed = TRUE
+/\ attempted = {"a", "b"}
+/\ claim = "none"
+/\ late = TRUE
+/\ status = "cancelled"
+/\ replayed = {"b"}
+/\ answers = {"a", "b"}
+
+Model checking completed. No error has been found.
+  Estimates of the probability that TLC did not check all reachable states
+  because two distinct states had the same fingerprint:
+  calculated (optimistic):  val = 8.8E-16
+255 states generated, 122 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 8.
+The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 5 and the 95th percentile is 3).
+Finished in 00s at (2026-10-27 17:57:19)

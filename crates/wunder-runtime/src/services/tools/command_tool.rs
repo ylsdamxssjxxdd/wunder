@@ -15,7 +15,7 @@ use super::{
     execute_in_sandbox, recover_tool_args_value, resolve_tool_name,
     tool_error::{
         build_execute_command_failure_data, build_execute_command_failure_message,
-        build_failed_tool_result, ToolErrorMeta,
+        build_failed_tool_result, tool_timeout_meta, ToolErrorMeta,
     },
     ToolContext, ToolEventEmitter, LOCAL_PTC_DIR_NAME, LOCAL_PTC_TIMEOUT_S,
 };
@@ -1671,15 +1671,11 @@ fn build_sandbox_command_result(mut data: Value) -> Value {
         .and_then(Value::as_bool)
         .unwrap_or(false);
     if timed_out {
+        data["execution_outcome"] = json!("unknown");
         return build_failed_tool_result(
             i18n::t("tool.exec.timeout"),
             data,
-            ToolErrorMeta::new(
-                "TOOL_EXEC_TIMEOUT",
-                Some("命令执行超时，可拆分命令或提高 timeout_s 后重试。".to_string()),
-                true,
-                Some(500),
-            ),
+            tool_timeout_meta("TOOL_EXEC_TIMEOUT"),
             false,
         );
     }
@@ -2202,15 +2198,7 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
                     guarded_omitted_bytes,
                     true,
                 ),
-                ToolErrorMeta::new(
-                    "TOOL_EXEC_TIMEOUT",
-                    Some(
-                        "命令执行超时，可拆分脚本或提高 timeout/budget.time_budget_ms 后重试。"
-                            .to_string(),
-                    ),
-                    true,
-                    Some(500),
-                ),
+                tool_timeout_meta("TOOL_EXEC_TIMEOUT"),
                 false,
             ));
         }

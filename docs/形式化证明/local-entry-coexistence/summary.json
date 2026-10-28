@@ -1,0 +1,49 @@
+{
+  "view": "customer",
+  "second": {
+    "role": "fix",
+    "label": "the fix",
+    "lacks": []
+  },
+  "modelStates": 263,
+  "modelTransitions": 909,
+  "chartStates": 113,
+  "chartTransitions": 112,
+  "chartStatus": {
+    "works": 92,
+    "wrong": 0,
+    "fixed": 153,
+    "mixed": 0,
+    "after": 0,
+    "worse": 0
+  },
+  "mixedStatus": [],
+  "cover": {
+    "drawn": true,
+    "states": 245,
+    "transitions": 996
+  },
+  "classes": [
+    {
+      "n": 1,
+      "end": "已启动：蛹<br/>启动被拦：舵机甲<br/>任务甲：无<br/>任务乙：无<br/>排空中的写入：0",
+      "invariant": "IndependentEntries",
+      "rule": "Opening one local entry must not reject another solely because its root is in use.",
+      "cause": "线程已经隔离，但数据根的进程级独占仍拒绝其他本地入口",
+      "readerSteps": 2,
+      "modelSteps": 3,
+      "counterexamples": 108,
+      "lastSteps": [
+        "打开本地入口"
+      ],
+      "startsHere": false,
+      "fix": "已启动：蛹、舵机甲<br/>启动被拦：无<br/>任务甲：无<br/>任务乙：无<br/>排空中的写入：0"
+    }
+  ],
+  "codeLike": [],
+  "uncited": {
+    "LocalEntries.tla": [],
+    "LocalEntriesFixed.tla": []
+  },
+  "brokenProperties": []
+}

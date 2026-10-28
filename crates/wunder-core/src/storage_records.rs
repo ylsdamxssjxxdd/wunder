@@ -696,7 +696,7 @@ pub struct SessionRunRecord {
     pub metadata: Option<Value>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct CronJobRecord {
     pub job_id: String,
     pub user_id: String,
@@ -727,6 +727,14 @@ pub struct CronJobRecord {
     pub auto_disabled_reason: Option<String>,
     pub created_at: f64,
     pub updated_at: f64,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct CronJobStats {
+    pub total: i64,
+    pub enabled: i64,
+    pub running: i64,
+    pub next_run_at: Option<f64>,
 }
 
 #[derive(Debug, Clone)]

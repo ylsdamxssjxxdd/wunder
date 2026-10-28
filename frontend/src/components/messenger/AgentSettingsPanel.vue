@@ -1800,7 +1800,7 @@ onBeforeUnmount(() => {
 .messenger-agent-icon-btn:hover {
   border-color: rgba(var(--ui-accent-rgb, 59, 130, 246), 0.34);
   background: rgba(var(--ui-accent-rgb, 59, 130, 246), 0.08);
-  color: var(--ui-accent-deep, #2563eb);
+  color: var(--ui-accent-ink, #2563eb);
 }
 
 .messenger-agent-icon-btn:focus-visible {
@@ -1829,7 +1829,7 @@ onBeforeUnmount(() => {
 .messenger-agent-avatar-mode-tab.active {
   border-color: rgba(var(--ui-accent-rgb, 59, 130, 246), 0.42);
   background: rgba(var(--ui-accent-rgb, 59, 130, 246), 0.1);
-  color: var(--ui-accent-deep, #2563eb);
+  color: var(--ui-accent-ink, #2563eb);
 }
 
 .messenger-agent-companion-head {

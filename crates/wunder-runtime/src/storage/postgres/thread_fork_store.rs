@@ -140,7 +140,7 @@ pub(super) fn fork(
             WHERE thread_id=$1 AND record_type='session_meta' AND ordinal=0)=1 \
           AND NOT EXISTS(SELECT 1 FROM service_thread_records \
             WHERE thread_id=$1 AND record_type='session_meta' AND ordinal<>0) \
-          AND EXISTS(SELECT 1 FROM service_thread_display_state WHERE thread_id=$1 AND next_ordinal>=$3)",
+          AND EXISTS(SELECT 1 FROM service_thread_display_state_v2 WHERE thread_id=$1 AND next_ordinal>=$3)",
         &[&source, &through_round, &boundary],
     )?.get::<_, bool>(0);
     ensure!(
@@ -237,20 +237,21 @@ pub(super) fn fork(
     );
     let preview_rebound = rebind_envelope("preview_json::jsonb", "payload");
     tx.execute(
-        &format!("INSERT INTO service_thread_items(thread_id,item_id,turn_id,root_turn_id,ordinal,visible,preview_json) \
+        &format!("INSERT INTO service_thread_items_v2(thread_id,item_id,turn_id,root_turn_id,ordinal,visible,preview_json) \
           SELECT $2,item_id,turn_id,root_turn_id,ordinal,visible,({preview_rebound})::text \
-          FROM service_thread_items WHERE thread_id=$1 AND ordinal<$3"),
+          FROM service_thread_items_v2 WHERE thread_id=$1 AND ordinal<$3"),
         &[&source, &target, &boundary],
     )?;
     tx.execute(
-        "INSERT INTO service_thread_chat_heads(thread_id,root_turn_id,summary_json) \
-         SELECT $2,h.root_turn_id,h.summary_json FROM service_thread_chat_heads h \
+        "INSERT INTO service_thread_chat_heads_v2(thread_id,root_turn_id,summary_json) \
+         SELECT $2,h.root_turn_id,h.summary_json FROM service_thread_chat_heads_v2 h \
          JOIN service_thread_admissions a ON a.thread_id=h.thread_id AND a.turn_id=h.root_turn_id \
          WHERE h.thread_id=$1 AND a.user_round<=$3",
         &[&source, &target, &through_round],
     )?;
     tx.execute(
-        "INSERT INTO service_thread_display_state(thread_id,next_ordinal) VALUES($1,$2)",
+        "INSERT INTO service_thread_display_state_v2(thread_id,next_ordinal,item_count,visible_count)
+         SELECT $1,$2,COUNT(*),COUNT(*) FILTER(WHERE visible) FROM service_thread_items_v2 WHERE thread_id=$1",
         &[&target, &boundary],
     )?;
     tx.commit()?;
@@ -469,17 +470,17 @@ mod tests {
         assert_eq!(copied.get::<_, i64>(0), 2);
         assert_eq!(copied.get::<_, i64>(1), 0);
         conn.execute(
-            "DELETE FROM service_thread_items WHERE thread_id=$1",
+            "DELETE FROM service_thread_items_v2 WHERE thread_id=$1",
             &[&target],
         )
         .unwrap();
         conn.execute(
-            "DELETE FROM service_thread_chat_heads WHERE thread_id=$1",
+            "DELETE FROM service_thread_chat_heads_v2 WHERE thread_id=$1",
             &[&target],
         )
         .unwrap();
         conn.execute(
-            "DELETE FROM service_thread_display_state WHERE thread_id=$1",
+            "DELETE FROM service_thread_display_state_v2 WHERE thread_id=$1",
             &[&target],
         )
         .unwrap();

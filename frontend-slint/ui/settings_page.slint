@@ -1,5 +1,5 @@
 import { I18n } from "i18n.slint";
-import { Theme, PromptPackCard, ToolCard, ModelCard, ProfileCard, FileCard, CronCard, CronRunCard, ChannelCatalogCard, ChannelAccountCard, ChannelBindingCard, ChannelLogCard } from "theme.slint";
+import { Theme, PromptPackCard, ToolCard, ModelCard, ProfileCard, FileCard, WorkspaceFileRow, CronCard, CronRunCard, ChannelCatalogCard, ChannelAccountCard, ChannelBindingCard, ChannelLogCard } from "theme.slint";
 import { Action, FormField, MiddleHeader, PageState, PageStateKind, ThemeCheck } from "components.slint";
 import { TextEditBase } from "textedit-base.slint";
 import { DragRow } from "drag_row.slint";
@@ -57,7 +57,7 @@ component FormSectionHead inherits Rectangle {
     in property <image> icon;
     in property <string> title;
     height: 24px;
-    Image { x: 0px; y: 4px; width: 16px; height: 16px; source: root.icon; colorize: Theme.accent-deep; }
+    Image { x: 0px; y: 4px; width: 16px; height: 16px; source: root.icon; colorize: Theme.accent-ink; }
     Text { x: 26px; width: parent.width - 26px; height: 24px; text: root.title; color: Theme.text; font-size: Theme.font-md; font-weight: 700; vertical-alignment: center; overflow: elide; }
 }
 
@@ -89,7 +89,7 @@ component ThemeComboBox inherits Rectangle {
 
     Rectangle {
         background: root.enabled ? Theme.input-bg : Theme.input-readonly-bg;
-        border-color: base.has-focus ? Theme.accent : (base.has-hover && root.enabled ? Theme.border-strong : Theme.input-border);
+        border-color: base.has-focus ? Theme.accent-ink : (base.has-hover && root.enabled ? Theme.border-strong : Theme.input-border);
         border-width: 1px;
         border-radius: Theme.radius-sm;
     }
@@ -599,6 +599,7 @@ export component SettingsPage inherits Rectangle {
     in-out property <[ToolResource]> tools-bases;
     in-out property <[ToolCard]> tools-server-tools;
     in-out property <[FileCard]> tools-files;
+    in property <[WorkspaceFileRow]> tools-file-rows;
     in-out property <string> tools-search;
     in-out property <string> tools-file-path;
     in-out property <string> tools-content;
@@ -613,17 +614,19 @@ export component SettingsPage inherits Rectangle {
 
     in-out property <bool> cron-loading: false;
     in-out property <[CronCard]> cron-jobs;
-    in-out property <[string]> cron-agent-names: [I18n.common_default_agent];
+    in-out property <int> cron-selected: -1;
+    in-out property <[string]> cron-workspace-names: [];
     in-out property <bool> cron-editor-open: false;
     in-out property <bool> cron-editor-saving: false;
     in-out property <int> cron-edit-kind: 0;
     in-out property <string> cron-edit-name;
     in-out property <string> cron-edit-at;
     in-out property <string> cron-edit-every;
+    in-out property <int> cron-edit-interval-unit: 0;
     in-out property <string> cron-edit-cron;
     in-out property <string> cron-edit-tz;
     in-out property <string> cron-edit-message;
-    in-out property <int> cron-edit-agent: 0;
+    in-out property <int> cron-edit-workspace: -1;
     in-out property <bool> cron-edit-delete-after: false;
     in-out property <bool> cron-edit-enabled: true;
     in-out property <bool> cron-runs-open: false;
@@ -815,7 +818,7 @@ export component SettingsPage inherits Rectangle {
                     Rectangle {
                         x: 12px; y: 8px; width: parent.width - 24px; height: 30px;
                         border-radius: Theme.radius-sm; background: Theme.input-bg;
-                        border-width: 1px; border-color: query.has-focus ? Theme.accent : Theme.input-border;
+                        border-width: 1px; border-color: query.has-focus ? Theme.accent-ink : Theme.input-border;
                         Image { x: 8px; y: 8px; width: 13px; height: 13px; source: @image-url("../assets/icons/magnifying-glass.svg"); colorize: Theme.muted; image-fit: contain; }
                         query := TextInput {
                             x: 28px; y: 0px; width: parent.width - 36px; height: parent.height;
@@ -967,7 +970,7 @@ export component SettingsPage inherits Rectangle {
                                             Rectangle { x: 0px; y: (parent.height - 4px) / 2; width: parent.width; height: 4px; border-radius: 2px; background: Theme.border;
                                                 Rectangle { x: 0px; y: 0px; width: parent.width * (root.font-size - 12) / 8; height: 4px; border-radius: 2px; background: Theme.accent; }
                                             }
-                                            Rectangle { x: parent.width * (root.font-size - 12) / 8 - 8px; y: (parent.height - 16px) / 2; width: 16px; height: 16px; border-radius: 8px; background: white; border-width: 2px; border-color: Theme.accent; }
+                                            Rectangle { x: parent.width * (root.font-size - 12) / 8 - 8px; y: (parent.height - 16px) / 2; width: 16px; height: 16px; border-radius: 8px; background: white; border-width: 2px; border-color: Theme.accent-ink; }
                                             TouchArea {
                                                 mouse-cursor: pointer;
                                                 pointer-event(event) => {
@@ -1197,7 +1200,7 @@ export component SettingsPage inherits Rectangle {
                                             activate => { root.select-model(index); }
                                             move-by(delta) => { root.move-model(index, delta); }
                                             clip: true;
-                                            Image { x: 10px; y: (parent.height - 18px) / 2; width: 18px; height: 18px; source: root.model-icon(model.model-type); colorize: Theme.accent-deep; }
+                                            Image { x: 10px; y: (parent.height - 18px) / 2; width: 18px; height: 18px; source: root.model-icon(model.model-type); colorize: Theme.accent-ink; }
                                             // Cloud entries keep room for their badge next to the key.
                                             Text { x: 36px; y: 11px; width: parent.width - (model.is-default ? 94px : 48px) - (model.is-cloud ? 34px : 0px); height: 18px; text: model.key; color: Theme.text; font-size: Theme.font-sm; font-weight: 600; overflow: elide; }
                                             Text { x: 36px; y: 32px; width: parent.width - (model.is-default ? 94px : 48px) - (model.is-cloud ? 34px : 0px); height: 15px; text: (model.model == "" && model.base-url == "") ? I18n.st_models_no_info : (model.model + " · " + model.base-url); color: Theme.muted; font-size: Theme.font-2xs; overflow: elide; }
@@ -1207,7 +1210,7 @@ export component SettingsPage inherits Rectangle {
                                             if model.is-cloud : Rectangle {
                                                 x: parent.width - (model.is-default ? 82px : 52px); y: (parent.height - 16px) / 2; width: 26px; height: 16px;
                                                 border-radius: 8px; background: Theme.accent-soft;
-                                                Text { width: parent.width; height: parent.height; text: I18n.st_cl_badge; color: Theme.accent; font-size: Theme.font-2xs; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                                                Text { width: parent.width; height: parent.height; text: I18n.st_cl_badge; color: Theme.accent-ink; font-size: Theme.font-2xs; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
                                             }
                                             // Default models carry the web's hanging bookmark ribbon.
                                             if model.is-default : Rectangle {
@@ -1414,7 +1417,7 @@ export component SettingsPage inherits Rectangle {
                         builtin-tools: root.tools-builtin; mcp-tools: root.tools-mcp;
                         skill-tools: root.tools-skills; knowledge-tools: root.tools-knowledge;
                         servers: root.tools-servers; skills: root.tools-skill-resources; bases: root.tools-bases;
-                        files: root.tools-files; server-tools: root.tools-server-tools;
+                        files: root.tools-files; file-rows: root.tools-file-rows; server-tools: root.tools-server-tools;
                         tab <=> root.tools-tab; selected <=> root.tools-selected;
                         file-path <=> root.tools-file-path; content <=> root.tools-content;
                         has-more: root.tools-has-more; directory: root.tools-directory;
@@ -1458,7 +1461,7 @@ export component SettingsPage inherits Rectangle {
                                 Rectangle {
                                     height: 176px; border-radius: Theme.radius-sm;
                                     background: root.saving ? Theme.input-readonly-bg : Theme.input-bg;
-                                    border-width: 1px; border-color: prompt-edit.has-focus ? Theme.accent : root.saving ? Theme.input-readonly-border : Theme.input-border;
+                                    border-width: 1px; border-color: prompt-edit.has-focus ? Theme.accent-ink : root.saving ? Theme.input-readonly-border : Theme.input-border;
                                     prompt-edit := TextEditBase {
                                         x: 1px; y: 1px; width: parent.width - 2px; height: parent.height - 2px;
                                         text <=> root.selected-agent-system-prompt;
@@ -1468,7 +1471,7 @@ export component SettingsPage inherits Rectangle {
                                         foreground: Theme.text; font-size: Theme.font-sm;
                                         background: transparent; border-width: 0px;
                                         scroll-view-padding: 10px;
-                                        selection-background-color: Theme.accent; selection-foreground-color: white;
+                                        selection-background-color: Theme.accent-ink; selection-foreground-color: white;
                                     }
                                 }
                             }
@@ -1486,7 +1489,7 @@ export component SettingsPage inherits Rectangle {
                                     Rectangle {
                                         x: parent.width - 270px; y: 0px; width: 270px; height: 34px;
                                         border-radius: Theme.radius-sm; background: Theme.input-bg;
-                                        border-width: 1px; border-color: agent-tool-search.has-focus ? Theme.accent : Theme.input-border;
+                                        border-width: 1px; border-color: agent-tool-search.has-focus ? Theme.accent-ink : Theme.input-border;
                                         Image { x: 9px; y: 10px; width: 13px; height: 13px; source: @image-url("../assets/icons/magnifying-glass.svg"); colorize: Theme.muted; image-fit: contain; }
                                         agent-tool-search := TextInput {
                                             x: 30px; y: 0px; width: parent.width - 38px; height: parent.height;
@@ -1541,7 +1544,7 @@ export component SettingsPage inherits Rectangle {
                                     Rectangle {
                                         horizontal-stretch: 1; height: 36px; border-radius: Theme.radius-sm;
                                         background: root.saving ? Theme.input-readonly-bg : Theme.input-bg;
-                                        border-width: 1px; border-color: agent-question-input.has-focus ? Theme.accent : root.saving ? Theme.input-readonly-border : Theme.input-border;
+                                        border-width: 1px; border-color: agent-question-input.has-focus ? Theme.accent-ink : root.saving ? Theme.input-readonly-border : Theme.input-border;
                                         agent-question-input := TextInput {
                                             x: 10px; y: 0px; width: parent.width - 20px; height: parent.height;
                                             text <=> root.agent-question-draft;
@@ -1622,7 +1625,7 @@ export component SettingsPage inherits Rectangle {
                                         height: 174px;
                                         border-radius: Theme.radius-md;
                                         border-width: 1px;
-                                        border-color: companion.id == PetSettingsState.selected-id ? Theme.accent : Theme.border;
+                                        border-color: companion.id == PetSettingsState.selected-id ? Theme.accent-ink : Theme.border;
                                         background: companion.id == PetSettingsState.selected-id ? Theme.accent-soft : Theme.surface;
                                         Image {
                                             x: 12px; y: 12px; width: parent.width - 24px; height: 84px;
@@ -1667,12 +1670,13 @@ export component SettingsPage inherits Rectangle {
                     }
 
                     if root.settings-tab == 5 : CronPage {
-                        loading: root.cron-loading; jobs: root.cron-jobs; agent-names <=> root.cron-agent-names;
+                        loading: root.cron-loading; jobs: root.cron-jobs; selected <=> root.cron-selected; workspace-names <=> root.cron-workspace-names;
                         editor-open <=> root.cron-editor-open; editor-saving <=> root.cron-editor-saving;
                         editor-kind <=> root.cron-edit-kind; editor-name <=> root.cron-edit-name;
+                        editor-interval-unit <=> root.cron-edit-interval-unit;
                         editor-at <=> root.cron-edit-at; editor-every <=> root.cron-edit-every;
                         editor-cron <=> root.cron-edit-cron; editor-tz <=> root.cron-edit-tz;
-                        editor-message <=> root.cron-edit-message; editor-agent <=> root.cron-edit-agent;
+                        editor-message <=> root.cron-edit-message; editor-workspace <=> root.cron-edit-workspace;
                         editor-delete-after <=> root.cron-edit-delete-after; editor-enabled <=> root.cron-edit-enabled;
                         runs-open <=> root.cron-runs-open; runs-loading: root.cron-runs-loading;
                         runs-title: root.cron-runs-title; runs: root.cron-runs;
@@ -1782,7 +1786,7 @@ export component SettingsPage inherits Rectangle {
                                         Action { label: I18n.pm_new; show-label: true; enabled: !root.prompt-loading; clicked => { root.create-prompt-pack(); } }
                                         Action { label: I18n.pm_delete_custom; show-label: true; enabled: !root.prompt-loading && root.selected-pack != "" && !root.prompt-readonly; clicked => { root.delete-prompt-pack(); } }
                                     }
-                                    HorizontalLayout { spacing: 6px;                                         Rectangle { width: 90px; height: 22px; border-radius: 4px; background: Theme.accent-soft; Text { width: parent.width; height: parent.height; text: I18n.pm_active_tag + root.prompt-active; color: Theme.accent-deep; font-size: Theme.font-2xs; horizontal-alignment: center; vertical-alignment: center; } }
+                                    HorizontalLayout { spacing: 6px;                                         Rectangle { width: 90px; height: 22px; border-radius: 4px; background: Theme.accent-soft; Text { width: parent.width; height: parent.height; text: I18n.pm_active_tag + root.prompt-active; color: Theme.accent-ink; font-size: Theme.font-2xs; horizontal-alignment: center; vertical-alignment: center; } }
                                         Rectangle { width: 90px; height: 22px; border-radius: 4px; background: Theme.surface; Text { width: parent.width; height: parent.height; text: I18n.pm_lang_default_tag; color: Theme.muted; font-size: Theme.font-2xs; horizontal-alignment: center; vertical-alignment: center; visible: root.prompt-packs.length > 0 && root.prompt-packs[0].is-lang-default; } }
                                         Rectangle { width: 120px; height: 22px; border-radius: 4px; background: Theme.surface; Text { width: parent.width; height: parent.height; text: I18n.pm_sync_tag + root.prompt-active; color: Theme.muted; font-size: Theme.font-2xs; horizontal-alignment: center; vertical-alignment: center; visible: root.prompt-readonly; } }
                                         Rectangle { horizontal-stretch: 1; }
@@ -1794,7 +1798,7 @@ export component SettingsPage inherits Rectangle {
                                     Rectangle { width: 190px; border-radius: Theme.radius-sm; background: Theme.surface; border-width: 1px; border-color: Theme.border;
                                         ScrollView { vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
                                             VerticalLayout { alignment: start; padding: 8px; spacing: 4px;
-                                                for segment[index] in [{key: "role", label: I18n.pm_segment_role}, {key: "engineering", label: I18n.pm_segment_engineering}, {key: "tools_protocol", label: I18n.pm_segment_tool_protocol}, {key: "skills_protocol", label: I18n.pm_segment_skill_protocol}, {key: "memory", label: I18n.pm_segment_memory}, {key: "extra", label: I18n.pm_segment_attach}] : Rectangle { horizontal-stretch: 1; height: 42px; border-radius: Theme.radius-sm; background: root.selected-segment == index ? Theme.accent-soft : transparent; border-width: 1px; border-color: root.selected-segment == index ? Theme.accent : transparent;
+                                                for segment[index] in [{key: "role", label: I18n.pm_segment_role}, {key: "engineering", label: I18n.pm_segment_engineering}, {key: "tools_protocol", label: I18n.pm_segment_tool_protocol}, {key: "skills_protocol", label: I18n.pm_segment_skill_protocol}, {key: "memory", label: I18n.pm_segment_memory}, {key: "extra", label: I18n.pm_segment_attach}] : Rectangle { horizontal-stretch: 1; height: 42px; border-radius: Theme.radius-sm; background: root.selected-segment == index ? Theme.accent-soft : transparent; border-width: 1px; border-color: root.selected-segment == index ? Theme.accent-ink : transparent;
                                                     VerticalLayout { spacing: 1px; Text { text: segment.label; color: root.selected-segment == index ? Theme.accent-deep : Theme.text; font-size: Theme.font-xs; font-weight: 600; } Text { text: segment.key; color: Theme.muted; font-size: 9px; overflow: elide; } }
                                                     TouchArea { clicked => { root.selected-segment = index; root.select-prompt-pack(root.selected-pack); } }
                                                 }
@@ -1804,7 +1808,7 @@ export component SettingsPage inherits Rectangle {
                                     Rectangle { horizontal-stretch: 1; border-radius: Theme.radius-sm; background: Theme.surface; border-width: 1px; border-color: Theme.border;
                                         VerticalLayout { padding: 12px; spacing: 8px;
                                             HorizontalLayout { height: 22px; Text { text: root.selected-pack == "" ? I18n.pm_segment_edit : I18n.pm_segment_edit_prefix + root.selected-pack; color: Theme.text; font-size: 13px; font-weight: 700; overflow: elide; } Rectangle { horizontal-stretch: 1; } Text { text: root.prompt-readonly ? I18n.pm_readonly_hint : I18n.pm_editable_hint; color: root.prompt-readonly ? Theme.muted : Theme.success; font-size: Theme.font-2xs; vertical-alignment: center; } }
-                                            TextEditBase { vertical-stretch: 1; text <=> root.prompt-draft; read-only: root.prompt-readonly || root.prompt-loading; wrap: word-wrap; foreground: root.prompt-readonly || root.prompt-loading ? Theme.input-readonly-text : Theme.text; font-size: Theme.font-sm; background: root.prompt-readonly || root.prompt-loading ? Theme.input-readonly-bg : Theme.input-bg; border-width: 1px; border-color: Theme.input-border; border-radius: Theme.radius-sm; selection-background-color: Theme.accent; selection-foreground-color: white; }
+                                            TextEditBase { vertical-stretch: 1; text <=> root.prompt-draft; read-only: root.prompt-readonly || root.prompt-loading; wrap: word-wrap; foreground: root.prompt-readonly || root.prompt-loading ? Theme.input-readonly-text : Theme.text; font-size: Theme.font-sm; background: root.prompt-readonly || root.prompt-loading ? Theme.input-readonly-bg : Theme.input-bg; border-width: 1px; border-color: Theme.input-border; border-radius: Theme.radius-sm; selection-background-color: Theme.accent-ink; selection-foreground-color: white; }
                                             HorizontalLayout { height: 30px; Rectangle { horizontal-stretch: 1; } Action { width: 96px; label: I18n.pm_save_segment; show-label: true; primary: true; enabled: !root.prompt-readonly && !root.prompt-loading && root.selected-pack != ""; clicked => { root.save-prompt-segment(); } } }
                                         }
                                     }
@@ -1814,7 +1818,7 @@ export component SettingsPage inherits Rectangle {
                                 VerticalLayout { padding: 14px; spacing: 8px;
                                     HorizontalLayout { height: 22px; Text { text: I18n.pm_preview_title; color: Theme.text; font-size: 13px; font-weight: 700; } Rectangle { horizontal-stretch: 1; } Action { label: I18n.pm_preview_refresh; show-label: true; enabled: !root.prompt-preview-loading; clicked => { root.refresh-prompt-preview(); } } }
                                     Text { text: I18n.pm_preview_hint; color: Theme.muted; font-size: Theme.font-2xs; overflow: elide; }
-                                    TextEditBase { vertical-stretch: 1; text: root.prompt-preview; read-only: true; wrap: word-wrap; foreground: Theme.text; font-size: Theme.font-xs; background: Theme.input-readonly-bg; border-width: 1px; border-color: Theme.input-readonly-border; border-radius: Theme.radius-sm; scroll-view-padding: 8px; selection-background-color: Theme.accent; selection-foreground-color: white; }
+                                    TextEditBase { vertical-stretch: 1; text: root.prompt-preview; read-only: true; wrap: word-wrap; foreground: Theme.text; font-size: Theme.font-xs; background: Theme.input-readonly-bg; border-width: 1px; border-color: Theme.input-readonly-border; border-radius: Theme.radius-sm; scroll-view-padding: 8px; selection-background-color: Theme.accent-ink; selection-foreground-color: white; }
                                 }
                             }
                         }

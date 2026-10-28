@@ -1,0 +1,97 @@
+{
+  "view": "customer",
+  "second": {
+    "role": "fix",
+    "label": "the fix",
+    "lacks": []
+  },
+  "modelStates": 1400,
+  "modelTransitions": 7440,
+  "chartStates": 12,
+  "chartTransitions": 13,
+  "chartStatus": {
+    "works": 2,
+    "wrong": 0,
+    "fixed": 10,
+    "mixed": 0,
+    "after": 0,
+    "worse": 0
+  },
+  "mixedStatus": [],
+  "cover": {
+    "drawn": true,
+    "states": 12,
+    "transitions": 28,
+    "leftOutStates": [],
+    "leftOutTransitions": [
+      "单条事件超预算，元信息不复制正文，统计不扫描历史，已有投影 --> 单条事件超预算，元信息复制正文，统计不扫描历史，已有投影: 运行时读取元信息",
+      "单条事件超预算，元信息不复制正文，统计不扫描历史，已有投影 --> 诊断在预算内，元信息不复制正文，统计不扫描历史，已有投影: 收到模型或工具事件",
+      "单条事件超预算，元信息不复制正文，统计不扫描历史，空投影 --> 诊断在预算内，元信息不复制正文，统计不扫描历史，空投影: 收到模型或工具事件",
+      "单条事件超预算，元信息不复制正文，统计扫描历史，已有投影 --> 单条事件超预算，元信息复制正文，统计扫描历史，已有投影: 运行时读取元信息",
+      "单条事件超预算，元信息不复制正文，统计扫描历史，已有投影 --> 诊断在预算内，元信息不复制正文，统计扫描历史，已有投影: 收到模型或工具事件",
+      "单条事件超预算，元信息复制正文，统计不扫描历史，已有投影 --> 诊断在预算内，元信息复制正文，统计不扫描历史，已有投影: 收到模型或工具事件",
+      "单条事件超预算，元信息复制正文，统计不扫描历史，空投影 --> 诊断在预算内，元信息复制正文，统计不扫描历史，空投影: 收到模型或工具事件",
+      "单条事件超预算，元信息复制正文，统计扫描历史，已有投影 --> 诊断在预算内，元信息复制正文，统计扫描历史，已有投影: 收到模型或工具事件",
+      "诊断在预算内，元信息不复制正文，统计不扫描历史，已有投影 --> 单条事件超预算，元信息不复制正文，统计不扫描历史，已有投影: 收到模型或工具事件",
+      "诊断在预算内，元信息不复制正文，统计扫描历史，已有投影 --> 单条事件超预算，元信息不复制正文，统计扫描历史，已有投影: 收到模型或工具事件",
+      "诊断在预算内，元信息复制正文，统计不扫描历史，已有投影 --> 单条事件超预算，元信息复制正文，统计不扫描历史，已有投影: 收到模型或工具事件",
+      "诊断在预算内，元信息复制正文，统计不扫描历史，已有投影 --> 诊断在预算内，元信息复制正文，统计扫描历史，已有投影: 舰桥读取条目统计",
+      "诊断在预算内，元信息复制正文，统计不扫描历史，空投影 --> 单条事件超预算，元信息复制正文，统计不扫描历史，空投影: 收到模型或工具事件",
+      "诊断在预算内，元信息复制正文，统计不扫描历史，空投影 --> 诊断在预算内，元信息复制正文，统计不扫描历史，已有投影: 原子写入或重放投影",
+      "诊断在预算内，元信息复制正文，统计扫描历史，已有投影 --> 单条事件超预算，元信息复制正文，统计扫描历史，已有投影: 收到模型或工具事件"
+    ]
+  },
+  "classes": [
+    {
+      "n": 1,
+      "end": "单条事件超预算，元信息不复制正文，统计不扫描历史，空投影",
+      "invariant": "BoundedDiagnostics",
+      "rule": "Per-event diagnostics have a byte budget, not merely a slot limit.",
+      "cause": "限制条数未限制单条正文",
+      "readerSteps": 1,
+      "modelSteps": 2,
+      "counterexamples": 220,
+      "lastSteps": [
+        "收到模型或工具事件"
+      ],
+      "startsHere": false,
+      "fix": "诊断在预算内，元信息不复制正文，统计不扫描历史，空投影"
+    },
+    {
+      "n": 2,
+      "end": "诊断在预算内，元信息不复制正文，统计扫描历史，已有投影",
+      "invariant": "ConstantCountRead",
+      "rule": "Hot count reads inspect no historical item rows after initialization.",
+      "cause": "热查询重新扫描历史条目",
+      "readerSteps": 2,
+      "modelSteps": 3,
+      "counterexamples": 490,
+      "lastSteps": [
+        "舰桥读取条目统计"
+      ],
+      "startsHere": false,
+      "fix": "诊断在预算内，元信息不复制正文，统计不扫描历史，已有投影"
+    },
+    {
+      "n": 3,
+      "end": "诊断在预算内，元信息复制正文，统计不扫描历史，空投影",
+      "invariant": "MetadataNoBodyCopies",
+      "rule": "Metadata reads copy no diagnostic body under the global monitor mutex.",
+      "cause": "元信息读取复制诊断正文",
+      "readerSteps": 2,
+      "modelSteps": 3,
+      "counterexamples": 240,
+      "lastSteps": [
+        "运行时读取元信息"
+      ],
+      "startsHere": false,
+      "fix": "诊断在预算内，元信息不复制正文，统计不扫描历史，空投影"
+    }
+  ],
+  "codeLike": [],
+  "uncited": {
+    "scratch/service-history\\ServiceHistory.tla": [],
+    "scratch/service-history\\ServiceHistoryFixed.tla": []
+  },
+  "brokenProperties": []
+}

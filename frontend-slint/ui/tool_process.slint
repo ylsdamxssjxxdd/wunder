@@ -147,6 +147,13 @@ component ProcessEntryCard inherits Rectangle {
                     horizontal-scrollbar-policy: always-off;
                     vertical-scrollbar-policy: as-needed;
                     content-width: self.visible-width;
+                    // A ScrollView only infers its content size from *layout*
+                    // children. This one is a component, so without the explicit
+                    // height `content-height` collapsed to the viewport: the
+                    // scrollbar never appeared and a long output was clipped at
+                    // the 240px cap with no way to reach the rest of it. State
+                    // the height the way the transcript scroll does.
+                    content-height: max(self.visible-height, detail.preferred-height);
                     detail := WorkflowDetail {
                         width: detail-scroll.visible-width;
                         sections: root.entry.sections;

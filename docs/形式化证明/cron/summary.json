@@ -1,0 +1,95 @@
+{
+  "view": "customer",
+  "second": {
+    "role": "fix",
+    "label": "the fix",
+    "lacks": []
+  },
+  "modelStates": 42844,
+  "modelTransitions": 73664,
+  "chartStates": 22,
+  "chartTransitions": 26,
+  "chartStatus": {
+    "works": 8,
+    "wrong": 0,
+    "fixed": 51,
+    "mixed": 0,
+    "after": 0,
+    "worse": 0
+  },
+  "mixedStatus": [],
+  "cover": {
+    "drawn": true,
+    "states": 59,
+    "transitions": 257
+  },
+  "classes": [
+    {
+      "n": 1,
+      "end": "任务启用，2个执行尚未结束，重复领取",
+      "invariant": "ExclusiveClaim",
+      "rule": "租约未失效时同一任务不得重复获得执行权。cron.rs:557; sqlite/cron.rs:294",
+      "cause": "未失效的执行权被再次领取",
+      "readerSteps": 3,
+      "modelSteps": 4,
+      "counterexamples": 386,
+      "lastSteps": [
+        "手动请求尝试领取"
+      ],
+      "startsHere": false,
+      "fix": "任务启用，1个执行尚未结束"
+    },
+    {
+      "n": 2,
+      "end": "任务启用，1个执行尚未结束",
+      "invariant": "NoResurrection",
+      "rule": "删除完成后，迟到的领取与完成回写不得复活任务。cron.rs:557; crates/wunder-runtime/src/services/cron.rs:2385",
+      "cause": "删除后仍用旧快照重新插入",
+      "readerSteps": 3,
+      "modelSteps": 4,
+      "counterexamples": 4234,
+      "lastSteps": [
+        "提交完成状态",
+        "手动请求尝试领取"
+      ],
+      "startsHere": false,
+      "fix": "任务已删除，无在途执行"
+    },
+    {
+      "n": 3,
+      "end": "任务停用，1个执行尚未结束，等待完成提交，历史与状态分离",
+      "invariant": "AtomicHistory",
+      "rule": "运行历史不得在删除或换代后单独写入。sqlite/cron.rs:100; crates/wunder-runtime/src/storage/postgres/cron.rs:96",
+      "cause": "历史写入没有绑定有效执行权",
+      "readerSteps": 4,
+      "modelSteps": 5,
+      "counterexamples": 6016,
+      "lastSteps": [
+        "单独写入执行历史"
+      ],
+      "startsHere": false,
+      "fix": "任务停用，1个执行尚未结束，等待完成提交"
+    },
+    {
+      "n": 4,
+      "end": "任务启用，无在途执行，覆盖新状态",
+      "invariant": "NoStaleCompletion",
+      "rule": "完成回写不得覆盖并发编辑、停用或新的租约。cron.rs:2385",
+      "cause": "旧执行覆盖了新的任务状态",
+      "readerSteps": 4,
+      "modelSteps": 6,
+      "counterexamples": 5054,
+      "lastSteps": [
+        "提交完成状态"
+      ],
+      "startsHere": false,
+      "fix": "任务停用，1个执行尚未结束"
+    }
+  ],
+  "codeLike": [],
+  "uncited": {
+    "CronLifecycle.tla": [],
+    "CronLifecycleFixed.tla": []
+  },
+  "brokenProperties": []
+}

@@ -1,0 +1,107 @@
+---
+config:
+  markdownAutoWrap: false
+  state:
+    useMaxWidth: false
+---
+stateDiagram-v2
+  %% second model (fix): the fix
+  classDef works fill:#f4f6f7,stroke:#566573,color:#1b2631
+  classDef wrong fill:#fdedec,stroke:#c0392b,color:#7b241c
+  classDef fixed fill:#e9f7ef,stroke:#1e8449,color:#145a32
+  classDef mixed fill:#fdebd0,stroke:#d35400,color:#7e5109
+  classDef after fill:#ffffff,stroke:#808b96,color:#566573
+  classDef worse fill:#f4ecf7,stroke:#7d3c98,color:#4a235a
+  classDef worksPath fill:#f4f6f7,stroke:#1f3a93,stroke-width:4px,color:#1b2631
+  classDef wrongPath fill:#fdedec,stroke:#1f3a93,stroke-width:4px,color:#7b241c
+  classDef fixedPath fill:#e9f7ef,stroke:#1f3a93,stroke-width:4px,color:#145a32
+  classDef mixedPath fill:#fdebd0,stroke:#1f3a93,stroke-width:4px,color:#7e5109
+  classDef afterPath fill:#ffffff,stroke:#1f3a93,stroke-width:4px,color:#566573
+  classDef worsePath fill:#f4ecf7,stroke:#1f3a93,stroke-width:4px,color:#4a235a
+  state "Legend" as legend {
+    state "Works today" as legendWorks
+    state "Fixed or new with the fix" as legendFixed
+  }
+  class legendWorks works
+  class legendFixed fixed
+  state "Create goal" as g0 {
+    state "command acknowledged" as s0
+    state "command persisted" as s1
+    state "control acquired" as s2
+    state "new rounds fenced" as s3
+    state "previous executor fenced" as s4
+    state "ready" as s5
+  }
+  state "Pause goal" as g1 {
+    state "command acknowledged" as s6
+    state "command persisted" as s7
+    state "control acquired" as s8
+    state "new rounds fenced" as s9
+    state "previous executor fenced" as s10
+    state "ready" as s11
+  }
+  state "Save changed objective" as g2 {
+    state "command acknowledged" as s12
+    state "command persisted" as s13
+    state "control acquired" as s14
+    state "new rounds fenced" as s15
+    state "previous executor fenced" as s16
+    state "ready" as s17
+  }
+  state "Active goal, command<br/>missing after reload" as s18
+  state "Active goal, command<br/>survives reload" as s19
+  state "Changed objective saved" as s20
+  state "Paused banner, executor<br/>still running" as s21
+  state "Paused goal, executor<br/>fenced" as s22
+  state "Save returned, original<br/>objective retained" as s23
+  [*] --> s5
+  [*] --> s11
+  [*] --> s17
+  s5 --> s2 : User submits the command
+  s17 --> s14 : User submits the command
+  s11 --> s8 : User submits the command
+  s2 --> s18 : Goal creation returns
+  s14 --> s23 : Banner save returns
+  s8 --> s21 : Pause command returns
+  s2 --> s3 : with the fix, Fence<br/>continuation admission
+  s14 --> s15 : with the fix, Fence<br/>continuation admission
+  s8 --> s9 : with the fix, Fence<br/>continuation admission
+  s3 --> s4 : with the fix, Cancel and<br/>settle previous execution
+  s15 --> s16 : with the fix, Cancel and<br/>settle previous execution
+  s9 --> s10 : with the fix, Cancel and<br/>settle previous execution
+  s4 --> s1 : with the fix, Accept durable<br/>user turn
+  s16 --> s13 : with the fix, Accept durable<br/>user turn
+  s10 --> s7 : with the fix, Accept durable<br/>user turn
+  s1 --> s0 : with the fix, Complete control<br/>turn
+  s13 --> s12 : with the fix, Complete control<br/>turn
+  s7 --> s6 : with the fix, Complete control<br/>turn
+  s0 --> s19 : with the fix, Goal creation<br/>returns
+  s12 --> s20 : with the fix, Banner save<br/>returns
+  s6 --> s22 : with the fix, Pause command<br/>returns
+  s14 --> s14 : with the fix, Banner save<br/>returns cannot happen at step<br/>2 of bug 1
+  s2 --> s2 : with the fix, Goal creation<br/>returns cannot happen at step<br/>2 of bug 2
+  s8 --> s8 : with the fix, Pause command<br/>returns cannot happen at step<br/>2 of bug 3
+  class s18 fixed
+  class s19 fixed
+  class s20 fixed
+  class s0 fixed
+  class s1 fixed
+  class s2 works
+  class s3 fixed
+  class s4 fixed
+  class s5 works
+  class s6 fixed
+  class s7 fixed
+  class s8 works
+  class s9 fixed
+  class s10 fixed
+  class s11 works
+  class s21 fixed
+  class s22 fixed
+  class s12 fixed
+  class s13 fixed
+  class s14 works
+  class s15 fixed
+  class s16 fixed
+  class s17 works
+  class s23 fixed

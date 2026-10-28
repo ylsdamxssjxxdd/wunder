@@ -168,6 +168,10 @@ impl OrchestratorError {
         Self::new("LLM_UNAVAILABLE", message, None)
     }
 
+    pub(super) fn llm_request_rejected(message: String) -> Self {
+        Self::new("LLM_REQUEST_REJECTED", message, None)
+    }
+
     pub(super) fn context_window_exceeded(message: String) -> Self {
         Self::new("CONTEXT_WINDOW_EXCEEDED", message, None)
     }
@@ -232,6 +236,14 @@ impl OrchestratorError {
 
 fn default_meta_for_code(code: &str) -> OrchestratorErrorMeta {
     match code.trim().to_ascii_uppercase().as_str() {
+        "LLM_REQUEST_REJECTED" => OrchestratorErrorMeta::new(
+            ErrorCategory::Provider,
+            ErrorSeverity::Warning,
+            false,
+            None,
+            ErrorSourceStage::Llm,
+            RecoveryAction::FixRequest,
+        ),
         "INVALID_REQUEST" => OrchestratorErrorMeta::new(
             ErrorCategory::Input,
             ErrorSeverity::Warning,

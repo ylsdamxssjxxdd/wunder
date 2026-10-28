@@ -1,0 +1,50 @@
+---
+config:
+  markdownAutoWrap: false
+  state:
+    useMaxWidth: false
+---
+stateDiagram-v2
+  %% second model (fix): the fix
+  classDef works fill:#f4f6f7,stroke:#566573,color:#1b2631
+  classDef wrong fill:#fdedec,stroke:#c0392b,color:#7b241c
+  classDef fixed fill:#e9f7ef,stroke:#1e8449,color:#145a32
+  classDef mixed fill:#fdebd0,stroke:#d35400,color:#7e5109
+  classDef after fill:#ffffff,stroke:#808b96,color:#566573
+  classDef worse fill:#f4ecf7,stroke:#7d3c98,color:#4a235a
+  classDef worksPath fill:#f4f6f7,stroke:#1f3a93,stroke-width:4px,color:#1b2631
+  classDef wrongPath fill:#fdedec,stroke:#1f3a93,stroke-width:4px,color:#7b241c
+  classDef fixedPath fill:#e9f7ef,stroke:#1f3a93,stroke-width:4px,color:#145a32
+  classDef mixedPath fill:#fdebd0,stroke:#1f3a93,stroke-width:4px,color:#7e5109
+  classDef afterPath fill:#ffffff,stroke:#1f3a93,stroke-width:4px,color:#566573
+  classDef worsePath fill:#f4ecf7,stroke:#1f3a93,stroke-width:4px,color:#4a235a
+  state "Legend" as legend {
+    state "规则成立" as legendWorks
+    state "修复后旧错误不可达或新增正确状态" as legendFixed
+  }
+  class legendWorks works
+  class legendFixed fixed
+  state "消息 K1：已受理，第 1 轮<br/>消息<br/>K2：已受理，第 2<br/>轮<br/>执行进程存活<br/>已分配用户轮次：2" as s0
+  state "消息 K1：已受理，第 1 轮<br/>消息<br/>K2：未受理<br/>执行进程存活<br/>已分配用户轮次：1" as s1
+  state "消息 K1：排队中，第 1<br/>轮（排队任务待派发）<br/>消息 K2：已受理，第<br/>2<br/>轮<br/>执行进程存活<br/>已分配用户轮次：2" as s2
+  state "消息 K1：排队中，第 1<br/>轮（排队任务待派发）<br/>消息 K2：已受理，第<br/>2<br/>轮<br/>执行进程存活<br/>监控记录停留在「运行中」（崩溃残留）<br/>重启后的恢复已完成<br/>已分配用户轮次：2" as s3
+  state "消息 K1：排队中，第 1<br/>轮（排队任务待派发）<br/>消息 K2：已受理，第<br/>2<br/>轮<br/>执行进程存活，持有会话锁<br/>已分配用户轮次：2" as s4
+  state "消息 K1：排队中，第 1<br/>轮（排队任务待派发）<br/>消息 K2：已受理，第<br/>2<br/>轮<br/>执行进程已崩溃<br/>监控记录停留在「运行中」（崩溃残留）<br/>已分配用户轮次：2" as s5
+  state "消息 K1：排队中，第 1<br/>轮（排队任务待派发）<br/>消息 K2：已受理，第<br/>2<br/>轮<br/>进程已崩溃，会话锁行等待过期<br/>监控记录停留在「运行中」（崩溃残留）<br/>已分配用户轮次：2" as s6
+  state "消息 K1：未受理<br/>消息<br/>K2：未受理<br/>执行进程存活<br/>已分配用户轮次：0" as s7
+  [*] --> s7
+  s7 --> s1 : 1. 发送消息 K1：受理事务提交，分配第 1 轮用户轮次
+  s1 --> s0 : 2. 发送消息 K2：受理事务提交，分配第 2 轮用户轮次
+  s0 --> s2 : 3. 消息 K1进入持久队列（受理行转排队中）
+  s2 --> s4 : 4. 消息 K2不忙时直跑：获得会话锁
+  s4 --> s6 : 5.<br/>进程崩溃（在途的提交/撤下续程丢失，运行中的任务行留在执行中）
+  s6 --> s5 : 6. 会话锁 TTL 到期（崩溃进程的心跳已停止）
+  s5 --> s3 : 7. 进程重启，拉起队列循环
+  class s0 worksPath
+  class s1 worksPath
+  class s2 worksPath
+  class s3 fixedPath
+  class s4 worksPath
+  class s5 worksPath
+  class s6 worksPath
+  class s7 worksPath

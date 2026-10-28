@@ -18,12 +18,17 @@ use tracing::warn;
 mod admission;
 pub(crate) mod benchmark;
 mod context_probe;
+mod failure;
+pub(crate) use failure::{LlmHttpError, LlmPayloadError, ProviderFailureKind};
+#[cfg(test)]
+mod failure_tests;
 pub(crate) mod output;
 mod payload;
 mod provider;
 mod response;
 mod usage;
 use usage::{merge_anthropic_usage, normalize_usage};
+mod stream_decode;
 mod stream_tool;
 #[cfg(test)]
 use context_probe::normalize_root_url;
@@ -46,9 +51,9 @@ pub use provider::{
 #[cfg(test)]
 use response::extract_tool_calls;
 use response::{
-    build_anthropic_messages, extract_responses_output, extract_stream_error_message,
-    has_stream_tool_activity, is_false_tool_stop_reason, openai_tool_definition_to_anthropic_tool,
-    parse_anthropic_body, parse_chat_completion_body, parse_responses_body,
+    build_anthropic_messages, extract_responses_output, has_stream_tool_activity,
+    is_false_tool_stop_reason, openai_tool_definition_to_anthropic_tool, parse_anthropic_body,
+    parse_chat_completion_body, parse_responses_body,
 };
 #[cfg(test)]
 use stream_tool::merge_stream_delta_field;
@@ -975,7 +980,16 @@ impl LlmClient {
         let payload = self.build_payload(messages, false, false, tools);
         let response = self.send_request_aware(&payload).await?;
         let status = response.status();
-        let body_text = response.text().await.context("read llm response body")?;
+        let body_text = response.text().await.map_err(|error| {
+            if status.is_success() {
+                anyhow::Error::new(error).context("read llm response body")
+            } else {
+                anyhow::Error::new(LlmHttpError::new(
+                    status.as_u16(),
+                    "read error response body failed",
+                ))
+            }
+        })?;
         let body = match serde_json::from_str::<Value>(&body_text) {
             Ok(value) => value,
             Err(err) => {
@@ -999,18 +1013,16 @@ impl LlmClient {
                 )
                 .await;
             }
-            let detail = if body == Value::Null {
-                json!({ "raw": truncate_text(&body_text, 2048) })
-            } else {
-                body
-            };
-            return Err(anyhow!("LLM request failed: {status} {detail}"));
+            return Err(LlmHttpError::new(status.as_u16(), &body_text).into());
         }
         if body == Value::Null {
             return Err(anyhow!(
                 "LLM response parse failed: {}",
                 truncate_text(&body_text, 2048)
             ));
+        }
+        if let Some(error) = LlmPayloadError::from_payload(&body) {
+            return Err(error.into());
         }
         let (content, reasoning, tool_calls) = if self.is_anthropic_provider() {
             parse_anthropic_body(&body)
@@ -1068,10 +1080,12 @@ impl LlmClient {
             if !status.is_success() {
                 let text = match response.text().await {
                     Ok(value) => value,
-                    Err(err) => {
-                        return Err(anyhow!(
-                            "LLM stream request failed: {status} (read body failed: {err})"
-                        ));
+                    Err(_) => {
+                        return Err(LlmHttpError::new(
+                            status.as_u16(),
+                            "read error response body failed",
+                        )
+                        .into());
                     }
                 };
                 if let Some(next_effort) = self.reasoning_effort_retry_step(status.as_u16(), &text)
@@ -1086,7 +1100,11 @@ impl LlmClient {
                     )
                     .await;
                 }
-                if usage_fallback && include_usage && matches!(status.as_u16(), 400 | 422) {
+                if usage_fallback
+                    && include_usage
+                    && matches!(status.as_u16(), 400 | 422)
+                    && text.to_ascii_lowercase().contains("stream_options")
+                {
                     include_usage = false;
                     usage_fallback = false;
                     continue;
@@ -1102,12 +1120,10 @@ impl LlmClient {
                             )
                         });
                 }
-                return Err(anyhow!(
-                    "LLM stream request failed: {status} {}",
-                    truncate_text(&text, 2048)
-                ));
+                return Err(LlmHttpError::new(status.as_u16(), &text).into());
             }
             let mut stream = response.bytes_stream();
+            let mut decoder = stream_decode::StreamDecoder::default();
             let mut buffer = String::new();
             let mut combined = String::new();
             let mut reasoning_combined = String::new();
@@ -1117,8 +1133,7 @@ impl LlmClient {
             let mut saw_done = false;
             while let Some(item) = stream.next().await {
                 let bytes = item?;
-                let part = String::from_utf8_lossy(&bytes);
-                buffer.push_str(&part);
+                decoder.push(&bytes, &mut buffer)?;
 
                 while let Some(event_block) = take_next_sse_event(&mut buffer) {
                     if process_sse_event_block_with_preview(
@@ -1142,6 +1157,9 @@ impl LlmClient {
                 }
             }
 
+            if !saw_done {
+                decoder.finish()?;
+            }
             while !saw_done {
                 let Some(event_block) = take_next_sse_event(&mut buffer) else {
                     break;
@@ -1179,13 +1197,7 @@ impl LlmClient {
             }
 
             let tool_calls = finalize_stream_tool_calls(&tool_calls_accumulator);
-            let stream_payload_empty =
-                !llm_response_has_payload(&combined, &reasoning_combined, tool_calls.as_ref());
-            if stream_payload_empty
-                && !saw_done
-                && usage.is_none()
-                && final_response_preview.finish_reason.is_none()
-            {
+            if !saw_done && final_response_preview.finish_reason.is_none() {
                 return Err(anyhow!("LLM stream ended without a completed response"));
             }
             return Ok(LlmResponse {
@@ -1447,23 +1459,19 @@ impl LlmClient {
 }
 
 fn should_fallback_stream_failure_to_non_stream(status: u16, body_text: &str) -> bool {
-    if matches!(status, 408 | 409 | 425 | 429 | 500 | 502 | 503 | 504) {
-        return true;
+    if !matches!(status, 400 | 404 | 405 | 422) {
+        return false;
     }
     let normalized = body_text.trim().to_ascii_lowercase();
     if normalized.is_empty() {
         return false;
     }
     [
-        "rate limit",
-        "too many requests",
-        "system is busy",
-        "engineinternalerror",
-        "server is busy",
-        "service unavailable",
-        "gateway timeout",
-        "upstream",
-        "tpm",
+        "streaming is not supported",
+        "streaming not supported",
+        "stream is not supported",
+        "does not support streaming",
+        "unsupported stream",
     ]
     .iter()
     .any(|needle| normalized.contains(needle))
@@ -1801,8 +1809,8 @@ where
             if let Some(reason) = output::finish_reason(&payload) {
                 final_response_preview.finish_reason = Some(reason);
             }
-            if let Some(error_message) = extract_stream_error_message(&payload) {
-                return Err(anyhow!(error_message));
+            if let Some(error) = LlmPayloadError::from_payload(&payload) {
+                return Err(error.into());
             }
             if is_anthropic_stream_payload(&payload) {
                 return process_anthropic_stream_payload(
@@ -1908,10 +1916,7 @@ where
             }
         }
         Err(err) => {
-            warn!(
-                "LLM stream json parse failed: {err}, data={}",
-                truncate_text(data, 512)
-            );
+            return Err(anyhow!("LLM stream json parse failed: {err}"));
         }
     }
 
@@ -3631,7 +3636,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn stream_complete_accepts_tail_event_without_done_or_newline() {
+    async fn stream_complete_accepts_finished_tail_without_done_or_newline() {
         use axum::body::Body;
         use axum::http::StatusCode;
         use axum::response::Response;
@@ -3645,7 +3650,7 @@ mod tests {
             "/v1/chat/completions",
             post(|| async {
                 let stream = stream::iter(vec![Ok::<_, std::convert::Infallible>(Bytes::from(
-                    r#"data: {"choices":[{"delta":{"content":"tail"}}]}"#,
+                    r#"data: {"choices":[{"delta":{"content":"tail"},"finish_reason":"stop"}]}"#,
                 ))]);
                 Response::builder()
                     .status(StatusCode::OK)
@@ -3707,7 +3712,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn stream_complete_falls_back_to_non_stream_after_retryable_http_failure() {
+    async fn stream_complete_falls_back_for_explicitly_unsupported_streaming() {
         use axum::extract::State;
         use axum::http::StatusCode;
         use axum::routing::post;
@@ -3734,10 +3739,10 @@ mod tests {
                         if payload.get("stream").and_then(Value::as_bool) == Some(true) {
                             state.stream_calls.fetch_add(1, Ordering::SeqCst);
                             return (
-                                StatusCode::TOO_MANY_REQUESTS,
+                                StatusCode::BAD_REQUEST,
                                 Json(json!({
                                     "error": {
-                                        "message": "Rate limit reached for TPM"
+                                        "message": "This model does not support streaming"
                                     }
                                 })),
                             );

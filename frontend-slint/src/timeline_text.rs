@@ -263,6 +263,11 @@ pub fn merge_reasoning_tail(bar: &TimelineRow, mut entry: ProcessEntry) {
     };
     if let Some(index) = children.iter().position(|old| old.id == entry.id) {
         let old = children.row_data(index).unwrap();
+        if old.status_kind != crate::timeline::STATUS_RUNNING
+            && entry.status_kind == crate::timeline::STATUS_RUNNING
+        {
+            return;
+        }
         entry.open = old.open;
         entry.payload = old.payload;
         if entry.status_kind != crate::timeline::STATUS_RUNNING
@@ -277,7 +282,11 @@ pub fn merge_reasoning_tail(bar: &TimelineRow, mut entry: ProcessEntry) {
     } else if let Some(index) = (0..children.row_count())
         .filter_map(|index| {
             let old = children.row_data(index)?;
-            if old.kind != crate::timeline::KIND_REASON {
+            if old.kind != crate::timeline::KIND_REASON
+                || old.status_kind != crate::timeline::STATUS_RUNNING
+                || (stable_reasoning_identity(old.id.as_str())
+                    && stable_reasoning_identity(entry.id.as_str()))
+            {
                 return None;
             }
             let old_detail = old.detail.as_str();
@@ -285,11 +294,9 @@ pub fn merge_reasoning_tail(bar: &TimelineRow, mut entry: ProcessEntry) {
             // The live reducer and the durable pager use different row ids for
             // the same reasoning segment. Match their bounded text when the
             // ids differ, otherwise every refresh appends another “已思考”.
-            let overlap = if old_detail == new_detail {
-                old_detail.len()
-            } else if old_detail.starts_with(new_detail) {
-                new_detail.len()
-            } else if new_detail.starts_with(old_detail) {
+            let overlap = if old_detail == new_detail
+                && entry.status_kind != crate::timeline::STATUS_RUNNING
+            {
                 old_detail.len()
             } else {
                 return None;
@@ -340,6 +347,12 @@ pub fn sync_reasoning_tails(rows: &[TimelineRow]) {
             merge_reasoning_tail(bar, process_entry(reason));
         }
     }
+}
+
+fn stable_reasoning_identity(id: &str) -> bool {
+    id.rsplit_once(":text-").is_some_and(|(_, round)| {
+        !round.is_empty() && round.chars().all(|value| value.is_ascii_digit())
+    })
 }
 
 /// History replacement builds one child model per process; live deltas patch
@@ -600,5 +613,53 @@ mod tests {
         );
         assert_eq!(children.row_count(), 1);
         assert_eq!(children.row_data(0).unwrap().id, "reason-fixture:text-1");
+    }
+
+    #[test]
+    fn canonical_thoughts_do_not_merge_by_equal_or_prefix_text() {
+        for detail in ["Fixture repeated", "Fixture repeated completed"] {
+            let children = ModelRc::new(VecModel::from(vec![ProcessEntry {
+                id: "reason-fixture:text-1".into(),
+                kind: crate::timeline::KIND_REASON,
+                detail: "Fixture repeated completed".into(),
+                status_kind: crate::timeline::STATUS_DONE,
+                ..Default::default()
+            }]));
+            let bar = TimelineRow {
+                kind: crate::timeline::KIND_PROCESS,
+                process_entries: children.clone(),
+                ..Default::default()
+            };
+            merge_reasoning_tail(
+                &bar,
+                ProcessEntry {
+                    id: "reason-fixture:text-2".into(),
+                    kind: crate::timeline::KIND_REASON,
+                    detail: detail.into(),
+                    status_kind: crate::timeline::STATUS_RUNNING,
+                    ..Default::default()
+                },
+            );
+            assert_eq!(children.row_count(), 2);
+            assert_eq!(
+                children.row_data(0).unwrap().detail,
+                "Fixture repeated completed"
+            );
+            assert_eq!(
+                children.row_data(0).unwrap().status_kind,
+                crate::timeline::STATUS_DONE
+            );
+            merge_reasoning_tail(
+                &bar,
+                ProcessEntry {
+                    id: "reason-fixture:text-2".into(),
+                    kind: crate::timeline::KIND_REASON,
+                    detail: "Fixture repeated completed continued".into(),
+                    status_kind: crate::timeline::STATUS_RUNNING,
+                    ..Default::default()
+                },
+            );
+            assert_eq!(children.row_count(), 2);
+        }
     }
 }

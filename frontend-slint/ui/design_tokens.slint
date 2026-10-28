@@ -47,10 +47,18 @@ export global Theme {
     out property <color> activity-off: #E9E8E5;
 
     // Accent: primary / hover / soft / tint family. The default is 橙汁
-    // (#F58A24, the amber of the 蜂巢 composer brain icon) — deliberately
-    // lighter than the 蜂巢 terracotta it replaces; the other names are
+    // (#F58A24). 橙汁 is defined here and the 蜂巢 web shell follows it —
+    // frontend/src/styles/base.css maps the same accent / deep / secondary /
+    // soft values, so do not restyle one side alone. The other names are
     // deliberate alternates, and every legacy name resolves to the default.
     out property <color> accent: palette == "hula-green" ? #16ad8d : palette == "forest" ? #2f7a5c : palette == "honey" ? #c08a2a : palette == "minimal" ? #8f9aad : palette == "tech-blue" ? #38bdf8 : #F58A24;
+    // Foreground accent (WCAG AA). The vivid `accent` is a brand fill — it is
+    // only 2.46:1 on white and 2.19:1 on accent-soft, so it must not carry
+    // meaning by itself. Anything the user has to read or interpret (text,
+    // icons, selection foreground, focus rings) uses `accent-ink` instead:
+    // 5.11:1 on white, 4.55:1 on accent-soft, 5.11:1 as a white-text backdrop.
+    // Mirrors --ui-accent-ink in frontend/src/styles/base.css; change both together.
+    out property <color> accent-ink: palette == "hula-green" ? #107D66 : palette == "forest" ? #2F7A5C : palette == "honey" ? #8E661F : palette == "minimal" ? #637087 : palette == "tech-blue" ? #0B77A7 : #AA580B;
     out property <color> accent-deep: palette == "hula-green" ? #0e8d72 : palette == "forest" ? #24614a : palette == "honey" ? #9c6f1f : palette == "minimal" ? #9ba6ba : palette == "tech-blue" ? #0ea5e9 : #E07A12;
     out property <color> accent-secondary: palette == "hula-green" ? #5dcbb0 : palette == "forest" ? #7fb39a : palette == "honey" ? #e0bd77 : palette == "minimal" ? #b5bfce : palette == "tech-blue" ? #7c9cff : #FFC98A;
     out property <color> accent-soft: palette == "hula-green" ? #e7f7f2 : palette == "forest" ? #e9f2ee : palette == "honey" ? #f8f0dd : palette == "minimal" ? #f3f4f6 : palette == "tech-blue" ? #e7f7ff : #FDF0DE;

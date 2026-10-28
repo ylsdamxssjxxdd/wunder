@@ -1,0 +1,38 @@
+---
+title: "FailureRecovery, bug 3"
+config:
+  markdownAutoWrap: false
+  state:
+    useMaxWidth: false
+---
+stateDiagram-v2
+  %% second model (fix): the fix
+  classDef plainFixed fill:#f4f6f7,stroke:#1e8449,stroke-width:4px,color:#145a32
+  classDef group0 fill:#d6eaf8,stroke:#6b757c,color:#1b2631
+  classDef group0Fixed fill:#d6eaf8,stroke:#1e8449,stroke-width:4px,color:#145a32
+  classDef group0Path fill:#d6eaf8,stroke:#1f3a93,stroke-width:4px,color:#1b2631
+  classDef group2 fill:#e8daef,stroke:#746d78,color:#1b2631
+  classDef group2Fixed fill:#e8daef,stroke:#1e8449,stroke-width:4px,color:#145a32
+  state "Legend" as legend {
+    state "正常恢复边界" as legendGroup0
+    state "错误处理缺口" as legendGroup2
+    state "Fixed or new with the fix" as legendFixed
+  }
+  class legendGroup0 group0
+  class legendGroup2 group2
+  class legendFixed plainFixed
+  state "鉴权失败：准备请求" as s0
+  state "鉴权失败：收到拒绝" as s1
+  state "鉴权失败：明确失败" as s2
+  state "鉴权失败：请求在途" as s3
+  state "鉴权失败：错误地重试同一鉴权请求" as s4
+  [*] --> s0
+  s0 --> s3 : 1. 通过取消闸后请求
+  s3 --> s1 : 2. 收到故障或不完整流
+  s1 --> s4 : 3. 分类故障并决定结清或重试
+  s1 --> s2 : with the fix, 分类故障并决定结清或重试
+  class s0 group0Path
+  class s1 group0Path
+  class s2 group0Fixed
+  class s3 group0Path
+  class s4 group2Fixed

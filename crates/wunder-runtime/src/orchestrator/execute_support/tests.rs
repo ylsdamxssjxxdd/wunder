@@ -2,6 +2,19 @@ use super::*;
 use crate::core::llm_speed::LlmSpeedSummary;
 
 #[test]
+fn tool_timeout_never_advertises_blind_side_effect_retries() {
+    let result = build_tool_timeout_result("execute_command", Some(Duration::from_secs(1)));
+    let observation = result.to_compact_payload_with_token_budget("execute_command", Some(512));
+    assert_eq!(observation["ok"], false);
+    assert!(observation.to_string().contains("TOOL_TIMEOUT"));
+    assert_eq!(observation["execution_outcome"], "unknown");
+    assert_eq!(observation["retryable"], false);
+    assert_eq!(result.data["execution_outcome"], "unknown");
+    assert_eq!(result.data["error_meta"]["retryable"], false);
+    assert!(result.data["error_meta"]["retry_after_ms"].is_null());
+}
+
+#[test]
 fn build_max_rounds_user_guidance_encourages_continue_or_raise_limit() {
     let answer = build_max_rounds_user_guidance(Some(10));
     assert!(!answer.trim().is_empty());
@@ -13,6 +26,21 @@ fn build_max_rounds_user_guidance_encourages_continue_or_raise_limit() {
 fn recover_from_context_overflow_when_code_matches() {
     let err = OrchestratorError::context_window_exceeded("context length exceeded".to_string());
     assert!(should_recover_from_context_overflow(&err));
+}
+
+#[test]
+fn permanent_provider_rejection_never_enters_context_compaction() {
+    let error = OrchestratorError::llm_request_rejected("context length exceeded".into());
+    assert!(!should_recover_from_context_overflow(&error));
+    assert!(!error.retryable());
+    assert_eq!(error.recovery_action(), "fix_request");
+}
+
+#[test]
+fn typed_unavailable_error_cannot_fall_back_to_context_compaction() {
+    let error = OrchestratorError::llm_unavailable("context length exceeded".into());
+    assert!(!should_recover_from_context_overflow(&error));
+    assert!(error.retryable());
 }
 
 #[test]

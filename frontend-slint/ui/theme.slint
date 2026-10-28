@@ -204,7 +204,7 @@ export struct FileCard { name: string, path: string, entry-type: string, size: s
 // Icons are resolved on the Rust side (vscode-icons rules) because Slint has
 // no extension→glyph mapping; `remaining` only carries a count for kind 2.
 export struct WorkspaceFileRow { path: string, name: string, kind: int, size-text: string, icon: image, depth: int, expanded: bool, loading: bool, remaining: int, selected: bool }
-export struct CronCard { id: string, name: string, enabled: bool, schedule: string, next-run: string, last-status: string, last-error: string }
+export struct CronCard { id: string, name: string, enabled: bool, workspace-name: string, message: string, schedule: string, next-run: string, last-status: string, last-error: string }
 export struct CronRunCard { run-id: string, status: string, trigger: string, summary: string, error: string, duration: string, created-at: string }
 export struct PromptPackCard { id: string, readonly: bool, locale: string, is-active: bool, is-lang-default: bool }
 // Avatar dialog models. `AvatarOption.key` is "initial" or "avatar-NNN";
@@ -267,4 +267,3 @@ export struct ProfileCard { user-id: string, username: string, email: string, un
 // list and cloud-workspace browser) has been removed; the working-directory
 // panel owns cloud file operations now, so only the approval card is projected.
 export struct InterlinkApproval { approval-id: string, command-id: string, kind: string, level: string, risk: string, from-node: string, prompt: string }
-

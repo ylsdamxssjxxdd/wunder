@@ -26,6 +26,7 @@ use tracing::{error, warn};
 use uuid::Uuid;
 use walkdir::WalkDir;
 
+mod event_projection;
 mod model_request_usage;
 
 const MIN_PAYLOAD_LIMIT: usize = 256;
@@ -53,15 +54,6 @@ struct MonitorEvent {
 }
 
 impl MonitorEvent {
-    fn to_storage(&self) -> Value {
-        json!({
-            "event_id": self.event_id,
-            "timestamp": self.timestamp,
-            "type": self.event_type,
-            "data": self.data,
-        })
-    }
-
     fn from_storage(payload: &Value) -> Option<Self> {
         let event_id = payload.get("event_id").and_then(Value::as_i64).unwrap_or(0);
         let timestamp = payload
@@ -75,7 +67,7 @@ impl MonitorEvent {
             .to_string();
         let data = payload
             .get("data")
-            .cloned()
+            .map(event_projection::bounded)
             .unwrap_or(Value::Object(Default::default()));
         Some(Self {
             event_id,
@@ -263,7 +255,7 @@ impl SessionRecord {
             agent_id,
             is_admin,
             trace_id,
-            question,
+            question: trim_text(&question, Some(2048)),
             status: MonitorState::STATUS_RUNNING.to_string(),
             stage: "received".to_string(),
             summary: i18n::t("monitor.summary.received"),
@@ -306,10 +298,10 @@ impl SessionRecord {
             "agent_id": self.agent_id,
             "is_admin": self.is_admin,
             "trace_id": self.trace_id,
-            "question": self.question,
+            "question": trim_text(&self.question, Some(2048)),
             "status": self.status,
             "stage": self.stage,
-            "summary": localize_summary(&self.summary),
+            "summary": trim_text(&localize_summary(&self.summary), Some(2048)),
             "start_time": format_ts(self.start_time),
             "updated_time": format_ts(self.updated_time),
             "elapsed_s": round2(self.elapsed_s()),
@@ -334,10 +326,10 @@ impl SessionRecord {
             "agent_id": self.agent_id,
             "is_admin": self.is_admin,
             "trace_id": self.trace_id,
-            "question": self.question,
+            "question": trim_text(&self.question, Some(2048)),
             "status": self.status,
             "stage": self.stage,
-            "summary": self.summary,
+            "summary": trim_text(&self.summary, Some(2048)),
             "start_time": self.start_time,
             "updated_time": self.updated_time,
             "ended_time": self.ended_time,
@@ -354,11 +346,6 @@ impl SessionRecord {
             "model_request_count": self.model_request_count,
             "quota_used": self.model_request_count,
             "next_event_id": self.next_event_id,
-            "events": self
-                .events
-                .iter()
-                .map(|event| event.to_storage())
-                .collect::<Vec<_>>(),
         })
     }
 
@@ -388,26 +375,26 @@ impl SessionRecord {
             .filter(|value| !value.is_empty())
             .map(str::to_string)
             .unwrap_or_else(build_monitor_trace_id);
-        let question = payload
-            .get("question")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string();
+        let question = trim_text(
+            payload
+                .get("question")
+                .and_then(Value::as_str)
+                .unwrap_or(""),
+            Some(2048),
+        );
         let status = payload
             .get("status")
             .and_then(Value::as_str)
             .unwrap_or("finished")
             .to_string();
-        let stage = payload
-            .get("stage")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string();
-        let summary = payload
-            .get("summary")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string();
+        let stage = trim_text(
+            payload.get("stage").and_then(Value::as_str).unwrap_or(""),
+            Some(256),
+        );
+        let summary = trim_text(
+            payload.get("summary").and_then(Value::as_str).unwrap_or(""),
+            Some(2048),
+        );
         let start_time = payload
             .get("start_time")
             .and_then(Value::as_f64)
@@ -451,7 +438,10 @@ impl SessionRecord {
             .unwrap_or(0);
         let mut events = VecDeque::new();
         if let Some(Value::Array(items)) = payload.get("events") {
-            for item in items {
+            for item in items
+                .iter()
+                .skip(items.len().saturating_sub(MONITOR_SESSION_EVENT_LIMIT))
+            {
                 if let Some(event) = MonitorEvent::from_storage(item) {
                     events.push_back(event);
                 }
@@ -995,7 +985,7 @@ impl MonitorState {
                     )
                 });
                 record.user_rounds = record.user_rounds.max(persisted_floor).max(requested_round);
-                record.question = question.to_string();
+                record.question = trim_text(question, Some(2048));
                 record.is_admin = is_admin;
                 if !agent_id.trim().is_empty() {
                     record.agent_id = agent_id.trim().to_string();
@@ -1068,10 +1058,10 @@ impl MonitorState {
                     }
                     if event_type == "progress" {
                         if let Some(stage) = data.get("stage").and_then(Value::as_str) {
-                            record.stage = stage.to_string();
+                            record.stage = trim_text(stage, Some(256));
                         }
                         if let Some(summary) = data.get("summary").and_then(Value::as_str) {
-                            record.summary = summary.to_string();
+                            record.summary = trim_text(summary, Some(2048));
                         }
                     } else if event_type == "tool_call" {
                         record.tool_calls = record.tool_calls.saturating_add(1);
@@ -1131,6 +1121,7 @@ impl MonitorState {
                     if event_type == "turn_terminal" {
                         pending_award = self.prepare_user_experience_settlement(record, data, now);
                     }
+                    record.summary = trim_text(&record.summary, Some(2048));
                     self.append_event(record, event_type, data, now);
                     record.dirty = true;
                     (self.maybe_persist_record(record, now, false), pending_award)
@@ -1294,8 +1285,7 @@ impl MonitorState {
                     };
                     // 终态记录不再改写为 cancelled：停止晚于完成/失败到达时，结清结果优先
                     // （对应 runtime.rs:858-863 尾部补写的适用前提）。
-                    if record.status == Self::STATUS_FINISHED
-                        || record.status == Self::STATUS_ERROR
+                    if record.status == Self::STATUS_FINISHED || record.status == Self::STATUS_ERROR
                     {
                         return;
                     }
@@ -1406,9 +1396,13 @@ impl MonitorState {
             Vec::new()
         };
         let sessions = self.sessions.lock();
-        if sessions
-            .get(parent)
-            .is_some_and(|record| record.cancel_requested)
+        if std::iter::once(parent)
+            .chain(durable_ancestors.iter().map(String::as_str))
+            .any(|ancestor| {
+                sessions
+                    .get(ancestor)
+                    .is_some_and(|record| record.cancel_requested)
+            })
         {
             anyhow::bail!("parent run was interrupted");
         }
@@ -1801,9 +1795,23 @@ impl MonitorState {
                 if let Some(record) = self.sessions.lock().get(cleaned) {
                     return Some(record.to_storage());
                 }
-                self.storage.get_monitor_record(cleaned).ok().flatten()
+                self.storage
+                    .get_monitor_record(cleaned)
+                    .ok()
+                    .flatten()
+                    .and_then(|payload| SessionRecord::from_storage(&payload))
+                    .map(|record| record.to_storage())
             },
         )
+    }
+
+    pub fn get_recent_events(&self, session_id: &str, limit: usize) -> Vec<Value> {
+        let sessions = self.sessions.lock();
+        let Some(record) = sessions.get(session_id.trim()) else {
+            return Vec::new();
+        };
+        record.events.iter().skip(record.events.len().saturating_sub(limit.min(64)))
+            .map(|event| json!({"event_id":event.event_id,"timestamp":event.timestamp,"type":event.event_type,"data":event.data})).collect()
     }
 
     pub fn max_model_round_for_user_round(&self, session_id: &str, user_round: i64) -> i64 {
@@ -1862,59 +1870,62 @@ impl MonitorState {
             "monitor.get_log_overview",
             || None,
             || {
+                let sessions = self.sessions.lock();
+                if let Some(record) = sessions.get(session_id.trim()) {
+                    return Some(Self::build_log_overview(record));
+                }
+                drop(sessions);
                 let record = self
-                    .sessions
-                    .lock()
-                    .get(session_id.trim())
-                    .cloned()
-                    .or_else(|| {
-                        self.storage
-                            .get_monitor_record(session_id.trim())
-                            .ok()
-                            .flatten()
-                            .and_then(|payload| SessionRecord::from_storage(&payload))
-                    })?;
-                // Keep the user-facing projection deliberately small.  The monitor summary
-                // also contains trace/user/admin fields that are useful to operators but must
-                // never be copied into a regular user's session response.
-                let speed = llm_speed_summary_from_monitor_events(&record.events);
-                let mut overview = serde_json::Map::new();
-                overview.insert("session_id".to_string(), json!(record.session_id.clone()));
-                overview.insert("agent_id".to_string(), json!(record.agent_id.clone()));
-                overview.insert("status".to_string(), json!(record.status.clone()));
-                overview.insert("elapsed_s".to_string(), json!(round2(record.elapsed_s())));
-                overview.insert("user_rounds".to_string(), json!(record.user_rounds.max(0)));
-                overview.insert("tool_calls".to_string(), json!(record.tool_calls.max(0)));
-                overview.insert(
-                    "model_request_count".to_string(),
-                    json!(record.model_request_count.unwrap_or(0).max(0)),
-                );
-                // Legacy alias mirroring the monitor summary shape.
-                overview.insert(
-                    "quota_used".to_string(),
-                    json!(record.model_request_count.unwrap_or(0).max(0)),
-                );
-                overview.insert(
-                    "consumed_tokens".to_string(),
-                    json!(record.consumed_tokens.max(0)),
-                );
-                overview.insert("event_total".to_string(), json!(record.events.len()));
-                overview.insert("ttft_ms".to_string(), json!(speed.ttft_ms));
-                overview.insert(
-                    "prefill_speed_tps".to_string(),
-                    json!(speed.prefill_speed_tps),
-                );
-                overview.insert(
-                    "prefill_speed_lower_bound".to_string(),
-                    json!(speed.prefill_speed_lower_bound),
-                );
-                overview.insert(
-                    "decode_speed_tps".to_string(),
-                    json!(speed.decode_speed_tps),
-                );
-                Some(Value::Object(overview))
+                    .storage
+                    .get_monitor_record(session_id.trim())
+                    .ok()
+                    .flatten()
+                    .and_then(|payload| SessionRecord::from_storage(&payload))?;
+                Some(Self::build_log_overview(&record))
             },
         )
+    }
+
+    fn build_log_overview(record: &SessionRecord) -> Value {
+        // Keep the user-facing projection deliberately small.  The monitor summary
+        // also contains trace/user/admin fields that are useful to operators but must
+        // never be copied into a regular user's session response.
+        let speed = llm_speed_summary_from_monitor_events(&record.events);
+        let mut overview = serde_json::Map::new();
+        overview.insert("session_id".to_string(), json!(record.session_id.clone()));
+        overview.insert("agent_id".to_string(), json!(record.agent_id.clone()));
+        overview.insert("status".to_string(), json!(record.status.clone()));
+        overview.insert("elapsed_s".to_string(), json!(round2(record.elapsed_s())));
+        overview.insert("user_rounds".to_string(), json!(record.user_rounds.max(0)));
+        overview.insert("tool_calls".to_string(), json!(record.tool_calls.max(0)));
+        overview.insert(
+            "model_request_count".to_string(),
+            json!(record.model_request_count.unwrap_or(0).max(0)),
+        );
+        // Legacy alias mirroring the monitor summary shape.
+        overview.insert(
+            "quota_used".to_string(),
+            json!(record.model_request_count.unwrap_or(0).max(0)),
+        );
+        overview.insert(
+            "consumed_tokens".to_string(),
+            json!(record.consumed_tokens.max(0)),
+        );
+        overview.insert("event_total".to_string(), json!(record.events.len()));
+        overview.insert("ttft_ms".to_string(), json!(speed.ttft_ms));
+        overview.insert(
+            "prefill_speed_tps".to_string(),
+            json!(speed.prefill_speed_tps),
+        );
+        overview.insert(
+            "prefill_speed_lower_bound".to_string(),
+            json!(speed.prefill_speed_lower_bound),
+        );
+        overview.insert(
+            "decode_speed_tps".to_string(),
+            json!(speed.decode_speed_tps),
+        );
+        Value::Object(overview)
     }
 
     pub fn list_records(&self) -> Vec<Value> {
@@ -2502,7 +2513,7 @@ impl MonitorState {
                 && record.stage == "queued"
             {
                 if !question.trim().is_empty() {
-                    record.question = question.to_string();
+                    record.question = trim_text(question, Some(2048));
                 }
                 record.is_admin = is_admin;
                 let trace_id = if record.trace_id.trim().is_empty() {
@@ -2541,7 +2552,7 @@ impl MonitorState {
                 return (self.maybe_persist_record(record, now, false), user_round);
             }
             record.user_rounds += 1;
-            record.question = question.to_string();
+            record.question = trim_text(question, Some(2048));
             record.is_admin = is_admin;
             let trace_id = if record.trace_id.trim().is_empty() {
                 let generated = build_monitor_trace_id();
@@ -2750,6 +2761,7 @@ impl MonitorState {
                             }
                         }
                     }
+                    record.summary = trim_text(&record.summary, Some(2048));
                     let summary = record.summary.clone();
                     self.append_event(record, status, &json!({ "summary": summary }), now);
                     record.dirty = true;
@@ -2770,17 +2782,31 @@ impl MonitorState {
         timestamp: f64,
     ) {
         update_model_round_high_water(&mut record.model_round_high_water, data);
-        let mut payload = data.clone();
-        if let Value::Object(ref mut map) = payload {
+        let mut sanitized = self.sanitize_event_data(event_type, data);
+        if let Value::Object(ref mut map) = sanitized {
             map.entry("trace_id".to_string())
                 .or_insert_with(|| Value::String(record.trace_id.clone()));
         }
-        let sanitized = self.sanitize_event_data(event_type, &payload);
         if let Some(previous) = record.events.back_mut() {
             if should_merge_monitor_event(previous, event_type, &sanitized) {
                 previous.timestamp = timestamp;
                 previous.data = sanitized;
                 return;
+            }
+        }
+        // Each response is counted once, including rejected calls and compaction.
+        // Legacy turns without per-response accounting still use round_usage.
+        if event_type == "model_usage"
+            || (event_type == "round_usage"
+                && data.get("usage_accounted").and_then(Value::as_bool) != Some(true))
+        {
+            let tokens = if event_type == "model_usage" {
+                parse_usage_billing_tokens(&data["usage"])
+            } else {
+                parse_usage_billing_tokens(data)
+            };
+            if tokens > 0 {
+                record.consumed_tokens = record.consumed_tokens.saturating_add(tokens);
             }
         }
         let event_id = record.next_event_id.max(1);
@@ -2789,56 +2815,27 @@ impl MonitorState {
             event_id,
             timestamp,
             event_type: event_type.to_string(),
-            data: sanitized.clone(),
+            data: sanitized,
         });
-        // Bound the per-session event queue so long sessions cannot grow
-        // in-memory and persisted payloads without limit.
         while record.events.len() > MONITOR_SESSION_EVENT_LIMIT {
             record.events.pop_front();
-        }
-        // Each response is counted once, including rejected calls and compaction.
-        // Legacy turns without per-response accounting still use round_usage.
-        if event_type == "model_usage"
-            || (event_type == "round_usage"
-                && sanitized.get("usage_accounted").and_then(Value::as_bool) != Some(true))
-        {
-            let tokens = if event_type == "model_usage" {
-                parse_usage_billing_tokens(&sanitized["usage"])
-            } else {
-                parse_usage_billing_tokens(&sanitized)
-            };
-            if tokens > 0 {
-                record.consumed_tokens = record.consumed_tokens.saturating_add(tokens);
-            }
         }
     }
 
     fn sanitize_event_data(&self, event_type: &str, data: &Value) -> Value {
         if event_type == "llm_request" {
-            return summarize_llm_request_event(data, self.payload_limit);
+            return event_projection::bounded(&summarize_llm_request_event(
+                data,
+                Some(self.payload_limit.unwrap_or(2048).min(2048)),
+            ));
         }
-        if !data.is_object() {
-            return data.clone();
-        }
-        if event_type == "llm_output" {
-            let mut trimmed = trim_string_fields(data, self.payload_limit);
-            if let Value::Object(ref mut map) = trimmed {
-                if let Some(Value::String(text)) = map.get("content") {
-                    map.insert(
-                        "content".to_string(),
-                        Value::String(trim_text(text, self.payload_limit)),
-                    );
-                }
-                if let Some(Value::String(text)) = map.get("reasoning") {
-                    map.insert(
-                        "reasoning".to_string(),
-                        Value::String(trim_text(text, self.payload_limit)),
-                    );
-                }
+        let bounded = event_projection::bounded(data);
+        match self.payload_limit {
+            Some(limit) => {
+                event_projection::bounded(&trim_json_value(&bounded, Some(limit.min(2048)), 0))
             }
-            return trimmed;
+            None => bounded,
         }
-        trim_string_fields(data, self.payload_limit)
     }
 
     fn maybe_persist_record(
@@ -3043,14 +3040,17 @@ fn should_merge_monitor_event(previous: &MonitorEvent, event_type: &str, data: &
 
 fn summarize_llm_request_event(data: &Value, limit: Option<usize>) -> Value {
     let Some(map) = data.as_object() else {
-        return trim_string_fields(data, limit);
+        return event_projection::bounded(data);
     };
     let mut summary = serde_json::Map::new();
-    for (key, value) in map {
+    for (key, value) in map.iter().take(32) {
         if key == "payload" {
             continue;
         }
-        summary.insert(key.clone(), trim_json_value(value, limit, 0));
+        summary.insert(
+            trim_text(key, Some(128)),
+            summarize_request_json_value(value, limit),
+        );
     }
     if let Some(payload) = map.get("payload") {
         let (message_count, payload_summary) = summarize_llm_request_payload(payload, limit);
@@ -3063,7 +3063,7 @@ fn summarize_llm_request_event(data: &Value, limit: Option<usize>) -> Value {
 
 fn summarize_llm_request_payload(payload: &Value, limit: Option<usize>) -> (usize, Value) {
     let Some(map) = payload.as_object() else {
-        return (0, trim_json_value(payload, limit, 0));
+        return (0, event_projection::bounded(payload));
     };
     let message_count = map
         .get("messages")
@@ -3076,23 +3076,23 @@ fn summarize_llm_request_payload(payload: &Value, limit: Option<usize>) -> (usiz
         })
         .unwrap_or(0);
     let mut summary = serde_json::Map::new();
-    for (key, value) in map {
+    for (key, value) in map.iter().take(32) {
         let compact = match key.as_str() {
             "messages" | "input" => summarize_request_message_array(value),
             "tools" | "functions" => summarize_request_tool_array(value),
-            _ => summarize_request_json_value(value, limit, 0),
+            _ => summarize_request_json_value(value, limit),
         };
-        summary.insert(key.clone(), compact);
+        summary.insert(trim_text(key, Some(128)), compact);
     }
     (message_count, Value::Object(summary))
 }
 
 fn summarize_request_message_array(value: &Value) -> Value {
     let Some(items) = value.as_array() else {
-        return value.clone();
+        return event_projection::bounded(value);
     };
     let mut role_counts: HashMap<String, usize> = HashMap::new();
-    for item in items {
+    for item in items.iter().take(32) {
         let role = item
             .get("role")
             .and_then(Value::as_str)
@@ -3100,11 +3100,14 @@ fn summarize_request_message_array(value: &Value) -> Value {
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .unwrap_or("unknown")
-            .to_string();
+            .chars()
+            .take(64)
+            .collect::<String>();
         *role_counts.entry(role).or_default() += 1;
     }
     let mut summary = serde_json::Map::new();
     summary.insert("count".to_string(), json!(items.len()));
+    summary.insert("truncated".to_string(), json!(items.len() > 32));
     if !role_counts.is_empty() {
         let mut roles = serde_json::Map::new();
         let mut keys = role_counts.keys().cloned().collect::<Vec<_>>();
@@ -3119,7 +3122,7 @@ fn summarize_request_message_array(value: &Value) -> Value {
 
 fn summarize_request_tool_array(value: &Value) -> Value {
     let Some(items) = value.as_array() else {
-        return value.clone();
+        return event_projection::bounded(value);
     };
     let preview = items
         .iter()
@@ -3135,19 +3138,19 @@ fn summarize_request_tool_array(value: &Value) -> Value {
 
 fn summarize_request_tool_item(value: &Value) -> Value {
     let Some(map) = value.as_object() else {
-        return value.clone();
+        return event_projection::bounded(value);
     };
     let mut summary = serde_json::Map::new();
     if let Some(value) = map.get("type") {
-        summary.insert("type".to_string(), value.clone());
+        summary.insert("type".to_string(), event_projection::bounded(value));
     }
     if let Some(value) = map.get("name") {
-        summary.insert("name".to_string(), value.clone());
+        summary.insert("name".to_string(), event_projection::bounded(value));
     }
     if let Some(function) = map.get("function").and_then(Value::as_object) {
         let mut compact = serde_json::Map::new();
         if let Some(value) = function.get("name") {
-            compact.insert("name".to_string(), value.clone());
+            compact.insert("name".to_string(), event_projection::bounded(value));
         }
         if !compact.is_empty() {
             summary.insert("function".to_string(), Value::Object(compact));
@@ -3159,40 +3162,8 @@ fn summarize_request_tool_item(value: &Value) -> Value {
     Value::Object(summary)
 }
 
-fn summarize_request_json_value(value: &Value, limit: Option<usize>, depth: usize) -> Value {
-    const MAX_DEPTH: usize = 4;
-    const MAX_OBJECT_KEYS: usize = 12;
-    const MAX_ARRAY_PREVIEW: usize = 3;
-    if depth >= MAX_DEPTH {
-        return Value::String("...(truncated)".to_string());
-    }
-    match value {
-        Value::Array(items) => json!({
-            "count": items.len(),
-            "preview": items
-                .iter()
-                .take(MAX_ARRAY_PREVIEW)
-                .map(|item| summarize_request_json_value(item, limit, depth + 1))
-                .collect::<Vec<_>>(),
-            "truncated": items.len() > MAX_ARRAY_PREVIEW
-        }),
-        Value::Object(map) => {
-            let mut compact = serde_json::Map::new();
-            for (index, (key, item)) in map.iter().enumerate() {
-                if index >= MAX_OBJECT_KEYS {
-                    compact.insert("_truncated".to_string(), Value::Bool(true));
-                    break;
-                }
-                compact.insert(
-                    key.clone(),
-                    summarize_request_json_value(item, limit, depth + 1),
-                );
-            }
-            Value::Object(compact)
-        }
-        Value::String(text) => Value::String(trim_text(text, limit)),
-        _ => value.clone(),
-    }
+fn summarize_request_json_value(value: &Value, limit: Option<usize>) -> Value {
+    trim_json_value(&event_projection::bounded(value), limit, 0)
 }
 
 fn trim_text(text: &str, limit: Option<usize>) -> String {
@@ -3486,6 +3457,98 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
+    fn monitor_long_run_metadata_never_copies_event_bodies() {
+        let temp = tempdir().unwrap();
+        let storage: Arc<dyn StorageBackend> = Arc::new(SqliteStorage::new(
+            temp.path().join("sample.db").to_string_lossy().into(),
+        ));
+        let monitor = MonitorState::new(
+            storage,
+            ObservabilityConfig::default(),
+            temp.path().to_string_lossy().into(),
+        );
+        monitor.register(
+            "sample-thread",
+            "sample-owner",
+            "sample-agent",
+            "sample input",
+            false,
+        );
+        let input = json!({"content":"sample output".repeat(100_000),"user_round":1,"model_round":100,"usage":{"total_tokens":17}});
+        for _ in 0..600 {
+            monitor.record_event("sample-thread", "model_usage", &input);
+        }
+        let record = monitor.get_record("sample-thread").unwrap();
+        assert!(record.get("events").is_none());
+        assert!(serde_json::to_vec(&record).unwrap().len() < 8192);
+        assert_eq!(record["consumed_tokens"], 600 * 17);
+        assert_eq!(record["model_round_high_water"]["1"], 100);
+        let detail = monitor.get_detail("sample-thread").unwrap();
+        assert_eq!(
+            detail["events"].as_array().unwrap().len(),
+            super::MONITOR_SESSION_EVENT_LIMIT
+        );
+        assert!(
+            serde_json::to_vec(&detail).unwrap().len()
+                < super::MONITOR_SESSION_EVENT_LIMIT
+                    * (super::event_projection::MAX_EVENT_BYTES + 1024)
+        );
+        assert_eq!(
+            monitor.get_log_overview("sample-thread").unwrap()["consumed_tokens"],
+            600 * 17
+        );
+        let mut samples = Vec::new();
+        for _ in 0..100 {
+            let started = std::time::Instant::now();
+            let metadata = monitor.get_record("sample-thread").unwrap();
+            assert!(metadata.get("events").is_none());
+            samples.push(started.elapsed().as_secs_f64() * 1000.0);
+        }
+        samples.sort_by(f64::total_cmp);
+        println!(
+            "{}",
+            json!({"monitor_metadata":{"retained_events":500,"incoming_body_bytes":input["content"].as_str().unwrap().len(),"response_bytes":serde_json::to_vec(&record).unwrap().len(),"samples":100,"p50_ms":samples[49],"p95_ms":samples[94]}})
+        );
+    }
+
+    #[test]
+    fn monitor_usage_accounting_reads_original_facts_not_diagnostic_projection() {
+        let root = tempdir().unwrap();
+        let storage: Arc<dyn StorageBackend> = Arc::new(SqliteStorage::new(
+            root.path().join("sample.db").to_string_lossy().into(),
+        ));
+        let monitor = MonitorState::new(
+            storage,
+            ObservabilityConfig::default(),
+            root.path().to_string_lossy().into(),
+        );
+        monitor.register(
+            "sample-thread",
+            "sample-owner",
+            "sample-agent",
+            "sample input",
+            false,
+        );
+        let mut usage = serde_json::Map::new();
+        for index in 0..64 {
+            usage.insert(
+                format!("sample-{index}"),
+                json!("sample output".repeat(1000)),
+            );
+        }
+        usage.insert("total_tokens".into(), json!(23));
+        monitor.record_event(
+            "sample-thread",
+            "model_usage",
+            &json!({"usage":usage,"content":"sample output".repeat(10000)}),
+        );
+        assert_eq!(
+            monitor.get_record("sample-thread").unwrap()["consumed_tokens"],
+            23
+        );
+    }
+
+    #[test]
     fn trim_string_fields_recursively_applies_limit() {
         let payload = json!({
             "outer": "abcdefg",
@@ -3634,7 +3697,9 @@ mod tests {
         assert_eq!(round, 4);
         let record = monitor.get_record("sess-round-hydrate").expect("record");
         assert_eq!(record["user_rounds"], json!(4));
-        assert!(record["events"].as_array().is_some_and(|events| events
+        let detail = monitor.get_detail("sess-round-hydrate").unwrap();
+        assert!(record.get("events").is_none());
+        assert!(detail["events"].as_array().is_some_and(|events| events
             .iter()
             .any(
                 |event| event["type"] == "round_start" && event["data"]["user_round"] == json!(4)
@@ -3702,7 +3767,9 @@ mod tests {
         let record = monitor.get_record(session_id).expect("session record");
         assert_eq!(record["status"], json!("cancelled"));
         assert_eq!(record["cancel_source"], json!("client_abort"));
-        assert!(record["events"].as_array().is_some_and(|events| events
+        let detail = monitor.get_detail(session_id).unwrap();
+        assert!(record.get("events").is_none());
+        assert!(detail["events"].as_array().is_some_and(|events| events
             .iter()
             .any(|event| event["type"] == "cancelled"
                 && event["data"]["cancel_source"] == "client_abort")));

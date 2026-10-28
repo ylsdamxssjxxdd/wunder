@@ -1,0 +1,57 @@
+{
+  "view": "customer",
+  "second": {
+    "role": "fix",
+    "label": "the fix",
+    "lacks": []
+  },
+  "modelStates": 4,
+  "modelTransitions": 3,
+  "chartStates": 4,
+  "chartTransitions": 4,
+  "chartStatus": {
+    "works": 2,
+    "wrong": 0,
+    "fixed": 2,
+    "mixed": 0,
+    "after": 0,
+    "worse": 0
+  },
+  "mixedStatus": [],
+  "chartGroups": [
+    {
+      "name": "发送与执行",
+      "color": "#d6eaf8",
+      "states": 2
+    },
+    {
+      "name": "已知线程完成",
+      "color": "#fdebd0",
+      "states": 2
+    }
+  ],
+  "mixedGroups": [],
+  "classes": [
+    {
+      "n": 1,
+      "end": "线程完成，气泡仍运行",
+      "invariant": "ImmediateTerminalAgreement",
+      "rule": "A completed thread entry must not coexist with its still-running bubble. Mutators: threadViewStore.ts:350, threadViewStore.ts:394.",
+      "cause": "目录只推进线程头，没有同时更新对应气泡",
+      "readerSteps": 2,
+      "modelSteps": 3,
+      "counterexamples": 1,
+      "lastSteps": [
+        "目录先返回完成态"
+      ],
+      "startsHere": false,
+      "fix": "线程与气泡完成"
+    }
+  ],
+  "codeLike": [],
+  "uncited": {
+    "audit/ThreadHead.tla": [],
+    "audit/ThreadHeadFixed.tla": []
+  },
+  "brokenProperties": []
+}

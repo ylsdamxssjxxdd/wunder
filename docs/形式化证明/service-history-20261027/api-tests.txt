@@ -1,0 +1,8 @@
+running 2 tests
+failed to parse config, falling back to defaults: read configuration failed
+test api::admin::monitor_admin::thread_history_tests::admin_thread_details_read_canonical_body_with_thread_identity ... ok
+failed to parse config, falling back to defaults: read configuration failed
+test api::admin::monitor_admin::thread_history_tests::postgres_admin_thread_details_and_preview_snapshot ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 2201 filtered out; finished in 1.03s
+

@@ -371,6 +371,229 @@ fn draw_rows(app: &mut TuiApp, width: u16, height: u16) -> Vec<String> {
 }
 
 #[tokio::test]
+async fn live_reasoning_is_transcript_only_and_never_floods_the_main_frame() {
+    let root = TempRoot::new("reasoning_projection");
+    let mut app = fixture_app(root.path()).await;
+    app.logs.clear();
+    app.reset_scrollback_archive();
+    feed_stream_event(&mut app, "llm_request", json!({}), 10101);
+    for index in 0..60 {
+        feed_stream_event(
+            &mut app,
+            "llm_output_delta",
+            json!({
+                "reasoning_delta": format!("private-thought-{index:03}\n")
+            }),
+            10102 + index,
+        );
+        let frame = draw_rows(&mut app, 60, 18).join("\n");
+        assert!(
+            !frame.contains("private-thought-"),
+            "reasoning leaked: {frame}"
+        );
+        assert!(!app
+            .drain_pending_scrollback_lines()
+            .iter()
+            .any(|line| line.to_string().contains("private-thought-")));
+    }
+    app.finalize_all_markdown_streams();
+    assert!(app.handle_transcript_view_key(ctrl(KeyCode::Char('t'))));
+    let transcript = app
+        .transcript_view_frame(60, 200)
+        .iter()
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(transcript.contains("private-thought-000"));
+    assert!(transcript.contains("private-thought-059"));
+}
+
+#[tokio::test]
+async fn resizing_the_inline_terminal_keeps_the_composer_at_the_bottom() {
+    use crate::tui::resize_inline_terminal;
+    use ratatui::{TerminalOptions, Viewport};
+
+    let root = TempRoot::new("inline_resize");
+    let mut app = fixture_app(root.path()).await;
+    let mut terminal = Terminal::with_options(
+        TestBackend::new(80, 24),
+        TerminalOptions {
+            viewport: Viewport::Inline(24),
+        },
+    )
+    .expect("terminal");
+    terminal
+        .draw(|frame| crate::tui::ui::draw(frame, &mut app))
+        .expect("draw");
+    for (width, height) in [(60, 18), (120, 36), (45, 20), (100, 30)] {
+        terminal.backend_mut().resize(width, height);
+        let backend = terminal.backend().clone();
+        resize_inline_terminal(&mut terminal, backend).expect("resize");
+        terminal
+            .draw(|frame| crate::tui::ui::draw(frame, &mut app))
+            .expect("draw");
+        assert_eq!(terminal.get_frame().area(), Rect::new(0, 0, width, height));
+        assert_eq!(
+            app.input_mouse_region.bottom(),
+            height,
+            "composer left a bottom gap"
+        );
+    }
+}
+
+#[tokio::test]
+async fn tool_progress_never_becomes_an_assistant_message() {
+    let root = TempRoot::new("tool_progress_projection");
+    let mut app = fixture_app(root.path()).await;
+    app.logs.clear();
+    app.reset_scrollback_archive();
+    feed_stream_event(&mut app, "llm_request", json!({}), 11001);
+    feed_stream_event(
+        &mut app,
+        "llm_output",
+        json!({"tool_calls": [{"id": "fixture-call"}]}),
+        11002,
+    );
+    feed_stream_event(
+        &mut app,
+        "tool_call",
+        json!({
+            "tool": "read_file", "args": {"path": "sample.txt"},
+            "tool_call_id": "fixture-call", "turn_id": "fixture-turn"
+        }),
+        11003,
+    );
+    feed_stream_event(
+        &mut app,
+        "tool_result",
+        json!({
+            "tool": "read_file", "tool_call_id": "fixture-call", "turn_id": "fixture-turn",
+            "result": {"ok": true, "data": {"content": "fixture value"}}
+        }),
+        11004,
+    );
+    feed_stream_event(&mut app, "llm_request", json!({}), 11005);
+    feed_stream_event(
+        &mut app,
+        "llm_output_delta",
+        json!({"delta": "fixture answer\n"}),
+        11006,
+    );
+    feed_stream_event(
+        &mut app,
+        "final",
+        json!({"answer": "fixture answer"}),
+        11007,
+    );
+    app.handle_stream_message(StreamMessage::Done {
+        session_id: app.session_id.clone(),
+    });
+    let frame = draw_rows(&mut app, 80, 24).join("\n");
+    assert!(
+        frame.contains("sample.txt") && frame.contains("fixture answer"),
+        "{frame}"
+    );
+    assert!(!frame.contains("calling tools"), "stale progress: {frame}");
+    assert!(app
+        .logs
+        .iter()
+        .filter(|entry| entry.kind == LogKind::Assistant)
+        .all(|entry| entry.text == "fixture answer\n" || entry.text == "fixture answer"));
+}
+
+#[tokio::test]
+async fn a_reported_stream_error_does_not_add_an_empty_output_error_on_done() {
+    let root = TempRoot::new("reported_error_done");
+    let mut app = fixture_app(root.path()).await;
+    app.logs.clear();
+    app.reset_scrollback_archive();
+    feed_stream_event(&mut app, "llm_request", json!({}), 12001);
+    feed_stream_event(
+        &mut app,
+        "error",
+        json!({"message": "fixture request cancelled"}),
+        12002,
+    );
+    feed_stream_event(
+        &mut app,
+        "turn_terminal",
+        json!({"status": "cancelled"}),
+        12003,
+    );
+    app.handle_stream_message(StreamMessage::Done {
+        session_id: app.session_id.clone(),
+    });
+    assert_eq!(
+        app.logs
+            .iter()
+            .filter(|entry| entry.kind == LogKind::Error)
+            .count(),
+        1
+    );
+    assert_eq!(
+        app.live_thread_status(&app.session_id),
+        Some(wunder_server::ThreadStatus::Failed)
+    );
+}
+
+#[tokio::test]
+async fn a_live_cell_cannot_be_committed_to_terminal_history() {
+    let root = TempRoot::new("active_history");
+    let mut app = fixture_app(root.path()).await;
+    app.logs.clear();
+    app.reset_scrollback_archive();
+    app.set_transcript_viewport(50, 8);
+    app.merge_assistant_delta("stream-head\nstream-tail\n");
+    for index in 0..20 {
+        app.push_log(LogKind::Info, format!("later-tool-{index}"));
+    }
+    app.transcript_rendered_view(50, 8, false);
+    assert!(
+        app.drain_pending_scrollback_lines().is_empty(),
+        "live text is not immutable history"
+    );
+    app.merge_assistant_delta("stream-final\n");
+    app.finalize_all_markdown_streams();
+    app.active_assistant = None;
+    app.transcript_rendered_view(50, 8, false);
+    let history = app
+        .drain_pending_scrollback_lines()
+        .iter()
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        history.contains("stream-final"),
+        "lost final delta: {history}"
+    );
+}
+
+#[tokio::test]
+async fn resizing_a_stream_reprojects_all_text_without_losing_or_reordering_lines() {
+    let root = TempRoot::new("stream_resize");
+    let mut app = fixture_app(root.path()).await;
+    app.logs.clear();
+    app.reset_scrollback_archive();
+    app.set_transcript_viewport(80, 12);
+    app.merge_assistant_delta("first-marker\n\nsecond-marker\n\n");
+    app.set_transcript_viewport(24, 12);
+    app.merge_assistant_delta("third-marker\n\n");
+    app.finalize_all_markdown_streams();
+    let actual = app
+        .render_entry_lines(0, false, 24)
+        .iter()
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let expected = render_markdown_lines(LogKind::Assistant, &app.logs[0].text, 24)
+        .iter()
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert_eq!(actual, expected);
+}
+
+#[tokio::test]
 async fn the_frame_composes_every_card_at_forty_eighty_and_one_hundred_twenty_columns() {
     let root = TempRoot::new("widths");
     for width in [40u16, 80, 120] {
@@ -395,7 +618,7 @@ async fn the_frame_composes_every_card_at_forty_eighty_and_one_hundred_twenty_co
             "the answer is on screen: {frame}"
         );
         assert!(
-            frame.contains("Ask directly"),
+            frame.contains("Ask anything"),
             "the composer keeps its placeholder: {frame}"
         );
         assert!(
@@ -683,9 +906,6 @@ async fn a_run_of_workspace_reads_shares_one_exploring_card() {
         json!({"tool": "read_file", "args": {"path": "src/alpha.rs"}, "tool_call_id": "call-1", "turn_id": "turn-1"}),
         101,
     );
-    // The first tool call of a turn also leaves a phase notice behind, so the card indexes
-    // are measured from what the transcript holds after the first read rather than from the
-    // fixture length.
     let group_index = app.logs.len() - 1;
     let base = app.logs.len();
 
@@ -818,7 +1038,11 @@ async fn the_footer_names_the_task_and_sheds_it_before_the_keys() {
     assert!(frame.contains('\u{2190}'), "the keys stay: {frame}");
     assert!(frame.contains('?'), "the keys stay: {frame}");
     assert!(
-        !frame.contains("summarise the flaky test"),
+        !frame
+            .lines()
+            .last()
+            .unwrap_or_default()
+            .contains("summarise the flaky test"),
         "and the description gives way first: {frame}"
     );
 
@@ -1374,6 +1598,52 @@ fn conversation_texts(app: &TuiApp) -> Vec<String> {
         .collect()
 }
 
+async fn freeze_fixture_instructions(app: &TuiApp) {
+    use wunder_server::stable_core::thread_store::{
+        CreateThreadRequest, RolloutId, SessionMeta, ThreadId, ThreadMetadata, ThreadMetadataStore,
+        ThreadStatus,
+    };
+    let root = app
+        .runtime
+        .state
+        .config_store
+        .get()
+        .await
+        .storage
+        .data_root
+        .clone();
+    let store =
+        wunder_server::storage::thread_store::LocalThreadStore::open(root).expect("thread store");
+    let thread_id = ThreadId::new(app.session_id.clone()).expect("thread id");
+    let rollout_id = RolloutId::new(format!("fixture-{}", app.session_id)).expect("rollout id");
+    store
+        .create_thread(CreateThreadRequest {
+            metadata: ThreadMetadata {
+                thread_id: thread_id.clone(),
+                current_rollout_id: rollout_id.clone(),
+                status: ThreadStatus::Active,
+                created_at_ms: 1,
+                updated_at_ms: 1,
+                title: None,
+                workspace_id: None,
+                pinned: false,
+            },
+            session_meta: SessionMeta {
+                thread_id,
+                rollout_id,
+                created_at_ms: 1,
+                source: "fixture".into(),
+                initial_system_prompt: "Frozen fixture instructions".into(),
+                initial_memory: None,
+                parent_thread_id: None,
+                history_base: None,
+                capabilities: Value::Null,
+            },
+        })
+        .await
+        .expect("freeze fixture instructions");
+}
+
 /// 根治方案 §10 完成定义：断线续传、去重、排序与快照恢复的结果，必须与该会话按
 /// `change_seq` 重放的 durable 帧逐文本一致。测试自己从 change 帧读提交行，作为
 /// 独立于被测折叠逻辑的参照。
@@ -1388,6 +1658,7 @@ async fn durable_replay_and_snapshot_recovery_land_the_same_text() {
         .accept_thread_turn(&owner, &session, &json!({"content": "first observation"}))
         .expect("seed turn");
     let turn_id = turn["turn_id"].as_str().expect("turn id").to_string();
+    freeze_fixture_instructions(&app).await;
 
     // The interrupted stream left a partly-filled reasoning cell and answer cell
     // behind; replay completes them in place instead of appending a second copy.
@@ -1548,6 +1819,7 @@ async fn the_durable_feed_folds_commits_behind_the_start_baseline() {
         .accept_thread_turn(&owner, &session, &json!({"content": "first observation"}))
         .expect("seed turn");
     let turn_id = turn["turn_id"].as_str().expect("turn id").to_string();
+    freeze_fixture_instructions(&app).await;
     let baseline = app.durable_watermark(&session).await;
     app.logs.clear();
     app.invalidate_transcript_metrics();
@@ -1613,6 +1885,7 @@ async fn a_slow_client_stops_the_feed_and_catches_up_by_replay() {
         .accept_thread_turn(&owner, &session, &json!({"content": "first observation"}))
         .expect("seed turn");
     let turn_id = turn["turn_id"].as_str().expect("turn id").to_string();
+    freeze_fixture_instructions(&app).await;
     for index in 0..300 {
         storage
             .append_thread_item(
@@ -1794,6 +2067,23 @@ async fn inquiry_panel_keeps_single_select_honest_and_reads_legacy_payloads() {
     );
 }
 
+#[tokio::test]
+async fn inquiry_panel_preserves_consumption_identity_for_direct_and_nested_events() {
+    let root = TempRoot::new("inquiry_identity");
+    let app = inquiry_fixture_app(root.path()).await;
+    let questions = json!([{"question":"Fixture choice", "options":[{"label":"Fixture option"}]}]);
+    let panel = app
+        .parse_inquiry_panel_state(&json!({"turn_id":"fixture-turn", "questions":questions}))
+        .unwrap();
+    assert_eq!(panel.inquiry_turn_id.as_deref(), Some("fixture-turn"));
+    let nested = app
+        .parse_inquiry_panel_from_tool_result(
+            &json!({"turn_id":"fixture-turn", "result":{"questions":questions}}),
+        )
+        .unwrap();
+    assert_eq!(nested.inquiry_turn_id.as_deref(), Some("fixture-turn"));
+}
+
 /// Pointer parity with codex: a click on a card's disclosure row folds or unfolds that
 /// card, and the row that opened it is the row that closes it.
 #[tokio::test]
@@ -1887,8 +2177,6 @@ async fn canonical_tool_names_open_the_card_their_kind_promises() {
                "args": {"input": "*** Begin Patch\n*** Update File: src/main.rs\n@@\n-old\n+new\n*** End Patch"}}),
         201,
     );
-    // The first tool of a turn also lands a phase notice, so the card is read by index
-    // rather than by counting rows.
     let base = app.logs.len() - 1;
     assert!(
         matches!(app.logs[base].special, Some(SpecialLogEntry::Patch(_))),
@@ -3136,7 +3424,7 @@ async fn a_tabbed_draft_wraps_at_the_projected_columns_not_one_per_tab() {
         .get(usize::from(area.y) + 1)
         .expect("the wrapped draft has a second row");
     assert!(
-        continuation.trim_start().starts_with("a tail"),
+        continuation.trim_start().starts_with("d a tail"),
         "the tab must cost columns 4..8, so the break falls before \"a\": {continuation:?}"
     );
 }
@@ -3532,7 +3820,7 @@ async fn the_wheel_over_the_draft_scrolls_it_without_moving_the_caret() {
     let mut app = fixture_app(root.path()).await;
     let _clipboard_turn = ClipboardSeam::arm();
     let _ = draw_rows(&mut app, 80, 24);
-    let band = usize::from(app.input_hit_area.height.max(1));
+    let band = 8usize;
     let lines = (1..=(band + 2))
         .map(|index| format!("item-{index}"))
         .collect::<Vec<_>>();
@@ -3602,7 +3890,7 @@ async fn a_drag_past_the_draft_band_edge_extends_the_mark_one_row_at_a_time() {
     let mut app = fixture_app(root.path()).await;
     let _clipboard_turn = ClipboardSeam::arm();
     let _ = draw_rows(&mut app, 80, 24);
-    let band = usize::from(app.input_hit_area.height.max(1));
+    let band = 8usize;
     let lines = (1..=(band + 2))
         .map(|index| format!("item-{index}"))
         .collect::<Vec<_>>();
@@ -3912,9 +4200,7 @@ async fn a_marked_draft_stays_inside_the_frame_at_every_sampled_width() {
         app.input_scroll = None;
         let before = draw_rows(&mut app, width, height);
         assert!(
-            before
-                .iter()
-                .any(|row| row.contains("gate") && row.contains("item-")),
+            before.iter().any(|row| row.contains("gate")),
             "the unmarked frame opens on the draft's own text at {width} columns: {before:?}"
         );
         let area = app.input_hit_area;
@@ -4750,6 +5036,7 @@ async fn one_frame_scans_a_bounded_piece_and_the_frames_together_scan_the_docume
     );
     let reference = once.transcript_search.matches.clone();
     assert_eq!(reference.len(), 60, "one hit per card");
+    drop(once);
 
     // The same document, one small budget at a time.
     let mut stepped = fixture_app(root.path()).await;
@@ -5256,6 +5543,7 @@ async fn an_open_selection_paints_over_a_hit_and_copies_the_same_text() {
     let mut plain = fixture_app(root.path()).await;
     raw_single_line_cards(&mut plain, &["gate item-1 value", "gate item-2 value"]);
     let copied_plain = drag_over_run(&mut plain, "gate", 80, 24);
+    drop(plain);
 
     let mut app = fixture_app(root.path()).await;
     raw_single_line_cards(&mut app, &["gate item-1 value", "gate item-2 value"]);

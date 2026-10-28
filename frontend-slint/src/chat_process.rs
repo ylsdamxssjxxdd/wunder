@@ -48,6 +48,7 @@ fn bind(app: &MainWindow, api: Arc<NativeDesktop>, child: bool, pending: Rc<Cell
     // re-creating the view used to drop the cursor and re-read the latest page,
     // which made the "earlier" control look dead.
     let inflight = Rc::new(RefCell::new(HashSet::<(String, String)>::new()));
+    let dirty = Rc::new(RefCell::new(HashSet::<(String, String)>::new()));
     let weak = app.as_weak();
     let callback = move |payload: i32, direction: i32| {
         let Some(app) = weak.upgrade() else { return };
@@ -103,6 +104,9 @@ fn bind(app: &MainWindow, api: Arc<NativeDesktop>, child: bool, pending: Rc<Cell
             return;
         }
         if !inflight.borrow_mut().insert(key.clone()) {
+            if direction == 2 {
+                dirty.borrow_mut().insert(key);
+            }
             return;
         }
         pending.set(pending.get() + 1);
@@ -131,6 +135,7 @@ fn bind(app: &MainWindow, api: Arc<NativeDesktop>, child: bool, pending: Rc<Cell
         });
         let weak = app.as_weak();
         let inflight = inflight.clone();
+        let dirty = dirty.clone();
         let pending = pending.clone();
         poll(move || {
             let result = match rx.try_recv() {
@@ -140,6 +145,7 @@ fn bind(app: &MainWindow, api: Arc<NativeDesktop>, child: bool, pending: Rc<Cell
             };
             pending.set(pending.get().saturating_sub(1));
             inflight.borrow_mut().remove(&key);
+            let refresh_again = dirty.borrow_mut().remove(&key);
             let Some(app) = weak.upgrade() else {
                 return true;
             };
@@ -160,9 +166,13 @@ fn bind(app: &MainWindow, api: Arc<NativeDesktop>, child: bool, pending: Rc<Cell
                 return true;
             }
             row.process_loading = false;
+            let succeeded = result.is_ok();
             match result {
                 Ok(page) => {
                     apply_page(&mut row, page, direction);
+                    if cloud && direction == 2 {
+                        crate::cloud_threads::merge_live_process(&mut row);
+                    }
                     for reason in model.iter().filter(|reason| {
                         reason.kind == crate::timeline::KIND_REASON
                             && reason.process_idx == row.process_idx
@@ -178,6 +188,13 @@ fn bind(app: &MainWindow, api: Arc<NativeDesktop>, child: bool, pending: Rc<Cell
                 Err(_) => row.process_error = direction != 2,
             }
             model.set_row_data(index, row);
+            if succeeded && refresh_again {
+                if child {
+                    app.invoke_subagent_process_page(index as i32, 2);
+                } else {
+                    app.invoke_timeline_process_page(index as i32, 2);
+                }
+            }
             true
         });
     };
@@ -188,7 +205,7 @@ fn bind(app: &MainWindow, api: Arc<NativeDesktop>, child: bool, pending: Rc<Cell
     }
 }
 
-fn apply_page(row: &mut TimelineRow, page: NativeProcessPage, direction: i32) {
+pub(crate) fn apply_page(row: &mut TimelineRow, page: NativeProcessPage, direction: i32) {
     let (page_first, page_last) = (page.first, page.last);
     let previous: HashMap<_, _> = row
         .process_entries

@@ -5,6 +5,8 @@ import type { ApiId, ApiPayload, QueryParams } from './types';
 export const fetchCronJobs = (params: QueryParams | undefined = undefined) =>
   api.get('/cron/list', { params });
 
+export const fetchCronWorkspaces = () => api.get('/cron/workspaces');
+
 export const fetchCronRuns = (jobId: ApiId, params: QueryParams = {}) =>
   api.get('/cron/runs', { params: { job_id: jobId, ...(params || {}) } });
 

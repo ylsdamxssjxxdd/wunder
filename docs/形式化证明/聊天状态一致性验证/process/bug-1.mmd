@@ -1,0 +1,45 @@
+---
+title: "气泡与工具：蓝框为原反例路径，绿框为已修复, bug 1"
+config:
+  markdownAutoWrap: false
+  state:
+    useMaxWidth: false
+---
+stateDiagram-v2
+  %% second model (fix): the fix
+  classDef plainFixed fill:#f4f6f7,stroke:#1e8449,stroke-width:4px,color:#145a32
+  classDef group0 fill:#d6eaf8,stroke:#6b757c,color:#1b2631
+  classDef group0Path fill:#d6eaf8,stroke:#1f3a93,stroke-width:4px,color:#1b2631
+  classDef group1 fill:#fdebd0,stroke:#7f7668,color:#1b2631
+  classDef group1Fixed fill:#fdebd0,stroke:#1e8449,stroke-width:4px,color:#145a32
+  classDef group1Path fill:#fdebd0,stroke:#1f3a93,stroke-width:4px,color:#1b2631
+  state "Legend" as legend {
+    state "执行中" as legendGroup0
+    state "终态已到达" as legendGroup1
+    state "修复后不再可达或新增正确状态" as legendFixed
+  }
+  class legendGroup0 group0
+  class legendGroup1 group1
+  class legendFixed plainFixed
+  state "气泡完成，工具转圈<br/>无读取，无刷新<br/>工具已落库" as s0
+  state "气泡完成，工具转圈<br/>读取中，待刷新<br/>工具已落库" as s1
+  state "气泡完成，工具转圈<br/>读取中，无刷新<br/>工具已落库" as s2
+  state "气泡运行，工具转圈<br/>无读取，待刷新<br/>工具未完成" as s3
+  state "气泡运行，工具转圈<br/>无读取，无刷新<br/>工具未完成" as s4
+  state "气泡运行，工具转圈<br/>读取中，无刷新<br/>工具已落库" as s5
+  state "气泡运行，工具转圈<br/>读取中，无刷新<br/>工具未完成" as s6
+  [*] --> s4
+  s4 --> s3 : 1. 计数变化，安排刷新
+  s3 --> s6 : 2. 延后 600 毫秒读取
+  s6 --> s5 : 3. 工具结果落库
+  s5 --> s1 : 4. 收到完成态，安排刷新
+  s1 --> s2 : 5. 读取在途，丢弃刷新
+  s2 --> s0 : 6. 旧响应落地
+  s1 --> s1 : with the fix, 读取在途，保留刷新
+  class s0 group1Fixed
+  class s1 group1Path
+  class s2 group1Path
+  class s3 group0Path
+  class s4 group0Path
+  class s5 group0Path
+  class s6 group0Path

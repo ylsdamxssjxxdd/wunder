@@ -1,0 +1,71 @@
+{
+  "view": "customer",
+  "second": {
+    "role": "fix",
+    "label": "the fix",
+    "lacks": []
+  },
+  "modelStates": 5,
+  "modelTransitions": 7,
+  "chartStates": 4,
+  "chartTransitions": 5,
+  "chartStatus": {
+    "works": 3,
+    "wrong": 0,
+    "fixed": 1,
+    "mixed": 0,
+    "after": 0,
+    "worse": 0
+  },
+  "mixedStatus": [],
+  "chartGroups": [
+    {
+      "name": "能取到更早的步骤",
+      "color": "#e8f4ea",
+      "states": 3
+    }
+  ],
+  "mixedGroups": [
+    "过程展开，显示最新一页，还有更早的步骤"
+  ],
+  "classes": [
+    {
+      "n": 1,
+      "end": "过程展开，显示最新一页，还有更早的步骤",
+      "invariant": "EarlierCanBeRead",
+      "rule": "With older steps left and the newest page on screen, the reader must still be able to reach them. The reader's sentence: 还有更早的过程时，向上滑或点击都要能真的看到它们.",
+      "cause": "视图重建时把续读位置弄丢了，界面还说有更早的步骤，点下去读到的还是同一页",
+      "readerSteps": 2,
+      "modelSteps": 3,
+      "counterexamples": 1,
+      "lastSteps": [
+        "点「查看更早的过程」",
+        "视图被重建"
+      ],
+      "startsHere": false,
+      "fix": "过程展开，还没读内容，还有更早的步骤"
+    },
+    {
+      "n": 2,
+      "end": "过程展开，显示最新一页，还有更早的步骤",
+      "invariant": "LoadedPageKeepsItsEdge",
+      "rule": "A loaded page keeps the cursor that continues it, whatever the view does.",
+      "cause": "视图重建时把续读位置弄丢了，界面还说有更早的步骤，点下去读到的还是同一页",
+      "readerSteps": 2,
+      "modelSteps": 3,
+      "counterexamples": 1,
+      "lastSteps": [
+        "点「查看更早的过程」",
+        "视图被重建"
+      ],
+      "startsHere": false,
+      "fix": "过程展开，还没读内容，还有更早的步骤"
+    }
+  ],
+  "codeLike": [],
+  "uncited": {
+    "docs/形式化证明/蛹与舵机状态一致性验证/models/NativeProcessPaging.tla": [],
+    "docs/形式化证明/蛹与舵机状态一致性验证/models/NativeProcessPagingFixed.tla": []
+  },
+  "brokenProperties": []
+}

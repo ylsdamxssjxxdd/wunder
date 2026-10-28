@@ -46,7 +46,9 @@ mod thread_history_migration;
 mod thread_lifecycle_tests;
 pub(crate) mod thread_mutation;
 pub mod thread_store;
-mod thread_view_projection;
+pub(crate) mod thread_view_projection;
+#[cfg(test)]
+mod token_auth_tests;
 
 pub use backend::*;
 pub use bridge::*;

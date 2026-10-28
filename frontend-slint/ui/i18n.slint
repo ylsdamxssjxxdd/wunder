@@ -323,7 +323,7 @@ export global I18n {
     out property <string> cp_model_pick: zh ? "切换模型" : "Switch model";
     out property <string> cp_model_context: zh ? "上下文 Token" : "Context tokens";
     out property <string> cp_voice_input: zh ? "语音输入" : "Voice input";
-    out property <string> cp_terminal_mode: zh ? "终端" : "Terminal";
+    out property <string> cp_open_cli: zh ? "打开舵机" : "Open CLI";
     out property <string> cp_model_search: zh ? "搜索模型" : "Search models";
     out property <string> cp_model_empty: zh ? "还没有可用模型。请到「设置 → 模型设置」添加。" : "No models yet. Add one in Settings → Models.";
     out property <string> cp_model_no_match: zh ? "没有匹配的模型" : "No matching model";
@@ -404,7 +404,7 @@ export global I18n {
     out property <string> ch_no_logs: zh ? "暂无运行日志" : "No runtime logs";
     out property <string> cron_create: zh ? "新建定时任务" : "New scheduled task";
     out property <string> cron_empty: zh ? "暂无定时任务" : "No scheduled tasks";
-    out property <string> cron_subtitle: zh ? "查看与管理智能体定时任务" : "View and manage agent scheduled tasks";
+    out property <string> cron_subtitle: zh ? "在指定工作区中按时执行任务" : "Run scheduled tasks in a selected workspace";
     out property <string> main_preview_prompt: zh ? "整理工作目录并说明结果" : "Organize the work folder and report";
     out property <string> main_preview_answer: zh ? "已完成目录检查，并整理了可以继续使用的文件。" : "Directory checked and usable files organized.";
     out property <string> main_preview_reasoning: zh ? "先读取目录清单，确认文件类型，再检查文本内容是否可用，最后汇总结果。" : "Read the listing first, confirm file types, verify text readability, then summarize.";
@@ -681,6 +681,16 @@ export global I18n {
     out property <string> cr_no_summary: zh ? "无输出摘要" : "No output summary";
     out property <string> cr_failure_prefix: zh ? "失败：" : "Failed: ";
     out property <string> cr_runs_empty: zh ? "暂无运行记录" : "No runs";
+    out property <string> cr_workspace_hint: zh ? "选择工作区，设置消息与执行时间" : "Choose a workspace, message and execution time";
+    out property <string> cr_field_workspace: zh ? "工作区" : "Workspace";
+    out property <string> cr_workspace_unavailable: zh ? "工作区不可用" : "Workspace unavailable";
+    out property <string> cr_mode: zh ? "执行方式" : "Mode";
+    out property <string> cr_kind_repeat: zh ? "重复" : "Repeat";
+    out property <string> cr_interval_every: zh ? "每" : "Every";
+    out property <string> cr_unit_minute: zh ? "分钟" : "Minutes";
+    out property <string> cr_unit_hour: zh ? "小时" : "Hours";
+    out property <string> cr_unit_day: zh ? "天" : "Days";
+    out property <string> cr_unit_second: zh ? "秒" : "Seconds";
     out property <string> cr_kind_once: zh ? "一次性" : "One-off";
     out property <string> cr_kind_interval: zh ? "固定间隔" : "Fixed interval";
     out property <string> cr_kind_cron: zh ? "Cron 表达式" : "Cron expression";
@@ -690,7 +700,6 @@ export global I18n {
     out property <string> cr_field_expression: zh ? "表达式" : "Expression";
     out property <string> cr_field_timezone: zh ? "时区" : "Time zone";
     out property <string> cr_field_message: zh ? "执行消息" : "Message";
-    out property <string> cr_field_target_agent: zh ? "目标智能体" : "Target agent";
     out property <string> cr_delete_after_run: zh ? "运行一次后删除" : "Delete after one run";
     out property <string> wd_groups: zh ? "群组" : "Groups";
     out property <string> wd_contacts: zh ? "联系人" : "Contacts";
@@ -795,6 +804,8 @@ export global I18n {
     out property <string> st_name_invalid: zh ? "名称不能为空且不能超过 80 个字符" : "Name cannot be empty and must be at most 80 characters";
     out property <string> st_agent_name_invalid: zh ? "智能体名称不能为空且不能超过 80 个字符" : "Agent name cannot be empty and must be at most 80 characters";
     out property <string> st_exec_interval_range: zh ? "执行间隔必须在 1..86400 秒之间" : "Interval must be between 1 and 86400 seconds";
+    out property <string> st_cron_interval_range: zh ? "重复周期必须为正整数，且不超过 1 天" : "Repeat interval must be a positive integer of at most 1 day";
+    out property <string> st_cron_workspace_required: zh ? "请选择工作区" : "Select a workspace";
     out property <string> st_exec_message_empty: zh ? "执行消息不能为空" : "Message cannot be empty";
     out property <string> st_channel_type_required: zh ? "请选择渠道类型" : "Pick a channel type";
     out property <string> st_members_required: zh ? "请至少选择 1 名初始成员" : "Pick at least 1 initial member";

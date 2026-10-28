@@ -1,0 +1,37 @@
+---
+config:
+  markdownAutoWrap: false
+  state:
+    useMaxWidth: false
+---
+stateDiagram-v2
+  %% second model (fix): the fix
+  classDef plainFixed fill:#f4f6f7,stroke:#1e8449,stroke-width:4px,color:#145a32
+  classDef group0 fill:#e8f4ea,stroke:#747a75,color:#1b2631
+  classDef group0Path fill:#e8f4ea,stroke:#1f3a93,stroke-width:4px,color:#1b2631
+  classDef group1 fill:#fde8e8,stroke:#7f7474,color:#1b2631
+  classDef group1Fixed fill:#fde8e8,stroke:#1e8449,stroke-width:4px,color:#145a32
+  state "Legend" as legend {
+    state "能取到更早的步骤" as legendGroup0
+    state "有更早的步骤却取不到" as legendGroup1
+    state "Fixed or new with the fix" as legendFixed
+  }
+  class legendGroup0 group0
+  class legendGroup1 group1
+  class legendFixed plainFixed
+  state "过程展开，显示最新一页，还有更早的步骤" as g0 {
+    state "只能点按钮，这一页没有续读位置" as s0
+  }
+  state "过程展开，还没读内容，还有更早的步骤" as g1 {
+    state "只能点按钮，这一页没有续读位置" as s1
+  }
+  state "过程收着，还没读内容，还有更早的步骤" as g2 {
+    state "只能点按钮，这一页没有续读位置" as s2
+  }
+  [*] --> s2
+  s2 --> s1 : 1. 展开工作过程 [Open]
+  s1 --> s0 : 2. 点「查看更早的过程」 [PressButton]
+  s1 --> s1 : with the fix, 点「查看更早的过程」<br/>[PressButton] cannot happen at<br/>step 2
+  class s0 group1Fixed
+  class s1 group0Path
+  class s2 group0Path

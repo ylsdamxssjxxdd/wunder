@@ -1,0 +1,355 @@
+{
+  "date": "2026-10-28",
+  "scope": "isolated-linux-amd64-compose-postgres-synthetic-sse",
+  "exclusions": [
+    "real-model-inference",
+    "password-login-burst",
+    "production-arm",
+    "long-duration-stability"
+  ],
+  "limits": {
+    "accounts": 2000,
+    "api_workers": 8,
+    "postgres_connections": 64,
+    "active_task_ceiling": 300,
+    "preparation_and_admission_slots": 8,
+    "bounded_blocking_threads": 64
+  },
+  "notes": {
+    "health_probe": "/wunder/i18n is HTTP liveness only",
+    "model_peak": "cumulative model-process peak",
+    "memory": "Docker memory usage, not process RSS",
+    "cpu": "100 percent is one core",
+    "queued": "durable task queue count excludes preparation wait"
+  },
+  "staircase": {
+    "passed": true,
+    "binary": {
+      "server_sha256": "0c657f769aec4f84a52d48751dc3e07ead589a335f822bfd1526a436e360d2bd"
+    },
+    "docker": {
+      "engine": "29.2.1",
+      "compose": "5.1.0",
+      "runtime_image_id": "sha256:f21af1564714cc69951c2dc7e8ed13ba8d200664e7b2fc627f0dc9a09d4e3134",
+      "postgres_image_id": "sha256:fe03a7605299a34ddf5e4f285dff78c3d7190a576b3c6b46f2fcff69f4bffd54",
+      "capacity": "32 33462284288 x86_64 linux"
+    },
+    "online": {
+      "connected": 2000,
+      "failures": {},
+      "connection_ms": {
+        "samples": 2000,
+        "p50_ms": 60.16068300232291,
+        "p95_ms": 118.63025900674984,
+        "maximum_ms": 142.56832000683062
+      },
+      "hold_seconds": 30
+    },
+    "closed_before_cleanup": 0,
+    "stages": [
+      {
+        "concurrency": 100,
+        "completed": 100,
+        "queued": 0,
+        "elapsed_s": 7.625281873013591,
+        "errors": {},
+        "durable_checks": {
+          "passed": 100
+        },
+        "model_calls": 100,
+        "model_peak": 12,
+        "first_text_ms": {
+          "samples": 100,
+          "p50_ms": 3698.9210480242036,
+          "p95_ms": 6586.882397008594,
+          "maximum_ms": 6868.848059006268
+        },
+        "completed_ms": {
+          "samples": 100,
+          "p50_ms": 4314.614337024977,
+          "p95_ms": 7185.891208006069,
+          "maximum_ms": 7456.912526016822
+        },
+        "queued_final_snapshots": 0,
+        "queued_rehydrated": 0,
+        "probes": {
+          "health": {
+            "total": 8,
+            "successful": 8,
+            "timing": {
+              "samples": 8,
+              "p50_ms": 0.9647599945310503,
+              "p95_ms": 3.9615559799131006,
+              "maximum_ms": 3.9615559799131006
+            }
+          },
+          "monitor": {
+            "total": 8,
+            "successful": 8,
+            "timing": {
+              "samples": 8,
+              "p50_ms": 10.206834995187819,
+              "p95_ms": 11.248622991843149,
+              "maximum_ms": 11.248622991843149
+            }
+          }
+        }
+      },
+      {
+        "concurrency": 500,
+        "completed": 500,
+        "queued": 0,
+        "elapsed_s": 27.63549114399939,
+        "errors": {},
+        "durable_checks": {
+          "passed": 500
+        },
+        "model_calls": 500,
+        "model_peak": 23,
+        "first_text_ms": {
+          "samples": 500,
+          "p50_ms": 13967.03561299364,
+          "p95_ms": 25419.208362000063,
+          "maximum_ms": 26179.110027005663
+        },
+        "completed_ms": {
+          "samples": 500,
+          "p50_ms": 15100.910427019699,
+          "p95_ms": 26027.914664009586,
+          "maximum_ms": 26772.509597998578
+        },
+        "queued_final_snapshots": 0,
+        "queued_rehydrated": 0,
+        "probes": {
+          "health": {
+            "total": 24,
+            "successful": 24,
+            "timing": {
+              "samples": 24,
+              "p50_ms": 10.852586012333632,
+              "p95_ms": 50.6922609929461,
+              "maximum_ms": 60.74727399391122
+            }
+          },
+          "monitor": {
+            "total": 24,
+            "successful": 24,
+            "timing": {
+              "samples": 24,
+              "p50_ms": 114.79520401917398,
+              "p95_ms": 338.01315299933776,
+              "maximum_ms": 727.3862480069511
+            }
+          }
+        }
+      },
+      {
+        "concurrency": 2000,
+        "completed": 2000,
+        "queued": 1111,
+        "elapsed_s": 130.26661158399656,
+        "errors": {},
+        "durable_checks": {
+          "passed": 2000
+        },
+        "model_calls": 2000,
+        "model_peak": 27,
+        "first_text_ms": {
+          "samples": 2000,
+          "p50_ms": 59479.85688201152,
+          "p95_ms": 120694.40220101387,
+          "maximum_ms": 127240.67637900589
+        },
+        "completed_ms": {
+          "samples": 2000,
+          "p50_ms": 59519.68995999778,
+          "p95_ms": 120724.90786001435,
+          "maximum_ms": 127268.27947900165
+        },
+        "queued_final_snapshots": 1111,
+        "queued_rehydrated": 0,
+        "probes": {
+          "health": {
+            "total": 124,
+            "successful": 124,
+            "timing": {
+              "samples": 124,
+              "p50_ms": 1.0725220199674368,
+              "p95_ms": 31.662935012718663,
+              "maximum_ms": 186.98307001614012
+            }
+          },
+          "monitor": {
+            "total": 124,
+            "successful": 124,
+            "timing": {
+              "samples": 124,
+              "p50_ms": 26.78672398906201,
+              "p95_ms": 110.13221897883341,
+              "maximum_ms": 268.6768980056513
+            }
+          }
+        }
+      }
+    ],
+    "resource_samples": 43,
+    "resources": {
+      "server": {
+        "sampled_peak_memory_mib": 599.5,
+        "sampled_peak_cpu_single_core_percent": 401.74,
+        "sampled_peak_pids": 113
+      },
+      "postgres": {
+        "sampled_peak_memory_mib": 418.8,
+        "sampled_peak_cpu_single_core_percent": 488.63,
+        "sampled_peak_pids": 72
+      },
+      "model": {
+        "sampled_peak_memory_mib": 28.7,
+        "sampled_peak_cpu_single_core_percent": 17.71,
+        "sampled_peak_pids": 1
+      }
+    },
+    "server_diagnostics": {
+      "scope": "last-2000-log-lines",
+      "validation_failures": 0,
+      "queue_timeouts": 0,
+      "execution_timeouts": 0,
+      "missing_threads": 0
+    },
+    "cleanup_passed": true
+  },
+  "independent_repeat": {
+    "passed": true,
+    "binary": {
+      "server_sha256": "0c657f769aec4f84a52d48751dc3e07ead589a335f822bfd1526a436e360d2bd"
+    },
+    "docker": {
+      "engine": "29.2.1",
+      "compose": "5.1.0",
+      "runtime_image_id": "sha256:f21af1564714cc69951c2dc7e8ed13ba8d200664e7b2fc627f0dc9a09d4e3134",
+      "postgres_image_id": "sha256:fe03a7605299a34ddf5e4f285dff78c3d7190a576b3c6b46f2fcff69f4bffd54",
+      "capacity": "32 33462284288 x86_64 linux"
+    },
+    "online": {
+      "connected": 2000,
+      "failures": {},
+      "connection_ms": {
+        "samples": 2000,
+        "p50_ms": 51.6024130047299,
+        "p95_ms": 119.31779599399306,
+        "maximum_ms": 160.00438798801042
+      },
+      "hold_seconds": 30
+    },
+    "closed_before_cleanup": 0,
+    "stages": [
+      {
+        "concurrency": 2000,
+        "completed": 2000,
+        "queued": 0,
+        "elapsed_s": 121.4728510180139,
+        "errors": {},
+        "durable_checks": {
+          "passed": 2000
+        },
+        "model_calls": 2000,
+        "model_peak": 34,
+        "first_text_ms": {
+          "samples": 2000,
+          "p50_ms": 60887.67131901113,
+          "p95_ms": 113058.6197960074,
+          "maximum_ms": 117488.97687101271
+        },
+        "completed_ms": {
+          "samples": 2000,
+          "p50_ms": 63106.52243101504,
+          "p95_ms": 114691.50414600153,
+          "maximum_ms": 118086.76894800738
+        },
+        "queued_final_snapshots": 0,
+        "queued_rehydrated": 0,
+        "probes": {
+          "health": {
+            "total": 103,
+            "successful": 103,
+            "timing": {
+              "samples": 103,
+              "p50_ms": 23.325143003603444,
+              "p95_ms": 129.62611400871538,
+              "maximum_ms": 373.7495240056887
+            }
+          },
+          "monitor": {
+            "total": 103,
+            "successful": 103,
+            "timing": {
+              "samples": 103,
+              "p50_ms": 98.35702800774015,
+              "p95_ms": 415.4699769860599,
+              "maximum_ms": 561.9422209856566
+            }
+          }
+        }
+      }
+    ],
+    "resource_samples": 33,
+    "resources": {
+      "server": {
+        "sampled_peak_memory_mib": 622.1,
+        "sampled_peak_cpu_single_core_percent": 356.16,
+        "sampled_peak_pids": 137
+      },
+      "postgres": {
+        "sampled_peak_memory_mib": 401.6,
+        "sampled_peak_cpu_single_core_percent": 420.16,
+        "sampled_peak_pids": 70
+      },
+      "model": {
+        "sampled_peak_memory_mib": 29.0,
+        "sampled_peak_cpu_single_core_percent": 18.03,
+        "sampled_peak_pids": 1
+      }
+    },
+    "server_diagnostics": {
+      "scope": "last-2000-log-lines",
+      "validation_failures": 0,
+      "queue_timeouts": 0,
+      "execution_timeouts": 0,
+      "missing_threads": 0
+    },
+    "cleanup_passed": true
+  },
+  "original_counterexample": {
+    "online_accounts": 2000,
+    "concurrent_tasks": 100,
+    "completed": 0,
+    "task_timeout_seconds": 240,
+    "model_calls": 0,
+    "monitor_probe_timeout_seconds": 45
+  },
+  "pre_admission_counterexample": {
+    "concurrent_tasks": 2000,
+    "completed": 932,
+    "closed": 1068,
+    "durable_passed": 932,
+    "passed": false
+  },
+  "formal": {
+    "model_states": 912,
+    "model_transitions": 2912,
+    "original_broken": [
+      "NoIoStarvation"
+    ],
+    "fixed_invariants": [
+      "NoIoStarvation",
+      "ExactCompletion"
+    ],
+    "uncited_conditions": 0,
+    "excludes": [
+      "fairness",
+      "production-timing",
+      "actual-2000-user-capacity"
+    ]
+  }
+}

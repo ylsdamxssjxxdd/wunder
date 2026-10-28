@@ -1241,7 +1241,8 @@ impl TuiApp {
         } else {
             format!("/review {focus}")
         };
-        self.start_stream_request(prompt, user_echo, None).await
+        self.start_stream_request(prompt, user_echo, None, None)
+            .await
     }
 
     async fn handle_plan_slash(&mut self, args: &str) -> Result<()> {
@@ -1263,7 +1264,8 @@ impl TuiApp {
         } else {
             format!("/plan {cleaned}")
         };
-        self.start_stream_request(prompt, user_echo, None).await
+        self.start_stream_request(prompt, user_echo, None, None)
+            .await
     }
 
     async fn handle_goal_slash(&mut self, args: &str) -> Result<()> {

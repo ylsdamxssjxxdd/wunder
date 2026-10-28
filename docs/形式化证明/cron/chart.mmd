@@ -1,0 +1,98 @@
+---
+title: "定时任务并发状态审计"
+config:
+  markdownAutoWrap: false
+  state:
+    useMaxWidth: false
+---
+stateDiagram-v2
+  %% second model (fix): the fix
+  classDef works fill:#f4f6f7,stroke:#566573,color:#1b2631
+  classDef wrong fill:#fdedec,stroke:#c0392b,color:#7b241c
+  classDef fixed fill:#e9f7ef,stroke:#1e8449,color:#145a32
+  classDef mixed fill:#fdebd0,stroke:#d35400,color:#7e5109
+  classDef after fill:#ffffff,stroke:#808b96,color:#566573
+  classDef worse fill:#f4ecf7,stroke:#7d3c98,color:#4a235a
+  classDef worksPath fill:#f4f6f7,stroke:#1f3a93,stroke-width:4px,color:#1b2631
+  classDef wrongPath fill:#fdedec,stroke:#1f3a93,stroke-width:4px,color:#7b241c
+  classDef fixedPath fill:#e9f7ef,stroke:#1f3a93,stroke-width:4px,color:#145a32
+  classDef mixedPath fill:#fdebd0,stroke:#1f3a93,stroke-width:4px,color:#7e5109
+  classDef afterPath fill:#ffffff,stroke:#1f3a93,stroke-width:4px,color:#566573
+  classDef worsePath fill:#f4ecf7,stroke:#1f3a93,stroke-width:4px,color:#4a235a
+  state "Legend" as legend {
+    state "正常" as legendWorks
+    state "修复后不再出现" as legendFixed
+  }
+  class legendWorks works
+  class legendFixed fixed
+  state "任务停用，1个执行尚未结束" as s0
+  state "任务停用，1个执行尚未结束，等待完成提交" as s1
+  state "任务停用，1个执行尚未结束，等待完成提交，历史与状态分离" as s2
+  state "任务停用，1个执行尚未结束，重复领取" as s3
+  state "任务停用，2个执行尚未结束，重复领取" as s4
+  state "任务停用，无在途执行" as s5
+  state "任务停用，无在途执行，覆盖新状态" as s6
+  state "任务停用，无在途执行，重复领取" as s7
+  state "任务启用，1个执行尚未结束" as s8
+  state "任务启用，1个执行尚未结束，等待完成提交" as s9
+  state "任务启用，1个执行尚未结束，重复领取" as s10
+  state "任务启用，2个执行尚未结束，重复领取" as s11
+  state "任务启用，手动请求已读取，1个执行尚未结束" as s12
+  state "任务启用，手动请求已读取，无在途执行" as s13
+  state "任务启用，无在途执行" as s14
+  state "任务启用，无在途执行，覆盖新状态" as s15
+  state "任务启用，无在途执行，重复领取" as s16
+  state "任务已删除，1个执行尚未结束，重复领取" as s17
+  state "任务已删除，手动请求已读取，无在途执行" as s18
+  state "任务已删除，无在途执行" as s19
+  state "任务已删除，无在途执行，覆盖新状态" as s20
+  state "任务已删除，无在途执行，重复领取" as s21
+  [*] --> s14
+  s14 --> s13 : 手动请求读取任务
+  s14 --> s8 : 定时调度原子领取
+  s14 --> s5 : 停用后续调度
+  s14 --> s19 : 删除任务
+  s13 --> s12 : 手动请求尝试领取 or 定时调度原子领取
+  s13 --> s18 : 删除任务
+  s8 --> s9 : 执行结束读取状态
+  s12 --> s11 : 手动请求尝试领取
+  s18 --> s8 : 手动请求尝试领取
+  s9 --> s1 : 停用后续调度
+  s11 --> s10 : 执行结束读取状态
+  s1 --> s2 : 单独写入执行历史
+  s10 --> s17 : 删除任务
+  s4 --> s3 : 执行结束读取状态
+  s12 --> s4 : 手动请求尝试领取
+  s1 --> s15 : 提交完成状态
+  s9 --> s15 : 提交完成状态
+  s3 --> s7 : 执行结束读取状态
+  s17 --> s21 : 执行结束读取状态
+  s15 --> s20 : 删除任务
+  s10 --> s16 : 执行结束读取状态
+  s9 --> s6 : 提交完成状态
+  s12 --> s8 : with the fix, 手动请求尝试领取
+  s18 --> s19 : with the fix, 手动请求尝试领取
+  s1 --> s0 : with the fix, 提交完成状态
+  s1 --> s1 : with the fix, 单独写入执行历史 cannot<br/>happen at step 4 of bug 3
+  class s0 fixed
+  class s1 fixed
+  class s2 fixed
+  class s3 fixed
+  class s4 fixed
+  class s5 fixed
+  class s6 fixed
+  class s7 fixed
+  class s8 fixed
+  class s9 fixed
+  class s10 fixed
+  class s11 fixed
+  class s12 fixed
+  class s13 fixed
+  class s14 fixed
+  class s15 fixed
+  class s16 fixed
+  class s17 fixed
+  class s18 works
+  class s19 works
+  class s20 fixed
+  class s21 fixed

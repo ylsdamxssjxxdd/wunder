@@ -1,0 +1,32 @@
+---
+title: "ToolTimeout, bug 1"
+config:
+  markdownAutoWrap: false
+  state:
+    useMaxWidth: false
+---
+stateDiagram-v2
+  %% second model (fix): the fix
+  classDef plainFixed fill:#f4f6f7,stroke:#1e8449,stroke-width:4px,color:#145a32
+  classDef group0 fill:#d6eaf8,stroke:#6b757c,color:#1b2631
+  classDef group0Fixed fill:#d6eaf8,stroke:#1e8449,stroke-width:4px,color:#145a32
+  classDef group0Path fill:#d6eaf8,stroke:#1f3a93,stroke-width:4px,color:#1b2631
+  classDef group1 fill:#fdebd0,stroke:#7f7668,color:#1b2631
+  classDef group1Fixed fill:#fdebd0,stroke:#1e8449,stroke-width:4px,color:#145a32
+  state "Legend" as legend {
+    state "保守恢复契约" as legendGroup0
+    state "危险重试建议" as legendGroup1
+    state "Fixed or new with the fix" as legendFixed
+  }
+  class legendGroup0 group0
+  class legendGroup1 group1
+  class legendFixed plainFixed
+  state "命令执行中" as s0
+  state "工具超时，却建议可直接重试" as s1
+  state "工具超时，明确结果未知并要求核对" as s2
+  [*] --> s0
+  s0 --> s1 : 1. 等待超时并返回错误建议
+  s0 --> s2 : with the fix, 等待超时并返回错误建议
+  class s0 group0Path
+  class s1 group1Fixed
+  class s2 group0Fixed

@@ -450,7 +450,7 @@ const props = withDefaults(
     desktopLocalMode: false,
     uiFontSize: 14,
     profileAvatarIcon: 'initial',
-    profileAvatarColor: 'var(--ui-accent)',
+    profileAvatarColor: 'var(--ui-accent-ink)',
     profileAvatarOptions: () => [],
     profileAvatarColors: () => []
   }

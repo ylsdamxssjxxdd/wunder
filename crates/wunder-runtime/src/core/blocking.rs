@@ -24,7 +24,7 @@ const FS_EXEC_TIMEOUT_MS: u64 = 60_000;
 const CPU_EXEC_TIMEOUT_MS: u64 = 60_000;
 const EXTERNAL_EXEC_TIMEOUT_MS: u64 = 30_000;
 
-const BLOCKING_KIND_COUNT: usize = 5;
+const BLOCKING_KIND_COUNT: usize = 6;
 
 // A blocking thread cannot be cancelled, so its permit stays claimed until the
 // operation returns even after the caller gave up. These states mark exactly the
@@ -37,6 +37,7 @@ const TASK_RETURNED: u8 = 2;
 pub enum BlockingKind {
     Db,
     View,
+    Auth,
     Fs,
     Cpu,
     External,
@@ -47,6 +48,7 @@ impl BlockingKind {
         Duration::from_millis(match self {
             Self::Db => DB_QUEUE_TIMEOUT_MS,
             Self::View => 150,
+            Self::Auth => 15_000,
             Self::Fs => FS_QUEUE_TIMEOUT_MS,
             Self::Cpu => CPU_QUEUE_TIMEOUT_MS,
             Self::External => EXTERNAL_QUEUE_TIMEOUT_MS,
@@ -57,6 +59,7 @@ impl BlockingKind {
         Duration::from_millis(match self {
             Self::Db => DB_EXEC_TIMEOUT_MS,
             Self::View => 2000,
+            Self::Auth => 10_000,
             Self::Fs => FS_EXEC_TIMEOUT_MS,
             Self::Cpu => CPU_EXEC_TIMEOUT_MS,
             Self::External => EXTERNAL_EXEC_TIMEOUT_MS,
@@ -67,6 +70,7 @@ impl BlockingKind {
         match self {
             Self::Db => DB_CONCURRENCY,
             Self::View => 8,
+            Self::Auth => 8,
             Self::Fs => FS_CONCURRENCY,
             Self::Cpu => CPU_CONCURRENCY,
             Self::External => EXTERNAL_CONCURRENCY,
@@ -77,6 +81,7 @@ impl BlockingKind {
         match self {
             Self::Db => "db",
             Self::View => "view",
+            Self::Auth => "auth",
             Self::Fs => "fs",
             Self::Cpu => "cpu",
             Self::External => "external",
@@ -87,6 +92,7 @@ impl BlockingKind {
         match self {
             Self::Db => 0,
             Self::View => 4,
+            Self::Auth => 5,
             Self::Fs => 1,
             Self::Cpu => 2,
             Self::External => 3,
@@ -108,6 +114,22 @@ static CLASS_SEMAPHORES: OnceLock<[Arc<Semaphore>; BLOCKING_KIND_COUNT]> = OnceL
 static CLASS_STALLED_PERMITS: [AtomicU64; BLOCKING_KIND_COUNT] =
     [const { AtomicU64::new(0) }; BLOCKING_KIND_COUNT];
 
+fn isolated_runtime() -> Result<&'static tokio::runtime::Runtime> {
+    static RUNTIME: OnceLock<Result<tokio::runtime::Runtime, String>> = OnceLock::new();
+    match RUNTIME.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .max_blocking_threads(total_concurrency())
+            .enable_all()
+            .thread_name("wunder-blocking")
+            .build()
+            .map_err(|error| error.to_string())
+    }) {
+        Ok(runtime) => Ok(runtime),
+        Err(error) => Err(anyhow!(error.clone())),
+    }
+}
+
 fn class_semaphores() -> &'static [Arc<Semaphore>; BLOCKING_KIND_COUNT] {
     CLASS_SEMAPHORES.get_or_init(|| {
         [
@@ -116,6 +138,7 @@ fn class_semaphores() -> &'static [Arc<Semaphore>; BLOCKING_KIND_COUNT] {
             Arc::new(Semaphore::new(BlockingKind::Cpu.concurrency().max(1))),
             Arc::new(Semaphore::new(BlockingKind::External.concurrency().max(1))),
             Arc::new(Semaphore::new(BlockingKind::View.concurrency().max(1))),
+            Arc::new(Semaphore::new(BlockingKind::Auth.concurrency().max(1))),
         ]
     })
 }
@@ -123,6 +146,7 @@ fn class_semaphores() -> &'static [Arc<Semaphore>; BLOCKING_KIND_COUNT] {
 fn class_kinds() -> [BlockingKind; BLOCKING_KIND_COUNT] {
     [
         BlockingKind::View,
+        BlockingKind::Auth,
         BlockingKind::Db,
         BlockingKind::Fs,
         BlockingKind::Cpu,
@@ -172,6 +196,14 @@ where
     F: FnOnce() -> Result<T> + Send + 'static,
 {
     run(BlockingKind::Db, label, task).await
+}
+
+pub async fn run_auth<T, F>(label: &'static str, task: F) -> Result<T>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T> + Send + 'static,
+{
+    run(BlockingKind::Auth, label, task).await
 }
 
 /// Presentation reads have reserved capacity and a short queue budget.
@@ -318,7 +350,7 @@ where
     let task_state = Arc::new(AtomicU8::new(TASK_RUNNING));
     let handle = {
         let task_state = Arc::clone(&task_state);
-        tokio::task::spawn_blocking(move || {
+        isolated_runtime()?.spawn_blocking(move || {
             let _permit = permit;
             let started = Instant::now();
             let result = task();
@@ -399,7 +431,7 @@ mod tests {
     fn every_class_reserve_fits_inside_the_reported_total() {
         use super::class_kinds;
         let total = super::total_concurrency();
-        assert_eq!(total, 56, "class reserves must stay explicit");
+        assert_eq!(total, 64, "class reserves must stay explicit");
         for kind in class_kinds() {
             assert!(kind.concurrency() > 0);
             assert!(kind.concurrency() <= total);
@@ -418,6 +450,68 @@ mod tests {
             Duration::from_millis(150)
         );
         assert_eq!(BlockingKind::View.exec_timeout(), Duration::from_secs(2));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn authentication_progresses_when_business_database_lane_is_full() {
+        let business = BlockingKind::Db.semaphore();
+        let held = business
+            .acquire_many(BlockingKind::Db.concurrency() as u32)
+            .await
+            .unwrap();
+        let authenticated = tokio::time::timeout(
+            Duration::from_secs(1),
+            super::run_auth("blocking.test.auth_isolation", || Ok(true)),
+        )
+        .await
+        .expect("business database saturation must not block authentication")
+        .unwrap();
+        assert!(authenticated);
+        assert!(!Arc::ptr_eq(&business, &BlockingKind::Auth.semaphore()));
+        drop(held);
+    }
+
+    #[test]
+    fn bounded_database_work_progresses_when_callers_blocking_pool_is_full() {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .max_blocking_threads(2)
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let release = Arc::new(AtomicBool::new(false));
+            let started = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let mut tasks = Vec::new();
+            for _ in 0..2 {
+                let release = release.clone();
+                let started = started.clone();
+                tasks.push(tokio::task::spawn_blocking(move || {
+                    started.fetch_add(1, Ordering::SeqCst);
+                    while !release.load(Ordering::SeqCst) {
+                        std::thread::sleep(Duration::from_millis(1));
+                    }
+                }));
+            }
+            while started.load(Ordering::SeqCst) != 2 {
+                tokio::task::yield_now().await;
+            }
+            let result = tokio::time::timeout(
+                Duration::from_secs(1),
+                run_db("blocking.test.caller_isolation", || Ok(7)),
+            )
+            .await;
+            release.store(true, Ordering::SeqCst);
+            for task in tasks {
+                task.await.unwrap();
+            }
+            assert_eq!(
+                result
+                    .expect("caller pool must not starve bounded work")
+                    .unwrap(),
+                7
+            );
+        });
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

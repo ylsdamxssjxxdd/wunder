@@ -61,6 +61,27 @@ fn verify_catalog_storage(storage: &dyn StorageBackend) {
     ] {
         storage.upsert_chat_session(&record).unwrap();
     }
+    let mut requested = (0..300)
+        .map(|index| {
+            (
+                "user-a".to_string(),
+                if index % 2 == 0 {
+                    active_id.clone()
+                } else {
+                    archived_id.clone()
+                },
+            )
+        })
+        .collect::<Vec<_>>();
+    requested.push(("user-a".into(), other_id.clone()));
+    requested.push(("user-b".into(), active_id.clone()));
+    requested.push(("user-a".into(), format!("{prefix}-missing")));
+    let titles = storage.list_chat_session_titles(&requested).unwrap();
+    assert_eq!(titles.len(), 2);
+    assert_eq!(titles.get(&active_id).map(String::as_str), Some("thread"));
+    assert_eq!(titles.get(&archived_id).map(String::as_str), Some("thread"));
+    assert!(!titles.contains_key(&other_id));
+    assert!(storage.list_chat_session_titles(&[]).unwrap().is_empty());
     assert_eq!(
         storage
             .list_active_chat_session_ids("user-a", &ids)

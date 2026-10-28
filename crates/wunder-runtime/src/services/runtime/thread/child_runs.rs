@@ -70,6 +70,16 @@ impl ChildRuns {
                 ancestors.push(ancestor.clone());
             }
         }
+        if ancestors.len() > 32 || ancestors.iter().any(|ancestor| ancestor == session_id) {
+            bail!("invalid or excessively deep child run ancestry");
+        }
+        if ancestors.iter().any(|ancestor| {
+            entries
+                .get(ancestor)
+                .is_some_and(|entry| entry.token.is_cancelled())
+        }) {
+            bail!("ancestor run was interrupted");
+        }
         if let Some(previous) = entries.insert(
             session_id.to_string(),
             Entry {
@@ -146,6 +156,41 @@ impl Drop for ChildRunGuard {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cancelled_durable_ancestor_blocks_sibling_dispatch() {
+        let registry = Arc::new(ChildRuns::default());
+        let ancestor = registry
+            .register("fixture-ancestor", "fixture-root")
+            .unwrap();
+        registry.cancel_tree("fixture-ancestor");
+        assert!(registry
+            .register_with_ancestors(
+                "fixture-worker",
+                "fixture-sibling",
+                &["fixture-ancestor".into()]
+            )
+            .is_err());
+        assert!(ancestor.token.is_cancelled());
+    }
+
+    #[test]
+    fn durable_ancestry_respects_depth_and_cycle_boundaries() {
+        let registry = Arc::new(ChildRuns::default());
+        let ancestors = (0..33)
+            .map(|index| format!("fixture-{index}"))
+            .collect::<Vec<_>>();
+        assert!(registry
+            .register_with_ancestors("fixture-worker", "fixture-parent", &ancestors)
+            .is_err());
+        assert!(registry
+            .register_with_ancestors(
+                "fixture-worker",
+                "fixture-parent",
+                &["fixture-worker".into()]
+            )
+            .is_err());
+    }
 
     #[test]
     fn sibling_dispatch_keeps_unloaded_durable_ancestors_cancellable() {

@@ -1,0 +1,18 @@
+{
+  "headOnly": {
+    "thread": "completed",
+    "bubble": "completed",
+    "task": "done"
+  },
+  "repairedRefresh": {
+    "bubble": "completed",
+    "tool": "completed",
+    "pendingRequests": 0,
+    "pendingTimers": 0
+  },
+  "initialRead": "pass",
+  "reopen": "pass",
+  "failure": "pass",
+  "history": "pass",
+  "identityReset": "pass"
+}

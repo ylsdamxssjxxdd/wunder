@@ -64,7 +64,7 @@ fn roots(
         JOIN LATERAL (SELECT turn_id,status,updated_at_ms,control_json FROM service_thread_admissions
             WHERE thread_id=$1 AND root_turn_id=root.root_turn_id
             ORDER BY created_at_ms DESC,turn_id DESC LIMIT 1) head ON TRUE
-        LEFT JOIN service_thread_chat_heads chat ON chat.thread_id=$1 AND chat.root_turn_id=root.root_turn_id
+        LEFT JOIN service_thread_chat_heads_v2 chat ON chat.thread_id=$1 AND chat.root_turn_id=root.root_turn_id
         ORDER BY root.user_round {order}"), &[&session,&before,&after,&((limit+1) as i64),&include_input])?
         .into_iter().map(turn).collect()
 }
@@ -155,8 +155,18 @@ fn chat(turn: &Value, items: &HashMap<String, Value>, seq: i64) -> Result<ChatVi
         );
     }
     row.workflow_count = summary.workflow_count;
+    row.process_count =
+        Some((summary.process_count - i64::from(summary.assistant_process_text)).max(0));
     row.workspace_change_seq = summary.workspace_change_seq;
     row.reasoning_count = summary.reasoning_count;
+    if let Some(item) = summary
+        .reasoning_item_id
+        .as_ref()
+        .filter(|id| **id != row.assistant.item_id)
+        .and_then(|id| items.get(id))
+    {
+        p::set_reasoning(&mut row.assistant, &item["payload"]);
+    }
     row.reasoning_item_id = summary.reasoning_item_id.unwrap_or_default();
     p::settle_question_panel(&mut row);
     Ok(row)
@@ -166,6 +176,36 @@ fn chat(turn: &Value, items: &HashMap<String, Value>, seq: i64) -> Result<ChatVi
 mod inquiry_tests {
     use super::*;
     use wunder_core::thread_store::CanonicalItem;
+
+    #[test]
+    fn service_chat_reasoning_identity_and_body_stay_paired_across_model_rounds() {
+        let summary = ChatSummary {
+            assistant_item_id: Some("fixture-turn:text-1".into()),
+            reasoning_item_id: Some("fixture-turn:text-2".into()),
+            process_count: 3,
+            assistant_process_text: true,
+            ..Default::default()
+        };
+        let turn = json!({"turn_id":"fixture-turn","root_turn_id":"fixture-turn",
+            "user_round":1,"status":"running","summary":summary});
+        let items = HashMap::from([
+            (
+                "fixture-turn:text-1".into(),
+                json!({"item_id":"fixture-turn:text-1","payload":{
+                "content":"Fixture answer","reasoning":"Fixture completed thought"}}),
+            ),
+            (
+                "fixture-turn:text-2".into(),
+                json!({"item_id":"fixture-turn:text-2","payload":{
+                "reasoning":"Fixture next thought"}}),
+            ),
+        ]);
+        let row = chat(&turn, &items, 3).unwrap();
+        assert_eq!(row.assistant.item_id, "fixture-turn:text-1");
+        assert_eq!(row.reasoning_item_id, "fixture-turn:text-2");
+        assert_eq!(row.assistant.reasoning, "Fixture next thought");
+        assert_eq!(row.process_count, Some(2));
+    }
 
     #[test]
     fn service_chat_preserves_explicit_tool_counts_without_inventing_unknown_values() {
@@ -353,6 +393,7 @@ impl PostgresThreadLog<'_> {
                     [
                         "user_item_id",
                         "assistant_item_id",
+                        "reasoning_item_id",
                         "question_panel_item_id",
                         "plan_item_id",
                     ]
@@ -364,7 +405,7 @@ impl PostgresThreadLog<'_> {
                 .collect::<Vec<_>>();
             let mut items = HashMap::new();
             if !ids.is_empty() {
-                for row in tx.query("SELECT item_id,ordinal,preview_json FROM service_thread_items WHERE thread_id=$1 AND item_id=ANY($2) AND visible",&[&session,&ids])? {
+                for row in tx.query("SELECT item_id,ordinal,preview_json FROM service_thread_items_v2 WHERE thread_id=$1 AND item_id=ANY($2) AND visible",&[&session,&ids])? {
                     items.insert(row.get::<_,String>(0),wire(&row.get::<_,String>(2),row.get(1))?);
                 }
             }
@@ -428,7 +469,7 @@ impl PostgresThreadLog<'_> {
             let rows = tx.query(
                 &format!(
                     "SELECT i.ordinal,i.preview_json,COALESCE(a.user_round,0) AS user_round
-                FROM service_thread_items i LEFT JOIN service_thread_admissions a
+                FROM service_thread_items_v2 i LEFT JOIN service_thread_admissions a
                   ON a.thread_id=i.thread_id AND a.turn_id=i.root_turn_id
                 WHERE i.thread_id=$1 AND ($2::text IS NULL OR i.root_turn_id=$2) AND i.visible
                   AND ($3::bigint IS NULL OR i.ordinal<$3) AND ($4::bigint IS NULL OR i.ordinal>$4)
@@ -446,7 +487,7 @@ impl PostgresThreadLog<'_> {
             page.next_before = page.trajectory.first().map(|r| r.item_index);
             page.next_after = page.trajectory.last().map(|r| r.item_index);
             if let Some(cursor) = page.next_after {
-                page.has_newer=tx.query_one("SELECT EXISTS(SELECT 1 FROM service_thread_items WHERE thread_id=$1 AND ($2::text IS NULL OR root_turn_id=$2) AND visible AND ordinal>$3)",&[&session,&root,&cursor])?.get(0);
+                page.has_newer=tx.query_one("SELECT EXISTS(SELECT 1 FROM service_thread_items_v2 WHERE thread_id=$1 AND ($2::text IS NULL OR root_turn_id=$2) AND visible AND ordinal>$3)",&[&session,&root,&cursor])?.get(0);
             }
         }
         Ok(page)
@@ -534,6 +575,7 @@ impl PostgresThreadLog<'_> {
         if item["kind"] == "system_message" {
             p::redact_internal_context(&mut body);
         }
+        p::attach_tool_schema(&mut body);
         let text = match field {
             "content" => message_content_text(&body["content"]).unwrap_or_default(),
             "reasoning" => body
@@ -590,7 +632,7 @@ impl PostgresThreadLog<'_> {
         let rows = tx.query(
             "SELECT i.item_id,i.ordinal,octet_length(text.content) AS bytes,
                 substring(text.content FROM strpos(text.content,$2) FOR 256) AS snippet
-            FROM (SELECT * FROM service_thread_items
+            FROM (SELECT * FROM service_thread_items_v2
                 WHERE thread_id=$1 AND visible AND CASE
                     WHEN strpos(preview_json,$2)>0 THEN true
                     WHEN octet_length(preview_json)<4096 THEN

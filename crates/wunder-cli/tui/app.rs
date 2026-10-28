@@ -7,6 +7,7 @@ use ratatui::layout::Position;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
+use ratatui::widgets::{Paragraph, Wrap};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
@@ -447,6 +448,7 @@ struct InquiryQuestion {
 
 #[derive(Debug, Clone)]
 struct InquiryPanelState {
+    inquiry_turn_id: Option<String>,
     questions: Vec<InquiryQuestion>,
 }
 
@@ -534,8 +536,6 @@ pub struct TuiApp {
     input_click_count: u8,
     history_archived_entries: usize,
     pending_scrollback_lines: Vec<Line<'static>>,
-    banner: crate::empty_state_animation::WelcomeLogo,
-    banner_cells: usize,
     transcript_view: transcript_view::TranscriptView,
     trajectory_view: Option<trajectory::TrajectoryView>,
     /// Cards the reader opened with Enter, keyed by cell identity so trimming the
@@ -761,8 +761,6 @@ impl TuiApp {
             input_click_count: 0,
             history_archived_entries: 0,
             pending_scrollback_lines: Vec::new(),
-            banner: crate::empty_state_animation::WelcomeLogo::default(),
-            banner_cells: 0,
             transcript_view: Default::default(),
             trajectory_view: None,
             expanded_cards: Default::default(),
@@ -909,33 +907,24 @@ impl TuiApp {
         app.display_language = crate::locale::resolve_cli_language(&app.global);
         app.spawn_startup_fills();
         let is_zh = app.is_zh_language();
-        let brand = crate::empty_state_animation::brand_name(is_zh);
+        let brand = crate::session_header::brand_name(is_zh);
         let brand_summary = format!(
             "{} {brand} (v{})",
-            crate::empty_state_animation::BRAND_MARK,
+            crate::session_header::BRAND_MARK,
             env!("CARGO_PKG_VERSION")
         );
-        let fresh_thread = app.logs.is_empty();
         app.push_special_log(
             LogKind::Tool,
             brand_summary.clone(),
             build_static_art_log(
                 brand_summary,
-                crate::empty_state_animation::header_lines(
+                crate::session_header::header_lines(
                     env!("CARGO_PKG_VERSION"),
                     app.runtime.launch_dir.to_string_lossy().as_ref(),
                     is_zh,
                 ),
             ),
         );
-        app.push_log(
-            LogKind::Info,
-            "wunder-cli tui mode. type /help for commands.".to_string(),
-        );
-        app.banner_cells = app.logs.len();
-        if fresh_thread {
-            app.banner.start_fresh();
-        }
         if !app.pending_attachments.is_empty() {
             app.push_log(
                 LogKind::Info,
@@ -1150,31 +1139,6 @@ impl TuiApp {
 
     pub fn request_redraw(&self) {
         self.frame_requester.schedule_frame();
-    }
-
-    /// The welcome logo gives way to the conversation as soon as it advances.
-    fn banner_retired(&self) -> bool {
-        self.banner.is_eligible() && (!self.input.is_empty() || self.logs.len() > self.banner_cells)
-    }
-
-    /// Rows the banner band occupies below the transcript, `0` once it has given way.
-    pub(crate) fn banner_reserved_rows(&self, screen: Rect) -> u16 {
-        if self.banner_retired() {
-            return 0;
-        }
-        self.banner.reserved_rows(screen)
-    }
-
-    /// Paint the welcome logo, retiring it first if the conversation moved on.
-    pub(crate) fn paint_banner(
-        &mut self,
-        screen: Rect,
-    ) -> Option<crate::empty_state_animation::Pose> {
-        if self.banner_retired() {
-            self.banner.dismiss();
-            return None;
-        }
-        self.banner.paint(screen)
     }
 
     pub fn schedule_periodic_redraw_if_needed(&self) {
@@ -2336,7 +2300,13 @@ impl TuiApp {
         if questions.is_empty() {
             return None;
         }
-        Some(InquiryPanelState { questions })
+        Some(InquiryPanelState {
+            inquiry_turn_id: payload
+                .get("turn_id")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+            questions,
+        })
     }
 
     fn parse_inquiry_question(&self, payload: &Value) -> Option<InquiryQuestion> {
@@ -2434,6 +2404,15 @@ impl TuiApp {
                 payload
                     .get("data")
                     .and_then(|value| self.parse_inquiry_panel_state(value))
+            })
+            .map(|mut panel| {
+                panel.inquiry_turn_id = panel.inquiry_turn_id.or_else(|| {
+                    payload
+                        .get("turn_id")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned)
+                });
+                panel
             })
     }
 
@@ -2847,6 +2826,17 @@ impl TuiApp {
     pub fn set_transcript_viewport(&mut self, width: u16, height: u16) {
         let width = width.max(1);
         let height = height.max(1);
+        if self.transcript_viewport_width != width {
+            self.finalize_all_markdown_streams();
+            for index in [self.active_assistant, self.active_reasoning]
+                .into_iter()
+                .flatten()
+            {
+                if let Some(entry) = self.logs.get_mut(index) {
+                    entry.markdown_cache = None;
+                }
+            }
+        }
         if self.transcript_viewport_width != width || self.transcript_viewport_height != height {
             self.transcript_viewport_width = width;
             self.transcript_viewport_height = height;
@@ -2938,14 +2928,34 @@ impl TuiApp {
     }
 
     fn stream_markdown_delta(&mut self, kind: LogKind, index: usize, delta: &str) -> bool {
+        let rebuilding = match kind {
+            LogKind::Assistant => self.assistant_markdown_stream.as_ref(),
+            LogKind::Reasoning => self.reasoning_markdown_stream.as_ref(),
+            _ => return false,
+        }
+        .is_none_or(|state| {
+            state.index != index
+                || state.wrap_width
+                    != markdown_stream_wrap_width(kind, self.transcript_viewport_width)
+        });
+        let source = if rebuilding {
+            let Some(entry) = self.logs.get_mut(index) else {
+                return false;
+            };
+            entry.markdown_cache = None;
+            Some(entry.text.clone())
+        } else {
+            None
+        };
         let Some(state) = self.ensure_markdown_stream_state(kind, index) else {
             return false;
         };
         if delta.is_empty() {
             return false;
         }
-        state.collector.push_delta(delta);
-        if !delta.contains('\n') {
+        let incoming = source.as_deref().unwrap_or(delta);
+        state.collector.push_delta(incoming);
+        if !incoming.contains('\n') {
             return false;
         }
         let newly_completed = state.collector.commit_complete_lines();
@@ -3450,6 +3460,20 @@ impl TuiApp {
         }
     }
 
+    pub(crate) fn composer_height(&mut self, width: u16, height: u16) -> u16 {
+        let text_width = usize::from(width.saturating_sub(4).max(1));
+        let rows = build_wrapped_input_lines(&self.input, text_width)
+            .len()
+            .max(1);
+        let notices = usize::from(self.warning_notice(self.is_zh_language(), width).is_some())
+            + usize::from(self.cloud_error_notice().is_some())
+            + usize::from(
+                self.composer_gap_line(width, self.is_zh_language())
+                    .is_some(),
+            );
+        (rows.min(8) + notices + 3).min(usize::from(height.saturating_sub(2).max(1))) as u16
+    }
+
     pub fn transcript_render_window(&mut self, viewport_height: u16) -> TranscriptRenderWindow {
         self.archive_scrollback_entries(viewport_height);
 
@@ -3507,7 +3531,7 @@ impl TuiApp {
             };
         }
 
-        let render_window = self.transcript_render_window(height);
+        let mut render_window = self.transcript_render_window(height);
         let transcript_total_lines = render_window.total_lines;
         let transcript_scroll = render_window.local_scroll;
         // The gap's unread count rides the total this frame already had to know, so a
@@ -3517,25 +3541,21 @@ impl TuiApp {
         // Alt+R drops the card styling and the markdown spans so a terminal
         // selection copies plain text; codex calls this raw scrollback mode.
         let raw_output = self.raw_output;
-        let mut transcript_lines: Vec<Line<'static>> = if raw_output {
-            render_window
-                .entries
-                .iter()
-                .flat_map(|entry| raw_entry_lines(self.logs[entry.global_index].text.as_str()))
-                .collect()
-        } else {
-            render_window
-                .entries
-                .iter()
-                .flat_map(|entry| {
-                    self.render_entry_lines(
-                        entry.global_index,
-                        selected_transcript.is_some_and(|selected| selected == entry.global_index),
-                        width,
-                    )
-                })
-                .collect()
-        };
+        let mut transcript_lines = Vec::new();
+        render_window.window_line_counts.clear();
+        for entry in &render_window.entries {
+            let lines = if raw_output {
+                raw_entry_lines(self.logs[entry.global_index].text.as_str())
+            } else {
+                self.render_entry_lines(
+                    entry.global_index,
+                    selected_transcript == Some(entry.global_index),
+                    width,
+                )
+            };
+            render_window.window_line_counts.push(lines.len());
+            transcript_lines.extend(lines);
+        }
 
         if transcript_lines.is_empty() {
             let placeholder = if is_zh {
@@ -3610,7 +3630,7 @@ impl TuiApp {
     }
 
     fn archive_scrollback_entries(&mut self, viewport_height: u16) {
-        if self.transcript_offset_from_bottom > 0 {
+        if self.transcript_offset_from_bottom > 0 || self.transcript_selection.is_some() {
             return;
         }
 
@@ -3629,16 +3649,34 @@ impl TuiApp {
             return;
         }
 
+        let mutable_start = self
+            .logs
+            .iter()
+            .enumerate()
+            .skip(archived)
+            .find_map(|(index, entry)| {
+                (self.active_assistant == Some(index)
+                    || self.active_reasoning == Some(index)
+                    || self.entry_is_streaming(entry.kind, index)
+                    || entry
+                        .special
+                        .as_ref()
+                        .is_some_and(SpecialLogEntry::is_pending))
+                .then_some(index)
+            })
+            .unwrap_or(self.logs.len());
         let archive_end = archived
             .saturating_add(window.start_entry)
+            .min(mutable_start)
             .min(self.logs.len());
         let mut lines = Vec::new();
         let render_width = self.transcript_viewport_width.max(1);
         for index in archived..archive_end {
-            lines.extend(self.render_entry_lines(index, false, render_width));
-        }
-        if lines.is_empty() {
-            return;
+            if self.raw_output {
+                lines.extend(raw_entry_lines(self.logs[index].text.as_str()));
+            } else {
+                lines.extend(self.render_entry_lines(index, false, render_width));
+            }
         }
 
         self.pending_scrollback_lines.extend(lines);
@@ -3984,6 +4022,17 @@ impl TuiApp {
         if self.raw_output {
             return raw_entry_lines(self.logs[index].text.as_str()).len();
         }
+        if kind == LogKind::Reasoning && !self.card_is_expanded(index) {
+            let hint = if self.is_zh_language() {
+                "  + 展开思考 (enter)"
+            } else {
+                "  + Show thinking (enter)"
+            };
+            return Paragraph::new(hint)
+                .wrap(Wrap { trim: false })
+                .line_count(width.max(1) as u16)
+                + transcript_entry_spacing_before(index);
+        }
         let expanded = self.card_is_expanded(index);
         let streaming = self.entry_is_streaming(kind, index);
         let Some(entry) = self.logs.get_mut(index) else {
@@ -4033,6 +4082,25 @@ impl TuiApp {
         selected: bool,
         width: u16,
     ) -> Vec<Line<'static>> {
+        if self
+            .logs
+            .get(index)
+            .is_some_and(|entry| entry.kind == LogKind::Reasoning)
+            && !self.card_is_expanded(index)
+        {
+            let mut lines = vec![Line::from(Span::styled(
+                if self.is_zh_language() {
+                    "  + 展开思考 (enter)"
+                } else {
+                    "  + Show thinking (enter)"
+                },
+                super::theme::secondary_text(),
+            ))];
+            if index > 0 {
+                lines.insert(0, Line::default());
+            }
+            return lines;
+        }
         let Some(kind) = self.logs.get(index).map(|entry| entry.kind) else {
             return Vec::new();
         };
@@ -6852,6 +6920,11 @@ impl TuiApp {
         if prompt.trim().is_empty() && !has_attachments {
             return Ok(());
         }
+        let inquiry_turn_id = self
+            .active_inquiry_panel
+            .as_ref()
+            .filter(|_| !prompt.trim_start().starts_with('/'))
+            .and_then(|panel| panel.inquiry_turn_id.clone());
         if let Some(converted) = self.try_convert_inquiry_input(prompt.as_str()) {
             if converted.trim().is_empty() && !has_attachments {
                 return Ok(());
@@ -6916,7 +6989,7 @@ impl TuiApp {
             self.push_log(LogKind::Error, err.to_string());
             return Ok(());
         }
-        self.start_stream_request(prompt, user_echo, request_attachments)
+        self.start_stream_request(prompt, user_echo, request_attachments, inquiry_turn_id)
             .await?;
         self.clear_pending_attachments();
         Ok(())
@@ -6927,6 +7000,7 @@ impl TuiApp {
         prompt: String,
         user_echo: String,
         attachments: Option<Vec<wunder_server::schemas::AttachmentPayload>>,
+        inquiry_turn_id: Option<String>,
     ) -> Result<()> {
         // Write access can change between the switch and this send (an orchestration
         // run may claim or release the thread), so the verdict is re-read here and
@@ -6998,6 +7072,10 @@ impl TuiApp {
         .await?;
         request.config_overrides.get_or_insert_with(|| json!({}))["__local_open_lease"] =
             json!({"owner":self.open_instance_id,"token":self.open_lease_token});
+        if let Some(inquiry_turn_id) = inquiry_turn_id {
+            request.config_overrides.get_or_insert_with(|| json!({}))["__inquiry_turn_id"] =
+                json!(inquiry_turn_id);
+        }
         request.approval_tx = Some(approval_tx);
         let orchestrator = self.runtime.state.kernel.orchestrator.clone();
         let frame_requester = self.frame_requester.clone();
@@ -7988,7 +8066,11 @@ impl TuiApp {
                 self.finalize_all_markdown_streams();
                 self.interrupt_pending_tools();
                 self.maybe_emit_tool_only_final_summary();
-                if !self.stream_saw_output && !self.stream_saw_final {
+                if !self.stream_saw_output
+                    && !self.stream_saw_final
+                    && self.thread_registry.terminal_status(&session_id)
+                        != Some(super::thread_registry::ThreadRunState::Failed)
+                {
                     self.push_log(
                         LogKind::Error,
                         "stream ended without model output or final answer".to_string(),
@@ -8200,6 +8282,7 @@ impl TuiApp {
                 // Skip progress events in tool-only workflow rendering.
             }
             "llm_request" => {
+                self.finalize_all_markdown_streams();
                 self.session_stats.model_calls = self.session_stats.model_calls.saturating_add(1);
                 self.active_assistant = None;
                 self.active_reasoning = None;
@@ -8363,6 +8446,10 @@ impl TuiApp {
             }
             "error" => {
                 let message = parse_error_message(payload);
+                self.thread_registry.record_terminal(
+                    &self.session_id,
+                    super::thread_registry::ThreadRunState::Failed,
+                );
                 self.push_log(LogKind::Error, format!("[error] {message}"));
                 self.note_cloud_error(&message);
             }
@@ -8588,16 +8675,6 @@ impl TuiApp {
             }
         }
 
-        if !has_meaningful_assistant {
-            self.push_log(
-                LogKind::Assistant,
-                crate::locale::tr(
-                    self.display_language.as_str(),
-                    "正在调用工具...",
-                    "calling tools...",
-                ),
-            );
-        }
         self.tool_phase_notice_emitted = true;
     }
 

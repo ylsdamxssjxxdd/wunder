@@ -12,6 +12,8 @@ pub type CloudThreadCancellation = CancellationToken;
 #[derive(Debug)]
 pub enum CloudThreadEvent {
     Change(ThreadViewChanges),
+    ProcessItem(Value),
+    Tail(Value),
     Reload,
     Connection(String),
 }
@@ -124,6 +126,11 @@ async fn watch(
                                 let event = frame.pointer("/payload/event").and_then(Value::as_str).unwrap_or("");
                                 if event == "thread_view_required" || event == "stream_overflow" {
                                     let _ = sender.send(CloudThreadEvent::Reload).await; return Ok(());
+                                }
+                                if matches!(event, "thread_process_item" | "thread_item_tail") {
+                                    let data = frame["payload"]["data"].get("data").unwrap_or(&frame["payload"]["data"]).clone();
+                                    let live = if event == "thread_process_item" { CloudThreadEvent::ProcessItem(data) } else { CloudThreadEvent::Tail(data) };
+                                    if sender.send(live).await.is_err() { return Ok(()); }
                                 }
                                 if event == "thread_view_change" {
                                     let change: ThreadViewChanges = serde_json::from_value(frame["payload"]["data"].clone())?;

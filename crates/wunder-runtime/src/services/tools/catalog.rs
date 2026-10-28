@@ -898,8 +898,8 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                 super::schema::string("name")
                     .desc(t("tool.spec.skill_call.args.name")),
                 super::schema::string("action")
-                    .desc("manifest returns compact metadata; read fetches one bounded resource")
-                    .enums(vec!["manifest", "read"])
+                    .desc("load (default) returns SKILL.md plus its resource index in one page; read fetches one bounded resource page; manifest returns metadata and one resource-index page only")
+                    .enums(vec!["load", "read", "manifest"])
                     .optional(),
                 super::schema::string("path")
                     .desc("Skill-relative resource path, default SKILL.md")
@@ -912,15 +912,15 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     .min(1)
                     .optional(),
                 super::schema::integer("line_limit")
-                    .desc("Maximum lines to return (capped by runtime)")
+                    .desc("Maximum lines to return (default 800 for load, 160 for read; capped by runtime)")
                     .min(1)
-                    .max(400)
+                    .max(800)
                     .optional(),
                 super::schema::string("cursor")
                     .desc("Opaque UTF-8 continuation cursor from a prior read; mutually exclusive with section, start_line and full.")
                     .optional(),
                 super::schema::integer("bytes_limit")
-                    .desc("Maximum UTF-8 bytes for one read page (default 16384, maximum 65536).")
+                    .desc("Maximum UTF-8 bytes for one page (default 49152 for load, 16384 for read; maximum 65536).")
                     .min(4)
                     .max(65536)
                     .optional(),

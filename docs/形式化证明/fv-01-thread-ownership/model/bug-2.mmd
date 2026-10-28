@@ -1,0 +1,48 @@
+---
+config:
+  markdownAutoWrap: false
+  state:
+    useMaxWidth: false
+---
+stateDiagram-v2
+  %% second model (fix): the fix
+  classDef works fill:#f4f6f7,stroke:#566573,color:#1b2631
+  classDef wrong fill:#fdedec,stroke:#c0392b,color:#7b241c
+  classDef fixed fill:#e9f7ef,stroke:#1e8449,color:#145a32
+  classDef mixed fill:#fdebd0,stroke:#d35400,color:#7e5109
+  classDef after fill:#ffffff,stroke:#808b96,color:#566573
+  classDef worse fill:#f4ecf7,stroke:#7d3c98,color:#4a235a
+  classDef worksPath fill:#f4f6f7,stroke:#1f3a93,stroke-width:4px,color:#1b2631
+  classDef wrongPath fill:#fdedec,stroke:#1f3a93,stroke-width:4px,color:#7b241c
+  classDef fixedPath fill:#e9f7ef,stroke:#1f3a93,stroke-width:4px,color:#145a32
+  classDef mixedPath fill:#fdebd0,stroke:#1f3a93,stroke-width:4px,color:#7e5109
+  classDef afterPath fill:#ffffff,stroke:#1f3a93,stroke-width:4px,color:#566573
+  classDef worsePath fill:#f4ecf7,stroke:#1f3a93,stroke-width:4px,color:#4a235a
+  state "Legend" as legend {
+    state "规则成立" as legendWorks
+    state "修复后旧错误不可达或新增正确状态" as legendFixed
+  }
+  class legendWorks works
+  class legendFixed fixed
+  state "实例 A 持有执行锁（第 1 代）<br/>实例 A<br/>打开线程（租约第 1 代）<br/>实例<br/>A执行中，实例 B空闲" as s0
+  state "实例 B 持有执行锁（第 2 代）<br/>实例 B<br/>打开线程（租约第 2 代）<br/>实例<br/>A执行中，实例 B执行中" as s1
+  state "执行锁已过期（原 实例 A 第 1<br/>代）<br/>实例 A 打开线程（租约第 1<br/>代）<br/>实例 A执行中，实例 B空闲" as s2
+  state "执行锁已过期（原 实例 A 第 1<br/>代）<br/>实例 B 打开线程（租约第 2<br/>代）<br/>实例 A执行中，实例 B已打开线程" as s3
+  state "执行锁已过期（原 实例 A 第 1<br/>代）<br/>打开租约已过期（原 实例 A 第 1<br/>代）<br/>实例 A执行中，实例 B空闲" as s4
+  state "无执行锁<br/>实例 A 打开线程（租约第 1<br/>代）<br/>实例 A已打开线程，实例 B空闲" as s5
+  state "无执行锁<br/>无线程打开租约<br/>实例<br/>A空闲，实例 B空闲" as s6
+  [*] --> s6
+  s6 --> s5 : 1. 实例 A 打开线程，获得打开租约（第 1 代）
+  s5 --> s0 : 2. 实例 A 开始执行，获得执行锁（第 1 代）
+  s0 --> s2 : 3. 执行锁持有者心跳延迟，锁行到期
+  s2 --> s4 : 4. 打开租约持有者心跳延迟，租约到期
+  s4 --> s3 : 5. 实例 B 打开线程，获得打开租约（第 2 代）
+  s3 --> s1 : 6. 实例 B 开始执行，获得执行锁（第 2 代）
+  s1 --> s1 : 7. 实例 A 的迟到心跳给他人的执行锁续期<br/>#160;<br/>with the fix, 实例 B 心跳续期自己的执行锁
+  class s0 worksPath
+  class s1 fixedPath
+  class s2 worksPath
+  class s3 worksPath
+  class s4 worksPath
+  class s5 worksPath
+  class s6 fixedPath

@@ -54,23 +54,27 @@ fn rebuild_batch_end(
 }
 
 pub(super) fn initialize(conn: &mut PgTx<'_>) -> Result<()> {
-    conn.batch_execute("CREATE TABLE IF NOT EXISTS service_thread_items (
+    conn.batch_execute("CREATE TABLE IF NOT EXISTS service_thread_items_v2 (
         thread_id TEXT NOT NULL REFERENCES service_threads(thread_id) ON DELETE CASCADE,
         item_id TEXT NOT NULL, turn_id TEXT NOT NULL, root_turn_id TEXT NOT NULL,
         ordinal BIGINT NOT NULL, visible BOOLEAN NOT NULL, preview_json TEXT NOT NULL,
         PRIMARY KEY(thread_id,item_id), UNIQUE(thread_id,ordinal)
     );
-    CREATE INDEX IF NOT EXISTS service_thread_items_root ON service_thread_items(thread_id,root_turn_id,ordinal);
-    CREATE INDEX IF NOT EXISTS service_thread_items_visible ON service_thread_items(thread_id,ordinal) WHERE visible;
-    CREATE TABLE IF NOT EXISTS service_thread_chat_heads (
+    CREATE INDEX IF NOT EXISTS service_thread_v2_items_root ON service_thread_items_v2(thread_id,root_turn_id,ordinal);
+    CREATE INDEX IF NOT EXISTS service_thread_v2_items_visible ON service_thread_items_v2(thread_id,ordinal) WHERE visible;
+    CREATE TABLE IF NOT EXISTS service_thread_chat_heads_v2 (
         thread_id TEXT NOT NULL REFERENCES service_threads(thread_id) ON DELETE CASCADE,
         root_turn_id TEXT NOT NULL, summary_json TEXT NOT NULL,
         PRIMARY KEY(thread_id,root_turn_id)
     );
-    CREATE TABLE IF NOT EXISTS service_thread_display_state (
+    CREATE TABLE IF NOT EXISTS service_thread_display_state_v2 (
         thread_id TEXT PRIMARY KEY REFERENCES service_threads(thread_id) ON DELETE CASCADE,
-        next_ordinal BIGINT NOT NULL
+        next_ordinal BIGINT NOT NULL,
+        item_count BIGINT,
+        visible_count BIGINT
     );
+    ALTER TABLE service_thread_display_state_v2 ADD COLUMN IF NOT EXISTS item_count BIGINT;
+    ALTER TABLE service_thread_display_state_v2 ADD COLUMN IF NOT EXISTS visible_count BIGINT;
     CREATE INDEX IF NOT EXISTS service_thread_admission_root
       ON service_thread_admissions(thread_id,root_turn_id,created_at_ms DESC,turn_id DESC);
     CREATE INDEX IF NOT EXISTS service_thread_admission_roots
@@ -82,13 +86,32 @@ pub(super) fn initialize(conn: &mut PgTx<'_>) -> Result<()> {
       WHERE status IN ('running','waiting_input','waiting_approval');")
 }
 
+fn ensure_counts(tx: &mut PgTx<'_>, thread: &str) -> Result<()> {
+    if tx.query_opt("SELECT 1 FROM service_thread_display_state_v2 WHERE thread_id=$1 AND item_count IS NOT NULL AND visible_count IS NOT NULL", &[&thread])?.is_some() {
+        return Ok(());
+    }
+    tx.execute("INSERT INTO service_thread_display_state_v2(thread_id,next_ordinal,item_count,visible_count)
+        SELECT $1,0,COUNT(*),COUNT(*) FILTER(WHERE visible) FROM service_thread_items_v2 WHERE thread_id=$1
+        ON CONFLICT(thread_id) DO UPDATE SET item_count=excluded.item_count,visible_count=excluded.visible_count", &[&thread])?;
+    Ok(())
+}
+
+pub(super) fn counts(tx: &mut PgTx<'_>, thread: &str, internal: bool) -> Result<(i64, i64)> {
+    let row = tx.query_one("SELECT owner.latest_user_round,COALESCE(CASE WHEN $2 THEN state.item_count ELSE state.visible_count END,0)
+        FROM service_thread_owners owner LEFT JOIN service_thread_display_state_v2 state USING(thread_id) WHERE owner.thread_id=$1", &[&thread,&internal])?;
+    Ok((row.get(0), row.get(1)))
+}
+
 pub(super) fn project_batch(
     tx: &mut PgTx<'_>,
     thread: &str,
     records: &[RolloutRecord],
     next: i64,
 ) -> Result<()> {
+    ensure_counts(tx, thread)?;
     let mut heads: HashMap<String, ChatSummary> = HashMap::new();
+    let mut item_count = 0i64;
+    let mut visible_count = 0i64;
     for record in records {
         let CanonicalRecord::Event(CanonicalEvent::ItemCompleted(item)) = &record.record else {
             continue;
@@ -134,14 +157,16 @@ pub(super) fn project_batch(
                 ));
         let preview = item_preview(&value);
         let ordinal = record.ordinal as i64;
-        let inserted = tx.execute("INSERT INTO service_thread_items(thread_id,item_id,turn_id,root_turn_id,ordinal,visible,preview_json)
+        let inserted = tx.execute("INSERT INTO service_thread_items_v2(thread_id,item_id,turn_id,root_turn_id,ordinal,visible,preview_json)
             VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(thread_id,item_id) DO NOTHING",
             &[&thread,&item.item_id.as_str(),&turn,&root,&ordinal,&visible,&serde_json::to_string(&preview)?])?;
         if inserted == 0 {
             continue;
         }
+        item_count += 1;
+        visible_count += i64::from(visible);
         if !heads.contains_key(&root) {
-            let raw: Option<String> = tx.query_opt("SELECT summary_json FROM service_thread_chat_heads WHERE thread_id=$1 AND root_turn_id=$2", &[&thread,&root])?.map(|r|r.get(0));
+            let raw: Option<String> = tx.query_opt("SELECT summary_json FROM service_thread_chat_heads_v2 WHERE thread_id=$1 AND root_turn_id=$2", &[&thread,&root])?.map(|r|r.get(0));
             heads.insert(
                 root.clone(),
                 raw.as_deref()
@@ -161,11 +186,10 @@ pub(super) fn project_batch(
         );
     }
     for (root, summary) in heads {
-        tx.execute("INSERT INTO service_thread_chat_heads(thread_id,root_turn_id,summary_json) VALUES($1,$2,$3)
+        tx.execute("INSERT INTO service_thread_chat_heads_v2(thread_id,root_turn_id,summary_json) VALUES($1,$2,$3)
             ON CONFLICT(thread_id,root_turn_id) DO UPDATE SET summary_json=excluded.summary_json", &[&thread,&root,&serde_json::to_string(&summary)?])?;
     }
-    tx.execute("INSERT INTO service_thread_display_state(thread_id,next_ordinal) VALUES($1,$2)
-        ON CONFLICT(thread_id) DO UPDATE SET next_ordinal=GREATEST(service_thread_display_state.next_ordinal,excluded.next_ordinal)", &[&thread,&next])?;
+    tx.execute("UPDATE service_thread_display_state_v2 SET next_ordinal=GREATEST(next_ordinal,$2),item_count=item_count+$3,visible_count=visible_count+$4 WHERE thread_id=$1", &[&thread,&next,&item_count,&visible_count])?;
     Ok(())
 }
 
@@ -174,15 +198,15 @@ pub(super) fn project_batch(
 pub(super) fn ensure_ready(storage: &PostgresStorage, thread: &str) -> Result<()> {
     let mut conn = storage.conn()?;
     let Some(row) = conn.query_opt(
-        "SELECT t.history_revision,COALESCE(p.next_ordinal,0) FROM service_threads t
-        LEFT JOIN service_thread_display_state p ON p.thread_id=t.thread_id WHERE t.thread_id=$1",
+        "SELECT t.history_revision,COALESCE(p.next_ordinal,0),p.item_count IS NOT NULL AND p.visible_count IS NOT NULL FROM service_threads t
+        LEFT JOIN service_thread_display_state_v2 p ON p.thread_id=t.thread_id WHERE t.thread_id=$1",
         &[&thread],
     )?
     else {
         return Ok(());
     };
     let target: i64 = row.get(0);
-    if row.get::<_, i64>(1) >= target {
+    if row.get::<_, i64>(1) >= target && row.get::<_, bool>(2) {
         return Ok(());
     }
     loop {
@@ -191,14 +215,16 @@ pub(super) fn ensure_ready(storage: &PostgresStorage, thread: &str) -> Result<()
             "SELECT history_revision FROM service_threads WHERE thread_id=$1 FOR UPDATE",
             &[&thread],
         )?;
+        ensure_counts(&mut tx, thread)?;
         let position = tx
             .query_opt(
-                "SELECT next_ordinal FROM service_thread_display_state WHERE thread_id=$1",
+                "SELECT next_ordinal FROM service_thread_display_state_v2 WHERE thread_id=$1",
                 &[&thread],
             )?
             .map(|r| r.get::<_, i64>(0))
             .unwrap_or(0);
         if position >= target {
+            tx.commit()?;
             return Ok(());
         }
         let sizes = tx.query("SELECT ordinal,octet_length(record_json) FROM service_thread_records WHERE thread_id=$1 AND ordinal>=$2 AND ordinal<$3 ORDER BY ordinal LIMIT 128", &[&thread,&position,&target])?;
@@ -244,6 +270,118 @@ mod tests {
     use super::*;
     use crate::storage::{canonical_thread_log::wait, ThreadLogStore};
     use wunder_core::thread_store::*;
+
+    #[test]
+    #[ignore = "requires an isolated WUNDER_TEST_POSTGRES_DSN"]
+    fn postgres_long_history_performance_and_storage_audit() {
+        use std::time::Instant;
+        let storage =
+            PostgresStorage::new(std::env::var("WUNDER_TEST_POSTGRES_DSN").unwrap(), 5, 4).unwrap();
+        let store = storage.service_threads().unwrap();
+        let thread =
+            ThreadId::new(format!("sample-audit-{}", uuid::Uuid::new_v4().simple())).unwrap();
+        let owner = "sample-audit-owner";
+        let admissions = store.admission_store();
+        admissions.register_owner(owner, thread.as_str()).unwrap();
+        let rollout = RolloutId::new(uuid::Uuid::new_v4().to_string()).unwrap();
+        wait(store.create_thread(CreateThreadRequest {
+            metadata: ThreadMetadata {
+                thread_id: thread.clone(),
+                current_rollout_id: rollout.clone(),
+                status: ThreadStatus::Active,
+                created_at_ms: 1,
+                updated_at_ms: 1,
+                title: None,
+                workspace_id: None,
+                pinned: false,
+            },
+            session_meta: SessionMeta {
+                thread_id: thread.clone(),
+                rollout_id: rollout,
+                created_at_ms: 1,
+                source: "sample".into(),
+                initial_system_prompt: "sample instructions".into(),
+                initial_memory: None,
+                parent_thread_id: None,
+                history_base: None,
+                capabilities: Value::Null,
+            },
+        }))
+        .unwrap()
+        .unwrap();
+        let admitted = admissions
+            .accept(owner, thread.as_str(), &json!({"content":"sample input"}))
+            .unwrap();
+        let turn = TurnId::new(admitted["turn_id"].as_str().unwrap()).unwrap();
+        let text = "sample output ".repeat(2521);
+        let mut reports = Vec::new();
+        let mut conn = storage.conn().unwrap();
+        for end in [128usize, 2048] {
+            let start = if end == 128 { 0 } else { 128 };
+            for first in (start..end).step_by(32) {
+                let records = (first..(first + 32).min(end))
+                    .map(|index| {
+                        CanonicalRecord::Event(CanonicalEvent::ItemCompleted(CanonicalItem {
+                            item_id: ItemId::new(format!("{turn}:sample-{index}")).unwrap(),
+                            turn_id: turn.clone(),
+                            root_turn_id: Some(turn.clone()),
+                            created_at_ms: index as i64 + 2,
+                            kind: CanonicalItemKind::AssistantMessage,
+                            payload: json!({"content":text,"model_round":index+1}),
+                            display_output: None,
+                            display_output_truncated: false,
+                        }))
+                    })
+                    .collect();
+                wait(store.append_canonical(&thread, records))
+                    .unwrap()
+                    .unwrap();
+            }
+            let mut scan = Vec::new();
+            let mut indexed = Vec::new();
+            for _ in 0..30 {
+                let started = Instant::now();
+                let actual: i64 = conn
+                    .query_one(
+                        "SELECT COUNT(*) FROM service_thread_items_v2 WHERE thread_id=$1 AND visible",
+                        &[&thread.as_str()],
+                    )
+                    .unwrap()
+                    .get(0);
+                scan.push(started.elapsed().as_secs_f64() * 1000.0);
+                let started = Instant::now();
+                let cached: i64 = conn
+                    .query_one(
+                        "SELECT visible_count FROM service_thread_display_state_v2 WHERE thread_id=$1",
+                        &[&thread.as_str()],
+                    )
+                    .unwrap()
+                    .get(0);
+                indexed.push(started.elapsed().as_secs_f64() * 1000.0);
+                assert_eq!(actual, end as i64);
+                assert_eq!(actual, cached);
+            }
+            scan.sort_by(f64::total_cmp);
+            indexed.sort_by(f64::total_cmp);
+            let started = Instant::now();
+            let snapshot = storage.thread_snapshot(owner, thread.as_str()).unwrap();
+            let full_ms = started.elapsed().as_secs_f64() * 1000.0;
+            let started = Instant::now();
+            let preview = storage
+                .thread_preview_snapshot(owner, thread.as_str())
+                .unwrap();
+            let preview_ms = started.elapsed().as_secs_f64() * 1000.0;
+            let plan = conn.query("EXPLAIN (ANALYZE,BUFFERS) SELECT visible_count FROM service_thread_display_state_v2 WHERE thread_id=$1", &[&thread.as_str()]).unwrap().iter().map(|row| row.get::<_,String>(0)).collect::<Vec<_>>();
+            let scanned_plan = conn.query("EXPLAIN (ANALYZE,BUFFERS) SELECT COUNT(*) FROM service_thread_items_v2 WHERE thread_id=$1 AND visible", &[&thread.as_str()]).unwrap().iter().map(|row| row.get::<_,String>(0)).collect::<Vec<_>>();
+            let audit = conn.query_one("SELECT (SELECT COALESCE(SUM(octet_length(record_json)),0)::bigint FROM service_thread_records WHERE thread_id=$1),(SELECT COALESCE(SUM(octet_length(preview_json)),0)::bigint FROM service_thread_items_v2 WHERE thread_id=$1),(SELECT COUNT(*) FROM service_thread_admissions WHERE thread_id=$1 AND input_json IS NOT NULL)", &[&thread.as_str()]).unwrap();
+            reports.push(json!({"items":end,"samples":30,"count_scan_ms":{"p50":scan[14],"p95":scan[28]},"count_projection_ms":{"p50":indexed[14],"p95":indexed[28]},"snapshot":{"full_ms":full_ms,"preview_ms":preview_ms,"full_bytes":serde_json::to_vec(&snapshot).unwrap().len(),"preview_bytes":serde_json::to_vec(&preview).unwrap().len()},"storage":{"canonical_bytes":audit.get::<_,i64>(0),"preview_bytes":audit.get::<_,i64>(1),"pending_inputs":audit.get::<_,i64>(2)},"projection_plan":plan,"scan_plan":scanned_plan}));
+        }
+        println!(
+            "{}",
+            json!({"profile":"windows-debug-postgres16-loopback","scenarios":reports})
+        );
+        wait(store.delete_thread(&thread)).unwrap().unwrap();
+    }
 
     #[test]
     #[ignore = "requires an isolated WUNDER_TEST_POSTGRES_DSN"]
@@ -430,11 +568,23 @@ mod tests {
             )
             .unwrap();
         let snapshot_model = snapshot["items"].as_array().unwrap().last().unwrap();
+        assert!(snapshot_model.get("preview_only").is_none());
+        assert_eq!(
+            snapshot_model["payload"]["content"].as_str().unwrap(),
+            full_text
+        );
         assert_eq!(
             snapshot_model["completed_at"].as_f64().unwrap()
                 - snapshot_model["started_at"].as_f64().unwrap(),
             2.0
         );
+        let preview = storage
+            .thread_preview_snapshot(owner, thread.as_str())
+            .unwrap();
+        let preview_model = preview["items"].as_array().unwrap().last().unwrap();
+        assert_eq!(preview_model["preview_only"], true);
+        assert!(preview_model["payload"]["content"].as_str().unwrap().len() < full_text.len());
+        assert!(serde_json::to_vec(&preview).unwrap().len() < 1024 * 1024);
         let older_trajectory = storage
             .thread_view_page(
                 owner,
@@ -530,23 +680,36 @@ mod tests {
         // Lose a rebuildable index, then resume projection and replay it twice.
         let mut conn = storage.conn().unwrap();
         conn.execute(
-            "DELETE FROM service_thread_items WHERE thread_id=$1",
+            "DELETE FROM service_thread_items_v2 WHERE thread_id=$1",
             &[&thread.as_str()],
         )
         .unwrap();
         conn.execute(
-            "DELETE FROM service_thread_chat_heads WHERE thread_id=$1",
+            "DELETE FROM service_thread_chat_heads_v2 WHERE thread_id=$1",
             &[&thread.as_str()],
         )
         .unwrap();
         conn.execute(
-            "DELETE FROM service_thread_display_state WHERE thread_id=$1",
+            "DELETE FROM service_thread_display_state_v2 WHERE thread_id=$1",
             &[&thread.as_str()],
         )
         .unwrap();
         let restored = storage
             .thread_view_page(owner, thread.as_str(), "chat", None, 12)
             .unwrap();
+        assert_eq!(
+            storage
+                .get_thread_log_counts(owner, thread.as_str(), true)
+                .unwrap(),
+            (25, 25 * 106)
+        );
+        conn.execute("UPDATE service_thread_display_state_v2 SET item_count=NULL,visible_count=NULL WHERE thread_id=$1", &[&thread.as_str()]).unwrap();
+        assert_eq!(
+            storage
+                .get_thread_log_counts(owner, thread.as_str(), false)
+                .unwrap(),
+            (25, 25 * 106)
+        );
         let repeated = storage
             .thread_view_page(owner, thread.as_str(), "chat", None, 12)
             .unwrap();
@@ -623,7 +786,7 @@ mod tests {
             .unwrap()
             .get(0);
         conn.execute(
-            "UPDATE service_thread_display_state SET next_ordinal=$2 WHERE thread_id=$1",
+            "UPDATE service_thread_display_state_v2 SET next_ordinal=$2 WHERE thread_id=$1",
             &[&thread.as_str(), &broken_ordinal],
         )
         .unwrap();
@@ -631,7 +794,7 @@ mod tests {
         assert!(ensure_ready(&storage, thread.as_str()).is_err());
         assert_eq!(
             conn.query_one(
-                "SELECT next_ordinal FROM service_thread_display_state WHERE thread_id=$1",
+                "SELECT next_ordinal FROM service_thread_display_state_v2 WHERE thread_id=$1",
                 &[&thread.as_str()]
             )
             .unwrap()
@@ -646,7 +809,7 @@ mod tests {
         assert!(ensure_ready(&storage, thread.as_str()).is_err());
         assert_eq!(
             conn.query_one(
-                "SELECT next_ordinal FROM service_thread_display_state WHERE thread_id=$1",
+                "SELECT next_ordinal FROM service_thread_display_state_v2 WHERE thread_id=$1",
                 &[&thread.as_str()]
             )
             .unwrap()
@@ -657,7 +820,7 @@ mod tests {
         ensure_ready(&storage, thread.as_str()).unwrap();
         assert_eq!(
             conn.query_one(
-                "SELECT next_ordinal FROM service_thread_display_state WHERE thread_id=$1",
+                "SELECT next_ordinal FROM service_thread_display_state_v2 WHERE thread_id=$1",
                 &[&thread.as_str()]
             )
             .unwrap()
@@ -672,7 +835,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             conn.query_one(
-                "SELECT count(*) FROM service_thread_items WHERE thread_id=$1",
+                "SELECT count(*) FROM service_thread_items_v2 WHERE thread_id=$1",
                 &[&thread.as_str()]
             )
             .unwrap()

@@ -1,0 +1,20 @@
+running 16 tests
+test api::chat::sessions::tests::finished_queue_task_does_not_keep_stream_active ... ok
+test api::chat::sessions::tests::history_cursor_advances_past_scanned_raw_rows_when_visible_window_not_trimmed ... ok
+test api::chat::sessions::tests::log_overview_falls_back_to_persisted_assistant_decode_speed ... ok
+test api::chat::sessions::tests::normalize_before_seq_ignores_invalid_cursor_values ... ok
+test api::chat::sessions::tests::projected_queue_assistant_message_contains_queue_workflow ... ok
+test api::chat::sessions::tests::projected_queue_messages_keep_client_message_id ... ok
+test api::chat::sessions::tests::projected_queue_user_message_keeps_attachment_payload ... ok
+test api::chat::sessions::tests::projected_queue_workflow_derives_wait_ahead_for_legacy_task_payload ... ok
+test api::chat::sessions::tests::pure_queue_projection_appends_pending_turn_without_touching_previous_assistant ... ok
+test api::chat::sessions::tests::pure_queue_projection_reuses_trailing_user_message ... ok
+test api::chat::sessions::tests::queue_task_counts_as_active_stream_state ... ok
+test api::chat::sessions::tests::raw_history_page_uses_oldest_raw_id_as_cursor_after_sentinel_trim ... ok
+test api::chat::sessions::tests::running_state_inserts_placeholder_after_hinted_user_round ... ok
+test api::chat::sessions::tests::running_state_uses_monitor_user_round_hint ... ok
+test api::chat::sessions::tests::transcript_summary_preserves_identity_and_marks_large_fields ... ok
+test api::chat::sessions::tests::visible_transcript_page_merge_backfills_without_dropping_recent_window ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 2187 filtered out; finished in 0.13s
+

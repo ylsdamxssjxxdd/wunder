@@ -6,12 +6,14 @@
 .messenger-view {
   /* §11.1 colour tokens. The accent family is not a literal here: it follows
      `--ui-accent*`, the one palette the theme picker writes, so the shell,
-     its buttons and the activity heatmap retint together. The fallbacks keep
-     the default terracotta if base.css has not loaded yet. */
-  --mz-primary: var(--ui-accent, #c96443);
-  --mz-primary-hover: var(--ui-accent-hover, #b55637);
-  --mz-primary-soft: var(--ui-accent-secondary, #dfac9a);
-  --mz-primary-tint: var(--ui-accent-soft, #f6e9e3);
+     its buttons and the activity heatmap retint together.
+     `--mz-primary*` 承载有信息含义的前景（文字、图标、实心底、焦点环），
+     所以接 ink 而不是品牌色；浅底着色与渐变仍走 `--ui-accent`。
+     对比度依据见 base.css 的 --ui-accent-ink 注释。 */
+  --mz-primary: var(--ui-accent-ink);
+  --mz-primary-hover: var(--ui-accent-ink-hover);
+  --mz-primary-soft: var(--ui-accent-secondary);
+  --mz-primary-tint: var(--ui-accent-soft);
   --mz-bg: #fbfaf8;
   --mz-surface: #ffffff;
   --mz-sidebar: #f6f5f3;
@@ -240,13 +242,13 @@
 }
 
 .messenger-sidebar-device-option.is-selected {
-  background: var(--mz-primary-tint, #f6e9e3);
+  background: var(--mz-primary-tint, var(--ui-accent-soft));
 }
 
 .messenger-sidebar-device-option-icon {
   flex-shrink: 0;
   width: 15px;
-  color: var(--mz-primary, #c96443);
+  color: var(--mz-primary, var(--ui-accent-ink));
   font-size: var(--mz-font-sm, 12px);
   text-align: center;
 }
@@ -269,7 +271,7 @@
 .messenger-sidebar-device-option-check {
   flex-shrink: 0;
   width: 10px;
-  color: var(--mz-primary, #c96443);
+  color: var(--mz-primary, var(--ui-accent-ink));
   font-size: 10px;
 }
 
@@ -586,7 +588,7 @@ button.messenger-sidebar-workspace-row {
 }
 
 .mz-thread-context-item:hover:not(:disabled) {
-  color: var(--mz-primary, #c96443);
+  color: var(--mz-primary, var(--ui-accent-ink));
   background: var(--mz-hover, #f1efec);
 }
 
@@ -1029,6 +1031,12 @@ button.messenger-sidebar-workspace-row {
   background: var(--mz-primary-tint);
 }
 
+/* 拖拽落点：目录行的可投放反馈。 */
+.workspace-file-row.is-drop-target {
+  background: var(--mz-primary-tint);
+  box-shadow: inset 0 0 0 1px var(--mz-primary);
+}
+
 .workspace-file-twisty {
   display: inline-flex;
   flex-shrink: 0;
@@ -1053,12 +1061,15 @@ button.messenger-sidebar-workspace-row {
   text-align: center;
 }
 
-/* VSCode 彩色主题图标（文件行），目录仍走 FA。 */
+/* VSCode 彩色主题图标（文件行），目录仍走 FA。
+   pointer-events: none 让图标不再是拖拽起点 —— 否则从图标上按下拖动时，
+   浏览器会把这张图当作「拖入的文件」塞进 dataTransfer.files，松手后被当成上传落盘。 */
 .workspace-file-icon-img {
   flex-shrink: 0;
   width: 14px;
   height: 14px;
   object-fit: contain;
+  pointer-events: none;
 }
 
 .workspace-file-row.is-dir .workspace-file-icon {
@@ -1230,7 +1241,7 @@ button.messenger-sidebar-workspace-row {
 }
 
 .workspace-files-menu-item:hover {
-  color: var(--mz-primary, #c96443);
+  color: var(--mz-primary, var(--ui-accent-ink));
   background: var(--mz-hover, #f1efec);
 }
 
@@ -1557,8 +1568,8 @@ button.messenger-sidebar-workspace-row {
 
 .messenger-sidebar-open:hover,
 .messenger-main .messenger-scroll-top-btn:hover {
-  color: var(--mz-primary, #c96443);
-  box-shadow: inset 0 0 0 1px var(--mz-primary-soft, #dfac9a);
+  color: var(--mz-primary, var(--ui-accent-ink));
+  box-shadow: inset 0 0 0 1px var(--mz-primary-soft, var(--ui-accent-secondary));
 }
 
 /* ---------------------------------------------------- sidebar resizer/collapse */
@@ -1587,11 +1598,11 @@ button.messenger-sidebar-workspace-row {
 
 .messenger-sidebar-resizer:hover::before,
 .messenger-sidebar-resizer.is-dragging::before {
-  background: var(--mz-primary-soft, #dfac9a);
+  background: var(--mz-primary-soft, var(--ui-accent-secondary));
 }
 
 .messenger-sidebar-resizer.is-dragging::before {
-  background: var(--mz-primary, #c96443);
+  background: var(--mz-primary, var(--ui-accent-ink));
 }
 
 .messenger-sidebar-collapse-btn {
@@ -1621,8 +1632,8 @@ button.messenger-sidebar-workspace-row {
 }
 
 .messenger-sidebar-collapse-btn:hover {
-  color: var(--mz-primary, #c96443);
-  border-color: var(--mz-primary-soft, #dfac9a);
+  color: var(--mz-primary, var(--ui-accent-ink));
+  border-color: var(--mz-primary-soft, var(--ui-accent-secondary));
 }
 
 /* -------------------------------------------------------- settings overlay */

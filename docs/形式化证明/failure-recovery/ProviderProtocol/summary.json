@@ -1,0 +1,121 @@
+{
+  "view": "customer",
+  "second": {
+    "role": "fix",
+    "label": "the fix",
+    "lacks": []
+  },
+  "modelStates": 20,
+  "modelTransitions": 15,
+  "chartStates": 28,
+  "chartTransitions": 23,
+  "chartStatus": {
+    "works": 15,
+    "wrong": 0,
+    "fixed": 13,
+    "mixed": 0,
+    "after": 0,
+    "worse": 0
+  },
+  "mixedStatus": [],
+  "cover": {
+    "drawn": false,
+    "why": "no step in TLC's graph is a reader action"
+  },
+  "chartGroups": [
+    {
+      "name": "协议验证中",
+      "color": "#d6eaf8",
+      "states": 18
+    },
+    {
+      "name": "响应已结清",
+      "color": "#fdebd0",
+      "states": 10
+    }
+  ],
+  "mixedGroups": [],
+  "classes": [
+    {
+      "n": 1,
+      "end": "无效编码或损坏事件：请求已结清，返回成功",
+      "invariant": "InvalidPayloadNeverSucceeds",
+      "rule": "Invalid UTF-8 or JSON is not concealed by a later DONE (services/llm.rs:1919; stream_decode.rs:20).",
+      "cause": "损坏内容被静默跳过",
+      "readerSteps": 3,
+      "modelSteps": 4,
+      "counterexamples": 1,
+      "lastSteps": [
+        "返回正文与工具提议"
+      ],
+      "startsHere": false,
+      "fix": "无效编码或损坏事件：识别为故障"
+    },
+    {
+      "n": 2,
+      "end": "成功状态携带错误：请求已结清，返回成功",
+      "invariant": "NoFailedPayloadSuccess",
+      "rule": "A failed provider envelope cannot be returned as a successful answer (services/llm.rs:1024).",
+      "cause": "错误封装被忽略",
+      "readerSteps": 3,
+      "modelSteps": 4,
+      "counterexamples": 1,
+      "lastSteps": [
+        "返回正文与工具提议"
+      ],
+      "startsHere": false,
+      "fix": "成功状态携带错误：识别为故障"
+    },
+    {
+      "n": 3,
+      "end": "正常回复含空错误字段：请求已结清，错误拒绝正常回复",
+      "invariant": "NullSuccessRemainsSuccess",
+      "rule": "A completed response with a null error field remains successful (services/llm/failure.rs:102).",
+      "cause": "空字段被当作故障",
+      "readerSteps": 3,
+      "modelSteps": 4,
+      "counterexamples": 1,
+      "lastSteps": [
+        "错误码优先分类"
+      ],
+      "startsHere": false,
+      "fix": "正常回复含空错误字段：准备返回结果"
+    },
+    {
+      "n": 4,
+      "end": "永久拒绝含误导正文：请求已结清，错误触发上下文恢复",
+      "invariant": "PermanentCodeNotReclassified",
+      "rule": "A permanent provider code takes priority over misleading message text (orchestrator/llm.rs:1335).",
+      "cause": "正文覆盖永久错误码",
+      "readerSteps": 3,
+      "modelSteps": 4,
+      "counterexamples": 1,
+      "lastSteps": [
+        "错误码优先分类"
+      ],
+      "startsHere": false,
+      "fix": "永久拒绝含误导正文：请求已结清，明确永久拒绝"
+    },
+    {
+      "n": 5,
+      "end": "中文跨网络分块：请求已结清，文字或参数已损坏",
+      "invariant": "Utf8ContentPreserved",
+      "rule": "Split network chunks do not change the successful text or tool arguments (stream_decode.rs:9).",
+      "cause": "逐块替换了半个字符",
+      "readerSteps": 3,
+      "modelSteps": 4,
+      "counterexamples": 1,
+      "lastSteps": [
+        "返回正文与工具提议"
+      ],
+      "startsHere": false,
+      "fix": "中文跨网络分块：请求已结清，返回成功"
+    }
+  ],
+  "codeLike": [],
+  "uncited": {
+    "models/ProviderProtocol.tla": [],
+    "external-scratch/ProviderProtocolFixed.tla": []
+  },
+  "brokenProperties": []
+}

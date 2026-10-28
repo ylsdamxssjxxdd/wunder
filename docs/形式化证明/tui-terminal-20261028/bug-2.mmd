@@ -1,0 +1,47 @@
+---
+title: "舵机中断后的重复报错, bug 2"
+config:
+  markdownAutoWrap: false
+  state:
+    useMaxWidth: false
+---
+stateDiagram-v2
+  %% second model (fix): the fix
+  classDef plainFixed fill:#f4f6f7,stroke:#1e8449,stroke-width:4px,color:#145a32
+  classDef group0 fill:#d6eaf8,stroke:#6b757c,color:#1b2631
+  classDef group0Fixed fill:#d6eaf8,stroke:#1e8449,stroke-width:4px,color:#145a32
+  classDef group1 fill:#fdebd0,stroke:#7f7668,color:#1b2631
+  classDef group1Fixed fill:#fdebd0,stroke:#1e8449,stroke-width:4px,color:#145a32
+  classDef group1Path fill:#fdebd0,stroke:#1f3a93,stroke-width:4px,color:#1b2631
+  state "Legend" as legend {
+    state "重复报错" as legendGroup0
+    state "预期行为" as legendGroup1
+    state "Fixed or new with the fix" as legendFixed
+  }
+  class legendGroup0 group0
+  class legendGroup1 group1
+  class legendFixed plainFixed
+  state "第 1 轮：新请求未继承旧错误" as s0
+  state "第 1 轮：无输出时正常提示错误" as s1
+  state "第 1 轮：终态已到达" as s2
+  state "第 2 轮：原始错误之后又出现空输出错误" as s3
+  state "第 2 轮：取消终态保留原始错误" as s4
+  state "第 2 轮：已显示原始错误" as s5
+  state "第 2 轮：新请求未继承旧错误" as s6
+  state "第 2 轮：终态已到达" as s7
+  [*] --> s0
+  s0 --> s2 : 1. 无输出直接收到终态
+  s2 --> s1 : 2. 流关闭并结算
+  s1 --> s6 : 3. 建立下一轮流并重置状态
+  s6 --> s5 : 4. 收到并显示原始错误
+  s5 --> s7 : 5. 收到后续取消终态
+  s7 --> s3 : 6. 流关闭并结算
+  s5 --> s4 : with the fix, 收到后续取消终态
+  class s0 group1Path
+  class s1 group1Path
+  class s2 group1Path
+  class s3 group0Fixed
+  class s4 group1Fixed
+  class s5 group1Path
+  class s6 group1Path
+  class s7 group1Path

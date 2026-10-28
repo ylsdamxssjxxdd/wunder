@@ -1,0 +1,141 @@
+{
+  "view": "customer",
+  "second": {
+    "role": "fix",
+    "label": "the fix",
+    "lacks": []
+  },
+  "modelStates": 182,
+  "modelTransitions": 178,
+  "chartStates": 39,
+  "chartTransitions": 37,
+  "chartStatus": {
+    "works": 32,
+    "wrong": 0,
+    "fixed": 15,
+    "mixed": 0,
+    "after": 0,
+    "worse": 0
+  },
+  "mixedStatus": [],
+  "cover": {
+    "drawn": true,
+    "states": 47,
+    "transitions": 54,
+    "leftOutStates": [
+      "工具失败后询问模型：可取消的退避",
+      "工具失败后询问模型：已停止，可取消的退避",
+      "工具失败后询问模型：明确失败",
+      "服务暂不可用：可取消的退避",
+      "服务暂不可用：已停止，可取消的退避",
+      "服务暂不可用：明确失败",
+      "流中断：已停止，可取消的退避",
+      "流中断：明确失败"
+    ],
+    "leftOutTransitions": [
+      "工具失败后询问模型：可取消的退避 --> 工具失败后询问模型：准备请求: with the fix, 等待到期",
+      "工具失败后询问模型：可取消的退避 --> 工具失败后询问模型：已停止，可取消的退避: with the fix, 取消等待分支被选中",
+      "工具失败后询问模型：已停止，可取消的退避 --> 工具失败后询问模型：已停止，取消结清: with the fix, 取消错误向外结清",
+      "工具失败后询问模型：收到暂时故障 --> 工具失败后询问模型：可取消的退避: with the fix, 分类故障并决定结清或重试",
+      "工具失败后询问模型：收到暂时故障 --> 工具失败后询问模型：明确失败: with the fix, 分类故障并决定结清或重试",
+      "工具失败后询问模型：明确失败 --> 工具失败后询问模型：已释放资源: with the fix, 结清并释放本代锁",
+      "服务暂不可用：可取消的退避 --> 服务暂不可用：准备请求: with the fix, 等待到期",
+      "服务暂不可用：可取消的退避 --> 服务暂不可用：已停止，可取消的退避: with the fix, 取消等待分支被选中",
+      "服务暂不可用：已停止，可取消的退避 --> 服务暂不可用：已停止，取消结清: with the fix, 取消错误向外结清",
+      "服务暂不可用：收到暂时故障 --> 服务暂不可用：可取消的退避: with the fix, 分类故障并决定结清或重试",
+      "服务暂不可用：收到暂时故障 --> 服务暂不可用：明确失败: with the fix, 分类故障并决定结清或重试",
+      "服务暂不可用：明确失败 --> 服务暂不可用：已释放资源: with the fix, 结清并释放本代锁",
+      "流中断：可取消的退避 --> 流中断：准备请求: with the fix, 等待到期",
+      "流中断：可取消的退避 --> 流中断：已停止，可取消的退避: with the fix, 取消等待分支被选中",
+      "流中断：已停止，可取消的退避 --> 流中断：已停止，取消结清: with the fix, 取消错误向外结清",
+      "流中断：明确失败 --> 流中断：已释放资源: with the fix, 结清并释放本代锁",
+      "流中断：缺少完成标记 --> 流中断：明确失败: with the fix, 分类故障并决定结清或重试"
+    ]
+  },
+  "chartGroups": [
+    {
+      "name": "正常恢复边界",
+      "color": "#d6eaf8",
+      "states": 27
+    },
+    {
+      "name": "资源已结清",
+      "color": "#fdebd0",
+      "states": 8
+    },
+    {
+      "name": "错误处理缺口",
+      "color": "#e8daef",
+      "states": 4
+    }
+  ],
+  "mixedGroups": [],
+  "classes": [
+    {
+      "n": 1,
+      "end": "服务暂不可用：未退避又请求一次",
+      "invariant": "NoHiddenTransientFallback",
+      "rule": "Transient HTTP failures cannot send another request before engine backoff (services/llm.rs:1454).",
+      "cause": "transient",
+      "readerSteps": 3,
+      "modelSteps": 4,
+      "counterexamples": 1,
+      "lastSteps": [
+        "绕过退避切换非流式"
+      ],
+      "startsHere": false,
+      "fix": "服务暂不可用：收到暂时故障"
+    },
+    {
+      "n": 2,
+      "end": "流中断：不完整流被当作成功",
+      "invariant": "NoIncompleteSuccess",
+      "rule": "EOF without a terminal marker or finish reason cannot be accepted (services/llm.rs:1193).",
+      "cause": "truncated",
+      "readerSteps": 3,
+      "modelSteps": 4,
+      "counterexamples": 1,
+      "lastSteps": [
+        "分类故障并决定结清或重试"
+      ],
+      "startsHere": false,
+      "fix": "流中断：可取消的退避"
+    },
+    {
+      "n": 3,
+      "end": "鉴权失败：错误地重试同一鉴权请求",
+      "invariant": "NoPermanentRetry",
+      "rule": "A permanent rejection never schedules another identical request (llm.rs:1302).",
+      "cause": "auth",
+      "readerSteps": 3,
+      "modelSteps": 4,
+      "counterexamples": 1,
+      "lastSteps": [
+        "分类故障并决定结清或重试"
+      ],
+      "startsHere": false,
+      "fix": "鉴权失败：明确失败"
+    },
+    {
+      "n": 4,
+      "end": "工具失败后询问模型：未退避又请求一次",
+      "invariant": "NoHiddenTransientFallback",
+      "rule": "Transient HTTP failures cannot send another request before engine backoff (services/llm.rs:1454).",
+      "cause": "tool",
+      "readerSteps": 5,
+      "modelSteps": 6,
+      "counterexamples": 1,
+      "lastSteps": [
+        "绕过退避切换非流式"
+      ],
+      "startsHere": false,
+      "fix": "工具失败后询问模型：收到暂时故障"
+    }
+  ],
+  "codeLike": [],
+  "uncited": {
+    "models/FailureRecovery.tla": [],
+    "external-scratch/FailureRecoveryFixed.tla": []
+  },
+  "brokenProperties": []
+}

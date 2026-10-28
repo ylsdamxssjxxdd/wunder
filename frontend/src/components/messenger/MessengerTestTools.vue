@@ -192,7 +192,7 @@ onBeforeUnmount(() => {
   margin-left: auto;
 }
 .messenger-test-tools input:focus-visible + span {
-  outline: 2px solid var(--ui-accent);
+  outline: 2px solid var(--ui-accent-ink);
   outline-offset: 3px;
 }
 </style>

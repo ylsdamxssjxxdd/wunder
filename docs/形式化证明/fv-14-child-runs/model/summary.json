@@ -1,0 +1,58 @@
+{
+  "view": "customer",
+  "second": {
+    "role": "fix",
+    "label": "the fix",
+    "lacks": []
+  },
+  "modelStates": 16,
+  "modelTransitions": 18,
+  "chartStates": 15,
+  "chartTransitions": 15,
+  "chartStatus": {
+    "works": 14,
+    "wrong": 0,
+    "fixed": 2,
+    "mixed": 0,
+    "after": 0,
+    "worse": 0
+  },
+  "mixedStatus": [],
+  "cover": {
+    "drawn": true,
+    "states": 16,
+    "transitions": 19,
+    "leftOutStates": [
+      "持久祖先允许派生<br/>子任务：执行中<br/>执行代次：2<br/>旧清理已到达"
+    ],
+    "leftOutTransitions": [
+      "持久祖先允许派生<br/>子任务：已完成<br/>执行代次：2<br/>旧清理已到达 --> 持久祖先已取消<br/>子任务：已完成<br/>执行代次：2<br/>旧清理已到达: 取消祖先及已登记后代",
+      "持久祖先允许派生<br/>子任务：执行中<br/>执行代次：2 --> 持久祖先允许派生<br/>子任务：执行中<br/>执行代次：2<br/>旧清理已到达: 旧执行清理迟到",
+      "持久祖先允许派生<br/>子任务：执行中<br/>执行代次：2<br/>旧清理已到达 --> 持久祖先允许派生<br/>子任务：已完成<br/>执行代次：2<br/>旧清理已到达: 子任务完成",
+      "持久祖先允许派生<br/>子任务：执行中<br/>执行代次：2<br/>旧清理已到达 --> 持久祖先已取消<br/>子任务：已取消<br/>执行代次：2<br/>旧清理已到达: 取消祖先及已登记后代"
+    ]
+  },
+  "classes": [
+    {
+      "n": 1,
+      "end": "持久祖先已取消<br/>子任务：执行中<br/>执行代次：1<br/>取消后仍派生了新任务",
+      "invariant": "NoEscapedDescendant",
+      "rule": "A cancelled durable ancestor forbids sibling dispatch into its scope.",
+      "cause": "只核对直接调度者，遗漏持久派生树中的已取消祖先",
+      "readerSteps": 2,
+      "modelSteps": 3,
+      "counterexamples": 1,
+      "lastSteps": [
+        "兄弟调度器派生祖先下的任务"
+      ],
+      "startsHere": false,
+      "fix": "持久祖先已取消<br/>子任务：未派生<br/>执行代次：0"
+    }
+  ],
+  "codeLike": [],
+  "uncited": {
+    "ChildRuns.tla": [],
+    "ChildRunsFixed.tla": []
+  },
+  "brokenProperties": []
+}

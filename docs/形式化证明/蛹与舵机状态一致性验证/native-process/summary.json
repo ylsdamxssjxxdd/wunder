@@ -1,0 +1,51 @@
+{
+  "view": "customer",
+  "second": {
+    "role": "fix",
+    "label": "the fix",
+    "lacks": []
+  },
+  "modelStates": 2,
+  "modelTransitions": 1,
+  "chartStates": 4,
+  "chartTransitions": 3,
+  "chartStatus": {
+    "works": 1,
+    "wrong": 0,
+    "fixed": 3,
+    "mixed": 0,
+    "after": 0,
+    "worse": 0
+  },
+  "mixedStatus": [],
+  "cover": {
+    "drawn": true,
+    "states": 4,
+    "transitions": 3,
+    "leftOutStates": [],
+    "leftOutTransitions": []
+  },
+  "classes": [
+    {
+      "n": 1,
+      "end": "气泡完成，旧工具转圈<br/>已有过程页",
+      "invariant": "SettledProcessAgreement",
+      "rule": "A completed latest page cannot settle with a stale running tool and no scheduled reread. Mutators: timeline_text.rs:413; tool_process.slint:186, :191; chat_process.rs:182.",
+      "cause": "终态保留旧过程页，运行刷新定时器却已经停止",
+      "readerSteps": 1,
+      "modelSteps": 2,
+      "counterexamples": 1,
+      "lastSteps": [
+        "完成历史替换运行历史"
+      ],
+      "startsHere": false,
+      "fix": "气泡完成，工具页待重读<br/>尚未加载过程页"
+    }
+  ],
+  "codeLike": [],
+  "uncited": {
+    "audit/NativeProcess.tla": [],
+    "audit/NativeProcessFixed.tla": []
+  },
+  "brokenProperties": []
+}

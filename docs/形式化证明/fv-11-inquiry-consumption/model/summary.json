@@ -1,0 +1,85 @@
+{
+  "view": "customer",
+  "second": {
+    "role": "fix",
+    "label": "the fix",
+    "lacks": []
+  },
+  "modelStates": 162,
+  "modelTransitions": 292,
+  "chartStates": 32,
+  "chartTransitions": 32,
+  "chartStatus": {
+    "works": 10,
+    "wrong": 0,
+    "fixed": 22,
+    "mixed": 0,
+    "after": 0,
+    "worse": 0
+  },
+  "mixedStatus": [],
+  "cover": {
+    "drawn": true,
+    "states": 32,
+    "transitions": 50,
+    "leftOutStates": [],
+    "leftOutTransitions": [
+      "等待回答<br/>已受理回答：0<br/>消费身份：none<br/>进程已崩溃 --> 等待回答<br/>已受理回答：0<br/>消费身份：none<br/>进程在线: 重启并读取持久身份",
+      "等待回答<br/>已受理回答：1<br/>消费身份：a<br/>进程已崩溃 --> 等待回答<br/>已受理回答：1<br/>消费身份：a<br/>进程在线: with the fix, 重启并读取持久身份",
+      "等待回答<br/>已受理回答：1<br/>消费身份：b<br/>进程已崩溃 --> 等待回答<br/>已受理回答：1<br/>消费身份：b<br/>进程在线: with the fix, 重启并读取持久身份",
+      "等待回答<br/>已受理回答：1<br/>消费身份：none<br/>进程已崩溃 --> 等待回答<br/>已受理回答：1<br/>消费身份：none<br/>进程在线: 重启并读取持久身份",
+      "等待回答<br/>已受理回答：2<br/>消费身份：none<br/>进程在线 --> 问询已结清<br/>已受理回答：2<br/>消费身份：none<br/>进程在线: 结清原等待轮次",
+      "等待回答<br/>已受理回答：2<br/>消费身份：none<br/>进程已崩溃 --> 等待回答<br/>已受理回答：2<br/>消费身份：none<br/>进程在线: 重启并读取持久身份",
+      "问询已停止<br/>已受理回答：0<br/>消费身份：none<br/>进程已崩溃 --> 问询已停止<br/>已受理回答：0<br/>消费身份：none<br/>进程在线: 重启并读取持久身份",
+      "问询已停止<br/>已受理回答：1<br/>消费身份：a<br/>进程已崩溃 --> 问询已停止<br/>已受理回答：1<br/>消费身份：a<br/>进程在线: with the fix, 重启并读取持久身份",
+      "问询已停止<br/>已受理回答：1<br/>消费身份：b<br/>进程已崩溃 --> 问询已停止<br/>已受理回答：1<br/>消费身份：b<br/>进程在线: with the fix, 重启并读取持久身份",
+      "问询已停止<br/>已受理回答：1<br/>消费身份：none<br/>进程在线<br/>停止后仍受理新回答 --> 问询已停止<br/>已受理回答：2<br/>消费身份：none<br/>进程在线<br/>停止后仍受理新回答: 客户端提交回答（受理事务）",
+      "问询已停止<br/>已受理回答：1<br/>消费身份：none<br/>进程已崩溃 --> 问询已停止<br/>已受理回答：1<br/>消费身份：none<br/>进程在线: 重启并读取持久身份",
+      "问询已停止<br/>已受理回答：1<br/>消费身份：none<br/>进程已崩溃<br/>停止后仍受理新回答 --> 问询已停止<br/>已受理回答：1<br/>消费身份：none<br/>进程在线<br/>停止后仍受理新回答: 重启并读取持久身份",
+      "问询已停止<br/>已受理回答：2<br/>消费身份：none<br/>进程已崩溃 --> 问询已停止<br/>已受理回答：2<br/>消费身份：none<br/>进程在线: 重启并读取持久身份",
+      "问询已停止<br/>已受理回答：2<br/>消费身份：none<br/>进程已崩溃<br/>停止后仍受理新回答 --> 问询已停止<br/>已受理回答：2<br/>消费身份：none<br/>进程在线<br/>停止后仍受理新回答: 重启并读取持久身份",
+      "问询已结清<br/>已受理回答：1<br/>消费身份：a<br/>进程已崩溃 --> 问询已结清<br/>已受理回答：1<br/>消费身份：a<br/>进程在线: with the fix, 重启并读取持久身份",
+      "问询已结清<br/>已受理回答：1<br/>消费身份：b<br/>进程已崩溃 --> 问询已结清<br/>已受理回答：1<br/>消费身份：b<br/>进程在线: with the fix, 重启并读取持久身份",
+      "问询已结清<br/>已受理回答：1<br/>消费身份：none<br/>进程已崩溃 --> 问询已结清<br/>已受理回答：1<br/>消费身份：none<br/>进程在线: 重启并读取持久身份",
+      "问询已结清<br/>已受理回答：2<br/>消费身份：none<br/>进程已崩溃 --> 问询已结清<br/>已受理回答：2<br/>消费身份：none<br/>进程在线: 重启并读取持久身份"
+    ]
+  },
+  "classes": [
+    {
+      "n": 1,
+      "end": "等待回答<br/>已受理回答：2<br/>消费身份：none<br/>进程在线",
+      "invariant": "AtMostOneAnswer",
+      "rule": "One inquiry must allocate at most one answer, even with different client keys.",
+      "cause": "只按客户端消息键去重，未绑定问询消费身份",
+      "readerSteps": 2,
+      "modelSteps": 3,
+      "counterexamples": 28,
+      "lastSteps": [
+        "客户端提交回答（受理事务）"
+      ],
+      "startsHere": false,
+      "fix": "等待回答<br/>已受理回答：1<br/>消费身份：a<br/>进程在线"
+    },
+    {
+      "n": 2,
+      "end": "问询已停止<br/>已受理回答：1<br/>消费身份：none<br/>进程在线<br/>停止后仍受理新回答",
+      "invariant": "StopWins",
+      "rule": "Stopping before any answer was accepted must reject a later answer.",
+      "cause": "受理前未检查原轮次是否仍等待输入",
+      "readerSteps": 2,
+      "modelSteps": 3,
+      "counterexamples": 14,
+      "lastSteps": [
+        "客户端提交回答（受理事务）"
+      ],
+      "startsHere": false,
+      "fix": "问询已停止<br/>已受理回答：0<br/>消费身份：none<br/>进程在线"
+    }
+  ],
+  "codeLike": [],
+  "uncited": {
+    "Inquiry.tla": [],
+    "InquiryFixed.tla": []
+  },
+  "brokenProperties": []
+}

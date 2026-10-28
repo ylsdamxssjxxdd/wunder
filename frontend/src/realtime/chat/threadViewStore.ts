@@ -10,7 +10,7 @@ import { reconcileThreadStream, LIVE_STREAM_MAX_CHARS } from './threadViewStream
 
 export interface ThreadBodyRef { body_id: string; revision: number; bytes: number }
 export interface ViewMessage { item_id: string; content: string; reasoning?: string; created_seq?: number; durable_seq?: number; content_offset?: number; reasoning_offset?: number; tail_offset?: number; body?: ThreadBodyRef; feedback?: unknown; stats?: unknown; tail?: string; failure?: string; attachments?: unknown[]; /** Full body text once the lazy read landed, plus the identity it belongs to. */ hydrated_content?: string; hydrated_body?: string; /** Contiguous local view of a stream; the durable row drops its middle. */ live_content?: string; live_offset?: number; question_panel?: ChatInquiryPanel | null }
-export interface ChatViewRow { root_turn_id: string; execution_turn_id?:string; user_round: number; client_message_id?: string; revision: number; status: string; stop_reason?: string | null; queued_input?: { queue_id: string; reason: string; priority: number } | null; user: ViewMessage; assistant: ViewMessage; workflow_count: number; workspace_change_seq?: number; reasoning_count?: number; reasoning_item_id?: string; process_activity?: ProcessActivity; failed_count: number; subagents?: any[]; plan?: ChatPlan | null }
+export interface ChatViewRow { root_turn_id: string; execution_turn_id?:string; user_round: number; client_message_id?: string; revision: number; status: string; stop_reason?: string | null; queued_input?: { queue_id: string; reason: string; priority: number } | null; user: ViewMessage; assistant: ViewMessage; workflow_count: number; process_count?: number | null; process_items?: Array<Record<string, any>>; process_revision?: number; workspace_change_seq?: number; reasoning_count?: number; reasoning_item_id?: string; process_activity?: ProcessActivity; failed_count: number; subagents?: any[]; plan?: ChatPlan | null }
 export interface ThreadViewPage { runtime_status?:string;status_turn_id?:string;active_turn_id?:string; session_id: string; epoch: number; view_seq: number; projection_state: string; degraded?: boolean; diagnostic?: string | null; thread_empty: boolean | null; latest_round: number; chat: ChatViewRow[]; trajectory: any[]; tiles: any[]; tile_level: number; next_before: number | null; has_more: boolean; next_after?: number | null; has_newer?: boolean }
 export type ViewPhase = 'opening' | 'ready' | 'verified_empty' | 'refreshing' | 'error';
 export interface ViewSlot { key: string; rootTurnId: string; user: Record<string, any>; assistant: Record<string, any> }
@@ -54,6 +54,10 @@ export const uiMessageStatus = (status: string) =>
   status === 'completed' ? 'final' : status === 'rejected' ? 'failed' : status;
 function materialize(row: ChatViewRow): ViewSlot {
   const running = ['accepted','running','queued','waiting_input','waiting_approval'].includes(row.status);
+  const onlineSteps = (row.process_items || []).reduce((total, item) => total + (item.kind === 'assistant_message'
+    ? Number(Boolean(String(item.payload?.reasoning || '').trim())) + Number(Boolean(String(item.payload?.content || '').trim()) &&
+      (item.item_id !== row.assistant.item_id || item.payload?.tool_calls?.length > 0))
+    : 1), 0);
   const make = (role: string, m: ViewMessage) => markRaw({ id: `tturn:${row.root_turn_id}:${role}`, role, content: m.content, item_id: m.item_id,
     turn_id: row.execution_turn_id??row.root_turn_id, root_turn_id: row.root_turn_id, user_round: row.user_round, client_message_id: row.client_message_id,
     __runtime_projected: true, __thread_view:true, final: !running, state:role==='assistant'?(running?'streaming':row.status==='completed'?'final':row.status):'final',
@@ -70,8 +74,10 @@ function materialize(row: ChatViewRow): ViewSlot {
     // carries reasoning so a truncated preview still binds to its full
     // process record instead of rendering a duplicate thought.
     reasoning_item_id: row.reasoning_item_id || (String(m.reasoning || '').trim() ? m.item_id : ''),
-    process_count: row.workflow_count + Number(row.reasoning_count || 0) + (role === 'assistant' && String(m.reasoning || '').trim() && !Number(row.reasoning_count || 0) ? 1 : 0), workflow_failed_count: row.failed_count, feedback: m.feedback, stats: m.stats, reasoning: m.reasoning || '',
+    process_count: Math.max(onlineSteps, row.process_count ?? (row.workflow_count + Number(row.reasoning_count || 0) + (role === 'assistant' && String(m.reasoning || '').trim() && !Number(row.reasoning_count || 0) ? 1 : 0))), workflow_failed_count: row.failed_count, feedback: m.feedback, stats: m.stats, reasoning: m.reasoning || '',
     process_activity: row.process_activity?.kind ? row.process_activity : undefined,
+    process_items: row.process_items, process_revision: row.process_revision,
+    process_refresh_revision: row.revision,
     __thread_tail: m.tail, failureDetail:m.failure, attachments:m.attachments,
     __thread_tail_offset: m.tail_offset, __thread_content_offset: m.content_offset,
     __thread_live: m.live_content, __thread_live_offset: m.live_offset,
@@ -233,13 +239,18 @@ function merge(e: Entry, row: ChatViewRow) {
   row = projectRowExecutionHead(e, row);
   // Acceptance binds identity; dispatch decides ownership of parked input.
   const previous = old ?? e.rows.get(`pending:${row.client_message_id}`);
+  if (previous?.process_items && (!row.execution_turn_id || row.execution_turn_id === previous.execution_turn_id)) {
+    row = { ...row, process_items: previous.process_items, process_revision: previous.process_revision };
+  }
   if (row.status === 'accepted' && previous?.status === 'queued') row={...row,status:'queued'};
   // A display refresh can be published between stream_started and the first
   // durable assistant item. Its assistant slot is intentionally empty; it is
   // not evidence that the live tail stopped. Keep the item-bound local stream
   // until a durable assistant identity replaces it.
   if (old && LIVE_ROW_STATUSES.includes(row.status) &&
-      String(old.assistant.item_id || '').trim() && !String(row.assistant.item_id || '').trim()) {
+      String(old.assistant.item_id || '').trim() && (!String(row.assistant.item_id || '').trim() ||
+        (tailTurnId(old.assistant.item_id) === tailTurnId(row.assistant.item_id) &&
+          modelRound(old.assistant.item_id) > modelRound(row.assistant.item_id)))) {
     row = {
       ...row,
       assistant: {
@@ -256,6 +267,7 @@ function merge(e: Entry, row: ChatViewRow) {
         body: old.assistant.body
       },
       reasoning_count: Math.max(Number(row.reasoning_count || 0), Number(old.reasoning_count || 0)),
+      process_count: row.process_count == null && old.process_count == null ? undefined : Math.max(Number(row.process_count || 0), Number(old.process_count || 0)),
       reasoning_item_id: old.reasoning_item_id || row.reasoning_item_id,
       process_activity: old.process_activity ?? row.process_activity
     };
@@ -286,6 +298,7 @@ function merge(e: Entry, row: ChatViewRow) {
         ...(keepOldReasoning ? {reasoning:old.assistant.reasoning,reasoning_offset:oldReasoningOffset} : {}),
         tail: assistant.tail, tail_offset: assistant.tail_offset,
         body:row.assistant.body?{...row.assistant.body,bytes:Math.max(row.assistant.body.bytes,old.assistant.body?.bytes??0)}:old.assistant.body}};
+      if (keepOldReasoning) row = { ...row, reasoning_item_id: old.reasoning_item_id || old.assistant.item_id };
     }
   }
   row = carryLocalBody(row, previous);
@@ -309,7 +322,7 @@ function bound(e: Entry, historical = false) {
   // The other edge was evicted during forward navigation or a live append.
   // Its next read must start at the retained boundary, not the old page cursor.
   if ((evictsOlder || e.next === null) && e.order.length) e.next = e.rows.get(e.order[0])!.user_round;
-  e.bytes = e.order.reduce((n,id) => { const r=e.rows.get(id)!; return n+2*(r.user.content.length+r.assistant.content.length+(r.assistant.reasoning?.length??0)+(r.assistant.tail?.length??0))+4096; }, 0);
+  e.bytes = e.order.reduce((n,id) => { const r=e.rows.get(id)!; return n+2*(r.user.content.length+r.assistant.content.length+(r.assistant.reasoning?.length??0)+(r.assistant.tail?.length??0))+4096+(r.process_items?.length??0)*32768; }, 0);
   let total = [...entries.values()].reduce((n,v)=>n+v.bytes,0);
   for (const [key,v] of entries) { if (total <= MAX_BYTES && entries.size <= 32) break; if (key === activeKey) continue; entries.delete(key);total-=v.bytes; }
 }
@@ -576,7 +589,7 @@ function tailRow(e: Entry, itemId: string): ChatViewRow | undefined {
     if (!LIVE_ROW_STATUSES.includes(row.status)) continue;
     if (row.assistant.item_id === itemId) return row;
     if (executionId && row.execution_turn_id === executionId) return row;
-    if (executionId && row.root_turn_id === executionId) rootMatch = row;
+    if (executionId && row.root_turn_id === executionId && (!row.execution_turn_id || row.execution_turn_id === executionId)) rootMatch = row;
   }
   if (rootMatch) return rootMatch;
   // Websocket ordering normally supplies stream_started first.  A reconnect
@@ -589,16 +602,50 @@ function tailRow(e: Entry, itemId: string): ChatViewRow | undefined {
   return undefined;
 }
 
+export function applyThreadViewProcessItem(key: string, payload: any): boolean {
+  const current = entries.get(key);
+  if (!current) return false;
+  const item = payload?.data ?? payload;
+  const id = String(item?.item_id || '');
+  const execution = String(item?.turn_id || '');
+  const kind = String(item?.kind || '');
+  if (!id || !execution || !['tool_call', 'assistant_message', 'compaction'].includes(kind)) return true;
+  const row = [...current.rows.values()].find(candidate =>
+    (candidate.execution_turn_id || candidate.root_turn_id) === execution && LIVE_ROW_STATUSES.includes(candidate.status));
+  if (!row) return true;
+  const items = new Map((row.process_items || []).map(previous => [String(previous.item_id), previous]));
+  const previous = items.get(id);
+  if (previous && previous.status !== 'running' && item.status === 'running') return true;
+  items.set(id, item);
+  row.process_items = [...items.values()].slice(-100);
+  let retained = row.process_items.length;
+  for (const other of [...current.rows.values()].reverse()) {
+    if (other === row || !other.process_items?.length) continue;
+    other.process_items = other.process_items.slice(-Math.max(0, 100 - retained));
+    if (retained >= 100) other.process_items = [];
+    retained += other.process_items.length;
+    current.slots.set(other.root_turn_id, materialize(other));
+  }
+  row.process_revision = Number(row.process_revision || 0) + 1;
+  if (kind === 'tool_call' && item.status === 'running') row.process_activity = {
+    kind: 'tool', item_id: id, tool: String(item.payload?.tool || item.payload?.tool_name || ''), created_seq: row.assistant.created_seq
+  };
+  current.slots.set(row.root_turn_id, materialize(row));
+  bound(current);
+  notifyTail();
+  return true;
+}
+
 /** Move a running compact row to a newly observed model item.  A later model
  * round follows tools and its partial prose/reasoning belongs to the work
  * process, not to the previous round's bounded preview. */
-function bindTailAssistant(row: ChatViewRow, itemId: string): void {
+function bindTailAssistant(row: ChatViewRow, itemId: string): boolean {
   const current = String(row.assistant.item_id || '');
-  if (current === itemId) return;
+  if (current === itemId) return true;
   const incomingRound = modelRound(itemId);
   const currentRound = modelRound(current);
   // Never let a delayed earlier model round overwrite a newer compact row.
-  if (current && incomingRound >= 0 && currentRound >= 0 && incomingRound < currentRound) return;
+  if (current && tailTurnId(current) === tailTurnId(itemId) && incomingRound >= 0 && currentRound >= 0 && incomingRound < currentRound) return false;
   row.assistant = {
     ...row.assistant,
     item_id: itemId,
@@ -613,6 +660,7 @@ function bindTailAssistant(row: ChatViewRow, itemId: string): void {
     body: undefined
   };
   row.reasoning_item_id = '';
+  return true;
 }
 export function applyThreadViewTail(key:string,payload:any):boolean {
   const e=entries.get(key);if(!e)return false;
@@ -620,8 +668,12 @@ export function applyThreadViewTail(key:string,payload:any):boolean {
   if(!id||!delta)return true;
   const row = tailRow(e, id);
   if (row) {
-    bindTailAssistant(row, id);
+    const previousReasoningId = row.reasoning_item_id;
+    if (!bindTailAssistant(row, id)) return true;
     if (String(p?.field || 'content') === 'reasoning') {
+      if (row.reasoning_item_id && row.reasoning_item_id !== id) {
+        row.assistant = { ...row.assistant, reasoning: '', reasoning_offset: 0 };
+      }
       // Reasoning is a bounded live projection (the durable item remains the
       // source of truth). Keep enough text for the expanded process entry and
       // preserve the stream when the server preview has already been capped.
@@ -636,6 +688,7 @@ export function applyThreadViewTail(key:string,payload:any):boolean {
       row.assistant = { ...row.assistant, reasoning: bounded,
         reasoning_offset: expected + [...delta].reduce((n, ch) => n + ch.length, 0) };
       row.reasoning_item_id = id;
+      if (row.process_count != null && previousReasoningId !== id) row.process_count += 1;
       row.reasoning_count = Math.max(1, Number(row.reasoning_count || 0));
       e.slots.set(row.root_turn_id, materialize(row));
       notifyTail();return true;

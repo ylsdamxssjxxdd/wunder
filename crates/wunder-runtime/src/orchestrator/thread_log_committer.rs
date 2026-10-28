@@ -6,14 +6,18 @@ use parking_lot::Mutex;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::{Arc, Weak};
-use tokio::sync::Mutex as AsyncMutex;
+use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard, OwnedSemaphorePermit, Semaphore};
 use wunder_core::thread_store::*;
+
+#[cfg(test)]
+mod tests;
 
 pub(crate) struct ThreadLogCommitter {
     storage: Arc<dyn StorageBackend>,
     threads: Arc<RuntimeThreadStore>,
     hub: Arc<super::thread_change_hub::ThreadChangeHub>,
     gates: Mutex<HashMap<String, Weak<AsyncMutex<()>>>>,
+    commit_slots: Arc<Semaphore>,
 }
 
 impl ThreadLogCommitter {
@@ -27,23 +31,32 @@ impl ThreadLogCommitter {
             threads,
             hub,
             gates: Mutex::new(HashMap::new()),
+            commit_slots: Arc::new(Semaphore::new(256)),
         }
     }
-    fn gate(&self, session: &str) -> Result<Arc<AsyncMutex<()>>> {
-        let mut gates = self.gates.lock();
-        gates.retain(|_, g| g.strong_count() > 0);
-        if let Some(g) = gates.get(session).and_then(Weak::upgrade) {
-            return Ok(g);
-        }
-        if gates.len() >= 256 {
-            bail!("active commit limit reached");
-        }
-        let gate = Arc::new(AsyncMutex::new(()));
-        gates.insert(session.to_owned(), Arc::downgrade(&gate));
-        Ok(gate)
+    async fn gate(&self, session: &str) -> Result<(OwnedMutexGuard<()>, OwnedSemaphorePermit)> {
+        let permit = self.commit_slots.clone().acquire_owned().await?;
+        let gate = {
+            let mut gates = self.gates.lock();
+            if gates.len() >= 256 {
+                gates.retain(|_, gate| gate.strong_count() > 0);
+            }
+            if let Some(gate) = gates.get(session).and_then(Weak::upgrade) {
+                gate
+            } else {
+                let gate = Arc::new(AsyncMutex::new(()));
+                gates.insert(session.to_owned(), Arc::downgrade(&gate));
+                gate
+            }
+        };
+        Ok((gate.lock_owned().await, permit))
     }
     pub(crate) fn publish_context_usage(&self, session: &str, payload: Value) {
         self.hub.publish_context_usage(session, payload);
+    }
+
+    pub(crate) fn publish_live(&self, session: &str, event: &crate::schemas::StreamEvent) {
+        self.hub.publish_live(session, event);
     }
     pub(crate) async fn latest_position(&self, session: &str) -> Result<i64> {
         match self
@@ -62,11 +75,12 @@ impl ThreadLogCommitter {
         session: &str,
         input: &Value,
     ) -> Result<Value> {
-        let gate = self.gate(session)?;
-        let _gate = gate.lock().await;
+        let inquiry = crate::storage::thread_admission::inquiry_turn_id(input)?;
+        let _gate = self.gate(session).await?;
         let admissions = self.threads.admission_store()?;
         let storage = self.storage.clone();
         let user = user.to_owned();
+        let settlement_user = user.clone();
         let accepted_session = session.to_owned();
         let input = input.clone();
         let accepted = blocking::run_db("thread_store.accept", move || {
@@ -90,13 +104,23 @@ impl ThreadLogCommitter {
             self.hub
                 .publish(session, self.latest_position(session).await?);
         }
+        drop(_gate);
+        if let Some(inquiry) = inquiry {
+            self.update_turn(
+                &settlement_user,
+                session,
+                &inquiry,
+                "completed",
+                "",
+                &json!({"stop_reason":"inquiry_answered", "answered_by_turn_id":accepted["turn_id"]}),
+            ).await?;
+        }
         Ok(accepted)
     }
     /// 崩溃孤儿结算经同一线程的提交闸串行：与 accept_turn 不会并发改写
     /// 同一线程的受理行。打开线程的成功路径调用；返回值是本轮结算的条数。
     pub(crate) async fn settle_thread_orphans(&self, session: &str) -> Result<usize> {
-        let gate = self.gate(session)?;
-        let _gate = gate.lock().await;
+        let _gate = self.gate(session).await?;
         let admissions = self.threads.admission_store()?;
         let thread = session.to_owned();
         blocking::run_db("thread_store.settle_orphans", move || {
@@ -111,8 +135,7 @@ impl ThreadLogCommitter {
         prompt: &str,
         workspace: &str,
     ) -> Result<String> {
-        let gate = self.gate(session)?;
-        let _gate = gate.lock().await;
+        let _gate = self.gate(session).await?;
         let admissions = self.threads.admission_store()?;
         let owner = user.to_owned();
         let id = session.to_owned();
@@ -205,8 +228,7 @@ impl ThreadLogCommitter {
         _summary: &str,
         payload: &Value,
     ) -> Result<bool> {
-        let gate = self.gate(session)?;
-        let _gate = gate.lock().await;
+        let _gate = self.gate(session).await?;
         if let Some(changed) = self
             .threads
             .update_service_turn(user, session, turn, status, _summary, payload)
@@ -230,6 +252,9 @@ impl ThreadLogCommitter {
         let Some(previous) = previous else {
             bail!("accepted turn not found");
         };
+        if !crate::storage::thread_admission::can_settle_inquiry(&previous, payload) {
+            return Ok(false);
+        }
         if !crate::storage::thread_admission::TurnAdmissions::can_transition(
             previous["status"].as_str().unwrap_or_default(),
             status,
@@ -245,7 +270,7 @@ impl ThreadLogCommitter {
             // The accepted user body must commit before its terminal event.
             // This is idempotent for a turn which already began execution.
             self.threads
-                .begin_turn(user, &thread, &TurnId::new(turn)?, "")
+                .materialize_terminal_turn(user, &thread, &TurnId::new(turn)?)
                 .await?;
             let now = chrono::Utc::now().timestamp_millis();
             let event = if status == "completed" {
@@ -350,8 +375,7 @@ impl ThreadLogCommitter {
         let session = payload["session_id"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("item has no thread"))?;
-        let gate = self.gate(session)?;
-        let _gate = gate.lock().await;
+        let _gate = self.gate(session).await?;
         let admissions = self.threads.admission_store()?;
         let owner = user.to_owned();
         let id = session.to_owned();
@@ -442,6 +466,37 @@ impl ThreadLogCommitter {
         Ok(Some(
             json!({"change_type":"item_upsert","turn_id":turn.as_str(),"item_id":item_id.as_str(),"revision":1,"cursor":cursor,"payload":wire_item}),
         ))
+    }
+    pub(crate) async fn commit_context_checkpoint(
+        &self,
+        user: &str,
+        payload: &Value,
+    ) -> Result<()> {
+        let session = payload["session_id"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("checkpoint has no thread"))?;
+        let turn = payload["turn_id"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("checkpoint has no turn"))?;
+        let _gate = self.gate(session).await?;
+        let admissions = self.threads.admission_store()?;
+        let owner = user.to_owned();
+        let session_id = session.to_owned();
+        let turn_id = turn.to_owned();
+        let running = blocking::run_db("thread_store.checkpoint_owner", move || {
+            admissions.check_owner(&owner, &session_id)?;
+            Ok(admissions
+                .turn(&session_id, &turn_id)?
+                .is_some_and(|turn| turn["status"] == "running"))
+        })
+        .await?;
+        if !running {
+            bail!("context checkpoint requires an active execution turn");
+        }
+        self.threads.append_chat_payload(user, payload).await?;
+        self.hub
+            .publish(session, self.latest_position(session).await?);
+        Ok(())
     }
     pub(crate) async fn append_item(&self, user: &str, payload: &Value) -> Result<Option<Value>> {
         self.commit_item(user, payload).await

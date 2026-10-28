@@ -76,7 +76,7 @@ pub(crate) fn status_for_error_code(code: &str) -> StatusCode {
         }
         "PUSH_NOT_SUPPORTED" => StatusCode::NOT_IMPLEMENTED,
         "LLM_UNAVAILABLE" => StatusCode::SERVICE_UNAVAILABLE,
-        "LLM_OUTPUT_LOOP" => StatusCode::BAD_GATEWAY,
+        "LLM_OUTPUT_LOOP" | "LLM_REQUEST_REJECTED" => StatusCode::BAD_GATEWAY,
         "SERVICE_UNAVAILABLE" | "CONNECTION_CLOSED" => StatusCode::SERVICE_UNAVAILABLE,
         "UPSTREAM_TIMEOUT" => StatusCode::GATEWAY_TIMEOUT,
         "INTERNAL_ERROR" => StatusCode::INTERNAL_SERVER_ERROR,
@@ -107,6 +107,7 @@ pub(crate) fn hint_for_error_code(code: &str) -> Option<&'static str> {
         }
         "CANCELLED" => Some("Start a new turn if you still want the task to continue."),
         "LLM_UNAVAILABLE" => Some("Retry later or switch to another available model/provider."),
+        "LLM_REQUEST_REJECTED" => Some("Check model credentials, permissions, quota and request configuration before retrying."),
         "LLM_OUTPUT_LOOP" => {
             Some("Retry the turn or adjust the model reasoning/output configuration.")
         }
@@ -291,6 +292,13 @@ mod tests {
 
     #[test]
     fn status_mapping_for_custom_error_code_is_stable() {
+        assert_eq!(
+            status_for_error_code("LLM_REQUEST_REJECTED"),
+            StatusCode::BAD_GATEWAY
+        );
+        assert!(hint_for_error_code("LLM_REQUEST_REJECTED")
+            .unwrap()
+            .contains("configuration"));
         assert_eq!(
             status_for_error_code("USER_QUOTA_INSUFFICIENT"),
             StatusCode::TOO_MANY_REQUESTS

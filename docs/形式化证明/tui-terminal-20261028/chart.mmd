@@ -1,0 +1,66 @@
+---
+title: "舵机中断后的重复报错"
+config:
+  markdownAutoWrap: false
+  state:
+    useMaxWidth: false
+---
+stateDiagram-v2
+  %% second model (fix): the fix
+  classDef plainFixed fill:#f4f6f7,stroke:#1e8449,stroke-width:4px,color:#145a32
+  classDef group0 fill:#d6eaf8,stroke:#6b757c,color:#1b2631
+  classDef group0Fixed fill:#d6eaf8,stroke:#1e8449,stroke-width:4px,color:#145a32
+  classDef group1 fill:#fdebd0,stroke:#7f7668,color:#1b2631
+  classDef group1Fixed fill:#fdebd0,stroke:#1e8449,stroke-width:4px,color:#145a32
+  state "Legend" as legend {
+    state "重复报错" as legendGroup0
+    state "预期行为" as legendGroup1
+    state "Fixed or new with the fix" as legendFixed
+  }
+  class legendGroup0 group0
+  class legendGroup1 group1
+  class legendFixed plainFixed
+  state "第 1 轮：仅保留原始错误，等待下一轮" as s0
+  state "第 1 轮：原始错误之后又出现空输出错误" as s1
+  state "第 1 轮：取消终态保留原始错误" as s2
+  state "第 1 轮：已显示原始错误" as s3
+  state "第 1 轮：新请求未继承旧错误" as s4
+  state "第 1 轮：无输出时正常提示错误" as s5
+  state "第 1 轮：终态已到达" as s6
+  state "第 2 轮：仅保留原始错误，等待下一轮" as s7
+  state "第 2 轮：原始错误之后又出现空输出错误" as s8
+  state "第 2 轮：取消终态保留原始错误" as s9
+  state "第 2 轮：已显示原始错误" as s10
+  state "第 2 轮：新请求未继承旧错误" as s11
+  state "第 2 轮：无输出时正常提示错误" as s12
+  state "第 2 轮：终态已到达" as s13
+  [*] --> s4
+  s4 --> s3 : 收到并显示原始错误
+  s4 --> s6 : 无输出直接收到终态
+  s3 --> s6 : 收到后续取消终态
+  s6 --> s5 : 流关闭并结算
+  s6 --> s1 : 流关闭并结算
+  s5 --> s11 : 建立下一轮流并重置状态
+  s11 --> s10 : 收到并显示原始错误
+  s11 --> s13 : 无输出直接收到终态
+  s10 --> s13 : 收到后续取消终态
+  s13 --> s12 : 流关闭并结算
+  s13 --> s8 : 流关闭并结算
+  s3 --> s2 : with the fix, 收到后续取消终态
+  s2 --> s0 : with the fix, 流关闭并结算
+  s10 --> s9 : with the fix, 收到后续取消终态
+  s9 --> s7 : with the fix, 流关闭并结算
+  class s0 group1Fixed
+  class s1 group0Fixed
+  class s2 group1Fixed
+  class s3 group1
+  class s4 group1
+  class s5 group1
+  class s6 group1
+  class s7 group1Fixed
+  class s8 group0Fixed
+  class s9 group1Fixed
+  class s10 group1
+  class s11 group1
+  class s12 group1
+  class s13 group1

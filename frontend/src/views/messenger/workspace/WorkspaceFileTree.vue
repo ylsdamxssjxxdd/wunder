@@ -51,6 +51,7 @@
             'is-active': row.path === activePath,
             'is-selected': selectedSet.has(row.path),
             'is-highlighted': row.path === highlightedPath,
+            'is-drop-target': row.path === dragOverPath,
             'is-dir': row.kind === 'dir'
           }"
           :style="{ paddingLeft: `${6 + row.depth * 12}px` }"
@@ -63,6 +64,10 @@
           @contextmenu.prevent.stop="openMenu(row, $event)"
           @dragstart="handleRowDragStart($event, row)"
           @dragend="handleRowDragEnd"
+          @dragenter="handleRowDragEnter($event, row)"
+          @dragover="handleRowDragOver($event, row)"
+          @dragleave="handleRowDragLeave($event, row)"
+          @drop="handleRowDrop($event, row)"
         >
           <input
             v-if="selectionMode"
@@ -149,7 +154,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
 import { useI18n } from '@/i18n';
 import { loadWorkspaceThemeIconResolver } from '@/components/chat/workspaceIcons';
-import { clearWorkspaceDragPaths, setWorkspaceDragPaths } from '@/components/chat/workspaceDrag';
+import { clearWorkspaceDragPaths, hasWorkspaceDragPaths, readWorkspaceDragPaths, setWorkspaceDragPaths } from '@/components/chat/workspaceDrag';
 import {
   WORKSPACE_ROW_HEIGHT,
   WORKSPACE_ROW_OVERSCAN,
@@ -190,6 +195,8 @@ const emit = defineEmits<{
   'exit-selection': [];
   retry: [];
   command: [command: string, row: WorkspaceVisibleRow | null];
+  /** 内部拖拽落到目录行：把这些路径移动到目标目录。 */
+  move: [payload: { paths: string[]; targetDir: string }];
 }>();
 
 const { t } = useI18n();
@@ -197,6 +204,8 @@ const { t } = useI18n();
 const scrollerRef = ref<HTMLElement | null>(null);
 const scrollTop = ref(0);
 const viewportHeight = ref(0);
+/** 当前高亮的拖拽落点（目录行路径），用于 is-drop-target 反馈。 */
+const dragOverPath = ref('');
 
 const selectedSet = computed(() => new Set(props.selectedPaths));
 
@@ -229,16 +238,76 @@ const handleRowDragStart = (event: DragEvent, row: WorkspaceVisibleRow) => {
     event.preventDefault();
     return;
   }
-  const paths = setWorkspaceDragPaths(event.dataTransfer, [row.path]);
+  // 多选状态下拖动已选中的行，整批一起移动。
+  const draggingSelection =
+    props.selectionMode && selectedSet.value.has(row.path) && props.selectedPaths.length > 0;
+  const paths = setWorkspaceDragPaths(
+    event.dataTransfer,
+    draggingSelection ? props.selectedPaths : [row.path]
+  );
   if (!paths.length) {
     event.preventDefault();
     return;
   }
-  if (event.dataTransfer) event.dataTransfer.effectAllowed = 'copy';
+  // 工作区内部是移动语义；拖到输入框引用文件时，接收方只读路径。
+  if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
 };
 
 const handleRowDragEnd = () => {
+  dragOverPath.value = '';
   clearWorkspaceDragPaths();
+};
+
+const canAcceptWorkspaceDrop = (row: WorkspaceVisibleRow): boolean =>
+  !props.readOnly && !props.remote && row.kind === 'dir' && Boolean(row.path);
+
+/** 目录不能移到自己或自己的子孙目录里。 */
+const isSameOrNestedPath = (source: string, targetDir: string): boolean =>
+  source === targetDir || targetDir.startsWith(`${source}/`);
+
+/**
+ * 只有「工作区内部拖拽 + 目标是可以写入的目录 + 不是自身/子孙」才返回可移动路径。
+ * 外部文件的拖拽一律返回空，交给面板做上传。
+ */
+const resolveAcceptableDragPaths = (
+  dataTransfer: DataTransfer | null,
+  row: WorkspaceVisibleRow
+): string[] => {
+  if (!dataTransfer || !hasWorkspaceDragPaths(dataTransfer) || !canAcceptWorkspaceDrop(row)) return [];
+  return readWorkspaceDragPaths(dataTransfer).filter((path) => !isSameOrNestedPath(path, row.path));
+};
+
+const handleRowDragEnter = (event: DragEvent, row: WorkspaceVisibleRow) => {
+  if (!resolveAcceptableDragPaths(event.dataTransfer, row).length) return;
+  event.preventDefault();
+  dragOverPath.value = row.path;
+};
+
+const handleRowDragOver = (event: DragEvent, row: WorkspaceVisibleRow) => {
+  if (!resolveAcceptableDragPaths(event.dataTransfer, row).length) return;
+  event.preventDefault();
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+  dragOverPath.value = row.path;
+};
+
+const handleRowDragLeave = (event: DragEvent, row: WorkspaceVisibleRow) => {
+  const related = event.relatedTarget as Node | null;
+  const current = event.currentTarget as Node | null;
+  if (related && current?.contains(related)) return;
+  if (dragOverPath.value === row.path) dragOverPath.value = '';
+};
+
+const handleRowDrop = (event: DragEvent, row: WorkspaceVisibleRow) => {
+  const dataTransfer = event.dataTransfer;
+  // 外部文件拖拽不在这里处理：让它冒泡到面板做上传。
+  if (!dataTransfer || !hasWorkspaceDragPaths(dataTransfer)) return;
+  const paths = resolveAcceptableDragPaths(dataTransfer, row);
+  dragOverPath.value = '';
+  if (!paths.length) return;
+  // 阻止冒泡，否则面板的 @drop 会把它当成一次上传。
+  event.preventDefault();
+  event.stopPropagation();
+  emit('move', { paths, targetDir: row.path });
 };
 
 let scrollFrame = 0;

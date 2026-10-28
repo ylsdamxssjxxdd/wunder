@@ -1,0 +1,111 @@
+---
+title: "数据库 I/O 与业务运行时隔离"
+config:
+  markdownAutoWrap: false
+  state:
+    useMaxWidth: false
+---
+stateDiagram-v2
+  %% second model (fix): the fix
+  classDef works fill:#f4f6f7,stroke:#566573,color:#1b2631
+  classDef wrong fill:#fdedec,stroke:#c0392b,color:#7b241c
+  classDef fixed fill:#e9f7ef,stroke:#1e8449,color:#145a32
+  classDef mixed fill:#fdebd0,stroke:#d35400,color:#7e5109
+  classDef after fill:#ffffff,stroke:#808b96,color:#566573
+  classDef worse fill:#f4ecf7,stroke:#7d3c98,color:#4a235a
+  classDef worksPath fill:#f4f6f7,stroke:#1f3a93,stroke-width:4px,color:#1b2631
+  classDef wrongPath fill:#fdedec,stroke:#1f3a93,stroke-width:4px,color:#7b241c
+  classDef fixedPath fill:#e9f7ef,stroke:#1f3a93,stroke-width:4px,color:#145a32
+  classDef mixedPath fill:#fdebd0,stroke:#1f3a93,stroke-width:4px,color:#7e5109
+  classDef afterPath fill:#ffffff,stroke:#1f3a93,stroke-width:4px,color:#566573
+  classDef worsePath fill:#f4ecf7,stroke:#1f3a93,stroke-width:4px,color:#4a235a
+  state "Legend" as legend {
+    state "可继续处理" as legendWorks
+    state "独立 I/O 后可继续处理" as legendFixed
+  }
+  class legendWorks works
+  class legendFixed fixed
+  state "依附业务线程的网络驱动：业务与替补线程全部等待数据库" as s0
+  state "依附业务线程的网络驱动：业务等待 0，替补等待<br/>0，响应就绪 0，完成 0" as s1
+  state "依附业务线程的网络驱动：业务等待 0，替补等待<br/>0，响应就绪 0，完成 1" as s2
+  state "依附业务线程的网络驱动：业务等待 0，替补等待<br/>0，响应就绪 0，完成 2" as s3
+  state "依附业务线程的网络驱动：业务等待 0，替补等待<br/>0，响应就绪 0，完成 3" as s4
+  state "依附业务线程的网络驱动：业务等待 0，替补等待<br/>1，响应就绪 0，完成 0" as s5
+  state "依附业务线程的网络驱动：业务等待 0，替补等待<br/>2，响应就绪 0，完成 0" as s6
+  state "依附业务线程的网络驱动：业务等待 1，替补等待<br/>0，响应就绪 0，完成 0" as s7
+  state "依附业务线程的网络驱动：业务等待 1，替补等待<br/>0，响应就绪 0，完成 1" as s8
+  state "依附业务线程的网络驱动：业务等待 1，替补等待<br/>0，响应就绪 0，完成 2" as s9
+  state "依附业务线程的网络驱动：业务等待 1，替补等待<br/>0，响应就绪 0，完成 3" as s10
+  state "依附业务线程的网络驱动：业务等待 1，替补等待<br/>0，响应就绪 1，完成 0" as s11
+  state "依附业务线程的网络驱动：业务等待 1，替补等待<br/>0，响应就绪 1，完成 1" as s12
+  state "依附业务线程的网络驱动：业务等待 1，替补等待<br/>0，响应就绪 1，完成 2" as s13
+  state "依附业务线程的网络驱动：业务等待 1，替补等待<br/>0，响应就绪 1，完成 3" as s14
+  state "依附业务线程的网络驱动：业务等待 1，替补等待<br/>1，响应就绪 0，完成 0" as s15
+  state "依附业务线程的网络驱动：业务等待 1，替补等待<br/>2，响应就绪 0，完成 0" as s16
+  state "全部数据库请求完成" as s17
+  state "独立网络驱动：业务等待 0，替补等待 0，响应就绪<br/>0，完成 0" as s18
+  state "独立网络驱动：业务等待 0，替补等待 0，响应就绪<br/>0，完成 1" as s19
+  state "独立网络驱动：业务等待 0，替补等待 0，响应就绪<br/>0，完成 2" as s20
+  state "独立网络驱动：业务等待 0，替补等待 0，响应就绪<br/>0，完成 3" as s21
+  state "独立网络驱动：业务等待 1，替补等待 0，响应就绪<br/>0，完成 0" as s22
+  state "独立网络驱动：业务等待 1，替补等待 0，响应就绪<br/>0，完成 1" as s23
+  state "独立网络驱动：业务等待 1，替补等待 0，响应就绪<br/>0，完成 2" as s24
+  state "独立网络驱动：业务等待 1，替补等待 0，响应就绪<br/>1，完成 0" as s25
+  state "独立网络驱动：业务等待 1，替补等待 0，响应就绪<br/>1，完成 1" as s26
+  state "独立网络驱动：业务等待 1，替补等待 0，响应就绪<br/>1，完成 2" as s27
+  [*] --> s1
+  [*] --> s18
+  s1 --> s7 : 调用同步数据库接口
+  s7 --> s5 : 移交业务线程继续调度
+  s7 --> s11 : 网络驱动收到数据库响应
+  s5 --> s15 : 调用同步数据库接口
+  s11 --> s2 : 原业务线程完成查询
+  s15 --> s6 : 移交业务线程继续调度
+  s2 --> s8 : 调用同步数据库接口
+  s6 --> s16 : 调用同步数据库接口
+  s8 --> s12 : 网络驱动收到数据库响应
+  s16 --> s0 : 调用同步数据库接口
+  s12 --> s3 : 原业务线程完成查询
+  s3 --> s9 : 调用同步数据库接口
+  s9 --> s13 : 网络驱动收到数据库响应
+  s13 --> s4 : 原业务线程完成查询
+  s4 --> s10 : 调用同步数据库接口
+  s10 --> s14 : 网络驱动收到数据库响应
+  s14 --> s17 : 原业务线程完成查询
+  s18 --> s22 : with the fix, 调用同步数据库接口
+  s22 --> s25 : with the fix, 网络驱动收到数据库响应
+  s25 --> s19 : with the fix, 原业务线程完成查询
+  s19 --> s23 : with the fix, 调用同步数据库接口
+  s23 --> s26 : with the fix, 网络驱动收到数据库响应
+  s26 --> s20 : with the fix, 原业务线程完成查询
+  s20 --> s24 : with the fix, 调用同步数据库接口
+  s24 --> s27 : with the fix, 网络驱动收到数据库响应
+  s27 --> s21 : with the fix, 原业务线程完成查询
+  class s0 fixed
+  class s1 works
+  class s2 works
+  class s3 works
+  class s4 works
+  class s5 works
+  class s6 works
+  class s7 works
+  class s8 works
+  class s9 works
+  class s10 works
+  class s11 works
+  class s12 works
+  class s13 works
+  class s14 works
+  class s15 works
+  class s16 works
+  class s17 works
+  class s18 fixed
+  class s19 fixed
+  class s20 fixed
+  class s21 fixed
+  class s22 fixed
+  class s23 fixed
+  class s24 fixed
+  class s25 fixed
+  class s26 fixed
+  class s27 fixed

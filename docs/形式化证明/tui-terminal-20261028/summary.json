@@ -1,0 +1,82 @@
+{
+  "view": "customer",
+  "second": {
+    "role": "fix",
+    "label": "the fix",
+    "lacks": []
+  },
+  "modelStates": 12,
+  "modelTransitions": 12,
+  "chartStates": 14,
+  "chartTransitions": 15,
+  "chartStatus": {
+    "works": 8,
+    "wrong": 0,
+    "fixed": 6,
+    "mixed": 0,
+    "after": 0,
+    "worse": 0
+  },
+  "mixedStatus": [],
+  "cover": {
+    "drawn": true,
+    "states": 14,
+    "transitions": 17,
+    "leftOutStates": [],
+    "leftOutTransitions": [
+      "第 1 轮：仅保留原始错误，等待下一轮 --> 第 2 轮：新请求未继承旧错误: with the fix, 建立下一轮流并重置状态",
+      "第 1 轮：原始错误之后又出现空输出错误 --> 第 2 轮：新请求未继承旧错误: 建立下一轮流并重置状态"
+    ]
+  },
+  "chartGroups": [
+    {
+      "name": "重复报错",
+      "color": "#d6eaf8",
+      "states": 2
+    },
+    {
+      "name": "预期行为",
+      "color": "#fdebd0",
+      "states": 12
+    }
+  ],
+  "mixedGroups": [],
+  "classes": [
+    {
+      "n": 1,
+      "end": "第 1 轮：原始错误之后又出现空输出错误",
+      "invariant": "NoDuplicateEmptyError",
+      "rule": "A reported request error must not be followed by a synthetic empty-output error.",
+      "cause": null,
+      "readerSteps": 3,
+      "modelSteps": 4,
+      "counterexamples": 1,
+      "lastSteps": [
+        "流关闭并结算"
+      ],
+      "startsHere": false,
+      "fix": "第 1 轮：取消终态保留原始错误"
+    },
+    {
+      "n": 2,
+      "end": "第 2 轮：原始错误之后又出现空输出错误",
+      "invariant": "NoDuplicateEmptyError",
+      "rule": "A reported request error must not be followed by a synthetic empty-output error.",
+      "cause": null,
+      "readerSteps": 6,
+      "modelSteps": 7,
+      "counterexamples": 1,
+      "lastSteps": [
+        "流关闭并结算"
+      ],
+      "startsHere": false,
+      "fix": "第 2 轮：取消终态保留原始错误"
+    }
+  ],
+  "codeLike": [],
+  "uncited": {
+    "TuiTerminal.tla": [],
+    "TuiTerminalFixed.tla": []
+  },
+  "brokenProperties": []
+}

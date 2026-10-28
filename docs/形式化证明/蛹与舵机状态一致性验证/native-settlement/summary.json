@@ -1,0 +1,68 @@
+{
+  "view": "customer",
+  "second": {
+    "role": "fix",
+    "label": "the fix",
+    "lacks": []
+  },
+  "modelStates": 8,
+  "modelTransitions": 7,
+  "chartStates": 10,
+  "chartTransitions": 9,
+  "chartStatus": {
+    "works": 5,
+    "wrong": 0,
+    "fixed": 5,
+    "mixed": 0,
+    "after": 0,
+    "worse": 0
+  },
+  "mixedStatus": [],
+  "cover": {
+    "drawn": true,
+    "states": 10,
+    "transitions": 10,
+    "leftOutStates": [],
+    "leftOutTransitions": [
+      "失败后收到迟到回复<br/>气泡失败，工具转圈 --> 失败流已结束<br/>气泡失败，工具已中断: with the fix, 失败订阅结束"
+    ]
+  },
+  "classes": [
+    {
+      "n": 1,
+      "end": "取消流已结束<br/>气泡已停止，工具转圈",
+      "invariant": "CancelledToolSettles",
+      "rule": "Once the cancelled stream drains, no tool owned by that turn keeps spinning. Mutators: native_chat.rs:3427; timeline.rs:1254.",
+      "cause": "取消未被识别为非成功结算，工具仍转圈",
+      "readerSteps": 3,
+      "modelSteps": 4,
+      "counterexamples": 1,
+      "lastSteps": [
+        "取消订阅结束"
+      ],
+      "startsHere": false,
+      "fix": "取消流已结束<br/>气泡已停止，工具已中断"
+    },
+    {
+      "n": 2,
+      "end": "失败后收到迟到回复<br/>气泡完成，工具转圈",
+      "invariant": "TerminalOutcomePreserved",
+      "rule": "A late final frame cannot rewrite the execution's failed terminal outcome. Mutators: native_chat.rs:3511, :3662, :3681.",
+      "cause": "失败终态没有保护，迟到回复覆盖为完成",
+      "readerSteps": 3,
+      "modelSteps": 4,
+      "counterexamples": 1,
+      "lastSteps": [
+        "迟到最终回复"
+      ],
+      "startsHere": false,
+      "fix": "失败后收到迟到回复<br/>气泡失败，工具转圈"
+    }
+  ],
+  "codeLike": [],
+  "uncited": {
+    "audit/NativeSettlement.tla": [],
+    "audit/NativeSettlementFixed.tla": []
+  },
+  "brokenProperties": []
+}

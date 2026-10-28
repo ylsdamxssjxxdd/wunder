@@ -1,0 +1,65 @@
+{
+  "view": "customer",
+  "second": {
+    "role": "fix",
+    "label": "the fix",
+    "lacks": []
+  },
+  "modelStates": 349,
+  "modelTransitions": 864,
+  "chartStates": 117,
+  "chartTransitions": 387,
+  "chartStatus": {
+    "works": 76,
+    "wrong": 0,
+    "fixed": 41,
+    "mixed": 0,
+    "after": 0,
+    "worse": 0
+  },
+  "mixedStatus": [],
+  "cover": {
+    "drawn": false,
+    "why": "no step in TLC's graph is a reader action"
+  },
+  "classes": [
+    {
+      "n": 1,
+      "end": "无执行锁<br/>实例 B 打开线程（租约第 2 代）<br/>实例 A已打开线程，实例 B执行中",
+      "invariant": "LateReleaseKeepsLock",
+      "rule": "规则1：过期失权旧持有者的迟到释放，绝不能删除当前属于他人代次的执行锁行。 变更点：session_lock_store.rs:130-134。",
+      "cause": "执行锁 release 只按线程匹配，旧持有者的迟到释放删除了新持有者的锁行",
+      "readerSteps": 7,
+      "modelSteps": 8,
+      "counterexamples": 16,
+      "lastSteps": [
+        "实例 A 的迟到释放删掉了他人的执行锁",
+        "实例 B 的迟到释放删掉了他人的执行锁"
+      ],
+      "startsHere": false,
+      "fix": "实例 B 持有执行锁（第 2 代）<br/>实例 B 打开线程（租约第 2 代）<br/>实例 A已打开线程，实例 B执行中"
+    },
+    {
+      "n": 2,
+      "end": "实例 B 持有执行锁（第 2 代）<br/>实例 B 打开线程（租约第 2 代）<br/>实例 A执行中，实例 B执行中",
+      "invariant": "LateTouchKeepsLock",
+      "rule": "规则2：过期失权旧持有者的迟到心跳，绝不能给他人代次的执行锁行续期。 变更点：session_lock_store.rs:117-120。",
+      "cause": "执行锁 touch 只按线程匹配，旧持有者的迟到心跳给新持有者的锁行续期",
+      "readerSteps": 7,
+      "modelSteps": 8,
+      "counterexamples": 8,
+      "lastSteps": [
+        "实例 A 的迟到心跳给他人的执行锁续期",
+        "实例 B 的迟到心跳给他人的执行锁续期"
+      ],
+      "startsHere": false,
+      "fix": "实例 B 持有执行锁（第 2 代）<br/>实例 B 打开线程（租约第 2 代）<br/>实例 A执行中，实例 B执行中"
+    }
+  ],
+  "codeLike": [],
+  "uncited": {
+    "docs\\形式化证明\\fv-01-thread-ownership\\ThreadOwnership.tla": [],
+    "docs\\形式化证明\\fv-01-thread-ownership\\ThreadOwnershipFixed.tla": []
+  },
+  "brokenProperties": []
+}

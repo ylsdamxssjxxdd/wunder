@@ -1,0 +1,56 @@
+{
+  "view": "customer",
+  "second": {
+    "role": "fix",
+    "label": "the fix",
+    "lacks": []
+  },
+  "modelStates": 6,
+  "modelTransitions": 5,
+  "chartStates": 3,
+  "chartTransitions": 3,
+  "chartStatus": {
+    "works": 3,
+    "wrong": 0,
+    "fixed": 1,
+    "mixed": 0,
+    "after": 0,
+    "worse": 0
+  },
+  "mixedStatus": [],
+  "cover": {
+    "drawn": true,
+    "states": 4,
+    "transitions": 5,
+    "leftOutStates": [
+      "本地任务执行中<br/>目录记录执行中，未弹完成提示"
+    ],
+    "leftOutTransitions": [
+      "本地任务已完成<br/>目录记录已完成，未弹完成提示 --> 本地任务执行中<br/>目录记录执行中，未弹完成提示: 后台线程开始",
+      "本地任务执行中<br/>目录记录执行中，未弹完成提示 --> 本地任务已完成<br/>目录记录已完成，已弹出完成提示: 后台线程完成"
+    ]
+  },
+  "classes": [
+    {
+      "n": 1,
+      "end": "本地任务已完成<br/>目录记录已完成，已弹出完成提示",
+      "invariant": "StaleCatalogueCannotComplete",
+      "rule": "A previous catalogue snapshot cannot finish a locally submitted turn or show its notice. Old behaviour: e5a90a38 frontend-slint/src/native_chat.rs:1476 observed every returned row.",
+      "cause": "目录读取开始早于本地提交，旧完成快照覆盖本地热状态",
+      "readerSteps": 2,
+      "modelSteps": 3,
+      "counterexamples": 1,
+      "lastSteps": [
+        "旧目录快照返回完成"
+      ],
+      "startsHere": false,
+      "fix": "本地任务执行中<br/>目录记录已完成，未弹完成提示"
+    }
+  ],
+  "codeLike": [],
+  "uncited": {
+    "docs\\形式化证明\\蛹与舵机状态一致性验证\\models\\NativeCatalogueStatus.tla": [],
+    "docs\\形式化证明\\蛹与舵机状态一致性验证\\models\\NativeCatalogueStatusFixed.tla": []
+  },
+  "brokenProperties": []
+}

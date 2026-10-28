@@ -49,6 +49,18 @@ pub(crate) fn build_failed_tool_result(
     })
 }
 
+pub(crate) fn tool_timeout_meta(code: &str) -> ToolErrorMeta {
+    ToolErrorMeta::new(
+        code,
+        Some(
+            "Verify the outcome before retrying; side effects may already have occurred."
+                .to_string(),
+        ),
+        false,
+        None,
+    )
+}
+
 pub(crate) fn with_error_meta(data: Value, meta: ToolErrorMeta) -> Value {
     let mut payload = ensure_object_payload(data);
     if let Some(obj) = payload.as_object_mut() {
@@ -116,6 +128,7 @@ pub(crate) fn build_execute_command_failure_data(
     }
     if timed_out {
         payload.insert("timed_out".to_string(), Value::Bool(true));
+        payload.insert("execution_outcome".to_string(), json!("unknown"));
     }
     if command_count > 1 {
         payload.insert(

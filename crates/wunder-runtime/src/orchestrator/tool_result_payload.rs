@@ -346,6 +346,16 @@ fn compact_failure_observation_payload(map: &mut Map<String, Value>) -> bool {
         return false;
     }
     let raw_data = map.get("data").cloned().unwrap_or(Value::Null);
+    if raw_data.get("execution_outcome").and_then(Value::as_str) == Some("unknown") {
+        map.insert("execution_outcome".to_string(), json!("unknown"));
+        map.insert("retryable".to_string(), Value::Bool(false));
+        if let Some(code) = raw_data.pointer("/error_meta/code").and_then(Value::as_str) {
+            map.insert(
+                "error_code".to_string(),
+                json!(code.chars().take(64).collect::<String>()),
+            );
+        }
+    }
     let error = build_compact_failure_error_message(
         map.get("error").and_then(Value::as_str).unwrap_or(""),
         &raw_data,
@@ -380,6 +390,12 @@ fn build_compact_failure_error_message(error: &str, data: &Value) -> String {
     push_compact_error_fragment(&mut fragments, error);
     if let Some(detail) = extract_compact_failure_detail(data) {
         push_compact_error_fragment(&mut fragments, &detail);
+    }
+    if data.get("execution_outcome").and_then(Value::as_str) == Some("unknown") {
+        push_compact_error_fragment(
+            &mut fragments,
+            "Outcome unknown; verify side effects before retrying.",
+        );
     }
     fragments.join(" ")
 }
@@ -552,6 +568,11 @@ const OBSERVATION_STATUS_TOKEN_BUDGET: i64 = 512;
 const OBSERVATION_LIST_TOKEN_BUDGET: i64 = 2_000;
 const OBSERVATION_COMMAND_TOKEN_BUDGET: i64 = 4_000;
 const OBSERVATION_DOCUMENT_TOKEN_BUDGET: i64 = 6_000;
+// A skill load promises SKILL.md plus its resource index (up to 48 KiB on the
+// first page, 64 KiB hard cap), so its observation budget must be able to carry
+// that whole payload. Otherwise the one-call load would be clipped here and
+// force the model back into a cursor round-trip.
+const OBSERVATION_SKILL_TOKEN_BUDGET: i64 = 16_000;
 const OBSERVATION_DEFAULT_TOKEN_BUDGET: i64 = 4_000;
 // Packaged MCP calls are provider-owned and may contain arbitrary JSON or
 // base64 content blocks. Keep their model projection small before the generic
@@ -563,8 +584,11 @@ const MCP_RESULT_MAX_ARRAY_ITEMS: usize = 12;
 const MCP_RESULT_MAX_DEPTH: usize = 4;
 const MCP_RESULT_MAX_CONTENT_BLOCKS: usize = 8;
 const MCP_RESULT_MAX_TEXT_CHARS: usize = 4_000;
-pub(super) const OBSERVATION_TURN_TARGET_TOKENS: i64 = 8_000;
-pub(super) const OBSERVATION_TURN_MAX_TOKENS: i64 = 12_000;
+// Content target for one turn's tool observations. It must be able to host the
+// largest single-tool promise (a skill load: 16k tokens), otherwise the target
+// would clip a payload the tool itself already agreed to return.
+pub(super) const OBSERVATION_TURN_TARGET_TOKENS: i64 = 16_000;
+pub(super) const OBSERVATION_TURN_MAX_TOKENS: i64 = 20_000;
 const OBSERVATION_READ_FILE_LIMIT: usize = 8;
 // Keep list-like/browser observations small even when a provider returns an
 // unbounded page. The complete provider payload remains in the event stream;
@@ -615,9 +639,8 @@ pub(super) fn default_observation_token_budget(tool_name: &str) -> i64 {
             OBSERVATION_LIST_TOKEN_BUDGET
         }
         "执行命令" | "execute_command" => OBSERVATION_COMMAND_TOKEN_BUDGET,
-        "读取文件" | "read_file" | "技能调用" | "skill_call" | "skill_get" => {
-            OBSERVATION_DOCUMENT_TOKEN_BUDGET
-        }
+        "读取文件" | "read_file" => OBSERVATION_DOCUMENT_TOKEN_BUDGET,
+        "技能调用" | "skill_call" | "skill_get" => OBSERVATION_SKILL_TOKEN_BUDGET,
         _ => OBSERVATION_DEFAULT_TOKEN_BUDGET,
     }
 }

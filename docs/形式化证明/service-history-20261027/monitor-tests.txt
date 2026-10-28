@@ -1,0 +1,25 @@
+running 20 tests
+test ops::monitor::event_projection::tests::diagnostic_projection_bounds_bytes_width_depth_and_unicode ... ok
+test ops::monitor::model_request_usage::tests::thread_quota_survives_event_eviction_storage_reload_and_new_turns ... ok
+test ops::monitor::tests::derive_effective_context_tokens_ignores_billing_token_usage_total ... ok
+test ops::monitor::tests::derive_effective_context_tokens_prefers_context_occupancy ... ok
+test ops::monitor::tests::derive_effective_context_tokens_reads_context_usage_events ... ok
+test ops::monitor::tests::finalize_user_experience_settlement_does_not_grant_quota ... ok
+test ops::monitor::tests::llm_speed_summary_prefers_decode_output_tokens ... ok
+test ops::monitor::tests::log_overview_is_a_safe_metrics_only_projection ... ok
+test ops::monitor::tests::monitor_cancel_source_is_recorded_in_summary_events_and_storage ... ok
+test ops::monitor::tests::monitor_long_run_metadata_never_copies_event_bodies ... {"monitor_metadata":{"incoming_body_bytes":1300000,"p50_ms":0.012799999999999999,"p95_ms":0.014199999999999999,"response_bytes":613,"retained_events":500,"samples":100}}
+ok
+test ops::monitor::tests::monitor_record_event_prefers_explicit_context_occupancy ... ok
+test ops::monitor::tests::monitor_register_hydrates_cold_session_round_from_storage ... ok
+test ops::monitor::tests::monitor_register_hydrates_round_floor_from_admissions_without_monitor_record ... ok
+test ops::monitor::tests::monitor_usage_accounting_reads_original_facts_not_diagnostic_projection ... ok
+test ops::monitor::tests::resolve_payload_limit_zero_disables_truncation ... ok
+test ops::monitor::tests::service_metrics_counts_queued_sessions_separately ... ok
+test ops::monitor::tests::token_accounting_includes_reasoning_and_accepts_zero_context_reset ... ok
+test ops::monitor::tests::trim_string_fields_recursively_applies_limit ... ok
+test ops::monitor::tests::workspace_usage_dir_name_filters_hidden_cache_dirs ... ok
+test ops::monitor::tests::workspace_usage_incremental_scan_respects_batch_size ... ok
+
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 2183 filtered out; finished in 1.71s
+

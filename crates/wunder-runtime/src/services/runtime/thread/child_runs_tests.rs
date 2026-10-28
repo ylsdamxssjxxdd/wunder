@@ -75,6 +75,47 @@ fn child_cancellation_survives_monitor_registration_and_keeps_history_identity()
 }
 
 #[test]
+fn sibling_cannot_dispatch_into_a_cancelled_durable_ancestor_scope() {
+    let directory = tempfile::tempdir().unwrap();
+    let storage: Arc<dyn StorageBackend> = Arc::new(SqliteStorage::new(
+        directory
+            .path()
+            .join("fixture.db")
+            .to_string_lossy()
+            .into_owned(),
+    ));
+    for session in [
+        record("fixture-root", None, None),
+        record("fixture-ancestor", Some("fixture-root"), Some("model")),
+        record("fixture-sibling", Some("fixture-root"), Some("model")),
+        record("fixture-worker", Some("fixture-ancestor"), Some("model")),
+    ] {
+        storage.upsert_chat_session(&session).unwrap();
+    }
+    let monitor = MonitorState::new(
+        storage,
+        Config::default().observability,
+        directory.path().to_string_lossy().into_owned(),
+    );
+    monitor.register("fixture-ancestor", "user", "", "fixture task", false);
+    monitor.register("fixture-sibling", "user", "", "fixture task", false);
+    assert!(monitor.cancel("fixture-ancestor"));
+    assert!(monitor
+        .register_child_run("fixture-worker", "fixture-sibling")
+        .is_err());
+    monitor.register(
+        "fixture-ancestor",
+        "user",
+        "",
+        "fixture resumed task",
+        false,
+    );
+    assert!(monitor
+        .register_child_run("fixture-worker", "fixture-sibling")
+        .is_ok());
+}
+
+#[test]
 fn child_directory_traversal_pages_and_preserves_independent_forks() {
     let dir = tempfile::tempdir().unwrap();
     let storage = SqliteStorage::new(dir.path().join("test.db").to_string_lossy().into());
