@@ -15,7 +15,7 @@
       :status="String(message.status || '')"
       :reasoning="String(message.reasoning || '')"
       :reasoning-item-id="String(message.reasoning_item_id || '')"
-      :reasoning-streaming="Boolean(message.streaming) && (!message.process_activity || message.process_activity.kind === 'thinking')"
+      :reasoning-streaming="Boolean(message.reasoningStreaming)"
       :final-item-id="String(message.item_id || message.assistant_item_id || '')"
       @open-change="processOpen = $event"
     />

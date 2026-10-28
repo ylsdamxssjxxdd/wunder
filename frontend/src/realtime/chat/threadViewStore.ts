@@ -54,6 +54,11 @@ export const uiMessageStatus = (status: string) =>
   status === 'completed' ? 'final' : status === 'rejected' ? 'failed' : status;
 function materialize(row: ChatViewRow): ViewSlot {
   const running = ['accepted','running','queued','waiting_input','waiting_approval'].includes(row.status);
+  const reasoningId = row.reasoning_item_id || row.assistant.item_id;
+  const reasoningItem = row.process_items?.find(item => item.item_id === reasoningId);
+  const reasoningStreaming = running && row.process_activity?.kind === 'thinking' &&
+    (!row.process_activity.item_id || row.process_activity.item_id === reasoningId) &&
+    (!reasoningItem || reasoningItem.status === 'running');
   const onlineSteps = (row.process_items || []).reduce((total, item) => total + (item.kind === 'assistant_message'
     ? Number(Boolean(String(item.payload?.reasoning || '').trim())) + Number(Boolean(String(item.payload?.content || '').trim()) &&
       (item.item_id !== row.assistant.item_id || item.payload?.tool_calls?.length > 0))
@@ -64,6 +69,7 @@ function materialize(row: ChatViewRow): ViewSlot {
     // Only a still-truncated body needs an explicit read; copy falls back to it.
     __thread_body: Boolean(m.body && m.body.bytes > new TextEncoder().encode(m.content).length) ? m.body : undefined,
     streaming: role === 'assistant' && running, status: role === 'assistant' ? row.status : 'completed',
+    reasoningStreaming: role === 'assistant' && reasoningStreaming,
     stop_reason: row.stop_reason, queued_input: row.queued_input, workspace_change_seq: row.workspace_change_seq ?? 0,
     // The process badge counts every visible process entry.  The server keeps
     // tool counts separately, so include the aggregated reasoning entry here.
@@ -128,6 +134,7 @@ function mergeTail(previous: ViewMessage, next: ViewMessage): ViewMessage {
  */
 export type BodyRole = 'user' | 'assistant';
 const LIVE_ROW_STATUSES = ['accepted','running','queued','waiting_input','waiting_approval'];
+const TERMINAL_ROW_STATUSES = ['completed','failed','cancelled','interrupted','rejected','stopped','aborted'];
 const bodyToken = (message: ViewMessage | undefined): string =>
   message?.body ? `${message.body.body_id}@${message.body.revision}` : '';
 const bodyBytes = (text: string): number => new TextEncoder().encode(text).length;
@@ -227,7 +234,7 @@ function projectRowExecutionHead(e: Entry, row: ChatViewRow): ChatViewRow {
     e.rowHeads.set(row.root_turn_id, head);
   }
   if (!head) return row;
-  if (head.turnId !== turnId || row.revision > head.seq) {
+  if (head.turnId !== turnId || (row.revision > head.seq && !TERMINAL_ROW_STATUSES.includes(head.status))) {
     e.rowHeads.delete(row.root_turn_id);
     return row;
   }
@@ -235,8 +242,14 @@ function projectRowExecutionHead(e: Entry, row: ChatViewRow): ChatViewRow {
 }
 function merge(e: Entry, row: ChatViewRow) {
   const old = e.rows.get(row.root_turn_id);
-  if (old && old.revision >= row.revision) return;
+  if (old && old.revision > row.revision) return;
+  if (old && old.revision === row.revision) {
+    row = { ...old, status: row.status, stop_reason: row.stop_reason, queued_input: row.queued_input,
+      assistant: { ...old.assistant, feedback: row.assistant.feedback } };
+  }
   row = projectRowExecutionHead(e, row);
+  if (old?.execution_turn_id && old.execution_turn_id === row.execution_turn_id &&
+      TERMINAL_ROW_STATUSES.includes(old.status)) row = { ...row, status: old.status };
   // Acceptance binds identity; dispatch decides ownership of parked input.
   const previous = old ?? e.rows.get(`pending:${row.client_message_id}`);
   if (previous?.process_items && (!row.execution_turn_id || row.execution_turn_id === previous.execution_turn_id)) {
@@ -344,10 +357,15 @@ export function threadViewHasNewerPage(key: string, page: ThreadViewPage, genera
 function applyExecutionHead(e: Entry, payload: {view_seq:number;runtime_status?:string;status_turn_id?:string;active_turn_id?:string}, rows: ChatViewRow[]) {
   if (payload.view_seq < e.headSeq) return;
   if (!payload.runtime_status && e.headAuthoritative) return;
+  const incomingTurnId = String(payload.status_turn_id || payload.active_turn_id || '');
+  const retainsTerminal = e.headAuthoritative && Boolean(e.statusTurnId) && incomingTurnId === e.statusTurnId &&
+    TERMINAL_ROW_STATUSES.includes(e.latestStatus);
   if (payload.runtime_status) {
-    e.latestStatus=payload.runtime_status;
-    e.statusTurnId=String(payload.status_turn_id || payload.active_turn_id || '');
-    e.activeTurnId=String(payload.active_turn_id || '');
+    if (!retainsTerminal) {
+      e.latestStatus=payload.runtime_status;
+      e.statusTurnId=incomingTurnId;
+      e.activeTurnId=String(payload.active_turn_id || '');
+    }
     e.headAuthoritative=true;
   } else if (!e.headAuthoritative) {
     // Source fixtures/legacy reads have no head. Once supplied, rows never own it again.
@@ -383,6 +401,12 @@ export function threadViewActiveTurnId(key:string):string {
   return e.activeTurnId || '';
 }
 export function threadViewOwnsExecution(key:string):boolean {void threadViewClock.value;return entries.get(key)?.headAuthoritative ?? false;}
+export function threadViewConfirmsCompletion(key:string,turnId:string,status:string):boolean {
+  const e=entries.get(key);
+  if(!e?.headAuthoritative)return true;
+  return (e.statusTurnId===turnId && e.latestStatus===status && TERMINAL_ROW_STATUSES.includes(status)) ||
+    [...e.rows.values()].some(row=>(row.execution_turn_id || row.root_turn_id)===turnId && row.status===status && TERMINAL_ROW_STATUSES.includes(row.status));
+}
 /** Admission guards compare execution watermarks, never transcript cursors. */
 export function threadViewHeadVersion(key:string):string {
   void threadViewClock.value;
@@ -394,7 +418,10 @@ export function threadViewHeadVersion(key:string):string {
 export function applyThreadViewHead(key:string, head:any):boolean {
   const e=entries.get(key);
   if(!e || !head || head.epoch!==e.epoch || !Number.isSafeInteger(head.view_seq) ||
-      !head.runtime_status || head.view_seq<=e.headSeq)return false;
+      !head.runtime_status || head.view_seq<e.headSeq)return false;
+  const turnId=String(head.status_turn_id || head.active_turn_id || '');
+  if(head.view_seq===e.headSeq && (head.runtime_status===e.latestStatus ||
+      (turnId===e.statusTurnId && TERMINAL_ROW_STATUSES.includes(e.latestStatus))))return false;
   applyExecutionHead(e,head,[]);
   notify();return true;
 }
@@ -554,6 +581,15 @@ export function removeThreadViewTurnByClientMessageId(key:string,client:string) 
 function advanceTailActivity(row: ChatViewRow, kind: 'thinking' | 'responding'): void {
   const current = row.process_activity;
   const createdSeq = Number(row.assistant.created_seq || 0);
+  if (current?.kind === 'processing') {
+    if (modelRound(row.assistant.item_id) <= Number(current.model_round ?? 0)) return;
+    row.process_activity = { kind, item_id: row.assistant.item_id, created_seq: createdSeq };
+    return;
+  }
+  if (current?.item_id && modelRound(row.assistant.item_id) > modelRound(current.item_id) && modelRound(current.item_id) >= 0) {
+    row.process_activity = { kind, item_id: row.assistant.item_id, created_seq: createdSeq };
+    return;
+  }
   const activeTool = current?.kind === 'tool'
     ? row.process_items?.find(item => item.item_id === current.item_id) : undefined;
   if (activeTool && modelRound(row.assistant.item_id) <= Number(activeTool.payload?.model_round ?? 0)) return;
@@ -618,8 +654,9 @@ export function applyThreadViewProcessItem(key: string, payload: any): boolean {
   const kind = String(item?.kind || '');
   if (!id || !execution || !['tool_call', 'assistant_message', 'compaction'].includes(kind)) return true;
   const row = [...current.rows.values()].find(candidate =>
-    (candidate.execution_turn_id || candidate.root_turn_id) === execution && LIVE_ROW_STATUSES.includes(candidate.status));
+    (candidate.execution_turn_id || candidate.root_turn_id) === execution);
   if (!row) return true;
+  if (!LIVE_ROW_STATUSES.includes(row.status) && item.status === 'running') return true;
   const items = new Map((row.process_items || []).map(previous => [String(previous.item_id), previous]));
   const previous = items.get(id);
   if (previous && previous.status !== 'running' && item.status === 'running') return true;
@@ -637,6 +674,9 @@ export function applyThreadViewProcessItem(key: string, payload: any): boolean {
       Number(item.payload?.model_round ?? 0) >= modelRound(row.assistant.item_id)) row.process_activity = {
     kind: 'tool', item_id: id, tool: String(item.payload?.tool || item.payload?.tool_name || ''), created_seq: row.assistant.created_seq
   };
+  if (item.status !== 'running' && row.process_activity?.item_id === id) {
+    row.process_activity = { ...row.process_activity, kind: 'processing', tool: '', model_round: Number(item.payload?.model_round ?? 0) };
+  }
   current.slots.set(row.root_turn_id, materialize(row));
   bound(current);
   notifyTail();

@@ -27,6 +27,7 @@ fn turn(row: tokio_postgres::Row) -> Result<Value> {
         "input":row.get::<_,Option<String>>("input_json").as_deref().map(serde_json::from_str::<Value>).transpose()?,
         "control":control.as_deref().map(serde_json::from_str::<Value>).transpose()?.unwrap_or_default(),
         "summary":row.get::<_,Option<String>>("summary_json").as_deref().map(serde_json::from_str::<Value>).transpose()?.unwrap_or_default(),
+        "process_item_id":row.get::<_,Option<String>>("process_item_id"),
     }))
 }
 
@@ -49,7 +50,7 @@ fn roots(
                 'mime_type',left(COALESCE(part->>'mime_type',part->>'content_type'),128))),'[]'::jsonb)
                 FROM (SELECT part FROM jsonb_array_elements(CASE WHEN jsonb_typeof(input.doc->'attachments')='array'
                   THEN input.doc->'attachments' ELSE '[]'::jsonb END) part LIMIT 8) cards))::text END AS input_json,
-            head.control_json,chat.summary_json
+            head.control_json,chat.summary_json,process.item_id AS process_item_id
         FROM (SELECT * FROM service_thread_admissions
             WHERE thread_id=$1 AND turn_id=root_turn_id
               AND ($2::bigint IS NULL OR user_round<$2) AND ($3::bigint IS NULL OR user_round>$3)
@@ -65,6 +66,9 @@ fn roots(
             WHERE thread_id=$1 AND root_turn_id=root.root_turn_id
             ORDER BY created_at_ms DESC,turn_id DESC LIMIT 1) head ON TRUE
         LEFT JOIN service_thread_chat_heads_v2 chat ON chat.thread_id=$1 AND chat.root_turn_id=root.root_turn_id
+        LEFT JOIN LATERAL (SELECT item_id FROM service_thread_items_v2
+            WHERE thread_id=$1 AND root_turn_id=root.root_turn_id AND visible
+            ORDER BY ordinal DESC LIMIT 1) process ON TRUE
         ORDER BY root.user_round {order}"), &[&session,&before,&after,&((limit+1) as i64),&include_input])?
         .into_iter().map(turn).collect()
 }
@@ -169,6 +173,12 @@ fn chat(turn: &Value, items: &HashMap<String, Value>, seq: i64) -> Result<ChatVi
         p::set_reasoning(&mut row.assistant, &item["payload"]);
     }
     row.reasoning_item_id = summary.reasoning_item_id.unwrap_or_default();
+    if let Some(item) = turn["process_item_id"]
+        .as_str()
+        .and_then(|id| items.get(id))
+    {
+        p::set_completed_activity(&mut row, item);
+    }
     p::settle_question_panel(&mut row);
     Ok(row)
 }
@@ -400,6 +410,7 @@ impl PostgresThreadLog<'_> {
                     ]
                     .into_iter()
                     .filter_map(|field| t["summary"][field].as_str().map(str::to_owned))
+                    .chain(t["process_item_id"].as_str().map(str::to_owned))
                 })
                 .collect::<BTreeSet<_>>()
                 .into_iter()

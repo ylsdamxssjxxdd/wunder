@@ -1037,6 +1037,12 @@ button.messenger-sidebar-workspace-row {
   box-shadow: inset 0 0 0 1px var(--mz-primary);
 }
 
+/* 空白区＝工作区根：整块给一圈内描边，表示松手会移到最外层。 */
+.workspace-files-scroll.is-drop-root {
+  box-shadow: inset 0 0 0 2px var(--mz-primary);
+  background: var(--mz-primary-tint);
+}
+
 .workspace-file-twisty {
   display: inline-flex;
   flex-shrink: 0;

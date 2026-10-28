@@ -515,6 +515,15 @@ impl<'a> CanonicalThreadLog<'a> {
             Some((summary.process_count - i64::from(summary.assistant_process_text)).max(0));
         row.workspace_change_seq = summary.workspace_change_seq;
         row.subagents = summary.subagents;
+        let activity = conn.query_row(
+            "SELECT preview_json,rollout_ordinal FROM thread_items WHERE rollout_id=?1
+             AND COALESCE(root_turn_id,turn_id)=?2 AND visible=1 ORDER BY rollout_ordinal DESC LIMIT 1",
+            params![rollout,root],
+            |record| Ok((record.get::<_,String>(0)?,record.get::<_,i64>(1)?)),
+        ).optional()?;
+        if let Some((raw, ordinal)) = activity {
+            p::set_completed_activity(&mut row, &Self::item(raw, ordinal, session, false)?);
+        }
         p::settle_question_panel(&mut row);
         Ok(row)
     }

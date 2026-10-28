@@ -32,6 +32,14 @@
       </div>
 
       <div class="workspace-new-file-field">
+        <span class="workspace-new-file-label">{{ t('workspace.createFile.locationLabel') }}</span>
+        <span class="workspace-new-file-location">
+          <i class="fa-solid fa-folder" aria-hidden="true"></i>
+          {{ locationLabel }}
+        </span>
+      </div>
+
+      <div class="workspace-new-file-field">
         <label class="workspace-new-file-label" for="workspace-new-file-name-input">{{ t('workspace.createFile.nameLabel') }}</label>
         <input
           id="workspace-new-file-name-input"
@@ -77,6 +85,8 @@ export type WorkspaceNewFileTemplate = {
 const props = defineProps<{
   visible: boolean;
   fileTypeOptions: WorkspaceNewFileTemplate[];
+  /** 目标目录（工作区相对路径，空串表示根目录）：显式告诉用户文件会落在哪。 */
+  directory?: string;
 }>();
 
 const emit = defineEmits<{
@@ -100,6 +110,11 @@ const selectedType = computed(() => {
 });
 
 const selectedTypeHint = computed(() => selectedType.value?.hint || '');
+
+const locationLabel = computed(() => {
+  const directory = String(props.directory || '').trim();
+  return directory || t('workspace.createFile.locationRoot');
+});
 
 watch(
   () => selectedType.value,
@@ -165,6 +180,27 @@ watch(
   font-size: 13px;
   font-weight: 600;
   color: #202020;
+}
+
+/* 目标目录：把「会新建到哪」摆在文件名之前，避免用户以为落在别处。 */
+.workspace-new-file-location {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 6px 10px;
+  border: 1px solid rgba(var(--ui-accent-rgb), 0.18);
+  border-radius: 8px;
+  background: rgba(var(--ui-accent-rgb), 0.05);
+  color: #4a4a4a;
+  font-size: 12.5px;
+  overflow-wrap: anywhere;
+}
+
+.workspace-new-file-location i {
+  flex-shrink: 0;
+  color: var(--ui-accent-ink);
+  font-size: 12px;
 }
 
 .workspace-new-file-type-grid {

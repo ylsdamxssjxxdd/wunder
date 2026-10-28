@@ -20,7 +20,7 @@ import { getCurrentLanguage, setLanguage, useI18n } from '@/i18n';
 import { flushBackgroundPublication } from '@/realtime/chat/chatBackgroundPublication';
 import { resolveChatRuntimeRenderableKey } from '@/realtime/chat/chatRuntimeMessageKeys';
 import { resolveChatRuntimeMessageRenderKey } from '@/realtime/chat/chatRuntimeRenderAdapter';
-import { threadViewClock, threadViewOwnsExecution, threadViewHeadVersion } from '@/realtime/chat/threadViewStore';
+import { threadViewClock, threadViewOwnsExecution, threadViewHeadVersion, threadViewConfirmsCompletion } from '@/realtime/chat/threadViewStore';
 import { threadViewPhase, threadViewSlots } from '@/realtime/chat/threadViewStore';
 import { readThreadBody } from '@/realtime/chat/threadBodyReader';
 import { buildChatThreadMaterializedSlots } from '@/realtime/chat/chatThreadRuntime';
@@ -11314,6 +11314,7 @@ function installMessengerControllerLifecycleReactiveEffects(ctx: MessengerContro
               const sessionId = String(completion?.sessionId || '').trim();
               const turnId = String(completion?.turnId || '').trim();
               const terminalStatus = completion?.status || 'completed';
+              if (!threadViewConfirmsCompletion(sessionId,turnId,terminalStatus)) continue;
               const catalogSession = ctx.chatStore.sessions?.find((session) => String(session?.id || '').trim() === sessionId);
               if (catalogSession) {
                   catalogSession.runtime_status = terminalStatus;

@@ -118,11 +118,12 @@ test('settling a live thought reloads its complete durable text without changing
     const host = document.createElement('div'); document.body.append(host);
     const originalAdapter = api.defaults.adapter;
     let requests = 0;
+    let settled = false;
     const complete = `${'fixture complete thought\n'.repeat(80)}fixture final tail`;
     api.defaults.adapter = async (config: unknown) => {
       requests++;
       return { status: 200, statusText: 'OK', headers: {}, config, data: { data: { turn: {
-        items: [{ item_id: 'fixture-answer', item_index: 1, kind: 'assistant_message', status: 'completed',
+        items: [{ item_id: 'fixture-answer', item_index: 1, kind: 'assistant_message', status: settled ? 'completed' : 'running',
           payload: { reasoning: complete, content: '' } }], has_older: false, has_newer: false
       } } } };
     };
@@ -144,7 +145,7 @@ test('settling a live thought reloads its complete durable text without changing
       host.querySelector<HTMLButtonElement>('.tl-thinking-head')!.click();
       await nextTick();
       const live = host.querySelector('.tl-thinking-text')?.textContent;
-      model.reasoningStreaming = false; model.status = 'completed';
+      settled = true; model.reasoningStreaming = false; model.status = 'completed';
       await until(() => requests >= 2 && host.querySelector('.tl-thinking-text')?.textContent === complete);
       return { live, complete: host.querySelector('.tl-thinking-text')?.textContent === complete, steps: model.count };
     } finally {

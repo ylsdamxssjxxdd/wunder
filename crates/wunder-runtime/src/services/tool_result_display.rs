@@ -20,6 +20,13 @@ fn string<'a>(value: &'a Value, keys: &[&str]) -> &'a str {
         .unwrap_or("")
 }
 
+/// Skill loading reuses one tool for every skill. The row must be identified by
+/// the skill it loads, not by the entry resource (usually `SKILL.md`) that every
+/// skill in the timeline shares.
+fn is_skill_tool(tool: &str) -> bool {
+    matches!(tool, "技能调用" | "skill_call" | "skill_get")
+}
+
 /// Keep one action and its retained result together. `pending` is supplied by
 /// the event lifecycle, so absent output never implies successful completion.
 pub fn tool_result_display(tool: &str, payload: &Value, pending: bool) -> String {
@@ -67,10 +74,19 @@ pub fn tool_result_display(tool: &str, payload: &Value, pending: bool) -> String
         "完成"
     };
     let mut lines = vec![format!("{} · {status}", preview(label))];
-    let target = string(
-        args,
-        &["path", "file_path", "command", "cmd", "query", "url"],
-    );
+    let target = if is_skill_tool(tool) {
+        let declared = string(args, &["name", "skill_name", "skillName"]);
+        if declared.is_empty() {
+            string(data, &["name"])
+        } else {
+            declared
+        }
+    } else {
+        string(
+            args,
+            &["path", "file_path", "command", "cmd", "query", "url"],
+        )
+    };
     // `queries` is a batch (`string[]`) and dsh's search card title is the
     // joined batch, so fall back to it when no single-string target exists.
     let queries_target: String = args
@@ -196,7 +212,13 @@ pub fn tool_result_display(tool: &str, payload: &Value, pending: bool) -> String
                 lines.push(preview(content));
             }
         }
-        let path = string(data, &["path", "file_path", "url", "title"]);
+        let path = if is_skill_tool(tool) {
+            // The loaded resource path is an implementation detail of the load;
+            // echoing `SKILL.md` would make every skill row look identical.
+            ""
+        } else {
+            string(data, &["path", "file_path", "url", "title"])
+        };
         if !path.is_empty() && path != target {
             lines.push(preview(path));
         }
@@ -251,8 +273,23 @@ mod tests {
         assert!(!output.contains("hidden"));
     }
     #[test]
-    fn pending_and_failed_writes_never_claim_applied_content() {
-        let payload = json!({"ok":false,"error":"write denied","args":{"content":"not written"}});
+    fn skill_rows_show_the_skill_name_instead_of_the_entry_resource() {
+        let output = tool_result_display(
+            "技能调用",
+            &json!({
+                "ok":true,
+                "args": {"name":"demo_skill","action":"read","path":"SKILL.md"},
+                "data": {"name":"demo_skill","path":"SKILL.md","content":"# Demo"}
+            }),
+            false,
+        );
+        let mut lines = output.lines();
+        assert!(lines.next().unwrap_or_default().contains("技能调用"));
+        assert_eq!(lines.next(), Some("demo_skill"));
+        assert!(!output.contains("SKILL.md"));
+    }
+    #[test]
+    fn pending_and_failed_writes_never_claim_applied_content() {        let payload = json!({"ok":false,"error":"write denied","args":{"content":"not written"}});
         let output = tool_result_display("write_file", &payload, false);
         assert!(output.contains("write denied"));
         assert!(!output.contains("not written"));

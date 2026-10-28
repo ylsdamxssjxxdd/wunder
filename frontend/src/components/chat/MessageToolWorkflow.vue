@@ -2848,7 +2848,12 @@ const resolveSkillSummaryTitle = (entry: RawEntry, toolDisplay: string, pathHint
   if (skillName) {
     return truncateSingleLine(`${toolDisplay} ${skillName}`);
   }
-  return composeSummaryTitle(toolDisplay, pathHints);
+  // Never fall back to the entry resource: every skill shares SKILL.md, so the
+  // row would lose the only thing that tells skills apart.
+  return composeSummaryTitle(
+    toolDisplay,
+    pathHints.filter((hint) => Boolean(resolveSkillPathName(hint)))
+  );
 };
 
 const resolveToolActionLabel = (entry: RawEntry): string => {

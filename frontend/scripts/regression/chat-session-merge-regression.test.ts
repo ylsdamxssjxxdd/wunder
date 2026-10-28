@@ -3,6 +3,22 @@ import assert from 'node:assert/strict';
 
 import { mergeSessionsByIdPreservingRuntimeFields } from '../../src/stores/chatSessionMerge';
 import { applySessionQuotaUsage } from '../../src/stores/chatSessionQuota';
+import { beginThreadView,commitThreadView,threadViewConfirmsCompletion,clearThreadView,threadViewSlots } from '../../src/realtime/chat/threadViewStore';
+
+test('catalog completion at an unchanged history cursor settles its bubble and rejects a premature notice',()=>{
+  const key='fixture-catalog-thread';
+  const generation=beginThreadView(key);
+  const row={root_turn_id:'fixture-catalog-turn',execution_turn_id:'fixture-catalog-turn',user_round:1,revision:5,status:'running',
+    user:{item_id:'fixture-user-item',content:'Fixture input'},assistant:{item_id:'',content:''},workflow_count:1,failed_count:0};
+  commitThreadView(key,{session_id:key,epoch:1,view_seq:5,projection_state:'ready',thread_empty:false,latest_round:1,chat:[row],trajectory:[],tiles:[],tile_level:0,next_before:1,has_more:false,
+    runtime_status:'running',status_turn_id:'fixture-catalog-turn',active_turn_id:'fixture-catalog-turn'},generation);
+  assert.equal(threadViewConfirmsCompletion(key,'fixture-catalog-turn','completed'),false);
+  const merged=mergeSessionsByIdPreservingRuntimeFields([{id:key}],[{id:key,runtime_head:{epoch:1,view_seq:5,runtime_status:'completed',status_turn_id:'fixture-catalog-turn',active_turn_id:''}}],session=>({...session}),items=>items);
+  assert.equal(merged[0].runtime_status,'completed');
+  assert.equal(threadViewSlots(key)![0].assistant.streaming,false);
+  assert.equal(threadViewConfirmsCompletion(key,'fixture-catalog-turn','completed'),true);
+  clearThreadView(key);
+});
 
 test('session merge keeps locally enhanced context fields when server refresh omits them', () => {
   const currentSessions = [

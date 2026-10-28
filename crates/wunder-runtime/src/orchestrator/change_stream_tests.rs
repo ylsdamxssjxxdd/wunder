@@ -1219,6 +1219,111 @@ async fn refresh_keeps_running_until_canonical_turn_terminal() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn six_round_process_reload_keeps_completed_thoughts_quiet_and_all_tool_results() {
+    let (state, _dir) = build_test_state("process_reload_fixture").await;
+    let turn = start_turn(&state, "fixture-thread", "fixture-owner").await;
+    let emitter = EventEmitter::new(
+        "fixture-thread".into(),
+        "fixture-owner".into(),
+        None,
+        Some(state.storage.clone()),
+        state.monitor.clone(),
+        false,
+        None,
+    )
+    .with_committer(state.kernel.orchestrator.committer.clone());
+    emitter.bind_turn(&turn, 1);
+    let mut call = 0;
+    for round in 1..=6 {
+        let calls = if round == 6 {
+            0
+        } else if round == 2 {
+            2
+        } else {
+            1
+        };
+        emitter.emit("llm_output", json!({"model_round":round,
+            "content":if round==6 {"Fixture final answer"}else{""},
+            "reasoning":if round==2 {"Fixture long thought. ".repeat(650)}else{"Fixture thought.".into()},
+            "finish_reason":if calls==0 {"stop"}else{"tool_calls"},
+            "tool_calls":(0..calls).map(|index| json!({"id":format!("fixture-call-{}",call+index),
+                "function":{"name":"fixture_tool","arguments":"{}"}})).collect::<Vec<_>>() })).await;
+        for _ in 0..calls {
+            emitter.emit("tool_call",json!({"model_round":round,"tool_call_id":format!("fixture-call-{call}"),"tool":"fixture_tool","args":{}})).await;
+            emitter.emit("tool_result",json!({"model_round":round,"tool_call_id":format!("fixture-call-{call}"),"tool":"fixture_tool","ok":true,
+                "data":{"status":"exited","stdout":"Fixture output","exit_code":0}})).await;
+            call += 1;
+        }
+        let page = state
+            .storage
+            .thread_view_page("fixture-owner", "fixture-thread", "chat", None, 12)
+            .unwrap();
+        assert_eq!(page.runtime_status, "running");
+        assert_eq!(page.chat[0].status, "running");
+        assert_eq!(page.chat[0].process_activity.kind, "processing");
+        if round == 1 {
+            assert_eq!(page.chat[0].reasoning_item_id, format!("{turn}:text-1"));
+            assert_eq!(
+                page.chat[0].process_activity.item_id,
+                format!("{turn}:tool-fixture-call-0")
+            );
+        }
+    }
+    let mut cursor = None;
+    let mut tools = std::collections::HashSet::new();
+    loop {
+        let page = state
+            .storage
+            .get_thread_turn_page(
+                "fixture-owner",
+                "fixture-thread",
+                &turn,
+                None,
+                cursor,
+                3,
+                false,
+            )
+            .unwrap()
+            .unwrap();
+        let items = page["items"].as_array().unwrap();
+        for item in items {
+            if item["kind"] == "tool_call" {
+                assert_eq!(item["status"], "completed");
+                tools.insert(item["item_id"].as_str().unwrap().to_owned());
+            }
+        }
+        if page["has_newer"] != true {
+            break;
+        }
+        cursor = items.last().and_then(|item| item["item_index"].as_i64());
+        assert!(cursor.is_some());
+    }
+    assert_eq!(tools.len(), 6);
+    state
+        .kernel
+        .orchestrator
+        .committer
+        .update_turn(
+            "fixture-owner",
+            "fixture-thread",
+            &turn,
+            "completed",
+            "",
+            &json!({"stop_reason":"model_response"}),
+        )
+        .await
+        .unwrap();
+    let page = state
+        .storage
+        .thread_view_page("fixture-owner", "fixture-thread", "chat", None, 12)
+        .unwrap();
+    assert_eq!(page.runtime_status, "completed");
+    assert_eq!(page.chat[0].status, "completed");
+    assert_eq!(page.chat[0].process_count, Some(12));
+    assert_eq!(page.chat[0].assistant.content, "Fixture final answer");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn admission_does_not_freeze_prompt_and_session_meta_keeps_initial_instructions() {
     use wunder_core::thread_store::ThreadId;
     let (state, _dir) = build_test_state("change_stream_system_prompt").await;

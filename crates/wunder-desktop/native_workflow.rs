@@ -140,10 +140,15 @@ fn complete_copy_text(data: &Value) -> Option<String> {
     None
 }
 
+/// Skill loading is one tool with one row per call; the row must name the skill
+/// being loaded, never the shared entry resource it reads.
+fn is_skill_tool(tool: &str) -> bool {
+    matches!(tool, "技能调用" | "skill_call" | "skill_get")
+}
+
 /// A collapsed row describes invocation arguments only. Results can contain
 /// arbitrary `path`, `query` or `content` fields that are not the call target.
-fn call_preview(tool: &str, data: &Value) -> String {
-    let args = data.get("args").or_else(|| data.get("arguments"));
+fn call_preview(tool: &str, data: &Value) -> String {    let args = data.get("args").or_else(|| data.get("arguments"));
     let parsed = args
         .and_then(Value::as_str)
         .filter(|value| value.len() <= 8192)
@@ -155,6 +160,11 @@ fn call_preview(tool: &str, data: &Value) -> String {
     );
     let keys: &[&str] = if command {
         &["content", "command", "cmd", "input", "script", "raw"]
+    } else if is_skill_tool(tool) {
+        // A skill call is identified by the skill it loads. The resource path
+        // (usually SKILL.md) is an implementation detail of that load and would
+        // read identically for every skill in the timeline.
+        &["name", "skill_name", "skillName"]
     } else if matches!(tool, "web_fetch" | "webfetch" | "网页抓取") {
         &["url", "uri", "query"]
     } else {
@@ -372,6 +382,14 @@ mod tests {
                 "read_file",
                 json!({"result":{"path":"wrong","content":"output"}}),
                 "",
+            ),
+            (
+                "技能调用",
+                json!({
+                    "args":{"name":"demo_skill","action":"read","path":"SKILL.md"},
+                    "result":{"data":{"path":"SKILL.md"}}
+                }),
+                "demo_skill",
             ),
         ] {
             let entry = NativeWorkflowEntry::from_payload(

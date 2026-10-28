@@ -30,6 +30,7 @@ pub fn tool_label(tool: &str) -> String {
         "question_panel" | "ask_panel" => "问询面板",
         "update_plan" | "plan_update" => "计划面板",
         "read_image" | "view_image" => "读图",
+        "skill_call" | "skill_get" => "技能调用",
         "schedule_task" => "定时任务",
         "context_compaction" | "compact" => "上下文压缩",
         "" => "工具",
