@@ -26,6 +26,16 @@ jobs:
             | sh -s -- -y --profile minimal --default-toolchain 1.92.0
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
+      - name: Configure crates.io mirror
+        run: |
+          mkdir -p ~/.cargo
+          cat > ~/.cargo/config.toml <<'EOF'
+          [source.crates-io]
+          replace-with = "rsproxy-sparse"
+          [source.rsproxy-sparse]
+          registry = "sparse+https://rsproxy.cn/index/"
+          EOF
+
       - name: Hash Cargo.lock
         id: lock
         run: echo "hash=$(sha256sum Cargo.lock | cut -c1-16)" >> "$GITHUB_OUTPUT"
