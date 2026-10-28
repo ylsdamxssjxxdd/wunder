@@ -452,7 +452,7 @@ onMounted(() => {
 
 .messenger-archived-thread-restore-btn:hover:not(:disabled) {
   border-color: rgba(var(--ui-accent-rgb), 0.42);
-  color: var(--ui-accent-deep);
+  color: var(--ui-accent-ink);
   background: var(--ui-accent-soft-2);
 }
 

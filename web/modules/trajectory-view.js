@@ -26,7 +26,7 @@ import {
   requestIdentity,
   timelineFocusIndexes,
   trajectoryDiagnosticRows,
-} from "./trajectory-model.js?v=20261025-01";
+} from "./trajectory-model.js?v=20261027-01";
 
 const OVERSCAN_PX = 360;
 const VIRTUAL_THRESHOLD = 100;
@@ -278,6 +278,11 @@ export function createTrajectoryView(host, options = {}) {
   let previousRows = [];
   let previousFoldSignature = "";
   let ledgerRenderKey = "";
+  let detailItem = null;
+  let detailCell = null;
+  let detailRequest = null;
+  let detailError = "";
+  let detailController = null;
 
   /* ---------- 骨架 ---------- */
   const root = h("div", "tt-root");
@@ -898,7 +903,9 @@ export function createTrajectoryView(host, options = {}) {
     if (cell.kind === "system") return [label.overview, label.raw];
     if (cell.kind === "compacted") return [label.overview, label.rawOutput];
     if (cell.kind === "tool" || cell.kind === "subtool") {
-      return [label.overview, label.params, label.result, label.schema, label.timing];
+      // The overview already carries the duration; a second timing tab only
+      // repeated it, and 蛹/蜂巢 do not offer one on a tool entry.
+      return [label.overview, label.params, label.result, label.schema];
     }
     return [label.overview, label.preview, label.raw];
   };
@@ -1049,9 +1056,53 @@ export function createTrajectoryView(host, options = {}) {
   const renderDetails = (selectedCell, selectedRecord, requests, allRecords) => {
     bodyEl.classList.toggle("tt-has-details", Boolean(selectedCell && selectedRecord));
     if (!selectedCell || !selectedRecord) {
+      detailController?.abort();
+      detailController = null;
+      detailRequest = null;
+      detailItem = null;
+      detailCell = null;
+      detailError = "";
       resizeHandle.style.display = "none";
       detailsEl.style.display = "none";
       return;
+    }
+
+    const itemId = selectedCell.recordId;
+    const rawItem = st.rawTurns.flatMap(turn => turn.items || []).find(item => item.item_id === itemId);
+    if (rawItem?.preview_only && sessionId) {
+      const itemIds = selectedCell.sourceItemIds || [itemId];
+      const identity = JSON.stringify([sessionId, itemIds]);
+      if (detailRequest !== identity) {
+        detailController?.abort();
+        detailController = new AbortController();
+        detailRequest = identity;
+        detailItem = null;
+        detailCell = null;
+        detailError = "";
+        Promise.all(itemIds.map(id => fetch(`${getWunderBase()}/admin/monitor/${encodeURIComponent(sessionId)}/thread-log/items/${encodeURIComponent(id)}`, {
+          headers: getAuthHeaders(), signal: detailController.signal,
+        }).then(async response => {
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          const result = await response.json();
+          return result.data;
+        }))).then(items => {
+          if (destroyed || detailRequest !== identity) return;
+          detailItem = items;
+          scheduleRender();
+        }).catch(error => {
+          if (destroyed || detailRequest !== identity || error.name === "AbortError") return;
+          detailError = error.message;
+          scheduleRender();
+        });
+      }
+      if (detailItem) {
+        if (!detailCell) {
+          const turn = st.rawTurns.find(turn => (turn.items || []).some(item => item.item_id === itemId));
+          const hydrated = flattenRecords(buildTrajectoryLayout([{ ...turn, items: detailItem }], modelT));
+          detailCell = hydrated.find(record => record.cell.recordId === itemId)?.cell;
+        }
+        if (detailCell) selectedCell = { ...selectedCell, ...detailCell, index: selectedCell.index };
+      }
     }
 
     if (detailsEl.parentNode !== bodyEl) {
@@ -1113,6 +1164,15 @@ export function createTrajectoryView(host, options = {}) {
 
     const body = h("div", "tt-detail-body");
     detailsEl.appendChild(body);
+    if (rawItem?.preview_only && sessionId && !detailItem) {
+      body.appendChild(h("div", "tt-no-payload", detailError || t("common.loading")));
+      if (detailError) {
+        const retry = h("button", "tt-link", modelT("retryDetail"));
+        retry.addEventListener("click", () => { detailRequest = null; scheduleRender(); });
+        body.appendChild(retry);
+      }
+      return;
+    }
     const label = tabs();
 
     if (st.activeTab === label.overview) {
@@ -1717,6 +1777,11 @@ export function createTrajectoryView(host, options = {}) {
     setSessionId(value) {
       const next = String(value || "").trim();
       if (next !== sessionId) {
+        detailController?.abort();
+        detailRequest = null;
+        detailItem = null;
+        detailCell = null;
+        detailError = "";
         st.collapsedTurns.clear();
         st.collapsedAssistants.clear();
         previousRows = [];
@@ -1729,12 +1794,13 @@ export function createTrajectoryView(host, options = {}) {
       scheduleRender();
     },
     setRawTurns(turns) {
+      const selectedId = st.selectedIndex === null ? null : findCell(computeTurns(), st.selectedIndex)?.recordId;
       st.rawTurns = Array.isArray(turns) ? turns : [];
       st.turnsKey += 1;
       st.loading = false;
       st.loadError = false;
-      st.selectedIndex = null;
-      st.activeTab = "";
+      st.selectedIndex = selectedId ? flattenRecords(computeTurns()).find(record => record.cell.recordId === selectedId)?.cell.index ?? null : null;
+      if (st.selectedIndex === null) st.activeTab = "";
       st.selection = null;
       // Live debug refresh must preserve user folds; render prunes evicted IDs.
       if (previousRows.length === 0) {
@@ -1759,6 +1825,9 @@ export function createTrajectoryView(host, options = {}) {
     },
     destroy() {
       destroyed = true;
+      detailController?.abort();
+      detailItem = null;
+      detailCell = null;
       window.removeEventListener("pointermove", onWindowPointerMove);
       window.removeEventListener("pointerup", onWindowPointerUp);
       window.removeEventListener("keydown", onKeyDown);

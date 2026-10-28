@@ -7,6 +7,29 @@ use tracing::{debug, warn};
 
 use super::runtime_metrics;
 
+pub(crate) struct TaskScope {
+    label: &'static str,
+    started: Instant,
+}
+
+pub(crate) fn scope(label: &'static str) -> TaskScope {
+    runtime_metrics::record_long_task_started(label);
+    TaskScope {
+        label,
+        started: Instant::now(),
+    }
+}
+
+impl Drop for TaskScope {
+    fn drop(&mut self) {
+        runtime_metrics::record_long_task_finished(
+            self.label,
+            runtime_metrics::elapsed_ms_u64(self.started),
+            false,
+        );
+    }
+}
+
 pub fn spawn<F>(label: &'static str, future: F) -> JoinHandle<F::Output>
 where
     F: Future + Send + 'static,
@@ -74,6 +97,30 @@ where
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
+
+    #[test]
+    fn scoped_task_records_completion_on_early_exit() {
+        let label = "long_task.test.scope.early_exit";
+        let before = super::runtime_metrics::snapshot()
+            .long_tasks
+            .into_iter()
+            .find(|metric| metric.label == label);
+        let started_before = before.as_ref().map_or(0, |metric| metric.started);
+        let finished_before = before.as_ref().map_or(0, |metric| metric.finished);
+        let operation = || -> Result<(), ()> {
+            let _scope = super::scope(label);
+            Err(())
+        };
+        assert!(operation().is_err());
+        let after = super::runtime_metrics::snapshot()
+            .long_tasks
+            .into_iter()
+            .find(|metric| metric.label == label)
+            .unwrap();
+        assert_eq!(after.started, started_before + 1);
+        assert_eq!(after.finished, finished_before + 1);
+        assert_eq!(after.in_flight, 0);
+    }
 
     #[tokio::test]
     async fn long_task_spawn_completes() {

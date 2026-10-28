@@ -3,7 +3,6 @@ mod attachments;
 mod cloud_command;
 mod cloud_interlink;
 mod command_session_display;
-mod empty_state_animation;
 mod error_display;
 mod exec_events;
 mod input_guard;
@@ -13,6 +12,7 @@ mod patch_diff;
 mod path_display;
 mod render;
 mod runtime;
+mod session_header;
 mod slash_command;
 mod tool_display;
 mod tool_presentation;
@@ -121,11 +121,29 @@ fn run_cli() -> Result<()> {
 
 fn init_tracing() {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn"));
-    // Diagnostics must never share stdout with the reply: `exec` promises that
-    // stdout carries the answer alone.
+    let diagnostic = if std::io::stderr().is_terminal() {
+        let directory =
+            wunder_server::local_bootstrap::resolve_home_from_env_or_user().join("logs");
+        std::fs::create_dir_all(&directory).ok().and_then(|_| {
+            std::fs::OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .open(directory.join(format!("cli-{}.log", std::process::id())))
+                .ok()
+        })
+    } else {
+        None
+    };
+    let writer: Box<dyn std::io::Write + Send> = match diagnostic {
+        Some(file) => Box::new(file),
+        None if std::io::stderr().is_terminal() => Box::new(std::io::sink()),
+        None => Box::new(std::io::stderr()),
+    };
     let _ = tracing_subscriber::fmt()
         .with_env_filter(filter)
-        .with_writer(std::io::stderr)
+        .with_ansi(false)
+        .with_writer(std::sync::Mutex::new(writer))
         .try_init();
 }
 

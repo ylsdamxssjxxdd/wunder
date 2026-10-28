@@ -1,8 +1,20 @@
 use super::PostgresStorage;
-use crate::storage::{CronJobRecord, CronRunRecord, StorageLifecycle};
+use crate::storage::{CronJobRecord, CronJobStats, CronRunRecord, StorageLifecycle};
 use anyhow::Result;
+use std::collections::HashMap;
 
 pub(super) trait PostgresCronStorage {
+    fn cron_workspace_bindings_impl(
+        &self,
+        user_id: &str,
+        session_ids: &[String],
+    ) -> Result<HashMap<String, Option<String>>>;
+    fn compare_and_swap_cron_job_impl(
+        &self,
+        expected: &CronJobRecord,
+        replacement: Option<&CronJobRecord>,
+        run: Option<&CronRunRecord>,
+    ) -> Result<bool>;
     fn upsert_cron_job_impl(&self, record: &CronJobRecord) -> Result<()>;
     fn get_cron_job_impl(&self, user_id: &str, job_id: &str) -> Result<Option<CronJobRecord>>;
     fn get_cron_job_by_dedupe_key_impl(
@@ -10,11 +22,20 @@ pub(super) trait PostgresCronStorage {
         user_id: &str,
         dedupe_key: &str,
     ) -> Result<Option<CronJobRecord>>;
-    fn list_cron_jobs_impl(
+    fn list_cron_jobs_page_impl(
         &self,
         user_id: &str,
         include_disabled: bool,
+        agent_id: Option<&str>,
+        limit: i64,
+        offset: i64,
     ) -> Result<Vec<CronJobRecord>>;
+    fn summarize_cron_jobs_impl(
+        &self,
+        user_id: &str,
+        agent_id: Option<&str>,
+        now: f64,
+    ) -> Result<CronJobStats>;
     fn delete_cron_job_impl(&self, user_id: &str, job_id: &str) -> Result<i64>;
     fn delete_cron_jobs_by_session_impl(&self, user_id: &str, session_id: &str) -> Result<i64>;
     fn reset_cron_jobs_running_impl(&self) -> Result<()>;
@@ -46,48 +67,76 @@ pub(super) trait PostgresCronStorage {
 }
 
 impl PostgresCronStorage for PostgresStorage {
+    fn cron_workspace_bindings_impl(
+        &self,
+        user_id: &str,
+        session_ids: &[String],
+    ) -> Result<HashMap<String, Option<String>>> {
+        self.ensure_initialized()?;
+        anyhow::ensure!(
+            session_ids.len() <= 201,
+            "cron workspace lookup exceeds page limit"
+        );
+        if session_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let mut conn = self.conn()?;
+        let rows = conn.query("SELECT session_id, workspace_id FROM chat_sessions WHERE user_id = $1 AND session_id = ANY($2)", &[&user_id, &session_ids])?;
+        Ok(rows.iter().map(|row| (row.get(0), row.get(1))).collect())
+    }
     fn upsert_cron_job_impl(&self, record: &CronJobRecord) -> Result<()> {
         self.ensure_initialized()?;
         let mut conn = self.conn()?;
-        let payload = Self::json_to_string(&record.payload);
-        let deliver = record.deliver.as_ref().map(Self::json_to_string);
-        let enabled = if record.enabled { 1 } else { 0 };
-        let delete_after = if record.delete_after_run { 1 } else { 0 };
-        conn.execute(
-            "INSERT INTO cron_jobs (job_id, user_id, session_id, agent_id, name, session_target, payload, deliver, enabled, delete_after_run, schedule_kind, schedule_at, schedule_every_ms, schedule_cron, schedule_tz, dedupe_key, next_run_at, running_at, runner_id, run_token, heartbeat_at, lease_expires_at, last_run_at, last_status, last_error, consecutive_failures, auto_disabled_reason, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29) ON CONFLICT(job_id) DO UPDATE SET user_id = EXCLUDED.user_id, session_id = EXCLUDED.session_id, agent_id = EXCLUDED.agent_id, name = EXCLUDED.name, session_target = EXCLUDED.session_target, payload = EXCLUDED.payload, deliver = EXCLUDED.deliver, enabled = EXCLUDED.enabled, delete_after_run = EXCLUDED.delete_after_run, schedule_kind = EXCLUDED.schedule_kind, schedule_at = EXCLUDED.schedule_at, schedule_every_ms = EXCLUDED.schedule_every_ms, schedule_cron = EXCLUDED.schedule_cron, schedule_tz = EXCLUDED.schedule_tz, dedupe_key = EXCLUDED.dedupe_key, next_run_at = EXCLUDED.next_run_at, running_at = EXCLUDED.running_at, runner_id = EXCLUDED.runner_id, run_token = EXCLUDED.run_token, heartbeat_at = EXCLUDED.heartbeat_at, lease_expires_at = EXCLUDED.lease_expires_at, last_run_at = EXCLUDED.last_run_at, last_status = EXCLUDED.last_status, last_error = EXCLUDED.last_error, consecutive_failures = EXCLUDED.consecutive_failures, auto_disabled_reason = EXCLUDED.auto_disabled_reason, updated_at = EXCLUDED.updated_at",
-            &[
-                &record.job_id,
-                &record.user_id,
-                &record.session_id,
-                &record.agent_id,
-                &record.name,
-                &record.session_target,
-                &payload,
-                &deliver,
-                &enabled,
-                &delete_after,
-                &record.schedule_kind,
-                &record.schedule_at,
-                &record.schedule_every_ms,
-                &record.schedule_cron,
-                &record.schedule_tz,
-                &record.dedupe_key,
-                &record.next_run_at,
-                &record.running_at,
-                &record.runner_id,
-                &record.run_token,
-                &record.heartbeat_at,
-                &record.lease_expires_at,
-                &record.last_run_at,
-                &record.last_status,
-                &record.last_error,
-                &record.consecutive_failures,
-                &record.auto_disabled_reason,
-                &record.created_at,
-                &record.updated_at,
-            ],
-        )?;
+        let mut tx = conn.transaction()?;
+        write_cron_job(&mut tx, record)?;
+        tx.commit()?;
         Ok(())
+    }
+
+    fn compare_and_swap_cron_job_impl(
+        &self,
+        expected: &CronJobRecord,
+        replacement: Option<&CronJobRecord>,
+        run: Option<&CronRunRecord>,
+    ) -> Result<bool> {
+        self.ensure_initialized()?;
+        anyhow::ensure!(
+            replacement.is_none_or(
+                |record| record.job_id == expected.job_id && record.user_id == expected.user_id
+            ),
+            "cron replacement identity mismatch"
+        );
+        anyhow::ensure!(
+            run.is_none_or(
+                |record| record.job_id == expected.job_id && record.user_id == expected.user_id
+            ),
+            "cron run identity mismatch"
+        );
+        let mut conn = self.conn()?;
+        let mut tx = conn.transaction()?;
+        let sql = format!(
+            "SELECT {} FROM cron_jobs WHERE user_id = $1 AND job_id = $2 FOR UPDATE",
+            cron_job_select_fields()
+        );
+        let current = tx
+            .query_opt(&sql, &[&expected.user_id, &expected.job_id])?
+            .map(|row| map_cron_job_row(&row));
+        if current.as_ref() != Some(expected) {
+            return Ok(false);
+        }
+        if let Some(record) = replacement {
+            write_cron_job(&mut tx, record)?;
+        } else {
+            tx.execute(
+                "DELETE FROM cron_jobs WHERE user_id = $1 AND job_id = $2",
+                &[&expected.user_id, &expected.job_id],
+            )?;
+        }
+        if let Some(record) = run {
+            write_cron_run(&mut tx, record)?;
+        }
+        tx.commit()?;
+        Ok(true)
     }
 
     fn get_cron_job_impl(&self, user_id: &str, job_id: &str) -> Result<Option<CronJobRecord>> {
@@ -126,31 +175,45 @@ impl PostgresCronStorage for PostgresStorage {
         Ok(row.map(|row| map_cron_job_row(&row)))
     }
 
-    fn list_cron_jobs_impl(
+    fn list_cron_jobs_page_impl(
         &self,
         user_id: &str,
         include_disabled: bool,
+        agent_id: Option<&str>,
+        limit: i64,
+        offset: i64,
     ) -> Result<Vec<CronJobRecord>> {
         self.ensure_initialized()?;
-        let cleaned_user = user_id.trim();
-        if cleaned_user.is_empty() {
-            return Ok(Vec::new());
-        }
+        let limit = limit.clamp(1, 201);
+        let offset = offset.max(0);
+        let enabled = if include_disabled { 1 } else { 0 };
         let mut conn = self.conn()?;
-        let mut sql = format!(
-            "SELECT {} FROM cron_jobs WHERE user_id = $1",
-            cron_job_select_fields()
-        );
-        if !include_disabled {
-            sql.push_str(" AND enabled = 1");
-        }
-        sql.push_str(" ORDER BY updated_at DESC");
-        let rows = conn.query(&sql, &[&cleaned_user])?;
-        let mut output = Vec::new();
-        for row in rows {
-            output.push(map_cron_job_row(&row));
-        }
-        Ok(output)
+        let sql = format!("SELECT {} FROM cron_jobs WHERE user_id = $1 AND ($2 = 1 OR enabled = 1) AND ($3::text IS NULL OR agent_id = $3) ORDER BY updated_at DESC, job_id ASC LIMIT $4 OFFSET $5", cron_job_select_fields());
+        let rows = conn.query(
+            &sql,
+            &[&user_id.trim(), &enabled, &agent_id, &limit, &offset],
+        )?;
+        Ok(rows.iter().map(map_cron_job_row).collect())
+    }
+
+    fn summarize_cron_jobs_impl(
+        &self,
+        user_id: &str,
+        agent_id: Option<&str>,
+        now: f64,
+    ) -> Result<CronJobStats> {
+        self.ensure_initialized()?;
+        let mut conn = self.conn()?;
+        let row = conn.query_one(
+            "SELECT COUNT(*), COALESCE(SUM(CASE WHEN enabled = 1 THEN 1 ELSE 0 END), 0), COALESCE(SUM(CASE WHEN running_at IS NOT NULL AND lease_expires_at > $3 THEN 1 ELSE 0 END), 0), MIN(CASE WHEN enabled = 1 THEN next_run_at END) FROM cron_jobs WHERE user_id = $1 AND ($2::text IS NULL OR agent_id = $2)",
+            &[&user_id.trim(), &agent_id, &now],
+        )?;
+        Ok(CronJobStats {
+            total: row.get(0),
+            enabled: row.get(1),
+            running: row.get(2),
+            next_run_at: row.get(3),
+        })
     }
 
     fn delete_cron_job_impl(&self, user_id: &str, job_id: &str) -> Result<i64> {
@@ -272,23 +335,9 @@ impl PostgresCronStorage for PostgresStorage {
     fn insert_cron_run_impl(&self, record: &CronRunRecord) -> Result<()> {
         self.ensure_initialized()?;
         let mut conn = self.conn()?;
-        conn.execute(
-            "INSERT INTO cron_runs (run_id, job_id, user_id, session_id, agent_id, trigger, status, summary, error, duration_ms, created_at) \
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
-            &[
-                &record.run_id,
-                &record.job_id,
-                &record.user_id,
-                &record.session_id,
-                &record.agent_id,
-                &record.trigger,
-                &record.status,
-                &record.summary,
-                &record.error,
-                &record.duration_ms,
-                &record.created_at,
-            ],
-        )?;
+        let mut tx = conn.transaction()?;
+        write_cron_run(&mut tx, record)?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -334,7 +383,7 @@ impl PostgresCronStorage for PostgresStorage {
         self.ensure_initialized()?;
         let mut conn = self.conn()?;
         let row = conn.query_opt(
-            "SELECT MIN(next_run_at) FROM cron_jobs WHERE enabled = 1 AND next_run_at IS NOT NULL AND next_run_at > $1",
+            "SELECT MIN(CASE WHEN running_at IS NOT NULL AND lease_expires_at > $1 THEN GREATEST(next_run_at, lease_expires_at) ELSE next_run_at END) FROM cron_jobs WHERE enabled = 1 AND next_run_at IS NOT NULL",
             &[&now],
         )?;
         Ok(row.and_then(|row| row.get::<_, Option<f64>>(0)))
@@ -381,4 +430,67 @@ fn map_cron_job_row(row: &tokio_postgres::Row) -> CronJobRecord {
         created_at: row.get(27),
         updated_at: row.get(28),
     }
+}
+
+fn write_cron_job(tx: &mut super::PgTx<'_>, record: &CronJobRecord) -> Result<()> {
+    let payload = PostgresStorage::json_to_string(&record.payload);
+    let deliver = record.deliver.as_ref().map(PostgresStorage::json_to_string);
+    let enabled = if record.enabled { 1 } else { 0 };
+    let delete_after = if record.delete_after_run { 1 } else { 0 };
+    tx.execute(
+            "INSERT INTO cron_jobs (job_id, user_id, session_id, agent_id, name, session_target, payload, deliver, enabled, delete_after_run, schedule_kind, schedule_at, schedule_every_ms, schedule_cron, schedule_tz, dedupe_key, next_run_at, running_at, runner_id, run_token, heartbeat_at, lease_expires_at, last_run_at, last_status, last_error, consecutive_failures, auto_disabled_reason, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29) ON CONFLICT(job_id) DO UPDATE SET user_id = EXCLUDED.user_id, session_id = EXCLUDED.session_id, agent_id = EXCLUDED.agent_id, name = EXCLUDED.name, session_target = EXCLUDED.session_target, payload = EXCLUDED.payload, deliver = EXCLUDED.deliver, enabled = EXCLUDED.enabled, delete_after_run = EXCLUDED.delete_after_run, schedule_kind = EXCLUDED.schedule_kind, schedule_at = EXCLUDED.schedule_at, schedule_every_ms = EXCLUDED.schedule_every_ms, schedule_cron = EXCLUDED.schedule_cron, schedule_tz = EXCLUDED.schedule_tz, dedupe_key = EXCLUDED.dedupe_key, next_run_at = EXCLUDED.next_run_at, running_at = EXCLUDED.running_at, runner_id = EXCLUDED.runner_id, run_token = EXCLUDED.run_token, heartbeat_at = EXCLUDED.heartbeat_at, lease_expires_at = EXCLUDED.lease_expires_at, last_run_at = EXCLUDED.last_run_at, last_status = EXCLUDED.last_status, last_error = EXCLUDED.last_error, consecutive_failures = EXCLUDED.consecutive_failures, auto_disabled_reason = EXCLUDED.auto_disabled_reason, updated_at = EXCLUDED.updated_at",
+            &[
+                &record.job_id,
+                &record.user_id,
+                &record.session_id,
+                &record.agent_id,
+                &record.name,
+                &record.session_target,
+                &payload,
+                &deliver,
+                &enabled,
+                &delete_after,
+                &record.schedule_kind,
+                &record.schedule_at,
+                &record.schedule_every_ms,
+                &record.schedule_cron,
+                &record.schedule_tz,
+                &record.dedupe_key,
+                &record.next_run_at,
+                &record.running_at,
+                &record.runner_id,
+                &record.run_token,
+                &record.heartbeat_at,
+                &record.lease_expires_at,
+                &record.last_run_at,
+                &record.last_status,
+                &record.last_error,
+                &record.consecutive_failures,
+                &record.auto_disabled_reason,
+                &record.created_at,
+                &record.updated_at,
+            ],
+        )?;
+    Ok(())
+}
+
+fn write_cron_run(tx: &mut super::PgTx<'_>, record: &CronRunRecord) -> Result<()> {
+    tx.execute(
+            "INSERT INTO cron_runs (run_id, job_id, user_id, session_id, agent_id, trigger, status, summary, error, duration_ms, created_at) \
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
+            &[
+                &record.run_id,
+                &record.job_id,
+                &record.user_id,
+                &record.session_id,
+                &record.agent_id,
+                &record.trigger,
+                &record.status,
+                &record.summary,
+                &record.error,
+                &record.duration_ms,
+                &record.created_at,
+            ],
+        )?;
+    Ok(())
 }

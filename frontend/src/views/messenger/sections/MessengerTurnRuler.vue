@@ -432,7 +432,7 @@ const handleStripWheel = (event: WheelEvent): void => {
 /* 悬停刻度：加高并染主色（宽度波感由 JS 距离给出）。 */
 .messenger-turn-ruler-tick:hover::after {
   height: 3px;
-  background: var(--mz-primary, #c96443);
+  background: var(--mz-primary, var(--ui-accent-ink));
 }
 
 /* 悬停预览卡：贴在刻度通道左侧，垂直位置由 `--turn-ruler-preview-offset`

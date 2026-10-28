@@ -5,8 +5,8 @@ use crate::storage::{
     BridgeDeliveryLogRecord, BridgeRouteAuditLogRecord, BridgeUserRouteRecord,
     ChannelAccountRecord, ChannelBindingRecord, ChannelMessageRecord, ChannelMessageStats,
     ChannelOutboxRecord, ChannelOutboxStats, ChannelSessionRecord, ChannelUserBindingRecord,
-    ChatSessionRecord, CronJobRecord, CronRunRecord, ExternalLinkRecord, GatewayClientRecord,
-    GatewayNodeRecord, GatewayNodeTokenRecord, ListBridgeCenterAccountsQuery,
+    ChatSessionRecord, CronJobRecord, CronJobStats, CronRunRecord, ExternalLinkRecord,
+    GatewayClientRecord, GatewayNodeRecord, GatewayNodeTokenRecord, ListBridgeCenterAccountsQuery,
     ListBridgeCentersQuery, ListBridgeDeliveryLogsQuery, ListBridgeRouteAuditLogsQuery,
     ListBridgeUserRoutesQuery, ListChannelUserBindingsQuery, MediaAssetRecord,
     MemoryFragmentEmbeddingRecord, MemoryFragmentRecord, MemoryHitRecord, MemoryJobRecord,
@@ -104,6 +104,13 @@ use vector_document_store::PostgresVectorDocumentStorage;
 use workspace_store::PostgresWorkspaceStorage;
 
 const DEFAULT_POOL_SIZE: usize = 64;
+const MAX_CACHED_STATEMENTS: usize = 256;
+
+fn bound_statement_cache(cache: &deadpool_postgres::StatementCache) {
+    if cache.size() >= MAX_CACHED_STATEMENTS {
+        cache.clear();
+    }
+}
 
 fn postgres_fallback_runtime() -> Result<&'static tokio::runtime::Runtime> {
     static RUNTIME: OnceLock<Result<tokio::runtime::Runtime, String>> = OnceLock::new();
@@ -143,9 +150,11 @@ impl PgConn<'_> {
     }
 
     pub(crate) fn execute(&mut self, query: &str, params: &[&(dyn ToSql + Sync)]) -> Result<u64> {
-        Ok(self
-            .storage
-            .block_on(self.client.execute(query, params))??)
+        bound_statement_cache(&self.client.statement_cache);
+        Ok(self.storage.block_on(async {
+            let statement = self.client.prepare_cached(query).await?;
+            self.client.execute(&statement, params).await
+        })??)
     }
 
     pub(crate) fn query(
@@ -153,7 +162,11 @@ impl PgConn<'_> {
         query: &str,
         params: &[&(dyn ToSql + Sync)],
     ) -> Result<Vec<tokio_postgres::Row>> {
-        Ok(self.storage.block_on(self.client.query(query, params))??)
+        bound_statement_cache(&self.client.statement_cache);
+        Ok(self.storage.block_on(async {
+            let statement = self.client.prepare_cached(query).await?;
+            self.client.query(&statement, params).await
+        })??)
     }
 
     pub(crate) fn query_one(
@@ -161,9 +174,11 @@ impl PgConn<'_> {
         query: &str,
         params: &[&(dyn ToSql + Sync)],
     ) -> Result<tokio_postgres::Row> {
-        Ok(self
-            .storage
-            .block_on(self.client.query_one(query, params))??)
+        bound_statement_cache(&self.client.statement_cache);
+        Ok(self.storage.block_on(async {
+            let statement = self.client.prepare_cached(query).await?;
+            self.client.query_one(&statement, params).await
+        })??)
     }
 
     pub(crate) fn query_opt(
@@ -171,9 +186,11 @@ impl PgConn<'_> {
         query: &str,
         params: &[&(dyn ToSql + Sync)],
     ) -> Result<Option<tokio_postgres::Row>> {
-        Ok(self
-            .storage
-            .block_on(self.client.query_opt(query, params))??)
+        bound_statement_cache(&self.client.statement_cache);
+        Ok(self.storage.block_on(async {
+            let statement = self.client.prepare_cached(query).await?;
+            self.client.query_opt(&statement, params).await
+        })??)
     }
 
     pub(crate) fn transaction<'a>(&'a mut self) -> Result<PgTx<'a>> {
@@ -197,7 +214,11 @@ impl PgTx<'_> {
     }
 
     pub(crate) fn execute(&mut self, query: &str, params: &[&(dyn ToSql + Sync)]) -> Result<u64> {
-        Ok(self.storage.block_on(self.tx.execute(query, params))??)
+        bound_statement_cache(&self.tx.statement_cache);
+        Ok(self.storage.block_on(async {
+            let statement = self.tx.prepare_cached(query).await?;
+            self.tx.execute(&statement, params).await
+        })??)
     }
 
     pub(crate) fn query(
@@ -205,7 +226,11 @@ impl PgTx<'_> {
         query: &str,
         params: &[&(dyn ToSql + Sync)],
     ) -> Result<Vec<tokio_postgres::Row>> {
-        Ok(self.storage.block_on(self.tx.query(query, params))??)
+        bound_statement_cache(&self.tx.statement_cache);
+        Ok(self.storage.block_on(async {
+            let statement = self.tx.prepare_cached(query).await?;
+            self.tx.query(&statement, params).await
+        })??)
     }
 
     pub(crate) fn query_one(
@@ -213,7 +238,11 @@ impl PgTx<'_> {
         query: &str,
         params: &[&(dyn ToSql + Sync)],
     ) -> Result<tokio_postgres::Row> {
-        Ok(self.storage.block_on(self.tx.query_one(query, params))??)
+        bound_statement_cache(&self.tx.statement_cache);
+        Ok(self.storage.block_on(async {
+            let statement = self.tx.prepare_cached(query).await?;
+            self.tx.query_one(&statement, params).await
+        })??)
     }
 
     pub(crate) fn query_opt(
@@ -221,7 +250,11 @@ impl PgTx<'_> {
         query: &str,
         params: &[&(dyn ToSql + Sync)],
     ) -> Result<Option<tokio_postgres::Row>> {
-        Ok(self.storage.block_on(self.tx.query_opt(query, params))??)
+        bound_statement_cache(&self.tx.statement_cache);
+        Ok(self.storage.block_on(async {
+            let statement = self.tx.prepare_cached(query).await?;
+            self.tx.query_opt(&statement, params).await
+        })??)
     }
 
     pub(crate) fn commit(self) -> Result<()> {
@@ -283,9 +316,10 @@ impl PostgresStorage {
     where
         F: Future<Output = T>,
     {
+        let runtime = postgres_fallback_runtime()?;
         match tokio::runtime::Handle::try_current() {
-            Ok(handle) => Ok(tokio::task::block_in_place(|| handle.block_on(fut))),
-            Err(_) => Ok(postgres_fallback_runtime()?.block_on(fut)),
+            Ok(_) => Ok(tokio::task::block_in_place(|| runtime.block_on(fut))),
+            Err(_) => Ok(runtime.block_on(fut)),
         }
     }
 
@@ -500,6 +534,66 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "requires an isolated WUNDER_TEST_POSTGRES_DSN"]
+    fn postgres_prepared_statements_are_reused_and_bounded_across_transactions() {
+        let storage =
+            PostgresStorage::new(std::env::var("WUNDER_TEST_POSTGRES_DSN").unwrap(), 5, 1).unwrap();
+        let mut connection = storage.conn().unwrap();
+        connection.client.statement_cache.clear();
+        assert_eq!(
+            connection
+                .query_one("SELECT $1::integer", &[&7_i32])
+                .unwrap()
+                .get::<_, i32>(0),
+            7
+        );
+        let size = connection.client.statement_cache.size();
+        for value in 0..4_i32 {
+            let mut transaction = connection.transaction().unwrap();
+            assert_eq!(
+                transaction
+                    .query_one("SELECT $1::integer", &[&value])
+                    .unwrap()
+                    .get::<_, i32>(0),
+                value
+            );
+            transaction.commit().unwrap();
+        }
+        assert_eq!(connection.client.statement_cache.size(), size);
+        for index in 0..(MAX_CACHED_STATEMENTS + 8) {
+            let query = format!("SELECT {index}::integer");
+            assert_eq!(
+                connection.query_one(&query, &[]).unwrap().get::<_, i32>(0),
+                index as i32
+            );
+            assert!(connection.client.statement_cache.size() <= MAX_CACHED_STATEMENTS);
+        }
+        let mut transaction = connection.transaction().unwrap();
+        transaction
+            .execute(
+                "CREATE TEMP TABLE fixture_statement_rollback(value integer)",
+                &[],
+            )
+            .unwrap();
+        transaction
+            .execute(
+                "INSERT INTO fixture_statement_rollback(value) VALUES($1)",
+                &[&7_i32],
+            )
+            .unwrap();
+        drop(transaction);
+        assert!(connection
+            .query_opt(
+                "SELECT to_regclass('pg_temp.fixture_statement_rollback')::text",
+                &[]
+            )
+            .unwrap()
+            .unwrap()
+            .get::<_, Option<String>>(0)
+            .is_none());
+    }
+
+    #[test]
     fn postgres_clones_share_connection_and_initialization_state() {
         let storage = PostgresStorage::new(
             "host=unavailable.invalid user=fixture dbname=fixture".into(),
@@ -547,5 +641,82 @@ mod tests {
         let second = postgres_fallback_runtime().expect("fallback runtime should be reusable");
         assert!(std::ptr::eq(first, second));
         assert_eq!(first.block_on(async { 7 }), 7);
+    }
+
+    #[test]
+    fn postgres_io_uses_dedicated_runtime_from_async_and_blocking_callers() {
+        let storage = PostgresStorage::new(
+            "host=unavailable.invalid user=fixture dbname=fixture".into(),
+            1,
+            2,
+        )
+        .unwrap();
+        let expected = postgres_fallback_runtime().unwrap().handle().id();
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .max_blocking_threads(2)
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            assert_eq!(
+                storage
+                    .block_on(async { tokio::runtime::Handle::current().id() })
+                    .unwrap(),
+                expected
+            );
+            let actual = tokio::task::spawn_blocking(move || {
+                storage.block_on(async { tokio::runtime::Handle::current().id() })
+            })
+            .await
+            .unwrap()
+            .unwrap();
+            assert_eq!(actual, expected);
+        });
+    }
+
+    #[test]
+    #[ignore = "requires an isolated WUNDER_TEST_POSTGRES_DSN"]
+    fn postgres_queries_progress_when_caller_blocking_pool_is_saturated() {
+        let dsn = std::env::var("WUNDER_TEST_POSTGRES_DSN").unwrap();
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        let worker = std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .max_blocking_threads(2)
+                .enable_all()
+                .build()
+                .unwrap();
+            runtime.block_on(async move {
+                let storage = PostgresStorage::new(dsn, 2, 4).unwrap();
+                let barrier = Arc::new(tokio::sync::Barrier::new(4));
+                let mut tasks = Vec::new();
+                for _ in 0..4 {
+                    let storage = storage.clone();
+                    let barrier = barrier.clone();
+                    tasks.push(tokio::spawn(async move {
+                        barrier.wait().await;
+                        for _ in 0..4 {
+                            let mut connection = storage.conn().unwrap();
+                            let mut transaction = connection.transaction().unwrap();
+                            let value: i32 = transaction
+                                .query_one("SELECT 7::integer, pg_sleep(0.01)", &[])
+                                .unwrap()
+                                .get(0);
+                            assert_eq!(value, 7);
+                            transaction.commit().unwrap();
+                        }
+                    }));
+                }
+                for task in tasks {
+                    task.await.unwrap();
+                }
+                sender.send(()).unwrap();
+            });
+        });
+        receiver
+            .recv_timeout(Duration::from_secs(15))
+            .expect("PostgreSQL I/O must progress independently of the caller blocking pool");
+        worker.join().unwrap();
     }
 }

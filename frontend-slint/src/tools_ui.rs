@@ -2,6 +2,7 @@
 //! filesystem reads never populate another tab; only one mutation runs at once.
 use crate::{
     FileCard, KnowledgeInfo, MainWindow, McpServerDraft, ToolCard, ToolResource, ToolsDialog,
+    WorkspaceFileRow,
 };
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use std::{
@@ -189,6 +190,7 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         }
         let token = gen.fetch_add(1, Ordering::Relaxed) + 1;
         app.set_tools_files(ModelRc::default());
+        app.set_tools_file_rows(ModelRc::default());
         app.set_tools_server_tools(ModelRc::default());
         app.set_tools_all_files(ModelRc::default());
         app.set_tools_search("".into());
@@ -246,6 +248,10 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         let Some((kind, name)) = selected(&app) else {
             return;
         };
+        if directory && kind == ToolResourceKind::Skill {
+            toggle_skill_directory(&app, &file_api, &name, path.as_str());
+            return;
+        }
         let path = if path == ".." {
             std::path::Path::new(app.get_tools_directory().as_str())
                 .parent()
@@ -593,6 +599,15 @@ fn apply_files(app: &MainWindow, files: wunder_desktop::native::NativeToolFiles,
         }
     }));
     app.set_tools_has_more(files.has_more && rows.len() < 2000);
+    if app.get_tools_tab() == 2 && files.has_more && rows.len() < 2000 {
+        let offset = rows.len();
+        rows.push(FileCard {
+            name: "加载更多".into(),
+            path: format!("__more__:{offset}:").into(),
+            entry_type: "more".into(),
+            ..Default::default()
+        });
+    }
     app.set_tools_all_files(model(rows));
     filter_files(app, app.get_tools_search().as_str());
 }
@@ -601,13 +616,138 @@ fn filter_files(app: &MainWindow, query: &str) {
     let query = query.trim().to_lowercase();
     let source = app.get_tools_all_files();
     if query.is_empty() {
+        project_skill_files(app, source.iter().collect());
         app.set_tools_files(source);
         return;
     }
-    app.set_tools_files(model(
-        source
-            .iter()
-            .filter(|row| row.name.to_lowercase().contains(&query))
+    let rows = source
+        .iter()
+        .filter(|row| row.entry_type != "more" && row.name.to_lowercase().contains(&query))
+        .collect::<Vec<_>>();
+    project_skill_files(app, rows.clone());
+    app.set_tools_files(model(rows));
+}
+
+fn project_skill_files(app: &MainWindow, files: Vec<FileCard>) {
+    app.set_tools_file_rows(model(
+        files
+            .into_iter()
+            .map(|file| WorkspaceFileRow {
+                path: file.path,
+                name: file.name,
+                kind: match file.entry_type.as_str() {
+                    "dir" => 1,
+                    "more" => 2,
+                    _ => 0,
+                },
+                size_text: file.size,
+                icon: file.icon,
+                depth: file.depth,
+                expanded: file.expanded,
+                remaining: -1,
+                ..Default::default()
+            })
             .collect(),
     ));
+}
+
+fn toggle_skill_directory(app: &MainWindow, api: &Arc<NativeDesktop>, name: &str, path: &str) {
+    let mut rows = app.get_tools_all_files().iter().collect::<Vec<_>>();
+    let Some(index) = rows.iter().position(|row| row.path == path) else {
+        return;
+    };
+    let row = &rows[index];
+    let depth = row.depth;
+    if row.expanded {
+        let end = rows[index + 1..]
+            .iter()
+            .position(|child| child.depth <= depth)
+            .map(|offset| index + 1 + offset)
+            .unwrap_or(rows.len());
+        rows.drain(index + 1..end);
+        rows[index].expanded = false;
+        app.set_tools_all_files(model(rows));
+        filter_files(app, app.get_tools_search().as_str());
+        return;
+    }
+    if rows.len() >= 2000 {
+        return;
+    }
+    let more = row.entry_type == "more";
+    let (directory, offset) = if more {
+        let mut parts = path.splitn(3, ':');
+        parts.next();
+        let offset = parts
+            .next()
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(0);
+        (parts.next().unwrap_or_default().to_string(), offset)
+    } else {
+        (path.to_string(), 0)
+    };
+    let name = name.to_string();
+    let key = path.to_string();
+    let api = api.clone();
+    let weak = app.as_weak();
+    app.set_tools_working(true);
+    std::thread::spawn(move || {
+        let result = api.tool_resource_files(ToolResourceKind::Skill, &name, &directory, offset);
+        let _ = weak.upgrade_in_event_loop(move |app| {
+            app.set_tools_working(false);
+            if selected(&app) != Some((ToolResourceKind::Skill, name)) {
+                return;
+            }
+            let files = match result {
+                Ok(files) => files,
+                Err(failure) => {
+                    error(&app, failure);
+                    return;
+                }
+            };
+            let mut rows = app.get_tools_all_files().iter().collect::<Vec<_>>();
+            let Some(index) = rows.iter().position(|row| row.path == key) else {
+                return;
+            };
+            let child_depth = if more { depth } else { depth + 1 };
+            let entry_count = files.entries.len();
+            let mut children = files
+                .entries
+                .into_iter()
+                .map(|file| FileCard {
+                    icon: crate::file_icons::workspace_file_icon(
+                        &file.name,
+                        if file.directory { "dir" } else { "file" },
+                    ),
+                    name: file.name.into(),
+                    path: file.path.into(),
+                    entry_type: if file.directory {
+                        "dir".into()
+                    } else {
+                        "file".into()
+                    },
+                    size: format!("{:.1} KB", file.size as f64 / 1024.0).into(),
+                    depth: child_depth,
+                    ..Default::default()
+                })
+                .collect::<Vec<_>>();
+            if files.has_more {
+                children.push(FileCard {
+                    name: "加载更多".into(),
+                    path: format!("__more__:{}:{directory}", offset + entry_count).into(),
+                    entry_type: "more".into(),
+                    depth: child_depth,
+                    ..Default::default()
+                });
+            }
+            children.truncate(2000usize.saturating_sub(rows.len()) + usize::from(more));
+            if more {
+                rows.splice(index..index + 1, children);
+            } else {
+                rows[index].expanded = true;
+                rows.splice(index + 1..index + 1, children);
+            }
+            app.set_tools_all_files(model(rows));
+            filter_files(&app, app.get_tools_search().as_str());
+        });
+    });
 }

@@ -81,7 +81,12 @@ pub struct RolloutRecorder {
     queued_bytes: Arc<Semaphore>,
     // A caller can bind file-root ownership to the worker's whole lifetime,
     // including the asynchronous drain after the last handle is dropped.
-    _worker_lifetime: Option<Arc<std::fs::File>>,
+    _worker_lifetime: Option<Arc<WriterLifetime>>,
+}
+
+struct WriterLifetime {
+    _root_owner: Arc<std::fs::File>,
+    _thread_owner: Arc<std::fs::File>,
 }
 
 /// Storage-root entry point for runtime integrations.  It owns a bounded
@@ -286,10 +291,18 @@ impl RolloutRecorder {
         descriptor: RolloutDescriptor,
         queued_bytes: Arc<Semaphore>,
         root_owner: Arc<std::fs::File>,
+        thread_owner: Arc<std::fs::File>,
     ) -> Result<Self> {
         checked_id(descriptor.thread_id.clone(), "thread id")?;
         checked_id(descriptor.rollout_id.clone(), "rollout id")?;
-        Self::from_descriptor_with_lifetime(descriptor, queued_bytes, Some(root_owner))
+        Self::from_descriptor_with_lifetime(
+            descriptor,
+            queued_bytes,
+            Some(Arc::new(WriterLifetime {
+                _root_owner: root_owner,
+                _thread_owner: thread_owner,
+            })),
+        )
     }
 
     fn from_descriptor(descriptor: RolloutDescriptor) -> Result<Self> {
@@ -309,7 +322,7 @@ impl RolloutRecorder {
     fn from_descriptor_with_lifetime(
         descriptor: RolloutDescriptor,
         queued_bytes: Arc<Semaphore>,
-        root_owner: Option<Arc<std::fs::File>>,
+        root_owner: Option<Arc<WriterLifetime>>,
     ) -> Result<Self> {
         checked_id(descriptor.thread_id.clone(), "thread id")?;
         checked_id(descriptor.rollout_id.clone(), "rollout id")?;

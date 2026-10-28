@@ -357,7 +357,10 @@ fn default_workspace_lands_in_the_user_workspace_folder() -> Result<(), Box<dyn 
     let resolved = runtime.workspace_local_resolve(&default.root_path, "notes/readme.md")?;
     assert!(resolved.is_file());
     let listing = runtime.workspace_local_listing(&default.root_path, "notes", 0)?;
-    assert!(listing.entries.iter().any(|entry| entry.name == "readme.md"));
+    assert!(listing
+        .entries
+        .iter()
+        .any(|entry| entry.name == "readme.md"));
     Ok(())
 }
 

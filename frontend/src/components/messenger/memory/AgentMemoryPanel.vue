@@ -915,10 +915,10 @@ watch(
 
 :deep(.agent-memory-dialog.el-dialog) {
   /* 对话框被传送到 body，显式承接蜂巢主题变量，避免退回组件的原生蓝灰默认色。 */
-  --mz-primary: var(--ui-accent, #c96443);
-  --mz-primary-hover: var(--ui-accent-hover, #b55637);
-  --mz-primary-soft: var(--ui-accent-secondary, #dfac9a);
-  --mz-primary-tint: var(--ui-accent-soft, #f6e9e3);
+  --mz-primary: var(--ui-accent-ink);
+  --mz-primary-hover: var(--ui-accent-ink-hover);
+  --mz-primary-soft: var(--ui-accent-secondary);
+  --mz-primary-tint: var(--ui-accent-soft);
   --mz-bg: #fbfaf8;
   --mz-surface: #ffffff;
   --mz-border: #e8e6e3;

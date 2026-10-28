@@ -6,6 +6,11 @@ use crate::storage::{
 use anyhow::Result;
 
 pub(super) trait PostgresUserAccountStorage {
+    fn token_auth_snapshot_impl(
+        &self,
+        token: &str,
+        now: f64,
+    ) -> Result<Option<(UserTokenRecord, UserAccountRecord)>>;
     fn update_user_account_profile_impl(&self, record: &UserAccountRecord) -> Result<()>;
     fn upsert_user_account_impl(&self, record: &UserAccountRecord) -> Result<()>;
     fn upsert_user_accounts_impl(&self, records: &[UserAccountRecord]) -> Result<()>;
@@ -64,6 +69,73 @@ pub(super) trait PostgresUserAccountStorage {
 }
 
 impl PostgresUserAccountStorage for PostgresStorage {
+    fn token_auth_snapshot_impl(
+        &self,
+        token: &str,
+        now: f64,
+    ) -> Result<Option<(UserTokenRecord, UserAccountRecord)>> {
+        self.ensure_initialized()?;
+        let cleaned = token.trim();
+        if cleaned.is_empty() {
+            return Ok(None);
+        }
+        let mut conn = self.conn()?;
+        let row = conn.query_opt(
+            "SELECT account.user_id,account.username,account.email,account.password_hash,account.roles,
+             account.status,account.access_level,account.unit_id,account.quota_balance,
+             account.quota_granted_total,account.quota_used_total,account.last_quota_grant_date,
+             account.experience_total,account.is_demo,account.created_at,account.updated_at,account.last_login_at,
+             credential.token,credential.session_scope,credential.family_id,credential.expires_at,
+             credential.created_at,credential.last_used_at
+             FROM user_tokens credential JOIN user_accounts account ON account.user_id=credential.user_id
+             LEFT JOIN user_session_scopes scope ON scope.user_id=credential.user_id
+               AND scope.session_scope=credential.session_scope
+             WHERE credential.token=$1 AND credential.expires_at>$2
+               AND lower(btrim(account.status))='active'
+               AND (scope.last_login_at IS NULL OR credential.created_at+0.000001>=scope.last_login_at)",
+            &[&cleaned, &now],
+        )?;
+        if row.is_none() {
+            let _ = conn.execute(
+                "DELETE FROM user_tokens credential WHERE credential.token=$1 AND
+                 (credential.expires_at<=$2 OR EXISTS (SELECT 1 FROM user_session_scopes scope
+                  WHERE scope.user_id=credential.user_id AND scope.session_scope=credential.session_scope
+                    AND credential.created_at+0.000001<scope.last_login_at))",
+                &[&cleaned, &now],
+            );
+        }
+        Ok(row.map(|row| {
+            let user = UserAccountRecord {
+                user_id: row.get(0),
+                username: row.get(1),
+                email: row.get(2),
+                password_hash: row.get(3),
+                roles: Self::parse_string_list(row.get::<_, Option<String>>(4)),
+                status: row.get(5),
+                access_level: row.get(6),
+                unit_id: row.get(7),
+                quota_balance: row.get::<_, Option<i64>>(8).unwrap_or(0),
+                quota_granted_total: row.get::<_, Option<i64>>(9).unwrap_or(0),
+                quota_used_total: row.get::<_, Option<i64>>(10).unwrap_or(0),
+                last_quota_grant_date: row.get(11),
+                experience_total: row.get::<_, Option<i64>>(12).unwrap_or(0),
+                is_demo: row.get::<_, i32>(13) != 0,
+                created_at: row.get(14),
+                updated_at: row.get(15),
+                last_login_at: row.get(16),
+            };
+            let record = UserTokenRecord {
+                token: row.get(17),
+                user_id: user.user_id.clone(),
+                session_scope: row.get(18),
+                family_id: row.get(19),
+                expires_at: row.get(20),
+                created_at: row.get(21),
+                last_used_at: row.get(22),
+            };
+            (record, user)
+        }))
+    }
     fn update_user_account_profile_impl(&self, record: &UserAccountRecord) -> Result<()> {
         self.ensure_initialized()?;
         let roles = Self::string_list_to_json(&record.roles);

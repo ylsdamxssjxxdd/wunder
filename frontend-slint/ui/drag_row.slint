@@ -58,7 +58,7 @@ export component DragRow inherits Rectangle {
     border-radius: Theme.radius-lg;
     background: root.selected ? root.selected-color : touch.has-hover || touch.pressed ? Theme.accent-soft : transparent;
     border-width: root.dragging ? 1px : 0px;
-    border-color: Theme.accent;
+    border-color: Theme.accent-ink;
     opacity: root.dragging ? 0.45 : 1;
     accessible-role: button; accessible-label: root.label;
     accessible-action-default => { if root.enabled { root.activate(); } }
@@ -145,7 +145,7 @@ export component DragRow inherits Rectangle {
         z: 99;
         border-radius: Theme.radius-sm;
         border-width: 1px;
-        border-color: Theme.accent.transparentize(0.6);
+        border-color: Theme.accent-ink.transparentize(0.6);
         background: Theme.accent.transparentize(0.91);
         opacity: 0.9;
         animate opacity { duration: 100ms; easing: ease-out; }

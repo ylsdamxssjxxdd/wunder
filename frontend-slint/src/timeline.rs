@@ -943,6 +943,20 @@ impl Timeline {
 
     /// Append a reasoning delta, opening a thinking entry for this segment.
     pub fn append_reasoning(&mut self, delta: &str) -> Result<(), String> {
+        self.append_reasoning_item("", delta)
+    }
+
+    pub fn append_reasoning_item(&mut self, item_id: &str, delta: &str) -> Result<(), String> {
+        let stable_id = (!item_id.is_empty()).then(|| format!("reason-{item_id}"));
+        if let Some(thinking) = self.thinking.as_ref() {
+            if stable_id.as_ref().is_some_and(|identity| {
+                self.model
+                    .row_data(thinking.index)
+                    .is_some_and(|row| row.id != identity.as_str())
+            }) {
+                self.close_thinking(false);
+            }
+        }
         if self.thinking.is_none() {
             // A body delta may still be pending in the same reducer frame.
             // Flush before creating the structural row so admission can copy
@@ -951,7 +965,7 @@ impl Timeline {
             self.mark_batch();
             let index = self.push(blank(
                 KIND_REASON,
-                format!("reason-{}-{}", self.process, self.reasons),
+                stable_id.unwrap_or_else(|| format!("reason-{}-{}", self.process, self.reasons)),
             ));
             let group = self.group;
             self.patch(index, |row| {

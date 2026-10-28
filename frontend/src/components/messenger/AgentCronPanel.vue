@@ -36,10 +36,14 @@
             </div>
             <div class="messenger-list-row">
               <span class="messenger-list-preview">{{ formatSchedule(job) }}</span>
-              <span class="messenger-kind-tag">{{ job.enabled ? t('cron.status.enabled') : t('cron.status.disabled') }}</span>
+              <span class="messenger-kind-tag">{{ job.running ? t('cron.run.running') : job.enabled ? t('cron.status.enabled') : t('cron.status.disabled') }}</span>
             </div>
           </div>
         </button>
+        <div v-if="listOffset > 0 || listHasMore" class="messenger-inline-actions">
+          <button class="messenger-inline-btn" type="button" :disabled="loading || listOffset === 0" @click="loadPage(Math.max(0, listOffset - 200))">{{ t('cron.jobs.previous') }}</button>
+          <button class="messenger-inline-btn" type="button" :disabled="loading || !listHasMore" @click="loadPage(listOffset + 200)">{{ t('cron.jobs.next') }}</button>
+        </div>
       </div>
 
       <div class="messenger-cron-detail">
@@ -47,6 +51,10 @@
         <div v-else-if="!selectedJob" class="messenger-list-empty">{{ t('cron.detail.empty') }}</div>
         <template v-else>
           <div class="messenger-cron-title">{{ selectedJob.name || selectedJob.job_id }}</div>
+          <div class="messenger-cron-kv">
+            <span>{{ t('cron.create.workspace') }}</span>
+            <span>{{ workspaces.find((workspace) => workspace.workspace_id === selectedJob.workspace_id)?.name || t('cron.workspace.unavailable') }}</span>
+          </div>
           <div class="messenger-cron-kv">
             <span>{{ t('cron.detail.schedule') }}</span>
             <span>{{ formatSchedule(selectedJob) }}</span>
@@ -102,6 +110,13 @@
       append-to-body
     >
       <div class="messenger-cron-create">
+        <label class="messenger-cron-field">
+          <span>{{ t('cron.create.workspace') }}</span>
+          <select v-model="createForm.workspaceId" :disabled="creating">
+            <option value="" disabled>{{ t('cron.create.workspaceRequired') }}</option>
+            <option v-for="workspace in workspaces" :key="workspace.workspace_id" :value="workspace.workspace_id">{{ workspace.name }}</option>
+          </select>
+        </label>
         <label class="messenger-cron-field">
           <span>{{ t('cron.create.message') }}</span>
           <textarea
@@ -167,18 +182,18 @@
 
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue';
-import { ElMessage } from 'element-plus';
+import { ElMessage, ElMessageBox } from 'element-plus';
 
 import {
   addCronJob,
   fetchCronJobs,
+  fetchCronWorkspaces,
   fetchCronRuns,
   disableCronJob,
   enableCronJob,
   removeCronJob,
   runCronJob
 } from '@/api/cron';
-import { createSession, listSessions } from '@/api/chat';
 import { useI18n } from '@/i18n';
 import { showApiError } from '@/utils/apiError';
 
@@ -203,12 +218,16 @@ const contextAgentId = computed(() => {
   if (!value || value === '__default__' || value === 'default') return '';
   return value;
 });
-const activeContextKey = computed(() => contextAgentId.value || '__default__');
+const activeContextKey = computed(() => 'workspaces');
 const isPanelActive = computed(() => props.active !== false);
 
 const jobs = ref<any[]>([]);
+const workspaces = ref<Array<{ workspace_id: string; name: string }>>([]);
 const runs = ref<any[]>([]);
 const loading = ref(false);
+const listHasMore = ref(false);
+const listOffset = ref(0);
+let jobsRequestGeneration = 0;
 const runsLoading = ref(false);
 const creating = ref(false);
 const permissionDenied = ref(false);
@@ -218,6 +237,7 @@ const selectedRunId = ref('');
 const lastLoadedContextKey = ref('');
 
 const createForm = reactive({
+  workspaceId: '',
   message: '',
   runAt: '',
   mode: 'once',
@@ -300,6 +320,8 @@ const formatDateTimeValue = (value: unknown): string => {
 const resolveDefaultRunAt = () => toDateTimeLocalValue(new Date(Date.now() + 5 * 60 * 1000));
 
 const resetCreateForm = () => {
+  createForm.workspaceId = workspaces.value.some((workspace) => workspace.workspace_id === createForm.workspaceId)
+    ? createForm.workspaceId : workspaces.value[0]?.workspace_id || '';
   createForm.message = '';
   createForm.runAt = resolveDefaultRunAt();
   createForm.mode = 'once';
@@ -308,6 +330,7 @@ const resetCreateForm = () => {
 };
 
 const openCreateDialog = () => {
+  resetCreateForm();
   if (!createForm.runAt) {
     createForm.runAt = resolveDefaultRunAt();
   }
@@ -340,44 +363,37 @@ const formatRunTime = (run: Record<string, unknown>): string =>
   formatDateTimeValue(run?.created_at_text || run?.created_at) || '-';
 
 const resolveIntervalMs = (): number | null => {
-  const intervalValue = Number.parseInt(String(createForm.intervalValue), 10);
-  if (!Number.isFinite(intervalValue) || intervalValue <= 0) return null;
+  const intervalValue = Number(createForm.intervalValue);
+  if (!Number.isInteger(intervalValue) || intervalValue <= 0) return null;
   const unitMs = INTERVAL_UNIT_MS[createForm.intervalUnit] || INTERVAL_UNIT_MS.minute;
   return intervalValue * unitMs;
 };
 
-const resolveTargetSessionId = async (): Promise<string> => {
-  const agentId = contextAgentId.value;
-  const params = agentId ? { agent_id: agentId } : undefined;
-  const { data } = await listSessions(params);
-  const items = Array.isArray(data?.data?.items) ? data.data.items : [];
-  const candidate = items[0];
-  const sessionId = String(candidate?.id || '').trim();
-  if (sessionId) return sessionId;
-  const created = await createSession(agentId ? { agent_id: agentId } : {});
-  const createdSessionId = String(created?.data?.data?.id || '').trim();
-  if (createdSessionId) return createdSessionId;
-  throw new Error(t('error.session_not_found'));
-};
-
-const loadJobs = async () => {
+const loadJobs = async (offset = 0) => {
+  const generation = ++jobsRequestGeneration;
   loading.value = true;
   try {
-    const params = contextAgentId.value ? { agent_id: contextAgentId.value } : undefined;
-    const { data } = await fetchCronJobs(params);
+    const [{ data }, workspaceResponse] = await Promise.all([
+      fetchCronJobs({ offset, limit: 200 }), fetchCronWorkspaces()
+    ]);
+    if (generation !== jobsRequestGeneration) return;
+    permissionDenied.value = false;
+    workspaces.value = workspaceResponse.data?.data?.workspaces || [];
     const items = Array.isArray(data?.data?.jobs) ? data.data.jobs : [];
+    listHasMore.value = data?.data?.has_more === true;
+    listOffset.value = offset;
     jobs.value = items;
-    if (!items.length) {
+    if (!jobs.value.length) {
       selectedJobId.value = '';
       selectedRunId.value = '';
       runs.value = [];
       return;
     }
-    if (!selectedJobId.value || !items.find((job: Record<string, unknown>) => job.job_id === selectedJobId.value)) {
-      selectedJobId.value = String(items[0].job_id || '');
+    if (!selectedJobId.value || !jobs.value.find((job: Record<string, unknown>) => job.job_id === selectedJobId.value)) {
+      selectedJobId.value = String(jobs.value[0].job_id || '');
     }
-    permissionDenied.value = false;
   } catch (error) {
+    if (generation !== jobsRequestGeneration) return;
     const status = resolveHttpStatus(error);
     if (status === 401 || status === 403) {
       permissionDenied.value = true;
@@ -389,25 +405,31 @@ const loadJobs = async () => {
     }
     showApiError(error, resolveError(error));
   } finally {
-    loading.value = false;
+    if (generation === jobsRequestGeneration) loading.value = false;
   }
 };
 
+let runsRequestGeneration = 0;
 const loadRuns = async (jobId: string) => {
+  const generation = ++runsRequestGeneration;
+  const isCurrent = () => generation === runsRequestGeneration && selectedJobId.value === jobId;
   if (permissionDenied.value) {
     selectedRunId.value = '';
     runs.value = [];
+    runsLoading.value = false;
     return;
   }
   if (!jobId) {
     selectedRunId.value = '';
     runs.value = [];
+    runsLoading.value = false;
     return;
   }
+  runs.value = [];
   runsLoading.value = true;
   try {
-    const params = contextAgentId.value ? { agent_id: contextAgentId.value } : undefined;
-    const { data } = await fetchCronRuns(jobId, params || {});
+    const { data } = await fetchCronRuns(jobId, { limit: 100 });
+    if (!isCurrent()) return;
     const items = Array.isArray(data?.data?.runs) ? data.data.runs : [];
     runs.value = items;
     if (!items.length) {
@@ -418,6 +440,7 @@ const loadRuns = async (jobId: string) => {
       selectedRunId.value = String(items[0].run_id || '');
     }
   } catch (error) {
+    if (!isCurrent()) return;
     const status = resolveHttpStatus(error);
     if (status === 401 || status === 403) {
       permissionDenied.value = true;
@@ -427,8 +450,13 @@ const loadRuns = async (jobId: string) => {
     }
     showApiError(error, resolveError(error));
   } finally {
-    runsLoading.value = false;
+    if (isCurrent()) runsLoading.value = false;
   }
+};
+
+const loadPage = async (offset: number) => {
+  await loadJobs(offset);
+  await loadRuns(selectedJobId.value);
 };
 
 const refreshAll = async () => {
@@ -449,7 +477,7 @@ const selectJob = async (job: Record<string, unknown>) => {
 
 const buildJobPayload = (job: Record<string, unknown>) => {
   const payload: Record<string, string> = { job_id: String(job.job_id || '') };
-  const agentId = String(job?.agent_id || '').trim() || contextAgentId.value;
+  const agentId = String(job?.agent_id || '').trim();
   if (agentId && agentId !== '__default__' && agentId !== 'default') {
     payload.agent_id = agentId;
   }
@@ -457,6 +485,10 @@ const buildJobPayload = (job: Record<string, unknown>) => {
 };
 
 const createJob = async () => {
+  if (!createForm.workspaceId) {
+    ElMessage.warning(t('cron.create.workspaceRequired'));
+    return;
+  }
   const message = String(createForm.message || '').trim();
   if (!message) {
     ElMessage.warning(t('cron.create.messageRequired'));
@@ -482,7 +514,7 @@ const createJob = async () => {
   };
   if (createForm.mode === 'repeat') {
     const everyMs = resolveIntervalMs();
-    if (!Number.isFinite(everyMs) || (everyMs as number) <= 0) {
+    if (!Number.isFinite(everyMs) || (everyMs as number) <= 0 || (everyMs as number) > 86400000) {
       ElMessage.warning(t('cron.create.intervalInvalid'));
       return;
     }
@@ -495,13 +527,11 @@ const createJob = async () => {
 
   creating.value = true;
   try {
-    const sessionId = await resolveTargetSessionId();
-    const agentId = contextAgentId.value;
     await addCronJob({
       action: 'add',
       job: {
-        session_id: sessionId,
-        ...(agentId ? { agent_id: agentId } : {}),
+        name: Array.from(message).slice(0, 40).join(''),
+        workspace_id: createForm.workspaceId,
         session: 'main',
         payload: { message },
         schedule,
@@ -552,6 +582,11 @@ const runSelectedJob = async () => {
 const removeSelectedJob = async () => {
   const job = selectedJob.value as Record<string, unknown> | null;
   if (!job) return;
+  try {
+    await ElMessageBox.confirm(t('cron.action.confirmDelete'), t('common.delete'), { type: 'warning' });
+  } catch {
+    return;
+  }
   try {
     await removeCronJob({ action: 'remove', job: buildJobPayload(job) });
     await refreshAll();

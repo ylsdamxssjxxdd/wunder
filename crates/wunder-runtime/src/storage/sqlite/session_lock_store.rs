@@ -12,8 +12,12 @@ pub(super) trait SqliteSessionLockStorage {
         ttl_s: f64,
         max_sessions: i64,
     ) -> Result<SessionLockStatus>;
-    fn touch_session_lock_impl(&self, session_id: &str, lock_token: &str, ttl_s: f64)
-        -> Result<bool>;
+    fn touch_session_lock_impl(
+        &self,
+        session_id: &str,
+        lock_token: &str,
+        ttl_s: f64,
+    ) -> Result<bool>;
     fn release_session_lock_impl(&self, session_id: &str, lock_token: &str) -> Result<()>;
     fn force_release_session_lock_impl(&self, session_id: &str) -> Result<()>;
     fn delete_session_locks_by_user_impl(&self, user_id: &str) -> Result<i64>;

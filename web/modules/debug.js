@@ -10,7 +10,7 @@ import { formatTimestamp } from "./utils.js?v=20251229-02";
 import { ensureLlmConfigLoaded } from "./llm.js";
 import { getCurrentLanguage, t } from "./i18n.js?v=20261016-01";
 import { resolveApiErrorMessage } from "./api-error.js";
-import { createTrajectoryView, fetchThreadLogSnapshot } from "./trajectory-view.js?v=20261025-01";
+import { createTrajectoryView, fetchThreadLogSnapshot } from "./trajectory-view.js?v=20261027-01";
 
 const DEBUG_STATE_KEY = "wunder_debug_state";
 const DEBUG_ACTIVE_STATUSES = new Set(["running", "cancelling"]);
@@ -457,26 +457,39 @@ let debugTrajectoryView = null;
 let trajectoryRequestId = 0;
 let trajectoryLastFetchMs = 0;
 let trajectoryRetryTimer = null;
+let trajectoryLoading = false;
+let trajectoryReload = false;
 
 const loadTrajectorySnapshot = async () => {
+  if (trajectoryLoading) {
+    trajectoryReload = true;
+    return;
+  }
   const sessionId = resolveDebugSessionId();
   if (!sessionId || !debugTrajectoryView) {
     debugTrajectoryView?.setSessionId?.("");
     return;
   }
   debugTrajectoryView.setSessionId?.(sessionId);
+  trajectoryLoading = true;
   const requestId = ++trajectoryRequestId;
   try {
     const turns = await fetchThreadLogSnapshot(sessionId);
-    if (requestId !== trajectoryRequestId) {
+    if (requestId !== trajectoryRequestId || sessionId !== resolveDebugSessionId()) {
       return;
     }
     debugTrajectoryView.setRawTurns(turns);
   } catch (error) {
-    if (requestId !== trajectoryRequestId) {
+    if (requestId !== trajectoryRequestId || sessionId !== resolveDebugSessionId()) {
       return;
     }
     debugTrajectoryView.setLoadError(true);
+  } finally {
+    trajectoryLoading = false;
+    if (trajectoryReload) {
+      trajectoryReload = false;
+      void loadTrajectorySnapshot();
+    }
   }
 };
 

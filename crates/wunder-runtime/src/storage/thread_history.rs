@@ -189,9 +189,9 @@ impl ThreadHistoryStore {
             [rollout_id],
         )?;
         for table in [
-            "thread_chat_heads",
-            "thread_chat_checkpoints",
-            "thread_chat_projection_state",
+            "thread_chat_heads_v2",
+            "thread_chat_checkpoints_v2",
+            "thread_chat_projection_state_v2",
         ] {
             tx.execute(
                 &format!("DELETE FROM {table} WHERE rollout_id=?1"),
@@ -295,21 +295,21 @@ impl ThreadHistoryStore {
             let physical = quote(&s.rollout_id);
             if let Some(end) = s.end_ordinal {
                 Ok(format!("SELECT {current} AS rollout_id,h.root_turn_id,h.rollout_ordinal,h.summary_json
-                    FROM main.thread_chat_heads h WHERE h.rollout_id={physical}
+                    FROM main.thread_chat_heads_v2 h WHERE h.rollout_id={physical}
                     AND h.rollout_ordinal<{} UNION ALL
                     SELECT {current} AS rollout_id,h.root_turn_id,c.rollout_ordinal,c.summary_json
-                    FROM main.thread_chat_heads h JOIN main.thread_chat_checkpoints c
+                    FROM main.thread_chat_heads_v2 h JOIN main.thread_chat_checkpoints_v2 c
                     ON c.rollout_id=h.rollout_id AND c.root_turn_id=h.root_turn_id
-                    AND c.rollout_ordinal=(SELECT MAX(p.rollout_ordinal) FROM main.thread_chat_checkpoints p
+                    AND c.rollout_ordinal=(SELECT MAX(p.rollout_ordinal) FROM main.thread_chat_checkpoints_v2 p
                         WHERE p.rollout_id=h.rollout_id AND p.root_turn_id=h.root_turn_id AND p.rollout_ordinal<{})
                     WHERE h.rollout_id={physical} AND h.rollout_ordinal>={}",
                     sqlite_i64(end)?,sqlite_i64(end)?,sqlite_i64(end)?))
             } else {
                 Ok(format!("SELECT {current} AS rollout_id,root_turn_id,rollout_ordinal,summary_json
-                    FROM main.thread_chat_heads WHERE rollout_id={physical}"))
+                    FROM main.thread_chat_heads_v2 WHERE rollout_id={physical}"))
             }
         }).collect::<Result<Vec<_>>>()?.join(" UNION ALL ");
-        conn.execute_batch(&format!("CREATE TEMP VIEW thread_items AS {items}; CREATE TEMP VIEW thread_turns AS {turns}; CREATE TEMP VIEW thread_root_counts AS {counts}; CREATE TEMP VIEW thread_chat_heads AS {chat};"))?;
+        conn.execute_batch(&format!("CREATE TEMP VIEW thread_items AS {items}; CREATE TEMP VIEW thread_turns AS {turns}; CREATE TEMP VIEW thread_root_counts AS {counts}; CREATE TEMP VIEW thread_chat_heads_v2 AS {chat};"))?;
         Ok(())
     }
 
@@ -1257,7 +1257,7 @@ fn project_completed_item(
 
 /// A bounded summary lives alongside the completed item, never another body.
 /// Page reads do not have to parse megabytes of output to display one card.
-pub(super) fn item_preview(item: &Value) -> Value {
+pub(crate) fn item_preview(item: &Value) -> Value {
     fn bounded(value: &Value, budget: &mut usize, depth: usize) -> Value {
         if *budget < 16 || depth > 8 {
             return Value::Null;
@@ -1341,6 +1341,27 @@ pub(super) fn item_preview(item: &Value) -> Value {
             }
         }
         if let Some(out) = result.pointer_mut(path).and_then(Value::as_object_mut) {
+            for key in [
+                "tool",
+                "tool_name",
+                "tool_call_id",
+                "model_round",
+                "event_type",
+            ] {
+                if let Some(value) = body.get(key) {
+                    let value = match value {
+                        Value::String(text) => {
+                            Value::String(wunder_core::thread_view::preview(text, 512))
+                        }
+                        Value::Number(_) | Value::Bool(_) => value.clone(),
+                        _ => continue,
+                    };
+                    out.insert(key.into(), value);
+                }
+            }
+            if let Some(sequence) = body.get("process_seq") {
+                out.insert("process_seq".into(), sequence.clone());
+            }
             let text = wunder_core::thread_view::message_content_text(&body["content"])
                 .unwrap_or_default();
             out.insert(

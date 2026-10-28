@@ -52,7 +52,7 @@ export component SubagentDetailDialog inherits Rectangle {
                 text: root.status-kind == 1 ? I18n.sub_status_running
                     : root.status-kind == 2 ? I18n.sub_status_failed
                     : I18n.sub_status_done;
-                color: root.status-kind == 1 ? Theme.accent
+                color: root.status-kind == 1 ? Theme.accent-ink
                     : root.status-kind == 2 ? Theme.danger
                     : Theme.success;
                 font-size: Theme.font-sm;

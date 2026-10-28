@@ -683,7 +683,7 @@ pub async fn gather_tasks(
     let owner = sources.local_user_id.clone();
     let records = blocking::run_db("interlink.client.shadow_tasks", move || {
         let jobs = storage
-            .list_cron_jobs(&owner, true)
+            .list_cron_jobs_page(&owner, true, None, (want + 1).min(201) as i64, 0)
             .unwrap_or_default()
             .into_iter()
             .take(want + 1)

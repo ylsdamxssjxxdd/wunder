@@ -333,6 +333,9 @@ pub trait ThreadLogStore {
         let _ = window;
         self.thread_snapshot(user_id, session_id)
     }
+    fn thread_preview_snapshot(&self, user_id: &str, session_id: &str) -> Result<Value> {
+        self.thread_snapshot(user_id, session_id)
+    }
     fn delete_thread_log_by_session(&self, user_id: &str, session_id: &str) -> Result<i64>;
 }
 
@@ -890,6 +893,33 @@ pub trait UserAccountStore {
     fn delete_external_link(&self, link_id: &str) -> Result<i64>;
     fn create_user_token(&self, record: &UserTokenRecord) -> Result<()>;
     fn get_user_token(&self, token: &str) -> Result<Option<UserTokenRecord>>;
+    fn token_auth_snapshot(
+        &self,
+        token: &str,
+        now: f64,
+    ) -> Result<Option<(UserTokenRecord, UserAccountRecord)>> {
+        let Some(record) = self.get_user_token(token)? else {
+            return Ok(None);
+        };
+        if record.expires_at <= now {
+            let _ = self.delete_user_token(&record.token);
+            return Ok(None);
+        }
+        let Some(user) = self.get_user_account(&record.user_id)? else {
+            return Ok(None);
+        };
+        if self
+            .get_user_session_scope(&record.user_id, &record.session_scope)?
+            .is_some_and(|scope| record.created_at + 0.000_001 < scope.last_login_at)
+        {
+            let _ = self.delete_user_token(&record.token);
+            return Ok(None);
+        }
+        if !user.status.trim().eq_ignore_ascii_case("active") {
+            return Ok(None);
+        }
+        Ok(Some((record, user)))
+    }
     fn touch_user_token(&self, token: &str, last_used_at: f64) -> Result<()>;
     fn delete_user_token(&self, token: &str) -> Result<i64>;
     /// Delete every access token bound to a refresh-token rotation family.
@@ -953,6 +983,10 @@ pub trait ChatSessionStore {
     ) -> Result<(Vec<ChatSessionRecord>, i64)>;
     /// Global ownership lookup for privileged administration only.
     fn get_chat_session_owner(&self, session_id: &str) -> Result<Option<String>>;
+    fn list_chat_session_titles(
+        &self,
+        session_owners: &[(String, String)],
+    ) -> Result<HashMap<String, String>>;
     /// Resolve a bounded set of active catalog entries within one user's scope.
     fn list_active_chat_session_ids(
         &self,
@@ -1364,6 +1398,17 @@ pub trait SessionRunStore {
 
 /// Cron job leasing and run history storage.
 pub trait CronStore {
+    fn cron_workspace_bindings(
+        &self,
+        user_id: &str,
+        session_ids: &[String],
+    ) -> Result<HashMap<String, Option<String>>>;
+    fn compare_and_swap_cron_job(
+        &self,
+        expected: &CronJobRecord,
+        replacement: Option<&CronJobRecord>,
+        run: Option<&CronRunRecord>,
+    ) -> Result<bool>;
     fn upsert_cron_job(&self, record: &CronJobRecord) -> Result<()>;
     fn get_cron_job(&self, user_id: &str, job_id: &str) -> Result<Option<CronJobRecord>>;
     fn get_cron_job_by_dedupe_key(
@@ -1371,7 +1416,20 @@ pub trait CronStore {
         user_id: &str,
         dedupe_key: &str,
     ) -> Result<Option<CronJobRecord>>;
-    fn list_cron_jobs(&self, user_id: &str, include_disabled: bool) -> Result<Vec<CronJobRecord>>;
+    fn list_cron_jobs_page(
+        &self,
+        user_id: &str,
+        include_disabled: bool,
+        agent_id: Option<&str>,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<CronJobRecord>>;
+    fn summarize_cron_jobs(
+        &self,
+        user_id: &str,
+        agent_id: Option<&str>,
+        now: f64,
+    ) -> Result<CronJobStats>;
     fn delete_cron_job(&self, user_id: &str, job_id: &str) -> Result<i64>;
     fn delete_cron_jobs_by_session(&self, user_id: &str, session_id: &str) -> Result<i64>;
     fn reset_cron_jobs_running(&self) -> Result<()>;

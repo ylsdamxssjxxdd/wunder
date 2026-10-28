@@ -54,7 +54,7 @@ impl PostgresLogStatsStorage for PostgresStorage {
         let rows = conn.query(
             "SELECT owner.user_id,COUNT(*)::BIGINT,
                 MAX((item.preview_json::jsonb->>'created_at_ms')::bigint)::DOUBLE PRECISION/1000
-             FROM service_thread_items item
+             FROM service_thread_items_v2 item
              JOIN service_thread_owners owner ON owner.thread_id=item.thread_id
              WHERE item.visible AND item.preview_json::jsonb->>'kind' IN ('user_message','assistant_message')
              GROUP BY owner.user_id",

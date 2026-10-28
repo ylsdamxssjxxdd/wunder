@@ -1,5 +1,5 @@
 use super::payload::normalize_tool_arguments_json;
-use super::{extract_stream_text, truncate_text, ChatMessage};
+use super::{extract_stream_text, ChatMessage};
 use crate::core::json_schema::normalize_tool_input_schema;
 use crate::core::tool_args::sanitize_tool_call_payload;
 use serde_json::{json, Value};
@@ -543,75 +543,4 @@ pub(super) fn is_false_tool_stop_reason(value: Option<&Value>) -> bool {
         raw.to_ascii_lowercase().as_str(),
         "tool_calls" | "tool_call" | "function_call" | "tooluse" | "tool_use"
     )
-}
-
-pub(super) fn extract_stream_error_message(payload: &Value) -> Option<String> {
-    let payload_type = payload
-        .get("type")
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    // Responses API can report fatal failures mid-stream via structured SSE events rather than
-    // terminating the HTTP request with a non-2xx status, so surface them as regular errors.
-    let error_payload = if payload_type == "response.failed" {
-        payload
-            .get("response")
-            .and_then(|response| response.get("error"))
-            .or_else(|| payload.get("error"))
-    } else {
-        payload.get("error").or_else(|| {
-            payload
-                .get("response")
-                .and_then(|response| response.get("error"))
-        })
-    }?;
-    let prefix = if payload_type == "response.failed" {
-        "LLM stream response failed"
-    } else {
-        "LLM stream payload failed"
-    };
-    Some(format_stream_error_message(prefix, error_payload))
-}
-
-fn format_stream_error_message(prefix: &str, error_payload: &Value) -> String {
-    match error_payload {
-        Value::String(text) => {
-            let text = text.trim();
-            if text.is_empty() {
-                prefix.to_string()
-            } else {
-                format!("{prefix}: {text}")
-            }
-        }
-        Value::Object(map) => {
-            let code = map.get("code").and_then(Value::as_str).unwrap_or("").trim();
-            let message = map
-                .get("message")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .trim();
-            if !code.is_empty() && !message.is_empty() {
-                format!("{prefix}: {code}: {message}")
-            } else if !message.is_empty() {
-                format!("{prefix}: {message}")
-            } else if !code.is_empty() {
-                format!("{prefix}: {code}")
-            } else {
-                let raw = serde_json::to_string(error_payload).unwrap_or_default();
-                if raw.is_empty() {
-                    prefix.to_string()
-                } else {
-                    format!("{prefix}: {}", truncate_text(&raw, 512))
-                }
-            }
-        }
-        _ => {
-            let raw = serde_json::to_string(error_payload).unwrap_or_default();
-            if raw.is_empty() {
-                prefix.to_string()
-            } else {
-                format!("{prefix}: {}", truncate_text(&raw, 512))
-            }
-        }
-    }
 }

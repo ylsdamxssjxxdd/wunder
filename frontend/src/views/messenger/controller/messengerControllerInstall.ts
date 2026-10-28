@@ -5804,7 +5804,10 @@ function installMessengerControllerWorkspaceResourceHydration(ctx: MessengerCont
       });
   };
 
-  ctx.resetWorkspaceResourceCards = (changedPaths: string[] = []) => {
+  ctx.resetWorkspaceResourceCards = (
+      changedPaths: string[] = [],
+      options: { clearSrc?: boolean; includeReady?: boolean } = {}
+  ) => {
       const container = ctx.messageListRef.value;
       if (!container)
           return 0;
@@ -5819,7 +5822,10 @@ function installMessengerControllerWorkspaceResourceHydration(ctx: MessengerCont
                   return;
               }
           }
-          if (resetWorkspaceImageCardState(element, { clearSrc: true, includeReady: true })) {
+          if (resetWorkspaceImageCardState(element, {
+              clearSrc: options.clearSrc ?? true,
+              includeReady: options.includeReady ?? true
+          })) {
               delete element.dataset.workspaceHydrationEpoch;
               resetCount += 1;
           }
@@ -5906,7 +5912,10 @@ function installMessengerControllerWorkspaceResourceHydration(ctx: MessengerCont
   };
 
   ctx.shouldHandleWorkspaceResourceRefresh = (detail: Record<string, unknown>) => {
-      if (detail.scope === 'directory') return false;
+      // `scope: "directory"`（轮次执行边界）不带可信的变更路径：shell 命令、
+      // 脚本等外部写入只推进工作区版本，不会有 workspace_update 的 paths。
+      // 这类刷新仍要放行，由 handleWorkspaceResourceRefresh 只重置已渲染的
+      // 图片卡片，避免它们停在旧内容上。
       const eventAgentId = ctx.normalizeAgentId(detail.agentId ?? detail.agent_id);
       const eventContainerId = ctx.parseWorkspaceRefreshContainerId(detail.containerId ?? detail.container_id);
       if (ctx.isWorldConversationActive.value) {
@@ -5934,6 +5943,17 @@ function installMessengerControllerWorkspaceResourceHydration(ctx: MessengerCont
       }
       bumpWorkspaceResourceCacheEpoch();
       const changedPaths = extractWorkspaceRefreshPaths(detail);
+      if (detail.scope === 'directory' && !changedPaths.length) {
+          // 执行边界没有具体路径：只把已渲染的图片卡片置为待刷新，保留旧图直到
+          // 新图解码完成；不清整表缓存，历史卡片不会集体闪白或重播 GIF。
+          // 重置后立刻全量补齐，避免排队中的增量 messageKeys 把这批卡片漏掉。
+          const resetCount = ctx.resetWorkspaceResourceCards([], { clearSrc: false, includeReady: true });
+          if (resetCount > 0) {
+              ctx.hydrateWorkspaceResources({});
+          }
+          ctx.scheduleWorkspaceResourceHydration('workspace-refresh');
+          return;
+      }
       rememberWorkspaceResourceInvalidation(changedPaths);
       if (!changedPaths.length) {
           ctx.clearWorkspaceResourceCache();

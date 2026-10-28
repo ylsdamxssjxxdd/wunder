@@ -1490,7 +1490,7 @@
   padding: 0;
   --chat-text: #f1f5f9;
   --chat-muted: #b3bccb;
-  --chat-primary: var(--ui-accent);
+  --chat-primary: var(--ui-accent-ink);
   color: #f1f5f9;
   background: #111a2f;
 }

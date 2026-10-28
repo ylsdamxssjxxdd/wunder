@@ -333,6 +333,11 @@ impl ThreadRegistry {
 
     pub(crate) fn record_terminal(&mut self, session_id: &str, status: ThreadRunState) {
         let projection = self.projection_mut(session_id);
+        let status = if projection.terminal_status == Some(ThreadRunState::Failed) {
+            ThreadRunState::Failed
+        } else {
+            status
+        };
         projection.terminal_status = Some(status);
         projection.status = status;
     }
@@ -343,6 +348,13 @@ impl ThreadRegistry {
     }
 
     pub(crate) fn insert_stream(&mut self, session_id: String, receiver: Receiver<StreamMessage>) {
+        let projection = self.projection_mut(&session_id);
+        projection.applied_event_ids.clear();
+        projection.last_applied_event_id = 0;
+        projection.last_seen_event_id = 0;
+        projection.terminal_status = None;
+        projection.pending_events.clear();
+        projection.replay_from = None;
         self.streams.insert(session_id, receiver);
     }
 
@@ -504,6 +516,52 @@ impl ThreadRegistry {
 mod tests {
     use super::*;
     use tokio::sync::mpsc;
+
+    #[test]
+    fn transport_ids_are_scoped_to_each_new_stream_not_the_thread_lifetime() {
+        let mut registry = ThreadRegistry::new("fixture-thread");
+        let (_sender, receiver) = mpsc::channel(4);
+        registry.insert_stream("fixture-thread".into(), receiver);
+        assert!(registry.mark_event_applied("fixture-thread", 1));
+        assert!(!registry.mark_event_applied("fixture-thread", 1));
+        registry.record_terminal("fixture-thread", ThreadRunState::Finished);
+        registry.mark_durable_applied("fixture-thread", 42);
+        registry.remove_stream("fixture-thread");
+        let (_sender, receiver) = mpsc::channel(4);
+        registry.insert_stream("fixture-thread".into(), receiver);
+        assert!(registry.mark_event_applied("fixture-thread", 1));
+        assert!(!registry.mark_event_applied("fixture-thread", 1));
+        assert_eq!(registry.terminal_status("fixture-thread"), None);
+        assert_eq!(registry.durable_cursor("fixture-thread"), 42);
+    }
+
+    #[test]
+    fn a_reported_failure_survives_terminal_updates_until_the_next_stream() {
+        let mut registry = ThreadRegistry::new("fixture-thread");
+        let (_sender, receiver) = mpsc::channel(4);
+        registry.insert_stream("fixture-thread".into(), receiver);
+        registry.record_terminal("fixture-thread", ThreadRunState::Failed);
+        registry.record_terminal("fixture-thread", ThreadRunState::Finished);
+        registry.record_terminal("fixture-thread", ThreadRunState::NeedsYou);
+        assert_eq!(
+            registry.terminal_status("fixture-thread"),
+            Some(ThreadRunState::Failed)
+        );
+        registry.record_terminal("fixture-other", ThreadRunState::Finished);
+        assert_eq!(
+            registry.terminal_status("fixture-other"),
+            Some(ThreadRunState::Finished)
+        );
+        registry.remove_stream("fixture-thread");
+        let (_sender, receiver) = mpsc::channel(4);
+        registry.insert_stream("fixture-thread".into(), receiver);
+        assert_eq!(registry.terminal_status("fixture-thread"), None);
+        registry.record_terminal("fixture-thread", ThreadRunState::Finished);
+        assert_eq!(
+            registry.terminal_status("fixture-thread"),
+            Some(ThreadRunState::Finished)
+        );
+    }
 
     #[test]
     fn replay_starts_at_applied_cursor_even_when_received_ids_are_sparse() {

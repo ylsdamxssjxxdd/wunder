@@ -217,7 +217,7 @@ void load('');
 .composer-file-picker-up:hover,
 .composer-file-picker-refresh:hover:not(:disabled) {
   background: var(--mz-hover, #f1efec);
-  color: var(--mz-primary, #c96443);
+  color: var(--mz-primary, var(--ui-accent-ink));
 }
 
 .composer-file-picker-refresh:disabled {
@@ -299,7 +299,7 @@ void load('');
 
 .composer-file-picker-entry:focus-visible,
 .composer-file-picker-quote:focus-visible {
-  outline: 2px solid var(--mz-primary-soft, #dfac9a);
+  outline: 2px solid var(--mz-primary);
   outline-offset: -2px;
 }
 

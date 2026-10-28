@@ -91,6 +91,8 @@ pub struct ChatViewRow {
     pub user: ViewMessage,
     pub assistant: ViewMessage,
     pub workflow_count: i64,
+    #[serde(default)]
+    pub process_count: Option<i64>,
     /// Monotonic durable tool identity for directory invalidation, including
     /// queue-owned runs and replay where transient workspace events are absent.
     #[serde(default)]
@@ -152,6 +154,16 @@ pub struct TrajectoryViewRow {
     /// Bounded model retry/failure metadata; bodies remain on-demand.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub diagnostics: Option<Value>,
+    /// Bounded single-line preview of a tool call's arguments. The ledger row
+    /// has to show what was called without hydrating the immutable body, the
+    /// same reason `summary` rides the row for messages.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub args_preview: Option<String>,
+    /// Bounded single-line preview of a tool result. Command tools answer with
+    /// `results[].stdout/stderr` rather than one text blob, so the projection
+    /// resolves that shape here instead of each surface re-guessing it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result_preview: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]

@@ -1,4 +1,5 @@
-import { Theme, ToolCard, FileCard } from "theme.slint";
+import { Theme, ToolCard, FileCard, WorkspaceFileRow } from "theme.slint";
+import { WorkspaceFilesPanel } from "workspace_files.slint";
 import { ToolText, ToolButton, ToolTab, ToolCountPill, ToolGroup } from "tools_widgets.slint";
 import { I18n } from "i18n.slint";
 import { ModalDialog, ConfirmDialog, FormField } from "components.slint";
@@ -119,7 +120,7 @@ component FormArea inherits Rectangle {
             vertical-stretch: 1;
             border-radius: 8px;
             border-width: 1px;
-            border-color: edit.has-focus ? Theme.accent : root.read-only ? Theme.input-readonly-border : Theme.input-border;
+            border-color: edit.has-focus ? Theme.accent-ink : root.read-only ? Theme.input-readonly-border : Theme.input-border;
             background: root.read-only ? Theme.input-readonly-bg : Theme.input-bg;
             clip: true;
             edit := TextEdit {
@@ -197,6 +198,10 @@ export component ToolsPage inherits Rectangle {
     in property <[ToolResource]> skills;
     in property <[ToolResource]> bases;
     in property <[FileCard]> files;
+    in property <[WorkspaceFileRow]> file-rows;
+    private property <string> active-file;
+    private property <int> active-file-index: -1;
+    changed selected => { root.active-file = ""; root.active-file-index = -1; }
     in property <[ToolCard]> server-tools;
     in-out property <int> tab: 0;
     in-out property <int> selected: -1;
@@ -279,6 +284,8 @@ export component ToolsPage inherits Rectangle {
                     ToolButton { icon: @image-url("../assets/icons/rotate-right.svg"); label: I18n.common_refresh; enabled: !root.loading && !root.working; clicked => { root.refresh(); } }
                     if root.tab == 1 : ToolButton { icon: @image-url("../assets/icons/plus.svg"); primary: true; label: I18n.tm_add; enabled: !root.working; clicked => { root.open-mcp-dialog(true); } }
                     if root.tab == 2 : ToolButton { icon: @image-url("../assets/icons/book.svg"); label: I18n.tm_import; enabled: !root.working; clicked => { ToolsDialog.import-skill(); } }
+                    if root.tab == 2 : ToolButton { icon: @image-url("../assets/icons/file-lines.svg"); label: I18n.tm_export; enabled: root.active && !root.working; clicked => { root.edit("export"); } }
+                    if root.tab == 2 : ToolButton { icon: @image-url("../assets/icons/trash.svg"); danger: true; label: I18n.common_delete; enabled: root.active && !root.readonly && !root.working; clicked => { root.deleting = true; } }
                     if root.tab == 3 : ToolButton { icon: @image-url("../assets/icons/plus.svg"); primary: true; label: I18n.tm_add; enabled: !root.working; clicked => { root.open-kb-dialog(true); } }
                     if root.tab == 3 : ToolButton { icon: @image-url("../assets/icons/pen.svg"); label: I18n.tm_edit; enabled: root.active && !root.working; clicked => { root.open-kb-dialog(false); } }
                     if root.tab == 3 : ToolButton { icon: @image-url("../assets/icons/trash.svg"); danger: true; label: I18n.common_delete; enabled: root.active && !root.working; clicked => { root.deleting = true; } }
@@ -373,23 +380,60 @@ export component ToolsPage inherits Rectangle {
                         preferred-width: root.tab == 3 ? 260px : 100000px;
                         max-width: root.tab == 3 ? 260px : 100000px;
                         spacing: 8px;
-                        HorizontalLayout { height: 30px; spacing: 8px;
-                            if root.tab == 2 : Image { width: 18px; height: 18px; source: @image-url("../assets/icons/box-archive.svg"); colorize: Theme.accent-deep; }
-                            ToolText { horizontal-stretch: 1; min-width: 0px; text: root.tab == 3 ? I18n.tm_files : root.active ? root.resources[root.selected].name : I18n.tm_select_skill; font-size: Theme.font-lg; font-weight: root.tab == 2 ? 700 : 400; color: root.tab == 2 ? Theme.text-secondary : Theme.text; }
-                            // 技能包目录可回上一层；知识库的文件区由所选库定位。
-                            if root.tab == 2 && root.directory != "" : ToolButton { icon: @image-url("../assets/icons/chevron-left.svg"); label: ".."; clicked => { root.open-file("..", true); } }
+                        if root.tab == 3 : HorizontalLayout { height: 30px; spacing: 8px;
+                            ToolText { horizontal-stretch: 1; min-width: 0px; text: I18n.tm_files; font-size: Theme.font-lg; color: Theme.text; }
                             ToolButton { icon: @image-url("../assets/icons/upload.svg"); label: I18n.tm_upload; enabled: root.active && !root.readonly && !root.working; clicked => { root.edit("upload"); } }
-                            ToolButton { icon: root.tab == 3 ? @image-url("../assets/icons/plus.svg") : @image-url("../assets/icons/rotate-right.svg"); label: root.tab == 3 ? I18n.tm_add : I18n.common_refresh; enabled: root.active && !root.working; clicked => { if root.tab == 3 { root.edit("file"); } else { root.select-resource(root.tab, root.selected); } } }
-                            if root.tab == 2 : ToolButton { icon: @image-url("../assets/icons/file-lines.svg"); label: I18n.tm_export; enabled: !root.working && root.active; clicked => { root.edit("export"); } }
-                            if root.tab == 2 : ToolButton { icon: @image-url("../assets/icons/trash.svg"); danger: true; label: I18n.common_delete; enabled: root.active && !root.readonly && !root.working; clicked => { root.deleting = true; } }
+                            ToolButton { icon: @image-url("../assets/icons/plus.svg"); label: I18n.tm_add; enabled: root.active && !root.working; clicked => { root.edit("file"); } }
                         }
                         // 技能与知识库的文件区共用聊天停靠面板的右键操作。
-                        ContextMenuArea {
+                        if root.tab == 2 : WorkspaceFilesPanel {
+                            vertical-stretch: 1; min-height: 0px;
+                            resource-mode: true; local: true;
+                            title: root.active ? root.resources[root.selected].name : I18n.tm_select_skill;
+                            rows: root.file-rows; loading: root.working; busy: root.working;
+                            read-only: root.readonly || !root.active;
+                            active-path: root.active-file;
+                            active-index: root.active-file-index;
+                            search-query <=> root.search;
+                            search-active: root.search != "";
+                            upload => { if root.active && !root.readonly { root.edit("upload"); } }
+                            refresh => { root.select-resource(root.tab, root.selected); }
+                            search-edit(query) => { root.search-files(query); }
+                            search-accept(query) => { root.search-files(query); }
+                            search-cancel => { root.search-files(""); }
+                            toggle(index) => {
+                                let row = root.file-rows[index];
+                                root.active-file = root.file-rows[index].path;
+                                root.active-file-index = index;
+                                if row.kind != 0 { root.open-file(root.active-file, true); }
+                            }
+                            menu(index, action) => {
+                                if index >= 0 && action == 0 {
+                                    let row = root.file-rows[index];
+                                    root.open-file(row.path, row.kind != 0);
+                                }
+                            }
+                            key-action(action) => {
+                                if root.file-rows.length > 0 && (action == 0 || action == 1 || action == 4 || action == 5) {
+                                    root.active-file-index = action == 4 ? 0 : action == 5 ? root.file-rows.length - 1 :
+                                        max(0, min(root.file-rows.length - 1, root.active-file-index + (action == 0 ? -1 : 1)));
+                                    root.active-file = root.file-rows[root.active-file-index].path;
+                                }
+                                if root.active-file-index >= 0 && root.active-file-index < root.file-rows.length {
+                                    let row = root.file-rows[root.active-file-index];
+                                    if action == 6 || (row.kind == 1 && ((action == 2 && row.expanded) || (action == 3 && !row.expanded))) {
+                                        root.open-file(row.path, row.kind != 0);
+                                    }
+                                }
+                                if action == 9 { root.select-resource(root.tab, root.selected); }
+                            }
+                        }
+                        if root.tab == 3 : ContextMenuArea {
                             vertical-stretch: 1; min-height: 0px;
                             enabled: !root.working;
                             Menu {
-                                MenuItem { title: I18n.tm_upload; activated => { if root.tab == 2 && root.active && !root.readonly { root.edit("upload"); } } }
-                                MenuItem { title: root.tab == 3 ? I18n.tm_add : I18n.tm_save; activated => { if root.tab == 3 { root.edit("file"); } } }
+                                MenuItem { title: I18n.tm_upload; enabled: root.active && !root.readonly && !root.working; activated => { root.edit("upload"); } }
+                                MenuItem { title: I18n.tm_add; enabled: root.active && !root.working; activated => { root.edit("file"); } }
                                 MenuItem { title: I18n.common_refresh; activated => { root.refresh(); } }
                             }
                             Rectangle {
@@ -429,7 +473,7 @@ export component ToolsPage inherits Rectangle {
                                 color: Theme.muted; font-size: Theme.font-sm;
                             }
                         }
-                        if root.has-more : ToolButton { width: 96px; label: I18n.tm_more; show-label: true; enabled: !root.working; clicked => { root.more-files(); } }
+                        if root.tab == 3 && root.has-more : ToolButton { width: 96px; label: I18n.tm_more; show-label: true; enabled: !root.working; clicked => { root.more-files(); } }
                     }
                     if root.tab == 3 : VerticalLayout {
                         horizontal-stretch: 1; min-width: 0px; spacing: 8px;

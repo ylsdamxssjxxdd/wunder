@@ -10,7 +10,6 @@
       </div>
       <div class="messenger-chat-settings-block">
         <AgentCronPanel
-          :agent-id="settingsAgentIdForApi"
           :active="isActive"
           @changed="handleCronPanelChanged"
         />
@@ -37,7 +36,6 @@ onDeactivated(() => {
   isActive.value = false;
 });
 
-const settingsAgentIdForApi = props.controller.settingsAgentIdForApi;
 const handleCronPanelChanged = props.controller.handleCronPanelChanged;
 const AgentCronPanel = props.controller.AgentCronPanel;
 </script>

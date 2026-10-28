@@ -29,7 +29,8 @@ export const setWorkspaceDragPaths = (
   currentWorkspaceDragPaths = normalized;
   dataTransfer.setData(WORKSPACE_DRAG_KEY, JSON.stringify(normalized));
   dataTransfer.setData('text/plain', `${WORKSPACE_DRAG_TEXT_PREFIX}${JSON.stringify(normalized)}`);
-  dataTransfer.setData('text/uri-list', normalized.join('\n'));
+  // 不再写 text/uri-list：那是「拖入外部链接」的语义，某些浏览器会把条目里的
+  // 路径当成可下载资源，落进 dataTransfer.files，被上传入口误当成文件。
   return normalized;
 };
 

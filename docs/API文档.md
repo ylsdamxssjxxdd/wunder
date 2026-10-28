@@ -1527,7 +1527,7 @@ wunder 是一个**多形态的智能体工作台**：蛹（desktop）是本地 A
   - `sandbox.resources`：资源限制（cpu/memory_mb/pids）
   - `observability.log_level`：日志级别
   - `observability.monitor_event_limit`：历史字段，线程监控日志不再按条数自动裁剪；保留 `0` 表示无限制
-  - `observability.monitor_payload_max_chars`：监控事件内容最大字符；设为 `0` 表示不截断
+  - `observability.monitor_payload_max_chars`：监控诊断字段的附加截断限制；设为 `0` 关闭附加限制，但诊断事件仍有约 8 KiB 的数据预算，完整正文从 canonical 线程历史读取。
   - `observability.monitor_drop_event_types`：历史字段，线程日志不再按事件类型自动丢弃
   - `cors.allow_origins`：允许来源列表
   - `cors.allow_methods`：允许方法列表
@@ -1817,7 +1817,8 @@ wunder 是一个**多形态的智能体工作台**：蛹（desktop）是本地 A
 - 每轮用户提问会额外写入 `user_input` 事件，`data.message/question` 保存原始用户消息，便于在线程日志中快速定位上下文。
 - 线程日志事件按事件序号完整持久化，服务重启、切换线程和刷新页面不会自动删除历史轮次；用户侧与舰桥详情窗口使用最多 100 条的稳定分页和紧凑原生条目渲染，完整日志仅在显式导出时读取。
 - `observability.monitor_event_limit` 与 `observability.monitor_drop_event_types` 仅为旧配置兼容保留，不再触发线程日志裁剪或丢弃。
-- `observability.monitor_payload_max_chars` 仍可限制单字段大小；需要完整字段时设为 `0`。
+- `observability.monitor_payload_max_chars` 仅控制诊断字段的附加截断；设为 `0` 不会取消诊断事件的总字节、深度和宽度限制。完整消息、工具结果和复制内容从 canonical 线程历史读取，不以监控缓存为原件。
+- 舰桥 `GET /wunder/admin/monitor/{session_id}/thread-log/snapshot` 在 PostgreSQL 下只返回有界预览，条目标记 `preview_only=true`；选中条目后使用 `GET /wunder/admin/monitor/{session_id}/thread-log/items/{item_id}` 读取完整正文并解析工具 Schema。普通线程恢复快照接口仍返回完整条目，不得把预览作为恢复原件。
 - `llm_request` 事件仅保存 `payload_summary` 与 `message_count`，不保留完整请求体。
 - 预填充速度基于会话第一轮 LLM 请求计算，避免多轮缓存导致速度偏高；当只能从“请求发出到首个输出事件”反推 TTFT 时，`prefill_speed_lower_bound=true`，表示该预填充速度是下界而非模型内部精确值。
 - `session.context_tokens/context_tokens_peak` 汇总采用最新 `context_usage` 显式占用；正常请求由供应商输入 Token（含缓存输入）刷新，不含当次生成的输出与思考；上下文压缩触发也只使用已观测上下文占用，不再叠加本地 token 估算或工具 schema 开销。压缩完成后在下一次模型 usage 返回前，上下文占用会标记为未观测。

@@ -8,6 +8,47 @@ use wunder_core::thread_store::*;
 const USER: &str = "user-sample";
 const THREAD: &str = "thread-sample";
 
+#[test]
+fn process_reasoning_identity_uses_its_own_body_when_answer_is_from_an_older_round() {
+    let root = tempfile::tempdir().unwrap();
+    let db = SqliteStorage::new(
+        root.path()
+            .join("state_1.sqlite")
+            .to_string_lossy()
+            .into_owned(),
+    );
+    db.ensure_initialized().unwrap();
+    let admitted = db
+        .accept_thread_turn(USER, THREAD, &json!({"content":"Fixture input"}))
+        .unwrap();
+    let turn = admitted["turn_id"].as_str().unwrap();
+    super::test_support::freeze_thread(root.path(), USER, THREAD);
+    super::test_support::begin_turn(root.path(), USER, THREAD, turn);
+    for (round, content, reasoning, calls) in [
+        (1, "Fixture answer", "Fixture completed thought", json!([])),
+        (
+            2,
+            "",
+            "Fixture next thought",
+            json!([{"id":"fixture-call"}]),
+        ),
+    ] {
+        db.append_thread_item(
+            USER,
+            &json!({"session_id":THREAD,"turn_id":turn,
+            "item_id":format!("{turn}:text-{round}"),"kind":"assistant_message","model_round":round,
+            "content":content,"reasoning":reasoning,"tool_calls":calls,"status":"completed"}),
+        )
+        .unwrap();
+    }
+    let page = db.thread_view_page(USER, THREAD, "chat", None, 12).unwrap();
+    let row = &page.chat[0];
+    assert_eq!(row.assistant.item_id, format!("{turn}:text-1"));
+    assert_eq!(row.reasoning_item_id, format!("{turn}:text-2"));
+    assert_eq!(row.assistant.reasoning, "Fixture next thought");
+    assert_eq!(row.process_count, Some(2));
+}
+
 fn read_body(db: &dyn StorageBackend, body_id: &str) -> String {
     let mut cursor = 0;
     let mut content = String::new();
@@ -165,7 +206,10 @@ async fn canonical_writer_reopens_through_backend_with_complete_chat_and_traject
         .begin_turn(USER, &thread, &turn, "sample-model")
         .await
         .unwrap();
-    let answer = format!("{}fixture-search-tail", "sample answer 中🙂\n".repeat(9_000));
+    let answer = format!(
+        "{}fixture-search-tail",
+        "sample answer 中🙂\n".repeat(9_000)
+    );
     let tool_output = "sample tool output 中🙂\n".repeat(8_000);
     let assistant_id = ItemId::new("assistant-sample").unwrap();
     let tool_id = ItemId::new("tool-sample").unwrap();
@@ -886,7 +930,11 @@ async fn inquiry_answer_starts_new_user_round_and_keeps_original_question() {
     .unwrap();
 
     let child = db
-        .accept_thread_turn(USER, THREAD, &json!({"content":"Fixture answer"}))
+        .accept_thread_turn(
+            USER,
+            THREAD,
+            &json!({"content":"Fixture answer", "inquiry_turn_id":parent}),
+        )
         .unwrap();
     let child_id = child["turn_id"].as_str().unwrap().to_string();
     assert_ne!(child["root_turn_id"].as_str(), Some(parent.as_str()));

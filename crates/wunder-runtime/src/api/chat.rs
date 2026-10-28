@@ -399,6 +399,21 @@ pub(crate) async fn build_chat_request(
     attachments: Option<Vec<ChatAttachment>>,
     request_overrides: ChatRequestOverrides,
 ) -> Result<WunderRequest, Response> {
+    let preparation_wait = crate::core::long_task::scope("chat.prepare.wait");
+    let _preparation = state
+        .kernel
+        .thread_runtime
+        .request_preparation_slot()
+        .await
+        .map_err(|_| {
+            error_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "request admission unavailable".into(),
+            )
+        })?;
+    drop(preparation_wait);
+    let _preparation_scope = crate::core::long_task::scope("chat.prepare");
+    let session_scope = crate::core::long_task::scope("chat.prepare.session");
     let session_id = session_id.trim().to_string();
     if session_id.is_empty() {
         return Err(error_response(
@@ -464,8 +479,14 @@ pub(crate) async fn build_chat_request(
         }
     }
 
+    drop(session_scope);
+    let tools_scope = crate::core::long_task::scope("chat.prepare.tools");
     let user_context = build_user_tool_context(state, &user.user_id).await;
+    drop(tools_scope);
+    let agent_scope = crate::core::long_task::scope("chat.prepare.agent");
     let agent_record = fetch_agent_record(state, user, record.agent_id.as_deref(), true).await?;
+    drop(agent_scope);
+    let overrides_scope = crate::core::long_task::scope("chat.prepare.overrides");
     let mut allowed = compute_allowed_tool_names(user, &user_context);
     let overrides = state
         .kernel
@@ -483,6 +504,8 @@ pub(crate) async fn build_chat_request(
         .as_ref()
         .map(|record| record.preview_skill)
         .unwrap_or(false);
+    drop(overrides_scope);
+    let title_scope = crate::core::long_task::scope("chat.prepare.title");
 
     // ThreadLog owns the durable user-turn directory. The admission
     // transaction, rather than a message projection, defines first use.
@@ -503,6 +526,8 @@ pub(crate) async fn build_chat_request(
     let _ = state
         .user_store
         .touch_chat_session(&user.user_id, &session_id, now, now);
+    drop(title_scope);
+    let _preferences_scope = crate::core::long_task::scope("chat.prepare.preferences");
 
     let attachments = attachments
         .unwrap_or_default()

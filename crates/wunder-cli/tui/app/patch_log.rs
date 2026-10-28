@@ -42,6 +42,16 @@ pub(super) enum SpecialLogEntry {
 }
 
 impl SpecialLogEntry {
+    pub(super) fn is_pending(&self) -> bool {
+        match self {
+            Self::Patch(entry) => entry.status == PatchLogStatus::Pending,
+            Self::Command(entry) => entry.status == CommandLogStatus::Pending,
+            Self::Tool(entry) => entry.status == GenericToolLogStatus::Pending,
+            Self::Exploring(entry) => entry.is_active(),
+            _ => false,
+        }
+    }
+
     pub(super) fn interrupt_pending(&mut self) -> bool {
         match self {
             Self::Tool(entry) if entry.status == GenericToolLogStatus::Pending => {

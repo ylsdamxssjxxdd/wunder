@@ -105,7 +105,7 @@
 .composer-icon-btn:hover:not(:disabled),
 .composer-icon-btn.is-active {
   background: var(--mz-hover, #f1efec);
-  color: var(--mz-primary, #c96443);
+  color: var(--mz-primary, var(--ui-accent-ink));
 }
 
 /* 录音中：图标变红（桌面 `icon-color: root.recording ? danger : muted`）。 */
@@ -121,7 +121,7 @@
 }
 
 .composer-icon-btn:focus-visible {
-  outline: 2px solid var(--mz-primary-soft, #dfac9a);
+  outline: 2px solid var(--mz-primary);
   outline-offset: 1px;
 }
 
@@ -169,8 +169,8 @@
 }
 
 .composer-model-trigger.is-active {
-  background: var(--mz-primary-tint, #f6e9e3);
-  color: var(--mz-primary, #c96443);
+  background: var(--mz-primary-tint, var(--ui-accent-soft));
+  color: var(--mz-primary, var(--ui-accent-ink));
 }
 
 .composer-model-trigger:disabled {
@@ -179,7 +179,7 @@
 }
 
 .composer-model-trigger:focus-visible {
-  outline: 2px solid var(--mz-primary-soft, #dfac9a);
+  outline: 2px solid var(--mz-primary);
   outline-offset: 1px;
 }
 
@@ -216,8 +216,8 @@
 .composer-model-spinner {
   width: 12px;
   height: 12px;
-  border: 2px solid rgba(var(--ui-accent-rgb, 201, 100, 67), 0.25);
-  border-top-color: var(--mz-primary, #c96443);
+  border: 2px solid rgba(var(--ui-accent-rgb), 0.25);
+  border-top-color: var(--mz-primary, var(--ui-accent-ink));
   border-radius: 50%;
   animation: composer-model-spin 640ms linear infinite;
 }
@@ -256,14 +256,14 @@
 }
 
 .composer-plus-btn:hover:not(:disabled) {
-  border-color: var(--mz-primary-soft, #dfac9a);
+  border-color: var(--mz-primary-soft, var(--ui-accent-secondary));
   background: var(--mz-hover, #f1efec);
 }
 
 .composer-plus-btn.is-active {
   border-color: rgba(var(--ui-accent-rgb), 0.5);
   background: var(--ui-accent-soft, #f7e9e4);
-  color: var(--mz-primary, #c96443);
+  color: var(--mz-primary, var(--ui-accent-ink));
 }
 
 .composer-plus-btn:disabled {
@@ -272,7 +272,7 @@
 }
 
 .composer-plus-btn:focus-visible {
-  outline: 2px solid var(--mz-primary-soft, #dfac9a);
+  outline: 2px solid var(--mz-primary);
   outline-offset: 2px;
 }
 
@@ -359,7 +359,7 @@
 
 .composer-plus-item.is-active .composer-plus-item-icon,
 .composer-plus-item.is-recording .composer-plus-item-icon {
-  color: var(--mz-primary, #c96443);
+  color: var(--mz-primary, var(--ui-accent-ink));
 }
 
 .composer-plus-item.is-recording {
@@ -398,15 +398,15 @@
   padding: 0;
   border: 0;
   border-radius: 8px;
-  background: var(--ui-accent, var(--mz-primary, #c96443));
-  box-shadow: 0 2px 6px rgba(var(--ui-accent-rgb, 201, 100, 67), 0.28);
+  background: var(--ui-accent-ink);
+  box-shadow: 0 2px 6px rgba(var(--ui-accent-rgb), 0.28);
   color: #ffffff;
   cursor: pointer;
   transition: background-color 140ms ease, opacity 140ms ease;
 }
 
 .composer-send-btn:hover:not(:disabled) {
-  background: var(--ui-accent-hover, var(--mz-primary-hover, #b55637));
+  background: var(--ui-accent-ink-hover);
 }
 
 .composer-send-btn:disabled {
@@ -418,7 +418,7 @@
 }
 
 .composer-send-btn:focus-visible {
-  outline: 2px solid var(--mz-primary-soft, #dfac9a);
+  outline: 2px solid var(--mz-primary);
   outline-offset: 2px;
 }
 
@@ -520,11 +520,11 @@
 }
 
 .composer-panel-item.is-selected {
-  color: var(--mz-primary, #c96443);
+  color: var(--mz-primary, var(--ui-accent-ink));
 }
 
 .composer-panel-item:focus-visible {
-  outline: 2px solid var(--mz-primary-soft, #dfac9a);
+  outline: 2px solid var(--mz-primary);
   outline-offset: -2px;
 }
 
@@ -544,7 +544,7 @@
   width: 14px;
   height: 14px;
   border-radius: 4px;
-  color: var(--mz-primary, #c96443);
+  color: var(--mz-primary, var(--ui-accent-ink));
   font-size: 9px;
 }
 

@@ -708,14 +708,13 @@ pub(crate) fn project_cloud_history(
         process.process_root = chat.root_turn_id.as_str().into();
         process.process_idx = index as i32 + 1;
         process.payload = rows.len() as i32;
-        process.text = crate::timeline_text::process_label(
-            (chat.workflow_count + chat.reasoning_count).min(i32::MAX as i64) as i32,
-        )
-        .into();
+        let process_steps = chat
+            .process_count
+            .unwrap_or(chat.workflow_count + chat.reasoning_count);
+        process.text =
+            crate::timeline_text::process_label(process_steps.min(i32::MAX as i64) as i32).into();
         process.summary = cloud_status_label(chat.status.as_str()).into();
-        process.visible = chat.workflow_count > 0
-            || chat.reasoning_count > 0
-            || !chat.assistant.reasoning.is_empty();
+        process.visible = process_steps > 0 || !chat.assistant.reasoning.is_empty();
         process.status_kind = crate::timeline::status_kind(chat.status.as_str());
         let process_id = process.process_idx;
         let running_thought = process.status_kind == crate::timeline::STATUS_RUNNING

@@ -27,12 +27,12 @@ export component Action inherits Rectangle {
     width: root.show-label ? 92px : 30px;
     height: 30px;
     border-radius: Theme.radius-sm;
-    background: root.primary ? (root.enabled ? Theme.accent : Theme.accent.transparentize(0.6))
+    background: root.primary ? (root.enabled ? Theme.accent-ink : Theme.accent.transparentize(0.6))
         : root.danger ? (root.enabled ? Theme.danger : Theme.danger.transparentize(0.6))
         : root.rail ? (root.selected || touch.has-hover ? #ffffff33 : transparent)
         : root.selected || touch.has-hover ? Theme.accent-soft : transparent;
     border-width: focus.has-focus ? 1px : 0px;
-    border-color: root.rail ? white : Theme.accent;
+    border-color: root.rail ? white : Theme.accent-ink;
     forward-focus: focus;
     accessible-role: button;
     accessible-label: root.label;
@@ -102,13 +102,13 @@ export component EdgeToggle inherits Rectangle {
         animate opacity { duration: 120ms; easing: ease-out; }
         background: Theme.accent-soft;
         border-width: 1px;
-        border-color: Theme.accent;
+        border-color: Theme.accent-ink;
         Image {
             x: 1px; y: (parent.height - 10px) / 2; width: 8px; height: 10px;
             source: root.opens-left
                 ? (root.open ? @image-url("../assets/icons/chevron-left.svg") : @image-url("../assets/icons/chevron-right.svg"))
                 : (root.open ? @image-url("../assets/icons/chevron-right.svg") : @image-url("../assets/icons/chevron-left.svg"));
-            image-fit: contain; colorize: Theme.accent-deep;
+            image-fit: contain; colorize: Theme.accent-ink;
         }
     }
 }
@@ -167,8 +167,8 @@ export component Avatar inherits Rectangle {
         // An empty source falls back to the glyph bubble so callers can pass a
         // resolved agent avatar or the shared default face.
         if !root.mine && root.source.width > 0 : Image { width: 100%; height: 100%; source: root.source; image-fit: cover; }
-        if !root.mine && root.source.width <= 0 && root.glyph != "" : Text { width: 100%; height: 100%; text: root.glyph; font-size: Theme.font-xl; color: Theme.accent-deep; horizontal-alignment: center; vertical-alignment: center; }
-        if root.mine : Text { text: I18n.common_me; font-size: Theme.font-md; color: Theme.accent-deep; horizontal-alignment: center; vertical-alignment: center; }
+        if !root.mine && root.source.width <= 0 && root.glyph != "" : Text { width: 100%; height: 100%; text: root.glyph; font-size: Theme.font-xl; color: Theme.accent-ink; horizontal-alignment: center; vertical-alignment: center; }
+        if root.mine : Text { text: I18n.common_me; font-size: Theme.font-md; color: Theme.accent-ink; horizontal-alignment: center; vertical-alignment: center; }
     }
     if !root.mine && root.status != "" : RuntimeBadge {
         x: parent.width - self.width + 3px; y: parent.height - self.height + 3px;
@@ -219,7 +219,7 @@ export component ThemeCheck inherits Rectangle {
             : box-touch.has-hover ? Theme.hover : Theme.surface;
         border-width: 1px;
         border-color: !root.enabled ? Theme.input-readonly-border
-            : root.checked ? Theme.accent
+            : root.checked ? Theme.accent-ink
             : box-touch.has-hover ? Theme.accent-secondary : Theme.input-border;
         Image {
             x: (parent.width - self.width) / 2;
@@ -275,7 +275,7 @@ export component FormField inherits Rectangle {
     Rectangle {
         y: 21px; width: parent.width; height: 36px; border-radius: Theme.radius-sm;
         background: root.read-only || !root.enabled ? Theme.input-readonly-bg : Theme.input-bg;
-        border-width: 1px; border-color: root.error != "" ? Theme.danger : editor.has-focus ? Theme.accent : root.read-only || !root.enabled ? Theme.input-readonly-border : Theme.input-border;
+        border-width: 1px; border-color: root.error != "" ? Theme.danger : editor.has-focus ? Theme.accent-ink : root.read-only || !root.enabled ? Theme.input-readonly-border : Theme.input-border;
         // Behind the editor, so it only takes the padding the editor does not
         // cover: clicking the box anywhere still puts the caret in the field.
         TouchArea {
@@ -313,7 +313,7 @@ export component InlineInput inherits Rectangle {
     callback edited();
     min-height: 30px;
     border-radius: Theme.radius-sm; border-width: 1px;
-    border-color: root.read-only || !root.enabled ? Theme.input-readonly-border : editor.has-focus ? Theme.accent : Theme.input-border;
+    border-color: root.read-only || !root.enabled ? Theme.input-readonly-border : editor.has-focus ? Theme.accent-ink : Theme.input-border;
     background: root.read-only || !root.enabled ? Theme.input-readonly-bg : Theme.input-bg;
     TouchArea {
         mouse-cursor: root.read-only || !root.enabled ? MouseCursor.default : MouseCursor.text;
@@ -456,7 +456,7 @@ export component ToastHost inherits Rectangle {
         Image {
             x: 14px; y: 12px; width: 16px; height: 16px;
             source: ToastState.kind == 2 ? @image-url("../assets/icons/status-error.svg") : @image-url("../assets/icons/log-info.svg");
-            colorize: ToastState.kind == 2 ? Theme.danger : Theme.accent;
+            colorize: ToastState.kind == 2 ? Theme.danger : Theme.accent-ink;
         }
         toast-text := Text {
             x: 40px; y: 0px; width: parent.width - 54px; height: parent.height;

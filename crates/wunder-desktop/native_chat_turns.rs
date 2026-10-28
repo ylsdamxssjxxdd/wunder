@@ -198,7 +198,7 @@ pub(super) fn load_turn(
             }
         }
     }
-    items.sort_by_key(|item| item["item_index"].as_i64().unwrap_or(0));
+    sort_process_items(&mut items, |item| item);
     // A stop can land before an assistant item is committed, leaving that round
     // with an empty payload while its streamed text is already durable as
     // blocks. Recover every round's own fields: the timeline is per round, so
@@ -206,7 +206,9 @@ pub(super) fn load_turn(
     recover_fields(&**storage, user, session, &mut items)?;
     let mut projected = project_turn(root, &items);
     if let (Some(turn), Some(chat)) = (&mut projected, chat) {
-        turn.process_steps = chat.workflow_count + chat.reasoning_count;
+        turn.process_steps = chat
+            .process_count
+            .unwrap_or(chat.workflow_count + chat.reasoning_count);
         if let Some(stats) = &chat.assistant.stats {
             turn.assistant.stats = super::NativeMessageStats::from_payload(stats);
         }
@@ -320,7 +322,9 @@ fn load_turn_header(
         assistant,
         rounds: Vec::new(),
         subagents,
-        process_steps: chat.workflow_count + chat.reasoning_count,
+        process_steps: chat
+            .process_count
+            .unwrap_or(chat.workflow_count + chat.reasoning_count),
         plan: chat.plan.as_ref().map(NativePlanView::from_payload),
         question_panel: pending_question_panel(chat),
     })
@@ -351,6 +355,30 @@ fn pending_question_panel(chat: &ChatViewRow) -> Option<Value> {
         "keep_open": panel.keep_open,
         "status": if status.is_empty() { "pending" } else { status },
     }))
+}
+
+pub(super) fn sort_process_items<Item>(items: &mut [Item], value: impl Fn(&Item) -> &Value) {
+    let mut anchors = std::collections::HashMap::<String, i64>::new();
+    for item in items.iter().map(&value) {
+        let index = item["item_index"].as_i64().unwrap_or(i64::MAX);
+        anchors
+            .entry(item["turn_id"].as_str().unwrap_or_default().to_owned())
+            .and_modify(|anchor| *anchor = (*anchor).min(index))
+            .or_insert(index);
+    }
+    items.sort_by_cached_key(|item| {
+        let item = value(item);
+        let turn = item["turn_id"].as_str().unwrap_or_default();
+        let index = item["item_index"].as_i64().unwrap_or(i64::MAX);
+        let sequence = item["payload"]["process_seq"].as_i64();
+        (
+            anchors.get(turn).copied().unwrap_or(index),
+            turn.to_owned(),
+            sequence.is_some(),
+            sequence.unwrap_or(index),
+            index,
+        )
+    });
 }
 
 pub(super) fn recover_fields(

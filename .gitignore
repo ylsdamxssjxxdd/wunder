@@ -111,6 +111,11 @@ scripts/blender
 temp
 config/runtime
 .cache*
-docs/技术说明书/验证记录
-docs/设计文档/聊天状态一致性验证
-docs/设计文档/蛹与舵机状态一致性验证
+# Formal sources and curated evidence are versioned; transient runs stay outside Git.
+/docs/形式化证明/**/report/
+/docs/形式化证明/**/states/
+/docs/形式化证明/**/.tlc*/
+/docs/形式化证明/**/*.class
+/docs/形式化证明/**/*.fp
+/docs/形式化证明/**/*.st
+/docs/形式化证明/**/*.tmp

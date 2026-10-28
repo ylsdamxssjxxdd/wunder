@@ -34,7 +34,7 @@ import {
   materializeChatRuntimeProjectionList
 } from './chatRuntimeRenderAdapter';
 import { chatPerf } from '@/utils/chatPerf';
-import { threadViewSlots, threadViewCommitted, submitThreadView, clearThreadView, applyThreadViewChanges, applyThreadViewTail, bindThreadViewStreamStarted,threadViewStatus } from './threadViewStore';
+import { threadViewSlots, threadViewCommitted, submitThreadView, clearThreadView, applyThreadViewChanges, applyThreadViewTail, applyThreadViewProcessItem, bindThreadViewStreamStarted,threadViewStatus } from './threadViewStore';
 import { threadViewStoreMessages } from '@/stores/chatGreeting';
 
 interface ChatThreadRuntimeEntry {
@@ -484,6 +484,7 @@ export const applyChatThreadServerEvent = (
   // While an open is still in flight (or failed) `applyThreadViewTail` finds no
   // row and would swallow the delta, so fall through to the durable state.
   if(eventType==='thread_item_tail' && threadViewCommitted(key) && applyThreadViewTail(key,payload))return true;
+  if(eventType==='thread_process_item' && threadViewCommitted(key)) return applyThreadViewProcessItem(key,payload);
   if (eventType === 'thread_view_change') {
     const wire = payload as any;
     const data = wire?.data ?? wire;

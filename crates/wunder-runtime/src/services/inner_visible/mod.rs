@@ -34,8 +34,8 @@ use anyhow::{anyhow, Context, Result};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::Path;
-use std::sync::Arc;
-use tokio::sync::{Mutex as TokioMutex, RwLock};
+use std::sync::{Arc, Mutex, Weak};
+use tokio::sync::{Mutex as TokioMutex, RwLock, Semaphore};
 use tracing::warn;
 
 const DEFAULT_AGENT_APPROVAL_MODE: &str = "full_auto";
@@ -62,7 +62,8 @@ pub struct InnerVisibleService {
     user_tool_store: Arc<UserToolStore>,
     user_tool_manager: Arc<UserToolManager>,
     user_store: Arc<UserStore>,
-    user_sync_locks: Arc<TokioMutex<HashMap<String, Arc<TokioMutex<()>>>>>,
+    user_sync_locks: Arc<Mutex<HashMap<String, Weak<TokioMutex<()>>>>>,
+    sync_slots: Arc<Semaphore>,
 }
 
 impl InnerVisibleService {
@@ -81,7 +82,8 @@ impl InnerVisibleService {
             user_tool_store,
             user_tool_manager,
             user_store,
-            user_sync_locks: Arc::new(TokioMutex::new(HashMap::new())),
+            user_sync_locks: Arc::default(),
+            sync_slots: Arc::new(Semaphore::new(8)),
         }
     }
 
@@ -130,12 +132,31 @@ impl InnerVisibleService {
         user_id: &str,
         mode: InnerVisibleSyncMode,
     ) -> Result<()> {
-        let user_lock = self.ensure_user_sync_lock(user_id).await;
-        let _guard = user_lock.lock().await;
+        let user_lock = self.ensure_user_sync_lock(user_id);
+        let guard = user_lock.lock_owned().await;
+        let slot = self.sync_slots.clone().acquire_owned().await?;
+        let config = self.config_store.get().await;
+        let skills = self.skills.read().await.clone();
+        let service = self.clone();
+        let user_id = user_id.to_owned();
+        crate::core::blocking::run_fs("inner_visible.sync_user_state", move || {
+            let _guard = guard;
+            let _slot = slot;
+            service.sync_user_state_blocking(&user_id, mode, &config, &skills)
+        })
+        .await
+    }
+
+    fn sync_user_state_blocking(
+        &self,
+        user_id: &str,
+        mode: InnerVisibleSyncMode,
+        config: &Config,
+        skills: &SkillRegistry,
+    ) -> Result<()> {
         let paths = self.ensure_scaffold(user_id)?;
         self.user_tool_store.ensure_materialized(user_id)?;
 
-        let config = self.config_store.get().await;
         if mode.allows_file_import() {
             self.validate_json_file(
                 tooling_path(&paths),
@@ -145,14 +166,13 @@ impl InnerVisibleService {
                 defaults_worker_card_path(&paths),
                 "failed to parse global defaults worker-card",
             );
-            self.ensure_declared_skills_enabled_from_worker_cards(user_id, &paths, &config)?;
+            self.ensure_declared_skills_enabled_from_worker_cards(user_id, &paths, config)?;
         }
-        let skills = self.skills.read().await.clone();
         let bindings = self
             .user_tool_manager
-            .build_bindings(&config, &skills, user_id);
-        let allowed_tool_names = self.allowed_tool_names(user_id, &config, &skills, &bindings)?;
-        let worker_card_skill_names = collect_worker_card_skill_names(&skills, &bindings);
+            .build_bindings(config, skills, user_id);
+        let allowed_tool_names = self.allowed_tool_names(user_id, config, skills, &bindings)?;
+        let worker_card_skill_names = collect_worker_card_skill_names(skills, &bindings);
 
         self.sync_default_agent(
             user_id,
@@ -173,13 +193,21 @@ impl InnerVisibleService {
         Ok(())
     }
 
-    async fn ensure_user_sync_lock(&self, user_id: &str) -> Arc<TokioMutex<()>> {
+    fn ensure_user_sync_lock(&self, user_id: &str) -> Arc<TokioMutex<()>> {
         let cleaned = user_id.trim();
-        let mut locks = self.user_sync_locks.lock().await;
-        locks
-            .entry(cleaned.to_string())
-            .or_insert_with(|| Arc::new(TokioMutex::new(())))
-            .clone()
+        let mut locks = self
+            .user_sync_locks
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if locks.len() >= 128 {
+            locks.retain(|_, lock| lock.strong_count() > 0);
+        }
+        if let Some(lock) = locks.get(cleaned).and_then(Weak::upgrade) {
+            return lock;
+        }
+        let lock = Arc::new(TokioMutex::new(()));
+        locks.insert(cleaned.to_owned(), Arc::downgrade(&lock));
+        lock
     }
 
     fn allowed_tool_names(
@@ -493,7 +521,7 @@ impl InnerVisibleService {
         let document = build_worker_card(record, worker_card_skill_names);
         let worker_card_file =
             worker_card_path(paths, Some(record.name.as_str()), Some(&record.agent_id));
-        atomic_write_text(
+        write_projection_if_changed(
             &worker_card_file,
             &serde_json::to_string_pretty(&document).context("serialize worker card failed")?,
         )?;
@@ -651,7 +679,7 @@ impl InnerVisibleService {
         self.write_agent_files(paths, &record, worker_card_skill_names)?;
         let defaults_document = build_worker_card(&record, worker_card_skill_names);
         let defaults_content = serde_json::to_string_pretty(&defaults_document)?;
-        atomic_write_text(&defaults_worker_card_path(paths), &defaults_content)?;
+        write_projection_if_changed(&defaults_worker_card_path(paths), &defaults_content)?;
         Ok(())
     }
 
@@ -686,6 +714,33 @@ impl InnerVisibleService {
             warn!("{label}: failed to parse {}: {err}", path.display());
         }
     }
+}
+
+fn write_projection_if_changed(path: &Path, content: &str) -> Result<()> {
+    match fs::read(path) {
+        Ok(existing) if existing == content.as_bytes() => return Ok(()),
+        Ok(existing) => {
+            if let (Ok(mut previous), Ok(mut next)) = (
+                serde_json::from_slice::<serde_json::Value>(&existing),
+                serde_json::from_str::<serde_json::Value>(content),
+            ) {
+                for document in [&mut previous, &mut next] {
+                    if let Some(metadata) = document
+                        .get_mut("metadata")
+                        .and_then(serde_json::Value::as_object_mut)
+                    {
+                        metadata.remove("exported_at");
+                    }
+                }
+                if previous == next {
+                    return Ok(());
+                }
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+    atomic_write_text(path, content)
 }
 
 fn normalize_default_agent_config(
@@ -1183,6 +1238,97 @@ mod tests {
             user_store.clone(),
         ));
         (temp, user_store, service, workspace)
+    }
+
+    #[test]
+    fn worker_card_projection_preserves_unchanged_export_and_applies_edits() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("worker-card.json");
+        let initial = r#"{"metadata":{"exported_at":"first","name":"fixture-agent"},"extra_prompt":"initial"}"#;
+        write_projection_if_changed(&path, initial).unwrap();
+        let modified = fs::metadata(&path).unwrap().modified().unwrap();
+        let timestamp_only = initial.replace("first", "second");
+        write_projection_if_changed(&path, &timestamp_only).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), initial);
+        assert_eq!(fs::metadata(&path).unwrap().modified().unwrap(), modified);
+        let changed = timestamp_only.replace("initial", "updated");
+        write_projection_if_changed(&path, &changed).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), changed);
+        fs::write(&path, "invalid").unwrap();
+        write_projection_if_changed(&path, &changed).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), changed);
+    }
+
+    #[tokio::test]
+    async fn user_sync_lock_directory_reuses_live_locks_and_reclaims_idle_entries() {
+        let (_root, _store, service, _workspace) = build_service().await;
+        let lock = service.ensure_user_sync_lock("fixture-owner");
+        let same = service.ensure_user_sync_lock("fixture-owner");
+        assert!(Arc::ptr_eq(&lock, &same));
+        let guard = same.lock_owned().await;
+        assert!(service
+            .ensure_user_sync_lock("fixture-owner")
+            .try_lock()
+            .is_err());
+        for index in 0..1024 {
+            drop(service.ensure_user_sync_lock(&format!("fixture-owner-{index}")));
+        }
+        let after = service.ensure_user_sync_lock("fixture-owner");
+        assert!(Arc::ptr_eq(&lock, &after));
+        assert!(service.user_sync_locks.lock().unwrap().len() <= 128);
+        drop(guard);
+        assert!(after.try_lock().is_ok());
+    }
+
+    #[tokio::test]
+    async fn repeated_materialization_does_not_rewrite_worker_cards() {
+        let (_root, _store, service, _workspace) = build_service().await;
+        service
+            .materialize_user_state("fixture-owner")
+            .await
+            .unwrap();
+        let paths = user_paths(service.workspace.as_ref(), "fixture-owner");
+        let path = defaults_worker_card_path(&paths);
+        let before = fs::read(&path).unwrap();
+        let modified = fs::metadata(&path).unwrap().modified().unwrap();
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        service
+            .materialize_user_state("fixture-owner")
+            .await
+            .unwrap();
+        assert_eq!(fs::read(&path).unwrap(), before);
+        assert_eq!(fs::metadata(&path).unwrap().modified().unwrap(), modified);
+    }
+
+    #[tokio::test]
+    async fn user_sync_backpressure_waits_without_expiring_filesystem_queue() {
+        let (_root, _store, service, _workspace) = build_service().await;
+        let slots = service
+            .sync_slots
+            .clone()
+            .acquire_many_owned(8)
+            .await
+            .unwrap();
+        let waiting_service = service.clone();
+        let waiting = tokio::spawn(async move {
+            waiting_service
+                .materialize_user_state("fixture-owner")
+                .await
+        });
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert!(!waiting.is_finished());
+        let user_lock = service.ensure_user_sync_lock("fixture-owner");
+        assert!(user_lock.try_lock().is_err());
+        waiting.abort();
+        assert!(waiting.await.unwrap_err().is_cancelled());
+        assert!(user_lock.try_lock().is_ok());
+        assert_eq!(service.sync_slots.available_permits(), 0);
+        drop(slots);
+        service
+            .materialize_user_state("fixture-owner")
+            .await
+            .unwrap();
+        assert_eq!(service.sync_slots.available_permits(), 8);
     }
 
     fn write_test_skill(skill_root: &Path, skill_name: &str) {

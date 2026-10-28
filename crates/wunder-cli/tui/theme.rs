@@ -203,7 +203,7 @@ pub(crate) fn transcript_selection(base: Style) -> Style {
 /// The composer is the only editable region on screen, so it gets the same surface
 /// tone the selection states use instead of floating on the terminal background.
 pub(crate) fn composer_surface() -> Style {
-    degrade(Style::default().bg(Color::Rgb(24, 36, 48)))
+    degrade(Style::default().bg(Color::Rgb(40, 40, 40)))
 }
 
 /// The prompt glyph keeps its weight in both focus states; only its colour yields.

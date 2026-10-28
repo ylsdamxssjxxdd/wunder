@@ -451,8 +451,14 @@ component FoldEntry inherits Rectangle {
                     }
                 }
                 thinking-scroll := ScrollView {
-                    horizontal-scrollbar-policy: always-off; vertical-scrollbar-policy: always-off;
+                    horizontal-scrollbar-policy: always-off; vertical-scrollbar-policy: as-needed;
                     x: 10px; y: 8px; width: parent.width - 20px; height: parent.height - 16px;
+                    // Same rule as the process card: a ScrollView only infers its
+                    // content height from layout children, and this one holds a
+                    // TextInput. Without it the box was capped at 240px with the
+                    // rest of the reasoning unreachable.
+                    content-height: max(self.visible-height, thinking-box.preferred-height);
+                    content-width: self.visible-width;
 
                     thinking-box := TextInput {
                         text: root.data.detail; read-only: true; wrap: word-wrap;
@@ -467,9 +473,11 @@ component FoldEntry inherits Rectangle {
                 height: min(240px, tool-body.preferred-height + 16px);
                 border-radius: Theme.radius-sm; background: Theme.panel;
                 border-width: 1px; border-color: Theme.border;
-                ScrollView {
-                    horizontal-scrollbar-policy: always-off; vertical-scrollbar-policy: always-off;
+                tool-scroll := ScrollView {
+                    horizontal-scrollbar-policy: always-off; vertical-scrollbar-policy: as-needed;
                     x: 10px; y: 8px; width: parent.width - 20px; height: parent.height - 16px;
+                    content-height: max(self.visible-height, tool-body.preferred-height);
+                    content-width: self.visible-width;
 
                     tool-body := WorkflowDetail {
                         sections: root.data.sections;
@@ -674,7 +682,7 @@ component SubagentCard inherits Rectangle {
                         text: root.data.status-kind == 1 ? I18n.sub_status_running
                             : root.data.status-kind == 2 ? I18n.sub_status_failed
                             : I18n.sub_status_done;
-                        color: root.data.status-kind == 1 ? Theme.accent
+                        color: root.data.status-kind == 1 ? Theme.accent-ink
                             : root.data.status-kind == 2 ? Theme.danger
                             : Theme.success;
                         font-size: Theme.font-sm;

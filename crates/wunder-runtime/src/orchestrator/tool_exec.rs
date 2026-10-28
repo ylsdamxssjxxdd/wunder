@@ -555,8 +555,8 @@ impl Orchestrator {
             // separate compaction result event supplies the visible activity.
             payload["meta"]["hidden"] = Value::Bool(true);
             return self
-                .thread_store
-                .append_chat_payload(user_id, &payload)
+                .committer
+                .commit_context_checkpoint(user_id, &payload)
                 .await;
         }
         use wunder_core::thread_store::{ThreadId, TurnId};

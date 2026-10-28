@@ -95,6 +95,29 @@ async function run() {
   fixture.props.status='completed';await drain();await tick();fixture.props.turnId='fixture-next-turn';await drain();
   respond('running');await drain();assert.equal(requests.length,0);assert.equal(fixture.tool(),undefined);fixture.app.unmount();
   assert.equal(timers.size,0);
+  fixture=mount();fixture.click();await drain();
+  const thought=(round,text)=>({item_id:'fixture-turn:text-'+round,item_index:round,turn_id:'fixture-turn',kind:'assistant_message',status:'completed',revision:1,payload:{model_round:round,reasoning:text}});
+  requests.shift().resolve({data:{data:{turn:{items:[thought(1,'Fixture repeated completed')],has_older:false,has_newer:false}}}});
+  await drain();fixture.props.reasoningItemId='fixture-turn:text-2';fixture.props.reasoning='Fixture repeated';fixture.props.reasoningStreaming=true;await drain();
+  const thoughts=()=>{const result=[];const walk=node=>{if(node.type==='fixture-thought')result.push(node.props);node.children.forEach(walk);};walk(fixture.container);return result;};
+  assert.equal(thoughts().length,2);
+  assert.equal(thoughts()[0].text,'Fixture repeated completed');
+  assert.equal(thoughts()[0].streaming,false);
+  assert.equal(thoughts()[1].text,'Fixture repeated');
+  const deadline=[...timers.keys()][0];
+  for(let index=2;index<=15;index++){fixture.props.count=index;await drain();assert.equal([...timers.keys()][0],deadline);}
+  await tick();assert.equal(requests.length,1);
+  requests.shift().resolve({data:{data:{turn:{items:[thought(1,'Fixture repeated completed'),thought(2,'Fixture repeated current')],has_older:false,has_newer:false}}}});
+  await drain();assert.equal(thoughts().length,2);assert.equal(thoughts()[0].text,'Fixture repeated completed');
+  fixture.app.unmount();assert.equal(timers.size,0);
+  fixture=mount();fixture.click();await drain();
+  requests.shift().resolve({data:{data:{turn:{items:[],has_older:false,has_newer:false}}}});await drain();
+  fixture.props.processItems=[{...toolItem('running'),payload:{...toolItem('running').payload,process_seq:2}}];fixture.props.processRevision=1;await drain();
+  assert.equal(fixture.tool(),'loading');assert.equal(requests.length,0);
+  fixture.props.processItems=[{...toolItem('completed'),payload:{...toolItem('completed').payload,process_seq:2}}];fixture.props.processRevision=2;await drain();
+  assert.equal(fixture.tool(),'completed');await tick();
+  respond('completed');await drain();assert.equal(fixture.tool(),'completed');
+  fixture.app.unmount();assert.equal(timers.size,0);
   console.log(JSON.stringify({headOnly,repairedRefresh,initialRead:'pass',reopen:'pass',failure:'pass',history:'pass',identityReset:'pass'},null,2));
 }
 run().catch(error=>{console.error(error);process.exitCode=1;});
@@ -118,6 +141,8 @@ await build({
       }
       return { contents: args.path.endsWith('MessageTimelineToolEntry.vue')
         ? 'import {h} from "vue";export default {props:["entry"],setup(props){return ()=>h("fixture-tool",{status:props.entry.status});}};'
+        : args.path.endsWith('MessageTimelineThinkingEntry.vue')
+        ? 'import {h} from "vue";export default {props:["entry"],setup(props){return ()=>h("fixture-thought",{text:props.entry.text,streaming:props.entry.streaming});}};'
         : 'export default {render(){return null;}};', loader: 'js', resolveDir: resolve(repo, 'frontend') };
     });
   } }],

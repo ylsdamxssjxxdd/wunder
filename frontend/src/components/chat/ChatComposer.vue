@@ -1224,6 +1224,9 @@ const recallableUserMessages = computed<string[]>(() => {
     if (output[output.length - 1] === content) continue;
     output.push(content);
   }
+  // 最近的一条排在最前：上箭头从下标 0 开始递增，第一次按就该回到最后发过的那条。
+  // 去重仍按时间正序做（只合并相邻重复），所以放在反转之前。
+  output.reverse();
   return output;
 });
 
@@ -1621,6 +1624,9 @@ const schedulePersistDraftState = () => {
 };
 
 const restoreDraftStateByKey = (key: string) => {
+  // 换会话/换草稿时召回游标必须归零，否则会从上一个会话的下标继续推进，
+  // 轻则跳条，重则越界后上键完全失效。
+  resetHistoryRecall();
   const normalizedKey = String(key || '').trim();
   if (!normalizedKey) {
     inputText.value = '';

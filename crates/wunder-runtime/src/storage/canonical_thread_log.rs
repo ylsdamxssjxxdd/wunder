@@ -485,9 +485,34 @@ impl<'a> CanonicalThreadLog<'a> {
                 }
             }
         }
+        if let Some(id) = summary
+            .reasoning_item_id
+            .as_ref()
+            .filter(|id| **id != row.assistant.item_id)
+        {
+            if let Some(raw) = conn
+                .query_row(
+                    "SELECT preview_json FROM thread_items WHERE rollout_id=?1 AND item_id=?2",
+                    params![rollout, id],
+                    |record| record.get::<_, String>(0),
+                )
+                .optional()?
+            {
+                let item: Value = serde_json::from_str(&raw)?;
+                let payload = item.get("payload").unwrap_or(&item);
+                let body = if payload.get("item_id").is_some() {
+                    payload.get("payload").unwrap_or(payload)
+                } else {
+                    payload
+                };
+                p::set_reasoning(&mut row.assistant, body);
+            }
+        }
         row.reasoning_count = summary.reasoning_count;
         row.reasoning_item_id = summary.reasoning_item_id.unwrap_or_default();
         row.workflow_count = summary.workflow_count;
+        row.process_count =
+            Some((summary.process_count - i64::from(summary.assistant_process_text)).max(0));
         row.workspace_change_seq = summary.workspace_change_seq;
         p::settle_question_panel(&mut row);
         Ok(row)
@@ -637,7 +662,12 @@ impl ThreadLogStore for CanonicalThreadLog<'_> {
         let item = self
             .get_thread_item(u, s, item_id, false)?
             .ok_or_else(|| anyhow!("item not found"))?;
-        let body = &item["payload"];
+        // The stored payload only points at the tool schema (`schema_ref`);
+        // resolve it once here, on the lazy read, so the detail view can show
+        // the contract without every row repeating kilobytes of JSON Schema.
+        let mut payload = item["payload"].clone();
+        crate::storage::thread_view_projection::attach_tool_schema(&mut payload);
+        let body = &payload;
         let text = if field == "detail" {
             serde_json::to_string_pretty(body)?
         } else if field == "reasoning" {
@@ -952,6 +982,9 @@ impl ThreadLogStore for CanonicalThreadLog<'_> {
         let previous = admissions
             .turn(s, t)?
             .ok_or_else(|| anyhow!("turn not found"))?;
+        if !super::thread_admission::can_settle_inquiry(&previous, payload) {
+            return Ok(false);
+        }
         if !super::thread_admission::TurnAdmissions::can_transition(
             previous["status"].as_str().unwrap_or(""),
             status,
@@ -966,10 +999,13 @@ impl ThreadLogStore for CanonicalThreadLog<'_> {
         let exists = Self::rollout(&conn, s)?.is_some();
         drop(conn);
         if terminal && exists {
-            wait(
-                self.threads
-                    .begin_turn(u, &ThreadId::new(s)?, &TurnId::new(t)?, ""),
-            )??;
+            wait(self.threads.materialize_turn(
+                u,
+                &ThreadId::new(s)?,
+                &TurnId::new(t)?,
+                "",
+                false,
+            ))??;
             let now = chrono::Utc::now().timestamp_millis();
             let event = if status == "completed" {
                 CanonicalEvent::TurnCompleted {

@@ -7,6 +7,7 @@ use ratatui::style::Style;
 use ratatui::text::Line;
 use ratatui::text::Span;
 use ratatui::text::Text;
+use ratatui::widgets::Block;
 use ratatui::widgets::Paragraph;
 use ratatui::widgets::Wrap;
 use ratatui::Frame;
@@ -107,7 +108,16 @@ pub(crate) fn draw_input(frame: &mut Frame, area: Rect, app: &mut TuiApp, is_zh:
         // A hidden control owns nothing: an empty rectangle answers every pointer.
         app.set_gap_hit_area(Rect::default());
     }
-    let (input_area, footer_area) = (sections[next], sections[next + 1]);
+    let (band, footer_area) = (sections[next], sections[next + 1]);
+    frame.render_widget(Block::default().style(theme::composer_surface()), band);
+    let input_area = Rect::new(
+        band.x.saturating_add(1),
+        band.y.saturating_add(1),
+        band.width.saturating_sub(2),
+        band.height
+            .saturating_sub(2)
+            .max(u16::from(band.height > 0)),
+    );
 
     let prompt_width = UnicodeWidthStr::width(INPUT_PROMPT) as u16;
     let text_area = Rect {
@@ -140,9 +150,9 @@ pub(crate) fn draw_input(frame: &mut Frame, area: Rect, app: &mut TuiApp, is_zh:
             let placeholder = if app.read_only_notice().is_some() {
                 crate::tui::app::read_only_placeholder(is_zh)
             } else if is_zh {
-                "直接提问，或使用 / 命令、@ 文件、# 技能、$ 应用；拖入图片或文件即可附加"
+                "输入消息，@ 提及文件，/ 查看命令"
             } else {
-                "Ask directly, or use / commands, @ files, # skills, and $ apps; drop images/files to attach"
+                "Ask anything, @ to mention files, / for commands"
             };
             Text::from(vec![Line::from(Span::styled(
                 placeholder,

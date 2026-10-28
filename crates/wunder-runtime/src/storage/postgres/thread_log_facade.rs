@@ -206,7 +206,7 @@ impl<'a> PostgresThreadLog<'a> {
         // Select ordinals and lengths first: an API page must not materialize
         // hundreds of maximum-size records before applying its byte budget.
         let rows = tx.query(&format!("WITH candidates AS MATERIALIZED (
-            SELECT i.ordinal FROM service_thread_items i
+            SELECT i.ordinal FROM service_thread_items_v2 i
             WHERE i.thread_id=$1 AND ($2::text IS NULL OR i.root_turn_id=$2)
               AND ($3::bigint IS NULL OR i.ordinal<$3) AND ($4::bigint IS NULL OR i.ordinal>$4)
               AND ($5 OR i.visible)
@@ -291,10 +291,19 @@ impl<'a> PostgresThreadLog<'a> {
             return Ok(false);
         }
         let previous = tx.query_opt(
-            "SELECT status,root_turn_id,user_round,input_json FROM service_thread_admissions WHERE thread_id=$1 AND turn_id=$2 FOR UPDATE",
+            "SELECT status,root_turn_id,user_round,input_json,control_json FROM service_thread_admissions WHERE thread_id=$1 AND turn_id=$2 FOR UPDATE",
             &[&session,&turn],
         )?.ok_or_else(|| anyhow!("turn not found"))?;
         let previous_status: String = previous.get(0);
+        let mut control: Value = previous
+            .get::<_, Option<String>>(4)
+            .map(|raw| serde_json::from_str(&raw))
+            .transpose()?
+            .unwrap_or_else(|| json!({}));
+        control["status"] = json!(previous_status);
+        if !crate::storage::thread_admission::can_settle_inquiry(&control, payload) {
+            return Ok(false);
+        }
         if !TurnAdmissions::can_transition(&previous_status, status) {
             return Ok(false);
         }
@@ -413,7 +422,7 @@ impl<'a> PostgresThreadLog<'a> {
         if !internal {
             super::thread_display::ensure_ready(self.storage, session)?;
             let mut conn = self.storage.conn()?;
-            if conn.query_opt("SELECT 1 FROM service_thread_items WHERE thread_id=$1 AND item_id=$2 AND visible", &[&session,&item_id])?.is_none() {
+            if conn.query_opt("SELECT 1 FROM service_thread_items_v2 WHERE thread_id=$1 AND item_id=$2 AND visible", &[&session,&item_id])?.is_none() {
                 return Ok(None);
             }
         }
@@ -586,7 +595,7 @@ impl<'a> PostgresThreadLog<'a> {
             SELECT r.ordinal,octet_length(r.record_json) AS bytes FROM service_thread_records r
             WHERE r.thread_id=$1 AND r.ordinal>=$2 AND
               (r.record_type IN ('turn_started','turn_completed','turn_aborted') OR
-               (r.record_type='item_completed' AND EXISTS(SELECT 1 FROM service_thread_items i
+               (r.record_type='item_completed' AND EXISTS(SELECT 1 FROM service_thread_items_v2 i
                  WHERE i.thread_id=r.thread_id AND i.ordinal=r.ordinal AND i.visible)))
             ORDER BY r.ordinal LIMIT $3
         ), sized AS (SELECT ordinal,SUM(bytes) OVER (ORDER BY ordinal) AS bytes,
@@ -757,12 +766,12 @@ impl<'a> PostgresThreadLog<'a> {
         let first = items.first().and_then(|i| i["item_index"].as_i64());
         let last = items.last().and_then(|i| i["item_index"].as_i64());
         let older = if let Some(edge) = first {
-            c.query_one("SELECT EXISTS(SELECT 1 FROM service_thread_items WHERE thread_id=$1 AND root_turn_id=$2 AND ordinal<$3 AND ($4 OR visible))",&[&session,&root,&edge,&internal])?.get::<_,bool>(0)
+            c.query_one("SELECT EXISTS(SELECT 1 FROM service_thread_items_v2 WHERE thread_id=$1 AND root_turn_id=$2 AND ordinal<$3 AND ($4 OR visible))",&[&session,&root,&edge,&internal])?.get::<_,bool>(0)
         } else {
             false
         };
         let newer = if let Some(edge) = last {
-            c.query_one("SELECT EXISTS(SELECT 1 FROM service_thread_items WHERE thread_id=$1 AND root_turn_id=$2 AND ordinal>$3 AND ($4 OR visible))",&[&session,&root,&edge,&internal])?.get::<_,bool>(0)
+            c.query_one("SELECT EXISTS(SELECT 1 FROM service_thread_items_v2 WHERE thread_id=$1 AND root_turn_id=$2 AND ordinal>$3 AND ($4 OR visible))",&[&session,&root,&edge,&internal])?.get::<_,bool>(0)
         } else {
             false
         };
@@ -781,15 +790,9 @@ impl<'a> PostgresThreadLog<'a> {
     ) -> Result<(i64, i64)> {
         self.check_owner(user, session)?;
         super::thread_display::ensure_ready(self.storage, session)?;
-        let mut c = self.storage.conn()?;
-        let turns:i64=c.query_one("SELECT COUNT(*) FROM service_thread_admissions WHERE thread_id=$1 AND turn_id=root_turn_id", &[&session])?.get(0);
-        let items: i64 = c
-            .query_one(
-                "SELECT COUNT(*) FROM service_thread_items WHERE thread_id=$1 AND ($2 OR visible)",
-                &[&session, &internal],
-            )?
-            .get(0);
-        Ok((turns, items))
+        let mut conn = self.storage.conn()?;
+        let mut tx = conn.transaction()?;
+        super::thread_display::counts(&mut tx, session, internal)
     }
 
     pub(crate) fn delete_thread_log_by_session(&self, user: &str, session: &str) -> Result<i64> {
@@ -820,7 +823,7 @@ impl<'a> PostgresThreadLog<'a> {
         );
         anyhow::ensure!(
             tx.query_opt(
-                "SELECT 1 FROM service_thread_items WHERE thread_id=$1 AND item_id=$2 AND visible",
+                "SELECT 1 FROM service_thread_items_v2 WHERE thread_id=$1 AND item_id=$2 AND visible",
                 &[&session, &item]
             )?
             .is_some(),
@@ -852,7 +855,7 @@ impl<'a> PostgresThreadLog<'a> {
         let mut conn = self.storage.conn()?;
         let mut tx = conn.transaction()?;
         tx.batch_execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")?;
-        let rows=tx.query("SELECT ordinal,preview_json FROM service_thread_items WHERE thread_id=$1 AND visible
+        let rows=tx.query("SELECT ordinal,preview_json FROM service_thread_items_v2 WHERE thread_id=$1 AND visible
             AND root_turn_id IN (SELECT root_turn_id FROM service_thread_admissions WHERE thread_id=$1 AND turn_id=root_turn_id
                 ORDER BY user_round DESC LIMIT $2)
             AND preview_json::jsonb->>'kind' IN ('user_message','assistant_message','agent_message')
@@ -881,11 +884,23 @@ impl<'a> PostgresThreadLog<'a> {
     pub(crate) fn thread_snapshot(&self, user: &str, session: &str) -> Result<Value> {
         self.thread_snapshot_window(user, session, &ThreadSnapshotWindow::default())
     }
+    pub(crate) fn thread_preview_snapshot(&self, user: &str, session: &str) -> Result<Value> {
+        self.snapshot_window(user, session, &ThreadSnapshotWindow::default(), true)
+    }
     pub(crate) fn thread_snapshot_window(
         &self,
         user: &str,
         session: &str,
         w: &ThreadSnapshotWindow,
+    ) -> Result<Value> {
+        self.snapshot_window(user, session, w, false)
+    }
+    fn snapshot_window(
+        &self,
+        user: &str,
+        session: &str,
+        w: &ThreadSnapshotWindow,
+        preview: bool,
     ) -> Result<Value> {
         self.check_owner(user, session)?;
         super::thread_display::ensure_ready(self.storage, session)?;
@@ -909,54 +924,79 @@ impl<'a> PostgresThreadLog<'a> {
             ORDER BY root.user_round DESC", &[&session,&w.before_turn_index,&((max_turns+1) as i64)])?;
         let mut more = rows.len() > max_turns;
         let mut turns = rows.into_iter().take(max_turns).map(|r|json!({"turn_id":r.get::<_,String>(0),"root_turn_id":r.get::<_,String>(1),"user_turn_index":r.get::<_,i64>(2),"status":r.get::<_,String>(3),"client_message_id":r.get::<_,Option<String>>(4),"created_time":r.get::<_,i64>(5) as f64/1000.0,"updated_time":r.get::<_,i64>(6) as f64/1000.0})).collect::<Vec<_>>();
-        let mut items = Vec::new();
-        let mut bytes = 0usize;
-        for turn in &turns {
-            let remaining = max_items.saturating_sub(items.len());
-            if remaining == 0 {
-                more = true;
-                break;
-            }
-            let root = turn["root_turn_id"].as_str().unwrap_or_default();
-            let mut page = Self::items_in_tx(
-                &mut tx,
-                session,
-                Some(root),
-                None,
-                None,
-                remaining as i64 + 1,
-                false,
-                false,
-                true,
-            )?;
-            if page.len() > remaining {
-                page.truncate(remaining);
-                more = true;
-            }
-            if let Some(first) = page.last().and_then(|item| item["item_index"].as_i64()) {
-                more |= tx.query_one("SELECT EXISTS(SELECT 1 FROM service_thread_items WHERE thread_id=$1 AND root_turn_id=$2 AND ordinal<$3 AND visible)", &[&session,&root,&first])?.get::<_,bool>(0);
-            }
-            for item in page {
-                let size = serde_json::to_vec(&item)?.len();
-                if bytes.saturating_add(size) > 16 * 1024 * 1024 && !items.is_empty() {
+        let mut items = if preview {
+            let roots = turns
+                .iter()
+                .filter_map(|turn| turn["root_turn_id"].as_str().map(str::to_owned))
+                .collect::<Vec<_>>();
+            let rows = tx.query("WITH candidates AS MATERIALIZED (
+            SELECT item.ordinal FROM unnest($2::text[]) root(root_turn_id)
+            CROSS JOIN LATERAL (SELECT ordinal FROM service_thread_items_v2
+                WHERE thread_id=$1 AND root_turn_id=root.root_turn_id AND visible ORDER BY ordinal DESC LIMIT $3) item
+            ORDER BY item.ordinal DESC LIMIT $3
+        ), sized AS (SELECT item.ordinal,item.preview_json,SUM(octet_length(item.preview_json)) OVER(ORDER BY item.ordinal DESC) AS bytes
+            FROM candidates JOIN service_thread_items_v2 item ON item.thread_id=$1 AND item.ordinal=candidates.ordinal)
+        SELECT ordinal,preview_json FROM sized WHERE bytes<=524288 ORDER BY ordinal DESC", &[&session,&roots,&((max_items+1) as i64)])?;
+            more |= rows.len() > max_items;
+            let items = rows
+                .into_iter()
+                .take(max_items)
+                .map(|row| {
+                    let item: CanonicalItem = serde_json::from_str(&row.get::<_, String>(1))?;
+                    let mut wire = Self::item_wire(&item, row.get::<_, i64>(0).max(0) as u64);
+                    wire["session_id"] = json!(session);
+                    wire["preview_only"] = json!(true);
+                    Self::redact_item(&mut wire, false);
+                    Ok(wire)
+                })
+                .collect::<Result<Vec<_>>>()?;
+            items
+        } else {
+            let mut items = Vec::new();
+            let mut bytes = 0usize;
+            for turn in &turns {
+                let remaining = max_items.saturating_sub(items.len());
+                if remaining == 0 {
                     more = true;
                     break;
                 }
-                bytes = bytes.saturating_add(size);
-                items.push(item);
+                let root = turn["root_turn_id"].as_str().unwrap_or_default();
+                let mut page = Self::items_in_tx(
+                    &mut tx,
+                    session,
+                    Some(root),
+                    None,
+                    None,
+                    remaining as i64 + 1,
+                    false,
+                    false,
+                    true,
+                )?;
+                if page.len() > remaining {
+                    page.truncate(remaining);
+                    more = true;
+                }
+                if let Some(first) = page.last().and_then(|item| item["item_index"].as_i64()) {
+                    more |= tx.query_one("SELECT EXISTS(SELECT 1 FROM service_thread_items_v2 WHERE thread_id=$1 AND root_turn_id=$2 AND ordinal<$3 AND visible)", &[&session,&root,&first])?.get::<_,bool>(0);
+                }
+                for item in page {
+                    let size = serde_json::to_vec(&item)?.len();
+                    if bytes.saturating_add(size) > 16 * 1024 * 1024 && !items.is_empty() {
+                        more = true;
+                        break;
+                    }
+                    bytes = bytes.saturating_add(size);
+                    items.push(item);
+                }
+                if bytes >= 16 * 1024 * 1024 {
+                    break;
+                }
             }
-            if bytes >= 16 * 1024 * 1024 {
-                break;
-            }
-        }
+            items
+        };
         turns.reverse();
         items.sort_by_key(|i| i["item_index"].as_i64().unwrap_or(0));
-        let total: i64 = tx
-            .query_one(
-                "SELECT COUNT(*) FROM service_thread_items WHERE thread_id=$1 AND visible",
-                &[&session],
-            )?
-            .get(0);
+        let total = super::thread_display::counts(&mut tx, session, false)?.1;
         more |= total > items.len() as i64;
         Ok(
             json!({"cursor":seq,"window_start_turn_index":turns.first().map(|t|&t["user_turn_index"]),"window_end_turn_index":turns.last().map(|t|&t["user_turn_index"]),"turns":turns,"item_total":total,"items":items,"truncated":more,"has_older":more}),
@@ -1011,7 +1051,7 @@ impl<'a> PostgresThreadLog<'a> {
                 (SELECT turn_id,status,user_round,created_at_ms,0 AS priority FROM service_thread_admissions
                  WHERE thread_id=owner.thread_id ORDER BY user_round DESC,created_at_ms DESC,turn_id DESC LIMIT 1)
              ) h ORDER BY priority DESC,user_round DESC,created_at_ms DESC,turn_id DESC LIMIT 1) head ON TRUE
-             LEFT JOIN LATERAL (SELECT preview_json FROM service_thread_items
+             LEFT JOIN LATERAL (SELECT preview_json FROM service_thread_items_v2
                 WHERE thread_id=owner.thread_id AND visible ORDER BY ordinal DESC LIMIT 1) activity ON TRUE
              WHERE owner.user_id=$1 AND owner.thread_id=ANY($2)",
             &[&user, &sessions],

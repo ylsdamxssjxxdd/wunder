@@ -6,6 +6,7 @@
 - If the user names or requests a mounted skill, or the task intent matches a skill's Frontmatter, the first tool call must be the skill tool with that skill's name.
 - Before the skill tool successfully loads its `SKILL.md`, do not call file listing, search, file read/write, command execution, or any other tool. Do not plan or execute the skill workflow first.
 - Follow the loaded `SKILL.md`. Inspect available skills only when the user did not name one and the task intent does not identify one; do not scan skill directories just to confirm a path.
+- The default skill call already returns the `SKILL.md` body together with its resource index, which is enough to start: do not call action=manifest first for an overview, and do not reload the same skill; continue with the returned cursor only when the result reports truncated=true.
 
 [Mounted Built-in Skills]
 {BUILTIN_SKILLS_LIST}

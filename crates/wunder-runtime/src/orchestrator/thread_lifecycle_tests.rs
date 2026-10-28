@@ -523,7 +523,10 @@ async fn stop_after_completion_keeps_completed_settlement() {
         .cancel_session_activity("fixture-user", "fixture-thread", "test_stop")
         .await
         .unwrap();
-    assert_eq!(settled.turns_cancelled, 0, "stop after completion is a no-op");
+    assert_eq!(
+        settled.turns_cancelled, 0,
+        "stop after completion is a no-op"
+    );
     let turns = state
         .storage
         .list_thread_turns("fixture-user", "fixture-thread", None, 12)
@@ -543,10 +546,7 @@ async fn stop_after_completion_keeps_completed_settlement() {
     );
 }
 
-async fn fixture_cancelled_turn(
-    state: &AppState,
-    cancel_turn_only: bool,
-) -> (String, RoundInfo) {
+async fn fixture_cancelled_turn(state: &AppState, cancel_turn_only: bool) -> (String, RoundInfo) {
     let accepted = state
         .storage
         .accept_thread_turn(
@@ -590,7 +590,9 @@ async fn fixture_cancelled_turn(
         assert!(settled);
     } else {
         // 停止已受理且取消对执行体可见。
-        state.monitor.cancel_with_source("fixture-thread", "test_stop");
+        state
+            .monitor
+            .cancel_with_source("fixture-thread", "test_stop");
         state
             .kernel
             .orchestrator

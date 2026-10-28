@@ -1,7 +1,7 @@
 use parking_lot::Mutex;
 use serde_json::Value;
 use std::collections::HashMap;
-use tokio::sync::watch;
+use tokio::sync::{broadcast, watch};
 
 /// Per-session durable change notifications.
 ///
@@ -14,11 +14,32 @@ pub struct ThreadChangeHub {
     inner: Mutex<HashMap<String, watch::Sender<i64>>>,
     context: Mutex<HashMap<String, watch::Sender<Value>>>,
     goal: Mutex<HashMap<String, watch::Sender<Value>>>,
+    live: Mutex<HashMap<String, broadcast::Sender<crate::schemas::StreamEvent>>>,
 }
 
 impl ThreadChangeHub {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub(crate) fn subscribe_live(
+        &self,
+        session: &str,
+    ) -> broadcast::Receiver<crate::schemas::StreamEvent> {
+        let mut live = self.live.lock();
+        live.retain(|_, sender| sender.receiver_count() > 0);
+        live.entry(session.to_owned())
+            .or_insert_with(|| broadcast::channel(128).0)
+            .subscribe()
+    }
+
+    pub(crate) fn publish_live(&self, session: &str, event: &crate::schemas::StreamEvent) {
+        let mut live = self.live.lock();
+        if let Some(sender) = live.get(session) {
+            if sender.send(event.clone()).is_err() {
+                live.remove(session);
+            }
+        }
     }
 
     /// Record the latest durable cursor for a session and wake its feeders.
@@ -155,6 +176,27 @@ impl crate::services::goal::service::GoalUpdatePublisher for ThreadChangeHub {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn live_process_events_are_ordered_scoped_and_bounded() {
+        let hub = ThreadChangeHub::new();
+        let mut receiver = hub.subscribe_live("fixture-thread");
+        let mut other = hub.subscribe_live("fixture-other");
+        for index in 0..130 {
+            hub.publish_live("fixture-thread", &crate::schemas::StreamEvent {
+                event: "thread_process_item".into(), data: serde_json::json!({"order":index}),
+                id: None, timestamp: None,
+            });
+        }
+        assert!(matches!(receiver.try_recv(), Err(broadcast::error::TryRecvError::Lagged(2))));
+        assert_eq!(receiver.try_recv().unwrap().data["order"], 2);
+        assert!(matches!(other.try_recv(), Err(broadcast::error::TryRecvError::Empty)));
+        drop(receiver);
+        hub.publish_live("fixture-thread", &crate::schemas::StreamEvent {
+            event: "thread_process_item".into(), data: Value::Null, id: None, timestamp: None,
+        });
+        assert!(!hub.live.lock().contains_key("fixture-thread"));
+    }
 
     #[test]
     fn publish_wakes_subscribers_with_monotonic_cursor() {

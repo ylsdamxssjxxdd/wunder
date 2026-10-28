@@ -17,8 +17,8 @@ pub struct CronRecord {
     pub next_run: String,
     pub last_status: String,
     pub last_error: String,
-    /// Agent the job runs against; empty means the default agent.
-    pub agent_id: String,
+    pub workspace_id: String,
+    pub workspace_name: String,
     /// Prompt message sent on each run.
     pub message: String,
     pub delete_after_run: bool,
@@ -46,7 +46,7 @@ pub struct NativeCronJobEdit {
     pub cron_expr: String,
     pub timezone: String,
     pub message: String,
-    pub agent_id: String,
+    pub workspace_id: String,
     pub delete_after_run: bool,
     pub enabled: bool,
 }
@@ -64,23 +64,70 @@ pub struct CronRunRecord {
 
 impl NativeDesktop {
     pub fn list_cron_jobs(&self) -> Result<Vec<CronRecord>> {
-        let mut jobs = self.state().storage.list_cron_jobs(self.user_id(), true)?;
-        jobs.sort_by(|a, b| a.updated_at.total_cmp(&b.updated_at).reverse());
-        jobs.truncate(200);
-        Ok(jobs.into_iter().map(cron_record_from).collect())
+        let jobs = self
+            .state()
+            .storage
+            .list_cron_jobs_page(self.user_id(), true, None, 200, 0)?;
+        let names = self.cron_workspace_names()?;
+        let sessions = jobs
+            .iter()
+            .map(|job| job.session_id.clone())
+            .collect::<Vec<_>>();
+        let bindings = self
+            .state()
+            .storage
+            .cron_workspace_bindings(self.user_id(), &sessions)?;
+        Ok(jobs
+            .into_iter()
+            .map(|job| {
+                let workspace_id = bindings
+                    .get(&job.session_id)
+                    .cloned()
+                    .flatten()
+                    .unwrap_or_default();
+                let mut record = cron_record_from(job);
+                record.workspace_name = names.get(&workspace_id).cloned().unwrap_or_default();
+                record.workspace_id = workspace_id;
+                record
+            })
+            .collect())
     }
 
     pub fn get_cron_job(&self, id: &str) -> Result<CronRecord> {
         self.state()
             .storage
             .get_cron_job(self.user_id(), id.trim())?
-            .map(cron_record_from)
             .ok_or_else(|| anyhow!("定时任务不存在"))
+            .and_then(|job| self.cron_record(job, &self.cron_workspace_names()?))
     }
 
-    /// Create or update a job through the shared cron service. The target
-    /// session is resolved like the web client: reuse the agent's most recent
-    /// session, or create one for the agent.
+    fn cron_workspace_names(&self) -> Result<std::collections::HashMap<String, String>> {
+        Ok(self
+            .state()
+            .storage
+            .list_workspaces(self.user_id())?
+            .into_iter()
+            .map(|workspace| (workspace.workspace_id, workspace.name))
+            .collect())
+    }
+
+    fn cron_record(
+        &self,
+        job: wunder_server::storage::CronJobRecord,
+        names: &std::collections::HashMap<String, String>,
+    ) -> Result<CronRecord> {
+        let workspace_id = self
+            .state()
+            .storage
+            .get_chat_session(self.user_id(), &job.session_id)?
+            .and_then(|session| session.workspace_id)
+            .unwrap_or_default();
+        let mut record = cron_record_from(job);
+        record.workspace_name = names.get(&workspace_id).cloned().unwrap_or_default();
+        record.workspace_id = workspace_id;
+        Ok(record)
+    }
+
     pub fn save_cron_job(&self, edit: &NativeCronJobEdit) -> Result<CronRecord> {
         let name = edit.name.trim();
         if name.is_empty() {
@@ -130,8 +177,14 @@ impl NativeDesktop {
             },
             other => return Err(anyhow!("不支持的调度类型：{other}")),
         };
-        let agent_id = normalize_agent_id(&edit.agent_id);
-        let session_id = self.resolve_cron_session(agent_id.as_deref())?;
+        let workspace_id = edit.workspace_id.trim();
+        if workspace_id.is_empty() {
+            return Err(anyhow!("请选择工作区"));
+        }
+        self.state()
+            .storage
+            .get_workspace(self.user_id(), workspace_id)?
+            .ok_or_else(|| anyhow!("工作区不存在"))?;
         let job_id = edit.job_id.trim();
         let input = CronJobInput {
             job_id: (!job_id.is_empty()).then(|| job_id.to_string()),
@@ -144,8 +197,9 @@ impl NativeDesktop {
             enabled: Some(edit.enabled),
             delete_after_run: Some(edit.delete_after_run),
             dedupe_key: None,
-            session_id: Some(session_id.clone()),
-            agent_id: agent_id.clone(),
+            session_id: None,
+            agent_id: None,
+            workspace_id: Some(workspace_id.to_string()),
         };
         let action = if job_id.is_empty() { "add" } else { "update" };
         let response = self.cron_action(action, input)?;
@@ -159,14 +213,13 @@ impl NativeDesktop {
     }
 
     pub fn toggle_cron_job(&self, id: &str, enabled: bool) -> Result<()> {
-        let mut job = self
-            .state()
-            .storage
-            .get_cron_job(self.user_id(), id)?
-            .ok_or_else(|| anyhow!("定时任务不存在"))?;
-        job.enabled = enabled;
-        job.updated_at = now();
-        self.state().storage.upsert_cron_job(&job)?;
+        self.cron_action(
+            if enabled { "enable" } else { "disable" },
+            CronJobInput {
+                job_id: Some(id.trim().to_string()),
+                ..Default::default()
+            },
+        )?;
         Ok(())
     }
 
@@ -175,17 +228,7 @@ impl NativeDesktop {
     pub fn run_cron_job_now(&self, id: &str) -> Result<String> {
         let input = CronJobInput {
             job_id: Some(id.trim().to_string()),
-            schedule: None,
-            schedule_text: None,
-            name: None,
-            session: None,
-            payload: None,
-            deliver: None,
-            enabled: None,
-            delete_after_run: None,
-            dedupe_key: None,
-            session_id: None,
-            agent_id: None,
+            ..Default::default()
         };
         let response = self.cron_action("run", input)?;
         Ok(response
@@ -253,9 +296,13 @@ impl NativeDesktop {
     }
 
     pub fn delete_cron_job(&self, id: &str) -> Result<()> {
-        if self.state().storage.delete_cron_job(self.user_id(), id)? == 0 {
-            return Err(anyhow!("定时任务不存在"));
-        }
+        self.cron_action(
+            "remove",
+            CronJobInput {
+                job_id: Some(id.trim().to_string()),
+                ..Default::default()
+            },
+        )?;
         Ok(())
     }
 
@@ -280,27 +327,6 @@ impl NativeDesktop {
         ))?;
         Ok(response)
     }
-
-    /// Reuse the agent's most recent active session, or create one — the same
-    /// routing the web cron dialog performs before "add".
-    fn resolve_cron_session(&self, agent_id: Option<&str>) -> Result<String> {
-        let target = agent_id.unwrap_or_default();
-        let (records, _) = self.state().storage.list_work_chat_sessions(
-            self.user_id(),
-            None,
-            Some("active"),
-            0,
-            100,
-        )?;
-        for record in records {
-            let record_agent = record.agent_id.clone().unwrap_or_default();
-            if record_agent == target {
-                return Ok(record.session_id);
-            }
-        }
-        let created = self.create_session(None)?;
-        Ok(created.id)
-    }
 }
 
 fn cron_record_from(job: wunder_server::storage::CronJobRecord) -> CronRecord {
@@ -319,10 +345,17 @@ fn cron_record_from(job: wunder_server::storage::CronJobRecord) -> CronRecord {
             .next_run_at
             .map(format_ts)
             .unwrap_or_else(|| "未计划".into()),
-        last_status: job.last_status.unwrap_or_else(|| "未运行".into()),
+        last_status: if job.running_at.is_some()
+            && job.lease_expires_at.is_some_and(|expires| {
+                expires > chrono::Utc::now().timestamp_millis() as f64 / 1000.0
+            }) {
+            "运行中".into()
+        } else {
+            job.last_status.unwrap_or_else(|| "未运行".into())
+        },
         last_error: job.last_error.unwrap_or_default(),
-        agent_id: normalize_agent_id(job.agent_id.as_deref().unwrap_or_default())
-            .unwrap_or_default(),
+        workspace_id: String::new(),
+        workspace_name: String::new(),
         message: job
             .payload
             .get("message")
@@ -336,12 +369,6 @@ fn cron_record_from(job: wunder_server::storage::CronJobRecord) -> CronRecord {
         cron_expr: job.schedule_cron.unwrap_or_default(),
         timezone: job.schedule_tz.unwrap_or_default(),
     }
-}
-
-fn normalize_agent_id(agent_id: &str) -> Option<String> {
-    let cleaned = agent_id.trim();
-    (!cleaned.is_empty() && cleaned != "__default__" && cleaned != "default")
-        .then(|| cleaned.to_string())
 }
 
 /// The UI collects local wall-clock text; the runtime parses RFC3339.
@@ -371,12 +398,6 @@ fn chrono_local_offset() -> chrono::FixedOffset {
     *chrono::Local::now().offset()
 }
 
-fn now() -> f64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|v| v.as_secs_f64())
-        .unwrap_or(0.0)
-}
 fn format_ts(value: f64) -> String {
     chrono::DateTime::from_timestamp(value as i64, 0)
         .map(|v| v.format("%Y-%m-%d %H:%M").to_string())

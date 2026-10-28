@@ -2734,7 +2734,7 @@ onBeforeUnmount(() => {
 .channel-refresh-btn:hover,
 .channel-action-btn:hover:not(:disabled) {
   border-color: rgba(var(--ui-accent-rgb), 0.4);
-  color: var(--ui-accent);
+  color: var(--ui-accent-ink);
   background: var(--ui-accent-soft);
 }
 
@@ -2848,7 +2848,7 @@ onBeforeUnmount(() => {
 
 .channel-weixin-qr-link {
   font-size: 12px;
-  color: var(--ui-accent);
+  color: var(--ui-accent-ink);
   text-decoration: none;
   word-break: break-all;
 }
@@ -2944,7 +2944,7 @@ onBeforeUnmount(() => {
   font-size: 11px;
   line-height: 1.2;
   white-space: nowrap;
-  color: var(--ui-accent);
+  color: var(--ui-accent-ink);
   background: #eaf4f1;
   border: 1px solid rgba(var(--ui-accent-rgb), 0.3);
   border-radius: 999px;
@@ -3111,7 +3111,7 @@ onBeforeUnmount(() => {
   padding: 1px 7px;
   border: 1px solid rgba(var(--ui-accent-rgb), 0.32);
   background: var(--ui-accent-soft);
-  color: var(--ui-accent);
+  color: var(--ui-accent-ink);
 }
 
 .channel-runtime-log-message {

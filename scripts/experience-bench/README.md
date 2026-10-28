@@ -1,5 +1,15 @@
 # 蜂巢与舵机外部体验测试
 
+## 服务并发容量
+
+`measure-capacity.py` 使用新的隔离 Compose 项目，生成 2000 个不同合成账号和令牌，创建独立线程，保持 2000 路 WebSocket，再逐级同时提交任务。生产准入仍为 300 个运行槽，超出部分必须排队；不是把 2000 个任务全部放入模型执行。模型使用异步 SSE 夹具，64 段、每段 8ms，无真实推理和计费。账号由 SQL 种子生成，因此不测试 2000 次密码登录散列峰值。
+
+```powershell
+python scripts/experience-bench/measure-capacity.py --server-binary target/x86/release/wunder-server --output temp_dir/capacity-run --levels 100,500,2000
+```
+
+宿主驱动 Python 3.8+；镜像内并发驱动要求 Python 3.11+、`aiohttp`。测试不下载镜像、不连接已有业务库，退出清理自己的 Compose 项目及令牌文件。驱动使用 opt-in profile，不随 `compose up` 提前启动。`capacity.json` 保存在线结果、各级任务完成/错误、排队数、舰桥探针与持久化核对；`report.json` 另保留有界容器资源样本和最后 2000 行服务日志的分类计数，不导出原始日志或凭据。失败即停止扩大负载，不能把缺少的 2000 级结果当作通过。排队线程使用有界显示快照及必要补水，不强行要求它走实时 token 通道；最终每个线程仍核对用户输入、完整回复与终态。短时合成压测不是生产 ARM、真实模型或长期稳定性的 SLA。
+
 方案与指标：[蜂巢](../../docs/蜂巢体验测试方案.md)、[舵机](../../docs/舵机体验测试方案.md)。本目录只提供外部驱动，不给产品增加测试入口。
 
 在仓库根目录执行，Python 3.8+：

@@ -339,7 +339,7 @@ const revealPath = (path: string): void => {
 }
 
 .patch-diff-path:hover {
-  color: var(--ui-accent-deep);
+  color: var(--ui-accent-ink);
   text-decoration: underline;
 }
 

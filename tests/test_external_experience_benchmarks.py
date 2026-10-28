@@ -411,7 +411,7 @@ class IdleStorageTests(unittest.TestCase):
         calls = []
         suite.stream = lambda session: calls.append(('stream', session))
         before, after = self.counters(), self.counters()
-        after['tables']['service_thread_items']['inserted'] += writes
+        after['tables']['service_thread_items_v2']['inserted'] += writes
         values = iter([before, after])
         query_values = iter([self.query_counters(), self.query_counters(
             service_calls=20+history_reads, history_read_calls=10+history_reads,

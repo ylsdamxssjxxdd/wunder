@@ -154,7 +154,7 @@ test('settling a live thought reloads its complete durable text without changing
   expect(result).toEqual({ live: 'fixture live tail', complete: true, steps: 1 });
 });
 
-test('a durable thought and a live preview with different ids render only one process entry', async ({ page }) => {
+test('a durable thought and a live preview share one canonical process identity', async ({ page }) => {
   await page.goto('/__e2e/composer-b4');
   const result = await page.evaluate(async () => {
     const source = await (await fetch('/src/components/chat/MessageTimelineTurnProcess.vue')).text();
@@ -169,13 +169,13 @@ test('a durable thought and a live preview with different ids render only one pr
     api.defaults.adapter = async (config: unknown) => ({
       status: 200, statusText: 'OK', headers: {}, config,
       data: { data: { turn: { items: [{
-        item_id: 'fixture-durable-item', item_index: 1, kind: 'assistant_message', status: 'running',
+        item_id: 'fixture-turn:text-1', item_index: 1, kind: 'assistant_message', status: 'running',
         payload: { reasoning: durable, content: '' }
       }], has_older: false, has_newer: false } } }
     });
     const model = reactive({ sessionId: 'fixture-thread', turnId: 'fixture-turn', count: 1, status: 'running',
-      activity: { kind: 'thinking' }, reasoning: durable, reasoningItemId: 'fixture-preview-item',
-      reasoningStreaming: true, finalItemId: 'fixture-preview-item' });
+      activity: { kind: 'thinking' }, reasoning: durable, reasoningItemId: 'fixture-turn:text-1',
+      reasoningStreaming: true, finalItemId: 'fixture-turn:text-1' });
     const app = createApp({ setup: () => () => h(Process, model) });
     const until = async (predicate: () => boolean) => {
       const deadline = Date.now() + 4000;
@@ -201,6 +201,67 @@ test('a durable thought and a live preview with different ids render only one pr
   expect(result).toEqual({ entries: 1, updated: true });
 });
 
+test('continuous work events refresh within a bounded window and never overwrite a completed prefix thought', async ({ page }) => {
+  await page.goto('/__e2e/composer-b4');
+  const result = await page.evaluate(async () => {
+    const source = await (await fetch('/src/components/chat/MessageTimelineTurnProcess.vue')).text();
+    const runtimeUrl = source.match(/from\s+["']([^"']*\/vue\.js[^"']*)["']/)?.[1];
+    if (!runtimeUrl) throw new Error('Missing fixture Vue runtime');
+    const [{ createApp, reactive, nextTick, h }, { default: Process }, { default: api }] = await Promise.all([
+      import(runtimeUrl), import('/src/components/chat/MessageTimelineTurnProcess.vue'), import('/src/api/http.ts')
+    ]);
+    const host = document.createElement('div');
+    document.body.append(host);
+    const originalAdapter = api.defaults.adapter;
+    const thought = (round: number, reasoning: string) => ({ item_id: 'fixture-turn:text-'+round, turn_id: 'fixture-turn',
+      kind: 'assistant_message', status: 'completed', item_index: round, payload: { model_round: round, reasoning } });
+    let requests = 0;
+    let firstRefresh = 0;
+    let started = 0;
+    api.defaults.adapter = async (config: unknown) => {
+      requests++;
+      if (requests === 2) firstRefresh = performance.now() - started;
+      return { status: 200, statusText: 'OK', headers: {}, config, data: { data: { turn: {
+        items: [thought(1, 'Fixture shared completed')], has_older: false, has_newer: false
+      } } } };
+    };
+    const model = reactive({ sessionId: 'fixture-session', turnId: 'fixture-turn', count: 1, status: 'running',
+      reasoning: '', reasoningItemId: '', reasoningStreaming: false, processItems: [] as unknown[], processRevision: 0 });
+    const app = createApp({ render: () => h(Process, model) });
+    try {
+      app.mount(host);
+      host.querySelector<HTMLButtonElement>('.timeline-process-head')!.click();
+      while (!host.querySelector('.tl-thinking-head')) await new Promise(resolve => setTimeout(resolve, 10));
+      model.reasoning = 'Fixture shared'; model.reasoningItemId = 'fixture-turn:text-2'; model.reasoningStreaming = true;
+      await nextTick();
+      const tool = { item_id: 'fixture-turn:tool-first', turn_id: 'fixture-turn', kind: 'tool_call', status: 'running',
+        payload: { model_round: 2, process_seq: 3, tool: 'read_file', tool_call_id: 'fixture-first', args: { path: 'fixture.txt' } } };
+      model.processItems = [tool]; model.processRevision++;
+      const toolStarted = performance.now();
+      await nextTick(); await nextTick();
+      const onlineToolVisible = Boolean(host.querySelector('.tl-entry-head'));
+      const onlineLatencyMs = performance.now() - toolStarted;
+      started = performance.now();
+      for (let index = 2; index <= 15; index++) {
+        model.count = index;
+        await new Promise(resolve => setTimeout(resolve, 30));
+      }
+      const entries = host.querySelectorAll('.tl-thinking');
+      return { entries: entries.length, oldUntouched: entries[0]?.textContent?.includes('Fixture shared completed') ?? false,
+        liveAtEnd: entries[1]?.textContent?.includes('Fixture shared') ?? false, requests, firstRefresh, onlineToolVisible, onlineLatencyMs };
+    } finally { app.unmount(); host.remove(); api.defaults.adapter = originalAdapter; }
+  });
+  expect(result.entries).toBe(2);
+  expect(result.oldUntouched).toBe(true);
+  expect(result.liveAtEnd).toBe(true);
+  expect(result.onlineToolVisible).toBe(true);
+  expect(result.onlineLatencyMs).toBeLessThan(200);
+  expect(result.requests).toBeGreaterThan(1);
+  expect(result.firstRefresh).toBeGreaterThan(0);
+  expect(result.firstRefresh).toBeLessThan(400);
+  console.log(JSON.stringify({ processDelivery: result }));
+});
+
 test('a bounded live thought binds to the same model round as its full durable process row', async ({ page }) => {
   await page.goto('/__e2e/composer-b4');
   const result = await page.evaluate(async () => {
@@ -221,7 +282,7 @@ test('a bounded live thought binds to the same model round as its full durable p
       }], has_older: false, has_newer: false } } }
     });
     const model = reactive({ sessionId: 'fixture-thread', turnId: 'fixture-turn', count: 1, status: 'running',
-      activity: { kind: 'thinking' }, reasoning: durable.slice(-512), reasoningItemId: 'fixture-live:text-2',
+      activity: { kind: 'thinking' }, reasoning: durable.slice(-512), reasoningItemId: 'fixture-turn:text-2',
       reasoningStreaming: true, finalItemId: 'fixture-turn:text-2' });
     const app = createApp({ setup: () => () => h(Process, model) });
     const until = async (predicate: () => boolean) => {

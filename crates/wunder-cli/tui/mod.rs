@@ -22,7 +22,9 @@ use crossterm::event::{
     EventStream, KeyEventKind,
 };
 use crossterm::execute;
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
+use crossterm::terminal::{
+    disable_raw_mode, enable_raw_mode, BeginSynchronizedUpdate, EndSynchronizedUpdate,
+};
 use frame_scheduler::spawn_frame_scheduler;
 use frame_scheduler::FrameNotifications;
 use futures::StreamExt;
@@ -145,7 +147,12 @@ async fn run_loop(
                     Event::FocusLost => {
                         app.set_terminal_focus(false);
                     }
-                    Event::Resize(_, _) => {}
+                    Event::Resize(_, _) => {
+                        resize_inline_terminal(
+                            terminal,
+                            CrosstermBackend::new(io::stdout()),
+                        )?;
+                    }
                     _ => {}
                 }
                 app.request_redraw();
@@ -165,20 +172,12 @@ async fn run_loop(
 
         sync_mouse_mode(terminal, app, &mut mouse_capture_enabled)?;
 
-        terminal.draw(|frame| ui::draw(frame, app))?;
+        render_frame(terminal, app)?;
         if first_frame_pending {
             first_frame_pending = false;
             // draw() has flushed its output; terminal emulators may display it
             // later, so this is a submitted frame rather than a paint callback.
             crate::runtime::cli_ui_startup_point("tui_first_frame_submitted");
-        }
-
-        let pending_scrollback_lines = app.drain_pending_scrollback_lines();
-        if !pending_scrollback_lines.is_empty() {
-            scrollback::insert_history_lines(terminal, pending_scrollback_lines)?;
-            // insert_before clears the inline viewport. Repaint it without
-            // waiting for another key, stream event or lease heartbeat.
-            app.request_redraw();
         }
 
         if app.should_quit() {
@@ -188,6 +187,40 @@ async fn run_loop(
         app.schedule_periodic_redraw_if_needed();
     }
     Ok(())
+}
+
+fn render_frame<B: ratatui::backend::Backend + io::Write>(
+    terminal: &mut Terminal<B>,
+    app: &mut TuiApp,
+) -> io::Result<()> {
+    execute!(terminal.backend_mut(), BeginSynchronizedUpdate)?;
+    let result = (|| {
+        terminal.draw(|frame| ui::draw(frame, app))?;
+        let lines = app.drain_pending_scrollback_lines();
+        if !lines.is_empty() {
+            scrollback::insert_history_lines(terminal, lines)?;
+            terminal.draw(|frame| ui::draw(frame, app))?;
+        }
+        Ok(())
+    })();
+    let finish = execute!(terminal.backend_mut(), EndSynchronizedUpdate);
+    result.and(finish)
+}
+
+fn resize_inline_terminal<B: ratatui::backend::Backend>(
+    terminal: &mut Terminal<B>,
+    mut backend: B,
+) -> io::Result<()> {
+    let size = backend.size()?;
+    terminal.show_cursor()?;
+    backend.set_cursor_position((0, 0))?;
+    *terminal = Terminal::with_options(
+        backend,
+        TerminalOptions {
+            viewport: Viewport::Inline(size.height.max(1)),
+        },
+    )?;
+    terminal.clear()
 }
 
 /// Receive one startup fill, or never resolve once the producer is gone. A

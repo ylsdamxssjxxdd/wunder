@@ -174,6 +174,10 @@ impl ThreadLogStore for PostgresStorage {
     fn thread_snapshot(&self, user_id: &str, session_id: &str) -> Result<Value> {
         super::thread_log_facade::PostgresThreadLog::new(self)?.thread_snapshot(user_id, session_id)
     }
+    fn thread_preview_snapshot(&self, user_id: &str, session_id: &str) -> Result<Value> {
+        super::thread_log_facade::PostgresThreadLog::new(self)?
+            .thread_preview_snapshot(user_id, session_id)
+    }
     fn thread_snapshot_window(
         &self,
         user_id: &str,
@@ -1033,6 +1037,13 @@ impl UserAccountStore for PostgresStorage {
     fn get_user_token(&self, token: &str) -> Result<Option<UserTokenRecord>> {
         self.get_user_token_impl(token)
     }
+    fn token_auth_snapshot(
+        &self,
+        token: &str,
+        now: f64,
+    ) -> Result<Option<(UserTokenRecord, UserAccountRecord)>> {
+        self.token_auth_snapshot_impl(token, now)
+    }
     fn touch_user_token(&self, token: &str, last_used_at: f64) -> Result<()> {
         self.touch_user_token_impl(token, last_used_at)
     }
@@ -1150,6 +1161,12 @@ impl ChatSessionStore for PostgresStorage {
     }
     fn get_chat_session_owner(&self, session_id: &str) -> Result<Option<String>> {
         self.get_chat_session_owner_impl(session_id)
+    }
+    fn list_chat_session_titles(
+        &self,
+        session_owners: &[(String, String)],
+    ) -> Result<HashMap<String, String>> {
+        self.list_chat_session_titles_impl(session_owners)
     }
     fn list_active_chat_session_ids(
         &self,
@@ -1775,6 +1792,21 @@ impl SessionRunStore for PostgresStorage {
 }
 
 impl CronStore for PostgresStorage {
+    fn cron_workspace_bindings(
+        &self,
+        user_id: &str,
+        session_ids: &[String],
+    ) -> Result<HashMap<String, Option<String>>> {
+        self.cron_workspace_bindings_impl(user_id, session_ids)
+    }
+    fn compare_and_swap_cron_job(
+        &self,
+        expected: &CronJobRecord,
+        replacement: Option<&CronJobRecord>,
+        run: Option<&CronRunRecord>,
+    ) -> Result<bool> {
+        self.compare_and_swap_cron_job_impl(expected, replacement, run)
+    }
     fn upsert_cron_job(&self, record: &CronJobRecord) -> Result<()> {
         self.upsert_cron_job_impl(record)
     }
@@ -1788,8 +1820,23 @@ impl CronStore for PostgresStorage {
     ) -> Result<Option<CronJobRecord>> {
         self.get_cron_job_by_dedupe_key_impl(user_id, dedupe_key)
     }
-    fn list_cron_jobs(&self, user_id: &str, include_disabled: bool) -> Result<Vec<CronJobRecord>> {
-        self.list_cron_jobs_impl(user_id, include_disabled)
+    fn list_cron_jobs_page(
+        &self,
+        user_id: &str,
+        include_disabled: bool,
+        agent_id: Option<&str>,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<CronJobRecord>> {
+        self.list_cron_jobs_page_impl(user_id, include_disabled, agent_id, limit, offset)
+    }
+    fn summarize_cron_jobs(
+        &self,
+        user_id: &str,
+        agent_id: Option<&str>,
+        now: f64,
+    ) -> Result<CronJobStats> {
+        self.summarize_cron_jobs_impl(user_id, agent_id, now)
     }
     fn delete_cron_job(&self, user_id: &str, job_id: &str) -> Result<i64> {
         self.delete_cron_job_impl(user_id, job_id)

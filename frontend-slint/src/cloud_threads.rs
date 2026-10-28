@@ -5,7 +5,8 @@
 //! page/watch lifecycle and command hand-off. `TimelineView` and `Composer`
 //! remain the single reader and writer surface for every thread.
 use crate::{CloudThreadCard, MainWindow, ModelCard};
-use slint::{ComponentHandle, ModelRc, VecModel};
+use serde_json::Value;
+use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use std::{
     cell::RefCell,
     sync::{
@@ -27,6 +28,7 @@ thread_local! {
     static PENDING_SELECTION: RefCell<Option<String>> = const { RefCell::new(None) };
     static WATCH: RefCell<Option<wunder_server::cloud::CloudThreadCancellation>> = const { RefCell::new(None) };
     static MESSAGES: RefCell<Vec<ChatViewRow>> = const { RefCell::new(Vec::new()) };
+    static PROCESS_ITEMS: RefCell<Vec<Value>> = const { RefCell::new(Vec::new()) };
     static LOADED_ID: RefCell<String> = const { RefCell::new(String::new()) };
     static DRAFTS: RefCell<std::collections::HashMap<String, String>> = RefCell::new(std::collections::HashMap::new());
     static ACCOUNT_KEY: RefCell<(bool, String, String)> = RefCell::new((false, String::new(), String::new()));
@@ -82,6 +84,53 @@ mod tests {
     }
 
     #[test]
+    fn cloud_live_reasoning_rejects_stale_rounds_and_old_durable_snapshots() {
+        let mut current = row(1, 1);
+        current.status = "running".into();
+        current.execution_turn_id = "fixture-execution".into();
+        current.assistant.item_id = "fixture-execution:text-1".into();
+        let mut rows = vec![current.clone()];
+        assert!(apply_tail_to(&mut rows, &serde_json::json!({"item_id":"fixture-execution:text-2",
+            "field":"reasoning","offset":0,"text":"Fixture current"})));
+        assert!(!apply_tail_to(&mut rows, &serde_json::json!({"item_id":"fixture-execution:text-1",
+            "field":"reasoning","offset":15,"text":" stale"})));
+        current.revision = 2;
+        merge_messages(&mut rows, &[current], false);
+        assert_eq!(rows[0].assistant.reasoning, "Fixture current");
+        assert_eq!(rows[0].reasoning_item_id, "fixture-execution:text-2");
+        assert!(apply_tail_to(&mut rows, &serde_json::json!({"item_id":"fixture-execution:text-2",
+            "field":"reasoning","offset":15,"text":" continued"})));
+        assert_eq!(rows[0].assistant.reasoning, "Fixture current continued");
+    }
+
+    #[test]
+    fn cloud_process_overlay_keeps_running_tools_visible_and_terminal_states_monotonic() {
+        PROCESS_ITEMS.with(|items| items.borrow_mut().clear());
+        MESSAGES.with(|messages| *messages.borrow_mut() = vec![ChatViewRow {
+            root_turn_id: "fixture-turn".into(), execution_turn_id: "fixture-turn".into(),
+            status: "running".into(), ..Default::default()
+        }]);
+        let tool = serde_json::json!({"turn_id":"fixture-turn","root_turn_id":"fixture-turn",
+            "item_id":"fixture-turn:tool-first","kind":"tool_call","status":"running",
+            "payload":{"tool":"read_file","tool_call_id":"fixture-first","process_seq":2}});
+        assert!(apply_process_item(tool.clone()));
+        let mut row = crate::TimelineRow { process_idx: 1, process_root: "fixture-turn".into(),
+            process_entries: ModelRc::new(VecModel::<crate::ProcessEntry>::default()), ..Default::default() };
+        merge_live_process(&mut row);
+        assert_eq!(row.process_entries.row_count(), 1);
+        assert_eq!(row.process_entries.row_data(0).unwrap().status_kind, crate::timeline::STATUS_RUNNING);
+        let mut completed = tool.clone();
+        completed["status"] = serde_json::json!("completed");
+        assert!(apply_process_item(completed));
+        assert!(apply_process_item(tool));
+        merge_live_process(&mut row);
+        assert_eq!(row.process_entries.row_count(), 1);
+        assert_eq!(row.process_entries.row_data(0).unwrap().status_kind, crate::timeline::STATUS_DONE);
+        PROCESS_ITEMS.with(|items| items.borrow_mut().clear());
+        MESSAGES.with(|messages| messages.borrow_mut().clear());
+    }
+
+    #[test]
     fn cloud_replay_keeps_order_rejects_old_revisions_and_bounds_history() {
         let mut rows = (1..=20).map(|round| row(round, 2)).collect::<Vec<_>>();
         merge_messages(&mut rows, &[row(19, 1), row(21, 1), row(20, 3)], false);
@@ -109,6 +158,7 @@ mod tests {
 }
 
 fn invalidate() -> u64 {
+    PROCESS_ITEMS.with(|items| items.borrow_mut().clear());
     WATCH.with(|watch| {
         if let Some(cancel) = watch.borrow_mut().take() {
             cancel.cancel();
@@ -188,7 +238,20 @@ fn merge_messages(messages: &mut Vec<ChatViewRow>, incoming: &[ChatViewRow], rep
             .find(|old| old.root_turn_id == row.root_turn_id)
         {
             if row.revision >= existing.revision {
-                *existing = row.clone();
+                let mut next = row.clone();
+                let same_execution = next.execution_turn_id == existing.execution_turn_id;
+                if same_execution
+                    && matches!(next.status.as_str(), "accepted" | "running")
+                    && (model_round(&existing.assistant.item_id) > model_round(&next.assistant.item_id)
+                        || (existing.assistant.item_id == next.assistant.item_id
+                            && (existing.assistant.reasoning_offset > next.assistant.reasoning_offset
+                                || existing.assistant.content_offset > next.assistant.content_offset)))
+                {
+                    next.assistant = existing.assistant.clone();
+                    next.reasoning_item_id = existing.reasoning_item_id.clone();
+                    next.process_activity = existing.process_activity.clone();
+                }
+                *existing = next;
             }
         } else {
             messages.push(row.clone());
@@ -206,18 +269,273 @@ fn merge_messages(messages: &mut Vec<ChatViewRow>, incoming: &[ChatViewRow], rep
     }
 }
 
+fn model_round(id: &str) -> i64 {
+    id.rsplit_once(":text-")
+        .and_then(|(_, round)| round.parse().ok())
+        .unwrap_or(-1)
+}
+
+fn apply_tail_to(messages: &mut [ChatViewRow], tail: &Value) -> bool {
+    let id = tail["item_id"].as_str().unwrap_or_default();
+    let Some((execution, _)) = id.rsplit_once(":text-") else {
+        return false;
+    };
+    let Some(row) = messages.iter_mut().find(|row| {
+        let current = if row.execution_turn_id.is_empty() {
+            &row.root_turn_id
+        } else {
+            &row.execution_turn_id
+        };
+        current == execution && matches!(row.status.as_str(), "accepted" | "running")
+    }) else {
+        return false;
+    };
+    let round = model_round(id);
+    if round < model_round(&row.assistant.item_id) {
+        return false;
+    }
+    let field = tail["field"].as_str().unwrap_or("content");
+    let text = tail["text"].as_str().unwrap_or_default();
+    let offset = tail["offset"].as_u64().unwrap_or(u64::MAX);
+    let reasoning = field == "reasoning";
+    if !matches!(field, "content" | "reasoning") || text.is_empty() {
+        return false;
+    }
+    let expected = if row.assistant.item_id != id
+        || (reasoning && row.reasoning_item_id != id)
+    {
+        0
+    } else if reasoning {
+        row.assistant.reasoning_offset
+    } else {
+        row.assistant.content_offset
+    };
+    if offset != expected as u64 {
+        return false;
+    }
+    if row.assistant.item_id != id {
+        row.assistant = Default::default();
+        row.assistant.item_id = id.into();
+    }
+    if reasoning && row.reasoning_item_id != id {
+        row.assistant.reasoning.clear();
+        row.assistant.reasoning_offset = 0;
+    }
+    let (body, cursor) = if reasoning {
+        (
+            &mut row.assistant.reasoning,
+            &mut row.assistant.reasoning_offset,
+        )
+    } else {
+        (
+            &mut row.assistant.content,
+            &mut row.assistant.content_offset,
+        )
+    };
+    if offset != *cursor as u64 || text.is_empty() {
+        return false;
+    }
+    body.push_str(text);
+    *cursor = cursor.saturating_add(text.encode_utf16().count());
+    if body.len() > 32768 {
+        let mut start = body.len() - 32768;
+        while !body.is_char_boundary(start) {
+            start += 1;
+        }
+        body.drain(..start);
+    }
+    if !reasoning || row.process_activity.kind != "tool_running" {
+        row.process_activity.kind = if reasoning { "thinking" } else { "responding" }.into();
+        row.process_activity.item_id = id.into();
+    }
+    if reasoning {
+        row.reasoning_item_id = id.into();
+    }
+    true
+}
+
+fn apply_tail(tail: Value) -> bool {
+    MESSAGES.with(|slot| {
+        let mut messages = slot.borrow_mut();
+        apply_tail_to(&mut messages, &tail)
+    })
+}
+
+fn apply_process_item(item: Value) -> bool {
+    if !matches!(item["kind"].as_str(), Some("assistant_message" | "tool_call" | "compaction"))
+        || item["item_id"].as_str().is_none_or(str::is_empty)
+    { return false }
+    let execution = item["turn_id"].as_str().unwrap_or_default();
+    let valid = MESSAGES.with(|messages| {
+        messages.borrow().iter().any(|row| {
+            let current = if row.execution_turn_id.is_empty() {
+                &row.root_turn_id
+            } else {
+                &row.execution_turn_id
+            };
+            current == execution && matches!(row.status.as_str(), "accepted" | "running")
+        })
+    });
+    if !valid {
+        return false;
+    }
+    PROCESS_ITEMS.with(|slot| {
+        let mut items = slot.borrow_mut();
+        if let Some(previous) = items
+            .iter_mut()
+            .find(|previous| previous["item_id"] == item["item_id"])
+        {
+            if previous["status"] != "running" && item["status"] == "running" {
+                return;
+            }
+            *previous = item;
+        } else {
+            if items.len() >= 100 {
+                items.remove(0);
+            }
+            items.push(item);
+        }
+    });
+    true
+}
+
+pub(crate) fn merge_live_process(row: &mut crate::TimelineRow) {
+    if row.process_newer {
+        return;
+    }
+    let items = PROCESS_ITEMS.with(|slot| {
+        slot.borrow()
+            .iter()
+            .filter(|item| {
+                item["root_turn_id"]
+                    .as_str()
+                    .or_else(|| item["turn_id"].as_str())
+                    == Some(row.process_root.as_str())
+            })
+            .cloned()
+            .collect::<Vec<_>>()
+    });
+    if items.is_empty() {
+        return;
+    }
+    let final_id = final_message_id(row.process_root.as_str());
+    let page = wunder_desktop::native::project_native_process_page(
+        &serde_json::json!({"items":items}),
+        &final_id,
+    );
+    let mut overlay = crate::TimelineRow {
+        process_idx: row.process_idx,
+        ..Default::default()
+    };
+    crate::chat_process::apply_page(&mut overlay, page, 2);
+    let mut entries = row.process_entries.iter().collect::<Vec<_>>();
+    for mut entry in overlay.process_entries.iter() {
+        if let Some(previous) = entries.iter_mut().find(|previous| previous.id == entry.id) {
+            if previous.status_kind != crate::timeline::STATUS_RUNNING
+                && entry.status_kind == crate::timeline::STATUS_RUNNING
+            {
+                continue;
+            }
+            entry.open = previous.open;
+            entry.payload = previous.payload;
+            *previous = entry;
+        } else {
+            if entries.len() >= 201 {
+                entries.remove(0);
+            }
+            entry.payload = -1 - row.process_idx * 1024 - entries.len() as i32;
+            entries.push(entry);
+        }
+    }
+    let ranks = overlay.process_entries.iter().enumerate()
+        .map(|(index, entry)| (entry.id.to_string(), index))
+        .collect::<std::collections::HashMap<_, _>>();
+    let mut ordered = entries.iter().filter(|entry| ranks.contains_key(entry.id.as_str()))
+        .cloned().collect::<Vec<_>>();
+    ordered.sort_by_key(|entry| ranks[entry.id.as_str()]);
+    let mut ordered = ordered.into_iter();
+    for entry in &mut entries {
+        if ranks.contains_key(entry.id.as_str()) {
+            *entry = ordered.next().unwrap();
+        }
+    }
+    for (index, entry) in entries.iter_mut().enumerate() {
+        entry.payload = -1 - row.process_idx * 1024 - index as i32;
+    }
+    if let Some(model) = row
+        .process_entries
+        .as_any()
+        .downcast_ref::<VecModel<crate::ProcessEntry>>()
+    {
+        if model.row_count() == entries.len() {
+            for (index, entry) in entries.into_iter().enumerate() {
+                if model.row_data(index).as_ref() != Some(&entry) {
+                    model.set_row_data(index, entry);
+                }
+            }
+        } else {
+            model.set_vec(entries);
+        }
+    } else {
+        row.process_entries = ModelRc::new(VecModel::from(entries));
+    }
+}
+
+fn apply_live_models(app: &MainWindow) {
+    let model = app.get_timeline();
+    for (index, mut row) in model.iter().enumerate() {
+        if row.kind != crate::timeline::KIND_PROCESS {
+            continue;
+        }
+        merge_live_process(&mut row);
+        if row.process_entries.row_count() > 0 {
+            row.visible = true;
+            let count = MESSAGES.with(|messages| messages.borrow().iter()
+                .find(|message| message.root_turn_id == row.process_root.as_str())
+                .map(|message| message.process_count.unwrap_or(message.workflow_count + message.reasoning_count))
+                .unwrap_or(0));
+            row.text = crate::timeline_text::process_label(count.max(row.process_entries.row_count() as i64).min(i32::MAX as i64) as i32).into();
+            model.set_row_data(index, row);
+        }
+    }
+}
+
 fn publish_page(app: &MainWindow, page: &ThreadViewPage, replace: bool) {
     // A degraded bootstrap is not an empty thread. Keep the committed view.
     if page.degraded {
         app.set_status("云端线程暂时读取缓慢，正在恢复连接".into());
         return;
     }
-    let rows = MESSAGES.with(|slot| {
+    let (rows, changed_roots) = MESSAGES.with(|slot| {
         let mut messages = slot.borrow_mut();
+        let changed_roots = page
+            .chat
+            .iter()
+            .filter(|incoming| {
+                messages
+                    .iter()
+                    .find(|previous| previous.root_turn_id == incoming.root_turn_id)
+                    .is_none_or(|previous| previous.revision < incoming.revision)
+            })
+            .map(|incoming| incoming.root_turn_id.clone())
+            .collect::<std::collections::HashSet<_>>();
         merge_messages(&mut messages, &page.chat, replace);
-        crate::native_chat::project_cloud_history(&messages, app.get_timeline())
+        (
+            crate::native_chat::project_cloud_history(&messages, app.get_timeline()),
+            changed_roots,
+        )
     });
     crate::native_chat::replace_external_timeline(app, rows, replace);
+    apply_live_models(app);
+    for (index, row) in app.get_timeline().iter().enumerate() {
+        if row.kind == crate::timeline::KIND_PROCESS
+            && row.process_paged
+            && !row.process_newer
+            && changed_roots.contains(row.process_root.as_str())
+        {
+            app.invoke_timeline_process_page(index as i32, 2);
+        }
+    }
     app.set_busy(matches!(
         page.runtime_status.as_str(),
         "running" | "queued" | "pending" | "waiting_approval"
@@ -382,6 +700,7 @@ fn load(app: &MainWindow, api: Arc<NativeDesktop>) {
                     let _ = applied.send(());
                     return;
                 }
+                let mut live_changed = false;
                 for event in events {
                     match event {
                         CloudThreadEvent::Change(change) => {
@@ -395,11 +714,19 @@ fn load(app: &MainWindow, api: Arc<NativeDesktop>) {
                         CloudThreadEvent::Connection(status) => {
                             app.set_cloud_thread_status(status.into());
                         }
+                        CloudThreadEvent::ProcessItem(item) => live_changed |= apply_process_item(item),
+                        CloudThreadEvent::Tail(tail) => live_changed |= apply_tail(tail),
                         CloudThreadEvent::Reload => {
                             load(&app, event_api.clone());
+                            live_changed = false;
                             break;
                         }
                     }
+                }
+                if live_changed {
+                    let rows = MESSAGES.with(|messages| crate::native_chat::project_cloud_history(&messages.borrow(), app.get_timeline()));
+                    crate::native_chat::replace_external_timeline(&app, rows, false);
+                    apply_live_models(&app);
                 }
                 let _ = applied.send(());
             });

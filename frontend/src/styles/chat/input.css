@@ -330,7 +330,7 @@
 }
 
 .chat-shell .inquiry-option.is-active .inquiry-option-label {
-  color: var(--ui-accent-deep, #1f2937);
+  color: var(--ui-accent-ink, #1f2937);
 }
 
 .chat-shell .inquiry-option-tag {
@@ -381,8 +381,8 @@
 
 .chat-shell .inquiry-option.is-active .inquiry-mark,
 .chat-shell .inquiry-other.is-active .inquiry-mark {
-  border-color: var(--ui-accent, #c96443);
-  background: var(--ui-accent, #c96443);
+  border-color: var(--ui-accent-ink);
+  background: var(--ui-accent-ink);
   color: #ffffff;
 }
 
@@ -437,7 +437,7 @@
 }
 
 .chat-shell .inquiry-other-input:focus {
-  border-bottom-color: var(--ui-accent, #c96443);
+  border-bottom-color: var(--ui-accent-ink);
 }
 
 .chat-shell .inquiry-pref {
@@ -465,7 +465,7 @@
 }
 
 .chat-shell .inquiry-pref-main.is-active {
-  color: var(--ui-accent-deep, #1f2937);
+  color: var(--ui-accent-ink, #1f2937);
   background: rgba(var(--ui-accent-rgb), 0.14);
 }
 

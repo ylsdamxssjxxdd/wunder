@@ -65,11 +65,11 @@ const { t } = useI18n();
 
 .composer-preset-panel-item:hover {
   background: var(--mz-hover, #f1efec);
-  color: var(--mz-primary, #c96443);
+  color: var(--mz-primary, var(--ui-accent-ink));
 }
 
 .composer-preset-panel-item:focus-visible {
-  outline: 2px solid var(--mz-primary-soft, #dfac9a);
+  outline: 2px solid var(--mz-primary);
   outline-offset: -2px;
 }
 </style>

@@ -1792,6 +1792,14 @@ fn running_turn_hint(record: Option<&Value>) -> RunningTurnHint {
         hint.user_round =
             positive_i64(record.get("user_rounds")).or_else(|| positive_i64(record.get("rounds")));
     }
+    if hint.model_round.is_none() {
+        hint.model_round = hint.user_round.and_then(|round| {
+            record
+                .get("model_round_high_water")?
+                .get(round.to_string())
+                .and_then(Value::as_i64)
+        });
+    }
     hint
 }
 

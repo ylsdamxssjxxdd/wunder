@@ -62,7 +62,7 @@ async fn cron_action_add_update_remove() {
     let add_payload = CronActionRequest {
         action: "add".to_string(),
         job: Some(CronJobInput {
-            job_id: None,
+            job_id: Some("caller_supplied_job_id".to_string()),
             name: Some("cron test".to_string()),
             schedule: Some(CronScheduleInput {
                 kind: "every".to_string(),
@@ -80,6 +80,7 @@ async fn cron_action_add_update_remove() {
             dedupe_key: None,
             session_id: None,
             agent_id: None,
+            workspace_id: None,
         }),
     };
     let add_resp = handle_cron_action(
@@ -99,6 +100,7 @@ async fn cron_action_add_update_remove() {
     .unwrap();
     let job_id = add_resp["job"]["job_id"].as_str().unwrap().to_string();
     assert_eq!(add_resp["action"], "add");
+    assert_ne!(add_resp["job"]["job_id"], "caller_supplied_job_id");
     assert_eq!(add_resp["job"]["session_id"], "session_a");
     assert!(add_resp["job"]["next_run_at"].is_number());
 
@@ -173,6 +175,7 @@ async fn cron_action_add_update_remove() {
                 dedupe_key: None,
                 session_id: None,
                 agent_id: None,
+                workspace_id: None,
             }),
         },
     )
@@ -206,6 +209,7 @@ async fn cron_action_add_update_remove() {
                 dedupe_key: None,
                 session_id: None,
                 agent_id: None,
+                workspace_id: None,
             }),
         },
     )
@@ -249,6 +253,7 @@ async fn cron_action_add_update_remove() {
                 dedupe_key: None,
                 session_id: None,
                 agent_id: None,
+                workspace_id: None,
             }),
         },
     )
@@ -285,6 +290,7 @@ async fn cron_action_add_update_remove() {
                 dedupe_key: None,
                 session_id: None,
                 agent_id: None,
+                workspace_id: None,
             }),
         },
     )
@@ -319,6 +325,7 @@ async fn cron_action_add_update_remove() {
                 dedupe_key: None,
                 session_id: None,
                 agent_id: None,
+                workspace_id: None,
             }),
         },
     )
@@ -396,6 +403,7 @@ async fn cron_action_respects_agent_scope() {
             dedupe_key: None,
             session_id: Some("session_scope".to_string()),
             agent_id: Some(agent_id.to_string()),
+            workspace_id: None,
         }),
     };
 
@@ -506,6 +514,7 @@ async fn cron_action_respects_agent_scope() {
                 dedupe_key: None,
                 session_id: None,
                 agent_id: None,
+                workspace_id: None,
             }),
         },
     )

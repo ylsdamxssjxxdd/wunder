@@ -100,6 +100,8 @@ pub(super) fn project_page(page: &Value, final_id: &str) -> NativeProcessPage {
         .as_array()
         .map(Vec::as_slice)
         .unwrap_or_default();
+    let mut rows: Vec<_> = rows.iter().collect();
+    super::chat_turns::sort_process_items(&mut rows, |item| *item);
     let final_id = if final_id.is_empty() && page["has_newer"] != true {
         rows.iter()
             .rev()
@@ -250,6 +252,36 @@ mod tests {
             .accept_thread_turn(user, session, &json!({"content":"Fixture input"}))
             .unwrap();
         let root = accepted["turn_id"].as_str().unwrap();
+        use wunder_server::stable_core::thread_store::*;
+        let thread = ThreadId::new(session).unwrap();
+        let rollout = RolloutId::new("fixture-rollout").unwrap();
+        state
+            .thread_store
+            .create_thread(CreateThreadRequest {
+                metadata: ThreadMetadata {
+                    thread_id: thread.clone(),
+                    current_rollout_id: rollout.clone(),
+                    status: ThreadStatus::Active,
+                    created_at_ms: 1,
+                    updated_at_ms: 1,
+                    title: None,
+                    workspace_id: None,
+                    pinned: false,
+                },
+                session_meta: SessionMeta {
+                    thread_id: thread,
+                    rollout_id: rollout,
+                    created_at_ms: 1,
+                    source: "fixture".into(),
+                    initial_system_prompt: "Fixture instructions".into(),
+                    initial_memory: None,
+                    parent_thread_id: None,
+                    history_base: None,
+                    capabilities: Value::Null,
+                },
+            })
+            .await
+            .unwrap();
         let answer = format!("{root}:text-1");
         state.storage.append_thread_item(user, &json!({"session_id":session,"turn_id":root,"item_id":answer,"kind":"assistant_message","model_round":1,"content":"Fixture answer","reasoning":"Fixture thought","status":"completed"})).unwrap();
         state.storage.append_thread_item(user, &json!({"session_id":session,"turn_id":root,"item_id":"fixture-child-run","kind":"subagent_run","runtime":{"session_id":"fixture-child","title":"Fixture child","status":"running","can_terminate":true,"metrics":{"tool_calls":2}}})).unwrap();
@@ -309,6 +341,21 @@ mod tests {
             "block-only reasoning remains readable on older pages"
         );
     }
+    #[test]
+    fn process_order_survives_reversed_parallel_tool_results() {
+        let page = project_page(
+            &json!({"items":[
+                {"item_id":"fixture-turn:tool-second","item_index":1,"turn_id":"fixture-turn","kind":"tool_call","status":"completed",
+                    "payload":{"tool":"read_file","tool_call_id":"fixture-second","process_seq":3}},
+                {"item_id":"fixture-turn:tool-first","item_index":2,"turn_id":"fixture-turn","kind":"tool_call","status":"completed",
+                    "payload":{"tool":"read_file","tool_call_id":"fixture-first","process_seq":2}}
+            ]}),
+            "fixture-answer",
+        );
+        assert_eq!(page.items[0].id, "fixture-turn:tool-first");
+        assert_eq!(page.items[1].id, "fixture-turn:tool-second");
+    }
+
     #[test]
     fn process_pages_keep_late_tools_and_exclude_only_authoritative_final_body() {
         let mut rows = vec![

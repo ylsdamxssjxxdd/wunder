@@ -341,7 +341,7 @@ const openDetail = (item: KnowledgeReference) => {
   --message-knowledge-citation-surface-strong: var(--chat-card, var(--hula-main-bg, #ffffff));
   --message-knowledge-citation-text: var(--chat-text, var(--hula-text, #111827));
   --message-knowledge-citation-muted: var(--chat-muted, var(--hula-muted, #4b5563));
-  --message-knowledge-citation-accent: var(--chat-primary, var(--ui-accent, #3b82f6));
+  --message-knowledge-citation-accent: var(--chat-primary, var(--ui-accent-ink, #3b82f6));
   margin-top: 10px;
   border: 1px solid var(--message-knowledge-citation-border);
   border-radius: 14px;

@@ -1620,7 +1620,7 @@
   --user-tools-border: #e3e3e3;
   --user-tools-text: #202020;
   --user-tools-muted: #808080;
-  --user-tools-accent: var(--ui-accent);
+  --user-tools-accent: var(--ui-accent-ink);
   --user-tools-surface: #fafafa;
   --user-tools-card: #ffffff;
   --user-tools-shadow: 0 14px 36px rgba(15, 23, 42, 0.12);
@@ -1676,7 +1676,7 @@
 .user-tools-dialog .user-tools-tab.active {
   background: var(--ui-accent-soft);
   border-color: rgba(var(--ui-accent-rgb), 0.45);
-  color: var(--ui-accent);
+  color: var(--ui-accent-ink);
   box-shadow: none;
 }
 
@@ -1691,7 +1691,7 @@
 
 .user-tools-dialog .icon-btn:hover {
   border-color: rgba(var(--ui-accent-rgb), 0.4);
-  color: var(--ui-accent);
+  color: var(--ui-accent-ink);
 }
 
 .user-tools-dialog .el-input__wrapper,
@@ -1761,7 +1761,7 @@
 .user-tools-dialog .user-tools-btn {
   border-color: rgba(var(--ui-accent-rgb), 0.36);
   background: var(--ui-accent-soft);
-  color: var(--ui-accent);
+  color: var(--ui-accent-ink);
   box-shadow: none;
 }
 
@@ -1804,7 +1804,7 @@
 }
 
 .user-tools-dialog .skills-section-title {
-  color: var(--ui-accent);
+  color: var(--ui-accent-ink);
   background: var(--ui-accent-soft);
   border-color: rgba(var(--ui-accent-rgb), 0.35);
 }
@@ -1844,13 +1844,13 @@
 .user-tools-dialog .user-tools-btn {
   border-color: rgba(var(--ui-accent-rgb), 0.26);
   background: var(--ui-accent-soft);
-  color: var(--ui-accent-deep);
+  color: var(--ui-accent-ink);
 }
 
 .user-tools-dialog .user-tools-btn:hover:not(:disabled) {
   border-color: rgba(var(--ui-accent-rgb), 0.48);
   background: var(--ui-accent-soft-2);
-  color: var(--ui-accent);
+  color: var(--ui-accent-ink);
   box-shadow: 0 0 0 3px rgba(var(--ui-accent-rgb), 0.1);
   transform: translateY(-1px);
 }
@@ -1858,7 +1858,7 @@
 .user-tools-dialog .user-tools-btn.secondary:hover:not(:disabled) {
   border-color: rgba(var(--ui-accent-rgb), 0.34);
   background: var(--ui-accent-soft-3);
-  color: var(--ui-accent);
+  color: var(--ui-accent-ink);
 }
 
 .user-tools-dialog .user-tools-btn.danger:hover:not(:disabled) {
@@ -1884,12 +1884,12 @@
     rgba(var(--ui-accent-rgb), 0.14),
     rgba(var(--ui-accent-rgb), 0.24)
   );
-  color: var(--ui-accent-deep);
+  color: var(--ui-accent-ink);
 }
 
 .user-tools-dialog .user-tools-footer-btn:hover:not(:disabled) {
   border-color: rgba(var(--ui-accent-rgb), 0.34);
-  color: var(--ui-accent);
+  color: var(--ui-accent-ink);
   box-shadow: 0 0 0 3px rgba(var(--ui-accent-rgb), 0.1);
   transform: translateY(-1px);
 }
@@ -1901,7 +1901,7 @@
     rgba(var(--ui-accent-rgb), 0.2),
     rgba(var(--ui-accent-rgb), 0.3)
   );
-  color: var(--ui-accent);
+  color: var(--ui-accent-ink);
 }
 
 .user-tools-dialog .list-item:hover,
@@ -1958,7 +1958,7 @@
   align-items: center;
   gap: 6px;
   font-size: 12px;
-  color: var(--ui-accent);
+  color: var(--ui-accent-ink);
 }
 
 .user-tools-dialog .mcp-connecting-hint i {

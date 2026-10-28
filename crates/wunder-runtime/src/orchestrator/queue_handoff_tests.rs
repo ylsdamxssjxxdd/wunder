@@ -80,7 +80,10 @@ async fn queue_handoff_parks_original_turn_and_keeps_cancel_available() {
             .unwrap(),
         SessionLockStatus::UserBusy
     );
-    state.storage.release_session_lock("session-b", &lock_b).unwrap();
+    state
+        .storage
+        .release_session_lock("session-b", &lock_b)
+        .unwrap();
     orchestrator.scheduling.grant_resume().unwrap();
     tokio::time::timeout(Duration::from_secs(5), paused)
         .await

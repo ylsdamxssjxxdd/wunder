@@ -16,7 +16,7 @@ use futures::StreamExt;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex as StdMutex, Weak};
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{mpsc, Mutex, OwnedSemaphorePermit, Semaphore};
 use tracing::warn;
 use uuid::Uuid;
 
@@ -162,6 +162,7 @@ pub struct ThreadRuntime {
     started: Arc<std::sync::atomic::AtomicBool>,
     transitions: Arc<StdMutex<HashMap<String, Weak<Mutex<()>>>>>,
     executions: Arc<StdMutex<HashMap<String, LeaseExecution>>>,
+    admission_slots: Arc<Semaphore>,
 }
 
 impl ThreadRuntime {
@@ -187,6 +188,7 @@ impl ThreadRuntime {
             started: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             transitions: Arc::new(StdMutex::new(HashMap::new())),
             executions: Arc::default(),
+            admission_slots: Arc::new(Semaphore::new(8)),
         });
         *runtime.orchestrator.task_runtime.write() = Arc::downgrade(&runtime);
         runtime
@@ -219,6 +221,10 @@ impl ThreadRuntime {
         self.submit_request(request, false).await
     }
 
+    pub(crate) async fn request_preparation_slot(&self) -> Result<OwnedSemaphorePermit> {
+        Ok(self.admission_slots.clone().acquire_owned().await?)
+    }
+
     /// Trusted background deliveries must always get a durable queue entry.
     /// This prevents a timed message from racing an active thread's lock after
     /// its own user turn has already been accepted.
@@ -234,6 +240,10 @@ impl ThreadRuntime {
         mut request: WunderRequest,
         force_runtime_queue: bool,
     ) -> Result<ThreadSubmitOutcome> {
+        let admission_wait = long_task::scope("chat.admit.wait");
+        let _admission = self.admission_slots.acquire().await?;
+        drop(admission_wait);
+        let _admission_scope = long_task::scope("chat.admit");
         let user_id = request.user_id.trim().to_string();
         if user_id.is_empty() {
             return Err(anyhow!(i18n::t("error.user_id_required")));
@@ -243,14 +253,9 @@ impl ThreadRuntime {
         // An inquiry answer is a normal new user turn. The private id only
         // tells the durable transcript which waiting turn to settle after the
         // new admission succeeds; it must never become the new turn's root.
-        let inquiry_turn_id = request
-            .config_overrides
-            .as_ref()
-            .and_then(|value| value.get("__inquiry_turn_id"))
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|id| !id.is_empty() && id.len() <= 256)
-            .map(ToOwned::to_owned);
+        let inquiry_turn_id = crate::storage::thread_admission::inquiry_turn_id(&json!({
+            "inquiry_turn_id": request.config_overrides.as_ref().and_then(|value| value.get("__inquiry_turn_id"))
+        }))?;
         if let Some(overrides) = request
             .config_overrides
             .as_mut()
@@ -332,6 +337,7 @@ impl ThreadRuntime {
             "client_message_id": request.client_message_id, "attachments": request.attachments,
             "meta": goal_meta,
             "root_user_round": root_user_round,
+            "inquiry_turn_id": inquiry_turn_id,
             "local_open_lease": request.config_overrides.as_ref().and_then(|v| v.get("__local_open_lease")),
         });
         let storage = self.user_store.storage_backend().clone();
@@ -345,32 +351,10 @@ impl ThreadRuntime {
             .committer
             .accept_turn(&user_id, &session_id, &input)
             .await?;
-        if accepted["created"] == false {
-            return Err(anyhow!("client_message_id already accepted"));
-        }
         let thread_turn_id = accepted["turn_id"].as_str().unwrap_or_default().to_string();
         let user_round = accepted["user_turn_index"].as_i64().unwrap_or(1);
-        if let Some(inquiry_turn_id) = inquiry_turn_id.as_deref() {
-            // The answer is already a durable, independent user round. Settle
-            // only a still-waiting turn; stale or already-settled ids are safe
-            // no-ops and must not block the user's new request.
-            if inquiry_turn_id != thread_turn_id {
-                let _ = self
-                    .orchestrator
-                    .committer
-                    .update_turn(
-                        &user_id,
-                        &session_id,
-                        inquiry_turn_id,
-                        "completed",
-                        "",
-                        &json!({
-                            "stop_reason": "inquiry_answered",
-                            "answered_by_turn_id": thread_turn_id,
-                        }),
-                    )
-                    .await;
-            }
+        if accepted["created"] == false {
+            return Err(anyhow!("client_message_id already accepted"));
         }
         if let Some(tag) = goal_round_tag.as_ref() {
             // Goal-round admission: the transcript fact that consumes one
@@ -2355,6 +2339,49 @@ fn ensure_session_record_with(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn request_preparation_backpressure_releases_on_cancellation() {
+        use crate::state::{AppState, AppStateInitOptions};
+        let root = tempfile::tempdir().unwrap();
+        let mut config = crate::config::Config::default();
+        config.storage.backend = "sqlite".into();
+        config.storage.data_root = root.path().join("data").to_string_lossy().into_owned();
+        config.workspace.root = root.path().join("workspace").to_string_lossy().into_owned();
+        let config_store = ConfigStore::new(root.path().join("config.yaml"));
+        config_store
+            .update(|current| *current = config.clone())
+            .await
+            .unwrap();
+        let state = AppState::new_with_options(
+            config_store,
+            config,
+            AppStateInitOptions::cli_default().with_start_thread_runtime(false),
+        )
+        .unwrap();
+        let runtime = state.kernel.thread_runtime.clone();
+        let mut permits = Vec::new();
+        for _ in 0..8 {
+            permits.push(runtime.request_preparation_slot().await.unwrap());
+        }
+        assert!(tokio::time::timeout(
+            std::time::Duration::from_millis(20),
+            runtime.request_preparation_slot()
+        )
+        .await
+        .is_err());
+        drop(permits.pop());
+        let recovered = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            runtime.request_preparation_slot(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        drop(recovered);
+        drop(permits);
+        assert_eq!(runtime.admission_slots.available_permits(), 8);
+    }
 
     #[tokio::test]
     async fn question_panel_stop_without_live_monitor_settles_and_wakes_view() {

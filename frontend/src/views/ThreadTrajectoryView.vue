@@ -1789,12 +1789,13 @@ const detailTabs = computed<string[]>(() => {
     return [overviewTab.value, t('messenger.trajectory.tabRawOutput')]
   }
   if (cell.kind === 'tool' || cell.kind === 'subtool') {
+    // Timing already rides the overview (`总时长`), and the other two surfaces
+    // never offered a second copy of it on a tool entry.
     return [
       overviewTab.value,
       paramsTab.value,
       resultTab.value,
       schemaTab.value,
-      t('messenger.trajectory.tabTiming'),
     ]
   }
   return [overviewTab.value, previewTab.value, rawTab.value]

@@ -108,6 +108,9 @@ const props = defineProps<{
   sessionId: string;
   turnId: string;
   count: number;
+  processItems?: Array<Record<string, unknown>>;
+  processRevision?: number;
+  refreshRevision?: number;
   activity?: ProcessActivity | null;
   status?: string;
   /** 流式期间的活动文本尾部：正文区让位时由过程区实时行承接展示。 */
@@ -173,89 +176,9 @@ const currentActivity = computed(() => {
 const currentReasoningItemId = computed(() => String(props.reasoningItemId || '').trim());
 const fallbackReasoningKey = ref('projected:0');
 const currentReasoningRowKey = computed(() => `reasoning:${currentReasoningItemId.value || fallbackReasoningKey.value}`);
-/**
- * The compact chat row and the lazy process endpoint are published by different
- * projections.  During a running request the compact row can briefly have a
- * newer item id than the already persisted process item, even though both hold
- * the same thought.  Bind that durable row once by its text so the live preview
- * updates it in place instead of adding a second, identical thinking entry.
- *
- * This is deliberately a binding, rather than a general content de-duplication:
- * two completed model rounds are allowed to contain the same words and must
- * remain two separate process records.
- */
-const currentReasoningMatchKey = ref('');
-const currentReasoningMatchIdentity = ref('');
-/**
- * A live preview may be addressed by the execution item id while the lazy
- * process endpoint returns a compatibility/random item id.  Both records
- * still carry the same model round.  The component is already scoped to one
- * user turn, so the round number is the stable identity we can safely use for
- * this hand-off; text is only a last-resort guard for older rows.
- */
-const modelRoundFromIdentity = (value: string): number | null => {
-  const match = value.match(/(?:^|:)(?:text|reasoning-text|reasoning)[-_](\d+)$/i);
-  if (!match) return null;
-  const round = Number(match[1]);
-  return Number.isSafeInteger(round) && round >= 0 ? round : null;
-};
-const modelRoundFromReasoningRow = (row: ProcessRow): number | null => {
-  if (row.kind !== 'reasoning') return null;
-  if (row.modelRound !== undefined && Number.isSafeInteger(row.modelRound) && row.modelRound >= 0) {
-    return row.modelRound;
-  }
-  return modelRoundFromIdentity(row.key.slice('reasoning:'.length));
-};
-const sameCurrentReasoningIdentity = (row: ProcessRow, liveIdentity: string): boolean => {
-  if (row.kind !== 'reasoning') return false;
-  const liveRound = modelRoundFromIdentity(liveIdentity);
-  const persistedRound = modelRoundFromReasoningRow(row);
-  return liveRound !== null && persistedRound !== null && liveRound === persistedRound;
-};
-const sameCurrentReasoningRound = (row: ProcessRow, liveRound: number | null): boolean =>
-  liveRound !== null && modelRoundFromReasoningRow(row) === liveRound;
-const sameCurrentReasoningText = (persisted: string, live: string): boolean => {
-  if (persisted === live) return true;
-  // While a tail is active, either projection may be one durable flush behind.
-  // Accept only a prefix relation here; once bound, later deltas do not rescan
-  // all rows and therefore cannot accidentally merge an older completed round.
-  return Boolean(props.reasoningStreaming) && (persisted.startsWith(live) || live.startsWith(persisted));
-};
-const bindCurrentReasoningRow = (): void => {
-  const live = reasoningText.value;
-  const identity = currentReasoningRowKey.value;
-  const liveRound = Number.isSafeInteger(Number(props.reasoningItemId)) ? Number(props.reasoningItemId) : null;
-  if (!live) {
-    currentReasoningMatchKey.value = '';
-    currentReasoningMatchIdentity.value = '';
-    return;
-  }
-  if (currentReasoningMatchIdentity.value !== identity) {
-    currentReasoningMatchIdentity.value = identity;
-    currentReasoningMatchKey.value = '';
-  }
-  if (rows.value.some((row) => row.kind === 'reasoning' && row.key === identity)) {
-    currentReasoningMatchKey.value = identity;
-    return;
-  }
-  if (currentReasoningMatchKey.value && rows.value.some((row) =>
-    row.kind === 'reasoning' && row.key === currentReasoningMatchKey.value
-  )) return;
-  // Process items are chronological.  On an identity hand-off the most recent
-  // equal thought is the only viable durable counterpart of the live preview.
-  for (let index = rows.value.length - 1; index >= 0; index -= 1) {
-    const row = rows.value[index];
-    if (!sameCurrentReasoningIdentity(row, currentReasoningItemId.value) &&
-        !sameCurrentReasoningRound(row, liveRound) &&
-        !(row.kind === 'reasoning' && sameCurrentReasoningText(row.entry.text, live))) continue;
-    currentReasoningMatchKey.value = row.key;
-    return;
-  }
-  currentReasoningMatchKey.value = '';
-};
-const hasCurrentReasoningRow = computed(() => Boolean(currentReasoningMatchKey.value) &&
-  rows.value.some((row) => row.kind === 'reasoning' && row.key === currentReasoningMatchKey.value)
-);
+const hasCurrentReasoningRow = computed(() => rows.value.some(row =>
+  row.kind === 'reasoning' && row.key === currentReasoningRowKey.value
+));
 const reasoningEntry = computed<TimelineReasoningEntry>(() => ({
   kind: 'reasoning', key: currentReasoningRowKey.value, streaming: Boolean(props.reasoningStreaming),
   summary: reasoningPreview(reasoningText.value), text: reasoningText.value
@@ -302,8 +225,26 @@ const itemIndex = (item: Record<string, unknown> | undefined): number | null => 
 };
 
 const rebuildRows = (): void => {
-  rows.value = buildRows(processItems.value);
-  bindCurrentReasoningRow();
+  const merged = new Map(processItems.value.map(item => [String(item.item_id), item]));
+  if (!hasNewerItems.value) for (const item of props.processItems || []) {
+    const previous = merged.get(String(item.item_id));
+    if (!previous || (previous.status === 'running' && item.status !== 'running')) merged.set(String(item.item_id), item);
+  }
+  const anchors = new Map<string, number>();
+  const ordered = [...merged.values()].map(item => {
+    const execution = String(item.turn_id || '');
+    const index = itemIndex(item) ?? Number.MAX_SAFE_INTEGER;
+    anchors.set(execution, Math.min(anchors.get(execution) ?? index, index));
+    const sequence = Number(flattenItemPayload(item.payload).process_seq || 0);
+    return { item, execution, index, sequence };
+  });
+  ordered.sort((previous, incoming) =>
+    (anchors.get(previous.execution)! - anchors.get(incoming.execution)!) ||
+    previous.execution.localeCompare(incoming.execution) ||
+    Number(previous.sequence > 0) - Number(incoming.sequence > 0) ||
+    (previous.sequence || previous.index) - (incoming.sequence || incoming.index) ||
+    previous.index - incoming.index);
+  rows.value = buildRows(ordered.map(value => value.item));
   firstItemIndex.value = itemIndex(processItems.value[0]);
   lastItemIndex.value = itemIndex(processItems.value.at(-1));
   const keys = new Set(rows.value.map(row => row.key));
@@ -408,7 +349,10 @@ const loadPage = async (direction: ProcessPageDirection): Promise<void> => {
       hasNewerItems.value = Boolean(turn.has_newer);
     } else if (batch.length) {
       const byId = new Map(processItems.value.map(item => [String(item.item_id), item]));
-      for (const item of batch) byId.set(String(item.item_id), item);
+      for (const item of batch) {
+        const previous = byId.get(String(item.item_id));
+        if (!previous || Number(item.revision || 0) >= Number(previous.revision || 0)) byId.set(String(item.item_id), item);
+      }
       const merged = [...byId.values()].sort((a, b) => (itemIndex(a) ?? 0) - (itemIndex(b) ?? 0));
       const evicted = merged.length > PROCESS_ITEM_WINDOW;
       processItems.value = older ? merged.slice(0, PROCESS_ITEM_WINDOW) : merged.slice(-PROCESS_ITEM_WINDOW);
@@ -502,8 +446,6 @@ const resetState = (): void => {
   lastItemIndex.value = null;
   openKeys.value = new Set();
   fallbackReasoningKey.value = 'projected:0';
-  currentReasoningMatchKey.value = '';
-  currentReasoningMatchIdentity.value = '';
   processBodyRef.value = null;
   patchViews.clear();
   structuredViews.clear();
@@ -532,22 +474,21 @@ watch(
  */
 const syncCurrentReasoningRow = (): void => {
   if (!loaded.value) return;
-  bindCurrentReasoningRow();
   let changed = false;
   // A subsequent model request starts a different item. Mark the preceding
   // thought final immediately, before the debounced log refresh supplies its
   // durable status, so an old row never keeps the live spinner.
   for (let index = 0; index < rows.value.length; index += 1) {
     const row = rows.value[index];
-    if (row.kind !== 'reasoning' || !row.entry.streaming || row.key === (currentReasoningMatchKey.value || currentReasoningRowKey.value)) continue;
+    if (row.kind !== 'reasoning' || !row.entry.streaming || row.key === currentReasoningRowKey.value) continue;
     rows.value[index] = {
-      kind: 'reasoning', key: row.key,
+      ...row,
       entry: { ...row.entry, streaming: false }
     };
     changed = true;
   }
   if (reasoningText.value) {
-    const targetKey = currentReasoningMatchKey.value || currentReasoningRowKey.value;
+    const targetKey = currentReasoningRowKey.value;
     const index = rows.value.findIndex((row) => row.kind === 'reasoning' && row.key === targetKey);
     const current = index >= 0 ? rows.value[index] : null;
     if (current?.kind === 'reasoning') {
@@ -557,7 +498,7 @@ const syncCurrentReasoningRow = (): void => {
         next.summary = reasoningPreview(next.text);
       }
       if (current.entry.text !== next.text || current.entry.streaming !== next.streaming) {
-        rows.value[index] = { kind: 'reasoning', key: current.key, entry: { ...next, key: current.key } };
+        rows.value[index] = { ...current, entry: { ...next, key: current.key } };
         changed = true;
       }
     }
@@ -574,7 +515,7 @@ watch(
 // waiting for the debounced page refresh left that item's prose hidden for the
 // whole tool run, then made it pop back into place on completion.
 watch(
-  () => props.finalItemId,
+  () => [props.finalItemId, props.processRevision],
   () => {
     if (!open.value || !loaded.value) return;
     rebuildRows();
@@ -585,17 +526,17 @@ watch(
 // Debounce structural/phase changes; individual text deltas patch only their
 // live row. A phase ending also reloads the complete durable reasoning text.
 watch(
-  () => [props.count, props.finalItemId, props.status, Boolean(props.reasoningStreaming)],
+  () => [props.count, props.finalItemId, props.status, Boolean(props.reasoningStreaming), props.processRevision, props.refreshRevision, props.activity?.item_id, props.activity?.kind],
   () => {
     refreshGate.pending = true;
     if (!open.value || (!loaded.value && !loadAbort)) return;
-    clearReloadTimer();
+    if (reloadTimer !== null) return;
     reloadTimer = window.setTimeout(() => {
       reloadTimer = null;
       if (requestProcessRefresh(refreshGate, open.value && loaded.value && !loadAbort && !hasNewerItems.value)) {
         void loadPage('refresh');
       }
-    }, 600);
+    }, 120);
   }
 );
 onBeforeUnmount(() => {
@@ -795,6 +736,10 @@ const buildRows = (items: Array<Record<string, unknown>>): ProcessRow[] => {
     const kind = String(item?.kind || '');
     if (SKIP_KINDS.has(kind) || (kind === 'system_message' && !isCompactionSystemItem(item))) continue;
     if (kind === 'assistant_message') {
+      const payload = flattenItemPayload(item.payload);
+      const execution = String(item.turn_id || payload.turn_id || '');
+      const round = Number(item.model_round ?? payload.model_round ?? String(item.item_id).match(/:text-(\d+)$/)?.[1] ?? 0);
+      if (execution && String(item.item_id) !== `${execution}:text-${round}`) continue;
       slots.push({ type: 'message', item });
       continue;
     }
@@ -818,7 +763,7 @@ const buildRows = (items: Array<Record<string, unknown>>): ProcessRow[] => {
     const payload = flattenItemPayload(item.payload);
     const turnId = String(item.turn_id || payload.turn_id || '');
     const round = Number(item.model_round ?? payload.model_round ?? 0);
-    return `${turnId}\u0000${Number.isFinite(round) ? round : 0}`;
+    return turnId ? `${turnId}\u0000${Number.isFinite(round) ? round : 0}` : String(item.item_id || '');
   };
   const messageScore = (item: Record<string, unknown>): number => {
     const payload = flattenItemPayload(item.payload);
@@ -886,7 +831,7 @@ const buildRows = (items: Array<Record<string, unknown>>): ProcessRow[] => {
       });
     }
     const content = typeof payload.content === 'string' ? payload.content.trim() : '';
-    if (content && itemId !== lastAssistantId) {
+    if (content && (itemId !== lastAssistantId || (Array.isArray(payload.tool_calls) && payload.tool_calls.length > 0))) {
       rows.push({ kind: 'print', key: `print:${itemId}`, text: content });
     }
   }
@@ -1082,7 +1027,7 @@ const buildRows = (items: Array<Record<string, unknown>>): ProcessRow[] => {
   height: 1em;
   margin-left: 2px;
   vertical-align: -0.15em;
-  background: var(--mz-primary, #c96443);
+  background: var(--mz-primary, var(--ui-accent-ink));
   animation: timeline-live-print-caret 0.9s steps(1) infinite;
 }
 

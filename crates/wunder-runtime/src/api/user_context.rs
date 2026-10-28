@@ -22,13 +22,19 @@ pub async fn credential_active(state: &AppState, token: &str, user_id: &str) -> 
     let store = state.user_store.clone();
     let token = token.to_string();
     let expected = user_id.to_string();
-    blocking::run_db("api.transport.revalidate", move || {
+    let result = blocking::run_auth("api.transport.revalidate", move || {
         store
             .authenticate_token_details(&token)
             .map(|auth| auth.is_some_and(|auth| auth.user.user_id == expected))
     })
-    .await
-    .unwrap_or(false)
+    .await;
+    match result {
+        Ok(active) => active,
+        Err(error) => {
+            warn!(%error, "transport credential validation failed");
+            false
+        }
+    }
 }
 
 pub async fn resolve_user(
@@ -57,7 +63,7 @@ async fn resolve_user_internal(
         .filter(|value| !value.is_empty());
     let token_auth = if let Some(token) = guard_auth::extract_bearer_token(headers) {
         let user_store = state.user_store.clone();
-        match blocking::run_db("api.user_context.authenticate_token", move || {
+        match blocking::run_auth("api.user_context.authenticate_token", move || {
             user_store.authenticate_token_details(&token)
         })
         .await

@@ -142,6 +142,7 @@ impl PostgresThreadStore {
         let checkpoint = payload
             .pointer("/meta/replacement_history")
             .and_then(serde_json::Value::as_array);
+        let require_active_checkpoint = checkpoint.is_some();
         let model_message = crate::services::history::build_message_from_item(&payload, true);
         let role = payload
             .get("role")
@@ -196,7 +197,8 @@ impl PostgresThreadStore {
                 display_output_truncated: false,
             },
         )));
-        self.append_canonical(&thread, records).await?;
+        self.append_canonical_checked(&thread, records, require_active_checkpoint)
+            .await?;
         Ok(())
     }
 
@@ -268,19 +270,33 @@ impl PostgresThreadStore {
         thread: &ThreadId,
         records: Vec<CanonicalRecord>,
     ) -> ThreadStoreResult<AppendOutcome> {
+        self.append_canonical_checked(thread, records, false).await
+    }
+
+    async fn append_canonical_checked(
+        &self,
+        thread: &ThreadId,
+        records: Vec<CanonicalRecord>,
+        require_active_checkpoint: bool,
+    ) -> ThreadStoreResult<AppendOutcome> {
         let now = Utc::now().timestamp_millis();
-        self.append_records(
-            thread,
-            records
-                .into_iter()
-                .map(|record| RolloutRecord {
-                    timestamp_ms: now,
-                    ordinal: 0,
-                    record,
-                })
-                .collect(),
-        )
+        let records = records
+            .into_iter()
+            .map(|record| RolloutRecord {
+                timestamp_ms: now,
+                ordinal: 0,
+                record,
+            })
+            .collect();
+        let store = self.clone();
+        let thread = thread.clone();
+        tokio::task::spawn_blocking(move || {
+            store.append_sync(&thread, records, require_active_checkpoint)
+        })
         .await
+        .map_err(|error| ThreadStoreError::Unavailable {
+            message: error.to_string(),
+        })?
     }
 
     pub(crate) fn admission_store(&self) -> crate::storage::postgres::PostgresAdmissionStore {
@@ -629,6 +645,7 @@ impl PostgresThreadStore {
         &self,
         thread: &ThreadId,
         records: Vec<RolloutRecord>,
+        require_active_checkpoint: bool,
     ) -> ThreadStoreResult<AppendOutcome> {
         if records.len() > 512 {
             return Err(ThreadStoreError::Conflict {
@@ -684,6 +701,19 @@ impl PostgresThreadStore {
             });
         }
         let mut max_ordinal = row.get::<_, i64>("history_revision");
+        for record in records.iter().filter(|_| require_active_checkpoint) {
+            if let CanonicalRecord::Compacted(checkpoint) = &record.record {
+                let active = tx.query_opt(
+                    "SELECT status FROM service_thread_admissions WHERE thread_id=$1 AND turn_id=$2 FOR UPDATE",
+                    &[&thread.as_str(), &checkpoint.turn_id.as_str()],
+                ).map_err(Self::map_error)?;
+                if !active.is_some_and(|row| row.get::<_, String>(0) == "running") {
+                    return Err(ThreadStoreError::Conflict {
+                        message: "context checkpoint requires an active execution turn".into(),
+                    });
+                }
+            }
+        }
         let mut display_records = Vec::with_capacity(records.len());
         for mut record in records {
             // Every caller uses the same transaction allocator, including retries.
@@ -926,7 +956,7 @@ impl ThreadStore for PostgresThreadStore {
     ) -> ThreadStoreResult<AppendOutcome> {
         let this = self.clone();
         let id = thread_id.clone();
-        tokio::task::spawn_blocking(move || this.append_sync(&id, records))
+        tokio::task::spawn_blocking(move || this.append_sync(&id, records, false))
             .await
             .map_err(|e| ThreadStoreError::Unavailable {
                 message: e.to_string(),

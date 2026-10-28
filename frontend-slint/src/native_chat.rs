@@ -58,6 +58,7 @@ struct TurnOutput {
     phase: Phase,
     settlement_failed: bool,
     terminal: bool,
+    execution: String,
     round: i64,
     /// Model round whose body block is currently open; a round change starts a
     /// new block instead of appending to the finished one.
@@ -90,6 +91,7 @@ impl TurnOutput {
             phase: Phase::Running,
             settlement_failed: false,
             terminal: false,
+            execution: String::new(),
             round: 0,
             body_round: -1,
             user_round: 0,
@@ -741,13 +743,12 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
     bind_history_paging(app, state.clone());
     bind_new_thread(app, state.clone());
     bind_send(app, state.clone());
-    // 加号菜单「终端」：呼出系统终端并进入当前工作区。
     let launch_weak = app.as_weak();
     let launch_desktop = state.borrow().desktop.clone();
-    app.on_launch_terminal(move || {
+    app.on_launch_cli(move || {
         if let Some(app) = launch_weak.upgrade() {
             let workspace = app.get_active_workspace_root().to_string();
-            if let Err(message) = launch_desktop.launch_terminal(&workspace) {
+            if let Err(message) = launch_desktop.launch_cli(&workspace) {
                 app.set_status(message.into());
             }
         }
@@ -3628,7 +3629,31 @@ fn apply_event(
     {
         active.user_round = round;
     }
+    if kind == "native_execution_started" {
+        active.execution = data["turn_id"].as_str().unwrap_or_default().to_owned();
+    } else if let Some(execution) = data["turn_id"].as_str().filter(|id| !id.is_empty()) {
+        if active.execution.is_empty() {
+            active.execution = execution.to_owned();
+        } else if active.execution != execution
+            && matches!(
+                kind,
+                "llm_output_delta"
+                    | "llm_output"
+                    | "llm_request"
+                    | "delta"
+                    | "reasoning"
+                    | "reasoning_delta"
+            )
+        {
+            return Ok(false);
+        }
+    }
     let round = data["model_round"].as_i64().unwrap_or(active.round);
+    let reasoning_item = if active.execution.is_empty() {
+        String::new()
+    } else {
+        format!("{}:text-{round}", active.execution)
+    };
     if round < active.round
         && matches!(
             kind,
@@ -3667,7 +3692,7 @@ fn apply_event(
                 .as_str()
                 .or_else(|| data["reasoning_delta"].as_str())
             {
-                timeline.append_reasoning(delta)?;
+                timeline.append_reasoning_item(&reasoning_item, delta)?;
                 active.set_state("正在思考…", Phase::Running);
                 return Ok(true);
             }
@@ -3736,7 +3761,7 @@ fn apply_event(
                 .as_str()
                 .filter(|value| !value.is_empty())
             {
-                timeline.append_reasoning(reasoning)?;
+                timeline.append_reasoning_item(&reasoning_item, reasoning)?;
                 active.set_state("正在思考…", Phase::Running);
                 changed = true;
             }
@@ -4430,6 +4455,72 @@ mod turn_tests {
         assert_eq!(reasons[1].detail, "Second thought");
     }
 
+    #[test]
+    fn canonical_thoughts_with_shared_text_keep_their_execution_identity() {
+        let timeline = Rc::new(RefCell::new(crate::timeline::Timeline::new()));
+        let mut output = TurnOutput::new("fixture-session".into(), timeline.clone());
+        let mut live = timeline.borrow_mut();
+        live.begin_turn("fixture-root", "Fixture input");
+        for (round, text) in [(1, "Fixture repeated completed"), (2, "Fixture repeated")] {
+            apply_event(&mut output, &mut live, &json!({"event":"thread_item_delta","data":{
+                "source_event":"llm_output_delta","turn_id":"fixture-root","model_round":round,"reasoning_delta":text
+            }})).unwrap();
+            live.flush();
+        }
+        let bar = live
+            .model()
+            .iter()
+            .find(|row| row.kind == crate::timeline::KIND_PROCESS)
+            .unwrap();
+        assert_eq!(bar.process_entries.row_count(), 2);
+        assert_eq!(
+            bar.process_entries.row_data(0).unwrap().id,
+            "reason-fixture-root:text-1"
+        );
+        assert_eq!(
+            bar.process_entries.row_data(0).unwrap().detail,
+            "Fixture repeated completed"
+        );
+        assert_eq!(
+            bar.process_entries.row_data(1).unwrap().id,
+            "reason-fixture-root:text-2"
+        );
+        apply_event(
+            &mut output,
+            &mut live,
+            &json!({"event":"native_execution_started","data":{
+                "root_turn_id":"fixture-root","turn_id":"fixture-continuation"
+            }}),
+        )
+        .unwrap();
+        apply_event(
+            &mut output,
+            &mut live,
+            &json!({"event":"reasoning_delta","data":{
+                "turn_id":"fixture-continuation","model_round":1,"delta":"Fixture next execution"
+            }}),
+        )
+        .unwrap();
+        assert!(!apply_event(
+            &mut output,
+            &mut live,
+            &json!({"event":"reasoning_delta","data":{
+                "turn_id":"fixture-root","model_round":3,"delta":" stale"
+            }})
+        )
+        .unwrap());
+        live.flush();
+        assert_eq!(bar.process_entries.row_count(), 3);
+        assert_eq!(
+            bar.process_entries.row_data(2).unwrap().id,
+            "reason-fixture-continuation:text-1"
+        );
+        assert_eq!(
+            bar.process_entries.row_data(2).unwrap().detail,
+            "Fixture next execution"
+        );
+    }
+
     /// The statistics footer must land on the independent turn footer,
     /// both when the runtime rides it on the final answer and when it only
     /// arrives with the terminal event.
@@ -4667,8 +4758,9 @@ mod turn_tests {
         for row in rows.iter().skip(2).take(6) {
             assert_eq!(row.process_idx, rows[1].process_idx, "step {row:?} escaped");
             assert!(
-                !row.process_open && (row.group_idx == crate::timeline::NO_GROUP || row.group_open),
-                "the process ships folded without a second batch gate"
+                row.process_open == rows[1].open
+                    && (row.group_idx == crate::timeline::NO_GROUP || row.group_open),
+                "the process follows its disclosure without a second batch gate"
             );
         }
         assert_eq!(rows[8].process_idx, crate::timeline::NO_PROCESS);
@@ -4688,10 +4780,13 @@ mod turn_tests {
             let mut live = timeline.borrow_mut();
             apply_event(output, &mut live, &event).unwrap()
         };
-        reduce(&mut output, json!({"event":"tool_call","data":{
-            "tool_call_id":"fixture-call","tool":"执行命令","tool_display_name":"执行命令",
-            "args":{"content":"fixture-command"}
-        }}));
+        reduce(
+            &mut output,
+            json!({"event":"tool_call","data":{
+                "tool_call_id":"fixture-call","tool":"执行命令","tool_display_name":"执行命令",
+                "args":{"content":"fixture-command"}
+            }}),
+        );
         for event in [
             json!({"event":"command_session_start","data":{
                 "tool_call_id":"fixture-call","tool_display_name":"执行命令",

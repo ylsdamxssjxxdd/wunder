@@ -86,12 +86,12 @@ pub(crate) async fn execute_self_status_tool(
         .monitor
         .as_ref()
         .and_then(|monitor| monitor.get_record(context.session_id));
-    let monitor_events = monitor_record
+    let recent_events = context
+        .monitor
         .as_ref()
-        .and_then(|record| record.get("events"))
-        .and_then(Value::as_array)
-        .map(Vec::as_slice)
-        .unwrap_or(&[]);
+        .map(|monitor| monitor.get_recent_events(context.session_id, events_limit))
+        .unwrap_or_default();
+    let monitor_events = recent_events.as_slice();
 
     let event_stats = collect_event_stats(monitor_events);
     let configured_model = configured_model_info(context);

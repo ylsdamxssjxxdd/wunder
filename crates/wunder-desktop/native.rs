@@ -47,6 +47,9 @@ mod chat_process;
 #[path = "native_chat_turns.rs"]
 mod chat_turns;
 pub use chat_process::{NativeProcessItem, NativeProcessPage};
+pub fn project_native_process_page(page: &Value, final_id: &str) -> NativeProcessPage {
+    chat_process::project_page(page, final_id)
+}
 #[path = "native_observer.rs"]
 mod observer;
 #[path = "native_queue.rs"]
@@ -99,6 +102,8 @@ pub use expert::ExpertMemory;
 mod activity;
 #[path = "native_channels.rs"]
 mod channels;
+#[path = "native_cli.rs"]
+mod cli;
 #[path = "native_cron.rs"]
 mod cron;
 #[path = "native_profile.rs"]
@@ -1569,63 +1574,6 @@ impl NativeDesktop {
             json!({"owner":self.instance_id,"token":token}),
             heartbeat,
         ))
-    }
-
-    /// Open a terminal at the active workspace. A system terminal is the only
-    /// launcher: the supplement no longer ships Git Bash, and the same
-    /// augmented PATH is applied so the local CLI and desktop commands are
-    /// immediately available alongside bundled tools.
-    pub fn launch_terminal(&self, workspace_root: &str) -> Result<(), String> {
-        let roots = wunder_server::local_bootstrap::supplement::roots(
-            &self.desktop.wunder_home,
-            &self.desktop.app_dir,
-            None,
-        );
-        let workdir = {
-            let requested = std::path::PathBuf::from(workspace_root.trim());
-            if workspace_root.trim().is_empty() || !requested.is_dir() {
-                self.desktop.workspace_root.clone()
-            } else {
-                requested
-            }
-        };
-        let child_path = terminal_child_path(&roots, &self.desktop.app_dir)
-            .map_err(|error| format!("构造终端 PATH 失败: {error}"))?;
-
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-
-            // `cmd.exe /K` stays open after the launcher exits and is present
-            // on every supported Windows edition, including the older systems
-            // targeted by the desktop package. The GUI has no inherited
-            // console, so explicitly request a visible console for the shell.
-            const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
-            let shell = std::env::var_os("COMSPEC").unwrap_or_else(|| "cmd.exe".into());
-            std::process::Command::new(shell)
-                .arg("/K")
-                .current_dir(&workdir)
-                .env("PATH", &child_path)
-                .creation_flags(CREATE_NEW_CONSOLE)
-                .spawn()
-                .map_err(|error| format!("启动系统终端失败: {error}"))?;
-        }
-        #[cfg(not(windows))]
-        {
-            let shell = std::env::var_os("SHELL").unwrap_or_else(|| "/bin/sh".into());
-            std::process::Command::new(shell)
-                .current_dir(&workdir)
-                .env("PATH", &child_path)
-                .spawn()
-                .map_err(|error| format!("启动系统终端失败: {error}"))?;
-        }
-        Ok(())
-    }
-
-    /// Compatibility alias for native callers built against the former name;
-    /// it opens the same system terminal as `launch_terminal`.
-    pub fn launch_git_bash(&self, workspace_root: &str) -> Result<(), String> {
-        self.launch_terminal(workspace_root)
     }
 
     pub fn has_asr_model(&self) -> bool {

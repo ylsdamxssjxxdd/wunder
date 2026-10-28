@@ -2,7 +2,7 @@ use super::tool_calls::ToolCall;
 use super::*;
 use crate::core::approval::{ApprovalRequestKind, ApprovalResponse};
 use crate::core::llm_speed::TurnDecodeSpeedAccumulator;
-use crate::services::tools::tool_error::{with_error_meta, ToolErrorMeta};
+use crate::services::tools::tool_error::{tool_timeout_meta, with_error_meta};
 
 pub(super) struct PlannedToolCall {
     pub(super) call: ToolCall,
@@ -653,7 +653,8 @@ pub(super) fn resolve_cached_memory_recall_result(
 
 pub(super) fn should_recover_from_context_overflow(err: &OrchestratorError) -> bool {
     err.code() == "CONTEXT_WINDOW_EXCEEDED"
-        || super::llm::is_context_window_error_text(err.message())
+        || (err.code() == "INTERNAL_ERROR"
+            && super::llm::is_context_window_error_text(err.message()))
 }
 
 pub(super) fn merge_context_window_limit_hint(
@@ -907,7 +908,7 @@ pub(super) fn build_tool_failure_next_step_hint(
         return "建议下一步：严格按工具要求重构参数；优先直接复制错误结果里的 example，再替换成当前目标和值。".to_string();
     }
     if code == "TOOL_TIMEOUT" {
-        return "建议下一步：缩小查询范围或改用可分页/导出路径，避免单次超时。".to_string();
+        return "执行结果未知；先核对目标状态，确认无副作用或具备幂等保障后再重试，禁止盲目重放写入或命令。".to_string();
     }
     if tool_name == apply_patch {
         if code == "PATCH_FORMAT_INVALID"
@@ -955,13 +956,9 @@ pub(super) fn build_tool_timeout_result(
             "next_step_hint": next_step_hint,
             "timeout_s": timeout_s,
             "timeout_ms": timeout_ms,
+            "execution_outcome": "unknown",
         }),
-        ToolErrorMeta::new(
-            "TOOL_TIMEOUT",
-            Some("Retry with a narrower scope or a resumable flow.".to_string()),
-            true,
-            timeout_ms,
-        ),
+        tool_timeout_meta("TOOL_TIMEOUT"),
     );
     ToolResultPayload::error(message, data)
 }

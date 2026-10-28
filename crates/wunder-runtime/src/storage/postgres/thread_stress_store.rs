@@ -149,9 +149,9 @@ mod tests {
             "service_threads",
             "service_thread_records",
             "service_thread_sessions",
-            "service_thread_items",
-            "service_thread_chat_heads",
-            "service_thread_display_state",
+            "service_thread_items_v2",
+            "service_thread_chat_heads_v2",
+            "service_thread_display_state_v2",
             "service_thread_admissions",
             "service_thread_owners",
         ] {

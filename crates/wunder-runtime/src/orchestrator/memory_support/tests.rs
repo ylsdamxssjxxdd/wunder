@@ -1129,8 +1129,8 @@ fn test_build_compaction_message_debug_entries_marks_summary_and_current_user() 
 
 #[test]
 fn test_build_committable_compaction_summary_rejects_placeholder_fragment() {
-    assert!(build_committable_compaction_summary("...(truncated)", "").is_none());
-    assert!(build_committable_compaction_summary("ok", "").is_none());
+    assert!(build_committable_compaction_summary("...(truncated)").is_none());
+    assert!(build_committable_compaction_summary("ok").is_none());
 }
 
 #[test]
@@ -1140,14 +1140,7 @@ fn test_build_committable_compaction_summary_clamps_to_char_limit() {
         "A".repeat(11_000),
         "B".repeat(11_000)
     );
-    let memory_block = format!(
-        "{}\n- User prefers concise diffs",
-        i18n::t("memory.block_prefix")
-    );
-
-    let (committed, injected) =
-        build_committable_compaction_summary(&summary, &memory_block).expect("summary");
-    assert!(injected);
+    let committed = build_committable_compaction_summary(&summary).expect("summary");
     assert!(committed.starts_with(&i18n::t("history.compaction_prefix")));
     assert!(committed.chars().count() <= COMPACTION_SUMMARY_MAX_CHARS);
     assert!(!is_invalid_compaction_summary(&committed));
@@ -1257,33 +1250,25 @@ fn test_build_committed_replacement_history_from_rebuilt_strips_retained_markers
 }
 
 #[test]
-fn test_merge_compaction_summary_with_fresh_memory_appends_block() {
+fn test_compaction_summary_does_not_reinject_memory() {
     let summary = format!(
         "{}\nKeep this summary",
         i18n::t("history.compaction_prefix")
     );
-    let memory_block = format!(
-        "{}\n- Remember user prefers markdown",
-        i18n::t("memory.block_prefix")
-    );
-    let (merged, injected) = merge_compaction_summary_with_fresh_memory(&summary, &memory_block);
-    assert!(injected);
+    let merged = build_committable_compaction_summary(&summary).unwrap();
     assert!(merged.contains("Keep this summary"));
-    assert!(merged.contains("Remember user prefers markdown"));
+    assert!(!merged.contains(i18n::t("memory.block_prefix").as_str()));
 }
 
 #[test]
-fn test_merge_compaction_summary_with_fresh_memory_replaces_old_block() {
+fn test_compaction_summary_strips_legacy_memory_block() {
     let summary = format!(
         "{}\nKeep this summary\n\n{}\n- stale memory",
         i18n::t("history.compaction_prefix"),
         i18n::t("memory.block_prefix"),
     );
-    let memory_block = format!("{}\n- fresh memory", i18n::t("memory.block_prefix"));
-    let (merged, injected) = merge_compaction_summary_with_fresh_memory(&summary, &memory_block);
-    assert!(injected);
+    let merged = build_committable_compaction_summary(&summary).unwrap();
     assert!(merged.contains("Keep this summary"));
-    assert!(merged.contains("fresh memory"));
     assert!(!merged.contains("stale memory"));
 }
 

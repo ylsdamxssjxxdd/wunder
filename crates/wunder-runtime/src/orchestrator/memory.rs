@@ -140,10 +140,10 @@ impl Orchestrator {
     #[allow(clippy::too_many_arguments)]
     pub(super) async fn maybe_compact_messages(
         &self,
-        config: &Config,
+        _config: &Config,
         llm_config: &LlmModelConfig,
         user_id: &str,
-        agent_id: Option<&str>,
+        _agent_id: Option<&str>,
         session_id: &str,
         is_admin: bool,
         round_info: RoundInfo,
@@ -576,28 +576,18 @@ impl Orchestrator {
             }
         };
         let fallback_content = build_compaction_fallback_summary(&source_messages, &user_content);
-        let (fresh_memory_block, fresh_memory_count, fresh_memory_total_count) = self
-            .build_fresh_memory_block_for_compaction(
-                config,
-                user_id,
-                agent_id,
-                session_id,
-                question_candidates.first().map(String::as_str),
-            )
-            .await;
-        let Some((mut summary_text, fresh_memory_injected)) =
-            build_committable_compaction_summary(&summary_model_output, &fresh_memory_block)
-                .or_else(|| {
-                    summary_fallback = true;
-                    if summary_fallback_reason.is_none() {
-                        summary_fallback_reason = Some(if summary_model_output.trim().is_empty() {
-                            "empty_summary"
-                        } else {
-                            "invalid_summary"
-                        });
-                    }
-                    build_committable_compaction_summary(&fallback_content, &fresh_memory_block)
-                })
+        let Some(mut summary_text) = build_committable_compaction_summary(&summary_model_output)
+            .or_else(|| {
+                summary_fallback = true;
+                if summary_fallback_reason.is_none() {
+                    summary_fallback_reason = Some(if summary_model_output.trim().is_empty() {
+                        "empty_summary"
+                    } else {
+                        "invalid_summary"
+                    });
+                }
+                build_committable_compaction_summary(&fallback_content)
+            })
         else {
             warn!(
                 session_id = %session_id,
@@ -621,8 +611,8 @@ impl Orchestrator {
                 "summary_fallback": true,
                 "summary_model_output": summary_model_output,
                 "fresh_memory_injected": false,
-                "fresh_memory_count": fresh_memory_count,
-                "fresh_memory_total_count": fresh_memory_total_count,
+                "fresh_memory_count": 0,
+                "fresh_memory_total_count": 0,
                 "history_usage": history_usage,
                 "context_tokens": history_usage,
                 "observed_context_tokens": history_usage,
@@ -838,6 +828,7 @@ impl Orchestrator {
             Value::String(compaction_profile.trigger_mode().to_string()),
         );
         let meta_value = Value::Object(meta);
+        self.ensure_not_cancelled(session_id)?;
         self.try_append_chat(
             user_id,
             session_id,
@@ -906,15 +897,9 @@ impl Orchestrator {
             json!(summary_model_output),
         );
         compaction_payload_map.insert("summary_text".to_string(), json!(injected_summary_text));
-        compaction_payload_map.insert(
-            "fresh_memory_injected".to_string(),
-            json!(fresh_memory_injected),
-        );
-        compaction_payload_map.insert("fresh_memory_count".to_string(), json!(fresh_memory_count));
-        compaction_payload_map.insert(
-            "fresh_memory_total_count".to_string(),
-            json!(fresh_memory_total_count),
-        );
+        compaction_payload_map.insert("fresh_memory_injected".to_string(), json!(false));
+        compaction_payload_map.insert("fresh_memory_count".to_string(), json!(0));
+        compaction_payload_map.insert("fresh_memory_total_count".to_string(), json!(0));
         compaction_payload_map.insert(
             "retained_user_message_count".to_string(),
             json!(retained_user_message_count),
@@ -1174,33 +1159,6 @@ impl Orchestrator {
         emitter.emit("compaction", compaction_payload).await;
 
         Ok(CompactionResult::compacted(rebuilt, compaction_id).with_summary_speed(summary_speed))
-    }
-
-    async fn build_fresh_memory_block_for_compaction(
-        &self,
-        config: &Config,
-        user_id: &str,
-        agent_id: Option<&str>,
-        session_id: &str,
-        query_text: Option<&str>,
-    ) -> (String, usize, usize) {
-        let fragment_store =
-            crate::services::memory_fragments::MemoryFragmentStore::new(self.storage.clone());
-        let inventory = fragment_store
-            .recall_for_prompt_inventory(
-                Some(config),
-                user_id,
-                agent_id,
-                Some(session_id),
-                None,
-                query_text,
-                Some(PROMPT_MEMORY_RECALL_LIMIT),
-            )
-            .await;
-        let hit_count = inventory.hits.len();
-        let total_count = inventory.total_available;
-        let block = fragment_store.build_prompt_block(&inventory.hits, total_count);
-        (block, hit_count, total_count)
     }
 
     pub(crate) async fn force_compact_session(

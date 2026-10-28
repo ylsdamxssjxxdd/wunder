@@ -106,10 +106,7 @@ pub(crate) fn centered_surface_rect(viewport: Rect, width: u16, height: u16) -> 
 /// 清空并铺上 Panel 表面底色，返回内容区（上下各 1 行、左右各 2 列内边距）。
 pub(crate) fn paint_panel(frame: &mut Frame, dialog: Rect) -> Rect {
     frame.render_widget(Clear, dialog);
-    frame.render_widget(
-        Block::default().style(theme::panel_surface()),
-        dialog,
-    );
+    frame.render_widget(Block::default().style(theme::panel_surface()), dialog);
     Rect::new(
         dialog.x + CONTENT_HORIZONTAL_INSET,
         dialog.y + 1,
@@ -342,7 +339,14 @@ struct RowLayout {
     show_description: bool,
 }
 
-fn paint_row(frame: &mut Frame, content: Rect, y: u16, row: &PickerRow, selected: bool, layout: &RowLayout) {
+fn paint_row(
+    frame: &mut Frame,
+    content: Rect,
+    y: u16,
+    row: &PickerRow,
+    selected: bool,
+    layout: &RowLayout,
+) {
     let RowLayout {
         prefix_width,
         desc_col,
@@ -398,7 +402,9 @@ fn paint_row(frame: &mut Frame, content: Rect, y: u16, row: &PickerRow, selected
         .filter(|text| show_description && !text.trim().is_empty())
     {
         let name_width = UnicodeWidthStr::width(name.as_str());
-        let desc_limit = content_width.saturating_sub(desc_col).max(MIN_DESCRIPTION_WIDTH);
+        let desc_limit = content_width
+            .saturating_sub(desc_col)
+            .max(MIN_DESCRIPTION_WIDTH);
         let pad = " ".repeat(desc_col.saturating_sub(prefix_width + name_width));
         spans.push(Span::styled(pad, desc_style));
         spans.push(Span::styled(
@@ -557,4 +563,3 @@ mod tests {
         assert_eq!(truncate_with_ellipsis("你好世界", 5), "你好…");
     }
 }
-

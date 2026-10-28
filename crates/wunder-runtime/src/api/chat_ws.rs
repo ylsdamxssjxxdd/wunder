@@ -671,7 +671,7 @@ async fn handle_ws(
                                                         let display_user = display_user.clone();
                                                         long_task::spawn("api.chat_ws.change_feeder", async move {
                                                             if let Some(seq)=display_cursor {
-                                                                crate::api::ws_helpers::resume_thread_view(feeder_state,feeder_session,display_user,seq,Some(&feeder_request_id),feeder_tx,Some(feeder_cancel)).await;
+                                                                crate::api::ws_helpers::resume_thread_view(feeder_state,feeder_session,display_user,seq,false,Some(&feeder_request_id),feeder_tx,Some(feeder_cancel)).await;
                                                             } else {
                                                                 resume_thread_changes_v2(feeder_state, feeder_session, change_cursor, Some(&feeder_request_id), feeder_tx, Some(feeder_cancel)).await;
                                                             }
@@ -686,7 +686,7 @@ async fn handle_ws(
                                                     let _ = send_ws_event(&ws_tx_snapshot, Some(&request_id_cleanup), event).await;
                                                     continue;
                                                 }
-                                                if event.event == "thread_item_tail" {
+                                                if matches!(event.event.as_str(), "thread_item_tail" | "thread_process_item") {
                                                     let _ = send_ws_tail_event(&ws_tx_snapshot, Some(&request_id_cleanup), event).await;
                                                     continue;
                                                 }
@@ -947,6 +947,7 @@ async fn handle_ws(
                                         session_id,
                                         view_user,
                                         seq,
+                                        true,
                                         Some(&request_id_cleanup),
                                         ws_tx_snapshot,
                                         Some(cancel.clone()),

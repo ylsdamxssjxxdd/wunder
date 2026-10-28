@@ -111,6 +111,61 @@ try {
     ["时长", "Duration"].includes(item.querySelector("dt")?.textContent)).map((item) => item.querySelector("dd")?.textContent));
   assert.equal(unknownDuration.length, 1);
   assert.doesNotMatch(unknownDuration[0], /^0(?:\s|$)/);
+  let detailRequests = 0;
+  let failDetail = true;
+  const fullCall = { ...call, payload: { ...call.payload, args: { query: "sample complete argument" } } };
+  const fullResult = { ...result, payload: { ...result.payload, data: { content: "sample complete result" } } };
+  await page.route("**/admin/monitor/sample-session/thread-log/items/*", async route => {
+    detailRequests += 1;
+    if (failDetail) {
+      await route.fulfill({ status: 503, body: "sample temporary failure" });
+      return;
+    }
+    const item = route.request().url().endsWith("sample-call") ? fullCall : fullResult;
+    await route.fulfill({ json: { data: item } });
+  });
+  const previewTurns = [{ user_round: 1, items: [
+    { ...call, preview_only: true }, { ...result, preview_only: true },
+  ] }];
+  await page.evaluate(turns => {
+    globalThis.sampleTrajectory.setSessionId("sample-session");
+    globalThis.sampleTrajectory.setRawTurns(turns);
+  }, previewTurns);
+  assert.equal(detailRequests, 0, "list refresh must not fetch full bodies");
+  await page.locator('.tt-row[data-record-index="0"]').click();
+  await inspector.locator(".tt-link").filter({ hasText: /retryDetail|重试|Retry/ }).waitFor();
+  failDetail = false;
+  await inspector.locator(".tt-link").filter({ hasText: /retryDetail|重试|Retry/ }).click();
+  await inspector.locator(".tt-detail-body").filter({ hasText: "sample complete argument" }).waitFor();
+  await inspector.locator(".tt-detail-tab").nth(2).click();
+  await inspector.locator(".tt-detail-body").filter({ hasText: "sample complete result" }).waitFor();
+  const requestsAfterSelection = detailRequests;
+  await page.evaluate(turns => globalThis.sampleTrajectory.setRawTurns(turns), previewTurns);
+  await inspector.locator(".tt-detail-body").filter({ hasText: "sample complete result" }).waitFor();
+  assert.equal(detailRequests, requestsAfterSelection, "polling must retain selection and reuse its bounded detail cache");
+  let releaseStale;
+  const staleGate = new Promise(resolve => { releaseStale = resolve; });
+  await page.route("**/admin/monitor/sample-stale/thread-log/items/*", async route => {
+    await staleGate;
+    try { await route.fulfill({ json: { data: { ...fullCall, payload: { ...fullCall.payload, args: { query: "sample stale response" } } } } }); } catch {}
+  });
+  await page.evaluate(turns => {
+    globalThis.sampleTrajectory.setSessionId("sample-stale");
+    globalThis.sampleTrajectory.setRawTurns(turns);
+  }, previewTurns);
+  const staleRequest = page.waitForRequest("**/admin/monitor/sample-stale/thread-log/items/*");
+  await page.locator('.tt-row[data-record-index="0"]').click();
+  await staleRequest;
+  await page.evaluate(turns => {
+    globalThis.sampleTrajectory.setSessionId("sample-session");
+    globalThis.sampleTrajectory.setRawTurns(turns);
+  }, previewTurns);
+  await page.locator('.tt-row[data-record-index="0"]').click();
+  await inspector.locator(".tt-detail-body").filter({ hasText: "sample complete argument" }).waitFor();
+  releaseStale();
+  await page.waitForTimeout(50);
+  assert.doesNotMatch(await inspector.textContent(), /sample stale response/);
+  await page.evaluate(() => globalThis.sampleTrajectory.destroy());
   assert.deepEqual(errors, []);
   console.log("trajectory admin timing: model, units, canonical envelopes, merge, unknown/zero and browser inspector passed");
 } finally {

@@ -37,7 +37,7 @@ export global EffortOptions {
 // software renderer has no transform-rotate, so the dot ring is rotated
 // mathematically with the web's 1.48s period (same approach as RuntimeBadge).
 component DockSpinner inherits Rectangle {
-    in property <color> tint: Theme.accent;
+    in property <color> tint: Theme.accent-ink;
     width: 12px; height: 12px;
     private property <angle> phase: mod(animation-tick(), 1480ms) / 1480ms * 360deg;
     for offset in [{x: 0.0, y: -4.1}, {x: 3.55, y: -2.05}, {x: 3.55, y: 2.05}, {x: 0.0, y: 4.1}, {x: -3.55, y: 2.05}, {x: -3.55, y: -2.05}] : Rectangle {
@@ -206,7 +206,7 @@ component ModelPicker inherits Rectangle {
                         width: 132px; height: 28px; border-radius: Theme.radius-sm;
                         background: empty-touch.has-hover ? Theme.accent-soft : Theme.surface;
                         border-width: 1px; border-color: Theme.border;
-                        Text { width: parent.width; height: parent.height; text: I18n.cp_model_settings; color: Theme.accent; font-size: Theme.font-sm; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                        Text { width: parent.width; height: parent.height; text: I18n.cp_model_settings; color: Theme.accent-ink; font-size: Theme.font-sm; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
                         empty-touch := TouchArea { mouse-cursor: pointer; clicked => { root.open = false; root.open-settings(); } }
                     }
                 }
@@ -228,18 +228,18 @@ component ModelPicker inherits Rectangle {
                     if model.key == root.current-key : Image {
                         x: 8px; y: 14px; width: 12px; height: 12px;
                         source: @image-url("../assets/icons/check.svg");
-                        colorize: Theme.accent; image-fit: contain;
+                        colorize: Theme.accent-ink; image-fit: contain;
                     }
                     Image {
                         x: 26px; y: 13px; width: 14px; height: 14px;
                         source: @image-url("../assets/icons/robot.svg");
-                        colorize: cloud-muted ? Theme.border : (model.key == root.current-key ? Theme.accent : Theme.muted);
+                        colorize: cloud-muted ? Theme.border : (model.key == root.current-key ? Theme.accent-ink : Theme.muted);
                         image-fit: contain;
                     }
                     Text {
                         x: 48px; y: 4px; width: parent.width - 122px; height: 17px;
                         text: model.key;
-                        color: cloud-muted ? Theme.muted : (model.key == root.current-key ? Theme.accent : Theme.text);
+                        color: cloud-muted ? Theme.muted : (model.key == root.current-key ? Theme.accent-ink : Theme.text);
                         font-size: Theme.font-md; font-weight: 600;
                         vertical-alignment: center; overflow: elide;
                     }
@@ -252,7 +252,7 @@ component ModelPicker inherits Rectangle {
                     if model.is-default : Rectangle {
                         x: parent.width - 74px; y: 12px; width: 34px; height: 16px;
                         border-radius: 8px; background: Theme.accent-soft;
-                        Text { width: parent.width; height: parent.height; text: I18n.cp_model_default_tag; color: Theme.accent; font-size: Theme.font-2xs; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                        Text { width: parent.width; height: parent.height; text: I18n.cp_model_default_tag; color: Theme.accent-ink; font-size: Theme.font-2xs; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
                     }
                     // A cloud model is never the default (the engine keeps
                     // the default pinned to a local entry), so the badge
@@ -260,7 +260,7 @@ component ModelPicker inherits Rectangle {
                     if model.is-cloud : Rectangle {
                         x: parent.width - 74px; y: 12px; width: 24px; height: 16px;
                         border-radius: 8px; background: Theme.accent-soft;
-                        Text { width: parent.width; height: parent.height; text: I18n.st_cl_badge; color: Theme.accent; font-size: Theme.font-2xs; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                        Text { width: parent.width; height: parent.height; text: I18n.st_cl_badge; color: Theme.accent-ink; font-size: Theme.font-2xs; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
                     }
                     row-touch := TouchArea {
                         x: 0px; y: 0px; width: parent.width; height: parent.height;
@@ -293,7 +293,7 @@ component ModelPicker inherits Rectangle {
                         pill-a-text := Text {
                             x: 9px; width: self.preferred-width; height: parent.height;
                             text: EffortOptions.short(option.value);
-                            color: root.effort == option.value ? Theme.accent : Theme.text-secondary;
+                            color: root.effort == option.value ? Theme.accent-ink : Theme.text-secondary;
                             font-size: Theme.font-xs; font-weight: root.effort == option.value ? 600 : 400;
                             vertical-alignment: center;
                         }
@@ -314,7 +314,7 @@ component ModelPicker inherits Rectangle {
                         pill-b-text := Text {
                             x: 9px; width: self.preferred-width; height: parent.height;
                             text: EffortOptions.short(option.value);
-                            color: root.effort == option.value ? Theme.accent : Theme.text-secondary;
+                            color: root.effort == option.value ? Theme.accent-ink : Theme.text-secondary;
                             font-size: Theme.font-xs; font-weight: root.effort == option.value ? 600 : 400;
                             vertical-alignment: center;
                         }
@@ -666,7 +666,7 @@ export component InquiryPanel inherits Rectangle {
                                     width: 18px; height: 18px;
                                     border-radius: question.multiple ? 5px : 9px;
                                     border-width: 1.5px;
-                                    border-color: option.selected ? Theme.accent : #D1D5DB;
+                                    border-color: option.selected ? Theme.accent-ink : #D1D5DB;
                                     background: option.selected ? Theme.accent : Theme.surface;
                                     Image {
                                         x: 3.5px; y: 5.5px; width: 10px; height: 7px;
@@ -722,7 +722,7 @@ export component InquiryPanel inherits Rectangle {
                                     width: 18px; height: 18px;
                                     border-radius: question.multiple ? 5px : 9px;
                                     border-width: 1.5px;
-                                    border-color: question.other != "" ? Theme.accent : #D1D5DB;
+                                    border-color: question.other != "" ? Theme.accent-ink : #D1D5DB;
                                     background: question.other != "" ? Theme.accent : Theme.surface;
                                     Image {
                                         x: 3.5px; y: 5.5px; width: 10px; height: 7px;
@@ -1094,7 +1094,7 @@ component QueueRow inherits Rectangle {
             label: root.turn.interjected ? I18n.cp_queue_interjected : I18n.cp_queue_interject;
             show-label: true;
             enabled: !root.turn.interjected;
-            icon-color: root.turn.interjected ? Theme.border : Theme.accent;
+            icon-color: root.turn.interjected ? Theme.border : Theme.accent-ink;
             clicked => { root.interject(root.turn.queue-id); }
         }
         QueueTool {
@@ -1241,7 +1241,7 @@ component PermissionFlyout inherits Rectangle {
             height: 28px; border-radius: 5px;
             background: root.mode == option.value ? Theme.accent-soft : perm-touch.has-hover ? Theme.hover : transparent;
             accessible-role: list-item; accessible-label: option.label;
-            Text { x: 10px; width: parent.width - 18px; height: parent.height; text: option.label; color: root.mode == option.value ? Theme.accent : Theme.text; font-size: Theme.font-2xs; vertical-alignment: center; }
+            Text { x: 10px; width: parent.width - 18px; height: parent.height; text: option.label; color: root.mode == option.value ? Theme.accent-ink : Theme.text; font-size: Theme.font-2xs; vertical-alignment: center; }
             perm-touch := TouchArea { mouse-cursor: pointer; clicked => { root.changed(option.value); } }
         }
         Text { height: 54px; text: I18n.cp_permission_note; color: Theme.muted; font-size: Theme.font-2xs; wrap: word-wrap; vertical-alignment: top; }
@@ -1327,12 +1327,7 @@ export component Composer inherits Rectangle {
     callback send();
     callback remove-attachment(int);
     callback record-voice();
-    callback launch-terminal();
-    // Terminal mode: Ctrl+C becomes an interrupt instead of copy.
-    callback interrupt();
-    // Terminal mode: the input routes to the local shell. The composer keeps
-    // its visual language (and the send button), only the placeholder and
-    // send semantics change; the backend decides where the text goes.
+    callback launch-cli();
     callback screenshot(bool, bool);
     // ---- 发送队列 (§发送队列) ----
     // Parked turns come straight from the engine's queue projection; the strip
@@ -1487,7 +1482,7 @@ export component Composer inherits Rectangle {
                 border-radius: 16px;
                 background: Theme.surface;
                 border-width: 1px;
-                border-color: self.has-focus ? Theme.accent : Theme.border;
+                border-color: self.has-focus ? Theme.accent-ink : Theme.border;
                 scroll-view-padding: 14px;
                 accessible-role: text-input;
                 accessible-value <=> self.text;
@@ -1575,7 +1570,7 @@ export component Composer inherits Rectangle {
                     Image {
                         x: 4px; y: 4px; width: 16px; height: 16px;
                         source: root.plus-open ? @image-url("../assets/icons/xmark.svg") : @image-url("../assets/icons/plus-plain.svg");
-                        colorize: root.plus-open ? Theme.accent : Theme.text-secondary;
+                        colorize: root.plus-open ? Theme.accent-ink : Theme.text-secondary;
                         image-fit: contain;
                     }
                     accessible-role: button; accessible-label: I18n.cp_more;
@@ -1668,7 +1663,7 @@ export component Composer inherits Rectangle {
                                 height: 34px; border-radius: Theme.radius-sm;
                                 background: root.permission-open || perm-row-touch.has-hover ? Theme.hover : transparent;
                                 accessible-role: list-item; accessible-label: I18n.cp_permission;
-                                Image { x: 8px; y: 9px; width: 16px; height: 16px; source: @image-url("../assets/icons/shield.svg"); colorize: root.permission-mode == "full_auto" ? Theme.muted : Theme.accent; image-fit: contain; }
+                                Image { x: 8px; y: 9px; width: 16px; height: 16px; source: @image-url("../assets/icons/shield.svg"); colorize: root.permission-mode == "full_auto" ? Theme.muted : Theme.accent-ink; image-fit: contain; }
                                 Text { x: 32px; width: parent.width - 110px; height: parent.height; text: I18n.cp_permission; color: Theme.text; font-size: Theme.font-md; vertical-alignment: center; overflow: elide; }
                                 Text {
                                     x: parent.width - 78px; width: 56px; height: parent.height;
@@ -1755,16 +1750,15 @@ export component Composer inherits Rectangle {
                                     pick(hide, region) => { root.plus-open = false; root.screenshot(hide, region); }
                                 }
                             }
-                            // 终端: opens a local terminal for the active workspace.
                             Rectangle {
                                 height: 34px; border-radius: Theme.radius-sm;
                                 background: term-row-touch.has-hover ? Theme.hover : transparent;
-                                accessible-role: list-item; accessible-label: I18n.cp_terminal_mode;
-                                Image { x: 8px; y: 9px; width: 16px; height: 16px; source: @image-url("../assets/icons/fa-display.svg"); colorize: Theme.text-secondary; image-fit: contain; }
-                                Text { x: 32px; width: parent.width - 44px; height: parent.height; text: I18n.cp_terminal_mode; color: Theme.text; font-size: Theme.font-md; vertical-alignment: center; overflow: elide; }
+                                accessible-role: list-item; accessible-label: I18n.cp_open_cli;
+                                Image { x: 8px; y: 9px; width: 16px; height: 16px; source: @image-url("../assets/icons/terminal.svg"); colorize: Theme.text-secondary; image-fit: contain; }
+                                Text { x: 32px; width: parent.width - 44px; height: parent.height; text: I18n.cp_open_cli; color: Theme.text; font-size: Theme.font-md; vertical-alignment: center; overflow: elide; }
                                 term-row-touch := TouchArea {
                                     mouse-cursor: pointer;
-                                    clicked => { root.plus-open = false; root.launch-terminal(); }
+                                    clicked => { root.plus-open = false; root.launch-cli(); }
                                 }
                             }
                         }
@@ -1775,7 +1769,7 @@ export component Composer inherits Rectangle {
                 height: 30px;
                 width: min(ws-text.preferred-width, 160px) + 22px;
                 visible: root.workspace-name != "";
-                Image { x: 5px; y: 9px; width: 12px; height: 12px; source: @image-url("../assets/icons/folder-open.svg"); colorize: Theme.accent; image-fit: contain; }
+                Image { x: 5px; y: 9px; width: 12px; height: 12px; source: @image-url("../assets/icons/folder-open.svg"); colorize: Theme.accent-ink; image-fit: contain; }
                 ws-text := Text {
                     x: 22px; width: min(self.preferred-width, 160px); height: parent.height;
                     text: root.workspace-name; color: Theme.text-secondary; font-size: Theme.font-sm;
@@ -1820,7 +1814,7 @@ export component Composer inherits Rectangle {
                     y: 1px; width: 28px; height: 28px;
                     border-radius: Theme.radius-sm;
                     background: root.stop-action
-                        ? (root.stopping ? Theme.border-strong : Theme.accent)
+                        ? (root.stopping ? Theme.border-strong : Theme.accent-ink)
                         : (root.send-enabled ? (send-touch.has-hover ? Theme.accent-deep : Theme.accent) : Theme.border-strong);
                     Image {
                         // The FA stop glyph is a full-bleed square; a 12px

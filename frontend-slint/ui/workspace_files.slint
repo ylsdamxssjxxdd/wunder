@@ -11,14 +11,15 @@ import { ModalDialog, Action } from "components.slint";
 component DirectoryBlankMenu inherits ContextMenuArea {
     in property <bool> busy;
     in property <bool> local;
+    in property <bool> resource-mode;
     callback menu(int, int);
     callback refresh();
     Menu {
-        MenuItem { title: I18n.wf_menu_new_dir; enabled: !root.busy; activated => { root.menu(-1, 5); } }
-        MenuItem { title: I18n.wf_menu_new_file; enabled: !root.busy; activated => { root.menu(-1, 6); } }
-        if root.local : MenuItem { title: I18n.wf_menu_open_ws; activated => { root.menu(-1, 9); } }
-        if !root.local : MenuItem { title: I18n.wf_menu_archive_root; enabled: !root.busy; activated => { root.menu(-1, 7); } }
-        if !root.local : MenuItem { title: I18n.wf_menu_clear; enabled: !root.busy; activated => { root.menu(-1, 8); } }
+        if !root.resource-mode : MenuItem { title: I18n.wf_menu_new_dir; enabled: !root.busy; activated => { root.menu(-1, 5); } }
+        if !root.resource-mode : MenuItem { title: I18n.wf_menu_new_file; enabled: !root.busy; activated => { root.menu(-1, 6); } }
+        if root.local && !root.resource-mode : MenuItem { title: I18n.wf_menu_open_ws; activated => { root.menu(-1, 9); } }
+        if !root.local && !root.resource-mode : MenuItem { title: I18n.wf_menu_archive_root; enabled: !root.busy; activated => { root.menu(-1, 7); } }
+        if !root.local && !root.resource-mode : MenuItem { title: I18n.wf_menu_clear; enabled: !root.busy; activated => { root.menu(-1, 8); } }
         MenuSeparator {}
         MenuItem { title: I18n.wf_menu_refresh; activated => { root.refresh(); } }
     }
@@ -48,6 +49,9 @@ component ToolButton inherits Rectangle {
 }
 
 export component WorkspaceFilesPanel inherits Rectangle {
+    in property <bool> resource-mode;
+    in property <bool> read-only;
+    in property <string> title: I18n.wf_title;
     in property <[WorkspaceFileRow]> rows;
     in property <bool> loading;
     in property <string> error;
@@ -81,10 +85,10 @@ export component WorkspaceFilesPanel inherits Rectangle {
     callback key-action(int);
     private property <bool> empty: !root.offline && !root.loading && !root.search-active
         && root.error == "" && root.rows.length == 0;
-    private property <bool> writeable: !root.busy && (root.local || !root.offline);
+    private property <bool> writeable: !root.read-only && !root.busy && (root.local || !root.offline);
 
     DropArea {
-        enabled: !root.offline && !root.busy;
+        enabled: !root.resource-mode && !root.offline && !root.busy;
         can-drop(event) => { return root.offline || root.busy ? DragAction.none : DragAction.copy; }
         dropped(event) => { root.drop(event); return DragAction.copy; }
         VerticalLayout {
@@ -93,10 +97,10 @@ export component WorkspaceFilesPanel inherits Rectangle {
             HorizontalLayout {
                 height: 26px; spacing: 4px;
                 if !root.search-open : Text {
-                    text: I18n.wf_title; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center;
+                    text: root.title; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; overflow: elide; min-width: 0px;
                 }
                 if !root.search-open : Rectangle { horizontal-stretch: 1; min-width: 0px; }
-                if !root.search-open : ToolButton {
+                if !root.search-open && !root.read-only : ToolButton {
                     // Same glyph as the cloud left rail's upload action
                     // (fa-arrow-up-from-bracket), not fa-upload: the two read
                     // differently at 14px and the rail must match the web.
@@ -111,13 +115,13 @@ export component WorkspaceFilesPanel inherits Rectangle {
                     actionable: root.local || !root.offline;
                     clicked => { root.search-open = true; }
                 }
-                if !root.search-open : ToolButton {
+                if !root.search-open && !root.resource-mode : ToolButton {
                     glyph: @image-url("../assets/icons/file-zipper.svg");
                     tip: I18n.wf_menu_archive_root;
                     actionable: root.writeable;
                     clicked => { root.download(); }
                 }
-                if !root.search-open : ToolButton {
+                if !root.search-open && !root.resource-mode : ToolButton {
                     glyph: @image-url("../assets/icons/list-check.svg");
                     tip: I18n.wf_select;
                     clicked => { root.select(); }
@@ -130,7 +134,7 @@ export component WorkspaceFilesPanel inherits Rectangle {
                 if root.search-open : search-field := Rectangle {
                     height: 24px; horizontal-stretch: 1;
                     border-radius: 6px; border-width: 1px;
-                    border-color: search-input.has-focus ? Theme.accent : Theme.input-border;
+                    border-color: search-input.has-focus ? Theme.accent-ink : Theme.input-border;
                     background: Theme.input-bg;
                     init => { search-input.focus(); }
                     // Raw TextInput like the composer row: the std LineEdit
@@ -184,6 +188,7 @@ export component WorkspaceFilesPanel inherits Rectangle {
                 vertical-stretch: 1;
                 enabled: !root.offline;
                 busy: root.busy; local: root.local;
+                resource-mode: root.resource-mode;
                 menu(index, action) => { root.menu(index, action); }
                 refresh => { root.refresh(); }
                 keyboard := FocusScope {
@@ -235,8 +240,8 @@ export component WorkspaceFilesPanel inherits Rectangle {
                         alignment: center; spacing: 8px;
                         HorizontalLayout { alignment: center; Image { width: 24px; height: 24px; source: @image-url("../assets/icons/folder-open.svg"); colorize: Theme.border-strong; } }
                         Text { text: I18n.wf_empty; color: Theme.muted; font-size: Theme.font-xs; horizontal-alignment: center; }
-                        Text { text: I18n.wf_empty_hint; color: Theme.muted; font-size: Theme.font-2xs; horizontal-alignment: center; wrap: word-wrap; }
-                        HorizontalLayout {
+                        if !root.resource-mode : Text { text: I18n.wf_empty_hint; color: Theme.muted; font-size: Theme.font-2xs; horizontal-alignment: center; wrap: word-wrap; }
+                        if !root.resource-mode && !root.read-only : HorizontalLayout {
                             alignment: center; spacing: 8px;
                             Button { text: I18n.wf_menu_new_dir; enabled: !root.busy; clicked => { root.menu(-1, 5); } Tooltip { text: @markdown("\{I18n.wf_menu_new_dir}"); } }
                             Button { text: I18n.wf_menu_new_file; enabled: !root.busy; clicked => { root.menu(-1, 6); } Tooltip { text: @markdown("\{I18n.wf_menu_new_file}"); } }
@@ -260,7 +265,7 @@ export component WorkspaceFilesPanel inherits Rectangle {
                                 background: row.path == root.active-path && !root.search-active && row.kind != 2 ? Theme.selected : row-touch.has-hover ? Theme.hover : transparent;
                                 row-touch := TouchArea {
                                     mouse-cursor: pointer;
-                                    enabled: row.kind != 2 || !row.loading;
+                                    enabled: !root.busy && (row.kind != 2 || !row.loading);
                                     accessible-role: button; accessible-label: row.name;
                                     accessible-action-default => { root.toggle(index); }
                                     property <length> press-x;
@@ -273,7 +278,7 @@ export component WorkspaceFilesPanel inherits Rectangle {
                                         }
                                     }
                                     moved => {
-                                        if row.kind == 0 && self.pressed && !self.drag-out && (abs(self.mouse-x - self.press-x) > 5px || abs(self.mouse-y - self.press-y) > 5px) {
+                                        if !root.resource-mode && row.kind == 0 && self.pressed && !self.drag-out && (abs(self.mouse-x - self.press-x) > 5px || abs(self.mouse-y - self.press-y) > 5px) {
                                             self.drag-out = true; root.drag-row(index);
                                         }
                                     }
@@ -284,13 +289,13 @@ export component WorkspaceFilesPanel inherits Rectangle {
                                             MenuItem { title: I18n.wf_menu_refresh; activated => { root.refresh(); } }
                                             MenuSeparator {}
                                             MenuItem { title: root.local ? I18n.wf_menu_open : I18n.wf_menu_preview; activated => { root.menu(index, 0); } }
-                                            if !root.local && row.kind == 0 : MenuItem { title: I18n.wf_menu_download; activated => { root.menu(index, 1); } }
-                                            if !root.local && row.kind == 1 : MenuItem { title: I18n.wf_menu_archive; activated => { root.menu(index, 7); } }
-                                            if row.kind == 1 : MenuItem { title: I18n.wf_menu_new_dir; enabled: !root.busy; activated => { root.menu(index, 5); } }
-                                            if row.kind == 1 : MenuItem { title: I18n.wf_menu_new_file; enabled: !root.busy; activated => { root.menu(index, 6); } }
-                                            if row.kind != 2 : MenuItem { title: I18n.wf_menu_rename; enabled: !root.busy; activated => { root.menu(index, 2); } }
-                                            if row.kind != 2 : MenuItem { title: I18n.wf_menu_reference; activated => { root.menu(index, 4); } }
-                                            if row.kind != 2 : MenuItem { title: I18n.wf_menu_delete; enabled: !root.busy; activated => { root.menu(index, 3); } }
+                                            if !root.resource-mode && !root.local && row.kind == 0 : MenuItem { title: I18n.wf_menu_download; activated => { root.menu(index, 1); } }
+                                            if !root.resource-mode && !root.local && row.kind == 1 : MenuItem { title: I18n.wf_menu_archive; activated => { root.menu(index, 7); } }
+                                            if !root.resource-mode && row.kind == 1 : MenuItem { title: I18n.wf_menu_new_dir; enabled: root.writeable; activated => { root.menu(index, 5); } }
+                                            if !root.resource-mode && row.kind == 1 : MenuItem { title: I18n.wf_menu_new_file; enabled: root.writeable; activated => { root.menu(index, 6); } }
+                                            if !root.resource-mode && row.kind != 2 : MenuItem { title: I18n.wf_menu_rename; enabled: root.writeable; activated => { root.menu(index, 2); } }
+                                            if !root.resource-mode && row.kind != 2 : MenuItem { title: I18n.wf_menu_reference; activated => { root.menu(index, 4); } }
+                                            if !root.resource-mode && row.kind != 2 : MenuItem { title: I18n.wf_menu_delete; enabled: root.writeable; activated => { root.menu(index, 3); } }
                                         }
                                         HorizontalLayout {
                                             padding-left: 6px + row.depth * 12px; padding-right: 4px; spacing: 5px;
@@ -300,7 +305,7 @@ export component WorkspaceFilesPanel inherits Rectangle {
                                                 width: 18px;
                                                 if row.selected : Image {
                                                     x: 3px; y: 7px; width: 12px; height: 12px;
-                                                    source: @image-url("../assets/icons/check.svg"); colorize: Theme.accent;
+                                                    source: @image-url("../assets/icons/check.svg"); colorize: Theme.accent-ink;
                                                 }
                                                 if !row.selected : Rectangle {
                                                     x: 3px; y: 7px; width: 12px; height: 12px;
@@ -344,6 +349,7 @@ export component WorkspaceFilesPanel inherits Rectangle {
                             y: min(parent.height, max(0px, root.rows.length * 26px + tree.content-y));
                             height: parent.height - self.y;
                             busy: root.busy; local: root.local;
+                            resource-mode: root.resource-mode;
                             menu(index, action) => { root.menu(index, action); }
                             refresh => { root.refresh(); }
                         }

@@ -1621,22 +1621,6 @@ pub(super) fn strip_existing_memory_block_text(text: &str) -> String {
     }
 }
 
-pub(super) fn merge_compaction_summary_with_fresh_memory(
-    summary_text: &str,
-    memory_block: &str,
-) -> (String, bool) {
-    let summary_without_memory = strip_existing_memory_block_text(summary_text);
-    let memory_block = memory_block.trim();
-    if memory_block.is_empty() {
-        return (summary_without_memory, false);
-    }
-    let summary_without_memory = summary_without_memory.trim_end();
-    if summary_without_memory.is_empty() {
-        return (memory_block.to_string(), true);
-    }
-    (format!("{summary_without_memory}\n\n{memory_block}"), true)
-}
-
 pub(super) fn is_empty_compaction_summary(summary: &str) -> bool {
     let cleaned = summary.trim();
     if cleaned.is_empty() {
@@ -1727,21 +1711,17 @@ pub(super) fn clamp_committed_compaction_summary(summary: &str, max_chars: usize
     HistoryManager::format_compaction_summary(&clamped_body)
 }
 
-pub(super) fn build_committable_compaction_summary(
-    summary_candidate: &str,
-    memory_block: &str,
-) -> Option<(String, bool)> {
+pub(super) fn build_committable_compaction_summary(summary_candidate: &str) -> Option<String> {
     if is_invalid_compaction_summary(summary_candidate) {
         return None;
     }
     let formatted = HistoryManager::format_compaction_summary(summary_candidate);
-    let (merged, fresh_memory_injected) =
-        merge_compaction_summary_with_fresh_memory(&formatted, memory_block);
+    let merged = strip_existing_memory_block_text(&formatted);
     let committed = clamp_committed_compaction_summary(&merged, COMPACTION_SUMMARY_MAX_CHARS);
     if is_invalid_compaction_summary(&committed) {
         return None;
     }
-    Some((committed, fresh_memory_injected))
+    Some(committed)
 }
 
 pub(super) fn compaction_prefixes() -> Vec<String> {

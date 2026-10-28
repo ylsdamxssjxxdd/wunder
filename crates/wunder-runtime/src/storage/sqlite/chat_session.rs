@@ -4,9 +4,14 @@ use crate::storage::{ChatSessionRecord, StorageLifecycle};
 use anyhow::Result;
 use rusqlite::types::Value as SqlValue;
 use rusqlite::{params, params_from_iter, OptionalExtension};
+use std::collections::HashMap;
 
 pub(super) trait SqliteChatSessionStorage {
     fn get_chat_session_owner_impl(&self, session_id: &str) -> Result<Option<String>>;
+    fn list_chat_session_titles_impl(
+        &self,
+        session_owners: &[(String, String)],
+    ) -> Result<HashMap<String, String>>;
     fn list_active_chat_session_ids_impl(
         &self,
         user_id: &str,
@@ -92,6 +97,34 @@ pub(super) trait SqliteChatSessionStorage {
 }
 
 impl SqliteChatSessionStorage for SqliteStorage {
+    fn list_chat_session_titles_impl(
+        &self,
+        session_owners: &[(String, String)],
+    ) -> Result<HashMap<String, String>> {
+        if session_owners.is_empty() {
+            return Ok(HashMap::new());
+        }
+        self.ensure_initialized()?;
+        let connection = self.open()?;
+        let mut result = HashMap::new();
+        for chunk in session_owners.chunks(100) {
+            let values = vec!["(?,?)"; chunk.len()].join(",");
+            let sql = format!("SELECT session_id,title FROM chat_sessions WHERE (user_id,session_id) IN (VALUES {values})");
+            let mut statement = connection.prepare(&sql)?;
+            let parameters = chunk
+                .iter()
+                .flat_map(|(user, session)| [user.as_str(), session.as_str()]);
+            let rows = statement.query_map(params_from_iter(parameters), |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?;
+            for row in rows {
+                let (session, title) = row?;
+                result.insert(session, title);
+            }
+        }
+        Ok(result)
+    }
+
     fn get_chat_session_owner_impl(&self, session_id: &str) -> Result<Option<String>> {
         self.ensure_initialized()?;
         Ok(self

@@ -29,6 +29,9 @@ const ADMIN_MONITOR_DETAIL_EVENT_PAGE_MAX_LIMIT: i64 = 100;
 #[cfg(test)]
 #[path = "session_catalog_tests.rs"]
 mod session_catalog_tests;
+#[cfg(test)]
+#[path = "thread_history_tests.rs"]
+mod thread_history_tests;
 
 pub(super) fn router() -> Router<Arc<AppState>> {
     Router::new()
@@ -60,6 +63,10 @@ pub(super) fn router() -> Router<Arc<AppState>> {
         .route(
             "/wunder/admin/monitor/{session_id}/thread-log/snapshot",
             get(admin_thread_snapshot),
+        )
+        .route(
+            "/wunder/admin/monitor/{session_id}/thread-log/items/{item_id}",
+            get(admin_thread_item),
         )
         .route(
             "/wunder/admin/monitor/{session_id}/thread-log/changes",
@@ -96,8 +103,8 @@ async fn admin_monitor(
     stage_started_at = Instant::now();
     let mut sessions = state.monitor.list_sessions(active_only);
     // 线程管理页展示「线程名称」：线程名称即用户在蜂巢中的会话标题，监控摘要
-    // 本身只带首条问题，这里按用户批量读取会话目录回填 thread_name。
-    attach_thread_names(&state, &mut sessions);
+    // 本身只带首条问题，这里按所属用户和线程身份批量读取标题回填 thread_name。
+    attach_thread_names(&state, &mut sessions).await?;
     let sessions_ms = stage_started_at.elapsed().as_millis();
 
     stage_started_at = Instant::now();
@@ -189,39 +196,29 @@ async fn admin_monitor(
 }
 
 /// 线程管理页展示「线程名称」：线程名称即用户在蜂巢中的会话标题。监控会话摘要
-/// 本身只带首条问题，这里按用户批量读取会话目录，把标题回填到 `thread_name`；
+/// 本身只带首条问题，这里按所属用户和线程身份批量读取标题，回填到 `thread_name`；
 /// 取不到标题时回退为线程首条问题。
-fn attach_thread_names(state: &Arc<AppState>, sessions: &mut [Value]) {
+async fn attach_thread_names(
+    state: &Arc<AppState>,
+    sessions: &mut [Value],
+) -> Result<(), Response> {
     if sessions.is_empty() {
-        return;
+        return Ok(());
     }
-    let mut seen: HashSet<String> = HashSet::new();
-    let mut user_ids: Vec<String> = Vec::new();
-    for session in sessions.iter() {
-        let user_id = session
-            .get("user_id")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .trim();
-        if !user_id.is_empty() && seen.insert(user_id.to_string()) {
-            user_ids.push(user_id.to_string());
-        }
-    }
-    let mut titles: HashMap<String, String> = HashMap::new();
-    for user_id in user_ids {
-        let Ok((records, _)) = state
-            .user_store
-            .list_chat_sessions(&user_id, None, None, 0, 1000)
-        else {
-            continue;
-        };
-        for record in records {
-            let title = record.title.trim();
-            if !title.is_empty() {
-                titles.insert(record.session_id, title.to_string());
-            }
-        }
-    }
+    let owners = sessions
+        .iter()
+        .filter_map(|session| {
+            let user = session.get("user_id")?.as_str()?.trim();
+            let thread = session.get("session_id")?.as_str()?.trim();
+            (!user.is_empty() && !thread.is_empty()).then(|| (user.to_string(), thread.to_string()))
+        })
+        .collect::<Vec<_>>();
+    let storage = state.storage.clone();
+    let titles = crate::core::blocking::run_db("api.admin.monitor.thread_titles", move || {
+        storage.list_chat_session_titles(&owners)
+    })
+    .await
+    .map_err(|error| error_response(StatusCode::SERVICE_UNAVAILABLE, error.to_string()))?;
     for session in sessions.iter_mut() {
         let Some(map) = session.as_object_mut() else {
             continue;
@@ -231,7 +228,11 @@ fn attach_thread_names(state: &Arc<AppState>, sessions: &mut [Value]) {
             .and_then(Value::as_str)
             .unwrap_or("")
             .to_string();
-        if let Some(title) = titles.get(&session_id) {
+        if let Some(title) = titles
+            .get(&session_id)
+            .map(|title| title.trim())
+            .filter(|title| !title.is_empty())
+        {
             map.insert("thread_name".to_string(), json!(title));
             continue;
         }
@@ -242,6 +243,7 @@ fn attach_thread_names(state: &Arc<AppState>, sessions: &mut [Value]) {
             }
         }
     }
+    Ok(())
 }
 
 async fn admin_runtime_metrics() -> Json<Value> {
@@ -610,9 +612,6 @@ async fn admin_monitor_detail(
             map.insert("agent_name".into(), json!(name));
         }
     }
-    // `get_record()` retains raw events and counters. Re-apply the canonical
-    // derived timing projection so the administrator and user detail views
-    // expose the same TTFT, prefill, and decode metrics.
     if let Some(Value::Object(overview)) = state.monitor.get_log_overview(&cleaned) {
         if let Some(map) = session.as_object_mut() {
             for key in [
@@ -758,11 +757,29 @@ async fn admin_thread_snapshot(
     let storage = state.storage.clone();
     let lookup = session_id.clone();
     let snapshot = crate::core::blocking::run_db("api.admin.thread_log.snapshot", move || {
-        storage.thread_snapshot(&user_id, &lookup)
+        storage.thread_preview_snapshot(&user_id, &lookup)
     })
     .await
     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     Ok(Json(json!({"data": snapshot})))
+}
+
+async fn admin_thread_item(
+    State(state): State<Arc<AppState>>,
+    AxumPath((session_id, item_id)): AxumPath<(String, String)>,
+) -> Result<Json<Value>, Response> {
+    let user_id = monitor_user_id(&state, &session_id)?;
+    let storage = state.storage.clone();
+    let mut item = crate::core::blocking::run_db("api.admin.thread_log.item", move || {
+        storage.get_thread_item(&user_id, &session_id, &item_id, true)
+    })
+    .await
+    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+    .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.content_not_found")))?;
+    if let Some(payload) = item.get_mut("payload") {
+        crate::storage::thread_view_projection::attach_tool_schema(payload);
+    }
+    Ok(Json(json!({"data": item})))
 }
 
 async fn admin_thread_changes(

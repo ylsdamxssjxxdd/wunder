@@ -11,6 +11,7 @@ fn should_backpressure_online_stream_event(event_type: &str) -> bool {
     matches!(
         event_type,
         "thread_item_tail"
+            | "thread_process_item"
             | "llm_output_delta"
             | "thread_item_delta"
             | "command_session_delta"
@@ -50,6 +51,7 @@ pub(super) struct EventEmitter {
     /// UTF-16 cursors for ephemeral assistant tails in the active request.
     /// Completed items remain the durable source of truth.
     tail_offsets: Arc<ParkingMutex<HashMap<(String, String), usize>>>,
+    process_order: Arc<ParkingMutex<(i64, HashMap<String, i64>)>>,
 }
 
 impl EventEmitter {
@@ -101,6 +103,7 @@ impl EventEmitter {
             account_credits_consumed: Arc::new(ParkingMutex::new(0)),
             tool_calls: Arc::new(AtomicI64::new(0)),
             tail_offsets: Arc::new(ParkingMutex::new(HashMap::new())),
+            process_order: Arc::new(ParkingMutex::new((0, HashMap::new()))),
         }
     }
 
@@ -203,6 +206,7 @@ impl EventEmitter {
         // metrics on the output event itself so a reopened chat bubble keeps
         // context, quota, timing and speed information.
         self.enrich_llm_output_message_stats(event_type, &mut data);
+        self.assign_process_order(event_type, &mut data);
         // Incremental text and progress are live-only. The completed event
         // below contains the semantic body used to restore a reopened thread.
         if let Some(item) =
@@ -231,6 +235,34 @@ impl EventEmitter {
             self.monitor
                 .record_event(&self.session_id, event_type, &data);
         }
+        if matches!(
+            event_type,
+            "tool_call" | "tool_result" | "llm_output" | "compaction"
+        ) {
+            if let Some(item) =
+                crate::services::thread_log::event_item(&self.session_id, event_type, &data)
+            {
+                let body = crate::storage::thread_history::item_preview(&json!({"payload":data}));
+                let item = json!({
+                    "session_id":self.session_id,"turn_id":item["turn_id"],"root_turn_id":item["root_turn_id"],
+                    "item_id":item["item_id"],"kind":item["kind"],"status":item["status"],"payload":body["payload"],
+                });
+                let process_event = StreamEvent {
+                    event: "thread_process_item".into(),
+                    data: enrich_event_payload(item, Some(&self.session_id), timestamp),
+                    id: Some(
+                        self.next_event_id
+                            .fetch_add(1, AtomicOrdering::SeqCst)
+                            .to_string(),
+                    ),
+                    timestamp: Some(timestamp),
+                };
+                if let Some(committer) = &self.committer {
+                    committer.publish_live(&self.session_id, &process_event);
+                }
+                self.enqueue_event(&process_event, false).await;
+            }
+        }
         if event_type.ends_with("_delta") {
             if let Some(map) = data.as_object_mut() {
                 // The shared envelope must retain the semantic stream type.
@@ -253,6 +285,9 @@ impl EventEmitter {
                 ),
                 timestamp: Some(timestamp),
             };
+            if let Some(committer) = &self.committer {
+                committer.publish_live(&self.session_id, &tail_event);
+            }
             self.enqueue_event(&tail_event, false).await;
         }
         let event_id = self.next_event_id.fetch_add(1, AtomicOrdering::SeqCst);
@@ -275,6 +310,48 @@ impl EventEmitter {
         }
         self.enqueue_event(&event, false).await;
         event
+    }
+
+    fn assign_process_order(&self, event_type: &str, data: &mut Value) {
+        let Some(turn) = data["turn_id"].as_str() else {
+            return;
+        };
+        let round = data["model_round"].as_i64().unwrap_or(0);
+        let key = match event_type {
+            "llm_request" | "llm_output_delta" | "llm_output" => format!("{turn}:text-{round}"),
+            "tool_call" | "tool_result" => {
+                let Some(call) = data["tool_call_id"].as_str() else {
+                    return;
+                };
+                format!("{turn}:tool-{call}")
+            }
+            "compaction" => {
+                crate::services::thread_log::event_item(&self.session_id, event_type, data)
+                    .and_then(|item| item["item_id"].as_str().map(str::to_owned))
+                    .unwrap_or_default()
+            }
+            _ => return,
+        };
+        let mut order = self.process_order.lock();
+        let sequence = if let Some(sequence) = order.1.get(&key) {
+            *sequence
+        } else {
+            order.0 = order.0.saturating_add(1);
+            if order.1.len() >= 1024 {
+                if let Some(oldest) = order
+                    .1
+                    .iter()
+                    .min_by_key(|(_, sequence)| **sequence)
+                    .map(|(key, _)| key.clone())
+                {
+                    order.1.remove(&oldest);
+                }
+            }
+            let sequence = order.0;
+            order.1.insert(key, sequence);
+            sequence
+        };
+        data["process_seq"] = json!(sequence);
     }
 
     fn enrich_llm_output_message_stats(&self, event_type: &str, data: &mut Value) {
@@ -527,6 +604,9 @@ mod tests {
 
     #[test]
     fn online_llm_delta_uses_backpressure_instead_of_lossy_overflow() {
+        assert!(should_backpressure_online_stream_event(
+            "thread_process_item"
+        ));
         assert!(should_backpressure_online_stream_event("thread_item_delta"));
         assert!(should_backpressure_online_stream_event("llm_output_delta"));
         assert!(should_backpressure_online_stream_event(

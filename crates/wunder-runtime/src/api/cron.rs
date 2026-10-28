@@ -1,5 +1,5 @@
 use crate::api::user_context::resolve_user;
-use crate::cron::{handle_cron_action, list_cron_runs, CronActionRequest};
+use crate::cron::{handle_cron_action, list_cron_jobs_page, list_cron_runs, CronActionRequest};
 use crate::i18n;
 use crate::state::AppState;
 use axum::extract::{Query, State};
@@ -13,6 +13,10 @@ use std::sync::Arc;
 
 #[derive(Debug, Deserialize)]
 struct CronActionQuery {
+    #[serde(default)]
+    limit: Option<i64>,
+    #[serde(default)]
+    offset: Option<i64>,
     #[serde(default)]
     user_id: Option<String>,
     #[serde(default)]
@@ -36,6 +40,7 @@ pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/wunder/cron/status", get(cron_status))
         .route("/wunder/cron/list", get(cron_list))
+        .route("/wunder/cron/workspaces", get(cron_workspaces))
         .route("/wunder/cron/runs", get(cron_runs))
         .route("/wunder/cron/add", post(cron_add))
         .route("/wunder/cron/update", post(cron_update))
@@ -45,6 +50,27 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/wunder/cron/get", post(cron_get))
         .route("/wunder/cron/run", post(cron_run))
         .route("/wunder/cron/action", post(cron_action))
+}
+
+async fn cron_workspaces(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, None).await?;
+    let storage = state.storage.clone();
+    let user_id = resolved.user.user_id.clone();
+    let mut workspaces =
+        crate::core::blocking::run_db("cron.workspaces", move || storage.list_workspaces(&user_id))
+            .await
+            .map_err(|err| error_response(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?
+            .into_iter()
+            .map(|record| json!({"workspace_id": record.workspace_id, "name": record.name}))
+            .collect::<Vec<_>>();
+    if workspaces.is_empty() {
+        workspaces
+            .push(json!({"workspace_id": "__cloud__", "name": i18n::t("cron.workspace.cloud")}));
+    }
+    Ok(Json(json!({"data": {"workspaces": workspaces}})))
 }
 
 async fn cron_status(
@@ -64,11 +90,19 @@ async fn cron_list(
     headers: HeaderMap,
     Query(query): Query<CronActionQuery>,
 ) -> Result<Json<Value>, Response> {
-    let payload = CronActionRequest {
-        action: "list".to_string(),
-        job: None,
-    };
-    handle_action(state, headers, query, payload, None).await
+    let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
+    let config = state.config_store.get().await;
+    let result = list_cron_jobs_page(
+        state.storage.clone(),
+        &resolved.user.user_id,
+        query.agent_id.as_deref(),
+        query.limit.unwrap_or(200),
+        query.offset.unwrap_or(0),
+        config.cron.enabled,
+    )
+    .await
+    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    Ok(Json(json!({"data": result})))
 }
 
 async fn cron_runs(

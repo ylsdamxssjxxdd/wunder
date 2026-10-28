@@ -1,10 +1,15 @@
 use super::PostgresStorage;
 use crate::storage::{ChatSessionRecord, StorageLifecycle};
 use anyhow::Result;
+use std::collections::HashMap;
 use tokio_postgres::types::ToSql;
 
 pub(super) trait PostgresChatSessionStorage {
     fn get_chat_session_owner_impl(&self, session_id: &str) -> Result<Option<String>>;
+    fn list_chat_session_titles_impl(
+        &self,
+        session_owners: &[(String, String)],
+    ) -> Result<HashMap<String, String>>;
     fn list_active_chat_session_ids_impl(
         &self,
         user_id: &str,
@@ -90,6 +95,37 @@ pub(super) trait PostgresChatSessionStorage {
 }
 
 impl PostgresChatSessionStorage for PostgresStorage {
+    fn list_chat_session_titles_impl(
+        &self,
+        session_owners: &[(String, String)],
+    ) -> Result<HashMap<String, String>> {
+        if session_owners.is_empty() {
+            return Ok(HashMap::new());
+        }
+        self.ensure_initialized()?;
+        let mut connection = self.conn()?;
+        let mut result = HashMap::new();
+        for chunk in session_owners.chunks(256) {
+            let users = chunk
+                .iter()
+                .map(|(user, _)| user.as_str())
+                .collect::<Vec<_>>();
+            let sessions = chunk
+                .iter()
+                .map(|(_, session)| session.as_str())
+                .collect::<Vec<_>>();
+            for row in connection.query(
+                "SELECT catalog.session_id,catalog.title FROM chat_sessions catalog \
+                 JOIN unnest($1::text[],$2::text[]) requested(user_id,session_id) \
+                 ON catalog.user_id=requested.user_id AND catalog.session_id=requested.session_id",
+                &[&users, &sessions],
+            )? {
+                result.insert(row.get(0), row.get(1));
+            }
+        }
+        Ok(result)
+    }
+
     fn get_chat_session_owner_impl(&self, session_id: &str) -> Result<Option<String>> {
         self.ensure_initialized()?;
         Ok(self

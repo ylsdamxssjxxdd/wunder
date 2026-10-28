@@ -36,14 +36,16 @@ export const THEME_PALETTE_LABEL_KEYS: Partial<Record<ThemePalette, string>> = {
 };
 
 /** 预览卡取的两档色值，与 base.css 里同名 `data-user-accent` 块的
- *  `--ui-accent` / `--ui-accent-soft-3` 一致；改色板时两处一起改。 */
+ *  `--ui-accent` / `--ui-accent-soft-3` 一致；改色板时两处一起改。
+ *  橙汁（eva-orange）的色值以蛹 frontend-slint/ui/design_tokens.slint 的
+ *  terracotta 为准：accent #F58A24、soft #FDF0DE。 */
 export type ThemeSwatchPalette = (typeof SELECTABLE_THEME_PALETTES)[number];
 
 export const THEME_PALETTE_SWATCHES: Record<ThemeSwatchPalette, { accent: string; tint: string }> = {
   forest: { accent: '#2f7a5c', tint: '#f3f8f5' },
   'hula-green': { accent: '#16ad8d', tint: '#effbf7' },
   honey: { accent: '#c08a2a', tint: '#fbf6ea' },
-  'eva-orange': { accent: '#c96443', tint: '#fbf4f1' }
+  'eva-orange': { accent: '#f58a24', tint: '#fef7ee' }
 };
 
 export const normalizeThemePalette = (value: unknown): ThemePalette => {

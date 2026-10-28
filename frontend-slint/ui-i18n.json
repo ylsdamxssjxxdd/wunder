@@ -1605,9 +1605,9 @@
   "en": "Voice input"
  },
  {
-  "key": "cp_terminal_mode",
-  "zh": "终端",
-  "en": "Terminal"
+  "key": "cp_open_cli",
+  "zh": "打开舵机",
+  "en": "Open CLI"
  },
  {
   "key": "cp_model_search",
@@ -2052,8 +2052,8 @@
  },
  {
   "key": "cron_subtitle",
-  "zh": "查看与管理智能体定时任务",
-  "en": "View and manage agent scheduled tasks"
+  "zh": "在指定工作区中按时执行任务",
+  "en": "Run scheduled tasks in a selected workspace"
  },
  {
   "key": "main_preview_prompt",
@@ -3444,6 +3444,56 @@
   "en": "No runs"
  },
  {
+  "key": "cr_workspace_hint",
+  "zh": "选择工作区，设置消息与执行时间",
+  "en": "Choose a workspace, message and execution time"
+ },
+ {
+  "key": "cr_field_workspace",
+  "zh": "工作区",
+  "en": "Workspace"
+ },
+ {
+  "key": "cr_workspace_unavailable",
+  "zh": "工作区不可用",
+  "en": "Workspace unavailable"
+ },
+ {
+  "key": "cr_mode",
+  "zh": "执行方式",
+  "en": "Mode"
+ },
+ {
+  "key": "cr_kind_repeat",
+  "zh": "重复",
+  "en": "Repeat"
+ },
+ {
+  "key": "cr_interval_every",
+  "zh": "每",
+  "en": "Every"
+ },
+ {
+  "key": "cr_unit_minute",
+  "zh": "分钟",
+  "en": "Minutes"
+ },
+ {
+  "key": "cr_unit_hour",
+  "zh": "小时",
+  "en": "Hours"
+ },
+ {
+  "key": "cr_unit_day",
+  "zh": "天",
+  "en": "Days"
+ },
+ {
+  "key": "cr_unit_second",
+  "zh": "秒",
+  "en": "Seconds"
+ },
+ {
   "key": "cr_kind_once",
   "zh": "一次性",
   "en": "One-off"
@@ -3487,11 +3537,6 @@
   "key": "cr_field_message",
   "zh": "执行消息",
   "en": "Message"
- },
- {
-  "key": "cr_field_target_agent",
-  "zh": "目标智能体",
-  "en": "Target agent"
  },
  {
   "key": "cr_delete_after_run",
@@ -4008,6 +4053,16 @@
   "key": "st_exec_interval_range",
   "zh": "执行间隔必须在 1..86400 秒之间",
   "en": "Interval must be between 1 and 86400 seconds"
+ },
+ {
+  "key": "st_cron_interval_range",
+  "zh": "重复周期必须为正整数，且不超过 1 天",
+  "en": "Repeat interval must be a positive integer of at most 1 day"
+ },
+ {
+  "key": "st_cron_workspace_required",
+  "zh": "请选择工作区",
+  "en": "Select a workspace"
  },
  {
   "key": "st_exec_message_empty",

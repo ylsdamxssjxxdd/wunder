@@ -179,6 +179,11 @@ function contentToText(value) {
 }
 
 function summarizeToolResult(payload) {
+  // Command tools answer with `results[].stdout/stderr` (or one record), not a
+  // text field. Without this the ledger row printed the tool name and nothing
+  // else, and the result tab was empty although the command had run.
+  const command = commandOutput(payload);
+  if (command) return command;
   const data = payload.data;
   if (typeof data === "string") return data;
   if (isRecord(data)) {
@@ -188,6 +193,31 @@ function summarizeToolResult(payload) {
   }
   const fallback = payload.result ?? payload.output ?? payload.content;
   return contentToText(fallback);
+}
+
+function commandOutput(payload) {
+  const data = payload.data;
+  if (!isRecord(data)) return "";
+  const list = Array.isArray(data.results) && data.results.length > 0 ? data.results : [data];
+  const parts = [];
+  for (const entry of list) {
+    if (!isRecord(entry)) continue;
+    const stdout = typeof entry.stdout === "string" ? entry.stdout : "";
+    const stderr = typeof entry.stderr === "string" ? entry.stderr : "";
+    const exit = typeof entry.returncode === "number" ? entry.returncode
+      : typeof entry.exit_code === "number" ? entry.exit_code : null;
+    if (!stdout.trim() && !stderr.trim() && exit === null) continue;
+    const lines = [];
+    const command = typeof entry.command === "string" && entry.command.trim() ? entry.command
+      : typeof entry.cmd === "string" && entry.cmd.trim() ? entry.cmd : "";
+    if (command) lines.push(`$ ${command}`);
+    for (const body of [stdout, stderr]) {
+      if (body.trim()) lines.push(body.replace(/\s+$/, ""));
+    }
+    if (exit !== null && exit !== 0) lines.push(`(exit ${exit})`);
+    if (lines.length > 0) parts.push(lines.join("\n"));
+  }
+  return parts.join("\n\n").trim();
 }
 
 function firstNonEmptyText(...values) {
@@ -534,7 +564,9 @@ function buildCell(item, payload, kind, index) {
             defineLazy(cell, 'resultPreviewMarkdown', () => markdownPreviewText(resultRaw));
         else
             cell.resultPreviewMarkdown = undefined;
-        const schema = payload.schema ?? payload.tool_schema ?? payload.schema_ref;
+        // The snapshot carries the resolved document; the bare `schema_ref`
+        // (catalog version + hash) is a pointer, not something to render.
+        const schema = payload.schema ?? payload.tool_schema;
         if (typeof schema === 'string' && schema.trim())
             cell.schemaDetail = schema;
         else if (isRecord(schema))
@@ -754,6 +786,7 @@ export function buildTrajectoryLayout(rawTurns, t) {
                     if (callId !== undefined && candidatePayload.tool_call_id !== callId)
                         continue;
                     const resultRaw = summarizeToolResult(candidatePayload);
+                    cell.sourceItemIds = [item.item_id, candidate.item_id].filter(Boolean);
                     if (resultRaw.trim()) {
                         cell.result = resultRaw;
                         cell.outputDetail = resultRaw;

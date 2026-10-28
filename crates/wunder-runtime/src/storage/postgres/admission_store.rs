@@ -107,8 +107,11 @@ impl PostgresAdmissionStore {
         let mut c = self.conn()?;
         let mut tx = c.transaction()?;
         Self::lock_thread(&mut tx, thread)?;
-        let settled =
-            Self::settle_orphaned_turns_in_tx(&mut tx, thread, chrono::Utc::now().timestamp_millis())?;
+        let settled = Self::settle_orphaned_turns_in_tx(
+            &mut tx,
+            thread,
+            chrono::Utc::now().timestamp_millis(),
+        )?;
         tx.commit()?;
         Ok(settled)
     }
@@ -186,6 +189,7 @@ impl PostgresAdmissionStore {
             !user.trim().is_empty() && !thread.trim().is_empty(),
             "missing thread identity"
         );
+        let inquiry_turn_id = crate::storage::thread_admission::inquiry_turn_id(input)?;
         let body = prepare_input_json(input)?;
         // Service threads have no local execution lease. Never trust a proof
         // merely because the desktop-only lease implementation is absent.
@@ -193,6 +197,8 @@ impl PostgresAdmissionStore {
             input.get("local_open_lease").is_none_or(Value::is_null),
             "local execution leases are not supported by service storage"
         );
+        self.storage.ensure_initialized()?;
+        super::thread_display::ensure_ready(&self.storage, thread)?;
         let mut c = self.conn()?;
         let mut tx = c.transaction()?;
         Self::lock_thread(&mut tx, thread)?;
@@ -215,6 +221,28 @@ impl PostgresAdmissionStore {
                 return Ok(accepted);
             }
         }
+        if let Some(inquiry_turn_id) = inquiry_turn_id.as_deref() {
+            let waiting = tx.query_opt(
+                "SELECT status,control_json FROM service_thread_admissions WHERE thread_id=$1 AND turn_id=$2 FOR UPDATE",
+                &[&thread, &inquiry_turn_id],
+            )?.ok_or_else(|| anyhow!("inquiry turn not found"))?;
+            if let Some(control) = waiting.get::<_, Option<String>>(1) {
+                let control: Value = serde_json::from_str(&control)?;
+                if let Some(answer) = control["answered_by_turn_id"].as_str() {
+                    let previous = tx.query_one(
+                        "SELECT root_turn_id,user_round FROM service_thread_admissions WHERE thread_id=$1 AND turn_id=$2",
+                        &[&thread, &answer],
+                    )?;
+                    let accepted = json!({"turn_id":answer,"root_turn_id":previous.get::<_, String>(0),"user_turn_index":previous.get::<_, i64>(1),"created":false});
+                    tx.commit()?;
+                    return Ok(accepted);
+                }
+            }
+            ensure!(
+                waiting.get::<_, String>(0) == "waiting_input",
+                "inquiry is no longer waiting for input"
+            );
+        }
         let turn = uuid::Uuid::new_v4().to_string();
         let (root, round) = if let Some(round) =
             input.get("root_user_round").and_then(Value::as_i64)
@@ -230,6 +258,15 @@ impl PostgresAdmissionStore {
         };
         let now = chrono::Utc::now().timestamp_millis();
         tx.execute("INSERT INTO service_thread_admissions(thread_id,turn_id,root_turn_id,user_round,client_message_id,status,input_json,created_at_ms,updated_at_ms) VALUES($1,$2,$3,$4,$5,'accepted',$6,$7,$7)", &[&thread,&turn,&root,&round,&client,&body,&now])?;
+        if let Some(inquiry_turn_id) = inquiry_turn_id.as_deref() {
+            let control = crate::storage::thread_admission::inquiry_answer_control(&turn)?;
+            let updated = tx.execute(
+                "UPDATE service_thread_admissions SET control_json=$3,updated_at_ms=$4
+                 WHERE thread_id=$1 AND turn_id=$2 AND status='waiting_input'",
+                &[&thread, &inquiry_turn_id, &control, &now],
+            )?;
+            ensure!(updated == 1, "inquiry is no longer waiting for input");
+        }
         tx.commit()?;
         Ok(
             json!({"turn_id":turn,"root_turn_id":root,"user_turn_index":round,"status":"accepted","created":true,"client_message_id":client}),
@@ -428,7 +465,7 @@ impl PostgresAdmissionStore {
                 let mut value = json!({"turn_id":row.get::<_,String>(0),"root_turn_id":row.get::<_,String>(1),"user_turn_index":row.get::<_,i64>(2),"status":row.get::<_,String>(3),"client_message_id":row.get::<_,Option<String>>(4),"created_time":row.get::<_,i64>(6) as f64/1000.0,"updated_time":row.get::<_,i64>(7) as f64/1000.0});
                 if let Some(raw) = row.get::<_,Option<String>>(5) {
                     let control: Value = serde_json::from_str(&raw)?;
-                    for key in ["queued_input", "stop_reason"] {
+                    for key in ["queued_input", "stop_reason", "answered_by_turn_id"] {
                         if let Some(field) = control.get(key) { value[key] = field.clone(); }
                     }
                 }
@@ -478,6 +515,15 @@ impl PostgresAdmissionStore {
             return Ok(false);
         }
         let previous_control: Option<String> = previous.get(1);
+        let mut inquiry_state: Value = previous_control
+            .as_deref()
+            .map(serde_json::from_str)
+            .transpose()?
+            .unwrap_or_else(|| json!({}));
+        inquiry_state["status"] = json!(previous_status);
+        if !crate::storage::thread_admission::can_settle_inquiry(&inquiry_state, payload) {
+            return Ok(false);
+        }
         let control = bounded_control_json(previous_control.as_deref(), status, payload)?;
         if previous_status == status
             && previous_control == control
