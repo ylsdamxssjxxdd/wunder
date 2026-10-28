@@ -1,4 +1,4 @@
-import { threadViewSlots, threadViewCursor,settlePendingThreadView,removeThreadViewTurnByClientMessageId } from '@/realtime/chat/threadViewStore';
+import { threadViewSlots, threadViewCursor, threadViewOwnsExecution, settlePendingThreadView, removeThreadViewTurnByClientMessageId } from '@/realtime/chat/threadViewStore';
 import { applyChatThreadEffects, applyThreadViewEffects, syncChatThreadShell } from './chatThreadEffects';
 import { defineStore } from 'pinia';
 
@@ -674,6 +674,18 @@ export const chatSendActions = {
               onOverflow: () => startSessionWatcher(this, sessionId)
             })
           ) {
+            return;
+          }
+          const transportFinalOnly = effectiveEventType === 'transport_final' ||
+            (effectiveEventType === 'final' && threadViewOwnsExecution(sessionId));
+          if (transportFinalOnly) {
+            chatDebugLog('chat.store.terminal-debug', 'transport-final', {
+              sessionId,
+              eventType: effectiveEventType,
+              eventId: normalizeStreamEventId(eventId),
+              threadViewOwnsExecution: threadViewOwnsExecution(sessionId)
+            });
+            syncRuntimeLastAppliedEventId();
             return;
           }
           const terminalLlmOutput =

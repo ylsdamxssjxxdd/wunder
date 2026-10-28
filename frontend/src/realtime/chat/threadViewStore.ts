@@ -404,7 +404,7 @@ export function threadViewOwnsExecution(key:string):boolean {void threadViewCloc
 export function threadViewConfirmsCompletion(key:string,turnId:string,status:string):boolean {
   const e=entries.get(key);
   if(!e?.headAuthoritative)return true;
-  return (e.statusTurnId===turnId && e.latestStatus===status && TERMINAL_ROW_STATUSES.includes(status)) ||
+  return e.statusTurnId===turnId && e.latestStatus===status && TERMINAL_ROW_STATUSES.includes(status) &&
     [...e.rows.values()].some(row=>(row.execution_turn_id || row.root_turn_id)===turnId && row.status===status && TERMINAL_ROW_STATUSES.includes(row.status));
 }
 /** Admission guards compare execution watermarks, never transcript cursors. */

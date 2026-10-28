@@ -46,28 +46,6 @@ export const claimAgentRuntimeCompletion = (sessionId: unknown, turnId: unknown)
   return true;
 };
 
-/** Claim the aggregate fallback notification for the same agent. */
-export const claimAgentRuntimeAgentCompletion = (agentId: unknown): boolean => {
-  const agent = String(agentId ?? '').trim();
-  if (!agent) return false;
-  const now = Date.now();
-  for (const [key, claimedAt] of completionClaims) {
-    if (now - claimedAt > COMPLETION_CLAIM_TTL_MS) completionClaims.delete(key);
-  }
-  const key = `agent:${agent}`;
-  const previous = completionClaims.get(key);
-  // Aggregate state has no turn identity, so keep this fallback claim short;
-  // a later independent task for the same agent must still be announceable.
-  if (previous !== undefined && now - previous < 15_000) return false;
-  completionClaims.set(key, now);
-  while (completionClaims.size > COMPLETION_CLAIM_LIMIT) {
-    const oldest = completionClaims.keys().next().value;
-    if (!oldest) break;
-    completionClaims.delete(oldest);
-  }
-  return true;
-};
-
 export const emitWorkspaceRefresh = (detail = {}) => {
   if (typeof window === 'undefined') return;
   const payload = detail && typeof detail === 'object' ? detail : { detail };

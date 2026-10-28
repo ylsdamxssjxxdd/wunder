@@ -650,7 +650,7 @@ pub(crate) async fn resume_queued_thread_view(
                     &tx,
                     request,
                     StreamEvent {
-                        event: "final".into(),
+                        event: "transport_final".into(),
                         data: json!({"session_id":session}),
                         id: None,
                         timestamp: Some(Utc::now()),
@@ -1382,7 +1382,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn queued_final_survives_display_feeder_reset() {
+    async fn queued_transport_final_survives_display_feeder_reset() {
         let (state, _dir) = build_test_state("queue-reset-fixture").await;
         state
             .storage
@@ -1452,7 +1452,7 @@ mod tests {
                 let Some(Message::Text(raw)) = receiver.recv().await else {
                     panic!("queue watcher closed without final");
                 };
-                if parse_ws_event_type(&raw) == "final" {
+                if parse_ws_event_type(&raw) == "transport_final" {
                     break;
                 }
             }

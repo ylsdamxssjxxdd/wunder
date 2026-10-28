@@ -33,9 +33,13 @@ class WorkProcessFormalTests(unittest.TestCase):
                 source = ROOT / "docs/形式化证明/聊天状态一致性验证/models"
                 for suffix in (".tla", ".cfg", ".map.mjs"):
                     self.assertEqual((scratch / (name + suffix)).read_bytes(), (source / (name + suffix)).read_bytes())
-                self.assertIn("Fixed = TRUE", (scratch / (name + "Fixed.cfg")).read_text(encoding="utf-8"))
-                self.assertEqual((scratch / (name + ".cfg")).read_text(encoding="utf-8").replace("Fixed = FALSE", "Fixed = TRUE"),
-                                 (scratch / (name + "Fixed.cfg")).read_text(encoding="utf-8"))
+                if name == "ThreadHead":
+                    self.assertEqual((scratch / (name + "Fixed.tla")).read_bytes(), (source / (name + "Fixed.tla")).read_bytes())
+                    self.assertEqual((scratch / (name + "Fixed.cfg")).read_bytes(), (source / (name + "Fixed.cfg")).read_bytes())
+                else:
+                    self.assertIn("Fixed = TRUE", (scratch / (name + "Fixed.cfg")).read_text(encoding="utf-8"))
+                    self.assertEqual((scratch / (name + ".cfg")).read_text(encoding="utf-8").replace("Fixed = FALSE", "Fixed = TRUE"),
+                                     (scratch / (name + "Fixed.cfg")).read_text(encoding="utf-8"))
                 target = Path(command[command.index("--out") + 1])
                 (target / "tlc/fixed").mkdir(parents=True)
                 invariants = [line.split()[1] for line in (source / (name + ".cfg")).read_text(encoding="utf-8").splitlines() if line.startswith("INVARIANT ")]
@@ -54,7 +58,7 @@ class WorkProcessFormalTests(unittest.TestCase):
                     mock.patch.object(module.subprocess, "run", side_effect=checker) as run, \
                     contextlib.redirect_stdout(io.StringIO()):
                 module.main()
-                self.assertEqual(run.call_count, 2)
+                self.assertEqual(run.call_count, 3)
 
     def test_all_invariants_and_canonical_sources_are_checked(self):
         self.run_fixture()

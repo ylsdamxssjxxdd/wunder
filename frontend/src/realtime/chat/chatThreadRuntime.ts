@@ -512,7 +512,7 @@ export const applyChatThreadServerEvent = (
       return true;
     }
   }
-  if (CONTROL_EVENT.test(eventType)||eventType==='final') return false;
+  if (CONTROL_EVENT.test(eventType)||eventType==='final'||eventType==='transport_final') return false;
   // An uncommitted window entry must not shadow the durable transcript either:
   // the frames below are the only producer of it until the page commits.
   if(threadViewCommitted(key))return true;

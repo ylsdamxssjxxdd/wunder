@@ -540,6 +540,10 @@ export const buildCanonicalChatRuntimeEvents = (
     ];
   }
 
+  if (eventType === 'transport_final') {
+    return [];
+  }
+
   if (eventType === 'turn_terminal') {
     const status = normalizeEventType(data.status ?? payload.status);
     const finalOk = data.final_ok ?? payload.final_ok;
