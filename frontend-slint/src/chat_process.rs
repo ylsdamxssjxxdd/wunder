@@ -100,15 +100,16 @@ fn bind(app: &MainWindow, api: Arc<NativeDesktop>, child: bool, pending: Rc<Cell
             -1 | 1 => return,
             _ => (None, None),
         };
-        if pending.get() >= 4 {
-            return;
-        }
-        if !inflight.borrow_mut().insert(key.clone()) {
+        if inflight.borrow().contains(&key) {
             if direction == 2 {
                 dirty.borrow_mut().insert(key);
             }
             return;
         }
+        if pending.get() >= 4 {
+            return;
+        }
+        inflight.borrow_mut().insert(key.clone());
         pending.set(pending.get() + 1);
         let entries = row.process_entries.clone();
         // Background tail refreshes keep the existing layout and scroll anchor.

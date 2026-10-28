@@ -37,8 +37,12 @@ def main():
         if any(summary.get("uncited", {}).values()) or summary["chartStatus"]["wrong"] or summary["brokenProperties"]:
             raise SystemExit("Unverified model: " + name)
         logs = list((target / "tlc").rglob("*.out"))
-        if not logs or not any("fixed" in path.parts for path in logs):
-            raise SystemExit("Missing fixed-model verification: " + name)
+        invariants = [line.split()[1] for line in (scratch / (name + ".cfg")).read_text(encoding="utf-8").splitlines() if line.startswith("INVARIANT ")]
+        required = [target / "tlc" / (name + ".out"), target / "tlc/fixed" / (name + "Fixed.out")]
+        required += [target / "tlc" / (name + "-" + invariant + ".out") for invariant in invariants]
+        required += [target / "tlc/fixed" / (name + "Fixed-" + invariant + ".out") for invariant in invariants]
+        if any(not path.is_file() for path in required):
+            raise SystemExit("Missing invariant verification: " + name)
         for path in logs:
             text = path.read_text(encoding="utf-8", errors="replace")
             if "Model checking completed" not in text or "Exception" in text or "TLC threw" in text:

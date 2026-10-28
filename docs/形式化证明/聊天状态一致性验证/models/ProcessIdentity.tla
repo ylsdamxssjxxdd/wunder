@@ -14,7 +14,7 @@ Init ==
     /\ currentText = ""
 
 NextRound ==
-    /\ phase = 0 \* frontend/src/realtime/chat/threadViewStore.ts:635; next item admission
+    /\ phase = 0 \* frontend/src/realtime/chat/threadViewStore.ts:649; next item admission
     /\ phase' = 1
     /\ liveRound' = 2
     /\ visibleRound' = 2
@@ -30,18 +30,18 @@ BindReasoning ==
     /\ UNCHANGED <<scenario, liveRound, visibleRound, incomingText, currentText>>
 
 LateTail ==
-    \* frontend/src/realtime/chat/threadViewStore.ts:655; false binding must return
-    /\ phase = 1 \* frontend/src/realtime/chat/threadViewStore.ts:655; false binding must return
-    /\ scenario = "tail" \* frontend/src/realtime/chat/threadViewStore.ts:655; false binding must return
+    \* frontend/src/realtime/chat/threadViewStore.ts:672; false binding must return
+    /\ phase = 1 \* frontend/src/realtime/chat/threadViewStore.ts:672; false binding must return
+    /\ scenario = "tail" \* frontend/src/realtime/chat/threadViewStore.ts:672; false binding must return
     /\ currentText' = IF Fixed THEN currentText ELSE currentText \o " stale"
     /\ visibleRound' = IF Fixed THEN visibleRound ELSE 1
     /\ phase' = 2
     /\ UNCHANGED <<scenario, liveRound, oldText, incomingText>>
 
 DurableRefresh ==
-    \* frontend/src/realtime/chat/threadViewStore.ts:234; active newer model identity survives
-    /\ phase = 1 \* frontend/src/realtime/chat/threadViewStore.ts:234; active newer model identity survives
-    /\ scenario = "snapshot" \* frontend/src/realtime/chat/threadViewStore.ts:234; active newer model identity survives
+    \* frontend/src/realtime/chat/threadViewStore.ts:250; active newer model identity survives
+    /\ phase = 1 \* frontend/src/realtime/chat/threadViewStore.ts:250; active newer model identity survives
+    /\ scenario = "snapshot" \* frontend/src/realtime/chat/threadViewStore.ts:250; active newer model identity survives
     /\ currentText' = IF Fixed THEN currentText ELSE ""
     /\ visibleRound' = IF Fixed THEN visibleRound ELSE 1
     /\ phase' = 2
@@ -53,8 +53,11 @@ TypeOK == /\ phase \in 0..2 /\ liveRound \in 1..2 /\ visibleRound \in 1..2
           /\ oldText \in {"Fixture repeated completed", "Fixture repeated"}
           /\ incomingText = "Fixture repeated"
           /\ currentText \in {"", "Fixture repeated", "Fixture repeated stale"}
+\* Completed canonical thoughts remain unchanged; mutators: frontend/src/components/chat/MessageTimelineTurnProcess.vue:178; frontend-slint/src/timeline_text.rs:251.
 CompletedReasoningImmutable == oldText = "Fixture repeated completed"
+\* Old model tails cannot move or append to the current thought; mutator: frontend/src/realtime/chat/threadViewStore.ts:673.
 NoTailIdentityRollback == (scenario = "tail" /\ phase = 2) => (visibleRound = liveRound /\ currentText = incomingText)
+\* A newer durable revision with an older model identity cannot replace live text; mutator: frontend/src/realtime/chat/threadViewStore.ts:250.
 NoDurableIdentityRollback == (scenario = "snapshot" /\ phase = 2) => (visibleRound = liveRound /\ currentText = incomingText)
 Spec == Init /\ [][Next]_vars
 =============================================================================

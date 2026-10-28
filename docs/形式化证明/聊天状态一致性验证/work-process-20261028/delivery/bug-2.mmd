@@ -1,0 +1,30 @@
+---
+config:
+  markdownAutoWrap: false
+  state:
+    useMaxWidth: false
+---
+stateDiagram-v2
+  %% second model (fix): the fix
+  classDef plainFixed fill:#f4f6f7,stroke:#1e8449,stroke-width:4px,color:#145a32
+  classDef group1 fill:#fdebd0,stroke:#7f7668,color:#1b2631
+  classDef group1Fixed fill:#fdebd0,stroke:#1e8449,stroke-width:4px,color:#145a32
+  classDef group1Path fill:#fdebd0,stroke:#1f3a93,stroke-width:4px,color:#1b2631
+  state "Legend" as legend {
+    state "refresh" as legendGroup1
+    state "Fixed or new with the fix" as legendFixed
+  }
+  class legendGroup1 group1
+  class legendFixed plainFixed
+  state "连续结构事件<br/>已收到1次事件<br/>首次期限0，当前期限0<br/>等待刷新" as s0
+  state "连续结构事件<br/>已收到2次事件<br/>首次期限3，当前期限3<br/>等待刷新" as s1
+  state "连续结构事件<br/>已收到3次事件<br/>首次期限3，当前期限3<br/>等待刷新" as s2
+  state "连续结构事件<br/>已收到3次事件<br/>首次期限3，当前期限4<br/>等待刷新" as s3
+  [*] --> s0
+  s0 --> s1 : 1. 新事件不推迟首次刷新期限
+  s1 --> s3 : 2. 新事件不推迟首次刷新期限
+  s1 --> s2 : with the fix, 新事件不推迟首次刷新期限
+  class s0 group1Path
+  class s1 group1Path
+  class s2 group1Fixed
+  class s3 group1Fixed

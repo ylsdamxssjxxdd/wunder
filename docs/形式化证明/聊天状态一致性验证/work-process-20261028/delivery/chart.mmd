@@ -1,0 +1,80 @@
+---
+config:
+  markdownAutoWrap: false
+  state:
+    useMaxWidth: false
+---
+stateDiagram-v2
+  %% second model (fix): the fix
+  classDef plainFixed fill:#f4f6f7,stroke:#1e8449,stroke-width:4px,color:#145a32
+  classDef group0 fill:#d6eaf8,stroke:#6b757c,color:#1b2631
+  classDef group0Fixed fill:#d6eaf8,stroke:#1e8449,stroke-width:4px,color:#145a32
+  classDef group1 fill:#fdebd0,stroke:#7f7668,color:#1b2631
+  classDef group1Fixed fill:#fdebd0,stroke:#1e8449,stroke-width:4px,color:#145a32
+  classDef group2 fill:#e8daef,stroke:#746d78,color:#1b2631
+  classDef group2Fixed fill:#e8daef,stroke:#1e8449,stroke-width:4px,color:#145a32
+  state "Legend" as legend {
+    state "order" as legendGroup0
+    state "refresh" as legendGroup1
+    state "tool" as legendGroup2
+    state "Fixed or new with the fix" as legendFixed
+  }
+  class legendGroup0 group0
+  class legendGroup1 group1
+  class legendGroup2 group2
+  class legendFixed plainFixed
+  state "工具实时条目<br/>尚未启动<br/>未展示条目，转圈" as s0
+  state "工具实时条目<br/>执行中<br/>未展示条目，转圈" as s1
+  state "工具实时条目<br/>执行中<br/>条目已展示，转圈" as s2
+  state "工具实时条目<br/>收到迟到启动帧<br/>条目已展示，已完成" as s3
+  state "工具实时条目<br/>结果已到达<br/>条目已展示，已完成" as s4
+  state "并发工具顺序<br/>依次启动工具一、二<br/>展示顺序" as s5
+  state "并发工具顺序<br/>依次启动工具一、二<br/>展示顺序1、2" as s6
+  state "并发工具顺序<br/>尚未启动<br/>展示顺序" as s7
+  state "并发工具顺序<br/>工具二先完成<br/>展示顺序1、2" as s8
+  state "并发工具顺序<br/>工具二先完成<br/>展示顺序2、1" as s9
+  state "连续结构事件<br/>已收到1次事件<br/>首次期限0，当前期限0<br/>等待刷新" as s10
+  state "连续结构事件<br/>已收到2次事件<br/>首次期限3，当前期限3<br/>等待刷新" as s11
+  state "连续结构事件<br/>已收到3次事件<br/>首次期限3，当前期限3<br/>等待刷新" as s12
+  state "连续结构事件<br/>已收到3次事件<br/>首次期限3，当前期限4<br/>等待刷新" as s13
+  state "连续结构事件<br/>已收到4次事件<br/>首次期限3，当前期限3<br/>等待刷新" as s14
+  state "连续结构事件<br/>已收到4次事件<br/>首次期限3，当前期限3<br/>请求已发出" as s15
+  state "连续结构事件<br/>已收到4次事件<br/>首次期限3，当前期限5<br/>等待刷新" as s16
+  state "连续结构事件<br/>已收到4次事件<br/>首次期限3，当前期限5<br/>请求已发出" as s17
+  [*] --> s0
+  [*] --> s7
+  [*] --> s10
+  s7 --> s5 : 记录两次启动的稳定序号
+  s10 --> s11 : 新事件不推迟首次刷新期限
+  s0 --> s1 : 工具开始即推送条目
+  s5 --> s9 : 逆序完成，不改变启动顺序
+  s11 --> s13 : 新事件不推迟首次刷新期限
+  s1 --> s4 : 收到工具结果
+  s13 --> s16 : 新事件不推迟首次刷新期限
+  s4 --> s3 : 拒绝迟到启动帧
+  s16 --> s17 : 期限到达，发起读取
+  s7 --> s6 : with the fix, 记录两次启动的稳定序号
+  s0 --> s2 : with the fix, 工具开始即推送条目
+  s6 --> s8 : with the fix, 逆序完成，不改变启动顺序
+  s11 --> s12 : with the fix, 新事件不推迟首次刷新期限
+  s2 --> s4 : with the fix, 收到工具结果
+  s12 --> s14 : with the fix, 新事件不推迟首次刷新期限
+  s14 --> s15 : with the fix, 期限到达，发起读取
+  class s0 group2
+  class s1 group2Fixed
+  class s2 group2Fixed
+  class s3 group2Fixed
+  class s4 group2Fixed
+  class s5 group0
+  class s6 group0Fixed
+  class s7 group0
+  class s8 group0Fixed
+  class s9 group0Fixed
+  class s10 group1
+  class s11 group1
+  class s12 group1Fixed
+  class s13 group1Fixed
+  class s14 group1Fixed
+  class s15 group1Fixed
+  class s16 group1Fixed
+  class s17 group1Fixed

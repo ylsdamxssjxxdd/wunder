@@ -606,6 +606,41 @@ async fn work_process_stream_admits_tools_before_results_with_stable_order() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn work_process_start_order_survives_more_than_one_thousand_pending_tools() {
+    let (state, _dir) = build_test_state("process-order-capacity-fixture").await;
+    let emitter = EventEmitter::new(
+        "fixture-thread".into(),
+        "fixture-owner".into(),
+        None,
+        None,
+        state.monitor.clone(),
+        false,
+        None,
+    );
+    emitter.bind_turn("fixture-turn", 1);
+    let first = emitter
+        .emit(
+            "tool_call",
+            json!({"model_round":1,"tool_call_id":"fixture-first","tool":"read_file"}),
+        )
+        .await;
+    for index in 0..1100 {
+        emitter.emit("tool_call", json!({"model_round":1,"tool_call_id":format!("fixture-{index}"),"tool":"read_file"})).await;
+    }
+    let completed = emitter
+        .emit(
+            "tool_result",
+            json!({"model_round":1,"tool_call_id":"fixture-first","tool":"read_file","ok":true}),
+        )
+        .await;
+    assert_eq!(
+        first.data["data"]["process_seq"],
+        completed.data["data"]["process_seq"]
+    );
+    assert!(first.data["data"]["process_seq"].as_i64().is_some());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn work_process_observers_receive_running_tools_and_thought_tails_without_durable_completion()
 {
     let (state, _dir) = build_test_state("process_observer").await;

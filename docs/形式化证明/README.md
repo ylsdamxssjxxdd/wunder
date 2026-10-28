@@ -26,7 +26,7 @@
 | 定时任务 | [cron](./cron/README.md) | 领取、编辑、停用、删除与历史原子性 |
 | 服务长线程 | [service-history-20261027](./service-history-20261027/README.md) | 诊断资源边界、元信息与投影计数 |
 | 数据库 I/O 隔离 | [postgres-io](./postgres-io/README.md) | 业务运行时阻塞与独立网络驱动模型 |
-| 蜂巢聊天投影 | [聊天状态一致性验证](./聊天状态一致性验证/README.md) | 完成头与过程刷新顺序 |
+| 蛹与蜂巢聊天投影 | [聊天状态一致性验证](./聊天状态一致性验证/README.md) | 完成头、过程刷新、实时条目与思考身份隔离 |
 | 蛹与舵机投影 | [蛹与舵机状态一致性验证](./蛹与舵机状态一致性验证/README.md) | 终态、过程分页与线程状态 |
 | 舵机 stream 轮次边界 | [tui-stream-epoch-20261027](./tui-stream-epoch-20261027/README.md) | 传输事件编号去重与新 stream 重置 |
 | 舵机中断报错 | [tui-terminal-20261028](./tui-terminal-20261028/README.md) | 错误、取消终态、关闭与下一轮重置 |
@@ -49,6 +49,7 @@
 python scripts/check_cron_formal.py --statechart <statechart-skill>/scripts/statechart.mjs --out <external-scratch>/cron
 python scripts/check_service_history_formal.py --statechart <statechart-skill>/scripts/statechart.mjs --out <external-scratch>/service-history
 python scripts/check_postgres_io_formal.py --statechart <statechart-skill>/scripts/statechart.mjs --out <external-scratch>/postgres-io
+python scripts/check_work_process_formal.py --statechart <statechart-skill>/scripts/statechart.mjs --out <external-scratch>/work-process
 ```
 
 其他主题按各自 README 的命令在仓库外复验；迁移和路径检查本身不构成重新运行全部 TLC 证明。

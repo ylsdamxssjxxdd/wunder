@@ -1,0 +1,92 @@
+{
+  "view": "customer",
+  "second": {
+    "role": "fix",
+    "label": "the fix",
+    "lacks": []
+  },
+  "modelStates": 12,
+  "modelTransitions": 9,
+  "chartStates": 18,
+  "chartTransitions": 16,
+  "chartStatus": {
+    "works": 5,
+    "wrong": 0,
+    "fixed": 13,
+    "mixed": 0,
+    "after": 0,
+    "worse": 0
+  },
+  "mixedStatus": [],
+  "chartGroups": [
+    {
+      "name": "order",
+      "color": "#d6eaf8",
+      "states": 5
+    },
+    {
+      "name": "refresh",
+      "color": "#fdebd0",
+      "states": 8
+    },
+    {
+      "name": "tool",
+      "color": "#e8daef",
+      "states": 5
+    }
+  ],
+  "mixedGroups": [],
+  "classes": [
+    {
+      "n": 1,
+      "end": "工具实时条目<br/>执行中<br/>未展示条目，转圈",
+      "invariant": "LiveToolVisible",
+      "rule": "An admitted running tool is visible before its result; mutators: crates/wunder-runtime/src/orchestrator/event_stream.rs:240; frontend/src/realtime/chat/threadViewStore.ts:611.",
+      "cause": "tool",
+      "readerSteps": 1,
+      "modelSteps": 2,
+      "counterexamples": 1,
+      "lastSteps": [
+        "工具开始即推送条目"
+      ],
+      "startsHere": false,
+      "fix": "工具实时条目<br/>执行中<br/>条目已展示，转圈"
+    },
+    {
+      "n": 2,
+      "end": "连续结构事件<br/>已收到3次事件<br/>首次期限3，当前期限4<br/>等待刷新",
+      "invariant": "FirstDeadlineNotPostponed",
+      "rule": "Later structural events cannot postpone an armed refresh; mutator: frontend/src/components/chat/MessageTimelineTurnProcess.vue:533.",
+      "cause": "refresh",
+      "readerSteps": 2,
+      "modelSteps": 3,
+      "counterexamples": 1,
+      "lastSteps": [
+        "新事件不推迟首次刷新期限"
+      ],
+      "startsHere": false,
+      "fix": "连续结构事件<br/>已收到3次事件<br/>首次期限3，当前期限3<br/>等待刷新"
+    },
+    {
+      "n": 3,
+      "end": "并发工具顺序<br/>工具二先完成<br/>展示顺序2、1",
+      "invariant": "ToolOrderStable",
+      "rule": "Reverse completion preserves admission order; mutators: crates/wunder-runtime/src/orchestrator/event_stream.rs:315; frontend/src/components/chat/MessageTimelineTurnProcess.vue:238.",
+      "cause": "order",
+      "readerSteps": 2,
+      "modelSteps": 3,
+      "counterexamples": 1,
+      "lastSteps": [
+        "逆序完成，不改变启动顺序"
+      ],
+      "startsHere": false,
+      "fix": "并发工具顺序<br/>依次启动工具一、二<br/>展示顺序1、2"
+    }
+  ],
+  "codeLike": [],
+  "uncited": {
+    "scratch/ProcessDelivery.tla": [],
+    "scratch/ProcessDeliveryFixed.tla": []
+  },
+  "brokenProperties": []
+}

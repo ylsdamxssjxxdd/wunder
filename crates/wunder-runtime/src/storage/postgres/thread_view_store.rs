@@ -158,6 +158,7 @@ fn chat(turn: &Value, items: &HashMap<String, Value>, seq: i64) -> Result<ChatVi
     row.process_count =
         Some((summary.process_count - i64::from(summary.assistant_process_text)).max(0));
     row.workspace_change_seq = summary.workspace_change_seq;
+    row.subagents = summary.subagents;
     row.reasoning_count = summary.reasoning_count;
     if let Some(item) = summary
         .reasoning_item_id

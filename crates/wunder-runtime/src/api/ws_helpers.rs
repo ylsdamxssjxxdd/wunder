@@ -351,6 +351,21 @@ pub(crate) async fn resume_thread_changes_v2(
     }
 }
 
+async fn send_ws_display_event(
+    tx: &WsSender,
+    request_id: Option<&str>,
+    event: StreamEvent,
+    cancel: Option<&CancellationToken>,
+) -> Result<(), ()> {
+    tokio::select! {
+        result = send_ws_event(tx, request_id, event) => result,
+        _ = async { match cancel {
+            Some(cancel) => cancel.cancelled().await,
+            None => std::future::pending().await,
+        }} => Err(()),
+    }
+}
+
 /// Browser display subscription: bounded row revisions, no raw log replay.
 pub(crate) async fn resume_thread_view(
     state: Arc<AppState>,
@@ -406,7 +421,7 @@ pub(crate) async fn resume_thread_view(
                     })
                     .unwrap_or(Value::Null);
                 if last_goal.as_ref() != Some(&goal) {
-                    if try_send_ws_event(
+                    if send_ws_display_event(
                         &tx,
                         request_id,
                         StreamEvent {
@@ -415,7 +430,9 @@ pub(crate) async fn resume_thread_view(
                             id: None,
                             timestamp: Some(Utc::now()),
                         },
+                        cancel.as_ref(),
                     )
+                    .await
                     .is_err()
                     {
                         return;
@@ -428,7 +445,7 @@ pub(crate) async fn resume_thread_view(
         };
         match result {
             Ok(page) if page.reset_required => {
-                let _ = try_send_ws_event(
+                let _ = send_ws_display_event(
                     &tx,
                     request_id,
                     StreamEvent {
@@ -437,7 +454,9 @@ pub(crate) async fn resume_thread_view(
                         id: None,
                         timestamp: Some(Utc::now()),
                     },
-                );
+                    cancel.as_ref(),
+                )
+                .await;
                 return;
             }
             Ok(page) => {
@@ -470,7 +489,7 @@ pub(crate) async fn resume_thread_view(
                     after = page.view_seq;
                     last_runtime = Some(runtime);
                     last_row_controls = Some(row_controls);
-                    if try_send_ws_event(
+                    if send_ws_display_event(
                         &tx,
                         request_id,
                         StreamEvent {
@@ -479,7 +498,9 @@ pub(crate) async fn resume_thread_view(
                             id: None,
                             timestamp: Some(Utc::now()),
                         },
+                        cancel.as_ref(),
                     )
+                    .await
                     .is_err()
                     {
                         return;
@@ -487,7 +508,7 @@ pub(crate) async fn resume_thread_view(
                 }
             }
             Err(_) => {
-                let _ = try_send_ws_event(
+                let _ = send_ws_display_event(
                     &tx,
                     request_id,
                     StreamEvent {
@@ -496,7 +517,9 @@ pub(crate) async fn resume_thread_view(
                         id: None,
                         timestamp: Some(Utc::now()),
                     },
-                );
+                    cancel.as_ref(),
+                )
+                .await;
                 return;
             }
         }
@@ -521,19 +544,27 @@ pub(crate) async fn resume_thread_view(
                     Ok(event) => {
                         let structural = event.event == "thread_process_item";
                         if send_ws_tail_event(&tx, request_id, event).await.is_err() && structural {
-                            let _ = try_send_ws_event(&tx, request_id, StreamEvent {
+                            tokio::select! {
+                            _ = &mut cancellation => return,
+                            result = send_ws_event(&tx, request_id, StreamEvent {
                                 event: "thread_view_required".into(), data: json!({"session_id":session_id}),
                                 id: None, timestamp: Some(Utc::now()),
-                            });
-                            return;
+                            }) => if result.is_err() { return; },
+                            }
+                            if let Some(receiver) = live.as_mut() { *receiver = receiver.resubscribe(); }
+                            break;
                         }
                     },
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                        let _ = try_send_ws_event(&tx, request_id, StreamEvent {
+                        tokio::select! {
+                        _ = &mut cancellation => return,
+                        result = send_ws_event(&tx, request_id, StreamEvent {
                             event: "thread_view_required".into(), data: json!({"session_id":session_id}),
                             id: None, timestamp: Some(Utc::now()),
-                        });
-                        return;
+                        }) => if result.is_err() { return; },
+                        }
+                        if let Some(receiver) = live.as_mut() { *receiver = receiver.resubscribe(); }
+                        break;
                     },
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
                 },
@@ -1681,6 +1712,113 @@ mod tests {
         );
         cancel.cancel();
         task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn display_watch_recovers_live_overflow_without_ending_the_subscription() {
+        let (state, _dir) = build_test_state("process-overflow-fixture").await;
+        state
+            .kernel
+            .orchestrator
+            .committer
+            .accept_turn(
+                "fixture-user",
+                "fixture-thread",
+                &json!({"content":"Fixture input"}),
+            )
+            .await
+            .unwrap();
+        let (sender, mut receiver) = mpsc::channel(1);
+        let cancel = CancellationToken::new();
+        let task = tokio::spawn(resume_thread_view(
+            state.clone(),
+            "fixture-thread".into(),
+            "fixture-user".into(),
+            0,
+            true,
+            None,
+            WsSender::new(sender),
+            Some(cancel.clone()),
+        ));
+        async fn next_event(receiver: &mut mpsc::Receiver<Message>, expected: &str) {
+            tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    let Message::Text(raw) = receiver.recv().await.unwrap() else {
+                        continue;
+                    };
+                    if parse_ws_event_type(&raw) == expected {
+                        return;
+                    }
+                }
+            })
+            .await
+            .unwrap();
+        }
+        next_event(&mut receiver, "thread_view_change").await;
+        for index in 0..200 {
+            state.kernel.orchestrator.change_hub.publish_live(
+                "fixture-thread",
+                &StreamEvent {
+                    event: "thread_process_item".into(),
+                    data: json!({"order":index}),
+                    id: None,
+                    timestamp: None,
+                },
+            );
+        }
+        next_event(&mut receiver, "thread_view_required").await;
+        tokio::task::yield_now().await;
+        state.kernel.orchestrator.change_hub.publish_live(
+            "fixture-thread",
+            &StreamEvent {
+                event: "thread_process_item".into(),
+                data: json!({"item_id":"fixture-next","status":"running"}),
+                id: None,
+                timestamp: None,
+            },
+        );
+        next_event(&mut receiver, "thread_process_item").await;
+        assert!(!task.is_finished());
+        cancel.cancel();
+        tokio::time::timeout(Duration::from_secs(5), task)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn live_process_structure_waits_for_capacity_while_text_tails_remain_bounded() {
+        let (tx, mut rx) = mpsc::channel::<Message>(1);
+        tx.try_send(Message::Text("fixture busy".into())).unwrap();
+        let sender = WsSender::new(tx);
+        let text = StreamEvent {
+            event: "thread_item_tail".into(),
+            data: json!({"text":"fixture tail"}),
+            id: None,
+            timestamp: None,
+        };
+        assert_eq!(send_ws_tail_event(&sender, None, text).await, Err(()));
+        let worker = tokio::spawn(async move {
+            send_ws_tail_event(
+                &sender,
+                None,
+                StreamEvent {
+                    event: "thread_process_item".into(),
+                    data: json!({"item_id":"fixture-tool","status":"running"}),
+                    id: None,
+                    timestamp: None,
+                },
+            )
+            .await
+        });
+        tokio::task::yield_now().await;
+        assert!(!worker.is_finished());
+        rx.recv().await.unwrap();
+        assert_eq!(worker.await.unwrap(), Ok(()));
+        let Message::Text(raw) = rx.recv().await.unwrap() else {
+            panic!("expected structure")
+        };
+        assert_eq!(parse_ws_event_type(&raw), "thread_process_item");
     }
 
     #[tokio::test]

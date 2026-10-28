@@ -8,6 +8,8 @@ use serde_json::Value;
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct ChatSummary {
     #[serde(default)]
+    pub subagents: Vec<Value>,
+    #[serde(default)]
     pub process_count: i64,
     #[serde(default)]
     pub assistant_process_text: bool,
@@ -116,6 +118,7 @@ pub(super) fn apply_item(
     } else {
         payload
     };
+    let kind = payload.get("kind").and_then(Value::as_str).unwrap_or(kind);
     if visible {
         summary.workflow_count += i64::from(kind != "user_message");
         let stable = super::thread_view_projection::stable_answer(id, turn, kind);
@@ -148,6 +151,16 @@ pub(super) fn apply_item(
                 }
             }
             "question_panel" => summary.question_panel_item_id = Some(id.into()),
+            "subagent_run" => {
+                if let Some(card) =
+                    super::thread_view_projection::subagent_card(body, id, ordinal + 1)
+                {
+                    super::thread_view_projection::upsert_subagent_card(
+                        &mut summary.subagents,
+                        card,
+                    );
+                }
+            }
             "plan" => summary.plan_item_id = Some(id.into()),
             _ => {}
         }
@@ -275,6 +288,9 @@ pub(super) fn read(conn: &Connection, rollout: &str, root: &str) -> Result<ChatS
         result.reasoning_count += current.reasoning_count;
         result.workflow_count += current.workflow_count;
         result.process_count += current.process_count;
+        for card in current.subagents {
+            super::thread_view_projection::upsert_subagent_card(&mut result.subagents, card);
+        }
         result.workspace_change_seq = result
             .workspace_change_seq
             .max(current.workspace_change_seq);
@@ -296,6 +312,45 @@ mod tests {
         }}})
         .to_string()
             + "\n"
+    }
+
+    #[test]
+    fn semantic_kinds_and_bounded_child_cards_survive_canonical_wrappers_and_rebuild() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = ThreadHistoryStore::open(directory.path().join("history.sqlite")).unwrap();
+        let mut bytes = String::new();
+        for index in 0..12 {
+            bytes += &record(
+                index,
+                "fixture-turn",
+                &format!("fixture-child-{index}"),
+                "configuration",
+                json!({"kind":"subagent_run","runtime":{"session_id":format!("fixture-child-{index}"),
+                    "status":"running","can_terminate":true,"metrics":{"tool_calls":2}}}),
+            );
+        }
+        bytes += &record(
+            12,
+            "fixture-turn",
+            "fixture-tool",
+            "tool_result",
+            json!({"kind":"tool_call","tool":"read_file","status":"completed"}),
+        );
+        store
+            .project_jsonl_bytes("fixture-rollout", bytes.as_bytes())
+            .unwrap();
+        let mut conn = Connection::open(store.db_path()).unwrap();
+        let expected = read(&conn, "fixture-rollout", "fixture-root").unwrap();
+        assert_eq!(expected.subagents.len(), 8);
+        assert_eq!(expected.subagents[0]["session_id"], "fixture-child-4");
+        assert_eq!(expected.subagents[0]["canTerminate"], true);
+        assert_eq!(expected.process_count, 1);
+        conn.execute_batch("DELETE FROM thread_chat_heads_v2; DELETE FROM thread_chat_checkpoints_v2; DELETE FROM thread_chat_projection_state_v2;").unwrap();
+        ensure_ready(&mut conn, "fixture-rollout").unwrap();
+        assert_eq!(
+            read(&conn, "fixture-rollout", "fixture-root").unwrap(),
+            expected
+        );
     }
 
     #[test]
