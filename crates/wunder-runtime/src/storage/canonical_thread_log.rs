@@ -514,6 +514,7 @@ impl<'a> CanonicalThreadLog<'a> {
         row.process_count =
             Some((summary.process_count - i64::from(summary.assistant_process_text)).max(0));
         row.workspace_change_seq = summary.workspace_change_seq;
+        row.subagents = summary.subagents;
         p::settle_question_panel(&mut row);
         Ok(row)
     }

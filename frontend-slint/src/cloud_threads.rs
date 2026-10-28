@@ -87,6 +87,7 @@ mod tests {
     fn cloud_live_reasoning_rejects_stale_rounds_and_old_durable_snapshots() {
         let mut current = row(1, 1);
         current.status = "running".into();
+        current.process_count = Some(1);
         current.execution_turn_id = "fixture-execution".into();
         current.assistant.item_id = "fixture-execution:text-1".into();
         let mut rows = vec![current.clone()];
@@ -104,6 +105,7 @@ mod tests {
         merge_messages(&mut rows, &[current], false);
         assert_eq!(rows[0].assistant.reasoning, "Fixture current");
         assert_eq!(rows[0].reasoning_item_id, "fixture-execution:text-2");
+        assert_eq!(rows[0].process_count, Some(2));
         assert!(apply_tail_to(
             &mut rows,
             &serde_json::json!({"item_id":"fixture-execution:text-2",
@@ -142,13 +144,41 @@ mod tests {
         let mut completed = tool.clone();
         completed["status"] = serde_json::json!("completed");
         assert!(apply_process_item(completed));
-        assert!(apply_process_item(tool));
+        assert!(!apply_process_item(tool));
         merge_live_process(&mut row);
         assert_eq!(row.process_entries.row_count(), 1);
         assert_eq!(
             row.process_entries.row_data(0).unwrap().status_kind,
             crate::timeline::STATUS_DONE
         );
+        PROCESS_ITEMS.with(|items| items.borrow_mut().clear());
+        MESSAGES.with(|messages| messages.borrow_mut().clear());
+    }
+
+    #[test]
+    fn cloud_continuation_process_items_bind_to_the_user_root() {
+        PROCESS_ITEMS.with(|items| items.borrow_mut().clear());
+        MESSAGES.with(|messages| {
+            *messages.borrow_mut() = vec![ChatViewRow {
+                root_turn_id: "fixture-root".into(),
+                execution_turn_id: "fixture-continuation".into(),
+                status: "running".into(),
+                ..Default::default()
+            }]
+        });
+        assert!(apply_process_item(
+            serde_json::json!({"turn_id":"fixture-continuation",
+            "root_turn_id":"fixture-continuation","item_id":"fixture-continuation:tool-first",
+            "kind":"tool_call","status":"running","payload":{"tool":"read_file","model_round":1,"process_seq":1}})
+        ));
+        let mut row = crate::TimelineRow {
+            process_idx: 1,
+            process_root: "fixture-root".into(),
+            process_entries: ModelRc::new(VecModel::<crate::ProcessEntry>::default()),
+            ..Default::default()
+        };
+        merge_live_process(&mut row);
+        assert_eq!(row.process_entries.row_count(), 1);
         PROCESS_ITEMS.with(|items| items.borrow_mut().clear());
         MESSAGES.with(|messages| messages.borrow_mut().clear());
     }
@@ -207,7 +237,8 @@ mod tests {
             .iter()
             .map(|entry| entry.id)
             .collect::<Vec<_>>();
-        let reversed = row.process_entries.iter().rev().collect::<Vec<_>>();
+        let mut reversed = row.process_entries.iter().collect::<Vec<_>>();
+        reversed.reverse();
         row.process_entries = ModelRc::new(VecModel::from(reversed));
         row.process_newer = true;
         merge_live_process(&mut row);
@@ -350,9 +381,20 @@ fn merge_messages(messages: &mut Vec<ChatViewRow>, incoming: &[ChatViewRow], rep
                                 || existing.assistant.content_offset
                                     > next.assistant.content_offset)))
                 {
-                    next.assistant = existing.assistant.clone();
+                    next.assistant.item_id = existing.assistant.item_id.clone();
+                    next.assistant.content = existing.assistant.content.clone();
+                    next.assistant.reasoning = existing.assistant.reasoning.clone();
+                    next.assistant.content_offset = existing.assistant.content_offset;
+                    next.assistant.reasoning_offset = existing.assistant.reasoning_offset;
+                    next.assistant.tail = existing.assistant.tail.clone();
+                    next.assistant.tail_offset = existing.assistant.tail_offset;
                     next.reasoning_item_id = existing.reasoning_item_id.clone();
                     next.process_activity = existing.process_activity.clone();
+                    next.reasoning_count = next.reasoning_count.max(existing.reasoning_count);
+                    next.process_count = match (next.process_count, existing.process_count) {
+                        (Some(incoming), Some(current)) => Some(incoming.max(current)),
+                        (incoming, current) => incoming.or(current),
+                    };
                 }
                 *existing = next;
             }
@@ -395,6 +437,7 @@ fn apply_tail_to(messages: &mut [ChatViewRow], tail: &Value) -> bool {
     };
     let round = model_round(id);
     let next_round = row.assistant.item_id != id;
+    let next_thought = row.reasoning_item_id != id;
     if round < model_round(&row.assistant.item_id) {
         return false;
     }
@@ -445,6 +488,7 @@ fn apply_tail_to(messages: &mut [ChatViewRow], tail: &Value) -> bool {
             start += 1;
         }
         body.drain(..start);
+        body.insert_str(0, "…\n");
     }
     if next_round
         || !matches!(row.process_activity.kind.as_str(), "tool" | "responding")
@@ -455,6 +499,12 @@ fn apply_tail_to(messages: &mut [ChatViewRow], tail: &Value) -> bool {
     }
     if reasoning {
         row.reasoning_item_id = id.into();
+        row.reasoning_count = row.reasoning_count.max(1);
+        if next_thought {
+            if let Some(count) = row.process_count.as_mut() {
+                *count = count.saturating_add(1);
+            }
+        }
     }
     true
 }
@@ -466,7 +516,7 @@ fn apply_tail(tail: Value) -> bool {
     })
 }
 
-fn apply_process_item(item: Value) -> bool {
+fn apply_process_item(mut item: Value) -> bool {
     if !matches!(
         item["kind"].as_str(),
         Some("assistant_message" | "tool_call" | "compaction")
@@ -474,18 +524,32 @@ fn apply_process_item(item: Value) -> bool {
     {
         return false;
     }
-    let execution = item["turn_id"].as_str().unwrap_or_default();
-    let valid = MESSAGES.with(|messages| {
-        messages.borrow().iter().any(|row| {
-            let current = if row.execution_turn_id.is_empty() {
-                &row.root_turn_id
-            } else {
-                &row.execution_turn_id
-            };
-            current == execution && matches!(row.status.as_str(), "accepted" | "running")
-        })
+    let execution = item["turn_id"].as_str().unwrap_or_default().to_owned();
+    let root = MESSAGES.with(|messages| {
+        messages
+            .borrow()
+            .iter()
+            .find(|row| {
+                let current = if row.execution_turn_id.is_empty() {
+                    &row.root_turn_id
+                } else {
+                    &row.execution_turn_id
+                };
+                current == &execution && matches!(row.status.as_str(), "accepted" | "running")
+            })
+            .map(|row| row.root_turn_id.clone())
     });
-    if !valid {
+    let Some(root) = root else {
+        return false;
+    };
+    item["root_turn_id"] = serde_json::json!(root);
+    if PROCESS_ITEMS.with(|items| {
+        items.borrow().iter().any(|previous| {
+            previous["item_id"] == item["item_id"]
+                && previous["status"] != "running"
+                && item["status"] == "running"
+        })
+    }) {
         return false;
     }
     if item["kind"] == "tool_call" && item["status"] == "running" {
@@ -495,7 +559,7 @@ fn apply_process_item(item: Value) -> bool {
                     &row.root_turn_id
                 } else {
                     &row.execution_turn_id
-                }) == execution
+                }) == &execution
                     && item["payload"]["model_round"].as_i64().unwrap_or(0)
                         >= model_round(&row.assistant.item_id)
             }) {

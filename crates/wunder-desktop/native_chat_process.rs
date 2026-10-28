@@ -298,6 +298,7 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(turn.assistant.text, "Fixture answer");
+        assert_eq!(turn.process_steps, 1606);
         assert_eq!(turn.subagents.len(), 1);
         assert_eq!(turn.subagents[0].session_id, "fixture-child");
         assert!(turn.subagents[0].can_terminate);

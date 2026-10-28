@@ -554,6 +554,13 @@ export function removeThreadViewTurnByClientMessageId(key:string,client:string) 
 function advanceTailActivity(row: ChatViewRow, kind: 'thinking' | 'responding'): void {
   const current = row.process_activity;
   const createdSeq = Number(row.assistant.created_seq || 0);
+  const activeTool = current?.kind === 'tool'
+    ? row.process_items?.find(item => item.item_id === current.item_id) : undefined;
+  if (activeTool && modelRound(row.assistant.item_id) <= Number(activeTool.payload?.model_round ?? 0)) return;
+  if (activeTool && modelRound(row.assistant.item_id) > Number(activeTool.payload?.model_round ?? 0)) {
+    row.process_activity = { kind, item_id: row.assistant.item_id, created_seq: createdSeq };
+    return;
+  }
   // A delayed tail may still extend its model item after a newer tool starts.
   // It must not switch the process header back to that older model phase.
   if (Number(current?.created_seq || 0) > createdSeq ||
@@ -621,13 +628,13 @@ export function applyThreadViewProcessItem(key: string, payload: any): boolean {
   let retained = row.process_items.length;
   for (const other of [...current.rows.values()].reverse()) {
     if (other === row || !other.process_items?.length) continue;
-    other.process_items = other.process_items.slice(-Math.max(0, 100 - retained));
-    if (retained >= 100) other.process_items = [];
+    other.process_items = retained >= 100 ? [] : other.process_items.slice(-(100 - retained));
     retained += other.process_items.length;
     current.slots.set(other.root_turn_id, materialize(other));
   }
   row.process_revision = Number(row.process_revision || 0) + 1;
-  if (kind === 'tool_call' && item.status === 'running') row.process_activity = {
+  if (kind === 'tool_call' && item.status === 'running' &&
+      Number(item.payload?.model_round ?? 0) >= modelRound(row.assistant.item_id)) row.process_activity = {
     kind: 'tool', item_id: id, tool: String(item.payload?.tool || item.payload?.tool_name || ''), created_seq: row.assistant.created_seq
   };
   current.slots.set(row.root_turn_id, materialize(row));
@@ -668,6 +675,10 @@ export function applyThreadViewTail(key:string,payload:any):boolean {
   if(!id||!delta)return true;
   const row = tailRow(e, id);
   if (row) {
+    const field = String(p?.field || 'content');
+    if (!['content', 'reasoning'].includes(field)) return true;
+    const offsetValue = Number(field === 'reasoning' ? p.reasoning_offset ?? p.offset : p.content_offset ?? p.offset);
+    if (row.assistant.item_id !== id && (!Number.isSafeInteger(offsetValue) || offsetValue !== 0)) return true;
     const previousReasoningId = row.reasoning_item_id;
     if (!bindTailAssistant(row, id)) return true;
     if (String(p?.field || 'content') === 'reasoning') {

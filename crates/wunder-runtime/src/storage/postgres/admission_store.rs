@@ -913,6 +913,23 @@ mod tests {
         assert!(!facade
             .update_thread_turn("fixture-user", &thread, &turn, "failed", "", &Value::Null)
             .unwrap());
+        let expected = facade
+            .thread_view_page("fixture-user", &thread, "chat", None, 12)
+            .unwrap();
+        {
+            let mut conn = fixture.storage.conn().unwrap();
+            for table in [
+                "service_thread_items_v2",
+                "service_thread_chat_heads_v2",
+                "service_thread_display_state_v2",
+            ] {
+                conn.execute(
+                    &format!("DELETE FROM {table} WHERE thread_id=$1"),
+                    &[&thread],
+                )
+                .unwrap();
+            }
+        }
         let second = admissions
             .accept(
                 "fixture-user",
@@ -921,6 +938,17 @@ mod tests {
             )
             .unwrap();
         let second = second["turn_id"].as_str().unwrap();
+        let restored = facade
+            .thread_view_page("fixture-user", &thread, "chat", None, 12)
+            .unwrap();
+        let original = restored
+            .chat
+            .iter()
+            .find(|row| row.root_turn_id == turn)
+            .unwrap();
+        assert_eq!(original.user.content, expected.chat[0].user.content);
+        assert_eq!(original.process_count, expected.chat[0].process_count);
+        assert_eq!(original.status, "completed");
         // A terminal update before begin must materialize and clear input too.
         assert!(facade
             .update_thread_turn(

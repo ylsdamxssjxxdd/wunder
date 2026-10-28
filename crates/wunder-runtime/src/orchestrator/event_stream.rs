@@ -337,7 +337,9 @@ impl EventEmitter {
             *sequence
         } else {
             order.0 = order.0.saturating_add(1);
-            if order.1.len() >= 1024 {
+            if order.1.len()
+                >= super::execute_support::DEFAULT_TOOL_CALL_BUDGET_PER_TURN as usize + 1024
+            {
                 if let Some(oldest) = order
                     .1
                     .iter()
