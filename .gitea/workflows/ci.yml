@@ -1,7 +1,14 @@
 name: Linux CI
 
 on:
+  push:
+    branches:
+      - "**"
   workflow_dispatch:
+
+concurrency:
+  group: linux-ci
+  cancel-in-progress: true
 
 env:
   GITHUB_PROXY: https://gh-proxy.com
