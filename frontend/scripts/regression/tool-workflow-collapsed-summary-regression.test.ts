@@ -110,3 +110,51 @@ test('collapsed workflow metadata reads terminal fields from a bounded result ta
     durationLabel: '612ms'
   });
 });
+
+test('skill rows summarize the loaded skill name instead of the shared entry resource', () => {
+  // 技能调用对所有技能共用一个工具；摘要取 path 会一律得到 SKILL.md。
+  for (const name of ['skill_call', 'skill_get', '\u6280\u80fd\u8c03\u7528']) {
+    const summary = buildCollapsedToolWorkflowSummary({
+      key: `skill:${name}`,
+      toolName: name,
+      toolDisplayName: '',
+      toolRuntimeName: name,
+      toolFunctionName: '',
+      callItem: {
+        toolCallRawDetail: JSON.stringify({
+          name: '\u516c\u6587\u5199\u4f5c',
+          action: 'read',
+          path: 'SKILL.md'
+        })
+      },
+      outputItem: null,
+      resultItem: {
+        detail: JSON.stringify({ data: { name: '\u516c\u6587\u5199\u4f5c', path: 'SKILL.md' } })
+      }
+    }, '\u6280\u80fd');
+
+    assert.equal(summary.brief, '\u516c\u6587\u5199\u4f5c');
+    assert.equal(summary.title, '\u6280\u80fd \u516c\u6587\u5199\u4f5c');
+    assert.doesNotMatch(summary.title, /SKILL\.md/);
+  }
+});
+
+test('skill rows fall back to the persisted result name and never to SKILL.md', () => {
+  const summary = buildCollapsedToolWorkflowSummary({
+    key: 'skill:result-only',
+    toolName: 'skill_call',
+    toolDisplayName: '',
+    toolRuntimeName: 'skill_call',
+    toolFunctionName: '',
+    callItem: {
+      detail: JSON.stringify({ data: { name: 'demo_skill', path: 'SKILL.md' } })
+    },
+    outputItem: null,
+    resultItem: {
+      toolCallRawDetail: JSON.stringify({ skill_name: 'demo_skill', path: 'SKILL.md' })
+    }
+  }, '\u6280\u80fd');
+
+  assert.equal(summary.brief, 'demo_skill');
+  assert.equal(summary.title, '\u6280\u80fd demo_skill');
+});
