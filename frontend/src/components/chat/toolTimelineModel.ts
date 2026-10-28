@@ -15,7 +15,7 @@ import {
   type RawToolRun,
   type WorkflowItem
 } from './toolWorkflowRunModel';
-import { buildCollapsedToolWorkflowSummary } from './toolWorkflowCollapsedSummary';
+import { buildCollapsedToolWorkflowSummary, isSkillCallTool } from './toolWorkflowCollapsedSummary';
 import { buildTimelineDiffStats, isTimelineEditToolRun } from './toolTimelinePatch';
 import type { TimelineDiffStats } from './toolTimelinePatch';
 import { resolveToolIconClass } from '@/utils/abilityVisuals';
@@ -478,6 +478,9 @@ const detailDuplicatesError = (detailText: string, errorText: string): boolean =
 };
 
 const buildTargets = (run: RawToolRun): TimelineTargetChip[] => {
+  // 技能调用的 path 是技能入口资源（几乎总是 SKILL.md），把它做成目标徽章只会
+  // 让每一行技能调用看起来是同一次调用；技能名已经由摘要承担。
+  if (isSkillCallTool(run.toolName)) return [];
   const paths = new Set<string>();
   [run.resultItem, run.outputItem, run.callItem].forEach((item) => {
     if (!item) return;

@@ -15,8 +15,18 @@ const QUERY_KEYS = ['query', 'question', 'keyword', 'keywords', 'sql'] as const;
 // 数组形态无法被按字符串取值的 readLightweightField 命中，单独读取。
 const QUERY_BATCH_KEYS = ['queries'] as const;
 const URL_KEYS = ['url', 'uri', 'source_url'] as const;
+// 技能调用的主体是「加载哪个技能」：所有技能共用同一个工具与 SKILL.md 入口，
+// 因此摘要必须取技能名，不能走通用 PATH_KEYS。
+const SKILL_NAME_KEYS = ['name', 'skill_name', 'skillName'] as const;
 
 const normalizeToolName = (value: unknown): string => String(value || '').trim().toLowerCase();
+
+export const isSkillCallTool = (toolName: unknown): boolean => {
+  const normalized = normalizeToolName(toolName);
+  return normalized === 'skill_call' ||
+    normalized === 'skill_get' ||
+    normalized.includes('\u6280\u80fd\u8c03\u7528');
+};
 
 export const isReadImageWorkflowTool = (toolName: unknown): boolean => {
   const normalized = normalizeToolName(toolName);
@@ -185,6 +195,13 @@ export const buildCollapsedToolWorkflowSummary = (
       readEntryField([entry.callItem], QUERY_KEYS) ||
       readCallSideParam(entry.resultItem, URL_KEYS) ||
       readCallSideParam(entry.resultItem, QUERY_KEYS);
+  } else if (isSkillCallTool(entry.toolName)) {
+    // `name` 同时是 WorkflowItem 的工具名字段，只能从调用参数 JSON 里读；
+    // 兜底只认 skill_name/skillName，绝不回落到 path（那永远是 SKILL.md）。
+    brief = readCallSideParam(entry.callItem, SKILL_NAME_KEYS) ||
+      readCallSideParam(entry.resultItem, SKILL_NAME_KEYS) ||
+      readEntryField([entry.callItem], ['skill_name', 'skillName']) ||
+      readEntryField([entry.resultItem], ['skill_name', 'skillName']);
   } else if (isQueryTool(entry.toolName)) {
     brief = readCallSideBatchParam(entry.callItem, QUERY_BATCH_KEYS) ||
       readCallSideBatchParam(entry.resultItem, QUERY_BATCH_KEYS) ||
