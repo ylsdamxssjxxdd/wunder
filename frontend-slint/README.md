@@ -121,27 +121,28 @@ bash frontend-slint/scripts/check-linux-arm64-appimage.sh \
 AppImage 启动时把 `WUNDER_TEMPD` 和 `WUNDER_WORK` 放到用户数据目录，不会写入只读的
 AppImage 挂载目录；也可通过 `--temp-root`、`--workspace` 或对应环境变量覆盖。
 
-Win7 本机构建继续使用相邻的 `Rust-builder/win7/offline`；Linux ARM64 开发机及 Windows Docker 交叉构建使用相邻的 `Rust-builder/kylin-arm/offline`。
+Win7 本机构建继续使用相邻的 `Rust-builder/win7/offline`；Linux 宿主按架构选择相邻的离线 SDK（ARM64 用 `kylin-arm`，x86_64 用 `kylin-x86`），Windows Docker 交叉构建使用 `kylin-arm`。
 
 构建入口集中在仓库根 `builders/`；`frontend-slint/scripts/` 只保留原生联调、启动回归和
-AppImage 结构检查。参考 rcho 的离线 SDK 组织，ARM64 Ubuntu 18.04 主机（或 Docker 中
-的 ARM64 Ubuntu 18.04 镜像）可交叉生成 Linux amd64 与 Win32 i686 原生 Slint 产物：
+AppImage 结构检查。Linux 入口自动识别宿主：ARM64 主机原生构建全部目标，x86_64 主机原生
+构建 amd64、交叉构建 arm64 与 Win7 x86：
 
 ```bash
-# ARM64 Linux -> Ubuntu 18.04 x86_64 Desktop AppImage / CLI ELF
+# Linux（ARM64 或 x86_64 宿主）-> Ubuntu 18.04 Desktop AppImage / CLI ELF
 # Linux Desktop（arm64 与 amd64）默认都打成 AppImage，同时保留裸 ELF；
-# CLI 永远是普通 ELF。runtime 默认取 kylin-arm SDK 的
-# offline/appimage-runtime/runtime-x86_64，仅在需要覆盖时才设置
-# WUNDER_APPIMAGE_RUNTIME_AMD64。
+# CLI 永远是普通 ELF。runtime 默认取离线 SDK 的
+# offline/appimage-runtime/ 内同架构 blob，仅在需要覆盖时才设置
+# WUNDER_APPIMAGE_RUNTIME_AMD64 / WUNDER_APPIMAGE_RUNTIME_ARM64。
 bash build.sh -t desktop -a linux-amd64
 bash build.sh -t cli -a linux-amd64
+bash build.sh -t desktop -a linux-arm64
+bash build.sh -t cli -a linux-arm64
 
-# ARM64 Linux -> Win32 i686 Desktop PE / CLI PE
-bash build.sh -t desktop -a win32-x86
-bash build.sh -t cli -a win32-x86
+# Win7 兼容的 32 位 Windows Desktop PE / CLI PE
+bash build.sh -t desktop -a win7-x86
+bash build.sh -t cli -a win7-x86
 
-# 全量发布：三个 Linux ARM64 主机可构建的架构 × Desktop/CLI。
-# AppImage runtime 默认使用 SDK 的 offline/appimage-runtime/ 内同架构 blob。
+# 全量发布：三个架构 × Desktop/CLI。
 bash build.sh -all
 ```
 

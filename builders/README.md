@@ -2,29 +2,30 @@
 
 本目录集中放置桌面 Slint 与 CLI 的离线发布、交叉编译和分发门禁脚本。仓库根目录只保留两个公开入口：Linux 使用 `build.sh`，Windows 使用 `build.bat`。`frontend-slint/scripts/` 只保留原生联调、启动回归和 AppImage 内容检查。
 
-公开入口统一以程序目标和分发架构选择构建。推荐使用简拼 `-t`/`-a`，`-target`/`-arch`/`--target`/`--arch` 写法等价：
+公开入口统一以程序目标和分发架构选择构建，并按宿主自动选择离线 SDK：ARM64 Linux 使用 `Rust-builder/kylin-arm`，x86_64 Linux 使用 `Rust-builder/kylin-x86`（准备方法见“kylin-x86”章节）。推荐使用简拼 `-t`/`-a`，`-target`/`-arch`/`--target`/`--arch` 写法等价：
 
 ```bash
-# ARM64 Linux 主机；从其它 Linux 主机执行时在命令末尾添加 --docker。
+# 两种 Linux 宿主都可直接执行；x86_64 上 linux-amd64 原生构建，
+# linux-arm64 与 win7-x86 由该 SDK 的交叉工具链构建。
+bash build.sh -t desktop -a linux-amd64
+bash build.sh -t cli -a linux-amd64
 bash build.sh -t desktop -a linux-arm64
 bash build.sh -t cli -a linux-arm64
-bash build.sh -t desktop -a linux-amd64
-
-# Win7 x86 的 Desktop/CLI 同样由 build.sh 在 ARM64 Linux 主机上交叉构建：
 bash build.sh -t desktop -a win7-x86
 bash build.sh -t cli -a win7-x86
 
 # Linux Desktop（arm64 与 amd64）默认都打成 AppImage，同时保留裸 ELF；
-# CLI 永远是普通 ELF。AppImage runtime 默认取 kylin-arm SDK 的
+# CLI 永远是普通 ELF。AppImage runtime 默认取离线 SDK 的
 # offline/appimage-runtime/ 内同架构 blob，仅在需要覆盖时才设置
 # WUNDER_APPIMAGE_RUNTIME_ARM64 / WUNDER_APPIMAGE_RUNTIME_AMD64。
 
-# 构建当前 ARM64 Linux 主机可发布的全部程序：三个架构 × Desktop/CLI。
-# AppImage runtime 默认使用 SDK 的 offline/appimage-runtime/ 内同架构 blob。
+# 构建当前 Linux 主机可发布的全部程序：三个架构 × Desktop/CLI。
 bash build.sh -all
 ```
 
-Windows 使用同一套目标/架构名称。Linux 目标通过 Docker 使用 `kylin-arm`；`win7-x86` 在本机通过 `win7` SDK 构建，在 ARM64 Linux 上也可用 `build.sh` 交叉生成（Desktop 与 CLI 均可，同一 `i686-win7-windows-gnu` 目标，build-std 方式）。旧的 `win32-x86` 名称已并入 `win7-x86`（Win7 兼容构建覆盖全部 32 位 Windows 场景）：
+`--docker` 固定使用 ARM64 Ubuntu 18.04 构建镜像并读取 `Rust-builder/kylin-arm`，与宿主架构无关；ARM64 宿主的默认 `--native` 走 kylin-arm，x86_64 宿主走 kylin-x86。
+
+Windows 使用同一套目标/架构名称。Windows 上的 Linux 目标通过 Docker 使用 `kylin-arm`；`win7-x86` 在 Windows 上通过 `win7` SDK 本地构建，Linux 宿主用 `build.sh` 交叉生成（ARM64 与 x86_64 均可，Desktop 与 CLI 同一 `i686-win7-windows-gnu` 目标，build-std 方式）。旧的 `win32-x86` 名称已并入 `win7-x86`（Win7 兼容构建覆盖全部 32 位 Windows 场景）：
 
 ```bat
 build.bat -t desktop -a win7-x86
@@ -142,18 +143,24 @@ docker run --rm --network none --platform linux/amd64 --entrypoint bash \
 #    再跑 check-kylin-x86-sdk.sh 门禁与 index-kylin-x86-sdk.py 索引。
 ```
 
-x86_64 主机上离线构建蛹（AppImage 交由 `build-linux-amd64-appimage.sh`）：
+SDK 就绪后，x86_64 主机直接用根入口构建全部目标（无需 Docker）：
 
 ```bash
-WUNDER_OFFLINE_ROOT=/path/to/Rust-builder/kylin-x86/offline \
-WUNDER_BUILD_JOBS=$(nproc) bash builders/build-linux-amd64-offline.sh
+WUNDER_BUILD_JOBS=$(nproc) bash build.sh -t desktop -a linux-amd64   # 原生 AppImage
+WUNDER_BUILD_JOBS=$(nproc) bash build.sh -t cli     -a linux-amd64   # 原生 ELF
+WUNDER_BUILD_JOBS=$(nproc) bash build.sh -t desktop -a linux-arm64   # 交叉 AppImage
+WUNDER_BUILD_JOBS=$(nproc) bash build.sh -t cli     -a linux-arm64   # 交叉 ELF
+WUNDER_BUILD_JOBS=$(nproc) bash build.sh -t desktop -a win7-x86      # 交叉 PE
+WUNDER_BUILD_JOBS=$(nproc) bash build.sh -t cli     -a win7-x86      # 交叉 PE
 ```
+
+ARM64 交叉使用 `offline/host-tools-amd64/root` 中 x86_64 宿主的 aarch64 gcc-7 与 binutils（缺失时由 `prepare-x86-arm64-cross.sh` 从 `offline/archives/host-tools-amd64-ubuntu18.tar` 按需解包），目标用户的库来自 `linux-arm64-ubuntu18` sysroot；无需宿主机安装交叉编译器。
 
 注意：离线脚本通过 `--config 'source.crates-io.replace-with="vendored-sources"'` 传
 入 vendor 替换，因为 cargo ≥1.96 解析配置主目录依据 passwd 而非 `HOME`/`CARGO_HOME`，
 开发者全局 `~/.cargo/config.toml`（镜像源等）会压过写入 cargo-home 的配置文件。
 
-Win7 x86 同样可以在 x86_64 主机离线交叉构建（蛹与舵机）：
+Win7 x86 同样可以在 x86_64 主机离线交叉构建（蛹与舵机，根入口见上）：
 
 ```bash
 WUNDER_OFFLINE_ROOT=/path/to/Rust-builder/kylin-x86/offline \

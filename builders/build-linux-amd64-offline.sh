@@ -37,6 +37,15 @@ if [[ "$(uname -m)" == aarch64 ]]; then export PATH="$rust/bin:$sdk/usr/bin:$PAT
 if [[ "$(uname -m)" == aarch64 ]]; then export LD_LIBRARY_PATH="$sdk/usr/lib/aarch64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"; fi
 export WUNDER_AMD64_SDK_ROOT="$sdk"
 unset GCC_EXEC_PREFIX COMPILER_PATH LIBRARY_PATH
+# The repo may be checked out without the executable bit on builder scripts;
+# cargo needs a directly executable linker wrapper.
+amd64_cc="$repo_root/builders/linux-amd64-cross-cc.sh"
+if [[ ! -x "$amd64_cc" ]]; then
+  mkdir -p "$target_dir"
+  amd64_cc="$target_dir/linux-amd64-cross-cc.sh"
+  cp -f "$repo_root/builders/linux-amd64-cross-cc.sh" "$amd64_cc"
+  chmod 755 "$amd64_cc"
+fi
 alsa_linker=""
 for candidate in "$sdk/usr/x86_64-linux-gnu/lib/libasound.so" "$sdk/usr/lib/x86_64-linux-gnu/libasound.so" "$sdk/lib/x86_64-linux-gnu/libasound.so"; do
   if [[ -e "$candidate" ]]; then alsa_linker="$candidate"; break; fi
@@ -54,9 +63,9 @@ WUNDER_VENDORED_CONFIG=(--config 'source.crates-io.replace-with="vendored-source
 export CARGO_HOME="${CARGO_HOME:-$repo_root/target/linux-amd64-ubuntu18-slint/cargo-home}"
 export CARGO_TARGET_DIR="$target_dir"
 export CARGO_NET_OFFLINE=true
-export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER="$repo_root/builders/linux-amd64-cross-cc.sh"
-export CC_x86_64_unknown_linux_gnu="$repo_root/builders/linux-amd64-cross-cc.sh"
-export CXX_x86_64_unknown_linux_gnu="$repo_root/builders/linux-amd64-cross-cc.sh --cxx"
+export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER="$amd64_cc"
+export CC_x86_64_unknown_linux_gnu="$amd64_cc"
+export CXX_x86_64_unknown_linux_gnu="$amd64_cc --cxx"
 export AR_x86_64_unknown_linux_gnu=x86_64-linux-gnu-ar
 export CFLAGS_x86_64_unknown_linux_gnu="--sysroot=$sdk -I$sdk/usr/x86_64-linux-gnu/include"
 export CXXFLAGS_x86_64_unknown_linux_gnu="$CFLAGS_x86_64_unknown_linux_gnu"
@@ -71,7 +80,7 @@ replace-with = "vendored-sources"
 [source.vendored-sources]
 directory = "$vendor_root"
 [target.$target]
-linker = "$repo_root/builders/linux-amd64-cross-cc.sh"
+linker = "$amd64_cc"
 rustflags = ["-C", "link-arg=--sysroot=$sdk", "-C", "link-arg=-L$sdk/usr/x86_64-linux-gnu/lib"]
 [net]
 offline = true
