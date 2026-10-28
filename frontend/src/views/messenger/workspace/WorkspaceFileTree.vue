@@ -2,12 +2,18 @@
   <div
     ref="scrollerRef"
     class="workspace-files-scroll"
+    :class="{ 'is-drop-root': dragOverPath === ROOT_DROP_TARGET }"
     role="tree"
     tabindex="0"
     :aria-label="t('messenger.filesArea.group')"
     @scroll.passive="handleScroll"
     @keydown.esc.prevent="emit('exit-selection')"
     @contextmenu.prevent.stop="openMenu(null, $event)"
+    @click="handleTreeClick"
+    @dragenter="handleTreeDragEnter"
+    @dragover="handleTreeDragOver"
+    @dragleave="handleTreeDragLeave"
+    @drop="handleTreeDrop"
   >
     <div v-if="loading && !rows.length" class="workspace-files-state">
       <span class="workspace-files-spinner" aria-hidden="true"></span>
@@ -57,6 +63,8 @@
           :style="{ paddingLeft: `${6 + row.depth * 12}px` }"
           :title="resolveRowTitle(row)"
           role="treeitem"
+          :data-path="row.path"
+          :data-kind="row.kind"
           :aria-expanded="row.kind === 'dir' ? row.expanded : undefined"
           :draggable="canDragWorkspacePath(row)"
           @click.stop="emit('activate', row)"
@@ -64,10 +72,6 @@
           @contextmenu.prevent.stop="openMenu(row, $event)"
           @dragstart="handleRowDragStart($event, row)"
           @dragend="handleRowDragEnd"
-          @dragenter="handleRowDragEnter($event, row)"
-          @dragover="handleRowDragOver($event, row)"
-          @dragleave="handleRowDragLeave($event, row)"
-          @drop="handleRowDrop($event, row)"
         >
           <input
             v-if="selectionMode"
@@ -161,6 +165,7 @@ import {
   formatWorkspaceBytes,
   formatWorkspaceTimestamp,
   workspaceFileExtension,
+  workspaceParentPath,
   type WorkspaceVisibleRow
 } from './workspaceFileModel';
 
@@ -197,6 +202,8 @@ const emit = defineEmits<{
   command: [command: string, row: WorkspaceVisibleRow | null];
   /** 内部拖拽落到目录行：把这些路径移动到目标目录。 */
   move: [payload: { paths: string[]; targetDir: string }];
+  /** 点击空白区（没有宿主行）：回到根目录，清选中。 */
+  'blank-activate': [];
 }>();
 
 const { t } = useI18n();
@@ -233,6 +240,13 @@ const spacerStyle = (height: number) => ({ height: `${height}px` });
 const canDragWorkspacePath = (row: WorkspaceVisibleRow): boolean =>
   !props.readOnly && !props.remote && row.kind !== 'more' && Boolean(row.path);
 
+/**
+ * 本次拖拽的源路径。`dataTransfer` 在 dragover 阶段处于保护模式（getData 返回空），
+ * 模块级暂存又可能被中途的刷新打断，所以组件自己再记一份：判定落点不依赖任何
+ * 可能在拖拽中途丢掉的通道。
+ */
+const draggingPaths = ref<string[]>([]);
+
 const handleRowDragStart = (event: DragEvent, row: WorkspaceVisibleRow) => {
   if (!canDragWorkspacePath(row)) {
     event.preventDefault();
@@ -249,65 +263,120 @@ const handleRowDragStart = (event: DragEvent, row: WorkspaceVisibleRow) => {
     event.preventDefault();
     return;
   }
+  draggingPaths.value = paths;
   // 工作区内部是移动语义；拖到输入框引用文件时，接收方只读路径。
   if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
 };
 
 const handleRowDragEnd = () => {
   dragOverPath.value = '';
+  draggingPaths.value = [];
   clearWorkspaceDragPaths();
 };
 
-const canAcceptWorkspaceDrop = (row: WorkspaceVisibleRow): boolean =>
-  !props.readOnly && !props.remote && row.kind === 'dir' && Boolean(row.path);
+/**
+ * 树里没有「根目录」这一行，空白区就是工作区根。用一个不可能出现在真实路径里的
+ * 哨兵值表达它，既能做高亮，又不会和 `''`（真空路径）混淆。
+ */
+const ROOT_DROP_TARGET = '\u0000workspace-root';
+
+const isWritableTree = computed(() => !props.readOnly && !props.remote);
 
 /** 目录不能移到自己或自己的子孙目录里。 */
 const isSameOrNestedPath = (source: string, targetDir: string): boolean =>
   source === targetDir || targetDir.startsWith(`${source}/`);
 
 /**
- * 只有「工作区内部拖拽 + 目标是可以写入的目录 + 不是自身/子孙」才返回可移动路径。
- * 外部文件的拖拽一律返回空，交给面板做上传。
+ * 从事件落点反推目标目录：目录行 → 该目录；文件行 → 它所在的父目录；
+ * 空白区 / 分页脚注以外的空白 → 工作区根（`''`）。没有任何落点语义时返回 null。
  */
-const resolveAcceptableDragPaths = (
-  dataTransfer: DataTransfer | null,
-  row: WorkspaceVisibleRow
-): string[] => {
-  if (!dataTransfer || !hasWorkspaceDragPaths(dataTransfer) || !canAcceptWorkspaceDrop(row)) return [];
-  return readWorkspaceDragPaths(dataTransfer).filter((path) => !isSameOrNestedPath(path, row.path));
+const resolveDropDestination = (event: DragEvent): { dir: string; highlight: string } | null => {
+  const target = event.target as HTMLElement | null;
+  const rowElement = target?.closest?.('.workspace-file-row') as HTMLElement | null;
+  if (!rowElement) {
+    // 「加载更多」是分页脚注，不是目录，落在这里不做移动。
+    if (target?.closest?.('.workspace-files-more')) return null;
+    return { dir: '', highlight: ROOT_DROP_TARGET };
+  }
+  const path = String(rowElement.dataset.path || '');
+  if (!path) return null;
+  if (rowElement.dataset.kind === 'dir') return { dir: path, highlight: path };
+  // 文件行本身不是容器：落到它所在的目录（父目录行就在上方，高亮它即可；
+  // 父目录是根时不额外高亮，因为列表本身就是根，再套一圈反而吵）。
+  const parent = workspaceParentPath(path);
+  return { dir: parent, highlight: parent };
 };
 
-const handleRowDragEnter = (event: DragEvent, row: WorkspaceVisibleRow) => {
-  if (!resolveAcceptableDragPaths(event.dataTransfer, row).length) return;
+/**
+ * 统一计算一次投放：只有「内部拖拽 + 可写 + 有明确落点 + 至少一条真的会换目录」
+ * 才返回可执行载荷。外部文件的拖拽一律返回 null，交给面板做上传。
+ */
+const resolveDropPayload = (
+  event: DragEvent
+): { dir: string; highlight: string; paths: string[] } | null => {
+  if (!isWritableTree.value) return null;
+  const dataTransfer = event.dataTransfer;
+  // 源路径优先取组件自己的记录：dragover 阶段 dataTransfer 读不出内容。
+  const sources = draggingPaths.value.length
+    ? draggingPaths.value
+    : dataTransfer && hasWorkspaceDragPaths(dataTransfer)
+      ? readWorkspaceDragPaths(dataTransfer)
+      : [];
+  if (!sources.length) return null;
+  const destination = resolveDropDestination(event);
+  if (!destination) return null;
+  const paths = sources.filter((path) => {
+    if (isSameOrNestedPath(path, destination.dir)) return false;
+    // 已经在这个目录里：不算可投放的移动，避免松手后只弹一句「目标路径相同」。
+    return workspaceParentPath(path) !== destination.dir;
+  });
+  if (!paths.length) return null;
+  return { ...destination, paths };
+};
+
+const handleTreeDragEnter = (event: DragEvent) => {
+  const payload = resolveDropPayload(event);
+  if (!payload) return;
   event.preventDefault();
-  dragOverPath.value = row.path;
+  dragOverPath.value = payload.highlight;
 };
 
-const handleRowDragOver = (event: DragEvent, row: WorkspaceVisibleRow) => {
-  if (!resolveAcceptableDragPaths(event.dataTransfer, row).length) return;
+const handleTreeDragOver = (event: DragEvent) => {
+  const payload = resolveDropPayload(event);
+  if (!payload) {
+    if (dragOverPath.value) dragOverPath.value = '';
+    return;
+  }
   event.preventDefault();
   if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
-  dragOverPath.value = row.path;
+  dragOverPath.value = payload.highlight;
 };
 
-const handleRowDragLeave = (event: DragEvent, row: WorkspaceVisibleRow) => {
+const handleTreeDragLeave = (event: DragEvent) => {
   const related = event.relatedTarget as Node | null;
   const current = event.currentTarget as Node | null;
   if (related && current?.contains(related)) return;
-  if (dragOverPath.value === row.path) dragOverPath.value = '';
+  dragOverPath.value = '';
 };
 
-const handleRowDrop = (event: DragEvent, row: WorkspaceVisibleRow) => {
-  const dataTransfer = event.dataTransfer;
-  // 外部文件拖拽不在这里处理：让它冒泡到面板做上传。
-  if (!dataTransfer || !hasWorkspaceDragPaths(dataTransfer)) return;
-  const paths = resolveAcceptableDragPaths(dataTransfer, row);
+const handleTreeDrop = (event: DragEvent) => {
+  const payload = resolveDropPayload(event);
   dragOverPath.value = '';
-  if (!paths.length) return;
+  // 外部文件：冒泡给面板走上传。
+  if (!payload) return;
   // 阻止冒泡，否则面板的 @drop 会把它当成一次上传。
   event.preventDefault();
   event.stopPropagation();
-  emit('move', { paths, targetDir: row.path });
+  emit('move', { paths: payload.paths, targetDir: payload.dir });
+};
+
+/** 点空白区＝回到根：清掉选中行，同时把「新建/上传」的落点收回根目录。 */
+const handleTreeClick = (event: MouseEvent) => {
+  const target = event.target as HTMLElement | null;
+  if (!target) return;
+  if (target.closest('.workspace-file-row') || target.closest('.workspace-files-more')) return;
+  if (!props.activePath && !props.selectedPaths.length) return;
+  emit('blank-activate');
 };
 
 let scrollFrame = 0;
@@ -440,15 +509,37 @@ const menuItems = computed<MenuItem[]>(() => {
     items.push({ command: 'preview', label: t('messenger.filesArea.menu.preview'), icon: 'fa-eye' });
     items.push({ command: 'download', label: t('common.download'), icon: 'fa-download' });
   }
+  // 根层的条目没有上一层，只有不在根层时才给这个动作。
+  if (isWritableTree.value && workspaceParentPath(row.path)) {
+    items.push({ command: 'move-up', label: t('messenger.filesArea.menu.moveUp'), icon: 'fa-arrow-up' });
+  }
   items.push({ command: 'rename', label: t('messenger.filesArea.menu.rename'), icon: 'fa-i-cursor' });
   if (!props.remote) items.push({ command: 'quote', label: t('messenger.filesArea.menu.quote'), icon: 'fa-comment-dots' });
   items.push({ command: 'delete', label: t('common.delete'), icon: 'fa-trash-can', danger: true });
   return items;
 });
 
+/** 「移动到上一层目录」的载荷：同层多选时整批一起上移。 */
+const resolveMoveUpPayload = (
+  row: WorkspaceVisibleRow
+): { paths: string[]; targetDir: string } | null => {
+  const parent = workspaceParentPath(row.path);
+  if (!parent) return null;
+  const targetDir = workspaceParentPath(parent);
+  const selection =
+    props.selectionMode && selectedSet.value.has(row.path) ? props.selectedPaths : [];
+  const sameLevel = selection.filter((path) => workspaceParentPath(path) === parent);
+  return { paths: sameLevel.length > 1 ? sameLevel : [row.path], targetDir };
+};
+
 const chooseMenuItem = (command: string) => {
   const row = menu.value.row;
   closeMenu();
+  if (command === 'move-up' && row) {
+    const payload = resolveMoveUpPayload(row);
+    if (payload) emit('move', payload);
+    return;
+  }
   emit('command', command, row);
 };
 

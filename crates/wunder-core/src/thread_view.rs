@@ -215,6 +215,8 @@ pub struct ProcessActivity {
     pub item_id: String,
     pub tool: String,
     pub created_seq: i64,
+    #[serde(default)]
+    pub model_round: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

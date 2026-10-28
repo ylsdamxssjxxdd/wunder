@@ -138,6 +138,33 @@ applyThreadViewChanges(key,{view_seq:2,rows:[{...row(1,2),status:'running',proce
 assert.equal(threadViewSlots(key)![0].assistant.process_activity.tool,'fixture_tool');
 console.log('thread view: current process phase follows reasoning, content and tool changes pass');
 
+clearThreadView(key); generation=beginThreadView(key);
+const terminalReplayRow={...row(1,70),execution_turn_id:'fixture-terminal-execution',status:'running'};
+commitThreadView(key,{...page([terminalReplayRow],70),runtime_status:'running',status_turn_id:'fixture-terminal-execution',active_turn_id:'fixture-terminal-execution'},generation);
+applyThreadViewChanges(key,{epoch:1,view_seq:71,runtime_status:'completed',status_turn_id:'fixture-terminal-execution',active_turn_id:'',rows:[{...terminalReplayRow,revision:71,status:'completed'}]});
+applyThreadViewChanges(key,{epoch:1,view_seq:71,runtime_status:'running',status_turn_id:'fixture-terminal-execution',active_turn_id:'fixture-terminal-execution',rows:[{...terminalReplayRow,revision:71}]});
+assert.equal(threadViewStatus(key),'completed');
+assert.equal(threadViewSlots(key)![0].assistant.streaming,false);
+applyThreadViewChanges(key,{epoch:1,view_seq:72,runtime_status:'running',status_turn_id:'fixture-terminal-execution',active_turn_id:'fixture-terminal-execution',rows:[{...terminalReplayRow,revision:72}]});
+assert.equal(threadViewStatus(key),'completed');
+assert.equal(threadViewSlots(key)![0].assistant.status,'completed');
+assert.equal(applyThreadViewHead(key,{epoch:1,view_seq:72,runtime_status:'running',status_turn_id:'fixture-terminal-execution',active_turn_id:'fixture-terminal-execution'}),false);
+console.log('thread view: terminal execution cannot reopen through an equal or later transcript snapshot');
+
+clearThreadView(key); generation=beginThreadView(key);
+commitThreadView(key,{...page([terminalReplayRow],70),runtime_status:'running',status_turn_id:'fixture-terminal-execution',active_turn_id:'fixture-terminal-execution'},generation);
+assert.equal(applyThreadViewHead(key,{epoch:1,view_seq:70,runtime_status:'completed',status_turn_id:'fixture-terminal-execution',active_turn_id:''}),true);
+assert.equal(threadViewStatus(key),'completed');
+assert.equal(threadViewSlots(key)![0].assistant.streaming,false);
+
+clearThreadView(key); generation=beginThreadView(key);
+const reasoningReload={...row(1,70),execution_turn_id:'fixture-reload-turn',status:'running',reasoning_item_id:'fixture-reload-turn:text-1',
+  assistant:{item_id:'',content:'',reasoning:'Fixture completed thought'},process_activity:{kind:'processing',item_id:'fixture-reload-turn:tool-first',created_seq:9}};
+commitThreadView(key,{...page([reasoningReload],70),runtime_status:'running',status_turn_id:'fixture-reload-turn',active_turn_id:'fixture-reload-turn'},generation);
+assert.equal(threadViewSlots(key)![0].assistant.reasoningStreaming,false);
+applyThreadViewTail(key,{item_id:'fixture-reload-turn:text-2',field:'reasoning',offset:0,text:'Fixture next thought'});
+assert.equal(threadViewSlots(key)![0].assistant.reasoningStreaming,true);
+
 clearThreadView(key);generation=beginThreadView(key);
 commitThreadView(key,page([{...row(1,1),status:'running',process_activity:{kind:'tool',tool:'fixture_tool',item_id:'fixture-call',created_seq:20},assistant:{item_id:'fixture-answer-1',created_seq:10,content:'',reasoning:'fixture thought',reasoning_offset:15}}]),generation);
 applyThreadViewTail(key,{item_id:'fixture-answer-1',field:'reasoning',offset:15,text:' late'});

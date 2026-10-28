@@ -299,7 +299,23 @@ pub(crate) fn set_activity(row: &mut ChatViewRow, kind: &str, id: &str, seq: i64
         item_id: id.into(),
         tool: preview(tool, 96),
         created_seq: seq,
+        model_round: id
+            .rsplit_once(":text-")
+            .and_then(|(_, round)| round.parse().ok())
+            .unwrap_or_default(),
     };
+}
+
+pub(crate) fn set_completed_activity(row: &mut ChatViewRow, item: &Value) {
+    let id = item["item_id"].as_str().unwrap_or_default();
+    set_activity(
+        row,
+        "processing",
+        id,
+        item["created_seq"].as_i64().unwrap_or_default(),
+        "",
+    );
+    row.process_activity.model_round = item["payload"]["model_round"].as_i64().unwrap_or_default();
 }
 
 pub(crate) fn stable_answer(item_id: &str, turn_id: &str, kind: &str) -> bool {

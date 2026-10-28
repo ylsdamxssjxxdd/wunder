@@ -180,9 +180,15 @@ const hasCurrentReasoningRow = computed(() => rows.value.some(row =>
   row.kind === 'reasoning' && row.key === currentReasoningRowKey.value
 ));
 const reasoningEntry = computed<TimelineReasoningEntry>(() => ({
-  kind: 'reasoning', key: currentReasoningRowKey.value, streaming: Boolean(props.reasoningStreaming),
+  kind: 'reasoning', key: currentReasoningRowKey.value, streaming: currentReasoningStreaming.value,
   summary: reasoningPreview(reasoningText.value), text: reasoningText.value
 }));
+const currentReasoningStreaming = computed(() => {
+  if (!props.reasoningStreaming || ['completed','failed','cancelled','interrupted','rejected','stopped'].includes(props.status || '')) return false;
+  const item = (props.processItems || []).find(item => item.item_id === currentReasoningItemId.value) ||
+    processItems.value.find(item => item.item_id === currentReasoningItemId.value);
+  return !item || item.status === 'running';
+});
 
 const clearReloadTimer = (): void => {
   if (reloadTimer !== null) {
@@ -506,7 +512,7 @@ const syncCurrentReasoningRow = (): void => {
   if (changed) triggerRef(rows);
 };
 watch(
-  () => [currentReasoningItemId.value, reasoningText.value, Boolean(props.reasoningStreaming), loaded.value],
+  () => [currentReasoningItemId.value, reasoningText.value, currentReasoningStreaming.value, loaded.value],
   syncCurrentReasoningRow
 );
 
@@ -571,6 +577,9 @@ const flattenItemPayload = (payload: unknown): Record<string, unknown> => {
   const nestedData = { ...asObject(outer.data), ...asObject(inner.data) };
   if (Object.keys(inner).length === 0 && Object.keys(nestedData).length === 0) return outer;
   const merged: Record<string, unknown> = { ...outer, ...inner, ...nestedData };
+  for (const key of ['tool', 'tool_name', 'tool_call_id', 'model_round', 'process_seq', 'status', 'kind', 'event_type']) {
+    if (inner[key] !== undefined || outer[key] !== undefined) merged[key] = inner[key] ?? outer[key];
+  }
   delete merged.payload;
   return merged;
 };
@@ -815,7 +824,7 @@ const buildRows = (items: Array<Record<string, unknown>>): ProcessRow[] => {
     const isCurrentReasoning = itemId === currentReasoningItemId.value;
     // The thread-view row contains the newest bounded preview. Prefer it for
     // its matching durable item so the active entry updates without a reload.
-    const reasoning = (isCurrentReasoning && props.reasoningStreaming ? reasoningText.value : '') || persistedReasoning ||
+    const reasoning = (isCurrentReasoning && currentReasoningStreaming.value ? reasoningText.value : '') || persistedReasoning ||
       (isCurrentReasoning ? reasoningText.value : '');
     if (reasoning) {
       const key = `reasoning:${itemId}`;
@@ -825,7 +834,7 @@ const buildRows = (items: Array<Record<string, unknown>>): ProcessRow[] => {
         modelRound: Number.isSafeInteger(Number(payload.model_round)) ? Number(payload.model_round) : undefined,
         entry: {
           kind: 'reasoning', key,
-          streaming: isCurrentReasoning && Boolean(props.reasoningStreaming),
+          streaming: isCurrentReasoning && currentReasoningStreaming.value,
           summary: reasoningPreview(reasoning), text: reasoning
         }
       });

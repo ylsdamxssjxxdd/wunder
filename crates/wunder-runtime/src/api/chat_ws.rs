@@ -4,9 +4,8 @@ use crate::api::ws_helpers::{
     apply_ws_auth_headers, has_ws_protocol_token, negotiate_ws_protocol, parse_connect_payload,
     parse_payload, resolve_session_id, resume_queued_thread_changes_v2, resume_thread_changes_v2,
     send_ws_error, send_ws_error_payload, send_ws_event, send_ws_pong, send_ws_ready,
-    send_ws_tail_event, try_send_ws_event, ws_error_payload_from_anyhow, ws_protocol_info,
-    WsEnvelope, WsFeatures, WsPolicy, WsQuery, WsReadyPayload, WsSender, WS_MAX_MESSAGE_BYTES,
-    WS_PROTOCOL_VERSION,
+    send_ws_tail_event, ws_error_payload_from_anyhow, ws_protocol_info, WsEnvelope, WsFeatures,
+    WsPolicy, WsQuery, WsReadyPayload, WsSender, WS_MAX_MESSAGE_BYTES, WS_PROTOCOL_VERSION,
 };
 use crate::api::ws_log::{
     log_ws_close, log_ws_handshake, log_ws_handshake_error, log_ws_message, log_ws_open,
@@ -687,7 +686,16 @@ async fn handle_ws(
                                                     continue;
                                                 }
                                                 if matches!(event.event.as_str(), "thread_item_tail" | "thread_process_item") {
-                                                    let _ = send_ws_tail_event(&ws_tx_snapshot, Some(&request_id_cleanup), event).await;
+                                                    let structural = event.event == "thread_process_item";
+                                                    if send_ws_tail_event(&ws_tx_snapshot, Some(&request_id_cleanup), event).await.is_err() && structural {
+                                                        if crate::api::ws_helpers::send_ws_display_event(
+                                                            &ws_tx_snapshot, Some(&request_id_cleanup), StreamEvent {
+                                                                event: "thread_view_required".into(),
+                                                                data: json!({"session_id":session_id_cleanup}),
+                                                                id: None, timestamp: Some(Utc::now()),
+                                                            }, Some(&cancel),
+                                                        ).await.is_err() { break; }
+                                                    }
                                                     continue;
                                                 }
                                                 if event.event == "thread_item_delta" {
@@ -738,11 +746,13 @@ async fn handle_ws(
                                             id: None,
                                             timestamp: Some(Utc::now()),
                                         };
-                                        let _ = try_send_ws_event(
+                                        let _ = crate::api::ws_helpers::send_ws_display_event(
                                             &ws_tx_snapshot,
                                             Some(&request_id_cleanup),
                                             final_event,
-                                        );
+                                            Some(&cancel),
+                                        )
+                                        .await;
                                     }
                                 }
                                 Err(err) => {

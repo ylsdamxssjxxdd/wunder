@@ -1,6 +1,6 @@
 import type { TimelineReasoningEntry, TimelineToolEntry } from './toolTimelineModel';
 
-export type ProcessActivity = { kind: string; item_id?: string; tool?: string; created_seq?: number };
+export type ProcessActivity = { kind: string; item_id?: string; tool?: string; created_seq?: number; model_round?: number };
 type Translate = (key: string, params?: Record<string, unknown>) => string;
 
 /** A bounded tail keeps a one-line live preview moving after a long thought. */

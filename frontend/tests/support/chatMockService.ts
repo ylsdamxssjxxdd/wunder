@@ -28,6 +28,28 @@ export class ChatMockService {
   private withheldProcessItemIds = new Set<string>();
   private stopped = false;
   private agentRuntimeState: 'idle' | 'running' = 'idle';
+  seedProcessExportFixture(complete = false) {
+    const turn={turn_id:`fixture-turn-${++this.round}`,user_round:this.round,content:'Fixture process request',status:'running'};
+    this.turns.push(turn);
+    this.commit('turn_upsert',turn);
+    this.item(turn,'user','user_message','completed',{role:'user',content:turn.content});
+    let call=0;
+    for(let round=1;round<=(complete?6:1);round++){
+      const count=round===6?0:round===2?2:1;
+      this.item(turn,`text-${round}`,'assistant_message','completed',{model_round:round,reasoning:`Fixture thought ${round}`,
+        content:round===6?'Fixture final answer':'',finish_reason:count?'tool_calls':'stop',process_seq:round+call,
+        tool_calls:Array.from({length:count},(_,index)=>({id:`fixture-call-${call+index}`,function:{name:'fixture_tool',arguments:'{}'}}))});
+      for(let index=0;index<count;index++,call++)this.item(turn,`tool-${call}`,'tool_call','completed',{
+        model_round:round,process_seq:round+call+1,tool:'fixture_tool',tool_call_id:`fixture-call-${call}`,event_type:'tool_result',
+        args:{description:`Fixture action ${call}`},data:{status:'exited',stdout:'Fixture output',exit_code:0}});
+    }
+    if(complete)this.state(turn,'completed');
+    return turn;
+  }
+  replayPrematureCompletion(turn: Row) {
+    for(const sub of this.subscriptions)this.send(sub,'thread_change',{cursor:this.changes.length+1,change_type:'turn_status',turn_id:turn.turn_id,revision:1,
+      payload:{turn_id:turn.turn_id,status:'completed'}});
+  }
   holdNext = false;
   autoCompactNext = false;
   duplicateNext = false;
@@ -128,6 +150,8 @@ export class ChatMockService {
       const activeReasoning = String(answer?.reasoning ?? '');
       const plan = items.filter(item => item.kind === 'plan' && Array.isArray(item.plan)).at(-1);
       const inquiry = items.map(item => extractChatInquiryPanel(item)).filter(Boolean).at(-1);
+      const latestItem = items.at(-1);
+      const liveThought = answer?.status === 'running';
       return {
         execution_turn_id: String(execution.turn_id), root_turn_id: String(root.turn_id),
         user_round: Number(root.user_round), client_message_id: root.client_message_id ?? null,
@@ -141,6 +165,9 @@ export class ChatMockService {
         workflow_count: items.filter(i => i.kind === 'tool_call').length,
         reasoning_count: reasoningItems.length,
         reasoning_item_id: activeReasoning ? String(answer?.item_id ?? '') : '',
+        process_activity: { kind: liveThought ? 'thinking' : 'processing',
+          item_id: String(liveThought ? answer?.item_id : latestItem?.item_id), created_seq: this.changes.length,
+          model_round:Number(latestItem?.model_round ?? 0) },
         failed_count: items.filter(i => i.kind === 'tool_call' && i.status === 'failed').length,
         subagents: [], created_time: Number(root.user_round) * 1000, updated_time: this.changes.length,
         ...(plan ? { plan: { item_id: plan.item_id, revision: plan.revision,
@@ -463,7 +490,8 @@ export class ChatMockService {
       const payload = request.postDataJSON();
       this.record({ transport: 'http', path, query: new URL(request.url()).search, method: request.method() });
       const session = { id: MOCK_SESSION, agent_id: MOCK_AGENT, title: 'Fixture conversation',
-        updated_at: '2026-01-01T00:00:00Z', status: 'active', running: Boolean(this.active), goal: this.goal };
+        updated_at: '2026-01-01T00:00:00Z', status: 'active', running: Boolean(this.active), goal: this.goal,
+        runtime_head:{epoch:1,view_seq:this.changes.length,...this.runtimeHead()} };
       const agent = { id: MOCK_AGENT, name: 'Fixture Agent', description: '', tool_names: ['read_file'] };
       let data: any = { items: [], total: 0 };
       if (path === '/auth/login') data = { access_token: 'fixture-auth', user: { id: 'fixture-user', username: 'fixture-user', roles: ['user'] } };

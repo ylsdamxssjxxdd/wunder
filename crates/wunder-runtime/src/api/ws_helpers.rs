@@ -351,7 +351,7 @@ pub(crate) async fn resume_thread_changes_v2(
     }
 }
 
-async fn send_ws_display_event(
+pub(crate) async fn send_ws_display_event(
     tx: &WsSender,
     request_id: Option<&str>,
     event: StreamEvent,

@@ -2,7 +2,7 @@
   <div
     class="workspace-files"
     :class="{ 'is-dragover': dragActive, 'is-selecting': selectionMode }"
-    @dragenter.prevent="handleDragEnter"
+    @dragenter="handleDragEnter($event)"
     @dragover.prevent="handleDragOver"
     @dragleave="handleDragLeave"
     @drop.prevent="handleDrop"
@@ -146,6 +146,7 @@
       @exit-selection="handleExitSelection"
       @retry="handleRetry"
       @command="handleRowCommand"
+      @blank-activate="handleBlankActivate"
       @move="handleTreeMove"
     />
 
@@ -232,6 +233,7 @@
   <WorkspaceNewFileDialog
     v-model:visible="newFileDialog.visible"
     :file-type-options="workspaceNewFileTemplates"
+    :directory="newFileDialog.directory"
     @confirm="handleNewFileConfirm"
   />
 </template>
@@ -821,14 +823,22 @@ const handleUploadInputChange = (event: Event) => {
   enqueueFiles(files.slice(0, UPLOAD_MAX_FILES_PER_DROP), uploadTarget.value);
 };
 
-const handleDragEnter = () => {
+const handleDragEnter = (event: DragEvent) => {
   // 远程节点是只读投影，不接受拖拽上传（写入要走 workspace.write + 本地审批）。
   if (remoteInterlinkActive.value) return;
+  // 工作区内部的条目拖拽是「移动」，不是「松手上传」，不要点亮上传高亮。
+  if (event.dataTransfer && hasWorkspaceDragPaths(event.dataTransfer)) return;
+  event.preventDefault();
   dragActive.value = true;
 };
 
 const handleDragOver = (event: DragEvent) => {
   if (remoteInterlinkActive.value) return;
+  if (event.dataTransfer && hasWorkspaceDragPaths(event.dataTransfer)) {
+    // 内部拖拽保持 move 光标，别被面板的 copy 语义覆盖。
+    event.dataTransfer.dropEffect = 'move';
+    return;
+  }
   dragActive.value = true;
   if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
 };
@@ -945,14 +955,19 @@ const toggleDirectoryPath = async (path: string): Promise<void> => {
 
 const handleActivateRow = (row: WorkspaceVisibleRow) => {
   setActivePath(row.path);
-  // 搜索结果平铺，点选只记高亮，不展开目录也不改上传目标。
+  // 选中的行同时决定「新建 / 上传」的落点：目录落到自己，文件落到它所在的目录。
+  // 放在搜索分支之前，搜索结果里的行也照样能作为落点。
+  uploadTarget.value = row.kind === 'dir' ? row.path : workspaceParentPath(row.path);
+  // 搜索结果平铺，点选只记高亮，不展开目录。
   if (searchActive.value) return;
-  if (row.kind === 'dir') {
-    uploadTarget.value = row.path;
-    void toggleDirectoryPath(row.path);
-    return;
-  }
-  uploadTarget.value = workspaceParentPath(row.path);
+  if (row.kind === 'dir') void toggleDirectoryPath(row.path);
+};
+
+/** 空白区就是工作区根：清掉选中行，并把新建/上传落点收回根目录。 */
+const handleBlankActivate = () => {
+  if (busy.value) return;
+  setActivePath('');
+  uploadTarget.value = '';
 };
 
 const handleOpenRow = (row: WorkspaceVisibleRow) => {
@@ -979,7 +994,7 @@ const handleToggleDirectory = (path: string) => {
     void revealPath(path);
     return;
   }
-  uploadTarget.value = normalizeWorkspaceRelativePath(path);
+  // 展开/折叠只是浏览动作，不改新建落点；落点由「点选行」和「点空白区」决定。
   void toggleDirectoryPath(path);
 };
 
@@ -1055,9 +1070,11 @@ const refreshFromWorkspaceEvent = (event: Event) => {
   void directoryRefresh.handleEvent(detail);
 };
 
-/** Menu target: a directory row creates inside it, anything else uses the current folder. */
-const createTargetPath = (row: WorkspaceVisibleRow | null): string =>
-  row && row.kind === 'dir' ? row.path : uploadTarget.value;
+/** 菜单里的新建落点：目录行落到自己，文件行落到它所在目录，空白区落到当前落点。 */
+const createTargetPath = (row: WorkspaceVisibleRow | null): string => {
+  if (!row) return uploadTarget.value;
+  return row.kind === 'dir' ? row.path : workspaceParentPath(row.path);
+};
 
 const handleCreateEntry = async (kind: 'dir' | 'file', row: WorkspaceVisibleRow | null) => {
   if (busy.value) return;
@@ -1072,7 +1089,9 @@ const handleCreateEntry = async (kind: 'dir' | 'file', row: WorkspaceVisibleRow 
   try {
     const value = await mzPrompt({
       title: t('messenger.filesArea.newDir'),
-      message: t('messenger.filesArea.newDirPrompt'),
+      message: t('messenger.filesArea.newDirPromptIn', {
+        path: directory || t('workspace.createFile.locationRoot')
+      }),
       placeholder: t('messenger.filesArea.namePlaceholder'),
       validator: (input: string) =>
         isValidWorkspaceEntryName(input) ? true : t('messenger.filesArea.invalidName')
@@ -1257,11 +1276,12 @@ const renameEntry = async (row: WorkspaceVisibleRow) => {
  * 目标目录展开时刷新它；源条目已从树里移除，不必再刷源目录。
  */
 const handleTreeMove = async (payload: { paths: string[]; targetDir: string }) => {
-  const targetDir = String(payload?.targetDir || '').trim();
+  // 空串是合法目标：它表示工作区根目录，不能当成「没给目标」丢掉。
+  const targetDir = String(payload?.targetDir ?? '').trim();
   const sources = (Array.isArray(payload?.paths) ? payload.paths : [])
     .map((path) => String(path || '').trim())
     .filter(Boolean);
-  if (!targetDir || !sources.length) return;
+  if (!sources.length) return;
   const request = directoryAbort;
   const moves: Array<{ from: string; to: string }> = [];
   let hitSameDir = false;
