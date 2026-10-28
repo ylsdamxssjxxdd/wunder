@@ -2332,6 +2332,11 @@ async fn watch(
                 event = feed.recv() => match event {
                     Some(wunder_server::cloud::CloudThreadEvent::Change(change)) => println!("{}", serde_json::to_string(&change)?),
                     Some(wunder_server::cloud::CloudThreadEvent::Connection(state)) => eprintln!("{state}"),
+                    // 过程条目与消息尾块是给蛹侧就地绘制的实时增量，舵机旁观只做
+                    // 透传：按服务端事件名输出一行 JSON，脚本可按 type 分派；已结算
+                    // 的行仍由 Change 承载，两者不重复结算。
+                    Some(wunder_server::cloud::CloudThreadEvent::ProcessItem(item)) => println!("{}", json!({"type": "thread_process_item", "data": item})),
+                    Some(wunder_server::cloud::CloudThreadEvent::Tail(tail)) => println!("{}", json!({"type": "thread_item_tail", "data": tail})),
                     Some(wunder_server::cloud::CloudThreadEvent::Reload) => {
                         let page = cloud.cloud_thread_view(&command.thread).await?;
                         let cursor = page.pointer("/page/view_seq").and_then(Value::as_i64).unwrap_or(0);
