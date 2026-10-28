@@ -90,44 +90,144 @@ mod tests {
         current.execution_turn_id = "fixture-execution".into();
         current.assistant.item_id = "fixture-execution:text-1".into();
         let mut rows = vec![current.clone()];
-        assert!(apply_tail_to(&mut rows, &serde_json::json!({"item_id":"fixture-execution:text-2",
-            "field":"reasoning","offset":0,"text":"Fixture current"})));
-        assert!(!apply_tail_to(&mut rows, &serde_json::json!({"item_id":"fixture-execution:text-1",
-            "field":"reasoning","offset":15,"text":" stale"})));
+        assert!(apply_tail_to(
+            &mut rows,
+            &serde_json::json!({"item_id":"fixture-execution:text-2",
+            "field":"reasoning","offset":0,"text":"Fixture current"})
+        ));
+        assert!(!apply_tail_to(
+            &mut rows,
+            &serde_json::json!({"item_id":"fixture-execution:text-1",
+            "field":"reasoning","offset":15,"text":" stale"})
+        ));
         current.revision = 2;
         merge_messages(&mut rows, &[current], false);
         assert_eq!(rows[0].assistant.reasoning, "Fixture current");
         assert_eq!(rows[0].reasoning_item_id, "fixture-execution:text-2");
-        assert!(apply_tail_to(&mut rows, &serde_json::json!({"item_id":"fixture-execution:text-2",
-            "field":"reasoning","offset":15,"text":" continued"})));
+        assert!(apply_tail_to(
+            &mut rows,
+            &serde_json::json!({"item_id":"fixture-execution:text-2",
+            "field":"reasoning","offset":15,"text":" continued"})
+        ));
         assert_eq!(rows[0].assistant.reasoning, "Fixture current continued");
     }
 
     #[test]
     fn cloud_process_overlay_keeps_running_tools_visible_and_terminal_states_monotonic() {
         PROCESS_ITEMS.with(|items| items.borrow_mut().clear());
-        MESSAGES.with(|messages| *messages.borrow_mut() = vec![ChatViewRow {
-            root_turn_id: "fixture-turn".into(), execution_turn_id: "fixture-turn".into(),
-            status: "running".into(), ..Default::default()
-        }]);
+        MESSAGES.with(|messages| {
+            *messages.borrow_mut() = vec![ChatViewRow {
+                root_turn_id: "fixture-turn".into(),
+                execution_turn_id: "fixture-turn".into(),
+                status: "running".into(),
+                ..Default::default()
+            }]
+        });
         let tool = serde_json::json!({"turn_id":"fixture-turn","root_turn_id":"fixture-turn",
             "item_id":"fixture-turn:tool-first","kind":"tool_call","status":"running",
             "payload":{"tool":"read_file","tool_call_id":"fixture-first","process_seq":2}});
         assert!(apply_process_item(tool.clone()));
-        let mut row = crate::TimelineRow { process_idx: 1, process_root: "fixture-turn".into(),
-            process_entries: ModelRc::new(VecModel::<crate::ProcessEntry>::default()), ..Default::default() };
+        let mut row = crate::TimelineRow {
+            process_idx: 1,
+            process_root: "fixture-turn".into(),
+            process_entries: ModelRc::new(VecModel::<crate::ProcessEntry>::default()),
+            ..Default::default()
+        };
         merge_live_process(&mut row);
         assert_eq!(row.process_entries.row_count(), 1);
-        assert_eq!(row.process_entries.row_data(0).unwrap().status_kind, crate::timeline::STATUS_RUNNING);
+        assert_eq!(
+            row.process_entries.row_data(0).unwrap().status_kind,
+            crate::timeline::STATUS_RUNNING
+        );
         let mut completed = tool.clone();
         completed["status"] = serde_json::json!("completed");
         assert!(apply_process_item(completed));
         assert!(apply_process_item(tool));
         merge_live_process(&mut row);
         assert_eq!(row.process_entries.row_count(), 1);
-        assert_eq!(row.process_entries.row_data(0).unwrap().status_kind, crate::timeline::STATUS_DONE);
+        assert_eq!(
+            row.process_entries.row_data(0).unwrap().status_kind,
+            crate::timeline::STATUS_DONE
+        );
         PROCESS_ITEMS.with(|items| items.borrow_mut().clear());
         MESSAGES.with(|messages| messages.borrow_mut().clear());
+    }
+
+    #[test]
+    fn cloud_gap_does_not_clear_live_state_or_reopen_tool_phase() {
+        let mut current = row(1, 1);
+        current.execution_turn_id = "fixture-execution".into();
+        current.status = "running".into();
+        current.assistant.item_id = "fixture-execution:text-1".into();
+        current.assistant.reasoning = "Fixture previous".into();
+        current.reasoning_item_id = current.assistant.item_id.clone();
+        let mut rows = vec![current];
+        assert!(!apply_tail_to(
+            &mut rows,
+            &serde_json::json!({"item_id":"fixture-execution:text-2",
+            "field":"reasoning","offset":5,"text":"gap"})
+        ));
+        assert_eq!(rows[0].assistant.reasoning, "Fixture previous");
+        assert!(apply_tail_to(
+            &mut rows,
+            &serde_json::json!({"item_id":"fixture-execution:text-2",
+            "field":"reasoning","offset":0,"text":"Fixture current"})
+        ));
+        rows[0].process_activity.kind = "tool".into();
+        assert!(apply_tail_to(
+            &mut rows,
+            &serde_json::json!({"item_id":"fixture-execution:text-2",
+            "field":"reasoning","offset":15,"text":" continued"})
+        ));
+        assert_eq!(rows[0].process_activity.kind, "tool");
+        assert!(apply_tail_to(
+            &mut rows,
+            &serde_json::json!({"item_id":"fixture-execution:text-3",
+            "field":"reasoning","offset":0,"text":"Fixture next"})
+        ));
+        assert_eq!(rows[0].process_activity.kind, "thinking");
+    }
+
+    #[test]
+    fn cloud_overlay_restores_start_order_and_respects_history_window() {
+        PROCESS_ITEMS.with(|items| *items.borrow_mut() = (1..=2).map(|order| serde_json::json!({
+            "turn_id":"fixture-turn", "root_turn_id":"fixture-turn",
+            "item_id":format!("fixture-turn:tool-{order}"), "kind":"tool_call", "status":"completed",
+            "payload":{"tool":"read_file","tool_call_id":format!("fixture-{order}"),"process_seq":order}
+        })).collect());
+        let mut row = crate::TimelineRow {
+            process_idx: 1,
+            process_root: "fixture-turn".into(),
+            process_entries: ModelRc::new(VecModel::<crate::ProcessEntry>::default()),
+            ..Default::default()
+        };
+        merge_live_process(&mut row);
+        let expected = row
+            .process_entries
+            .iter()
+            .map(|entry| entry.id)
+            .collect::<Vec<_>>();
+        let reversed = row.process_entries.iter().rev().collect::<Vec<_>>();
+        row.process_entries = ModelRc::new(VecModel::from(reversed));
+        row.process_newer = true;
+        merge_live_process(&mut row);
+        assert_ne!(
+            row.process_entries
+                .iter()
+                .map(|entry| entry.id)
+                .collect::<Vec<_>>(),
+            expected
+        );
+        row.process_newer = false;
+        merge_live_process(&mut row);
+        assert_eq!(
+            row.process_entries
+                .iter()
+                .map(|entry| entry.id)
+                .collect::<Vec<_>>(),
+            expected
+        );
+        PROCESS_ITEMS.with(|items| items.borrow_mut().clear());
     }
 
     #[test]
@@ -242,10 +342,13 @@ fn merge_messages(messages: &mut Vec<ChatViewRow>, incoming: &[ChatViewRow], rep
                 let same_execution = next.execution_turn_id == existing.execution_turn_id;
                 if same_execution
                     && matches!(next.status.as_str(), "accepted" | "running")
-                    && (model_round(&existing.assistant.item_id) > model_round(&next.assistant.item_id)
+                    && (model_round(&existing.assistant.item_id)
+                        > model_round(&next.assistant.item_id)
                         || (existing.assistant.item_id == next.assistant.item_id
-                            && (existing.assistant.reasoning_offset > next.assistant.reasoning_offset
-                                || existing.assistant.content_offset > next.assistant.content_offset)))
+                            && (existing.assistant.reasoning_offset
+                                > next.assistant.reasoning_offset
+                                || existing.assistant.content_offset
+                                    > next.assistant.content_offset)))
                 {
                     next.assistant = existing.assistant.clone();
                     next.reasoning_item_id = existing.reasoning_item_id.clone();
@@ -291,6 +394,7 @@ fn apply_tail_to(messages: &mut [ChatViewRow], tail: &Value) -> bool {
         return false;
     };
     let round = model_round(id);
+    let next_round = row.assistant.item_id != id;
     if round < model_round(&row.assistant.item_id) {
         return false;
     }
@@ -301,9 +405,7 @@ fn apply_tail_to(messages: &mut [ChatViewRow], tail: &Value) -> bool {
     if !matches!(field, "content" | "reasoning") || text.is_empty() {
         return false;
     }
-    let expected = if row.assistant.item_id != id
-        || (reasoning && row.reasoning_item_id != id)
-    {
+    let expected = if row.assistant.item_id != id || (reasoning && row.reasoning_item_id != id) {
         0
     } else if reasoning {
         row.assistant.reasoning_offset
@@ -344,7 +446,10 @@ fn apply_tail_to(messages: &mut [ChatViewRow], tail: &Value) -> bool {
         }
         body.drain(..start);
     }
-    if !reasoning || row.process_activity.kind != "tool_running" {
+    if next_round
+        || !matches!(row.process_activity.kind.as_str(), "tool" | "responding")
+        || (!reasoning && row.process_activity.kind != "tool")
+    {
         row.process_activity.kind = if reasoning { "thinking" } else { "responding" }.into();
         row.process_activity.item_id = id.into();
     }
@@ -362,9 +467,13 @@ fn apply_tail(tail: Value) -> bool {
 }
 
 fn apply_process_item(item: Value) -> bool {
-    if !matches!(item["kind"].as_str(), Some("assistant_message" | "tool_call" | "compaction"))
-        || item["item_id"].as_str().is_none_or(str::is_empty)
-    { return false }
+    if !matches!(
+        item["kind"].as_str(),
+        Some("assistant_message" | "tool_call" | "compaction")
+    ) || item["item_id"].as_str().is_none_or(str::is_empty)
+    {
+        return false;
+    }
     let execution = item["turn_id"].as_str().unwrap_or_default();
     let valid = MESSAGES.with(|messages| {
         messages.borrow().iter().any(|row| {
@@ -378,6 +487,22 @@ fn apply_process_item(item: Value) -> bool {
     });
     if !valid {
         return false;
+    }
+    if item["kind"] == "tool_call" && item["status"] == "running" {
+        MESSAGES.with(|messages| {
+            for row in messages.borrow_mut().iter_mut().filter(|row| {
+                (if row.execution_turn_id.is_empty() {
+                    &row.root_turn_id
+                } else {
+                    &row.execution_turn_id
+                }) == execution
+                    && item["payload"]["model_round"].as_i64().unwrap_or(0)
+                        >= model_round(&row.assistant.item_id)
+            }) {
+                row.process_activity.kind = "tool".into();
+                row.process_activity.item_id = item["item_id"].as_str().unwrap_or_default().into();
+            }
+        });
     }
     PROCESS_ITEMS.with(|slot| {
         let mut items = slot.borrow_mut();
@@ -447,11 +572,17 @@ pub(crate) fn merge_live_process(row: &mut crate::TimelineRow) {
             entries.push(entry);
         }
     }
-    let ranks = overlay.process_entries.iter().enumerate()
+    let ranks = overlay
+        .process_entries
+        .iter()
+        .enumerate()
         .map(|(index, entry)| (entry.id.to_string(), index))
         .collect::<std::collections::HashMap<_, _>>();
-    let mut ordered = entries.iter().filter(|entry| ranks.contains_key(entry.id.as_str()))
-        .cloned().collect::<Vec<_>>();
+    let mut ordered = entries
+        .iter()
+        .filter(|entry| ranks.contains_key(entry.id.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
     ordered.sort_by_key(|entry| ranks[entry.id.as_str()]);
     let mut ordered = ordered.into_iter();
     for entry in &mut entries {
@@ -490,11 +621,24 @@ fn apply_live_models(app: &MainWindow) {
         merge_live_process(&mut row);
         if row.process_entries.row_count() > 0 {
             row.visible = true;
-            let count = MESSAGES.with(|messages| messages.borrow().iter()
-                .find(|message| message.root_turn_id == row.process_root.as_str())
-                .map(|message| message.process_count.unwrap_or(message.workflow_count + message.reasoning_count))
-                .unwrap_or(0));
-            row.text = crate::timeline_text::process_label(count.max(row.process_entries.row_count() as i64).min(i32::MAX as i64) as i32).into();
+            let count = MESSAGES.with(|messages| {
+                messages
+                    .borrow()
+                    .iter()
+                    .find(|message| message.root_turn_id == row.process_root.as_str())
+                    .map(|message| {
+                        message
+                            .process_count
+                            .unwrap_or(message.workflow_count + message.reasoning_count)
+                    })
+                    .unwrap_or(0)
+            });
+            row.text = crate::timeline_text::process_label(
+                count
+                    .max(row.process_entries.row_count() as i64)
+                    .min(i32::MAX as i64) as i32,
+            )
+            .into();
             model.set_row_data(index, row);
         }
     }
@@ -701,6 +845,7 @@ fn load(app: &MainWindow, api: Arc<NativeDesktop>) {
                     return;
                 }
                 let mut live_changed = false;
+                let mut process_changed = false;
                 for event in events {
                     match event {
                         CloudThreadEvent::Change(change) => {
@@ -714,7 +859,11 @@ fn load(app: &MainWindow, api: Arc<NativeDesktop>) {
                         CloudThreadEvent::Connection(status) => {
                             app.set_cloud_thread_status(status.into());
                         }
-                        CloudThreadEvent::ProcessItem(item) => live_changed |= apply_process_item(item),
+                        CloudThreadEvent::ProcessItem(item) => {
+                            let changed = apply_process_item(item);
+                            live_changed |= changed;
+                            process_changed |= changed;
+                        }
                         CloudThreadEvent::Tail(tail) => live_changed |= apply_tail(tail),
                         CloudThreadEvent::Reload => {
                             load(&app, event_api.clone());
@@ -724,9 +873,16 @@ fn load(app: &MainWindow, api: Arc<NativeDesktop>) {
                     }
                 }
                 if live_changed {
-                    let rows = MESSAGES.with(|messages| crate::native_chat::project_cloud_history(&messages.borrow(), app.get_timeline()));
+                    let rows = MESSAGES.with(|messages| {
+                        crate::native_chat::project_cloud_history(
+                            &messages.borrow(),
+                            app.get_timeline(),
+                        )
+                    });
                     crate::native_chat::replace_external_timeline(&app, rows, false);
-                    apply_live_models(&app);
+                    if process_changed {
+                        apply_live_models(&app);
+                    }
                 }
                 let _ = applied.send(());
             });

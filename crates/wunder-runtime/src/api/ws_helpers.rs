@@ -363,7 +363,13 @@ pub(crate) async fn resume_thread_view(
     cancel: Option<CancellationToken>,
 ) {
     let mut wake = state.kernel.orchestrator.change_hub.subscribe(&session_id);
-    let mut live = live_events.then(|| state.kernel.orchestrator.change_hub.subscribe_live(&session_id));
+    let mut live = live_events.then(|| {
+        state
+            .kernel
+            .orchestrator
+            .change_hub
+            .subscribe_live(&session_id)
+    });
     let mut goal_wake = state
         .kernel
         .orchestrator
@@ -1078,8 +1084,13 @@ pub(crate) async fn send_ws_tail_event(
     });
     let text = build_ws_text("event", request_id, Some(payload));
     if event_name == "thread_process_item" {
-        tokio::time::timeout(std::time::Duration::from_secs(2), send_text_backpressured(tx, text))
-            .await.map_err(|_| ())?.map_err(|_| ())
+        tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            send_text_backpressured(tx, text),
+        )
+        .await
+        .map_err(|_| ())?
+        .map_err(|_| ())
     } else {
         try_send_text_strict(tx, text).map(|_| ()).map_err(|_| ())
     }
@@ -1576,17 +1587,28 @@ mod tests {
             .unwrap()
         }
         assert_eq!(next_status(&mut rx, "running").await["view_seq"], after);
-        state.kernel.orchestrator.change_hub.publish_live("fixture-thread", &StreamEvent {
-            event: "thread_process_item".into(), data: json!({"item_id":"fixture-tool","status":"running"}),
-            id: None, timestamp: None,
-        });
+        state.kernel.orchestrator.change_hub.publish_live(
+            "fixture-thread",
+            &StreamEvent {
+                event: "thread_process_item".into(),
+                data: json!({"item_id":"fixture-tool","status":"running"}),
+                id: None,
+                timestamp: None,
+            },
+        );
         let live = tokio::time::timeout(Duration::from_secs(3), async {
             loop {
-                let Some(Message::Text(raw)) = rx.recv().await else { panic!("display closed") };
+                let Some(Message::Text(raw)) = rx.recv().await else {
+                    panic!("display closed")
+                };
                 let frame: Value = serde_json::from_str(&raw).unwrap();
-                if frame["payload"]["event"] == "thread_process_item" { break frame; }
+                if frame["payload"]["event"] == "thread_process_item" {
+                    break frame;
+                }
             }
-        }).await.unwrap();
+        })
+        .await
+        .unwrap();
         assert_eq!(live["payload"]["data"]["status"], "running");
         committer
             .update_turn(
