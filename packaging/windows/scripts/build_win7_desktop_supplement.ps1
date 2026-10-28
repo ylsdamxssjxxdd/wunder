@@ -984,19 +984,6 @@ if ($null -ne $gitArchiveMeta) {
 }
 
 # ---------------------------------------------------------------------------
-# Prune (wheel tests, foreign-architecture PE files, MinGit extras)
-# ---------------------------------------------------------------------------
-if ($SkipPrune) {
-  Write-Step 'skipping stage prune (-SkipPrune)'
-} else {
-  $pruneArgs = @{ PackageRoot = $packRoot; Arch = $Arch }
-  if ($SkipGitPrune) { $pruneArgs.SkipGit = $true }
-  Invoke-SupplementPrune @pruneArgs
-}
-
-Invoke-GitSmoke -GitRoot $gitRoot
-
-# ---------------------------------------------------------------------------
 # ripgrep
 # ---------------------------------------------------------------------------
 $rgMeta = Get-PropertyValue -Object $manifest -Name 'rg'
@@ -1101,6 +1088,26 @@ if ($browserEnabled) {
 } else {
   Write-Step 'bundled browser disabled in manifest (browser.enabled=false)'
 }
+
+# ---------------------------------------------------------------------------
+# Prune (wheel tests, foreign-architecture PE files, MinGit extras)
+# ---------------------------------------------------------------------------
+# Must stay after the last staged component and before the release gate: the
+# prune clears foreign-architecture PE images across the whole opt/ tree, but
+# the browser, ripgrep and ffmpeg are only staged after Git. It used to run right
+# after Git, so the x64 nacl64.exe that the Chrome tree brings along was never
+# filtered and only the release gate caught it -- which fails the build, so the
+# supplement could never be republished at all. Running it here also covers any
+# component added later.
+if ($SkipPrune) {
+  Write-Step 'skipping stage prune (-SkipPrune)'
+} else {
+  $pruneArgs = @{ PackageRoot = $packRoot; Arch = $Arch }
+  if ($SkipGitPrune) { $pruneArgs.SkipGit = $true }
+  Invoke-SupplementPrune @pruneArgs
+}
+
+Invoke-GitSmoke -GitRoot $gitRoot
 
 # ---------------------------------------------------------------------------
 # Validate imports
