@@ -606,21 +606,47 @@ async fn work_process_stream_admits_tools_before_results_with_stable_order() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn work_process_observers_receive_running_tools_and_thought_tails_without_durable_completion() {
+async fn work_process_observers_receive_running_tools_and_thought_tails_without_durable_completion()
+{
     let (state, _dir) = build_test_state("process_observer").await;
-    let mut observer = state.kernel.orchestrator.change_hub.subscribe_live("fixture-thread");
-    let emitter = EventEmitter::new("fixture-thread".into(), "fixture-owner".into(), None, None,
-        state.monitor.clone(), false, None).with_committer(state.kernel.orchestrator.committer.clone());
+    let mut observer = state
+        .kernel
+        .orchestrator
+        .change_hub
+        .subscribe_live("fixture-thread");
+    let emitter = EventEmitter::new(
+        "fixture-thread".into(),
+        "fixture-owner".into(),
+        None,
+        None,
+        state.monitor.clone(),
+        false,
+        None,
+    )
+    .with_committer(state.kernel.orchestrator.committer.clone());
     emitter.bind_turn("fixture-turn", 1);
-    emitter.emit("llm_output_delta", json!({"model_round":1,"reasoning_delta":"Fixture thought"})).await;
-    emitter.emit("tool_call", json!({"model_round":1,"tool_call_id":"fixture-call","tool":"read_file"})).await;
+    emitter
+        .emit(
+            "llm_output_delta",
+            json!({"model_round":1,"reasoning_delta":"Fixture thought"}),
+        )
+        .await;
+    emitter
+        .emit(
+            "tool_call",
+            json!({"model_round":1,"tool_call_id":"fixture-call","tool":"read_file"}),
+        )
+        .await;
     let tail = observer.try_recv().unwrap();
     let tool = observer.try_recv().unwrap();
     assert_eq!(tail.event, "thread_item_tail");
     assert_eq!(tail.data["data"]["text"], "Fixture thought");
     assert_eq!(tool.event, "thread_process_item");
     assert_eq!(tool.data["data"]["status"], "running");
-    assert_eq!(tool.data["data"]["item_id"], "fixture-turn:tool-fixture-call");
+    assert_eq!(
+        tool.data["data"]["item_id"],
+        "fixture-turn:tool-fixture-call"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

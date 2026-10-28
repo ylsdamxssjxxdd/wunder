@@ -183,18 +183,35 @@ mod tests {
         let mut receiver = hub.subscribe_live("fixture-thread");
         let mut other = hub.subscribe_live("fixture-other");
         for index in 0..130 {
-            hub.publish_live("fixture-thread", &crate::schemas::StreamEvent {
-                event: "thread_process_item".into(), data: serde_json::json!({"order":index}),
-                id: None, timestamp: None,
-            });
+            hub.publish_live(
+                "fixture-thread",
+                &crate::schemas::StreamEvent {
+                    event: "thread_process_item".into(),
+                    data: serde_json::json!({"order":index}),
+                    id: None,
+                    timestamp: None,
+                },
+            );
         }
-        assert!(matches!(receiver.try_recv(), Err(broadcast::error::TryRecvError::Lagged(2))));
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(broadcast::error::TryRecvError::Lagged(2))
+        ));
         assert_eq!(receiver.try_recv().unwrap().data["order"], 2);
-        assert!(matches!(other.try_recv(), Err(broadcast::error::TryRecvError::Empty)));
+        assert!(matches!(
+            other.try_recv(),
+            Err(broadcast::error::TryRecvError::Empty)
+        ));
         drop(receiver);
-        hub.publish_live("fixture-thread", &crate::schemas::StreamEvent {
-            event: "thread_process_item".into(), data: Value::Null, id: None, timestamp: None,
-        });
+        hub.publish_live(
+            "fixture-thread",
+            &crate::schemas::StreamEvent {
+                event: "thread_process_item".into(),
+                data: Value::Null,
+                id: None,
+                timestamp: None,
+            },
+        );
         assert!(!hub.live.lock().contains_key("fixture-thread"));
     }
 
