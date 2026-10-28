@@ -6,7 +6,8 @@
 set -euo pipefail
 
 repo_root="${WUNDER_REPO_ROOT:-$(cd -- "$(dirname -- "$0")/.." && pwd)}"
-offline_root="${WUNDER_OFFLINE_ROOT:-${WUNDER_BUILDER_ROOT:-$repo_root/../Rust-builder/kylin-arm}/offline}"
+if [[ "$(uname -m)" == x86_64 ]]; then host_profile=kylin-x86; else host_profile=kylin-arm; fi
+offline_root="${WUNDER_OFFLINE_ROOT:-${WUNDER_BUILDER_ROOT:-$repo_root/../Rust-builder/$host_profile}/offline}"
 sdk="$offline_root/linux-amd64-ubuntu18/root"
 target_dir="${CARGO_TARGET_DIR:-$repo_root/target/linux-amd64-ubuntu18-slint/cargo}"
 output_dir="${WUNDER_OUTPUT_DIR:-$repo_root/target/slint/dist/linux-amd64}"
@@ -16,8 +17,16 @@ max_glibc="${WUNDER_SLINT_LINUX_MAX_GLIBC:-2.27}"
 stage_dir=""
 
 # The packaging process runs after the child cross-build process exits, so set
-# up the cross SDK again instead of relying on child-shell exports.
-export PATH="$offline_root/rust/toolchains/1.92.0-aarch64-unknown-linux-gnu/bin:$sdk/usr/bin:$PATH"
+# up the cross SDK again instead of relying on child-shell exports. On x86_64
+# the host gcc is wrapped with the bionic sysroot; on ARM64 the SDK's cross
+# compiler is required.
+if [[ "$(uname -m)" == x86_64 ]]; then
+  appimage_rust="$offline_root/rust/toolchains/nightly-2026-03-14-x86_64-unknown-linux-gnu"
+  [[ -x "$appimage_rust/bin/cargo" ]] || appimage_rust="$appimage_rust/nightly-2026-03-14-x86_64-unknown-linux-gnu"
+  export PATH="$appimage_rust/bin:$PATH"
+else
+  export PATH="$offline_root/rust/toolchains/1.92.0-aarch64-unknown-linux-gnu/bin:$sdk/usr/bin:$PATH"
+fi
 export WUNDER_AMD64_SDK_ROOT="$sdk"
 
 fail() { echo "[wunder-slint-amd64-appimage] $*" >&2; exit 2; }

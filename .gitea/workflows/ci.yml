@@ -1,0 +1,275 @@
+name: Linux CI
+
+on:
+  push:
+    branches:
+      - "**"
+  workflow_dispatch:
+
+concurrency:
+  group: linux-ci
+  cancel-in-progress: true
+
+env:
+  GITHUB_PROXY: https://gh-proxy.com
+
+jobs:
+  linux-cli:
+    runs-on: wunder-ci
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust 1.92
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --profile minimal --default-toolchain 1.92.0
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Configure crates.io mirror
+        run: |
+          mkdir -p ~/.cargo
+          cat > ~/.cargo/config.toml <<'EOF'
+          [source.crates-io]
+          replace-with = "rsproxy-sparse"
+          [source.rsproxy-sparse]
+          registry = "sparse+https://rsproxy.cn/index/"
+          EOF
+
+      - name: Hash Cargo.lock
+        id: lock
+        run: echo "hash=$(sha256sum Cargo.lock | cut -c1-16)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ steps.lock.outputs.hash }}
+          restore-keys: |
+            cargo-
+
+      - name: Build Linux CLI
+        run: cargo build -p wunder-cli --release --locked
+
+      - name: Smoke test
+        run: ./target/release/wunder-cli --version
+
+  linux-desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            appimage_runtime: x86_64
+            supplement_platform: linux/amd64
+            desktop_image: wunder-desktop-ubuntu1804-x86_64
+            appimage_script: builders/build-linux-appimage-native.sh
+          - arch: arm64
+            appimage_runtime: aarch64
+            supplement_platform: linux/arm64
+            desktop_image: wunder-desktop-ubuntu1804-arm64
+            appimage_script: builders/build-linux-arm64-cross-appimage.sh
+    runs-on: wunder-ci
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build desktop image
+        run: |
+          set -euo pipefail
+          docker build --platform linux/amd64 \
+            --build-arg RUST_TOOLCHAIN=1.92.0 \
+            --build-arg APPIMAGE_RUNTIME_URL="${GITHUB_PROXY}/https://github.com/AppImage/AppImageKit/releases/download/continuous/runtime-${{ matrix.appimage_runtime }}" \
+            -f packaging/docker/Dockerfile.ubuntu18-desktop \
+            -t "${{ matrix.desktop_image }}" .
+
+      - name: Build supplement image
+        run: |
+          set -euo pipefail
+          docker build --platform "${{ matrix.supplement_platform }}" \
+            -f packaging/docker/Dockerfile.ubuntu18-supplement \
+            -t "wunder-supplement-ubuntu1804-${{ matrix.arch }}" .
+
+      - name: Hash Cargo.lock
+        id: lock
+        run: echo "hash=$(sha256sum Cargo.lock | cut -c1-16)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: desktop-${{ matrix.arch }}-cargo-${{ steps.lock.outputs.hash }}
+          restore-keys: |
+            desktop-${{ matrix.arch }}-cargo-
+
+      - name: Build AppImage
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/app" \
+            -v /home/sjxx/gitea/cargo-registry:/usr/local/cargo/registry \
+            -w /app \
+            -e ARCH="${{ matrix.arch }}" \
+            -e WUNDER_OUTPUT_DIR=/app/release-assets \
+            -e WUNDER_APPIMAGE_RUNTIME=/usr/local/lib/wunder/appimage-runtime \
+            "${{ matrix.desktop_image }}" \
+            bash "${{ matrix.appimage_script }}"
+
+      - name: Verify AppImage payload
+        run: |
+          set -euo pipefail
+          asset="$(find release-assets -maxdepth 1 -name "wunder-slint-*-linux-${{ matrix.arch }}.AppImage" -print -quit)"
+          test -n "$asset"
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/app" \
+            -w /app \
+            "${{ matrix.desktop_image }}" \
+            bash frontend-slint/scripts/check-linux-arm64-appimage.sh "/app/$asset"
+
+      - name: Build Linux CLI
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/app" \
+            -v /home/sjxx/gitea/cargo-registry:/usr/local/cargo/registry \
+            -w /app \
+            -e ARCH="${{ matrix.arch }}" \
+            -e WUNDER_CLI_OUTPUT_DIR=/app/release-assets \
+            "${{ matrix.desktop_image }}" \
+            bash builders/build-linux-cli-native.sh
+
+      - name: Build supplement
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import pathlib
+
+          path = pathlib.Path('packaging/linux/scripts/linux-supplement-manifest.json')
+          data = json.loads(path.read_text(encoding='utf-8'))
+          proxy = 'https://gh-proxy.com/'
+
+          def route(node):
+              if isinstance(node, dict):
+                  url = node.get('url')
+                  if isinstance(url, str) and url.startswith('https://github.com/'):
+                      node['url'] = proxy + url
+                  for value in node.values():
+                      route(value)
+              elif isinstance(node, list):
+                  for value in node:
+                      route(value)
+
+          route(data)
+          path.write_text(json.dumps(data, indent=2) + '\n', encoding='utf-8')
+          PY
+          rm -rf supplement-dist supplement-build
+          mkdir -p supplement-dist supplement-build
+          docker run --rm --platform "${{ matrix.supplement_platform }}" \
+            -v "$GITHUB_WORKSPACE:/app" \
+            -w /app \
+            -e ARCH="${{ matrix.arch }}" \
+            -e WUNDER_OUTPUT_DIR=/app/supplement-dist \
+            -e WUNDER_SUPPLEMENT_BUILD_ROOT=/app/supplement-build \
+            -e WUNDER_SUPPLEMENT_PYPI_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple \
+            "wunder-supplement-ubuntu1804-${{ matrix.arch }}" \
+            bash packaging/linux/scripts/build_linux_supplement.sh
+
+      - name: Verify supplement
+        run: |
+          set -euo pipefail
+          pack="$(find supplement-dist -maxdepth 1 -name "wunder-supplement-linux-${{ matrix.arch }}.tar.gz" -print -quit)"
+          test -n "$pack"
+          tar -tzf "$pack" >/dev/null
+          ls -lh "$pack"
+
+      - name: Pack installer
+        run: |
+          set -euo pipefail
+          desktop="$(find release-assets -maxdepth 1 -name "wunder-slint-*-linux-${{ matrix.arch }}.AppImage" -print -quit)"
+          cli="$(find release-assets -maxdepth 1 -name "wunder-cli-*-linux-${{ matrix.arch }}" -print -quit)"
+          supplement="$(find supplement-dist -maxdepth 1 -name "wunder-supplement-linux-${{ matrix.arch }}.tar.gz" -print -quit)"
+          test -n "$desktop"
+          test -n "$cli"
+          test -n "$supplement"
+          bash builders/pack.sh -a "linux-${{ matrix.arch }}" \
+            --desktop "$desktop" \
+            --cli "$cli" \
+            --supplement "$supplement" \
+            --output-dir release-assets
+          find release-assets -maxdepth 1 -type f -printf '%f %s\n' | sort
+
+      - name: Publish artifacts
+        run: |
+          set -euo pipefail
+          grep -q ' /home/sjxx/gitea/artifacts ' /proc/mounts || {
+            echo 'artifact directory is not mounted into the job container' >&2
+            exit 1
+          }
+          dest="/home/sjxx/gitea/artifacts/linux-${{ matrix.arch }}"
+          mkdir -p "$dest"
+          cp release-assets/*.AppImage \
+            release-assets/wunder-cli-* \
+            release-assets/*.run \
+            supplement-dist/*.tar.gz \
+            "$dest"/
+          chown -R 1000:1000 "$dest"
+          ls -lh "$dest"
+
+      - name: Publish Gitea release
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          api="$GITHUB_SERVER_URL/api/v1/repos/$GITHUB_REPOSITORY"
+          auth="Authorization: token $TOKEN"
+          tag="ci-${GITHUB_RUN_NUMBER}"
+
+          release_id() {
+            curl -s -H "$auth" "$api/releases/tags/$tag" \
+              | python3 -c 'import json,sys; print(json.load(sys.stdin).get("id", ""))' 2>/dev/null || true
+          }
+
+          id="$(release_id)"
+          if [ -z "$id" ]; then
+            curl -s -o /dev/null -X POST -H "$auth" -H 'Content-Type: application/json' \
+              -d "{\"tag_name\":\"$tag\",\"name\":\"CI Build #${GITHUB_RUN_NUMBER}\",\"target_commitish\":\"${GITHUB_SHA}\",\"prerelease\":true}" \
+              "$api/releases" || true
+            id="$(release_id)"
+          fi
+          test -n "$id"
+
+          upload() {
+            local file="$1" name="$2" code
+            code=$(curl -s -o /tmp/release-upload.json -w '%{http_code}' \
+              -X POST -H "$auth" -F "attachment=@${file}" \
+              "$api/releases/${id}/assets?name=${name}")
+            if [ "$code" = "422" ] || [ "$code" = "409" ]; then
+              local asset_id
+              asset_id=$(curl -s -H "$auth" "$api/releases/${id}/assets" | NAME="$name" python3 -c 'import json, os; n = os.environ["NAME"]; print(next((a["id"] for a in json.load(sys.stdin) if a["name"] == n), ""))')
+              if [ -n "$asset_id" ]; then
+                curl -s -o /dev/null -X DELETE -H "$auth" "$api/releases/${id}/assets/${asset_id}"
+              fi
+              code=$(curl -s -o /tmp/release-upload.json -w '%{http_code}' \
+                -X POST -H "$auth" -F "attachment=@${file}" \
+                "$api/releases/${id}/assets?name=${name}")
+            fi
+            if [ "$code" != "201" ]; then
+              echo "failed to upload ${name}: HTTP ${code}" >&2
+              cat /tmp/release-upload.json >&2 || true
+              exit 1
+            fi
+            echo "uploaded ${name}"
+          }
+
+          for file in release-assets/*.AppImage release-assets/wunder-cli-* release-assets/*.run supplement-dist/*.tar.gz; do
+            upload "$file" "$(basename "$file")"
+          done
+          echo "release: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$tag"

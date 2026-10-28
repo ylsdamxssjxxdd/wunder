@@ -6,15 +6,15 @@ set -euo pipefail
 # AppDir; durable desktop state is kept outside the read-only image by AppRun.
 
 repo_root="${WUNDER_REPO_ROOT:-$(cd -- "$(dirname -- "$0")/.." && pwd)}"
+host_arch="$(uname -m)"
+case "$host_arch" in
+  aarch64) host_profile=kylin-arm ;;
+  x86_64) host_profile=kylin-x86 ;;
+  *) echo "[wunder-slint-appimage] unsupported Linux host: ${host_arch:-unknown}" >&2; exit 2 ;;
+esac
 # A native ARM64 Linux checkout keeps the reusable SDK beside the repository.
-# Docker mounts it at /builder/kylin-arm, so retain that location as fallback.
-if [[ -n "${WUNDER_BUILDER_ROOT:-}" ]]; then
-  builder_root="$WUNDER_BUILDER_ROOT"
-elif [[ -d "$repo_root/../Rust-builder/kylin-arm" ]]; then
-  builder_root="$repo_root/../Rust-builder/kylin-arm"
-else
-  builder_root="/builder/kylin-arm"
-fi
+# Docker mounts it at /builder/kylin-arm; x86_64 hosts default to kylin-x86.
+builder_root="${WUNDER_BUILDER_ROOT:-$repo_root/../Rust-builder/$host_profile}"
 offline_root="${WUNDER_OFFLINE_ROOT:-$builder_root/offline}"
 vendor_root="${WUNDER_CARGO_VENDOR:-$offline_root/cargo-vendor-slint}"
 cargo_home="${CARGO_HOME:-$repo_root/target/linux-arm64-ubuntu18-slint/cargo-home}"
@@ -62,27 +62,43 @@ gcc_shared="$gcc_lib/libgcc_s.so"
   || fail "Ubuntu 18 ARM64 sysroot has an absolute libgcc_s.so link: $gcc_lib (run builders/prepare-linux-arm64-devel-sysroot.sh --repair)"
 [[ -e "$gcc_shared" ]] \
   || fail "Ubuntu 18 ARM64 sysroot has a dangling libgcc_s.so link: $gcc_lib (run builders/prepare-linux-arm64-devel-sysroot.sh --repair)"
-[[ -x "$gcc_lib/cc1" ]] \
-  || fail "ARM64 SDK GCC backend is missing: $gcc_lib/cc1 (run builders/prepare-linux-arm64-devel-sysroot.sh)"
 for library in libgmp.so.10 libisl.so.19 libmpc.so.3 libmpfr.so.6; do
   [[ -e "$sysroot/usr/lib/aarch64-linux-gnu/$library" || -e "$sysroot/lib/aarch64-linux-gnu/$library" ]] \
     || fail "ARM64 SDK GCC runtime is missing: $library (run builders/prepare-linux-arm64-devel-sysroot.sh)"
 done
 [[ -n "$runtime_source" ]] || fail "WUNDER_APPIMAGE_RUNTIME must point to an ARM64 type-2 AppImage runtime"
 require_file "$runtime_source"
-export PATH="$offline_root/rust/toolchains/1.92.0-aarch64-unknown-linux-gnu/bin:$PATH"
-# squashfs-tools may be absent on a minimal ARM64 host; the offline SDK's
-# arm64 sysroot carries a copy together with its own library closure.
-if ! command -v mksquashfs >/dev/null 2>&1; then
-  sdk_arm64_root="$offline_root/linux-arm64-ubuntu18/root"
-  if [[ -x "$sdk_arm64_root/usr/bin/mksquashfs" ]]; then
-    export LD_LIBRARY_PATH="$sdk_arm64_root/usr/lib/aarch64-linux-gnu:$sdk_arm64_root/lib/aarch64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-    export PATH="$sdk_arm64_root/usr/bin:$PATH"
+
+# Native ARM64 uses the SDK's own GCC; x86_64 uses the amd64-hosted cross
+# compiler from host-tools-amd64 and its binutils.
+strip_cmd=(strip)
+cargo_target_args=()
+if [[ "$host_arch" == x86_64 ]]; then
+  host_root="$(bash "$repo_root/builders/prepare-x86-arm64-cross.sh")"
+  export WUNDER_ARM64_CROSS_HOST_ROOT="$host_root"
+  rust="$offline_root/rust/toolchains/nightly-2026-03-14-x86_64-unknown-linux-gnu"
+  [[ -x "$rust/bin/cargo" ]] || rust="$rust/nightly-2026-03-14-x86_64-unknown-linux-gnu"
+  export PATH="$rust/bin:$host_root/usr/bin:$PATH"
+  strip_cmd=(env "LD_LIBRARY_PATH=$host_root/usr/lib/x86_64-linux-gnu" "$host_root/usr/bin/aarch64-linux-gnu-strip")
+  cargo_target_args=(--target aarch64-unknown-linux-gnu)
+else
+  [[ -x "$gcc_lib/cc1" ]] \
+    || fail "ARM64 SDK GCC backend is missing: $gcc_lib/cc1 (run builders/prepare-linux-arm64-devel-sysroot.sh)"
+  export PATH="$offline_root/rust/toolchains/1.92.0-aarch64-unknown-linux-gnu/bin:$PATH"
+  # squashfs-tools may be absent on a minimal ARM64 host; the offline SDK's
+  # arm64 sysroot carries a copy together with its own library closure.
+  if ! command -v mksquashfs >/dev/null 2>&1; then
+    sdk_arm64_root="$offline_root/linux-arm64-ubuntu18/root"
+    if [[ -x "$sdk_arm64_root/usr/bin/mksquashfs" ]]; then
+      export LD_LIBRARY_PATH="$sdk_arm64_root/usr/lib/aarch64-linux-gnu:$sdk_arm64_root/lib/aarch64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+      export PATH="$sdk_arm64_root/usr/bin:$PATH"
+    fi
   fi
 fi
-for command_name in cargo rustc readelf strip ldd mksquashfs dd awk grep sort mktemp stat od tr; do
+for command_name in cargo rustc readelf mksquashfs dd awk grep sort mktemp stat od tr; do
   require_command "$command_name"
 done
+[[ "$host_arch" == x86_64 ]] || require_command ldd
 
 runtime_machine="$(LC_ALL=C readelf -h "$runtime_source" | LC_ALL=C awk -F: '/Machine:/{gsub(/^[ \t]+/, "", $2); print $2}')"
 [[ "$runtime_machine" == "AArch64" ]] || fail "AppImage runtime must be AArch64, got: ${runtime_machine:-unknown}"
@@ -107,22 +123,47 @@ EOF
 # developer-wide ~/.cargo/config.toml (mirror setups) would otherwise defeat
 # the vendored configuration written into the per-build cargo home.
 WUNDER_VENDORED_CONFIG=(--config 'source.crates-io.replace-with="vendored-sources"')
+# The repo may be checked out without the executable bit on builder scripts;
+# cargo needs a directly executable linker wrapper.
+arm64_cc="$repo_root/builders/linux_arm64_sysroot_cc.sh"
+if [[ ! -x "$arm64_cc" ]]; then
+  mkdir -p "$target_dir"
+  arm64_cc="$target_dir/linux_arm64_sysroot_cc.sh"
+  cp -f "$repo_root/builders/linux_arm64_sysroot_cc.sh" "$arm64_cc"
+  chmod 755 "$arm64_cc"
+fi
 export CARGO_HOME="$cargo_home"
 export CARGO_TARGET_DIR="$target_dir"
 export CARGO_NET_OFFLINE=true
 export RCHO_ARM64_SYSROOT="$sysroot"
 export RCHO_ARM64_CC="$sysroot/usr/bin/aarch64-linux-gnu-gcc-7"
-export CC_aarch64_unknown_linux_gnu="$repo_root/builders/linux_arm64_sysroot_cc.sh"
-export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER="$repo_root/builders/linux_arm64_sysroot_cc.sh"
+export CC_aarch64_unknown_linux_gnu="$arm64_cc"
+export CXX_aarch64_unknown_linux_gnu="$arm64_cc --cxx"
+export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER="$arm64_cc"
 export RUSTFLAGS="${RUSTFLAGS:-} -C link-arg=--sysroot=$sysroot -C link-arg=-L$sysroot_lib"
+if [[ "$host_arch" == x86_64 ]]; then
+  # Archive tooling is object-format agnostic; the SDK's aarch64 binutils need
+  # bundled libbfd on LD_LIBRARY_PATH, so prefer the host tools here.
+  export AR_aarch64_unknown_linux_gnu=ar
+  export RANLIB_aarch64_unknown_linux_gnu=ranlib
+  export NM_aarch64_unknown_linux_gnu=nm
+  export PKG_CONFIG_ALLOW_CROSS=1
+  export PKG_CONFIG_SYSROOT_DIR="$sysroot"
+  export PKG_CONFIG_LIBDIR="$sysroot/usr/lib/aarch64-linux-gnu/pkgconfig:$sysroot/usr/share/pkgconfig"
+fi
 
 echo "[wunder-slint-appimage] cargo: $(cargo --version)"
 echo "[wunder-slint-appimage] rustc: $(rustc --version)"
-echo "[wunder-slint-appimage] baseline: $(ldd --version | head -n 1)"
-cargo "${WUNDER_VENDORED_CONFIG[@]}" build --locked --offline --release --manifest-path "$manifest" --bin wunder-frontend-slint
+echo "[wunder-slint-appimage] baseline: GLIBC_$max_glibc (Ubuntu 18.04 sysroot)"
+cargo "${WUNDER_VENDORED_CONFIG[@]}" build --locked --offline --release --manifest-path "$manifest" \
+  --bin wunder-frontend-slint "${cargo_target_args[@]}"
 
 phase=validation
-binary="$target_dir/release/wunder-frontend-slint"
+if [[ "$host_arch" == x86_64 ]]; then
+  binary="$target_dir/aarch64-unknown-linux-gnu/release/wunder-frontend-slint"
+else
+  binary="$target_dir/release/wunder-frontend-slint"
+fi
 require_file "$binary"
 machine="$(LC_ALL=C readelf -h "$binary" | LC_ALL=C awk -F: '/Machine:/{gsub(/^[ \t]+/, "", $2); print $2}')"
 [[ "$machine" == "AArch64" ]] || fail "expected AArch64 ELF, got: ${machine:-unknown}"
@@ -138,7 +179,7 @@ mkdir -p "$appdir/usr/bin" "$appdir/usr/lib" "$appdir/usr/share/applications" "$
 # Strip a private copy only; Cargo's incremental/release cache remains usable
 # after packaging and can be reused by the next build.
 cp -f "$binary" "$appdir/usr/bin/wunder-frontend-slint"
-strip --strip-all --strip-unneeded "$appdir/usr/bin/wunder-frontend-slint"
+"${strip_cmd[@]}" --strip-all --strip-unneeded "$appdir/usr/bin/wunder-frontend-slint"
 
 # Use the example configuration as the distributable seed; runtime state is
 # written outside the AppImage and no machine-specific paths are packaged.
@@ -195,7 +236,10 @@ if [[ -z "$runtime_lib_root" ]]; then
     fi
   done
 fi
-library_cache="$(ldconfig -p 2>/dev/null || true)"
+# A native ARM64 host can consult its multi-arch ldconfig cache. On x86_64 the
+# cache lists host libraries, so only the pinned ARM64 sysroot may be used.
+library_cache=""
+[[ "$host_arch" == x86_64 ]] || library_cache="$(ldconfig -p 2>/dev/null || true)"
 for library in "${x11_libraries[@]}"; do
   if [[ -n "$runtime_lib_root" && -f "$runtime_lib_root/$library" ]]; then
     library_path="$runtime_lib_root/$library"
@@ -212,15 +256,40 @@ for library in libX11.so.6 libXtst.so.6 libxcb.so.1 libxcb-xkb.so.1 libxkbcommon
   [[ -f "$appdir/usr/lib/$library" ]] || fail "required bundled ARM64 X11/XCB library is missing: $library; install the ARM64 packages on the host, use --docker, or set WUNDER_SLINT_RUNTIME_LIB_DIR=/path/to/libs"
 done
 
-# Bundle non-glibc direct dependencies reported by ldd, such as fontconfig and
-# freetype, because old distributions may not provide matching versions.
-while IFS= read -r library_path; do
-  [[ -f "$library_path" ]] || continue
-  case "$library_path" in
-    /lib/*/libc.so.*|/lib/*/libm.so.*|/lib/*/libpthread.so.*|/lib/*/libdl.so.*|/lib/*/librt.so.*|/lib/*/ld-linux-*) continue ;;
-  esac
-  cp -L -f "$library_path" "$appdir/usr/lib/$(basename "$library_path")"
-done < <(ldd "$binary" | awk '/=> \/|^\// {for (i=1; i<=NF; i++) if ($i ~ /^\//) {print $i; break}}' | sort -u)
+# Bundle non-glibc direct dependencies, such as fontconfig and freetype,
+# because old distributions may not provide matching versions. A native ARM64
+# host can use ldd; a cross build walks DT_NEEDED with readelf against the
+# pinned sysroot instead.
+if [[ "$host_arch" == x86_64 ]]; then
+  dependency_dir="$sysroot/usr/lib/aarch64-linux-gnu"
+  dependency_dirs=("$appdir/usr/lib" "$dependency_dir" "$sysroot/lib/aarch64-linux-gnu" "$gcc_lib")
+  queue=("$binary")
+  while ((${#queue[@]})); do
+    object="${queue[0]}"
+    queue=("${queue[@]:1}")
+    while IFS= read -r library; do
+      case "$library" in
+        libc.so.*|libm.so.*|libpthread.so.*|libdl.so.*|librt.so.*|ld-linux-*) continue ;;
+      esac
+      [[ -e "$appdir/usr/lib/$library" ]] && continue
+      library_path=""
+      for directory in "${dependency_dirs[@]}"; do
+        if [[ -f "$directory/$library" ]]; then library_path="$directory/$library"; break; fi
+      done
+      [[ -n "$library_path" ]] || continue
+      cp -L -f "$library_path" "$appdir/usr/lib/$library"
+      queue+=("$appdir/usr/lib/$library")
+    done < <(LC_ALL=C readelf -d "$object" | LC_ALL=C awk '/\(NEEDED\)/{gsub(/[][]/, "", $NF); print $NF}')
+  done
+else
+  while IFS= read -r library_path; do
+    [[ -f "$library_path" ]] || continue
+    case "$library_path" in
+      /lib/*/libc.so.*|/lib/*/libm.so.*|/lib/*/libpthread.so.*|/lib/*/libdl.so.*|/lib/*/librt.so.*|/lib/*/ld-linux-*) continue ;;
+    esac
+    cp -L -f "$library_path" "$appdir/usr/lib/$(basename "$library_path")"
+  done < <(ldd "$binary" | awk '/=> \/|^\// {for (i=1; i<=NF; i++) if ($i ~ /^\//) {print $i; break}}' | sort -u)
+fi
 
 cat > "$appdir/AppRun" <<'EOF'
 #!/bin/sh

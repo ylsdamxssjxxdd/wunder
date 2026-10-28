@@ -4,8 +4,17 @@
 set -euo pipefail
 
 repo_root="${WUNDER_REPO_ROOT:-$(cd -- "$(dirname -- "$0")/.." && pwd -P)}"
-builder_root="${WUNDER_BUILDER_ROOT:-$repo_root/../Rust-builder/kylin-arm}"
+host_arch="$(uname -m)"
+case "$host_arch" in
+  aarch64) host_profile=kylin-arm ;;
+  x86_64) host_profile=kylin-x86 ;;
+  *) echo "[wunder-build] unsupported Linux host: ${host_arch:-unknown}" >&2; exit 2 ;;
+esac
+builder_root="${WUNDER_BUILDER_ROOT:-$repo_root/../Rust-builder/$host_profile}"
 offline_root="${WUNDER_OFFLINE_ROOT:-$builder_root/offline}"
+# The Docker image is an ARM64 Ubuntu 18.04 builder and always reads kylin-arm,
+# even when the host itself defaults to kylin-x86.
+docker_builder_root="${WUNDER_DOCKER_BUILDER_ROOT:-$repo_root/../Rust-builder/kylin-arm}"
 target=""
 arch=""
 build_all=0
@@ -24,13 +33,18 @@ Options:
   -a, -arch, --arch      Select one distribution architecture.
                          linux-arm64: Desktop AppImage or CLI ELF.
                          linux-amd64: Desktop AppImage or CLI ELF.
-                         win7-x86:    Win7-compatible Desktop or CLI PE built by kylin-arm
+                         win7-x86:    Win7-compatible Desktop or CLI PE
                                       (i686-win7-windows-gnu with -Z build-std).
   -all, --all            Build every distribution available on this host: both programs for
                          Linux ARM64, Linux amd64 and Win7 x86. Linux Desktop outputs are AppImages.
   --egui                 Build the native wunder-egui desktop into target/wunder-egui/release.
-  --native         Build on an ARM64 Linux host (default).
-  --docker         Run the ARM64 Ubuntu 18.04 build image. Useful from non-ARM Linux hosts.
+  --native         Build directly on this Linux host (default).
+  --docker         Run the ARM64 Ubuntu 18.04 build image. Requires Rust-builder/kylin-arm.
+
+Host profiles (chosen from uname -m, override the SDK with WUNDER_BUILDER_ROOT):
+  aarch64  Rust-builder/kylin-arm builds every target natively.
+  x86_64   Rust-builder/kylin-x86 builds Linux amd64 natively and cross-builds
+           Linux ARM64 and Win7 x86 with the SDK toolchains.
 
 On Windows, use build.bat. Its win7-x86 target uses Rust-builder/win7 directly.
 EOF
@@ -118,7 +132,7 @@ runtime_for() {
 # shell string, preventing an empty optional argument from changing the call.
 run_in_docker() {
   command -v docker >/dev/null 2>&1 || fail "Docker is required for --docker"
-  [[ -d "$builder_root/offline" ]] || fail "kylin-arm offline SDK is missing: $builder_root/offline"
+  [[ -d "$docker_builder_root/offline" ]] || fail "kylin-arm offline SDK is missing: $docker_builder_root/offline (set WUNDER_DOCKER_BUILDER_ROOT)"
 
   local -a docker_args=(
     run --rm --network none --platform linux/arm64
@@ -127,7 +141,7 @@ run_in_docker() {
     -e WUNDER_BUILDER_ROOT=/builder/kylin-arm
     -e WUNDER_OFFLINE_ROOT=/builder/kylin-arm/offline
     -v "$repo_root:/workspace"
-    -v "$builder_root:/builder/kylin-arm:ro"
+    -v "$docker_builder_root:/builder/kylin-arm:ro"
   )
   local runtime
   if [[ "$build_all" == 1 || ( "$target" == desktop && "$arch" == linux-arm64 ) ]]; then
@@ -152,8 +166,8 @@ if [[ "$mode" == docker && "${WUNDER_IN_DOCKER:-0}" != 1 ]]; then
   run_in_docker
 fi
 
-[[ "$(uname -s)" == Linux && "$(uname -m)" == aarch64 ]] || fail "an ARM64 Linux host is required; use --docker on another Linux host"
-[[ -d "$offline_root" ]] || fail "kylin-arm offline SDK is missing: $offline_root"
+[[ "$(uname -s)" == Linux ]] || fail "Linux host required; use build.bat on Windows"
+[[ -d "$offline_root" ]] || fail "offline SDK is missing: $offline_root (expected the $host_profile profile)"
 
 run_builder() {
   local script="$1"
@@ -187,10 +201,18 @@ build_one() {
       run_builder "$repo_root/builders/build-cli-linux-amd64-offline.sh" env
       ;;
     win7-x86:desktop)
-      run_builder "$repo_root/builders/build-win7-arm64-offline.sh" env
+      if [[ "$host_arch" == x86_64 ]]; then
+        run_builder "$repo_root/builders/build-win7-x86-offline.sh" env
+      else
+        run_builder "$repo_root/builders/build-win7-arm64-offline.sh" env
+      fi
       ;;
     win7-x86:cli)
-      run_builder "$repo_root/builders/build-cli-win7-arm64-offline.sh" env
+      if [[ "$host_arch" == x86_64 ]]; then
+        run_builder "$repo_root/builders/build-cli-win7-x86-offline.sh" env
+      else
+        run_builder "$repo_root/builders/build-cli-win7-arm64-offline.sh" env
+      fi
       ;;
     *) fail "unsupported build matrix entry: $selected_target/$selected_arch" ;;
   esac

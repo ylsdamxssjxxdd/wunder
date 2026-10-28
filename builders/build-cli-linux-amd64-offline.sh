@@ -3,10 +3,22 @@
 set -euo pipefail
 
 repo_root="${WUNDER_REPO_ROOT:-$(cd -- "$(dirname -- "$0")/.." && pwd)}"
-offline_root="${WUNDER_OFFLINE_ROOT:-${WUNDER_BUILDER_ROOT:-$repo_root/../Rust-builder/kylin-arm}/offline}"
+host_arch="$(uname -m)"
+case "$host_arch" in
+  aarch64) host_profile=kylin-arm ;;
+  x86_64) host_profile=kylin-x86 ;;
+  *) echo "[wunder-cli-linux-amd64] unsupported Linux host: ${host_arch:-unknown}" >&2; exit 2 ;;
+esac
+offline_root="${WUNDER_OFFLINE_ROOT:-${WUNDER_BUILDER_ROOT:-$repo_root/../Rust-builder/$host_profile}/offline}"
 offline_root="$(cd "$offline_root" && pwd -P)"
 sdk="$offline_root/linux-amd64-ubuntu18/root"
-rust="$offline_root/rust/toolchains/1.92.0-aarch64-unknown-linux-gnu"
+if [[ "$host_arch" == x86_64 ]]; then
+  rust="$offline_root/rust/toolchains/nightly-2026-03-14-x86_64-unknown-linux-gnu"
+  # Accept the initial SDK export with an extra directory level.
+  [[ -x "$rust/bin/cargo" ]] || rust="$rust/nightly-2026-03-14-x86_64-unknown-linux-gnu"
+else
+  rust="$offline_root/rust/toolchains/1.92.0-aarch64-unknown-linux-gnu"
+fi
 vendor_root="${WUNDER_CARGO_VENDOR:-$offline_root/cargo-vendor-slint}"
 target="x86_64-unknown-linux-gnu"
 target_dir="${CARGO_TARGET_DIR:-$repo_root/target/cli-linux-amd64-ubuntu18/cargo}"
@@ -18,19 +30,32 @@ fail() { echo "[wunder-cli-linux-amd64] $*" >&2; exit 2; }
 require_file() { [[ -f "$1" ]] || fail "required file is missing: $1"; }
 require_command() { command -v "$1" >/dev/null 2>&1 || fail "required command is unavailable: $1"; }
 
-[[ "$(uname -m)" == aarch64 ]] || fail "ARM64 Linux host required (use the Docker wrapper on other hosts)"
+[[ "$host_arch" == aarch64 || "$host_arch" == x86_64 ]] || fail "x86_64 or ARM64 Linux host required"
 require_file "$repo_root/Cargo.toml"
 [[ -d "$sdk" ]] || fail "Ubuntu 18.04 amd64 SDK is missing: $sdk"
-[[ -x "$rust/bin/cargo" ]] || fail "ARM64 Rust toolchain is missing: $rust/bin/cargo"
+[[ -x "$rust/bin/cargo" ]] || fail "Rust toolchain is missing: $rust/bin/cargo"
 [[ -d "$rust/lib/rustlib/$target/lib" ]] || fail "Rust std for $target is missing"
 [[ -d "$vendor_root" ]] || fail "shared offline Cargo vendor is missing: $vendor_root"
-# SDK tools are the ones the build actually uses (the cross wrapper execs
-# $sdk/usr/bin copies directly), so put them on PATH before validation.
-export PATH="$rust/bin:$sdk/usr/bin:$PATH"
-for tool in cc x86_64-linux-gnu-gcc-7 x86_64-linux-gnu-readelf x86_64-linux-gnu-strip awk grep sed sort tail; do require_command "$tool"; done
-export LD_LIBRARY_PATH="$sdk/usr/lib/aarch64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+# On ARM64 the cross compiler comes from the SDK, so its bin directory must
+# lead PATH. On x86_64 the host gcc is wrapped with the bionic sysroot instead.
+export PATH="$rust/bin:$PATH"
+if [[ "$host_arch" == aarch64 ]]; then
+  export PATH="$rust/bin:$sdk/usr/bin:$PATH"
+  export LD_LIBRARY_PATH="$sdk/usr/lib/aarch64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+fi
+for tool in cc x86_64-linux-gnu-readelf x86_64-linux-gnu-strip awk grep sed sort tail; do require_command "$tool"; done
+[[ "$host_arch" != aarch64 ]] || require_command x86_64-linux-gnu-gcc-7
 export WUNDER_AMD64_SDK_ROOT="$sdk"
 unset GCC_EXEC_PREFIX COMPILER_PATH LIBRARY_PATH
+# The repo may be checked out without the executable bit on builder scripts;
+# cargo needs a directly executable linker wrapper.
+amd64_cc="$repo_root/builders/linux-amd64-cross-cc.sh"
+if [[ ! -x "$amd64_cc" ]]; then
+  mkdir -p "$target_dir"
+  amd64_cc="$target_dir/linux-amd64-cross-cc.sh"
+  cp -f "$repo_root/builders/linux-amd64-cross-cc.sh" "$amd64_cc"
+  chmod 755 "$amd64_cc"
+fi
 # CLI --config outranks every config file: cargo >=1.96 resolves its config
 # home from the passwd entry rather than HOME or CARGO_HOME, so a
 # developer-wide ~/.cargo/config.toml (mirror setups) would otherwise defeat
@@ -39,9 +64,9 @@ WUNDER_VENDORED_CONFIG=(--config 'source.crates-io.replace-with="vendored-source
 export CARGO_HOME="$cargo_home"
 export CARGO_TARGET_DIR="$target_dir"
 export CARGO_NET_OFFLINE=true
-export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER="$repo_root/builders/linux-amd64-cross-cc.sh"
-export CC_x86_64_unknown_linux_gnu="$repo_root/builders/linux-amd64-cross-cc.sh"
-export CXX_x86_64_unknown_linux_gnu="$repo_root/builders/linux-amd64-cross-cc.sh --cxx"
+export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER="$amd64_cc"
+export CC_x86_64_unknown_linux_gnu="$amd64_cc"
+export CXX_x86_64_unknown_linux_gnu="$amd64_cc --cxx"
 export AR_x86_64_unknown_linux_gnu=x86_64-linux-gnu-ar
 mkdir -p "$cargo_home" "$target_dir" "$output_dir"
 cat > "$cargo_home/config.toml" <<EOF
@@ -50,7 +75,7 @@ replace-with = "vendored-sources"
 [source.vendored-sources]
 directory = "$vendor_root"
 [target.$target]
-linker = "$repo_root/builders/linux-amd64-cross-cc.sh"
+linker = "$amd64_cc"
 rustflags = ["-C", "link-arg=--sysroot=$sdk", "-C", "link-arg=-L$sdk/usr/x86_64-linux-gnu/lib"]
 [net]
 offline = true
