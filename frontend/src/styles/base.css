@@ -15,14 +15,13 @@
   --ui-accent-secondary: #ffc98a;
   --ui-accent-secondary-rgb: 255, 201, 138;
   --ui-accent-deep: #e07a12;
-  /* 前景强调色（WCAG AA）。品牌色 #F58A24 在白底只有 2.46:1、在橙汁 soft 底
-     只有 2.19:1，不能承载文字、图标、实心按钮底或焦点环。行业标准做法是把
-     「品牌色」与「前景色」拆开：--ui-accent 只用于浅底着色、渐变和装饰性
-     填充；凡有信息含义的前景一律用 --ui-accent-ink（白底 5.05:1、橙汁 soft
-     底 4.50:1、白字反白 5.05:1）。新增前景用法接 ink，不要直接接 accent。 */
-  --ui-accent-ink: #aa580b;
-  --ui-accent-ink-rgb: 170, 88, 11;
-  --ui-accent-ink-hover: #954d0a;
+  /* 前景强调色。橙汁（默认）刻意不再加深：这套色以蛹的琥珀橙为准，主交互色
+     与品牌色保持同值 #F58A24，hover 取蛹的 deep #E07A12。代价是文字、实心
+     按钮白字低于 WCAG AA（白底 2.46:1），这是「观感优先于对比度」的产品选择，
+     不要为了刷达标单边把 ink 调深。其它色板仍保留各自加深的 ink 档。 */
+  --ui-accent-ink: #f58a24;
+  --ui-accent-ink-rgb: 245, 138, 36;
+  --ui-accent-ink-hover: #e07a12;
   --user-edit-caret: var(--ui-accent-deep);
   --user-edit-selection-bg: rgba(var(--ui-accent-rgb), 0.24);
   --user-edit-cursor:
@@ -49,9 +48,10 @@
   --ui-accent-secondary: #ffc98a;
   --ui-accent-secondary-rgb: 255, 201, 138;
   --ui-accent-deep: #e07a12;
-  /* 前景强调色：用途与对比度说明见 :root 的 --ui-accent-ink。 */  --ui-accent-ink: #aa580b;
-  --ui-accent-ink-rgb: 170, 88, 11;
-  --ui-accent-ink-hover: #954d0a;
+  /* 前景强调色与 :root 同值：橙汁不加深，理由见 :root 的 --ui-accent-ink。 */
+  --ui-accent-ink: #f58a24;
+  --ui-accent-ink-rgb: 245, 138, 36;
+  --ui-accent-ink-hover: #e07a12;
   --ui-accent-soft: #fdf0de;
   --ui-accent-soft-2: #fce3c7;
   --ui-accent-soft-3: #fef7ee;
