@@ -468,8 +468,17 @@ const buildAssistantBubble = (
   // `question_panel`. Keep those records available to resolveQuestionPanel,
   // but never expose them as a regular process/tool card: doing so duplicates
   // the panel in the tool list and leaves the actionable control ambiguous.
+  // A plan is a durable turn item, not part of an assistant text payload. 计划面板
+  // 每次发布都提交一条完整快照，同一轮因此会有多条 plan 条目：气泡只显示最新
+  // 一条，历史快照留给轨迹视图，避免出现一串「计划更新」卡片。
+  // The latest execution/creation identity wins independently of arrival order.
+  const planItem = workflows.filter(item => item.kind === 'plan').sort((a, b) =>
+    compareExecutions(a, b) || itemSeq(a) - itemSeq(b) || compareWorkflowItems(a, b)
+  ).at(-1);
   const renderableWorkflows = workflows.filter((item) =>
-    !isQuestionPanelWorkflowItem(item) && hasRenderableWorkflowIdentity(item, textItems)
+    !isQuestionPanelWorkflowItem(item) &&
+    (item.kind !== 'plan' || item === planItem) &&
+    hasRenderableWorkflowIdentity(item, textItems)
   );
   const records = renderableWorkflows
     .slice()
@@ -514,10 +523,6 @@ const buildAssistantBubble = (
     };
   }
   // A plan is a durable turn item, not part of an assistant text payload.
-  // The latest execution/creation identity wins independently of arrival order.
-  const planItem = workflows.filter(item => item.kind === 'plan').sort((a, b) =>
-    compareExecutions(a, b) || itemSeq(a) - itemSeq(b) || compareWorkflowItems(a, b)
-  ).at(-1);
   const plan = planItem ? normalizeChatPlan(planItem.raw) : null;
   if (plan && planItem) {
     message.display = { ...(message.display ?? {}), plan: {

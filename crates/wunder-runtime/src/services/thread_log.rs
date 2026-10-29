@@ -181,7 +181,10 @@ pub fn event_item(session_id: &str, event_type: &str, data: &Value) -> Option<Va
                 "completed"
             },
         ),
-        "plan_update" => ("plan", "plan".into(), "completed"),
+        // 计划面板每次发布都携带整份清单，一次发布就是一条独立快照。用同一个
+        // 条目 id 会让「已完成条目不可改写」的落库规则丢弃第 2 次及之后的更新，
+        // 面板就永远停在第 1 步；聊天行与轨迹都由最新一条计划条目取胜。
+        "plan_update" => ("plan", plan_update_key(data, model), "completed"),
         // Keep the structured inquiry durable even when the assistant output
         // item was committed before the tool ran.  The panel is presentation
         // state, not a model-context message, so it gets its own hidden-from-
@@ -280,6 +283,22 @@ pub fn event_item(session_id: &str, event_type: &str, data: &Value) -> Option<Va
     Some(item)
 }
 
+/// 计划快照的条目身份。发布方是计划面板工具，工具调用 id 是唯一稳定的发布
+/// 标识：重放或重试同一个调用只写一条，不同发布各自成条。缺少调用 id 的旧写入
+/// 回退到模型轮次，同轮重复发布语义相同，去重无害。
+fn plan_update_key(data: &Value, model: i64) -> String {
+    match data
+        .get("tool_call_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        Some(call) => format!("plan-{call}"),
+        None if model > 0 => format!("plan-m{model}"),
+        None => "plan".to_string(),
+    }
+}
+
 /// 从上下文类事件的结构化字段中提取一段人类可读文本。白名单之外的
 /// 事件类型不会走到这里。
 fn derive_context_text(event_type: &str, data: &Value) -> Option<String> {
@@ -375,6 +394,46 @@ mod tests {
         assert_eq!(failed["kind"], "terminal");
         assert_eq!(failed["status"], "failed");
         assert_eq!(failed["content"], "upstream timeout");
+    }
+
+    #[test]
+    fn each_plan_publish_is_its_own_snapshot_but_replay_is_idempotent() {
+        let first = event_item(
+            "s",
+            "plan_update",
+            &json!({"turn_id":"turn","model_round":1,"tool_call_id":"call-a",
+                "plan":[{"step":"one","status":"in_progress"},{"step":"two","status":"pending"}]}),
+        )
+        .expect("first plan snapshot");
+        let second = event_item(
+            "s",
+            "plan_update",
+            &json!({"turn_id":"turn","model_round":2,"tool_call_id":"call-b",
+                "plan":[{"step":"one","status":"completed"},{"step":"two","status":"completed"}]}),
+        )
+        .expect("second plan snapshot");
+        assert_eq!(first["kind"], "plan");
+        assert_ne!(
+            first["item_id"], second["item_id"],
+            "a repeated id makes the completed item immutable and freezes the panel"
+        );
+        // 重放同一次发布（同 turn/同 tool_call_id）必须落回同一个条目。
+        let replayed = event_item(
+            "s",
+            "plan_update",
+            &json!({"turn_id":"turn","model_round":2,"tool_call_id":"call-b",
+                "plan":[{"step":"one","status":"completed"},{"step":"two","status":"completed"}]}),
+        )
+        .unwrap();
+        assert_eq!(replayed["item_id"], second["item_id"]);
+        // 缺少工具调用 id 的写入仍可入账，按模型轮次区分。
+        let legacy = event_item(
+            "s",
+            "plan_update",
+            &json!({"turn_id":"turn","model_round":3,"plan":[{"step":"one","status":"completed"}]}),
+        )
+        .unwrap();
+        assert_eq!(legacy["item_id"], "turn:plan-m3");
     }
 
     #[test]
