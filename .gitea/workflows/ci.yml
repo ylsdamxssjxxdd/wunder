@@ -12,6 +12,7 @@ concurrency:
 
 env:
   GITHUB_PROXY: https://gh-proxy.com
+  KEEP_CI_RELEASES: "5"
 
 jobs:
   linux-cli:
@@ -273,3 +274,41 @@ jobs:
             upload "$file" "$(basename "$file")"
           done
           echo "release: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$tag"
+
+      - name: Prune old CI releases
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          api="$GITHUB_SERVER_URL/api/v1/repos/$GITHUB_REPOSITORY"
+          python3 - "$api" "$TOKEN" "${KEEP_CI_RELEASES:-5}" <<'PY'
+          import json, sys, urllib.request
+          api, token, keep = sys.argv[1], sys.argv[2], int(sys.argv[3])
+
+          def call(path, method='GET'):
+              req = urllib.request.Request(api + path, method=method,
+                                           headers={'Authorization': 'token ' + token})
+              with urllib.request.urlopen(req) as resp:
+                  data = resp.read()
+                  return json.loads(data) if data else []
+
+          releases, page = [], 1
+          while True:
+              batch = call('/releases?limit=50&page=%d' % page)
+              releases.extend(batch)
+              if len(batch) < 50:
+                  break
+              page += 1
+
+          ci = sorted((r for r in releases if r['tag_name'].startswith('ci-')),
+                      key=lambda r: (r['created_at'], r['id']), reverse=True)
+          for release in ci[keep:]:
+              try:
+                  call('/releases/%d' % release['id'], 'DELETE')
+                  call('/tags/' + release['tag_name'], 'DELETE')
+              except Exception as exc:
+                  print('prune failed for %s: %s' % (release['tag_name'], exc))
+                  continue
+              print('pruned release %s' % release['tag_name'])
+          print('kept ci releases: %s' % ', '.join(r['tag_name'] for r in ci[:keep]))
+          PY
