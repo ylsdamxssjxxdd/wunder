@@ -784,6 +784,66 @@ async fn completed_inquiry_control_stays_pending_with_plan_after_reopen() {
 }
 
 #[tokio::test]
+async fn plan_panel_reopen_shows_the_latest_publish_not_the_first_step() {
+    let root = tempfile::tempdir().unwrap();
+    let db_path = root.path().join("state_1.sqlite");
+    let db = SqliteStorage::new(db_path.to_string_lossy().into_owned());
+    db.ensure_initialized().unwrap();
+    let admitted = db
+        .accept_thread_turn(USER, THREAD, &json!({"content":"Fixture input"}))
+        .unwrap();
+    let turn = admitted["turn_id"].as_str().unwrap().to_string();
+    super::test_support::freeze_thread(root.path(), USER, THREAD);
+    super::test_support::begin_turn(root.path(), USER, THREAD, &turn);
+    // 计划面板每次发布整份清单：同一轮里的三次发布必须各自成条，重新打开线程
+    // 后聊天行显示的是最后一次发布，而不是第 1 步。
+    for (round, call, steps) in [
+        (
+            1,
+            "fixture-plan-call-a",
+            json!([{"step":"Step one","status":"in_progress"},
+                   {"step":"Step two","status":"pending"}]),
+        ),
+        (
+            2,
+            "fixture-plan-call-b",
+            json!([{"step":"Step one","status":"completed"},
+                   {"step":"Step two","status":"in_progress"}]),
+        ),
+        (
+            3,
+            "fixture-plan-call-c",
+            json!([{"step":"Step one","status":"completed"},
+                   {"step":"Step two","status":"completed"}]),
+        ),
+    ] {
+        let item = crate::services::thread_log::event_item(
+            THREAD,
+            "plan_update",
+            &json!({
+                "turn_id":turn,"model_round":round,"tool_call_id":call,
+                "explanation":"Fixture progress","plan":steps
+            }),
+        )
+        .expect("plan snapshot item");
+        db.append_thread_item(USER, &item).unwrap();
+    }
+    drop(db);
+    let reopened = SqliteStorage::new(db_path.to_string_lossy().into_owned());
+    reopened.ensure_initialized().unwrap();
+    let page = reopened
+        .thread_view_page(USER, THREAD, "chat", None, 10)
+        .unwrap();
+    let plan = page.chat[0].plan.as_ref().expect("plan survives reopen");
+    assert_eq!(plan.explanation, "Fixture progress");
+    assert_eq!(plan.steps.len(), 2);
+    assert!(
+        plan.steps.iter().all(|step| step.status == "completed"),
+        "the panel must show the last publish: {plan:?}"
+    );
+}
+
+#[tokio::test]
 async fn inquiry_continuation_replaces_waiting_head_for_chat_projection() {
     let root = tempfile::tempdir().unwrap();
     let db = SqliteStorage::new(
