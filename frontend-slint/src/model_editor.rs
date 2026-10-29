@@ -132,15 +132,25 @@ fn schedule(app: &MainWindow, delay: Duration) {
     });
 }
 
+/// 编辑提交策略：只有已存在的模型才自动保存。未保存的新模型草稿一旦填完模型
+/// 名称就满足保存条件，自动保存会立刻结束创建态，把用户刚起的配置名称锁成
+/// 只读——新建只能由表单上的「保存」显式提交。
+fn edit_should_autosave(creating: bool) -> bool {
+    !creating
+}
+
 fn defer(app: &MainWindow, action: AfterSave) -> bool {
+    // 未保存的新模型从不隐式落库：切走、刷新、再点「添加」都由调用方按草稿处理
+    // （停放或放弃），唯一提交入口是表单上显式点的那次保存。否则草稿刚填完模型
+    // 名称就被提交、创建态结束，配置名称随之变灰且再也改不回来。
+    if app.get_model_creating() {
+        return false;
+    }
     if !has_unsaved(app) {
         return false;
     }
     let inflight = EDITOR.with(|slot| slot.borrow().as_ref().is_some_and(|editor| editor.inflight));
     if !inflight && !Draft::read(app).ready() {
-        if app.get_model_creating() {
-            return false;
-        }
         app.set_model_save_error("请补全模型标识、提供方和模型名称".into());
         return true;
     }
@@ -198,6 +208,12 @@ pub(crate) fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         if app.get_model_projecting() || app.get_settings_model_key().starts_with("cloud/") {
             return;
         }
+        // An unsaved new model is never auto-committed (see the rationale on
+        // `edit_should_autosave`); the explicit 保存 action commits it.
+        if !edit_should_autosave(app.get_model_creating()) {
+            app.set_model_save_error("".into());
+            return;
+        }
         if has_unsaved(&app) {
             app.set_model_save_error("".into());
             schedule(&app, Duration::from_millis(500));
@@ -219,7 +235,9 @@ pub(crate) fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         }
         let draft = Draft::read(&app);
         if !draft.ready() {
-            if has_unsaved(&app) && !app.get_model_creating() {
+            // The explicit save of an incomplete new draft must say what is
+            // missing; existing rows keep the same rule as before.
+            if app.get_model_creating() || has_unsaved(&app) {
                 app.set_model_save_error("请补全模型标识、提供方和模型名称".into());
             }
             return;
@@ -294,7 +312,7 @@ pub(crate) fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                         app.invoke_refresh_agents();
                     }
                     Err(error) => {
-                        app.set_model_save_error(format!("自动保存失败：{error}").into());
+                        app.set_model_save_error(format!("保存失败：{error}").into());
                         if changed {
                             schedule(&app, Duration::from_millis(500));
                         }
@@ -303,4 +321,17 @@ pub(crate) fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
             });
         });
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 回归：新建草稿不参与自动保存。缺了这条守卫，草稿在第一份完整的
+    /// 模型名称落键的瞬间就被提交、退出创建态，配置名称随之变灰。
+    #[test]
+    fn a_new_model_draft_is_never_auto_saved() {
+        assert!(!edit_should_autosave(true));
+        assert!(edit_should_autosave(false));
+    }
 }

@@ -462,6 +462,9 @@ export component SettingsPage inherits Rectangle {
     callback select-model(int);
     callback create-model();
     callback discard-model-draft();
+    // Commits the unsaved new-model draft. Creation never auto-saves: the
+    // config name stays editable until this runs.
+    callback save-model();
     callback move-model(int, int);
     callback set-default-model(string);
     // The models tab edits the selected model in place: every editor draft
@@ -1238,8 +1241,25 @@ export component SettingsPage inherits Rectangle {
                                         Text { height: 17px; text: root.model-creating ? I18n.st_model_new_hint : ((root.model-editor-is-default ? I18n.st_models_default_badge + " · " : "") + I18n.st_model_colon + root.model-editor-name + " · " + root.model-editor-base-url); color: Theme.muted; font-size: Theme.font-xs; overflow: elide; }
                                     }
                                     // The former page-header actions live with the
-                                    // form now that the title bar is gone.
-                                    Action { height: 32px; icon: @image-url("../assets/icons/fa-star.svg"); label: root.selected-is-default ? I18n.st_is_default : I18n.st_set_default; show-label: true; enabled: !root.loading && !root.saving && !root.model-creating && !root.cloud-locked && root.selected-key != "" && !root.selected-is-default; clicked => { root.set-default-model(root.selected-key); } }
+                                    // form now that the title bar is gone. A new model
+                                    // is committed by this explicit save: auto-saving a
+                                    // draft the moment it turns valid would end the
+                                    // creation state and lock the config name mid-edit.
+                                    if root.model-creating : Action {
+                                        height: 32px; icon: @image-url("../assets/icons/save.svg");
+                                        label: I18n.common_save; show-label: true; primary: true;
+                                        enabled: !root.loading && !root.saving && !root.cloud-locked
+                                            && root.model-key-draft != "" && root.model-name-draft != "";
+                                        clicked => { root.save-model(); }
+                                    }
+                                    if !root.model-creating : Action {
+                                        height: 32px; icon: @image-url("../assets/icons/fa-star.svg");
+                                        label: root.selected-is-default ? I18n.st_is_default : I18n.st_set_default;
+                                        show-label: true;
+                                        enabled: !root.loading && !root.saving && !root.cloud-locked
+                                            && root.selected-key != "" && !root.selected-is-default;
+                                        clicked => { root.set-default-model(root.selected-key); }
+                                    }
                                     // While a new model is being created the same slot discards
                                     // the unsaved draft; a saved row keeps the delete confirmation.
                                     // Cloud entries stay visible but inert (the engine clears them

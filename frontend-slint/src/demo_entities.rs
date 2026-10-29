@@ -89,6 +89,11 @@ pub fn install(app: &MainWindow) {
     let weak = app.as_weak();
     app.on_model_edited(move || {
         let Some(app) = weak.upgrade() else { return };
+        // 与真实后端同一条规则：新建草稿只由显式保存落库，自动保存会让表单
+        // 刚填完模型名称就退出创建态，配置名称随之变灰。
+        if app.get_model_creating() {
+            return;
+        }
         let mut clean = app.get_selected_model_card();
         clean.is_default = false;
         clean.is_cloud = false;

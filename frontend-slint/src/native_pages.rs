@@ -963,7 +963,8 @@ fn bind_settings(app: &MainWindow, api: Arc<NativeDesktop>) {
         model_catalogue().set(&app, rows);
         app.set_selected_model(0);
         crate::entity_state::apply_new_model_draft(&app, entry);
-        app.set_status("已创建模型草稿，填写基础设置后自动保存".into());
+        // 新建草稿不自动保存：填完基础设置后由表单上的「保存」提交。
+        app.set_status("已创建模型草稿，填写基础设置后保存".into());
     });
     let weak = app.as_weak();
     app.on_discard_model_draft(move || {
