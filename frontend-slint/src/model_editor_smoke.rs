@@ -36,6 +36,8 @@ pub fn run(
                     app.invoke_create_model();
                     app.set_model_key_draft("extra-model".into());
                     app.set_model_name_draft("sample-model".into());
+                    // 新建草稿不再自动保存，这里显式提交（表单上的「保存」）。
+                    app.invoke_save_model();
                     app.invoke_new_thread();
                     phase = 1;
                 }
