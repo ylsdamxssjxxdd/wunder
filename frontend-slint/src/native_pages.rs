@@ -1341,6 +1341,22 @@ pub(crate) fn apply_settings(app: &MainWindow, settings: DesktopSettings) {
     app.set_runtime_ffmpeg_status(status("ffmpeg").into());
     app.set_runtime_browser_status(status("browser").into());
     app.set_runtime_shell_status(status("powershell").into());
+    // Same projection for the "effective" binary: the settings page shows it as
+    // the placeholder so an empty override still reveals which runtime is used.
+    let effective = |tool: &str| {
+        settings
+            .tool_status
+            .iter()
+            .find(|entry| entry.tool == tool)
+            .map(|entry| entry.effective.clone())
+            .unwrap_or_default()
+    };
+    app.set_runtime_python_effective(effective("python").into());
+    app.set_runtime_git_effective(effective("git").into());
+    app.set_runtime_rg_effective(effective("rg").into());
+    app.set_runtime_ffmpeg_effective(effective("ffmpeg").into());
+    app.set_runtime_browser_effective(effective("browser").into());
+    app.set_runtime_shell_effective(effective("powershell").into());
     // The catalogue object projects the composer's full model list and mirrors
     // its size for the picker's "empty list" versus "nothing configured" split.
     app.set_virtual_replay_logs(string_model(settings.virtual_replay_logs));

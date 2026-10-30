@@ -548,6 +548,14 @@ export component MainWindow inherits Window {
     in-out property <string> runtime-ffmpeg-status;
     in-out property <string> runtime-browser-status;
     in-out property <string> runtime-shell-status;
+    // Effective binary the runtime resolves right now (bundled or system); the
+    // settings page shows it as the field placeholder for empty overrides.
+    in-out property <string> runtime-python-effective;
+    in-out property <string> runtime-git-effective;
+    in-out property <string> runtime-rg-effective;
+    in-out property <string> runtime-ffmpeg-effective;
+    in-out property <string> runtime-browser-effective;
+    in-out property <string> runtime-shell-effective;
     in-out property <bool> importing-supplement: false;
     in-out property <string> supplement-status;
     callback import-supplement();
@@ -1355,6 +1363,8 @@ export component MainWindow inherits Window {
         ffmpeg-path <=> root.runtime-ffmpeg; browser-path <=> root.runtime-browser; shell-path <=> root.runtime-shell;
         python-status: root.runtime-python-status; git-status: root.runtime-git-status; rg-status: root.runtime-rg-status;
         ffmpeg-status: root.runtime-ffmpeg-status; browser-status: root.runtime-browser-status; shell-status: root.runtime-shell-status;
+        python-effective: root.runtime-python-effective; git-effective: root.runtime-git-effective; rg-effective: root.runtime-rg-effective;
+        ffmpeg-effective: root.runtime-ffmpeg-effective; browser-effective: root.runtime-browser-effective; shell-effective: root.runtime-shell-effective;
         importing-supplement <=> root.importing-supplement; supplement-status <=> root.supplement-status;
         import-supplement => { root.import-supplement(); }
         pick-python-path => { root.pick-python-path(); }

@@ -89,9 +89,13 @@ def main():
                 try:
                     peak = max(peak, watched.memory_info().rss)
                     # Debug builds keep a console, so Windows auto-spawns
-                    # conhost. Only a real bridge/runtime child is a failure.
+                    # conhost. The tool catalogue also probes the shell host
+                    # it will hand to the model, which starts one short-lived
+                    # PowerShell. Only a real bridge/runtime child is a
+                    # failure.
                     children = [c for c in watched.children()
-                                if c.name().lower() not in ("conhost.exe", "openconsole.exe")]
+                                if c.name().lower() not in ("conhost.exe", "openconsole.exe",
+                                                            "powershell.exe", "pwsh.exe")]
                     assert not children, f"native runtime spawned a child: {[c.name() for c in children]}"
                     connections = getattr(watched, "net_connections", None) or watched.connections
                     assert not any(c.status == psutil.CONN_LISTEN for c in connections()), "native UI opened a listening socket"
