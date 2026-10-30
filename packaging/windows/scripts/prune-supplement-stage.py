@@ -91,6 +91,13 @@ GIT_GCM_GLOBS = [
 
 GIT_CONFIG_HELPER = ('helper = manager', 'helper = wincred')
 
+# Portable PowerShell 7 ships localized help/resource folders for every
+# culture plus ref/ reference assemblies; the pack only runs CLI commands, so
+# everything outside the two UI languages the product ships in is dead weight.
+PWSH_ROOT = 'opt/powershell'
+PWSH_KEEP_DIRS = {'en-US', 'zh-Hans', 'zh-Hant', 'Modules', 'Schemas', '_manifest', 'assets', 'preview'}
+PWSH_DROP_DIRS = ['ref', 'cs', 'de', 'es', 'fr', 'it', 'ja', 'ko', 'pl', 'pt-BR', 'ru', 'tr']
+
 
 def rewrite_git_config(text):
     """Point credential.helper at wincred and stop inheriting a host Git install.
@@ -260,7 +267,25 @@ def main():
             foreign.append(f'{MACHINE_NAMES.get(machine, hex(machine))} {target.relative_to(root)}')
             drop_file(target)
 
-    # 3. MinGit extras.
+    # 3. Portable PowerShell extras: non-shipped cultures and ref/ assemblies.
+    pwsh = opt / 'powershell'
+    if pwsh.is_dir():
+        for rel in PWSH_DROP_DIRS:
+            target = pwsh / rel
+            if target.is_dir():
+                drop_dir(target)
+        # A future pwsh release may add more culture folders; anything that is
+        # not an explicit keep or a native directory is dead weight, so drop it.
+        # Compare case-insensitively: culture names are mixed-case ('en-US')
+        # while child.name.lower() is not.
+        known_natives = {d.lower() for d in PWSH_KEEP_DIRS} | {
+            d.lower() for d in PWSH_DROP_DIRS
+        }
+        for child in sorted(pwsh.iterdir()):
+            if child.is_dir() and child.name.lower() not in known_natives:
+                drop_dir(child)
+
+    # 4. MinGit extras.
     git = opt / 'git'
     if git.is_dir() and not options['skip_git']:
         for rel in GIT_DIRS:

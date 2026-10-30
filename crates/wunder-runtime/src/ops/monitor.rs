@@ -985,7 +985,10 @@ impl MonitorState {
                     )
                 });
                 record.user_rounds = record.user_rounds.max(persisted_floor).max(requested_round);
-                record.question = trim_text(question, Some(2048));
+                // 线程问题保持首条用户消息：连续轮次沿用线程既有问题，不逐轮覆盖。
+                if record.question.trim().is_empty() {
+                    record.question = trim_text(question, Some(2048));
+                }
                 record.is_admin = is_admin;
                 if !agent_id.trim().is_empty() {
                     record.agent_id = agent_id.trim().to_string();
@@ -2512,7 +2515,7 @@ impl MonitorState {
                 && record.status == Self::STATUS_QUEUED
                 && record.stage == "queued"
             {
-                if !question.trim().is_empty() {
+                if record.question.trim().is_empty() && !question.trim().is_empty() {
                     record.question = trim_text(question, Some(2048));
                 }
                 record.is_admin = is_admin;
@@ -2552,7 +2555,9 @@ impl MonitorState {
                 return (self.maybe_persist_record(record, now, false), user_round);
             }
             record.user_rounds += 1;
-            record.question = trim_text(question, Some(2048));
+            if record.question.trim().is_empty() {
+                record.question = trim_text(question, Some(2048));
+            }
             record.is_admin = is_admin;
             let trace_id = if record.trace_id.trim().is_empty() {
                 let generated = build_monitor_trace_id();

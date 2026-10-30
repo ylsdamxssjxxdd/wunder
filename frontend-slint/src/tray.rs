@@ -78,6 +78,14 @@ pub fn uninstall() {
 
 pub fn show_main(app: &MainWindow) {
     let _ = app.show();
+    // Slint remembers a shown window and skips the mapping command when asked
+    // again, so a window unmapped behind its back (hidden-window capture) would
+    // stay off the desktop forever. Cycle the platform state before focusing:
+    // this is the last resort that always brings the window back.
+    if !crate::native_window::is_mapped(app.window()) {
+        let _ = app.hide();
+        let _ = app.show();
+    }
     crate::native_window::restore_and_focus(app.window());
     app.window().request_redraw();
     hide_notice();

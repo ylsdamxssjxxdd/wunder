@@ -342,6 +342,14 @@ fn pending_question_panel(chat: &ChatViewRow) -> Option<Value> {
     if !status.is_empty() && status != "pending" {
         return None;
     }
+    // The composer answers against the waiting execution row (a goal round is
+    // its own turn under the same root), so the panel carries that identity;
+    // replay suppression keys on it as well.
+    let waiting_turn = if chat.execution_turn_id.is_empty() {
+        chat.root_turn_id.as_str()
+    } else {
+        chat.execution_turn_id.as_str()
+    };
     Some(json!({
         "questions": panel.questions.iter().map(|question| json!({
             "question": question.question,
@@ -354,6 +362,7 @@ fn pending_question_panel(chat: &ChatViewRow) -> Option<Value> {
         })).collect::<Vec<_>>(),
         "keep_open": panel.keep_open,
         "status": if status.is_empty() { "pending" } else { status },
+        "turn_id": waiting_turn,
     }))
 }
 

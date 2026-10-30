@@ -37,7 +37,7 @@ export type WorkspaceVisibleRow = {
 /** Entries requested per directory page. Keeps a single render under one screen. */
 export const WORKSPACE_DIRECTORY_PAGE_SIZE = 200;
 /** Row height used by the scroll viewport math (px). */
-export const WORKSPACE_ROW_HEIGHT = 26;
+export const WORKSPACE_ROW_HEIGHT = 28;
 /** Extra rows rendered above/below the viewport. */
 export const WORKSPACE_ROW_OVERSCAN = 6;
 

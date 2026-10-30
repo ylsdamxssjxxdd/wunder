@@ -332,16 +332,24 @@ component GoalTool inherits Rectangle {
     in property <image> icon;
     in property <string> tip;
     callback clicked;
-    width: 26px; height: 26px;
-    border-radius: 8px;
-    border-width: 1px;
-    border-color: hit.has-hover ? #E8B2C8 : #EFC6D7;
-    background: hit.has-hover ? #FFE6EF : #FFFFFF;
-    Image {
-        x: 6px; y: 6px; width: 14px; height: 14px;
-        source: root.icon;
-        colorize: hit.has-hover ? #9D2B5C : #7D858F;
-        image-fit: contain;
+    width: 26px;
+    preferred-height: 26px;
+    // Layout rows top-align fixed-height children: stretch to the row and
+    // centre the chip inside the cell.
+    chip := Rectangle {
+        y: (parent.height - 26px) / 2;
+        width: 26px;
+        height: 26px;
+        border-radius: 8px;
+        border-width: 1px;
+        border-color: hit.has-hover ? #E8B2C8 : #EFC6D7;
+        background: hit.has-hover ? #FFE6EF : #FFFFFF;
+        Image {
+            x: 6px; y: 6px; width: 14px; height: 14px;
+            source: root.icon;
+            colorize: hit.has-hover ? #9D2B5C : #7D858F;
+            image-fit: contain;
+        }
     }
     hit := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
     accessible-role: button;
@@ -1452,7 +1460,9 @@ export component Composer inherits Rectangle {
     // surface — no white rectangular frame around it.
     background: transparent;
     VerticalLayout {
-        padding: 14px; padding-top: 8px; padding-bottom: 10px; spacing: 6px;
+        // The side inset lives on the input band (main.slint), so the goal
+        // banner and the inquiry card share this card's edges.
+        padding-top: 8px; padding-bottom: 10px; spacing: 6px;
         if root.queue-open : QueueStrip {
             turns: root.queue-turns;
             overflow: root.queue-overflow;

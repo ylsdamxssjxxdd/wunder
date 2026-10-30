@@ -491,6 +491,11 @@
   "en": "Trajectory view"
  },
  {
+  "key": "sb_last_finished",
+  "zh": "最后完成",
+  "en": "Last finished"
+ },
+ {
   "key": "tl_state_queued",
   "zh": "排队中",
   "en": "Queued"

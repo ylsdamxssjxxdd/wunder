@@ -7,6 +7,8 @@ export type TaskListItem = {
   locked: boolean;
   runtimeStatus: string;
   createdAt: number;
+  /** 最后一轮落库的时间（毫秒）；侧栏悬停提示用它回答「这条线程什么时候完成过」。 */
+  lastActiveAt: number;
   consumedTokens: number;
   toolCalls: number;
   modelRequestCount: number | null;
@@ -125,6 +127,7 @@ function computeTaskList(sessions: Record<string, any>[], agentId: string, fallb
       item.runtime_status ?? item.runtimeStatus ?? item.thread_status ?? item.threadStatus ?? item.status ?? ''
     ).trim().toLowerCase(),
     createdAt: resolveTaskCreationTimestamp(item),
+    lastActiveAt: resolveTaskActivityTimestamp(item),
     consumedTokens: normalizeCount(item.consumed_tokens ?? item.consumedTokens),
     toolCalls: normalizeCount(item.tool_calls ?? item.toolCalls),
     modelRequestCount: readSessionQuotaUsed(item),
@@ -138,6 +141,23 @@ function resolveTaskCreationTimestamp(item: Record<string, any>): number {
   const candidates = [item.created_at, item.createdAt, item.last_message_at, item.lastMessageAt, item.updated_at, item.updatedAt];
   for (const candidate of candidates) {
     if (typeof candidate === 'number' && Number.isFinite(candidate)) {
+      return normalizeTimestamp(candidate);
+    }
+    const parsed = Date.parse(String(candidate || ''));
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return 0;
+}
+
+/**
+ * Activity time is what the sidebar tooltip shows: the newest persisted turn.
+ * `updated_at` also moves on rename, so it only serves as a fallback below the
+ * message timestamp.
+ */
+function resolveTaskActivityTimestamp(item: Record<string, any>): number {
+  const candidates = [item.last_message_at, item.lastMessageAt, item.updated_at, item.updatedAt, item.created_at, item.createdAt];
+  for (const candidate of candidates) {
+    if (typeof candidate === 'number' && Number.isFinite(candidate) && candidate > 0) {
       return normalizeTimestamp(candidate);
     }
     const parsed = Date.parse(String(candidate || ''));

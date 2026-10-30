@@ -2059,6 +2059,27 @@ impl WorkspaceManager {
             .unwrap_or(0) as i64
     }
 
+    /// Follow a model key rename through every per-thread pin of this user, so
+    /// threads that explicitly picked the model keep it instead of silently
+    /// falling back to the agent/default model.
+    pub fn migrate_session_model_overrides(
+        &self,
+        user_id: &str,
+        old: &str,
+        new: &str,
+    ) -> Result<usize> {
+        let prefix = format!("session_model:{}:", self.safe_user_id(user_id));
+        let mut renamed = 0usize;
+        for (key, value) in self.storage.list_meta_prefix(&prefix)? {
+            if value.trim() != old {
+                continue;
+            }
+            self.storage.set_meta(&key, new)?;
+            renamed = renamed.saturating_add(1);
+        }
+        Ok(renamed)
+    }
+
     pub fn load_session_context_overflow(&self, user_id: &str, session_id: &str) -> bool {
         let key = self.session_context_overflow_key(user_id, session_id);
         let Ok(value) = self.storage.get_meta(&key) else {

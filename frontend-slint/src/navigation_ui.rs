@@ -430,6 +430,7 @@ fn rebuild_rows(app: &MainWindow) {
                             archivable: thread_archivable(thread.status.as_str(), false),
                             checked: false,
                             path: "".into(),
+                            hint: "".into(),
                         });
                     }
                 }
@@ -465,6 +466,7 @@ fn rebuild_rows(app: &MainWindow) {
                 archivable: false,
                 checked: false,
                 path: card.root_path.clone(),
+                hint: "".into(),
             });
             if !expanded {
                 continue;
@@ -516,6 +518,7 @@ fn rebuild_rows(app: &MainWindow) {
                     archivable,
                     checked,
                     path: "".into(),
+                    hint: conv.time.clone(),
                 });
             }
         }
@@ -593,6 +596,7 @@ fn cloud_row(app: &MainWindow) -> SidebarRow {
         archivable: false,
         checked: false,
         path: "".into(),
+        hint: "".into(),
     }
 }
 
@@ -1158,6 +1162,7 @@ mod tests {
             archivable: true,
             checked: false,
             path: "".into(),
+            hint: "".into(),
         }
     }
 

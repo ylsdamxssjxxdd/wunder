@@ -192,6 +192,7 @@ impl ThreadHistoryStore {
             "thread_chat_heads_v2",
             "thread_chat_checkpoints_v2",
             "thread_chat_projection_state_v2",
+            "thread_chat_checkpoint_state_v2",
         ] {
             tx.execute(
                 &format!("DELETE FROM {table} WHERE rollout_id=?1"),
@@ -315,6 +316,16 @@ impl ThreadHistoryStore {
 
     pub(crate) fn ensure_chat_summary(&self, rollout_id: &str) -> Result<()> {
         super::thread_chat_summary::ensure_ready(&mut *self.connect()?, rollout_id)
+    }
+
+    /// Materialize cutoff checkpoints for one lineage segment.  Scoped reads
+    /// of a branched segment recover per-root summaries as of `through`
+    /// (exclusive); heads alone cannot answer that, and writing one checkpoint
+    /// per item on the hot path would duplicate the head for every entry.
+    pub(crate) fn ensure_chat_checkpoints(&self, rollout_id: &str, through_ordinal: u64) -> Result<()> {
+        validate_id("rollout_id", rollout_id)?;
+        let through = sqlite_i64(through_ordinal)?;
+        super::thread_chat_summary::ensure_checkpoints(&mut *self.connect()?, rollout_id, through)
     }
 
     /// Returns the existing projection waterline without reading a rollout.
@@ -1255,147 +1266,444 @@ fn project_completed_item(
     Ok(())
 }
 
-/// A bounded summary lives alongside the completed item, never another body.
-/// Page reads do not have to parse megabytes of output to display one card.
+/// A bounded card-grade projection lives alongside the completed item, never
+/// another body. The whitelist below carries exactly what the chat and
+/// trajectory pages render: identity, lifecycle, short text previews, bounded
+/// numeric stats and precomputed tool previews. Arguments, results, display
+/// copies and full content stay in the canonical log and are read through
+/// verified body locators when a view actually needs them.
 pub(crate) fn item_preview(item: &Value) -> Value {
-    fn bounded(value: &Value, budget: &mut usize, depth: usize) -> Value {
-        if *budget < 16 || depth > 8 {
-            return Value::Null;
-        }
-        *budget -= 8;
-        match value {
-            Value::String(text) => {
-                let text = wunder_core::thread_view::preview(text, (*budget).min(2048));
-                *budget = budget.saturating_sub(text.len());
-                Value::String(text)
-            }
-            Value::Array(values) => {
-                let mut result = Vec::new();
-                for value in values.iter().take(32) {
-                    if *budget < 16 {
-                        break;
-                    }
-                    result.push(bounded(value, budget, depth + 1));
-                }
-                Value::Array(result)
-            }
-            Value::Object(values) => {
-                let mut result = serde_json::Map::new();
-                for (key, value) in values.iter().take(64) {
-                    if *budget < key.len() + 16 {
-                        break;
-                    }
-                    if matches!(key.as_str(), "model_content" | "config_overrides") {
-                        continue;
-                    }
-                    *budget -= key.len();
-                    result.insert(key.clone(), bounded(value, budget, depth + 1));
-                }
-                Value::Object(result)
-            }
-            _ => value.clone(),
+    let mut out = serde_json::Map::new();
+    for key in [
+        "item_id",
+        "turn_id",
+        "root_turn_id",
+        "created_at_ms",
+        "kind",
+    ] {
+        if let Some(value) = item.get(key) {
+            out.insert(key.into(), value.clone());
         }
     }
-    let mut result = bounded(item, &mut 12_288, 0);
-    // Body budgets must never discard fields required to decode identity or
-    // decide visibility. Large tool args cannot consume the metadata budget.
+    if item
+        .get("display_output_truncated")
+        .and_then(Value::as_bool)
+        == Some(true)
+    {
+        out.insert("display_output_truncated".into(), Value::Bool(true));
+    }
+    let payload = item.get("payload").unwrap_or(item);
+    out.insert("payload".into(), preview_payload(payload));
+    Value::Object(out)
+}
+
+/// Bounded copy of a diagnostics object (`error`, `error_meta`,
+/// `trajectory_retry`, `trajectory_failure`): exactly the scalar fields
+/// services::thread_log::diagnostics reads, never provider bodies or detail.
+fn bounded_diagnostics(map: &serde_json::Map<String, Value>) -> Value {
+    use serde_json::json;
+    use wunder_core::thread_view::preview;
+    let mut out = serde_json::Map::new();
+    for key in [
+        "code",
+        "source_stage",
+        "recovery_action",
+        "retry_reason",
+        "reason",
+    ] {
+        if let Some(text) = map
+            .get(key)
+            .and_then(Value::as_str)
+            .filter(|text| !text.is_empty())
+        {
+            out.insert(key.into(), json!(preview(text, 128)));
+        }
+    }
+    if let Some(text) = map
+        .get("status")
+        .and_then(Value::as_str)
+        .filter(|text| !text.is_empty())
+    {
+        out.insert("status".into(), json!(preview(text, 48)));
+    }
+    if let Some(text) = map
+        .get("message")
+        .and_then(Value::as_str)
+        .filter(|text| !text.is_empty())
+    {
+        out.insert("message".into(), json!(preview(text, 512)));
+    }
+    for key in ["attempt", "max_attempts", "delay_s", "retry_after_ms"] {
+        if let Some(value) = map.get(key).filter(|value| value.is_number()) {
+            out.insert(key.into(), value.clone());
+        }
+    }
+    for key in ["retryable", "will_retry"] {
+        if let Some(value) = map.get(key).and_then(Value::as_bool) {
+            out.insert(key.into(), json!(value));
+        }
+    }
+    // One bounded nesting level: error objects carry their own error_meta.
+    if let Some(meta) = map.get("error_meta").and_then(Value::as_object) {
+        let mut kept = serde_json::Map::new();
+        for key in ["source_stage", "recovery_action"] {
+            if let Some(text) = meta
+                .get(key)
+                .and_then(Value::as_str)
+                .filter(|text| !text.is_empty())
+            {
+                kept.insert(key.into(), json!(preview(text, 128)));
+            }
+        }
+        if let Some(value) = meta.get("retryable").and_then(Value::as_bool) {
+            kept.insert("retryable".into(), json!(value));
+        }
+        if let Some(value) = meta.get("retry_after_ms").filter(|value| value.is_number()) {
+            kept.insert("retry_after_ms".into(), value.clone());
+        }
+        if !kept.is_empty() {
+            out.insert("error_meta".into(), Value::Object(kept));
+        }
+    }
+    Value::Object(out)
+}
+
+fn preview_payload(payload: &Value) -> Value {
+    use serde_json::json;
+    if !payload.is_object() {
+        return match payload.as_str() {
+            Some(text) => json!({"content": wunder_core::thread_view::preview(text, 256)}),
+            None => json!({}),
+        };
+    }
+    let wrapped = payload.get("item_id").and_then(Value::as_str).is_some()
+        && payload.get("payload").is_some_and(Value::is_object);
+    if !wrapped {
+        return preview_body(payload);
+    }
+    let mut out = serde_json::Map::new();
     for key in [
         "item_id",
         "turn_id",
         "root_turn_id",
         "kind",
-        "created_at_ms",
-        "display_output_truncated",
+        "status",
+        "visibility",
     ] {
-        if let Some(value) = item.get(key) {
-            result[key] = value.clone();
+        if let Some(value) = payload.get(key) {
+            out.insert(key.into(), value.clone());
         }
     }
-    let wrapped =
-        item.pointer("/payload/item_id").is_some() && item.pointer("/payload/payload").is_some();
-    let path = if wrapped {
-        "/payload/payload"
-    } else {
-        "/payload"
+    out.insert("payload".into(), preview_body(&payload["payload"]));
+    Value::Object(out)
+}
+
+fn preview_body(body: &Value) -> Value {
+    use serde_json::json;
+    use wunder_core::thread_view::preview;
+    let Some(map) = body.as_object() else {
+        return json!({});
     };
-    if wrapped {
-        for key in [
-            "item_id",
-            "turn_id",
-            "root_turn_id",
-            "kind",
-            "status",
-            "visibility",
-        ] {
-            if let Some(value) = item["payload"].get(key) {
-                result["payload"][key] = value.clone();
+    let mut out = serde_json::Map::new();
+    // Identity and lifecycle scalars are small by contract and must survive
+    // verbatim for grouping, dedup and status rendering.
+    for key in [
+        "kind",
+        "status",
+        "visibility",
+        "role",
+        "event_type",
+        "tool_call_id",
+        "model_round",
+        "process_seq",
+        "ok",
+        "success",
+        "is_error",
+    ] {
+        if let Some(value) = map.get(key) {
+            if value.is_string() || value.is_number() || value.is_boolean() {
+                out.insert(key.into(), value.clone());
             }
         }
     }
-    if let Some(body) = item.pointer(path) {
-        if !result.pointer(path).is_some_and(Value::is_object) {
-            if wrapped {
-                result["payload"]["payload"] = serde_json::json!({});
-            } else {
-                result["payload"] = serde_json::json!({});
+    for key in ["tool", "tool_name", "name"] {
+        if let Some(text) = map.get(key).and_then(Value::as_str) {
+            if !text.is_empty() {
+                out.insert(key.into(), json!(preview(text, 96)));
             }
         }
-        if let Some(out) = result.pointer_mut(path).and_then(Value::as_object_mut) {
-            for key in [
-                "tool",
-                "tool_name",
-                "tool_call_id",
-                "model_round",
-                "event_type",
-            ] {
-                if let Some(value) = body.get(key) {
-                    let value = match value {
-                        Value::String(text) => {
-                            Value::String(wunder_core::thread_view::preview(text, 512))
-                        }
-                        Value::Number(_) | Value::Bool(_) => value.clone(),
-                        _ => continue,
-                    };
-                    out.insert(key.into(), value);
+    }
+    if let Some(reference) = map.get("schema_ref").filter(|value| value.is_object()) {
+        out.insert("schema_ref".into(), reference.clone());
+    }
+    // Timing scalars drive trajectory span/duration math.
+    for key in [
+        "started_at",
+        "completed_at",
+        "start_time",
+        "end_time",
+        "started_time",
+        "finished_time",
+        "finished_at",
+        "elapsed_s",
+        "duration_s",
+        "duration_ms",
+        "durationMs",
+        "prefill_duration_s",
+        "decode_duration_s",
+        "ttft_ms",
+    ] {
+        if let Some(value) = map.get(key) {
+            if value.is_number() || value.is_string() {
+                out.insert(key.into(), value.clone());
+            }
+        }
+    }
+    // Failure diagnostics read a small bounded field set (see
+    // services::thread_log::diagnostics): `error` may be a string or an
+    // object, and the retry/failure snapshots are structured objects.
+    for key in ["code", "stop_reason"] {
+        if let Some(text) = map.get(key).and_then(Value::as_str) {
+            if !text.is_empty() {
+                out.insert(key.into(), json!(preview(text, 128)));
+            }
+        }
+    }
+    match map.get("error") {
+        Some(Value::String(error)) if !error.is_empty() => {
+            out.insert("error".into(), json!(preview(error, 512)));
+        }
+        Some(Value::Object(error)) => {
+            out.insert("error".into(), bounded_diagnostics(error));
+        }
+        _ => {}
+    }
+    if let Some(message) = map
+        .get("message")
+        .and_then(Value::as_str)
+        .filter(|text| !text.is_empty())
+    {
+        out.insert("message".into(), json!(preview(message, 512)));
+    }
+    if let Some(value) = map.get("retryable").and_then(Value::as_bool) {
+        out.insert("retryable".into(), json!(value));
+    }
+    if let Some(value) = map.get("retry_after_ms").filter(|value| value.is_number()) {
+        out.insert("retry_after_ms".into(), value.clone());
+    }
+    for key in ["error_meta", "trajectory_retry", "trajectory_failure"] {
+        if let Some(value) = map.get(key).and_then(Value::as_object) {
+            out.insert(key.into(), bounded_diagnostics(value));
+        }
+    }
+    // Card-grade text previews; full content and reasoning stay in the log.
+    let content = wunder_core::thread_view::message_content_text(&body["content"])
+        .unwrap_or_default();
+    if !content.is_empty() {
+        out.insert("content".into(), json!(preview(&content, 256)));
+        out.insert("_content_bytes".into(), Value::from(content.len()));
+        out.insert(
+            "_content_utf16".into(),
+            Value::from(content.encode_utf16().count()),
+        );
+    }
+    for key in ["reasoning", "reasoning_content"] {
+        if let Some(reasoning) = map.get(key).and_then(Value::as_str) {
+            if !reasoning.is_empty() {
+                out.insert(key.into(), json!(preview(reasoning, 256)));
+                out.insert(
+                    "_reasoning_utf16".into(),
+                    Value::from(reasoning.encode_utf16().count()),
+                );
+                break;
+            }
+        }
+    }
+    if map
+        .get("tool_calls")
+        .and_then(Value::as_array)
+        .is_some_and(|calls| !calls.is_empty())
+    {
+        out.insert("tool_calls".into(), json!([{}]));
+    }
+    if let Some(attachments) = map.get("attachments").and_then(Value::as_array) {
+        let bounded = super::thread_view_projection::user_attachments(attachments);
+        if !bounded.is_empty() {
+            out.insert("attachments".into(), Value::Array(bounded));
+        }
+    }
+    // Bounded numeric stats feed trajectory chips and the chat bubble footer.
+    if let Some(stats) = super::thread_view_projection::finite_stats(body) {
+        out.insert("message_stats".into(), stats);
+    }
+    if let Some(breakdown) = super::thread_view_projection::request_token_breakdown(body) {
+        out.insert("request_token_breakdown".into(), breakdown);
+    }
+    if let Some(timing) = map.get("stream_timing").and_then(Value::as_object) {
+        let bounded: serde_json::Map<_, _> = timing
+            .iter()
+            .filter(|(_, value)| value.is_number())
+            .take(8)
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect();
+        if !bounded.is_empty() {
+            out.insert("stream_timing".into(), Value::Object(bounded));
+        }
+    }
+    // Meta whitelist: compaction identity, model-context markers and tool
+    // duration metadata. Prompt and session payloads never enter a preview.
+    if let Some(meta) = map.get("meta").and_then(Value::as_object) {
+        let mut kept = serde_json::Map::new();
+        for key in ["type", "compaction_id", "language"] {
+            if let Some(text) = meta.get(key).and_then(Value::as_str) {
+                if !text.is_empty() {
+                    kept.insert(key.into(), json!(preview(text, 64)));
                 }
             }
-            if let Some(sequence) = body.get("process_seq") {
-                out.insert("process_seq".into(), sequence.clone());
+        }
+        for key in ["duration_ms", "durationMs", "retry_after_ms"] {
+            if let Some(value) = meta.get(key).filter(|value| value.is_number()) {
+                kept.insert(key.into(), value.clone());
             }
-            let text = wunder_core::thread_view::message_content_text(&body["content"])
-                .unwrap_or_default();
-            out.insert(
-                "content".into(),
-                Value::String(wunder_core::thread_view::preview(&text, 2048)),
-            );
-            out.insert("_content_bytes".into(), Value::from(text.len()));
-            out.insert(
-                "_content_utf16".into(),
-                Value::from(text.encode_utf16().count()),
-            );
-            let reasoning = body
-                .get("reasoning")
-                .or_else(|| body.get("reasoning_content"))
-                .and_then(Value::as_str)
-                .unwrap_or("");
-            out.insert(
-                "reasoning".into(),
-                Value::String(wunder_core::thread_view::preview(reasoning, 1024)),
-            );
-            if body
-                .get("tool_calls")
-                .and_then(Value::as_array)
-                .is_some_and(|calls| !calls.is_empty())
-            {
-                out.insert("tool_calls".into(), serde_json::json!([{}]));
-            }
-            out.insert(
-                "_reasoning_utf16".into(),
-                Value::from(reasoning.encode_utf16().count()),
-            );
+        }
+        if let Some(value) = meta.get("retryable").and_then(Value::as_bool) {
+            kept.insert("retryable".into(), json!(value));
+        }
+        if meta
+            .get("workspace_changed")
+            .is_some_and(|value| value == &Value::Bool(true) || value.is_number())
+        {
+            kept.insert("workspace_changed".into(), meta["workspace_changed"].clone());
+        }
+        if !kept.is_empty() {
+            out.insert("meta".into(), Value::Object(kept));
         }
     }
-    result
+    // A question panel is a control surface; store the bounded extracted panel
+    // so the chat projection can recover it without the carrier's full result.
+    if let Some(panel) = super::thread_view_projection::extract_question_panel(body) {
+        if let Ok(panel) = serde_json::to_value(panel) {
+            out.insert("question_panel".into(), panel);
+        }
+    }
+    // Plans and compaction summaries render from small structured fields.
+    for key in ["plan", "steps"] {
+        if let Some(entries) = map.get(key).and_then(Value::as_array) {
+            let bounded: Vec<Value> = entries
+                .iter()
+                .take(32)
+                .map(|entry| {
+                    let mut step = serde_json::Map::new();
+                    if let Some(text) = entry.as_str() {
+                        step.insert("step".into(), json!(preview(text, 256)));
+                    }
+                    for field in ["step", "title"] {
+                        if let Some(text) = entry.get(field).and_then(Value::as_str) {
+                            step.insert(field.into(), json!(preview(text, 256)));
+                        }
+                    }
+                    if let Some(status) = entry.get("status").and_then(Value::as_str) {
+                        step.insert("status".into(), json!(preview(status, 32)));
+                    }
+                    Value::Object(step)
+                })
+                .collect();
+            if !bounded.is_empty() {
+                out.insert(key.into(), Value::Array(bounded));
+            }
+            break;
+        }
+    }
+    if let Some(explanation) = map.get("explanation").and_then(Value::as_str) {
+        if !explanation.is_empty() {
+            out.insert("explanation".into(), json!(preview(explanation, 512)));
+        }
+    }
+    for key in [
+        "summary_text",
+        "summaryText",
+        "summary_model_output",
+        "summaryModelOutput",
+        "summary",
+    ] {
+        if let Some(text) = map.get(key).and_then(Value::as_str) {
+            if !text.trim().is_empty() {
+                out.insert(key.into(), json!(preview(text, 512)));
+                break;
+            }
+        }
+    }
+    // Subagent runtime cards and trajectory projections use a fixed field set.
+    if let Some(runtime) = map.get("runtime").and_then(Value::as_object) {
+        let mut kept = serde_json::Map::new();
+        for key in [
+            "label",
+            "spawn_label",
+            "title",
+            "status",
+            "run_id",
+            "session_id",
+            "dispatch_id",
+            "run_kind",
+        ] {
+            if let Some(text) = runtime.get(key).and_then(Value::as_str) {
+                if !text.is_empty() {
+                    kept.insert(key.into(), json!(preview(text, 128)));
+                }
+            }
+        }
+        for key in ["user_message", "task", "summary", "latest_message"] {
+            if let Some(text) = runtime.get(key).and_then(Value::as_str) {
+                if !text.is_empty() {
+                    kept.insert(key.into(), json!(preview(text, 512)));
+                }
+            }
+        }
+        for key in ["terminal", "failed", "can_terminate"] {
+            if let Some(value) = runtime.get(key).and_then(Value::as_bool) {
+                kept.insert(key.into(), json!(value));
+            }
+        }
+        for key in [
+            "started_time",
+            "finished_time",
+            "updated_time",
+            "queued_time",
+            "elapsed_s",
+        ] {
+            if let Some(value) = runtime.get(key).filter(|value| value.is_number()) {
+                kept.insert(key.into(), value.clone());
+            }
+        }
+        if let Some(metrics) = runtime.get("metrics").and_then(Value::as_object) {
+            let bounded: serde_json::Map<_, _> = metrics
+                .iter()
+                .filter(|(_, value)| {
+                    value.is_number() || value.is_boolean() || value.is_string()
+                })
+                .take(16)
+                .map(|(key, value)| (preview(key, 64), value.clone()))
+                .collect();
+            if !bounded.is_empty() {
+                kept.insert("metrics".into(), Value::Object(bounded));
+            }
+        }
+        if !kept.is_empty() {
+            out.insert("runtime".into(), Value::Object(kept));
+        }
+    }
+    // Tool ledger rows carry precomputed bounded previews; the raw args and
+    // result objects remain available through the canonical body locators.
+    let kind = map.get("kind").and_then(Value::as_str).unwrap_or("");
+    if matches!(kind, "tool_call" | "tool_result" | "tool") || map.get("tool").is_some() {
+        if let Some(args) = super::thread_view_projection::tool_args_preview(body) {
+            out.insert("args_preview".into(), json!(args));
+        }
+        if let Some(result) = super::thread_view_projection::tool_result_preview(body) {
+            out.insert("result_preview".into(), json!(result));
+        }
+    }
+    Value::Object(out)
 }
 
 fn ensure_turn_for_item(

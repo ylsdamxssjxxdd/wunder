@@ -291,6 +291,13 @@
     0 0 0 2px var(--tt-brand);
 }
 
+.tt-span-selected,
+.tt-span-selected:hover {
+  box-shadow:
+    0 0 0 1px var(--tt-bg),
+    0 0 0 2px var(--tt-amber);
+}
+
 /* Aggregate tiles are deliberately sliced by the view model. A fine light
    divider keeps adjacent slices visible even when a bucket contains only one
    lane, while remaining unobtrusive at the 1–2px widths used by huge logs. */
@@ -1062,4 +1069,89 @@
   min-width: 0;
   padding-left: 4px;
   font-style: normal;
+}
+
+/* ---------------------------------------------------------------- */
+/* 逐步 token 直方图（消耗条）                                         */
+/* ---------------------------------------------------------------- */
+
+.tt-tokenbars {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
+  flex: none;
+  padding: 4px 0 8px;
+  border-bottom: 0.5px solid var(--tt-border-2);
+  user-select: none;
+}
+
+.tt-tokenbars-label {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-right: 3px;
+  border-right: 0.5px solid var(--tt-border-2);
+  font-size: 10px;
+  line-height: 1;
+  color: var(--tt-text-3);
+  white-space: nowrap;
+}
+
+.tt-tokenbars-track {
+  display: flex;
+  align-items: flex-end;
+  gap: 1px;
+  height: 40px;
+  min-width: 0;
+  padding: 0 4px;
+  overflow: hidden;
+}
+
+.tt-tokenbar {
+  flex: 1 1 0;
+  min-width: 2px;
+  max-width: 28px;
+  align-self: flex-end;
+  border-radius: 1px 1px 0 0;
+  background: var(--tt-brand);
+  cursor: pointer;
+}
+
+.tt-tokenbar:hover {
+  box-shadow:
+    0 0 0 1px var(--tt-bg),
+    0 0 0 2px var(--tt-brand);
+}
+
+.tt-tokenbar-max {
+  background: var(--tt-amber);
+}
+
+.tt-tokenbar-max:hover {
+  box-shadow:
+    0 0 0 1px var(--tt-bg),
+    0 0 0 2px var(--tt-amber);
+}
+
+.tt-tokenbar-empty {
+  background: var(--tt-caption);
+  opacity: 0.5;
+  cursor: default;
+}
+
+.tt-tokenbar-selected,
+.tt-tokenbar-selected:hover {
+  box-shadow:
+    0 0 0 1px var(--tt-bg),
+    0 0 0 2px var(--tt-amber);
+}
+
+.tt-tokenbars-summary {
+  display: flex;
+  align-items: center;
+  padding: 0 8px 0 4px;
+  font-family: var(--tt-mono);
+  font-size: 10px;
+  line-height: 1;
+  color: var(--tt-text-3);
+  white-space: nowrap;
 }

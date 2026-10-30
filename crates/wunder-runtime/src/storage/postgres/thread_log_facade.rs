@@ -24,6 +24,19 @@ pub(crate) struct PostgresThreadLog<'a> {
     pub(super) store: Arc<PostgresThreadStore>,
 }
 
+/// Extract the bounded question text from a stored user_message preview.
+fn first_user_question_text(raw: &str) -> Option<String> {
+    let item: Value = serde_json::from_str(raw).ok()?;
+    let wrapped = item.get("item_id").is_some() && item.get("payload").is_some();
+    let body = item.get("payload").filter(|_| wrapped).unwrap_or(&item);
+    let text = wunder_core::thread_view::message_content_text(&body["content"])?;
+    let text = text.trim();
+    if text.is_empty() {
+        return None;
+    }
+    Some(text.chars().take(2048).collect())
+}
+
 #[cfg(test)]
 mod timing_tests {
     use super::*;
@@ -556,6 +569,42 @@ impl<'a> PostgresThreadLog<'a> {
         )?
         .map(|row| row.get(0))
         .unwrap_or(0))
+    }
+
+    pub(crate) fn thread_first_user_questions(
+        &self,
+        session_ids: &[String],
+    ) -> Result<HashMap<String, String>> {
+        let mut sessions = session_ids
+            .iter()
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+            .take(2000)
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        sessions.sort_unstable();
+        sessions.dedup();
+        if sessions.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let mut conn = self.storage.conn()?;
+        let rows = conn.query(
+            "SELECT DISTINCT ON (thread_id) thread_id,preview_json
+             FROM service_thread_items_v2
+             WHERE thread_id=ANY($1) AND visible
+               AND preview_json::jsonb->>'kind'='user_message'
+             ORDER BY thread_id,ordinal ASC",
+            &[&sessions],
+        )?;
+        let mut output = HashMap::new();
+        for row in rows {
+            let session: String = row.get(0);
+            let raw: String = row.get(1);
+            if let Some(text) = first_user_question_text(&raw) {
+                output.insert(session, text);
+            }
+        }
+        Ok(output)
     }
 
     pub(crate) fn list_thread_changes(

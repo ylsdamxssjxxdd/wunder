@@ -246,6 +246,14 @@ pub trait ThreadLogStore {
         include_internal: bool,
     ) -> Result<(i64, i64)>;
     fn latest_thread_user_round_by_session(&self, session_id: &str) -> Result<i64>;
+    /// Privileged administration projection: the first visible user question
+    /// text for each requested thread, read from canonical history. Diagnostic
+    /// persistence never stores questions, so administration reads them here
+    /// instead. Callers must authorize administration before invoking.
+    fn thread_first_user_questions(
+        &self,
+        session_ids: &[String],
+    ) -> Result<HashMap<String, String>>;
     /// Return the durable user-turn tail and ThreadLog change cursor for each
     /// requested session in one batch. The result is bounded by the supplied
     /// session ids and is used by the session catalog so detached threads

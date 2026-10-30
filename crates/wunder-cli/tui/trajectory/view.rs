@@ -109,14 +109,179 @@ fn usage(row: &TrajectoryViewRow) -> String {
     {
         for key in keys {
             if let Some(value) = source.get(key).filter(|v| v.is_number() || v.is_string()) {
-                return value
+                let text = value
                     .as_str()
                     .map(str::to_owned)
                     .unwrap_or_else(|| value.to_string());
+                // 台账列宽只有 7 格：满千用 k、满百万用 M 的紧凑写法才放得下。
+                return text
+                    .parse::<f64>()
+                    .ok()
+                    .filter(|n| n.is_finite() && *n >= 0.0)
+                    .map(compact_tokens)
+                    .unwrap_or(text);
             }
         }
     }
     "—".into()
+}
+
+/** 单步（模型请求）token 总量：输入 + 缓存读 + 缓存写 + 输出，未上报返回 None。 */
+fn usage_total(row: &TrajectoryViewRow) -> Option<f64> {
+    let stats = row.stats.as_ref()?;
+    let groups: [&[&str]; 4] = [
+        &["input_tokens", "prompt_tokens", "inputTokens", "promptTokens"],
+        &[
+            "cached_input_tokens",
+            "cache_read_input_tokens",
+            "cached_tokens",
+            "cacheReadTokens",
+            "cacheReadInputTokens",
+            "cache_read_tokens",
+        ],
+        &[
+            "cache_creation_input_tokens",
+            "cacheWriteTokens",
+            "cacheCreationInputTokens",
+        ],
+        &[
+            "output_tokens",
+            "completion_tokens",
+            "outputTokens",
+            "completionTokens",
+        ],
+    ];
+    let sources: Vec<&serde_json::Value> = [
+        Some(stats),
+        stats.get("usage"),
+        stats.get("round_usage"),
+        stats.get("roundUsage"),
+        stats.get("stats"),
+        stats.get("data"),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    let mut total = 0.0;
+    let mut any = false;
+    for keys in groups {
+        'found: for source in &sources {
+            for key in keys {
+                let Some(value) = source.get(*key) else {
+                    continue;
+                };
+                let number = value
+                    .as_f64()
+                    .or_else(|| value.as_str().and_then(|text| text.parse::<f64>().ok()));
+                if let Some(number) = number.filter(|n| n.is_finite() && *n >= 0.0) {
+                    total += number;
+                    any = true;
+                    break 'found;
+                }
+            }
+        }
+    }
+    any.then_some(total)
+}
+/**
+ * 逐步 token 直方图数据：每个模型请求一根柱。模型请求的输入包含累积上下文，
+ * 直接画总量会单调递增、掩盖真正膨胀的步骤，因此柱值取相对上一步的新增量
+ * delta = max(0, 本步总量 − 上一步总量)；未上报的步为 None，不参与增量链。
+ * 返回 (bar 列表（行索引, delta), 增量总和)。
+ */
+pub(super) fn step_token_deltas(v: &TrajectoryView) -> (Vec<(usize, Option<f64>)>, f64) {
+    let mut bars = Vec::new();
+    let mut previous: Option<f64> = None;
+    let mut total_sum = 0.0;
+    for (index, row) in v.active_rows().iter().enumerate() {
+        if row.kind != "assistant_message" {
+            continue;
+        }
+        if let Some(total) = usage_total(row) {
+            let delta = previous.map_or(total, |prev| (total - prev).max(0.0));
+            previous = Some(total);
+            total_sum += delta;
+            bars.push((index, Some(delta)));
+        } else {
+            bars.push((index, None));
+        }
+    }
+    (bars, total_sum)
+}
+/** 直方图与汇总的紧凑 token 数：12,345 → 12.3k。 */
+fn compact_tokens(value: f64) -> String {
+    if !value.is_finite() {
+        return "0".into();
+    }
+    if value >= 1e6 {
+        format!("{:.1}M", value / 1e6)
+    } else if value >= 1e3 {
+        format!("{:.1}k", value / 1e3)
+    } else {
+        format!("{}", value.round() as i64)
+    }
+}
+/** 消耗带左侧「新增占用」标签的列宽：pad(8) + 1 空格。 */
+pub(super) const TOKENBARS_LABEL_COLS: u16 = 9;
+fn draw_tokenbars(frame: &mut Frame, area: Rect, v: &mut TrajectoryView, steps: &(Vec<(usize, Option<f64>)>, f64), zh: bool) {
+    let (bars, total_sum) = steps;
+    const LEVELS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+    let summary = format!("{} {} tok", tr(zh, "共", "total"), compact_tokens(*total_sum));
+    let width = (area.width as usize)
+        .saturating_sub(TOKENBARS_LABEL_COLS as usize + 1 + summary.width() + 1);
+    if width == 0 || bars.is_empty() {
+        return;
+    }
+    v.tokenbars_area = area;
+    let max = bars
+        .iter()
+        .filter_map(|(_, delta)| *delta)
+        .fold(0.0_f64, f64::max);
+    let count = bars.len();
+    let mut spans = vec![Span::styled(
+        format!("{} ", pad(tr(zh, "新增占用", "New tok"), 8)),
+        theme::secondary_text(),
+    )];
+    v.tokenbar_hits.clear();
+    for x in 0..width {
+        // 步数多于列宽时按桶取最大增量，保证峰值始终可见。
+        let lo = x * count / width;
+        let hi = ((x + 1) * count / width).max(lo + 1).min(count);
+        let bucket = &bars[lo..hi];
+        let delta = bucket.iter().filter_map(|(_, delta)| *delta).fold(None, |best: Option<f64>, d| {
+            Some(best.map_or(d, |b| b.max(d)))
+        });
+        let selected = bucket.iter().any(|(index, _)| *index == v.selected);
+        // 点击命中与显示取同一根柱：桶内增量最大者，均无上报则取首根。
+        let hit = bucket
+            .iter()
+            .filter(|(_, delta)| delta.is_some())
+            .max_by(|(_, a), (_, b)| a.unwrap().total_cmp(&b.unwrap()))
+            .or(bucket.first())
+            .map(|(index, _)| *index);
+        v.tokenbar_hits.push(hit);
+        let (symbol, base_style) = match delta {
+            Some(d) if max > 0.0 => {
+                let level = ((d / max) * 7.0).round().clamp(0.0, 7.0) as usize;
+                (
+                    LEVELS[level],
+                    if d >= max {
+                        theme::warning_text()
+                    } else {
+                        theme::accent_text()
+                    },
+                )
+            }
+            Some(_) => (LEVELS[0], theme::accent_text()),
+            None => ('·', theme::secondary_text()),
+        };
+        spans.push(Span::styled(
+            symbol.to_string(),
+            if selected { theme::modal_selected() } else { base_style },
+        ));
+    }
+    spans.push(Span::styled(format!(" {summary}"), theme::secondary_text()));
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
 fn ledger_summary(row: &TrajectoryViewRow, zh: bool) -> String {
@@ -200,11 +365,14 @@ pub(crate) fn draw(frame: &mut Frame, area: Rect, app: &mut TuiApp, zh: bool) {
         return;
     };
     frame.render_widget(Clear, area);
+    let token_steps = step_token_deltas(v);
+    let show_tokens = v.tokens && token_steps.1 > 0.0 && area.height >= 14;
     let bands = Layout::default()
         .direction(LayoutDirection::Vertical)
         .constraints([
             Constraint::Length(3),
             Constraint::Length(if area.height >= 18 { 5 } else { 3 }),
+            Constraint::Length(if show_tokens { 1 } else { 0 }),
             Constraint::Min(1),
             Constraint::Length(2),
         ])
@@ -229,12 +397,14 @@ pub(crate) fn draw(frame: &mut Frame, area: Rect, app: &mut TuiApp, zh: bool) {
         state
     );
     let toolbar = format!(
-        "[d] {}   [t] {} {}   [c] {} {}   [+/-] {}×   [e] {}   [?] {}",
+        "[d] {}   [x] {} {}   [t] {} {}   [c] {} {}   [+/-] {}×   [e] {}   [?] {}",
         if v.duration {
             tr(zh, "耗时", "Duration")
         } else {
             tr(zh, "顺序", "Sequence")
         },
+        tr(zh, "新增占用", "New tok"),
+        if v.tokens { "▾" } else { "▸" },
         tr(zh, "轮次", "Turns"),
         if v.fold_turns { "▸" } else { "▾" },
         tr(zh, "调用", "Calls"),
@@ -280,20 +450,25 @@ pub(crate) fn draw(frame: &mut Frame, area: Rect, app: &mut TuiApp, zh: bool) {
         bands[0],
     );
     draw_timeline(frame, bands[1], v, zh);
-    let wide = bands[2].width >= 100;
+    v.tokenbars_area = Rect::default();
+    v.tokenbar_hits.clear();
+    if show_tokens {
+        draw_tokenbars(frame, bands[2], v, &token_steps, zh);
+    }
+    let wide = bands[3].width >= 100;
     v.ledger_area = Rect::default();
     v.detail_area = Rect::default();
     if wide {
         let parts = Layout::default()
             .direction(LayoutDirection::Horizontal)
             .constraints([Constraint::Percentage(57), Constraint::Percentage(43)])
-            .split(bands[2]);
+            .split(bands[3]);
         draw_ledger(frame, parts[0], v, zh);
         draw_detail(frame, parts[1], v, zh);
     } else if v.detail_focus {
-        draw_detail(frame, bands[2], v, zh);
+        draw_detail(frame, bands[3], v, zh);
     } else {
-        draw_ledger(frame, bands[2], v, zh);
+        draw_ledger(frame, bands[3], v, zh);
     }
     let message = v
         .error
@@ -325,13 +500,13 @@ pub(crate) fn draw(frame: &mut Frame, area: Rect, app: &mut TuiApp, zh: bool) {
             )),
             Line::from(Span::styled(footer, theme::secondary_text())),
         ]),
-        bands[3],
+        bands[4],
     );
     if v.help {
         frame.render_widget(Clear, area);
         frame.render_widget(Paragraph::new(tr(zh,
-            "轨迹日志\n\n↑↓ / j k：选择记录；PageUp / PageDown：翻页（边缘自动读取）\nEnter：进入当前用户轮次；Esc：依次返回列表、全局与会话\ni / →：切换详情焦点；窄终端显示独立详情页\nTab / Shift+Tab：切换详情页签；详情焦点内 ↑↓ / PgUp PgDn 滚动，h / l 平移长行\nd：顺序 / 真实耗时；+ / -：围绕选中条目缩放；0：复位\nt：全部轮次折叠；空格：当前轮次折叠；c：同模型轮次工具折叠\n/：全文搜索（Enter 提交，最多 20 个命中；缩小词组可继续定位）\nf：切换实时跟随；手动浏览暂停跟随；r：刷新或重试\ny：复制当前详情页签；e：导出完整 JSONL 到启动目录\n鼠标：台账点击选择，时间线点击定位已载入记录，滚轮浏览\n\nEsc / ? 返回",
-            "Trajectory log\n\n↑↓ / j k: select; PageUp / PageDown: page (load at either edge)\nEnter: inspect user turn; Esc: return through details, overview, conversation\ni / →: focus details; narrow terminals show a separate detail page\nTab / Shift+Tab: detail tabs; focused ↑↓ / PgUp PgDn: scroll details; h / l: pan long lines\nd: sequence / elapsed time; + / -: zoom around selection; 0: reset\nt: fold all turns; Space: fold selected turn; c: fold tool groups\n/: full-text search (Enter submits, up to 20 hits; refine for more)\nf: toggle live follow; browsing pauses follow; r: refresh or retry\ny: copy current detail tab; e: export full JSONL to launch directory\nMouse: click ledger or loaded timeline record; wheel to browse\n\nEsc / ? returns")), area);
+            "轨迹日志\n\n↑↓ / j k：选择记录；PageUp / PageDown：翻页（边缘自动读取）\nEnter：进入当前用户轮次；Esc：依次返回列表、全局与会话\ni / →：切换详情焦点；窄终端显示独立详情页\nTab / Shift+Tab：切换详情页签；详情焦点内 ↑↓ / PgUp PgDn 滚动，h / l 平移长行\nd：顺序 / 真实耗时；x：逐步新增占用直方图；+ / -：围绕选中条目缩放；0：复位\nt：全部轮次折叠；空格：当前轮次折叠；c：同模型轮次工具折叠\n/：全文搜索（Enter 提交，最多 20 个命中；缩小词组可继续定位）\nf：切换实时跟随；手动浏览暂停跟随；r：刷新或重试\ny：复制当前详情页签；e：导出完整 JSONL 到启动目录\n鼠标：台账点击选择，时间线或消耗带点击定位已载入记录，滚轮浏览\n\nEsc / ? 返回",
+            "Trajectory log\n\n↑↓ / j k: select; PageUp / PageDown: page (load at either edge)\nEnter: inspect user turn; Esc: return through details, overview, conversation\ni / →: focus details; narrow terminals show a separate detail page\nTab / Shift+Tab: detail tabs; focused ↑↓ / PgUp PgDn: scroll details; h / l: pan long lines\nd: sequence / elapsed time; x: per-step new-usage histogram; + / -: zoom around selection; 0: reset\nt: fold all turns; Space: fold selected turn; c: fold tool groups\n/: full-text search (Enter submits, up to 20 hits; refine for more)\nf: toggle live follow; browsing pauses follow; r: refresh or retry\ny: copy current detail tab; e: export full JSONL to launch directory\nMouse: click ledger, timeline or token-band record; wheel to browse\n\nEsc / ? returns")), area);
     }
 }
 fn draw_timeline(frame: &mut Frame, area: Rect, v: &mut TrajectoryView, zh: bool) {

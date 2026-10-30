@@ -41,6 +41,11 @@ pub(super) fn initialize(conn: &Connection) -> Result<()> {
          );
          CREATE TABLE IF NOT EXISTS thread_chat_projection_state_v2 (
             rollout_id TEXT PRIMARY KEY NOT NULL, next_ordinal INTEGER NOT NULL
+         );
+         -- Checkpoints are materialized only when a branch cutoff needs them;
+         -- this watermark is the resumable position of that lazy backfill.
+         CREATE TABLE IF NOT EXISTS thread_chat_checkpoint_state_v2 (
+            rollout_id TEXT PRIMARY KEY NOT NULL, scanned_ordinal INTEGER NOT NULL
          );",
     )?;
     Ok(())
@@ -83,11 +88,9 @@ pub(super) fn project_item(
     if previous.as_deref() == Some(&encoded) {
         return Ok(());
     }
-    tx.execute(
-        "INSERT INTO thread_chat_checkpoints_v2(rollout_id,root_turn_id,rollout_ordinal,summary_json)
-         VALUES(?1,?2,?3,?4)",
-        params![rollout, root, ordinal, encoded],
-    )?;
+    // Only the head is maintained on the write path. Cutoff checkpoints are
+    // materialized lazily by `ensure_checkpoints` when a branch needs them, so
+    // ordinary threads never pay one checkpoint row per item.
     tx.execute(
         "INSERT INTO thread_chat_heads_v2(rollout_id,root_turn_id,rollout_ordinal,summary_json)
          VALUES(?1,?2,?3,?4) ON CONFLICT(rollout_id,root_turn_id) DO UPDATE SET
@@ -95,6 +98,119 @@ pub(super) fn project_item(
         params![rollout, root, ordinal, encoded],
     )?;
     Ok(())
+}
+
+/// Materialize cutoff checkpoints for one rollout up to `through` (exclusive
+/// ordinal). A scoped read of a branched lineage must recover the summary as
+/// of the cutoff; writing one checkpoint per change for every thread would
+/// duplicate the head once per item, so checkpoints exist only for rollouts
+/// that actually became a branch source. Rebuilds resume from the durable
+/// per-rollout watermark and never touch the live heads.
+pub(super) fn ensure_checkpoints(conn: &mut Connection, rollout: &str, through: i64) -> Result<()> {
+    loop {
+        let scanned: i64 = conn
+            .query_row(
+                "SELECT scanned_ordinal FROM thread_chat_checkpoint_state_v2 WHERE rollout_id=?1",
+                [rollout],
+                |row| row.get(0),
+            )
+            .optional()?
+            .unwrap_or(0);
+        if scanned >= through {
+            return Ok(());
+        }
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let scanned: i64 = tx
+            .query_row(
+                "SELECT scanned_ordinal FROM thread_chat_checkpoint_state_v2 WHERE rollout_id=?1",
+                [rollout],
+                |row| row.get(0),
+            )
+            .optional()?
+            .unwrap_or(0);
+        if scanned >= through {
+            return Ok(());
+        }
+        // Seed each root from its latest checkpoint below the watermark.
+        let mut summaries: std::collections::HashMap<String, (ChatSummary, String)> =
+            std::collections::HashMap::new();
+        let mut seeds = tx.prepare(
+            "SELECT c.root_turn_id, c.summary_json FROM thread_chat_checkpoints_v2 c
+             WHERE c.rollout_id=?1 AND c.rollout_ordinal<?2
+             AND NOT EXISTS(SELECT 1 FROM thread_chat_checkpoints_v2 n
+                 WHERE n.rollout_id=c.rollout_id AND n.root_turn_id=c.root_turn_id
+                 AND n.rollout_ordinal>c.rollout_ordinal AND n.rollout_ordinal<?2)",
+        )?;
+        let seed_rows = seeds.query_map(params![rollout, scanned], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        for row in seed_rows {
+            let (root, raw) = row?;
+            summaries.insert(root, (serde_json::from_str(&raw)?, raw));
+        }
+        drop(seeds);
+        let mut statement = tx.prepare(
+            "SELECT root_turn_id,turn_id,item_id,item_type,rollout_ordinal,visible,preview_json
+             FROM thread_items WHERE rollout_id=?1 AND rollout_ordinal>=?2 AND rollout_ordinal<?3
+             ORDER BY rollout_ordinal LIMIT 128",
+        )?;
+        let mut rows = statement.query(params![rollout, scanned, through])?;
+        let mut batch = Vec::new();
+        let mut bytes = 0;
+        while let Some(row) = rows.next()? {
+            let raw: String = row.get(6)?;
+            bytes += raw.len();
+            batch.push((
+                row.get::<_, Option<String>>(0)?,
+                row.get::<_, Option<String>>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, i64>(4)?,
+                row.get::<_, bool>(5)?,
+                raw,
+            ));
+            if bytes >= 2 * 1024 * 1024 {
+                break;
+            }
+        }
+        drop(rows);
+        drop(statement);
+        let next = batch.last().map(|row| row.4 + 1).unwrap_or(through);
+        for (root, turn, id, kind, ordinal, visible, raw) in batch {
+            let Some(turn) = turn else { continue };
+            let root = root.unwrap_or_else(|| turn.clone());
+            let entry = summaries.entry(root.clone()).or_default();
+            let mut summary = entry.0.clone();
+            apply_item(
+                &mut summary,
+                &turn,
+                &id,
+                &kind,
+                ordinal,
+                visible,
+                &serde_json::from_str(&raw)?,
+            );
+            let encoded = serde_json::to_string(&summary)?;
+            if encoded != entry.1 {
+                tx.execute(
+                    "INSERT INTO thread_chat_checkpoints_v2(rollout_id,root_turn_id,rollout_ordinal,summary_json)
+                     VALUES(?1,?2,?3,?4) ON CONFLICT(rollout_id,root_turn_id,rollout_ordinal)
+                     DO UPDATE SET summary_json=excluded.summary_json",
+                    params![rollout, root, ordinal, encoded],
+                )?;
+                *entry = (summary, encoded);
+            }
+        }
+        tx.execute(
+            "INSERT INTO thread_chat_checkpoint_state_v2(rollout_id,scanned_ordinal) VALUES(?1,?2)
+             ON CONFLICT(rollout_id) DO UPDATE SET scanned_ordinal=excluded.scanned_ordinal",
+            params![rollout, next],
+        )?;
+        tx.commit()?;
+        if next == through {
+            return Ok(());
+        }
+    }
 }
 
 /// Shared compact projection semantics for local and service history.
@@ -551,7 +667,10 @@ mod tests {
         store
             .project_jsonl_bytes("fixture-source", bytes.as_bytes())
             .unwrap();
-        let conn = Connection::open(store.db_path()).unwrap();
+        let mut conn = Connection::open(store.db_path()).unwrap();
+        // Cutoff checkpoints are lazy: materialize them exactly like the
+        // scoped read path does before applying the branch view.
+        ensure_checkpoints(&mut conn, "fixture-source", 3).unwrap();
         ThreadHistoryStore::apply_scope(
             &conn,
             "fixture-branch",
@@ -645,7 +764,10 @@ mod tests {
             .unwrap();
         let mut conn = Connection::open(store.db_path()).unwrap();
         let expected = read(&conn, "fixture-rollout", "fixture-root").unwrap();
-        // Simulate a resumable old-data upgrade interrupted after checkpoint 127.
+        // Simulate a resumable old-data upgrade interrupted after ordinal 127.
+        // Checkpoints are materialized lazily now; derive the interrupted head
+        // through the same folding the branch-cutoff path uses.
+        ensure_checkpoints(&mut conn, "fixture-rollout", 128).unwrap();
         let checkpoint: String = conn
             .query_row(
                 "SELECT summary_json FROM thread_chat_checkpoints_v2
@@ -654,11 +776,6 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        conn.execute(
-            "DELETE FROM thread_chat_checkpoints_v2 WHERE rollout_ordinal>=128",
-            [],
-        )
-        .unwrap();
         conn.execute(
             "UPDATE thread_chat_heads_v2 SET rollout_ordinal=127,summary_json=?1",
             [checkpoint],

@@ -9,7 +9,7 @@
 use crate::runtime_phase::Phase;
 use crate::{CompletionNotice, I18n, MainWindow};
 use slint::{ComponentHandle, Model};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -35,6 +35,17 @@ thread_local! {
     /// Smoke runs drive full turns and compare screenshots, so their windows
     /// must never pop a toast; `install_ready_without_pets` turns this off.
     static ENABLED: RefCell<bool> = const { RefCell::new(true) };
+    /// Set while the notice component is being built. The platform hook reads
+    /// it once, when the window adapter (and with it the native window
+    /// attributes) is created, to mark this window as a non-activating overlay
+    /// instead of an ordinary top-level.
+    static NOTICE_WINDOW_PENDING: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Claim the pending notice window for the platform hook. Called from the
+/// backend's window-attributes hook, exactly once per created window.
+pub(crate) fn take_notice_window() -> bool {
+    NOTICE_WINDOW_PENDING.with(|pending| pending.replace(false))
 }
 
 /// Web `AgentRuntimeState` collapsed to what the completion predicate needs.
@@ -115,7 +126,13 @@ fn show(app: &MainWindow, session: &str, agent_name: &str) {
     let weak = NOTICE.with(|slot| {
         let mut slot = slot.borrow_mut();
         if slot.is_none() {
-            let Ok(notice) = CompletionNotice::new() else {
+            // The adapter — and the native window — is created inside `new()`,
+            // so the platform hook must know before that call that this window
+            // is a toast, not the workbench.
+            NOTICE_WINDOW_PENDING.with(|pending| pending.set(true));
+            let created = CompletionNotice::new();
+            NOTICE_WINDOW_PENDING.with(|pending| pending.set(false));
+            let Ok(notice) = created else {
                 return None;
             };
             let weak_app = app.as_weak();
@@ -137,6 +154,7 @@ fn show(app: &MainWindow, session: &str, agent_name: &str) {
     notice.set_notice_body(body.into());
     OPEN_SESSION.with(|cell| *cell.borrow_mut() = session.to_string());
     let _ = notice.show();
+    crate::native_window::make_notification_overlay(notice.window());
     shape_notice(&notice);
     position_above_taskbar(&notice);
     let hide_weak = notice.as_weak();
@@ -182,9 +200,13 @@ fn position_above_taskbar(notice: &CompletionNotice) {
     let weak = notice.as_weak();
     slint::Timer::single_shot(Duration::from_millis(50), move || {
         let Some(notice) = weak.upgrade() else { return };
-        // The client rect only exists once the window is mapped, so the rounded
-        // silhouette is (re)applied here; `show()` already tried it eagerly to
-        // keep the first frames from showing square corners.
+        // The HWND only exists once the window is mapped, and Winit rewrites
+        // the ex-style during that same show, so the overlay bits are applied
+        // here as well; the eager call before mapping is the one that covers a
+        // window that was already created.
+        crate::native_window::make_notification_overlay(notice.window());
+        // The client rect only appears with the mapping, so the rounded
+        // silhouette is (re)applied here too.
         shape_notice(&notice);
         let Some(area) = crate::pet_window::work_area() else {
             return;
@@ -216,6 +238,64 @@ fn shape_notice(notice: &CompletionNotice) {
 /// Smoke runs must never pop toasts over their screenshot comparisons.
 pub fn set_enabled(enabled: bool) {
     ENABLED.with(|slot| *slot.borrow_mut() = enabled);
+}
+
+// TEMPORARY PROBE — remove before finishing.
+#[cfg(windows)]
+pub(crate) fn probe(app: &MainWindow) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetForegroundWindow, GetWindowLongW, IsWindowVisible, GWL_EXSTYLE,
+    };
+    fn hwnd_of(window: &slint::Window) -> isize {
+        use slint::winit_030::winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+        match window.window_handle().window_handle().map(|h| h.as_raw()) {
+            Ok(RawWindowHandle::Win32(handle)) => handle.hwnd.get() as isize,
+            _ => 0,
+        }
+    }
+    use windows_sys::Win32::Foundation::RECT;
+    use windows_sys::Win32::UI::WindowsAndMessaging::GetWindowRect;
+    fn report(cycle: &str, before: isize) {
+        let hwnd = NOTICE.with(|slot| {
+            slot.borrow()
+                .as_ref()
+                .map(|notice| hwnd_of(notice.window()))
+                .unwrap_or(0)
+        });
+        let style = unsafe { GetWindowLongW(hwnd as _, GWL_EXSTYLE) } as u32;
+        let visible = unsafe { IsWindowVisible(hwnd as _) };
+        let now = unsafe { GetForegroundWindow() } as isize;
+        let mut rect: RECT = unsafe { std::mem::zeroed() };
+        unsafe { GetWindowRect(hwnd as _, &mut rect) };
+        println!(
+            "NOTICE-PROBE {cycle} hwnd={hwnd:#x} visible={visible} exstyle={style:#x} \
+             toolwindow={} noactivate={} appwindow={} rect=({},{} {}x{}) \
+             fg_before={before:#x} fg_now={now:#x} stole_focus={}",
+            style & 0x80 != 0,
+            style & 0x0800_0000 != 0,
+            style & 0x0004_0000 != 0,
+            rect.left,
+            rect.top,
+            rect.right - rect.left,
+            rect.bottom - rect.top,
+            now == hwnd,
+        );
+    }
+    let before = unsafe { GetForegroundWindow() } as isize;
+    show(app, "probe-session", "示例智能体");
+    let weak = app.as_weak();
+    slint::Timer::single_shot(Duration::from_millis(700), move || {
+        report("first", before);
+        let Some(app) = weak.upgrade() else {
+            std::process::exit(1)
+        };
+        hide();
+        show(&app, "probe-session", "示例智能体");
+        slint::Timer::single_shot(Duration::from_millis(700), move || {
+            report("second", before);
+            std::process::exit(0);
+        });
+    });
 }
 
 #[cfg(test)]

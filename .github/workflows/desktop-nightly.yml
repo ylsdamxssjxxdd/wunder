@@ -196,6 +196,21 @@ jobs:
             if ($meta.rg.version -ne $rgPin) {
               throw "supplement ripgrep is $($meta.rg.version), expected $rgPin; rebuild the Desktop Supplements release"
             }
+            # 便携 PowerShell 7 是命令工具的默认 shell，版本必须与清单一致：
+            # 换了版本就意味着目标机上的语法能力变了，工具下发的提示也要跟着改。
+            $psPin = (Get-Content -LiteralPath 'packaging/windows/scripts/win7-supplement-manifest.json' -Raw -Encoding UTF8 | ConvertFrom-Json).powershell.version
+            if ($meta.powershell.bundled -ne $true) {
+              throw 'supplement does not bundle the portable PowerShell; rebuild the Desktop Supplements release'
+            }
+            if ($meta.powershell.version -ne $psPin) {
+              throw "supplement PowerShell is $($meta.powershell.version), expected $psPin; rebuild the Desktop Supplements release"
+            }
+            # 条目分隔符在不同打包器下可能是 / 或 \，两处都试一次。
+            $pwshEntry = $zip.GetEntry('opt/powershell/pwsh.exe')
+            if (-not $pwshEntry) { $pwshEntry = $zip.GetEntry('opt\powershell\pwsh.exe') }
+            if (-not $pwshEntry) {
+              throw 'supplement does not contain opt/powershell/pwsh.exe; rebuild the Desktop Supplements release'
+            }
             # 发布前最后一道架构检查：release 上的包可能来自旧构建缓存，而打包脚本
             # 的门禁只保护「本次构建」。任何 32 位包里混入 x64/arm64 的 exe/dll/pyd
             # 都只能在目标机上才炸（capstone.dll 就是这么混进来的）。

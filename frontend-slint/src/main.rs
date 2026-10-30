@@ -102,6 +102,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
     install_window_chrome(&app);
+    if first_argument.as_deref() == Some(std::ffi::OsStr::new("--notice-probe")) {
+        crate::completion_notice::probe(&app);
+        slint::run_event_loop()?;
+        return Ok(());
+    }
     if first_argument.as_deref() == Some(std::ffi::OsStr::new("--smoke-check")) {
         demo::install(&app);
         let directory = arguments
@@ -578,6 +583,26 @@ fn install_slint_platform() -> Result<(), Box<dyn std::error::Error>> {
         .with_window_attributes_hook({
             let frameless_first_window = std::sync::Arc::clone(&frameless_first_window);
             move |attributes| {
+                if crate::completion_notice::take_notice_window() {
+                    // The completion toast is a tool window that never activates
+                    // on show: no taskbar button, no focus taken from whatever
+                    // the user is doing. It also has no minimum size, unlike the
+                    // workbench and the other auxiliary windows.
+                    #[cfg(windows)]
+                    {
+                        use winit::platform::windows::WindowAttributesExtWindows as _;
+                        return attributes
+                            .with_title("蛹")
+                            .with_decorations(false)
+                            .with_active(false)
+                            .with_skip_taskbar(true);
+                    }
+                    #[cfg(not(windows))]
+                    return attributes
+                        .with_title("蛹")
+                        .with_decorations(false)
+                        .with_active(false);
+                }
                 let frameless =
                     frameless_first_window.swap(false, std::sync::atomic::Ordering::AcqRel);
                 let attributes = attributes

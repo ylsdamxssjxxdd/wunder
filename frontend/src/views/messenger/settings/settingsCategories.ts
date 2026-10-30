@@ -7,8 +7,8 @@
  * 只描述「导航结构 + 搜索关键词」，不承载业务逻辑：每个分类的内容组件
  * 在 `settingsCategoryComponents.ts` 里按需异步加载。
  *
- * 搜索只匹配标题与关键词（不匹配副标题），避免出现「搜『模型』命中多个分类」
- * 这类误命中；关键词同时覆盖中英文口语叫法。
+ * 导航只有标题一行（分类摘要已移除），搜索也只匹配标题与关键词，避免出现
+ * 「搜『模型』命中多个分类」这类误命中；关键词同时覆盖中英文口语叫法。
  */
 
 export type SettingsCategoryId =
@@ -30,8 +30,6 @@ export type SettingsCategoryMeta = {
   icon: string;
   /** i18n key for the navigation title (also the content pane title). */
   titleKey: string;
-  /** i18n key for the navigation subtitle (also the content pane subtitle). */
-  descKey: string;
   /** Lower-case search aliases; matched against the search keyword. */
   keywords: string[];
 };
@@ -55,7 +53,6 @@ const META: Record<SettingsCategoryId, Omit<SettingsCategoryMeta, 'id'>> = {
   general: {
     icon: 'fa-solid fa-gear',
     titleKey: 'messenger.settingsPage.cat.general.title',
-    descKey: 'messenger.settingsPage.cat.general.desc',
     keywords: [
       '常规',
       '语言',
@@ -88,7 +85,6 @@ const META: Record<SettingsCategoryId, Omit<SettingsCategoryMeta, 'id'>> = {
   account: {
     icon: 'fa-solid fa-id-card',
     titleKey: 'messenger.settingsPage.cat.account.title',
-    descKey: 'messenger.settingsPage.cat.account.desc',
     keywords: [
       '账号',
       '昵称',
@@ -114,43 +110,36 @@ const META: Record<SettingsCategoryId, Omit<SettingsCategoryMeta, 'id'>> = {
   tools: {
     icon: 'fa-solid fa-screwdriver-wrench',
     titleKey: 'messenger.settingsPage.cat.tools.title',
-    descKey: 'messenger.settingsPage.cat.tools.desc',
     keywords: ['工具', '技能', '知识库', '脚本', 'tool', 'skill', 'knowledge', 'mcp']
   },
   agent: {
     icon: 'fa-solid fa-robot',
     titleKey: 'messenger.settingsPage.cat.agent.title',
-    descKey: 'messenger.settingsPage.cat.agent.desc',
     keywords: ['智能体', '提示词', '欢迎语', '审批', '行为', 'agent', 'prompt', 'approval']
   },
   companion: {
     icon: 'fa-solid fa-paw',
     titleKey: 'messenger.settingsPage.cat.companion.title',
-    descKey: 'messenger.settingsPage.cat.companion.desc',
     keywords: ['桌宠', '形象', '动画', '缩放', '气泡', 'companion', 'avatar', 'sprite', 'pet']
   },
   cron: {
     icon: 'fa-solid fa-clock',
     titleKey: 'messenger.settingsPage.cat.cron.title',
-    descKey: 'messenger.settingsPage.cat.cron.desc',
     keywords: ['定时', '计划', '任务', 'cron', 'schedule']
   },
   memory: {
     icon: 'fa-solid fa-brain',
     titleKey: 'messenger.settingsPage.cat.memory.title',
-    descKey: 'messenger.settingsPage.cat.memory.desc',
     keywords: ['记忆', '碎片', 'memory']
   },
   channels: {
     icon: 'fa-solid fa-plug',
     titleKey: 'messenger.settingsPage.cat.channels.title',
-    descKey: 'messenger.settingsPage.cat.channels.desc',
     keywords: ['渠道', '扫码', '绑定', '重连', 'channel', 'qr', 'bind']
   },
   devices: {
     icon: 'fa-solid fa-satellite-dish',
     titleKey: 'messenger.settingsPage.cat.devices.title',
-    descKey: 'messenger.settingsPage.cat.devices.desc',
     keywords: [
       '设备',
       '我的设备',
@@ -167,13 +156,11 @@ const META: Record<SettingsCategoryId, Omit<SettingsCategoryMeta, 'id'>> = {
   prompts: {
     icon: 'fa-solid fa-file-lines',
     titleKey: 'messenger.settingsPage.cat.prompts.title',
-    descKey: 'messenger.settingsPage.cat.prompts.desc',
     keywords: ['提示词包', '分段', 'prompt pack', 'prompts']
   },
   archived: {
     icon: 'fa-solid fa-box-archive',
     titleKey: 'messenger.settingsPage.cat.archived.title',
-    descKey: 'messenger.settingsPage.cat.archived.desc',
     keywords: ['归档', '线程', '恢复', 'archive', 'thread']
   }
 };

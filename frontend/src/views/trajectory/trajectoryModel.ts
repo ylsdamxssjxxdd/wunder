@@ -1141,6 +1141,85 @@ export function buildRequestNumbers(turns: readonly TrajTurnModel[]): TrajReques
 }
 
 /* ------------------------------------------------------------------ */
+/* 逐步 token 直方图                                                    */
+/* ------------------------------------------------------------------ */
+
+export interface StepUsageBar {
+  requestNumber: number
+  turn: number | null
+  step: number
+  assistantIndex: number
+  startedAt: number | null
+  completedAt: number | null
+  reported: boolean
+  input: number
+  cacheRead: number
+  cacheWrite: number
+  output: number
+  total: number
+  delta: number | null
+}
+
+export interface StepUsageBars {
+  bars: StepUsageBar[]
+  max: number
+  totalSum: number
+  reportedCount: number
+}
+
+/**
+ * 把请求编号列表投影成逐步用量直方图：每一步（模型请求）一根柱。
+ * 模型请求的输入包含累积上下文，直接画总量会单调递增、掩盖真正膨胀的
+ * 步骤，因此柱值取相对上一步的新增量：delta = max(0, 本步总量 − 上一步总量)，
+ * 总量 = 输入 + 缓存读 + 缓存写 + 输出。压缩上下文后总量回落的步增量为 0。
+ * 未上报用量的步以 reported=false 标出，由视图降级显示，不参与增量链。
+ */
+export function buildStepUsageBars(requests: readonly TrajRequestNumber[]): StepUsageBars {
+  const bars: StepUsageBar[] = []
+  let max = 0
+  let totalSum = 0
+  let reportedCount = 0
+  let previousTotal: number | null = null
+  for (const request of requests) {
+    const usage = request.usage
+    const reported = usage !== undefined && usage !== null
+    const pick = (key: keyof TrajUsage): number => {
+      const value = reported ? usage?.[key] : undefined
+      return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : 0
+    }
+    const input = pick('input')
+    const cacheRead = pick('cacheRead')
+    const cacheWrite = pick('cacheWrite')
+    const output = pick('output')
+    const total = input + cacheRead + cacheWrite + output
+    let delta: number | null = null
+    if (reported) {
+      reportedCount += 1
+      delta = previousTotal === null ? total : Math.max(0, total - previousTotal)
+      previousTotal = total
+      totalSum += delta
+      if (delta > max) max = delta
+    }
+    bars.push({
+      requestNumber: request.number,
+      turn: request.turn,
+      step: request.step,
+      assistantIndex: request.assistantIndex,
+      startedAt: request.startedAt,
+      completedAt: request.completedAt,
+      reported,
+      input,
+      cacheRead,
+      cacheWrite,
+      output,
+      total,
+      delta,
+    })
+  }
+  return { bars, max, totalSum, reportedCount }
+}
+
+/* ------------------------------------------------------------------ */
 /* 时间线投影                                                          */
 /* ------------------------------------------------------------------ */
 

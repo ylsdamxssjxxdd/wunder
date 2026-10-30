@@ -26,10 +26,7 @@
           @click="selectCategory(item.id)"
         >
           <i :class="item.icon" class="messenger-settings-frame-nav-icon" aria-hidden="true"></i>
-          <span class="messenger-settings-frame-nav-text">
-            <span class="messenger-settings-frame-nav-title">{{ t(item.titleKey) }}</span>
-            <span class="messenger-settings-frame-nav-desc">{{ t(item.descKey) }}</span>
-          </span>
+          <span class="messenger-settings-frame-nav-title">{{ t(item.titleKey) }}</span>
         </button>
         <div v-if="!visibleCategories.length" class="messenger-settings-frame-nav-empty">
           {{ t('messenger.settingsPage.searchEmpty') }}

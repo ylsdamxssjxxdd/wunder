@@ -310,22 +310,32 @@ fn build_extractor_command(
         return Ok(("tar".to_string(), args, "tar"));
     }
 
-    if cfg!(windows) && binary_available("powershell.exe") {
-        let command = format!(
-            "Expand-Archive -LiteralPath '{}' -DestinationPath '{}' -Force",
-            ps_escape(archive_path),
-            ps_escape(output_root)
-        );
-        return Ok((
-            "powershell.exe".to_string(),
-            vec![
-                "-NoLogo".to_string(),
-                "-NoProfile".to_string(),
-                "-Command".to_string(),
-                command,
-            ],
-            "powershell-expand-archive",
-        ));
+    // `Expand-Archive` only exists from PowerShell 5.0 on; a Windows 7 host
+    // (2.0) would fail here even though tar/7z could still do the job, so the
+    // branch is skipped rather than handed a cmdlet it cannot resolve.
+    //
+    // The gate and the launched program must describe the same interpreter:
+    // the version check follows the resolved host (which may be the bundled
+    // portable pwsh 7), so launching a bare `powershell.exe` from PATH could
+    // hand the cmdlet to the system 2.0 that cannot resolve it.
+    if cfg!(windows) && !legacy_powershell() {
+        if let Some(program) = crate::core::command_utils::powershell_executable() {
+            let command = format!(
+                "Expand-Archive -LiteralPath '{}' -DestinationPath '{}' -Force",
+                ps_escape(archive_path),
+                ps_escape(output_root)
+            );
+            return Ok((
+                program,
+                vec![
+                    "-NoLogo".to_string(),
+                    "-NoProfile".to_string(),
+                    "-Command".to_string(),
+                    command,
+                ],
+                "powershell-expand-archive",
+            ));
+        }
     }
 
     if cfg!(windows) && binary_available("tar.exe") {
@@ -402,6 +412,12 @@ fn binary_exists_in_dir(dir: &Path, program: &str) -> bool {
 
 fn ps_escape(value: &Path) -> String {
     value.as_os_str().to_string_lossy().replace('\'', "''")
+}
+
+/// Windows PowerShell 2.0–4.0 has no `Expand-Archive`; treat those hosts as
+/// "no PowerShell extractor" and let tar/7z take the work.
+fn legacy_powershell() -> bool {
+    crate::core::command_utils::powershell_is_legacy()
 }
 
 fn apply_platform_spawn_options_std(command: &mut Command) {

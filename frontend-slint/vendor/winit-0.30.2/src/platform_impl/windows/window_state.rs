@@ -16,7 +16,8 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     SW_HIDE, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, SW_SHOW, SW_SHOWNOACTIVATE, WINDOWPLACEMENT,
     WINDOW_EX_STYLE, WINDOW_STYLE, WS_BORDER, WS_CAPTION, WS_CHILD, WS_CLIPCHILDREN,
     WS_CLIPSIBLINGS, WS_EX_ACCEPTFILES, WS_EX_APPWINDOW, WS_EX_LAYERED, WS_EX_NOREDIRECTIONBITMAP,
-    WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_EX_WINDOWEDGE, WS_MAXIMIZE, WS_MAXIMIZEBOX, WS_MINIMIZE,
+    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_EX_WINDOWEDGE, WS_MAXIMIZE,
+    WS_MAXIMIZEBOX, WS_MINIMIZE,
     WS_MINIMIZEBOX, WS_OVERLAPPEDWINDOW, WS_POPUP, WS_SIZEBOX, WS_SYSMENU, WS_VISIBLE,
 };
 
@@ -122,6 +123,13 @@ bitflags! {
         const MARKER_ACTIVATE = 1 << 21;
 
         const CLIP_CHILDREN = 1 << 22;
+
+        /// A tool window: never in the taskbar or Alt+Tab. Winit's usual
+        /// approach — `ITaskbarList::DeleteTab` after creation — only removes a
+        /// button that already exists, so a window that is created hidden and
+        /// shown later still gets one. The style bit is the only thing the
+        /// shell honours from the very first show.
+        const SKIP_TASKBAR = 1 << 23;
 
         const EXCLUSIVE_FULLSCREEN_OR_MASK = WindowFlags::ALWAYS_ON_TOP.bits();
     }
@@ -269,8 +277,11 @@ impl WindowFlags {
         if self.contains(WindowFlags::VISIBLE) {
             style |= WS_VISIBLE;
         }
-        if self.contains(WindowFlags::ON_TASKBAR) {
+        if self.contains(WindowFlags::ON_TASKBAR) && !self.contains(WindowFlags::SKIP_TASKBAR) {
             style_ex |= WS_EX_APPWINDOW;
+        }
+        if self.contains(WindowFlags::SKIP_TASKBAR) {
+            style_ex |= WS_EX_TOOLWINDOW;
         }
         if self.contains(WindowFlags::ALWAYS_ON_TOP) {
             style_ex |= WS_EX_TOPMOST;

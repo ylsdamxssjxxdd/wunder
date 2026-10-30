@@ -101,7 +101,11 @@ pub struct LanPeerRecord {
 /// access key).
 #[derive(Default)]
 pub struct ModelEdit<'a> {
+    /// The key this row is stored under. When `original_key` names an existing
+    /// entry and the two differ, the save is a rename.
     pub key: &'a str,
+    /// Stored key the editor row belongs to; empty when creating a new model.
+    pub original_key: &'a str,
     pub provider: &'a str,
     pub model: &'a str,
     pub base_url: &'a str,
@@ -542,8 +546,21 @@ impl NativeDesktop {
             parse_f32(edit.video_guidance_scale_2, "视频引导系数 2", 0.0, 20.0)?;
         let video_boundary_ratio = parse_f32(edit.video_boundary_ratio, "视频边界比例", 0.0, 1.0)?;
         let video_flow_shift = parse_f32(edit.video_flow_shift, "视频 flow shift", 0.0, f32::MAX)?;
-        self.update_settings(|config, _| {
-            let key = edit.key.trim().to_string();
+        let original_key = edit.original_key.trim().to_string();
+        let new_key = edit.key.trim().to_string();
+        let renaming = !original_key.is_empty() && original_key != new_key;
+        let settings = self.update_settings(|config, _| {
+            let key = new_key.clone();
+            if renaming {
+                if config.llm.models.contains_key(&key) {
+                    bail!("模型配置名称已存在，请使用其他名称");
+                }
+                let Some(entry) = config.llm.models.remove(&original_key) else {
+                    bail!("模型不存在，无法重命名");
+                };
+                config.llm.models.insert(key.clone(), entry);
+                retarget_model_default(&mut config.llm, &original_key, &key);
+            }
             if !config.llm.models.contains_key(&key) && config.llm.models.len() >= 200 {
                 bail!("模型配置已达到 200 项上限");
             }
@@ -609,7 +626,14 @@ impl NativeDesktop {
                 set_default(&mut config.llm, kind, key);
             }
             Ok(())
-        })
+        })?;
+        if renaming {
+            self.migrate_model_references(&original_key, &new_key);
+            // Re-project so the returned list already reflects the migrated
+            // display order and the new key.
+            return self.get_desktop_settings();
+        }
+        Ok(settings)
     }
 
     /// Remove a model and promote an enabled local model of the same type
@@ -635,6 +659,47 @@ impl NativeDesktop {
             }
             Ok(())
         })
+    }
+
+    /// After a model key changes, keep the pointers that named it: agents that
+    /// pinned the model and per-thread model overrides. Best effort — the
+    /// config rename is already committed and a stale pointer degrades through
+    /// the normal fallback chain, so a storage hiccup must not fail the save.
+    fn migrate_model_references(&self, old: &str, new: &str) {
+        let user_id = self.user_id();
+        let state = self.state();
+        match state.storage.list_user_agents(user_id) {
+            Ok(agents) => {
+                for mut agent in agents {
+                    if agent.model_name.as_deref().map(str::trim) != Some(old) {
+                        continue;
+                    }
+                    agent.model_name = Some(new.to_string());
+                    let _ = state.storage.upsert_user_agent(&agent);
+                }
+            }
+            Err(error) => {
+                tracing::warn!(%error, "model rename could not list agents");
+            }
+        }
+        if let Err(error) = state
+            .workspace
+            .migrate_session_model_overrides(user_id, old, new)
+        {
+            tracing::warn!(%error, "model rename could not migrate session overrides");
+        }
+        if let Ok(mut order) = self.navigation_order() {
+            if order.models.iter().any(|key| key == old) {
+                for key in order.models.iter_mut() {
+                    if key == old {
+                        *key = new.to_string();
+                    }
+                }
+                if let Err(error) = self.save_navigation_order(&order) {
+                    tracing::warn!(%error, "model rename could not migrate display order");
+                }
+            }
+        }
     }
 
     pub fn set_default_model(&self, key: &str) -> Result<DesktopSettings> {
@@ -902,6 +967,25 @@ fn set_default(llm: &mut LlmConfig, kind: &str, key: String) {
         "image" => llm.default_image = Some(key),
         "video" => llm.default_video = Some(key),
         _ => llm.default = key,
+    }
+}
+
+/// Follow a model key rename through the per-type default pointers so the
+/// renamed model stays the default it used to be.
+fn retarget_model_default(llm: &mut LlmConfig, old: &str, new: &str) {
+    if llm.default == old {
+        llm.default = new.to_string();
+    }
+    for slot in [
+        &mut llm.default_embedding,
+        &mut llm.default_asr,
+        &mut llm.default_tts,
+        &mut llm.default_image,
+        &mut llm.default_video,
+    ] {
+        if slot.as_deref() == Some(old) {
+            *slot = Some(new.to_string());
+        }
     }
 }
 

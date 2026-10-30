@@ -528,6 +528,10 @@ impl Orchestrator {
             };
             let mut reached_max_rounds = false;
             let turn_started_at = Instant::now();
+            // The emitter stamps `message_stats.interaction_duration_s` on the
+            // `llm_output` event that becomes the durable assistant item, so it
+            // has to measure the same turn this executor reports at the end.
+            emitter.mark_turn_started(turn_started_at);
             let mut round_usage: TokenUsage;
             let mut last_model_usage: Option<TokenUsage> = None;
             let mut confirmed_context_occupancy_tokens: Option<i64> = None;

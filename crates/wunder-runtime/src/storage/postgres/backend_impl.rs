@@ -322,6 +322,13 @@ impl ThreadLogStore for PostgresStorage {
         super::thread_log_facade::PostgresThreadLog::new(self)?
             .latest_thread_user_round_by_session(session_id)
     }
+    fn thread_first_user_questions(
+        &self,
+        session_ids: &[String],
+    ) -> Result<std::collections::HashMap<String, String>> {
+        super::thread_log_facade::PostgresThreadLog::new(self)?
+            .thread_first_user_questions(session_ids)
+    }
     fn thread_turn_tails(
         &self,
         user_id: &str,

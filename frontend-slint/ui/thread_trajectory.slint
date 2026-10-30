@@ -2,7 +2,7 @@
 // detail text are pre-projected and pre-bounded in Rust; Slint only lays out
 // what it was handed. The --tt-* palette matches web `thread-trajectory.css`
 // value for value so both shells render the same trajectory experience.
-import { Theme, TrajRow, TrajSpan, TrajTick, TrajBoundary, TrajTiming, TrajSection, TrajTab, TrajSearchHit } from "theme.slint";
+import { Theme, TrajRow, TrajSpan, TrajTick, TrajBoundary, TrajTiming, TrajSection, TrajTab, TrajSearchHit, TrajTokenBar } from "theme.slint";
 import { I18n } from "i18n.slint";
 import { ListView, ScrollView } from "std-widgets.slint";
 
@@ -71,10 +71,11 @@ component TrajToggle inherits Rectangle {
     in property <string> label;
     in property <bool> on;
     in property <bool> clock: false;
+    in property <bool> bars: false;
     callback toggle();
     height: 22px;
     y: 5px;
-    width: toggle-label.preferred-width + (root.clock ? 30px : 29px);
+    width: toggle-label.preferred-width + (root.clock || root.bars ? 30px : 29px);
     border-radius: 4px;
     background: root.on ? TrajTokens.brand-soft : toggle-touch.has-hover ? TrajTokens.hover : transparent;
     HorizontalLayout {
@@ -89,7 +90,25 @@ component TrajToggle inherits Rectangle {
                 colorize: root.on ? TrajTokens.brand : TrajTokens.text-2;
             }
         }
-        if !root.clock : TrajText {
+        if root.bars : Rectangle {
+            width: 12px; height: parent.height;
+            Rectangle {
+                x: 1px; y: parent.height - 9px;
+                width: 2.5px; height: 5px; border-radius: 0.6px;
+                background: root.on ? TrajTokens.brand : TrajTokens.text-2;
+            }
+            Rectangle {
+                x: 4.75px; y: parent.height - 12px;
+                width: 2.5px; height: 8px; border-radius: 0.6px;
+                background: root.on ? TrajTokens.brand : TrajTokens.text-2;
+            }
+            Rectangle {
+                x: 8.5px; y: parent.height - 7.5px;
+                width: 2.5px; height: 3.5px; border-radius: 0.6px;
+                background: root.on ? TrajTokens.brand : TrajTokens.text-2;
+            }
+        }
+        if !root.clock && !root.bars : TrajText {
             width: 11px; height: parent.height;
             text: root.on ? "⊞" : "⊟";
             color: root.on ? TrajTokens.brand : TrajTokens.text-2;
@@ -119,6 +138,8 @@ export component ThreadTrajectoryDialog inherits Rectangle {
     // the row highlight and the span highlight.
     in property <[TrajRow]> rows;
     in property <[TrajSpan]> spans;
+    in property <[TrajTokenBar]> token-bars;
+    in property <string> token-total;
     in property <[TrajTick]> ticks;
     in property <[TrajBoundary]> boundaries;
     in property <float> view-start: 0.0;
@@ -144,6 +165,7 @@ export component ThreadTrajectoryDialog inherits Rectangle {
     in property <int> ledger-scroll-seq: 0;
     // Toolbar state.
     in property <bool> show-duration: true;
+    in-out property <bool> show-tokens: true;
     in-out property <bool> show-turns: false;
     in-out property <bool> show-calls: false;
     in-out property <string> query;
@@ -197,6 +219,9 @@ export component ThreadTrajectoryDialog inherits Rectangle {
     private property <bool> press-pan: false;
     private property <bool> track-hovered: false;
     private property <length> track-hover-x: 0px;
+    private property <int> bar-hover: -1;
+    private property <length> bar-tip-x: 0px;
+    private property <length> bar-tip-y: 0px;
 
     function handle-track-move(mouse-x: length) {
         root.track-hovered = true;
@@ -245,6 +270,12 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                 clock: true;
                 on: root.show-duration;
                 toggle => { root.toggle-duration(); }
+            }
+            TrajToggle {
+                label: I18n.traj_token_usage;
+                bars: true;
+                on: root.show-tokens;
+                toggle => { root.show-tokens = !root.show-tokens; }
             }
             TrajToggle {
                 label: I18n.traj_turns;
@@ -503,7 +534,7 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                         width: parent.width + 4px; height: parent.height + 4px;
                         border-radius: 3px;
                         border-width: 1px;
-                        border-color: TrajTokens.brand;
+                        border-color: span.selected ? TrajTokens.amber : TrajTokens.brand;
                         background: transparent;
                         Rectangle {
                             x: 1px; y: 1px;
@@ -532,6 +563,85 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                     Rectangle { x: 0px; y: 0px; width: 3px; height: parent.height; background: TrajTokens.brand; }
                     Rectangle { x: parent.width - 3px; y: 0px; width: 3px; height: parent.height; background: TrajTokens.brand; }
                 }
+                }
+            }
+        }
+        // ---- 消耗直方图：每一步（模型请求）一根柱，柱高为相对上一步的新增 token ----
+        if root.show-tokens && root.token-bars.length > 0 : Rectangle {
+            height: 48px;
+            clip: true;
+            HorizontalLayout {
+                // 与泳道标签共用 44px 标签沟槽
+                Rectangle {
+                    width: 44px;
+                    Rectangle { x: 43.5px; width: 0.5px; height: parent.height; background: TrajTokens.border-2; }
+                    TrajText {
+                        x: 0px; width: 41px; height: parent.height;
+                        vertical-alignment: center; horizontal-alignment: right;
+                        text: I18n.traj_token_usage;
+                        color: TrajTokens.text-3; font-size: 10px;
+                    }
+                }
+                token-track := Rectangle {
+                    horizontal-stretch: 1;
+                    clip: true;
+                    HorizontalLayout {
+                        x: 4px;
+                        width: parent.width - 8px;
+                        padding-top: 4px;
+                        padding-bottom: 8px;
+                        spacing: 1px;
+                        for bar[i] in root.token-bars : bar-cell := Rectangle {
+                            horizontal-stretch: 1;
+                            max-width: 28px;
+                            bar-fill := Rectangle {
+                                y: parent.height - self.height;
+                                width: parent.width;
+                                height: bar.reported ? max(2px, parent.height * max(0.04, bar.ratio)) : 2px;
+                                border-radius: 1px;
+                                background: !bar.reported ? TrajTokens.caption : bar.peak ? TrajTokens.amber : TrajTokens.brand;
+                                opacity: bar.reported ? 1.0 : 0.5;
+                            }
+                            // 与舰桥/蜂巢一致：点击时间线段或台账行后，对应柱子
+                            // 保持琥珀色选中环，反向点击柱子亦然（同走 select-span）。
+                            property <bool> is-selected: bar.index >= 0 && bar.index == root.selected-index;
+                            if bar-touch.has-hover || bar-cell.is-selected : Rectangle {
+                                x: -2px;
+                                y: bar-fill.y - 2px;
+                                width: parent.width + 4px;
+                                height: bar-fill.height + 4px;
+                                border-radius: 3px;
+                                border-width: 1px;
+                                border-color: bar-cell.is-selected ? TrajTokens.amber : bar.peak ? TrajTokens.amber : TrajTokens.brand;
+                                background: transparent;
+                            }
+                            bar-touch := TouchArea {
+                                mouse-cursor: bar.index >= 0 ? pointer : default;
+                                moved => {
+                                    root.bar-hover = i;
+                                    root.bar-tip-x = 48px + bar-cell.x + self.mouse-x;
+                                    root.bar-tip-y = 114px + self.mouse-y;
+                                }
+                                changed has-hover => {
+                                    if !self.has-hover && root.bar-hover == i { root.bar-hover = -1; }
+                                }
+                                clicked => {
+                                    if bar.index >= 0 { root.select-span(bar.index); }
+                                }
+                            }
+                        }
+                    }
+                }
+                Rectangle {
+                    width: token-total-label.preferred-width + 12px;
+                    token-total-label := TrajText {
+                        x: 4px; height: parent.height;
+                        text: root.token-total;
+                        color: TrajTokens.text-3;
+                        font-family: Theme.font-mono;
+                        font-size: 10px;
+                        vertical-alignment: center;
+                    }
                 }
             }
         }
@@ -1114,6 +1224,26 @@ export component ThreadTrajectoryDialog inherits Rectangle {
             x: 8px; y: 5px;
             width: parent.width - 16px;
             text: root.tooltip-text;
+            color: TrajTokens.text;
+            font-size: 11px;
+            wrap: word-wrap;
+        }
+    }
+
+    // 消耗柱 tooltip：文本在 Rust 侧随柱子一起预投影，这里只定位展示。
+    if root.bar-hover >= 0 && root.bar-hover < root.token-bars.length && root.token-bars[root.bar-hover].tooltip != "" : Rectangle {
+        x: clamp(root.bar-tip-x + 12px, 0px, root.width - self.width);
+        y: clamp(root.bar-tip-y + 12px, 0px, root.height - self.height);
+        width: min(320px, bar-tooltip-lines.preferred-width + 16px);
+        height: bar-tooltip-lines.preferred-height + 10px;
+        background: white;
+        border-radius: 4px;
+        border-width: 0.5px; border-color: TrajTokens.border-3;
+        drop-shadow-blur: 16px; drop-shadow-offset-y: 4px; drop-shadow-color: #0F11151F;
+        bar-tooltip-lines := TrajText {
+            x: 8px; y: 5px;
+            width: parent.width - 16px;
+            text: root.token-bars[root.bar-hover].tooltip;
             color: TrajTokens.text;
             font-size: 11px;
             wrap: word-wrap;

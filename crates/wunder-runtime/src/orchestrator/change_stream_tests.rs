@@ -822,7 +822,61 @@ async fn completed_output_projects_context_and_quota_stats_without_history_rewri
     assert_eq!(stats["toolCalls"], json!(0));
     assert_eq!(stats["tool_calls"], json!(0));
     assert_eq!(stats["usage"]["total_tokens"], json!(355));
+    // No turn clock on this fixture emitter, so the round spans are the last
+    // resort. A real execution marks the clock and reports the whole round.
     assert_eq!(stats["interaction_duration_s"], json!(1.0));
+    while queue_rx.try_recv().is_ok() {}
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn output_event_reports_the_user_round_clock_not_the_model_reply_span() {
+    let (state, _dir) = build_test_state("change_stream_turn_duration").await;
+    let (queue_tx, mut queue_rx) = mpsc::channel::<StreamSignal>(64);
+    let emitter = EventEmitter::new(
+        "session-a".into(),
+        "user-a".into(),
+        Some(queue_tx),
+        Some(state.storage.clone()),
+        state.monitor.clone(),
+        false,
+        None,
+    )
+    .with_committer(state.kernel.orchestrator.committer.clone());
+    let turn = start_turn(&state, "session-a", "user-a").await;
+    emitter.bind_turn(&turn, 1);
+    // The final model reply is only the last slice of a round that already
+    // spent seconds in tools. The assistant item is committed from this event,
+    // so the number a reopened bubble shows has to be the round, not the reply.
+    emitter.mark_turn_started(std::time::Instant::now() - std::time::Duration::from_secs(5));
+
+    emitter
+        .emit(
+            "llm_output",
+            json!({
+                "model_round": 1,
+                "content": "done",
+                "prefill_duration_s": 0.2,
+                "decode_duration_s": 0.8,
+            }),
+        )
+        .await;
+
+    let page = state
+        .storage
+        .thread_view_page("user-a", "session-a", "chat", None, 12)
+        .expect("chat view");
+    let stats = page.chat[0]
+        .assistant
+        .stats
+        .as_ref()
+        .expect("assistant bubble stats");
+    let seconds = stats["interaction_duration_s"]
+        .as_f64()
+        .expect("turn duration");
+    assert!(
+        seconds >= 5.0,
+        "the footer must report the whole user round, got {seconds}"
+    );
     while queue_rx.try_recv().is_ok() {}
 }
 

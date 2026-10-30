@@ -276,44 +276,71 @@ fn settle_hidden_window(state: Option<&HideState>) {
     std::thread::sleep(HIDE_SETTLE);
 }
 
+/// Placement flags used when the hidden window is mapped again. `SWP_SHOWWINDOW`
+/// is not optional: the hide bypassed Winit, so nothing else maps the HWND again.
+#[cfg(windows)]
+const REMAP_FLAGS: u32 = windows_sys::Win32::UI::WindowsAndMessaging::SWP_SHOWWINDOW
+    | windows_sys::Win32::UI::WindowsAndMessaging::SWP_NOACTIVATE
+    | windows_sys::Win32::UI::WindowsAndMessaging::SWP_NOSENDCHANGING;
+
 #[cfg(windows)]
 fn restore_hidden_window(app: &slint::Weak<MainWindow>, state: &HideState) {
-    use slint::winit_030::WinitWindowAccessor;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        SetWindowPos, ShowWindow, HWND_TOP, SWP_NOACTIVATE, SWP_NOSENDCHANGING, SW_MAXIMIZE,
+        IsWindowVisible, SetWindowPos, ShowWindow, HWND_TOP, SWP_NOMOVE, SWP_NOSIZE, SW_MAXIMIZE,
+        SW_SHOW,
     };
+    // The hide went straight to the HWND, so Winit's cached WindowFlags still
+    // contain VISIBLE and Slint still believes the window is shown. Both
+    // `Window::show()` and `set_visible(true)` therefore diff to nothing and
+    // emit no mapping command, which is exactly how a hidden-window capture
+    // used to leave the window unmapped for the rest of the session. Cycle the
+    // platform state so Winit drops VISIBLE first, then map it for real; the
+    // cycle also clears the stale software surface through a full repaint.
+    if unsafe { IsWindowVisible(state.hwnd) } == 0 {
+        if let Some(window) = app.upgrade() {
+            let _ = window.hide();
+            let _ = window.show();
+        }
+    }
     let width = state.rect.width().max(1);
     let height = state.rect.height().max(1);
     unsafe {
-        SetWindowPos(
-            state.hwnd,
-            HWND_TOP,
-            state.rect.left,
-            state.rect.top,
-            width,
-            height,
-            SWP_NOACTIVATE | SWP_NOSENDCHANGING,
-        );
+        if state.maximized {
+            // A maximized window keeps its own geometry; only remap it and let
+            // Windows restore the maximized rectangle.
+            SetWindowPos(
+                state.hwnd,
+                HWND_TOP,
+                0,
+                0,
+                0,
+                0,
+                REMAP_FLAGS | SWP_NOMOVE | SWP_NOSIZE,
+            );
+            ShowWindow(state.hwnd, SW_MAXIMIZE);
+        } else {
+            // Put the HWND back at the exact physical rectangle captured
+            // before hiding, in the same call that shows it. Nothing can apply
+            // a cached position afterwards because the platform state cycle
+            // above already ran.
+            SetWindowPos(
+                state.hwnd,
+                HWND_TOP,
+                state.rect.left,
+                state.rect.top,
+                width,
+                height,
+                REMAP_FLAGS,
+            );
+        }
+        if IsWindowVisible(state.hwnd) == 0 {
+            // Last resort against a shell that dropped the show bit while the
+            // window was not allowed to take the foreground.
+            ShowWindow(state.hwnd, SW_SHOW);
+        }
     }
     if let Some(window) = app.upgrade() {
-        let _ = window.show();
-        if state.maximized {
-            unsafe { ShowWindow(state.hwnd, SW_MAXIMIZE) };
-        } else {
-            // Winit can apply its cached position after show; put the HWND
-            // back at the exact physical rectangle captured before hiding.
-            let _ = window.window().with_winit_window(|_| unsafe {
-                SetWindowPos(
-                    state.hwnd,
-                    HWND_TOP,
-                    state.rect.left,
-                    state.rect.top,
-                    width,
-                    height,
-                    SWP_NOACTIVATE | SWP_NOSENDCHANGING,
-                );
-            });
-        }
+        window.window().request_redraw();
     }
 }
 
@@ -840,6 +867,20 @@ fn report(app: &slint::Weak<MainWindow>, message: String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn remap_flags_map_the_hidden_window_again() {
+        // Regression: the hide bypasses Winit's state queue, so a restore that
+        // only asks Slint to show the window is a no-op and leaves the window
+        // unmapped for the rest of the session. The mapping must be part of
+        // the placement call itself.
+        assert_ne!(
+            REMAP_FLAGS & windows_sys::Win32::UI::WindowsAndMessaging::SWP_SHOWWINDOW,
+            0,
+            "restoring a hidden window has to map it again"
+        );
+    }
 
     #[cfg(windows)]
     #[test]

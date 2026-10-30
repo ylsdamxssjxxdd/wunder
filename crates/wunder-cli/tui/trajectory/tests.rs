@@ -78,6 +78,74 @@ fn trajectory_timeline_respects_time_gaps_and_model_lane() {
     assert!((v.domain().1 - v.domain().0 - 47.5).abs() < 0.01);
 }
 #[test]
+fn trajectory_step_token_deltas_track_increment() {
+    let usage_row = |seq: i64, stats: Option<serde_json::Value>| TrajectoryViewRow {
+        item_id: format!("fixture-usage-{seq}"),
+        root_turn_id: "root-0".into(),
+        turn_id: "root-0".into(),
+        user_round: 0,
+        created_seq: seq,
+        kind: "assistant_message".into(),
+        status: "completed".into(),
+        started_at: seq as f64,
+        stats,
+        ..Default::default()
+    };
+    let mut v = TrajectoryView::new("fixture-thread".into());
+    v.rows = vec![
+        usage_row(0, Some(json!({"input_tokens": 3200, "output_tokens": 480}))),
+        // 输入含累积上下文：本步新增 = 7,000 − 3,680 = 3,320
+        usage_row(1, Some(json!({"input_tokens": 5400, "output_tokens": 1600}))),
+        // 未上报：画基线，不参与增量链
+        usage_row(2, None),
+        // 压缩后总量回落：增量钳为 0
+        usage_row(3, Some(json!({"input_tokens": 2000, "output_tokens": 200}))),
+        usage_row(4, Some(json!({"input_tokens": 6000, "output_tokens": 400}))),
+        // 非模型请求行不产生柱子
+        TrajectoryViewRow {
+            kind: "tool_call".into(),
+            ..usage_row(5, Some(json!({"input_tokens": 99999})))
+        },
+    ];
+    let (bars, total) = view::step_token_deltas(&v);
+    let deltas: Vec<Option<f64>> = bars.iter().map(|(_, delta)| *delta).collect();
+    assert_eq!(
+        deltas,
+        vec![Some(3680.0), Some(3320.0), None, Some(0.0), Some(4200.0)]
+    );
+    assert!((total - 11200.0).abs() < 1e-9);
+}
+#[tokio::test]
+async fn trajectory_tokenbars_render_and_toggle() {
+    let root = TempRoot::new("trajectory-tokenbars");
+    let mut app = fixture_app(root.path()).await;
+    let usage_row = |seq: i64, input: i64, output: i64| TrajectoryViewRow {
+        item_id: format!("fixture-bar-{seq}"),
+        root_turn_id: "root-0".into(),
+        turn_id: "root-0".into(),
+        user_round: 0,
+        created_seq: seq,
+        kind: "assistant_message".into(),
+        status: "completed".into(),
+        started_at: seq as f64,
+        completed_at: Some(seq as f64 + 0.5),
+        summary: format!("record {seq}"),
+        stats: Some(json!({"input_tokens": input, "output_tokens": output})),
+        ..Default::default()
+    };
+    let mut v = TrajectoryView::new("fixture-thread".into());
+    v.rows = vec![usage_row(0, 3200, 480), usage_row(1, 5400, 1600)];
+    v.tokens = true;
+    app.trajectory_view = Some(v);
+    let with_bars = render(&mut app, 120, 30);
+    // 火花线块字符仅消耗带使用：第一根柱为峰值 3,680 → '█'。
+    assert!(with_bars.contains('█'), "{with_bars}");
+    key(&mut app, KeyCode::Char('x')).await;
+    assert!(!app.trajectory_view.as_ref().unwrap().tokens);
+    let without_bars = render(&mut app, 120, 30);
+    assert!(!without_bars.contains('▁'), "{without_bars}");
+}
+#[test]
 fn trajectory_folding_keeps_turn_anchor_and_context_records() {
     let mut v = TrajectoryView::new("fixture-thread".into());
     v.rows = rows(0, 30);

@@ -103,6 +103,9 @@ impl CliRuntime {
         set_env_path("WUNDER_HOME", &wunder_home);
         // Supplements imported by 蛹 are shared with this manual local entry.
         wunder_server::local_bootstrap::supplement::configure_runtime_env(&[wunder_home.clone()]);
+        // The shell host is probed lazily and cached; drop the cache so a
+        // supplement unpacked since this process started is picked up.
+        wunder_server::command_utils::reset_powershell_host();
         set_env_path("WUNDER_USER_TOOLS_ROOT", &user_tools_root);
         set_env_path("WUNDER_VECTOR_KNOWLEDGE_ROOT", &vector_root);
         set_env_path("WUNDER_COMPANIONS_ROOT", &companions_root);

@@ -1,6 +1,6 @@
 use super::thread_history::{
-    completed_item, event_body, is_completed_item, message_context, read_bounded_line,
-    RolloutEnvelope,
+    completed_item, event_body, is_completed_item, item_preview, message_context,
+    read_bounded_line, RolloutEnvelope,
 };
 use super::thread_history_body::{item_digest, open_catalog, source_path};
 use anyhow::{anyhow, bail, Result};
@@ -9,7 +9,7 @@ use serde_json::Value;
 use std::io::BufReader;
 use std::path::Path;
 
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
 const COMPACTION_PENDING: i64 = 2;
 
 pub(super) fn migrate(conn: &mut Connection, path: &Path) -> Result<()> {
@@ -26,7 +26,24 @@ pub(super) fn migrate(conn: &mut Connection, path: &Path) -> Result<()> {
         migrate_bodies(conn, path)?;
     }
     let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-    if version == COMPACTION_PENDING {
+    let mut compact = version == COMPACTION_PENDING;
+    if (2..SCHEMA_VERSION).contains(&version) {
+        // v4: previews became a strict whitelist projection instead of a deep
+        // copy, and per-item chat checkpoints moved to lazy materialization.
+        // Rebuild the stored previews from the canonical sources and drop the
+        // accumulated checkpoint rows; heads keep every field they consume,
+        // so they stay valid without a rebuild.
+        rebuild_previews(conn, path)?;
+        conn.execute_batch(
+            "DROP TABLE IF EXISTS thread_chat_checkpoints_v2;
+             DROP TABLE IF EXISTS thread_chat_checkpoint_state_v2;
+             DROP TABLE IF EXISTS thread_chat_heads;
+             DROP TABLE IF EXISTS thread_chat_checkpoints;
+             DROP TABLE IF EXISTS thread_chat_projection_state;",
+        )?;
+        compact = true;
+    }
+    if compact {
         tracing::info!("compacting migrated canonical history index");
         conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE); PRAGMA auto_vacuum=INCREMENTAL; VACUUM; PRAGMA wal_checkpoint(TRUNCATE);")?;
     } else if version == 0 {
@@ -34,6 +51,98 @@ pub(super) fn migrate(conn: &mut Connection, path: &Path) -> Result<()> {
     }
     if version < SCHEMA_VERSION {
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+    }
+    Ok(())
+}
+
+/// Re-derive `preview_json` from the canonical rollout records. A preview is
+/// a rebuildable projection and the pre-v4 shape is a readable superset, so a
+/// rollout whose source is unavailable keeps its old previews; the failure is
+/// logged and never blocks the upgrade.
+fn rebuild_previews(conn: &mut Connection, path: &Path) -> Result<()> {
+    let root = path
+        .parent()
+        .ok_or_else(|| anyhow!("history database has no parent"))?;
+    let catalog = match open_catalog(root) {
+        Ok(catalog) => catalog,
+        Err(error) => {
+            tracing::warn!("history preview rebuild skipped: {error}");
+            return Ok(());
+        }
+    };
+    tracing::info!("rebuilding canonical history previews");
+    let mut after = String::new();
+    loop {
+        let next: Option<(String, u64)> = conn
+            .query_row(
+                "SELECT rollout_id,next_rollout_byte_offset FROM thread_history_projection_state
+             WHERE rollout_id>?1 ORDER BY rollout_id LIMIT 1",
+                [&after],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        let Some((rollout, boundary)) = next else {
+            break;
+        };
+        after = rollout.clone();
+        if let Err(error) = rebuild_rollout_previews(conn, &catalog, root, &rollout, boundary) {
+            tracing::warn!("history preview rebuild skipped for {rollout}: {error}");
+        }
+    }
+    Ok(())
+}
+
+fn rebuild_rollout_previews(
+    conn: &mut Connection,
+    catalog: &Connection,
+    root: &Path,
+    rollout: &str,
+    boundary: u64,
+) -> Result<()> {
+    let path = source_path(catalog, root, rollout)?;
+    let mut reader = BufReader::new(super::rollout_compression::open_rollout_stream(path)?);
+    let mut offset = 0u64;
+    while offset < boundary {
+        let mut updates: Vec<(String, String)> = Vec::new();
+        let mut batch_bytes = 0usize;
+        while offset < boundary && updates.len() < 512 && batch_bytes < 4 * 1024 * 1024 {
+            let mut line = Vec::new();
+            if !read_bounded_line(&mut reader, &mut line)? || line.is_empty() {
+                bail!("cannot rebuild history previews: canonical source is incomplete");
+            }
+            let length = line.len() as u64;
+            if offset.checked_add(length).is_none_or(|end| end > boundary) {
+                bail!("cannot rebuild history previews: canonical boundary is invalid");
+            }
+            if !line.iter().all(u8::is_ascii_whitespace) {
+                let envelope: RolloutEnvelope = serde_json::from_slice(&line)?;
+                if is_completed_item(&envelope) {
+                    let item = completed_item(event_body(&envelope))?;
+                    let body = event_body(&envelope);
+                    let id = item
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .or_else(|| item.get("item_id").and_then(Value::as_str))
+                        .or_else(|| body.get("item_id").and_then(Value::as_str));
+                    if let Some(id) = id {
+                        updates.push((id.to_owned(), item_preview(item).to_string()));
+                    }
+                }
+            }
+            offset += length;
+            batch_bytes += line.len();
+        }
+        if updates.is_empty() {
+            continue;
+        }
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        for (id, preview) in &updates {
+            tx.execute(
+                "UPDATE thread_items SET preview_json=?3 WHERE rollout_id=?1 AND item_id=?2",
+                params![rollout, id, preview],
+            )?;
+        }
+        tx.commit()?;
     }
     Ok(())
 }

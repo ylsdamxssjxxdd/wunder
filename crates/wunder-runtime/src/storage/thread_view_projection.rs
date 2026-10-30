@@ -523,12 +523,20 @@ pub(crate) fn trajectory(
         )
         .then(|| crate::services::thread_log::diagnostics::project(item, status))
         .flatten(),
-        args_preview: is_tool_kind(kind)
-            .then(|| tool_args_preview(item))
-            .flatten(),
-        result_preview: is_tool_kind(kind)
-            .then(|| tool_result_preview(item))
-            .flatten(),
+        args_preview: is_tool_kind(kind).then(|| {
+            item.get("args_preview")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+                .or_else(|| tool_args_preview(item))
+        })
+        .flatten(),
+        result_preview: is_tool_kind(kind).then(|| {
+            item.get("result_preview")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+                .or_else(|| tool_result_preview(item))
+        })
+        .flatten(),
     }
 }
 
@@ -550,7 +558,7 @@ fn single_line(text: &str) -> String {
 /// The argument a reader needs to recognise a call, not the whole JSON bag.
 /// Command tools put it in `command`, file tools in `path`, and the rest fall
 /// back to the serialized object so nothing is hidden.
-fn tool_args_preview(item: &Value) -> Option<String> {
+pub(crate) fn tool_args_preview(item: &Value) -> Option<String> {
     let args = item.get("args").or_else(|| item.get("arguments"))?;
     let preferred = [
         "command", "cmd", "path", "query", "pattern", "url", "skill", "action", "code",
@@ -646,7 +654,7 @@ pub(crate) fn attach_tool_schema(payload: &mut Value) {
     }
 }
 
-fn tool_result_preview(item: &Value) -> Option<String> {
+pub(crate) fn tool_result_preview(item: &Value) -> Option<String> {
     if let Some(text) = command_output(item) {
         return Some(preview(&single_line(&text), 240));
     }
@@ -795,7 +803,7 @@ fn trajectory_duration_seconds(item: &Value, kind: &str) -> Option<f64> {
 
 /// Keep the trajectory page compact and safe: this local estimate is numeric
 /// only, and never carries any part of the request body or provider settings.
-fn request_token_breakdown(item: &Value) -> Option<Value> {
+pub(crate) fn request_token_breakdown(item: &Value) -> Option<Value> {
     let source = item.get("request_token_breakdown")?.as_object()?;
     let keys = [
         "native_tool_tokens",

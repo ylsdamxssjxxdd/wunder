@@ -189,6 +189,65 @@ fn test_prepare_compaction_summary_messages_merges_system_and_skips_tool_only_as
 }
 
 #[test]
+fn test_fold_leading_system_messages_merges_history_block() {
+    let mut messages = vec![
+        json!({ "role": "system", "content": "system prompt" }),
+        json!({ "role": "system", "content": "artifact index" }),
+        json!({ "role": "system", "content": "memory block" }),
+        json!({ "role": "user", "content": "question" }),
+    ];
+
+    fold_leading_system_messages(&mut messages);
+
+    assert_eq!(messages.len(), 2);
+    assert_eq!(messages[0]["role"], json!("system"));
+    assert_eq!(
+        messages[0]["content"],
+        json!("system prompt\n\nartifact index\n\nmemory block")
+    );
+    assert_eq!(messages[1]["content"], json!("question"));
+}
+
+#[test]
+fn test_compaction_summary_input_starts_with_single_system_message() {
+    // Mirrors maybe_compact_messages: build the input, keep the frozen prompt
+    // as its own prefix, prepare the history, then fold the prepared system
+    // block back into the frozen one before the request is sent.
+    let frozen = json!({ "role": "system", "content": "system prompt" });
+    let source = vec![
+        json!({ "role": "user", "content": "older request" }),
+        json!({ "role": "assistant", "content": "older answer" }),
+        json!({ "role": "system", "content": "artifact index" }),
+    ];
+    let instruction = json!({ "role": "user", "content": "CONTEXT CHECKPOINT COMPACTION" });
+    let mut summary_input = build_compaction_summary_input(Some(&frozen), &source, instruction);
+
+    let frozen_head = summary_input.remove(0);
+    let mut prepared = prepare_compaction_summary_messages(summary_input, 2048);
+    let mut request = vec![frozen_head];
+    request.append(&mut prepared);
+    assert_eq!(request[1]["role"], json!("system"));
+
+    fold_leading_system_messages(&mut request);
+
+    assert_eq!(
+        request
+            .iter()
+            .filter(|message| message["role"] == json!("system"))
+            .count(),
+        1
+    );
+    assert_eq!(
+        request[0]["content"],
+        json!("system prompt\n\nartifact index")
+    );
+    assert_eq!(
+        request.last().unwrap()["content"],
+        json!("CONTEXT CHECKPOINT COMPACTION")
+    );
+}
+
+#[test]
 fn test_build_compaction_summary_input_keeps_instruction_last() {
     let system_message = json!({ "role": "system", "content": "system prompt" });
     let source_messages = vec![

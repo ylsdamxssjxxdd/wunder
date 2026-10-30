@@ -7,13 +7,23 @@ use wunder_desktop::{ModelEdit, NativeDesktop};
 struct Draft {
     card: ModelCard,
     secret: String,
+    /// Stored key of the row being edited; empty while creating a new model.
+    /// The key field is an identity, so it is only sent as a rename when the
+    /// editor explicitly commits it.
+    original_key: String,
 }
 
 impl Draft {
     fn read(app: &MainWindow) -> Self {
+        let creating = app.get_model_creating();
         Self {
             card: crate::entity_state::draft_model_card(app, app.get_settings_model_key().as_str()),
             secret: app.get_model_token_draft().trim().to_owned(),
+            original_key: if creating {
+                String::new()
+            } else {
+                app.get_settings_model_key().to_string()
+            },
         }
     }
 
@@ -24,9 +34,17 @@ impl Draft {
             && !self.card.key.starts_with("cloud/")
     }
 
-    fn edit(&self) -> ModelEdit<'_> {
+    fn edit(&self, renaming: bool) -> ModelEdit<'_> {
+        let key = if renaming || self.original_key.is_empty() {
+            self.card.key.as_str()
+        } else {
+            // Non-rename saves always address the stored entry, so a half-typed
+            // key cannot move the config out from under the row.
+            self.original_key.as_str()
+        };
         ModelEdit {
-            key: &self.card.key,
+            key,
+            original_key: self.original_key.as_str(),
             provider: &self.card.provider,
             model: &self.card.model,
             base_url: &self.card.base_url,
@@ -89,6 +107,10 @@ struct Editor {
     baseline: Option<Draft>,
     inflight: bool,
     after: Option<AfterSave>,
+    /// The next save may move the config key. Armed by the key field's
+    /// commit (Enter/focus loss) and by leaving the row; the debounced
+    /// autosave never renames on its own.
+    rename_armed: bool,
 }
 
 thread_local! {
@@ -117,6 +139,12 @@ pub(crate) fn has_unsaved(app: &MainWindow) -> bool {
                     .is_some_and(|clean| clean != &draft)
         })
     })
+}
+
+/// The config key field differs from the stored key of the selected row.
+fn key_dirty(app: &MainWindow) -> bool {
+    !app.get_model_creating()
+        && app.get_model_key_draft().trim() != app.get_settings_model_key().as_str()
 }
 
 fn schedule(app: &MainWindow, delay: Duration) {
@@ -157,6 +185,9 @@ fn defer(app: &MainWindow, action: AfterSave) -> bool {
     EDITOR.with(|slot| {
         if let Some(editor) = slot.borrow_mut().as_mut() {
             editor.after = Some(action);
+            // Leaving the row commits a pending key edit with the rest of the
+            // form, the same way Enter in the key field does.
+            editor.rename_armed = true;
         }
     });
     app.invoke_save_model();
@@ -214,6 +245,13 @@ pub(crate) fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
             app.set_model_save_error("".into());
             return;
         }
+        // A key rename changes an identity and rewrites every reference to it,
+        // so it commits on Enter/focus loss or when leaving the row — never
+        // from the debounced autosave, which would rename per keystroke.
+        if key_dirty(&app) {
+            app.set_model_save_error("".into());
+            return;
+        }
         if has_unsaved(&app) {
             app.set_model_save_error("".into());
             schedule(&app, Duration::from_millis(500));
@@ -247,6 +285,15 @@ pub(crate) fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
             return;
         }
         let creating = app.get_model_creating();
+        let rename_armed = EDITOR.with(|slot| {
+            slot.borrow_mut()
+                .as_mut()
+                .is_some_and(|editor| std::mem::take(&mut editor.rename_armed))
+        });
+        let renaming = rename_armed
+            && !creating
+            && !draft.original_key.is_empty()
+            && draft.card.key.trim() != draft.original_key;
         if creating
             && app.get_settings_model_key() != draft.card.key
             && app
@@ -267,7 +314,7 @@ pub(crate) fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         let weak = app.as_weak();
         let api = api.clone();
         crate::native_pages::run_background(move || {
-            let result = api.save_model(draft.edit());
+            let result = api.save_model(draft.edit(renaming));
             let _ = weak.upgrade_in_event_loop(move |app| {
                 let changed = Draft::read(&app) != draft;
                 EDITOR.with(|slot| {
@@ -278,19 +325,29 @@ pub(crate) fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                 app.set_saving(false);
                 match result {
                     Ok(settings) => {
-                        let key = draft.card.key.to_string();
+                        // The key actually stored: a rename lands on the typed
+                        // key, every other save addresses the existing entry.
+                        let key = if creating || renaming || draft.original_key.is_empty() {
+                            draft.card.key.to_string()
+                        } else {
+                            draft.original_key.clone()
+                        };
                         let projecting = app.get_model_projecting();
                         app.set_model_projecting(true);
                         if creating {
                             crate::entity_state::clear_model_draft();
                             app.set_model_creating(false);
+                        }
+                        if app.get_settings_model_key() != key {
                             app.set_settings_model_key(key.as_str().into());
                         }
                         if app.get_model_token_draft().trim() == draft.secret {
                             app.set_model_token_draft("".into());
                         }
-                        let mut clean = draft;
+                        let mut clean = draft.clone();
                         clean.secret.clear();
+                        clean.card.key = key.as_str().into();
+                        clean.original_key = key.clone();
                         EDITOR.with(|slot| {
                             if let Some(editor) = slot.borrow_mut().as_mut() {
                                 editor.baseline = Some(clean);
@@ -301,6 +358,16 @@ pub(crate) fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                             app.get_models().iter().position(|model| model.key == key)
                         {
                             app.set_selected_model(index as i32);
+                        }
+                        // The composer follows the renamed model. This runs
+                        // after apply_settings re-projected the catalogue: a
+                        // lookup before it would miss the new key and blank
+                        // the composer instead of selecting it.
+                        let selected = app.get_selected_model_key();
+                        if renaming
+                            && (selected.is_empty() || selected == draft.original_key.as_str())
+                        {
+                            crate::native_pages::select_model_key(&app, &key);
                         }
                         app.set_model_projecting(projecting);
                         app.set_model_save_error("".into());
@@ -320,6 +387,26 @@ pub(crate) fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                 }
             });
         });
+    });
+    let weak = app.as_weak();
+    app.on_commit_model_key(move || {
+        let Some(app) = weak.upgrade() else { return };
+        if app.get_model_creating()
+            || app.get_model_projecting()
+            || app.get_settings_model_key().starts_with("cloud/")
+        {
+            return;
+        }
+        let typed = app.get_model_key_draft();
+        if typed.trim().is_empty() || typed.trim() == app.get_settings_model_key().as_str() {
+            return;
+        }
+        EDITOR.with(|slot| {
+            if let Some(editor) = slot.borrow_mut().as_mut() {
+                editor.rename_armed = true;
+            }
+        });
+        app.invoke_save_model();
     });
 }
 

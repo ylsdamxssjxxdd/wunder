@@ -13,24 +13,28 @@ import { ToolsPage, ToolResource } from "tools_page.slint";
 import { ExpertData, MemoryCard, ArchiveCard, RuntimePoint } from "expert_data.slint";
 import { PetSettingsState } from "pet_settings.slint";
 
-// Web-style settings navigation entry: 36px circular icon badge, title and
-// subtitle rows, solid accent background with white text when selected.
+// Web-style settings navigation entry: circular icon badge and one title row.
+// The category note that used to sit under the label is gone, so the column
+// reads as a tight single-line list instead of eleven two-line blocks.
 component SettingsNavItem inherits Rectangle {
     in property <image> icon;
     in property <string> title;
-    in property <string> subtitle;
     in property <bool> selected: false;
     callback clicked();
-    height: 60px;
+    height: 48px;
     border-radius: Theme.radius-lg;
     background: root.selected ? Theme.accent : (touch.has-hover ? Theme.accent-soft : transparent);
     Rectangle {
-        x: 10px; y: 12px; width: 36px; height: 36px; border-radius: 18px;
+        x: 10px; y: (parent.height - 36px) / 2; width: 36px; height: 36px; border-radius: 18px;
         background: root.selected ? #ffffff3d : Theme.selected;
         Image { x: 9px; y: 9px; width: 18px; height: 18px; source: root.icon; colorize: root.selected ? white : Theme.text-secondary; }
     }
-    Text { x: 56px; y: 12px; width: parent.width - 66px; height: 18px; text: root.title; color: root.selected ? white : Theme.text; font-size: Theme.font-md; font-weight: 600; overflow: elide; }
-    Text { x: 56px; y: 31px; width: parent.width - 66px; height: 15px; text: root.subtitle; color: root.selected ? #ffffffd1 : Theme.muted; font-size: Theme.font-xs; overflow: elide; }
+    Text {
+        x: 56px; y: 0px; width: parent.width - 66px; height: parent.height;
+        text: root.title; color: root.selected ? white : Theme.text;
+        font-size: Theme.font-md; font-weight: 600; overflow: elide;
+        vertical-alignment: center;
+    }
     touch := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
 }
 
@@ -465,6 +469,9 @@ export component SettingsPage inherits Rectangle {
     // Commits the unsaved new-model draft. Creation never auto-saves: the
     // config name stays editable until this runs.
     callback save-model();
+    // Renames the selected model. The config key is an identity, so it commits
+    // on Enter/focus loss instead of every keystroke.
+    callback commit-model-key();
     callback move-model(int, int);
     callback set-default-model(string);
     // The models tab edits the selected model in place: every editor draft
@@ -842,77 +849,77 @@ export component SettingsPage inherits Rectangle {
                         SettingsNavItem {
                             visible: root.settings-category-flags[0];
                             icon: @image-url("../assets/icons/fa-sliders.svg");
-                            title: I18n.stc_general; subtitle: I18n.stc_general_note;
+                            title: I18n.stc_general;
                             selected: root.settings-tab == 0;
                             clicked => { root.settings-tab = 0;  }
                         }
                         SettingsNavItem {
                             visible: root.settings-category-flags[1];
                             icon: @image-url("../assets/icons/log-user.svg");
-                            title: I18n.stc_account; subtitle: I18n.stc_account_note;
+                            title: I18n.stc_account;
                             selected: root.settings-tab == 13;
                             clicked => { root.settings-tab = 13;  }
                         }
                         SettingsNavItem {
                             visible: root.settings-category-flags[2];
                             icon: @image-url("../assets/icons/brain.svg");
-                            title: I18n.stc_models; subtitle: I18n.stc_models_note;
+                            title: I18n.stc_models;
                             selected: root.settings-tab == 1;
                             clicked => { root.settings-tab = 1; root.refresh(); }
                         }
                         SettingsNavItem {
                             visible: root.settings-category-flags[3];
                             icon: @image-url("../assets/icons/fa-toolbox.svg");
-                            title: I18n.stc_tools; subtitle: I18n.stc_tools_note;
+                            title: I18n.stc_tools;
                             selected: root.settings-tab == 2;
                             clicked => { root.settings-tab = 2; root.refresh(); }
                         }
                         SettingsNavItem {
                             visible: root.settings-category-flags[4];
                             icon: @image-url("../assets/icons/robot.svg");
-                            title: I18n.stc_agent; subtitle: I18n.stc_agent_note;
+                            title: I18n.stc_agent;
                             selected: root.settings-tab == 3;
                             clicked => { root.settings-tab = 3;  }
                         }
                         SettingsNavItem {
                             visible: root.settings-category-flags[5];
                             icon: @image-url("../assets/icons/paw.svg");
-                            title: I18n.stc_pet; subtitle: I18n.stc_pet_note;
+                            title: I18n.stc_pet;
                             selected: root.settings-tab == 4;
                             clicked => { root.settings-tab = 4;  }
                         }
                         SettingsNavItem {
                             visible: root.settings-category-flags[6];
                             icon: @image-url("../assets/icons/fa-clock.svg");
-                            title: I18n.stc_cron; subtitle: I18n.stc_cron_note;
+                            title: I18n.stc_cron;
                             selected: root.settings-tab == 5;
                             clicked => { root.settings-tab = 5; root.refresh(); }
                         }
                         SettingsNavItem {
                             visible: root.settings-category-flags[7];
                             icon: @image-url("../assets/icons/fa-memory.svg");
-                            title: I18n.stc_memory; subtitle: I18n.stc_memory_note;
+                            title: I18n.stc_memory;
                             selected: root.settings-tab == 6;
                             clicked => { root.settings-tab = 6; root.refresh(); }
                         }
                         SettingsNavItem {
                             visible: root.settings-category-flags[8];
                             icon: @image-url("../assets/icons/plug.svg");
-                            title: I18n.stc_channels; subtitle: I18n.stc_channels_note;
+                            title: I18n.stc_channels;
                             selected: root.settings-tab == 7;
                             clicked => { root.settings-tab = 7; root.refresh(); }
                         }
                         SettingsNavItem {
                             visible: root.settings-category-flags[9];
                             icon: @image-url("../assets/icons/file-lines.svg");
-                            title: I18n.stc_prompts; subtitle: I18n.stc_prompts_note;
+                            title: I18n.stc_prompts;
                             selected: root.settings-tab == 9;
                             clicked => { root.settings-tab = 9; root.refresh-prompt-packs(); }
                         }
                         SettingsNavItem {
                             visible: root.settings-category-flags[10];
                             icon: @image-url("../assets/icons/box-archive.svg");
-                            title: I18n.stc_archives; subtitle: I18n.stc_archives_note;
+                            title: I18n.stc_archives;
                             selected: root.settings-tab == 10;
                             clicked => { root.settings-tab = 10;  }
                         }
@@ -1030,7 +1037,7 @@ export component SettingsPage inherits Rectangle {
                             }
                             // 帮助：手册在独立窗口打开（节省设置弹窗空间）。
                             SettingsCard {
-                                SettingsCardHeader { title: I18n.stc_help; subtitle: I18n.stc_help_note; }
+                                SettingsCardHeader { title: I18n.stc_help; }
                                 Rectangle { height: 10px; }
                                 HorizontalLayout { height: 34px; spacing: 10px;
                                     Action { width: 140px; label: I18n.st_help_open; show-label: true; primary: true; enabled: !root.loading; clicked => { root.open-help(); } }
@@ -1154,7 +1161,7 @@ export component SettingsPage inherits Rectangle {
                                 }
                             }
                             SettingsCard {
-                                SettingsCardHeader { title: I18n.stc_runs_tab; subtitle: I18n.stc_runs_note; }
+                                SettingsCardHeader { title: I18n.stc_runs_tab; }
                                 HorizontalLayout { spacing: 12px;
                                     for item in [
                                         { label: I18n.stc_runs_duration, value: root.expert-duration },
@@ -1280,7 +1287,17 @@ export component SettingsPage inherits Rectangle {
                                         SettingsCard {
                                             FormSectionHead { icon: @image-url("../assets/icons/gear.svg"); title: I18n.st_model_section_basic; }
                                             Rectangle { height: 4px; }
-                                            FormField { label: I18n.model_key_label; placeholder: I18n.model_key_placeholder; read-only: (!root.model-creating && root.selected-key != "") || root.cloud-locked || root.saving; text <=> root.model-key-draft; }
+                                            FormField {
+                                                label: I18n.model_key_label;
+                                                placeholder: I18n.model_key_placeholder;
+                                                // The key is the stored identity. It stays
+                                                // editable for local models — a rename is
+                                                // committed on Enter/focus loss — and is
+                                                // locked only for engine-managed cloud rows.
+                                                read-only: root.cloud-locked || root.saving;
+                                                text <=> root.model-key-draft;
+                                                committed => { root.commit-model-key(); }
+                                            }
                                             FormCombo {
                                                 label: I18n.st_model_type_label;
                                                 enabled: !root.cloud-locked;
@@ -1771,7 +1788,7 @@ export component SettingsPage inherits Rectangle {
                     if root.settings-tab == 10 : ScrollView { vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
                         VerticalLayout { padding: 24px; spacing: 16px; alignment: start; vertical-stretch: 1;
                             SettingsCard {
-                                SettingsCardHeader { title: I18n.stc_archives; subtitle: I18n.stc_archives_note; }
+                                SettingsCardHeader { title: I18n.stc_archives; }
                                 if root.expert-archives.length == 0 : Text { height: 48px; text: I18n.stc_archives_empty; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; }
                                 for archive in root.expert-archives : Rectangle {
                                     height: 54px;

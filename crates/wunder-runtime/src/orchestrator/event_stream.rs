@@ -52,11 +52,32 @@ pub(super) struct EventEmitter {
     /// Completed items remain the durable source of truth.
     tail_offsets: Arc<ParkingMutex<HashMap<(String, String), usize>>>,
     process_order: Arc<ParkingMutex<(i64, HashMap<String, i64>)>>,
+    /// Start of the bound user round, set by the executor with the same instant
+    /// it uses for its own turn bookkeeping. The durable assistant item is
+    /// committed from `llm_output`, so that event — not only the final one — has
+    /// to report the turn-wide duration.
+    turn_started: Arc<ParkingMutex<Option<std::time::Instant>>>,
 }
 
 impl EventEmitter {
     pub(super) fn bind_turn(&self, turn_id: &str, user_round: i64) {
         *self.turn_context.lock() = json!({"turn_id":turn_id,"user_round":user_round});
+    }
+
+    /// Anchor the user-round clock. The executor passes the instant it already
+    /// uses for `interaction_duration_s`, so the live footer, the persisted
+    /// assistant item and the final event can never disagree.
+    pub(super) fn mark_turn_started(&self, at: std::time::Instant) {
+        *self.turn_started.lock() = Some(at);
+    }
+
+    /// Elapsed whole-user-round seconds, or `None` for emitters that never ran
+    /// a turn (fixtures, replay helpers).
+    fn turn_elapsed_s(&self) -> Option<f64> {
+        let started = *self.turn_started.lock();
+        started
+            .map(|at| at.elapsed().as_secs_f64())
+            .filter(|seconds| *seconds > 0.0)
     }
 
     pub(super) fn with_committer(
@@ -104,6 +125,7 @@ impl EventEmitter {
             tool_calls: Arc::new(AtomicI64::new(0)),
             tail_offsets: Arc::new(ParkingMutex::new(HashMap::new())),
             process_order: Arc::new(ParkingMutex::new((0, HashMap::new()))),
+            turn_started: Arc::new(ParkingMutex::new(None)),
         }
     }
 
@@ -242,7 +264,23 @@ impl EventEmitter {
             if let Some(item) =
                 crate::services::thread_log::event_item(&self.session_id, event_type, &data)
             {
-                let body = crate::storage::thread_history::item_preview(&json!({"payload":data}));
+                let mut body = crate::storage::thread_history::item_preview(&json!({"payload":data}));
+                // The live process row renders directly from this event, so it
+                // keeps the small raw call/result objects the stored card-grade
+                // preview deliberately drops. Bounded per field; oversized
+                // objects stay preview-only.
+                if let Some(payload) = body["payload"].as_object_mut() {
+                    for key in ["args", "arguments", "data", "result"] {
+                        if let Some(value) = data.get(key) {
+                            let size = serde_json::to_string(value)
+                                .map(|raw| raw.len())
+                                .unwrap_or(usize::MAX);
+                            if size <= 4096 {
+                                payload.insert(key.into(), value.clone());
+                            }
+                        }
+                    }
+                }
                 let item = json!({
                     "session_id":self.session_id,"turn_id":item["turn_id"],"root_turn_id":item["root_turn_id"],
                     "item_id":item["item_id"],"kind":item["kind"],"status":item["status"],"payload":body["payload"],
@@ -423,19 +461,31 @@ impl EventEmitter {
                 stats.insert(key.into(), value.clone());
             }
         }
-        // A provider may expose only prefill/decode spans.  Their sum is the
-        // best available per-round elapsed time and keeps the footer useful.
-        if !stats.contains_key("interaction_duration_s") {
-            let prefill = stats
-                .get("prefill_duration_s")
-                .and_then(Value::as_f64)
-                .unwrap_or(0.0);
-            let decode = stats
-                .get("decode_duration_s")
-                .and_then(Value::as_f64)
-                .unwrap_or(0.0);
-            if prefill + decode > 0.0 {
-                stats.insert("interaction_duration_s".into(), json!(prefill + decode));
+        // The footer's stopwatch is the whole user round, and `llm_output` is
+        // the event the durable assistant item is committed from — a reopened
+        // bubble is rebuilt from exactly this object. The provider's
+        // prefill/decode spans measure one model reply, so they must never be
+        // labelled as the interaction duration; the turn clock is authoritative
+        // and only an emitter that never ran a turn falls back to them.
+        let has_interaction = stats
+            .get("interaction_duration_s")
+            .and_then(Value::as_f64)
+            .is_some_and(|seconds| seconds > 0.0);
+        if !has_interaction {
+            if let Some(seconds) = self.turn_elapsed_s() {
+                stats.insert("interaction_duration_s".into(), json!(seconds));
+            } else {
+                let prefill = stats
+                    .get("prefill_duration_s")
+                    .and_then(Value::as_f64)
+                    .unwrap_or(0.0);
+                let decode = stats
+                    .get("decode_duration_s")
+                    .and_then(Value::as_f64)
+                    .unwrap_or(0.0);
+                if prefill + decode > 0.0 {
+                    stats.insert("interaction_duration_s".into(), json!(prefill + decode));
+                }
             }
         }
         map.insert("message_stats".into(), Value::Object(stats));

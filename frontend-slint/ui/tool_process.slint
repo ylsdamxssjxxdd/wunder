@@ -209,6 +209,10 @@ export component ToolProcess inherits Rectangle {
     private property <length> measured-height: process-list.content-height;
     changed measured-height => {
         root.viewport-height = min(Theme.workflow-height, max(26px, root.measured-height));
+        // A streaming entry grows taller without adding a row: neither `count`
+        // nor `revision` moves, so re-arm the tail follow here or the new text
+        // sinks below the capped viewport until the reader scrolls by hand.
+        root.scroll-pending = true;
     }
     private property <bool> follow-tail: true;
     private property <bool> scroll-pending: true;

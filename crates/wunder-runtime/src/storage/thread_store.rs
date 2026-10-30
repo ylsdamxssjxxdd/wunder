@@ -505,39 +505,43 @@ impl LocalThreadStore {
             for segment in segments {
                 history.ensure_chat_summary(segment.rollout_id.as_str())?;
                 let mut state = history.projection_state(segment.rollout_id.as_str())?;
-                if segment
+                let projected = segment
                     .end
                     .as_ref()
                     .is_some_and(|end| state.next_rollout_byte_offset >= end.end_byte_offset)
-                {
-                    continue;
-                }
-                if segment.end.is_none()
-                    && state.next_rollout_byte_offset > 0
-                    && rollout_compression::logical_rollout_len(&segment.path)?
-                        == Some(state.next_rollout_byte_offset)
-                {
-                    continue;
-                }
-                let mut reader = rollout_compression::open_rollout_reader(&segment.path)?;
-                let end = if let Some(end) = segment.end {
-                    validate_history_boundary(&mut reader, &end)?;
-                    end.end_byte_offset
-                } else {
-                    complete_read_boundary(&mut reader)?.end_byte_offset
-                };
-                // An ancestor can already be projected beyond the immutable
-                // branch boundary. Scoped readers enforce that cutoff.
-                while state.next_rollout_byte_offset < end {
-                    let progress = history.project_reader_batch(
-                        &mut reader,
-                        segment.rollout_id.as_str(),
-                        end,
-                    )?;
-                    if progress.records_projected == 0 {
-                        bail!("history recovery did not advance");
+                    || (segment.end.is_none()
+                        && state.next_rollout_byte_offset > 0
+                        && rollout_compression::logical_rollout_len(&segment.path)?
+                            == Some(state.next_rollout_byte_offset));
+                if !projected {
+                    let mut reader = rollout_compression::open_rollout_reader(&segment.path)?;
+                    let end = if let Some(end) = segment.end.as_ref() {
+                        validate_history_boundary(&mut reader, end)?;
+                        end.end_byte_offset
+                    } else {
+                        complete_read_boundary(&mut reader)?.end_byte_offset
+                    };
+                    // An ancestor can already be projected beyond the immutable
+                    // branch boundary. Scoped readers enforce that cutoff.
+                    while state.next_rollout_byte_offset < end {
+                        let progress = history.project_reader_batch(
+                            &mut reader,
+                            segment.rollout_id.as_str(),
+                            end,
+                        )?;
+                        if progress.records_projected == 0 {
+                            bail!("history recovery did not advance");
+                        }
+                        state = progress.state;
                     }
-                    state = progress.state;
+                }
+                // Cutoff summaries come from lazily materialized checkpoints;
+                // heads only describe the full rollout.
+                if let Some(end) = segment.end.as_ref() {
+                    history.ensure_chat_checkpoints(
+                        segment.rollout_id.as_str(),
+                        end.end_ordinal_exclusive,
+                    )?;
                 }
             }
             Ok(())
@@ -1221,7 +1225,10 @@ impl LocalThreadStore {
                     &mut batch,
                     &mut records,
                     CanonicalRecord::Event(CanonicalEvent::ItemCompleted(CanonicalItem {
-                        item_id: ItemId::new(format!("{turn}:text-{index}"))?,
+                        // Stable assistant identity is `{turn}:text-{model_round}`
+                        // (1-based), matching the live writer; process and chat
+                        // projections reject replay copies by this exact shape.
+                        item_id: ItemId::new(format!("{turn}:text-{}", index + 1))?,
                         turn_id: turn.clone(),
                         root_turn_id: Some(root_turn.clone()),
                         created_at_ms: now,
@@ -1236,8 +1243,31 @@ impl LocalThreadStore {
                 for (tool_index, (profile, call_id, args, result)) in
                     generated_tools.into_iter().enumerate()
                 {
-                    let payload = serde_json::json!({"tool":profile.name,"args":args,"data":result.data,"error":result.error,"ok":!result.failed});
-                    let observation = serde_json::json!({"role":"tool","tool_call_id":call_id,"content":serde_json::to_string(&payload)?});
+                    // Match the production tool timeline shape (see
+                    // thread_log::event_item): kind/tool_call_id/status plus a
+                    // catalog schema reference so detail views resolve the
+                    // contract exactly like a real executed call.
+                    let mut payload = serde_json::json!({
+                        "kind":"tool_call","tool":profile.name,"tool_call_id":call_id.clone(),
+                        "args":args,"data":result.data,"error":result.error,"ok":!result.failed,
+                        "status":if result.failed{"failed"}else{"completed"},
+                        "meta":result.meta,
+                    });
+                    if let Some(reference) = crate::tools::runtime_tool_schema_reference(
+                        profile.function_name,
+                    )
+                    .or_else(|| crate::tools::runtime_tool_schema_reference(profile.name))
+                    {
+                        payload["schema_ref"] = serde_json::to_value(reference)?;
+                    }
+                    // The observation replays into the model context verbatim;
+                    // keep the session-linked call id only on the envelope so
+                    // the same seed regenerates byte-identical context.
+                    let mut observation_payload = payload.clone();
+                    if let Some(fields) = observation_payload.as_object_mut() {
+                        fields.remove("tool_call_id");
+                    }
+                    let observation = serde_json::json!({"role":"tool","tool_call_id":call_id,"content":serde_json::to_string(&observation_payload)?});
                     self.push_stress_record(
                         &thread,
                         &mut batch,

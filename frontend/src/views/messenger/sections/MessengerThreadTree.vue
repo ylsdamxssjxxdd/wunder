@@ -43,7 +43,8 @@
         <button
           class="mz-thread-select"
           type="button"
-          :title="item.title"
+          :title="threadTooltip(item)"
+          :data-thread-title="item.title"
           :aria-current="activeSessionId === item.id ? 'true' : undefined"
           @click="handleRowClick(item)"
         >
@@ -158,11 +159,12 @@ import { resolveVisibleTaskRows, taskWindow, type TaskListItem } from '@/views/m
 import { hasCompletedTaskTurn, resolveTaskIndicatorState, resolveTaskRuntimeState, type TaskIndicatorState } from '@/views/messenger/taskRuntimeState';
 import { getRuntime, getSessionMessages, hasRuntimeControllers } from '@/stores/chatRuntimeState';
 import { useTaskListPages } from '@/views/messenger/useTaskListPages';
+import { formatDateTime } from '@/utils/formatDateTime';
 import { usePersistentStableListOrder } from '@/views/messenger/stableListOrder';
 import type { AgentRuntimeState } from '@/views/messenger/model';
 
 // §5.2 thread rows are 28px tall so the row height is also the virtual window step.
-const ROW_HEIGHT = 28;
+const ROW_HEIGHT = 32;
 
 const props = defineProps<{ items: TaskListItem[]; activeSessionId: string; agentId: string }>();
 const emit = defineEmits<{
@@ -174,6 +176,17 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
+
+/**
+ * Row tooltip: the full title (it may be elided) plus when the thread last
+ * finished a turn, so a long-lost thread can be identified by date instead of
+ * by scrolling its transcript.
+ */
+const threadTooltip = (item: TaskListItem): string => {
+  const at = formatDateTime(item.lastActiveAt);
+  return at ? `${item.title} · ${t('messenger.tasks.lastFinishedAt', { time: at })}` : item.title;
+};
+
 const store = useChatStore();
 const authStore = useAuthStore();
 const { loading, error: pageError, hasMore, loadMore } = useTaskListPages(toRef(props, 'agentId'));

@@ -1132,3 +1132,84 @@ async fn private_completed_items_do_not_block_public_replay_pagination() {
         .unwrap()
         .is_none());
 }
+
+#[tokio::test]
+async fn thread_first_user_questions_returns_the_first_visible_user_message() {
+    let root = tempfile::tempdir().unwrap();
+    let db = SqliteStorage::new(
+        root.path()
+            .join("state_1.sqlite")
+            .to_string_lossy()
+            .into_owned(),
+    );
+    db.ensure_initialized().unwrap();
+    let backend: &dyn StorageBackend = &db;
+    let store = LocalThreadStore::open(root.path()).unwrap();
+    let thread = ThreadId::new(THREAD).unwrap();
+    let first = backend
+        .accept_thread_turn(USER, THREAD, &json!({"content":"Fixture first question"}))
+        .unwrap();
+    let first_turn = TurnId::new(first["turn_id"].as_str().unwrap()).unwrap();
+    store
+        .create_thread(CreateThreadRequest {
+            metadata: ThreadMetadata {
+                thread_id: thread.clone(),
+                current_rollout_id: RolloutId::new("rollout-question").unwrap(),
+                status: ThreadStatus::Active,
+                created_at_ms: 1,
+                updated_at_ms: 1,
+                title: None,
+                workspace_id: None,
+                pinned: false,
+            },
+            session_meta: SessionMeta {
+                thread_id: thread.clone(),
+                rollout_id: RolloutId::new("rollout-question").unwrap(),
+                created_at_ms: 1,
+                source: "sample".into(),
+                initial_system_prompt: "frozen instructions".into(),
+                initial_memory: None,
+                parent_thread_id: None,
+                history_base: None,
+                capabilities: Value::Null,
+            },
+        })
+        .await
+        .unwrap();
+    store
+        .begin_turn(USER, &thread, &first_turn, "sample-model")
+        .await
+        .unwrap();
+    backend
+        .append_chat(
+            USER,
+            &json!({"session_id":THREAD,"turn_id":first_turn,"item_id":"first-user",
+                "role":"user","content":"Fixture first question"}),
+        )
+        .unwrap();
+    let second = backend
+        .accept_thread_turn(USER, THREAD, &json!({"content":"Fixture second question"}))
+        .unwrap();
+    let second_turn = TurnId::new(second["turn_id"].as_str().unwrap()).unwrap();
+    store
+        .begin_turn(USER, &thread, &second_turn, "sample-model")
+        .await
+        .unwrap();
+    backend
+        .append_chat(
+            USER,
+            &json!({"session_id":THREAD,"turn_id":second_turn,"item_id":"second-user",
+                "role":"user","content":"Fixture second question"}),
+        )
+        .unwrap();
+
+    let questions = backend
+        .thread_first_user_questions(&[THREAD.to_string(), "missing-thread".to_string()])
+        .unwrap();
+    assert_eq!(
+        questions.get(THREAD).map(String::as_str),
+        Some("Fixture first question")
+    );
+    assert!(!questions.contains_key("missing-thread"));
+    assert!(backend.thread_first_user_questions(&[]).unwrap().is_empty());
+}

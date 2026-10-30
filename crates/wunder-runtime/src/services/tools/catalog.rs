@@ -188,15 +188,27 @@ pub fn build_mcp_tool_alias_entries(config: &Config) -> Vec<McpToolAliasEntry> {
 }
 
 /// Localized note describing the shell `执行命令` will actually run in, so the
-/// model emits the correct syntax on the first try. Returns `None` when the
-/// active shell needs no hint (plain cmd on a Windows host).
+/// model emits the correct syntax on the first try. The note also states the
+/// PowerShell generation: a Windows 7 host only has 2.0, and telling the model
+/// up front costs one line instead of a round of red parse errors.
 fn exec_shell_note(language: &str) -> Option<String> {
-    use crate::core::command_utils::ShellKind;
+    use crate::core::command_utils::{self, ShellKind};
     let env = crate::core::python_runtime::resolve_desktop_command_env();
     let key = match env.shell.kind {
         ShellKind::Bash => "tool.spec.exec.shell_bash",
-        ShellKind::PowerShell => "tool.spec.exec.shell_powershell",
-        ShellKind::Cmd => return None,
+        // Windows 7 ships PowerShell 2.0; without saying so the model keeps
+        // reaching for `::new()`, `Get-FileHash` and `-Raw` and blames itself
+        // for the red errors that follow. The bundled portable PowerShell 7 is
+        // the opposite case: modern syntax is fine, but the Windows-only
+        // modules and `Get-WmiObject` the model may remember are gone.
+        ShellKind::PowerShell => match command_utils::powershell_major_version() {
+            Some(version) if version < 5 => "tool.spec.exec.shell_powershell_legacy",
+            Some(version) if version >= 7 => "tool.spec.exec.shell_pwsh",
+            _ => "tool.spec.exec.shell_powershell",
+        },
+        // cmd is either an explicit setting or the only shell this host has
+        // (no PowerShell installed / blocked by policy).
+        ShellKind::Cmd => "tool.spec.exec.shell_cmd",
     };
     let note = i18n::t_in_language(key, language);
     let note = note.trim().to_string();

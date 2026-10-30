@@ -2,9 +2,27 @@ import { Theme } from "theme.slint";
 
 // The pitch the sidebar tree lays its rows out with. The native drop resolver
 // walks the same numbers, so a row height only lives in this file.
+//
+// 侧栏统一的排版规则（蜂巢的 messenger-shell.css 用同一组数值）：
+// - 行高空出可点击余量：导航行 32px；分组行再留 4px 组间气口（chip 仍 32px）。
+// - 两侧留白一致：行盒左右各让出 12px，行内再补 8px，文字从 20px 起排。
+// - 图标字号（13px）不大于正文字号，落 20px 圆角底上，图文间距固定 8px。
+// - 所有行、行内动作按钮共用 8px 圆角；浮层（设备菜单、拖拽浮标）10px。
+// - 线程行只缩进一格：状态点列起于 28px，标题恰好接到工作区标题列（48px）。
 export global SidebarMetrics {
-    in-out property <length> thread-height: 28px;
-    in-out property <length> group-height: 34px;
+    in-out property <length> thread-height: 32px;
+    in-out property <length> group-height: 36px;
+    // 分组行里 chip 顶部让出的气口：组间更松，组内行贴紧。
+    in-out property <length> group-air: 4px;
+    in-out property <length> gutter: 12px;
+    in-out property <length> row-padding: 8px;
+    in-out property <length> row-radius: 8px;
+    in-out property <length> icon-glyph: 13px;
+    in-out property <length> icon-tile: 20px;
+    in-out property <length> icon-gap: 8px;
+    // 线程行内容列（状态点左缘）距侧栏左缘。28 = 12 行盒内缩 + 16 行内距，
+    // 加上 11px 状态点与 8px 图文间距后标题落在 47px，压着工作区标题的 48px。
+    in-out property <length> thread-indent: 28px;
 }
 
 // Shared drag state. `anchor-y` is the window-relative pointer at press and
@@ -92,8 +110,8 @@ export component DragRow inherits Rectangle {
             }
             if event.kind == PointerEventKind.up && event.button == PointerEventButton.left {
                 if DragPreview.active {
-                    // Travel in px, not rows: the tree mixes 28px thread rows
-                    // with 34px group rows, so only the native side can turn
+                    // Travel in px, not rows: the tree mixes taller group rows
+                    // with thread rows, so only the native side can turn
                     // the travel into the row the pointer actually sits in.
                     root.move-by(round((DragPreview.pointer-y - DragPreview.anchor-y) / 1px));
                 } else {

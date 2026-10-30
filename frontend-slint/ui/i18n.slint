@@ -99,6 +99,7 @@ export global I18n {
     public pure function sb_thread_selected(count: string) -> string { return zh ? "已选 " + count + " 项" : "" + count + " selected"; }
     out property <string> sb_thread_archive: zh ? "归档" : "Archive";
     out property <string> sb_thread_trajectory: zh ? "轨迹视图" : "Trajectory view";
+    out property <string> sb_last_finished: zh ? "最后完成" : "Last finished";
     out property <string> tl_state_queued: zh ? "排队中" : "Queued";
     out property <string> tl_state_question: zh ? "等待回答" : "Waiting for answers";
     out property <string> tl_state_input: zh ? "等待用户输入" : "Waiting for input";
@@ -1342,6 +1343,7 @@ export global I18n {
     out property <string> traj_back: zh ? "返回" : "Back";
     out property <string> traj_search: zh ? "搜索完整线程" : "Search full thread";
     out property <string> traj_duration: zh ? "时长" : "Duration";
+    out property <string> traj_token_usage: zh ? "新增占用" : "New tok";
     out property <string> traj_turns: zh ? "轮次" : "Turns";
     out property <string> traj_calls: zh ? "调用" : "Calls";
     out property <string> traj_lane_input: zh ? "输入" : "Input";

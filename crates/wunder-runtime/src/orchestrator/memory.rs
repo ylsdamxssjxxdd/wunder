@@ -24,7 +24,11 @@ fn ensure_frozen_system_message(
         }
         _ => messages.insert(0, frozen_system_message.clone()),
     }
-    let frozen_system_tokens = estimate_message_tokens(frozen_system_message);
+    // A strict provider accepts one leading system message only; the frozen
+    // prompt and a retained system block would otherwise start the request
+    // with two (see `fold_leading_system_messages`).
+    fold_leading_system_messages(messages);
+    let frozen_system_tokens = estimate_message_tokens(&messages[0]);
     if frozen_system_tokens > message_budget {
         return Err(OrchestratorError::new(
             "CONTEXT_WINDOW_EXCEEDED",
@@ -49,8 +53,9 @@ fn ensure_frozen_system_message(
                 }
             }
         }
+        let head = messages[0].clone();
         messages.clear();
-        messages.push(frozen_system_message.clone());
+        messages.push(head);
         messages.extend(remaining_messages);
     }
     if estimate_messages_tokens(messages) > message_budget {
@@ -2201,5 +2206,53 @@ impl Orchestrator {
             return false;
         };
         text.starts_with(OBSERVATION_PREFIX)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn ensure_frozen_system_message_folds_retained_system_block() {
+        let frozen = json!({ "role": "system", "content": "frozen prompt" });
+        let mut messages = vec![
+            json!({ "role": "system", "content": "frozen prompt" }),
+            json!({ "role": "system", "content": "artifact index" }),
+            json!({ "role": "user", "content": "question" }),
+        ];
+
+        ensure_frozen_system_message(&mut messages, Some(&frozen), 1_000_000)
+            .expect("frozen prompt fits");
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0]["role"], json!("system"));
+        assert_eq!(
+            messages[0]["content"],
+            json!("frozen prompt\n\nartifact index")
+        );
+        assert_eq!(messages[1]["content"], json!("question"));
+    }
+
+    #[test]
+    fn ensure_frozen_system_message_keeps_folded_head_when_trimming() {
+        let frozen = json!({ "role": "system", "content": "frozen prompt" });
+        let mut messages = vec![
+            json!({ "role": "system", "content": "frozen prompt" }),
+            json!({ "role": "system", "content": "artifact index" }),
+            json!({ "role": "user", "content": "x".repeat(4000) }),
+        ];
+
+        ensure_frozen_system_message(&mut messages, Some(&frozen), 200).expect("trimmed to budget");
+
+        assert_eq!(
+            messages[0]["content"],
+            json!("frozen prompt\n\nartifact index")
+        );
+        assert!(messages
+            .iter()
+            .skip(1)
+            .all(|message| message["role"] != json!("system")));
     }
 }

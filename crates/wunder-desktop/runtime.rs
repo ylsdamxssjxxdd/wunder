@@ -57,6 +57,20 @@ pub struct DesktopSettings {
     pub git_path: String,
     #[serde(default)]
     pub rg_path: String,
+    /// User-picked ffmpeg executable. Empty resolves the embedded supplement
+    /// first and PATH second; a configured path wins over both.
+    #[serde(default)]
+    pub ffmpeg_path: String,
+    /// User-picked browser executable for the browser tool bridge. Empty keeps
+    /// the bundled `opt/browser` discovery.
+    #[serde(default)]
+    pub browser_path: String,
+    /// User-picked shell executable (`pwsh.exe` / `powershell.exe`). Empty
+    /// keeps the supplement host probe. A `cmd.exe` pick is deliberately not
+    /// honoured here: the command tool passes PowerShell-only switches, so
+    /// cmd selection goes through `shell_mode` instead.
+    #[serde(default)]
+    pub shell_path: String,
     /// Preferred command shell. "auto" (or empty) uses the platform default
     /// shell (PowerShell/cmd on Windows, bash on Unix); on Windows "cmd" or
     /// "powershell" force that shell. The supplement no longer ships Git Bash,
@@ -97,6 +111,9 @@ impl Default for DesktopSettings {
             pip_path: String::new(),
             git_path: String::new(),
             rg_path: String::new(),
+            ffmpeg_path: String::new(),
+            browser_path: String::new(),
+            shell_path: String::new(),
             shell_mode: String::new(),
             python_runtime_mode: default_python_runtime_mode(),
             container_roots: HashMap::new(),
@@ -974,6 +991,10 @@ fn resolve_desktop_tool_bin(raw: &str, app_dir: &Path) -> Option<PathBuf> {
 pub(crate) fn refresh_runtime_tool_env(settings: &DesktopSettings, app_dir: &Path) {
     let supplement_roots = embedded_supplement_roots_for_env(app_dir);
     wunder_server::local_bootstrap::supplement::configure_runtime_env(&supplement_roots);
+    // The supplement may just have published a portable `pwsh.exe`; the shell
+    // host is probed lazily and cached, so the cache has to be dropped or the
+    // command tool keeps using the system's PowerShell until the next restart.
+    wunder_server::command_utils::reset_powershell_host();
     match resolve_desktop_python_bin(settings, app_dir) {
         DesktopPythonBin::Custom(python_bin) | DesktopPythonBin::Auto(python_bin) => {
             set_env_path_if_exists("WUNDER_PYTHON_BIN", &python_bin);

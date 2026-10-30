@@ -135,10 +135,20 @@ component ThreadRow inherits ContextMenuArea {
         background: data.active ? Theme.selected : transparent;
     }
 
-    // Tree connector line linking the thread to its workspace row.
-    Rectangle { x: 20px; y: 0px; width: 1px; height: parent.height; background: Theme.border; }
+    // Tree connector line linking the thread to its workspace row: 掉在工作区
+    // 图标中心（行内距 + 半个图标底）上，与工作区行的图标列同一条竖线。
+    Rectangle {
+        x: SidebarMetrics.row-padding + SidebarMetrics.icon-tile / 2;
+        y: 0px; width: 1px; height: parent.height; background: Theme.border;
+    }
     HorizontalLayout {
-        padding-left: root.selecting ? 56px : 34px; padding-right: 8px; spacing: 8px;
+        // 只缩进一格：状态点落在 28px（28-12=16 行内坐标），标题接上工作区标题列；
+        // 多选时让开 15px 勾选框。
+        padding-left: root.selecting
+            ? SidebarMetrics.row-padding + 15px + SidebarMetrics.icon-gap
+            : SidebarMetrics.thread-indent - SidebarMetrics.gutter;
+        padding-right: SidebarMetrics.row-padding;
+        spacing: SidebarMetrics.icon-gap;
         StatusDot {
             y: (parent.height - self.height) / 2;
             status: data.status;
@@ -175,7 +185,7 @@ component ThreadRow inherits ContextMenuArea {
     // archive gate rejects. The whole row toggles (the touch below), so the
     // square itself carries no input handling.
     if root.selecting : Rectangle {
-        x: 16px;
+        x: 8px;
         y: (parent.height - 15px) / 2;
         width: 15px; height: 15px;
         border-radius: 4px;
@@ -201,15 +211,16 @@ component ThreadRow inherits ContextMenuArea {
     // the pointer enters or leaves a row. This mirrors the web order:
     // rename, trajectory view, archive.
     if root.hover && !root.selecting : Rectangle {
-        x: parent.width - 76px;
+        // 动作条与行右内边距对齐：3×20px 按钮 + 4px 间隔 + 两侧 8px。
+        x: parent.width - 84px;
         y: 0px;
-        width: 76px;
+        width: 84px;
         height: parent.height;
         background: data.active ? Theme.selected : Theme.accent-soft;
         Rectangle {
-            x: 2px; y: (parent.height - 20px) / 2; width: 20px; height: 20px; border-radius: 4px;
+            x: 8px; y: (parent.height - 20px) / 2; width: 20px; height: 20px; border-radius: SidebarMetrics.row-radius;
             background: rename-touch.has-hover ? Theme.selected : transparent;
-            Image { x: 3px; y: 3px; width: 14px; height: 14px; source: @image-url("../assets/icons/fa-pen-to-square.svg"); colorize: Theme.muted; }
+            Image { x: (parent.width - SidebarMetrics.icon-glyph) / 2; y: (parent.height - SidebarMetrics.icon-glyph) / 2; width: SidebarMetrics.icon-glyph; height: SidebarMetrics.icon-glyph; source: @image-url("../assets/icons/fa-pen-to-square.svg"); colorize: Theme.muted; }
             rename-touch := TouchArea {
                 mouse-cursor: pointer;
                 accessible-role: button; accessible-label: I18n.common_rename;
@@ -224,10 +235,12 @@ component ThreadRow inherits ContextMenuArea {
             }
         }
         Rectangle {
-            x: 28px; y: (parent.height - 20px) / 2; width: 20px; height: 20px; border-radius: 4px;
+            x: 32px; y: (parent.height - 20px) / 2; width: 20px; height: 20px; border-radius: SidebarMetrics.row-radius;
             background: trajectory-touch.has-hover ? Theme.selected : transparent;
             Image {
-                x: 3px; y: 3px; width: 14px; height: 14px;
+                x: (parent.width - SidebarMetrics.icon-glyph) / 2;
+                y: (parent.height - SidebarMetrics.icon-glyph) / 2;
+                width: SidebarMetrics.icon-glyph; height: SidebarMetrics.icon-glyph;
                 source: @image-url("../assets/icons/fa-route.svg");
                 colorize: Theme.muted;
             }
@@ -245,10 +258,12 @@ component ThreadRow inherits ContextMenuArea {
             }
         }
         Rectangle {
-            x: 54px; y: (parent.height - 20px) / 2; width: 20px; height: 20px; border-radius: 4px;
+            x: 56px; y: (parent.height - 20px) / 2; width: 20px; height: 20px; border-radius: SidebarMetrics.row-radius;
             background: archive-touch.has-hover && data.archivable ? Theme.selected : transparent;
             Image {
-                x: 3px; y: 3px; width: 14px; height: 14px;
+                x: (parent.width - SidebarMetrics.icon-glyph) / 2;
+                y: (parent.height - SidebarMetrics.icon-glyph) / 2;
+                width: SidebarMetrics.icon-glyph; height: SidebarMetrics.icon-glyph;
                 source: @image-url("../assets/icons/box-archive.svg");
                 colorize: data.archivable ? Theme.muted : Theme.border-strong;
             }
@@ -347,7 +362,7 @@ export component Sidebar inherits Rectangle {
     callback file-key(int);
     in-out property <float> split-ratio: 0.6;
     callback layout-changed();
-    private property <length> split-track: max(1px, root.height - 85px - (root.selection-mode ? 70px : 0px));
+    private property <length> split-track: max(1px, root.height - 89px - (root.selection-mode ? 70px : 0px));
     callback file-toggle(int);
     callback file-refresh();
     callback file-connect();
@@ -378,26 +393,31 @@ export component Sidebar inherits Rectangle {
 
     VerticalLayout {
         spacing: 0px;
-        // 8 + 28 keeps the old 36px header block, so the splitter's fixed
-        // chrome accounting (height - 85px) stays correct.
+        // 顶部气口 8 + 设备行 32 = 40px 头部块；split-track 的固定 chrome
+        // 记账（height - 89px）跟着这两个数字走。
         Rectangle { height: 8px; }
         HorizontalLayout {
-            height: 28px;
-            padding-left: 8px; padding-right: 10px;
-            spacing: 2px;
+            height: 32px;
+            padding-left: SidebarMetrics.gutter; padding-right: SidebarMetrics.gutter;
+            spacing: 4px;
             // Device selector: the current device owns every workspace row below.
             Rectangle {
-                height: 28px;
+                height: 32px;
                 horizontal-stretch: 1;
-                border-radius: 7px;
+                border-radius: SidebarMetrics.row-radius;
                 background: device-toggle.has-hover && root.cloud-available ? Theme.hover : transparent;
                 HorizontalLayout {
-                    padding-left: 4px; padding-right: 6px; spacing: 6px;
+                    padding-left: SidebarMetrics.row-padding;
+                    padding-right: SidebarMetrics.row-padding;
+                    spacing: SidebarMetrics.icon-gap;
                     Rectangle {
-                        y: (parent.height - 18px) / 2;
-                        width: 18px; height: 18px;
+                        y: (parent.height - SidebarMetrics.icon-tile) / 2;
+                        width: SidebarMetrics.icon-tile; height: SidebarMetrics.icon-tile;
+                        border-radius: Theme.radius-tag;
                         Image {
-                            width: 100%; height: 100%;
+                            x: (parent.width - SidebarMetrics.icon-glyph) / 2;
+                            y: (parent.height - SidebarMetrics.icon-glyph) / 2;
+                            width: SidebarMetrics.icon-glyph; height: SidebarMetrics.icon-glyph;
                             source: WorkspaceVisual.icon(root.cloud-active ? "cloud" : "monitor");
                             colorize: root.cloud-active ? Theme.accent-ink : Theme.muted;
                         }
@@ -406,7 +426,7 @@ export component Sidebar inherits Rectangle {
                         height: parent.height;
                         text: root.cloud-active ? I18n.sb_device_cloud : I18n.sb_device_local;
                         color: Theme.text;
-                        font-size: Theme.font-lg;
+                        font-size: Theme.font-md;
                         font-weight: 600;
                         vertical-alignment: center;
                         overflow: elide;
@@ -434,15 +454,16 @@ export component Sidebar inherits Rectangle {
                     clicked => { root.device-menu-open = !root.device-menu-open; }
                 }
             }
-            // Creates a workspace bound to a local directory.
+            // Creates a workspace bound to a local directory. 24px 触面与行同高
+            // 居中，字形跟行内图标同号，右缘与行尾对齐在同一条留白上。
             Rectangle {
-                width: 22px; height: 28px;
+                width: 24px; height: 32px;
                 // The glyph stays the FA plus the cloud client uses; a text
                 // "+" was a different weight and optical size beside it.
                 Image {
-                    x: (parent.width - self.width) / 2;
-                    y: (parent.height - self.height) / 2;
-                    width: 14px; height: 14px;
+                    x: (parent.width - SidebarMetrics.icon-glyph) / 2;
+                    y: (parent.height - SidebarMetrics.icon-glyph) / 2;
+                    width: SidebarMetrics.icon-glyph; height: SidebarMetrics.icon-glyph;
                     source: @image-url("../assets/icons/fa-plus.svg");
                     colorize: ws-add-touch.has-hover ? Theme.accent-ink : Theme.muted;
                 }
@@ -476,8 +497,12 @@ export component Sidebar inherits Rectangle {
                     height: row.kind == 1 || row.kind == 3 ? SidebarMetrics.thread-height : SidebarMetrics.group-height;
                     width: parent.width;
                     if row.kind == 0 : ws-drag := DragRow {
-                        height: parent.height;
-                        width: parent.width;
+                        // 分组行让出 4px 顶部气口：组间比组内松，chip 仍与线程行同高。
+                        x: SidebarMetrics.gutter;
+                        y: SidebarMetrics.group-air;
+                        width: parent.width - SidebarMetrics.gutter * 2;
+                        height: parent.height - SidebarMetrics.group-air;
+                        border-radius: SidebarMetrics.row-radius;
                         enabled: !root.busy;
                         selected: row.selected;
                         selected-color: Theme.selected;
@@ -486,30 +511,36 @@ export component Sidebar inherits Rectangle {
                         row-kind: row.kind;
                         workspace-id: row.workspace-id;
                         tooltip: row.path != "" ? row.path : row.expanded ? I18n.ws_collapse_threads : I18n.ws_expand_threads;
-                        actions-width: 74px;
+                        actions-width: 84px;
                         activate => { root.select-row(ri); }
                         move-by(travel) => { root.move-row(ri, travel); }
                         // Selection indicator on the workspace row.
-                        Rectangle { x: 0px; y: 5px; width: 2px; height: 24px; border-radius: 1px; background: row.selected ? Theme.accent : transparent; }
+                        Rectangle { x: 2px; y: (parent.height - 16px) / 2; width: 2px; height: 16px; border-radius: 1px; background: row.selected ? Theme.accent : transparent; }
                         HorizontalLayout {
-                            padding-left: 12px; padding-right: 32px; spacing: 8px;
+                            padding-left: SidebarMetrics.row-padding;
+                            // 「+」常驻在动作条最右一列，计数与标题在这里让开它。
+                            padding-right: 32px;
+                            spacing: SidebarMetrics.icon-gap;
                             Rectangle {
-                                y: (parent.height - 22px) / 2;
-                                width: 22px; height: 22px; border-radius: 6px;
+                                y: (parent.height - SidebarMetrics.icon-tile) / 2;
+                                width: SidebarMetrics.icon-tile; height: SidebarMetrics.icon-tile;
+                                border-radius: Theme.radius-tag;
                                 // No separate chevron: the glyph itself is the fold
                                 // switch. Expanded = solid workspace colour, the
                                 // threads below are open; collapsed = hollow
                                 // (muted) glyph.
                                 background: row.expanded ? WorkspaceVisual.color(row.color).transparentize(0.87) : Theme.hover;
                                 Image {
-                                    x: 2px; y: 2px; width: 18px; height: 18px;
+                                    x: (parent.width - SidebarMetrics.icon-glyph) / 2;
+                                    y: (parent.height - SidebarMetrics.icon-glyph) / 2;
+                                    width: SidebarMetrics.icon-glyph; height: SidebarMetrics.icon-glyph;
                                     source: WorkspaceVisual.icon(row.icon);
                                     colorize: row.expanded ? WorkspaceVisual.color(row.color) : Theme.muted;
                                 }
                             }
                             Text {
                                 height: parent.height; text: row.name;
-                                color: Theme.text; font-size: Theme.font-lg;
+                                color: Theme.text; font-size: Theme.font-md;
                                 vertical-alignment: center; overflow: elide;
                                 horizontal-stretch: 1;
                             }
@@ -528,15 +559,17 @@ export component Sidebar inherits Rectangle {
                         // layout, so revealing them moves nothing and they sit on
                         // the name's own centre line.
                         Rectangle {
-                            x: parent.width - 74px;
+                            x: parent.width - 84px;
                             y: 0px;
-                            width: 74px;
+                            width: 84px;
                             height: parent.height;
                             background: ws-drag.hover ? (row.selected ? Theme.selected : Theme.accent-soft) : transparent;
                             Rectangle {
-                                x: 42px; y: (parent.height - 22px) / 2; width: 22px; height: 22px;
+                                x: 56px; y: (parent.height - 20px) / 2; width: 20px; height: 20px;
                                 Image {
-                                    x: 4px; y: 4px; width: 14px; height: 14px;
+                                    x: (parent.width - SidebarMetrics.icon-glyph) / 2;
+                                    y: (parent.height - SidebarMetrics.icon-glyph) / 2;
+                                    width: SidebarMetrics.icon-glyph; height: SidebarMetrics.icon-glyph;
                                     source: @image-url("../assets/icons/fa-plus.svg");
                                     colorize: ws-thread-touch.has-hover ? Theme.accent-ink : Theme.muted;
                                 }
@@ -548,12 +581,12 @@ export component Sidebar inherits Rectangle {
                                 }
                             }
                             if ws-drag.hover : Rectangle {
-                                x: 26px; y: (parent.height - 22px) / 2; width: 22px; height: 22px; border-radius: 5px;
+                                x: 32px; y: (parent.height - 20px) / 2; width: 20px; height: 20px; border-radius: SidebarMetrics.row-radius;
                                 background: ws-edit-touch.has-hover ? Theme.selected : transparent;
                                 // fa-pen-to-square, the glyph the web uses for
                                 // rename/edit; the bare pen read as a different
                                 // action next to it.
-                                Image { x: 4px; y: 4px; width: 14px; height: 14px; source: @image-url("../assets/icons/fa-pen-to-square.svg"); colorize: Theme.muted; }
+                                Image { x: (parent.width - SidebarMetrics.icon-glyph) / 2; y: (parent.height - SidebarMetrics.icon-glyph) / 2; width: SidebarMetrics.icon-glyph; height: SidebarMetrics.icon-glyph; source: @image-url("../assets/icons/fa-pen-to-square.svg"); colorize: Theme.muted; }
                                 ws-edit-touch := TouchArea {
                                     mouse-cursor: pointer;
                                     accessible-role: button; accessible-label: I18n.ws_menu_edit;
@@ -562,9 +595,9 @@ export component Sidebar inherits Rectangle {
                                 }
                             }
                             if ws-drag.hover : Rectangle {
-                                x: 0px; y: (parent.height - 22px) / 2; width: 22px; height: 22px; border-radius: 5px;
+                                x: 8px; y: (parent.height - 20px) / 2; width: 20px; height: 20px; border-radius: SidebarMetrics.row-radius;
                                 background: ws-delete-touch.has-hover ? Theme.selected : transparent;
-                                Image { x: 4px; y: 4px; width: 14px; height: 14px; source: @image-url("../assets/icons/trash.svg"); colorize: ws-delete-touch.has-hover ? Theme.danger : Theme.muted; }
+                                Image { x: (parent.width - SidebarMetrics.icon-glyph) / 2; y: (parent.height - SidebarMetrics.icon-glyph) / 2; width: SidebarMetrics.icon-glyph; height: SidebarMetrics.icon-glyph; source: @image-url("../assets/icons/trash.svg"); colorize: ws-delete-touch.has-hover ? Theme.danger : Theme.muted; }
                                 ws-delete-touch := TouchArea {
                                     mouse-cursor: pointer;
                                     accessible-role: button; accessible-label: I18n.ws_menu_delete;
@@ -575,17 +608,24 @@ export component Sidebar inherits Rectangle {
                         }
                     }
                     if row.kind == 1 : DragRow {
+                        x: SidebarMetrics.gutter;
+                        width: parent.width - SidebarMetrics.gutter * 2;
                         height: parent.height;
-                        width: parent.width;
+                        border-radius: SidebarMetrics.row-radius;
                         // Selection mode freezes reordering, as on the web.
                         enabled: !root.busy && !root.selection-mode;
                         selected: row.active;
                         selected-color: Theme.selected;
                         label: row.title;
+                        // 悬停提示带最后完成时间：标题可能被省略号截断，日期是
+                        // 找回一条久远线程的第二个线索。
+                        tooltip: row.hint == ""
+                            ? row.title
+                            : row.title + " · " + I18n.sb_last_finished + " " + row.hint;
                         row-index: ri;
                         row-kind: row.kind;
                         workspace-id: row.workspace-id;
-                        actions-width: 76px;
+                        actions-width: 84px;
                         activate => { root.select-row(ri); }
                         move-by(travel) => { root.move-row(ri, travel); }
                         ThreadRow {
@@ -605,13 +645,15 @@ export component Sidebar inherits Rectangle {
                         }
                     }
                     if row.kind == 3 : Rectangle {
+                        x: SidebarMetrics.gutter;
+                        width: parent.width - SidebarMetrics.gutter * 2;
                         height: parent.height;
-                        width: parent.width;
+                        border-radius: SidebarMetrics.row-radius;
                         background: row.active ? Theme.selected : cloud-thread-touch.has-hover ? Theme.hover : transparent;
                         cloud-thread-touch := TouchArea {
                             mouse-cursor: pointer;
                             accessible-role: button; accessible-label: row.title;
-                            if !(cloud-thread-touch.mouse-x >= cloud-thread-touch.width - 76px) : Tooltip { text: @markdown("\{row.title}"); }
+                            if !(cloud-thread-touch.mouse-x >= cloud-thread-touch.width - 84px) : Tooltip { text: @markdown("\{row.title}"); }
                             clicked => { root.select-row(ri); }
                             ThreadRow {
                                 width: parent.width; height: parent.height;
@@ -630,8 +672,11 @@ export component Sidebar inherits Rectangle {
                     // native projection expands its bounded cloud thread rows
                     // directly beneath it.
                     if row.kind == 2 : DragRow {
-                        height: parent.height;
-                        width: parent.width;
+                        x: SidebarMetrics.gutter;
+                        y: SidebarMetrics.group-air;
+                        width: parent.width - SidebarMetrics.gutter * 2;
+                        height: parent.height - SidebarMetrics.group-air;
+                        border-radius: SidebarMetrics.row-radius;
                         enabled: !root.busy;
                         selected: row.selected;
                         selected-color: Theme.selected;
@@ -640,34 +685,41 @@ export component Sidebar inherits Rectangle {
                         row-kind: row.kind;
                         workspace-id: "cloud";
                         tooltip: row.expanded ? I18n.ws_collapse_threads : I18n.ws_expand_threads;
-                        actions-width: 32px;
+                        actions-width: 40px;
                         activate => { root.select-row(ri); }
                         move-by(travel) => { root.move-row(ri, travel); }
-                        Rectangle { x: 0px; y: 5px; width: 2px; height: 24px; border-radius: 1px; background: row.selected ? Theme.accent : transparent; }
+                        Rectangle { x: 2px; y: (parent.height - 16px) / 2; width: 2px; height: 16px; border-radius: 1px; background: row.selected ? Theme.accent : transparent; }
                         HorizontalLayout {
-                            padding-left: 12px; padding-right: 32px; spacing: 8px;
+                            padding-left: SidebarMetrics.row-padding;
+                            padding-right: 32px;
+                            spacing: SidebarMetrics.icon-gap;
                             Rectangle {
-                                y: (parent.height - 22px) / 2;
-                                width: 22px; height: 22px; border-radius: 6px;
+                                y: (parent.height - SidebarMetrics.icon-tile) / 2;
+                                width: SidebarMetrics.icon-tile; height: SidebarMetrics.icon-tile;
+                                border-radius: Theme.radius-tag;
                                 background: row.expanded ? Theme.accent.transparentize(0.87) : Theme.hover;
                                 Image {
-                                    x: 2px; y: 2px; width: 18px; height: 18px;
+                                    x: (parent.width - SidebarMetrics.icon-glyph) / 2;
+                                    y: (parent.height - SidebarMetrics.icon-glyph) / 2;
+                                    width: SidebarMetrics.icon-glyph; height: SidebarMetrics.icon-glyph;
                                     source: WorkspaceVisual.icon("cloud"); image-fit: contain;
                                     colorize: row.expanded ? Theme.accent-ink : Theme.muted;
                                 }
                             }
                             Text {
                                 height: parent.height; text: row.name;
-                                color: Theme.text; font-size: Theme.font-lg;
+                                color: Theme.text; font-size: Theme.font-md;
                                 vertical-alignment: center; overflow: elide;
                                 horizontal-stretch: 1;
                             }
                         }
                         Rectangle {
-                            x: parent.width - 32px; y: (parent.height - 22px) / 2;
-                            width: 22px; height: 22px;
+                            x: parent.width - 28px; y: (parent.height - 20px) / 2;
+                            width: 20px; height: 20px;
                             Image {
-                                x: 4px; y: 4px; width: 14px; height: 14px;
+                                x: (parent.width - SidebarMetrics.icon-glyph) / 2;
+                                y: (parent.height - SidebarMetrics.icon-glyph) / 2;
+                                width: SidebarMetrics.icon-glyph; height: SidebarMetrics.icon-glyph;
                                 source: @image-url("../assets/icons/fa-plus.svg");
                                 colorize: cloud-new-touch.has-hover ? Theme.accent-ink : Theme.muted;
                             }
@@ -703,7 +755,8 @@ export component Sidebar inherits Rectangle {
             private property <bool> all-selected: root.archivable-count > 0 && root.selected-count >= root.archivable-count;
             private property <bool> partial-selected: root.selected-count > 0 && root.selected-count < root.archivable-count;
             VerticalLayout {
-                padding-left: 10px; padding-right: 10px; padding-top: 6px; padding-bottom: 10px;
+                padding-left: SidebarMetrics.gutter; padding-right: SidebarMetrics.gutter;
+                padding-top: 4px; padding-bottom: 8px;
                 spacing: 6px;
                 HorizontalLayout {
                     spacing: 8px;
@@ -773,8 +826,8 @@ export component Sidebar inherits Rectangle {
                     }
                 }
                 Rectangle {
-                    height: 26px;
-                    border-radius: Theme.radius-sm;
+                    height: 28px;
+                    border-radius: SidebarMetrics.row-radius;
                     background: root.selected-count > 0 ? Theme.accent : Theme.hover;
                     HorizontalLayout {
                         alignment: center;
@@ -883,13 +936,14 @@ export component Sidebar inherits Rectangle {
             selected-count: root.file-selected-count;
         }
         Rectangle { height: 1px; background: Theme.border; }
-        // Settings button.
+        // Settings button: 4px 上气口 + 32px 行 + 4px 下气口，与树里的行同高同留白。
         Rectangle {
             height: 40px;
             HorizontalLayout {
-                padding-left: 12px; padding-right: 12px;
+                padding-left: SidebarMetrics.gutter; padding-right: SidebarMetrics.gutter;
+                padding-top: 4px; padding-bottom: 4px;
                 Rectangle {
-                    height: 40px; border-radius: 10px;
+                    height: 32px; border-radius: SidebarMetrics.row-radius;
                     background: settings-touch.has-hover ? Theme.hover : transparent;
                     settings-touch := TouchArea {
                         mouse-cursor: pointer;
@@ -897,7 +951,9 @@ export component Sidebar inherits Rectangle {
                         clicked => { root.open-settings(); }
                     }
                     HorizontalLayout {
-                        padding-left: 12px; spacing: 8px; alignment: start;
+                        padding-left: SidebarMetrics.row-padding;
+                        padding-right: SidebarMetrics.row-padding;
+                        spacing: SidebarMetrics.icon-gap; alignment: start;
                         // The user's avatar leads the row instead of the bare
                         // gear: the profile colour carries the circle and the
                         // profile glyph sits on it, the same recipe as the
@@ -905,8 +961,8 @@ export component Sidebar inherits Rectangle {
                         // identity colour). The shared "me" label is the
                         // fallback so the button always marks an identity.
                         Rectangle {
-                            y: (parent.height - 26px) / 2;
-                            width: 26px; height: 26px; border-radius: 13px;
+                            y: (parent.height - 24px) / 2;
+                            width: 24px; height: 24px; border-radius: 12px;
                             background: root.user-color;
                             clip: true;
                             accessible-role: image;
@@ -918,16 +974,16 @@ export component Sidebar inherits Rectangle {
                                 horizontal-alignment: center; vertical-alignment: center;
                             }
                         }
-                        Text { height: parent.height; text: I18n.sidebar_settings; color: Theme.text; font-size: Theme.font-lg; vertical-alignment: center; }
+                        Text { height: parent.height; text: I18n.sidebar_settings; color: Theme.text; font-size: Theme.font-md; vertical-alignment: center; }
                     }
                     // Cloud quota pill (§6.1): the plain balance number next
                     // to the profile row, red at or below 10% of the daily
                     // grant; hidden while signed out.
                     if root.cloud-quota-text != "" : Rectangle {
-                        x: parent.width - 72px;
+                        x: parent.width - SidebarMetrics.row-padding - 60px;
                         y: (parent.height - 20px) / 2;
                         width: 60px; height: 20px;
-                        border-radius: 10px;
+                        border-radius: Theme.radius-md;
                         // Reconnecting keeps the balance readable but visibly
                         // degraded; expired flips the pill to the danger tint.
                         opacity: root.cloud-quota-reconnecting ? 0.45 : 1.0;
@@ -947,17 +1003,17 @@ export component Sidebar inherits Rectangle {
     // Device menu overlay: the outside touch closes it; the two rows switch
     // between this local 蛹 and the signed-in cloud workspace.
     if root.device-menu-open && root.cloud-available : TouchArea {
-        y: 36px;
+        y: 40px;
         width: parent.width;
-        height: parent.height - 36px;
+        height: parent.height - 40px;
         z: 140;
         clicked => { root.device-menu-open = false; }
     }
     if root.device-menu-open && root.cloud-available : Rectangle {
-        x: 8px;
-        y: 38px;
-        width: parent.width - 16px;
-        height: 76px;
+        x: SidebarMetrics.gutter;
+        y: 42px;
+        width: parent.width - SidebarMetrics.gutter * 2;
+        height: 72px;
         z: 150;
         border-width: 1px;
         border-color: Theme.border;
@@ -968,15 +1024,16 @@ export component Sidebar inherits Rectangle {
             padding: 4px;
             spacing: 0px;
             Rectangle {
-                height: 34px;
-                border-radius: 6px;
+                height: 32px;
+                border-radius: SidebarMetrics.row-radius;
                 background: local-device-option.has-hover && root.local-workspace-count > 0
                     ? Theme.hover : !root.cloud-active ? Theme.selected : transparent;
                 HorizontalLayout {
-                    padding-left: 8px; padding-right: 8px; spacing: 8px;
+                    padding-left: SidebarMetrics.row-padding; padding-right: SidebarMetrics.row-padding;
+                    spacing: SidebarMetrics.icon-gap;
                     Image {
-                        y: (parent.height - 16px) / 2;
-                        width: 16px; height: 16px;
+                        y: (parent.height - SidebarMetrics.icon-glyph) / 2;
+                        width: SidebarMetrics.icon-glyph; height: SidebarMetrics.icon-glyph;
                         source: WorkspaceVisual.icon("monitor");
                         colorize: root.local-workspace-count > 0 ? Theme.muted : Theme.border-strong;
                     }
@@ -1016,14 +1073,15 @@ export component Sidebar inherits Rectangle {
                 }
             }
             Rectangle {
-                height: 34px;
-                border-radius: 6px;
+                height: 32px;
+                border-radius: SidebarMetrics.row-radius;
                 background: cloud-device-option.has-hover ? Theme.hover : root.cloud-active ? Theme.selected : transparent;
                 HorizontalLayout {
-                    padding-left: 8px; padding-right: 8px; spacing: 8px;
+                    padding-left: SidebarMetrics.row-padding; padding-right: SidebarMetrics.row-padding;
+                    spacing: SidebarMetrics.icon-gap;
                     Image {
-                        y: (parent.height - 16px) / 2;
-                        width: 16px; height: 16px;
+                        y: (parent.height - SidebarMetrics.icon-glyph) / 2;
+                        width: SidebarMetrics.icon-glyph; height: SidebarMetrics.icon-glyph;
                         source: WorkspaceVisual.icon("cloud");
                         colorize: Theme.accent-ink;
                     }
@@ -1059,14 +1117,14 @@ export component Sidebar inherits Rectangle {
     // travel is clamped to the tree's own span so a drag that leaves the list
     // cannot paint over the header or the working-directory region below.
     if DragPreview.active : Rectangle {
-        x: 8px;
+        x: SidebarMetrics.gutter;
         y: Math.max(tree.absolute-position.y - root.absolute-position.y, Math.min(
             DragPreview.pointer-y - root.absolute-position.y - 10px,
             tree.absolute-position.y - root.absolute-position.y + tree.height - 22px));
-        width: parent.width - 16px;
-        height: 20px;
+        width: parent.width - SidebarMetrics.gutter * 2;
+        height: 24px;
         z: 200;
-        border-radius: Theme.radius-sm;
+        border-radius: SidebarMetrics.row-radius;
         border-width: 1px;
         border-color: Theme.accent-ink;
         background: Theme.surface;

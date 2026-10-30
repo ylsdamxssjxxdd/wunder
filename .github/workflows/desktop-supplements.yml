@@ -42,7 +42,10 @@ jobs:
           linux_hash="${{ hashFiles('packaging/linux/scripts/build_linux_supplement.sh', 'packaging/linux/scripts/linux-supplement-manifest.json', 'packaging/python/requirements-linux-common.txt', 'packaging/docker/Dockerfile.ubuntu18-supplement', 'packaging/docker/Dockerfile.rust-builder-kylin-x86', 'config/matplotlibrc', 'fonts/*') }}"
           # 浏览器 pin（版本+SHA256 字面量）参与 win7 缓存键：来源变更即触发重建
           browser_pin='chromium-109.0.5414.120-r1070088-hibbiki-mini_installer.sync.exe-sha256-C1AABD6EEF38D759BBD92CA9516353D88C463A1E8389A875B4D12D53DB467F98'
-          echo "win7_key=wunder-supplement-win7-ia32-v4-${win7_hash}-${browser_pin}" >> "$GITHUB_OUTPUT"
+          # 便携 PowerShell 7 pin：7.1.7 是最后一个能在 Win7 上启动的 pwsh（7.2 起需要 .NET 6 / Win8.1+），
+          # 同时是最后一个提供自包含 win-x86 zip 的版本；清单里的 SHA256 变更即触发重建。
+          pwsh_pin='powershell-7.1.7-win-x86.zip-sha256-D10F8EE270E94ABD45892DC56765EA5FA6BF84A2D8E5B37EC40B78D195A8F65F'
+          echo "win7_key=wunder-supplement-win7-ia32-v5-${win7_hash}-${browser_pin}-${pwsh_pin}" >> "$GITHUB_OUTPUT"
           echo "linux_amd64_key=wunder-supplement-linux-amd64-v3-${linux_hash}" >> "$GITHUB_OUTPUT"
           echo "linux_arm64_key=wunder-supplement-linux-arm64-v3-${linux_hash}" >> "$GITHUB_OUTPUT"
 
@@ -121,9 +124,27 @@ jobs:
       - name: Verify pack exists
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
           $zip = Get-ChildItem -Path supplement-dist -Filter 'wunder-supplement-win7-*.zip' | Select-Object -First 1
           if (-not $zip) { throw 'no supplement zip produced or restored' }
           Write-Host "pack: $($zip.Name) ($([math]::Round($zip.Length / 1MB, 1)) MB)"
+          # 便携 PowerShell 7 门禁：清单声明 bundled、pwsh.exe 为 32 位 PE、且能在
+          # 构建机上真实启动并自报 7.1.7（x64 runner 可运行 x86 自包含构建）。
+          $work = 'verify-win7'
+          Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
+          Expand-Archive -LiteralPath $zip.FullName -DestinationPath $work -Force
+          $meta = Get-Content -LiteralPath "$work\wunder-win7-supplement.json" -Raw -Encoding UTF8 | ConvertFrom-Json
+          if ($meta.powershell.bundled -ne $true) { throw 'supplement metadata says the portable PowerShell is not bundled' }
+          if ($meta.powershell.version -ne '7.1.7') { throw "unexpected bundled PowerShell version: $($meta.powershell.version)" }
+          $pwsh = Join-Path $work 'opt\powershell\pwsh.exe'
+          if (-not (Test-Path -LiteralPath $pwsh -PathType Leaf)) { throw 'opt/powershell/pwsh.exe missing from the pack' }
+          $bytes = [IO.File]::ReadAllBytes($pwsh)
+          $peOffset = [BitConverter]::ToInt32($bytes, 0x3c)
+          $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
+          if ($machine -ne 0x014c) { throw ('pwsh.exe is not an i386 PE (machine=0x{0:x4})' -f $machine) }
+          $version = & $pwsh -NoLogo -NoProfile -NonInteractive -Command '$PSVersionTable.PSVersion.ToString()'
+          if ("$version".Trim() -ne '7.1.7') { throw "pwsh smoke reported '$version' instead of 7.1.7" }
+          Write-Host "portable PowerShell smoke ok: $version"
       - uses: actions/upload-artifact@v4
         with:
           name: supplement-win7-ia32
@@ -289,7 +310,7 @@ jobs:
             gh release create "$RELEASE_TAG" \
               --repo "${GITHUB_REPOSITORY}" \
               --title "Wunder 补充包（Win7 32 位 / Linux x86_64 / Linux ARM64）" \
-              --notes "本地补充包。在蛹设置中导入，或手动解压到 WUNDER_HOME（默认用户主目录 .wunder），蛹与舵机共用 Python、Git、rg、ffmpeg 运行环境。" \
+              --notes "本地补充包。在蛹设置中导入，或手动解压到 WUNDER_HOME（默认用户主目录 .wunder），蛹与舵机共用 Python、Git、rg、ffmpeg 与便携 PowerShell 7 运行环境。" \
             --latest=false --target "${GITHUB_SHA}"
           fi
           find release-assets -type f -maxdepth 2 -print0 | while IFS= read -r -d '' asset; do

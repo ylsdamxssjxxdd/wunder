@@ -4,7 +4,7 @@
 // an entry expands, a streamed line wraps, and the layout follows, which is
 // what a virtualized ListView cannot do while the rows keep changing height.
 import { I18n } from "i18n.slint";
-import { Theme, TimelineRow, PatchCard, TextBlock, TimelineSpin, TurnStatMetric } from "theme.slint";
+import { Theme, TimelineRow, PatchCard, TextBlock, TimelineSpin, TurnStatMetric, TurnMark } from "theme.slint";
 import { MarkdownBlock } from "markdown.slint";
 import { PatchDiffCard } from "patch_diff_card.slint";
 import { WorkflowDetail } from "workflow_detail.slint";
@@ -803,9 +803,9 @@ export component TimelineView inherits Rectangle {
     in property <[ActivityMonth]> activity-months;
     in-out property <int> activity-tab: 0;
     callback preview-prompt();
-    // Fractional offset (row index / row count) of every user turn; the ruler
-    // strip renders one tick per mark and jumping is proportional.
-    in property <[float]> turn-marks: [];
+    // One mark per user turn: its fractional offset drives the proportional
+    // jump, and its pre-bounded preview text feeds the hover card.
+    in property <[TurnMark]> turn-marks: [];
     in-out property <bool> follow-output: true;
     // A turn is still producing output, so the running entries' rings have to
     // keep turning. Without this the spin timer ticks for the whole session and
@@ -969,7 +969,9 @@ export component TimelineView inherits Rectangle {
     }
     // ---- turn ruler (right edge): compact locator ticks sit around the
     // viewport centre. Their source fraction still determines the jump target,
-    // while the visual rhythm stays close and calm.
+    // while the visual rhythm stays close and calm. Hovering a tick previews
+    // that turn — the user's message over the agent's newest answer — like the
+    // web messenger's ruler card.
     marks-strip := Rectangle {
         x: parent.width - 24px; y: 10px; width: 24px; height: parent.height - 20px;
         visible: root.turn-marks.length > 1;
@@ -994,9 +996,39 @@ export component TimelineView inherits Rectangle {
             }
             tick-area := TouchArea {
                 mouse-cursor: pointer;
-                clicked => { root.jump-to-turn(mark); }
+                clicked => { root.jump-to-turn(mark.fraction); }
                 // Wheel gestures over the strip keep scrolling the transcript.
                 scroll-event(event) => { return reject; }
+            }
+            // Preview card: left of the strip, centred on the hovered tick and
+            // clamped to the strip so a tick near either end still reads whole.
+            // The card takes no pointer input, so moving onto it just ends the
+            // tick's hover instead of fighting the transcript beneath.
+            if tick-area.has-hover && (mark.user != "" || mark.agent != "") : Rectangle {
+                width: min(264px, max(0px, root.width - 40px));
+                height: preview-column.preferred-height + 20px;
+                x: -self.width - 8px;
+                y: min(marks-strip.height - self.height - 4px,
+                    max(4px, tick-hit.y + 6px - self.height / 2)) - tick-hit.y;
+                border-radius: Theme.radius-md;
+                background: Theme.surface;
+                border-width: 1px; border-color: Theme.border;
+                drop-shadow-color: #0F17291F;
+                drop-shadow-blur: 18px; drop-shadow-offset-y: 4px;
+                preview-column := VerticalLayout {
+                    x: 12px; y: 10px; width: parent.width - 24px;
+                    spacing: 4px;
+                    if mark.user != "" : Text {
+                        text: mark.user; color: Theme.text;
+                        font-size: Theme.font-md; font-weight: 600;
+                        line-height-factor: 1.4; wrap: word-wrap;
+                    }
+                    if mark.agent != "" : Text {
+                        text: mark.agent; color: Theme.muted;
+                        font-size: Theme.font-sm; line-height-factor: 1.5;
+                        wrap: word-wrap;
+                    }
+                }
             }
         }
     }

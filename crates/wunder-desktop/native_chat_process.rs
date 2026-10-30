@@ -165,7 +165,13 @@ pub(super) fn project_page(page: &Value, final_id: &str) -> NativeProcessPage {
                             return None;
                         }
                     }
-                    "tool_call" | "compaction" => {
+                    "tool_call" | "compaction" | "tool_result" => {
+                        // Legacy stress rows predate the `tool_call` kind and
+                        // surface as `tool_result`; keep them expandable when
+                        // they still name a tool.
+                        if row["kind"] == "tool_result" && !data["tool"].is_string() {
+                            return None;
+                        }
                         let compact = row["kind"] == "compaction";
                         let tool = if compact {
                             "上下文压缩"
@@ -378,6 +384,22 @@ mod tests {
         assert!(page.has_older);
         assert!(!page.has_newer);
         assert_eq!(page.first, Some(101));
+    }
+
+    #[test]
+    fn process_page_keeps_legacy_stress_tool_result_rows_with_a_tool_name() {
+        let page = project_page(
+            &json!({"items":[
+                {"item_id":"fixture-turn:tool-0-0","item_index":1,"turn_id":"fixture-turn","kind":"tool_result","status":"completed",
+                    "payload":{"tool":"read_file","args":{"path":"sample.txt"},"data":{"bytes":12},"ok":true}},
+                {"item_id":"fixture-turn:tool-0-1","item_index":2,"turn_id":"fixture-turn","kind":"tool_result","status":"completed",
+                    "payload":{"args":{"path":"missing.txt"},"error":"not found","ok":false}}
+            ]}),
+            "fixture-answer",
+        );
+        assert_eq!(page.items.len(), 1);
+        let tool = page.items[0].tool.as_ref().unwrap();
+        assert_eq!(tool.id, "fixture-turn:tool-0-0");
     }
 
     #[test]

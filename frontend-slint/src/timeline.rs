@@ -9,7 +9,7 @@
 //!
 //! The work-process bar owns thinking, tools and earlier answer blocks. It
 //! ships folded in a bounded viewport; batch rows retain invocation identity.
-use crate::{TextBlock, TimelineRow};
+use crate::{TextBlock, TimelineRow, TurnMark};
 #[allow(unused_imports)]
 use slint::{Model, ModelRc, VecModel};
 use std::cell::Cell;
@@ -44,6 +44,44 @@ pub(crate) fn is_process_step(kind: i32, index: usize, newest_body: usize) -> bo
 /// Live rows form a rolling window. Durable process pagination keeps every
 /// earlier step accessible without retaining the whole execution in memory.
 pub(crate) const MAX_LIVE_PROCESS_ROWS: usize = 160;
+/// Characters kept for the ruler's hover preview, matching the web ruler card
+/// (user title 160, agent snippet 200).
+const USER_PREVIEW_LIMIT: usize = 160;
+const AGENT_PREVIEW_LIMIT: usize = 200;
+
+/// Collapse whitespace runs into single spaces and cut at `limit` characters.
+/// A cut preview ends with an ellipsis so it never reads as the whole message.
+fn preview_text(text: &str, limit: usize) -> String {
+    let mut out = String::with_capacity(limit + 4);
+    let mut count = 0usize;
+    let mut pending_space = false;
+    let mut truncated = false;
+    for ch in text.chars() {
+        if ch.is_whitespace() {
+            pending_space = !out.is_empty();
+            continue;
+        }
+        if pending_space {
+            if count >= limit {
+                truncated = true;
+                break;
+            }
+            out.push(' ');
+            count += 1;
+            pending_space = false;
+        }
+        if count >= limit {
+            truncated = true;
+            break;
+        }
+        out.push(ch);
+        count += 1;
+    }
+    if truncated {
+        out.push('…');
+    }
+    out
+}
 
 pub fn status_kind(state: &str) -> i32 {
     match state {
@@ -204,7 +242,7 @@ struct BatchBar {
 /// The live turn reducer.
 pub struct Timeline {
     model: Rc<VecModel<TimelineRow>>,
-    marks: Rc<VecModel<f32>>,
+    marks: Rc<VecModel<TurnMark>>,
     marks_dirty: Cell<bool>,
     body: Option<Body>,
     thinking: Option<Thinking>,
@@ -232,6 +270,9 @@ pub struct Timeline {
     /// Independent turn footer, always after body/process/card rows.
     footer: Cell<usize>,
     turn: Option<String>,
+    /// Row index of the live turn's own user bubble; the ruler's newest mark is
+    /// that row, so a streaming flush can patch its preview without a scan.
+    active_user_row: usize,
     /// The live turn ran to its end but its rows are still the only copy: the
     /// durable snapshot has not caught up with it yet.
     settled: bool,
@@ -310,6 +351,7 @@ impl Timeline {
             protect_next_body: false,
             footer: Cell::new(usize::MAX),
             turn: None,
+            active_user_row: usize::MAX,
             settled: false,
             highlight: false,
             published: Cell::new(false),
@@ -322,7 +364,7 @@ impl Timeline {
         ModelRc::from(self.model.clone())
     }
 
-    pub fn marks_model(&self) -> ModelRc<f32> {
+    pub fn marks_model(&self) -> ModelRc<TurnMark> {
         ModelRc::from(self.marks.clone())
     }
 
@@ -334,7 +376,7 @@ impl Timeline {
             return;
         }
         let next = self.turn_marks();
-        if self.marks.iter().ne(next.iter().copied()) {
+        if self.marks.iter().ne(next.iter().cloned()) {
             self.marks.set_vec(next);
         }
     }
@@ -370,26 +412,80 @@ impl Timeline {
         String::new()
     }
 
-    /// Row-index fractions of each user turn for the chat view's turn ruler.
-    /// The ruler jumps proportionally, so one bounded pass per structural change
-    /// keeps it in sync without reporting per-row heights. Capped to the newest 100
-    /// turns so the strip stays readable on marathon threads.
-    pub fn turn_marks(&self) -> Vec<f32> {
+    /// One mark per user turn for the chat view's turn ruler. The mark carries
+    /// the turn row's fraction, the user's message and the turn's newest answer,
+    /// so the hover card needs no second lookup into the row model. One bounded
+    /// pass per structural change keeps it in sync without reporting per-row
+    /// heights; capped to the newest 100 turns so the strip stays readable on
+    /// marathon threads.
+    pub fn turn_marks(&self) -> Vec<TurnMark> {
         let total = self.model.row_count();
         if total <= 1 {
             return Vec::new();
         }
-        let mut marks: Vec<f32> = self
+        let users: Vec<usize> = self
             .model
             .iter()
             .enumerate()
             .filter(|(_, row)| row.kind == KIND_USER)
-            .map(|(index, _)| index as f32 / total as f32)
+            .map(|(index, _)| index)
             .collect();
-        if marks.len() > 100 {
-            marks.drain(..marks.len() - 100);
+        let first = users.len().saturating_sub(100);
+        let mut marks = Vec::with_capacity(users.len() - first);
+        for (position, &index) in users.iter().enumerate().skip(first) {
+            let end = users.get(position + 1).copied().unwrap_or(total);
+            let user = self
+                .model
+                .row_data(index)
+                .map(|row| preview_text(&row.text, USER_PREVIEW_LIMIT))
+                .unwrap_or_default();
+            // The turn's newest answer is its last non-empty body row; earlier
+            // bodies are intermediate notes inside the work process. Walking
+            // back from the turn's end usually hits it after a few rows.
+            let answer = ((index + 1)..end)
+                .rev()
+                .find(|row_index| {
+                    self.model.row_data(*row_index).is_some_and(|row| {
+                        row.kind == KIND_BODY && !row.text.is_empty()
+                    })
+                })
+                .and_then(|row_index| self.model.row_data(row_index))
+                .map(|row| preview_text(&row.text, AGENT_PREVIEW_LIMIT))
+                .unwrap_or_default();
+            marks.push(TurnMark {
+                fraction: index as f32 / total as f32,
+                user: user.into(),
+                agent: answer.into(),
+            });
         }
         marks
+    }
+
+    /// Mirror the streaming answer into the newest tick's preview so hovering
+    /// the live turn reads the reply as it grows. Skipped while the marks are
+    /// dirty: a structural change is about to rebuild them, and until that sync
+    /// the tail mark is not guaranteed to be this turn's.
+    fn update_tail_mark(&self, text: &str) {
+        if self.marks_dirty.get() || self.active_user_row == usize::MAX {
+            return;
+        }
+        let total = self.model.row_count();
+        let count = self.marks.row_count();
+        if total == 0 || count == 0 {
+            return;
+        }
+        let Some(mut mark) = self.marks.row_data(count - 1) else {
+            return;
+        };
+        if mark.fraction.to_bits() != (self.active_user_row as f32 / total as f32).to_bits() {
+            return;
+        }
+        let agent: slint::SharedString = preview_text(text, AGENT_PREVIEW_LIMIT).into();
+        if mark.agent == agent {
+            return;
+        }
+        mark.agent = agent;
+        self.marks.set_row_data(count - 1, mark);
     }
 
     /// Messages this thread already sent, newest first — the walk behind the
@@ -416,6 +512,7 @@ impl Timeline {
     pub fn clear(&mut self) {
         self.model.set_vec(Vec::new());
         self.marks_dirty.set(true);
+        self.active_user_row = usize::MAX;
 
         self.body = None;
         self.thinking = None;
@@ -566,6 +663,10 @@ impl Timeline {
                 row.blocks = crate::message_blocks::from_text(text);
                 self.model.set_row_data(index, row);
             }
+            self.active_user_row = index;
+            // The ruler preview reads this bubble's text, so the marks refresh
+            // even though the row's own position did not move.
+            self.marks_dirty.set(true);
             let process_id = format!("process-{root}");
             if let Some((bar, row)) = self
                 .model
@@ -591,6 +692,7 @@ impl Timeline {
         user.text = text.into();
         user.blocks = crate::message_blocks::from_text(text);
         let index = self.push(user);
+        self.active_user_row = index;
         self.open_process(root);
         index
     }
@@ -1123,6 +1225,7 @@ impl Timeline {
             let patch = tool.patch;
             let group = tool.group;
             let summary = crate::timeline_text::tool_summary(entry);
+            let row_summary = crate::timeline_text::tool_row_summary(entry, &target);
             let metrics = crate::timeline_text::tool_metrics(entry);
             let metrics_visible = !metrics.is_empty();
             let copy = crate::timeline_text::copy_text(&entry.sections, entry.detail.as_str());
@@ -1138,7 +1241,7 @@ impl Timeline {
                 row.tool_name = label.as_str().into();
                 row.tool_icon = icon.as_str().into();
                 row.target = target.as_str().into();
-                row.summary = summary.as_str().into();
+                row.summary = row_summary.as_str().into();
                 row.tool_metrics = metrics.as_str().into();
                 row.tool_metrics_visible = metrics_visible;
                 row.detail = copy.clone();
@@ -1171,6 +1274,7 @@ impl Timeline {
         let index = self.push(blank(KIND_TOOL, format!("tool-{}", entry.id)));
         let icon = crate::tool_icons::workflow_icon(&entry.title).to_string();
         let summary = crate::timeline_text::tool_summary(entry);
+        let row_summary = crate::timeline_text::tool_row_summary(entry, &target);
         let metrics = crate::timeline_text::tool_metrics(entry);
         let metrics_visible = !metrics.is_empty();
         let copy = crate::timeline_text::copy_text(&entry.sections, entry.detail.as_str());
@@ -1186,7 +1290,7 @@ impl Timeline {
             row.tool_name = label.as_str().into();
             row.tool_icon = icon.as_str().into();
             row.target = target.as_str().into();
-            row.summary = summary.as_str().into();
+            row.summary = row_summary.as_str().into();
             row.tool_metrics = metrics.as_str().into();
             row.tool_metrics_visible = metrics_visible;
             row.detail = copy;
@@ -1400,6 +1504,9 @@ impl Timeline {
         // event (reasoning/tool/round boundary), never by a body-only flush;
         // this preserves the newest answer outside the fold.
         self.refresh_process_bar();
+        // The newest tick previews the reply while it streams; a structural
+        // change above rebuilds every mark, so this only patches the tail.
+        self.update_tail_mark(&text);
     }
 
     /// Replace the whole model with durable history rows. Only for a timeline
@@ -1407,6 +1514,7 @@ impl Timeline {
     pub fn set_history(&mut self, mut rows: Vec<TimelineRow>) {
         crate::timeline_text::process_models(&mut rows);
         self.marks_dirty.set(true);
+        self.active_user_row = usize::MAX;
         self.model.set_vec(rows);
         self.sync_fold_ids();
         self.sync_turn_marks();
@@ -1544,6 +1652,7 @@ impl Timeline {
     /// Release the reducer's hold on a turn the snapshot has taken over.
     fn forget_turn(&mut self) {
         self.turn = None;
+        self.active_user_row = usize::MAX;
         self.settled = false;
         self.body = None;
         self.thinking = None;
@@ -1579,6 +1688,9 @@ impl Timeline {
             return;
         }
         let shift = |index: usize| (index as isize + delta).max(0) as usize;
+        if self.active_user_row != usize::MAX {
+            self.active_user_row = shift(self.active_user_row);
+        }
         if let Some(body) = self.body.as_mut() {
             body.index = shift(body.index);
         }
@@ -2574,6 +2686,54 @@ mod tests {
         assert!(timeline.marks_dirty.get(), "a new user row moves the marks");
         timeline.sync_turn_marks();
         assert!(!timeline.marks_dirty.get());
+    }
+
+    #[test]
+    fn turn_marks_preview_the_user_message_and_newest_answer() {
+        let mut timeline = Timeline::new();
+        timeline.begin_turn("turn-a", "First question");
+        timeline.start_body(1);
+        timeline.append_body("Intermediate note").unwrap();
+        timeline.flush();
+        timeline.start_body(2);
+        timeline.append_body("First answer").unwrap();
+        timeline.flush();
+        timeline.begin_turn("turn-b", "Second question");
+        timeline.sync_turn_marks();
+
+        let marks = timeline.turn_marks();
+        assert_eq!(marks.len(), 2);
+        assert_eq!(marks[0].user, "First question");
+        assert_eq!(
+            marks[0].agent, "First answer",
+            "the preview reads the turn's newest answer, not its notes"
+        );
+        assert_eq!(marks[1].user, "Second question");
+        assert_eq!(
+            marks[1].agent, "",
+            "a question still awaiting an answer previews only itself"
+        );
+    }
+
+    #[test]
+    fn the_newest_turn_preview_follows_the_streaming_answer() {
+        let mut timeline = Timeline::new();
+        timeline.begin_turn("live", "Fixture input");
+        timeline.start_body(1);
+        timeline.append_body("Partial").unwrap();
+        timeline.flush();
+        timeline.sync_turn_marks();
+        assert_eq!(timeline.turn_marks()[0].agent, "Partial");
+
+        timeline.append_body(" answer").unwrap();
+        timeline.flush();
+        let marks = timeline.marks_model();
+        assert_eq!(marks.row_count(), 1);
+        assert_eq!(
+            marks.row_data(0).unwrap().agent,
+            "Partial answer",
+            "a streamed delta patches the newest tick instead of rebuilding the ruler"
+        );
     }
 
     #[test]
