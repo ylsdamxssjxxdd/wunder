@@ -28,6 +28,20 @@
       <button
         class="tt-toggle"
         type="button"
+        :class="{ 'tt-toggle-active': showTokens }"
+        :aria-pressed="showTokens"
+        @click="showTokens = !showTokens"
+      >
+        <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+          <rect x="3" y="8" width="2.4" height="5" rx="0.6" fill="currentColor" />
+          <rect x="7" y="5" width="2.4" height="8" rx="0.6" fill="currentColor" />
+          <rect x="11" y="9.5" width="2.4" height="3.5" rx="0.6" fill="currentColor" />
+        </svg>
+        <span>{{ t('messenger.trajectory.tokenUsage') }}</span>
+      </button>
+      <button
+        class="tt-toggle"
+        type="button"
         :class="{ 'tt-toggle-active': showTurns }"
         :aria-pressed="showTurns"
         :title="t(showTurns ? 'messenger.trajectory.expandTurns' : 'messenger.trajectory.collapseTurns')"
@@ -165,6 +179,27 @@
       >
         <div v-for="(line, i) in tooltip.lines" :key="i" class="tt-tooltip-line">{{ line }}</div>
       </div>
+    </div>
+
+    <div v-if="showTokens && stepUsage.bars.length > 0" class="tt-tokenbars">
+      <span class="tt-tokenbars-label">{{ t('messenger.trajectory.tokenUsage') }}</span>
+      <div class="tt-tokenbars-track">
+        <span
+          v-for="bar in stepUsage.bars"
+          :key="bar.requestNumber"
+          class="tt-tokenbar"
+          :class="tokenBarClasses(bar)"
+          :style="{ height: tokenBarHeight(bar) }"
+          @pointerenter="onTokenBarEnter(bar, $event)"
+          @pointerleave="onSpanLeave"
+          @click.stop="onTokenBarClick(bar)"
+        />
+      </div>
+      <span class="tt-tokenbars-summary">{{
+        stepUsage.reportedCount > 0
+          ? t('messenger.trajectory.tokenTotal', { value: `${formatCompactTokens(stepUsage.totalSum)} tok` })
+          : ''
+      }}</span>
     </div>
 
     <div class="tt-body" :class="{ 'tt-has-details': selectedCell }">
@@ -482,6 +517,7 @@ import { renderMarkdown } from '@/utils/markdown'
 import TrajectoryJsonTree from './trajectory/TrajectoryJsonTree.vue'
 import {
   buildRequestNumbers,
+  buildStepUsageBars,
   buildTrajectoryLayout,
   collapseTurnRecords,
   buildFoldGroups,
@@ -504,6 +540,7 @@ import {
   trajectoryPageTurns,
 } from './trajectory/trajectoryModel'
 import type {
+  StepUsageBar,
   TableRecord,
   TimelineMode,
   TimelineModel,
@@ -569,6 +606,7 @@ let loadAbort: AbortController | null = null
 
 const showDuration = ref(true)
 const showTime = ref(false)
+const showTokens = ref(true)
 const searchQuery = ref('')
 
 const searchHits=shallowRef<any[]>([]),searchLoading=ref(false),searchError=ref(false),searchMore=ref(false),searchText=ref('')
@@ -627,6 +665,7 @@ const timelineMode = computed(() => {
 
 const turns = computed(() => buildTrajectoryLayout(rawTurns.value, modelT))
 const requests = computed(() => buildRequestNumbers(turns.value))
+const stepUsage = computed(() => buildStepUsageBars(requests.value))
 const allRecords = computed(() => flattenRecords(turns.value))
 const filteredRecords = computed(() => filterRecords(allRecords.value, searchQuery.value))
 const foldGroups = computed(() => buildFoldGroups(allRecords.value))
@@ -2117,6 +2156,7 @@ function spanClasses(span: { model: TimelineSpan; dimmed: boolean; outside: bool
     'tt-span-error': span.model.isError,
     'tt-span-dimmed': span.dimmed,
     'tt-span-outside': span.outside,
+    'tt-span-selected': selectedIndex.value !== null && selectedIndex.value === span.model.index,
   }
 }
 
@@ -2172,6 +2212,74 @@ const selectionStyle = computed(() => {
 function formatTokens(value: number | undefined): string {
   if (value === undefined || !Number.isFinite(value)) return t('messenger.trajectory.unavailable')
   return t('messenger.trajectory.tokens', { value: Math.round(value).toLocaleString('en-US') })
+}
+
+/** 直方图与汇总的紧凑 token 数：12,345 → 12.3k。 */
+function formatCompactTokens(value: number): string {
+  if (!Number.isFinite(value)) return '0'
+  if (value >= 1e6) return `${(value / 1e6).toFixed(1)}M`
+  if (value >= 1e3) return `${(value / 1e3).toFixed(1)}k`
+  return String(Math.round(value))
+}
+
+function tokenBarHeight(bar: StepUsageBar): string {
+  if (!bar.reported) return '2px'
+  const ratio = stepUsage.value.max > 0 ? (bar.delta ?? 0) / stepUsage.value.max : 0
+  return `${Math.max(4, Math.round(ratio * 100))}%`
+}
+
+function tokenBarClasses(bar: StepUsageBar): Record<string, boolean> {
+  return {
+    'tt-tokenbar-empty': !bar.reported,
+    'tt-tokenbar-max': bar.reported && bar.delta !== null && bar.delta === stepUsage.value.max && bar.delta > 0,
+    'tt-tokenbar-selected': selectedIndex.value !== null && selectedIndex.value === bar.assistantIndex,
+  }
+}
+
+function onTokenBarEnter(bar: StepUsageBar, event: PointerEvent): void {
+  if (tooltipTimer !== null) window.clearTimeout(tooltipTimer)
+  const clientX = event.clientX
+  const clientY = event.clientY
+  tooltipTimer = window.setTimeout(() => {
+    const stepText = modelT('trajectory.stepLabel', { step: bar.step })
+    const lines: string[] = [
+      bar.turn !== null ? `${modelT('trajectory.turnTitle', { turn: bar.turn })} · ${stepText}` : stepText,
+    ]
+    if (bar.reported) {
+      lines.push(modelT('trajectory.usageDelta', {
+        value: modelT('trajectory.tokens', { value: formatCompactTokens(bar.delta ?? 0) }),
+      }))
+      lines.push(modelT('trajectory.usageStepTotal', {
+        value: modelT('trajectory.tokens', { value: formatCompactTokens(bar.total) }),
+      }))
+      const parts = [
+        modelT('trajectory.usageInput', { value: formatCompactTokens(bar.input) }),
+        modelT('trajectory.usageOutput', { value: formatCompactTokens(bar.output) }),
+      ]
+      if (bar.cacheRead > 0) {
+        parts.push(modelT('trajectory.usageCacheRead', { value: formatCompactTokens(bar.cacheRead) }))
+      }
+      if (bar.cacheWrite > 0) {
+        parts.push(modelT('trajectory.usageCacheWrite', { value: formatCompactTokens(bar.cacheWrite) }))
+      }
+      lines.push(parts.join(' · '))
+    } else {
+      lines.push(modelT('trajectory.usageNotReported'))
+    }
+    if (bar.startedAt !== null && bar.completedAt !== null && bar.completedAt >= bar.startedAt) {
+      lines.push(modelT('trajectory.totalDurationValue', {
+        duration: formatDurationMillis(bar.completedAt - bar.startedAt, modelT),
+      }))
+    }
+    tooltip.lines = lines
+    tooltip.x = clientX
+    tooltip.y = clientY
+    tooltip.visible = true
+  }, TOOLTIP_DELAY_MS)
+}
+
+function onTokenBarClick(bar: StepUsageBar): void {
+  selectIndex(bar.assistantIndex)
 }
 </script>
 

@@ -45,6 +45,14 @@ export component TrajDemo inherits Window {
             { pos: 0.34, label: "2" },
             { pos: 0.68, label: "3" }
         ];
+        token-bars: [
+            { index: 2, ratio: 0.05, reported: true, peak: false, tooltip: "Turn 2 · Step 1\n+1,578 tok new\n1,578 tok this step\nin 1,236 · out 342\nTotal 1,420 ms" },
+            { index: 4, ratio: 0.12, reported: true, peak: false, tooltip: "Turn 2 · Step 2\n+2,900 tok new\n4,478 tok this step\nin 4,100 · out 378" },
+            { index: 6, ratio: 1.0, reported: true, peak: true, tooltip: "Turn 3 · Step 1\n+85,000 tok new\n98,400 tok this step\nin 96,000 · out 2,400\nTotal 12,000 ms" },
+            { index: 8, ratio: 0.08, reported: true, peak: false, tooltip: "Turn 3 · Step 2\n+4,100 tok new\n102,500 tok this step\nin 99,500 · out 3,000" },
+            { index: -1, ratio: 0.0, reported: false, peak: false, tooltip: "Turn 3 · Step 3\nNot reported" }
+        ];
+        token-total: "93.6k tok total";
         view-start: 0.0;
         view-width: 1.0;
         detail-header: "Turn 2 · Step 1";

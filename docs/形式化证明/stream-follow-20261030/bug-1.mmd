@@ -1,0 +1,49 @@
+---
+config:
+  markdownAutoWrap: false
+  state:
+    useMaxWidth: false
+---
+stateDiagram-v2
+  %% second model (fix): the fix
+  classDef plainFixed fill:#f4f6f7,stroke:#1e8449,stroke-width:4px,color:#145a32
+  classDef group0 fill:#d6eaf8,stroke:#6b757c,color:#1b2631
+  classDef group0Path fill:#d6eaf8,stroke:#1f3a93,stroke-width:4px,color:#1b2631
+  classDef group1 fill:#fdebd0,stroke:#7f7668,color:#1b2631
+  classDef group1Fixed fill:#fdebd0,stroke:#1e8449,stroke-width:4px,color:#145a32
+  classDef group1Path fill:#fdebd0,stroke:#1f3a93,stroke-width:4px,color:#1b2631
+  state "Legend" as legend {
+    state "视口已跟上" as legendGroup0
+    state "过程区落后" as legendGroup1
+    state "Fixed or new with the fix" as legendFixed
+  }
+  class legendGroup0 group0
+  class legendGroup1 group1
+  class legendFixed plainFixed
+  state "外层时间线：最新0段，视口停在0，跟随中<br/>工作过程列表：最新0段，视口停在0，跟随中" as s0
+  state "外层时间线：最新1段，视口停在0，跟随中，跟随待触发<br/>工作过程列表：最新0段，视口停在0，跟随中" as s1
+  state "外层时间线：最新2段，视口停在0，跟随中，跟随待触发<br/>工作过程列表：最新0段，视口停在0，跟随中" as s2
+  state "外层时间线：最新3段，视口停在0，跟随中，跟随待触发<br/>工作过程列表：最新0段，视口停在0，跟随中" as s3
+  state "外层时间线：最新3段，视口停在3，跟随中<br/>工作过程列表：最新0段，视口停在0，跟随中" as s4
+  state "外层时间线：最新3段，视口停在3，跟随中<br/>工作过程列表：最新1段，视口停在0，跟随中" as s5
+  state "外层时间线：最新3段，视口停在3，跟随中<br/>工作过程列表：最新1段，视口停在0，跟随中，跟随待触发" as s6
+  state "外层时间线：最新3段，视口停在3，跟随中<br/>工作过程列表：最新2段，视口停在0，跟随中" as s7
+  state "外层时间线：最新3段，视口停在3，跟随中<br/>工作过程列表：最新3段，视口停在0，跟随中" as s8
+  [*] --> s0
+  s0 --> s1 : 1. 外层发布新一帧，重武装跟随
+  s1 --> s2 : 2. 外层发布新一帧，重武装跟随
+  s2 --> s3 : 3. 外层发布新一帧，重武装跟随
+  s3 --> s4 : 4. 外层跟随到最新
+  s4 --> s5 : 5. 过程区条目流式变高（无新增信号）
+  s5 --> s7 : 6. 过程区条目流式变高（无新增信号）
+  s7 --> s8 : 7. 过程区条目流式变高（无新增信号）
+  s4 --> s6 : with the fix, 过程区条目流式变高（无新增信号）
+  class s0 group0Path
+  class s1 group0Path
+  class s2 group0Path
+  class s3 group0Path
+  class s4 group0Path
+  class s5 group1Path
+  class s6 group1Path
+  class s7 group1Path
+  class s8 group1Fixed

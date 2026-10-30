@@ -12,7 +12,7 @@
       :aria-selected="activeId === item.local_thread_id"
     >
       <button class="interlink-thread-row mz-thread-select" type="button"
-        :title="item.title || item.local_thread_id" @click="emit('open', item.local_thread_id)">
+        :title="rowTooltip(item)" @click="emit('open', item.local_thread_id)">
         <span class="mz-thread-status" :class="statusOf(item.status).style" aria-hidden="true">
           <i class="fa-solid" :class="statusOf(item.status).icon"></i>
         </span>
@@ -32,11 +32,18 @@
 <script setup lang="ts">
 import { useI18n } from '@/i18n';
 import type { InterlinkShadowThread } from '@/api/interlink';
+import { formatDateTime } from '@/utils/formatDateTime';
 
 defineProps<{ items: InterlinkShadowThread[]; loading: boolean; error: string; hasMore: boolean; truncated: boolean; activeId: string }>();
 const emit = defineEmits<{ open: [id: string]; refresh: []; 'load-more': [] }>();
 const { language } = useI18n();
 const text = (zh: string, en: string): string => language.value.startsWith('zh') ? zh : en;
+/** 同主侧栏：标题之外补一行最后活动时间，便于按日期找回远端线程。 */
+const rowTooltip = (item: InterlinkShadowThread): string => {
+  const title = item.title || item.local_thread_id;
+  const at = formatDateTime(item.updated_at);
+  return at ? `${title} · ${text('最后完成', 'Last finished')} ${at}` : title;
+};
 const statusOf = (status: string) => {
   if (status === 'working') return { style: 'is-running', icon: 'fa-spinner fa-spin' };
   if (status === 'failed') return { style: 'is-error', icon: 'fa-circle-exclamation' };

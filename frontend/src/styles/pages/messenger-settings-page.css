@@ -73,11 +73,14 @@
 .messenger-settings-frame-nav-item {
   position: relative;
   display: flex;
-  align-items: flex-start;
+  /* 行高是固定的节奏：窗口变矮时让列表滚动，不要把这些行压扁。 */
+  flex-shrink: 0;
+  align-items: center;
   gap: 10px;
   box-sizing: border-box;
   width: 100%;
-  padding: 8px 10px 8px 12px;
+  height: 36px;
+  padding: 0 10px 0 12px;
   border: 0;
   border-radius: var(--mz-radius-btn);
   background: transparent;
@@ -108,8 +111,8 @@
 }
 
 .messenger-settings-frame-nav-icon {
+  flex-shrink: 0;
   width: 16px;
-  margin-top: 2px;
   color: var(--mz-text-muted);
   text-align: center;
 }
@@ -118,24 +121,14 @@
   color: var(--mz-primary);
 }
 
-.messenger-settings-frame-nav-text {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
+/* 单行条目：分类摘要已从导航里移除，标题自己吃掉剩余宽度并省略。 */
 .messenger-settings-frame-nav-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
   font-size: var(--mz-font-base);
   font-weight: 500;
   line-height: 1.3;
-}
-
-.messenger-settings-frame-nav-desc {
-  color: var(--mz-text-muted);
-  font-size: var(--mz-font-sm, 12px);
-  line-height: 1.3;
-  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

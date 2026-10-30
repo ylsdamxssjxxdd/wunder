@@ -919,6 +919,44 @@ pub(super) fn prepare_compaction_summary_messages(
     prepared
 }
 
+/// Fold adjacent leading system messages into one. Providers that accept a
+/// single leading system message reject a second one even when it directly
+/// follows the first ("System message must be at the beginning."). The summary
+/// request keeps the frozen thread prompt as its own prefix while the prepared
+/// history may still lead with a system block, so the two have to be combined
+/// before the request leaves the runtime.
+pub(super) fn fold_leading_system_messages(messages: &mut Vec<Value>) {
+    while messages.len() > 1
+        && messages[0].is_object()
+        && messages[1].get("role").and_then(Value::as_str) == Some("system")
+    {
+        let extra = messages.remove(1);
+        let extra_text = extract_guard_content_text(extra.get("content").unwrap_or(&Value::Null));
+        let extra_text = extra_text.trim();
+        if extra_text.is_empty() {
+            continue;
+        }
+        let Some(first) = messages[0].as_object_mut() else {
+            break;
+        };
+        let merged = match first.get("content") {
+            Some(Value::String(existing)) if !existing.trim().is_empty() => {
+                format!("{}\n\n{}", existing.trim_end(), extra_text)
+            }
+            None | Some(Value::Null) | Some(Value::String(_)) => extra_text.to_string(),
+            Some(other) => {
+                let existing = extract_guard_content_text(other);
+                if existing.is_empty() {
+                    extra_text.to_string()
+                } else {
+                    format!("{existing}\n\n{extra_text}")
+                }
+            }
+        };
+        first.insert("content".to_string(), Value::String(merged));
+    }
+}
+
 pub(super) fn build_compaction_summary_input(
     system_message: Option<&Value>,
     source_messages: &[Value],

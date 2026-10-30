@@ -8,6 +8,7 @@ ENTRIES = [
     ("sb_thread_selected", "已选 {} 项", "{} selected", ["count"]),
     ("sb_thread_archive", "归档", "Archive"),
     ("sb_thread_trajectory", "轨迹视图", "Trajectory view"),
+    ("sb_last_finished", "最后完成", "Last finished"),
     ("tl_state_queued", "排队中", "Queued"),
     ("tl_state_question", "等待回答", "Waiting for answers"),
     ("tl_state_input", "等待用户输入", "Waiting for input"),

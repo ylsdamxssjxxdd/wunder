@@ -4,7 +4,7 @@ import { ExpertToolGroup } from "expert_widgets.slint";
 export { ExpertToolGroup }
 import { RuntimeStatus } from "runtime_status.slint";
 import { I18n } from "i18n.slint";
-import { Theme, DesktopPage, Conversation, WorkspaceCard, SidebarRow, CloudThreadCard, TextBlock, WorkflowLine, WorkflowSection, ToolWorkflowEntry, TimelineRow, TimelineCounts, TurnStatMetric, PatchCard, PatchLine, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, TrajRow, TrajSpan, TrajTick, TrajBoundary, TrajTiming, TrajSection, TrajTab, TrajSearchHit, CronCard, CronRunCard, PromptPackCard, ChannelCatalogCard, ChannelAccountCard, ChannelBindingCard, ChannelLogCard, AvatarOption, AvatarColorChip, CompanionCard, PlanStep, InquiryQuestion, QueueTurn, DraftRecall, InterlinkApproval, WorkspaceFileRow } from "theme.slint";
+import { Theme, DesktopPage, Conversation, WorkspaceCard, SidebarRow, CloudThreadCard, TextBlock, WorkflowLine, WorkflowSection, ToolWorkflowEntry, TimelineRow, TimelineCounts, TurnStatMetric, TurnMark, PatchCard, PatchLine, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, TrajRow, TrajSpan, TrajTick, TrajBoundary, TrajTiming, TrajSection, TrajTab, TrajSearchHit, TrajTokenBar, CronCard, CronRunCard, PromptPackCard, ChannelCatalogCard, ChannelAccountCard, ChannelBindingCard, ChannelLogCard, AvatarOption, AvatarColorChip, CompanionCard, PlanStep, InquiryQuestion, QueueTurn, DraftRecall, InterlinkApproval, WorkspaceFileRow } from "theme.slint";
 import { Action, EdgeToggle, RailButton, Avatar, FormField, MiddleHeader, MiddleFooter, ConfirmDialog, InfoDialog, ToastHost, ToastState } from "components.slint";
 export { ToastState }
 import { ProcessEntry } from "theme.slint";
@@ -278,8 +278,8 @@ export component MainWindow inherits Window {
     callback inquiry-use-recommended(int);
     callback inquiry-page-move(int);
     callback inquiry-expanded-toggle();
-    // Fractional offset of every user turn for the right-edge ruler.
-    in-out property <[float]> turn-marks: [];
+    // Fraction and hover preview of every user turn for the right-edge ruler.
+    in-out property <[TurnMark]> turn-marks: [];
     in-out property <bool> connected: false;
     // The default is deliberately loading: MainWindow exists before the
     // asynchronous local runtime does, so a first frame must never resemble a
@@ -345,6 +345,8 @@ export component MainWindow inherits Window {
     in-out property <bool> traj-open: false;
     in-out property <[TrajRow]> traj-rows;
     in-out property <[TrajSpan]> traj-spans;
+    in-out property <[TrajTokenBar]> traj-token-bars;
+    in-out property <string> traj-token-total;
     in-out property <[TrajTick]> traj-ticks;
     in-out property <[TrajBoundary]> traj-boundaries;
     in-out property <float> traj-view-start: 0.0;
@@ -911,6 +913,7 @@ export component MainWindow inherits Window {
     callback discard-model-draft();
     callback move-model(int, int);
     callback save-model();
+    callback commit-model-key();
     callback set-default-model(string);
     callback delete-model(string);
     // The native projection bumps scroll-revision; TimelineView owns the
@@ -1173,11 +1176,16 @@ export component MainWindow inherits Window {
                     // The whole input band shares the transcript's reading column:
                     // a layout child may not re-declare width (that is a binding
                     // loop), so the row stays full width and centres its band.
+                    // The band owns the composer card's 14px side inset, so the
+                    // status dock, goal banner and inquiry card share the card's
+                    // edges instead of riding the wider band.
                     Rectangle {
                         height: input-band.preferred-height;
                         input-band := VerticalLayout {
                             width: min(parent.width, Theme.timeline-column-width);
                             x: (parent.width - self.width) / 2;
+                            padding-left: 14px;
+                            padding-right: 14px;
                             spacing: 0px;
                             if root.activity-steps-total > 0 : StatusDock {
                                 running: root.activity-running;
@@ -1362,6 +1370,7 @@ export component MainWindow inherits Window {
         create-model => { root.create-model(); }
         discard-model-draft => { root.discard-model-draft(); }
         save-model => { root.save-model(); }
+        commit-model-key => { root.commit-model-key(); }
         move-model(from, delta) => { root.move-model(from, delta); }
         set-default-model(key) => { root.set-default-model(key); }
         refresh => { root.refresh-settings(); }
@@ -1633,6 +1642,7 @@ export component MainWindow inherits Window {
         y: Theme.titlebar-height;
         height: max(0px, parent.height - Theme.titlebar-height);
         rows: root.traj-rows; spans: root.traj-spans; ticks: root.traj-ticks; boundaries: root.traj-boundaries;
+        token-bars: root.traj-token-bars; token-total: root.traj-token-total;
         view-start: root.traj-view-start; view-width: root.traj-view-width;
         selection-active: root.traj-selection-active; selection-start: root.traj-selection-start; selection-end: root.traj-selection-end;
         detail-header: root.traj-detail-header; detail-badge: root.traj-detail-badge; detail-kind: root.traj-detail-kind;

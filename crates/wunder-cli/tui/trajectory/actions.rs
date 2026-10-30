@@ -299,6 +299,7 @@ impl TuiApp {
             KeyCode::Char('?') => v.help = true,
             KeyCode::Char('/') | KeyCode::F(3) => v.searching = true,
             KeyCode::Char('d') => v.duration = !v.duration,
+            KeyCode::Char('x') => v.tokens = !v.tokens,
             KeyCode::Char('+') | KeyCode::Char('=') => v.zoom = v.zoom.saturating_add(1).min(8),
             KeyCode::Char('-') => v.zoom = v.zoom.saturating_sub(1),
             KeyCode::Char('0') => v.zoom = 0,
@@ -496,6 +497,21 @@ impl TuiApp {
                     v.live = false;
                 }
                 self.request_trajectory_detail();
+            }
+            MouseEventKind::Down(MouseButton::Left) if v.tokenbars_area.contains(point) => {
+                // 点击消耗带定位对应步骤：列号跳过左侧标签后查绘制期留下的命中表。
+                let x = event
+                    .column
+                    .saturating_sub(v.tokenbars_area.x + view::TOKENBARS_LABEL_COLS)
+                    as usize;
+                if event.column >= v.tokenbars_area.x + view::TOKENBARS_LABEL_COLS {
+                    if let Some(Some(i)) = v.tokenbar_hits.get(x).copied() {
+                        v.selected = i;
+                        v.detail_scroll = 0;
+                        v.live = false;
+                        self.request_trajectory_detail();
+                    }
+                }
             }
             MouseEventKind::Down(MouseButton::Left) if v.detail_area.contains(point) => {
                 v.detail_focus = true

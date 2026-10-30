@@ -4,13 +4,14 @@
 
 import { elements } from "./elements.js?v=20261016-01";
 import { getAuthHeaders } from "./admin-auth.js?v=20261011-01";
-import { getCurrentLanguage, t } from "./i18n.js?v=20261016-02";
+import { getCurrentLanguage, t } from "./i18n.js?v=20261030-03";
 import { getWunderBase } from "./api.js";
 import { notify } from "./notify.js";
 import { normalizeMarkdownForWebPreview, enhanceRenderedMarkdown } from "./markdown-preview.js";
 import {
   attachTurnItems,
   buildRequestNumbers,
+  buildStepUsageBars,
   buildTrajectoryLayout,
   collapseTurnRecords,
   buildFoldGroups,
@@ -26,7 +27,7 @@ import {
   requestIdentity,
   timelineFocusIndexes,
   trajectoryDiagnosticRows,
-} from "./trajectory-model.js?v=20261027-01";
+} from "./trajectory-model.js?v=20261030-03";
 
 const OVERSCAN_PX = 360;
 const VIRTUAL_THRESHOLD = 100;
@@ -246,6 +247,7 @@ export function createTrajectoryView(host, options = {}) {
     loading: true,
     loadError: false,
     showDuration: true,
+    showTokens: true,
     showTurns: false,
     showCalls: false,
     searchQuery: "",
@@ -314,6 +316,12 @@ export function createTrajectoryView(host, options = {}) {
       svg.appendChild(svgEl("circle", { cx: "8", cy: "8", r: "5.25", fill: "none", stroke: "currentColor", "stroke-width": "1.25" }));
       svg.appendChild(svgEl("path", { d: "M8 4.75V8l2.25 1.5", fill: "none", stroke: "currentColor", "stroke-width": "1.25", "stroke-linecap": "round" }));
       button.appendChild(svg);
+    } else if (glyph === "bars") {
+      const svg = svgEl("svg", { viewBox: "0 0 16 16", width: "12", height: "12", "aria-hidden": "true" });
+      for (const [x, y, height] of [[3, 8, 5], [7, 5, 8], [11, 9.5, 3.5]]) {
+        svg.appendChild(svgEl("rect", { x: String(x), y: String(y), width: "2.4", height: String(height), rx: "0.6", fill: "currentColor" }));
+      }
+      button.appendChild(svg);
     } else {
       button.appendChild(h("span", "tt-toggle-glyph", glyph));
     }
@@ -322,9 +330,11 @@ export function createTrajectoryView(host, options = {}) {
   };
 
   const durationToggle = mkToggle("clock", modelT("duration"));
+  const tokensToggle = mkToggle("bars", modelT("tokenUsage"));
   const turnsToggle = mkToggle("⊞", modelT("turns"));
   const callsToggle = mkToggle("⊟", modelT("calls"));
   toolbar.appendChild(durationToggle);
+  toolbar.appendChild(tokensToggle);
   toolbar.appendChild(turnsToggle);
   toolbar.appendChild(callsToggle);
   toolbar.appendChild(h("div", "tt-toolbar-spacer"));
@@ -393,6 +403,16 @@ export function createTrajectoryView(host, options = {}) {
   plotEl.appendChild(trackEl);
   timelineEl.appendChild(plotEl);
 
+  // 消耗直方图：每一步（模型请求）一根柱，柱高对应该步 token 消耗。
+  const tokenbarsEl = h("div", "tt-tokenbars");
+  tokenbarsEl.style.display = "none";
+  const tokenbarsLabel = h("span", "tt-tokenbars-label", modelT("tokenUsage"));
+  const tokenbarsTrack = h("div", "tt-tokenbars-track");
+  const tokenbarsSummary = h("span", "tt-tokenbars-summary");
+  tokenbarsEl.appendChild(tokenbarsLabel);
+  tokenbarsEl.appendChild(tokenbarsTrack);
+  tokenbarsEl.appendChild(tokenbarsSummary);
+
   const tooltipEl = h("div", "tt-tooltip");
   tooltipEl.style.display = "none";
 
@@ -418,6 +438,7 @@ export function createTrajectoryView(host, options = {}) {
 
   root.appendChild(toolbar);
   root.appendChild(timelineEl);
+  root.appendChild(tokenbarsEl);
   root.appendChild(bodyEl);
   root.appendChild(tooltipEl);
   host.textContent = "";
@@ -484,6 +505,14 @@ export function createTrajectoryView(host, options = {}) {
     const hours = Math.floor(abs / 3600000);
     const minutes = Math.round((abs % 3600000) / 60000);
     return `${hours}h ${padAxis2(minutes)}m`;
+  };
+
+  /** 直方图与汇总的紧凑 token 数：12,345 → 12.3k。 */
+  const formatCompactTokens = (value) => {
+    if (!Number.isFinite(value)) return "0";
+    if (value >= 1e6) return `${(value / 1e6).toFixed(1)}M`;
+    if (value >= 1e3) return `${(value / 1e3).toFixed(1)}k`;
+    return String(Math.round(value));
   };
 
   /* ---------- 渲染 ---------- */
@@ -565,6 +594,7 @@ export function createTrajectoryView(host, options = {}) {
 
     renderToolbar();
     renderTimeline(timeline, domain, matched, focusSet);
+    renderTokenbars(requests, matched);
     renderLedger({
       rows,
       winStart,
@@ -590,6 +620,8 @@ export function createTrajectoryView(host, options = {}) {
   const renderToolbar = () => {
     durationToggle.classList.toggle("tt-toggle-active", st.showDuration);
     durationToggle.setAttribute("aria-pressed", st.showDuration ? "true" : "false");
+    tokensToggle.classList.toggle("tt-toggle-active", st.showTokens);
+    tokensToggle.setAttribute("aria-pressed", st.showTokens ? "true" : "false");
     turnsToggle.classList.toggle("tt-toggle-active", st.showTurns);
     turnsToggle.setAttribute("aria-pressed", st.showTurns ? "true" : "false");
     callsToggle.classList.toggle("tt-toggle-active", st.showCalls);
@@ -680,6 +712,7 @@ export function createTrajectoryView(host, options = {}) {
       const node = h("span", "tt-span");
       node.classList.add(`tt-span-${modelSpan.kind}`);
       if (modelSpan.isError) node.classList.add("tt-span-error");
+      if (st.selectedIndex !== null && st.selectedIndex === modelSpan.index) node.classList.add("tt-span-selected");
       if (needle && !matched.has(modelSpan.index)) node.classList.add("tt-span-dimmed");
       if (focusSet && !focusSet.has(modelSpan.index)) node.classList.add("tt-span-outside");
       node.style.left = `${spanLeft}px`;
@@ -710,6 +743,85 @@ export function createTrajectoryView(host, options = {}) {
     } else {
       selectionEl.style.display = "none";
     }
+  };
+
+  const renderTokenbars = (requests, matched) => {
+    const usage = buildStepUsageBars(requests);
+    const needle = st.searchQuery.trim().toLowerCase();
+    const visible = st.showTokens && usage.bars.length > 0;
+    tokenbarsEl.style.display = visible ? "" : "none";
+    if (!visible) return;
+    tokenbarsLabel.textContent = modelT("tokenUsage");
+    tokenbarsSummary.textContent =
+      usage.reportedCount > 0
+        ? modelT("tokenTotal", { value: `${formatCompactTokens(usage.totalSum)} tok` })
+        : "";
+    tokenbarsTrack.textContent = "";
+    for (const bar of usage.bars) {
+      const node = h("span", "tt-tokenbar");
+      if (!bar.reported) {
+        node.classList.add("tt-tokenbar-empty");
+        node.style.height = "2px";
+      } else {
+        const ratio = usage.max > 0 ? bar.delta / usage.max : 0;
+        node.style.height = `${Math.max(4, Math.round(ratio * 100))}%`;
+        if (bar.delta === usage.max && bar.delta > 0) node.classList.add("tt-tokenbar-max");
+      }
+      if (needle && !matched.has(bar.assistantIndex)) node.classList.add("tt-tokenbar-dimmed");
+      if (st.selectedIndex !== null && st.selectedIndex === bar.assistantIndex) node.classList.add("tt-tokenbar-selected");
+      node.addEventListener("pointerenter", (event) => onBarEnter(bar, event));
+      node.addEventListener("pointerleave", onSpanLeave);
+      node.addEventListener("click", (event) => {
+        event.stopPropagation();
+        if (bar.assistantIndex !== null) selectIndex(bar.assistantIndex);
+      });
+      tokenbarsTrack.appendChild(node);
+    }
+  };
+
+  const onBarEnter = (bar, event) => {
+    if (tooltipTimer !== null) window.clearTimeout(tooltipTimer);
+    const clientX = event.clientX;
+    const clientY = event.clientY;
+    tooltipTimer = window.setTimeout(() => {
+      const stepText = bar.step !== null
+        ? modelT("stepLabel", { step: bar.step })
+        : modelT("requestLabel", { request: bar.requestNumber });
+      const lines = [
+        bar.turn !== null ? `${modelT("turnTitle", { turn: bar.turn })} · ${stepText}` : stepText,
+      ];
+      if (bar.reported) {
+        lines.push(modelT("usageDelta", {
+          value: modelT("tokens", { value: formatCompactTokens(bar.delta) }),
+        }));
+        lines.push(modelT("usageStepTotal", {
+          value: modelT("tokens", { value: formatCompactTokens(bar.total) }),
+        }));
+        const parts = [
+          modelT("usageInput", { value: formatCompactTokens(bar.input) }),
+          modelT("usageOutput", { value: formatCompactTokens(bar.output) }),
+        ];
+        if (bar.cacheRead > 0) {
+          parts.push(modelT("usageCacheRead", { value: formatCompactTokens(bar.cacheRead) }));
+        }
+        if (bar.cacheWrite > 0) {
+          parts.push(modelT("usageCacheWrite", { value: formatCompactTokens(bar.cacheWrite) }));
+        }
+        lines.push(parts.join(" · "));
+      } else {
+        lines.push(modelT("usageNotReported"));
+      }
+      if (bar.startedAt !== null && bar.completedAt !== null && bar.completedAt >= bar.startedAt) {
+        lines.push(modelT("totalDurationValue", {
+          duration: formatDurationMillis(bar.completedAt - bar.startedAt, modelT),
+        }));
+      }
+      tooltipEl.textContent = "";
+      lines.forEach((line) => tooltipEl.appendChild(h("div", "tt-tooltip-line", line)));
+      tooltipEl.style.left = `${clientX}px`;
+      tooltipEl.style.top = `${clientY}px`;
+      tooltipEl.style.display = "";
+    }, TOOLTIP_DELAY_MS);
   };
 
   const renderLedger = ({ rows, winStart, winEnd, topPx, ledgerHeight, records, requests, focusSet }) => {
@@ -1655,6 +1767,10 @@ export function createTrajectoryView(host, options = {}) {
     st.viewSpan = 0;
     scheduleRender();
   });
+  tokensToggle.addEventListener("click", () => {
+    st.showTokens = !st.showTokens;
+    scheduleRender();
+  });
   turnsToggle.addEventListener("click", () => {
     const groups = buildFoldGroups(flattenRecords(computeTurns()));
     const keys = [...groups.turns].filter(([, turn]) => turn.hidden > 0).map(([turn]) => turn);
@@ -1754,6 +1870,9 @@ export function createTrajectoryView(host, options = {}) {
     durationToggle
       .querySelector(".tt-toggle-label")
       ?.replaceChildren(document.createTextNode(modelT("duration")));
+    tokensToggle
+      .querySelector(".tt-toggle-label")
+      ?.replaceChildren(document.createTextNode(modelT("tokenUsage")));
     turnsToggle
       .querySelector(".tt-toggle-label")
       ?.replaceChildren(document.createTextNode(modelT("turns")));

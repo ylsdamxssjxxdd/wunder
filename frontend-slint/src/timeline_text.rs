@@ -539,6 +539,20 @@ pub fn tool_summary(entry: &NativeWorkflowEntry) -> String {
     String::new()
 }
 
+/// The collapsed entry row places the target chip right next to the tool
+/// name. Read/write-style calls preview exactly that target, so echoing the
+/// preview as the summary would print the same file name twice on one row;
+/// the row keeps the chip (it opens the resource) and leaves the outcome slot
+/// empty. The folded batch bar has no chip and keeps reading `tool_summary`.
+pub fn tool_row_summary(entry: &NativeWorkflowEntry, target: &str) -> String {
+    let summary = tool_summary(entry);
+    let target = target.trim();
+    if !target.is_empty() && !summary.is_empty() && target.starts_with(summary.trim_end()) {
+        return String::new();
+    }
+    summary
+}
+
 /// The web timeline keeps invocation usage at the far edge of the row. Native
 /// projection already receives the bounded, formatted values from the shared
 /// desktop workflow adapter, so this helper only joins the populated parts.
@@ -585,6 +599,31 @@ mod tests {
         ] {
             assert_eq!(tool_label(alias), COMMAND_TOOL, "{alias}");
         }
+    }
+
+    #[test]
+    fn row_summary_drops_the_target_the_chip_already_shows() {
+        let mut entry = NativeWorkflowEntry {
+            id: "fixture-read".into(),
+            title: "read_file".into(),
+            preview: "fixture/sample.txt".into(),
+            detail: String::new(),
+            state: "completed".into(),
+            tokens: String::new(),
+            duration: String::new(),
+            sections: Vec::new(),
+            patch_files: Vec::new(),
+        };
+        let (target, _) = tool_target(&entry);
+        assert_eq!(target, "fixture/sample.txt");
+        assert_eq!(tool_row_summary(&entry, &target), "");
+        // A truncated chip still counts as the same target.
+        entry.preview = "a".repeat(200);
+        let (target, _) = tool_target(&entry);
+        assert_eq!(tool_row_summary(&entry, &target), "");
+        // An unrelated summary is kept.
+        entry.preview = "fixture query".into();
+        assert_eq!(tool_row_summary(&entry, "other.txt"), "fixture query");
     }
 
     #[test]

@@ -1812,8 +1812,20 @@
     "zh-CN": "Shell 环境：POSIX bash。请编写 POSIX 命令：管道、&&、;、grep、sed、awk、find、ssh、ls、cat、head、tail、tar、curl 等。在 Windows 上路径用 /c/... 或正斜杠 C:/...（避免反斜杠），调用 cmd 请写成 `cmd //c ...`。输出为 UTF-8。不要使用 cmd 或 PowerShell 语法（如 dir、type、copy、del、set、%VAR%）。"
   },
   "tool.spec.exec.shell_powershell": {
-    "en-US": "Shell environment: PowerShell. Use PowerShell syntax (cmdlets, pipelines, $variables). Do not use cmd or bash syntax.",
-    "zh-CN": "Shell 环境：PowerShell。请使用 PowerShell 语法（cmdlet、管道、$变量）。不要使用 cmd 或 bash 语法。"
+    "en-US": "Shell environment: Windows PowerShell. Use PowerShell syntax (cmdlets, pipelines, $variables). `&&` and `||` are not supported — chain with `;` or issue separate calls. Do not use cmd or bash syntax.",
+    "zh-CN": "Shell 环境：Windows PowerShell。请使用 PowerShell 语法（cmdlet、管道、$变量）。不支持 `&&`、`||`，串联请用 `;` 或分多次调用。不要使用 cmd 或 bash 语法。"
+  },
+  "tool.spec.exec.shell_powershell_legacy": {
+    "en-US": "Shell environment: Windows PowerShell 2.0 (an old Windows 7 build; assume 2.0-4.0, nothing newer). Use only syntax that generation supports: no `::new()`, `Get-FileHash`, `Get-Content -Raw`, `-AsHashtable`, `??` or ternary. File size: `(Get-Item x).Length`; hash: `certutil -hashfile x SHA256`; whole text: `Get-Content x | Out-String`. For anything modern, call an external program (python, rg, git) or write cmd syntax and run `cmd /c ...`. Output may be GBK; quote non-ASCII paths.",
+    "zh-CN": "Shell 环境：Windows PowerShell 2.0（Win7 的老版本，按 2.0–4.0 的能力写命令）。只用这一代支持的语法：不要用 `::new()`、`Get-FileHash`、`Get-Content -Raw`、`-AsHashtable`、`??` 和三元运算。文件大小用 `(Get-Item x).Length`，哈希用 `certutil -hashfile x SHA256`，整段文本用 `Get-Content x | Out-String`。需要现代命令时直接调用外部程序（python、rg、git 等），或改写成 cmd 语法用 `cmd /c ...` 执行。输出可能是 GBK，含中文的路径请加引号。"
+  },
+  "tool.spec.exec.shell_pwsh": {
+    "en-US": "Shell environment: PowerShell 7 (pwsh, bundled with the app). Modern PowerShell is fully available: `::new()`, `??`, ternary, `Get-ChildItem -File`, `-Raw`, `Get-FileHash`, `&&`/`||` chains. Two differences from Windows PowerShell: `Get-WmiObject` is gone (use `Get-CimInstance`), and the `-ComputerName` parameter on service/process cmdlets is gone (run locally or use `Invoke-Command`). Windows-only modules that ship with PowerShell 5.1 (ActiveDirectory, DnsServer, SmbShare, WebAdministration) are not present. Paths use backslashes; chain commands with `;`. Output is UTF-8.",
+    "zh-CN": "Shell 环境：PowerShell 7（pwsh，随应用内置）。现代语法全部可用：`::new()`、`??`、三元运算、`Get-ChildItem -File`、`-Raw`、`Get-FileHash`、`&&`/`||` 串联。与 Windows PowerShell 的两点差异：没有 `Get-WmiObject`（改用 `Get-CimInstance`），服务/进程类 cmdlet 的 `-ComputerName` 参数已移除（本地执行或改用 `Invoke-Command`）；5.1 自带的 Windows 专属模块（ActiveDirectory、DnsServer、SmbShare、WebAdministration）不存在。路径用反斜杠，串联用 `;`。输出为 UTF-8。"
+  },
+  "tool.spec.exec.shell_cmd": {
+    "en-US": "Shell environment: cmd.exe (this host has no usable PowerShell). Use cmd syntax (dir, type, copy, del, set, %VAR%, &&); do not use PowerShell cmdlets or $variables. For anything beyond basic file and flow control, call an external program (python, rg, git).",
+    "zh-CN": "Shell 环境：cmd.exe（这台机器没有可用的 PowerShell）。请使用 cmd 语法（dir、type、copy、del、set、%VAR%、&&），不要使用 PowerShell 的 cmdlet 或 $变量。超出基本文件与流程控制的需求，请调用外部程序（python、rg、git 等）。"
   },
   "tool.spec.browser.description": {
     "en-US": "Automate a browser session. Start the session first to warm up or reuse it, then open/navigate; the common flow is start -> open/navigate -> snapshot/read_page -> click/type/press -> wait/screenshot. Screenshots are saved to the workspace by default.",

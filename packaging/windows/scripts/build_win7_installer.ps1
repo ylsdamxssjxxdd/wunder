@@ -16,6 +16,11 @@ $ErrorActionPreference = "Stop"
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..\..")).Path
 $installerRoot = Join-Path $repoRoot "packaging\windows\installer"
 $stageRoot = Join-Path $repoRoot "temp_dir\installer\win7-x86"
+# Single source of truth for the supplement component order. The [Code] section
+# of wunder.iss indexes its ComponentTasks/ComponentLabels arrays in exactly
+# this order, so a component added here must also bump ComponentCount and the
+# array bounds there.
+$ComponentOrder = @("python", "git", "rg", "ffmpeg", "powershell", "browser")
 $win7BuilderRoot = if ($env:WUNDER_WIN7_BUILDER_ROOT) {
   $env:WUNDER_WIN7_BUILDER_ROOT
 } elseif ($env:WUNDER_BUILDER_ROOT) {
@@ -106,7 +111,7 @@ function Find-Supplement([string]$Root) {
 
 function Get-ZipSupplementInfo([string]$Path) {
   Add-Type -AssemblyName System.IO.Compression.FileSystem
-  $known = @("python", "git", "rg", "ffmpeg", "browser")
+  $known = $ComponentOrder
   $bytes = @{}
   $files = @{}
   foreach ($name in $known) { $bytes[$name] = [int64]0; $files[$name] = 0 }
@@ -136,7 +141,7 @@ function Get-ZipSupplementInfo([string]$Path) {
 }
 
 function Get-DirectorySupplementInfo([string]$Path) {
-  $known = @("python", "git", "rg", "ffmpeg", "browser")
+  $known = $ComponentOrder
   $bytes = @{}
   $files = @{}
   foreach ($name in $known) {
@@ -321,12 +326,12 @@ if (-not $CoreOnly) {
   if ($supplementItem.PSIsContainer) {
     $supplementRoot = $supplementItem.FullName
     $info = Get-DirectorySupplementInfo $supplementRoot
-    foreach ($name in @("python", "git", "rg", "ffmpeg", "browser")) {
+    foreach ($name in $ComponentOrder) {
       if (Test-Path -LiteralPath (Join-Path $supplementRoot "opt\$name") -PathType Container) { $available += $name }
     }
   } else {
     $info = Get-ZipSupplementInfo $supplementItem.FullName
-    foreach ($name in @("python", "git", "rg", "ffmpeg", "browser")) {
+    foreach ($name in $ComponentOrder) {
       if ($info.Files[$name] -gt 0) { $available += $name }
     }
     if ($available.Count -eq 0) { throw "Supplement archive has no opt/<component> files: $supplementPath" }
@@ -361,11 +366,19 @@ foreach ($name in @("desktop", "cli")) {
   $lines.Add(('Name: "{0}"; Description: "{1}"' -f $name, $label))
 }
 if (-not $CoreOnly) {
+  # The bundled portable PowerShell is the command tool's default shell, so it
+  # is the one supplement component checked by default; everything else stays
+  # opt-in to keep the default install lean.
+  $defaultCheckedComponents = @("powershell")
   foreach ($name in $available) {
     $versionForLabel = Get-MetadataVersion $metadata $name
     $taskBytes = $componentBytes[$name]
     $label = Format-ComponentLabel $name $versionForLabel $taskBytes
-    $lines.Add(('Name: "{0}"; Description: "{1}"; Flags: unchecked' -f $name, $label))
+    if ($defaultCheckedComponents -contains $name) {
+      $lines.Add(('Name: "{0}"; Description: "{1}"' -f $name, $label))
+    } else {
+      $lines.Add(('Name: "{0}"; Description: "{1}"; Flags: unchecked' -f $name, $label))
+    }
   }
 }
 $lines.Add("")
@@ -403,8 +416,16 @@ $isccArgs = @(
   "/DComponentsShown=$($available.Count)",
   (Join-Path $stageRoot "wunder.iss")
 )
-& $isccPath @isccArgs
-if ($LASTEXITCODE -ne 0) { throw "Inno Setup compilation failed with exit code $LASTEXITCODE" }
+# Start-Process instead of `&`: when this script is launched from a wrapper shell
+# (build.bat -> powershell -File, Git Bash, CI), `&` can leave $LASTEXITCODE
+# unset even though ISCC ran and produced the installer, so a successful build
+# was reported as "failed with exit code " (empty). -Wait -PassThru gives the
+# real exit code and keeps ISCC's console output on the current console.
+$isccArgLine = ($isccArgs | ForEach-Object {
+  if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ }
+}) -join ' '
+$isccProcess = Start-Process -FilePath $isccPath -ArgumentList $isccArgLine -NoNewWindow -Wait -PassThru
+if ($isccProcess.ExitCode -ne 0) { throw "Inno Setup compilation failed with exit code $($isccProcess.ExitCode)" }
 
 $installerPath = Join-Path $OutputDir "$outputBase.exe"
 if (-not (Test-Path -LiteralPath $installerPath -PathType Leaf)) {
@@ -415,7 +436,7 @@ $installerHash = (Get-Sha256Hex $installerPath).ToLowerInvariant()
 
 $componentManifest = @()
 # The manifest inventories every opt directory that entered the installer.
-foreach ($name in @("python", "git", "rg", "ffmpeg", "browser")) {
+foreach ($name in $ComponentOrder) {
   if ($componentFiles[$name] -gt 0) {
     $componentManifest += [ordered]@{
       name = $name

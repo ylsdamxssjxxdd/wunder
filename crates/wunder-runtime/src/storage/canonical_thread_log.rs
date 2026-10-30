@@ -15,6 +15,22 @@ use wunder_core::{storage_backend::ThreadSnapshotWindow, thread_store::*, thread
 
 pub(crate) const VISIBLE: &str = "visible=1";
 
+/// Extract the bounded question text from a stored user_message preview.
+fn first_user_question_text(raw: &str) -> Option<String> {
+    let item: Value = serde_json::from_str(raw).ok()?;
+    let wrapped = item.get("item_id").is_some() && item.get("payload").is_some();
+    let body = item
+        .get("payload")
+        .filter(|_| wrapped)
+        .unwrap_or(&item);
+    let text = wunder_core::thread_view::message_content_text(&body["content"])?;
+    let text = text.trim();
+    if text.is_empty() {
+        return None;
+    }
+    Some(text.chars().take(2048).collect())
+}
+
 pub(crate) struct CanonicalThreadLog<'a> {
     threads: &'a LocalThreadStore,
     metadata: &'a dyn MetaStore,
@@ -402,6 +418,7 @@ impl<'a> CanonicalThreadLog<'a> {
             return Ok(row);
         };
         let summary = super::thread_chat_summary::read(conn, &rollout, root)?;
+        let mut bodies = ItemBodyReader::for_connection(conn)?;
         for (kind, id) in [
             ("user_message", summary.user_item_id.as_deref()),
             ("assistant_message", summary.assistant_item_id.as_deref()),
@@ -410,11 +427,23 @@ impl<'a> CanonicalThreadLog<'a> {
         ] {
             let Some(id) = id else { continue };
             let item = conn
-                .query_row("SELECT preview_json,rollout_ordinal FROM thread_items WHERE rollout_id=?1 AND item_id=?2", params![rollout, id], |r| {
-                    Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+                .query_row(&format!("SELECT preview_json,rollout_ordinal,{ITEM_BODY_COLUMNS} FROM thread_items WHERE rollout_id=?1 AND item_id=?2"), params![rollout, id], |r| {
+                    Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, ItemBodyRef::from_row(r, 2)?))
                 })
                 .optional()?;
-            let Some((raw, ordinal)) = item else { continue };
+            let Some((preview, ordinal, reference)) = item else { continue };
+            // Chat cards display bounded full bodies, while the stored preview
+            // is card-grade only. Hydrate the few referenced items per turn
+            // from the verified canonical body; fall back to the preview when
+            // the source is temporarily unreadable or unusually large.
+            let raw = if reference.item_bytes <= 4 * 1024 * 1024 {
+                match bodies.read(&reference, u64::try_from(ordinal)?, id) {
+                    Ok(raw) => serde_json::to_string(&raw)?,
+                    Err(_) => preview,
+                }
+            } else {
+                preview
+            };
             let item = Self::item(raw, ordinal, session, false)?;
             let body = &item["payload"];
             if kind == "question_panel" {
@@ -490,14 +519,28 @@ impl<'a> CanonicalThreadLog<'a> {
             .as_ref()
             .filter(|id| **id != row.assistant.item_id)
         {
-            if let Some(raw) = conn
+            if let Some((preview, ordinal, reference)) = conn
                 .query_row(
-                    "SELECT preview_json FROM thread_items WHERE rollout_id=?1 AND item_id=?2",
+                    &format!("SELECT preview_json,rollout_ordinal,{ITEM_BODY_COLUMNS} FROM thread_items WHERE rollout_id=?1 AND item_id=?2"),
                     params![rollout, id],
-                    |record| record.get::<_, String>(0),
+                    |record| Ok((
+                        record.get::<_, String>(0)?,
+                        record.get::<_, i64>(1)?,
+                        ItemBodyRef::from_row(record, 2)?,
+                    )),
                 )
                 .optional()?
             {
+                // The thinking tail shown in the bubble is longer than the
+                // card-grade preview; read the verified body when bounded.
+                let raw = if reference.item_bytes <= 4 * 1024 * 1024 {
+                    match bodies.read(&reference, u64::try_from(ordinal)?, id) {
+                        Ok(raw) => serde_json::to_string(&raw)?,
+                        Err(_) => preview,
+                    }
+                } else {
+                    preview
+                };
                 let item: Value = serde_json::from_str(&raw)?;
                 let payload = item.get("payload").unwrap_or(&item);
                 let body = if payload.get("item_id").is_some() {
@@ -1136,6 +1179,49 @@ impl ThreadLogStore for CanonicalThreadLog<'_> {
     }
     fn latest_thread_user_round_by_session(&self, s: &str) -> Result<i64> {
         self.admissions()?.latest_round(s)
+    }
+    fn thread_first_user_questions(
+        &self,
+        session_ids: &[String],
+    ) -> Result<HashMap<String, String>> {
+        let mut sessions = session_ids
+            .iter()
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+            .take(2000)
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        sessions.sort_unstable();
+        sessions.dedup();
+        if sessions.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let conn = self.connection(None)?;
+        let mut output = HashMap::new();
+        for chunk in sessions.chunks(200) {
+            let values = vec!["?"; chunk.len()].join(",");
+            let sql = format!(
+                "SELECT d.thread_id,(
+                    SELECT i.preview_json FROM thread_items i
+                    WHERE i.rollout_id=d.rollout_id AND i.item_type='user_message' AND i.visible=1
+                    ORDER BY i.rollout_ordinal ASC LIMIT 1)
+                 FROM state.canonical_threads d WHERE d.thread_id IN ({values})"
+            );
+            let mut statement = conn.prepare(&sql)?;
+            let rows = statement.query_map(rusqlite::params_from_iter(chunk.iter()), |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                ))
+            })?;
+            for row in rows {
+                let (session, preview) = row?;
+                if let Some(text) = preview.as_deref().and_then(first_user_question_text) {
+                    output.insert(session, text);
+                }
+            }
+        }
+        Ok(output)
     }
     fn thread_turn_tails(
         &self,

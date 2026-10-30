@@ -19,6 +19,10 @@ pub fn run(
     let timer = Timer::default();
     let started = Instant::now();
     let mut phase = 0;
+    // Catalogue size before this probe adds/removes its own rows; the engine
+    // may seed extra models (e.g. the virtual replay entry), so the count is
+    // relative rather than a fixed one.
+    let mut baseline_models = 0;
     timer.start(TimerMode::Repeated, Duration::from_millis(40), move || {
         let Some(app) = weak.upgrade() else { return };
         let checked = (|| -> Result<bool, Box<dyn std::error::Error>> {
@@ -33,6 +37,7 @@ pub fn run(
                 0 => {
                     app.set_settings_open(true);
                     app.set_settings_active_panel(1);
+                    baseline_models = app.get_composer_models().row_count();
                     app.invoke_create_model();
                     app.set_model_key_draft("extra-model".into());
                     app.set_model_name_draft("sample-model".into());
@@ -85,7 +90,38 @@ pub fn run(
                     if app.get_models().iter().any(|model| model.key == "test-model") { return Ok(false) }
                     assert_state(saved.is_some_and(|model| model.is_default), "default was not promoted")?;
                     assert_state(app.get_selected_model_key() == "extra-model", "composer retained the deleted model")?;
-                    assert_state(app.get_composer_models().row_count() == 1, "composer catalogue did not reconcile deletion")?;
+                    assert_state(
+                        app.get_composer_models().row_count() == baseline_models
+                            && !app.get_composer_models().iter().any(|model| model.key == "test-model")
+                            && app.get_composer_models().iter().any(|model| model.key == "extra-model"),
+                        "composer catalogue did not reconcile deletion",
+                    )?;
+                    // Rename the remaining row from the key field. The commit
+                    // callback (Enter/focus loss in the real UI) is what arms
+                    // the rename; typing alone must never move the config.
+                    app.set_model_key_draft("renamed-extra".into());
+                    app.invoke_commit_model_key();
+                    phase = 7;
+                }
+                7 => {
+                    let renamed = app.get_models().iter().find(|model| model.key == "renamed-extra");
+                    if renamed.is_none() { return Ok(false) }
+                    assert_state(!app.get_models().iter().any(|model| model.key == "extra-model"), "old key survived the rename")?;
+                    assert_state(app.get_settings_model_key() == "renamed-extra", "editor kept the old key")?;
+                    assert_state(
+                        app.get_selected_model_key() == "renamed-extra",
+                        &format!(
+                            "composer kept the old key (selected {:?}, composer {:?})",
+                            app.get_selected_model_key(),
+                            app.get_composer_models()
+                                .iter()
+                                .map(|model| model.key.to_string())
+                                .collect::<Vec<_>>()
+                        ),
+                    )?;
+                    assert_state(renamed.is_some_and(|model| model.is_default), "rename dropped the default badge")?;
+                    let session = api.get_session(app.get_active_session_id().as_str())?.0;
+                    assert_state(session.session_model_name.as_deref() == Some("renamed-extra"), "thread pin lost on rename")?;
                     crate::smoke::snapshot(&app, &directory.join("model-settings.png"))?;
                     return Ok(true);
                 }
@@ -95,7 +131,7 @@ pub fn run(
         })();
         if matches!(checked, Ok(false)) { return; }
         let report = match &checked {
-            Ok(_) => "PASS: model autosave/catalogue/inflight-edit/switch-flush/validation/default-fallback\n".to_owned(),
+            Ok(_) => "PASS: model autosave/catalogue/inflight-edit/switch-flush/validation/default-fallback/rename\n".to_owned(),
             Err(error) => format!("FAIL: {error}\n"),
         };
         *output.borrow_mut() = Some(std::fs::write(directory.join("smoke.txt"), report)

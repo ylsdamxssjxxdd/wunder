@@ -116,13 +116,16 @@ Type: filesandordirs; Name: "{app}\opt\remotion"
 #include "payload.generated.iss"
 
 [Code]
+// Keep the component list in sync with build_win7_installer.ps1: the task names
+// below must cover every supplement component that script can emit (currently
+// python, git, rg, ffmpeg, powershell, browser).
 const
-  ComponentCount = 5;
+  ComponentCount = 6;
   CComponentsShown = {#ComponentsShown};
 
 var
-  ComponentTasks: array[0..4] of String;
-  ComponentLabels: array[0..4] of String;
+  ComponentTasks: array[0..5] of String;
+  ComponentLabels: array[0..5] of String;
   SelectAllCheckBox: TNewCheckBox;
   UpdatingSelectAll: Boolean;
 
@@ -132,12 +135,14 @@ begin
   ComponentTasks[1] := 'git';
   ComponentTasks[2] := 'rg';
   ComponentTasks[3] := 'ffmpeg';
-  ComponentTasks[4] := 'browser';
+  ComponentTasks[4] := 'powershell';
+  ComponentTasks[5] := 'browser';
   ComponentLabels[0] := 'Python';
   ComponentLabels[1] := 'Git';
   ComponentLabels[2] := 'ripgrep';
   ComponentLabels[3] := 'FFmpeg';
-  ComponentLabels[4] := '内置浏览器';
+  ComponentLabels[4] := 'PowerShell';
+  ComponentLabels[5] := '内置浏览器';
   Result := True;
 end;
 

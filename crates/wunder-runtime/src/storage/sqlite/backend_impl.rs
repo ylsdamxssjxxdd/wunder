@@ -363,6 +363,16 @@ impl ThreadLogStore for SqliteStorage {
         )
         .latest_thread_user_round_by_session(session_id)
     }
+    fn thread_first_user_questions(
+        &self,
+        session_ids: &[String],
+    ) -> Result<std::collections::HashMap<String, String>> {
+        crate::storage::canonical_thread_log::CanonicalThreadLog::new(
+            self.canonical_threads()?.as_ref(),
+            self,
+        )
+        .thread_first_user_questions(session_ids)
+    }
     fn thread_turn_tails(
         &self,
         user_id: &str,

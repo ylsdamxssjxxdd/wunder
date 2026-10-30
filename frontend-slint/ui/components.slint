@@ -265,6 +265,10 @@ export component FormField inherits Rectangle {
     in property <bool> strong-label: false;
     in-out property <string> text <=> editor.text;
     callback edited();
+    // Fired when the user is done with the field (Enter or focus loss). Fields
+    // whose value is an identity — the model config key — commit here instead
+    // of on every keystroke.
+    callback committed();
     height: root.error == "" ? 62px : 78px;
     Text {
         y: 0px; width: parent.width; height: 18px; text: root.label;
@@ -291,6 +295,8 @@ export component FormField inherits Rectangle {
             selection-background-color: Theme.accent-soft; selection-foreground-color: Theme.text;
             accessible-role: text-input; accessible-label: root.label; accessible-placeholder-text: root.placeholder;
             edited => { root.edited(); }
+            accepted => { root.committed(); }
+            changed has-focus => { if !editor.has-focus { root.committed(); } }
         }
     }
     if root.error != "" : Text {

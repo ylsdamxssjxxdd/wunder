@@ -105,12 +105,20 @@ pub fn tool_result_display(tool: &str, payload: &Value, pending: bool) -> String
     } else {
         target
     };
+    // Card-grade previews (storage rows, live process events) replace the raw
+    // args/result objects with precomputed single-line previews.
+    let target_text = if target_text.is_empty() {
+        string(payload, &["args_preview"])
+    } else {
+        target_text
+    };
     if !target_text.is_empty() {
         lines.push(preview(target_text));
     }
     if pending {
         return lines.join("\n");
     }
+    let before_result = lines.len();
     let error = string(result, &["error", "message"]);
     if failed && !error.is_empty() {
         lines.push(preview(error));
@@ -240,6 +248,12 @@ pub fn tool_result_display(tool: &str, payload: &Value, pending: bool) -> String
                 }
                 break;
             }
+        }
+    }
+    if lines.len() == before_result {
+        let result_preview = string(payload, &["result_preview"]);
+        if !result_preview.is_empty() {
+            lines.push(preview(result_preview));
         }
     }
     preview(

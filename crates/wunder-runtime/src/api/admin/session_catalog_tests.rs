@@ -209,3 +209,90 @@ async fn session_catalog_admin_delete_without_monitor_reconciles_across_pages() 
         json!(["session-a"])
     );
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn monitor_list_backfills_question_from_canonical_history() {
+    use crate::storage::thread_store::LocalThreadStore;
+    use wunder_core::thread_store::{
+        CreateThreadRequest, RolloutId, SessionMeta, ThreadId, ThreadMetadata, ThreadMetadataStore,
+        ThreadStatus, TurnId,
+    };
+
+    let dir = tempfile::tempdir().unwrap();
+    let mut config = Config::default();
+    config.storage.backend = "sqlite".into();
+    config.storage.data_root = dir.path().join("data").to_string_lossy().into();
+    config.workspace.root = dir.path().join("workspace").to_string_lossy().into();
+    let config_store = ConfigStore::new(dir.path().join("config.yaml"));
+    config_store
+        .update(|current| *current = config.clone())
+        .await
+        .unwrap();
+    let state = Arc::new(
+        AppState::new_with_options(config_store, config, AppStateInitOptions::cli_default())
+            .unwrap(),
+    );
+    let thread = "thread-sample";
+    let mut record = session(thread, "user-a", "active");
+    record.title = "Fixture title".into();
+    state.storage.upsert_chat_session(&record).unwrap();
+
+    let store = LocalThreadStore::open(&dir.path().join("data")).unwrap();
+    let thread_id = ThreadId::new(thread).unwrap();
+    let rollout = RolloutId::new("rollout-sample").unwrap();
+    let admitted = state
+        .storage
+        .accept_thread_turn("user-a", thread, &json!({"content":"Fixture question"}))
+        .unwrap();
+    let turn = TurnId::new(admitted["turn_id"].as_str().unwrap()).unwrap();
+    store
+        .create_thread(CreateThreadRequest {
+            metadata: ThreadMetadata {
+                thread_id: thread_id.clone(),
+                current_rollout_id: rollout.clone(),
+                status: ThreadStatus::Active,
+                created_at_ms: 1,
+                updated_at_ms: 1,
+                title: None,
+                workspace_id: None,
+                pinned: false,
+            },
+            session_meta: SessionMeta {
+                thread_id: thread_id.clone(),
+                rollout_id: rollout,
+                created_at_ms: 1,
+                source: "sample".into(),
+                initial_system_prompt: "frozen instructions".into(),
+                initial_memory: None,
+                parent_thread_id: None,
+                history_base: None,
+                capabilities: Value::Null,
+            },
+        })
+        .await
+        .unwrap();
+    store
+        .begin_turn("user-a", &thread_id, &turn, "sample-model")
+        .await
+        .unwrap();
+    state
+        .storage
+        .append_chat(
+            "user-a",
+            &json!({"session_id":thread,"turn_id":turn,"item_id":"fixture-user",
+                "role":"user","content":"Fixture question"}),
+        )
+        .unwrap();
+
+    let mut sessions = vec![json!({
+        "session_id": thread,
+        "user_id": "user-a",
+        "status": "finished",
+        "question": ""
+    })];
+    if let Err(_error) = super::attach_thread_names(&state, &mut sessions).await {
+        panic!("attach thread names failed");
+    }
+    assert_eq!(sessions[0]["question"], json!("Fixture question"));
+    assert_eq!(sessions[0]["thread_name"], json!("Fixture title"));
+}

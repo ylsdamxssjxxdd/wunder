@@ -244,13 +244,14 @@ pub(crate) fn apply_page(row: &mut TimelineRow, page: NativeProcessPage, directi
         }
         if let Some(tool) = item.tool {
             let (target, patch) = crate::timeline_text::tool_target(&tool);
+            let summary = crate::timeline_text::tool_row_summary(&tool, &target);
             entries.push(ProcessEntry {
                 kind: crate::timeline::KIND_TOOL,
                 id: format!("tool-{}", tool.id).into(),
                 tool_name: crate::timeline_text::tool_label(&tool.title).into(),
                 tool_icon: crate::tool_icons::workflow_icon(&tool.title).into(),
                 target: target.into(),
-                summary: crate::timeline_text::tool_summary(&tool).into(),
+                summary: summary.into(),
                 detail: crate::timeline_text::copy_text(&[], &tool.detail),
                 sections: crate::timeline_text::sections(&tool.sections),
                 patch: if patch {

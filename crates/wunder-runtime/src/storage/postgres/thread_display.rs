@@ -97,9 +97,15 @@ fn ensure_counts(tx: &mut PgTx<'_>, thread: &str) -> Result<()> {
 }
 
 pub(super) fn counts(tx: &mut PgTx<'_>, thread: &str, internal: bool) -> Result<(i64, i64)> {
-    let row = tx.query_one("SELECT owner.latest_user_round,COALESCE(CASE WHEN $2 THEN state.item_count ELSE state.visible_count END,0)
+    // A thread acquires its `service_thread_owners` row on first admission.
+    // Before that the owner-anchored join yields no row, which is the empty /
+    // first-use state and must read as `(0, 0)` rather than an error: the SQLite
+    // backend counts admissions directly and returns 0 for the same situation.
+    // Returning an error here makes the very first user message look like a
+    // continuation, which suppresses the automatic session title.
+    let row = tx.query_opt("SELECT owner.latest_user_round,COALESCE(CASE WHEN $2 THEN state.item_count ELSE state.visible_count END,0)
         FROM service_thread_owners owner LEFT JOIN service_thread_display_state_v2 state USING(thread_id) WHERE owner.thread_id=$1", &[&thread,&internal])?;
-    Ok((row.get(0), row.get(1)))
+    Ok(row.map(|row| (row.get(0), row.get(1))).unwrap_or((0, 0)))
 }
 
 pub(super) fn project_batch(

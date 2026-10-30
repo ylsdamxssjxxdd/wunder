@@ -412,7 +412,7 @@ impl PostgresThreadStore {
                         item(
                             &turn,
                             &root,
-                            &format!("text-{index}"),
+                            &format!("text-{}", index + 1),
                             CanonicalItemKind::AssistantMessage,
                             payload,
                             now,
@@ -423,9 +423,28 @@ impl PostgresThreadStore {
                 for (tool_index, (profile, call_id, args, result)) in
                     generated.into_iter().enumerate()
                 {
-                    let payload = json!({"tool":profile.name,"args":args,"data":result.data,"error":result.error,"ok":!result.failed});
+                    // Match the production tool timeline shape (see
+                    // thread_log::event_item): kind/tool_call_id/status plus a
+                    // catalog schema reference so detail views resolve the
+                    // contract exactly like a real executed call.
+                    let mut payload = json!({"kind":"tool_call","tool":profile.name,"tool_call_id":call_id.clone(),
+                        "args":args,"data":result.data,"error":result.error,"ok":!result.failed,
+                        "status":if result.failed{"failed"}else{"completed"},"meta":result.meta});
+                    if let Some(reference) =
+                        crate::tools::runtime_tool_schema_reference(profile.function_name)
+                            .or_else(|| crate::tools::runtime_tool_schema_reference(profile.name))
+                    {
+                        payload["schema_ref"] = serde_json::to_value(reference)?;
+                    }
+                    // The observation replays into the model context verbatim;
+                    // keep the session-linked call id only on the envelope so
+                    // the same seed regenerates byte-identical context.
+                    let mut observation_payload = payload.clone();
+                    if let Some(fields) = observation_payload.as_object_mut() {
+                        fields.remove("tool_call_id");
+                    }
                     batch.push(self, &thread, response(&turn, &root, &format!("call-{index}-{tool_index}"), CanonicalItemKind::ToolResult,
-                        json!({"role":"tool","tool_call_id":call_id,"content":serde_json::to_string(&payload)?}), now)?).await?;
+                        json!({"role":"tool","tool_call_id":call_id,"content":serde_json::to_string(&observation_payload)?}), now)?).await?;
                     let mut record = item(
                         &turn,
                         &root,

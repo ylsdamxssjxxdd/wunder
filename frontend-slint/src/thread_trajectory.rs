@@ -5,7 +5,7 @@
 //! global record index so hover and selection survive filtering.
 use crate::{
     I18n, MainWindow, TrajBoundary, TrajRow, TrajSearchHit, TrajSection, TrajSpan, TrajTab,
-    TrajTick, TrajTiming,
+    TrajTick, TrajTiming, TrajTokenBar,
 };
 use chrono::{Local, TimeZone};
 use serde_json::{json, Value};
@@ -2464,14 +2464,29 @@ fn timeline_domain(state: &State, model: &SnapshotModel) -> (f64, f64) {
             .iter()
             .filter_map(|span| span.sequence_end)
             .fold(model.records.len().max(1) as f64, f64::max);
-        (
-            0.0,
-            if overview {
-                detail_end.max(model.overview_sequence_end)
-            } else {
-                detail_end
-            },
-        )
+        if overview {
+            // Aggregate tiles cover the whole thread, so the sequence axis
+            // keeps the global origin and the tiles fill the left side.
+            (0.0, detail_end.max(model.overview_sequence_end))
+        } else {
+            // Without tiles the bar shows only the loaded window. Anchoring
+            // the axis at the durable sequence origin would push a late
+            // window of a long thread against the right edge; follow the
+            // loaded window exactly like the duration domain does.
+            let detail_start = model
+                .spans
+                .iter()
+                .filter_map(|span| span.sequence_start)
+                .fold(f64::INFINITY, f64::min);
+            (
+                if detail_start.is_finite() {
+                    detail_start
+                } else {
+                    0.0
+                },
+                detail_end,
+            )
+        }
     }
 }
 
@@ -2993,6 +3008,167 @@ fn tooltip_for(model: &SnapshotModel, texts: &Texts, record_index: i32) -> Strin
 // ------------------------------------------------------------------ */
 // Controller                                                          */
 // ------------------------------------------------------------------ */
+
+/** 直方图与汇总的紧凑 token 数：12,345 → 12.3k。 */
+fn compact_tokens(value: f64) -> String {
+    if !value.is_finite() {
+        return "0".to_string();
+    }
+    if value >= 1e6 {
+        format!("{:.1}M", value / 1e6)
+    } else if value >= 1e3 {
+        format!("{:.1}k", value / 1e3)
+    } else {
+        format!("{}", value.round() as i64)
+    }
+}
+
+/// 逐步 token 直方图投影：每一步（模型请求）一根柱。模型请求的输入包含累积
+/// 上下文，直接画总量会单调递增、掩盖真正膨胀的步骤，因此柱值取相对上一步的
+/// 新增量：delta = max(0, 本步总量 − 上一步总量)，总量 = 输入 + 缓存读 + 缓存写
+/// + 输出；压缩上下文后总量回落的步增量为 0。未上报用量的步画基线刻度，
+/// 不参与增量链。tooltip 文本随柱一起预投影，Slint 只负责定位展示。
+fn project_token_bars(app: &MainWindow, model: &SnapshotModel, texts: &Texts) {
+    struct BarInfo {
+        record: i32,
+        reported: bool,
+        delta: f64,
+        tooltip: String,
+    }
+    let zh = texts.zh;
+    let mut infos: Vec<BarInfo> = Vec::with_capacity(model.requests.len());
+    let mut previous_total: Option<f64> = None;
+    let mut max_delta = 0.0_f64;
+    let mut total_sum = 0.0_f64;
+    for request in &model.requests {
+        let Some(cell) = model.cells.get(request.assistant_index) else {
+            continue;
+        };
+        let record_index = model
+            .records
+            .iter()
+            .position(|record| record.cell == request.assistant_index)
+            .map(|index| index as i32)
+            .unwrap_or(-1);
+        let mut lines: Vec<String> = Vec::new();
+        let header = if record_index >= 0 {
+            model
+                .records
+                .get(record_index as usize)
+                .and_then(|record| record.turn.map(|turn| (turn, record.group.as_str())))
+        } else {
+            None
+        };
+        lines.push(match header {
+            Some((turn, group)) => texts.header(turn, group),
+            None => texts.request_label(request.number),
+        });
+        let usage = cell.usage.filter(|usage| usage.any());
+        let Some(usage) = usage else {
+            lines.push(texts.not_reported().to_string());
+            infos.push(BarInfo {
+                record: record_index,
+                reported: false,
+                delta: 0.0,
+                tooltip: lines.join("\n"),
+            });
+            continue;
+        };
+        let total = usage.input.unwrap_or(0.0)
+            + usage.cache_read.unwrap_or(0.0)
+            + usage.cache_write.unwrap_or(0.0)
+            + usage.output.unwrap_or(0.0);
+        let delta = previous_total.map_or(total, |prev| (total - prev).max(0.0));
+        previous_total = Some(total);
+        total_sum += delta;
+        if delta > max_delta {
+            max_delta = delta;
+        }
+        lines.push(if zh {
+            format!("新增 {} tok", compact_tokens(delta))
+        } else {
+            format!("+{} tok new", compact_tokens(delta))
+        });
+        lines.push(if zh {
+            format!("本步共 {} tok", compact_tokens(total))
+        } else {
+            format!("{} tok this step", compact_tokens(total))
+        });
+        let mut parts = vec![
+            format!(
+                "{} {}",
+                label(zh, "输入", "in"),
+                compact_tokens(usage.input.unwrap_or(0.0))
+            ),
+            format!(
+                "{} {}",
+                label(zh, "输出", "out"),
+                compact_tokens(usage.output.unwrap_or(0.0))
+            ),
+        ];
+        if usage.cache_read.unwrap_or(0.0) > 0.0 {
+            parts.push(format!(
+                "{} {}",
+                label(zh, "缓存读", "cache read"),
+                compact_tokens(usage.cache_read.unwrap_or(0.0))
+            ));
+        }
+        if usage.cache_write.unwrap_or(0.0) > 0.0 {
+            parts.push(format!(
+                "{} {}",
+                label(zh, "缓存写", "cache write"),
+                compact_tokens(usage.cache_write.unwrap_or(0.0))
+            ));
+        }
+        lines.push(parts.join(" · "));
+        if let Some(duration) = cell
+            .metrics
+            .as_ref()
+            .and_then(|metrics| metrics.step_start.zip(metrics.completed))
+            .map(|(start, completed)| (completed - start).max(0.0))
+        {
+            lines.push(format!(
+                "{} {}",
+                label(zh, "总计", "Total"),
+                texts.millis(duration)
+            ));
+        }
+        infos.push(BarInfo {
+            record: record_index,
+            reported: true,
+            delta,
+            tooltip: lines.join("\n"),
+        });
+    }
+    let bars: Vec<TrajTokenBar> = infos
+        .iter()
+        .map(|info| TrajTokenBar {
+            index: info.record,
+            ratio: if info.reported && max_delta > 0.0 {
+                (info.delta / max_delta) as f32
+            } else {
+                0.0
+            },
+            reported: info.reported,
+            peak: info.reported && info.delta > 0.0 && info.delta == max_delta,
+            tooltip: info.tooltip.clone().into(),
+        })
+        .collect();
+    app.set_traj_token_bars(to_model(bars));
+    app.set_traj_token_total(
+        if total_sum > 0.0 {
+            if zh {
+                format!("共 {} tok", compact_tokens(total_sum))
+            } else {
+                format!("{} tok total", compact_tokens(total_sum))
+            }
+        } else {
+            String::new()
+        }
+        .into(),
+    );
+}
+
 fn apply_model(app: &MainWindow, state: &State) {
     let Some(snapshot) = &state.model else { return };
     let texts = Texts::new(app.global::<I18n>().get_zh());
@@ -3001,6 +3177,7 @@ fn apply_model(app: &MainWindow, state: &State) {
     app.set_traj_failed(false);
     project_rows(app, state, snapshot, &texts);
     project_timeline(app, state, snapshot, &texts);
+    project_token_bars(app, snapshot, &texts);
     project_details(app, state, snapshot, &texts);
     project_search(app, state);
 }
@@ -4455,6 +4632,71 @@ mod tests {
     }
 
     #[test]
+    fn sequence_domain_follows_the_loaded_window_without_tiles() {
+        // The desktop backend ships no tiles, so the sequence axis must
+        // follow the loaded window. Anchoring it at the durable sequence
+        // origin squeezes a late window of a long thread against the right
+        // edge of the bar.
+        let page = json!({
+            "trajectory": (160231..160468).step_by(59).map(|seq| json!({
+                "item_id": format!("fixture-{seq}"), "root_turn_id": "r", "turn_id": "r",
+                "user_round": 1, "created_seq": seq, "kind": "assistant_message",
+                "started_at": 1000.0 + seq as f64, "completed_at": 1001.0 + seq as f64
+            })).collect::<Vec<_>>(),
+            "has_more": true
+        });
+        let model = parse_view_page(&page);
+        assert!(!model.has_overview);
+        let state = State {
+            show_duration: false,
+            has_more: true,
+            ..Default::default()
+        };
+        let (lo, hi) = timeline_domain(&state, &model);
+        assert_eq!((lo, hi), (160231.0, 160468.0));
+        let total = hi - lo;
+        let mut min_start = f32::MAX;
+        let mut max_end = f32::MIN;
+        for span in &model.spans {
+            let (start, width) = visible_span(
+                span.sequence_start.unwrap(),
+                span.sequence_end.unwrap(),
+                lo,
+                total,
+            )
+            .unwrap();
+            min_start = min_start.min(start);
+            max_end = max_end.max(start + width);
+        }
+        assert!(min_start.abs() < 1e-6, "min_start={min_start}");
+        assert!((max_end - 1.0).abs() < 1e-4, "max_end={max_end}");
+        // Overview tiles keep the global origin so aggregate coverage still
+        // paints the whole thread to the left of the detail window.
+        let overview_state = State {
+            show_duration: false,
+            has_more: true,
+            ..Default::default()
+        };
+        let overview_page = json!({
+            "tile_level": 0,
+            "trajectory": [{
+                "item_id": "fixture-detail", "root_turn_id": "r", "turn_id": "r",
+                "user_round": 1, "created_seq": 900, "kind": "assistant_message",
+                "started_at": 10.0, "completed_at": 11.0
+            }],
+            "tiles": [{
+                "bucket": 0, "count": 64, "failed": 0, "running": 0,
+                "start": 1.0, "end": 2.0,
+                "input_count": 12, "model_count": 40, "tool_count": 12
+            }]
+        });
+        let overview_model = parse_view_page(&overview_page);
+        let (overview_lo, overview_hi) = timeline_domain(&overview_state, &overview_model);
+        assert_eq!(overview_lo, 0.0);
+        assert_eq!(overview_hi, 901.0_f64.max(128.0));
+    }
+
+    #[test]
     fn aggregate_and_detail_spans_share_idle_compression_mapping() {
         let mut detail = vec![
             SpanBase {
@@ -4726,4 +4968,5 @@ mod tests {
         // Structured, non-command results are not mistaken for command output.
         assert!(command_output(&json!({"data": {"entries": []}})).is_none());
     }
+
 }

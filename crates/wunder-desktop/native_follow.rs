@@ -197,6 +197,12 @@ impl Projection {
                     if let Some(panel) = pending_question_panel(payload) {
                         if self.question_panel_item != id {
                             self.question_panel_item = id.to_string();
+                            // The composer answers against the durable waiting
+                            // turn row and keys replay suppression on the same
+                            // identity; without it every identical question
+                            // collapses into one consumed panel.
+                            let mut panel = panel;
+                            panel["turn_id"] = json!(execution);
                             events.push(json!({"event":"question_panel","data":panel}));
                         }
                     } else if self.question_panel_item == id
@@ -790,6 +796,8 @@ mod tests {
             .expect("question panel event");
         assert_eq!(panel["data"]["status"], "pending");
         assert_eq!(panel["data"]["questions"][0]["question"], "继续吗？");
+        // The composer answers and de-duplicates against the waiting turn row.
+        assert_eq!(panel["data"]["turn_id"], "fixture-root");
         // A duplicate revision is ignored and must not reopen the card.
         assert!(projection.apply(&item).unwrap().is_empty());
     }

@@ -27,6 +27,11 @@ export global Theme {
     out property <color> surface: #ffffff;
     out property <color> border: #E8E6E3;
     out property <color> border-strong: #D8D5D0;
+    // The frameless window's own outline. It has to delineate the app against
+    // the desktop without a DWM shadow (Win7 has none for a borderless HWND),
+    // so it stays darker than any in-page rule: ~3:1 on the white surface,
+    // the minimum for a visible UI boundary.
+    out property <color> window-frame: #9A948B;
     // Row states for lists, trees and the sidebar.
     out property <color> hover: #F6F5F3;
     out property <color> selected: #F1EFEC;

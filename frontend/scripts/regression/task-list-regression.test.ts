@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { ref } from 'vue';
 
 import { buildTaskList, isArchivedTaskRecord, isRootWorkThread, taskWindow } from '../../src/views/messenger/taskList';
+import { formatDateTime, toEpochMs } from '../../src/utils/formatDateTime';
 import { useTaskListActivity } from '../../src/views/messenger/useTaskListActivity';
 import { moveKeyWithinOrder, prependFreshKeys } from '../../src/views/messenger/stableListOrder';
 import { resolveTaskRuntimeState } from '../../src/views/messenger/taskRuntimeState';
@@ -20,8 +21,45 @@ test('work thread list excludes archived and subagent sessions', () => {
       { id: 'archived', agent_id: 'agent', status: 'archived', created_at: 3 },
       { id: 'child', agent_id: 'agent', parent_session_id: 'root', spawned_by: 'model', created_at: 4 }
     ], 'agent', 'New'),
-    [{ id: 'active', title: 'New', locked: false, runtimeStatus: 'active', createdAt: 2, consumedTokens: 0, toolCalls: 0, modelRequestCount: null, quotaUsed: null }]
+    [{ id: 'active', title: 'New', locked: false, runtimeStatus: 'active', createdAt: 2, lastActiveAt: 2, consumedTokens: 0, toolCalls: 0, modelRequestCount: null, quotaUsed: null }]
   );
+});
+
+test('work thread rows carry the newest activity time for the row tooltip', () => {
+  const rows = buildTaskList([
+    {
+      id: 'chatty',
+      agent_id: 'agent',
+      created_at: '2026-01-01T08:00:00Z',
+      updated_at: '2026-01-02T09:00:00Z',
+      last_message_at: '2026-01-03T10:30:00Z'
+    },
+    // No message stamp: the rename-driven updated_at is the best activity
+    // signal this row has, so the tooltip still gets a time.
+    { id: 'renamed', agent_id: 'agent', created_at: '2026-01-01T08:00:00Z', updated_at: '2026-02-01T09:00:00Z' }
+  ], 'agent', 'New');
+
+  const chatty = rows.find((row) => row.id === 'chatty');
+  assert.equal(chatty?.lastActiveAt, Date.parse('2026-01-03T10:30:00Z'));
+  const renamed = rows.find((row) => row.id === 'renamed');
+  assert.equal(renamed?.lastActiveAt, Date.parse('2026-02-01T09:00:00Z'));
+});
+
+test('tooltip timestamp accepts seconds, milliseconds and ISO text', () => {
+  const ms = Date.parse('2026-03-04T05:06:00Z');
+  assert.equal(toEpochMs(ms / 1000), ms);
+  assert.equal(toEpochMs(ms), ms);
+  assert.equal(toEpochMs('2026-03-04T05:06:00Z'), ms);
+  assert.equal(toEpochMs(''), 0);
+  assert.equal(toEpochMs(0), 0);
+  // Local-time label, so it is built from the same Date the assertion reads.
+  const label = new Date(ms);
+  const pad = (part: number) => String(part).padStart(2, '0');
+  assert.equal(
+    formatDateTime(ms),
+    `${label.getFullYear()}-${pad(label.getMonth() + 1)}-${pad(label.getDate())} ${pad(label.getHours())}:${pad(label.getMinutes())}`
+  );
+  assert.equal(formatDateTime(0), '');
 });
 
 test('thread drag order uses the complete persisted order', () => {

@@ -5,8 +5,8 @@ import { expect, test, type Page } from '@playwright/test';
  *
  * 原用例断言的是右 Dock 的 `.messenger-right-panel--tasks` / `.messenger-task-select`
  * （四区骨架的一部分，两栏壳体里已不存在）。此处按新形态改写为左栏
- * `MessengerThreadTree`：`.mz-thread-row` / `.mz-thread-select`（`title` 为线程名、
- * `aria-current` 表示选中）。断言的**行为**保持不变：
+ * `MessengerThreadTree`：`.mz-thread-row` / `.mz-thread-select`（`data-thread-title`
+ * 为线程名——`title` 已带最后完成时间，不能再用作标识；`aria-current` 表示选中）。断言的**行为**保持不变：
  * 目录刷新后已删除的行从组件里消失；打开空线程不报错；点击已删除的行会被移除、
  * 给出提示并清掉指向它的路由。
  *
@@ -73,7 +73,7 @@ test('complete catalog removes deleted rows from the actual work thread componen
   await scrollThreadTreeToEnd(page);
   await expect(page.locator('.mz-thread-title').filter({ hasText: /^Removed / })).toHaveCount(0);
   await expect(page.locator('.mz-thread-select')).toHaveCount(2);
-  await expect(page.locator('.mz-thread-select[title="Session A"]')).toHaveCount(1);
+  await expect(page.locator('.mz-thread-select[data-thread-title="Session A"]')).toHaveCount(1);
 });
 
 test('opening an empty thread completes without an error notification', async ({ page }) => {
@@ -85,8 +85,8 @@ test('opening an empty thread completes without an error notification', async ({
       : { id: 'perf-session-b', agent_id: 'perf-agent', title: 'Session B', transcript: [] };
     return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ data }) });
   });
-  await page.locator('.mz-thread-select[title="Session B"]').click();
-  await expect(page.locator('.mz-thread-select[title="Session B"]')).toHaveAttribute('aria-current', 'true');
+  await page.locator('.mz-thread-select[data-thread-title="Session B"]').click();
+  await expect(page.locator('.mz-thread-select[data-thread-title="Session B"]')).toHaveAttribute('aria-current', 'true');
   await page.waitForTimeout(600);
   await expect(page.locator('.el-message--error')).toHaveCount(0);
 });
@@ -97,8 +97,8 @@ test('clicking a deleted row removes it, explains the failure, and clears its ro
   await page.route('**/wunder/chat/sessions/removed-thread**', route => route.fulfill({ status: 404,
     contentType: 'application/json', body: JSON.stringify({ error: { message: 'Not found' } }) }));
   await scrollThreadTreeToEnd(page);
-  await page.locator('.mz-thread-select[title="Removed thread"]').click();
-  await expect(page.locator('.mz-thread-select[title="Removed thread"]')).toHaveCount(0);
+  await page.locator('.mz-thread-select[data-thread-title="Removed thread"]').click();
+  await expect(page.locator('.mz-thread-select[data-thread-title="Removed thread"]')).toHaveCount(0);
   await expect(page.locator('.el-message--warning')).toBeVisible();
   await expect(page).not.toHaveURL(/session_id=removed-thread/);
   await page.evaluate(async () => {
@@ -110,10 +110,10 @@ test('clicking a deleted row removes it, explains the failure, and clears its ro
     mergeSessionCatalogPage(store, { items: [old] });
   });
   await scrollThreadTreeToEnd(page);
-  await expect(page.locator('.mz-thread-select[title="Removed thread"]')).toHaveCount(0);
+  await expect(page.locator('.mz-thread-select[data-thread-title="Removed thread"]')).toHaveCount(0);
   await page.route('**/wunder/chat/sessions/perf-session-b**', route => route.fulfill({ status: 200, contentType: 'application/json',
     body: JSON.stringify({ data: route.request().url().includes('/events') ? { events: [], rounds: [], running: false } :
       { id: 'perf-session-b', agent_id: 'perf-agent', title: 'Session B', transcript: [] } }) }));
-  await page.locator('.mz-thread-select[title="Session B"]').click();
-  await expect(page.locator('.mz-thread-select[title="Session B"]')).toHaveAttribute('aria-current', 'true');
+  await page.locator('.mz-thread-select[data-thread-title="Session B"]').click();
+  await expect(page.locator('.mz-thread-select[data-thread-title="Session B"]')).toHaveAttribute('aria-current', 'true');
 });

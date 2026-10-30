@@ -48,15 +48,28 @@
   /* 刻度条独占通道宽度：输入区按它右移，两列才能对齐到同一中线。 */
   --mz-turn-ruler-width: 18px;
 
-  /* §5.2 sidebar metrics */
+  /* §5.2 sidebar metrics — 与 frontend-slint/ui/drag_row.slint 的 SidebarMetrics
+     同值，两端侧栏的行节奏必须一致：
+     · 两侧留白 12px，行内再补 8px，图标从 20px 起排；
+     · 导航行 32px（设备/工作区/线程/设置），分组行另留 4px 组间气口；
+     · 图标 13px 与正文字号同级但字形更小，图文间距固定 8px；
+     · 行与行内按钮统一 8px 圆角，浮层 10px；
+     · 线程行只缩进一格：状态点列 28px，标题正好接到工作区标题列 48px。 */
   --mz-sidebar-width: 240px;
   --mz-sidebar-padding: 12px;
   --mz-search-height: 34px;
-  --mz-group-title-height: 24px;
-  --mz-workspace-row-height: 34px;
-  --mz-thread-row-height: 28px;
+  --mz-group-title-height: 32px;
+  --mz-workspace-row-height: 32px;
+  --mz-thread-row-height: 32px;
+  /* 线程行内容列（状态点左缘）距侧栏左缘：28px。标题因此落在
+     28 + 12 + 8 = 48px，正好压在工作区标题列上，缩进只保留能表达层级的一格。 */
   --mz-thread-indent: 28px;
   --mz-settings-btn-height: 32px;
+  --mz-group-air: 4px;
+  --mz-row-padding: 8px;
+  --mz-row-gap: 8px;
+  --mz-row-icon: 13px;
+  --mz-row-radius: 8px;
 
   /* §11.2 typography / §11.3 radii */
   --mz-font-2xs: 10px;
@@ -133,7 +146,7 @@
   display: flex;
   flex-direction: column;
   min-height: 0;
-  padding-top: 4px;
+  padding-top: 8px;
   overflow: hidden;
 }
 
@@ -144,18 +157,18 @@
   align-items: center;
   box-sizing: border-box;
   height: var(--mz-group-title-height);
-  padding: 0 6px 0 var(--mz-sidebar-padding);
+  padding: 0 var(--mz-sidebar-padding);
 }
 
 .messenger-sidebar-device {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--mz-row-gap);
   min-width: 0;
-  height: 22px;
-  padding: 0 6px;
+  height: var(--mz-group-title-height);
+  padding: 0 var(--mz-row-padding);
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--mz-row-radius);
   background: transparent;
   color: var(--mz-text);
   font: inherit;
@@ -169,9 +182,9 @@
 
 .messenger-sidebar-device-icon {
   flex-shrink: 0;
-  width: 15px;
+  width: 20px;
   color: var(--mz-primary);
-  font-size: var(--mz-font-md);
+  font-size: var(--mz-row-icon);
   text-align: center;
 }
 
@@ -179,7 +192,7 @@
   min-width: 0;
   overflow: hidden;
   color: var(--mz-text);
-  font-size: var(--mz-font-sm);
+  font-size: var(--mz-font-md);
   font-weight: 600;
   letter-spacing: 0.02em;
   text-overflow: ellipsis;
@@ -189,7 +202,7 @@
 .messenger-sidebar-device-kind {
   flex-shrink: 0;
   color: var(--mz-text-muted);
-  font-size: var(--mz-font-2xs);
+  font-size: var(--mz-font-xs);
 }
 
 .messenger-sidebar-device-chevron {
@@ -221,12 +234,12 @@
 .messenger-sidebar-device-option {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--mz-row-gap);
   width: 100%;
   height: 32px;
-  padding: 0 8px;
+  padding: 0 var(--mz-row-padding);
   border: 0;
-  border-radius: 7px;
+  border-radius: var(--mz-row-radius);
   background: transparent;
   color: var(--mz-text, #1f2329);
   font: inherit;
@@ -247,9 +260,9 @@
 
 .messenger-sidebar-device-option-icon {
   flex-shrink: 0;
-  width: 15px;
+  width: 20px;
   color: var(--mz-primary, var(--ui-accent-ink));
-  font-size: var(--mz-font-sm, 12px);
+  font-size: var(--mz-row-icon, 13px);
   text-align: center;
 }
 
@@ -257,7 +270,7 @@
   flex: 1;
   min-width: 0;
   overflow: hidden;
-  font-size: var(--mz-font-sm, 12px);
+  font-size: var(--mz-font-md, 13px);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -265,7 +278,7 @@
 .messenger-sidebar-device-option-kind {
   flex-shrink: 0;
   color: var(--mz-text-muted, #8a8f99);
-  font-size: var(--mz-font-2xs, 10px);
+  font-size: var(--mz-font-xs, 11px);
 }
 
 .messenger-sidebar-device-option-check {
@@ -286,14 +299,15 @@
   display: flex;
   flex-shrink: 0;
   align-items: center;
-  gap: 6px;
+  gap: var(--mz-row-gap);
   box-sizing: border-box;
   height: var(--mz-workspace-row-height);
-  margin: 0 6px;
-  padding: 0 6px;
-  border-radius: 8px;
+  /* 组间比组内松：每行只带 4px 顶部气口，组内线程行之间不留空隙。 */
+  margin: var(--mz-group-air) var(--mz-sidebar-padding) 0;
+  padding: 0 var(--mz-row-padding);
+  border-radius: var(--mz-row-radius);
   color: var(--mz-text);
-  font-size: var(--mz-font-base);
+  font-size: var(--mz-font-md);
   cursor: pointer;
   transition: background-color 120ms ease, color 120ms ease;
 }
@@ -329,7 +343,7 @@
 
 /* 已连接的本地工作区行（§6.3）：同一套行样式套在 button 上，补齐 UA 重置。 */
 button.messenger-sidebar-workspace-row {
-  width: calc(100% - 12px);
+  width: calc(100% - var(--mz-sidebar-padding) * 2);
   border: 0;
   background: none;
   font: inherit;
@@ -338,8 +352,10 @@ button.messenger-sidebar-workspace-row {
 
 .messenger-sidebar-workspace-icon {
   flex-shrink: 0;
+  width: 20px;
   color: var(--mz-primary);
-  font-size: var(--mz-font-md);
+  font-size: var(--mz-row-icon);
+  text-align: center;
 }
 
 .messenger-sidebar-workspace-name {
@@ -363,15 +379,15 @@ button.messenger-sidebar-workspace-row {
   flex-shrink: 0;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: 20px;
+  height: 20px;
   padding: 0;
   border: 0;
-  border-radius: var(--mz-radius-tag);
+  border-radius: var(--mz-row-radius);
   color: var(--mz-text-muted);
   background: transparent;
   font: inherit;
-  font-size: var(--mz-font-sm);
+  font-size: var(--mz-row-icon);
   cursor: pointer;
   transition: background-color 120ms ease, color 120ms ease;
 }
@@ -415,12 +431,19 @@ button.messenger-sidebar-workspace-row {
   display: flex;
   align-items: center;
   box-sizing: border-box;
+  /* 行高/留白与工作区行同一套：32px、两侧 12px、8px 圆角。 */
   height: var(--mz-thread-row-height);
-  margin: 0 6px;
-  /* §5.2: thread rows are indented one rail step under the workspace row. */
-  padding-left: calc(var(--mz-thread-indent) - 6px);
-  border-radius: 7px;
+  margin: 0 var(--mz-sidebar-padding);
+  /* 缩进只为表达层级：状态点列 28px，标题随后对齐工作区标题列（48px）。 */
+  padding-left: calc(var(--mz-thread-indent) - var(--mz-sidebar-padding));
+  padding-right: var(--mz-row-padding);
+  border-radius: var(--mz-row-radius);
   transition: background-color 120ms ease;
+}
+
+/* 多选态：缩进退回行内边距，勾选框占据缩进列。 */
+.mz-thread-row.is-selecting {
+  padding-left: var(--mz-row-padding);
 }
 
 .mz-thread-row:hover {
@@ -434,11 +457,11 @@ button.messenger-sidebar-workspace-row {
 .mz-thread-row.is-active::before {
   content: '';
   position: absolute;
-  top: 6px;
-  bottom: 6px;
+  top: 8px;
+  bottom: 8px;
   left: 2px;
   width: 2px;
-  border-radius: 2px;
+  border-radius: 1px;
   background: var(--mz-primary);
 }
 
@@ -446,10 +469,10 @@ button.messenger-sidebar-workspace-row {
   display: flex;
   flex: 1;
   align-items: center;
-  gap: 8px;
+  gap: var(--mz-row-gap);
   min-width: 0;
   height: 100%;
-  padding: 0 4px;
+  padding: 0;
   border: 0;
   color: var(--mz-text-secondary);
   background: transparent;
@@ -469,9 +492,9 @@ button.messenger-sidebar-workspace-row {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  width: 11px;
-  height: 11px;
-  font-size: 10px;
+  width: 12px;
+  height: 12px;
+  font-size: 11px;
   line-height: 1;
   color: var(--mz-text-muted);
 }
@@ -521,13 +544,15 @@ button.messenger-sidebar-workspace-row {
   flex-shrink: 0;
   width: 20px;
   height: 20px;
+  /* 行内动作：20px 触面、按钮间距 4px，行尾再留 8px。 */
+  margin-left: 4px;
   padding: 0;
   border: 0;
-  border-radius: var(--mz-radius-tag);
+  border-radius: var(--mz-row-radius);
   color: var(--mz-text-muted);
   background: transparent;
   font: inherit;
-  font-size: var(--mz-font-sm);
+  font-size: var(--mz-row-icon);
   cursor: pointer;
   opacity: 0;
 }
@@ -635,7 +660,8 @@ button.messenger-sidebar-workspace-row {
   box-sizing: border-box;
   width: 15px;
   height: 15px;
-  margin: 0 6px 0 2px;
+  /* 勾选框顶到行内边距上，缩进让给后面的标题（与蛹的多选行同几何）。 */
+  margin: 0 var(--mz-row-gap) 0 0;
   border: 1px solid var(--mz-border-strong);
   border-radius: 4px;
   color: #fff;
@@ -663,7 +689,7 @@ button.messenger-sidebar-workspace-row {
 
 .mz-thread-selection-bar {
   flex-shrink: 0;
-  padding: 8px 10px 10px;
+  padding: 4px var(--mz-sidebar-padding) 8px;
   border-top: 1px solid var(--mz-border);
   background: var(--mz-surface);
 }
@@ -708,11 +734,11 @@ button.messenger-sidebar-workspace-row {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: 20px;
+  height: 20px;
   padding: 0;
   border: 0;
-  border-radius: var(--mz-radius-tag);
+  border-radius: var(--mz-row-radius);
   color: var(--mz-text-muted);
   background: transparent;
   font-size: var(--mz-font-md);
@@ -728,12 +754,12 @@ button.messenger-sidebar-workspace-row {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: var(--mz-row-gap);
   width: 100%;
-  height: 32px;
+  height: 28px;
   margin-top: 8px;
   border: 1px solid var(--mz-primary);
-  border-radius: var(--mz-radius-tag);
+  border-radius: var(--mz-row-radius);
   color: #fff;
   background: var(--mz-primary);
   font: inherit;
@@ -830,10 +856,10 @@ button.messenger-sidebar-workspace-row {
   display: flex;
   flex-shrink: 0;
   align-items: center;
-  gap: 6px;
+  gap: var(--mz-row-gap);
   box-sizing: border-box;
-  height: 30px;
-  padding: 0 6px 0 var(--mz-sidebar-padding);
+  height: 28px;
+  padding: 0 var(--mz-sidebar-padding);
   border-bottom: 1px solid var(--mz-border);
   color: var(--mz-text-muted);
   font-size: var(--mz-font-sm);
@@ -1009,12 +1035,12 @@ button.messenger-sidebar-workspace-row {
 .workspace-file-row {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--mz-row-gap);
   box-sizing: border-box;
-  height: 26px;
-  padding-right: 4px;
+  height: 28px;
+  padding-right: var(--mz-row-padding);
   color: var(--mz-text-secondary);
-  font-size: var(--mz-font-sm);
+  font-size: var(--mz-font-md);
   cursor: default;
   user-select: none;
 }
@@ -1444,21 +1470,22 @@ button.messenger-sidebar-workspace-row {
 
 .messenger-sidebar-footer {
   flex-shrink: 0;
-  padding: 0;
+  /* 4px 上气口 + 32px 行 + 4px 下气口，与树里的行同高同留白。 */
+  padding: 4px var(--mz-sidebar-padding);
   border-top: 1px solid var(--mz-border);
 }
 
 .messenger-sidebar-settings {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--mz-row-gap);
   box-sizing: border-box;
   width: 100%;
   height: var(--mz-settings-btn-height);
   margin: 0;
-  padding: 0 8px;
+  padding: 0 var(--mz-row-padding);
   border: 0;
-  border-radius: 0;
+  border-radius: var(--mz-row-radius);
   color: var(--mz-text-secondary);
   background: transparent;
   font: inherit;

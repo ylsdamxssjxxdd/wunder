@@ -1083,12 +1083,14 @@ fn restore_thread_extras(
     {
         if let Some(inquiry) = inquiry_from_payload(&panel) {
             let mut inquiry = inquiry;
-            inquiry.inquiry_turn_id = turns
-                .iter()
-                .rev()
-                .find(|turn| turn.question_panel.as_ref() == Some(&panel))
-                .map(|turn| turn.root_id.clone())
-                .unwrap_or_default();
+            // The waiting execution row identity travels inside the panel
+            // payload; the round root is a different row once goal rounds
+            // continue the turn, and settling needs the waiting row itself.
+            inquiry.inquiry_turn_id = panel
+                .get("turn_id")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
             state.inquiries.insert(session.to_string(), inquiry);
         }
     }
@@ -4170,11 +4172,26 @@ fn apply_context_usage(app: &MainWindow, usage: wunder_desktop::NativeContextUsa
     app.set_context_counts(format!("{} / {} tokens", count(used), count(capacity)).into());
 }
 
+/// Row activity stamp: Unix seconds rendered as local `YYYY-MM-DD HH:MM`.
+///
+/// The sidebar appends it to the row tooltip so a half-forgotten thread can be
+/// found by date. A never-touched record (0) stays empty rather than showing a
+/// made-up time, and the value is only formatted once per catalogue refresh.
 fn format_time(value: f64) -> String {
-    if value > 0.0 {
-        "刚刚".to_string()
+    if !(value > 0.0) {
+        return String::new();
+    }
+    let millis = if value < 100_000_000_000.0 {
+        (value * 1000.0) as i64
     } else {
-        String::new()
+        value as i64
+    };
+    match chrono::DateTime::from_timestamp_millis(millis) {
+        Some(stamp) => stamp
+            .with_timezone(&chrono::Local)
+            .format("%Y-%m-%d %H:%M")
+            .to_string(),
+        None => String::new(),
     }
 }
 
@@ -4191,6 +4208,19 @@ fn format_count_i64(value: i64) -> String {
 #[cfg(test)]
 mod turn_tests {
     use super::*;
+
+    /// 侧栏行的活动时间必须是一个真实日期，不是占位的「刚刚」：悬停提示靠它
+    /// 回答「这条线程最后什么时候干过活」。秒/毫秒两种存法都要认。
+    #[test]
+    fn row_activity_stamp_renders_a_real_date() {
+        for raw in [1_700_000_000.0, 1_700_000_000_000.0] {
+            let stamp = format_time(raw);
+            assert_eq!(stamp.len(), 16, "{stamp}");
+            assert_eq!(stamp.matches('-').count(), 2, "{stamp}");
+            assert_eq!(stamp.matches(':').count(), 1, "{stamp}");
+        }
+        assert_eq!(format_time(0.0), "");
+    }
 
     #[test]
     fn cancelled_terminal_settles_open_tool_without_a_success_mark() {
@@ -5046,6 +5076,29 @@ mod turn_tests {
         assert!(panel.questions[0].options[1].selected);
         assert_eq!(panel.questions[1].other, "fixture note");
         assert_eq!(panel.current_index(), 0);
+    }
+
+    /// Two panels that ask the very same question in different turns are
+    /// different panels: the replay guard keys on the waiting turn's identity,
+    /// not on the wording, so a re-asked question still opens the card.
+    #[test]
+    fn inquiry_consumption_key_distinguishes_identical_questions() {
+        let mut first = fixture_panel();
+        first.inquiry_turn_id = "fixture-turn-a".into();
+        let mut second = fixture_panel();
+        second.inquiry_turn_id = "fixture-turn-b".into();
+        assert_ne!(
+            first.consumption_key("fixture-session"),
+            second.consumption_key("fixture-session"),
+            "identical wording in a new turn must survive the replay guard"
+        );
+        let mut replay = fixture_panel();
+        replay.inquiry_turn_id = "fixture-turn-a".into();
+        assert_eq!(
+            first.consumption_key("fixture-session"),
+            replay.consumption_key("fixture-session"),
+            "the same turn republishing the same panel is one panel"
+        );
     }
 
     /// The runtime wraps every payload as `{session_id, timestamp, data}`, so

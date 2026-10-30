@@ -615,8 +615,12 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
                 row.target = target.as_str().into();
                 row.tool_metrics = crate::timeline_text::tool_metrics(item).into();
                 row.tool_metrics_visible = !row.tool_metrics.is_empty();
-                row.summary = crate::timeline_text::tool_summary(item).as_str().into();
-                latest = row.summary.clone();
+                row.summary = crate::timeline_text::tool_row_summary(item, &target)
+                    .as_str()
+                    .into();
+                // The folded batch bar has no target chip, so its readout
+                // keeps the full call preview even when the row drops it.
+                latest = crate::timeline_text::tool_summary(item).as_str().into();
                 row.detail = crate::timeline_text::copy_text(&item.sections, item.detail.as_str());
                 row.sections = crate::timeline_text::sections(&item.sections);
                 row.tokens = item.tokens.as_str().into();

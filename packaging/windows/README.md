@@ -6,20 +6,21 @@
 - `opt/git`：给 `git clone`、`git status`、补丁应用与仓库操作使用的内置 Git
 - `opt/rg`：给 `search_content` 与命令行检索使用的内置 ripgrep
 - `opt/ffmpeg`：随包附带的静态 ffmpeg（`opt/ffmpeg/bin` 已由桌面运行时自动接入 `PATH`）
+- `opt/powershell`：随包附带的便携 PowerShell 7.1.7（`pwsh.exe`），是 `执行命令` 工具的默认 shell；可用 `-SkipPowerShell` 跳过，详见「版本选择」
 - `opt/browser`：默认内置 Chrome 109 win32 浏览器，供 `browser_*` 工具开箱使用；可用 `-SkipBrowser` 跳过，详见「内置浏览器」
 
 补充包设计目标：**统一安装到 `WUNDER_HOME/opt`，蛹与舵机共用一份运行环境**。
 
 当前约定：
 
-- `build.bat pack -a win7-x86` 生成单文件 `wunder-<版本>-win7-x86-setup.exe`；安装向导把程序本体也作为可勾选项：蛹（桌面端）与舵机（命令行）默认勾选，不勾则不安装对应的 `wunder-desktop.exe`/`wunder-cli.exe`，因此可以只装补充组件；Python/Git/ripgrep/ffmpeg/内置浏览器默认全部不勾选。勾选蛹即自动创建开始菜单与桌面快捷方式（不再单列“桌面快捷方式”任务）。页面提供“全选（推荐）”一次勾选全部项，任一项取消会自动回退全选状态。
+- `build.bat pack -a win7-x86` 生成单文件 `wunder-<版本>-win7-x86-setup.exe`；安装向导把程序本体也作为可勾选项：蛹（桌面端）与舵机（命令行）默认勾选，不勾则不安装对应的 `wunder-desktop.exe`/`wunder-cli.exe`，因此可以只装补充组件。补充组件里只有 PowerShell 7 默认勾选（它是命令工具的默认 shell，缺了会退回系统 PowerShell 2.0），Python/Git/ripgrep/ffmpeg/内置浏览器默认不勾选。勾选蛹即自动创建开始菜单与桌面快捷方式（不再单列“桌面快捷方式”任务）。页面提供“全选（推荐）”一次勾选全部项，任一项取消会自动回退全选状态。
 - 安装向导允许改安装目录，默认 `%USERPROFILE%\.wunder`。安装根会写入 `.wunder-home`，蛹和舵机启动时以该根作为 `WUNDER_HOME`；显式设置的非空 `WUNDER_HOME` 优先。
 - 安装目录同时保存配置、会话、工作区、日志和 `opt/` 补充组件；迁移时复制整个安装根。
 - 选中已存在的组件时，安装器先清空对应 `opt/<component>`，再写入新版本；`config`、`data`、`workspace`、`logs` 等用户数据不会删除。
 - 勾选舵机时，安装完成后 `{安装根}\bin` 会加入当前用户 `PATH`（重复安装不重复追加，卸载时只移除这一项）。新开终端可直接运行 `wunder-cli`；`desktop` 启动蛹，`wunder-desktop` 也可直接运行。
 - 开始菜单使用形态名称：蛹（桌面程序）与舵机（命令行）；桌面快捷方式随勾选“蛹”自动创建；卸载入口仍为“卸载心舰”。
 - 卸载器移除 `bin`、`.wunder-home`、安装时选择的组件目录和安装器写入的用户 `PATH` 项，保留用户数据。
-- 补充包仍可单独导入：在蛹设置中选择“导入补充包”，或手动解压到 `WUNDER_HOME`。两端自动识别共享 home 中的 `opt/python`、`opt/git`、`opt/rg`、`opt/ffmpeg` 与 `opt/browser`。
+- 补充包仍可单独导入：在蛹设置中选择“导入补充包”，或手动解压到 `WUNDER_HOME`。两端自动识别共享 home 中的 `opt/python`、`opt/git`、`opt/rg`、`opt/ffmpeg`、`opt/powershell` 与 `opt/browser`。
 
 ## 安装后的终端命令
 
@@ -65,6 +66,12 @@ Windows 安装包优先使用离线 SDK 的 `Rust-builder/win7/offline/tools/inn
   - `14.1.1` 起的官方 Windows 二进制用 Rust 1.78+ 构建，静态导入 `bcryptprimitives.dll`（`ProcessPrng`）和 `api-ms-win-core-synch-l1-2-0.dll`（`WaitOnAddress`），这两个 DLL 从 Windows 8 才提供；在 32 位 Windows 7 上启动即崩溃并报 `Segmentation fault`。
   - `14.1.0` 是最后一个仍能在 Windows 7 运行的官方版本。构建脚本会校验 SHA256、PE 架构和导入表；若以后要升级到 `14.1.1+`，必须用 Rust `<= 1.77.2` 自行重编，否则门禁会直接失败。
   - 代价：`14.1.1` 才修复了正则内层字面量优化可能漏匹配的问题（ripgrep #2884），`14.1.0` 仍带该缺陷；若搜索正确性必须包含该修复，只能用 Rust `<= 1.77.2` 自行重编 `14.1.1`。
+- PowerShell：`7.1.7 portable (win-x86 zip)`
+  - `7.1.7` 是最后一个能在 Windows 7 上启动的 PowerShell 7：`7.2` 起基于 .NET 6，要求 Windows 8.1+；它也是最后一个提供自包含 win-x86 zip 的版本。
+  - zip 自带 .NET 5 运行时、降级版 API-set shim 与 UCRT，解压即用：不写注册表、不需要管理员权限、不需要重启，这决定它（而不是需要系统级安装的 WMF 5.1）成为补充包的默认选择。
+  - 目标机仍需打齐 Universal CRT（`KB2999226`）与 Visual C++ 2015-2019 运行库才能加载 .NET 5 宿主；即便缺失，执行命令工具会在启动探测失败后自动回退系统 Windows PowerShell（Win7 上是 2.0），不会出现整条命令链瘫痪。
+  - 运行时按绝对路径优先选择 `opt/powershell/pwsh.exe`（可执行文件名不是 `powershell.exe`，靠 PATH 永远命中不了它），并把路径发布到 `WUNDER_POWERSHELL_EXE`；版本探测与实际启动使用同一个二进制。
+  - 剪裁阶段会移除非 `en-US/zh-Hans/zh-Hant` 的语言资源目录与 `ref/` 引用程序集（约 22 MB），模型侧的工具说明会按 pwsh 7 的差异（无 `Get-WmiObject`、无 `-ComputerName` 参数等）单独下发。
 
 ## 入口命令
 
@@ -133,6 +140,7 @@ opt/
   git/
   rg/
   ffmpeg/
+  powershell/     （便携 PowerShell 7.1.7，pwsh.exe；可用 `-SkipPowerShell` 跳过）
   browser/        （默认自动准备 Chrome 109；可用 `-SkipBrowser` 跳过）
 README-win7-supplement.txt
 wunder-win7-supplement.json
@@ -168,19 +176,22 @@ Win7 最高只支持到 Chrome 109（`109.0.5414.x`，最后一个支持 Windows
    - `opt/git`
    - `opt/rg`
    - `opt/ffmpeg`
+   - `opt/powershell`（若打包时未用 `-SkipPowerShell` 跳过）
    - `opt/browser`（若打包时投喂了浏览器）
 4. 重新启动蛹或舵机。
 
 两端启动时会自动：
 
 - 从共享 home 探测补充包，不受程序安装目录和启动目录影响
-- 将共享 home 下的 `opt/python`、`opt/python/Scripts`、`opt/git/cmd`、`opt/git/bin`、`opt/rg`、`opt/rg/bin`、`opt/ffmpeg/bin` 接入 `PATH`，重复导入不会重复累加
+- 将共享 home 下的 `opt/python`、`opt/python/Scripts`、`opt/git/cmd`、`opt/git/bin`、`opt/rg`、`opt/rg/bin`、`opt/ffmpeg/bin`、`opt/powershell` 接入 `PATH`，重复导入不会重复累加
+- 把 `opt/powershell/pwsh.exe` 的绝对路径发布为 `WUNDER_POWERSHELL_EXE`，执行命令工具探测成功后即以它为默认 shell
 
-这样桥接层与智能体工具调用就能优先命中内置 Python / Git / rg。
+这样桥接层与智能体工具调用就能优先命中内置 Python / Git / rg / PowerShell。
 
 ## 兼容性提示
 
 - Python 3.8 embeddable package 在 Win7 上建议配合 `KB2533623` 与 Universal CRT 更新使用。
+- 便携 PowerShell 7 的 .NET 5 宿主依赖 Universal CRT（`KB2999226`）与 Visual C++ 2015-2019 运行库；缺失时执行命令工具自动回退系统 Windows PowerShell，命令不会失败，只是回到旧语法。
 - `opt/ffmpeg` 仅内置 `ffmpeg`（eugeneware/ffmpeg-static `b4.4.1`），不含 `ffprobe`；
   依赖 `WUNDER_FFPROBE_BIN`/`ffprobe` 的音视频探测接口仍需系统或用户侧提供 ffprobe。
 - `common` 档位（当前唯一档位）会额外内置 `pip / setuptools / wheel`，并按 `packaging/python/requirements-win7-common.txt` 预装办公文档、数据库、轻量视频、地图/雷达与绘图库。

@@ -195,9 +195,10 @@ async fn admin_monitor(
     Ok(response)
 }
 
-/// 线程管理页展示「线程名称」：线程名称即用户在蜂巢中的会话标题。监控会话摘要
-/// 本身只带首条问题，这里按所属用户和线程身份批量读取标题，回填到 `thread_name`；
-/// 取不到标题时回退为线程首条问题。
+/// 线程管理页展示「线程名称」与「问题」。名称取用户在蜂巢中的会话标题；
+/// 问题取线程首条用户消息。诊断持久化不保存正文，历史会话的摘要因此没有
+/// 问题字段，这里按线程身份从 canonical 历史批量回填；两处都取不到时，
+/// 名称回退为该线程的问题。
 async fn attach_thread_names(
     state: &Arc<AppState>,
     sessions: &mut [Value],
@@ -213,12 +214,30 @@ async fn attach_thread_names(
             (!user.is_empty() && !thread.is_empty()).then(|| (user.to_string(), thread.to_string()))
         })
         .collect::<Vec<_>>();
+    let missing_questions = sessions
+        .iter()
+        .filter(|session| {
+            session
+                .get("question")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|question| !question.is_empty())
+                .is_none()
+        })
+        .filter_map(|session| session.get("session_id")?.as_str().map(str::to_string))
+        .collect::<Vec<_>>();
     let storage = state.storage.clone();
-    let titles = crate::core::blocking::run_db("api.admin.monitor.thread_titles", move || {
-        storage.list_chat_session_titles(&owners)
-    })
-    .await
-    .map_err(|error| error_response(StatusCode::SERVICE_UNAVAILABLE, error.to_string()))?;
+    let (titles, questions) =
+        crate::core::blocking::run_db("api.admin.monitor.thread_titles", move || {
+            let titles = storage.list_chat_session_titles(&owners)?;
+            // 问题回填是展示增强：历史库不可读时保持空问题，不让整页失败。
+            let questions = storage
+                .thread_first_user_questions(&missing_questions)
+                .unwrap_or_default();
+            Ok::<_, anyhow::Error>((titles, questions))
+        })
+        .await
+        .map_err(|error| error_response(StatusCode::SERVICE_UNAVAILABLE, error.to_string()))?;
     for session in sessions.iter_mut() {
         let Some(map) = session.as_object_mut() else {
             continue;
@@ -228,19 +247,29 @@ async fn attach_thread_names(
             .and_then(Value::as_str)
             .unwrap_or("")
             .to_string();
+        let current_question = map
+            .get("question")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|question| !question.is_empty())
+            .map(str::to_string);
+        let question = current_question.or_else(|| {
+            questions
+                .get(&session_id)
+                .map(|question| question.trim().to_string())
+                .filter(|question| !question.is_empty())
+        });
+        if let Some(question) = question.as_deref() {
+            map.insert("question".to_string(), json!(question));
+        }
         if let Some(title) = titles
             .get(&session_id)
             .map(|title| title.trim())
             .filter(|title| !title.is_empty())
         {
             map.insert("thread_name".to_string(), json!(title));
-            continue;
-        }
-        if let Some(question) = map.get("question").and_then(Value::as_str) {
-            let trimmed = question.trim();
-            if !trimmed.is_empty() {
-                map.insert("thread_name".to_string(), json!(trimmed));
-            }
+        } else if let Some(question) = question {
+            map.insert("thread_name".to_string(), json!(question));
         }
     }
     Ok(())

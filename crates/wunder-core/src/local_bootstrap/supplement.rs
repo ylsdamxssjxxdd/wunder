@@ -7,6 +7,11 @@ pub enum Tool {
     Python,
     Git,
     Rg,
+    /// Bundled portable PowerShell 7 shipped for Windows 7 hosts that only
+    /// have Windows PowerShell 2.0. It is the command tool's default shell, so
+    /// discovery has to be explicit: the portable build is called `pwsh.exe`,
+    /// which a bare `powershell.exe` lookup can never resolve.
+    PowerShell,
 }
 
 /// The shared home always wins. Older installations remain read-only fallbacks;
@@ -44,6 +49,16 @@ pub fn find_tool(roots: &[PathBuf], tool: Tool) -> Option<PathBuf> {
             "opt/ripgrep/bin/rg",
             "opt/ripgrep/rg",
         ],
+        Tool::PowerShell if cfg!(windows) => &[
+            "opt/powershell/pwsh.exe",
+            "opt/powershell/powershell.exe",
+            "opt/powershell/bin/pwsh.exe",
+            "opt/powershell/bin/powershell.exe",
+        ],
+        Tool::PowerShell => &[
+            "opt/powershell/pwsh",
+            "opt/powershell/bin/pwsh",
+        ],
     };
     roots.iter().find_map(|root| {
         candidates
@@ -69,6 +84,8 @@ pub fn path_entries(roots: &[PathBuf]) -> Vec<PathBuf> {
         "opt/ripgrep/bin",
         "opt/ffmpeg",
         "opt/ffmpeg/bin",
+        "opt/powershell",
+        "opt/powershell/bin",
     ];
     roots
         .iter()
@@ -110,6 +127,13 @@ pub fn configure_runtime_env(roots: &[PathBuf]) {
         &["opt/ffmpeg/bin/ffprobe", "opt/ffmpeg/ffprobe"]
     }) {
         std::env::set_var("WUNDER_FFPROBE_BIN", &ffprobe);
+    }
+    // The portable PowerShell is `pwsh.exe`, so PATH alone cannot redirect the
+    // command tool's `powershell.exe` lookup. Publishing the resolved absolute
+    // path keeps shell selection explicit and lets the runtime probe that exact
+    // binary (and fall back to the system one when it refuses to start).
+    if let Some(pwsh) = find_tool(roots, Tool::PowerShell) {
+        std::env::set_var("WUNDER_POWERSHELL_EXE", &pwsh);
     }
 }
 
@@ -156,5 +180,21 @@ mod tests {
         std::fs::remove_file(home.join(name)).unwrap();
         assert_eq!(find_tool(&roots, Tool::Rg), Some(app.join(name)));
         assert_eq!(super::roots(&home, &home, Some(home.clone())), vec![home]);
+    }
+
+    #[test]
+    fn bundled_powershell_resolves_by_its_own_executable_name() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path().join("profile");
+        let pwsh = if cfg!(windows) {
+            "opt/powershell/pwsh.exe"
+        } else {
+            "opt/powershell/pwsh"
+        };
+        std::fs::create_dir_all(home.join("opt/powershell")).unwrap();
+        std::fs::write(home.join(pwsh), b"fixture").unwrap();
+        let roots = roots(&home, &home, None);
+        assert_eq!(find_tool(&roots, Tool::PowerShell), Some(home.join(pwsh)));
+        assert!(path_entries(&roots).contains(&home.join("opt/powershell")));
     }
 }
