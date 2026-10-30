@@ -1324,6 +1324,9 @@ pub(crate) fn apply_settings(app: &MainWindow, settings: DesktopSettings) {
     app.set_runtime_python(settings.python_path.into());
     app.set_runtime_git(settings.git_path.into());
     app.set_runtime_rg(settings.rg_path.into());
+    app.set_runtime_ffmpeg(settings.ffmpeg_path.into());
+    app.set_runtime_browser(settings.browser_path.into());
+    app.set_runtime_shell(settings.shell_path.into());
     let status = |tool: &str| {
         settings
             .tool_status
@@ -1335,6 +1338,9 @@ pub(crate) fn apply_settings(app: &MainWindow, settings: DesktopSettings) {
     app.set_runtime_python_status(status("python").into());
     app.set_runtime_git_status(status("git").into());
     app.set_runtime_rg_status(status("rg").into());
+    app.set_runtime_ffmpeg_status(status("ffmpeg").into());
+    app.set_runtime_browser_status(status("browser").into());
+    app.set_runtime_shell_status(status("powershell").into());
     // The catalogue object projects the composer's full model list and mirrors
     // its size for the picker's "empty list" versus "nothing configured" split.
     app.set_virtual_replay_logs(string_model(settings.virtual_replay_logs));

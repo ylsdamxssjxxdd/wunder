@@ -895,6 +895,27 @@ pub fn runtime_tool_statuses(settings: &DesktopSettings, app_dir: &Path) -> Vec<
         resolve_tool_auto(&settings.rg_path, app_dir, resolve_embedded_rg_bin, || {
             search_path_for("rg")
         });
+    // ffmpeg / browser / shell follow the same precedence: configured path wins,
+    // then the bundled supplement, then the host PATH. Chromium has no PATH arm
+    // because it only ever ships in the supplement, never system-wide.
+    let (ffmpeg_resolved, ffmpeg_auto_label) = resolve_tool_auto(
+        &settings.ffmpeg_path,
+        app_dir,
+        resolve_embedded_ffmpeg_bin,
+        || search_path_for("ffmpeg"),
+    );
+    let (browser_resolved, browser_auto_label) = resolve_tool_auto(
+        &settings.browser_path,
+        app_dir,
+        resolve_embedded_browser_bin,
+        || None::<PathBuf>,
+    );
+    let (shell_resolved, shell_auto_label) = resolve_tool_auto(
+        &settings.shell_path,
+        app_dir,
+        resolve_embedded_powershell_bin,
+        || search_path_for("powershell"),
+    );
     vec![
         tool_status(
             "python",
@@ -904,6 +925,24 @@ pub fn runtime_tool_statuses(settings: &DesktopSettings, app_dir: &Path) -> Vec<
         ),
         tool_status("git", &settings.git_path, git_resolved, git_auto_label),
         tool_status("rg", &settings.rg_path, rg_resolved, rg_auto_label),
+        tool_status(
+            "ffmpeg",
+            &settings.ffmpeg_path,
+            ffmpeg_resolved,
+            ffmpeg_auto_label,
+        ),
+        tool_status(
+            "browser",
+            &settings.browser_path,
+            browser_resolved,
+            browser_auto_label,
+        ),
+        tool_status(
+            "powershell",
+            &settings.shell_path,
+            shell_resolved,
+            shell_auto_label,
+        ),
     ]
 }
 
@@ -1008,6 +1047,38 @@ pub(crate) fn refresh_runtime_tool_env(settings: &DesktopSettings, app_dir: &Pat
         .or_else(|| resolve_embedded_rg_bin(app_dir))
     {
         set_env_path_if_exists("WUNDER_RG_BIN", &rg_bin);
+    }
+    // ffmpeg, browser and shell have no `configure_runtime_env` equivalent for
+    // a user pick: the supplement bootstrap publishes ffmpeg only, and the
+    // browser bridge reads `WUNDER_BROWSER_BIN` straight from the environment.
+    // An empty setting leaves the supplement values untouched on purpose.
+    if let Some(ffmpeg_bin) = resolve_desktop_tool_bin(&settings.ffmpeg_path, app_dir) {
+        set_env_path_if_exists("WUNDER_FFMPEG_BIN", &ffmpeg_bin);
+        let probe_name = if cfg!(windows) {
+            "ffprobe.exe"
+        } else {
+            "ffprobe"
+        };
+        let probe = ffmpeg_bin.with_file_name(probe_name);
+        if probe.is_file() {
+            set_env_path_if_exists("WUNDER_FFPROBE_BIN", &probe);
+        }
+    }
+    if let Some(browser_bin) = resolve_desktop_tool_bin(&settings.browser_path, app_dir) {
+        set_env_path_if_exists("WUNDER_BROWSER_BIN", &browser_bin);
+    }
+    if let Some(shell_bin) = resolve_desktop_tool_bin(&settings.shell_path, app_dir) {
+        // cmd.exe cannot take the PowerShell switches the command tool passes,
+        // so a cmd pick stays a `shell_mode` decision instead of a host override.
+        let is_cmd = shell_bin
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(|name| name.eq_ignore_ascii_case("cmd.exe"))
+            .unwrap_or(false);
+        if !is_cmd {
+            set_env_path_if_exists(wunder_server::command_utils::POWERSHELL_EXE_ENV, &shell_bin);
+            wunder_server::command_utils::reset_powershell_host();
+        }
     }
 }
 
@@ -1130,6 +1201,50 @@ fn resolve_embedded_rg_bin(app_dir: &Path) -> Option<PathBuf> {
     wunder_server::local_bootstrap::supplement::find_tool(
         &embedded_supplement_roots_for_env(app_dir),
         wunder_server::local_bootstrap::supplement::Tool::Rg,
+    )
+}
+
+/// ffmpeg lives at `opt/ffmpeg/bin/ffmpeg.exe` in the supplement matrix. The
+/// supplement tool enum has no FFmpeg arm because nothing else probes it, so the
+/// same roots are searched directly.
+fn resolve_embedded_ffmpeg_bin(app_dir: &Path) -> Option<PathBuf> {
+    let names: &[&str] = if cfg!(windows) {
+        &["opt/ffmpeg/bin/ffmpeg.exe", "opt/ffmpeg/ffmpeg.exe"]
+    } else {
+        &["opt/ffmpeg/bin/ffmpeg", "opt/ffmpeg/ffmpeg"]
+    };
+    embedded_supplement_roots_for_env(app_dir)
+        .iter()
+        .find_map(|root| {
+            names
+                .iter()
+                .map(|name| root.join(name))
+                .find(|path| path.is_file())
+        })
+}
+
+/// Chromium ships in the supplement under `opt/browser/chrome-win/chrome.exe`;
+/// the browser tool enum has no Browser arm, so the roots are searched directly.
+fn resolve_embedded_browser_bin(app_dir: &Path) -> Option<PathBuf> {
+    let names: &[&str] = if cfg!(windows) {
+        &["opt/browser/chrome-win/chrome.exe", "opt/browser/chrome.exe"]
+    } else {
+        &["opt/browser/chrome-linux/chrome", "opt/browser/chrome"]
+    };
+    embedded_supplement_roots_for_env(app_dir)
+        .iter()
+        .find_map(|root| {
+            names
+                .iter()
+                .map(|name| root.join(name))
+                .find(|path| path.is_file())
+        })
+}
+
+fn resolve_embedded_powershell_bin(app_dir: &Path) -> Option<PathBuf> {
+    wunder_server::local_bootstrap::supplement::find_tool(
+        &embedded_supplement_roots_for_env(app_dir),
+        wunder_server::local_bootstrap::supplement::Tool::PowerShell,
     )
 }
 

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-Slint-Royalty-free-2.0 OR LicenseRef-Slint-Software-3.0
 
 import { ScrollView } from "std-widgets.slint";
+import { TextFieldActivation } from "text_field.slint";
 
 export component TextEditBase inherits Rectangle {
     in property <length> scroll-view-padding;
@@ -65,6 +66,10 @@ export component TextEditBase inherits Rectangle {
     }
 
     forward-focus: text-input;
+
+    changed has-focus => {
+        if self.has-focus && !root.read-only && root.enabled { TextFieldActivation.activated(); }
+    }
 
     ContextMenuArea {
         enabled: root.enabled;

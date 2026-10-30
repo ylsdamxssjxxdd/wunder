@@ -1,4 +1,4 @@
-//! §9.1 settings search: one place that decides which of the eleven
+//! §9.1 settings search: one place that decides which of the twelve
 //! categories a query keeps.
 //!
 //! The match runs natively because Slint 1.18 strings expose only is-empty /
@@ -14,8 +14,9 @@
 /// navigation order: general, account, models, tools, agent, companion, cron,
 /// memory, channels, prompts and archived threads. Help is not a category — it
 /// opens from a button on the general page.
-const SETTINGS_CATEGORY_LABELS: [[&str; 3]; 11] = [
+const SETTINGS_CATEGORY_LABELS: [[&str; 3]; 12] = [
     ["常规", "常规设置", "general"],
+    ["本地运行时", "运行时", "runtime"],
     ["账号", "个人资料 眺望心舰", "account 3d wunder"],
     ["模型设置", "模型配置", "models"],
     ["工具管理", "工具", "tools"],
@@ -64,9 +65,9 @@ mod tests {
     fn query_matches_case_insensitively_across_languages() {
         let models = category_flags("MODEL");
         assert_eq!(models.iter().filter(|flag| **flag).count(), 1);
-        assert!(models[2], "models should match its english keyword");
+        assert!(models[3], "models should match its english keyword");
         let chinese = category_flags("记忆");
-        assert!(chinese[7], "memories should match its chinese label");
+        assert!(chinese[8], "memories should match its chinese label");
         assert!(!chinese[0]);
     }
 
@@ -81,6 +82,6 @@ mod tests {
     /// The shell hard-codes the initial flag list, so the count is a contract.
     #[test]
     fn category_count_matches_the_navigation() {
-        assert_eq!(SETTINGS_CATEGORY_COUNT, 11);
+        assert_eq!(SETTINGS_CATEGORY_COUNT, 12);
     }
 }

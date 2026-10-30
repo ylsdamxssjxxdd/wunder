@@ -1,0 +1,44 @@
+{
+  "view": "customer",
+  "second": {
+    "role": "fix",
+    "label": "the fix",
+    "lacks": []
+  },
+  "modelStates": 12,
+  "modelTransitions": 11,
+  "chartStates": 12,
+  "chartTransitions": 13,
+  "chartStatus": {
+    "works": 10,
+    "wrong": 0,
+    "fixed": 2,
+    "mixed": 0,
+    "after": 0,
+    "worse": 0
+  },
+  "mixedStatus": [],
+  "classes": [
+    {
+      "n": 1,
+      "end": "Active goal, 0 rounds done, nothing next",
+      "invariant": "GoalKeepsDriving",
+      "rule": "目标一旦活跃且武装，只要会话空闲且未达轮次上限，就必须继续开轮。 crates/wunder-desktop/native_stream.rs:238; crates/wunder-runtime/src/services/goal/driver.rs:200",
+      "cause": null,
+      "readerSteps": 3,
+      "modelSteps": 4,
+      "counterexamples": 1,
+      "lastSteps": [
+        "Human turn ends, session fence released"
+      ],
+      "startsHere": false,
+      "fix": "Goal waits for the human turn, wake kept for the release"
+    }
+  ],
+  "codeLike": [],
+  "uncited": {
+    "docs\\形式化证明\\goal-round-driver\\models\\GoalRoundDriver.tla": [],
+    "docs\\形式化证明\\goal-round-driver\\models\\GoalRoundDriverFixed.tla": []
+  },
+  "brokenProperties": []
+}

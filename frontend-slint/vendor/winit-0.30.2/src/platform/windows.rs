@@ -499,6 +499,11 @@ pub trait WindowAttributesExtWindows {
     /// Whether show or hide the window icon in the taskbar.
     fn with_skip_taskbar(self, skip: bool) -> Self;
 
+    /// Sets `WS_EX_NOACTIVATE`: the window never becomes the foreground window,
+    /// not even when shown with `SW_SHOW` or clicked. Used for notification
+    /// overlays that must not take focus from whatever the user is doing.
+    fn with_no_activate(self, no_activate: bool) -> Self;
+
     /// Customize the window class name.
     fn with_class_name<S: Into<String>>(self, class_name: S) -> Self;
 
@@ -571,6 +576,12 @@ impl WindowAttributesExtWindows for WindowAttributes {
     #[inline]
     fn with_skip_taskbar(mut self, skip: bool) -> Self {
         self.platform_specific.skip_taskbar = skip;
+        self
+    }
+
+    #[inline]
+    fn with_no_activate(mut self, no_activate: bool) -> Self {
+        self.platform_specific.no_activate = no_activate;
         self
     }
 

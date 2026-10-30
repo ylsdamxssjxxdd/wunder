@@ -193,7 +193,12 @@ fn render_frame<B: ratatui::backend::Backend + io::Write>(
     terminal: &mut Terminal<B>,
     app: &mut TuiApp,
 ) -> io::Result<()> {
-    execute!(terminal.backend_mut(), BeginSynchronizedUpdate)?;
+    // The markers are only an anti-tearing hint; a console without a VT parser
+    // would print them as literal text instead of interpreting them.
+    let synchronized = synchronized_update_supported();
+    if synchronized {
+        execute!(terminal.backend_mut(), BeginSynchronizedUpdate)?;
+    }
     let result = (|| {
         terminal.draw(|frame| ui::draw(frame, app))?;
         let lines = app.drain_pending_scrollback_lines();
@@ -203,8 +208,32 @@ fn render_frame<B: ratatui::backend::Backend + io::Write>(
         }
         Ok(())
     })();
-    let finish = execute!(terminal.backend_mut(), EndSynchronizedUpdate);
+    let finish = if synchronized {
+        execute!(terminal.backend_mut(), EndSynchronizedUpdate)
+    } else {
+        Ok(())
+    };
     result.and(finish)
+}
+
+/// Whether this console actually parses the synchronized-update markers
+/// (`ESC[?2026h` / `ESC[?2026l`). Windows 7's conhost has no VT parser and
+/// cannot gain one, yet crossterm always writes these two commands as raw
+/// ANSI on Windows, so every frame would leak a literal `?2026` fragment into
+/// the viewport. `supports_ansi` also tries to enable VT processing first, so
+/// on a console that can interpret the markers they are kept.
+fn synchronized_update_supported() -> bool {
+    static SUPPORTED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *SUPPORTED.get_or_init(|| {
+        #[cfg(windows)]
+        {
+            crossterm::ansi_support::supports_ansi()
+        }
+        #[cfg(not(windows))]
+        {
+            true
+        }
+    })
 }
 
 fn resize_inline_terminal<B: ratatui::backend::Backend>(

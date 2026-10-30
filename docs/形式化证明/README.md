@@ -22,6 +22,7 @@
 | 上下文检查点 | [fv-13-context-checkpoint](./fv-13-context-checkpoint/README.md) | 先持久化后应用、结清围栏 |
 | 子智能体 | [fv-14-child-runs](./fv-14-child-runs/README.md) | 祖先取消、派生与迟到回收 |
 | 目标控制 | [goal-control](./goal-control/README.md) | 创建、编辑、暂停与本地投影 |
+| 目标轮次驱动 | [goal-round-driver](./goal-round-driver/README.md) | 会话栅栏释放后的继续驱动与丢失唤醒 |
 | 多本地入口共存 | [local-entry-coexistence](./local-entry-coexistence/README.md) | 蛹与多个舵机共享数据根、线程隔离 |
 | 定时任务 | [cron](./cron/README.md) | 领取、编辑、停用、删除与历史原子性 |
 | 服务长线程 | [service-history-20261027](./service-history-20261027/README.md) | 诊断资源边界、元信息与投影计数 |

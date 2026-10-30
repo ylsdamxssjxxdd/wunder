@@ -33,10 +33,14 @@ fn persist(app: &MainWindow, api: &Arc<NativeDesktop>) {
     let python = app.get_runtime_python().to_string();
     let git = app.get_runtime_git().to_string();
     let rg = app.get_runtime_rg().to_string();
+    let ffmpeg = app.get_runtime_ffmpeg().to_string();
+    let browser = app.get_runtime_browser().to_string();
+    let shell = app.get_runtime_shell().to_string();
     let api = api.clone();
     let weak = app.as_weak();
     std::thread::spawn(move || {
-        let result = api.save_runtime(&workspace, &language, &python, &git, &rg);
+        let result =
+            api.save_runtime(&workspace, &language, &python, &git, &rg, &ffmpeg, &browser, &shell);
         let _ = weak.upgrade_in_event_loop(move |app| {
             app.set_saving(false);
             match result {
@@ -143,6 +147,42 @@ fn install_tool_path_pickers(app: &MainWindow, api: Arc<NativeDesktop>) {
         }
         if let Some(path) = crate::file_dialog::pick_executable("rg") {
             app.set_runtime_rg(path.into());
+            persist(&app, &persist_api);
+        }
+    });
+    let weak = app.as_weak();
+    let persist_api = api.clone();
+    app.on_pick_ffmpeg_path(move || {
+        let Some(app) = weak.upgrade() else { return };
+        if app.get_saving() || app.get_settings_loading() {
+            return;
+        }
+        if let Some(path) = crate::file_dialog::pick_executable("ffmpeg") {
+            app.set_runtime_ffmpeg(path.into());
+            persist(&app, &persist_api);
+        }
+    });
+    let weak = app.as_weak();
+    let persist_api = api.clone();
+    app.on_pick_browser_path(move || {
+        let Some(app) = weak.upgrade() else { return };
+        if app.get_saving() || app.get_settings_loading() {
+            return;
+        }
+        if let Some(path) = crate::file_dialog::pick_executable("browser") {
+            app.set_runtime_browser(path.into());
+            persist(&app, &persist_api);
+        }
+    });
+    let weak = app.as_weak();
+    let persist_api = api.clone();
+    app.on_pick_shell_path(move || {
+        let Some(app) = weak.upgrade() else { return };
+        if app.get_saving() || app.get_settings_loading() {
+            return;
+        }
+        if let Some(path) = crate::file_dialog::pick_executable("shell") {
+            app.set_runtime_shell(path.into());
             persist(&app, &persist_api);
         }
     });

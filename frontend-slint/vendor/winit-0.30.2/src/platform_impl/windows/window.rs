@@ -1332,6 +1332,10 @@ unsafe fn init(
         WindowFlags::SKIP_TASKBAR,
         attributes.platform_specific.skip_taskbar,
     );
+    window_flags.set(
+        WindowFlags::NO_ACTIVATE,
+        attributes.platform_specific.no_activate,
+    );
     window_flags.set(WindowFlags::TRANSPARENT, attributes.transparent);
     // WindowFlags::VISIBLE and MAXIMIZED are set down below after the window has been configured.
     window_flags.set(WindowFlags::RESIZABLE, attributes.resizable);

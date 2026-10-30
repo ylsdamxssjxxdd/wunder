@@ -24,6 +24,16 @@ const PROJECTION_BATCH_RECORDS: usize = 512;
 const PROJECTION_BATCH_BYTES: usize = 4 * 1024 * 1024;
 const PROJECTION_MAX_LINE_BYTES: usize = 8 * 1024 * 1024;
 
+/// Bounded active window per rollout. Only the newest items keep a full row
+/// (locator, digest, preview); older items leave the window and are re-read
+/// from the canonical rollout through sparse anchors. This keeps the index
+/// size independent of total thread length.
+pub(crate) const ACTIVE_WINDOW_ITEMS: i64 = 2000;
+/// A sparse anchor is stored every `ANCHOR_INTERVAL` completed items, giving a
+/// re-read start point so at most one interval needs sequential scanning.
+pub(crate) const ANCHOR_INTERVAL: i64 = 1024;
+pub(crate) const HISTORY_SCHEMA_VERSION: u32 = 5;
+
 /// A generic record in the canonical JSONL stream.
 ///
 /// The recorder owns the policy that decides which records reach JSONL.  The
@@ -516,6 +526,7 @@ impl ThreadHistoryStore {
                 sqlite_i64(state.next_rollout_ordinal)?,
             )?;
         }
+        trim_active_window(&tx, rollout_id)?;
         tx.commit()?;
 
         Ok(ProjectionProgress {
@@ -576,8 +587,7 @@ impl ThreadHistoryStore {
             ))?;
             let rows =
                 statement.query(params![rollout_id, ordinal, cursor.item_id, fetch, turn_id])?;
-            let projected = collect_item_page(rows, rollout_id, &mut bodies)?;
-            projected
+            collect_item_page(rows, rollout_id, &mut bodies)?
         } else {
             let mut statement = conn.prepare(&format!(
                 "SELECT turn_id,root_turn_id,item_id,item_type,created_at_ms,rollout_ordinal,{ITEM_BODY_COLUMNS}
@@ -587,14 +597,44 @@ impl ThreadHistoryStore {
                  LIMIT ?2"
             ))?;
             let rows = statement.query(params![rollout_id, fetch, turn_id])?;
-            let projected = collect_item_page(rows, rollout_id, &mut bodies)?;
-            projected
+            collect_item_page(rows, rollout_id, &mut bodies)?
         };
 
-        let has_more = budget_limited || items.len() > limit;
+        let budget_limited_when_window_full = budget_limited;
         if items.len() > limit {
             items.pop();
         }
+        let root = self.db_path.parent().expect("history database has a parent");
+
+        // The active window could not fill the page: re-read the remainder from
+        // the canonical rollout through the nearest sparse anchor.
+        if items.len() < limit {
+            let anchor_cursor = match items.last() {
+                Some(oldest) => Some((i64::try_from(oldest.rollout_ordinal)?, oldest.item_id.as_str())),
+                None => request.before.as_ref().map(|cursor| {
+                    (i64::try_from(cursor.rollout_ordinal).unwrap_or(0), cursor.item_id.as_str())
+                }),
+            };
+            let missing = i64::try_from(limit - items.len())?;
+            let older = read_items_via_anchor(root, rollout_id, anchor_cursor, turn_id, missing)?;
+            items.extend(older);
+        }
+
+        // More history exists when a sparse anchor precedes the oldest row on
+        // this page, or when the window scan was cut by its byte budget.
+        let has_more = if budget_limited_when_window_full {
+            true
+        } else if let Some(oldest) = items.last() {
+            let oldest_ordinal = i64::try_from(oldest.rollout_ordinal)?;
+            conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM thread_item_anchors
+                 WHERE rollout_id=?1 AND rollout_ordinal<?2)",
+                params![rollout_id, oldest_ordinal],
+                |row| row.get::<_, i64>(0),
+            )? == 1
+        } else {
+            false
+        };
         let next_before = has_more.then(|| {
             let last = items.last().expect("nonempty page when it has more");
             ThreadHistoryCursor {
@@ -634,7 +674,13 @@ impl ThreadHistoryStore {
             rollout_id,
             &mut ItemBodyReader::for_connection(&conn)?,
         )?;
-        Ok(projected.pop())
+        if let Some(item) = projected.pop() {
+            return Ok(Some(item));
+        }
+        // Outside the active window: locate the owning turn and scan from the
+        // nearest anchor so the read stays bounded instead of walking the file.
+        let root = self.db_path.parent().expect("history database has a parent");
+        find_item_via_anchor(&conn, root, rollout_id, item_id)
     }
 
     pub(crate) fn read_canonical_item(
@@ -667,8 +713,7 @@ impl ThreadHistoryStore {
             "SELECT t.turn_id,t.root_turn_id,t.status,t.error_json,t.started_at_ms,t.completed_at_ms,t.duration_ms,
                     t.first_user_item_id,t.final_agent_item_id,t.start_rollout_byte_offset,
                     t.end_rollout_byte_offset,t.start_ordinal,t.end_ordinal,t.updated_at_ordinal,
-                    (SELECT COUNT(*) FROM thread_items i
-                       WHERE i.rollout_id=t.rollout_id AND i.turn_id=t.turn_id)
+                    t.item_count
              FROM thread_turns t WHERE t.rollout_id=?1
                AND (?2 IS NULL OR COALESCE(t.start_ordinal,0) < ?2
                  OR (COALESCE(t.start_ordinal,0)=?2 AND t.turn_id < ?3))
@@ -935,8 +980,17 @@ fn initialize_schema(conn: &Connection) -> Result<()> {
             end_rollout_byte_offset INTEGER,
             start_ordinal INTEGER,
             end_ordinal INTEGER,
+            item_count INTEGER NOT NULL DEFAULT 0,
             updated_at_ordinal INTEGER NOT NULL,
             PRIMARY KEY (rollout_id, turn_id)
+        );
+        CREATE TABLE IF NOT EXISTS thread_item_anchors (
+            rollout_id TEXT NOT NULL,
+            rollout_ordinal INTEGER NOT NULL,
+            item_id TEXT NOT NULL,
+            record_byte_offset INTEGER NOT NULL,
+            record_byte_length INTEGER NOT NULL,
+            PRIMARY KEY (rollout_id, rollout_ordinal)
         );
         CREATE TABLE IF NOT EXISTS thread_items (
             rollout_id TEXT NOT NULL,
@@ -975,9 +1029,251 @@ fn initialize_schema(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_thread_history_turns_start_page
             ON thread_turns(rollout_id, COALESCE(start_ordinal,0) DESC, turn_id DESC);
         CREATE INDEX IF NOT EXISTS idx_thread_history_turns_forward_start
-            ON thread_turns(rollout_id, start_ordinal);",
+            ON thread_turns(rollout_id, start_ordinal);
+        CREATE INDEX IF NOT EXISTS idx_thread_history_anchors_ordinal
+            ON thread_item_anchors(rollout_id, rollout_ordinal);",
+    )?;
+    // Upgrade an already-created table without relying solely on the migration
+    // branch; ADD COLUMN is a no-op once the column exists.
+    ensure_column(
+        conn,
+        "thread_turns",
+        "item_count",
+        "INTEGER NOT NULL DEFAULT 0",
     )?;
     super::thread_chat_summary::initialize(conn)
+}
+
+fn ensure_column(conn: &Connection, table: &str, column: &str, definition: &str) -> Result<()> {
+    let exists: i64 = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info(?1) WHERE name=?2)",
+        params![table, column],
+        |row| row.get(0),
+    )?;
+    if exists == 0 {
+        conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {definition};"))?;
+    }
+    Ok(())
+}
+
+/// Drop rows outside the bounded active window. The kept rows are the newest
+/// `ACTIVE_WINDOW_ITEMS` ordinals; everything older stays reachable through
+/// sparse anchors and the canonical rollout.
+fn trim_active_window(tx: &Transaction<'_>, rollout_id: &str) -> Result<()> {
+    tx.execute(
+        "DELETE FROM thread_items
+         WHERE rollout_id=?1
+           AND rollout_ordinal <= (
+               SELECT rollout_ordinal FROM thread_items
+                WHERE rollout_id=?1
+                ORDER BY rollout_ordinal DESC
+                LIMIT 1 OFFSET ?2)",
+        params![rollout_id, ACTIVE_WINDOW_ITEMS],
+    )?;
+    Ok(())
+}
+
+/// Re-read completed items outside the active window by scanning forward from
+/// the nearest sparse anchor. At most `ANCHOR_INTERVAL` plus the page size of
+/// canonical records are touched, so the cost stays bounded regardless of the
+/// total rollout length. Results are returned newest-first.
+fn read_items_via_anchor(
+    root: &Path,
+    rollout_id: &str,
+    before: Option<(i64, &str)>,
+    turn_id: Option<&str>,
+    limit: i64,
+) -> Result<Vec<ThreadHistoryItem>> {
+    let catalog = super::thread_history_body::open_catalog(root)?;
+    let source = super::thread_history_body::source_path(&catalog, root, rollout_id)?;
+    // Nearest anchor not newer than the cursor; fall back to the stream start
+    // when the target precedes every anchor.
+    let anchor: Option<(i64, i64)> = match before {
+        Some((ordinal, _)) => catalog
+            .query_row(
+                "SELECT record_byte_offset,rollout_ordinal FROM thread_item_anchors
+                 WHERE rollout_id=?1 AND rollout_ordinal<=?2
+                 ORDER BY rollout_ordinal DESC LIMIT 1",
+                params![rollout_id, ordinal],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?,
+        None => None,
+    };
+    let start_offset = anchor.map(|(offset, _)| offset).unwrap_or(0);
+    let mut file = super::rollout_compression::open_rollout_reader(&source)?;
+    file.seek(SeekFrom::Start(u64::try_from(start_offset)?))?;
+    let mut reader = BufReader::new(file);
+    let mut collected: Vec<ThreadHistoryItem> = Vec::new();
+    let mut line = Vec::new();
+    let mut scanned = 0i64;
+    loop {
+        line.clear();
+        if !read_bounded_line(&mut reader, &mut line)? {
+            break;
+        }
+        if line.is_empty() || line.iter().all(u8::is_ascii_whitespace) {
+            continue;
+        }
+        scanned += 1;
+        let envelope: RolloutEnvelope = match serde_json::from_slice(&line) {
+            Ok(envelope) => envelope,
+            Err(error) => return Err(error).context("invalid canonical rollout record"),
+        };
+        let ordinal = sqlite_i64(envelope.ordinal)?;
+        // Stop once the scan reaches or passes the exclusive cursor.
+        if let Some((cursor_ordinal, cursor_item_id)) = before {
+            if ordinal > cursor_ordinal
+                || (ordinal == cursor_ordinal
+                    && item_ordinal_id(&envelope).as_deref() == Some(cursor_item_id))
+            {
+                break;
+            }
+        }
+        if !is_completed_item(&envelope) {
+            if scanned > ANCHOR_INTERVAL * 2 + limit {
+                break;
+            }
+            continue;
+        }
+        let item = completed_item(event_body(&envelope))?;
+        let item_turn = item.get("turn_id").and_then(Value::as_str);
+        if turn_id.is_some_and(|wanted| item_turn != Some(wanted)) {
+            continue;
+        }
+        if let Some(history) = envelope_to_history_item(rollout_id, &envelope, item, ordinal)? {
+            collected.push(history);
+        }
+        if collected.len() >= limit as usize || scanned > ANCHOR_INTERVAL * 2 + limit {
+            break;
+        }
+    }
+    collected.reverse();
+    Ok(collected)
+}
+
+fn item_ordinal_id(envelope: &RolloutEnvelope) -> Option<String> {
+    let item = completed_item(event_body(envelope)).ok()?;
+    item_identity(item).ok()
+}
+
+fn item_identity(item: &Value) -> Result<String> {
+    item.get("id")
+        .or_else(|| item.get("item_id"))
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| anyhow!("canonical item has no identity"))
+}
+
+/// Project one canonical completed envelope into the same shape the active
+/// window rows produce.
+fn envelope_to_history_item(
+    rollout_id: &str,
+    envelope: &RolloutEnvelope,
+    item: &Value,
+    ordinal: i64,
+) -> Result<Option<ThreadHistoryItem>> {
+    let body = event_body(envelope);
+    let item_type = item
+        .get("item_type")
+        .or_else(|| item.get("type"))
+        .or_else(|| item.get("kind"))
+        .and_then(Value::as_str)
+        .unwrap_or("unknown")
+        .to_string();
+    let turn_id = body.get("turn_id").and_then(Value::as_str).map(str::to_string);
+    let root_turn_id = body
+        .get("root_turn_id")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let created_at_ms = body
+        .get("created_at_ms")
+        .and_then(Value::as_i64)
+        .unwrap_or_default();
+    Ok(Some(ThreadHistoryItem {
+        rollout_id: rollout_id.to_owned(),
+        turn_id,
+        root_turn_id,
+        item_id: item_identity(item)?,
+        item_type,
+        created_at_ms,
+        rollout_ordinal: u64::try_from(ordinal)?,
+        item_json: item.clone(),
+    }))
+}
+
+/// Locate one item outside the active window. The owning turn is resolved from
+/// the item id, then scanning starts at the nearest anchor so at most one turn
+/// plus an anchor interval is touched.
+fn find_item_via_anchor(
+    history: &Connection,
+    root: &Path,
+    rollout_id: &str,
+    item_id: &str,
+) -> Result<Option<ThreadHistoryItem>> {
+    let (turn_id, turn_start) = match item_id.rsplit_once(':') {
+        Some((turn, _suffix)) => {
+            let start: Option<i64> = history
+                .query_row(
+                    "SELECT start_ordinal FROM thread_turns
+                     WHERE rollout_id=?1 AND turn_id=?2",
+                    params![rollout_id, turn],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            (Some(turn), start.unwrap_or(0))
+        }
+        None => (None, 0),
+    };
+    let anchor_offset: i64 = history
+        .query_row(
+            "SELECT record_byte_offset FROM thread_item_anchors
+             WHERE rollout_id=?1 AND rollout_ordinal<=?2
+             ORDER BY rollout_ordinal DESC LIMIT 1",
+            params![rollout_id, turn_start],
+            |row| row.get(0),
+        )
+        .optional()?
+        .flatten()
+        .unwrap_or(0);
+    let catalog = super::thread_history_body::open_catalog(root)?;
+    let source = super::thread_history_body::source_path(&catalog, root, rollout_id)?;
+    let mut file = super::rollout_compression::open_rollout_reader(&source)?;
+    file.seek(SeekFrom::Start(u64::try_from(anchor_offset)?))?;
+    let mut reader = BufReader::new(file);
+    let mut line = Vec::new();
+    let mut scanned = 0i64;
+    let scan_budget = ANCHOR_INTERVAL * 2 + 256;
+    loop {
+        line.clear();
+        if !read_bounded_line(&mut reader, &mut line)? {
+            break;
+        }
+        if line.is_empty() || line.iter().all(u8::is_ascii_whitespace) {
+            continue;
+        }
+        scanned += 1;
+        if scanned > scan_budget {
+            break;
+        }
+        let envelope: RolloutEnvelope = match serde_json::from_slice(&line) {
+            Ok(envelope) => envelope,
+            Err(_) => continue,
+        };
+        if !is_completed_item(&envelope) {
+            continue;
+        }
+        let item = completed_item(event_body(&envelope))?;
+        if item_identity(item)? != item_id {
+            continue;
+        }
+        if turn_id.is_some_and(|turn| item.get("turn_id").and_then(Value::as_str) != Some(turn)) {
+            continue;
+        }
+        let ordinal = sqlite_i64(envelope.ordinal)?;
+        return envelope_to_history_item(rollout_id, &envelope, item, ordinal);
+    }
+    Ok(None)
 }
 
 fn load_state(conn: &Connection, rollout_id: &str) -> Result<ProjectionState> {
@@ -1229,6 +1525,17 @@ fn project_completed_item(
         return Ok(());
     }
 
+    // Sparse anchor: keep a re-read locator at fixed ordinal intervals before
+    // the row can leave the active window.
+    if ordinal % ANCHOR_INTERVAL == 0 {
+        tx.execute(
+            "INSERT OR IGNORE INTO thread_item_anchors
+                 (rollout_id,rollout_ordinal,item_id,record_byte_offset,record_byte_length)
+             VALUES (?1,?2,?3,?4,?5)",
+            params![rollout_id, ordinal, item_id, sqlite_i64(byte_offset)?, sqlite_i64(byte_length)?],
+        )?;
+    }
+
     if let Some(turn_id) = turn_id.as_deref() {
         super::thread_chat_summary::project_item(
             tx,
@@ -1246,6 +1553,14 @@ fn project_completed_item(
             visible_items=visible_items+excluded.visible_items, workflow_items=workflow_items+excluded.workflow_items",
             params![rollout_id,root_turn_id.as_deref().unwrap_or(turn_id), i64::from(visible),
                 i64::from(visible && item_type != "user_message")])?;
+        // Durable per-turn total survives even after the item row leaves the
+        // active window, so turn pages do not depend on a thread_items COUNT.
+        tx.execute(
+            "UPDATE thread_turns SET item_count=item_count+1,
+                updated_at_ordinal=MAX(updated_at_ordinal,?2)
+             WHERE rollout_id=?1 AND turn_id=?3",
+            params![rollout_id, ordinal, turn_id],
+        )?;
         if is_user_item(item, item_type) {
             tx.execute(
                 "UPDATE thread_turns SET first_user_item_id=COALESCE(first_user_item_id,?3),

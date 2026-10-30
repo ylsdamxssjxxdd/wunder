@@ -1,0 +1,65 @@
+---
+title: "Goal round driver keeps driving after the session fence is released"
+config:
+  markdownAutoWrap: false
+  state:
+    useMaxWidth: false
+---
+stateDiagram-v2
+  %% second model (fix): the fix
+  classDef works fill:#f4f6f7,stroke:#566573,color:#1b2631
+  classDef wrong fill:#fdedec,stroke:#c0392b,color:#7b241c
+  classDef fixed fill:#e9f7ef,stroke:#1e8449,color:#145a32
+  classDef mixed fill:#fdebd0,stroke:#d35400,color:#7e5109
+  classDef after fill:#ffffff,stroke:#808b96,color:#566573
+  classDef worse fill:#f4ecf7,stroke:#7d3c98,color:#4a235a
+  classDef worksPath fill:#f4f6f7,stroke:#1f3a93,stroke-width:4px,color:#1b2631
+  classDef wrongPath fill:#fdedec,stroke:#1f3a93,stroke-width:4px,color:#7b241c
+  classDef fixedPath fill:#e9f7ef,stroke:#1f3a93,stroke-width:4px,color:#145a32
+  classDef mixedPath fill:#fdebd0,stroke:#1f3a93,stroke-width:4px,color:#7e5109
+  classDef afterPath fill:#ffffff,stroke:#1f3a93,stroke-width:4px,color:#566573
+  classDef worsePath fill:#f4ecf7,stroke:#1f3a93,stroke-width:4px,color:#4a235a
+  state "Legend" as legend {
+    state "Works today" as legendWorks
+    state "Fixed or new with the fix" as legendFixed
+  }
+  class legendWorks works
+  class legendFixed fixed
+  state "Active goal, 0 rounds<br/>done, nothing next" as s0
+  state "Goal waits for the human<br/>turn" as s1
+  state "Goal waits for the human<br/>turn, wake kept for the<br/>release" as s2
+  state "Next round requested, 0<br/>rounds done" as s3
+  state "Next round requested, 1<br/>round done" as s4
+  state "Next round requested, 2<br/>rounds done" as s5
+  state "Next round requested, 3<br/>rounds done" as s6
+  state "No goal, human turn owns<br/>the session" as s7
+  state "No goal, session free" as s8
+  state "Round 1 is running" as s9
+  state "Round 2 is running" as s10
+  state "Round 3 is running" as s11
+  [*] --> s7
+  s7 --> s1 : Model creates the goal<br/>mid-turn
+  s7 --> s8 : Human turn ends, session fence<br/>released
+  s1 --> s3 : Human turn ends, session fence<br/>released
+  s1 --> s0 : Human turn ends, session fence<br/>released
+  s3 --> s9 : Driver starts the next goal<br/>round
+  s9 --> s4 : Goal round ends
+  s4 --> s10 : Driver starts the next goal<br/>round
+  s10 --> s5 : Goal round ends
+  s5 --> s11 : Driver starts the next goal<br/>round
+  s11 --> s6 : Goal round ends
+  s1 --> s2 : with the fix, Driver wake<br/>meets the busy session
+  s2 --> s3 : with the fix, Human turn ends,<br/>session fence released
+  s1 --> s1 : Driver wake meets the busy<br/>session
+  class s0 fixed
+  class s1 works
+  class s2 fixed
+  class s3 works
+  class s4 works
+  class s5 works
+  class s6 works
+  class s7 works
+  class s8 works
+  class s9 works
+  class s10 works
+  class s11 works

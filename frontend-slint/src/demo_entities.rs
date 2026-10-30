@@ -256,6 +256,9 @@ pub fn install(app: &MainWindow) {
     app.on_pick_python_path(|| {});
     app.on_pick_git_path(|| {});
     app.on_pick_rg_path(|| {});
+    app.on_pick_ffmpeg_path(|| {});
+    app.on_pick_browser_path(|| {});
+    app.on_pick_shell_path(|| {});
     let weak = app.as_weak();
     app.on_create_model(move || {
         let Some(app) = weak.upgrade() else { return };
