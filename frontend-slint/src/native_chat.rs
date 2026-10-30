@@ -2010,6 +2010,38 @@ fn bind_thread_model(app: &MainWindow, state: Rc<RefCell<State>>) {
         }
         let session = app.get_active_session_id().to_string();
         if session.is_empty() {
+            // No thread owns the picker yet. The local built-in agent always
+            // follows the global default, so the composer's choice means the
+            // same thing the settings page's "set default" does; the next
+            // thread inherits it. Drop a stale thread projection first, or the
+            // label would keep showing a model no thread is pinned to.
+            let previous = app.get_selected_agent_model().to_string();
+            app.set_selected_model_key("".into());
+            app.set_selected_agent_model(key.clone().into());
+            let desktop = state.borrow().desktop.clone();
+            let weak = app.as_weak();
+            std::thread::spawn(move || {
+                let result = desktop.set_default_model(&key);
+                let _ = weak.upgrade_in_event_loop(move |app| {
+                    if app.get_cloud_chat_active() {
+                        return;
+                    }
+                    match result {
+                        Ok(settings) => {
+                            crate::native_pages::apply_settings(&app, settings);
+                            app.set_selected_agent_model(key.into());
+                            app.set_status("已切换默认模型".into());
+                            // The built-in agent card projects the default, so
+                            // the settings page must show the same model.
+                            app.invoke_refresh_agents();
+                        }
+                        Err(error) => {
+                            app.set_selected_agent_model(previous.into());
+                            app.set_status(format!("无法切换模型：{error}").into());
+                        }
+                    }
+                });
+            });
             return;
         }
         // Optimistic switch: project the picked card into the composer label

@@ -26,7 +26,7 @@ pub fn run(
     timer.start(TimerMode::Repeated, Duration::from_millis(40), move || {
         let Some(app) = weak.upgrade() else { return };
         let checked = (|| -> Result<bool, Box<dyn std::error::Error>> {
-            if started.elapsed() > Duration::from_secs(45) {
+            if started.elapsed() > Duration::from_secs(60) {
                 return Err(format!("model smoke timed out in phase {phase}: {}", app.get_model_save_error()).into());
             }
             if app.get_chat_loading() || app.get_saving() || app.get_settings_loading() || app.get_agents_loading() || app.get_creating_session() || app.get_session_loading() {
@@ -122,7 +122,84 @@ pub fn run(
                     assert_state(renamed.is_some_and(|model| model.is_default), "rename dropped the default badge")?;
                     let session = api.get_session(app.get_active_session_id().as_str())?.0;
                     assert_state(session.session_model_name.as_deref() == Some("renamed-extra"), "thread pin lost on rename")?;
-                    crate::smoke::snapshot(&app, &directory.join("model-settings.png"))?;
+                    // A second model makes the picker's row click meaningful:
+                    // the pinned row and this one are different keys.
+                    app.invoke_create_model();
+                    app.set_model_key_draft("threadless-model".into());
+                    app.set_model_name_draft("sample-alt".into());
+                    app.invoke_save_model();
+                    phase = 8;
+                }
+                8 => {
+                    let alt = app.get_models().iter().find(|model| model.key == "threadless-model");
+                    if alt.is_none() || app.get_model_creating() { return Ok(false) }
+                    assert_state(!alt.is_some_and(|model| model.is_default), "second model unexpectedly became the default")?;
+                    // Close the settings overlay on its own tick so the next
+                    // pointer press cannot land on the panel that still owns
+                    // the window this frame.
+                    app.set_settings_open(false);
+                    phase = 9;
+                }
+                9 => {
+                    let x = app.get_composer_model_trigger_x() + app.get_composer_model_trigger_width() / 2.0;
+                    let y = app.get_composer_model_trigger_y() + app.get_composer_model_trigger_height() / 2.0;
+                    crate::smoke::click(&app, x, y)?;
+                    phase = 10;
+                }
+                10 => {
+                    assert_state(app.get_composer_model_open(), "composer model trigger did not open the picker")?;
+                    let menu_x = app.get_composer_model_menu_x();
+                    let menu_y = app.get_composer_model_menu_y();
+                    assert_state(
+                        app.get_composer_model_menu_width() > 0.0
+                            && app.get_composer_model_menu_height() > 0.0
+                            && menu_x >= 0.0
+                            && menu_y >= 0.0,
+                        "model popover geometry is not usable for pointer input",
+                    )?;
+                    // Row geometry mirrors composer.slint: 8px popover padding
+                    // + 20px context row + 6px spacing + 1px divider + 6px
+                    // spacing above row 0, then 40px per row.
+                    let index = app.get_composer_models().iter()
+                        .position(|model| model.key == "threadless-model")
+                        .ok_or("second model missing from the composer catalogue")?;
+                    crate::smoke::click(&app, menu_x + 150.0, menu_y + 61.0 + 40.0 * index as f32)?;
+                    phase = 11;
+                }
+                11 => {
+                    assert_state(!app.get_composer_model_open(), "model picker stayed open after selecting a row")?;
+                    let session = api.get_session(app.get_active_session_id().as_str())?.0;
+                    if session.session_model_name.as_deref() != Some("threadless-model") { return Ok(false) }
+                    assert_state(app.get_selected_model_key() == "threadless-model", "row click did not reach the composer label")?;
+                    // Without an active thread the picker must still switch:
+                    // the local agent follows the global default, so the pick
+                    // lands there instead of dying silently.
+                    app.set_active_session_id("".into());
+                    app.set_selected_model_key("".into());
+                    phase = 12;
+                }
+                12 => {
+                    let x = app.get_composer_model_trigger_x() + app.get_composer_model_trigger_width() / 2.0;
+                    let y = app.get_composer_model_trigger_y() + app.get_composer_model_trigger_height() / 2.0;
+                    crate::smoke::click(&app, x, y)?;
+                    phase = 13;
+                }
+                13 => {
+                    assert_state(app.get_composer_model_open(), "threadless model trigger did not open the picker")?;
+                    let menu_x = app.get_composer_model_menu_x();
+                    let menu_y = app.get_composer_model_menu_y();
+                    let index = app.get_composer_models().iter()
+                        .position(|model| model.key == "threadless-model")
+                        .ok_or("second model missing from the composer catalogue")?;
+                    crate::smoke::click(&app, menu_x + 150.0, menu_y + 61.0 + 40.0 * index as f32)?;
+                    phase = 14;
+                }
+                14 => {
+                    let alt = app.get_models().iter().find(|model| model.key == "threadless-model");
+                    if !alt.is_some_and(|model| model.is_default) { return Ok(false) }
+                    assert_state(app.get_selected_model_key() == "", "threadless switch left a thread pin in the label")?;
+                    if app.get_selected_agent_model() != "threadless-model" { return Ok(false) }
+                    crate::smoke::snapshot(&app, &directory.join("model-composer.png"))?;
                     return Ok(true);
                 }
                 _ => unreachable!(),
@@ -131,7 +208,7 @@ pub fn run(
         })();
         if matches!(checked, Ok(false)) { return; }
         let report = match &checked {
-            Ok(_) => "PASS: model autosave/catalogue/inflight-edit/switch-flush/validation/default-fallback/rename\n".to_owned(),
+            Ok(_) => "PASS: model autosave/catalogue/inflight-edit/switch-flush/validation/default-fallback/rename/picker-click/threadless-default\n".to_owned(),
             Err(error) => format!("FAIL: {error}\n"),
         };
         *output.borrow_mut() = Some(std::fs::write(directory.join("smoke.txt"), report)

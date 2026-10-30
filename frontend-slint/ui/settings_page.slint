@@ -39,6 +39,27 @@ component SettingsNavItem inherits Rectangle {
     touch := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
 }
 
+// Flat "browse…" button that lines up with a FormField's input box. A FormField
+// row is 62px tall with the box at y=21/h=36, so callers mount this inside a
+// height-62 container with `alignment: end; padding-bottom: 5px` to share the
+// box's baseline instead of floating at the top of the row.
+component PathBrowseButton inherits Rectangle {
+    in property <bool> enabled: true;
+    callback clicked();
+    width: 92px; height: 36px;
+    border-radius: Theme.radius-sm;
+    background: root.enabled ? (touch.has-hover ? Theme.accent-soft : Theme.input-bg) : Theme.input-readonly-bg;
+    border-width: 1px;
+    border-color: root.enabled ? (touch.has-hover ? Theme.accent-ink : Theme.input-border) : Theme.input-readonly-border;
+    Text {
+        width: parent.width; height: parent.height;
+        text: I18n.st_browse;
+        color: root.enabled ? Theme.text : Theme.muted;
+        font-size: Theme.font-sm; horizontal-alignment: center; vertical-alignment: center;
+    }
+    touch := TouchArea { enabled: root.enabled; mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
 // White rounded card grouping settings rows (web settings card).
 component SettingsCard inherits Rectangle {
     border-radius: Theme.radius-lg; background: Theme.surface; border-width: 1px; border-color: Theme.border;
@@ -403,6 +424,16 @@ export component SettingsPage inherits Rectangle {
     in property <string> ffmpeg-status;
     in property <string> browser-status;
     in property <string> shell-status;
+    // Effective executable the runtime would actually use right now (bundled
+    // supplement or system). Shown as the field placeholder so an empty
+    // override still tells the user which binary is in play without pinning it
+    // into the saved config.
+    in property <string> python-effective;
+    in property <string> git-effective;
+    in property <string> rg-effective;
+    in property <string> ffmpeg-effective;
+    in property <string> browser-effective;
+    in property <string> shell-effective;
     in-out property <bool> importing-supplement: false;
     in-out property <string> supplement-status;
     callback import-supplement();
@@ -1052,40 +1083,46 @@ export component SettingsPage inherits Rectangle {
                     // ---- account: cloud account + activity (runs) ----
                     // ---- local runtime: 执行路径 + 补充包（就地保存，无保存按钮） ----
                     if root.settings-tab == 14 : ScrollView { vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
-                        VerticalLayout { padding: 24px; spacing: 14px; alignment: start; vertical-stretch: 1;
+                        VerticalLayout { padding: 24px; spacing: 8px; alignment: start; vertical-stretch: 1;
                             SettingsCard {
                                 SettingsCardHeader { title: I18n.st_tab_runtime; subtitle: I18n.st_exec_paths_note; }
                                 Rectangle { height: 10px; }
                                 HorizontalLayout { height: 62px; spacing: 10px;
-                                    FormField { horizontal-stretch: 1; label: I18n.st_python_path; placeholder: I18n.st_python_hint; text <=> root.python-path; read-only: root.saving || root.loading; edited => { root.save-runtime(); } }
-                                    Action { width: 96px; height: 34px; label: I18n.st_browse; show-label: true; enabled: !root.saving && !root.loading; clicked => { root.pick-python-path(); } }
+                                    FormField { horizontal-stretch: 1; label: I18n.st_python_path; placeholder: root.python-effective; text <=> root.python-path; read-only: root.saving || root.loading; edited => { root.save-runtime(); } }
+                                    VerticalLayout { width: 92px; alignment: end; padding-bottom: 5px;
+                                        PathBrowseButton { enabled: !root.saving && !root.loading; clicked => { root.pick-python-path(); } }
+                                    }
                                 }
-                                Text { height: 18px; text: root.python-status; color: root.python-status.starts-with("⚠") ? Theme.danger : Theme.muted; font-size: Theme.font-xs; overflow: elide; }
                                 HorizontalLayout { height: 62px; spacing: 10px;
-                                    FormField { horizontal-stretch: 1; label: I18n.st_git_path; placeholder: I18n.st_git_hint; text <=> root.git-path; read-only: root.saving || root.loading; edited => { root.save-runtime(); } }
-                                    Action { width: 96px; height: 34px; label: I18n.st_browse; show-label: true; enabled: !root.saving && !root.loading; clicked => { root.pick-git-path(); } }
+                                    FormField { horizontal-stretch: 1; label: I18n.st_git_path; placeholder: root.git-effective; text <=> root.git-path; read-only: root.saving || root.loading; edited => { root.save-runtime(); } }
+                                    VerticalLayout { width: 92px; alignment: end; padding-bottom: 5px;
+                                        PathBrowseButton { enabled: !root.saving && !root.loading; clicked => { root.pick-git-path(); } }
+                                    }
                                 }
-                                Text { height: 18px; text: root.git-status; color: root.git-status.starts-with("⚠") ? Theme.danger : Theme.muted; font-size: Theme.font-xs; overflow: elide; }
                                 HorizontalLayout { height: 62px; spacing: 10px;
-                                    FormField { horizontal-stretch: 1; label: I18n.st_rg_path; placeholder: I18n.st_rg_hint; text <=> root.rg-path; read-only: root.saving || root.loading; edited => { root.save-runtime(); } }
-                                    Action { width: 96px; height: 34px; label: I18n.st_browse; show-label: true; enabled: !root.saving && !root.loading; clicked => { root.pick-rg-path(); } }
+                                    FormField { horizontal-stretch: 1; label: I18n.st_rg_path; placeholder: root.rg-effective; text <=> root.rg-path; read-only: root.saving || root.loading; edited => { root.save-runtime(); } }
+                                    VerticalLayout { width: 92px; alignment: end; padding-bottom: 5px;
+                                        PathBrowseButton { enabled: !root.saving && !root.loading; clicked => { root.pick-rg-path(); } }
+                                    }
                                 }
-                                Text { height: 18px; text: root.rg-status; color: root.rg-status.starts-with("⚠") ? Theme.danger : Theme.muted; font-size: Theme.font-xs; overflow: elide; }
                                 HorizontalLayout { height: 62px; spacing: 10px;
-                                    FormField { horizontal-stretch: 1; label: I18n.st_ffmpeg_path; placeholder: I18n.st_ffmpeg_hint; text <=> root.ffmpeg-path; read-only: root.saving || root.loading; edited => { root.save-runtime(); } }
-                                    Action { width: 96px; height: 34px; label: I18n.st_browse; show-label: true; enabled: !root.saving && !root.loading; clicked => { root.pick-ffmpeg-path(); } }
+                                    FormField { horizontal-stretch: 1; label: I18n.st_ffmpeg_path; placeholder: root.ffmpeg-effective; text <=> root.ffmpeg-path; read-only: root.saving || root.loading; edited => { root.save-runtime(); } }
+                                    VerticalLayout { width: 92px; alignment: end; padding-bottom: 5px;
+                                        PathBrowseButton { enabled: !root.saving && !root.loading; clicked => { root.pick-ffmpeg-path(); } }
+                                    }
                                 }
-                                Text { height: 18px; text: root.ffmpeg-status; color: root.ffmpeg-status.starts-with("⚠") ? Theme.danger : Theme.muted; font-size: Theme.font-xs; overflow: elide; }
                                 HorizontalLayout { height: 62px; spacing: 10px;
-                                    FormField { horizontal-stretch: 1; label: I18n.st_browser_path; placeholder: I18n.st_browser_hint; text <=> root.browser-path; read-only: root.saving || root.loading; edited => { root.save-runtime(); } }
-                                    Action { width: 96px; height: 34px; label: I18n.st_browse; show-label: true; enabled: !root.saving && !root.loading; clicked => { root.pick-browser-path(); } }
+                                    FormField { horizontal-stretch: 1; label: I18n.st_browser_path; placeholder: root.browser-effective; text <=> root.browser-path; read-only: root.saving || root.loading; edited => { root.save-runtime(); } }
+                                    VerticalLayout { width: 92px; alignment: end; padding-bottom: 5px;
+                                        PathBrowseButton { enabled: !root.saving && !root.loading; clicked => { root.pick-browser-path(); } }
+                                    }
                                 }
-                                Text { height: 18px; text: root.browser-status; color: root.browser-status.starts-with("⚠") ? Theme.danger : Theme.muted; font-size: Theme.font-xs; overflow: elide; }
                                 HorizontalLayout { height: 62px; spacing: 10px;
-                                    FormField { horizontal-stretch: 1; label: I18n.st_shell_path; placeholder: I18n.st_shell_hint; text <=> root.shell-path; read-only: root.saving || root.loading; edited => { root.save-runtime(); } }
-                                    Action { width: 96px; height: 34px; label: I18n.st_browse; show-label: true; enabled: !root.saving && !root.loading; clicked => { root.pick-shell-path(); } }
+                                    FormField { horizontal-stretch: 1; label: I18n.st_shell_path; placeholder: root.shell-effective; text <=> root.shell-path; read-only: root.saving || root.loading; edited => { root.save-runtime(); } }
+                                    VerticalLayout { width: 92px; alignment: end; padding-bottom: 5px;
+                                        PathBrowseButton { enabled: !root.saving && !root.loading; clicked => { root.pick-shell-path(); } }
+                                    }
                                 }
-                                Text { height: 18px; text: root.shell-status; color: root.shell-status.starts-with("⚠") ? Theme.danger : Theme.muted; font-size: Theme.font-xs; overflow: elide; }
                                 Rectangle { height: 8px; }
                                 HorizontalLayout { height: 34px;
                                     Action { width: 128px; label: root.importing-supplement ? I18n.st_supplement_importing : I18n.st_supplement_import; show-label: true; primary: true; enabled: !root.importing-supplement && !root.saving && !root.loading; clicked => { root.import-supplement(); } }
