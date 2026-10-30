@@ -32,6 +32,12 @@ pub(crate) const ACTIVE_WINDOW_ITEMS: i64 = 2000;
 /// A sparse anchor is stored every `ANCHOR_INTERVAL` completed items, giving a
 /// re-read start point so at most one interval needs sequential scanning.
 pub(crate) const ANCHOR_INTERVAL: i64 = 1024;
+/// Free pages tolerated before the projection hands them back to the
+/// filesystem. `auto_vacuum=INCREMENTAL` only moves freed pages onto the
+/// freelist at commit time; without an explicit `incremental_vacuum` the file
+/// keeps its high-water mark forever, so a trimmed window would still look
+/// like it grows with the log.
+const RECLAIM_FREE_PAGES: i64 = 512;
 pub(crate) const HISTORY_SCHEMA_VERSION: u32 = 5;
 
 /// A generic record in the canonical JSONL stream.
@@ -287,7 +293,7 @@ impl ThreadHistoryStore {
         let items=segments.iter().map(|s|condition("rollout_ordinal",s).map(|c|format!("SELECT {current} AS rollout_id,turn_id,root_turn_id,item_id,item_type,created_at_ms,rollout_ordinal,rollout_id AS source_rollout_id,record_byte_offset,record_byte_length,item_bytes,item_digest,preview_json,visible,message_context FROM main.thread_items WHERE {c}"))).collect::<Result<Vec<_>>>()?.join(" UNION ALL ");
         let turns=segments.iter().map(|s|condition("COALESCE(start_ordinal,end_ordinal,0)",s).map(|c|{
             let end=s.end_ordinal.map(|v|v.to_string()).unwrap_or(i64::MAX.to_string());
-            format!("SELECT {current} AS rollout_id,turn_id,root_turn_id,CASE WHEN end_ordinal>={end} THEN 'running' ELSE status END AS status,error_json,started_at_ms,CASE WHEN end_ordinal>={end} THEN NULL ELSE completed_at_ms END AS completed_at_ms,duration_ms,first_user_item_id,final_agent_item_id,start_rollout_byte_offset,end_rollout_byte_offset,start_ordinal,CASE WHEN end_ordinal>={end} THEN NULL ELSE end_ordinal END AS end_ordinal,updated_at_ordinal FROM main.thread_turns WHERE {c}")
+            format!("SELECT {current} AS rollout_id,turn_id,root_turn_id,CASE WHEN end_ordinal>={end} THEN 'running' ELSE status END AS status,error_json,started_at_ms,CASE WHEN end_ordinal>={end} THEN NULL ELSE completed_at_ms END AS completed_at_ms,duration_ms,first_user_item_id,final_agent_item_id,start_rollout_byte_offset,end_rollout_byte_offset,start_ordinal,CASE WHEN end_ordinal>={end} THEN NULL ELSE end_ordinal END AS end_ordinal,updated_at_ordinal,item_count FROM main.thread_turns WHERE {c}")
         })).collect::<Result<Vec<_>>>()?.join(" UNION ALL ");
         let counts=segments.iter().map(|s|->Result<String>{
             let physical=quote(&s.rollout_id);
@@ -526,8 +532,11 @@ impl ThreadHistoryStore {
                 sqlite_i64(state.next_rollout_ordinal)?,
             )?;
         }
-        trim_active_window(&tx, rollout_id)?;
+        let trimmed = trim_active_window(&tx, rollout_id)?;
         tx.commit()?;
+        if trimmed > 0 {
+            reclaim_free_pages(&conn)?;
+        }
 
         Ok(ProjectionProgress {
             state,
@@ -608,7 +617,7 @@ impl ThreadHistoryStore {
 
         // The active window could not fill the page: re-read the remainder from
         // the canonical rollout through the nearest sparse anchor.
-        if items.len() < limit {
+        if items.len() < limit && !budget_limited_when_window_full {
             let anchor_cursor = match items.last() {
                 Some(oldest) => Some((i64::try_from(oldest.rollout_ordinal)?, oldest.item_id.as_str())),
                 None => request.before.as_ref().map(|cursor| {
@@ -616,7 +625,8 @@ impl ThreadHistoryStore {
                 }),
             };
             let missing = i64::try_from(limit - items.len())?;
-            let older = read_items_via_anchor(root, rollout_id, anchor_cursor, turn_id, missing)?;
+            let older =
+                read_items_via_anchor(&conn, root, rollout_id, anchor_cursor, turn_id, missing)?;
             items.extend(older);
         }
 
@@ -1059,8 +1069,8 @@ fn ensure_column(conn: &Connection, table: &str, column: &str, definition: &str)
 /// Drop rows outside the bounded active window. The kept rows are the newest
 /// `ACTIVE_WINDOW_ITEMS` ordinals; everything older stays reachable through
 /// sparse anchors and the canonical rollout.
-fn trim_active_window(tx: &Transaction<'_>, rollout_id: &str) -> Result<()> {
-    tx.execute(
+fn trim_active_window(tx: &Transaction<'_>, rollout_id: &str) -> Result<usize> {
+    let deleted = tx.execute(
         "DELETE FROM thread_items
          WHERE rollout_id=?1
            AND rollout_ordinal <= (
@@ -1070,6 +1080,22 @@ fn trim_active_window(tx: &Transaction<'_>, rollout_id: &str) -> Result<()> {
                 LIMIT 1 OFFSET ?2)",
         params![rollout_id, ACTIVE_WINDOW_ITEMS],
     )?;
+    Ok(deleted)
+}
+
+/// Hand trimmed pages back to the filesystem. Only an explicit
+/// `incremental_vacuum` shrinks an INCREMENTAL database, and it must run
+/// outside the write transaction.
+fn reclaim_free_pages(conn: &Connection) -> Result<()> {
+    let auto_vacuum: i64 = conn.query_row("PRAGMA auto_vacuum", [], |row| row.get(0))?;
+    if auto_vacuum != 2 {
+        return Ok(());
+    }
+    let free: i64 = conn.query_row("PRAGMA freelist_count", [], |row| row.get(0))?;
+    if free < RECLAIM_FREE_PAGES {
+        return Ok(());
+    }
+    conn.execute_batch(&format!("PRAGMA incremental_vacuum({free});"))?;
     Ok(())
 }
 
@@ -1078,6 +1104,7 @@ fn trim_active_window(tx: &Transaction<'_>, rollout_id: &str) -> Result<()> {
 /// canonical records are touched, so the cost stays bounded regardless of the
 /// total rollout length. Results are returned newest-first.
 fn read_items_via_anchor(
+    history: &Connection,
     root: &Path,
     rollout_id: &str,
     before: Option<(i64, &str)>,
@@ -1087,9 +1114,10 @@ fn read_items_via_anchor(
     let catalog = super::thread_history_body::open_catalog(root)?;
     let source = super::thread_history_body::source_path(&catalog, root, rollout_id)?;
     // Nearest anchor not newer than the cursor; fall back to the stream start
-    // when the target precedes every anchor.
+    // when the target precedes every anchor. Anchors live in the history
+    // database, never in the canonical catalog.
     let anchor: Option<(i64, i64)> = match before {
-        Some((ordinal, _)) => catalog
+        Some((ordinal, _)) => history
             .query_row(
                 "SELECT record_byte_offset,rollout_ordinal FROM thread_item_anchors
                  WHERE rollout_id=?1 AND rollout_ordinal<=?2
@@ -2708,4 +2736,89 @@ mod tests {
         assert!(!second.has_more);
         assert_eq!(second.items[0].item_id, "item-0");
     }
+
+    fn settled_index_bytes(store: &ThreadHistoryStore) -> u64 {
+        let conn = Connection::open(store.db_path()).expect("open projection for checkpoint");
+        conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+            .expect("truncate write-ahead log");
+        drop(conn);
+        fs::metadata(store.db_path()).unwrap().len()
+    }
+
+    /// Regression: the index used to keep one row per completed item, so its
+    /// size tracked the canonical log one-to-one. Only the newest
+    /// `ACTIVE_WINDOW_ITEMS` rows may stay materialized, the file must stop
+    /// growing once the window is full, and older items must still be readable
+    /// through the sparse anchors.
+    #[test]
+    fn active_window_bounds_the_index_and_keeps_older_items_reachable() {
+        let (_directory, store) = store();
+        let total: u64 = 6_000;
+        let batch: u64 = 400;
+        let mut source = String::new();
+        let mut settled_at_full_window = 0u64;
+        let mut start = 0u64;
+        while start < total {
+            let end = (start + batch).min(total);
+            let mut chunk = String::new();
+            for ordinal in start..end {
+                chunk.push_str(&line(
+                    ordinal,
+                    "item_completed",
+                    json!({"turn_id":"turn-window","item":{
+                        "id":format!("item-{ordinal}"),"type":"assistant_message",
+                        "created_at_ms":ordinal,"content":"x".repeat(64)}}),
+                ));
+            }
+            source.push_str(&chunk);
+            store
+                .persist_test_source("rollout-window", source.as_bytes())
+                .unwrap();
+            let state = store.projection_state("rollout-window").unwrap();
+            store
+                .project_chunk("rollout-window", state, chunk.as_bytes())
+                .unwrap();
+            if settled_at_full_window == 0 && end >= ACTIVE_WINDOW_ITEMS as u64 + 800 {
+                settled_at_full_window = settled_index_bytes(&store);
+            }
+            start = end;
+        }
+
+        let conn = Connection::open(store.db_path()).unwrap();
+        let rows: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM thread_items WHERE rollout_id='rollout-window'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(rows, ACTIVE_WINDOW_ITEMS);
+        let anchors: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM thread_item_anchors WHERE rollout_id='rollout-window'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(anchors, (total / ANCHOR_INTERVAL as u64 + 1) as i64);
+        drop(conn);
+
+        let settled = settled_index_bytes(&store);
+        assert!(
+            settled <= settled_at_full_window * 3 / 2,
+            "index grew with the log after the window filled: {settled_at_full_window} -> {settled}"
+        );
+        assert!(
+            settled < 8 * 1024 * 1024,
+            "bounded window index is unexpectedly large: {settled} bytes"
+        );
+
+        // The oldest items left the window; they are still served from the
+        // canonical rollout through the nearest sparse anchor.
+        let old = store
+            .read_item("rollout-window", "item-100")
+            .expect("item outside the active window is still readable");
+        assert_eq!(old.item_json["id"], "item-100");
+    }
 }
+

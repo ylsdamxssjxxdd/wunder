@@ -44,9 +44,10 @@ pub(super) fn migrate(conn: &mut Connection, path: &Path) -> Result<()> {
         compact = true;
     }
     let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-    if version < 5 {
+    if (1..5).contains(&version) {
         // v5: bounded active window plus sparse anchors so the index size no
-        // longer grows linearly with the canonical log.
+        // longer grows linearly with the canonical log. Version 0 is a fresh
+        // file whose schema has not been created yet.
         migrate_bounded_window(conn)?;
         compact = true;
     }
@@ -294,12 +295,19 @@ fn migrate_bounded_window(conn: &mut Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_thread_history_anchors_ordinal
             ON thread_item_anchors(rollout_id, rollout_ordinal);",
     )?;
+    // A legacy index may predate `thread_turns`; the schema initializer creates
+    // it afterwards, so only backfill the column when the table is present.
+    let has_turns: i64 = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('thread_turns') WHERE name='turn_id')",
+        [],
+        |row| row.get(0),
+    )?;
     let has_count: i64 = conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM pragma_table_info('thread_turns') WHERE name='item_count')",
         [],
         |row| row.get(0),
     )?;
-    if has_count == 0 {
+    if has_turns == 1 && has_count == 0 {
         conn.execute_batch(
             "ALTER TABLE thread_turns ADD COLUMN item_count INTEGER NOT NULL DEFAULT 0;",
         )?;
@@ -312,12 +320,14 @@ fn migrate_bounded_window(conn: &mut Connection) -> Result<()> {
           WHERE rollout_ordinal % ?1 = 0",
         [super::thread_history::ANCHOR_INTERVAL],
     )?;
-    conn.execute_batch(
-        "UPDATE thread_turns SET item_count=(
-             SELECT COUNT(*) FROM thread_items i
-              WHERE i.rollout_id=thread_turns.rollout_id
-                AND i.turn_id=thread_turns.turn_id);",
-    )?;
+    if has_turns == 1 {
+        conn.execute_batch(
+            "UPDATE thread_turns SET item_count=(
+                 SELECT COUNT(*) FROM thread_items i
+                  WHERE i.rollout_id=thread_turns.rollout_id
+                    AND i.turn_id=thread_turns.turn_id);",
+        )?;
+    }
     conn.execute(
         "DELETE FROM thread_items WHERE rowid IN (
              SELECT rowid FROM (
@@ -513,4 +523,92 @@ mod tests {
             99
         );
     }
+
+    /// A v4 index keeps one row per completed item, so it grows one-to-one with
+    /// the canonical log. Opening it must shrink every rollout to the bounded
+    /// active window, backfill the sparse anchors and hand the pages back.
+    #[test]
+    fn v4_index_shrinks_to_the_active_window_and_backfills_anchors() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("thread_history_1.sqlite");
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE thread_items(
+                rollout_id TEXT NOT NULL,turn_id TEXT,root_turn_id TEXT,item_id TEXT NOT NULL,
+                item_type TEXT NOT NULL,created_at_ms INTEGER NOT NULL,rollout_ordinal INTEGER NOT NULL,
+                record_byte_offset INTEGER NOT NULL,record_byte_length INTEGER NOT NULL,
+                item_bytes INTEGER NOT NULL,item_digest BLOB NOT NULL,
+                message_context INTEGER NOT NULL DEFAULT 0,
+                preview_json TEXT NOT NULL DEFAULT '{}',visible INTEGER NOT NULL DEFAULT 1,
+                PRIMARY KEY(rollout_id,item_id));
+             CREATE TABLE thread_turns(
+                rollout_id TEXT NOT NULL,turn_id TEXT NOT NULL,root_turn_id TEXT,
+                status TEXT NOT NULL,error_json TEXT,started_at_ms INTEGER NOT NULL,
+                completed_at_ms INTEGER,duration_ms INTEGER,first_user_item_id TEXT,
+                final_agent_item_id TEXT,start_rollout_byte_offset INTEGER,
+                end_rollout_byte_offset INTEGER,start_ordinal INTEGER,end_ordinal INTEGER,
+                updated_at_ordinal INTEGER NOT NULL,PRIMARY KEY(rollout_id,turn_id));
+             CREATE TABLE thread_history_projection_state(
+                rollout_id TEXT PRIMARY KEY NOT NULL,next_rollout_byte_offset INTEGER NOT NULL,
+                next_rollout_ordinal INTEGER NOT NULL,history_revision INTEGER NOT NULL);
+             PRAGMA user_version=4;",
+        )
+        .unwrap();
+        let preview = json!({"type":"assistant_message","text":"p".repeat(400)}).to_string();
+        {
+            let tx = conn.unchecked_transaction().unwrap();
+            {
+                let mut insert = tx
+                    .prepare(
+                        "INSERT INTO thread_items VALUES(
+                            'fixture-rollout','fixture-turn','fixture-turn',?1,'assistant_message',?2,?2,
+                            0,0,0,x'00',0,?3,1)",
+                    )
+                    .unwrap();
+                for ordinal in 0..5_000 {
+                    insert
+                        .execute(params![format!("item-{ordinal:06}"), ordinal, preview])
+                        .unwrap();
+                }
+            }
+            tx.commit().unwrap();
+        }
+        drop(conn);
+        let before = fs::metadata(&path).unwrap().len();
+
+        let store = ThreadHistoryStore::open(&path).unwrap();
+        drop(store);
+        let conn = Connection::open(&path).unwrap();
+        let rows: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM thread_items WHERE rollout_id='fixture-rollout'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(rows, super::super::thread_history::ACTIVE_WINDOW_ITEMS);
+        let anchors: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM thread_item_anchors WHERE rollout_id='fixture-rollout'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(anchors, 5_000 / super::super::thread_history::ANCHOR_INTERVAL + 1);
+        assert_eq!(
+            conn.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            5
+        );
+        assert_eq!(
+            conn.query_row("PRAGMA auto_vacuum", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            2
+        );
+        drop(conn);
+        let after = fs::metadata(&path).unwrap().len();
+        eprintln!("v5 window migration: {before} -> {after} bytes");
+        assert!(after < before, "migration must reclaim the linear rows");
+    }
 }
+
