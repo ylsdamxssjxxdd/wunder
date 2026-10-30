@@ -3,6 +3,7 @@ import { WorkspaceFilesPanel } from "workspace_files.slint";
 import { ToolText, ToolButton, ToolTab, ToolCountPill, ToolGroup } from "tools_widgets.slint";
 import { I18n } from "i18n.slint";
 import { ModalDialog, ConfirmDialog, FormField } from "components.slint";
+import { TextFieldActivation } from "text_field.slint";
 // ContextMenuArea/Menu/MenuItem are builtin elements in Slint 1.18: no std-widgets import.
 import { ScrollView, ListView, LineEdit, TextEdit, Button, ComboBox } from "std-widgets.slint";
 
@@ -131,6 +132,9 @@ component FormArea inherits Rectangle {
                 read-only: root.read-only;
                 font-size: 13px;
                 edited => { root.edited(); }
+                changed has-focus => {
+                    if self.has-focus && !self.read-only && self.enabled { TextFieldActivation.activated(); }
+                }
             }
         }
     }
@@ -486,7 +490,13 @@ export component ToolsPage inherits Rectangle {
                             border-radius: Theme.radius-md; border-width: 1px; border-color: Theme.input-border; background: Theme.input-bg;
                             clip: true;
                             if root.file-path == "" : ToolText { x: 10px; y: 10px; width: parent.width - 20px; height: 20px; text: I18n.tm_select_file; color: Theme.muted; font-size: Theme.font-sm; }
-                            if root.file-path != "" : TextEdit { x: 4px; y: 4px; width: parent.width - 8px; height: parent.height - 8px; text <=> root.content; read-only: root.working; }
+                            if root.file-path != "" : TextEdit {
+                                x: 4px; y: 4px; width: parent.width - 8px; height: parent.height - 8px;
+                                text <=> root.content; read-only: root.working;
+                                changed has-focus => {
+                                    if self.has-focus && !self.read-only && self.enabled { TextFieldActivation.activated(); }
+                                }
+                            }
                         }
                     }
                 }
@@ -496,7 +506,12 @@ export component ToolsPage inherits Rectangle {
     if root.tab == 2 && root.file-path != "" : ModalDialog {
         card-width: 850px; card-height: 650px; dismissed => { root.file-path = ""; }
         ToolText { height: 24px; text: root.file-path; font-weight: 700; }
-        TextEdit { vertical-stretch: 1; text <=> root.content; read-only: root.readonly || root.working; }
+        TextEdit {
+            vertical-stretch: 1; text <=> root.content; read-only: root.readonly || root.working;
+            changed has-focus => {
+                if self.has-focus && !self.read-only && self.enabled { TextFieldActivation.activated(); }
+            }
+        }
         HorizontalLayout { height: 30px; spacing: 8px;
             ToolText { horizontal-stretch: 1; text: root.readonly ? I18n.tm_readonly : ""; color: Theme.muted; }
             Button { text: I18n.common_close; clicked => { root.file-path = ""; } }
@@ -508,7 +523,12 @@ export component ToolsPage inherits Rectangle {
         card-width: 540px; card-height: 220px; dismissable: !root.working; dismissed => { root.operation = ""; }
         ToolText { text: root.operation == "export" ? I18n.tm_export : root.operation == "upload" ? I18n.tm_upload : I18n.tm_new_file; height: 24px; font-size: 16px; font-weight: 700; }
         ToolText { text: root.operation == "file" ? I18n.tm_name : I18n.tm_path; height: 20px; }
-        LineEdit { text <=> root.draft-name; enabled: !root.working; }
+        LineEdit {
+            text <=> root.draft-name; enabled: !root.working;
+            changed has-focus => {
+                if self.has-focus && !self.read-only && self.enabled { TextFieldActivation.activated(); }
+            }
+        }
         Rectangle { vertical-stretch: 1; }
         HorizontalLayout { spacing: 8px; Rectangle { horizontal-stretch: 1; }
             Button { text: I18n.common_cancel; enabled: !root.working; clicked => { root.operation = ""; } }

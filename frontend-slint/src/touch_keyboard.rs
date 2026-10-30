@@ -92,11 +92,11 @@ pub(crate) fn note_winit_event(event: &winit::event::WindowEvent) {
     });
 }
 
-/// A composer editor was focused or pressed. Only a touch-originated
-/// activation asks the system for the on-screen keyboard; mouse,
-/// pen-independent pointer and keyboard focus stay quiet. The winit filter
-/// invokes this both for a focus transition and another finger tap after the
-/// editor already owns focus.
+/// A text field was focused or pressed. Only a touch-originated activation
+/// asks the system for the on-screen keyboard; mouse, pen-independent pointer
+/// and keyboard focus stay quiet. Every project field reports focus through
+/// the `TextFieldActivation` global, and the winit filter invokes this for a
+/// finger tap after the composer editor already owns focus.
 pub(crate) fn on_text_field_activated(window: &slint::Window) {
     let source = LAST_ACTIVATION.with(Cell::get);
     let recent_touch = LAST_TOUCH_STARTED.with(|slot| {

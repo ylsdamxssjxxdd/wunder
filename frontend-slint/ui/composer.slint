@@ -3,6 +3,7 @@ import { Theme, ChatAttachment, ModelCard, PlanStep, InquiryQuestion, QueueTurn,
 import { Action } from "components.slint";
 import { ListView, ScrollView } from "std-widgets.slint";
 import { TextEditBase } from "textedit-base.slint";
+import { TextFieldActivation, TextFieldMenu } from "text_field.slint";
 import { DragPreview } from "drag_row.slint";
 
 // Slint has neither top-level functions nor module-level constants, so the
@@ -747,12 +748,22 @@ export component InquiryPanel inherits Rectangle {
                             Rectangle {
                                 horizontal-stretch: 1;
                                 height: parent.height;
-                                TextInput {
-                                    x: 0px; y: 0px; width: parent.width; height: parent.height - 2px;
-                                    text: question.other;
-                                    color: Theme.text; font-size: 13px;
-                                    vertical-alignment: center;
-                                    edited => { root.other-edited(question.index, self.text); }
+                                TextFieldMenu {
+                                    text: other-input.text;
+                                    cut() => { other-input.cut(); }
+                                    copy() => { other-input.copy(); }
+                                    paste() => { other-input.paste(); }
+                                    select-all() => { other-input.select-all(); }
+                                    other-input := TextInput {
+                                        x: 0px; y: 0px; width: parent.width; height: parent.height - 2px;
+                                        text: question.other;
+                                        color: Theme.text; font-size: 13px;
+                                        vertical-alignment: center;
+                                        edited => { root.other-edited(question.index, self.text); }
+                                        changed has-focus => {
+                                            if self.has-focus && !self.read-only && self.enabled { TextFieldActivation.activated(); }
+                                        }
+                                    }
                                 }
                                 Text {
                                     x: 1px; y: 0px; width: parent.width; height: parent.height;
@@ -908,6 +919,9 @@ export component GoalBanner inherits Rectangle {
                 text <=> root.edit-draft;
                 color: Theme.text; font-size: Theme.font-md;
                 vertical-alignment: center;
+                changed has-focus => {
+                    if self.has-focus && !self.read-only && self.enabled { TextFieldActivation.activated(); }
+                }
                 // Enter submits; an empty draft cancels the edit instead of
                 // clearing the goal — clearing stays on the trash control.
                 accepted => {
@@ -1351,15 +1365,10 @@ export component Composer inherits Rectangle {
     // caret's byte offsets, which only Rust can compare against the draft's byte
     // length, so the editor forwards them and takes back what Rust returns.
     callback recall-history(int, int, int, string) -> DraftRecall;
-    // Editor focus, surfaced so the platform layer can raise the Windows touch
-    // keyboard when the activation came from a finger (see touch_keyboard.rs).
+    // Editor focus, surfaced so the platform layer can tell whether the draft
+    // currently holds focus (touch keyboard re-taps land here; see
+    // touch_keyboard.rs).
     out property <bool> editor-has-focus: editor.has-focus;
-    callback editor-focus-gained();
-    changed editor-has-focus => {
-        if root.editor-has-focus {
-            root.editor-focus-gained();
-        }
-    }
     private property <bool> queue-open: root.queue-turns.length > 0;
     // A running turn no longer swallows the send: the engine parks the turn and
     // the strip above the input shows it. What still blocks is a slash command

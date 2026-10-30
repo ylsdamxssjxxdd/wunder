@@ -1,5 +1,6 @@
 import { Theme } from "theme.slint";
 import { ExpertButton, ExpertField } from "expert_widgets.slint";
+import { TextFieldActivation } from "text_field.slint";
 import { TextEditBase } from "textedit-base.slint";
 import { LineEdit, ComboBox, ScrollView, ListView } from "std-widgets.slint";
 export struct MemoryCard { id: string, title: string, content: string, category: string, source: string, time: string }
@@ -39,7 +40,13 @@ export component ExpertData inherits Rectangle {
             ExpertButton { width: 96px; label: "新建碎片"; icon: @image-url("../assets/icons/plus.svg"); selected: true; clicked => { root.open-memory(-1); } }
         }
         HorizontalLayout { height: 38px; spacing: 12px;
-            LineEdit { horizontal-stretch: 7; placeholder-text: "搜索记忆 ID、索引标题或内容详情"; text <=> root.query; accepted => { root.refresh(); } }
+            LineEdit {
+                horizontal-stretch: 7; placeholder-text: "搜索记忆 ID、索引标题或内容详情"; text <=> root.query;
+                changed has-focus => {
+                    if self.has-focus && !self.read-only && self.enabled { TextFieldActivation.activated(); }
+                }
+                accepted => { root.refresh(); }
+            }
             ComboBox { horizontal-stretch: 3; model: root.categories; current-value <=> root.category; selected(value) => { root.refresh(); } }
         }
         ScrollView { horizontal-scrollbar-policy: always-off;

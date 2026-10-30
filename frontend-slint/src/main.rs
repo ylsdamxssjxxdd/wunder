@@ -96,17 +96,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         slint::CloseRequestResponse::KeepWindowShown
     });
     let weak = app.as_weak();
-    app.on_composer_focus_gained(move || {
+    app.global::<TextFieldActivation>().on_activated(move || {
         if let Some(app) = weak.upgrade() {
             touch_keyboard::on_text_field_activated(app.window());
         }
     });
     install_window_chrome(&app);
-    if first_argument.as_deref() == Some(std::ffi::OsStr::new("--notice-probe")) {
-        crate::completion_notice::probe(&app);
-        slint::run_event_loop()?;
-        return Ok(());
-    }
     if first_argument.as_deref() == Some(std::ffi::OsStr::new("--smoke-check")) {
         demo::install(&app);
         let directory = arguments
@@ -595,7 +590,8 @@ fn install_slint_platform() -> Result<(), Box<dyn std::error::Error>> {
                             .with_title("蛹")
                             .with_decorations(false)
                             .with_active(false)
-                            .with_skip_taskbar(true);
+                            .with_skip_taskbar(true)
+                            .with_no_activate(true);
                     }
                     #[cfg(not(windows))]
                     return attributes

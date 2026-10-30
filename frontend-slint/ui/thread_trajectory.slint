@@ -4,11 +4,17 @@
 // value for value so both shells render the same trajectory experience.
 import { Theme, TrajRow, TrajSpan, TrajTick, TrajBoundary, TrajTiming, TrajSection, TrajTab, TrajSearchHit, TrajTokenBar } from "theme.slint";
 import { I18n } from "i18n.slint";
+import { TextFieldActivation, TextFieldMenu } from "text_field.slint";
 import { ListView, ScrollView } from "std-widgets.slint";
 
 // Keep the trajectory's typography independent of the surrounding workbench.
 component TrajText inherits Text { font-family: "Segoe UI"; }
-component TrajTextInput inherits TextInput { font-family: "Segoe UI"; }
+component TrajTextInput inherits TextInput {
+    font-family: "Segoe UI";
+    changed has-focus => {
+        if self.has-focus && !self.read-only && self.enabled { TextFieldActivation.activated(); }
+    }
+}
 
 export global TrajTokens {
     out property <color> brand: #4176E6;
@@ -312,16 +318,23 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                     vertical-alignment: center;
                     overflow: elide;
                 }
-                traj-search-input := TrajTextInput {
-                    x: 23px; width: parent.width - 30px; height: parent.height;
-                    text <=> root.query;
-                    single-line: true;
-                    color: TrajTokens.text;
-                    font-size: 12px;
-                    vertical-alignment: center;
-                    selection-background-color: TrajTokens.brand-soft;
-                    selection-foreground-color: TrajTokens.text;
-                    edited => { root.search-edited(); }
+                TextFieldMenu {
+                    text: traj-search-input.text;
+                    cut() => { traj-search-input.cut(); }
+                    copy() => { traj-search-input.copy(); }
+                    paste() => { traj-search-input.paste(); }
+                    select-all() => { traj-search-input.select-all(); }
+                    traj-search-input := TrajTextInput {
+                        x: 23px; width: parent.width - 30px; height: parent.height;
+                        text <=> root.query;
+                        single-line: true;
+                        color: TrajTokens.text;
+                        font-size: 12px;
+                        vertical-alignment: center;
+                        selection-background-color: TrajTokens.brand-soft;
+                        selection-foreground-color: TrajTokens.text;
+                        edited => { root.search-edited(); }
+                    }
                 }
             }
             Rectangle {

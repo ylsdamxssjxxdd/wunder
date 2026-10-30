@@ -70,6 +70,9 @@ struct DriverState {
     user_id: Mutex<Option<String>>,
     attempt: Mutex<Option<RoundAttempt>>,
     requested: AtomicBool,
+    /// A drive was skipped because the session was still busy. The session
+    /// lease clears this when the fence is released so the round is not lost.
+    deferred: AtomicBool,
     gate: AsyncMutex<()>,
 }
 
@@ -192,6 +195,25 @@ impl GoalDriver {
         }
     }
 
+    /// The session-wide execution fence was released. A drive that was skipped
+    /// while the session was busy is re-evaluated now that the session is idle.
+    pub fn notify_lease_released(&self, user_id: &str, session_id: &str) {
+        let key = session_id.trim();
+        let state = self
+            .states
+            .lock()
+            .ok()
+            .and_then(|map| map.get(key).cloned());
+        let Some(state) = state else {
+            return;
+        };
+        if !state.deferred.swap(false, Ordering::SeqCst) {
+            return;
+        }
+        self.state_user_id(&state, user_id);
+        self.request_drive(&state, user_id, session_id);
+    }
+
     /// Turn finalization hook: settle the attempt, then re-evaluate driving.
     pub fn notify_turn_ended(
         &self,
@@ -204,6 +226,9 @@ impl GoalDriver {
         self.state_user_id(&state, user_id);
         match outcome {
             TurnEndOutcome::WaitingUserInput | TurnEndOutcome::MaxTokens => {
+                // Waiting for human input never drives, not even through the
+                // lease-release re-evaluation.
+                state.deferred.store(false, Ordering::SeqCst);
                 if let Some(tag) = goal_round {
                     self.take_attempt_if(&state, |attempt| attempt.tag == *tag);
                 }
@@ -228,6 +253,12 @@ impl GoalDriver {
     fn request_drive(&self, state: &Arc<DriverState>, user_id: &str, session_id: &str) {
         let already = state.requested.swap(true, Ordering::SeqCst);
         if already {
+            return;
+        }
+        // Lease release may run from a non-async drop (e.g. process teardown);
+        // without a live reactor there is nothing to drive anyway.
+        if tokio::runtime::Handle::try_current().is_err() {
+            state.requested.store(false, Ordering::SeqCst);
             return;
         }
         let state = state.clone();
@@ -292,10 +323,14 @@ async fn drive_once(
     {
         return;
     }
-    // 3. Humans keep priority: only drive a fully available session.
+    // 3. Humans keep priority: only drive a fully available session. Arm the
+    // deferred flag before the availability probe so a lease released mid-probe
+    // cannot lose the wake; the idle session re-drives on lease release.
+    state.deferred.store(true, Ordering::SeqCst);
     if !host.host_session_available(user_id, session_id).await {
         return;
     }
+    state.deferred.store(false, Ordering::SeqCst);
     // 4. Reserve the next round if the goal is still driving.
     reserve_and_submit(host, state, user_id, session_id).await;
 }
@@ -539,6 +574,31 @@ mod tests {
         drive_once(&host, state, "user-1", "session-1").await;
     }
 
+    async fn wait_drive_settled(state: &Arc<DriverState>) {
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                let guard = state.gate.lock().await;
+                drop(guard);
+                if !state.requested.load(Ordering::SeqCst) {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+    }
+
+    async fn wait_for_submits(host: &Arc<MockHost>) {
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while host.submits().is_empty() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+    }
+
     #[tokio::test]
     async fn submits_next_round_when_active_armed_and_under_cap() {
         let host = Arc::new(MockHost::with_view(view(
@@ -585,6 +645,62 @@ mod tests {
 
         assert!(host.submits().is_empty());
         assert!(state.attempt.lock().unwrap().is_none());
+        assert!(state.deferred.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn lease_release_re_drives_a_deferred_round() {
+        let host = Arc::new(MockHost::with_view(view(
+            PHASE_ACTIVE,
+            2,
+            8,
+            GoalActivation::Armed,
+        )));
+        host.available.store(false, Ordering::SeqCst);
+        let driver = GoalDriver::new();
+        driver.set_host(host.clone());
+        let state = driver.state("session-1");
+
+        // A goal change arrives while a human turn still owns the session.
+        driver.notify_goal_changed("user-1", "session-1");
+        wait_drive_settled(&state).await;
+        assert!(host.submits().is_empty());
+
+        // The fence is released; the deferred round must start without any
+        // other goal or turn notification.
+        host.available.store(true, Ordering::SeqCst);
+        driver.notify_lease_released("user-1", "session-1");
+        wait_for_submits(&host).await;
+        assert_eq!(host.submits(), vec![tag(3)]);
+        assert!(!state.deferred.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn waiting_user_input_discards_a_deferred_drive() {
+        let host = Arc::new(MockHost::with_view(view(
+            PHASE_ACTIVE,
+            2,
+            8,
+            GoalActivation::Armed,
+        )));
+        host.available.store(false, Ordering::SeqCst);
+        let driver = GoalDriver::new();
+        driver.set_host(host.clone());
+        let state = driver.state("session-1");
+
+        driver.notify_goal_changed("user-1", "session-1");
+        wait_drive_settled(&state).await;
+        driver.notify_turn_ended(
+            "user-1",
+            "session-1",
+            None,
+            TurnEndOutcome::WaitingUserInput,
+        );
+
+        host.available.store(true, Ordering::SeqCst);
+        driver.notify_lease_released("user-1", "session-1");
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        assert!(host.submits().is_empty());
     }
 
     #[tokio::test]

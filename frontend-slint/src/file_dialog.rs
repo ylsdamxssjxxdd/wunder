@@ -41,13 +41,17 @@ pub fn pick_companion_package() -> Option<String> {
     }
 }
 
-/// Pick an executable file (python / git / rg) for a runtime tool path;
-/// `None` means the user cancelled or no native picker is available.
+/// Pick an executable file (python / git / rg / ffmpeg / browser / shell) for a
+/// runtime tool path; `None` means the user cancelled or no native picker is
+/// available.
 pub fn pick_executable(tool: &str) -> Option<String> {
     let filter_label = match tool {
         "python" => "Python 可执行文件",
         "git" => "Git 可执行文件",
         "rg" => "ripgrep 可执行文件",
+        "ffmpeg" => "ffmpeg 可执行文件",
+        "browser" => "浏览器可执行文件",
+        "shell" => "shell 可执行文件",
         _ => "可执行文件",
     };
     #[cfg(windows)]

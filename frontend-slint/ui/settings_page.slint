@@ -2,6 +2,7 @@ import { I18n } from "i18n.slint";
 import { Theme, PromptPackCard, ToolCard, ModelCard, ProfileCard, FileCard, WorkspaceFileRow, CronCard, CronRunCard, ChannelCatalogCard, ChannelAccountCard, ChannelBindingCard, ChannelLogCard } from "theme.slint";
 import { Action, FormField, MiddleHeader, PageState, PageStateKind, ThemeCheck } from "components.slint";
 import { TextEditBase } from "textedit-base.slint";
+import { TextFieldActivation, TextFieldMenu } from "text_field.slint";
 import { DragRow } from "drag_row.slint";
 import { ComboBoxBase } from "combo_base.slint";
 import { ModelPresets } from "model_presets.slint";
@@ -393,15 +394,24 @@ export component SettingsPage inherits Rectangle {
     in-out property <string> python-path;
     in-out property <string> git-path;
     in-out property <string> rg-path;
+    in-out property <string> ffmpeg-path;
+    in-out property <string> browser-path;
+    in-out property <string> shell-path;
     in property <string> python-status;
     in property <string> git-status;
     in property <string> rg-status;
+    in property <string> ffmpeg-status;
+    in property <string> browser-status;
+    in property <string> shell-status;
     in-out property <bool> importing-supplement: false;
     in-out property <string> supplement-status;
     callback import-supplement();
     callback pick-python-path();
     callback pick-git-path();
     callback pick-rg-path();
+    callback pick-ffmpeg-path();
+    callback pick-browser-path();
+    callback pick-shell-path();
     // ---- 线程渲染压测：用户手动触发，写入本地库模拟线程 ----
     in-out property <bool> stress-running: false;
     in-out property <string> stress-user-rounds: "1000";
@@ -564,11 +574,11 @@ export component SettingsPage inherits Rectangle {
     // have no substring test, so the filter runs natively and the matching
     // categories come back as a bit set (bit N = category N).
     in-out property <string> settings-query: "";
-    // One flag per category, in navigation order (11 categories). Slint 1.18 has
+    // One flag per category, in navigation order (12 categories). Slint 1.18 has
     // no bitwise operators, so the native search projection ships booleans rather
     // than a mask; an all-true list means "no query". Index = nav position, not
     // tab id.
-    in-out property <[bool]> settings-category-flags: [true, true, true, true, true, true, true, true, true, true, true];
+    in-out property <[bool]> settings-category-flags: [true, true, true, true, true, true, true, true, true, true, true, true];
     out property <bool> settings-has-matches: root.count-visible() > 0;
     out property <int> settings-visible-count: root.count-visible();    // How many categories the current query keeps; the empty state and the test
     // projections both read this instead of re-deriving the flags.
@@ -583,7 +593,8 @@ export component SettingsPage inherits Rectangle {
             + (root.settings-category-flags[7] ? 1 : 0)
             + (root.settings-category-flags[8] ? 1 : 0)
             + (root.settings-category-flags[9] ? 1 : 0)
-            + (root.settings-category-flags[10] ? 1 : 0);
+            + (root.settings-category-flags[10] ? 1 : 0)
+            + (root.settings-category-flags[11] ? 1 : 0);
     }
     // Slint cannot test a substring, so the query is projected out and the
     // matching categories come back as a bit set.
@@ -828,14 +839,24 @@ export component SettingsPage inherits Rectangle {
                     Rectangle {
                         x: 12px; y: 8px; width: parent.width - 24px; height: 30px;
                         border-radius: Theme.radius-sm; background: Theme.input-bg;
-                        border-width: 1px; border-color: query.has-focus ? Theme.accent-ink : Theme.input-border;
+                        border-width: 1px; border-color: query-input.has-focus ? Theme.accent-ink : Theme.input-border;
                         Image { x: 8px; y: 8px; width: 13px; height: 13px; source: @image-url("../assets/icons/magnifying-glass.svg"); colorize: Theme.muted; image-fit: contain; }
-                        query := TextInput {
-                            x: 28px; y: 0px; width: parent.width - 36px; height: parent.height;
-                            text <=> root.settings-query;
-                            single-line: true;
-                            font-size: Theme.font-sm; color: Theme.text;
-                            vertical-alignment: center;
+                        TextFieldMenu {
+                            text: query-input.text;
+                            cut() => { query-input.cut(); }
+                            copy() => { query-input.copy(); }
+                            paste() => { query-input.paste(); }
+                            select-all() => { query-input.select-all(); }
+                            query-input := TextInput {
+                                x: 28px; y: 0px; width: parent.width - 36px; height: parent.height;
+                                text <=> root.settings-query;
+                                single-line: true;
+                                font-size: Theme.font-sm; color: Theme.text;
+                                vertical-alignment: center;
+                                changed has-focus => {
+                                    if self.has-focus && !self.read-only && self.enabled { TextFieldActivation.activated(); }
+                                }
+                            }
                         }
                         if root.settings-query == "" : Text {
                             x: 28px; y: 0px; width: parent.width - 36px; height: parent.height;
@@ -855,69 +876,76 @@ export component SettingsPage inherits Rectangle {
                         }
                         SettingsNavItem {
                             visible: root.settings-category-flags[1];
+                            icon: @image-url("../assets/icons/fa-toolbox.svg");
+                            title: I18n.st_tab_runtime;
+                            selected: root.settings-tab == 14;
+                            clicked => { root.settings-tab = 14;  }
+                        }
+                        SettingsNavItem {
+                            visible: root.settings-category-flags[2];
                             icon: @image-url("../assets/icons/log-user.svg");
                             title: I18n.stc_account;
                             selected: root.settings-tab == 13;
                             clicked => { root.settings-tab = 13;  }
                         }
                         SettingsNavItem {
-                            visible: root.settings-category-flags[2];
+                            visible: root.settings-category-flags[3];
                             icon: @image-url("../assets/icons/brain.svg");
                             title: I18n.stc_models;
                             selected: root.settings-tab == 1;
                             clicked => { root.settings-tab = 1; root.refresh(); }
                         }
                         SettingsNavItem {
-                            visible: root.settings-category-flags[3];
+                            visible: root.settings-category-flags[4];
                             icon: @image-url("../assets/icons/fa-toolbox.svg");
                             title: I18n.stc_tools;
                             selected: root.settings-tab == 2;
                             clicked => { root.settings-tab = 2; root.refresh(); }
                         }
                         SettingsNavItem {
-                            visible: root.settings-category-flags[4];
+                            visible: root.settings-category-flags[5];
                             icon: @image-url("../assets/icons/robot.svg");
                             title: I18n.stc_agent;
                             selected: root.settings-tab == 3;
                             clicked => { root.settings-tab = 3;  }
                         }
                         SettingsNavItem {
-                            visible: root.settings-category-flags[5];
+                            visible: root.settings-category-flags[6];
                             icon: @image-url("../assets/icons/paw.svg");
                             title: I18n.stc_pet;
                             selected: root.settings-tab == 4;
                             clicked => { root.settings-tab = 4;  }
                         }
                         SettingsNavItem {
-                            visible: root.settings-category-flags[6];
+                            visible: root.settings-category-flags[7];
                             icon: @image-url("../assets/icons/fa-clock.svg");
                             title: I18n.stc_cron;
                             selected: root.settings-tab == 5;
                             clicked => { root.settings-tab = 5; root.refresh(); }
                         }
                         SettingsNavItem {
-                            visible: root.settings-category-flags[7];
+                            visible: root.settings-category-flags[8];
                             icon: @image-url("../assets/icons/fa-memory.svg");
                             title: I18n.stc_memory;
                             selected: root.settings-tab == 6;
                             clicked => { root.settings-tab = 6; root.refresh(); }
                         }
                         SettingsNavItem {
-                            visible: root.settings-category-flags[8];
+                            visible: root.settings-category-flags[9];
                             icon: @image-url("../assets/icons/plug.svg");
                             title: I18n.stc_channels;
                             selected: root.settings-tab == 7;
                             clicked => { root.settings-tab = 7; root.refresh(); }
                         }
                         SettingsNavItem {
-                            visible: root.settings-category-flags[9];
+                            visible: root.settings-category-flags[10];
                             icon: @image-url("../assets/icons/file-lines.svg");
                             title: I18n.stc_prompts;
                             selected: root.settings-tab == 9;
                             clicked => { root.settings-tab = 9; root.refresh-prompt-packs(); }
                         }
                         SettingsNavItem {
-                            visible: root.settings-category-flags[10];
+                            visible: root.settings-category-flags[11];
                             icon: @image-url("../assets/icons/box-archive.svg");
                             title: I18n.stc_archives;
                             selected: root.settings-tab == 10;
@@ -993,32 +1021,7 @@ export component SettingsPage inherits Rectangle {
                                     }
                                 }
                             }
-                            // 执行路径就地保存：选完或改完立即落盘，不再设「保存设置」按钮。
-                            SettingsCard {
-                                SettingsCardHeader { title: I18n.st_tab_runtime; subtitle: I18n.st_exec_paths_note; }
-                                Rectangle { height: 10px; }
-                                HorizontalLayout { height: 62px; spacing: 10px;
-                                    FormField { horizontal-stretch: 1; label: I18n.st_python_path; placeholder: I18n.st_python_hint; text <=> root.python-path; read-only: root.saving || root.loading; edited => { root.save-runtime(); } }
-                                    Action { width: 96px; height: 34px; label: I18n.st_browse; show-label: true; enabled: !root.saving && !root.loading; clicked => { root.pick-python-path(); } }
-                                }
-                                Text { height: 18px; text: root.python-status; color: root.python-status.starts-with("⚠") ? Theme.danger : Theme.muted; font-size: Theme.font-xs; overflow: elide; }
-                                HorizontalLayout { height: 62px; spacing: 10px;
-                                    FormField { horizontal-stretch: 1; label: I18n.st_git_path; placeholder: I18n.st_git_hint; text <=> root.git-path; read-only: root.saving || root.loading; edited => { root.save-runtime(); } }
-                                    Action { width: 96px; height: 34px; label: I18n.st_browse; show-label: true; enabled: !root.saving && !root.loading; clicked => { root.pick-git-path(); } }
-                                }
-                                Text { height: 18px; text: root.git-status; color: root.git-status.starts-with("⚠") ? Theme.danger : Theme.muted; font-size: Theme.font-xs; overflow: elide; }
-                                HorizontalLayout { height: 62px; spacing: 10px;
-                                    FormField { horizontal-stretch: 1; label: I18n.st_rg_path; placeholder: I18n.st_rg_hint; text <=> root.rg-path; read-only: root.saving || root.loading; edited => { root.save-runtime(); } }
-                                    Action { width: 96px; height: 34px; label: I18n.st_browse; show-label: true; enabled: !root.saving && !root.loading; clicked => { root.pick-rg-path(); } }
-                                }
-                                Text { height: 18px; text: root.rg-status; color: root.rg-status.starts-with("⚠") ? Theme.danger : Theme.muted; font-size: Theme.font-xs; overflow: elide; }
-                                Rectangle { height: 8px; }
-                                HorizontalLayout { height: 34px;
-                                    Action { width: 128px; label: root.importing-supplement ? I18n.st_supplement_importing : I18n.st_supplement_import; show-label: true; primary: true; enabled: !root.importing-supplement && !root.saving && !root.loading; clicked => { root.import-supplement(); } }
-                                    Rectangle { horizontal-stretch: 1; }
-                                }
-                                Text { height: 18px; text: root.supplement-status; color: root.supplement-status.starts-with("导入失败") ? Theme.danger : Theme.muted; font-size: Theme.font-xs; overflow: elide; visible: root.supplement-status != ""; }
-                            }
+                            
                             // ---- 线程渲染压测（用户手动触发） ----
                             SettingsCard {
                                 SettingsCardHeader { title: I18n.st_stress_title; subtitle: I18n.st_stress_note; }
@@ -1047,6 +1050,51 @@ export component SettingsPage inherits Rectangle {
                         }
                     }
                     // ---- account: cloud account + activity (runs) ----
+                    // ---- local runtime: 执行路径 + 补充包（就地保存，无保存按钮） ----
+                    if root.settings-tab == 14 : ScrollView { vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
+                        VerticalLayout { padding: 24px; spacing: 14px; alignment: start; vertical-stretch: 1;
+                            SettingsCard {
+                                SettingsCardHeader { title: I18n.st_tab_runtime; subtitle: I18n.st_exec_paths_note; }
+                                Rectangle { height: 10px; }
+                                HorizontalLayout { height: 62px; spacing: 10px;
+                                    FormField { horizontal-stretch: 1; label: I18n.st_python_path; placeholder: I18n.st_python_hint; text <=> root.python-path; read-only: root.saving || root.loading; edited => { root.save-runtime(); } }
+                                    Action { width: 96px; height: 34px; label: I18n.st_browse; show-label: true; enabled: !root.saving && !root.loading; clicked => { root.pick-python-path(); } }
+                                }
+                                Text { height: 18px; text: root.python-status; color: root.python-status.starts-with("⚠") ? Theme.danger : Theme.muted; font-size: Theme.font-xs; overflow: elide; }
+                                HorizontalLayout { height: 62px; spacing: 10px;
+                                    FormField { horizontal-stretch: 1; label: I18n.st_git_path; placeholder: I18n.st_git_hint; text <=> root.git-path; read-only: root.saving || root.loading; edited => { root.save-runtime(); } }
+                                    Action { width: 96px; height: 34px; label: I18n.st_browse; show-label: true; enabled: !root.saving && !root.loading; clicked => { root.pick-git-path(); } }
+                                }
+                                Text { height: 18px; text: root.git-status; color: root.git-status.starts-with("⚠") ? Theme.danger : Theme.muted; font-size: Theme.font-xs; overflow: elide; }
+                                HorizontalLayout { height: 62px; spacing: 10px;
+                                    FormField { horizontal-stretch: 1; label: I18n.st_rg_path; placeholder: I18n.st_rg_hint; text <=> root.rg-path; read-only: root.saving || root.loading; edited => { root.save-runtime(); } }
+                                    Action { width: 96px; height: 34px; label: I18n.st_browse; show-label: true; enabled: !root.saving && !root.loading; clicked => { root.pick-rg-path(); } }
+                                }
+                                Text { height: 18px; text: root.rg-status; color: root.rg-status.starts-with("⚠") ? Theme.danger : Theme.muted; font-size: Theme.font-xs; overflow: elide; }
+                                HorizontalLayout { height: 62px; spacing: 10px;
+                                    FormField { horizontal-stretch: 1; label: I18n.st_ffmpeg_path; placeholder: I18n.st_ffmpeg_hint; text <=> root.ffmpeg-path; read-only: root.saving || root.loading; edited => { root.save-runtime(); } }
+                                    Action { width: 96px; height: 34px; label: I18n.st_browse; show-label: true; enabled: !root.saving && !root.loading; clicked => { root.pick-ffmpeg-path(); } }
+                                }
+                                Text { height: 18px; text: root.ffmpeg-status; color: root.ffmpeg-status.starts-with("⚠") ? Theme.danger : Theme.muted; font-size: Theme.font-xs; overflow: elide; }
+                                HorizontalLayout { height: 62px; spacing: 10px;
+                                    FormField { horizontal-stretch: 1; label: I18n.st_browser_path; placeholder: I18n.st_browser_hint; text <=> root.browser-path; read-only: root.saving || root.loading; edited => { root.save-runtime(); } }
+                                    Action { width: 96px; height: 34px; label: I18n.st_browse; show-label: true; enabled: !root.saving && !root.loading; clicked => { root.pick-browser-path(); } }
+                                }
+                                Text { height: 18px; text: root.browser-status; color: root.browser-status.starts-with("⚠") ? Theme.danger : Theme.muted; font-size: Theme.font-xs; overflow: elide; }
+                                HorizontalLayout { height: 62px; spacing: 10px;
+                                    FormField { horizontal-stretch: 1; label: I18n.st_shell_path; placeholder: I18n.st_shell_hint; text <=> root.shell-path; read-only: root.saving || root.loading; edited => { root.save-runtime(); } }
+                                    Action { width: 96px; height: 34px; label: I18n.st_browse; show-label: true; enabled: !root.saving && !root.loading; clicked => { root.pick-shell-path(); } }
+                                }
+                                Text { height: 18px; text: root.shell-status; color: root.shell-status.starts-with("⚠") ? Theme.danger : Theme.muted; font-size: Theme.font-xs; overflow: elide; }
+                                Rectangle { height: 8px; }
+                                HorizontalLayout { height: 34px;
+                                    Action { width: 128px; label: root.importing-supplement ? I18n.st_supplement_importing : I18n.st_supplement_import; show-label: true; primary: true; enabled: !root.importing-supplement && !root.saving && !root.loading; clicked => { root.import-supplement(); } }
+                                    Rectangle { horizontal-stretch: 1; }
+                                }
+                                Text { height: 18px; text: root.supplement-status; color: root.supplement-status.starts-with("导入失败") ? Theme.danger : Theme.muted; font-size: Theme.font-xs; overflow: elide; visible: root.supplement-status != ""; }
+                            }
+                        }
+                    }
                     if root.settings-tab == 13 : ScrollView { vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
                         VerticalLayout { padding: 24px; spacing: 16px; alignment: start; vertical-stretch: 1;
                             // ---- cloud account (§6.1) ----
@@ -1526,13 +1574,23 @@ export component SettingsPage inherits Rectangle {
                                     Rectangle {
                                         x: parent.width - 270px; y: 0px; width: 270px; height: 34px;
                                         border-radius: Theme.radius-sm; background: Theme.input-bg;
-                                        border-width: 1px; border-color: agent-tool-search.has-focus ? Theme.accent-ink : Theme.input-border;
+                                        border-width: 1px; border-color: tool-search-input.has-focus ? Theme.accent-ink : Theme.input-border;
                                         Image { x: 9px; y: 10px; width: 13px; height: 13px; source: @image-url("../assets/icons/magnifying-glass.svg"); colorize: Theme.muted; image-fit: contain; }
-                                        agent-tool-search := TextInput {
-                                            x: 30px; y: 0px; width: parent.width - 38px; height: parent.height;
-                                            text <=> root.expert-tool-keyword;
-                                            single-line: true;
-                                            font-size: Theme.font-sm; color: Theme.text; vertical-alignment: center;
+                                        TextFieldMenu {
+                                            text: tool-search-input.text;
+                                            cut() => { tool-search-input.cut(); }
+                                            copy() => { tool-search-input.copy(); }
+                                            paste() => { tool-search-input.paste(); }
+                                            select-all() => { tool-search-input.select-all(); }
+                                            tool-search-input := TextInput {
+                                                x: 30px; y: 0px; width: parent.width - 38px; height: parent.height;
+                                                text <=> root.expert-tool-keyword;
+                                                single-line: true;
+                                                font-size: Theme.font-sm; color: Theme.text; vertical-alignment: center;
+                                                changed has-focus => {
+                                                    if self.has-focus && !self.read-only && self.enabled { TextFieldActivation.activated(); }
+                                                }
+                                            }
                                         }
                                         if root.expert-tool-keyword == "" : Text {
                                             x: 30px; y: 0px; width: parent.width - 38px; height: parent.height;
@@ -1581,13 +1639,25 @@ export component SettingsPage inherits Rectangle {
                                     Rectangle {
                                         horizontal-stretch: 1; height: 36px; border-radius: Theme.radius-sm;
                                         background: root.saving ? Theme.input-readonly-bg : Theme.input-bg;
-                                        border-width: 1px; border-color: agent-question-input.has-focus ? Theme.accent-ink : root.saving ? Theme.input-readonly-border : Theme.input-border;
-                                        agent-question-input := TextInput {
-                                            x: 10px; y: 0px; width: parent.width - 20px; height: parent.height;
-                                            text <=> root.agent-question-draft;
-                                            single-line: true; enabled: !root.saving;
-                                            font-size: Theme.font-sm; color: Theme.text; vertical-alignment: center;
-                                            accepted => { root.add-agent-question(); }
+                                        border-width: 1px; border-color: question-input.has-focus ? Theme.accent-ink : root.saving ? Theme.input-readonly-border : Theme.input-border;
+                                        TextFieldMenu {
+                                            enabled: !root.saving;
+                                            read-only: root.saving;
+                                            text: question-input.text;
+                                            cut() => { question-input.cut(); }
+                                            copy() => { question-input.copy(); }
+                                            paste() => { question-input.paste(); }
+                                            select-all() => { question-input.select-all(); }
+                                            question-input := TextInput {
+                                                x: 10px; y: 0px; width: parent.width - 20px; height: parent.height;
+                                                text <=> root.agent-question-draft;
+                                                single-line: true; enabled: !root.saving;
+                                                font-size: Theme.font-sm; color: Theme.text; vertical-alignment: center;
+                                                accepted => { root.add-agent-question(); }
+                                                changed has-focus => {
+                                                    if self.has-focus && !self.read-only && self.enabled { TextFieldActivation.activated(); }
+                                                }
+                                            }
                                         }
                                         if root.agent-question-draft == "" : Text {
                                             x: 10px; y: 0px; width: parent.width - 20px; height: parent.height;

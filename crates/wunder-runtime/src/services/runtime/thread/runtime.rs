@@ -101,6 +101,32 @@ pub struct SessionLease {
     active_runtime_sessions: Arc<StdMutex<HashSet<String>>>,
     queue_wake: Option<mpsc::Sender<()>>,
     executions: Option<Arc<StdMutex<HashMap<String, LeaseExecution>>>>,
+    goal_wake: Option<GoalLeaseWake>,
+}
+
+/// Re-evaluates a deferred goal drive once the session fence is released.
+struct GoalLeaseWake {
+    service: Weak<goal::GoalService>,
+    user_id: String,
+    session_id: String,
+}
+
+impl std::fmt::Debug for GoalLeaseWake {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GoalLeaseWake")
+            .field("session_id", &self.session_id)
+            .finish_non_exhaustive()
+    }
+}
+
+impl GoalLeaseWake {
+    fn wake(&self) {
+        if let Some(service) = self.service.upgrade() {
+            service
+                .driver()
+                .notify_lease_released(&self.user_id, &self.session_id);
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -121,7 +147,23 @@ impl SessionLease {
             active_runtime_sessions,
             queue_wake: None,
             executions: None,
+            goal_wake: None,
         }
+    }
+
+    /// Bind the goal driver so releasing the fence re-evaluates a deferred
+    /// drive (a goal change during a running turn is otherwise stranded).
+    fn bind_goal_wake(
+        &mut self,
+        service: &Arc<goal::GoalService>,
+        user_id: &str,
+        session_id: &str,
+    ) {
+        self.goal_wake = Some(GoalLeaseWake {
+            service: Arc::downgrade(service),
+            user_id: user_id.trim().to_string(),
+            session_id: session_id.trim().to_string(),
+        });
     }
 }
 
@@ -143,6 +185,9 @@ impl Drop for SessionLease {
         }
         if let Some(wake) = &self.queue_wake {
             let _ = wake.try_send(());
+        }
+        if let Some(wake) = self.goal_wake.take() {
+            wake.wake();
         }
     }
 }
@@ -410,6 +455,9 @@ impl ThreadRuntime {
                         .enqueue_task(&request, &agent_id, Some(session_id))
                         .await?;
                     return Ok(ThreadSubmitOutcome::Queued(info));
+                }
+                if let Some(active) = lease.as_mut() {
+                    active.bind_goal_wake(&self.orchestrator.goal_handle(), &user_id, session_id);
                 }
             }
         }
@@ -1611,7 +1659,12 @@ impl ThreadRuntime {
             .pointer("/config_overrides/__thread_log_turn_id")
             .and_then(Value::as_str)
             .unwrap_or("");
-        if let Some(lease) = self.try_acquire_start_lease(&task.session_id, turn).await {
+        if let Some(mut lease) = self.try_acquire_start_lease(&task.session_id, turn).await {
+            lease.bind_goal_wake(
+                &self.orchestrator.goal_handle(),
+                &task.user_id,
+                &task.session_id,
+            );
             Some(lease)
         } else {
             self.finish_thread(&task.thread_id).await;
@@ -2339,6 +2392,117 @@ fn ensure_session_record_with(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Regression for desktop goal stalling: the goal is created while a
+    /// human turn owns the session fence (the model calls the `goal` tool
+    /// mid-turn). The driver's wake is rejected by the busy fence, so the
+    /// released direct-run lease must re-evaluate it without another notify.
+    #[tokio::test]
+    async fn goal_change_during_a_direct_run_drives_after_the_fence_release() {
+        use crate::state::{AppState, AppStateInitOptions};
+        let root = tempfile::tempdir().unwrap();
+        let mut config = crate::config::Config::default();
+        config.storage.backend = "sqlite".into();
+        config.storage.data_root = root.path().join("data").to_string_lossy().into_owned();
+        config.workspace.root = root.path().join("workspace").to_string_lossy().into_owned();
+        let store = ConfigStore::new(root.path().join("config.yaml"));
+        store
+            .update(|current| *current = config.clone())
+            .await
+            .unwrap();
+        let state = AppState::new_with_options(
+            store,
+            config,
+            AppStateInitOptions::cli_default().with_start_thread_runtime(false),
+        )
+        .unwrap();
+        let user = state
+            .user_store
+            .create_user(
+                "fixture-user",
+                None,
+                "fixture-password",
+                None,
+                None,
+                vec!["user".into()],
+                "active",
+                false,
+            )
+            .unwrap();
+        let session = "fixture-thread";
+        let request = WunderRequest {
+            user_id: user.user_id.clone(),
+            question: "Fixture prompt".into(),
+            client_message_id: None,
+            tool_names: Vec::new(),
+            skip_tool_calls: false,
+            stream: true,
+            session_id: Some(session.into()),
+            agent_id: None,
+            workspace_container_id: None,
+            workspace_id: None,
+            model_name: None,
+            language: None,
+            config_overrides: None,
+            agent_prompt: None,
+            preview_skill: false,
+            attachments: None,
+            allow_queue: true,
+            is_admin: false,
+            enforce_runtime_queue: false,
+            approval_tx: None,
+        };
+        let ThreadSubmitOutcome::Run(_, Some(fence)) = state
+            .kernel
+            .thread_runtime
+            .submit_user_request(request)
+            .await
+            .unwrap()
+        else {
+            panic!("fixture precondition: an idle session grants a direct-run fence");
+        };
+        let storage = state.user_store.storage_backend().clone();
+        state
+            .kernel
+            .orchestrator
+            .goal_handle()
+            .create(storage, &user.user_id, session, "Fixture objective", None)
+            .await
+            .unwrap();
+        // Let the driver evaluate the goal while the human turn still holds
+        // the fence; the round must be deferred, not started.
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        let goal = state
+            .storage
+            .get_session_goal(&user.user_id, session)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            goal.rounds_started, 0,
+            "a busy session must not start a goal round"
+        );
+        // Ending the human turn releases the fence. The deferred goal round
+        // must start with no further goal or turn notification.
+        drop(fence);
+        let started = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let goal = state
+                    .storage
+                    .get_session_goal(&user.user_id, session)
+                    .unwrap()
+                    .unwrap();
+                if goal.rounds_started >= 1 {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await;
+        assert!(
+            started.is_ok(),
+            "releasing the direct-run fence must re-drive the deferred goal round"
+        );
+    }
 
     #[tokio::test]
     async fn request_preparation_backpressure_releases_on_cancellation() {

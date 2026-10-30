@@ -68,6 +68,9 @@ pub struct DesktopSettings {
     pub python_path: String,
     pub git_path: String,
     pub rg_path: String,
+    pub ffmpeg_path: String,
+    pub browser_path: String,
+    pub shell_path: String,
     pub tool_status: Vec<RuntimeToolStatus>,
     pub models: Vec<ModelRecord>,
     /// Stable replay-log ids selectable by the virtual model editor. The log
@@ -718,6 +721,7 @@ impl NativeDesktop {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn save_runtime(
         &self,
         workspace: &str,
@@ -725,6 +729,9 @@ impl NativeDesktop {
         python_path: &str,
         git_path: &str,
         rg_path: &str,
+        ffmpeg_path: &str,
+        browser_path: &str,
+        shell_path: &str,
     ) -> Result<DesktopSettings> {
         if workspace.trim().is_empty() || !matches!(language, "zh-CN" | "en-US") {
             bail!("请填写工作目录和有效的语言");
@@ -761,6 +768,9 @@ impl NativeDesktop {
             settings.python_path = python_path.trim().to_string();
             settings.git_path = git_path.trim().to_string();
             settings.rg_path = rg_path.trim().to_string();
+            settings.ffmpeg_path = ffmpeg_path.trim().to_string();
+            settings.browser_path = browser_path.trim().to_string();
+            settings.shell_path = shell_path.trim().to_string();
             Ok(())
         })
     }
@@ -1163,6 +1173,9 @@ fn project(
         python_path: persisted.python_path.clone(),
         git_path: persisted.git_path.clone(),
         rg_path: persisted.rg_path.clone(),
+        ffmpeg_path: persisted.ffmpeg_path.clone(),
+        browser_path: persisted.browser_path.clone(),
+        shell_path: persisted.shell_path.clone(),
         tool_status: runtime_tool_statuses(persisted, app_dir),
         models,
         virtual_replay_logs: config

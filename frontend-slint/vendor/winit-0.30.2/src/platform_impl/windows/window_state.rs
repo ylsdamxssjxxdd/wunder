@@ -15,9 +15,9 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOREPOSITION, SWP_NOSIZE, SWP_NOZORDER,
     SW_HIDE, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, SW_SHOW, SW_SHOWNOACTIVATE, WINDOWPLACEMENT,
     WINDOW_EX_STYLE, WINDOW_STYLE, WS_BORDER, WS_CAPTION, WS_CHILD, WS_CLIPCHILDREN,
-    WS_CLIPSIBLINGS, WS_EX_ACCEPTFILES, WS_EX_APPWINDOW, WS_EX_LAYERED, WS_EX_NOREDIRECTIONBITMAP,
-    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_EX_WINDOWEDGE, WS_MAXIMIZE,
-    WS_MAXIMIZEBOX, WS_MINIMIZE,
+    WS_CLIPSIBLINGS, WS_EX_ACCEPTFILES, WS_EX_APPWINDOW, WS_EX_LAYERED, WS_EX_NOACTIVATE,
+    WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_EX_WINDOWEDGE,
+    WS_MAXIMIZE, WS_MAXIMIZEBOX, WS_MINIMIZE,
     WS_MINIMIZEBOX, WS_OVERLAPPEDWINDOW, WS_POPUP, WS_SIZEBOX, WS_SYSMENU, WS_VISIBLE,
 };
 
@@ -130,6 +130,12 @@ bitflags! {
         /// shown later still gets one. The style bit is the only thing the
         /// shell honours from the very first show.
         const SKIP_TASKBAR = 1 << 23;
+
+        /// Never the foreground window (`WS_EX_NOACTIVATE`). The bit has to
+        /// live in the flags and not be poked in afterwards: every state diff
+        /// rebuilds `GWL_EXSTYLE` from this set, and a later show uses
+        /// `SW_SHOW`, which would otherwise activate a notification overlay.
+        const NO_ACTIVATE = 1 << 24;
 
         const EXCLUSIVE_FULLSCREEN_OR_MASK = WindowFlags::ALWAYS_ON_TOP.bits();
     }
@@ -282,6 +288,9 @@ impl WindowFlags {
         }
         if self.contains(WindowFlags::SKIP_TASKBAR) {
             style_ex |= WS_EX_TOOLWINDOW;
+        }
+        if self.contains(WindowFlags::NO_ACTIVATE) {
+            style_ex |= WS_EX_NOACTIVATE;
         }
         if self.contains(WindowFlags::ALWAYS_ON_TOP) {
             style_ex |= WS_EX_TOPMOST;

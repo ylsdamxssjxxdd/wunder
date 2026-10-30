@@ -1,4 +1,5 @@
 import { Button } from "std-widgets.slint";
+import { TextFieldActivation, TextFieldMenu } from "text_field.slint";
 
 // Help browser controls follow the classic light desktop help face reused from
 // the reference workbench: flat buttons, hairline separators and a compact
@@ -41,26 +42,37 @@ export component HelpInput inherits Rectangle {
             overflow: elide;
             accessible-role: none;
         }
-        editor := TextInput {
-            private property <length> computed-x: 6px;
-            x: min(6px, max(parent.width - self.width - 6px - self.text-cursor-width, self.computed-x));
-            width: max(parent.width - 12px - self.text-cursor-width, self.preferred-width);
-            height: parent.height;
+        TextFieldMenu {
             enabled: root.enabled;
-            single-line: true;
-            color: root.enabled ? #202020 : #777777;
-            vertical-alignment: center;
-            selection-background-color: #2c76b855;
-            selection-foreground-color: #202020;
-            cursor-position-changed(cursor-position) => {
-                if cursor-position.x + self.computed-x < 6px {
-                    self.computed-x = -cursor-position.x + 6px;
-                } else if cursor-position.x + self.computed-x > parent.width - 6px - self.text-cursor-width {
-                    self.computed-x = parent.width - cursor-position.x - 6px - self.text-cursor-width;
+            text: editor.text;
+            cut() => { editor.cut(); }
+            copy() => { editor.copy(); }
+            paste() => { editor.paste(); }
+            select-all() => { editor.select-all(); }
+            editor := TextInput {
+                private property <length> computed-x: 6px;
+                x: min(6px, max(parent.width - self.width - 6px - self.text-cursor-width, self.computed-x));
+                width: max(parent.width - 12px - self.text-cursor-width, self.preferred-width);
+                height: parent.height;
+                enabled: root.enabled;
+                single-line: true;
+                color: root.enabled ? #202020 : #777777;
+                vertical-alignment: center;
+                selection-background-color: #2c76b855;
+                selection-foreground-color: #202020;
+                cursor-position-changed(cursor-position) => {
+                    if cursor-position.x + self.computed-x < 6px {
+                        self.computed-x = -cursor-position.x + 6px;
+                    } else if cursor-position.x + self.computed-x > parent.width - 6px - self.text-cursor-width {
+                        self.computed-x = parent.width - cursor-position.x - 6px - self.text-cursor-width;
+                    }
+                }
+                accepted => { root.accepted(self.text); }
+                edited => { root.edited(self.text); }
+                changed has-focus => {
+                    if self.has-focus && !self.read-only && self.enabled { TextFieldActivation.activated(); }
                 }
             }
-            accepted => { root.accepted(self.text); }
-            edited => { root.edited(self.text); }
         }
     }
 }

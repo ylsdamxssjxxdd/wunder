@@ -8,6 +8,7 @@ import { SidebarMetrics } from "drag_row.slint";
 import { I18n } from "i18n.slint";
 import { ListView, Button, LineEdit } from "std-widgets.slint";
 import { ModalDialog, Action } from "components.slint";
+import { TextFieldActivation, TextFieldMenu } from "text_field.slint";
 
 component DirectoryBlankMenu inherits ContextMenuArea {
     in property <bool> busy;
@@ -147,14 +148,24 @@ export component WorkspaceFilesPanel inherits Rectangle {
                         padding-left: 8px; padding-right: 2px;
                         Rectangle {
                             horizontal-stretch: 1;
-                            search-input := TextInput {
-                                width: parent.width; height: parent.height;
-                                single-line: true;
-                                text <=> root.search-query;
-                                color: Theme.text; font-size: Theme.font-xs;
-                                vertical-alignment: center;
-                                edited() => { root.search-edit(root.search-query); }
-                                accepted() => { root.search-accept(root.search-query); }
+                            TextFieldMenu {
+                                text: search-input.text;
+                                cut() => { search-input.cut(); }
+                                copy() => { search-input.copy(); }
+                                paste() => { search-input.paste(); }
+                                select-all() => { search-input.select-all(); }
+                                search-input := TextInput {
+                                    width: parent.width; height: parent.height;
+                                    single-line: true;
+                                    text <=> root.search-query;
+                                    color: Theme.text; font-size: Theme.font-xs;
+                                    vertical-alignment: center;
+                                    edited() => { root.search-edit(root.search-query); }
+                                    accepted() => { root.search-accept(root.search-query); }
+                                    changed has-focus => {
+                                        if self.has-focus && !self.read-only && self.enabled { TextFieldActivation.activated(); }
+                                    }
+                                }
                             }
                             if root.search-query == "" : Text {
                                 width: parent.width; height: parent.height;
@@ -396,6 +407,9 @@ export component WorkspacePromptDialog inherits ModalDialog {
         if root.input-visible : LineEdit {
             enabled: !root.busy;
             text <=> root.prompt-value;
+            changed has-focus => {
+                if self.has-focus && !self.read-only && self.enabled { TextFieldActivation.activated(); }
+            }
             accepted => { if !root.busy { root.accepted(root.prompt-value); } }
         }
         Rectangle { vertical-stretch: 1; }

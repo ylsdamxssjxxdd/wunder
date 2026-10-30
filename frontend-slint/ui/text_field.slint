@@ -1,0 +1,33 @@
+// Shared behavior for the project's own text fields.
+//
+// Windows only raises the touch keyboard for windows that expose a real text
+// service, which the Slint (winit) window does not, so the platform layer
+// asks for it explicitly (src/touch_keyboard.rs). Every editable field reports
+// focus here; the platform layer ignores the report unless the focus change
+// came from a finger, so mouse and keyboard activation stay quiet.
+export global TextFieldActivation {
+    callback activated();
+}
+
+// Project fields are built on bare TextInput, which has no context menu of its
+// own (only the std LineEdit/TextEdit widgets ship one). Wrapping the editor
+// with this area gives them the same cut/copy/paste/select-all menu as the
+// composer.
+export component TextFieldMenu inherits ContextMenuArea {
+    in property <bool> read-only: false;
+    in property <string> text;
+    callback cut();
+    callback copy();
+    callback paste();
+    callback select-all();
+    // The slot has to be declared before the Menu: the menu-lowering pass
+    // removes the Menu from the element's children, and a slot declared after
+    // it would keep the stale insertion index and panic the compiler.
+    @children
+    Menu {
+        MenuItem { title: @tr("Cut"); enabled: !root.read-only && root.enabled; activated => { root.cut(); } }
+        MenuItem { title: @tr("Copy"); enabled: !root.text.is-empty; activated => { root.copy(); } }
+        MenuItem { title: @tr("Paste"); enabled: !root.read-only && root.enabled; activated => { root.paste(); } }
+        MenuItem { title: @tr("Select All"); enabled: !root.text.is-empty; activated => { root.select-all(); } }
+    }
+}

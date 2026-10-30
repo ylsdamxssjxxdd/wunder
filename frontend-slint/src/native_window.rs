@@ -15,10 +15,8 @@ use windows_sys::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadI
 #[cfg(windows)]
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     BringWindowToTop, GetClientRect, GetForegroundWindow, GetWindowThreadProcessId, IsIconic,
-    IsWindowVisible, IsZoomed, SetForegroundWindow, SetWindowPos, ShowWindow, GWL_EXSTYLE,
-    SW_MAXIMIZE, SW_MINIMIZE, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
-    SWP_NOZORDER, SW_RESTORE, SW_SHOW, SW_SHOWNOACTIVATE, WS_EX_APPWINDOW, WS_EX_NOACTIVATE,
-    WS_EX_TOOLWINDOW,
+    IsWindowVisible, IsZoomed, SetForegroundWindow, ShowWindow, SW_MAXIMIZE, SW_MINIMIZE,
+    SW_RESTORE, SW_SHOW,
 };
 
 /// Starts the platform caption-drag for the custom title bar. Winit turns this
@@ -254,73 +252,6 @@ pub fn apply_rounded_region(window: &slint::Window, radius: f32) {
 
 #[cfg(not(windows))]
 pub fn apply_rounded_region(_window: &slint::Window, _radius: f32) {}
-
-/// Turn a top-level Slint window into a notification overlay: out of the
-/// taskbar and Alt+Tab (`WS_EX_TOOLWINDOW`) and never pulled to the
-/// foreground (`WS_EX_NOACTIVATE`). Winit derives `GWL_EXSTYLE` from its own
-/// window flags and rewrites the style whenever a state diff runs, so these
-/// bits are written directly and re-applied after every show; a plain
-/// `ShowWindow` is not enough because Winit's second and later shows use
-/// `SW_SHOW`, which would activate the toast and take focus from the user.
-#[cfg(windows)]
-pub fn make_notification_overlay(window: &slint::Window) {
-    let Some(hwnd) = native_hwnd(window) else { return };
-    unsafe {
-        let style = ex_style(hwnd);
-        let wanted = (style | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW) & !WS_EX_APPWINDOW;
-        if wanted != style {
-            set_ex_style(hwnd, wanted);
-            // A style bit only reaches the shell after a frame change.
-            SetWindowPos(
-                hwnd,
-                0,
-                0,
-                0,
-                0,
-                0,
-                SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
-            );
-        }
-        // Only re-assert mapping on a window that is already on screen: this
-        // runs from a deferred timer as well, and must not resurrect a toast
-        // that has been hidden in the meantime.
-        if IsWindowVisible(hwnd) != 0 {
-            ShowWindow(hwnd, SW_SHOWNOACTIVATE);
-        }
-    }
-}
-
-#[cfg(not(windows))]
-pub fn make_notification_overlay(_window: &slint::Window) {}
-
-#[cfg(windows)]
-fn ex_style(hwnd: HWND) -> u32 {
-    #[cfg(target_pointer_width = "64")]
-    let style = unsafe {
-        windows_sys::Win32::UI::WindowsAndMessaging::GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32
-    };
-    #[cfg(target_pointer_width = "32")]
-    let style = unsafe {
-        windows_sys::Win32::UI::WindowsAndMessaging::GetWindowLongW(hwnd, GWL_EXSTYLE) as u32
-    };
-    style
-}
-
-#[cfg(windows)]
-fn set_ex_style(hwnd: HWND, style: u32) {
-    #[cfg(target_pointer_width = "64")]
-    unsafe {
-        windows_sys::Win32::UI::WindowsAndMessaging::SetWindowLongPtrW(
-            hwnd,
-            GWL_EXSTYLE,
-            style as isize,
-        );
-    }
-    #[cfg(target_pointer_width = "32")]
-    unsafe {
-        windows_sys::Win32::UI::WindowsAndMessaging::SetWindowLongW(hwnd, GWL_EXSTYLE, style as i32);
-    }
-}
 
 #[cfg(windows)]
 fn native_hwnd(window: &slint::Window) -> Option<HWND> {

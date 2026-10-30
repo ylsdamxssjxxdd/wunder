@@ -4,6 +4,10 @@ import { ExpertToolGroup } from "expert_widgets.slint";
 export { ExpertToolGroup }
 import { RuntimeStatus } from "runtime_status.slint";
 import { I18n } from "i18n.slint";
+// Re-exported so the generated Rust API exposes it: only globals exported from
+// the root file get a public wrapper. The fields report focus through
+// components.slint / textedit-base.slint.
+export { TextFieldActivation } from "text_field.slint";
 import { Theme, DesktopPage, Conversation, WorkspaceCard, SidebarRow, CloudThreadCard, TextBlock, WorkflowLine, WorkflowSection, ToolWorkflowEntry, TimelineRow, TimelineCounts, TurnStatMetric, TurnMark, PatchCard, PatchLine, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, TrajRow, TrajSpan, TrajTick, TrajBoundary, TrajTiming, TrajSection, TrajTab, TrajSearchHit, TrajTokenBar, CronCard, CronRunCard, PromptPackCard, ChannelCatalogCard, ChannelAccountCard, ChannelBindingCard, ChannelLogCard, AvatarOption, AvatarColorChip, CompanionCard, PlanStep, InquiryQuestion, QueueTurn, DraftRecall, InterlinkApproval, WorkspaceFileRow } from "theme.slint";
 import { Action, EdgeToggle, RailButton, Avatar, FormField, MiddleHeader, MiddleFooter, ConfirmDialog, InfoDialog, ToastHost, ToastState } from "components.slint";
 export { ToastState }
@@ -535,15 +539,24 @@ export component MainWindow inherits Window {
     in-out property <string> runtime-python;
     in-out property <string> runtime-git;
     in-out property <string> runtime-rg;
+    in-out property <string> runtime-ffmpeg;
+    in-out property <string> runtime-browser;
+    in-out property <string> runtime-shell;
     in-out property <string> runtime-python-status;
     in-out property <string> runtime-git-status;
     in-out property <string> runtime-rg-status;
+    in-out property <string> runtime-ffmpeg-status;
+    in-out property <string> runtime-browser-status;
+    in-out property <string> runtime-shell-status;
     in-out property <bool> importing-supplement: false;
     in-out property <string> supplement-status;
     callback import-supplement();
     callback pick-python-path();
     callback pick-git-path();
     callback pick-rg-path();
+    callback pick-ffmpeg-path();
+    callback pick-browser-path();
+    callback pick-shell-path();
     // The settings page's active category, shared with the smoke harness.
     in-out property <int> settings-active-panel: 0;
     // Leaving the settings page abandons the unsaved new-model draft (selected
@@ -820,9 +833,6 @@ export component MainWindow inherits Window {
     // ArrowUp/ArrowDown recall: (direction, cursor byte offset, anchor byte
     // offset, draft) in, the draft to show (or the unchanged one) back.
     callback recall-history(int, int, int, string) -> DraftRecall;
-    // Fires when the composer editor gains focus; Rust decides whether the
-    // activation was touch and asks Windows for the on-screen keyboard.
-    callback composer-focus-gained();
     callback capture-screenshot(bool, bool);
     callback record-voice();
     callback remove-attachment(int);
@@ -964,7 +974,7 @@ export component MainWindow inherits Window {
     // query is filtered natively and the matching categories come back as one
     // flag per category, in §9.2 order.
     in-out property <string> settings-query: "";
-    in-out property <[bool]> settings-category-flags: [true, true, true, true, true, true, true, true, true, true, true];
+    in-out property <[bool]> settings-category-flags: [true, true, true, true, true, true, true, true, true, true, true, true];
     callback filter-settings-categories(string);
     // Help is not a category anymore: the general page raises this to open the
     // standalone help window.
@@ -1254,7 +1264,6 @@ export component MainWindow inherits Window {
                             recall-history(direction, cursor-offset, anchor-offset, draft) => {
                                 return root.recall-history(direction, cursor-offset, anchor-offset, draft);
                             }
-                            editor-focus-gained => { root.composer-focus-gained(); }
                             generating: root.busy || root.goal-active; stopping: root.stopping; stop => { root.stop-generation(); }
                             recording: root.recording; transcribing: root.transcribing; recording-elapsed: root.recording-elapsed; recording-pulse: root.recording-pulse;
                             send => { root.send-message(); }
@@ -1343,7 +1352,9 @@ export component MainWindow inherits Window {
         // profile route owns them); the settings page no longer shows a
         // separate identity panel, so nothing is bound through it.
         python-path <=> root.runtime-python; git-path <=> root.runtime-git; rg-path <=> root.runtime-rg;
+        ffmpeg-path <=> root.runtime-ffmpeg; browser-path <=> root.runtime-browser; shell-path <=> root.runtime-shell;
         python-status: root.runtime-python-status; git-status: root.runtime-git-status; rg-status: root.runtime-rg-status;
+        ffmpeg-status: root.runtime-ffmpeg-status; browser-status: root.runtime-browser-status; shell-status: root.runtime-shell-status;
         importing-supplement <=> root.importing-supplement; supplement-status <=> root.supplement-status;
         import-supplement => { root.import-supplement(); }
         pick-python-path => { root.pick-python-path(); }

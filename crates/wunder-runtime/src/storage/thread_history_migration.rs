@@ -9,7 +9,7 @@ use serde_json::Value;
 use std::io::BufReader;
 use std::path::Path;
 
-const SCHEMA_VERSION: i64 = 4;
+const SCHEMA_VERSION: i64 = 5;
 const COMPACTION_PENDING: i64 = 2;
 
 pub(super) fn migrate(conn: &mut Connection, path: &Path) -> Result<()> {
@@ -27,7 +27,7 @@ pub(super) fn migrate(conn: &mut Connection, path: &Path) -> Result<()> {
     }
     let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
     let mut compact = version == COMPACTION_PENDING;
-    if (2..SCHEMA_VERSION).contains(&version) {
+    if (2..4).contains(&version) {
         // v4: previews became a strict whitelist projection instead of a deep
         // copy, and per-item chat checkpoints moved to lazy materialization.
         // Rebuild the stored previews from the canonical sources and drop the
@@ -41,6 +41,13 @@ pub(super) fn migrate(conn: &mut Connection, path: &Path) -> Result<()> {
              DROP TABLE IF EXISTS thread_chat_checkpoints;
              DROP TABLE IF EXISTS thread_chat_projection_state;",
         )?;
+        compact = true;
+    }
+    let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+    if version < 5 {
+        // v5: bounded active window plus sparse anchors so the index size no
+        // longer grows linearly with the canonical log.
+        migrate_bounded_window(conn)?;
         compact = true;
     }
     if compact {
@@ -267,6 +274,61 @@ fn migrate_bodies(conn: &mut Connection, path: &Path) -> Result<()> {
          PRAGMA user_version=2;",
     )?;
     tx.commit()?;
+    Ok(())
+}
+
+/// v5 upgrade: introduce the sparse anchor table and the durable per-turn
+/// item count, backfill both from the existing rows, then shrink every
+/// rollout to its bounded active window. The outer migration runs VACUUM so
+/// the deleted pages are returned to the filesystem.
+fn migrate_bounded_window(conn: &mut Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS thread_item_anchors (
+            rollout_id TEXT NOT NULL,
+            rollout_ordinal INTEGER NOT NULL,
+            item_id TEXT NOT NULL,
+            record_byte_offset INTEGER NOT NULL,
+            record_byte_length INTEGER NOT NULL,
+            PRIMARY KEY (rollout_id, rollout_ordinal)
+        );
+        CREATE INDEX IF NOT EXISTS idx_thread_history_anchors_ordinal
+            ON thread_item_anchors(rollout_id, rollout_ordinal);",
+    )?;
+    let has_count: i64 = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('thread_turns') WHERE name='item_count')",
+        [],
+        |row| row.get(0),
+    )?;
+    if has_count == 0 {
+        conn.execute_batch(
+            "ALTER TABLE thread_turns ADD COLUMN item_count INTEGER NOT NULL DEFAULT 0;",
+        )?;
+    }
+    conn.execute(
+        "INSERT OR IGNORE INTO thread_item_anchors
+             (rollout_id,rollout_ordinal,item_id,record_byte_offset,record_byte_length)
+         SELECT rollout_id,rollout_ordinal,item_id,record_byte_offset,record_byte_length
+           FROM thread_items
+          WHERE rollout_ordinal % ?1 = 0",
+        [super::thread_history::ANCHOR_INTERVAL],
+    )?;
+    conn.execute_batch(
+        "UPDATE thread_turns SET item_count=(
+             SELECT COUNT(*) FROM thread_items i
+              WHERE i.rollout_id=thread_turns.rollout_id
+                AND i.turn_id=thread_turns.turn_id);",
+    )?;
+    conn.execute(
+        "DELETE FROM thread_items WHERE rowid IN (
+             SELECT rowid FROM (
+                 SELECT rowid,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY rollout_id
+                            ORDER BY rollout_ordinal DESC, item_id DESC) AS rn
+                   FROM thread_items)
+              WHERE rn > ?1)",
+        [super::thread_history::ACTIVE_WINDOW_ITEMS],
+    )?;
     Ok(())
 }
 
