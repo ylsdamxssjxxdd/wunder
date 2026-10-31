@@ -359,7 +359,9 @@ export global I18n {
     out property <string> hud_memory: zh ? "内存" : "Memory";
     out property <string> hud_network: zh ? "网络" : "Network";
     out property <string> hud_disk: zh ? "磁盘" : "Disk";
-    out property <string> hud_link: zh ? "链路" : "link";
+    out property <string> hud_detail_title: zh ? "本机状态" : "This machine";
+    out property <string> hud_read: zh ? "读" : "R";
+    out property <string> hud_write: zh ? "写" : "W";
     public pure function hud_cores(cores: string) -> string { return zh ? "" + cores + " 核" : "" + cores + " cores"; }
     out property <string> hud_tasks_title: zh ? "后台任务" : "Running tasks";
     public pure function hud_tasks_count(count: string) -> string { return zh ? "" + count + " 个运行中" : "" + count + " running"; }
@@ -471,6 +473,9 @@ export global I18n {
     out property <string> traj_token_usage: zh ? "新增占用" : "New tok";
     out property <string> ws_collapse_threads: zh ? "收起工作区线程" : "Collapse workspace threads";
     out property <string> ws_expand_threads: zh ? "展开工作区线程" : "Expand workspace threads";
+    out property <string> rs_stopped_terminated: zh ? "已终止" : "Terminated";
+    out property <string> rs_stopped_cancelled: zh ? "已取消" : "Cancelled";
+    out property <string> rs_stopped_aborted: zh ? "已中断" : "Interrupted";
     out property <string> ed_total_legend: zh ? "○ 累计消耗" : "○ Total usage";
     out property <string> ed_all_tags: zh ? "全部标签" : "All tags";
     out property <string> ed_memory_desc: zh ? "将可复用的长期事实整理为模型友好的记忆索引与详情。" : "Organize reusable long-term facts into model-friendly memory indexes.";

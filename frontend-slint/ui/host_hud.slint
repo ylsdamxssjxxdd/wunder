@@ -1,23 +1,35 @@
-// 输入区底部「本机硬件状态」小网格（HostHud）。
+// 输入区底部「本机硬件状态」读数行（HostHud）。
 //
-// 五格读数直接排在动作行最左侧（紧跟加号，替代了原来的工作区名称位），不套底色
-// 也不描边——它读起来是输入区的一部分，而不是贴在底部的一条独立状态条：
-// 前四格是 CPU、内存、网络、磁盘占用（用「液位字形」表达：图标从底部按占用比例
-// 着色填满，与模型触发器里那个大脑图标同一套逻辑，精确读数让给悬停提示），末格
-// 是后台任务计数，鼠标移上去在上方展开任务面板。
+// 三格直接排在动作行最左侧（紧跟加号，替代了原来的工作区名称位），不套底色也不
+// 描边——它读起来是输入区的一部分，而不是贴在底部的一条独立状态条：前两格是 CPU
+// 与内存占用（液位字形：图标从底部按占用比例着色填满，与模型触发器里那个大脑图标
+// 同一套逻辑），末格是后台任务计数。
 //
-// 高度 26px（与动作行里 24~28px 的控件同处一条中线），宽度按内容取（约 110px）。
+// 网络与磁盘不再单独占格。四项指标都塞进一行会让读数行宽到压住模型触发器，也让
+// 「一眼扫过」变成「逐个辨认」；现在鼠标移到 CPU 或内存上，就在读数行上方展开详情
+// 面板，四项一次列全（含百分比、核心数、绝对内存、上下行速率、读写速率）。格子只
+// 保留最需要一眼看到的两个压力项。
+//
+// 高度 26px（与动作行里 24~28px 的控件同处一条中线），宽度按内容取（约 128px）。
 
 import { Theme, CommandTask } from "theme.slint";
 import { I18n } from "i18n.slint";
 
+// 占用率到颜色的映射。液位填充与详情面板里的百分比共用一套，同一份数据不会在两处
+// 显示成两种颜色。特意不用 Theme.warning(#C98A2B)：那种赭黄夹在橙与红之间会读成
+// 棕色，在实心小字形上像「脏了」而不是「告警」。
+global Levels {
+    public pure function color-of(ratio: float) -> color {
+        return ratio >= 0.9 ? #DC2626 : ratio >= 0.8 ? #EA580C : Theme.accent;
+    }
+}
+
 // 占用类：字形即仪表。底字用弱色，另一份同形图元放在一个从底部往上裁的容器里，
 // 按占用比例露出——和模型触发器的大脑图标（液位填充）是同一套做法，因此两处都
-// 是「填得越高越满、越满越警示」。数字一概不进格子，只留在悬停提示里。
+// 是「填得越高越满、越满越警示」。数字一概不进格子，深读数在详情面板里。
 component GaugeCell inherits Rectangle {
     in property <image> icon;
     in property <float> ratio: 0.0;
-    in property <string> hint: "";
     out property <bool> hovered: touch.has-hover;
 
     width: 26px;
@@ -25,12 +37,7 @@ component GaugeCell inherits Rectangle {
     background: transparent;
 
     private property <float> fill: Math.clamp(root.ratio, 0.0, 1.0);
-    // 与模型触发器的大脑图标同一套暖色阶：强调橙 → 深橙 → 红（0.80 / 0.90 两档），
-    // 同为 16px 的实心填充，两处读数才一致。这里特意不用 Theme.warning(#C98A2B)：
-    // 那种赭黄夹在橙与红之间会读成棕色，在实心小字形上像「脏了」而不是「告警」。
-    private property <color> level-color: root.fill >= 0.9 ? #DC2626
-        : root.fill >= 0.8 ? #EA580C
-        : Theme.accent;
+    private property <color> level-color: Levels.color-of(root.fill);
 
     // 16px 与模型触发器里的大脑图标同尺寸：液位填充在这个尺寸下才有足够的
     // 纵向分辨率（14px 时 60% 与 80% 几乎分不出来）。
@@ -62,9 +69,9 @@ component GaugeCell inherits Rectangle {
             }
         }
     }
-    touch := TouchArea {
-        Tooltip { text: @markdown("\{root.hint}"); }
-    }
+    // 只承接 hover：读数移交给统一详情面板，这里不再挂 Tooltip（两者会前后脚冒出
+    // 来互相遮挡）。
+    touch := TouchArea { }
 }
 
 // 后台任务格：图标 + 计数。有任务时整格点亮，计数用强调色。
@@ -99,6 +106,131 @@ component TaskCell inherits Rectangle {
     touch := TouchArea {
         // 有任务时由任务面板承担说明，不再弹自己的悬停提示（两者会打架）。
         if root.count == 0 : Tooltip { text: @markdown("\{root.hint}"); }
+    }
+}
+
+// 详情面板的一行：图标 + 名称 + 主值 + 副值。
+component DetailRow inherits Rectangle {
+    in property <image> icon;
+    in property <string> label: "";
+    in property <string> value: "";
+    in property <string> detail: "";
+    in property <float> ratio: 0.0;
+
+    height: 21px;
+    background: transparent;
+
+    Image {
+        x: 0px; y: 4px; width: 13px; height: 13px;
+        source: root.icon;
+        colorize: Theme.muted;
+        image-fit: contain;
+    }
+    Text {
+        x: 18px; y: 0px; width: 40px; height: 21px;
+        text: root.label;
+        color: Theme.text-secondary;
+        font-size: Theme.font-2xs;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    // 主值：常态用正文色，只有真的紧张时才跳成告警色——四项全是橙数字会花掉。
+    Text {
+        x: 58px; y: 0px; width: 44px; height: 21px;
+        text: root.value == "" ? "—" : root.value;
+        color: root.value == "" ? Theme.muted
+            : root.ratio >= 0.8 ? Levels.color-of(root.ratio) : Theme.text;
+        font-size: Theme.font-xs;
+        font-weight: 600;
+        horizontal-alignment: right;
+        vertical-alignment: center;
+    }
+    // 副值：速率、绝对内存等。放不下就省略，不折行（折行会顶掉下一行）。
+    Text {
+        x: 108px; y: 0px; width: parent.width - 108px; height: 21px;
+        text: root.detail;
+        color: Theme.muted;
+        font-size: 10px;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+}
+
+// 悬停 CPU / 内存展开的本机详情面板：四项读数一次看全。
+// 与任务面板同一套外观与定位（底边贴读数行顶边 0 间距），指针从格子移进来不会中断。
+component DetailPanel inherits Rectangle {
+    in property <string> cpu-value: "";
+    in property <float> cpu-ratio: 0.0;
+    in property <string> cpu-detail: "";
+    in property <string> memory-value: "";
+    in property <float> memory-ratio: 0.0;
+    in property <string> memory-detail: "";
+    in property <string> net-value: "";
+    in property <float> net-ratio: 0.0;
+    in property <string> net-detail: "";
+    in property <string> disk-value: "";
+    in property <float> disk-ratio: 0.0;
+    in property <string> disk-detail: "";
+    out property <bool> hovered: hover.has-hover;
+
+    width: 296px;
+    height: card.height + 6px;
+    background: transparent;
+
+    // 悬停区必须是卡片的祖先（理由同任务面板）：它是兄弟层时，指针一落到行上就
+    // 丢 hover，面板立刻收起，用户根本进不来。
+    hover := TouchArea {
+        x: 0px; y: 0px; width: parent.width; height: parent.height;
+        card := Rectangle {
+            y: 0px; width: parent.width; height: rows.preferred-height + 16px;
+            border-radius: Theme.radius-lg;
+            background: Theme.surface;
+            border-width: 1px;
+            border-color: Theme.border;
+            drop-shadow-color: #00000024; drop-shadow-blur: 16px; drop-shadow-offset-y: 4px;
+
+            rows := VerticalLayout {
+                x: 10px; y: 8px; width: parent.width - 20px;
+                spacing: 0px;
+
+                Text {
+                    height: 18px;
+                    text: I18n.hud_detail_title;
+                    color: Theme.text;
+                    font-size: Theme.font-xs;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                }
+                DetailRow {
+                    icon: @image-url("../assets/icons/cpu-chip.svg");
+                    label: I18n.hud_cpu;
+                    value: root.cpu-value;
+                    detail: root.cpu-detail;
+                    ratio: root.cpu-ratio;
+                }
+                DetailRow {
+                    icon: @image-url("../assets/icons/fa-memory.svg");
+                    label: I18n.hud_memory;
+                    value: root.memory-value;
+                    detail: root.memory-detail;
+                    ratio: root.memory-ratio;
+                }
+                DetailRow {
+                    icon: @image-url("../assets/icons/fa-earth-asia.svg");
+                    label: I18n.hud_network;
+                    value: root.net-value;
+                    detail: root.net-detail;
+                    ratio: root.net-ratio;
+                }
+                DetailRow {
+                    icon: @image-url("../assets/icons/disk-drive.svg");
+                    label: I18n.hud_disk;
+                    value: root.disk-value;
+                    detail: root.disk-detail;
+                    ratio: root.disk-ratio;
+                }
+            }
+        }
     }
 }
 
@@ -189,12 +321,12 @@ component TaskRow inherits Rectangle {
 }
 
 // 悬停展开的任务面板。整体上浮在输入卡之上，底边与读数行紧贴（0 间距），
-// 这样指针从读数移进面板时悬停不会中断，面板不会闪。
+// 指针从读数移进面板时既没有空隙、也不会丢掉 hover（见下方 hover 桥的说明）。
 component TaskPanel inherits Rectangle {
     in property <[CommandTask]> tasks;
     in property <int> count: 0;
     in property <int> hidden: 0;
-    out property <bool> hovered: bridge.has-hover;
+    out property <bool> hovered: hover.has-hover;
     callback toggle(string);
     callback terminate(string);
 
@@ -202,74 +334,87 @@ component TaskPanel inherits Rectangle {
     height: card.height + 6px;
     background: transparent;
 
-    // 先在底层铺满悬停区，再画卡片：卡片里的按钮因此仍然优先命中。
-    bridge := TouchArea {
+    // 悬停桥必须是卡片与各行的**祖先**，不能是并排的兄弟层：Slint 的 has-hover
+    // 只赋给命中链上的元素，指针一落到某一行（或它的终止按钮）上，兄弟层的
+    // 桥就立刻丢 hover，面板随关闭——表现就是「鼠标一移进去就消失」。
+    // 父级 TouchArea 在子级之前拿到 hover，因此在面板任意位置都保持为真。
+    hover := TouchArea {
         x: 0px; y: 0px; width: parent.width; height: parent.height;
-    }
-    card := Rectangle {
-        y: 0px; width: parent.width; height: body.preferred-height + 16px;
-        border-radius: Theme.radius-lg;
-        background: Theme.surface;
-        border-width: 1px;
-        border-color: Theme.border;
-        drop-shadow-color: #00000024; drop-shadow-blur: 16px; drop-shadow-offset-y: 4px;
+        card := Rectangle {
+            y: 0px; width: parent.width; height: body.preferred-height + 16px;
+            border-radius: Theme.radius-lg;
+            background: Theme.surface;
+            border-width: 1px;
+            border-color: Theme.border;
+            drop-shadow-color: #00000024; drop-shadow-blur: 16px; drop-shadow-offset-y: 4px;
 
-        body := VerticalLayout {
-            x: 8px; y: 8px; width: parent.width - 16px;
-            spacing: 2px;
+            body := VerticalLayout {
+                x: 8px; y: 8px; width: parent.width - 16px;
+                spacing: 2px;
 
-            HorizontalLayout {
-                height: 18px; spacing: 6px;
-                Text {
-                    text: I18n.hud_tasks_title;
-                    color: Theme.text;
-                    font-size: Theme.font-xs;
-                    font-weight: 600;
-                    vertical-alignment: center;
+                HorizontalLayout {
+                    height: 18px; spacing: 6px;
+                    Text {
+                        text: I18n.hud_tasks_title;
+                        color: Theme.text;
+                        font-size: Theme.font-xs;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                    Text {
+                        text: I18n.hud_tasks_count(root.count);
+                        color: Theme.muted;
+                        font-size: Theme.font-2xs;
+                        vertical-alignment: center;
+                    }
                 }
-                Rectangle { horizontal-stretch: 1; }
-                Text {
-                    text: I18n.hud_tasks_count(root.count);
+                if root.tasks.length == 0 : Text {
+                    height: 24px;
+                    text: I18n.hud_tasks_empty;
                     color: Theme.muted;
                     font-size: Theme.font-2xs;
                     vertical-alignment: center;
                 }
-            }
-            if root.tasks.length == 0 : Text {
-                height: 24px;
-                text: I18n.hud_tasks_empty;
-                color: Theme.muted;
-                font-size: Theme.font-2xs;
-                vertical-alignment: center;
-            }
-            for task[index] in root.tasks : TaskRow {
-                task: task;
-                toggle(id) => { root.toggle(id); }
-                terminate(id) => { root.terminate(id); }
-            }
-            if root.hidden > 0 : Text {
-                height: 16px;
-                text: I18n.hud_tasks_more(root.hidden);
-                color: Theme.muted;
-                font-size: Theme.font-2xs;
-                vertical-alignment: center;
+                for task[index] in root.tasks : TaskRow {
+                    task: task;
+                    toggle(id) => { root.toggle(id); }
+                    terminate(id) => { root.terminate(id); }
+                }
+                if root.hidden > 0 : Text {
+                    height: 16px;
+                    text: I18n.hud_tasks_more(root.hidden);
+                    color: Theme.muted;
+                    font-size: Theme.font-2xs;
+                    vertical-alignment: center;
+                }
             }
         }
     }
 }
 
 export component HostHud inherits Rectangle {
-    // 四项占用比例（0..=1），只驱动液位填充高度与告警色。网络与磁盘给的也是
+    // 四项占用比例（0..=1），驱动液位填充与面板里的百分比配色。网络与磁盘给的也是
     // 占用率（网卡速率占链路带宽、磁盘忙碌时间占比），不是吞吐量。
     in property <float> cpu: 0.0;
     in property <float> memory: 0.0;
     in property <float> net: 0.0;
     in property <float> disk: 0.0;
-    // 悬停提示，调用方按当前语言组装好整句。
-    in property <string> cpu-hint: "";
-    in property <string> memory-hint: "";
-    in property <string> net-hint: "";
-    in property <string> disk-hint: "";
+    // 预格式化的读数，全部由 Rust 侧算好；空串表示该项当前拿不到。
+    in property <string> cpu-text: "—";
+    in property <string> memory-text: "—";
+    in property <string> net-text: "—";
+    in property <string> disk-text: "—";
+    in property <string> memory-used: "—";
+    in property <string> memory-total: "—";
+    // 链路速率（"1.0G" / "100M"），空串表示未知。
+    in property <string> link: "";
+    // 实时速率（不带单位后缀，这里拼成 ↓1.2M/s）。
+    in property <string> net-rx: "";
+    in property <string> net-tx: "";
+    in property <string> disk-read: "";
+    in property <string> disk-write: "";
+    in property <int> cores: 0;
     // 后台任务
     in property <int> task-count: 0;
     in property <int> task-hidden: 0;
@@ -278,10 +423,41 @@ export component HostHud inherits Rectangle {
     callback toggle-task(string);
     callback terminate-task(string);
 
-    // 面板在任务格或面板本身上悬停时展开；两个区域上下紧贴，切换时不会中断。
-    // 只在任务格上触发：其余格子有自己的数值提示，不该顺带弹出任务列表。
+    // 两个面板都只在指针真的离开后延迟 200ms 收起：真实鼠标轨迹并不保证每帧都落在
+    // 连续像素上，快速斜向移动时中间可能空出一帧，立刻收起会让指针再也追不上。
+    // 详情面板跟 CPU / 内存格，任务面板跟任务格。
+    private property <bool> info-hovering: cpu-cell.hovered || mem-cell.hovered
+        || info-panel.hovered;
+    private property <bool> info-lingering: false;
+    private property <bool> task-hovering: task-cell.hovered || panel.hovered;
+    private property <bool> task-lingering: false;
+
+    // 两个面板都排在读数行左缘上方，同一时刻只能出现一个：指针从 CPU 格移到任务格
+    // 时详情面板的 200ms 宽限还在，不互斥就会有两张卡片叠在一起闪一下。
+    private property <bool> info-open: (root.info-hovering || root.info-lingering)
+        && !root.task-hovering;
     private property <bool> panel-open: root.task-count > 0
-        && (task-cell.hovered || panel.hovered);
+        && (root.task-hovering || root.task-lingering)
+        && !root.info-hovering;
+
+    changed info-hovering => {
+        if (!root.info-hovering) {
+            root.info-lingering = true;
+        }
+    }
+    changed task-hovering => {
+        if (!root.task-hovering) {
+            root.task-lingering = true;
+        }
+    }
+    Timer {
+        interval: 200ms;
+        running: root.info-lingering || root.task-lingering;
+        triggered => {
+            root.info-lingering = false;
+            root.task-lingering = false;
+        }
+    }
 
     // 无底色、无描边：这组读数直接长在动作行上，不再自成一格「底部状态条」，
     // 免得和输入卡之间出现一条硬边。留白交给格内居中与行内的 spacing。
@@ -299,34 +475,43 @@ export component HostHud inherits Rectangle {
         cpu-cell := GaugeCell {
             icon: @image-url("../assets/icons/cpu-chip.svg");
             ratio: root.cpu;
-            hint: root.cpu-hint;
         }
         mem-cell := GaugeCell {
             icon: @image-url("../assets/icons/fa-memory.svg");
             ratio: root.memory;
-            hint: root.memory-hint;
-        }
-        net-cell := GaugeCell {
-            icon: @image-url("../assets/icons/fa-earth-asia.svg");
-            ratio: root.net;
-            hint: root.net-hint;
-        }
-        disk-cell := GaugeCell {
-            icon: @image-url("../assets/icons/disk-drive.svg");
-            ratio: root.disk;
-            hint: root.disk-hint;
         }
         task-cell := TaskCell {
             count: root.task-count;
             hint: root.task-hint;
         }
     }
-    // 常驻实例 + visible 控制：条件元素里的 id 不能在 `panel-open` 里前向引用，
+
+    // 常驻实例 + visible 控制：条件元素里的 id 不能在属性绑定里前向引用，
     // 而悬停判定又必须先读到 panel.hovered。
+    info-panel := DetailPanel {
+        visible: root.info-open;
+        // 左对齐读数行左缘：面板比读数行宽得多，居中就会往两边伸出去被裁掉。
+        x: 0px;
+        y: -self.height;
+        cpu-value: root.cpu-text;
+        cpu-ratio: root.cpu;
+        cpu-detail: root.cores > 0 ? I18n.hud_cores(root.cores) : "";
+        memory-value: root.memory-text;
+        memory-ratio: root.memory;
+        memory-detail: root.memory-used + " / " + root.memory-total;
+        net-value: root.net-text;
+        net-ratio: root.net;
+        net-detail: root.net-text == "" ? ""
+            : "↓" + root.net-rx + "/s  ↑" + root.net-tx + "/s"
+                + (root.link == "" ? "" : "  · " + root.link);
+        disk-value: root.disk-text;
+        disk-ratio: root.disk;
+        disk-detail: root.disk-text == "" ? ""
+            : I18n.hud_read + " " + root.disk-read + "/s  "
+                + I18n.hud_write + " " + root.disk-write + "/s";
+    }
     panel := TaskPanel {
         visible: root.panel-open;
-        // 左对齐到卡片左缘，不再水平居中：网格已经退回动作行最左侧，居中的话面板
-        // 会往左伸出去 (380-118)/2 ≈ 131px，被输入区甚至窗口边缘切掉。
         x: 0px;
         y: -self.height;
         tasks: root.tasks;

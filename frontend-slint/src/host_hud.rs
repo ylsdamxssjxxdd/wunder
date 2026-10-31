@@ -1,10 +1,10 @@
-//! 输入区底部「本机硬件状态」网格的数据接线。
+//! 输入区底部「本机硬件状态」读数行的数据接线。
 //!
 //! 采样（CPU / 内存 / 网络 / 磁盘）在 `wunder_desktop::native_host_hud` 的后台线程里跑，这里只
 //! 做三件事：
 //! 1. 每秒把最近一次快照投影成 Slint 属性，且只在数值真的变化时写，避免无谓的
 //!    绑定重算；
-//! 2. 把字节量格式化成悬停提示里放得下的紧凑文本（渲染路径不做换算）；
+//! 2. 把字节量与速率格式化成详情面板里放得下的紧凑文本（渲染路径不做换算）；
 //! 3. 主窗口隐藏到托盘时让采样器退避到 5s 节拍，并跳过这一帧的投影。
 //!
 //! 渲染线程上没有任何系统调用，单次投影的成本是「一次小结构体加锁拷贝 + 几次
@@ -45,6 +45,10 @@ struct Projection {
     net_text: String,
     disk_text: String,
     link: String,
+    net_rx: String,
+    net_tx: String,
+    disk_read: String,
+    disk_write: String,
     memory_used: String,
     memory_total: String,
     cores: i32,
@@ -54,22 +58,32 @@ impl Projection {
     fn from(sample: HostHud) -> Self {
         // 网络与磁盘拿不到读数时用空串表达「当前不可用」，由 Slint 侧渲染成破折号，
         // 液位保持空——不能用 0% 假装「很闲」。
-        let (net_ratio, net_text, link) = if sample.net_ok {
+        let (net_ratio, net_text, link, net_rx, net_tx) = if sample.net_ok {
             (
                 (sample.net_percent / 100.0).clamp(0.0, 1.0),
                 format!("{:.0}%", sample.net_percent.clamp(0.0, 100.0)),
                 link_speed(sample.net_link_bps),
+                rate(sample.net_rx_bps),
+                rate(sample.net_tx_bps),
             )
         } else {
-            (0.0, String::new(), String::new())
+            (
+                0.0,
+                String::new(),
+                String::new(),
+                String::new(),
+                String::new(),
+            )
         };
-        let (disk_ratio, disk_text) = if sample.disk_ok {
+        let (disk_ratio, disk_text, disk_read, disk_write) = if sample.disk_ok {
             (
                 (sample.disk_percent / 100.0).clamp(0.0, 1.0),
                 format!("{:.0}%", sample.disk_percent.clamp(0.0, 100.0)),
+                rate(sample.disk_read_bps),
+                rate(sample.disk_write_bps),
             )
         } else {
-            (0.0, String::new())
+            (0.0, String::new(), String::new(), String::new())
         };
         Self {
             cpu_ratio: (sample.cpu_percent / 100.0).clamp(0.0, 1.0),
@@ -81,6 +95,10 @@ impl Projection {
             net_text,
             disk_text,
             link,
+            net_rx,
+            net_tx,
+            disk_read,
+            disk_write,
             memory_used: bytes(sample.memory_used),
             memory_total: bytes(sample.memory_total),
             cores: sample.cores as i32,
@@ -150,6 +168,18 @@ fn tick(bridge: &mut Bridge) {
     if projection.link != last.link {
         app.set_host_link(projection.link.as_str().into());
     }
+    if projection.net_rx != last.net_rx {
+        app.set_host_net_rx(projection.net_rx.as_str().into());
+    }
+    if projection.net_tx != last.net_tx {
+        app.set_host_net_tx(projection.net_tx.as_str().into());
+    }
+    if projection.disk_read != last.disk_read {
+        app.set_host_disk_read(projection.disk_read.as_str().into());
+    }
+    if projection.disk_write != last.disk_write {
+        app.set_host_disk_write(projection.disk_write.as_str().into());
+    }
     if projection.memory_used != last.memory_used {
         app.set_host_memory_used(projection.memory_used.as_str().into());
     }
@@ -172,6 +202,21 @@ fn link_speed(bits_per_second: u64) -> String {
         return format!("{gbit:.1}G");
     }
     format!("{:.0}M", bits_per_second as f64 / 1_000_000.0)
+}
+
+/// 速率（字节/秒）→ "1.2M" / "48K"。面板里统一拼成 "↓1.2M/s"，这里只给数量。
+fn rate(bytes_per_second: u64) -> String {
+    if bytes_per_second == 0 {
+        return "0B".to_string();
+    }
+    let mut amount = bytes_per_second as f64;
+    for unit in ["B", "K", "M", "G"] {
+        if amount < 1024.0 {
+            return format!("{}{unit}", decimal(amount));
+        }
+        amount /= 1024.0;
+    }
+    format!("{}T", decimal(amount))
 }
 
 /// 字节量 → "9.9G" / "683G"。用于内存提示里的绝对用量。
@@ -216,6 +261,15 @@ mod tests {
     }
 
     #[test]
+    fn rate_reads_at_a_glance() {
+        assert_eq!(rate(0), "0B");
+        assert_eq!(rate(900), "900B");
+        assert_eq!(rate(1536), "1.5K");
+        assert_eq!(rate(12 * 1024 * 1024), "12M");
+        assert_eq!(rate(3 * 1024 * 1024 * 1024), "3.0G");
+    }
+
+    #[test]
     fn unavailable_usage_projects_to_empty_readings() {
         let sample = HostHud {
             net_ok: false,
@@ -227,6 +281,8 @@ mod tests {
         assert_eq!(projection.disk_ratio, 0.0);
         assert!(projection.net_text.is_empty() && projection.disk_text.is_empty());
         assert!(projection.link.is_empty());
+        assert!(projection.net_rx.is_empty() && projection.net_tx.is_empty());
+        assert!(projection.disk_read.is_empty() && projection.disk_write.is_empty());
     }
 
     #[test]
@@ -238,8 +294,12 @@ mod tests {
             memory_total: 1024 * 1024 * 1024 * 16,
             net_percent: 12.4,
             net_link_bps: 1_000_000_000,
+            net_rx_bps: 1_500_000,
+            net_tx_bps: 48 * 1024,
             net_ok: true,
             disk_percent: 88.0,
+            disk_read_bps: 12 * 1024 * 1024,
+            disk_write_bps: 0,
             disk_ok: true,
             cores: 32,
             available: true,
@@ -257,6 +317,10 @@ mod tests {
         assert_eq!(projection.link, "1.0G");
         assert_eq!(projection.disk_ratio, 0.88);
         assert_eq!(projection.disk_text, "88%");
+        assert_eq!(projection.net_rx, "1.4M");
+        assert_eq!(projection.net_tx, "48K");
+        assert_eq!(projection.disk_read, "12M");
+        assert_eq!(projection.disk_write, "0B");
         assert_eq!(projection.cores, 32);
     }
 }

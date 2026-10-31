@@ -13,6 +13,7 @@ use crate::{
         self, BubbleTone, PetAnim, PetBubble, PetCommand, PetEvent, PetMenuItem, PetService,
         PetVisual,
     },
+    runtime_phase::Phase,
     MainWindow,
 };
 use slint::{ComponentHandle, Model, Weak};
@@ -82,76 +83,45 @@ impl Sprite {
     }
 }
 
-/// Normalized runtime state, the same five values the web signal arbitrator
-/// produces before it becomes a sprite row. Derived order is the priority the
-/// arbitrator uses: running beats pending beats error beats done beats idle.
+/// How long a failure face stays on screen before the pet goes back to rest.
+const FAILED_HOLD: Duration = Duration::from_secs(6);
+
+/// Normalized runtime state, the same set the web signal arbitrator produces
+/// before it becomes a sprite row. Derived order is the priority the
+/// arbitrator uses: running beats pending beats error beats done beats stopped
+/// beats idle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Runtime {
     Idle,
+    /// Ended on purpose (user stop / cancel). The calmest terminal row.
+    Stopped,
     Done,
     Error,
     Pending,
     Running,
 }
 
-/// Map a desktop runtime status string (thread row or message state) onto the
-/// five web runtime states.
+impl Runtime {
+    /// Collapse the app-wide phase onto the pet's fewer, ordered states.
+    fn of(phase: Phase) -> Runtime {
+        match phase {
+            Phase::Idle => Runtime::Idle,
+            Phase::Pending | Phase::Inquiry => Runtime::Pending,
+            Phase::Running => Runtime::Running,
+            Phase::Done => Runtime::Done,
+            Phase::Stopped => Runtime::Stopped,
+            Phase::Error => Runtime::Error,
+        }
+    }
+}
+
+/// Map a desktop runtime status string onto the pet's runtime state.
+///
+/// The phrase table lives in [`Phase`] and nowhere else: this module used to
+/// keep its own copy, which silently filed a user stop under failure long
+/// after the app-wide table had learned the difference.
 fn classify_runtime(status: &str) -> Runtime {
-    let value = status.trim();
-    if value.is_empty() {
-        return Runtime::Idle;
-    }
-    if matches!(
-        value,
-        "error" | "failed" | "timeout" | "aborted" | "terminated" | "cancelled" | "canceled"
-    ) || value.contains("失败")
-        || value.contains("错误")
-        || value.contains("超时")
-        || value.contains("中断")
-        || value.contains("已停止")
-        || value.contains("取消")
-    {
-        return Runtime::Error;
-    }
-    if matches!(
-        value,
-        "pending"
-            | "queued"
-            | "waiting"
-            | "waiting_input"
-            | "waiting_user_input"
-            | "pending_question"
-            | "pending_confirm"
-            | "awaiting_confirmation"
-            | "awaiting_approval"
-            | "approval_pending"
-            | "question"
-            | "asking"
-    ) || value.starts_with("等待")
-        || value.contains("排队")
-        || value.contains("确认")
-        || value.contains("审批")
-        || value.contains("提问")
-    {
-        return Runtime::Pending;
-    }
-    if matches!(
-        value,
-        "running" | "streaming" | "executing" | "processing" | "cancelling"
-    ) || value.starts_with("正在")
-        || value.starts_with("目标")
-    {
-        return Runtime::Running;
-    }
-    if matches!(
-        value,
-        "done" | "completed" | "complete" | "finish" | "finished" | "success" | "succeeded"
-    ) || value.contains("任务完成")
-        || value.contains("输出已结束")
-    {
-        return Runtime::Done;
-    }
-    Runtime::Idle
+    Runtime::of(Phase::of(status))
 }
 
 /// The row a pet plays: web precedence is the transient override, then a
@@ -161,6 +131,7 @@ fn base_sprite(runtime: Runtime, settled: bool) -> Sprite {
         Runtime::Done if settled => Sprite::Waiting,
         Runtime::Done => Sprite::Jumping,
         Runtime::Pending => Sprite::Review,
+        Runtime::Stopped => Sprite::Waiting,
         Runtime::Error => Sprite::Failed,
         Runtime::Running => Sprite::Running,
         Runtime::Idle => Sprite::Idle,
@@ -278,6 +249,10 @@ struct Pet {
     runtime: Runtime,
     /// Web `doneSettledByKey`: a finished task jumps until the user acknowledges it.
     settled: bool,
+    /// When the failure face has had long enough to be noticed. A failed frame
+    /// is a reaction, not a resting state: after the hold the pet goes back to
+    /// its calm row instead of sitting on a sad face for the rest of the day.
+    failed_until: Option<Instant>,
     transient: Option<(Sprite, Instant)>,
     bubble: Option<(String, BubbleTone, Instant)>,
     /// First observed bubble per pet is history, not news.
@@ -294,6 +269,7 @@ impl Pet {
             spec,
             runtime: Runtime::Idle,
             settled: true,
+            failed_until: None,
             transient: None,
             bubble: None,
             hint_signature: None,
@@ -304,6 +280,7 @@ impl Pet {
 
     fn apply_spec(&mut self, spec: PetSpec, runtime: Runtime, hint: Option<&Hint>) {
         let was_done = self.runtime == Runtime::Done;
+        let was_failed = self.runtime == Runtime::Error;
         self.spec = spec;
         self.runtime = runtime;
         if runtime == Runtime::Done {
@@ -312,6 +289,13 @@ impl Pet {
             }
         } else {
             self.settled = true;
+        }
+        if runtime == Runtime::Error {
+            if !was_failed {
+                self.failed_until = Some(Instant::now() + FAILED_HOLD);
+            }
+        } else {
+            self.failed_until = None;
         }
         // The global pet is decoupled from agents, so it accepts the active
         // session's hint no matter which agent produced it.
@@ -335,13 +319,21 @@ impl Pet {
 
     /// Drop an expired one-shot and report the row to play.
     fn sprite(&mut self, now: Instant) -> Sprite {
-        match self.transient {
-            Some((sprite, until)) if until > now => sprite,
-            Some(_) => {
-                self.transient = None;
-                base_sprite(self.runtime, self.settled)
+        if let Some((sprite, until)) = self.transient {
+            if until > now {
+                return sprite;
             }
-            None => base_sprite(self.runtime, self.settled),
+            self.transient = None;
+        }
+        base_sprite(self.resting_runtime(now), self.settled)
+    }
+
+    /// The runtime the pet rests on. An old failure falls back to idle so the
+    /// sad frame cannot outlive the moment it reported.
+    fn resting_runtime(&self, now: Instant) -> Runtime {
+        match self.runtime {
+            Runtime::Error if self.failed_until.is_some_and(|until| until <= now) => Runtime::Idle,
+            other => other,
         }
     }
 
@@ -998,9 +990,59 @@ mod tests {
         assert_eq!(classify_runtime("输出已结束"), Runtime::Done);
         assert_eq!(classify_runtime("failed"), Runtime::Error);
         assert_eq!(classify_runtime("执行失败"), Runtime::Error);
-        assert_eq!(classify_runtime("已停止"), Runtime::Error);
+        // A user stop is its own terminal state; the web arbitrator settles a
+        // cancelled run without ever showing the failed sprite.
+        assert_eq!(classify_runtime("已停止"), Runtime::Stopped);
+        assert_eq!(classify_runtime("cancelled"), Runtime::Stopped);
+        assert_eq!(classify_runtime("已取消"), Runtime::Stopped);
         assert_eq!(classify_runtime(""), Runtime::Idle);
         assert_eq!(classify_runtime("idle"), Runtime::Idle);
+    }
+
+    /// Every phrase the pet's own table used to know must keep its sprite now
+    /// that the classification comes from the one app-wide phase table.
+    #[test]
+    fn the_shared_phase_table_keeps_every_phrase_the_pet_knew() {
+        for phrase in [
+            "running",
+            "streaming",
+            "executing",
+            "processing",
+            "cancelling",
+            "正在生成…",
+            "目标继续执行…",
+        ] {
+            assert_eq!(classify_runtime(phrase), Runtime::Running, "{phrase}");
+        }
+        for phrase in [
+            "pending",
+            "queued",
+            "waiting",
+            "waiting_input",
+            "waiting_user_input",
+            "asking",
+            "等待用户输入",
+            "等待确认",
+            "排队中",
+        ] {
+            assert_eq!(classify_runtime(phrase), Runtime::Pending, "{phrase}");
+        }
+        for phrase in [
+            "done",
+            "completed",
+            "complete",
+            "finish",
+            "finished",
+            "success",
+            "succeeded",
+            "任务完成",
+            "输出已结束",
+        ] {
+            assert_eq!(classify_runtime(phrase), Runtime::Done, "{phrase}");
+        }
+        for phrase in ["error", "failed", "timeout", "执行失败", "模型调用错误", "请求超时"] {
+            assert_eq!(classify_runtime(phrase), Runtime::Error, "{phrase}");
+        }
     }
 
     #[test]
@@ -1008,7 +1050,8 @@ mod tests {
         assert!(Runtime::Running > Runtime::Pending);
         assert!(Runtime::Pending > Runtime::Error);
         assert!(Runtime::Error > Runtime::Done);
-        assert!(Runtime::Done > Runtime::Idle);
+        assert!(Runtime::Done > Runtime::Stopped);
+        assert!(Runtime::Stopped > Runtime::Idle);
     }
 
     #[test]
@@ -1016,6 +1059,7 @@ mod tests {
         assert_eq!(base_sprite(Runtime::Done, false), Sprite::Jumping);
         assert_eq!(base_sprite(Runtime::Done, true), Sprite::Waiting);
         assert_eq!(base_sprite(Runtime::Pending, true), Sprite::Review);
+        assert_eq!(base_sprite(Runtime::Stopped, true), Sprite::Waiting);
         assert_eq!(base_sprite(Runtime::Error, true), Sprite::Failed);
         assert_eq!(base_sprite(Runtime::Running, true), Sprite::Running);
         assert_eq!(base_sprite(Runtime::Idle, false), Sprite::Idle);
@@ -1104,5 +1148,46 @@ mod tests {
         assert_eq!(pet.sprite(Instant::now()), Sprite::Waiting);
         // The hint runs on its own clock.
         assert!(pet.bubble(Instant::now() + MESSAGE_HINT * 2).is_none());
+    }
+
+    fn test_spec() -> PetSpec {
+        PetSpec {
+            key: "desktop:pet-a".to_string(),
+            agent_id: String::new(),
+            companion_id: "pet-a".to_string(),
+            name: "小助手".to_string(),
+            scale: 1.0,
+            message_hints: true,
+            x: 28.0,
+            y: 28.0,
+        }
+    }
+
+    #[test]
+    fn a_stopped_run_never_shows_the_failure_face() {
+        let spec = test_spec();
+        let mut pet = Pet::new(spec.clone());
+        pet.apply_spec(spec, Runtime::Stopped, None);
+        let now = Instant::now();
+        assert_eq!(pet.sprite(now), Sprite::Waiting);
+        // Time passing changes nothing: a stop is already at rest.
+        assert_eq!(pet.sprite(now + FAILED_HOLD * 3), Sprite::Waiting);
+    }
+
+    #[test]
+    fn a_failure_face_is_a_reaction_not_a_resting_state() {
+        let spec = test_spec();
+        let mut pet = Pet::new(spec.clone());
+        pet.apply_spec(spec.clone(), Runtime::Error, None);
+        let now = Instant::now();
+        assert_eq!(pet.sprite(now), Sprite::Failed);
+        // Still visible for the hold window, then the pet goes back to calm.
+        assert_eq!(pet.sprite(now + FAILED_HOLD / 2), Sprite::Failed);
+        assert_eq!(pet.sprite(now + FAILED_HOLD * 2), Sprite::Idle);
+        // A second failure re-arms the reaction instead of inheriting an
+        // expired hold.
+        pet.apply_spec(spec, Runtime::Idle, None);
+        pet.apply_spec(test_spec(), Runtime::Error, None);
+        assert_eq!(pet.sprite(Instant::now()), Sprite::Failed);
     }
 }

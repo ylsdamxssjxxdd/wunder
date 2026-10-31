@@ -9,6 +9,7 @@ export global RuntimeStatus {
             : code == 3 ? "inquiry"
             : code == 4 ? "done"
             : code == 5 ? "error"
+            : code == 6 ? "stopped"
             : "idle";
     }
 
@@ -22,6 +23,9 @@ export global RuntimeStatus {
         // "模型请求正在排队" is the status dock's queued phrase (it embeds the
         // waiting position, hence the prefix match rather than equality).
         if value == "pending" || value == "queued" || value == "waiting" || value == "waiting_approval" || value == "waiting_input" || value == "waiting_user_input" || value.starts-with("正在排队") || value.starts-with("任务已排队") || value.starts-with("模型请求正在排队") || value.starts-with("等待") { return "pending"; }
+        // A user stop is a settled state of its own: it must not borrow the
+        // failure colour that made every "stop" look like a crash.
+        if value == "stopped" || value == "cancelled" || value == "canceled" || value == "aborted" || value == "terminated" || value.starts-with("已停止") || value.starts-with("已终止") || value.starts-with("已取消") || value.starts-with("已中断") { return "stopped"; }
         if value == "error" || value == "failed" || value == "system_error" || value == "rejected" || value.starts-with("执行失败") { return "error"; }
         if value == "done" || value == "finished" || value == "completed" || value == "success" || value.starts-with("任务完成") || value.starts-with("输出已结束") { return "done"; }
         // `请求中` is the admission phrase the reducer writes before the first
@@ -41,10 +45,10 @@ export component RuntimeBadge inherits Rectangle {
     border-radius: self.width / 2;
     border-width: root.avatar-badge ? 2px : 0px;
     border-color: white;
-    background: root.state == "running" ? Theme.accent : root.state == "done" ? #3ca976 : root.state == "pending" ? #8b6bd0 : root.state == "error" ? #cd4a60 : #f3f4f6;
+    background: root.state == "running" ? Theme.accent : root.state == "done" ? #3ca976 : root.state == "pending" ? #8b6bd0 : root.state == "error" ? #cd4a60 : root.state == "stopped" ? Theme.muted : #f3f4f6;
     if root.state != "running" : Image {
         width: 10px; height: 10px;
-        source: root.state == "done" ? @image-url("../assets/icons/status-check.svg") : root.state == "pending" ? @image-url("../assets/icons/status-clock.svg") : root.state == "error" ? @image-url("../assets/icons/status-error.svg") : @image-url("../assets/icons/status-pause.svg");
+        source: root.state == "done" ? @image-url("../assets/icons/status-check.svg") : root.state == "pending" ? @image-url("../assets/icons/status-clock.svg") : root.state == "error" ? @image-url("../assets/icons/status-error.svg") : root.state == "stopped" ? @image-url("../assets/icons/stop.svg") : @image-url("../assets/icons/status-pause.svg");
         image-fit: contain; colorize: root.state == "idle" ? Theme.muted : white;
     }
     if root.state == "running" : spinner := Rectangle {

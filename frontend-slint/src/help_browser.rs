@@ -1286,7 +1286,9 @@ mod tests {
 
     #[test]
     fn typeset_smoke() {
-        // 单测进程没有走 main.rs 的启动路径，先注册内嵌字体再排版。
+        // 排版要走 Slint 的共享字体集，线程必须先持有测试平台与锁，
+        // 否则惰性初始化会拉起 winit 并占死进程级 event-loop proxy。
+        let _ui = crate::test_support::lock();
         crate::register_bundled_font().expect("注册内嵌字体");
         let manual = Manual::load(true);
         let mut typesetter = Typesetter::new();
@@ -1301,6 +1303,7 @@ mod tests {
 
     #[test]
     fn art_sheet_images_typeset() {
+        let _ui = crate::test_support::lock();
         crate::register_bundled_font().expect("注册内嵌字体");
         let manual = Manual::load(true);
         let topic = manual

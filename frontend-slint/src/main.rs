@@ -551,31 +551,35 @@ mod bundled_font {
 
 #[cfg(test)]
 pub(crate) mod test_support {
-    //! Headless UI tests share one MinimalSoftwareWindow platform and one
-    //! global lock: Slint installs the platform once per process and window
-    //! construction must not race across test threads.
-    use std::sync::{Mutex, MutexGuard, Once};
+    //! Headless UI tests serialize window construction behind one lock, and
+    //! every test thread carries its own MinimalSoftwareWindow platform.
+    use std::sync::{Mutex, MutexGuard};
 
     static LOCK: Mutex<()> = Mutex::new(());
-    static PLATFORM: Once = Once::new();
+
+    struct TestPlatform;
+    impl slint::platform::Platform for TestPlatform {
+        fn create_window_adapter(
+            &self,
+        ) -> Result<std::rc::Rc<dyn slint::platform::WindowAdapter>, slint::PlatformError> {
+            Ok(
+                slint::platform::software_renderer::MinimalSoftwareWindow::new(
+                    slint::platform::software_renderer::RepaintBufferType::NewBuffer,
+                ),
+            )
+        }
+    }
 
     pub(crate) fn lock() -> MutexGuard<'static, ()> {
-        PLATFORM.call_once(|| {
-            struct TestPlatform;
-            impl slint::platform::Platform for TestPlatform {
-                fn create_window_adapter(
-                    &self,
-                ) -> Result<std::rc::Rc<dyn slint::platform::WindowAdapter>, slint::PlatformError>
-                {
-                    Ok(
-                        slint::platform::software_renderer::MinimalSoftwareWindow::new(
-                            slint::platform::software_renderer::RepaintBufferType::NewBuffer,
-                        ),
-                    )
-                }
-            }
-            let _ = slint::platform::set_platform(Box::new(TestPlatform));
-        });
+        // Slint's global context is thread-local, so installing the platform
+        // once per process only serves the first test's thread. Every later
+        // thread would fall back to the lazy default backend (winit), whose
+        // event-loop proxy claims a process-global slot and locks every
+        // further thread out with "The Slint platform was initialized in
+        // another thread". Install per thread instead; on a thread that
+        // already holds a context `set_platform` reports AlreadySet, which is
+        // exactly the case we want to keep working.
+        let _ = slint::platform::set_platform(Box::new(TestPlatform));
         LOCK.lock().unwrap_or_else(|poison| poison.into_inner())
     }
 }

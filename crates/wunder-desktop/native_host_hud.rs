@@ -1,7 +1,8 @@
 //! 本机硬件状态采样：CPU、内存、网络、磁盘四项占用。
 //!
-//! 四个指标都归一成 0..=100 的「占用百分比」，前端因此能用同一个液位字形渲染，
-//! 不需要区分「速率」和「比例」两种量：
+//! 四个指标都归一成 0..=100 的「占用百分比」，前端因此能用同一套刻度表示，
+//! 不需要区分「速率」和「比例」两种量。另外附上网络双向速率与磁盘读写速率，
+//! 供输入区的详情面板显示具体吞吐：
 //! - CPU：忙碌增量 / 总增量；
 //! - 内存：已用 / 物理总量；
 //! - 网络：最忙那块网卡的收发速率 / 它自己的链路速率；
@@ -46,8 +47,16 @@ pub struct HostHud {
     pub net_percent: f32,
     /// 上面那块网卡的链路速率（bit/s），0 表示未知。
     pub net_link_bps: u64,
+    /// 上面那块网卡的接收速率（字节/秒）。
+    pub net_rx_bps: u64,
+    /// 上面那块网卡的发送速率（字节/秒）。
+    pub net_tx_bps: u64,
     /// 磁盘占用百分比（0..=100）：整盘忙碌时间占比。
     pub disk_percent: f32,
+    /// 整盘读取速率（字节/秒）。
+    pub disk_read_bps: u64,
+    /// 整盘写入速率（字节/秒）。
+    pub disk_write_bps: u64,
     /// 逻辑核心数，0 表示未知。
     pub cores: u32,
     /// CPU/内存是否可用；平台不支持时为 false。
@@ -155,37 +164,72 @@ pub(crate) struct LinkSample {
 
 #[derive(Default)]
 struct LinkState {
-    bytes: u64,
+    received: u64,
+    transmitted: u64,
 }
 
-/// 逐网卡的差值状态。取「占用率最大的那块」，返回（占用率, 该链路速率）。
+/// 一块网卡在两次采样之间的读数：占用率 + 链路速率 + 双向实时速率。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct LinkReading {
+    /// 收发合计占链路带宽的百分比（0..=100）。
+    pub usage: f32,
+    /// 该网卡的链路速率（bit/s）。
+    pub speed_bps: u64,
+    /// 接收速率（字节/秒）。
+    pub rx_bps: u64,
+    /// 发送速率（字节/秒）。
+    pub tx_bps: u64,
+}
+
+/// 逐网卡的差值状态。取「占用率最大的那块」，返回它自己的完整读数。
 #[derive(Default)]
 pub(crate) struct LinkMeter {
     links: HashMap<String, LinkState>,
 }
 
 impl LinkMeter {
-    pub(crate) fn update(&mut self, dt: f64, rows: &[LinkSample]) -> Option<(f32, u64)> {
+    pub(crate) fn update(&mut self, dt: f64, rows: &[LinkSample]) -> Option<LinkReading> {
         if rows.is_empty() {
             self.links.clear();
             return None;
         }
         let mut next = HashMap::with_capacity(rows.len());
-        let mut busiest: Option<(f32, u64)> = None;
+        let mut busiest: Option<LinkReading> = None;
         for row in rows {
-            let bytes = row.received.saturating_add(row.transmitted);
-            let mut usage = 0.0f32;
+            let mut reading = LinkReading {
+                usage: 0.0,
+                speed_bps: row.speed_bps,
+                rx_bps: 0,
+                tx_bps: 0,
+            };
             if let Some(previous) = self.links.get(&row.id) {
-                if dt > 0.0 && row.speed_bps > 0 {
-                    let bytes_per_second = bytes.saturating_sub(previous.bytes) as f64 / dt;
-                    let capacity = row.speed_bps as f64 / 8.0;
-                    usage = (bytes_per_second / capacity * 100.0).clamp(0.0, 100.0) as f32;
+                if dt > 0.0 {
+                    let rx = row.received.saturating_sub(previous.received) as f64 / dt;
+                    let tx = row.transmitted.saturating_sub(previous.transmitted) as f64 / dt;
+                    reading.rx_bps = rx as u64;
+                    reading.tx_bps = tx as u64;
+                    if row.speed_bps > 0 {
+                        let capacity = row.speed_bps as f64 / 8.0;
+                        reading.usage = ((rx + tx) / capacity * 100.0).clamp(0.0, 100.0) as f32;
+                    }
                 }
             }
-            if row.speed_bps > 0 && busiest.map(|(seen, _)| usage > seen).unwrap_or(true) {
-                busiest = Some((usage, row.speed_bps));
+            // 只有报得出链路速率的接口才能当「占用率」的基准；虚拟网卡空闲时
+            // 天然是 0%，不会盖掉真正在用的那条。
+            if row.speed_bps > 0
+                && busiest
+                    .map(|seen| reading.usage > seen.usage)
+                    .unwrap_or(true)
+            {
+                busiest = Some(reading);
             }
-            next.insert(row.id.clone(), LinkState { bytes });
+            next.insert(
+                row.id.clone(),
+                LinkState {
+                    received: row.received,
+                    transmitted: row.transmitted,
+                },
+            );
         }
         self.links = next;
         busiest
@@ -212,6 +256,9 @@ mod platform {
     /// `_Total` 实例的磁盘忙碌时间占比。PDH 自己按两次采集的间隔折算，这里不再
     /// 差分。用英文计数器名，避免本地化系统上路径随语言漂移。
     const DISK_BUSY_PATH: &str = r"\PhysicalDisk(_Total)\% Disk Time";
+    /// 整盘吞吐。`* Bytes/sec` 是 PDH 自己算好的速率，直接读即可，不用再差分。
+    const DISK_READ_PATH: &str = r"\PhysicalDisk(_Total)\Disk Read Bytes/sec";
+    const DISK_WRITE_PATH: &str = r"\PhysicalDisk(_Total)\Disk Write Bytes/sec";
 
     pub struct Probe {
         last_idle: u64,
@@ -241,34 +288,33 @@ mod platform {
         pub fn sample(&mut self, dt: f64) -> HostHud {
             let (memory_used, memory_total) = self.memory();
             self.update_cpu(dt);
-            let links = net_samples();
-            let (net_percent, net_link_bps, net_ok) = match &links {
-                Some(rows) => match self.links.update(dt, rows) {
-                    Some((usage, speed)) => (usage, speed, true),
-                    None => (0.0, 0, false),
-                },
-                None => (0.0, 0, false),
-            };
-            let (disk_percent, disk_ok) = match self.disk.as_mut() {
-                Some(disk) => match disk.sample(dt) {
-                    Some(busy) => (busy, true),
-                    None => (0.0, false),
-                },
-                None => (0.0, false),
-            };
-            HostHud {
+            let mut out = HostHud {
                 cpu_percent: self.cpu_percent,
                 memory_percent: percent(memory_used, memory_total),
                 memory_used,
                 memory_total,
-                net_percent,
-                net_link_bps,
-                disk_percent,
                 cores: self.cores,
                 available: true,
-                net_ok,
-                disk_ok,
+                ..HostHud::default()
+            };
+            if let Some(rows) = net_samples() {
+                if let Some(reading) = self.links.update(dt, &rows) {
+                    out.net_percent = reading.usage;
+                    out.net_link_bps = reading.speed_bps;
+                    out.net_rx_bps = reading.rx_bps;
+                    out.net_tx_bps = reading.tx_bps;
+                    out.net_ok = true;
+                }
             }
+            if let Some(disk) = self.disk.as_mut() {
+                if let Some((busy, read, write)) = disk.sample(dt) {
+                    out.disk_percent = busy;
+                    out.disk_read_bps = read;
+                    out.disk_write_bps = write;
+                    out.disk_ok = true;
+                }
+            }
+            out
         }
 
         fn update_cpu(&mut self, dt: f64) {
@@ -351,6 +397,8 @@ mod platform {
     struct DiskProbe {
         query: isize,
         busy: isize,
+        read: isize,
+        write: isize,
     }
 
     impl DiskProbe {
@@ -360,31 +408,51 @@ mod platform {
                 if PdhOpenQueryW(ptr::null(), 0, &mut query) != 0 {
                     return None;
                 }
-                let mut busy = 0isize;
-                let path = wide(DISK_BUSY_PATH);
-                if PdhAddEnglishCounterW(query, path.as_ptr(), 0, &mut busy) != 0
-                    || PdhCollectQueryData(query) != 0
-                {
+                // 忙碌占比是主指标，缺它整块磁盘读数就没有意义；吞吐两个计数器缺
+                // 一个只影响详情里的速率，按「读不到就报 0」处理，不让整块失效。
+                let busy = add_counter(query, DISK_BUSY_PATH)?;
+                let read = add_counter(query, DISK_READ_PATH).unwrap_or(0);
+                let write = add_counter(query, DISK_WRITE_PATH).unwrap_or(0);
+                if PdhCollectQueryData(query) != 0 {
                     PdhCloseQuery(query);
                     return None;
                 }
-                Some(Self { query, busy })
+                Some(Self {
+                    query,
+                    busy,
+                    read,
+                    write,
+                })
             }
         }
 
         /// 第一次调用只建立基线（PDH 需要一个间隔才能算出百分比），返回 None。
-        fn sample(&mut self, dt: f64) -> Option<f32> {
+        fn sample(&mut self, dt: f64) -> Option<(f32, u64, u64)> {
             unsafe {
                 if PdhCollectQueryData(self.query) != 0 {
                     return None;
                 }
-                let value = read_counter(self.busy)?;
+                let busy = read_counter(self.busy)?;
                 if dt <= 0.0 {
                     return None;
                 }
+                let read = read_counter(self.read).unwrap_or(0.0).max(0.0) as u64;
+                let write = read_counter(self.write).unwrap_or(0.0).max(0.0) as u64;
                 // 多盘合计可能超过 100%，对读数意义不大，夹住即可。
-                Some((value as f32).clamp(0.0, 100.0))
+                Some(((busy as f32).clamp(0.0, 100.0), read, write))
             }
+        }
+    }
+
+    /// 把英文计数器名挂到查询上。失败时自己不留残句柄，由调用方决定是否降级。
+    unsafe fn add_counter(query: isize, path: &str) -> Option<isize> {
+        let mut counter = 0isize;
+        let wide_path = wide(path);
+        let status = unsafe { PdhAddEnglishCounterW(query, wide_path.as_ptr(), 0, &mut counter) };
+        if status == 0 {
+            Some(counter)
+        } else {
+            None
         }
     }
 
@@ -428,8 +496,11 @@ mod platform {
         cpu_total: Option<u64>,
         cpu_percent: f32,
         links: LinkMeter,
-        disk_busy: Option<u64>,
+        /// 累计（io_ticks 毫秒, 读字节, 写字节）。
+        disk_prev: Option<(u64, u64, u64)>,
         disk_percent: f32,
+        disk_read_bps: u64,
+        disk_write_bps: u64,
     }
 
     impl Probe {
@@ -440,8 +511,10 @@ mod platform {
                 cpu_total: None,
                 cpu_percent: 0.0,
                 links: LinkMeter::default(),
-                disk_busy: None,
+                disk_prev: None,
                 disk_percent: 0.0,
+                disk_read_bps: 0,
+                disk_write_bps: 0,
             }
         }
 
@@ -452,49 +525,47 @@ mod platform {
             let memory = read("/proc/meminfo").map(memory_totals).unwrap_or((0, 0));
             self.update_cpu(cpu, dt);
 
-            let links = read("/proc/net/dev").map(net_samples);
-            let (net_percent, net_link_bps, net_ok) = match &links {
-                Some(rows) => match self.links.update(dt, rows) {
-                    Some((usage, speed)) => (usage, speed, true),
-                    None => (0.0, 0, false),
-                },
-                None => (0.0, 0, false),
-            };
-
-            let busy = read("/proc/diskstats").map(disk_busy_ticks);
-            let (disk_percent, disk_ok) = match (busy, dt) {
-                (Some(ticks), dt) if dt > 0.0 => {
-                    let value = match self.disk_busy {
-                        // io_ticks 的单位是毫秒。
-                        Some(previous) => (ticks.saturating_sub(previous) as f64 / (dt * 1000.0)
-                            * 100.0)
-                            .clamp(0.0, 100.0) as f32,
-                        None => 0.0,
-                    };
-                    self.disk_busy = Some(ticks);
-                    self.disk_percent = value;
-                    (value, true)
-                }
-                (Some(ticks), _) => {
-                    self.disk_busy = Some(ticks);
-                    (self.disk_percent, true)
-                }
-                (None, _) => (0.0, false),
-            };
-
-            HostHud {
+            let mut out = HostHud {
                 cpu_percent: self.cpu_percent,
                 memory_percent: percent(memory.0, memory.1),
                 memory_used: memory.0,
                 memory_total: memory.1,
-                net_percent,
-                net_link_bps,
-                disk_percent,
                 cores: self.cores,
                 available: true,
-                net_ok,
-                disk_ok,
+                ..HostHud::default()
+            };
+
+            if let Some(rows) = read("/proc/net/dev").map(net_samples) {
+                if let Some(reading) = self.links.update(dt, &rows) {
+                    out.net_percent = reading.usage;
+                    out.net_link_bps = reading.speed_bps;
+                    out.net_rx_bps = reading.rx_bps;
+                    out.net_tx_bps = reading.tx_bps;
+                    out.net_ok = true;
+                }
             }
+
+            if let Some(totals) = read("/proc/diskstats").map(disk_totals) {
+                if let Some(previous) = self.disk_prev {
+                    if dt > 0.0 {
+                        // io_ticks 的单位是毫秒。
+                        self.disk_percent =
+                            (totals.0.saturating_sub(previous.0) as f64 / (dt * 1000.0) * 100.0)
+                                .clamp(0.0, 100.0) as f32;
+                        self.disk_read_bps =
+                            (totals.1.saturating_sub(previous.1) as f64 / dt) as u64;
+                        self.disk_write_bps =
+                            (totals.2.saturating_sub(previous.2) as f64 / dt) as u64;
+                    }
+                }
+                self.disk_prev = Some(totals);
+                out.disk_percent = self.disk_percent;
+                out.disk_read_bps = self.disk_read_bps;
+                out.disk_write_bps = self.disk_write_bps;
+                out.disk_ok = true;
+            }
+
+            out
         }
 
         fn update_cpu(&mut self, cpu: Option<(u64, u64)>, dt: f64) {
@@ -614,9 +685,13 @@ mod platform {
             .unwrap_or(0)
     }
 
-    /// 第 3 列是设备名，其后的第 10 个字段（`io_ticks`，毫秒）是该盘的累计忙碌时间。
-    pub(super) fn disk_busy_ticks(data: String) -> u64 {
+    /// 第 3 列是设备名，其后第 10 个字段（`io_ticks`，毫秒）是该盘的累计忙碌时间。
+    /// 同时累加读/写扇区（第 3、7 个字段）换算成字节，供详情面板显示吞吐。
+    pub(super) fn disk_totals(data: String) -> (u64, u64, u64) {
+        const SECTOR: u64 = 512;
         let mut busy = 0u64;
+        let mut read = 0u64;
+        let mut write = 0u64;
         for line in data.lines() {
             let mut fields = line.split_whitespace();
             let _major = fields.next();
@@ -634,10 +709,13 @@ mod platform {
                     .and_then(|value| value.parse::<u64>().ok())
                     .unwrap_or(0);
             }
-            // 读写扇区与耗时之后，第 9 个（0 基）就是 io_ticks。
+            // values: 读完成、读合并、读扇区… 写完成、写合并、写扇区… 之后第 10 项
+            // （0 基的 9）才是 io_ticks。
+            read = read.saturating_add(values[2].saturating_mul(SECTOR));
+            write = write.saturating_add(values[6].saturating_mul(SECTOR));
             busy = busy.saturating_add(values[9]);
         }
-        busy
+        (busy, read, write)
     }
 
     /// 只累计整盘，避免分区与整盘各算一次。名字规则按内核命名习惯：
@@ -705,10 +783,16 @@ mod tests {
                 speed_bps: 10_000_000_000,
             },
         ];
+        let first = meter.update(1.0, &first).expect("有链路速率就应该有读数");
         assert_eq!(
-            meter.update(1.0, &first),
-            Some((0.0, 1_000_000_000)),
-            "有链路速率就应该有读数，首个节拍为 0%"
+            first,
+            LinkReading {
+                usage: 0.0,
+                speed_bps: 1_000_000_000,
+                rx_bps: 0,
+                tx_bps: 0,
+            },
+            "首个节拍没有基线，速率与占用都应为 0"
         );
 
         // 有线网卡 1 秒内收 25,000,000 字节 = 125,000,000 B/s 的 20%；虚拟网卡仍闲着。
@@ -716,7 +800,7 @@ mod tests {
             LinkSample {
                 id: "wired".into(),
                 received: 1_000 + 25_000_000,
-                transmitted: 1_000,
+                transmitted: 2_000,
                 speed_bps: 1_000_000_000,
             },
             LinkSample {
@@ -726,9 +810,16 @@ mod tests {
                 speed_bps: 10_000_000_000,
             },
         ];
-        let (usage, speed) = meter.update(1.0, &second).expect("仍然有读数");
-        assert_eq!(speed, 1_000_000_000);
-        assert!((usage - 20.0).abs() < 0.01, "usage={usage}");
+        let reading = meter.update(1.0, &second).expect("仍然有读数");
+        assert_eq!(reading.speed_bps, 1_000_000_000);
+        assert!(
+            (reading.usage - 20.0).abs() < 0.01,
+            "usage={}",
+            reading.usage
+        );
+        // 收发分向也要单独给出：详情面板里是「↓ rx ↑ tx」两个数。
+        assert_eq!(reading.rx_bps, 25_000_000);
+        assert_eq!(reading.tx_bps, 1_000);
     }
 
     #[test]
@@ -763,7 +854,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn parses_proc_samples() {
-        use super::platform::{cpu_totals, disk_busy_ticks, is_whole_disk, net_samples};
+        use super::platform::{cpu_totals, disk_totals, is_whole_disk, net_samples};
         let (busy, total) = cpu_totals("cpu  10 0 10 80 0 0 0 0 0 0\n".to_string());
         assert_eq!(busy, 20);
         assert_eq!(total, 100);
@@ -781,12 +872,15 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!((rows[0].received, rows[0].transmitted), (100, 40));
 
-        // 两个整盘各 30ms / 20ms 的 io_ticks，分区不重复计入。
-        let busy = disk_busy_ticks(
-            "   8       0 sda 10 0 200 30 5 0 400 20 0 0 0\n   8       1 sda1 1 0 20 5 1 0 40 3 0 0 0\n"
+        // 两个整盘：io_ticks 各 30ms / 20ms，读扇区 200 + 400，写扇区 20 + 40；
+        // 分区不重复计入。
+        let (busy, read, write) = disk_totals(
+            "   8       0 sda 10 0 200 30 5 0 20 20 0 30 0\n   8       1 sda1 1 0 20 5 1 0 40 3 0 5 0\n   8      16 sdb 10 0 400 20 5 0 40 20 0 20 0\n"
                 .to_string(),
         );
-        assert_eq!(busy, 30);
+        assert_eq!(busy, 50);
+        assert_eq!(read, (200 + 400) * 512);
+        assert_eq!(write, (20 + 40) * 512);
     }
 }
 

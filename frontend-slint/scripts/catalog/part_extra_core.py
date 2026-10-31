@@ -109,4 +109,9 @@ ENTRIES = [
     ('traj_token_usage', '新增占用', 'New tok'),
     ('ws_collapse_threads', '收起工作区线程', 'Collapse workspace threads'),
     ('ws_expand_threads', '展开工作区线程', 'Expand workspace threads'),
+    # runtime_status 用来识别运行时返回的状态文本（"已终止"/"已取消"/"已中断"），
+    # 不是显示文案；但 i18n 门禁按字面量扫描，需要目录项存在。
+    ("rs_stopped_terminated", "已终止", "Terminated"),
+    ("rs_stopped_cancelled", "已取消", "Cancelled"),
+    ("rs_stopped_aborted", "已中断", "Interrupted"),
 ]

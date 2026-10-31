@@ -132,8 +132,12 @@ mod tests {
         assert_eq!(icon_key("flow.drawio", "file"), "processon_flow.png");
         assert_eq!(icon_key("flow.drawio.xml", "file"), "processon_flow.png");
         assert_eq!(icon_key("report", "dir"), "folder.png");
-        assert_eq!(icon_key("未命名", "file"), "default_file.png");
-        assert_eq!(icon_key("README.", "file"), "default_file.png");
-        assert_eq!(icon_key("archive.jar", "file"), "default_file.png");
+        // The web theme's default file icon is the text glyph: extension-less
+        // names and trailing-dot names both land on it. `jar` reaches it
+        // through an explicit extension hit that resolves to the default —
+        // the web resolver never falls through to the file-name table.
+        assert_eq!(icon_key("未命名", "file"), "file_type_text.png");
+        assert_eq!(icon_key("README.", "file"), "file_type_text.png");
+        assert_eq!(icon_key("archive.jar", "file"), "file_type_text.png");
     }
 }
