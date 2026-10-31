@@ -62,7 +62,7 @@
   <g id="menus-model">
     <rect x="64" y="1390" width="28" height="24" rx="6" fill="#FDF0DE"/><text x="78" y="1407" text-anchor="middle" class="chip">04</text><text x="104" y="1408" class="sect">菜单与模型 · 每个弹层只属于一个触发器</text><text x="1536" y="1407" text-anchor="end" class="sect-note">加号菜单 220 · 级联 268 · 模型弹层 300×340</text>
     <rect x="64" y="1432" width="474" height="404" rx="12" class="card"/><text x="86" y="1462" class="card-t">加号菜单 · 6 项</text>
-    <rect x="86" y="1484" width="220" height="234" rx="12" fill="#FFF" stroke="#E8E6E3"/><text x="102" y="1513" class="ui13">⌘　命令　　　　　　　　　　›</text><rect x="94" y="1524" width="204" height="34" rx="8" fill="#F6F5F3"/><text x="110" y="1547" class="ui13">✦　预设问题　　　　　　　　›</text><text x="102" y="1581" class="ui13">♢　审批模式　　　　　全权限　›</text><text x="102" y="1615" class="ui13">♩　语音输入</text><text x="102" y="1649" class="ui13">▣　截图　　　　　　　　　　›</text><text x="102" y="1683" class="ui13">▤　终端模式</text>
+    <rect x="86" y="1484" width="220" height="234" rx="12" fill="#FFF" stroke="#E8E6E3"/><text x="102" y="1513" class="ui13">⌘　命令　　　　　　　　　　›</text><rect x="94" y="1524" width="204" height="34" rx="8" fill="#F6F5F3"/><text x="110" y="1547" class="ui13">✦　预设问题　　　　　　　　›</text><text x="102" y="1581" class="ui13">♢　审批模式　　　　　全权限　›</text><text x="102" y="1615" class="ui13">♩　语音输入</text><text x="102" y="1649" class="ui13">▣　截图　　　　　　　　　　›</text><text x="102" y="1683" class="ui13">▤　打开舵机</text>
     <text x="86" y="1748" class="note">菜单打开时加号变为 xmark。</text><text x="86" y="1774" class="note">命令、预设、审批和截图可级联。</text><text x="86" y="1806" class="tiny">仅输入“/”且菜单关闭时，直接显示命令浮层。</text>
 
     <rect x="563" y="1432" width="474" height="404" rx="12" class="card"/><text x="585" y="1462" class="card-t">级联与弹层边界</text>
@@ -80,5 +80,5 @@
     <rect x="1094" y="1734" width="42" height="24" rx="12" fill="#FFF" stroke="#E8E6E3"/><text x="1115" y="1750" text-anchor="middle" class="ui11 secondary">中</text><rect x="1140" y="1734" width="42" height="24" rx="12" fill="#FFF" stroke="#E8E6E3"/><text x="1161" y="1750" text-anchor="middle" class="ui11 secondary">高</text><rect x="1186" y="1734" width="62" height="24" rx="12" fill="#FFF" stroke="#E8E6E3"/><text x="1217" y="1750" text-anchor="middle" class="ui11 secondary">极高</text>
     <text x="1096" y="1786" class="tiny">选中用勾与 accent 文本；列表行悬停 hover。</text><text x="1096" y="1806" class="tiny">云模型不可用时保留列表但灰化并禁止选择。</text>
   </g>
-  <g id="footer"><line x1="64" y1="1870" x2="1536" y2="1870" stroke="#D8D5D0"/><text x="64" y="1890" class="tiny">事实来源：composer.slint · textedit-base.slint · drag_row.slint；发送判断以代码布尔投影为准，不从按钮外观反推。</text><text x="1536" y="1890" text-anchor="end" class="mono tiny">07 / 09 · 2026-10-25</text></g>
+  <g id="footer"><line x1="64" y1="1870" x2="1536" y2="1870" stroke="#D8D5D0"/><text x="64" y="1890" class="tiny">事实来源：composer.slint · textedit-base.slint · drag_row.slint；发送判断以代码布尔投影为准，不从按钮外观反推。</text><text x="1536" y="1890" text-anchor="end" class="mono tiny">07 / 09 · 2026-10-31</text></g>
 </svg>

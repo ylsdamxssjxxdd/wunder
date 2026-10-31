@@ -15,7 +15,10 @@ export struct WorkspaceCard { workspace-id: string, name: string, icon: string, 
 // multi-select state, only meaningful while the tree is in selection mode.
 // `hint` is a pre-formatted activity line ("2026-10-29 17:42") shown beside the
 // full title in the row tooltip; empty when the row carries no timestamp.
-export struct SidebarRow { kind: int, workspace-id: string, name: string, icon: string, color: string, thread-count: int, expanded: bool, selected: bool, thread-id: string, title: string, status: string, phase: int, active: bool, payload: int, origin: string, archivable: bool, checked: bool, path: string, hint: string }
+// `group-top`/`group-end` are the owning workspace's content-space span in px,
+// computed by the projection that builds the rows; the tree reads them off the
+// expanded header to keep it pinned while its threads scroll beneath.
+export struct SidebarRow { kind: int, workspace-id: string, name: string, icon: string, color: string, thread-count: int, expanded: bool, selected: bool, thread-id: string, title: string, status: string, phase: int, active: bool, payload: int, origin: string, archivable: bool, checked: bool, path: string, hint: string, group-top: float, group-end: float }
 // Bounded remote projection used by the cloud workspace branch of the same
 // sidebar tree. It remains separate from local `Conversation` storage: cloud
 // threads are addressed through the cloud façade and are never copied into the
@@ -219,6 +222,11 @@ export struct FileCard { name: string, path: string, entry-type: string, size: s
 // Icons are resolved on the Rust side (vscode-icons rules) because Slint has
 // no extension→glyph mapping; `remaining` only carries a count for kind 2.
 export struct WorkspaceFileRow { path: string, name: string, kind: int, size-text: string, icon: image, depth: int, expanded: bool, loading: bool, remaining: int, selected: bool }
+// One folder header pinned above the working-directory tree while its children
+// scroll underneath. The native controller derives the chain from the row the
+// scroll offset lands on; `y` is the slot from the tree's top edge in px, and
+// the tree renders the replicas in order so ancestors stack above children.
+export struct PinnedFileRow { name: string, depth: int, expanded: bool, loading: bool, y: float }
 export struct CronCard { id: string, name: string, enabled: bool, workspace-name: string, message: string, schedule: string, next-run: string, last-status: string, last-error: string }
 export struct CronRunCard { run-id: string, status: string, trigger: string, summary: string, error: string, duration: string, created-at: string }
 export struct PromptPackCard { id: string, readonly: bool, locale: string, is-active: bool, is-lang-default: bool }

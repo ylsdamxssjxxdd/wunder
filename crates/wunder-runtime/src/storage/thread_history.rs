@@ -182,6 +182,24 @@ pub(crate) struct HistorySegment {
     pub end_ordinal: Option<u64>,
 }
 
+/// Bounded re-read direction over a rollout lineage. `cursor` is always the
+/// exclusive pagination edge: older pages continue strictly below it, newer
+/// pages strictly above it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ScanDirection {
+    Older,
+    Newer,
+}
+
+#[derive(Debug, Default)]
+pub(super) struct ScannedItems {
+    /// Descending ordinals for `Older`, ascending for `Newer`.
+    pub items: Vec<ThreadHistoryItem>,
+    /// The scan stopped at its record/byte budget while matching history
+    /// remained beyond the returned edge.
+    pub more: bool,
+}
+
 impl ThreadHistoryStore {
     #[cfg(test)]
     fn persist_test_source(&self, rollout_id: &str, jsonl: &[u8]) -> Result<()> {
@@ -609,50 +627,67 @@ impl ThreadHistoryStore {
             collect_item_page(rows, rollout_id, &mut bodies)?
         };
 
-        let budget_limited_when_window_full = budget_limited;
-        if items.len() > limit {
+        let window_extra = items.len() > limit;
+        if window_extra {
             items.pop();
         }
+        let mut more = window_extra || budget_limited;
         let root = self.db_path.parent().expect("history database has a parent");
+        let segments: &[HistorySegment] = match &self.scope {
+            Some((current, segments)) if current == rollout_id => segments.as_slice(),
+            _ => &[],
+        };
 
         // The active window could not fill the page: re-read the remainder from
-        // the canonical rollout through the nearest sparse anchor.
-        if items.len() < limit && !budget_limited_when_window_full {
-            let anchor_cursor = match items.last() {
-                Some(oldest) => Some((i64::try_from(oldest.rollout_ordinal)?, oldest.item_id.as_str())),
-                None => request.before.as_ref().map(|cursor| {
-                    (i64::try_from(cursor.rollout_ordinal).unwrap_or(0), cursor.item_id.as_str())
-                }),
+        // the canonical rollout through sparse anchors. A rollout ordinal
+        // identifies one record, so the keyset edge needs no id tiebreak here.
+        if !more && items.len() < limit {
+            let edge = items
+                .last()
+                .map(|item| i64::try_from(item.rollout_ordinal).unwrap_or(i64::MAX))
+                .or_else(|| {
+                    request.before.as_ref().map(|cursor| {
+                        i64::try_from(cursor.rollout_ordinal).unwrap_or(i64::MAX)
+                    })
+                });
+            let accept = |item: &ThreadHistoryItem| {
+                turn_id.map_or(true, |turn| item.turn_id.as_deref() == Some(turn))
             };
-            let missing = i64::try_from(limit - items.len())?;
-            let older =
-                read_items_via_anchor(&conn, root, rollout_id, anchor_cursor, turn_id, missing)?;
-            items.extend(older);
+            let missing = limit - items.len();
+            let hint = match turn_id {
+                Some(turn) => turn_scan_hint(&conn, rollout_id, turn)?,
+                None => None,
+            };
+            let scanned = scan_lineage(
+                root,
+                &conn,
+                segments,
+                rollout_id,
+                ScanDirection::Older,
+                edge,
+                None,
+                None,
+                missing,
+                hint,
+                &accept,
+            )?;
+            more = scanned.more;
+            // The re-read slice is newest-first and already bounded by this
+            // page's missing count, so it appends without reordering.
+            items.extend(scanned.items);
         }
-
-        // More history exists when a sparse anchor precedes the oldest row on
-        // this page, or when the window scan was cut by its byte budget.
-        let has_more = if budget_limited_when_window_full {
-            true
-        } else if let Some(oldest) = items.last() {
-            let oldest_ordinal = i64::try_from(oldest.rollout_ordinal)?;
-            conn.query_row(
-                "SELECT EXISTS(SELECT 1 FROM thread_item_anchors
-                 WHERE rollout_id=?1 AND rollout_ordinal<?2)",
-                params![rollout_id, oldest_ordinal],
-                |row| row.get::<_, i64>(0),
-            )? == 1
-        } else {
-            false
-        };
-        let next_before = has_more.then(|| {
-            let last = items.last().expect("nonempty page when it has more");
-            ThreadHistoryCursor {
+        // Report older history only when a cursor can address the next page;
+        // an empty page never loops the caller.
+        let has_more = more && !items.is_empty();
+        let next_before = if has_more {
+            items.last().map(|last| ThreadHistoryCursor {
                 history_revision: state.history_revision,
                 rollout_ordinal: last.rollout_ordinal,
                 item_id: last.item_id.clone(),
-            }
-        });
+            })
+        } else {
+            None
+        };
         Ok(ThreadHistoryPage {
             history_revision: state.history_revision,
             items,
@@ -687,10 +722,14 @@ impl ThreadHistoryStore {
         if let Some(item) = projected.pop() {
             return Ok(Some(item));
         }
-        // Outside the active window: locate the owning turn and scan from the
-        // nearest anchor so the read stays bounded instead of walking the file.
+        // Outside the active window: locate the owning turn and re-read the
+        // canonical rollout so the read stays bounded.
         let root = self.db_path.parent().expect("history database has a parent");
-        find_item_via_anchor(&conn, root, rollout_id, item_id)
+        let segments: &[HistorySegment] = match &self.scope {
+            Some((current, segments)) if current == rollout_id => segments.as_slice(),
+            _ => &[],
+        };
+        find_item_via_anchor(&conn, root, segments, rollout_id, item_id)
     }
 
     pub(crate) fn read_canonical_item(
@@ -1099,42 +1138,285 @@ fn reclaim_free_pages(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-/// Re-read completed items outside the active window by scanning forward from
-/// the nearest sparse anchor. At most `ANCHOR_INTERVAL` plus the page size of
-/// canonical records are touched, so the cost stays bounded regardless of the
-/// total rollout length. Results are returned newest-first.
-fn read_items_via_anchor(
-    history: &Connection,
+/// Re-read completed items outside the active window. Only the newest
+/// `ACTIVE_WINDOW_ITEMS` rows of each physical rollout keep an index row, so
+/// every older view hydrates from the canonical JSONL through the sparse
+/// anchors. Each call is bounded by an anchor interval, a record budget and a
+/// byte budget, so its cost never depends on the total rollout length.
+///
+/// `cursor` is the exclusive pagination edge, `floor` an inclusive lower
+/// ordinal and `ceiling` an exclusive upper ordinal. `start_hint` is the
+/// owning turn's exact `(ordinal, byte)` record boundary: unlike sparse
+/// anchors it always sits at the top of the requested range, so a trimmed
+/// turn is re-read in one pass. The accept callback sees the canonical item
+/// exactly as the projection would have stored it.
+pub(super) fn scan_lineage(
     root: &Path,
-    rollout_id: &str,
-    before: Option<(i64, &str)>,
-    turn_id: Option<&str>,
-    limit: i64,
-) -> Result<Vec<ThreadHistoryItem>> {
-    let catalog = super::thread_history_body::open_catalog(root)?;
-    let source = super::thread_history_body::source_path(&catalog, root, rollout_id)?;
-    // Nearest anchor not newer than the cursor; fall back to the stream start
-    // when the target precedes every anchor. Anchors live in the history
-    // database, never in the canonical catalog.
-    let anchor: Option<(i64, i64)> = match before {
-        Some((ordinal, _)) => history
-            .query_row(
-                "SELECT record_byte_offset,rollout_ordinal FROM thread_item_anchors
-                 WHERE rollout_id=?1 AND rollout_ordinal<=?2
-                 ORDER BY rollout_ordinal DESC LIMIT 1",
-                params![rollout_id, ordinal],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .optional()?,
-        None => None,
+    history: &Connection,
+    segments: &[HistorySegment],
+    current: &str,
+    direction: ScanDirection,
+    cursor: Option<i64>,
+    floor: Option<i64>,
+    ceiling: Option<i64>,
+    limit: usize,
+    start_hint: Option<(i64, u64)>,
+    accept: &dyn Fn(&ThreadHistoryItem) -> bool,
+) -> Result<ScannedItems> {
+    let mut output = ScannedItems::default();
+    if limit == 0 {
+        return Ok(output);
+    }
+    let synthesized;
+    let segments = if segments.is_empty() {
+        synthesized = vec![HistorySegment {
+            rollout_id: current.to_owned(),
+            start_ordinal: 0,
+            end_ordinal: None,
+        }];
+        synthesized.as_slice()
+    } else {
+        segments
     };
-    let start_offset = anchor.map(|(offset, _)| offset).unwrap_or(0);
+    // The re-read is bounded by records and bytes, never by the rollout
+    // length. Exact turn boundaries keep ordinary reads far below both caps.
+    let mut budget = MAX_SCAN_RECORDS;
+    let mut bytes = 0usize;
+    let mut catalog = None;
+    match direction {
+        ScanDirection::Older => {
+            let edge = cursor.unwrap_or(i64::MAX);
+            'lineage: for segment in segments.iter().rev() {
+                let (low, high) = segment_bounds(segment);
+                let low_bound = floor.map_or(low, |floor| floor.max(low));
+                let mut stop = edge.min(high);
+                while stop > low_bound {
+                    // Prefer whatever boundary sits closest to the page edge:
+                    // the owning turn's exact start record when it is newer
+                    // than the nearest sparse anchor. Ranges before the first
+                    // anchor still live at the start of the segment, so they
+                    // fall back to byte zero instead of reporting the oldest
+                    // items unreachable.
+                    let anchor = segment_anchor(history, &segment.rollout_id, low, stop - 1)?;
+                    let hint = segment_hint(start_hint, segment, stop - 1);
+                    let (start_byte, start_ordinal) = match (anchor, hint) {
+                        (Some((anchor_byte, anchor_ordinal)), Some((hint_ordinal, hint_byte))) => {
+                            if hint_ordinal >= anchor_ordinal {
+                                (hint_byte, hint_ordinal)
+                            } else {
+                                (anchor_byte, anchor_ordinal)
+                            }
+                        }
+                        (Some((byte, ordinal)), None) => (byte, ordinal),
+                        (None, Some((ordinal, byte))) => (byte, ordinal),
+                        (None, None) => (0, low),
+                    };
+                    let mut chunk_items = Vec::new();
+                    let chunk = scan_segment_records(
+                        root,
+                        &mut catalog,
+                        segment,
+                        current,
+                        start_byte,
+                        low_bound,
+                        stop,
+                        &mut budget,
+                        &mut bytes,
+                        None,
+                        &mut chunk_items,
+                        accept,
+                    )?;
+                    if chunk.truncated {
+                        // A partial chunk ends below the page edge; including
+                        // it would leave a hole above the returned items.
+                        output.more = true;
+                        break 'lineage;
+                    }
+                    // Chunks walk from the page edge downwards, so each one is
+                    // flipped into page order before it joins the newest-first
+                    // buffer. A later (older) chunk can never displace a newer
+                    // item once the page limit is reached.
+                    chunk_items.reverse();
+                    output.items.extend(chunk_items);
+                    if output.items.len() > limit {
+                        output.items.truncate(limit);
+                        output.more = true;
+                        break 'lineage;
+                    }
+                    // The chunk covered everything below `stop` within this
+                    // segment once the scan reached the segment floor.
+                    if start_ordinal <= low_bound {
+                        break;
+                    }
+                    stop = start_ordinal;
+                }
+            }
+        }
+        ScanDirection::Newer => {
+            let from = cursor.map_or(i64::MIN, |cursor| cursor.saturating_add(1));
+            'lineage: for segment in segments.iter() {
+                let (low, high) = segment_bounds(segment);
+                let low_bound = floor.map_or(low, |floor| floor.max(low)).max(from);
+                let stop = ceiling.map_or(high, |ceiling| ceiling.min(high));
+                if stop <= low_bound {
+                    continue;
+                }
+                let anchor = segment_anchor(history, &segment.rollout_id, low, low_bound)?;
+                let hint = segment_hint(start_hint, segment, low_bound);
+                let start_byte = match (anchor, hint) {
+                    (Some((anchor_byte, anchor_ordinal)), Some((hint_ordinal, hint_byte))) => {
+                        if hint_ordinal > anchor_ordinal {
+                            hint_byte
+                        } else {
+                            anchor_byte
+                        }
+                    }
+                    (Some((anchor_byte, _)), None) => anchor_byte,
+                    (None, Some((_, hint_byte))) => hint_byte,
+                    (None, None) => 0,
+                };
+                let chunk = scan_segment_records(
+                    root,
+                    &mut catalog,
+                    segment,
+                    current,
+                    start_byte,
+                    low_bound,
+                    stop,
+                    &mut budget,
+                    &mut bytes,
+                    Some(limit),
+                    &mut output.items,
+                    accept,
+                )?;
+                if chunk.truncated || chunk.filled {
+                    output.more = true;
+                    break 'lineage;
+                }
+            }
+        }
+    }
+    Ok(output)
+}
+
+fn segment_bounds(segment: &HistorySegment) -> (i64, i64) {
+    let low = i64::try_from(segment.start_ordinal).unwrap_or(i64::MAX);
+    let high = segment
+        .end_ordinal
+        .map(|end| i64::try_from(end).unwrap_or(i64::MAX))
+        .unwrap_or(i64::MAX);
+    (low, high)
+}
+
+/// Bind a turn's exact start boundary to the physical segment that owns it.
+/// The hint is only a valid scan start at or below the caller's edge; a hint
+/// from another lineage segment must not be used against this one.
+fn segment_hint(
+    hint: Option<(i64, u64)>,
+    segment: &HistorySegment,
+    edge: i64,
+) -> Option<(i64, u64)> {
+    let (ordinal, byte) = hint?;
+    let (low, high) = segment_bounds(segment);
+    (ordinal >= low && ordinal < high && ordinal <= edge).then_some((ordinal, byte))
+}
+
+/// Exact canonical re-read start of one root turn. The projector records the
+/// byte offset of a turn's earliest record, so a turn that left the active
+/// window is re-read from its own boundary instead of waiting for the nearest
+/// sparse anchor, which can sit thousands of records away.
+pub(super) fn turn_scan_hint(
+    history: &Connection,
+    rollout_id: &str,
+    root: &str,
+) -> Result<Option<(i64, u64)>> {
+    Ok(history
+        .query_row(
+            "SELECT start_ordinal,start_rollout_byte_offset FROM thread_turns
+             WHERE rollout_id=?1 AND COALESCE(root_turn_id,turn_id)=?2
+               AND start_ordinal IS NOT NULL AND start_rollout_byte_offset IS NOT NULL
+             ORDER BY start_ordinal ASC LIMIT 1",
+            params![rollout_id, root],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+        )
+        .optional()?
+        .map(|(ordinal, offset)| -> Result<(i64, u64)> {
+            Ok((ordinal, sqlite_u64_required(offset)?))
+        })
+        .transpose()?)
+}
+
+/// Nearest sparse anchor at or below `through`; anchors are stored per
+/// physical rollout, never per logical lineage.
+fn segment_anchor(
+    history: &Connection,
+    rollout_id: &str,
+    floor: i64,
+    through: i64,
+) -> Result<Option<(u64, i64)>> {
+    Ok(history
+        .query_row(
+            "SELECT record_byte_offset,rollout_ordinal FROM thread_item_anchors
+             WHERE rollout_id=?1 AND rollout_ordinal>=?2 AND rollout_ordinal<=?3
+             ORDER BY rollout_ordinal DESC LIMIT 1",
+            params![rollout_id, floor, through],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+        )
+        .optional()?
+        .map(|(offset, ordinal)| -> Result<(u64, i64)> {
+            Ok((sqlite_u64_required(offset)?, ordinal))
+        })
+        .transpose()?)
+}
+
+struct ScanChunk {
+    /// The accepted-item limit was reached before the ordinal range ended.
+    filled: bool,
+    /// The record or byte budget ran out before the ordinal range ended.
+    truncated: bool,
+}
+
+/// Sequential forward read of one physical segment inside `[floor,stop)`.
+/// Accepted items append in ascending ordinal order. Callers own the ring and
+/// page truncation, so this function only reports whether it stopped early.
+#[allow(clippy::too_many_arguments)]
+fn scan_segment_records(
+    root: &Path,
+    catalog: &mut Option<Connection>,
+    segment: &HistorySegment,
+    current: &str,
+    start_byte: u64,
+    floor: i64,
+    stop: i64,
+    budget: &mut i64,
+    bytes: &mut usize,
+    accept_limit: Option<usize>,
+    items: &mut Vec<ThreadHistoryItem>,
+    accept: &dyn Fn(&ThreadHistoryItem) -> bool,
+) -> Result<ScanChunk> {
+    let mut chunk = ScanChunk {
+        filled: accept_limit.is_some_and(|limit| items.len() >= limit),
+        truncated: false,
+    };
+    if chunk.filled {
+        return Ok(chunk);
+    }
+    if *budget <= 0 {
+        chunk.truncated = true;
+        return Ok(chunk);
+    }
+    if catalog.is_none() {
+        *catalog = Some(super::thread_history_body::open_catalog(root)?);
+    }
+    let source = super::thread_history_body::source_path(
+        catalog.as_ref().expect("catalog opened"),
+        root,
+        &segment.rollout_id,
+    )?;
     let mut file = super::rollout_compression::open_rollout_reader(&source)?;
-    file.seek(SeekFrom::Start(u64::try_from(start_offset)?))?;
+    file.seek(SeekFrom::Start(start_byte))?;
     let mut reader = BufReader::new(file);
-    let mut collected: Vec<ThreadHistoryItem> = Vec::new();
     let mut line = Vec::new();
-    let mut scanned = 0i64;
     loop {
         line.clear();
         if !read_bounded_line(&mut reader, &mut line)? {
@@ -1143,47 +1425,57 @@ fn read_items_via_anchor(
         if line.is_empty() || line.iter().all(u8::is_ascii_whitespace) {
             continue;
         }
-        scanned += 1;
+        *budget -= 1;
+        if *budget <= 0 {
+            chunk.truncated = true;
+            break;
+        }
+        // Count every byte the scan had to read. The budget must bound real
+        // IO, not only the accepted display items, so a range far from its
+        // start cannot turn into an unbounded read.
+        *bytes = (*bytes).saturating_add(line.len());
+        if *bytes > SCAN_BYTES_BUDGET {
+            chunk.truncated = true;
+            break;
+        }
+        // An unfinished tail or a foreign line must not poison a bounded read.
         let envelope: RolloutEnvelope = match serde_json::from_slice(&line) {
             Ok(envelope) => envelope,
-            Err(error) => return Err(error).context("invalid canonical rollout record"),
+            Err(_) => continue,
         };
-        let ordinal = sqlite_i64(envelope.ordinal)?;
-        // Stop once the scan reaches or passes the exclusive cursor.
-        if let Some((cursor_ordinal, cursor_item_id)) = before {
-            if ordinal > cursor_ordinal
-                || (ordinal == cursor_ordinal
-                    && item_ordinal_id(&envelope).as_deref() == Some(cursor_item_id))
-            {
-                break;
-            }
+        let ordinal = match i64::try_from(envelope.ordinal) {
+            Ok(ordinal) => ordinal,
+            Err(_) => continue,
+        };
+        if ordinal >= stop {
+            break;
         }
-        if !is_completed_item(&envelope) {
-            if scanned > ANCHOR_INTERVAL * 2 + limit {
-                break;
-            }
+        if ordinal < floor || !is_completed_item(&envelope) {
             continue;
         }
-        let item = completed_item(event_body(&envelope))?;
-        let item_turn = item.get("turn_id").and_then(Value::as_str);
-        if turn_id.is_some_and(|wanted| item_turn != Some(wanted)) {
+        let item = match completed_item(event_body(&envelope)) {
+            Ok(item) => item,
+            Err(_) => continue,
+        };
+        let Some(item) = envelope_to_history_item(current, &envelope, item, ordinal)? else {
+            continue;
+        };
+        if !accept(&item) {
             continue;
         }
-        if let Some(history) = envelope_to_history_item(rollout_id, &envelope, item, ordinal)? {
-            collected.push(history);
-        }
-        if collected.len() >= limit as usize || scanned > ANCHOR_INTERVAL * 2 + limit {
+        items.push(item);
+        if accept_limit.is_some_and(|limit| items.len() >= limit) {
+            chunk.filled = true;
             break;
         }
     }
-    collected.reverse();
-    Ok(collected)
+    Ok(chunk)
 }
 
-fn item_ordinal_id(envelope: &RolloutEnvelope) -> Option<String> {
-    let item = completed_item(event_body(envelope)).ok()?;
-    item_identity(item).ok()
-}
+const SCAN_BYTES_BUDGET: usize = 16 * 1024 * 1024;
+/// Hard record ceiling for one bounded re-read. The byte budget normally
+/// stops a scan first; this protects against pathologically small records.
+const MAX_SCAN_RECORDS: i64 = 65_536;
 
 fn item_identity(item: &Value) -> Result<String> {
     item.get("id")
@@ -1230,78 +1522,80 @@ fn envelope_to_history_item(
     }))
 }
 
-/// Locate one item outside the active window. The owning turn is resolved from
-/// the item id, then scanning starts at the nearest anchor so at most one turn
-/// plus an anchor interval is touched.
-fn find_item_via_anchor(
+/// Locate one item outside the active window. The owning turn narrows the
+/// ordinal range so at most one anchor interval is re-read; a missing turn row
+/// falls back to the lineage bounds, still bounded by the scan budget.
+pub(super) fn find_item_via_anchor(
     history: &Connection,
     root: &Path,
+    segments: &[HistorySegment],
     rollout_id: &str,
     item_id: &str,
 ) -> Result<Option<ThreadHistoryItem>> {
-    let (turn_id, turn_start) = match item_id.rsplit_once(':') {
-        Some((turn, _suffix)) => {
-            let start: Option<i64> = history
+    let (turn_id, turn_start, turn_end, start_hint) = match item_id.rsplit_once(':') {
+        Some((turn, _)) => {
+            let range: Option<(i64, i64, Option<i64>)> = history
                 .query_row(
-                    "SELECT start_ordinal FROM thread_turns
-                     WHERE rollout_id=?1 AND turn_id=?2",
+                    "SELECT COALESCE(start_ordinal,end_ordinal,0),
+                            COALESCE(end_ordinal,updated_at_ordinal,0),
+                            start_rollout_byte_offset
+                     FROM thread_turns WHERE rollout_id=?1 AND turn_id=?2",
                     params![rollout_id, turn],
-                    |row| row.get(0),
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
                 )
                 .optional()?;
-            (Some(turn), start.unwrap_or(0))
+            match range {
+                Some((start, end, offset)) => {
+                    let hint = match offset {
+                        Some(offset) => Some((start, sqlite_u64_required(offset)?)),
+                        None => None,
+                    };
+                    (Some(turn), start, end, hint)
+                }
+                None => (Some(turn), 0, i64::MAX, None),
+            }
         }
-        None => (None, 0),
+        None => (None, 0, i64::MAX, None),
     };
-    let anchor_offset: i64 = history
-        .query_row(
-            "SELECT record_byte_offset FROM thread_item_anchors
-             WHERE rollout_id=?1 AND rollout_ordinal<=?2
-             ORDER BY rollout_ordinal DESC LIMIT 1",
-            params![rollout_id, turn_start],
-            |row| row.get(0),
-        )
-        .optional()?
-        .flatten()
-        .unwrap_or(0);
-    let catalog = super::thread_history_body::open_catalog(root)?;
-    let source = super::thread_history_body::source_path(&catalog, root, rollout_id)?;
-    let mut file = super::rollout_compression::open_rollout_reader(&source)?;
-    file.seek(SeekFrom::Start(u64::try_from(anchor_offset)?))?;
-    let mut reader = BufReader::new(file);
-    let mut line = Vec::new();
-    let mut scanned = 0i64;
-    let scan_budget = ANCHOR_INTERVAL * 2 + 256;
-    loop {
-        line.clear();
-        if !read_bounded_line(&mut reader, &mut line)? {
-            break;
-        }
-        if line.is_empty() || line.iter().all(u8::is_ascii_whitespace) {
-            continue;
-        }
-        scanned += 1;
-        if scanned > scan_budget {
-            break;
-        }
-        let envelope: RolloutEnvelope = match serde_json::from_slice(&line) {
-            Ok(envelope) => envelope,
-            Err(_) => continue,
-        };
-        if !is_completed_item(&envelope) {
-            continue;
-        }
-        let item = completed_item(event_body(&envelope))?;
-        if item_identity(item)? != item_id {
-            continue;
-        }
-        if turn_id.is_some_and(|turn| item.get("turn_id").and_then(Value::as_str) != Some(turn)) {
-            continue;
-        }
-        let ordinal = sqlite_i64(envelope.ordinal)?;
-        return envelope_to_history_item(rollout_id, &envelope, item, ordinal);
+    let accept = |candidate: &ThreadHistoryItem| {
+        candidate.item_id == item_id
+            && turn_id.map_or(true, |turn| {
+                candidate
+                    .turn_id
+                    .as_deref()
+                    .map_or(true, |item_turn| item_turn == turn)
+            })
+    };
+    let older = scan_lineage(
+        root,
+        history,
+        segments,
+        rollout_id,
+        ScanDirection::Older,
+        Some(turn_end.saturating_add(1)),
+        Some(turn_start),
+        None,
+        1,
+        start_hint,
+        &accept,
+    )?;
+    if let Some(item) = older.items.into_iter().next() {
+        return Ok(Some(item));
     }
-    Ok(None)
+    let newer = scan_lineage(
+        root,
+        history,
+        segments,
+        rollout_id,
+        ScanDirection::Newer,
+        Some(turn_start.saturating_sub(1)),
+        None,
+        Some(turn_end.saturating_add(1)),
+        1,
+        start_hint,
+        &accept,
+    )?;
+    Ok(newer.items.into_iter().next())
 }
 
 fn load_state(conn: &Connection, rollout_id: &str) -> Result<ProjectionState> {
@@ -1494,18 +1788,7 @@ fn project_completed_item(
     let (item_bytes, digest) = item_digest(item)?;
     let preview = item_preview(item);
     let preview_json = serde_json::to_string(&preview)?;
-    let payload = item.get("payload").unwrap_or(item);
-    let visible = payload
-        .get("visibility")
-        .and_then(Value::as_str)
-        .unwrap_or("user")
-        == "user"
-        && payload.pointer("/meta/hidden").and_then(Value::as_bool) != Some(true)
-        && payload
-            .pointer("/payload/meta/hidden")
-            .and_then(Value::as_bool)
-            != Some(true)
-        && payload.get("kind").and_then(Value::as_str) != Some("system_message");
+    let visible = item_is_visible(item);
 
     if let Some(turn_id) = turn_id.as_deref() {
         ensure_turn_for_item(
@@ -1607,6 +1890,23 @@ fn project_completed_item(
         }
     }
     Ok(())
+}
+
+/// Display visibility is decided once by the projector and again on every
+/// canonical re-read, so a trimmed window row and a rollout item agree.
+pub(super) fn item_is_visible(item: &Value) -> bool {
+    let payload = item.get("payload").unwrap_or(item);
+    payload
+        .get("visibility")
+        .and_then(Value::as_str)
+        .unwrap_or("user")
+        == "user"
+        && payload.pointer("/meta/hidden").and_then(Value::as_bool) != Some(true)
+        && payload
+            .pointer("/payload/meta/hidden")
+            .and_then(Value::as_bool)
+            != Some(true)
+        && payload.get("kind").and_then(Value::as_str) != Some("system_message")
 }
 
 /// A bounded card-grade projection lives alongside the completed item, never

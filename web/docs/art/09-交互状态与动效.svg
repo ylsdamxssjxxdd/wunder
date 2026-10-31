@@ -50,7 +50,9 @@
     <rect x="836" y="1244" width="90" height="24" rx="5" fill="#F6F5F3" stroke="#D8D5D0"/><text x="881" y="1260" text-anchor="middle" class="mono ui11">Esc</text><text x="940" y="1260" class="note">关闭弹层 / 取消编辑</text>
     <rect x="836" y="1276" width="120" height="24" rx="5" fill="#F6F5F3" stroke="#D8D5D0"/><text x="896" y="1292" text-anchor="middle" class="mono ui11">Shift+Enter</text><text x="970" y="1292" class="note">编辑器换行</text>
     <rect x="836" y="1308" width="120" height="24" rx="5" fill="#F6F5F3" stroke="#D8D5D0"/><text x="896" y="1324" text-anchor="middle" class="mono ui11">↑ / ↓</text><text x="970" y="1324" class="note">按条件召回已发送草稿</text>
-    <text x="836" y="1360" class="tiny">弹窗打开后焦点进入，关闭后回到触发元素；Tab 在模态内循环。</text><text x="836" y="1384" class="tiny">发送键遵循线程偏好：Enter / Ctrl+Enter / 仅按钮。</text>
+    <line x1="836" y1="1340" x2="1512" y2="1340" stroke="#E8E6E3"/>
+    <text x="836" y="1364" class="note">所有可编辑输入统一右键菜单（剪切/复制/粘贴/全选，按只读与空文本禁用）；触屏聚焦呼出虚拟键盘。</text>
+    <text x="836" y="1386" class="tiny">弹窗焦点进入并在模态内循环；发送键遵循线程偏好：Enter / Ctrl+Enter / 仅按钮。</text>
   </g>
 
   <g id="responsive-a11y">
@@ -62,5 +64,5 @@
   </g>
 
   <g id="implementation-notes"><rect x="64" y="1728" width="1472" height="100" rx="12" class="card"/><text x="88" y="1758" class="card-t">实机差异记录 · 不是新的视觉提案</text><text x="88" y="1786" class="note">实心按钮 1px accent 焦点对比弱；普通停用按钮不统一灰化；ThemeCheck 没有独立焦点描边；Switch 使用系统蓝色。</text><text x="88" y="1812" class="tiny">后续若调整产品行为，应先改实现并重新渲染本页，不在设计稿里提前“修正”实机。</text><text x="1512" y="1812" text-anchor="end" class="tiny">组件级特殊状态见各自分页</text></g>
-  <g id="footer"><line x1="64" y1="1850" x2="1536" y2="1850" stroke="#D8D5D0"/><text x="64" y="1870" class="tiny">事实来源：components.slint · settings_page.slint · composer.slint · status_icon.slint · 当前 Slint 软件渲染帧</text><text x="1536" y="1870" text-anchor="end" class="mono tiny">09 / 09 · 2026-10-25</text></g>
+  <g id="footer"><line x1="64" y1="1850" x2="1536" y2="1850" stroke="#D8D5D0"/><text x="64" y="1870" class="tiny">事实来源：components.slint · settings_page.slint · composer.slint · status_icon.slint · 当前 Slint 软件渲染帧</text><text x="1536" y="1870" text-anchor="end" class="mono tiny">09 / 09 · 2026-10-31</text></g>
 </svg>

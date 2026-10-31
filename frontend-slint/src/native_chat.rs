@@ -1054,6 +1054,33 @@ fn publish_idle_plan(app: &MainWindow, state: &State, session: &str) {
     app.set_activity_plan_steps(ModelRc::new(VecModel::from(rows)));
 }
 
+/// The pending 问询面板 one thread's durable turns still wait on. The waiting
+/// execution row identity travels inside the panel payload; the round root is a
+/// different row once goal rounds continue the turn, and settling needs the
+/// waiting row itself. A panel the user already answered in this process stays
+/// suppressed by its consumption key.
+fn durable_inquiry(
+    session: &str,
+    turns: &[wunder_desktop::NativeChatTurn],
+    consumed: &VecDeque<String>,
+) -> Option<InquiryState> {
+    let panel = turns
+        .iter()
+        .rev()
+        .find_map(|turn| turn.question_panel.as_ref())?;
+    let mut inquiry = inquiry_from_payload(panel)?;
+    inquiry.inquiry_turn_id = panel
+        .get("turn_id")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let key = inquiry.consumption_key(session);
+    if !key.is_empty() && consumed.iter().any(|item| item == &key) {
+        return None;
+    }
+    Some(inquiry)
+}
+
 /// Restore a reopened thread's interactive metadata from its durable rows: the
 /// last published plan feeds the dock cache and a still-pending 问询面板 comes
 /// back as the card above the composer. The observer calls this once per open,
@@ -1076,22 +1103,12 @@ fn restore_thread_extras(
             ),
         );
     }
-    if let Some(panel) = turns
-        .iter()
-        .rev()
-        .find_map(|turn| turn.question_panel.clone())
-    {
-        if let Some(inquiry) = inquiry_from_payload(&panel) {
-            let mut inquiry = inquiry;
-            // The waiting execution row identity travels inside the panel
-            // payload; the round root is a different row once goal rounds
-            // continue the turn, and settling needs the waiting row itself.
-            inquiry.inquiry_turn_id = panel
-                .get("turn_id")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string();
+    match durable_inquiry(session, turns, &state.consumed_inquiries) {
+        Some(inquiry) => {
             state.inquiries.insert(session.to_string(), inquiry);
+        }
+        None => {
+            state.inquiries.remove(session);
         }
     }
     publish_idle_plan(app, state, session);
@@ -3097,15 +3114,17 @@ fn bind_stop(app: &MainWindow, state: Rc<RefCell<State>>) {
             std::thread::spawn(move || {
                 let result = desktop.cancel_chat(&cancel_session);
                 let _ = weak.upgrade_in_event_loop(move |app| {
+                    // A stopped submission can return a stream only after this
+                    // control request did. Keep the composer fenced until that
+                    // stream was cancelled and drained too; otherwise its
+                    // session-wide cancellation can hit a new request
+                    // submitted in the gap. Every other outcome — including an
+                    // error and a thread switch mid-cancel — must drop the
+                    // fence, or the stop button stays inert on the next visit.
+                    if !waits_for_submission_stream {
+                        app.set_stopping(false);
+                    }
                     if app.get_active_session_id() == cancel_session {
-                        // A stopped submission can return a stream only after
-                        // this control request did. Keep the composer fenced
-                        // until that stream was cancelled and drained too;
-                        // otherwise its session-wide cancellation can hit a
-                        // new request submitted in the gap.
-                        if !waits_for_submission_stream {
-                            app.set_stopping(false);
-                        }
                         match result {
                             Err(error) => app.set_status(format!("无法停止：{error}").into()),
                             Ok(()) => {
@@ -4240,6 +4259,73 @@ fn format_count_i64(value: i64) -> String {
 #[cfg(test)]
 mod turn_tests {
     use super::*;
+
+    fn panel_turn(
+        root: &str,
+        panel: Option<Value>,
+    ) -> wunder_desktop::NativeChatTurn {
+        let message = wunder_desktop::NativeMessage {
+            turn_id: root.into(),
+            text: String::new(),
+            mine: false,
+            created_at: 0.0,
+            state: String::new(),
+            stats_status: String::new(),
+            user_round: 0,
+            stats: Default::default(),
+            attachments: Vec::new(),
+        };
+        wunder_desktop::NativeChatTurn {
+            root_id: root.into(),
+            user: wunder_desktop::NativeMessage {
+                mine: true,
+                ..message.clone()
+            },
+            assistant: message,
+            rounds: Vec::new(),
+            subagents: Vec::new(),
+            process_steps: 0,
+            plan: None,
+            question_panel: panel,
+        }
+    }
+
+    /// The passive observer reconciles the composer card from durable turns.
+    /// A background goal round never crosses a local stream, so this is the
+    /// only path that can open (or close) its 问询面板.
+    #[test]
+    fn durable_inquiry_opens_only_an_unanswered_pending_panel() {
+        let session = "fixture-session";
+        let pending = serde_json::json!({
+            "questions": [{
+                "question": "继续吗？",
+                "multiple": false,
+                "options": [{"label": "继续"}, {"label": "暂停"}]
+            }],
+            "keep_open": true,
+            "status": "pending",
+            "turn_id": "fixture-round"
+        });
+        let turns = vec![panel_turn("fixture-root", Some(pending.clone()))];
+        let opened =
+            durable_inquiry(session, &turns, &VecDeque::new()).expect("pending panel");
+        assert_eq!(opened.inquiry_turn_id, "fixture-round");
+        assert_eq!(opened.questions.len(), 1);
+        assert_eq!(opened.questions[0].options.len(), 2);
+
+        let mut consumed = VecDeque::new();
+        consumed.push_back(opened.consumption_key(session));
+        assert!(
+            durable_inquiry(session, &turns, &consumed).is_none(),
+            "an answered panel must not reopen when the durable row lags"
+        );
+
+        let mut answered = pending;
+        answered["status"] = serde_json::json!("answered");
+        let settled = vec![panel_turn("fixture-root", Some(answered))];
+        assert!(durable_inquiry(session, &settled, &VecDeque::new()).is_none());
+        assert!(durable_inquiry(session, &[], &VecDeque::new()).is_none());
+    }
 
     /// 侧栏行的活动时间必须是一个真实日期，不是占位的「刚刚」：悬停提示靠它
     /// 回答「这条线程最后什么时候干过活」。秒/毫秒两种存法都要认。

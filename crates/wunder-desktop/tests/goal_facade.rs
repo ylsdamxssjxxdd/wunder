@@ -26,7 +26,11 @@ fn isolated_with_endpoint(
             "llm": {"default": "fixture-model", "models": {
                 "fixture-model": {"enable": true, "provider": "openai_compatible",
                     "model": "fixture-model", "base_url": endpoint, "api_key": "fixture-key",
-                    "timeout_s": 30, "stream": true, "max_context": 16384, "max_output": 64}
+                    // A goal round ships the whole tool envelope; a 16k window
+                    // admitted the request without room for a single message
+                    // and settled CONTEXT_WINDOW_EXCEEDED before the pause
+                    // under test could cancel the model call.
+                    "timeout_s": 30, "stream": true, "max_context": 65536, "max_output": 64}
             }},
             "skills": {"enabled": []}
         }))?,
@@ -183,7 +187,9 @@ fn goal_pause_cancels_an_inflight_model_request() -> anyhow::Result<()> {
         .unwrap();
     assert_eq!(
         stopped.status, "cancelled",
-        "a paused banner must not hide a running executor"
+        "a paused banner must not hide a running executor \
+         (stop_reason {:?}, failure {:?})",
+        stopped.stop_reason, stopped.assistant.failure
     );
     assert!(runtime.block_on(
         desktop
@@ -199,6 +205,85 @@ fn goal_pause_cancels_an_inflight_model_request() -> anyhow::Result<()> {
         .iter()
         .any(|turn| turn.root_id == executing.root_turn_id));
     desktop.cancel_chat(&session.id)?;
+    Ok(())
+}
+
+/// The open lease can lapse while this process still runs the round (a stalled
+/// heartbeat, a long system sleep). Stopping must not answer THREAD_IN_USE and
+/// leave the round running: no foreign instance can be holding the thread,
+/// because this process owns its live execution lock.
+#[test]
+fn stop_reaches_a_local_round_after_the_open_lease_lapsed() -> anyhow::Result<()> {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .thread_stack_size(16 * 1024 * 1024)
+        .enable_all()
+        .build()?;
+    let calls = Arc::new(AtomicUsize::new(0));
+    let counter = calls.clone();
+    let address = runtime.block_on(async {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let address = listener.local_addr()?;
+        let app = axum::Router::new().route(
+            "/v1/chat/completions",
+            axum::routing::post(move || {
+                let counter = counter.clone();
+                async move {
+                    counter.fetch_add(1, Ordering::SeqCst);
+                    std::future::pending::<axum::Json<serde_json::Value>>().await
+                }
+            }),
+        );
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        Ok::<_, anyhow::Error>(address)
+    })?;
+    let (_guard, _directory, desktop) = isolated_with_endpoint(&format!("http://{address}/v1"))?;
+    let session = desktop.create_session(None)?;
+    desktop.execute_chat_command(
+        &session.id,
+        NativeChatCommand::GoalSet("Fixture objective".into()),
+    )?;
+    desktop
+        .state()
+        .kernel
+        .orchestrator
+        .goal_handle()
+        .driver()
+        .notify_goal_changed(desktop.user_id(), &session.id);
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while calls.load(Ordering::SeqCst) == 0 {
+        assert!(
+            Instant::now() < deadline,
+            "the goal round must reach the fixture model"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    desktop.close_session(&session.id)?;
+    assert!(
+        desktop
+            .state()
+            .kernel
+            .thread_runtime
+            .has_local_execution(&session.id),
+        "the round still runs in this process after the lease lapsed"
+    );
+    desktop.cancel_chat(&session.id)?;
+    let settled = Instant::now() + Duration::from_secs(15);
+    while !runtime.block_on(
+        desktop
+            .state()
+            .kernel
+            .thread_runtime
+            .is_session_available_for_submit(desktop.user_id(), &session.id),
+    ) {
+        assert!(Instant::now() < settled, "stop must settle the local round");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(desktop
+        .state()
+        .storage
+        .get_session_goal(desktop.user_id(), &session.id)?
+        .is_none());
     Ok(())
 }
 

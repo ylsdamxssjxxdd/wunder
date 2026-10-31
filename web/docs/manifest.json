@@ -1,6 +1,6 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-10-25T14:45:05.929514+00:00",
+  "generated_at": "2026-10-31T01:45:29.180063+00:00",
   "site": {
     "name": "使用说明书",
     "description": "wunder is a multi-form agent workbench: Pupa (desktop) is the local AI workbench, Beehive (web) is the cloud AI workbench, Helm (cli) is the manual local entry point, and the Hull (server) is the user and agent management platform. / wunder 是多形态的智能体工作台：蛹（desktop）是本地 AI 工作台，蜂巢（web）是云端 AI 工作台，舵机（cli）是手工本地操作入口，舰体（server）是用户与智能体管理平台。",
@@ -5951,8 +5951,7 @@
         "frontend-slint/run.bat",
         "crates/wunder-desktop/args.rs",
         "crates/wunder-desktop/native.rs",
-        "crates/wunder-desktop/runtime.rs",
-        "crates/wunder-runtime/src/services/desktop_runtime_recovery.rs"
+        "crates/wunder-desktop/runtime.rs"
       ],
       "tab": "Getting Started",
       "group": "Onboarding",

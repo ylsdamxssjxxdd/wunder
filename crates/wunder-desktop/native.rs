@@ -565,15 +565,28 @@ impl NativeDesktop {
             .spawn(move || {
                 let (heartbeat_lock, heartbeat_wake) = &*heartbeat_state;
                 loop {
-                    // A selected idle thread is only viewed, so waiting here
-                    // must not touch SQLite. The stream-owned heartbeat guard
-                    // wakes us only while a submitted local turn still needs
-                    // its cross-process fencing lease.
+                    // Every locally opened thread owns its cross-process
+                    // lease for as long as it stays open, not only while a
+                    // local stream is pumped. An idle selected thread used to
+                    // let the durable lease expire after fifteen seconds; a
+                    // background goal round then held the execution lock and
+                    // the next stop/pause could neither renew nor re-acquire
+                    // the lease, surfacing THREAD_IN_USE on the stop button.
                     let mut state = match heartbeat_lock.lock() {
                         Ok(state) => state,
                         Err(_) => return,
                     };
+                    // Re-read the open set on every wake: a notify carries no
+                    // payload, so a cached emptiness would keep us asleep
+                    // after the first thread is opened.
                     while state.active.is_empty() && !state.stopping {
+                        let no_open_threads = heartbeat_threads
+                            .lock()
+                            .map(|set| set.is_empty())
+                            .unwrap_or(true);
+                        if !no_open_threads {
+                            break;
+                        }
                         state = match heartbeat_wake.wait(state) {
                             Ok(state) => state,
                             Err(_) => return,
@@ -590,19 +603,10 @@ impl NativeDesktop {
                     if state.stopping {
                         return;
                     }
-                    let active = state.active.clone();
                     drop(state);
                     let sessions = heartbeat_threads
                         .lock()
-                        .map(|set| {
-                            active
-                                .into_iter()
-                                .filter_map(|(session, lease)| {
-                                    (set.get(&session).copied() == Some(lease.fencing_token))
-                                        .then_some((session, lease.fencing_token))
-                                })
-                                .collect::<Vec<_>>()
-                        })
+                        .map(|set| set.iter().map(|(session, token)| (session.clone(), *token)).collect::<Vec<_>>())
                         .unwrap_or_default();
                     for (session, token) in sessions {
                         // The SQLite write runs outside the operation lock so a
@@ -747,6 +751,9 @@ impl NativeDesktop {
                     confirmed.insert(session_id.to_string(), Instant::now());
                 }
                 self.mark_thread_lease_used(session_id);
+                // Start (or keep) the durable heartbeat now that the open set
+                // is non-empty; it otherwise waits on its condvar.
+                self.wake_lease_heartbeat();
                 self.settle_orphans_best_effort(session_id);
                 Ok(())
             }
@@ -758,6 +765,34 @@ impl NativeDesktop {
 
     pub fn open_session(&self, session_id: &str) -> Result<()> {
         self.ensure_thread_open(session_id)
+    }
+
+    /// Control entry for stop and goal commands. A turn this very process is
+    /// running stays stoppable even if the open lease lapsed meanwhile (system
+    /// sleep, stalled heartbeat): the execution lock this process holds keeps
+    /// every foreign instance out, so the fallback cannot fence someone
+    /// else's work.
+    fn ensure_thread_control(&self, session_id: &str) -> Result<()> {
+        match self.ensure_thread_open(session_id) {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                if self
+                    .state()
+                    .kernel
+                    .thread_runtime
+                    .has_local_execution(session_id)
+                {
+                    Ok(())
+                } else {
+                    Err(error)
+                }
+            }
+        }
+    }
+
+    fn wake_lease_heartbeat(&self) {
+        let (_, wake) = &*self.lease_heartbeat;
+        wake.notify_all();
     }
 
     fn hold_thread_lease_for_stream(
@@ -1487,7 +1522,7 @@ impl NativeDesktop {
     }
 
     pub fn cancel_chat(&self, session_id: &str) -> Result<()> {
-        self.ensure_thread_open(session_id)?;
+        self.ensure_thread_control(session_id)?;
         self.runtime.block_on(stream::cancel_chat(
             &self.desktop.state,
             &self.desktop.user_id,
@@ -1675,6 +1710,37 @@ mod thread_switch_tests {
         // The runtime keeps SQLite alive after this helper returns.
         std::mem::forget(directory);
         NativeDesktop::start_with_args(args).expect("isolated desktop")
+    }
+
+    #[test]
+    fn open_thread_lease_stays_fresh_without_a_live_stream() {
+        let desktop = Arc::new(start_isolated());
+        let session = desktop.create_session(None).expect("session");
+        desktop.open_chat_snapshot(&session.id).expect("open");
+        let opened = desktop
+            .state()
+            .storage
+            .get_thread_open_lease(&session.id, desktop.user_id())
+            .expect("lease read")
+            .expect("open lease");
+        // A selected idle thread used to let its lease expire: only a local
+        // stream drove the heartbeat. A goal continuation then held the
+        // execution lock and stop/pause could not renew or re-acquire it.
+        std::thread::sleep(Duration::from_secs(6));
+        let refreshed = desktop
+            .state()
+            .storage
+            .get_thread_open_lease(&session.id, desktop.user_id())
+            .expect("lease read")
+            .expect("an open thread keeps its lease");
+        assert_eq!(refreshed.owner_instance_id, opened.owner_instance_id);
+        assert!(
+            refreshed.expires_at > opened.expires_at + 1.0,
+            "an idle open thread must keep renewing its lease \
+             (opened {}, refreshed {})",
+            opened.expires_at,
+            refreshed.expires_at
+        );
     }
 
     #[test]

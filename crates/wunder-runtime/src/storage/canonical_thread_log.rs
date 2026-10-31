@@ -36,6 +36,32 @@ pub(crate) struct CanonicalThreadLog<'a> {
     metadata: &'a dyn MetaStore,
 }
 
+/// One consistent read snapshot over the projection. The connection already
+/// carries its lineage temporary views, and the lineage bounds are kept here
+/// so a bounded read can continue into the canonical rollout when the active
+/// window was trimmed.
+pub(crate) struct HistorySnapshot {
+    conn: Connection,
+    root: std::path::PathBuf,
+    rollout: Option<String>,
+    segments: Vec<HistorySegment>,
+}
+
+impl std::ops::Deref for HistorySnapshot {
+    type Target = Connection;
+    fn deref(&self) -> &Connection {
+        &self.conn
+    }
+}
+
+/// A bounded item page plus the durable "more remains" signal, so callers no
+/// longer infer continuation from a second index query.
+#[derive(Debug, Default)]
+struct ItemPage {
+    items: Vec<Value>,
+    more: bool,
+}
+
 pub(crate) fn wait<T: Send>(future: impl Future<Output = T> + Send) -> Result<T> {
     let runtime = super::runtime::runtime()?;
     match tokio::runtime::Handle::try_current() {
@@ -99,10 +125,14 @@ impl<'a> CanonicalThreadLog<'a> {
     fn check(&self, user: &str, session: &str) -> Result<()> {
         self.admissions()?.check_owner(user, session)
     }
-    fn connection(&self, session: Option<&str>) -> Result<Connection> {
+    fn connection(&self, session: Option<&str>) -> Result<HistorySnapshot> {
         self.connection_for(session, None)
     }
-    fn connection_for(&self, session: Option<&str>, user: Option<&str>) -> Result<Connection> {
+    fn connection_for(
+        &self,
+        session: Option<&str>,
+        user: Option<&str>,
+    ) -> Result<HistorySnapshot> {
         let root = self.threads.root();
         let conn = Connection::open_with_flags(
             root.join("thread_history_1.sqlite"),
@@ -165,6 +195,8 @@ impl<'a> CanonicalThreadLog<'a> {
             }
         }
         conn.execute_batch("BEGIN")?;
+        let mut pinned = None;
+        let mut scoped = Vec::new();
         if let Some(session) = session {
             if let Some(current) = Self::rollout(&conn, session)? {
                 let segments = prepared_segments
@@ -181,9 +213,16 @@ impl<'a> CanonicalThreadLog<'a> {
                     })
                     .collect::<Vec<_>>();
                 ThreadHistoryStore::apply_scope(&conn, &current, &segments)?;
+                scoped = segments;
+                pinned = Some(current);
             }
         }
-        Ok(conn)
+        Ok(HistorySnapshot {
+            conn,
+            root: root.to_path_buf(),
+            rollout: pinned,
+            segments: scoped,
+        })
     }
     fn rollout(conn: &Connection, session: &str) -> Result<Option<String>> {
         Ok(conn
@@ -255,7 +294,7 @@ impl<'a> CanonicalThreadLog<'a> {
         )
     }
     fn items(
-        conn: &Connection,
+        snapshot: &HistorySnapshot,
         session: &str,
         turn: Option<&str>,
         before: Option<i64>,
@@ -264,12 +303,94 @@ impl<'a> CanonicalThreadLog<'a> {
         internal: bool,
         messages: bool,
     ) -> Result<Vec<Value>> {
-        Self::item_page(
-            conn, session, turn, before, after, limit, internal, messages, false,
-        )
+        Ok(Self::item_page(
+            snapshot, session, turn, before, after, limit, internal, messages, false,
+        )?
+        .items)
     }
+    /// Ordinal bounds of every turn sharing a root. The bounds keep a bounded
+    /// re-read inside the owned turn instead of walking the rollout.
+    fn turn_ordinal_range(conn: &Connection, rollout: &str, root: &str) -> Result<(i64, i64)> {
+        Ok(conn.query_row(
+            "SELECT COALESCE(MIN(COALESCE(start_ordinal,end_ordinal,0)),0),
+                    COALESCE(MAX(COALESCE(end_ordinal,updated_at_ordinal)),0)
+             FROM thread_turns
+             WHERE rollout_id=?1 AND COALESCE(root_turn_id,turn_id)=?2",
+            params![rollout, root],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?)
+    }
+    /// The active window only keeps its newest rows; anything below this
+    /// ordinal must be re-read from the canonical rollout.
+    fn window_floor(conn: &Connection, rollout: &str) -> Result<i64> {
+        Ok(conn.query_row(
+            "SELECT COALESCE(MIN(rollout_ordinal),0) FROM thread_items WHERE rollout_id=?1",
+            [rollout],
+            |row| row.get(0),
+        )?)
+    }
+    /// Fetch a referenced item from the active window with its verified body
+    /// locator, hydrating the bounded full body and falling back to the stored
+    /// card-grade preview when the source is unreadable or unusually large.
+    fn window_item(
+        snapshot: &HistorySnapshot,
+        rollout: &str,
+        id: &str,
+    ) -> Result<Option<(String, i64, ItemBodyRef)>> {
+        Ok(snapshot
+            .query_row(
+                &format!(
+                    "SELECT preview_json,rollout_ordinal,{ITEM_BODY_COLUMNS}
+                     FROM thread_items WHERE rollout_id=?1 AND item_id=?2"
+                ),
+                params![rollout, id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        ItemBodyRef::from_row(row, 2)?,
+                    ))
+                },
+            )
+            .optional()?)
+    }
+    fn hydrate(
+        bodies: &mut ItemBodyReader,
+        reference: &ItemBodyRef,
+        ordinal: i64,
+        id: &str,
+        preview: String,
+    ) -> Result<String> {
+        if reference.item_bytes <= 4 * 1024 * 1024 {
+            match bodies.read(reference, u64::try_from(ordinal)?, id) {
+                Ok(raw) => Ok(serde_json::to_string(&raw)?),
+                Err(_) => Ok(preview),
+            }
+        } else {
+            Ok(preview)
+        }
+    }
+    fn cache_scanned(
+        loaded: &mut HashMap<String, (String, i64)>,
+        items: Vec<ThreadHistoryItem>,
+    ) -> Result<()> {
+        for item in items {
+            let ordinal = i64::try_from(item.rollout_ordinal)?;
+            let raw = serde_json::to_string(&item.item_json)?;
+            // Chat cards display bounded bodies; keep an oversized canonical
+            // item at its card-grade preview like the window path does.
+            let raw = if raw.len() > 4 * 1024 * 1024 {
+                serde_json::to_string(&item_preview(&item.item_json))?
+            } else {
+                raw
+            };
+            loaded.entry(item.item_id).or_insert((raw, ordinal));
+        }
+        Ok(())
+    }
+    #[allow(clippy::too_many_arguments)]
     fn item_page(
-        conn: &Connection,
+        snapshot: &HistorySnapshot,
         session: &str,
         turn: Option<&str>,
         before: Option<i64>,
@@ -278,11 +399,73 @@ impl<'a> CanonicalThreadLog<'a> {
         internal: bool,
         messages: bool,
         summary: bool,
-    ) -> Result<Vec<Value>> {
-        let Some(rollout) = Self::rollout(conn, session)? else {
-            return Ok(vec![]);
+    ) -> Result<ItemPage> {
+        let Some(rollout) = snapshot.rollout.as_deref() else {
+            return Ok(ItemPage::default());
         };
-        let order = if after.is_some() { "ASC" } else { "DESC" };
+        let limit = usize::try_from(limit.clamp(1, 501))?;
+        let (low, high) = match turn {
+            Some(root) => Self::turn_ordinal_range(snapshot, rollout, root)?,
+            None => (0, i64::MAX),
+        };
+        let floor = Self::window_floor(snapshot, rollout)?;
+        // A trimmed turn is re-read from its own projected start record, an
+        // exact line boundary that always sits at the top of the requested
+        // range. Sparse anchors can be thousands of records away, which made
+        // ranges between two anchors unreachable within one bounded scan.
+        let start_hint = match turn {
+            Some(root) => turn_scan_hint(snapshot, rollout, root)?,
+            None => None,
+        };
+        let accept = |item: &ThreadHistoryItem| -> bool {
+            turn.map_or(true, |root| {
+                item.root_turn_id.as_deref().or(item.turn_id.as_deref()) == Some(root)
+            }) && (internal || item_is_visible(&item.item_json))
+                && (!messages
+                    || if internal {
+                        message_context(&item.item_json, &item.item_type)
+                    } else {
+                        matches!(
+                            item.item_type.as_str(),
+                            "user_message" | "assistant_message" | "agent_message"
+                        )
+                    })
+        };
+        let desc = after.is_none();
+        let mut output = ItemPage::default();
+        let window_before = before;
+        let mut window_after = after;
+        // Ascending paging starting below the trimmed window: the canonical
+        // rollout owns that range until the window begins, and mixing it into
+        // the window query would silently skip every earlier item.
+        if let (false, Some(after)) = (desc, after) {
+            if after < floor {
+                let ceiling = floor.min(high.saturating_add(1));
+                let scanned = scan_lineage(
+                    &snapshot.root,
+                    snapshot,
+                    &snapshot.segments,
+                    rollout,
+                    ScanDirection::Newer,
+                    Some(after),
+                    Some(low),
+                    Some(ceiling),
+                    limit,
+                    start_hint,
+                    &accept,
+                )?;
+                output.items = Self::project_scanned(scanned.items, session, internal, summary)?;
+                output.more = scanned.more;
+                window_after = Some(ceiling.saturating_sub(1));
+                if output.items.len() >= limit {
+                    // The page is filled entirely from the canonical range;
+                    // newer window items, if any, belong to the next page.
+                    output.more = true;
+                    return Ok(output);
+                }
+            }
+        }
+        let order = if desc { "DESC" } else { "ASC" };
         let root = if turn.is_some() {
             "AND COALESCE(root_turn_id,turn_id)=?2"
         } else {
@@ -297,40 +480,149 @@ impl<'a> CanonicalThreadLog<'a> {
         };
         let sql=format!("SELECT preview_json,rollout_ordinal,item_id,{ITEM_BODY_COLUMNS} FROM thread_items WHERE rollout_id=?1 {root} AND (?3 IS NULL OR rollout_ordinal<?3) AND (?4 IS NULL OR rollout_ordinal>?4) {} {message_filter} ORDER BY rollout_ordinal {order} LIMIT ?5",
             if internal {String::new()}else{format!("AND {VISIBLE}")});
-        let mut stmt = conn.prepare(&sql)?;
-        let rows = stmt.query_map(
-            params![rollout, turn, before, after, limit.clamp(1, 501)],
-            |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, i64>(1)?,
-                    row.get::<_, String>(2)?,
-                    ItemBodyRef::from_row(row, 3)?,
-                ))
-            },
-        )?;
-        let mut bytes = 0;
-        let mut output = Vec::new();
-        let mut bodies = ItemBodyReader::for_connection(conn)?;
-        for row in rows {
-            let (preview, ordinal, id, reference) = row?;
-            let size = if summary {
-                preview.len()
-            } else {
-                reference.item_bytes
-            };
-            if bytes + size > 16 * 1024 * 1024 && !output.is_empty() {
-                break;
+        let mut bodies = ItemBodyReader::for_connection(snapshot)?;
+        {
+            let mut stmt = snapshot.prepare(&sql)?;
+            let rows = stmt.query_map(
+                params![
+                    rollout,
+                    turn,
+                    window_before,
+                    window_after,
+                    i64::try_from(limit + 1)?
+                ],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, String>(2)?,
+                        ItemBodyRef::from_row(row, 3)?,
+                    ))
+                },
+            )?;
+            let mut bytes = 0usize;
+            for row in rows {
+                let (preview, ordinal, id, reference) = row?;
+                let size = if summary {
+                    preview.len()
+                } else {
+                    reference.item_bytes
+                };
+                if bytes.saturating_add(size) > 16 * 1024 * 1024 && !output.items.is_empty() {
+                    output.more = true;
+                    break;
+                }
+                bytes += size;
+                let raw = if summary {
+                    preview
+                } else {
+                    Self::hydrate(
+                        &mut bodies,
+                        &reference,
+                        ordinal,
+                        &id,
+                        preview,
+                    )?
+                };
+                output.items.push(Self::item(raw, ordinal, session, internal)?);
             }
-            bytes += size;
-            let raw = if summary {
-                preview
-            } else {
-                serde_json::to_string(&bodies.read(&reference, u64::try_from(ordinal)?, &id)?)?
-            };
-            output.push(Self::item(raw, ordinal, session, internal)?);
+        }
+        if output.items.len() > limit {
+            output.items.truncate(limit);
+            output.more = true;
+        }
+        // Newest-first paging that ran out inside the window must continue
+        // below its trimmed floor, where only the canonical rollout remains.
+        // The re-read starts at the owned turn's own upper bound, not the
+        // window floor: a turn that sits entirely below the window would
+        // otherwise walk every newer turn's records before reaching itself.
+        if desc && !output.more && output.items.len() < limit {
+            let edge = before
+                .map_or(floor, |before| before.min(floor))
+                .min(high.saturating_add(1));
+            if edge > low {
+                let missing = limit - output.items.len();
+                let scanned = scan_lineage(
+                    &snapshot.root,
+                    snapshot,
+                    &snapshot.segments,
+                    rollout,
+                    ScanDirection::Older,
+                    Some(edge),
+                    Some(low),
+                    None,
+                    missing,
+                    start_hint,
+                    &accept,
+                )?;
+                output.more = scanned.more;
+                // The re-read slice is already newest-first, matching this
+                // page order, so it appends without another reversal.
+                output.items.extend(Self::project_scanned(
+                    scanned.items,
+                    session,
+                    internal,
+                    summary,
+                )?);
+            }
         }
         Ok(output)
+    }
+    /// Whether one accepted item exists just outside a page edge. The probe
+    /// reuses the bounded reader, so an edge that already sits below the
+    /// trimmed window still reports the true adjacency.
+    fn has_adjacent(
+        snapshot: &HistorySnapshot,
+        session: &str,
+        root: &str,
+        edge: i64,
+        direction: ScanDirection,
+        internal: bool,
+    ) -> Result<bool> {
+        let probe = match direction {
+            ScanDirection::Older => Self::item_page(
+                snapshot,
+                session,
+                Some(root),
+                Some(edge),
+                None,
+                1,
+                internal,
+                false,
+                false,
+            )?,
+            ScanDirection::Newer => Self::item_page(
+                snapshot,
+                session,
+                Some(root),
+                None,
+                Some(edge),
+                1,
+                internal,
+                false,
+                false,
+            )?,
+        };
+        Ok(probe.more || !probe.items.is_empty())
+    }
+    fn project_scanned(
+        items: Vec<ThreadHistoryItem>,
+        session: &str,
+        internal: bool,
+        summary: bool,
+    ) -> Result<Vec<Value>> {
+        items
+            .into_iter()
+            .map(|item| {
+                let ordinal = i64::try_from(item.rollout_ordinal)?;
+                let raw = if summary {
+                    serde_json::to_string(&item_preview(&item.item_json))?
+                } else {
+                    serde_json::to_string(&item.item_json)?
+                };
+                Self::item(raw, ordinal, session, internal)
+            })
+            .collect()
     }
     fn turn(conn: &Connection, session: &str, turn: &str) -> Result<Option<Value>> {
         let row=conn.query_row("SELECT a.root_turn_id,a.user_round,CASE WHEN t.status='aborted' THEN COALESCE(json_extract(t.error_json,'$.status'),a.status,'aborted') WHEN t.status IN ('completed','failed') THEN t.status ELSE a.status END,a.client_message_id,a.created_at_ms,a.updated_at_ms,t.error_json,a.control_json FROM queue.canonical_turn_admissions a LEFT JOIN state.canonical_threads d ON d.thread_id=a.thread_id LEFT JOIN thread_turns t ON t.rollout_id=d.rollout_id AND t.turn_id=a.turn_id WHERE a.thread_id=?1 AND a.turn_id=?2",params![session,turn],|r|Ok((r.get::<_,String>(0)?,r.get::<_,i64>(1)?,r.get::<_,String>(2)?,r.get::<_,Option<String>>(3)?,r.get::<_,i64>(4)?,r.get::<_,i64>(5)?,r.get::<_,Option<String>>(6)?,r.get::<_,Option<String>>(7)?))).optional()?;
@@ -365,12 +657,13 @@ impl<'a> CanonicalThreadLog<'a> {
     }
     fn chat_row(
         &self,
-        conn: &Connection,
+        snapshot: &HistorySnapshot,
         session: &str,
         turn: &Value,
         seq: i64,
     ) -> Result<ChatViewRow> {
         use super::thread_view_projection as p;
+        let conn: &Connection = snapshot;
         let root = turn["root_turn_id"].as_str().unwrap_or_default();
         let round = turn["user_turn_index"].as_i64().unwrap_or(0);
         let mut row = p::new_chat(
@@ -414,11 +707,99 @@ impl<'a> CanonicalThreadLog<'a> {
                 row.user.attachments = p::user_attachments(a);
             }
         }
-        let Some(rollout) = Self::rollout(conn, session)? else {
+        let Some(rollout) = snapshot.rollout.clone() else {
             return Ok(row);
         };
+        // The owning root's earliest record boundary. Every canonical re-read
+        // below starts there, so a trimmed turn never depends on how far away
+        // its nearest sparse anchor happens to be.
+        let start_hint = turn_scan_hint(conn, &rollout, root)?;
         let summary = super::thread_chat_summary::read(conn, &rollout, root)?;
-        let mut bodies = ItemBodyReader::for_connection(conn)?;
+        // Every referenced display item is resolved once. Items that already
+        // left the bounded active window are re-read from the canonical rollout
+        // instead of silently rendering an empty message card. Chat cards show
+        // bounded full bodies, so the few referenced items per turn are
+        // hydrated from their verified canonical body and fall back to the
+        // card-grade preview when the source is unreadable or unusually large.
+        let mut wanted: Vec<&str> = Vec::new();
+        for id in [
+            summary.user_item_id.as_deref(),
+            summary.assistant_item_id.as_deref(),
+            summary.question_panel_item_id.as_deref(),
+            summary.plan_item_id.as_deref(),
+            summary.reasoning_item_id.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if !wanted.contains(&id) {
+                wanted.push(id);
+            }
+        }
+        let mut loaded: HashMap<String, (String, i64)> = HashMap::new();
+        {
+            let mut bodies = ItemBodyReader::for_connection(snapshot)?;
+            for id in &wanted {
+                if let Some((preview, ordinal, reference)) =
+                    Self::window_item(snapshot, &rollout, id)?
+                {
+                    let raw = Self::hydrate(&mut bodies, &reference, ordinal, id, preview)?;
+                    loaded.insert((*id).to_owned(), (raw, ordinal));
+                }
+            }
+        }
+        if wanted.iter().any(|id| !loaded.contains_key(*id)) {
+            let (low, high) = Self::turn_ordinal_range(conn, &rollout, root)?;
+            // Anything at or above the window floor still owns an index row, so
+            // only the trimmed range below it needs a canonical re-read.
+            let edge = Self::window_floor(conn, &rollout)?.min(high.saturating_add(1));
+            let accept = |item: &ThreadHistoryItem| -> bool {
+                item.root_turn_id.as_deref().or(item.turn_id.as_deref()) == Some(root)
+                    && wanted.iter().any(|id| item.item_id == *id)
+            };
+            if let Some(id) = summary
+                .user_item_id
+                .as_deref()
+                .filter(|id| !loaded.contains_key(*id))
+            {
+                // User input opens the owned range; probe forward from the turn
+                // start so a long turn need not be walked in full for it.
+                let scanned = scan_lineage(
+                    &snapshot.root,
+                    snapshot,
+                    &snapshot.segments,
+                    &rollout,
+                    ScanDirection::Newer,
+                    Some(low.saturating_sub(1)),
+                    Some(low),
+                    Some(edge),
+                    1,
+                    start_hint,
+                    &|item: &ThreadHistoryItem| accept(item) && item.item_id == id,
+                )?;
+                Self::cache_scanned(&mut loaded, scanned.items)?;
+            }
+            if wanted.iter().any(|id| !loaded.contains_key(*id)) {
+                // Remaining card items (answer tail, plan, panel, reasoning)
+                // live at or near the owned turn's upper bound. Walking back
+                // from that bound keeps the re-read inside one anchor interval
+                // plus the turn itself instead of crossing every newer turn.
+                let scanned = scan_lineage(
+                    &snapshot.root,
+                    snapshot,
+                    &snapshot.segments,
+                    &rollout,
+                    ScanDirection::Older,
+                    Some(high.saturating_add(1)),
+                    Some(low),
+                    None,
+                    usize::try_from(ANCHOR_INTERVAL)?,
+                    start_hint,
+                    &accept,
+                )?;
+                Self::cache_scanned(&mut loaded, scanned.items)?;
+            }
+        }
         for (kind, id) in [
             ("user_message", summary.user_item_id.as_deref()),
             ("assistant_message", summary.assistant_item_id.as_deref()),
@@ -426,23 +807,8 @@ impl<'a> CanonicalThreadLog<'a> {
             ("plan", summary.plan_item_id.as_deref()),
         ] {
             let Some(id) = id else { continue };
-            let item = conn
-                .query_row(&format!("SELECT preview_json,rollout_ordinal,{ITEM_BODY_COLUMNS} FROM thread_items WHERE rollout_id=?1 AND item_id=?2"), params![rollout, id], |r| {
-                    Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, ItemBodyRef::from_row(r, 2)?))
-                })
-                .optional()?;
-            let Some((preview, ordinal, reference)) = item else { continue };
-            // Chat cards display bounded full bodies, while the stored preview
-            // is card-grade only. Hydrate the few referenced items per turn
-            // from the verified canonical body; fall back to the preview when
-            // the source is temporarily unreadable or unusually large.
-            let raw = if reference.item_bytes <= 4 * 1024 * 1024 {
-                match bodies.read(&reference, u64::try_from(ordinal)?, id) {
-                    Ok(raw) => serde_json::to_string(&raw)?,
-                    Err(_) => preview,
-                }
-            } else {
-                preview
+            let Some((raw, ordinal)) = loaded.remove(id) else {
+                continue;
             };
             let item = Self::item(raw, ordinal, session, false)?;
             let body = &item["payload"];
@@ -514,33 +880,53 @@ impl<'a> CanonicalThreadLog<'a> {
                 }
             }
         }
+        if row.assistant.question_panel.is_none() {
+            // The panel may live below the trimmed window; walk the owners of
+            // the owned turn directly in the canonical rollout. A turn that
+            // still owns window rows cannot hide a panel from the query above,
+            // so the canonical pass only runs for trimmed turns.
+            let (low, high) = Self::turn_ordinal_range(conn, &rollout, root)?;
+            if low < Self::window_floor(conn, &rollout)? {
+                let scanned = scan_lineage(
+                    &snapshot.root,
+                    snapshot,
+                    &snapshot.segments,
+                    &rollout,
+                    ScanDirection::Older,
+                    Some(high.saturating_add(1)),
+                    Some(low),
+                    None,
+                    64,
+                    start_hint,
+                    &|item: &ThreadHistoryItem| {
+                        item.root_turn_id.as_deref().or(item.turn_id.as_deref()) == Some(root)
+                            && item_is_visible(&item.item_json)
+                            && matches!(
+                                item.item_type.as_str(),
+                                "tool_call" | "tool_result" | "question_panel"
+                            )
+                    },
+                )?;
+                // Newest-first: the latest visible panel wins.
+                for item in scanned.items {
+                    let ordinal = i64::try_from(item.rollout_ordinal)?;
+                    let preview = serde_json::to_string(&item_preview(&item.item_json))?;
+                    let projected = Self::item(preview, ordinal, session, false)?;
+                    if let Some(panel) = p::extract_question_panel(&projected["payload"]) {
+                        row.assistant.question_panel = Some(panel);
+                        break;
+                    }
+                }
+            }
+        }
         if let Some(id) = summary
             .reasoning_item_id
             .as_ref()
             .filter(|id| **id != row.assistant.item_id)
         {
-            if let Some((preview, ordinal, reference)) = conn
-                .query_row(
-                    &format!("SELECT preview_json,rollout_ordinal,{ITEM_BODY_COLUMNS} FROM thread_items WHERE rollout_id=?1 AND item_id=?2"),
-                    params![rollout, id],
-                    |record| Ok((
-                        record.get::<_, String>(0)?,
-                        record.get::<_, i64>(1)?,
-                        ItemBodyRef::from_row(record, 2)?,
-                    )),
-                )
-                .optional()?
-            {
-                // The thinking tail shown in the bubble is longer than the
-                // card-grade preview; read the verified body when bounded.
-                let raw = if reference.item_bytes <= 4 * 1024 * 1024 {
-                    match bodies.read(&reference, u64::try_from(ordinal)?, id) {
-                        Ok(raw) => serde_json::to_string(&raw)?,
-                        Err(_) => preview,
-                    }
-                } else {
-                    preview
-                };
+            // The thinking tail shown in the bubble is longer than the
+            // card-grade preview; the verified body is already hydrated above.
+            if let Some((raw, _)) = loaded.remove(id) {
                 let item: Value = serde_json::from_str(&raw)?;
                 let payload = item.get("payload").unwrap_or(&item);
                 let body = if payload.get("item_id").is_some() {
@@ -558,12 +944,38 @@ impl<'a> CanonicalThreadLog<'a> {
             Some((summary.process_count - i64::from(summary.assistant_process_text)).max(0));
         row.workspace_change_seq = summary.workspace_change_seq;
         row.subagents = summary.subagents;
-        let activity = conn.query_row(
+        let mut activity = conn.query_row(
             "SELECT preview_json,rollout_ordinal FROM thread_items WHERE rollout_id=?1
              AND COALESCE(root_turn_id,turn_id)=?2 AND visible=1 ORDER BY rollout_ordinal DESC LIMIT 1",
             params![rollout,root],
             |record| Ok((record.get::<_,String>(0)?,record.get::<_,i64>(1)?)),
         ).optional()?;
+        if activity.is_none() {
+            // The newest visible item of an early turn lives only in the
+            // canonical rollout once the window trimmed it.
+            let (low, high) = Self::turn_ordinal_range(conn, &rollout, root)?;
+            let scanned = scan_lineage(
+                &snapshot.root,
+                snapshot,
+                &snapshot.segments,
+                &rollout,
+                ScanDirection::Older,
+                Some(high.saturating_add(1)),
+                Some(low),
+                None,
+                1,
+                start_hint,
+                &|item: &ThreadHistoryItem| {
+                    item.root_turn_id.as_deref().or(item.turn_id.as_deref()) == Some(root)
+                        && item_is_visible(&item.item_json)
+                },
+            )?;
+            for item in scanned.items {
+                let ordinal = i64::try_from(item.rollout_ordinal)?;
+                activity = Some((serde_json::to_string(&item_preview(&item.item_json))?, ordinal));
+                break;
+            }
+        }
         if let Some((raw, ordinal)) = activity {
             p::set_completed_activity(&mut row, &Self::item(raw, ordinal, session, false)?);
         }
@@ -625,11 +1037,10 @@ impl ThreadLogStore for CanonicalThreadLog<'_> {
             page.has_newer = page.next_after.is_some_and(|n| n < latest);
         } else {
             let limit = limit.clamp(1, TRAJECTORY_PAGE_MAX);
-            let mut items =
-                Self::item_page(&conn, s, root, b, a, limit as i64 + 1, false, false, true)?;
-            page.has_more = items.len() > limit;
-            items.truncate(limit);
-            for item in items {
+            let items =
+                Self::item_page(&conn, s, root, b, a, limit as i64, false, false, true)?;
+            page.has_more = items.more;
+            for item in items.items {
                 let id = item["item_id"].as_str().unwrap_or("");
                 let turn = item["turn_id"].as_str().unwrap_or("");
                 let root = item["root_turn_id"].as_str().unwrap_or(turn);
@@ -1103,7 +1514,8 @@ impl ThreadLogStore for CanonicalThreadLog<'_> {
         {
             return Ok(None);
         }
-        if Self::rollout(&self.connection(Some(s))?, s)?.is_none() {
+        let snapshot = self.connection(Some(s))?;
+        if Self::rollout(&snapshot, s)?.is_none() {
             bail!("thread instructions must be frozen before appending history");
         }
         let thread = ThreadId::new(s)?;
@@ -1156,7 +1568,8 @@ impl ThreadLogStore for CanonicalThreadLog<'_> {
     }
     fn list_thread_turns(&self, u: &str, s: &str, b: Option<i64>, l: i64) -> Result<Vec<Value>> {
         self.check(u, s)?;
-        Self::turns(&self.connection(Some(s))?, s, b, None, l)
+        let snapshot = self.connection(Some(s))?;
+        Self::turns(&snapshot, s, b, None, l)
     }
     fn get_thread_log_counts(&self, u: &str, s: &str, internal: bool) -> Result<(i64, i64)> {
         self.check(u, s)?;
@@ -1282,19 +1695,36 @@ impl ThreadLogStore for CanonicalThreadLog<'_> {
             return Ok(None);
         };
         let limit = l.clamp(1, 500);
-        let mut items = Self::items(
+        let page = Self::item_page(
             &conn,
             s,
             Some(t),
             b,
             a.or_else(|| b.is_none().then_some(-1)),
-            limit + 1,
+            limit,
             internal,
             false,
+            false,
         )?;
-        let more = items.len() > limit as usize;
-        items.truncate(limit as usize);
+        let desc = b.is_some();
+        let more = page.more;
+        let mut items = page.items;
         items.sort_by_key(|i| i["item_index"].as_i64().unwrap_or(0));
+        let first = items.first().and_then(|i| i["item_index"].as_i64());
+        let last = items.last().and_then(|i| i["item_index"].as_i64());
+        // Pagination edges can sit below the trimmed window, so adjacency is
+        // probed through the same bounded reader instead of a window-only
+        // EXISTS that would hide every earlier item.
+        let older = match first {
+            Some(_) if more && desc => true,
+            Some(first) => Self::has_adjacent(&conn, s, t, first, ScanDirection::Older, internal)?,
+            None => false,
+        };
+        let newer = match last {
+            Some(_) if more && !desc => true,
+            Some(last) => Self::has_adjacent(&conn, s, t, last, ScanDirection::Newer, internal)?,
+            None => false,
+        };
         turn["next_before"] = items
             .first()
             .map(|i| i["item_index"].clone())
@@ -1303,47 +1733,56 @@ impl ThreadLogStore for CanonicalThreadLog<'_> {
             .last()
             .map(|i| i["item_index"].clone())
             .unwrap_or(Value::Null);
-        turn["has_more"] = json!(more);
-        let rollout = Self::rollout(&conn, s)?;
-        let first = items.first().and_then(|i| i["item_index"].as_i64());
-        let last = items.last().and_then(|i| i["item_index"].as_i64());
-        let exists = |edge: Option<i64>, op: &str| -> Result<bool> {
-            let Some(edge) = edge else { return Ok(false) };
-            Ok(conn.query_row(&format!("SELECT EXISTS(SELECT 1 FROM thread_items WHERE rollout_id=?1 AND COALESCE(root_turn_id,turn_id)=?2 AND rollout_ordinal{op}?3 {})",if internal{String::new()}else{format!("AND {VISIBLE}")}),params![rollout,t,edge],|r|r.get(0))?)
-        };
-        let older = exists(first, "<")?;
-        let newer = exists(last, ">")?;
         turn["has_older"] = json!(older);
         turn["has_newer"] = json!(newer);
-        turn["has_more"] = json!(
-            more || if a.is_some() || b.is_none() {
-                newer
-            } else {
-                older
-            }
-        );
+        turn["has_more"] = json!((if desc { older } else { newer }) && !items.is_empty());
         turn["items"] = json!(items);
         Ok(Some(turn))
     }
     fn get_thread_item(&self, u: &str, s: &str, id: &str, internal: bool) -> Result<Option<Value>> {
         self.check(u, s)?;
-        let conn = self.connection(Some(s))?;
-        let rollout = Self::rollout(&conn, s)?;
-        let sql=format!("SELECT {ITEM_BODY_COLUMNS},rollout_ordinal FROM thread_items WHERE rollout_id=?1 AND item_id=?2 {}",if internal{String::new()}else{format!("AND {VISIBLE}")});
-        let mut result = conn
-            .query_row(&sql, params![rollout, id], |r| {
-                Ok((ItemBodyRef::from_row(r, 0)?, r.get::<_, i64>(5)?))
+        let snapshot = self.connection(Some(s))?;
+        let Some(rollout) = snapshot.rollout.clone() else {
+            return Ok(None);
+        };
+        let mut bodies = ItemBodyReader::for_connection(&snapshot)?;
+        // A single item read may target a turn that already left the active
+        // window; keep the same verified-body path and re-read the canonical
+        // rollout through its sparse anchors instead of returning "not found".
+        let located = match Self::window_item(&snapshot, &rollout, id)? {
+            Some((preview, ordinal, reference)) => {
+                let raw = Self::hydrate(&mut bodies, &reference, ordinal, id, preview)?;
+                Some((raw, ordinal))
+            }
+            None => find_item_via_anchor(
+                &snapshot,
+                &snapshot.root,
+                &snapshot.segments,
+                &rollout,
+                id,
+            )?
+            .map(|found| -> Result<(String, i64)> {
+                Ok((
+                    serde_json::to_string(&found.item_json)?,
+                    i64::try_from(found.rollout_ordinal)?,
+                ))
             })
-            .optional()?
-            .map(|(reference, ordinal)| {
-                let raw = ItemBodyReader::for_connection(&conn)?.read(
-                    &reference,
-                    u64::try_from(ordinal)?,
-                    id,
-                )?;
-                Self::item(serde_json::to_string(&raw)?, ordinal, s, internal)
-            })
-            .transpose()?;
+            .transpose()?,
+        };
+        let mut result = match located {
+            Some((raw, ordinal)) => {
+                if !internal {
+                    // The window lookup selects by identity alone, so re-apply
+                    // the display visibility contract to the re-read item.
+                    let value: Value = serde_json::from_str(&raw)?;
+                    if !item_is_visible(&value) {
+                        return Ok(None);
+                    }
+                }
+                Some(Self::item(raw, ordinal, s, internal)?)
+            }
+            None => None,
+        };
         if let Some(item) = result.as_mut() {
             if let Some(vote) = self
                 .metadata
@@ -1429,31 +1868,22 @@ impl ThreadLogStore for CanonicalThreadLog<'_> {
                 more = true;
                 break;
             }
-            let mut page = Self::items(
+            let page = Self::item_page(
                 &conn,
                 s,
                 Some(id),
                 None,
                 None,
-                remaining as i64 + 1,
+                remaining as i64,
+                false,
                 false,
                 false,
             )?;
-            if page.len() > remaining {
-                page.truncate(remaining);
-                more = true;
-            }
-            // The per-turn reader also has a byte cap. Consult the index so
-            // a short byte-limited page never claims the turn was complete.
-            if let Some(first) = page
-                .iter()
-                .filter_map(|item| item["item_index"].as_i64())
-                .min()
-            {
-                let older:bool=conn.query_row(&format!("SELECT EXISTS(SELECT 1 FROM thread_items WHERE rollout_id=?1 AND COALESCE(root_turn_id,turn_id)=?2 AND rollout_ordinal<?3 AND {VISIBLE})"),params![rollout,id,first],|r|r.get(0))?;
-                more |= older;
-            }
-            for item in page {
+            // The reader reports continuation itself (window overflow, byte
+            // cap or canonical re-read), so a short page never claims that an
+            // early turn was complete.
+            more |= page.more;
+            for item in page.items {
                 let bytes = serde_json::to_vec(&item)?.len();
                 if item_bytes.saturating_add(bytes) > 16 * 1024 * 1024 && !items.is_empty() {
                     more = true;

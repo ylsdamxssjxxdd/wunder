@@ -1213,3 +1213,183 @@ async fn thread_first_user_questions_returns_the_first_visible_user_message() {
     assert!(!questions.contains_key("missing-thread"));
     assert!(backend.thread_first_user_questions(&[]).unwrap().is_empty());
 }
+
+/// A thread longer than the bounded active window must still open its oldest
+/// chat cards and process timeline. The projection keeps only the newest
+/// `ACTIVE_WINDOW_ITEMS` rows; every read below that floor has to revalidate
+/// against the canonical rollout instead of reporting "not found".
+#[tokio::test]
+async fn trimmed_active_window_replays_earliest_chat_and_process_from_rollout() {
+    use super::thread_history::ACTIVE_WINDOW_ITEMS;
+    use rusqlite::Connection;
+    use std::collections::BTreeMap;
+
+    let root = tempfile::tempdir().unwrap();
+    let store = LocalThreadStore::open(root.path()).unwrap();
+    // 60 user turns with 40 model rounds each keeps the total comfortably above
+    // the window while staying modest enough for a unit test.
+    let user_rounds = 60;
+    let model_rounds = 40;
+    let spec = super::stress_model::StressThreadSpec {
+        session_id: THREAD.into(),
+        title: "fixture".into(),
+        workspace_id: None,
+        user_rounds,
+        model_rounds_per_turn: model_rounds,
+        seed: Some(7),
+        scenario: crate::storage::StressThreadScenario::Typical,
+    };
+    store
+        .generate_stress_thread(USER, &spec, |_, _| {})
+        .await
+        .unwrap();
+    let db = SqliteStorage::new(
+        root.path()
+            .join("state_1.sqlite")
+            .to_string_lossy()
+            .into_owned(),
+    );
+    db.ensure_initialized().unwrap();
+
+    // Precondition: the projection really trimmed everything outside its
+    // window, so any successful early read below proves the rollout fallback.
+    let history = Connection::open(root.path().join("thread_history_1.sqlite")).unwrap();
+    let (window_rows, floor) = history
+        .query_row(
+            "SELECT COUNT(*),MIN(rollout_ordinal) FROM thread_items",
+            [],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+        )
+        .unwrap();
+    assert_eq!(window_rows, ACTIVE_WINDOW_ITEMS);
+    let anchors: i64 = history
+        .query_row(
+            "SELECT COUNT(*) FROM thread_item_anchors",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(anchors > 0, "sparse anchors must cover the trimmed prefix");
+
+    let turns = db.list_thread_turns(USER, THREAD, None, 201).unwrap();
+    assert_eq!(turns.len(), user_rounds as usize);
+    let first = turns.last().expect("oldest turn");
+    let first_turn = first["turn_id"].as_str().expect("turn id").to_owned();
+
+    let user = db
+        .get_thread_item(USER, THREAD, &format!("{first_turn}:user"), false)
+        .unwrap()
+        .expect("trimmed user item must replay");
+    assert!(
+        user["item_index"].as_i64().unwrap() < floor,
+        "fixture must keep the oldest turn below the active window"
+    );
+    assert!(!user["payload"]["content"]
+        .as_str()
+        .unwrap_or_default()
+        .is_empty());
+    let answer = db
+        .get_thread_item(
+            USER,
+            THREAD,
+            &format!("{first_turn}:text-{model_rounds}"),
+            false,
+        )
+        .unwrap();
+    assert!(answer.is_some(), "trimmed answer item must replay");
+
+    // A turn in the middle of the trimmed prefix historically sat between two
+    // sparse anchors far beyond one scan budget; its own start record must
+    // resolve it without walking the whole rollout.
+    let middle = turns
+        .iter()
+        .find(|turn| turn["user_turn_index"].as_i64() == Some(i64::from(user_rounds) / 2))
+        .expect("middle turn");
+    let middle_turn = middle["turn_id"].as_str().expect("middle turn id");
+    let middle_answer = db
+        .get_thread_item(
+            USER,
+            THREAD,
+            &format!("{middle_turn}:text-{model_rounds}"),
+            false,
+        )
+        .unwrap()
+        .expect("middle trimmed answer item must replay");
+    assert!(middle_answer["item_index"].as_i64().unwrap() < floor);
+    let mut cursor = Some(i64::MAX);
+    let mut process = BTreeMap::new();
+    let mut pages = 0;
+    loop {
+        let page = db
+            .get_thread_turn_page(USER, THREAD, &first_turn, cursor, None, 10, false)
+            .unwrap()
+            .expect("owned turn exists");
+        let items = page["items"].as_array().expect("items array");
+        assert!(
+            !items.is_empty(),
+            "process page below the active window must not be empty"
+        );
+        for item in items {
+            let index = item["item_index"].as_i64().unwrap();
+            assert!(index < floor, "trimmed process must come from the rollout");
+            process.insert(item["item_id"].as_str().unwrap().to_owned(), index);
+        }
+        pages += 1;
+        if !page["has_older"].as_bool().unwrap() {
+            break;
+        }
+        cursor = page["next_before"].as_i64();
+        assert!(pages <= 20, "bounded pagination must terminate");
+    }
+    assert!(process.len() > 10);
+    assert!(process.contains_key(&format!("{first_turn}:user")));
+    assert!(process.contains_key(&format!("{first_turn}:text-{model_rounds}")));
+
+    // Oldest-first paging starts at the owned turn's first item and reports a
+    // newer neighbour even though every row lives below the window.
+    let head = db
+        .get_thread_turn_page(USER, THREAD, &first_turn, None, None, 10, false)
+        .unwrap()
+        .expect("owned turn exists");
+    let items = head["items"].as_array().unwrap();
+    assert_eq!(items.len(), 10);
+    assert_eq!(
+        items[0]["item_id"].as_str(),
+        Some(format!("{first_turn}:user").as_str())
+    );
+    assert!(!head["has_older"].as_bool().unwrap());
+    assert!(head["has_newer"].as_bool().unwrap());
+
+    // Chat pages read newest to oldest; every round must keep its input and
+    // its answer even after its item rows left the active window.
+    let mut rows: BTreeMap<i64, (String, String, String)> = BTreeMap::new();
+    let mut before = None;
+    let mut guards = 0;
+    loop {
+        let page = db
+            .thread_view_page(USER, THREAD, "chat", before, 12)
+            .unwrap();
+        for row in &page.chat {
+            rows.insert(
+                row.user_round,
+                (
+                    row.user.content.clone(),
+                    row.assistant.content.clone(),
+                    row.assistant.item_id.clone(),
+                ),
+            );
+        }
+        guards += 1;
+        assert!(guards <= 10, "chat pagination must terminate");
+        match (page.has_more, page.next_before) {
+            (true, Some(next)) => before = Some(next),
+            _ => break,
+        }
+    }
+    assert_eq!(rows.len(), user_rounds as usize);
+    assert_eq!(rows.keys().next(), Some(&1), "oldest chat round missing");
+    for (round, (user, assistant, _)) in &rows {
+        assert!(!user.is_empty(), "round {round} lost its user message");
+        assert!(!assistant.is_empty(), "round {round} lost its answer");
+    }
+}

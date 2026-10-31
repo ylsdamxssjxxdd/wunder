@@ -75,7 +75,9 @@ impl NativeDesktop {
         session: &str,
         command: NativeChatCommand,
     ) -> Result<String> {
-        self.ensure_thread_open(session)?;
+        // Goal control must reach its own running round even when the open
+        // lease lapsed; a foreign owner still keeps the guard.
+        self.ensure_thread_control(session)?;
         self.runtime.block_on(async {
             let store = self.state().user_store.clone();
             let owner = self.user_id().to_owned();

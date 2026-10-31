@@ -9,7 +9,7 @@
     <rect x="64" y="202" width="1472" height="360" rx="12" class="card"/>
     <text x="88" y="232" class="card-t">折叠后 · 保留摘要</text><text x="812" y="232" class="card-t">展开后 · 查看步骤与输出</text>
     <rect x="88" y="254" width="676" height="46" rx="6" fill="#FBFAF8"/><path d="m98 270 5 4-5 4" fill="none" stroke="#8A8F99" stroke-width="1.4"/><text x="118" y="278" class="ui13 secondary">工作过程 · 3 步</text><text x="230" y="278" class="ui12 muted">已完成</text><text x="740" y="278" text-anchor="end" class="tiny">点击整行展开</text>
-    <text x="88" y="332" class="note">过程条只显示步数和聚合状态；不在折叠时重复全部工具详情。</text><text x="88" y="360" class="note">完成后可展开复核，运行时可跟随最新步骤。</text><text x="88" y="396" class="tiny">更早过程按需分页；加载/失败使用页顶 30px 区域。</text><text x="88" y="430" class="tiny">展开/折叠不使用高度动画，避免长会话布局抖动。</text>
+    <text x="88" y="332" class="note">过程条只显示步数和聚合状态；不在折叠时重复全部工具详情。</text><text x="88" y="360" class="note">完成后可展开复核，运行时可跟随最新步骤。</text><text x="88" y="396" class="tiny">滚动到列表顶部自动加载更早一页；仅失败时显示一行重试条。</text><text x="88" y="430" class="tiny">展开/折叠不使用高度动画，避免长会话布局抖动。</text>
     <line x1="788" y1="222" x2="788" y2="538" stroke="#E8E6E3"/>
     <rect x="812" y="254" width="700" height="280" rx="6" fill="#FBFAF8"/>
     <path d="m824 270 5 4-5 4" fill="none" stroke="#8A8F99" stroke-width="1.4" transform="rotate(90 827 274)"/><text x="844" y="278" class="ui13 secondary">工作过程 · 3 步</text><text x="956" y="278" class="ui12 muted">已完成</text>
@@ -65,5 +65,5 @@
     <rect x="836" y="1526" width="676" height="62" rx="8" fill="#FBFAF8" stroke="#E8E6E3"/><circle cx="856" cy="1548" r="7" fill="none" stroke="#1A8A5C"/><path d="m852 1548 3 3 6-6" fill="none" stroke="#1A8A5C"/><text x="876" y="1552" class="ui13" font-weight="600">资料整理</text><text x="954" y="1552" class="ui12" fill="#1A8A5C">已完成</text><text x="850" y="1576" class="ui12 muted">摘要：已合并重复段落，输出 3 条结论。</text>
     <text x="836" y="1622" class="note">卡片只呈现标题、状态、摘要与可用操作。</text><text x="836" y="1648" class="note">运行时显示 22px 圆形中断按钮；点击卡查看子线程。</text><text x="836" y="1674" class="tiny">详情加载不阻塞主时间线；完成后不再显示中断。</text>
   </g>
-  <g id="footer"><line x1="64" y1="1730" x2="1536" y2="1730" stroke="#D8D5D0"/><text x="64" y="1750" class="tiny">事实来源：tool_process.slint · status_icon.slint · workflow_detail.slint · patch_diff_card.slint · timeline.slint</text><text x="1536" y="1750" text-anchor="end" class="mono tiny">05 / 09 · 2026-10-25</text></g>
+  <g id="footer"><line x1="64" y1="1730" x2="1536" y2="1730" stroke="#D8D5D0"/><text x="64" y="1750" class="tiny">事实来源：tool_process.slint · status_icon.slint · workflow_detail.slint · patch_diff_card.slint · timeline.slint</text><text x="1536" y="1750" text-anchor="end" class="mono tiny">05 / 09 · 2026-10-31</text></g>
 </svg>
