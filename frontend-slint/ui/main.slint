@@ -8,7 +8,7 @@ import { I18n } from "i18n.slint";
 // the root file get a public wrapper. The fields report focus through
 // components.slint / textedit-base.slint.
 export { TextFieldActivation } from "text_field.slint";
-import { Theme, DesktopPage, Conversation, WorkspaceCard, SidebarRow, CloudThreadCard, TextBlock, WorkflowLine, WorkflowSection, ToolWorkflowEntry, TimelineRow, TimelineCounts, TurnStatMetric, TurnMark, PatchCard, PatchLine, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, TrajRow, TrajSpan, TrajTick, TrajBoundary, TrajTiming, TrajSection, TrajTab, TrajSearchHit, TrajTokenBar, CronCard, CronRunCard, PromptPackCard, ChannelCatalogCard, ChannelAccountCard, ChannelBindingCard, ChannelLogCard, AvatarOption, AvatarColorChip, CompanionCard, PlanStep, InquiryQuestion, QueueTurn, DraftRecall, InterlinkApproval, WorkspaceFileRow, PinnedFileRow } from "theme.slint";
+import { Theme, DesktopPage, Conversation, WorkspaceCard, SidebarRow, CloudThreadCard, TextBlock, WorkflowLine, WorkflowSection, ToolWorkflowEntry, TimelineRow, TimelineCounts, TurnStatMetric, TurnMark, PatchCard, PatchLine, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, TrajRow, TrajSpan, TrajTick, TrajBoundary, TrajTiming, TrajSection, TrajTab, TrajSearchHit, TrajTokenBar, CronCard, CronRunCard, PromptPackCard, ChannelCatalogCard, ChannelAccountCard, ChannelBindingCard, ChannelLogCard, AvatarOption, AvatarColorChip, CompanionCard, PlanStep, InquiryQuestion, QueueTurn, DraftRecall, InterlinkApproval, WorkspaceFileRow } from "theme.slint";
 import { Action, EdgeToggle, RailButton, Avatar, FormField, MiddleHeader, MiddleFooter, ConfirmDialog, InfoDialog, ToastHost, ToastState } from "components.slint";
 export { ToastState }
 import { ProcessEntry } from "theme.slint";
@@ -643,11 +643,6 @@ export component MainWindow inherits Window {
     // `refresh` reloads the root and every expanded directory in one bounded
     // pass.
     in-out property <[WorkspaceFileRow]> ws-file-rows: [];
-    // Sticky ancestor-folder chain over the file tree, recomputed by the
-    // native controller from the live scroll offset.
-    in-out property <[PinnedFileRow]> ws-file-pinned: [];
-    in-out property <float> ws-file-pinned-bottom: 0;
-    callback ws-file-sticky-scroll(float);
     in-out property <bool> ws-file-loading: false;
     in-out property <string> ws-file-error;
     in-out property <bool> ws-file-offline: true;
@@ -1080,9 +1075,6 @@ export component MainWindow inherits Window {
                 file-busy: root.ws-file-busy;
                 file-active-path: root.ws-file-active-path;
                 file-active-index: root.ws-file-active-index;
-                file-pinned: root.ws-file-pinned;
-                file-pinned-bottom: root.ws-file-pinned-bottom;
-                file-sticky-scroll(scroll) => { root.ws-file-sticky-scroll(scroll); }
                 file-key(action) => { root.ws-file-key(action); }
                 split-ratio <=> root.sidebar-split-ratio;
                 layout-changed => { root.sidebar-layout-changed(); }

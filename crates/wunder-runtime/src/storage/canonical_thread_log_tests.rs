@@ -1445,3 +1445,281 @@ async fn trimmed_active_window_replays_earliest_chat_and_process_from_rollout() 
         "anchor-free process page below the window must not be empty"
     );
 }
+
+/// A fork keeps the inherited prefix in the parent rollout. Once the inherited
+/// turns leave the active window, every read has to bind the parent's byte
+/// offsets to the parent physical segment while the page cursor walks toward
+/// the child's own segment.
+#[tokio::test]
+async fn forked_thread_replays_inherited_rounds_beyond_the_active_window() {
+    use super::thread_history::ACTIVE_WINDOW_ITEMS;
+    use rusqlite::Connection;
+    use std::collections::BTreeSet;
+
+    const BRANCH: &str = "thread-sample-branch";
+
+    let root = tempfile::tempdir().unwrap();
+    let store = LocalThreadStore::open(root.path()).unwrap();
+    let user_rounds = 60i64;
+    let model_rounds = 40i64;
+    let spec = super::stress_model::StressThreadSpec {
+        session_id: THREAD.into(),
+        title: "fixture".into(),
+        workspace_id: None,
+        user_rounds,
+        model_rounds_per_turn: model_rounds,
+        seed: Some(7),
+        scenario: crate::storage::StressThreadScenario::Typical,
+    };
+    store
+        .generate_stress_thread(USER, &spec, |_, _| {})
+        .await
+        .unwrap();
+    let db = SqliteStorage::new(
+        root.path()
+            .join("state_1.sqlite")
+            .to_string_lossy()
+            .into_owned(),
+    );
+    db.ensure_initialized().unwrap();
+    let history_path = root.path().join("thread_history_1.sqlite");
+    let history = Connection::open(&history_path).unwrap();
+    let window_rows: i64 = history
+        .query_row("SELECT COUNT(*) FROM thread_items", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(window_rows, ACTIVE_WINDOW_ITEMS);
+    let floor: i64 = history
+        .query_row(
+            "SELECT MIN(rollout_ordinal) FROM thread_items",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+
+    let parent = ThreadId::new(THREAD).unwrap();
+    let fork_round = user_rounds / 2;
+    let turns = db.list_thread_turns(USER, THREAD, None, 201).unwrap();
+    let fork_turn = turns
+        .iter()
+        .find(|turn| turn["user_turn_index"].as_i64() == Some(fork_round))
+        .expect("fork turn")
+        .clone();
+    let fork_turn_id = fold_turn_id(&fork_turn);
+    let branch = ThreadId::new(BRANCH).unwrap();
+    store
+        .fork_through_turn(&parent, &branch, &TurnId::new(fork_turn_id).unwrap())
+        .await
+        .unwrap();
+
+    // The branch continues through the same production admission and writer
+    // path, so its own records live in a second physical rollout.
+    store
+        .admission_store()
+        .unwrap()
+        .register_owner(USER, BRANCH)
+        .unwrap();
+    let admitted = db
+        .accept_thread_turn(USER, BRANCH, &json!({"content":"sample branch input"}))
+        .unwrap();
+    let own_turn = admitted["turn_id"].as_str().unwrap().to_owned();
+    super::test_support::begin_turn(root.path(), USER, BRANCH, &own_turn);
+    db.append_thread_item(
+        USER,
+        &json!({"session_id":BRANCH,"turn_id":own_turn,
+        "item_id":format!("{own_turn}:text-1"),"kind":"assistant_message","role":"assistant",
+        "content":"sample branch answer","status":"completed"}),
+    )
+    .unwrap();
+    // Warm the branch projection, then remove the optional anchors: only each
+    // turn's own projected start record may locate the inherited prefix.
+    db.thread_view_page(USER, BRANCH, "chat", None, 12).unwrap();
+    history
+        .execute("DELETE FROM thread_item_anchors", [])
+        .unwrap();
+
+    let mut rounds = BTreeSet::new();
+    let mut before = None;
+    let mut guards = 0;
+    loop {
+        let page = db
+            .thread_view_page(USER, BRANCH, "chat", before, 12)
+            .unwrap();
+        for row in &page.chat {
+            assert!(
+                !row.user.content.is_empty(),
+                "forked round {} lost its user message",
+                row.user_round
+            );
+            assert!(
+                !row.assistant.content.is_empty(),
+                "forked round {} lost its answer",
+                row.user_round
+            );
+            rounds.insert(row.user_round);
+        }
+        guards += 1;
+        assert!(guards <= 10, "forked chat pagination must terminate");
+        match (page.has_more, page.next_before) {
+            (true, Some(next)) => before = Some(next),
+            _ => break,
+        }
+    }
+    assert_eq!(rounds.len(), (fork_round + 1) as usize);
+    assert_eq!(rounds.iter().next(), Some(&1), "inherited prefix is missing");
+
+    // The oldest inherited turn must still replay below the parent's window
+    // floor, and its process page must contain the input plus the last answer.
+    let first = turns
+        .iter()
+        .find(|turn| turn["user_turn_index"].as_i64() == Some(1))
+        .expect("oldest inherited turn")
+        .clone();
+    let first_turn = fold_turn_id(&first);
+    let user = db
+        .get_thread_item(USER, BRANCH, &format!("{first_turn}:user"), false)
+        .unwrap()
+        .expect("inherited user item must replay");
+    assert!(
+        user["item_index"].as_i64().unwrap() < floor,
+        "fixture must keep the inherited turn below the parent window"
+    );
+    let mut cursor = Some(i64::MAX);
+    let mut process = Vec::new();
+    let mut pages = 0;
+    loop {
+        let page = db
+            .get_thread_turn_page(USER, BRANCH, &first_turn, cursor, None, 10, false)
+            .unwrap()
+            .expect("inherited turn exists");
+        let items = page["items"].as_array().expect("items array");
+        assert!(
+            !items.is_empty(),
+            "inherited process page below the window must not be empty"
+        );
+        process.extend(items.iter().map(|item| item["item_id"].as_str().unwrap().to_owned()));
+        pages += 1;
+        if !page["has_older"].as_bool().unwrap() {
+            break;
+        }
+        cursor = page["next_before"].as_i64();
+        assert!(pages <= 20, "bounded pagination must terminate");
+    }
+    assert!(process.contains(&format!("{first_turn}:user")));
+    assert!(process.contains(&format!("{first_turn}:text-{model_rounds}")));
+}
+
+/// Cold rollouts may be stored compressed. A window-external read must decode
+/// into a seekable logical view before applying the same byte-offset contract.
+#[tokio::test]
+async fn compressed_rollout_replays_turns_beyond_the_active_window() {
+    use super::rollout_compression::{compress_rollout, CompressionOptions};
+    use super::thread_history::ACTIVE_WINDOW_ITEMS;
+    use rusqlite::Connection;
+
+    let root = tempfile::tempdir().unwrap();
+    let store = LocalThreadStore::open(root.path()).unwrap();
+    let user_rounds = 60i64;
+    let model_rounds = 40i64;
+    let spec = super::stress_model::StressThreadSpec {
+        session_id: THREAD.into(),
+        title: "fixture".into(),
+        workspace_id: None,
+        user_rounds,
+        model_rounds_per_turn: model_rounds,
+        seed: Some(7),
+        scenario: crate::storage::StressThreadScenario::Typical,
+    };
+    store
+        .generate_stress_thread(USER, &spec, |_, _| {})
+        .await
+        .unwrap();
+    let db = SqliteStorage::new(
+        root.path()
+            .join("state_1.sqlite")
+            .to_string_lossy()
+            .into_owned(),
+    );
+    db.ensure_initialized().unwrap();
+    let history = Connection::open(root.path().join("thread_history_1.sqlite")).unwrap();
+    let window_rows: i64 = history
+        .query_row("SELECT COUNT(*) FROM thread_items", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(window_rows, ACTIVE_WINDOW_ITEMS);
+    history
+        .execute("DELETE FROM thread_item_anchors", [])
+        .unwrap();
+    let state = Connection::open(root.path().join("state_1.sqlite")).unwrap();
+    let relative: String = state
+        .query_row("SELECT rollout_path FROM canonical_rollouts LIMIT 1", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    drop(state);
+    let rollout = root.path().join(relative);
+    let compressed = compress_rollout(
+        &rollout,
+        &CompressionOptions {
+            enabled: true,
+            level: 3,
+            min_age_days: 0,
+        },
+    )
+    .unwrap()
+    .expect("cold rollout compresses");
+    assert!(!rollout.exists(), "compression replaces the plain source");
+    assert!(compressed.exists());
+
+    let turns = db.list_thread_turns(USER, THREAD, None, 201).unwrap();
+    let first = turns.last().expect("oldest turn").clone();
+    let first_turn = fold_turn_id(&first);
+    let user = db
+        .get_thread_item(USER, THREAD, &format!("{first_turn}:user"), false)
+        .unwrap()
+        .expect("compressed user item must replay");
+    assert!(!user["payload"]["content"]
+        .as_str()
+        .unwrap_or_default()
+        .is_empty());
+    let mut before = None;
+    let mut guards = 0;
+    let mut replayed = 0;
+    loop {
+        let page = db.thread_view_page(USER, THREAD, "chat", before, 12).unwrap();
+        for row in &page.chat {
+            assert!(
+                !row.user.content.is_empty(),
+                "compressed round {} lost its user message",
+                row.user_round
+            );
+            assert!(
+                !row.assistant.content.is_empty(),
+                "compressed round {} lost its answer",
+                row.user_round
+            );
+            replayed += 1;
+        }
+        guards += 1;
+        assert!(guards <= 10, "compressed chat pagination must terminate");
+        match (page.has_more, page.next_before) {
+            (true, Some(next)) => before = Some(next),
+            _ => break,
+        }
+    }
+    assert_eq!(replayed, user_rounds as usize);
+    let page = db
+        .get_thread_turn_page(USER, THREAD, &first_turn, Some(i64::MAX), None, 10, false)
+        .unwrap()
+        .expect("owned turn exists");
+    assert!(
+        !page["items"].as_array().unwrap().is_empty(),
+        "compressed process page below the window must not be empty"
+    );
+}
+
+fn fold_turn_id(turn: &Value) -> String {
+    turn["turn_id"]
+        .as_str()
+        .or_else(|| turn["id"].as_str())
+        .expect("turn id")
+        .to_owned()
+}
