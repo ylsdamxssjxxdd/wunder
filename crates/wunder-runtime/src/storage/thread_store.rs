@@ -3465,6 +3465,30 @@ mod stress_batch_tests {
         );
     }
 
+    #[test]
+    fn compact_replayed_model_message_is_idempotent_and_matches_request_shape() {
+        let persisted = json!({
+            "role": "assistant",
+            "content": "",
+            "reasoning_content": "think",
+            "tool_calls": [{
+                "id": "call-9",
+                "type": "function",
+                "function": {"name": "read_file", "arguments": r#"{"path":"a.txt"}"#}
+            }],
+            "message_stats": {"input_tokens": 1},
+            "meta": {"type": "tool_call"}
+        });
+        let first = compact_replayed_model_message(persisted).expect("replayable assistant row");
+        let second = compact_replayed_model_message(first.clone()).expect("idempotent replay");
+        assert_eq!(first, second);
+        assert_eq!(first["role"], "assistant");
+        assert_eq!(first["reasoning_content"], "think");
+        assert_eq!(first["tool_calls"][0]["id"], "call-9");
+        assert!(first.get("message_stats").is_none());
+        assert!(first.get("meta").is_none());
+    }
+
     fn settings_record() -> CanonicalRecord {
         CanonicalRecord::Event(CanonicalEvent::SettingsApplied(
             serde_json::json!({"mode":"sample"}),

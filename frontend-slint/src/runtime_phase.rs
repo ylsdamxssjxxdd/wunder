@@ -59,6 +59,17 @@ impl Phase {
         matches!(self, Phase::Pending | Phase::Running | Phase::Inquiry)
     }
 
+    /// True once the turn has settled: it produced an answer ([`Phase::Done`]),
+    /// broke ([`Phase::Error`]), or the user ended it ([`Phase::Stopped`]).
+    ///
+    /// A settled mark is news, not a state: the durable catalogue keeps
+    /// answering the same terminal for the rest of the thread's life, so a
+    /// view must hold the mark for a beat and then present the row idle again.
+    /// [`Phase::Idle`] is not settled — it is the absence of a mark.
+    pub fn terminal(self) -> bool {
+        matches!(self, Phase::Done | Phase::Error | Phase::Stopped)
+    }
+
     /// Classify a status phrase this process did not author: a durable
     /// catalogue value, a cloud row, or a message state.
     ///
@@ -221,6 +232,21 @@ mod tests {
             let phase = Phase::of(phrase);
             assert!(phase.live(), "{phrase} must not read as idle");
             assert_ne!(phase, Phase::Running, "{phrase} is a user wait");
+        }
+    }
+
+    /// A settled mark is news, not a state: only `Done`/`Error`/`Stopped` are
+    /// terminal, and `Idle` is the absence of a mark rather than a settled end.
+    /// Treating any non-`Done` terminal as a permanent state left the stop box
+    /// and the failure badge stuck on a finished thread.
+    #[test]
+    fn only_done_error_and_stopped_are_terminal() {
+        for phase in [Phase::Done, Phase::Error, Phase::Stopped] {
+            assert!(phase.terminal(), "{phase:?} is settled");
+            assert!(!phase.live(), "{phase:?} is settled, so it is not live");
+        }
+        for phase in [Phase::Idle, Phase::Pending, Phase::Running, Phase::Inquiry] {
+            assert!(!phase.terminal(), "{phase:?} has not settled yet");
         }
     }
 }

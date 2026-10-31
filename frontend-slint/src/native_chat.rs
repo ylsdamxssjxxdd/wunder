@@ -1592,7 +1592,7 @@ fn reconcile_catalogue_statuses(
     local_statuses: &[(String, String)],
 ) {
     let now = Instant::now();
-    let mut holds_completion = false;
+    let mut holds_terminal = false;
     for row in rows.iter_mut() {
         let local_status = local_statuses
             .iter()
@@ -1618,18 +1618,19 @@ fn reconcile_catalogue_statuses(
                 Phase::from_code(row.runtime_phase),
             );
         }
-        // The catalogue reports "completed" for the rest of the thread's life.
-        // Once the finish is no longer news the row presents as idle, so a
-        // restart or a poll cannot restart yesterday's celebration.
+        // The catalogue keeps answering the same terminal (completed, cancelled,
+        // failed) for the rest of the thread's life. Once it is no longer news
+        // the row presents as idle, so a restart or a poll cannot resurrect an
+        // outcome — a celebration or a stop square — that ended long ago.
         if reconciled.retired {
             row.runtime_status = "".into();
             row.runtime_phase = Phase::Idle.code();
-        } else if Phase::from_code(row.runtime_phase) == Phase::Done {
-            holds_completion = true;
+        } else if Phase::from_code(row.runtime_phase).terminal() {
+            holds_terminal = true;
         }
     }
-    if holds_completion {
-        schedule_done_decay(app);
+    if holds_terminal {
+        schedule_settle_decay(app);
     }
     SESSION_STATUSES.with(|slot| {
         slot.borrow_mut().retain(|session| {
@@ -3029,13 +3030,14 @@ fn set_session_status(app: &MainWindow, session: &str, status: &str, phase: Phas
     // The hot→done completion gate must see every report, including repeated
     // ones, so it sits outside the row-change branch.
     crate::completion_notice::observe_status(app, session, phase);
-    if phase == Phase::Done {
-        schedule_done_decay(app);
+    if phase.terminal() {
+        schedule_settle_decay(app);
     }
 }
 
 /// Present one session as idle and forget what this client knew about its
-/// finish, so the next catalogue read can adopt whatever the thread does next.
+/// settled mark, so the next catalogue read can adopt whatever the thread does
+/// next.
 fn retire_session_status(app: &MainWindow, session: &str) {
     SESSION_STATUSES.with(|slot| slot.borrow_mut().forget(session));
     write_session_row(app, session, "", Phase::Idle);
@@ -3062,22 +3064,24 @@ fn write_session_row(app: &MainWindow, session: &str, status: &str, phase: Phase
     crate::navigation_ui::update_thread_status(app, session, status, phase);
 }
 
-/// Completion marks are retired on a tick rather than at read time: the durable
-/// catalogue keeps answering "completed" forever, so nothing else would ever
-/// take the mark down. The timer only runs while a row still carries one.
-const DONE_DECAY_TICK: Duration = Duration::from_millis(500);
+/// Settled marks are retired on a tick rather than at read time: the durable
+/// catalogue keeps answering the same terminal (completed, cancelled, failed)
+/// forever, so nothing else would ever take the mark down. Every settled phase
+/// is covered, so a stop square or a failure triangle ages out exactly like a
+/// completion. The timer only runs while a row still carries one.
+const SETTLE_DECAY_TICK: Duration = Duration::from_millis(500);
 
 thread_local! {
-    static DONE_DECAY: Timer = Timer::default();
+    static SETTLE_DECAY: Timer = Timer::default();
 }
 
-fn schedule_done_decay(app: &MainWindow) {
+fn schedule_settle_decay(app: &MainWindow) {
     let weak = app.as_weak();
-    DONE_DECAY.with(|timer| {
+    SETTLE_DECAY.with(|timer| {
         if timer.running() {
             return;
         }
-        timer.start(TimerMode::Repeated, DONE_DECAY_TICK, move || {
+        timer.start(TimerMode::Repeated, SETTLE_DECAY_TICK, move || {
             let Some(app) = weak.upgrade() else {
                 return;
             };
@@ -3085,7 +3089,7 @@ fn schedule_done_decay(app: &MainWindow) {
             let due: Vec<String> = app
                 .get_conversations()
                 .iter()
-                .filter(|row| Phase::from_code(row.runtime_phase) == Phase::Done)
+                .filter(|row| Phase::from_code(row.runtime_phase).terminal())
                 .map(|row| row.id.to_string())
                 .filter(|session| {
                     SESSION_STATUSES.with(|slot| slot.borrow().should_retire(session, now))
@@ -3101,9 +3105,9 @@ fn schedule_done_decay(app: &MainWindow) {
             let pending = app
                 .get_conversations()
                 .iter()
-                .any(|row| Phase::from_code(row.runtime_phase) == Phase::Done);
+                .any(|row| Phase::from_code(row.runtime_phase).terminal());
             if !pending {
-                DONE_DECAY.with(|timer| timer.stop());
+                SETTLE_DECAY.with(|timer| timer.stop());
             }
         });
     });

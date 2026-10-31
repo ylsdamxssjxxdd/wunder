@@ -36,6 +36,60 @@ export const isReadImageWorkflowTool = (toolName: unknown): boolean => {
     normalized === '\u8bfb\u56fe';
 };
 
+// 记忆管理把所有动作共用在一个工具里，摘要必须落到具体动作上：
+// 到底保存了哪条记忆、搜索了什么词，而不是一列裸的「add/update」。
+export const isMemoryManagerTool = (toolName: unknown): boolean => {
+  const normalized = normalizeToolName(toolName);
+  return normalized === 'memory_manager' ||
+    normalized === 'memory_manage' ||
+    normalized.includes('\u8bb0\u5fc6\u7ba1\u7406');
+};
+
+const MEMORY_ACTION_KEYS = ['action'] as const;
+const MEMORY_TITLE_KEYS = ['title'] as const;
+const MEMORY_QUERY_KEYS = ['query'] as const;
+const MEMORY_ID_KEYS = ['memory_id', 'id'] as const;
+
+const normalizeMemoryAction = (raw: unknown): string => {
+  const value = String(raw || '').trim().toLowerCase();
+  if (value === 'list') return 'list';
+  if (value === 'get' || value === 'read' || value === 'detail') return 'get';
+  if (value === 'add' || value === 'create' || value === 'append') return 'add';
+  if (value === 'update' || value === 'upsert') return 'update';
+  if (value === 'delete' || value === 'remove') return 'remove';
+  if (value === 'clear' || value === 'reset') return 'clear';
+  if (value === 'recall' || value === 'search' || value === 'query' || value === 'retrieve') return 'search';
+  return '';
+};
+
+const MEMORY_ACTION_VERBS: Record<string, string> = {
+  list: '列出全部',
+  get: '查看',
+  add: '保存',
+  update: '更新',
+  remove: '删除',
+  clear: '清空全部',
+  search: '搜索'
+};
+
+const buildMemoryBrief = (
+  action: string,
+  params: { title: string; query: string; memoryId: string }
+): string => {
+  const verb = MEMORY_ACTION_VERBS[action] || '';
+  if (!verb) return '';
+  if (action === 'add' || action === 'update') {
+    return `${verb}${params.title ? `「${params.title}」` : '记忆'}`;
+  }
+  if (action === 'search') {
+    return `${verb}${params.query ? `「${params.query}」` : '记忆'}`;
+  }
+  if (action === 'get' || action === 'remove') {
+    return `${verb}${params.memoryId ? `「${params.memoryId}」` : '记忆'}`;
+  }
+  return verb;
+};
+
 const isExecuteCommandTool = (toolName: unknown): boolean => {
   const normalized = normalizeToolName(toolName);
   return normalized === 'execute_command' || normalized.includes('\u6267\u884c\u547d\u4ee4');
@@ -202,6 +256,27 @@ export const buildCollapsedToolWorkflowSummary = (
       readCallSideParam(entry.resultItem, SKILL_NAME_KEYS) ||
       readEntryField([entry.callItem], ['skill_name', 'skillName']) ||
       readEntryField([entry.resultItem], ['skill_name', 'skillName']);
+  } else if (isMemoryManagerTool(entry.toolName)) {
+    // 摘要只描述「这次调用做了什么」：动作动词 + 标题/查询词/记忆 id，
+    // 全部来自调用侧参数；结果正文（保存了什么内容）留给展开区。
+    // title/id 也是 WorkflowItem 的行字段，只能从调用参数 JSON 里读。
+    const callDetail = typeof entry.callItem?.detail === 'string' ? entry.callItem.detail : '';
+    const action = normalizeMemoryAction(
+      readCallSideParam(entry.callItem, MEMORY_ACTION_KEYS) ||
+      readCallSideParam(entry.resultItem, MEMORY_ACTION_KEYS) ||
+      readLightweightField(callDetail, MEMORY_ACTION_KEYS)
+    );
+    brief = buildMemoryBrief(action, {
+      title: readCallSideParam(entry.callItem, MEMORY_TITLE_KEYS) ||
+        readCallSideParam(entry.resultItem, MEMORY_TITLE_KEYS) ||
+        readLightweightField(callDetail, MEMORY_TITLE_KEYS),
+      query: readCallSideParam(entry.callItem, MEMORY_QUERY_KEYS) ||
+        readCallSideParam(entry.resultItem, MEMORY_QUERY_KEYS) ||
+        readLightweightField(callDetail, MEMORY_QUERY_KEYS),
+      memoryId: readCallSideParam(entry.callItem, MEMORY_ID_KEYS) ||
+        readCallSideParam(entry.resultItem, MEMORY_ID_KEYS) ||
+        readLightweightField(callDetail, MEMORY_ID_KEYS)
+    });
   } else if (isQueryTool(entry.toolName)) {
     brief = readCallSideBatchParam(entry.callItem, QUERY_BATCH_KEYS) ||
       readCallSideBatchParam(entry.resultItem, QUERY_BATCH_KEYS) ||

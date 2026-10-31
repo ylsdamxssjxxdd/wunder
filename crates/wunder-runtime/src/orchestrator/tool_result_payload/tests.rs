@@ -1343,6 +1343,28 @@ fn schedule_and_memory_list_projection_marks_omitted_items() {
 }
 
 #[test]
+fn memory_display_detail_stays_out_of_the_model_observation() {
+    // `data.detail`/`title` serve native cards only; the model keeps the
+    // bounded identity fields plus the canonical action.
+    let memory = ToolResultPayload::from_value(json!({
+        "ok": true,
+        "data": {
+            "action": "add",
+            "memory_id": "preftone",
+            "saved": true,
+            "title": "Reply language",
+            "detail": "已保存记忆「Reply language」"
+        }
+    }));
+    let observation = memory.to_compact_payload("memory_manager");
+    assert_eq!(observation["data"]["action"], "add");
+    assert_eq!(observation["data"]["memory_id"], "preftone");
+    assert_eq!(observation["data"]["saved"], true);
+    assert!(observation["data"].get("detail").is_none());
+    assert!(observation["data"].get("title").is_none());
+}
+
+#[test]
 fn schedule_memory_and_question_projection_unwrap_model_carrier() {
     let schedule = ToolResultPayload::from_value(json!({
         "ok": true,

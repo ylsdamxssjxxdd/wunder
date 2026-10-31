@@ -202,7 +202,10 @@ async fn run(
                             // a terminal result, never an unbounded full call payload.
                             let args = payload.get("args").or_else(|| payload.get("arguments"));
                             let mut compact = serde_json::Map::new();
-                            for key in ["path", "file_path", "command", "cmd", "content", "text"] {
+                            for key in [
+                                "path", "file_path", "command", "cmd", "content", "text", "action",
+                                "title", "query", "memory_id",
+                            ] {
                                 if let Some(text) = args.and_then(|v| v.get(key)).and_then(Value::as_str) {
                                     compact.insert(key.into(), json!(wunder_server::tool_result_display::preview(text)));
                                 }

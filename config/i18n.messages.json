@@ -295,6 +295,10 @@
     "en-US": "This turn reached the model round limit ({max_rounds}). The task may be unfinished. You can continue the conversation from the current progress, or increase this model's max_rounds and retry. If intermediate files or tables were already generated, you can review them in the workspace first.",
     "zh-CN": "本轮已达到模型轮次上限（{max_rounds}），任务可能尚未完成。你可以直接继续对话，让模型基于当前进度接着做；或者把该模型的 max_rounds 调大后重试。如果本轮已经生成了中间文件、表格或草稿，也可以先查看工作区结果。"
   },
+  "error.tool.blocked_in_subagent_session": {
+    "en-US": "`{tool}` is not available in subagent sessions; it can only run in the main thread.",
+    "zh-CN": "子智能体会话不能调用 {tool}，该工具仅在主线程可用。"
+  },
   "error.tool_failure_guard_user_guidance": {
     "en-US": "Tool `{tool_name}` failed repeatedly ({repeat_count}/{threshold}). This step was paused so the conversation does not stay stuck on the same error. You can keep chatting, for example: ask the model to inspect the error first, stop repeating the same step, try a different approach, switch tools, or split the task into smaller steps.",
     "zh-CN": "工具 `{tool_name}` 连续失败（{repeat_count}/{threshold}）。这一步已先暂停，避免会话一直卡在同一个错误上。你可以直接继续对话，例如让模型先分析刚才的报错、不要再重复这一步、换一种方法完成、改用其他工具，或拆成更小的步骤继续。"
@@ -1098,6 +1102,38 @@
   "tool.memory_manager.note_get_full_detail": {
     "en-US": "get returns the full stored detail for one memory_id. Prefer list/search first when you only need candidate indexes.",
     "zh-CN": "get 会返回单条 memory_id 对应的完整记忆内容；如果你只是想浏览候选索引，优先使用 list/search。"
+  },
+  "tool.memory_manager.detail.add": {
+    "en-US": "Saved memory \"{title}\"",
+    "zh-CN": "已保存记忆「{title}」"
+  },
+  "tool.memory_manager.detail.update": {
+    "en-US": "Updated memory \"{title}\"",
+    "zh-CN": "已更新记忆「{title}」"
+  },
+  "tool.memory_manager.detail.remove": {
+    "en-US": "Removed memory {memory_id}",
+    "zh-CN": "已删除记忆 {memory_id}"
+  },
+  "tool.memory_manager.detail.clear": {
+    "en-US": "Cleared {count} memory entries",
+    "zh-CN": "已清空 {count} 条记忆"
+  },
+  "tool.memory_manager.detail.list": {
+    "en-US": "Listed {count} memory entries",
+    "zh-CN": "已列出 {count} 条记忆"
+  },
+  "tool.memory_manager.detail.search": {
+    "en-US": "Searched memories for \"{query}\", {count} matched",
+    "zh-CN": "已搜索记忆「{query}」，命中 {count} 条"
+  },
+  "tool.memory_manager.detail.found": {
+    "en-US": "Found {count} memory entries",
+    "zh-CN": "已找到 {count} 条记忆"
+  },
+  "tool.memory_manager.detail.get": {
+    "en-US": "Loaded memory \"{title}\"",
+    "zh-CN": "已读取记忆「{title}」"
   },
   "tool.list.path_not_found": {
     "en-US": "Path not found.",

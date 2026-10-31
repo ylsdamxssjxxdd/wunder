@@ -444,3 +444,57 @@ test('edit tool detection covers runtime and display name aliases', () => {
   assert.equal(isTimelineEditToolRun(baseRun({ toolName: 'unknown', toolDisplayName: '写入文件' })), true);
   assert.equal(isTimelineEditToolRun(baseRun({ toolName: 'execute_command' })), false);
 });
+
+test('memory entries name the concrete operation in summary and detail', () => {
+  const run = baseRun({
+    toolName: 'memory_manager',
+    toolDisplayName: '记忆管理',
+    toolRuntimeName: 'memory_manager',
+    callItem: callItem({ args: { action: 'add', title: '回复语言', content: '默认用中文回复。' } }),
+    resultItem: callItem({
+      ok: true,
+      data: {
+        action: 'add', memory_id: 'preftone', saved: true, title: '回复语言',
+        detail: '已保存记忆「回复语言」'
+      }
+    })
+  });
+  const entry = buildTimelineToolEntry(run, t);
+  assert.equal(entry.summary, '保存「回复语言」');
+  assert.equal(entry.detailText, '已保存记忆「回复语言」');
+
+  const search = baseRun({
+    toolName: '记忆管理',
+    toolDisplayName: '记忆管理',
+    callItem: callItem({ args: { action: 'search', query: '语言偏好' } }),
+    resultItem: callItem({
+      ok: true,
+      data: {
+        action: 'search', query: '语言偏好', count: 2, detail: '已搜索记忆「语言偏好」，命中 2 条',
+        items: [
+          { memory_id: 'preftone', title: '回复语言', snippet: '默认用中文回复' },
+          { memory_id: 'preffmt', title: '排版偏好', snippet: '列表用短横线' }
+        ]
+      }
+    })
+  });
+  const searchEntry = buildTimelineToolEntry(search, t);
+  assert.equal(searchEntry.summary, '搜索「语言偏好」');
+  assert.ok(searchEntry.detailText.includes('已搜索记忆「语言偏好」，命中 2 条'));
+  assert.ok(searchEntry.detailText.includes('回复语言 · 默认用中文回复'));
+
+  const view = buildTimelineStructuredView(search, t);
+  assert.equal(view?.variant, 'list');
+  assert.equal(view?.groups[0].rows[0].title, '已搜索记忆「语言偏好」，命中 2 条');
+  assert.equal(view?.groups[1].rows[0].title, '回复语言 · 默认用中文回复');
+
+  const legacy = baseRun({
+    toolName: '记忆管理',
+    toolDisplayName: '记忆管理',
+    callItem: callItem({ args: { action: 'add', content: '旧数据没有 detail 字段。' } }),
+    resultItem: callItem({ ok: true, data: { memory_id: 'preftone', saved: true } })
+  });
+  const legacyEntry = buildTimelineToolEntry(legacy, t);
+  assert.equal(legacyEntry.summary, '保存记忆');
+  assert.equal(legacyEntry.detailText, '旧数据没有 detail 字段。');
+});

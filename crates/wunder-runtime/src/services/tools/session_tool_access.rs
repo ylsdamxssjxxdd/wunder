@@ -11,6 +11,7 @@ use crate::tools::resolve_tool_name;
 use crate::user_store::build_default_agent_record_from_storage;
 use anyhow::{anyhow, Result};
 use std::collections::HashSet;
+use wunder_core::storage_backend::ChatSessionStore;
 
 #[derive(Clone, Copy)]
 pub(crate) enum ChildSessionToolMode {
@@ -93,12 +94,36 @@ pub(crate) fn resolve_agent_tool_defaults(agent: Option<&UserAgentRecord>) -> Ve
     )
 }
 
+/// 子会话（子智能体）禁止使用的内置工具规范名。问询面板会把执行线程置入
+/// 等待用户输入的状态，而面板事件只发到子线程自己的事件流，父侧既看不到
+/// 面板也无法作答，子线程会一直卡在 waiting_user_input。
+const CHILD_BLOCKED_TOOL_NAMES: &[&str] = &["问询面板"];
+
+pub(crate) fn is_child_session_blocked_tool(name: &str) -> bool {
+    let canonical = resolve_tool_name(name.trim());
+    CHILD_BLOCKED_TOOL_NAMES.contains(&canonical.as_str())
+}
+
+/// 会话是否为派生子智能体会话（记录了父会话）。
+pub(crate) fn session_is_child(
+    storage: &dyn StorageBackend,
+    user_id: &str,
+    session_id: &str,
+) -> bool {
+    storage
+        .get_chat_session(user_id, session_id)
+        .ok()
+        .flatten()
+        .and_then(|record| record.parent_session_id)
+        .is_some_and(|parent| !parent.trim().is_empty())
+}
+
 pub(crate) fn resolve_child_session_tool_names(
     mode: ChildSessionToolMode,
     parent_tool_names: &[String],
     child_agent: Option<&UserAgentRecord>,
 ) -> Vec<String> {
-    match mode {
+    let names = match mode {
         ChildSessionToolMode::InheritParentSession => parent_tool_names.to_vec(),
         ChildSessionToolMode::UseTargetAgentDefaults => {
             let defaults = resolve_agent_tool_defaults(child_agent);
@@ -108,7 +133,11 @@ pub(crate) fn resolve_child_session_tool_names(
                 defaults
             }
         }
-    }
+    };
+    names
+        .into_iter()
+        .filter(|name| !is_child_session_blocked_tool(name))
+        .collect()
 }
 
 pub(crate) fn apply_tool_overrides(
@@ -269,4 +298,80 @@ pub(crate) fn load_agent_record(
 pub(crate) fn is_default_agent_alias_value(raw: &str) -> bool {
     let cleaned = raw.trim();
     cleaned.eq_ignore_ascii_case("__default__") || cleaned.eq_ignore_ascii_case("default")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::SqliteStorage;
+    use wunder_core::storage_backend::StorageLifecycle;
+
+    fn storage() -> (tempfile::TempDir, SqliteStorage) {
+        let dir = tempfile::tempdir().unwrap();
+        let db = SqliteStorage::new(dir.path().join("fixture.db").to_string_lossy().into());
+        db.ensure_initialized().unwrap();
+        (dir, db)
+    }
+
+    fn chat_session(user: &str, id: &str, parent: Option<&str>) -> ChatSessionRecord {
+        ChatSessionRecord {
+            session_id: id.into(),
+            user_id: user.into(),
+            title: "Fixture".into(),
+            status: "active".into(),
+            created_at: 1.0,
+            updated_at: 1.0,
+            last_message_at: 1.0,
+            agent_id: None,
+            workspace_id: None,
+            tool_overrides: vec![],
+            parent_session_id: parent.map(str::to_string),
+            parent_message_id: None,
+            spawn_label: None,
+            spawned_by: None,
+        }
+    }
+
+    #[test]
+    fn child_tool_names_strip_question_panel_aliases_in_both_modes() {
+        let parent = vec![
+            "读取文件".to_string(),
+            "问询面板".to_string(),
+            "question_panel".to_string(),
+        ];
+        let inherited = resolve_child_session_tool_names(
+            ChildSessionToolMode::InheritParentSession,
+            &parent,
+            None,
+        );
+        assert_eq!(inherited, vec!["读取文件".to_string()]);
+        // 目标智能体没有配置工具时回落到父清单，回落结果同样要被裁剪。
+        let fallback = resolve_child_session_tool_names(
+            ChildSessionToolMode::UseTargetAgentDefaults,
+            &parent,
+            None,
+        );
+        assert_eq!(fallback, vec!["读取文件".to_string()]);
+    }
+
+    #[test]
+    fn blocked_tool_predicate_covers_canonical_and_aliases() {
+        assert!(is_child_session_blocked_tool("问询面板"));
+        assert!(is_child_session_blocked_tool("question_panel"));
+        assert!(is_child_session_blocked_tool("ask_panel"));
+        assert!(!is_child_session_blocked_tool("读取文件"));
+        assert!(!is_child_session_blocked_tool("子智能体控制"));
+    }
+
+    #[test]
+    fn session_is_child_requires_parent_reference() {
+        let (_dir, db) = storage();
+        db.upsert_chat_session(&chat_session("owner", "root", None))
+            .unwrap();
+        db.upsert_chat_session(&chat_session("owner", "child", Some("root")))
+            .unwrap();
+        assert!(!session_is_child(&db, "owner", "root"));
+        assert!(session_is_child(&db, "owner", "child"));
+        assert!(!session_is_child(&db, "owner", "missing"));
+    }
 }

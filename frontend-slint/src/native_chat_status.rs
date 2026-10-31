@@ -2,32 +2,35 @@
 //!
 //! Two things live here. The first is the fencing between a status this process
 //! authored and one it read back: a stale read must never reopen a thread the
-//! local owner just settled. The second is completion freshness — a finished
-//! thread keeps its mark only while the mark is news. The durable catalogue
-//! keeps saying "completed" for the rest of the thread's life, so without this
-//! every restart, every poll and every pet projection re-celebrated a run that
-//! ended yesterday.
+//! local owner just settled. The second is settled freshness — a thread that
+//! reached a terminal keeps its mark only while the mark is news. The durable
+//! catalogue keeps answering the same terminal (`completed`, `cancelled`,
+//! `failed`) for the rest of the thread's life, so without this every restart,
+//! every poll and every pet projection re-announced an outcome that ended
+//! yesterday — and a freshly selected thread flashed a stop square that had
+//! nothing to do with what it is doing now.
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use crate::runtime_phase::Phase;
 
-/// How long a completion mark stays once this process watched the thread
-/// finish. A completion is news, not a state: after a beat the row settles
-/// back to idle, the sidebar stops claiming a success nobody is waiting for,
-/// and the desktop pet stops celebrating.
-pub(super) const DONE_HOLD: Duration = Duration::from_secs(6);
+/// How long a settled mark stays once this process watched the thread settle.
+/// A terminal is news, not a state: after a beat the row settles back to idle,
+/// the sidebar stops claiming an outcome nobody is waiting for, and the desktop
+/// pet stops reacting. This covers every settled phase alike — a completion, a
+/// failure, and a user stop.
+pub(super) const TERMINAL_HOLD: Duration = Duration::from_secs(6);
 
-/// What a finished thread is allowed to show right now.
+/// What a settled thread is allowed to show right now.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Completion {
-    /// Not a finished thread.
+    /// Not a settled thread.
     None,
     /// Watched here: the mark may stay until this instant.
     Until(Instant),
-    /// Already finished when this process first read it — older news, so the
-    /// row opens idle and a pet that never watched the run never celebrates it.
+    /// Already settled when this process first read it — older news, so the
+    /// row opens idle and a pet that never watched the run never reacts to it.
     History,
 }
 
@@ -45,12 +48,12 @@ struct SessionStatus {
 }
 
 /// The verdict for one row: the phrase it should carry, whether this read was
-/// adopted from the catalogue, and whether its completion mark has aged out.
+/// adopted from the catalogue, and whether its settled mark has aged out.
 pub(super) struct Reconciled {
     pub(super) status: String,
     pub(super) accepted: bool,
-    /// True when the row must be presented as idle instead: the thread is
-    /// finished, but the finish is no longer news.
+    /// True when the row must be presented as idle instead: the thread reached
+    /// a terminal, but that terminal is no longer news.
     pub(super) retired: bool,
 }
 
@@ -139,17 +142,17 @@ impl StatusProjection {
     }
 }
 
-/// Fold one observed status into a session's completion bookkeeping.
+/// Fold one observed status into a session's settled bookkeeping.
 fn note(entry: &mut SessionStatus, status: &str, now: Instant) {
     let phase = Phase::of(status);
-    entry.completion = if phase == Phase::Done {
+    entry.completion = if phase.terminal() {
         match entry.completion {
-            // A second report of the same finish never extends the hold, and
+            // A second report of the same terminal never extends the hold, and
             // never re-arms a mark that already aged out.
             Completion::Until(until) => Completion::Until(until),
             // Only a thread this process watched go busy counts as fresh news;
-            // anything else arrived finished.
-            _ if Phase::of(entry.status.as_str()).live() => Completion::Until(now + DONE_HOLD),
+            // anything else arrived settled, so it is history.
+            _ if Phase::of(entry.status.as_str()).live() => Completion::Until(now + TERMINAL_HOLD),
             _ => Completion::History,
         }
     } else {
@@ -159,12 +162,16 @@ fn note(entry: &mut SessionStatus, status: &str, now: Instant) {
 }
 
 fn retired(entry: &SessionStatus, now: Instant) -> bool {
-    if Phase::of(entry.status.as_str()) != Phase::Done {
+    // A settled mark is news: once it is no longer fresh (or never was) the row
+    // presents idle again. Every terminal phase is covered — a completion that
+    // ended yesterday must not sit on the row forever, and neither must a stop
+    // square or a failure triangle that a fresh catalogue read resurfaces.
+    if !Phase::of(entry.status.as_str()).terminal() {
         return false;
     }
     match entry.completion {
         Completion::Until(until) => until <= now,
-        // Nothing to hold: the finish was already old news on arrival.
+        // Nothing to hold: the terminal was already old news on arrival.
         Completion::History | Completion::None => true,
     }
 }
@@ -315,12 +322,12 @@ mod tests {
         projection.record_local("fixture-session", "正在生成…", at);
         projection.record_local("fixture-session", "任务完成", at);
         assert!(!projection.should_retire("fixture-session", at));
-        assert!(!projection.should_retire("fixture-session", at + DONE_HOLD / 2));
-        assert!(projection.should_retire("fixture-session", at + DONE_HOLD * 2));
+        assert!(!projection.should_retire("fixture-session", at + TERMINAL_HOLD / 2));
+        assert!(projection.should_retire("fixture-session", at + TERMINAL_HOLD * 2));
         // A repeated report of the same finish neither extends the hold nor
         // re-arms the mark.
-        projection.record_local("fixture-session", "任务完成", at + DONE_HOLD * 3);
-        assert!(projection.should_retire("fixture-session", at + DONE_HOLD * 3));
+        projection.record_local("fixture-session", "任务完成", at + TERMINAL_HOLD * 3);
+        assert!(projection.should_retire("fixture-session", at + TERMINAL_HOLD * 3));
     }
 
     #[test]
@@ -329,9 +336,9 @@ mod tests {
         let mut projection = StatusProjection::default();
         projection.record_local("fixture-session", "正在生成…", at);
         projection.record_local("fixture-session", "任务完成", at);
-        assert!(projection.should_retire("fixture-session", at + DONE_HOLD * 2));
-        projection.record_local("fixture-session", "请求中", at + DONE_HOLD * 3);
-        assert!(!projection.should_retire("fixture-session", at + DONE_HOLD * 3));
+        assert!(projection.should_retire("fixture-session", at + TERMINAL_HOLD * 2));
+        projection.record_local("fixture-session", "请求中", at + TERMINAL_HOLD * 3);
+        assert!(!projection.should_retire("fixture-session", at + TERMINAL_HOLD * 3));
     }
 
     /// A retired completion must not fence the thread: the next run, started
@@ -342,11 +349,63 @@ mod tests {
         let mut projection = StatusProjection::default();
         projection.record_local("fixture-session", "正在生成…", at);
         projection.record_local("fixture-session", "任务完成", at);
-        assert!(projection.should_retire("fixture-session", at + DONE_HOLD * 2));
+        assert!(projection.should_retire("fixture-session", at + TERMINAL_HOLD * 2));
         projection.forget("fixture-session");
         let reconciled = projection.reconcile("fixture-session", "running", 0, None, at);
         assert_eq!(reconciled.status, "running");
         assert!(reconciled.accepted);
         assert!(!reconciled.retired);
+    }
+
+    /// The catalogue answers `cancelled` for the rest of a thread's life after a
+    /// stop. A thread this process never watched run is not news, so merely
+    /// selecting it must not flash the stop square.
+    #[test]
+    fn a_stop_this_process_never_watched_is_not_a_state() {
+        let at = now();
+        let mut projection = StatusProjection::default();
+        let reconciled = projection.reconcile("fixture-session", "cancelled", 0, None, at);
+        assert!(reconciled.retired, "a cold stop must present as idle");
+        assert!(projection.should_retire("fixture-session", at));
+    }
+
+    /// A stop this process watched happen is news: it holds for a beat, then
+    /// retires to idle exactly like a completion.
+    #[test]
+    fn a_stop_this_process_watched_held_then_aged_out() {
+        let at = now();
+        let mut projection = StatusProjection::default();
+        projection.record_local("fixture-session", "正在生成…", at);
+        projection.record_local("fixture-session", "已停止", at);
+        assert!(!projection.should_retire("fixture-session", at));
+        assert!(!projection.should_retire("fixture-session", at + TERMINAL_HOLD / 2));
+        assert!(projection.should_retire("fixture-session", at + TERMINAL_HOLD * 2));
+        // A repeated report of the same stop neither extends the hold nor
+        // re-arms a mark that already aged out.
+        projection.record_local("fixture-session", "已停止", at + TERMINAL_HOLD * 3);
+        assert!(projection.should_retire("fixture-session", at + TERMINAL_HOLD * 3));
+    }
+
+    /// The same rule holds for a failure: a durable `failed` read cold is
+    /// history, not a red triangle that clings to the row for good.
+    #[test]
+    fn a_failure_this_process_never_watched_is_not_a_state() {
+        let at = now();
+        let mut projection = StatusProjection::default();
+        let reconciled = projection.reconcile("fixture-session", "failed", 0, None, at);
+        assert!(reconciled.retired, "a cold failure must present as idle");
+    }
+
+    /// A retired stop must not fence the thread: the next run's status has to
+    /// reach the row again.
+    #[test]
+    fn a_new_run_clears_a_retired_stop() {
+        let at = now();
+        let mut projection = StatusProjection::default();
+        assert!(projection
+            .reconcile("fixture-session", "cancelled", 0, None, at)
+            .retired);
+        projection.record_local("fixture-session", "请求中", at);
+        assert!(!projection.should_retire("fixture-session", at));
     }
 }

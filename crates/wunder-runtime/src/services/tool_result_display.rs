@@ -27,6 +27,133 @@ fn is_skill_tool(tool: &str) -> bool {
     matches!(tool, "技能调用" | "skill_call" | "skill_get")
 }
 
+/// The memory tool serves every action through one schema; the card must name
+/// the concrete operation (which memory was written, which query ran) instead
+/// of a bare tool name.
+fn is_memory_tool(tool: &str) -> bool {
+    matches!(tool, "记忆管理" | "memory_manager" | "memory_manage")
+}
+
+fn memory_action_name(raw: &str) -> &'static str {
+    match raw.trim().to_lowercase().as_str() {
+        "list" => "list",
+        "get" | "read" | "detail" => "get",
+        "add" | "create" | "append" => "add",
+        "update" | "upsert" => "update",
+        "delete" | "remove" => "remove",
+        "clear" | "reset" => "clear",
+        "recall" | "search" | "query" | "retrieve" => "search",
+        _ => "",
+    }
+}
+
+/// Bounded body for one memory field: enough to recognise what was stored,
+/// never the whole record (the full content stays in args and audit events).
+fn memory_body_preview(text: &str) -> String {
+    let mut chars = text.chars();
+    let head: String = chars.by_ref().take(400).collect();
+    let truncated = chars.next().is_some();
+    let mut lines = head.lines();
+    let mut output = lines.by_ref().take(4).collect::<Vec<_>>().join("\n");
+    if truncated || lines.next().is_some() {
+        output.push_str("\n…");
+    }
+    output
+}
+
+/// Fallback operation line for older persisted threads whose result `data`
+/// predates the backend-stamped `detail` field.
+fn memory_operation_line(action: &str, args: &Value, data: &Value) -> String {
+    let title = string(args, &["title"]);
+    let query = string(args, &["query"]);
+    let memory_id = [string(args, &["memory_id"]), string(data, &["memory_id"])]
+        .into_iter()
+        .find(|value| !value.is_empty())
+        .unwrap_or("");
+    let subject = |text: &str| {
+        if text.is_empty() {
+            String::new()
+        } else {
+            format!("「{}」", text)
+        }
+    };
+    match action {
+        "add" => format!("保存记忆{}", subject(title)),
+        "update" => format!("更新记忆{}", subject(title)),
+        "get" => format!("读取记忆{}", subject(if title.is_empty() { memory_id } else { title })),
+        "remove" => format!("删除记忆{}", subject(memory_id)),
+        "clear" => "清空记忆".to_string(),
+        "list" => {
+            let count = data.get("count").and_then(Value::as_u64).unwrap_or(0);
+            format!("列出记忆（{count} 条）")
+        }
+        "search" => format!("搜索记忆{}", subject(query)),
+        _ => String::new(),
+    }
+}
+
+/// Memory rows lead with the concrete operation, then the stored content or
+/// matched entries. `data.detail` (backend-stamped, localized) is preferred;
+/// raw args keep older replays readable.
+fn append_memory_display(
+    args: &Value,
+    data: &Value,
+    pending: bool,
+    failed: bool,
+    cancelled: bool,
+    lines: &mut Vec<String>,
+) {
+    let action = memory_action_name(string(args, &["action"]));
+    let detail = string(data, &["detail"]);
+    let operation = if detail.is_empty() {
+        memory_operation_line(action, args, data)
+    } else {
+        detail.to_string()
+    };
+    if !operation.is_empty() {
+        lines.push(preview(&operation));
+    }
+    if pending {
+        return;
+    }
+    match action {
+        "add" | "update" if !failed && !cancelled => {
+            let content = string(args, &["content"]);
+            if !content.is_empty() {
+                lines.push(memory_body_preview(content));
+            }
+        }
+        "get" if !failed && !cancelled => {
+            let content = string(data.pointer("/item").unwrap_or(&Value::Null), &["content"]);
+            if !content.is_empty() {
+                lines.push(memory_body_preview(content));
+            }
+        }
+        "list" | "search" if !failed && !cancelled => {
+            if let Some(items) = data.get("items").and_then(Value::as_array) {
+                for item in items.iter().take(6) {
+                    let title = string(item, &["title"]);
+                    let snippet = string(item, &["snippet"]);
+                    let line = if snippet.is_empty() {
+                        title.to_string()
+                    } else if title.is_empty() {
+                        snippet.to_string()
+                    } else {
+                        format!("{title} · {snippet}")
+                    };
+                    if !line.is_empty() {
+                        lines.push(preview(&line));
+                    }
+                }
+                if items.len() > 6 {
+                    lines.push("…".into());
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Keep one action and its retained result together. `pending` is supplied by
 /// the event lifecycle, so absent output never implies successful completion.
 pub fn tool_result_display(tool: &str, payload: &Value, pending: bool) -> String {
@@ -74,6 +201,10 @@ pub fn tool_result_display(tool: &str, payload: &Value, pending: bool) -> String
         "完成"
     };
     let mut lines = vec![format!("{} · {status}", preview(label))];
+    if is_memory_tool(tool) {
+        append_memory_display(args, data, pending, failed, cancelled, &mut lines);
+        return preview(&lines.join("\n"));
+    }
     let target = if is_skill_tool(tool) {
         let declared = string(args, &["name", "skill_name", "skillName"]);
         if declared.is_empty() {
@@ -348,5 +479,57 @@ mod tests {
         assert!(fetch.contains("网页抓取 · 完成"));
         assert!(fetch.contains("https://example.test/a"));
         assert!(fetch.contains("hello"));
+    }
+    #[test]
+    fn memory_rows_name_the_operation_and_content() {
+        let output = tool_result_display(
+            "记忆管理",
+            &json!({
+                "args": {"action":"add","title":"Reply language","content":"Reply in Chinese by default."},
+                "data": {"action":"add","memory_id":"preftone","saved":true,"title":"Reply language","detail":"已保存记忆「Reply language」"}
+            }),
+            false,
+        );
+        assert!(output.contains("记忆管理 · 完成"));
+        assert!(output.contains("已保存记忆「Reply language」"));
+        assert!(output.contains("Reply in Chinese by default."));
+        let failed = tool_result_display(
+            "memory_manager",
+            &json!({"ok":false,"error":"denied","args":{"action":"add","content":"not stored"},"data":{}}),
+            false,
+        );
+        assert!(failed.contains("失败"));
+        assert!(!failed.contains("not stored"));
+    }
+    #[test]
+    fn memory_rows_derive_operations_from_args_for_old_replays() {
+        let output = tool_result_display(
+            "memory_manager",
+            &json!({"args":{"action":"create","title":"Reply language","content":"Reply in Chinese by default."},"data":{"memory_id":"preftone","saved":true}}),
+            false,
+        );
+        assert!(output.contains("保存记忆「Reply language」"));
+        let listed = tool_result_display(
+            "记忆管理",
+            &json!({"args":{"action":"list"},"data":{"action":"list","count":2,"items":[{"memory_id":"a","title":"Alpha"},{"memory_id":"b","title":"Beta"}]}}),
+            false,
+        );
+        assert!(listed.contains("列出记忆（2 条）"));
+        assert!(listed.contains("Alpha"));
+        assert!(listed.contains("Beta"));
+        let searched = tool_result_display(
+            "记忆管理",
+            &json!({"args":{"action":"recall","query":"language"},"data":{"action":"search","query":"language","count":1,"items":[{"title":"Reply language","snippet":"Reply in Chinese"}]}}),
+            false,
+        );
+        assert!(searched.contains("搜索记忆「language」"));
+        assert!(searched.contains("Reply language · Reply in Chinese"));
+        let pending = tool_result_display(
+            "记忆管理",
+            &json!({"args":{"action":"add","title":"t"}}),
+            true,
+        );
+        assert!(pending.contains("运行中"));
+        assert!(pending.contains("保存记忆「t」"));
     }
 }

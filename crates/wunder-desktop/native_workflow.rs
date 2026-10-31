@@ -146,6 +146,30 @@ fn is_skill_tool(tool: &str) -> bool {
     matches!(tool, "技能调用" | "skill_call" | "skill_get")
 }
 
+/// Memory calls share one tool schema; the folded row names the concrete
+/// operation instead of the raw action enum.
+fn memory_call_preview(args: &Value) -> String {
+    let action = args["action"].as_str().unwrap_or_default().trim().to_lowercase();
+    let verb = match action.as_str() {
+        "list" => "列出记忆",
+        "get" | "read" | "detail" => "读取记忆",
+        "add" | "create" | "append" => "保存记忆",
+        "update" | "upsert" => "更新记忆",
+        "delete" | "remove" => "删除记忆",
+        "clear" | "reset" => "清空记忆",
+        "recall" | "search" | "query" | "retrieve" => "搜索记忆",
+        _ => return String::new(),
+    };
+    let subject = ["title", "query", "memory_id", "id"]
+        .iter()
+        .find_map(|key| args[*key].as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| format!("「{}」", value.chars().take(104).collect::<String>()))
+        .unwrap_or_default();
+    format!("{verb}{subject}")
+}
+
 /// A collapsed row describes invocation arguments only. Results can contain
 /// arbitrary `path`, `query` or `content` fields that are not the call target.
 fn call_preview(tool: &str, data: &Value) -> String {    let args = data.get("args").or_else(|| data.get("arguments"));
@@ -158,6 +182,17 @@ fn call_preview(tool: &str, data: &Value) -> String {    let args = data.get("ar
         tool,
         "execute_command" | "run_command" | "shell" | "运行命令" | "执行命令" | "command_session"
     );
+    if matches!(tool, "记忆管理" | "memory_manager" | "memory_manage") {
+        let parsed_args = args
+            .as_str()
+            .filter(|value| value.len() <= 8192)
+            .and_then(|value| serde_json::from_str::<Value>(value).ok());
+        let args = parsed_args.as_ref().or(Some(args)).unwrap_or(&Value::Null);
+        let preview = memory_call_preview(args);
+        if !preview.is_empty() {
+            return preview;
+        }
+    }
     let keys: &[&str] = if command {
         &["content", "command", "cmd", "input", "script", "raw"]
     } else if is_skill_tool(tool) {
@@ -390,6 +425,16 @@ mod tests {
                     "result":{"data":{"path":"SKILL.md"}}
                 }),
                 "demo_skill",
+            ),
+            (
+                "记忆管理",
+                json!({"args":{"action":"add","title":"回复语言","content":"默认用中文回复。"}}),
+                "保存记忆「回复语言」",
+            ),
+            (
+                "memory_manager",
+                json!({"args":{"action":"recall","query":"语言偏好"}}),
+                "搜索记忆「语言偏好」",
             ),
         ] {
             let entry = NativeWorkflowEntry::from_payload(

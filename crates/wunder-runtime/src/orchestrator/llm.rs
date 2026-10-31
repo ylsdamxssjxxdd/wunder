@@ -268,7 +268,7 @@ fn build_context_cache_probe(messages: &[ChatMessage], tools: Option<&[Value]>) 
     probe
 }
 
-fn stable_json_hash(value: &Value) -> String {
+pub(super) fn stable_json_hash(value: &Value) -> String {
     let bytes = serde_json::to_vec(value).unwrap_or_default();
     let mut hasher = Sha256::new();
     hasher.update(bytes);
