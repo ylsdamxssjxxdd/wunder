@@ -119,3 +119,10 @@ config/runtime
 /docs/形式化证明/**/*.fp
 /docs/形式化证明/**/*.st
 /docs/形式化证明/**/*.tmp
+docs/decisions
+docs/features
+docs/discussions
+build_win7.log
+build_win7b.log
+metadata_win7.err
+metadata_win7.json

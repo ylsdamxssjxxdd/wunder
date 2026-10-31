@@ -30,12 +30,39 @@ fn persist(app: &MainWindow, api: &Arc<NativeDesktop>) {
     }
     app.set_saving(true);
     let language = app.get_runtime_language().to_string();
-    let python = app.get_runtime_python().to_string();
-    let git = app.get_runtime_git().to_string();
-    let rg = app.get_runtime_rg().to_string();
-    let ffmpeg = app.get_runtime_ffmpeg().to_string();
-    let browser = app.get_runtime_browser().to_string();
-    let shell = app.get_runtime_shell().to_string();
+    // A field still holding the auto-detected effective path must not be stored:
+    // persisting it would freeze auto-detection into a custom override.
+    let keep_custom = |value: String, effective: String| {
+        if !effective.trim().is_empty() && value.trim() == effective.trim() {
+            String::new()
+        } else {
+            value
+        }
+    };
+    let python = keep_custom(
+        app.get_runtime_python().to_string(),
+        app.get_runtime_python_effective().to_string(),
+    );
+    let git = keep_custom(
+        app.get_runtime_git().to_string(),
+        app.get_runtime_git_effective().to_string(),
+    );
+    let rg = keep_custom(
+        app.get_runtime_rg().to_string(),
+        app.get_runtime_rg_effective().to_string(),
+    );
+    let ffmpeg = keep_custom(
+        app.get_runtime_ffmpeg().to_string(),
+        app.get_runtime_ffmpeg_effective().to_string(),
+    );
+    let browser = keep_custom(
+        app.get_runtime_browser().to_string(),
+        app.get_runtime_browser_effective().to_string(),
+    );
+    let shell = keep_custom(
+        app.get_runtime_shell().to_string(),
+        app.get_runtime_shell_effective().to_string(),
+    );
     let api = api.clone();
     let weak = app.as_weak();
     std::thread::spawn(move || {

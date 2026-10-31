@@ -17,9 +17,9 @@
   <g id="header"><text x="64" y="42" class="kicker">WUNDER / 蛹 · DESKTOP UI SPEC</text><text x="64" y="84" class="h1">03　外壳与侧栏</text><text x="64" y="114" class="sub">窗口控制、工作区导航、文件目录和设置入口各自归位；线程行交互态与任务状态分开阅读。</text><text x="1536" y="44" text-anchor="end" class="mono tiny">SHEET 03 / 09</text><text x="1536" y="84" text-anchor="end" class="mono ui12">CHROME · SIDEBAR · ROW STATES</text><line x1="64" y1="140" x2="1536" y2="140" stroke="#D8D5D0"/></g>
 
   <g id="window-chrome">
-    <rect x="64" y="160" width="28" height="24" rx="6" fill="#FDF0DE"/><text x="78" y="177" text-anchor="middle" class="chip">01</text><text x="104" y="178" class="sect">窗口外壳 · 28px 自绘标题栏</text><text x="1536" y="177" text-anchor="end" class="sect-note">无整窗圆角和投影；外层 1px border-strong</text>
+    <rect x="64" y="160" width="28" height="24" rx="6" fill="#FDF0DE"/><text x="78" y="177" text-anchor="middle" class="chip">01</text><text x="104" y="178" class="sect">窗口外壳 · 28px 自绘标题栏</text><text x="1536" y="177" text-anchor="end" class="sect-note">无整窗圆角和投影；四边各 1px window-frame 暖灰 #B9B2A7</text>
     <rect x="64" y="202" width="1472" height="224" rx="12" class="card"/>
-    <rect x="88" y="226" width="1424" height="28" fill="#F6F5F3" stroke="#D8D5D0"/>
+    <rect x="88" y="226" width="1424" height="28" fill="#F6F5F3" stroke="#B9B2A7"/>
     <image href="assets/app-icon.png" x="98" y="232" width="16" height="16"/><text x="122" y="245" class="ui12" font-weight="600">蛹 · 运行中 2 线程</text>
     <g fill="none" stroke="#3D3D3D" stroke-width="1.8" stroke-linecap="round"><path d="M1418 240h10"/><rect x="1456" y="233" width="10" height="10"/><path d="m1493 233 10 10m0-10-10 10"/></g>
     <text x="88" y="282" class="card-t">标题状态</text><text x="88" y="308" class="note">空闲　/　运行中 N 线程　/　问询 N；12px · 600 · 单行省略。</text>
@@ -39,11 +39,11 @@
     <rect x="64" y="502" width="1472" height="650" rx="12" class="card"/>
     <rect x="88" y="526" width="240" height="600" fill="#F6F5F3" stroke="#D8D5D0"/>
     <use href="#s-monitor" x="100" y="538" width="16" height="16" color="#8A8F99"/><text x="124" y="552" class="ui14" font-weight="600">本地</text><text x="156" y="552" class="ui11 muted">蛹</text><use href="#s-plus" x="300" y="540" width="14" height="14" color="#8A8F99"/>
-    <rect x="96" y="570" width="224" height="34" rx="12" fill="#F1EFEC"/><rect x="96" y="575" width="2" height="24" rx="1" fill="#F58A24"/><use href="#s-folder" x="108" y="578" width="18" height="18" color="#1F76AF"/><text x="136" y="592" class="ui14" font-weight="600">默认工作区</text><text x="272" y="592" class="ui11 muted">2</text><use href="#s-plus" x="300" y="580" width="12" height="12" color="#8A8F99"/>
-    <line x1="108" y1="604" x2="108" y2="668" stroke="#E8E6E3"/>
-    <rect x="100" y="610" width="220" height="28" rx="8" fill="#FDF0DE"/><use href="#s-check" x="104" y="619" width="10" height="10" color="#1A8A5C"/><text x="126" y="630" class="ui13 secondary">周报摘要</text>
-    <rect x="244" y="614" width="20" height="20" rx="4" fill="#FDF0DE"/><use href="#s-pen" x="247" y="617" width="14" height="14" color="#8A8F99"/><rect x="270" y="614" width="20" height="20" rx="4" fill="#FDF0DE"/><use href="#s-traj" x="273" y="617" width="14" height="14" color="#8A8F99"/><rect x="296" y="614" width="20" height="20" rx="4" fill="#FDF0DE"/><use href="#s-archive" x="299" y="617" width="14" height="14" color="#8A8F99"/>
-    <circle cx="109" cy="654" r="2" fill="#F58A24"/><circle cx="115" cy="654" r="2" fill="#F58A24"/><circle cx="109" cy="660" r="2" fill="#F58A24"/><circle cx="115" cy="660" r="2" fill="#F58A24"/><text x="126" y="662" class="ui13 secondary">数据核对</text>
+    <rect x="96" y="570" width="224" height="36" rx="8" fill="#F1EFEC"/><rect x="96" y="576" width="2" height="24" rx="1" fill="#F58A24"/><use href="#s-folder" x="108" y="579" width="18" height="18" color="#1F76AF"/><text x="136" y="593" class="ui14" font-weight="600">默认工作区</text><text x="272" y="593" class="ui11 muted">2</text><use href="#s-plus" x="300" y="581" width="12" height="12" color="#8A8F99"/>
+    <line x1="108" y1="606" x2="108" y2="672" stroke="#E8E6E3"/>
+    <rect x="100" y="610" width="220" height="32" rx="8" fill="#FDF0DE"/><use href="#s-check" x="104" y="621" width="10" height="10" color="#1A8A5C"/><text x="126" y="632" class="ui13 secondary">周报摘要</text>
+    <rect x="244" y="616" width="20" height="20" rx="4" fill="#FDF0DE"/><use href="#s-pen" x="247" y="619" width="14" height="14" color="#8A8F99"/><rect x="270" y="616" width="20" height="20" rx="4" fill="#FDF0DE"/><use href="#s-traj" x="273" y="619" width="14" height="14" color="#8A8F99"/><rect x="296" y="616" width="20" height="20" rx="4" fill="#FDF0DE"/><use href="#s-archive" x="299" y="619" width="14" height="14" color="#8A8F99"/>
+    <circle cx="109" cy="658" r="2" fill="#F58A24"/><circle cx="115" cy="658" r="2" fill="#F58A24"/><circle cx="109" cy="664" r="2" fill="#F58A24"/><circle cx="115" cy="664" r="2" fill="#F58A24"/><text x="126" y="666" class="ui13 secondary">数据核对</text>
     <line x1="88" y1="800" x2="328" y2="800" stroke="#E8E6E3"/><text x="100" y="826" class="ui12 muted">工作目录</text>
     <path d="m102 850 5 4-5 4" fill="none" stroke="#8A8F99" stroke-width="1.3"/><use href="#s-folder" x="116" y="844" width="14" height="14" color="#C08A2A"/><text x="136" y="858" class="ui13">notes</text>
     <rect x="100" y="874" width="216" height="26" rx="6" fill="#F1EFEC"/><path d="M118 880h10v14h-10z" fill="none" stroke="#8A8F99"/><text x="138" y="892" class="ui13">sample.txt</text><text x="304" y="892" text-anchor="end" class="ui11 muted">2 KB</text>
@@ -51,9 +51,10 @@
     <line x1="88" y1="1086" x2="328" y2="1086" stroke="#E8E6E3"/><circle cx="113" cy="1106" r="13" fill="#F58A24"/><text x="113" y="1110" text-anchor="middle" font-size="10" font-weight="700" fill="#FFF">U</text><text x="136" y="1111" class="ui14">设置</text>
 
     <text x="376" y="552" class="card-t">A · 设备、工作区与线程</text><text x="1512" y="552" text-anchor="end" class="tiny">tree rows</text><line x1="376" y1="568" x2="1512" y2="568" stroke="#E8E6E3"/>
-    <text x="376" y="596" class="note">设备行：本地 / 云端切换，新建入口在右侧。</text><text x="376" y="622" class="note">工作区行 34px：2px 选中条、18px 图标、名称、计数与新建。</text><text x="376" y="648" class="note">线程行 28px：34px 左缩进、11px 状态位、13px 标题。</text><text x="376" y="674" class="note">悬停动作带 76px，固定覆盖右侧，不推动标题宽度。</text>
+    <text x="376" y="596" class="note">设备行：本地 / 云端切换，新建入口在右侧。</text><text x="376" y="622" class="note">工作区组行 36px：4px 组间气口、20px 图标底、2px 选中条、名称、计数与新建。</text><text x="376" y="648" class="note">线程行 32px：状态点列缩进 28px，标题接到工作区标题列；字号 13。</text><text x="376" y="674" class="note">悬停动作带 76px，固定覆盖右侧，不推动标题宽度；tooltip 附最后完成时间。</text>
     <rect x="376" y="698" width="1136" height="48" rx="8" fill="#FDF0DE"/><use href="#s-pen" x="392" y="715" width="14" height="14" color="#8A8F99"/><text x="416" y="727" class="ui12">重命名</text><use href="#s-traj" x="552" y="715" width="14" height="14" color="#8A8F99"/><text x="576" y="727" class="ui12">轨迹</text><use href="#s-archive" x="680" y="715" width="14" height="14" color="#8A8F99"/><text x="704" y="727" class="ui12">归档</text><text x="1492" y="727" text-anchor="end" class="tiny">真实顺序，不是新建 / 编辑 / 删除</text>
     <text x="376" y="782" class="tiny">右键菜单还包含多选；多选态禁用拖拽，勾选只作用于可归档线程。</text>
+    <text x="376" y="800" class="note">组头吸顶：展开的工作区下滚时组行钉在树顶、随下一组到达推出；工作目录父链吸顶同构（树行 28px）。</text>
 
     <line x1="376" y1="812" x2="1512" y2="812" stroke="#E8E6E3"/>
     <text x="376" y="842" class="card-t">B · 工作目录与底部设置</text>
@@ -64,24 +65,25 @@
 
   <g id="sidebar-states">
     <rect x="64" y="1186" width="28" height="24" rx="6" fill="#FDF0DE"/><text x="78" y="1203" text-anchor="middle" class="chip">03</text><text x="104" y="1204" class="sect">状态表现 · 左边看“怎么操作”，右边看“任务到哪了”</text>
-    <rect x="64" y="1228" width="724" height="332" rx="12" class="card"/><text x="88" y="1258" class="card-t">线程行 · 控件交互态</text><text x="764" y="1258" text-anchor="end" class="tiny">28px 固定行高</text>
-    <text x="88" y="1290" class="tiny">默认</text><rect x="200" y="1272" width="560" height="28" rx="8" fill="transparent"/><use href="#s-check" x="212" y="1281" width="10" height="10" color="#1A8A5C"/><text x="234" y="1292" class="ui13 secondary">示例线程</text>
-    <text x="88" y="1330" class="tiny">悬停</text><rect x="200" y="1312" width="560" height="28" rx="8" fill="#FDF0DE"/><use href="#s-check" x="212" y="1321" width="10" height="10" color="#1A8A5C"/><text x="234" y="1332" class="ui13 secondary">示例线程</text><use href="#s-pen" x="658" y="1319" width="14" height="14" color="#8A8F99"/><use href="#s-traj" x="684" y="1319" width="14" height="14" color="#8A8F99"/><use href="#s-archive" x="710" y="1319" width="14" height="14" color="#8A8F99"/>
-    <text x="88" y="1370" class="tiny">当前线程</text><rect x="200" y="1352" width="560" height="28" rx="8" fill="#F1EFEC"/><use href="#s-check" x="212" y="1361" width="10" height="10" color="#1A8A5C"/><text x="234" y="1372" class="ui13">示例线程</text>
-    <text x="88" y="1410" class="tiny">多选已选</text><rect x="200" y="1392" width="560" height="28" rx="8" fill="transparent"/><rect x="212" y="1398" width="15" height="15" rx="4" fill="#F58A24"/><use href="#s-check" x="215" y="1401" width="9" height="9" color="#FFF"/><text x="266" y="1412" class="ui13">示例线程</text>
-    <text x="88" y="1450" class="tiny">多选禁用</text><rect x="200" y="1432" width="560" height="28" rx="8" fill="transparent"/><rect x="212" y="1438" width="15" height="15" rx="4" fill="transparent" stroke="#D8D5D0" opacity=".4"/><text x="266" y="1452" class="ui13 muted">不可归档线程</text>
+    <rect x="64" y="1228" width="724" height="332" rx="12" class="card"/><text x="88" y="1258" class="card-t">线程行 · 控件交互态</text><text x="764" y="1258" text-anchor="end" class="tiny">32px 固定行高</text>
+    <text x="88" y="1290" class="tiny">默认</text><rect x="200" y="1272" width="560" height="32" rx="8" fill="transparent"/><use href="#s-check" x="212" y="1281" width="10" height="10" color="#1A8A5C"/><text x="234" y="1292" class="ui13 secondary">示例线程</text>
+    <text x="88" y="1330" class="tiny">悬停</text><rect x="200" y="1312" width="560" height="32" rx="8" fill="#FDF0DE"/><use href="#s-check" x="212" y="1321" width="10" height="10" color="#1A8A5C"/><text x="234" y="1332" class="ui13 secondary">示例线程</text><use href="#s-pen" x="658" y="1321" width="14" height="14" color="#8A8F99"/><use href="#s-traj" x="684" y="1321" width="14" height="14" color="#8A8F99"/><use href="#s-archive" x="710" y="1321" width="14" height="14" color="#8A8F99"/>
+    <text x="88" y="1370" class="tiny">当前线程</text><rect x="200" y="1352" width="560" height="32" rx="8" fill="#F1EFEC"/><use href="#s-check" x="212" y="1361" width="10" height="10" color="#1A8A5C"/><text x="234" y="1372" class="ui13">示例线程</text>
+    <text x="88" y="1410" class="tiny">多选已选</text><rect x="200" y="1392" width="560" height="32" rx="8" fill="transparent"/><rect x="212" y="1400" width="15" height="15" rx="4" fill="#F58A24"/><use href="#s-check" x="215" y="1403" width="9" height="9" color="#FFF"/><text x="266" y="1412" class="ui13">示例线程</text>
+    <text x="88" y="1450" class="tiny">多选禁用</text><rect x="200" y="1432" width="560" height="32" rx="8" fill="transparent"/><rect x="212" y="1440" width="15" height="15" rx="4" fill="transparent" stroke="#D8D5D0" opacity=".4"/><text x="266" y="1452" class="ui13 muted">不可归档线程</text>
     <text x="88" y="1500" class="note">active 用 selected；hover 用 accent-soft；拖拽只改变顺序，不改状态图标。</text><text x="88" y="1526" class="tiny">多选勾选框 15px；不可归档行 opacity .4。</text>
 
-    <rect x="812" y="1228" width="724" height="332" rx="12" class="card"/><text x="836" y="1258" class="card-t">线程状态 · 业务生命周期</text><text x="1512" y="1258" text-anchor="end" class="tiny">RuntimeStatus.normalize</text>
+    <rect x="812" y="1228" width="724" height="332" rx="12" class="card"/><text x="836" y="1258" class="card-t">线程状态 · 显式相位</text><text x="1512" y="1258" text-anchor="end" class="tiny">空闲 / 排队 / 运行 / 等待 / 完成 / 失败</text>
     <circle cx="846" cy="1294" r="5" fill="none" stroke="#F58A24" stroke-width="2" stroke-dasharray="22 10"/><text x="870" y="1299" class="ui13">运行中</text><text x="1120" y="1299" class="note">accent 六点旋转环 · 1.2s</text>
     <use href="#s-clock" x="836" y="1322" width="20" height="20" color="#C98A2B"/><text x="870" y="1339" class="ui13">排队 / 等待审批</text><text x="1120" y="1339" class="note">warning；审批另有 shield</text>
     <use href="#s-question" x="836" y="1362" width="20" height="20" color="#F58A24"/><text x="870" y="1379" class="ui13">等待回答</text><text x="1120" y="1379" class="note">accent；优先于 running 聚合</text>
     <use href="#s-check" x="836" y="1402" width="20" height="20" color="#1A8A5C"/><text x="870" y="1419" class="ui13">已完成</text><text x="1120" y="1419" class="note">success + 对勾资产</text>
     <use href="#s-error" x="836" y="1442" width="20" height="20" color="#D04A43"/><text x="870" y="1459" class="ui13">错误</text><text x="1120" y="1459" class="note">danger + 警示资产</text>
     <rect x="836" y="1482" width="20" height="20" rx="10" fill="none" stroke="#9BA0A8"/><path d="M842 1488v8m8-8v8" stroke="#8A8F99" stroke-width="2"/><text x="870" y="1499" class="ui13">空闲 / 停止</text><text x="1120" y="1499" class="note">muted + pause；不是“失败”</text>
-    <text x="836" y="1536" class="tiny">状态图标 10px 图像盒 / 11px 容器；颜色、图形和 Tooltip 共同表达。</text>
+    <text x="836" y="1536" class="tiny">状态由显式 Phase 驱动，窗口标题、侧栏状态点与活动计数同源读取，不再按状态文案前缀猜测。</text>
+    <text x="836" y="1554" class="tiny">状态图标 10px 图像盒 / 11px 容器；颜色、图形和 Tooltip 共同表达。</text>
   </g>
 
   <g id="splitter"><rect x="64" y="1594" width="28" height="24" rx="6" fill="#FDF0DE"/><text x="78" y="1611" text-anchor="middle" class="chip">04</text><text x="104" y="1612" class="sect">分隔柄 · 命中区常驻，视觉反馈按需出现</text><rect x="64" y="1636" width="1472" height="104" rx="12" class="card"/><text x="88" y="1666" class="card-t">静止</text><line x1="160" y1="1658" x2="160" y2="1718" stroke="transparent"/><text x="200" y="1666" class="note">0px 可见条 · 6px 命中区</text><text x="520" y="1666" class="card-t">悬停</text><rect x="589" y="1652" width="2" height="32" rx="1" fill="#F58A24"/><text x="630" y="1666" class="note">2×32 accent</text><text x="944" y="1666" class="card-t">拖动</text><rect x="1013" y="1648" width="2" height="40" rx="1" fill="#F58A24"/><text x="1054" y="1666" class="note">2×40 accent · ew-resize</text><text x="88" y="1712" class="tiny">轨迹详情右侧柄同构，命中区 8px，静止保留 1px 线；不要绘制整条高亮色带。</text></g>
-  <g id="footer"><line x1="64" y1="1770" x2="1536" y2="1770" stroke="#D8D5D0"/><text x="64" y="1790" class="tiny">事实来源：window_chrome.slint · sidebar.slint · workspace_files.slint · main.slint（分隔柄）</text><text x="1536" y="1790" text-anchor="end" class="mono tiny">03 / 09 · 2026-10-25</text></g>
+  <g id="footer"><line x1="64" y1="1770" x2="1536" y2="1770" stroke="#D8D5D0"/><text x="64" y="1790" class="tiny">事实来源：window_chrome.slint · sidebar.slint · workspace_files.slint · main.slint（分隔柄）</text><text x="1536" y="1790" text-anchor="end" class="mono tiny">03 / 09 · 2026-10-31</text></g>
 </svg>

@@ -162,9 +162,10 @@ export component WindowChrome inherits Rectangle {
 // A borderless window has no non-client frame. Reproduce the visible part
 // inside the client area: one hairline on all four sides. The tone is the
 // dedicated `window-frame` token rather than the in-page `border-strong` — the
-// page rule is lighter than the app surfaces and read as "no edge at all" on a
-// light desktop. The frame paints above content; the native resize hit-test
-// region (the window's resize-border-width) stays untouched.
+// page rule read as "no edge at all" on a light desktop — but it stays a warm
+// mid neutral instead of a full-contrast rule, which turned the edge into a
+// black line around the light UI. The frame paints above content; the native
+// resize hit-test region (the window's resize-border-width) stays untouched.
 export component WindowFrame inherits Rectangle {
     x: 0px;
     y: 0px;

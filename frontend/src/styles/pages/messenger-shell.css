@@ -1032,6 +1032,33 @@ button.messenger-sidebar-workspace-row {
   flex-direction: column;
 }
 
+/* 吸顶祖先链：滚动时顶行所属的目录链钉在滚动区顶端（外层在上），
+   让深层列表不丢路径上下文。容器零高 sticky 钉在视口顶缘，钉住的
+   行绝对定位到各自槽位；整条链 pointer-events 放行，点击穿透到底下
+   继续滚动的行。背景用滚动区自己的 surface 遮住从下方滚过的行。 */
+.workspace-files-sticky {
+  position: sticky;
+  top: 0;
+  height: 0;
+  z-index: 3;
+  pointer-events: none;
+}
+
+.workspace-files-sticky .workspace-file-row.is-sticky-pin {
+  position: absolute;
+  left: 0;
+  right: 0;
+  background: var(--mz-surface);
+}
+
+.workspace-files-sticky-edge {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--mz-border);
+}
+
 .workspace-file-row {
   display: flex;
   align-items: center;

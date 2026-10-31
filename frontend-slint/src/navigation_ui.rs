@@ -141,7 +141,9 @@ fn is_workspace_header(row: &RowSpec) -> bool {
 }
 
 fn row_height(kind: i32, thread_px: f32, group_px: f32) -> f32 {
-    if kind == 1 {
+    // 云端线程行（kind 3）与本地线程同高；只有组头吃 group_px。
+    // Slint 侧委托的高度分支与此必须一字不差，否则组跨度整体漂移。
+    if kind == 1 || kind == 3 {
         thread_px
     } else {
         group_px
@@ -431,6 +433,8 @@ fn rebuild_rows(app: &MainWindow) {
                             checked: false,
                             path: "".into(),
                             hint: "".into(),
+                            group_top: 0.0,
+                            group_end: 0.0,
                         });
                     }
                 }
@@ -467,6 +471,8 @@ fn rebuild_rows(app: &MainWindow) {
                 checked: false,
                 path: card.root_path.clone(),
                 hint: "".into(),
+                group_top: 0.0,
+                group_end: 0.0,
             });
             if !expanded {
                 continue;
@@ -519,6 +525,8 @@ fn rebuild_rows(app: &MainWindow) {
                     checked,
                     path: "".into(),
                     hint: conv.time.clone(),
+                    group_top: 0.0,
+                    group_end: 0.0,
                 });
             }
         }
@@ -527,9 +535,51 @@ fn rebuild_rows(app: &MainWindow) {
         .iter()
         .filter(|row| row.kind == 1 && row.archivable)
         .count() as i32;
+    stamp_group_spans(app, &mut rows);
     app.set_sidebar_rows(ModelRc::new(VecModel::from(rows)));
     app.set_sidebar_archivable_count(archivable_count);
     app.set_sidebar_selected_count(THREAD_SELECTION.with(|slot| slot.borrow().len()) as i32);
+}
+
+/// Record each row's owning group's content-space span (header cell top
+/// through the row after the group's last child). The tree pins the expanded
+/// workspace header over its scrolling threads by reading the span off the
+/// row itself, so the Slint side never re-derives the mixed row pitches and
+/// a metrics change cannot desynchronise the overlay from the real rows.
+fn stamp_group_spans(app: &MainWindow, rows: &mut [SidebarRow]) {
+    let (thread_px, group_px) = {
+        let metrics = app.global::<SidebarMetrics>();
+        (metrics.get_thread_height(), metrics.get_group_height())
+    };
+    let mut spans: Vec<(f32, f32)> = Vec::with_capacity(rows.len());
+    let mut cursor_y = 0.0f32;
+    // (header row index, its top y) while the group's rows are still arriving.
+    let mut open: Option<(usize, f32)> = None;
+    for (index, row) in rows.iter().enumerate() {
+        let height = row_height(row.kind, thread_px, group_px);
+        if row.kind == 0 || row.kind == 2 {
+            if let Some((header, _)) = open.take() {
+                for span in &mut spans[header..index] {
+                    span.1 = cursor_y;
+                }
+            }
+            open = Some((index, cursor_y));
+            spans.push((cursor_y, cursor_y));
+        } else {
+            let top = open.as_ref().map_or(0.0, |(_, top)| *top);
+            spans.push((top, cursor_y + height));
+        }
+        cursor_y += height;
+    }
+    if let Some((header, _)) = open.take() {
+        for span in &mut spans[header..] {
+            span.1 = cursor_y;
+        }
+    }
+    for (row, (top, end)) in rows.iter_mut().zip(spans) {
+        row.group_top = top;
+        row.group_end = end;
+    }
 }
 
 /// Point update for one local thread's runtime status. The tree rows are a
@@ -597,6 +647,8 @@ fn cloud_row(app: &MainWindow) -> SidebarRow {
         checked: false,
         path: "".into(),
         hint: "".into(),
+        group_top: 0.0,
+        group_end: 0.0,
     }
 }
 
@@ -1163,6 +1215,8 @@ mod tests {
             checked: false,
             path: "".into(),
             hint: "".into(),
+            group_top: 0.0,
+            group_end: 0.0,
         }
     }
 

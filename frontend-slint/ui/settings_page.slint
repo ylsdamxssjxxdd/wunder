@@ -906,8 +906,10 @@ export component SettingsPage inherits Rectangle {
                             clicked => { root.settings-tab = 0;  }
                         }
                         SettingsNavItem {
+                            // Runtime is the local toolchain, not a toolbox — the
+                            // toolbox glyph belongs to "工具" below.
                             visible: root.settings-category-flags[1];
-                            icon: @image-url("../assets/icons/fa-toolbox.svg");
+                            icon: @image-url("../assets/icons/terminal.svg");
                             title: I18n.st_tab_runtime;
                             selected: root.settings-tab == 14;
                             clicked => { root.settings-tab = 14;  }
@@ -928,7 +930,7 @@ export component SettingsPage inherits Rectangle {
                         }
                         SettingsNavItem {
                             visible: root.settings-category-flags[4];
-                            icon: @image-url("../assets/icons/fa-toolbox.svg");
+                            icon: @image-url("../assets/icons/wrench.svg");
                             title: I18n.stc_tools;
                             selected: root.settings-tab == 2;
                             clicked => { root.settings-tab = 2; root.refresh(); }
@@ -1088,37 +1090,37 @@ export component SettingsPage inherits Rectangle {
                                 SettingsCardHeader { title: I18n.st_tab_runtime; subtitle: I18n.st_exec_paths_note; }
                                 Rectangle { height: 10px; }
                                 HorizontalLayout { height: 62px; spacing: 10px;
-                                    FormField { horizontal-stretch: 1; label: I18n.st_python_path; placeholder: root.python-effective; text <=> root.python-path; read-only: root.saving || root.loading; edited => { root.save-runtime(); } }
+                                    FormField { horizontal-stretch: 1; label: I18n.st_python_path; text <=> root.python-path; read-only: root.saving || root.loading; edited => { root.save-runtime(); } }
                                     VerticalLayout { width: 92px; alignment: end; padding-bottom: 5px;
                                         PathBrowseButton { enabled: !root.saving && !root.loading; clicked => { root.pick-python-path(); } }
                                     }
                                 }
                                 HorizontalLayout { height: 62px; spacing: 10px;
-                                    FormField { horizontal-stretch: 1; label: I18n.st_git_path; placeholder: root.git-effective; text <=> root.git-path; read-only: root.saving || root.loading; edited => { root.save-runtime(); } }
+                                    FormField { horizontal-stretch: 1; label: I18n.st_git_path; text <=> root.git-path; read-only: root.saving || root.loading; edited => { root.save-runtime(); } }
                                     VerticalLayout { width: 92px; alignment: end; padding-bottom: 5px;
                                         PathBrowseButton { enabled: !root.saving && !root.loading; clicked => { root.pick-git-path(); } }
                                     }
                                 }
                                 HorizontalLayout { height: 62px; spacing: 10px;
-                                    FormField { horizontal-stretch: 1; label: I18n.st_rg_path; placeholder: root.rg-effective; text <=> root.rg-path; read-only: root.saving || root.loading; edited => { root.save-runtime(); } }
+                                    FormField { horizontal-stretch: 1; label: I18n.st_rg_path; text <=> root.rg-path; read-only: root.saving || root.loading; edited => { root.save-runtime(); } }
                                     VerticalLayout { width: 92px; alignment: end; padding-bottom: 5px;
                                         PathBrowseButton { enabled: !root.saving && !root.loading; clicked => { root.pick-rg-path(); } }
                                     }
                                 }
                                 HorizontalLayout { height: 62px; spacing: 10px;
-                                    FormField { horizontal-stretch: 1; label: I18n.st_ffmpeg_path; placeholder: root.ffmpeg-effective; text <=> root.ffmpeg-path; read-only: root.saving || root.loading; edited => { root.save-runtime(); } }
+                                    FormField { horizontal-stretch: 1; label: I18n.st_ffmpeg_path; text <=> root.ffmpeg-path; read-only: root.saving || root.loading; edited => { root.save-runtime(); } }
                                     VerticalLayout { width: 92px; alignment: end; padding-bottom: 5px;
                                         PathBrowseButton { enabled: !root.saving && !root.loading; clicked => { root.pick-ffmpeg-path(); } }
                                     }
                                 }
                                 HorizontalLayout { height: 62px; spacing: 10px;
-                                    FormField { horizontal-stretch: 1; label: I18n.st_browser_path; placeholder: root.browser-effective; text <=> root.browser-path; read-only: root.saving || root.loading; edited => { root.save-runtime(); } }
+                                    FormField { horizontal-stretch: 1; label: I18n.st_browser_path; text <=> root.browser-path; read-only: root.saving || root.loading; edited => { root.save-runtime(); } }
                                     VerticalLayout { width: 92px; alignment: end; padding-bottom: 5px;
                                         PathBrowseButton { enabled: !root.saving && !root.loading; clicked => { root.pick-browser-path(); } }
                                     }
                                 }
                                 HorizontalLayout { height: 62px; spacing: 10px;
-                                    FormField { horizontal-stretch: 1; label: I18n.st_shell_path; placeholder: root.shell-effective; text <=> root.shell-path; read-only: root.saving || root.loading; edited => { root.save-runtime(); } }
+                                    FormField { horizontal-stretch: 1; label: I18n.st_shell_path; text <=> root.shell-path; read-only: root.saving || root.loading; edited => { root.save-runtime(); } }
                                     VerticalLayout { width: 92px; alignment: end; padding-bottom: 5px;
                                         PathBrowseButton { enabled: !root.saving && !root.loading; clicked => { root.pick-shell-path(); } }
                                     }

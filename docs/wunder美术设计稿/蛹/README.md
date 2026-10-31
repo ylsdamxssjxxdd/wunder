@@ -4,10 +4,11 @@
 
 - 总览窗口：1462 × 866 逻辑像素；preferred：1180 × 740；最小：1024 × 700
 - 分页画布：1600 px 宽；产品 UI 按 1× 逻辑像素绘制，稿面注释独立排版
-- 默认强调色：`#F58A24`；中性色不随强调色切换
+- 默认强调色：`#F58A24`；前景文字/图标用 `accent-ink`（橙汁保持 `#F58A24`，其余色板同色相加深，与蜂巢 `base.css --ui-accent-ink` 同步）；中性色不随强调色切换
+- 窗口四边各 1px `window-frame` 暖灰 `#B9B2A7`（白底约 2.1:1），不是 `border-strong`
 - 阅读列：≤1000 px，时间线与输入带共用列宽，内边距 24 px
 - 应用图标：`assets/app-icon.png`；`bee.svg` 仅保留为渠道/协作辅助标记
-- 更新日期：2026-10-25
+- 更新日期：2026-10-31
 
 ## 文件与功能分区
 
@@ -38,6 +39,9 @@
 
 - 标题栏 28 px；窗口按钮 3 × 38 × 28；拖拽区 `width − 114`。
 - 侧栏默认 240 px，可拖 170–420；分隔柄命中区 6 px，静止无可见条，悬停 2×32、拖动 2×40 accent。
+- 侧栏行节奏（`SidebarMetrics`）：线程行 32、组行 36 + 4px 组间气口、两侧留白 12、行内边距 8、圆角 8；线程状态点列缩进 28、标题接到工作区标题列（48）；字号标题 13 / 次级 11，图标底 20 / 字形 13；行内动作按钮 20px 触面 + 4px 间距。
+- 组头吸顶：展开的工作区下滚时组行钉在树顶、随下一组到达推出；工作目录父链吸顶同构（树行 28px），由 Rust 投影盖章几何（`group-top/group-end`、`PinnedFileRow`）。
+- 线程行 tooltip 为「标题 · 最后完成 YYYY-MM-DD HH:mm」（`SidebarRow.hint`）；线程状态是显式 Phase（空闲/排队/运行/等待/完成/失败），窗口标题、状态点与活动计数同源读取。
 - 线程悬停动作真实顺序为**重命名 / 轨迹 / 归档**；工作区操作是另一组，不混用。
 - 输入带：`8 + 100 + 6 + 30 + 10 = 154`；内容宽 = 输入带 − 左右各 14 = 972（列宽 1000 时）。附件 +36，分支 +22，队列按可见行数增加。
 - 编辑器使用 14px SimSun；发送/停止位于动作行右下，不位于输入卡内。
@@ -46,10 +50,12 @@
 - 计划胶囊 26 px，展开卡 ≤560 px、最大高 360；展开卡只有说明与步骤，没有额外套标题或计数。
 - 目标横幅按钮顺序为**编辑 / 暂停或恢复 / 清除**；`elapsed` 字段当前不渲染。
 - 问询面板没有提交/跳过按钮，答案由 Composer 发送；空草稿但当前页有答案时发送可用。
-- 模型弹层 300×340；加号菜单 220；级联 268。
-- 设置壳 `min(1080, w−72) × min(720, h−56)`，头部 44，导航 260，导航项 60 高 + 4 间距；导航与内容都可滚动。
+- 模型弹层 300×340；加号菜单 220，第 6 项为「打开舵机」（独立终端运行 wunder-cli，继承当前工作区与本地数据根）；级联 268。
+- 所有可编辑输入统一右键菜单（剪切/复制/粘贴/全选，按只读与空文本禁用，`text_field.slint`）；触屏聚焦呼出虚拟键盘。
+- 设置壳 `min(1080, w−72) × min(720, h−56)`，头部 44，导航 260，导航项 48 高 + 4 间距、单行条目（无分类摘要）；导航与内容都可滚动。
+- 模型页：新建草稿显式保存（头部「保存」动作），已有配置自动保存；配置名可回车/失焦提交改名。
 - 主题选择使用四张 110px 高预览卡，不是小色块；常规页没有“界面密度、开机启动、全局保存”这些控件。
-- 弹窗：Confirm 400×160；Modal 420×220；Info 720×620。
+- 弹窗：Confirm 400×160；Modal 420×220；Info 宽 `min(520, 窗宽−72)`、卡高 = 正文高 + 150，正文超过 360px 封顶滚动，头部 22px 图标徽标（accent-soft 底 + accent-ink 字形）、正文浅色面板承载。
 
 ## 状态与动效
 
@@ -72,9 +78,9 @@
 ## 事实来源
 
 - `frontend-slint/ui/design_tokens.slint`、`theme.slint`、`main.slint`
-- `frontend-slint/ui/window_chrome.slint`、`sidebar.slint`、`workspace_files.slint`
-- `frontend-slint/ui/timeline.slint`、`tool_process.slint`、`status_icon.slint`
-- `frontend-slint/ui/composer.slint`、`textedit-base.slint`、`settings_page.slint`
+- `frontend-slint/ui/window_chrome.slint`、`sidebar.slint`、`workspace_files.slint`、`drag_row.slint`
+- `frontend-slint/ui/timeline.slint`、`tool_process.slint`、`status_icon.slint`、`thread_trajectory.slint`
+- `frontend-slint/ui/composer.slint`、`textedit-base.slint`、`text_field.slint`、`settings_page.slint`
 - `frontend-slint/ui/components.slint`、`patch_diff_card.slint`、`workflow_detail.slint`
 - `frontend-slint/ui/markdown.slint`、`activity_card.slint`、`runtime_status.slint`
 - `frontend-slint/src/turn_stats.rs`、`tool_icons.rs`、`demo.rs` 与当前 Slint 软件渲染帧

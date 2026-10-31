@@ -115,6 +115,12 @@ impl Observation {
         self.ready
     }
 
+    /// The durable turns this observer currently holds, for projections that
+    /// live outside the history model (the composer's inquiry card).
+    pub(super) fn durable_turns(&self) -> &[NativeChatTurn] {
+        &self.turns
+    }
+
     /// Adopt a durable snapshot obtained while the selection worker was
     /// acquiring the thread lease. This puts meaningful history on screen
     /// before the passive watcher performs its own refresh.
@@ -468,6 +474,13 @@ pub(super) fn install(app: &MainWindow, state: Rc<RefCell<State>>) {
         } else if (dirty || reset) && local_busy {
             observation.history_dirty = true;
         }
+        // A background goal round publishes its 问询面板 as a durable turn
+        // without any local stream pump. Reconcile the composer card from the
+        // observed turns so it opens (and closes again once settled) without
+        // the reader having to reopen the thread.
+        if dirty || reset {
+            sync_durable_inquiry(&app, &mut current, &session);
+        }
         let queue_due = queue_active && queue::due_arrived(&mut current.queue_due);
         drop(current);
         if refresh {
@@ -478,6 +491,34 @@ pub(super) fn install(app: &MainWindow, state: Rc<RefCell<State>>) {
             refresh_queue_async(&app, &state, &session);
         }
     });
+}
+
+/// Keep the composer's 问询面板 card in step with the durable turns. A panel
+/// published by a background goal round never crosses a local stream pump, so
+/// without this the card only appeared after the thread was reopened.
+fn sync_durable_inquiry(app: &MainWindow, state: &mut State, session: &str) {
+    let next = super::durable_inquiry(
+        session,
+        state.observation.durable_turns(),
+        &state.consumed_inquiries,
+    );
+    let next_key = next.as_ref().map(|panel| panel.consumption_key(session));
+    let current_key = state
+        .inquiries
+        .get(session)
+        .map(|panel| panel.consumption_key(session));
+    if next_key == current_key {
+        return;
+    }
+    match next {
+        Some(panel) => {
+            state.inquiries.insert(session.to_string(), panel);
+        }
+        None => {
+            state.inquiries.remove(session);
+        }
+    }
+    super::publish_inquiry(app, session, state);
 }
 
 /// Durable history uses the same single work-process fold as streaming. Batch

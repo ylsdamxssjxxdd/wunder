@@ -3,7 +3,7 @@
 // The head mirrors the web left-rail: one icon toolbar (upload / search /
 // download / multi-select / refresh) that swaps to the search field while
 // querying, and a selection bar while picking rows for batch actions.
-import { Theme, WorkspaceFileRow } from "theme.slint";
+import { Theme, WorkspaceFileRow, PinnedFileRow } from "theme.slint";
 import { SidebarMetrics } from "drag_row.slint";
 import { I18n } from "i18n.slint";
 import { ListView, Button, LineEdit } from "std-widgets.slint";
@@ -62,6 +62,12 @@ export component WorkspaceFilesPanel inherits Rectangle {
     in property <bool> local;
     in property <string> active-path;
     in property <int> active-index: -1;
+    // Sticky folder chain: the ancestors of the row the scroll offset lands
+    // on, stacked outermost first; `pinned-bottom` is where the stack ends
+    // (0 = nothing pinned). The controller recomputes on every scroll frame.
+    in property <[PinnedFileRow]> pinned-rows;
+    in property <float> pinned-bottom: 0;
+    callback sticky-scroll(float);
     // Search head state; `active` means flat results replaced the tree.
     in-out property <bool> search-open;
     in-out property <string> search-query;
@@ -273,6 +279,10 @@ export component WorkspaceFilesPanel inherits Rectangle {
                                     if top + 28px > -self.content-y + self.visible-height { self.content-y = min(0px, self.visible-height - top - 28px); }
                                 }
                             }
+                            // Feed the sticky chain: the controller turns the
+                            // scroll offset into the ancestor folders that
+                            // should stay pinned at the top edge.
+                            changed content-y => { root.sticky-scroll(-self.content-y / 1px); }
                             for row[index] in root.rows : Rectangle {
                                 height: 28px; width: parent.width;
                                 background: row.path == root.active-path && !root.search-active && row.kind != 2 ? Theme.selected : row-touch.has-hover ? Theme.hover : transparent;
@@ -367,6 +377,62 @@ export component WorkspaceFilesPanel inherits Rectangle {
                             resource-mode: root.resource-mode;
                             menu(index, action) => { root.menu(index, action); }
                             refresh => { root.refresh(); }
+                        }
+                        // Sticky folder chain: while the listing scrolls, the
+                        // ancestor folders of the row at the top edge stay
+                        // stacked there (outermost first), so a deep folder
+                        // never loses its path context. The replicas are plain
+                        // projections without input handling — clicks keep
+                        // reaching the rows that scroll beneath them — and the
+                        // edge line marks where the stack ends.
+                        if root.pinned-bottom > 0 : Rectangle {
+                            x: 0px; y: 0px;
+                            width: parent.width;
+                            height: parent.height;
+                            // A pathological deep chain must not paint past
+                            // the tree into the regions below it.
+                            clip: true;
+                            for pin in root.pinned-rows : Rectangle {
+                                x: 0px;
+                                y: pin.y * 1px;
+                                width: parent.width;
+                                height: 28px;
+                                background: Theme.sidebar;
+                                HorizontalLayout {
+                                    padding-left: SidebarMetrics.row-padding + pin.depth * 12px;
+                                    padding-right: SidebarMetrics.row-padding;
+                                    spacing: SidebarMetrics.icon-gap;
+                                    Rectangle {
+                                        width: 14px;
+                                        Image {
+                                            x: 1px; y: 8px; width: 12px; height: 12px;
+                                            source: @image-url("../assets/icons/chevron-down.svg");
+                                            colorize: Theme.muted;
+                                        }
+                                    }
+                                    Image {
+                                        y: 7px; width: 14px; height: 14px;
+                                        source: @image-url("../assets/icons/folder-open.svg");
+                                        colorize: Theme.warning;
+                                    }
+                                    Text {
+                                        text: pin.name;
+                                        color: Theme.text-secondary; font-size: Theme.font-md;
+                                        vertical-alignment: center; overflow: elide;
+                                        horizontal-stretch: 1;
+                                    }
+                                    if pin.loading : Text {
+                                        text: I18n.wf_loading_dir;
+                                        color: Theme.muted; font-size: Theme.font-2xs;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                            }
+                            Rectangle {
+                                y: root.pinned-bottom * 1px;
+                                width: parent.width; height: 1px;
+                                background: Theme.border;
+                            }
                         }
                     }
                 }

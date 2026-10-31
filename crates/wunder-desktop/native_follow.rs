@@ -223,6 +223,20 @@ impl Projection {
                     tool_data["item_id"] = json!(id);
                     events.push(json!({"event":if pending {"tool_call"} else {"tool_result"}, "data":tool_data,
                         "display_result":wunder_server::tool_result_display::tool_result_display(tool, payload, pending)}));
+                } else if kind == "question_panel" {
+                    // A background round (goal continuation) publishes its
+                    // panel as its own durable item, not on assistant meta.
+                    // Without this the follower never told the composer that
+                    // the thread had stopped waiting for the reader.
+                    if let Some(panel) = durable_question_panel(payload) {
+                        let id = format!("panel:{id}");
+                        if self.question_panel_item != id {
+                            self.question_panel_item = id;
+                            let mut panel = panel;
+                            panel["turn_id"] = json!(execution);
+                            events.push(json!({"event":"question_panel","data":panel}));
+                        }
+                    }
                 } else if kind == "compaction" {
                     let mut detail = payload.clone();
                     detail["status"] = p["status"].clone();
@@ -348,6 +362,22 @@ fn pending_question_panel(payload: &Value) -> Option<Value> {
         return None;
     }
     Some(panel.clone())
+}
+
+/// A standalone `question_panel` thread-log item. Its envelope status only says
+/// the item was persisted; the panel itself is still pending until the reader
+/// answers it (or the waiting turn settles), so the synthetic status is always
+/// `pending`.
+fn durable_question_panel(payload: &Value) -> Option<Value> {
+    let questions = payload.get("questions")?.as_array()?;
+    if questions.is_empty() {
+        return None;
+    }
+    Some(json!({
+        "questions": questions,
+        "keep_open": payload.get("keep_open").and_then(Value::as_bool).unwrap_or(true),
+        "status": "pending",
+    }))
 }
 
 pub(super) async fn watch(
@@ -799,6 +829,45 @@ mod tests {
         // The composer answers and de-duplicates against the waiting turn row.
         assert_eq!(panel["data"]["turn_id"], "fixture-root");
         // A duplicate revision is ignored and must not reopen the card.
+        assert!(projection.apply(&item).unwrap().is_empty());
+    }
+
+    #[test]
+    fn standalone_question_panel_item_reaches_the_composer() {
+        let mut projection = Projection {
+            root: "fixture-root".into(),
+            execution: "fixture-round".into(),
+            ..Default::default()
+        };
+        let item = json!({
+            "cursor": 4,
+            "change_type": "item_upsert",
+            "turn_id": "fixture-round",
+            "payload": {
+                "item_id": "fixture-round:question-panel-2",
+                "kind": "question_panel",
+                "status": "completed",
+                "revision": 1,
+                "payload": {
+                    "kind": "question_panel",
+                    "status": "completed",
+                    "keep_open": true,
+                    "questions": [{
+                        "question": "继续吗？",
+                        "options": [{"label": "继续"}, {"label": "暂停"}]
+                    }]
+                }
+            }
+        });
+        let events = projection.apply(&item).expect("panel item");
+        let panel = events
+            .iter()
+            .find(|event| event["event"] == "question_panel")
+            .expect("question panel event");
+        assert_eq!(panel["data"]["status"], "pending");
+        assert_eq!(panel["data"]["questions"][0]["question"], "继续吗？");
+        // The answer must settle the waiting goal round, not the root command.
+        assert_eq!(panel["data"]["turn_id"], "fixture-round");
         assert!(projection.apply(&item).unwrap().is_empty());
     }
 

@@ -34,6 +34,30 @@
     </div>
 
     <div v-else class="workspace-files-rows" :style="rowsStyle">
+      <!-- 吸顶祖先链：钉住的目录行是纯投影（无输入处理），点击穿透到
+           底下继续滚动的行；底部细线标记整条链的结束位置。 -->
+      <div v-if="stickyRows.length" class="workspace-files-sticky" aria-hidden="true">
+        <div
+          v-for="pin in stickyRows"
+          :key="`sticky-${pin.row.path}`"
+          class="workspace-file-row is-sticky-pin"
+          :style="{
+            top: `${pin.slot * WORKSPACE_ROW_HEIGHT}px`,
+            paddingLeft: `${6 + pin.row.depth * 12}px`
+          }"
+        >
+          <span class="workspace-file-twisty" aria-hidden="true">
+            <i class="fa-solid fa-chevron-down"></i>
+          </span>
+          <i class="workspace-file-icon fa-solid fa-folder-open" aria-hidden="true"></i>
+          <span class="workspace-file-name">{{ pin.row.name }}</span>
+          <span v-if="pin.row.loading" class="workspace-files-spinner" aria-hidden="true"></span>
+        </div>
+        <div
+          class="workspace-files-sticky-edge"
+          :style="{ top: `${stickyRows.length * WORKSPACE_ROW_HEIGHT}px` }"
+        ></div>
+      </div>
       <div :style="spacerStyle(topSpacer)" aria-hidden="true"></div>
       <template v-for="row in visibleRows" :key="row.key">
         <button
@@ -236,6 +260,52 @@ const bottomSpacer = computed(() =>
 const rowsStyle = computed(() => ({ minHeight: `${props.rows.length * WORKSPACE_ROW_HEIGHT}px` }));
 
 const spacerStyle = (height: number) => ({ height: `${height}px` });
+
+// -------------------------------------------------------------- sticky chain
+// 滚动时把「顶行所属的祖先文件夹」钉在滚动区顶端（外层在上、内层在下），
+// 深层列表不再失去路径上下文。行是扁平虚拟化的，祖先链从顶行向上行走：
+// 上一行里深度减一、类型为目录的行即父目录；「加载更多」是所属目录的
+// 分页脚注，按深一层参与推导。每个目录只在自己的子树还能填满它的槽位
+// （末行尚未滚过顶缘）时保留，否则整个链在其内侧截断。
+const subtreeEndIndex = (rows: WorkspaceVisibleRow[], folder: number): number => {
+  const depth = rows[folder].depth;
+  let index = folder + 1;
+  while (
+    index < rows.length &&
+    rows[index].depth + (rows[index].kind === 'more' ? 1 : 0) > depth
+  ) {
+    index += 1;
+  }
+  return index;
+};
+
+const stickyRows = computed(() => {
+  const rows = props.rows;
+  if (!rows.length) return [];
+  const top = Math.max(
+    0,
+    Math.min(Math.floor(scrollTop.value / WORKSPACE_ROW_HEIGHT), rows.length - 1)
+  );
+  const head = rows[top];
+  if (!head) return [];
+  let depth = head.depth + (head.kind === 'more' ? 1 : 0);
+  const chain: number[] = [];
+  for (let cursor = top - 1; cursor >= 0; cursor -= 1) {
+    const row = rows[cursor];
+    if (row.kind === 'dir' && row.depth === depth - 1) {
+      chain.push(cursor);
+      depth = row.depth;
+    }
+  }
+  const pins: Array<{ row: WorkspaceVisibleRow; slot: number }> = [];
+  for (let slot = 0; slot < chain.length; slot += 1) {
+    const index = chain[chain.length - 1 - slot];
+    const endY = subtreeEndIndex(rows, index) * WORKSPACE_ROW_HEIGHT - scrollTop.value;
+    if (endY - WORKSPACE_ROW_HEIGHT < slot * WORKSPACE_ROW_HEIGHT) break;
+    pins.push({ row: rows[index], slot });
+  }
+  return pins;
+});
 
 const canDragWorkspacePath = (row: WorkspaceVisibleRow): boolean =>
   !props.readOnly && !props.remote && row.kind !== 'more' && Boolean(row.path);

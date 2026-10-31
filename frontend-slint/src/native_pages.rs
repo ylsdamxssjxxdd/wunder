@@ -1061,21 +1061,13 @@ fn bind_settings(app: &MainWindow, api: Arc<NativeDesktop>) {
                         let items = stats.iter().map(|entry| entry.items).sum::<i64>();
                         let tool_calls = stats.iter().map(|entry| entry.tool_calls).sum::<i64>();
                         let text = format!(
-                            "已生成 {} 个线程 / {user_turns} 轮次 / {items} 条消息 / {tool_calls} 次工具调用",
+                            "已生成 {} 个线程，共 {user_turns} 轮用户轮次、{items} 条消息、{tool_calls} 次工具调用。",
                             stats.len(),
                         );
                         app.set_stress_status(text.clone().into());
                         app.set_dialog_title("压测线程已生成".into());
                         app.set_dialog_text(
-                            format!(
-                                "{text}\n会话 ID：{}",
-                                stats
-                                    .iter()
-                                    .map(|entry| entry.session_id.as_str())
-                                    .collect::<Vec<_>>()
-                                    .join("、")
-                            )
-                            .into(),
+                            format!("{text}\n\n线程已写入当前工作区，可在会话列表中打开。").into(),
                         );
                         app.set_dialog_open(true);
                         app.invoke_refresh_chat();
@@ -1321,12 +1313,38 @@ pub(crate) fn apply_settings(app: &MainWindow, settings: DesktopSettings) {
     let theme_global = app.global::<crate::Theme>();
     theme_global.set_palette(normalize_palette(&settings.theme).into());
     theme_global.set_font_scale(settings.font_size.clamp(12, 20) as f32 / 14.0);
-    app.set_runtime_python(settings.python_path.into());
-    app.set_runtime_git(settings.git_path.into());
-    app.set_runtime_rg(settings.rg_path.into());
-    app.set_runtime_ffmpeg(settings.ffmpeg_path.into());
-    app.set_runtime_browser(settings.browser_path.into());
-    app.set_runtime_shell(settings.shell_path.into());
+    // One table drives both the editable field and its "effective" companion: a
+    // field without an explicit override is pre-filled with the auto-detected
+    // binary (supplement or system), so the real path is visible in place rather
+    // than as a hint. The save path drops values equal to the effective one, so
+    // merely viewing the resolved path never freezes it into a custom override.
+    let effective = |tool: &str| {
+        settings
+            .tool_status
+            .iter()
+            .find(|entry| entry.tool == tool)
+            .map(|entry| entry.effective.clone())
+            .unwrap_or_default()
+    };
+    let display = |configured: String, tool: &str| {
+        if configured.trim().is_empty() {
+            effective(tool)
+        } else {
+            configured
+        }
+    };
+    app.set_runtime_python(display(settings.python_path.clone(), "python").into());
+    app.set_runtime_git(display(settings.git_path.clone(), "git").into());
+    app.set_runtime_rg(display(settings.rg_path.clone(), "rg").into());
+    app.set_runtime_ffmpeg(display(settings.ffmpeg_path.clone(), "ffmpeg").into());
+    app.set_runtime_browser(display(settings.browser_path.clone(), "browser").into());
+    app.set_runtime_shell(display(settings.shell_path.clone(), "powershell").into());
+    app.set_runtime_python_effective(effective("python").into());
+    app.set_runtime_git_effective(effective("git").into());
+    app.set_runtime_rg_effective(effective("rg").into());
+    app.set_runtime_ffmpeg_effective(effective("ffmpeg").into());
+    app.set_runtime_browser_effective(effective("browser").into());
+    app.set_runtime_shell_effective(effective("powershell").into());
     let status = |tool: &str| {
         settings
             .tool_status
@@ -1341,22 +1359,6 @@ pub(crate) fn apply_settings(app: &MainWindow, settings: DesktopSettings) {
     app.set_runtime_ffmpeg_status(status("ffmpeg").into());
     app.set_runtime_browser_status(status("browser").into());
     app.set_runtime_shell_status(status("powershell").into());
-    // Same projection for the "effective" binary: the settings page shows it as
-    // the placeholder so an empty override still reveals which runtime is used.
-    let effective = |tool: &str| {
-        settings
-            .tool_status
-            .iter()
-            .find(|entry| entry.tool == tool)
-            .map(|entry| entry.effective.clone())
-            .unwrap_or_default()
-    };
-    app.set_runtime_python_effective(effective("python").into());
-    app.set_runtime_git_effective(effective("git").into());
-    app.set_runtime_rg_effective(effective("rg").into());
-    app.set_runtime_ffmpeg_effective(effective("ffmpeg").into());
-    app.set_runtime_browser_effective(effective("browser").into());
-    app.set_runtime_shell_effective(effective("powershell").into());
     // The catalogue object projects the composer's full model list and mirrors
     // its size for the picker's "empty list" versus "nothing configured" split.
     app.set_virtual_replay_logs(string_model(settings.virtual_replay_logs));

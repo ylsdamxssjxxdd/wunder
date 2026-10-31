@@ -1015,6 +1015,19 @@ impl ThreadRuntime {
             .unwrap_or(true)
     }
 
+    /// Whether this process currently owns a running execution for the thread.
+    /// Used by the local UI so control actions can still fence their own turn
+    /// after the open lease lapsed (system sleep, stalled heartbeat).
+    pub fn has_local_execution(&self, session: &str) -> bool {
+        let session = session.trim();
+        !session.is_empty()
+            && self
+                .active_runtime_sessions
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .contains(session)
+    }
+
     /// Serialize destructive hand-off with admission for this thread only.
     /// Weak entries retain no idle locks; unrelated threads never await each other.
     fn transition_gate(&self, session: &str) -> Arc<Mutex<()>> {

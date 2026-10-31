@@ -2,7 +2,7 @@ import { RuntimeBadge } from "runtime_status.slint";
 import { I18n } from "i18n.slint";
 import { Theme } from "theme.slint";
 import { TextFieldActivation, TextFieldMenu } from "text_field.slint";
-import { Spinner } from "std-widgets.slint";
+import { ScrollView, Spinner } from "std-widgets.slint";
 
 // Keyboard and accessibility actions share the pointer callback.
 export component Action inherits Rectangle {
@@ -438,22 +438,74 @@ export component ConfirmDialog inherits Rectangle {
     }
 }
 
+// One-shot information dialog. The card hugs its message instead of opening a
+// fixed sheet: a one-line notice stays a small card, a long preview grows to
+// the cap and then scrolls inside the body panel.
 export component InfoDialog inherits Rectangle {
     in property <string> title;
     in property <string> message;
     in property <string> close-label;
     callback closed();
     width: 100%; height: 100%;
+
+    property <length> card-width: min(520px, root.width - 72px);
+    // Message probe. Its width is the real body width minus the scrollbar
+    // gutter, so the measured height is never smaller than what the laid-out
+    // text needs, whichever way the scrollbar resolves.
+    property <length> probe-width: root.card-width - 72px;
+    probe := Text {
+        visible: false;
+        x: -3000px; y: 0px;
+        width: root.probe-width;
+        text: root.message;
+        wrap: word-wrap;
+        font-size: Theme.font-sm;
+    }
+    property <length> body-height: min(360px, max(22px, probe.preferred-height));
+    // Card padding (20 top + 20 bottom) + header 30 + gap 12 + body panel 24
+    // (its own padding) + gap 12 + footer 32.
+    property <length> card-height: root.body-height + 150px;
+
     ModalDialog {
-        card-width: 720px;
-        card-height: 620px;
+        card-width: root.card-width;
+        card-height: root.card-height;
         dismissed => { root.closed(); }
-        HorizontalLayout { height: 30px;
-            Text { text: root.title; color: Theme.text; font-size: Theme.font-md; font-weight: 600; }
+        HorizontalLayout { height: 30px; spacing: Theme.space-2;
+            Rectangle {
+                width: 22px; height: 22px; border-radius: 11px;
+                background: Theme.accent-soft;
+                Image {
+                    x: 5px; y: 5px; width: 12px; height: 12px;
+                    source: @image-url("../assets/icons/log-info.svg");
+                    colorize: Theme.accent-ink;
+                }
+            }
+            Text { text: root.title; color: Theme.text; font-size: Theme.font-md; font-weight: 600; vertical-alignment: center; }
             Rectangle { horizontal-stretch: 1; }
             Action { icon: @image-url("../assets/icons/xmark.svg"); label: root.close-label; clicked => { root.closed(); } }
         }
-        Text { text: root.message; color: Theme.muted; font-size: Theme.font-sm; wrap: word-wrap; vertical-stretch: 1; }
+        Rectangle {
+            height: root.body-height + 24px;
+            border-radius: Theme.radius-md;
+            background: Theme.panel;
+            border-width: 1px; border-color: Theme.border;
+            body := ScrollView {
+                x: 12px; y: 12px;
+                width: parent.width - 24px;
+                height: parent.height - 24px;
+                horizontal-scrollbar-policy: always-off;
+                vertical-scrollbar-policy: probe.preferred-height > root.body-height ? as-needed : always-off;
+                content-width: self.visible-width;
+                content-height: max(self.visible-height, probe.preferred-height);
+                Text {
+                    x: 0px; y: 0px;
+                    width: body.visible-width;
+                    height: body.content-height;
+                    text: root.message; color: Theme.text-secondary;
+                    font-size: Theme.font-sm; wrap: word-wrap;
+                }
+            }
+        }
         HorizontalLayout {
             Rectangle { horizontal-stretch: 1; }
             Action { label: root.close-label; icon: @image-url("../assets/icons/check.svg"); show-label: true; primary: true; clicked => { root.closed(); } }

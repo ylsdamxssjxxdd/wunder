@@ -33,8 +33,9 @@
     <rect x="88" y="604" width="14" height="14" rx="3" fill="#E9E8E5"/><text x="112" y="616" class="mono tiny">activity-off #E9E8E5</text>
     <rect x="328" y="604" width="14" height="14" rx="3" fill="#F5F4F2"/><text x="352" y="616" class="mono tiny">diff-header #F5F4F2</text>
     <rect x="590" y="604" width="14" height="14" rx="3" fill="#F6F5F3" stroke="#D8D5D0"/><text x="614" y="616" class="mono tiny">input-readonly-bg = hover</text>
-    <text x="88" y="656" class="note">输入：默认可写白底 + border-strong；只读/停用才降为 hover 灰底。</text>
-    <text x="88" y="680" class="tiny">bubble = #FFFFFF；middle = sidebar；chat = panel；overlay = #00000040。</text>
+    <rect x="88" y="630" width="14" height="14" rx="3" fill="#B9B2A7"/><text x="112" y="642" class="mono tiny">window-frame #B9B2A7 · 窗口四边各 1px</text>
+    <text x="88" y="668" class="note">输入：默认可写白底 + border-strong；只读/停用才降为 hover 灰底。</text>
+    <text x="88" y="692" class="tiny">bubble = #FFFFFF；middle = sidebar；chat = panel；overlay = #00000040。</text>
 
     <rect x="988" y="204" width="548" height="500" rx="12" class="card"/>
     <text x="1012" y="234" class="card-t">强调色族 · 默认橙汁</text><text x="1512" y="234" text-anchor="end" class="tiny">palette = terracotta</text>
@@ -46,7 +47,9 @@
     <text x="1012" y="526" class="card-t">可切换色族</text><text x="1012" y="548" class="tiny">设置页展示前四项，后两项为保留项</text>
     <g><rect x="1012" y="566" width="72" height="34" rx="6" fill="#F58A24"/><rect x="1096" y="566" width="72" height="34" rx="6" fill="#16AD8D"/><rect x="1180" y="566" width="72" height="34" rx="6" fill="#2F7A5C"/><rect x="1264" y="566" width="72" height="34" rx="6" fill="#C08A2A"/><rect x="1348" y="566" width="72" height="34" rx="6" fill="#8F9AAD"/><rect x="1432" y="566" width="80" height="34" rx="6" fill="#38BDF8"/></g>
     <text x="1012" y="622" class="mono tiny">terracotta</text><text x="1096" y="622" class="mono tiny">hula-green</text><text x="1180" y="622" class="mono tiny">forest</text><text x="1264" y="622" class="mono tiny">honey</text><text x="1348" y="622" class="mono tiny">minimal</text><text x="1432" y="622" class="mono tiny">tech-blue</text>
-    <text x="1012" y="660" class="note">主按钮 accent，悬停 accent-deep。</text><text x="1012" y="682" class="tiny">浅色正文不用 accent；焦点 1px，无外发光。</text>
+    <text x="1012" y="640" class="mono hex">#F58A24</text><text x="1096" y="640" class="mono hex">#107D66</text><text x="1180" y="640" class="mono hex">#2F7A5C</text><text x="1264" y="640" class="mono hex">#8E661F</text><text x="1348" y="640" class="mono hex">#637087</text><text x="1432" y="640" class="mono hex">#0B77A7</text><text x="1512" y="640" text-anchor="end" class="mono tiny">ink</text>
+    <text x="1012" y="660" class="note">主按钮 accent，悬停 accent-deep；accent 底上的文字用白。</text>
+    <text x="1012" y="682" class="tiny">浅底强调文字/图标用 accent-ink（AA 前景档，与蜂巢 base.css 同步）；焦点 1px 无外发光。</text>
   </g>
 
   <g id="semantic-colors">
@@ -91,7 +94,7 @@
   <g id="layout-baseline">
     <rect x="64" y="1472" width="28" height="24" rx="6" fill="#FDF0DE"/><text x="78" y="1489" text-anchor="middle" class="chip">04</text><text x="104" y="1490" class="sect">窗口布局基线</text>
     <rect x="64" y="1514" width="1472" height="194" rx="12" class="card"/>
-    <rect x="88" y="1538" width="660" height="138" fill="#FBFAF8" stroke="#D8D5D0"/>
+    <rect x="88" y="1538" width="660" height="138" fill="#FBFAF8" stroke="#B9B2A7"/>
     <rect x="88" y="1538" width="660" height="28" fill="#F6F5F3"/><text x="100" y="1557" class="ui11">28px 标题栏</text>
     <rect x="88" y="1566" width="150" height="110" fill="#F6F5F3"/><text x="100" y="1592" class="ui11">侧栏 240px</text><text x="100" y="1612" class="tiny">170–420 可拖</text>
     <rect x="270" y="1578" width="440" height="58" rx="8" fill="#FFF" stroke="#E8E6E3"/><text x="282" y="1602" class="ui11 muted">居中的阅读列与输入带</text><text x="282" y="1622" class="mono tiny">min(可用宽度, 1000px)</text>
@@ -102,5 +105,5 @@
     <text x="784" y="1638" class="note">输入带 8 + 100 + 6 + 30 + 10 = 154px。</text>
     <text x="784" y="1666" class="tiny">附件 +36；分支 +22；队列按可见行数增加，均有界。</text>
   </g>
-  <g id="footer"><line x1="64" y1="1730" x2="1536" y2="1730" stroke="#D8D5D0"/><text x="64" y="1750" class="tiny">唯一变量来源：frontend-slint/ui/design_tokens.slint；稿面底色 #F5F3EF 仅用于文档，不是产品 token。</text><text x="1536" y="1750" text-anchor="end" class="mono tiny">01 / 09 · 2026-10-25</text></g>
+  <g id="footer"><line x1="64" y1="1730" x2="1536" y2="1730" stroke="#D8D5D0"/><text x="64" y="1750" class="tiny">唯一变量来源：frontend-slint/ui/design_tokens.slint；稿面底色 #F5F3EF 仅用于文档，不是产品 token。</text><text x="1536" y="1750" text-anchor="end" class="mono tiny">01 / 09 · 2026-10-31</text></g>
 </svg>

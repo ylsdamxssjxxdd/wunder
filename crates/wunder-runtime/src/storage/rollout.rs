@@ -11,7 +11,7 @@
 //! timer.
 
 use anyhow::{anyhow, Context, Result};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Local, Utc};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -253,8 +253,13 @@ impl RolloutRecorder {
         let thread_id = checked_id(thread_id.into(), "thread id")?;
         let rollout_id = checked_id(rollout_id.into(), "rollout id")?;
         let created_at = Utc::now();
-        let date_path = created_at.format("%Y/%m/%d").to_string();
-        let stamp = created_at.format("%Y-%m-%dT%H-%M-%S%.3fZ");
+        // The dated directory and filename use the machine's local clock so
+        // operators can match a file to "now" without a UTC offset in their
+        // head. `created_at` itself stays UTC: it is the ordering authority
+        // and is rebuilt from the persisted epoch on reload.
+        let local = created_at.with_timezone(&Local);
+        let date_path = local.format("%Y/%m/%d").to_string();
+        let stamp = local.format("%Y-%m-%dT%H-%M-%S%.3f%z");
         let filename = format!(
             "rollout-{stamp}-{}_{}.jsonl",
             safe_filename_component(&thread_id),
@@ -896,7 +901,8 @@ fn safe_filename_component(id: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        visit_complete_records, PersistedRolloutRecord, RolloutRecorder, ROLLOUT_WRITER_CAPACITY,
+        safe_filename_component, visit_complete_records, PersistedRolloutRecord, RolloutRecorder,
+        ROLLOUT_WRITER_CAPACITY,
     };
     use serde_json::json;
     use tempfile::tempdir;
@@ -1068,6 +1074,27 @@ mod tests {
                 .collect::<Vec<_>>(),
             [0, 1]
         );
+    }
+
+    #[tokio::test]
+    async fn rollout_path_uses_local_calendar_date() {
+        let root = tempdir().expect("temporary root");
+        let recorder =
+            RolloutRecorder::create(root.path(), "thread_a", "rollout_a").expect("create recorder");
+        let descriptor = recorder.descriptor().clone();
+        recorder.shutdown().await.expect("shutdown recorder");
+        let local = descriptor.created_at.with_timezone(&chrono::Local);
+        let expected_path = root
+            .path()
+            .join("sessions")
+            .join(local.format("%Y/%m/%d").to_string())
+            .join(format!(
+                "rollout-{}-{}_{}.jsonl",
+                local.format("%Y-%m-%dT%H-%M-%S%.3f%z"),
+                safe_filename_component("thread_a"),
+                safe_filename_component("rollout_a"),
+            ));
+        assert_eq!(descriptor.path, expected_path);
     }
 
     #[test]

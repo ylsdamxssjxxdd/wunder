@@ -5,7 +5,7 @@
 // the workspace refactor spec (§5.2). The tree is one flat row model built by
 // the native projection, so the Slint thread only lays out rows; rows
 // drag-reorder through `move-row`.
-import { Theme, SidebarRow, WorkspaceFileRow } from "theme.slint";
+import { Theme, SidebarRow, WorkspaceFileRow, PinnedFileRow } from "theme.slint";
 import { I18n } from "i18n.slint";
 import { ListView } from "std-widgets.slint";
 import { DragRow, DragPreview, SidebarMetrics } from "drag_row.slint";
@@ -284,6 +284,142 @@ component ThreadRow inherits ContextMenuArea {
     }
 }
 
+// Workspace header chip, shared by the tree delegate and the sticky replica
+// so a pinned header is pixel-identical to its row and keeps the same
+// actions. kind 0 is a local workspace, kind 2 the pinned cloud row; both
+// are drag-reorderable through the DragRow base.
+component GroupHeaderRow inherits DragRow {
+    in property <SidebarRow> data;
+    // Action code: 0 new thread, 1 edit, 3 delete. The cloud row only
+    // carries the new-thread entry (0); its site reroutes it.
+    callback menu(int);
+
+    label: data.name;
+    row-kind: data.kind;
+    workspace-id: data.kind == 2 ? "cloud" : data.workspace-id;
+    selected: data.selected;
+    selected-color: Theme.selected;
+    tooltip: data.kind == 2
+        ? (data.expanded ? I18n.ws_collapse_threads : I18n.ws_expand_threads)
+        : (data.path != "" ? data.path : data.expanded ? I18n.ws_collapse_threads : I18n.ws_expand_threads);
+    actions-width: data.kind == 2 ? 40px : 84px;
+
+    // Selection indicator on the workspace row.
+    Rectangle { x: 2px; y: (parent.height - 16px) / 2; width: 2px; height: 16px; border-radius: 1px; background: data.selected ? Theme.accent : transparent; }
+    HorizontalLayout {
+        padding-left: SidebarMetrics.row-padding;
+        // 「+」常驻在动作条最右一列，计数与标题在这里让开它。
+        padding-right: 32px;
+        spacing: SidebarMetrics.icon-gap;
+        Rectangle {
+            y: (parent.height - SidebarMetrics.icon-tile) / 2;
+            width: SidebarMetrics.icon-tile; height: SidebarMetrics.icon-tile;
+            border-radius: Theme.radius-tag;
+            // No separate chevron: the glyph itself is the fold switch.
+            // Expanded = solid workspace colour, the threads below are open;
+            // collapsed = hollow (muted) glyph. The cloud row keeps the
+            // accent tint instead of a workspace colour.
+            background: data.kind == 2
+                ? (data.expanded ? Theme.accent.transparentize(0.87) : Theme.hover)
+                : (data.expanded ? WorkspaceVisual.color(data.color).transparentize(0.87) : Theme.hover);
+            Image {
+                x: (parent.width - SidebarMetrics.icon-glyph) / 2;
+                y: (parent.height - SidebarMetrics.icon-glyph) / 2;
+                width: SidebarMetrics.icon-glyph; height: SidebarMetrics.icon-glyph;
+                source: data.kind == 2 ? WorkspaceVisual.icon("cloud") : WorkspaceVisual.icon(data.icon);
+                image-fit: contain;
+                colorize: data.kind == 2
+                    ? (data.expanded ? Theme.accent-ink : Theme.muted)
+                    : (data.expanded ? WorkspaceVisual.color(data.color) : Theme.muted);
+            }
+        }
+        Text {
+            height: parent.height; text: data.name;
+            color: Theme.text; font-size: Theme.font-md;
+            vertical-alignment: center; overflow: elide;
+            horizontal-stretch: 1;
+        }
+        if data.kind == 0 : Text {
+            // Thread count yields to the hover actions.
+            visible: !root.hover && data.thread-count > 0;
+            height: parent.height; text: "\{data.thread-count}";
+            color: Theme.muted; font-size: Theme.font-xs; vertical-alignment: center;
+        }
+    }
+    if data.kind == 0 : Rectangle {
+        // Direct actions replace the old ellipsis menu: plus spawns a thread
+        // in this workspace, pen opens the edit dialog (icon, color, folder,
+        // reveal), trash deletes the workspace after its own confirm step.
+        // They ride over the row instead of joining its layout, so revealing
+        // them moves nothing and they sit on the name's own centre line.
+        x: parent.width - 84px;
+        y: 0px;
+        width: 84px;
+        height: parent.height;
+        background: root.hover ? (data.selected ? Theme.selected : Theme.accent-soft) : transparent;
+        Rectangle {
+            x: 56px; y: (parent.height - 20px) / 2; width: 20px; height: 20px;
+            Image {
+                x: (parent.width - SidebarMetrics.icon-glyph) / 2;
+                y: (parent.height - SidebarMetrics.icon-glyph) / 2;
+                width: SidebarMetrics.icon-glyph; height: SidebarMetrics.icon-glyph;
+                source: @image-url("../assets/icons/fa-plus.svg");
+                colorize: ws-thread-touch.has-hover ? Theme.accent-ink : Theme.muted;
+            }
+            ws-thread-touch := TouchArea {
+                mouse-cursor: pointer;
+                accessible-role: button; accessible-label: I18n.ws_menu_new_thread;
+                Tooltip { text: @markdown("\{I18n.ws_menu_new_thread}"); }
+                clicked => { root.menu(0); }
+            }
+        }
+        if root.hover : Rectangle {
+            x: 32px; y: (parent.height - 20px) / 2; width: 20px; height: 20px; border-radius: SidebarMetrics.row-radius;
+            background: ws-edit-touch.has-hover ? Theme.selected : transparent;
+            // fa-pen-to-square, the glyph the web uses for rename/edit; the
+            // bare pen read as a different action next to it.
+            Image { x: (parent.width - SidebarMetrics.icon-glyph) / 2; y: (parent.height - SidebarMetrics.icon-glyph) / 2; width: SidebarMetrics.icon-glyph; height: SidebarMetrics.icon-glyph; source: @image-url("../assets/icons/fa-pen-to-square.svg"); colorize: Theme.muted; }
+            ws-edit-touch := TouchArea {
+                mouse-cursor: pointer;
+                accessible-role: button; accessible-label: I18n.ws_menu_edit;
+                Tooltip { text: @markdown("\{I18n.ws_menu_edit}"); }
+                clicked => { root.menu(1); }
+            }
+        }
+        if root.hover : Rectangle {
+            x: 8px; y: (parent.height - 20px) / 2; width: 20px; height: 20px; border-radius: SidebarMetrics.row-radius;
+            background: ws-delete-touch.has-hover ? Theme.selected : transparent;
+            Image { x: (parent.width - SidebarMetrics.icon-glyph) / 2; y: (parent.height - SidebarMetrics.icon-glyph) / 2; width: SidebarMetrics.icon-glyph; height: SidebarMetrics.icon-glyph; source: @image-url("../assets/icons/trash.svg"); colorize: ws-delete-touch.has-hover ? Theme.danger : Theme.muted; }
+            ws-delete-touch := TouchArea {
+                mouse-cursor: pointer;
+                accessible-role: button; accessible-label: I18n.ws_menu_delete;
+                Tooltip { text: @markdown("\{I18n.ws_menu_delete}"); }
+                clicked => { root.menu(3); }
+            }
+        }
+    }
+    if data.kind == 2 : Rectangle {
+        // Pinned cloud workspace header: only the visible new-thread
+        // affordance, matching the cloud row on the web.
+        x: parent.width - 28px; y: (parent.height - 20px) / 2;
+        width: 20px; height: 20px;
+        Image {
+            x: (parent.width - SidebarMetrics.icon-glyph) / 2;
+            y: (parent.height - SidebarMetrics.icon-glyph) / 2;
+            width: SidebarMetrics.icon-glyph; height: SidebarMetrics.icon-glyph;
+            source: @image-url("../assets/icons/fa-plus.svg");
+            colorize: cloud-new-touch.has-hover ? Theme.accent-ink : Theme.muted;
+        }
+        cloud-new-touch := TouchArea {
+            mouse-cursor: pointer;
+            enabled: root.enabled;
+            accessible-role: button; accessible-label: I18n.ws_menu_new_thread;
+            Tooltip { text: @markdown("\{I18n.ws_menu_new_thread}"); }
+            clicked => { root.menu(0); }
+        }
+    }
+}
+
 export component Sidebar inherits Rectangle {
     min-height: 0px;
     preferred-height: 600px;
@@ -347,6 +483,11 @@ export component Sidebar inherits Rectangle {
     // apply a persisted ratio without feeding layout results back into its
     // preferred size; the clamp keeps both regions available.
     in property <[WorkspaceFileRow]> file-rows;
+    // Pinned ancestor folders of the working-directory tree, projected by the
+    // native controller from the live scroll offset.
+    in property <[PinnedFileRow]> file-pinned;
+    in property <float> file-pinned-bottom: 0;
+    callback file-sticky-scroll(float);
     in property <bool> file-loading;
     in property <string> file-error;
     in property <bool> file-offline;
@@ -491,121 +632,27 @@ export component Sidebar inherits Rectangle {
         tree-frame := Rectangle {
             min-height: 0px; preferred-height: 0px;
             vertical-stretch: clamp(root.split-ratio, 0.3, 0.8);
+            // The sticky header replica below is a sibling of the tree and
+            // slides out above its top edge when the next group arrives; the
+            // frame must clip it so it never paints over the device row.
+            clip: true;
             tree := ListView {
                 horizontal-scrollbar-policy: always-off;
                 for row[ri] in root.rows : Rectangle {
                     height: row.kind == 1 || row.kind == 3 ? SidebarMetrics.thread-height : SidebarMetrics.group-height;
                     width: parent.width;
-                    if row.kind == 0 : ws-drag := DragRow {
+                    if row.kind == 0 : GroupHeaderRow {
                         // 分组行让出 4px 顶部气口：组间比组内松，chip 仍与线程行同高。
                         x: SidebarMetrics.gutter;
                         y: SidebarMetrics.group-air;
                         width: parent.width - SidebarMetrics.gutter * 2;
                         height: parent.height - SidebarMetrics.group-air;
-                        border-radius: SidebarMetrics.row-radius;
                         enabled: !root.busy;
-                        selected: row.selected;
-                        selected-color: Theme.selected;
-                        label: row.name;
                         row-index: ri;
-                        row-kind: row.kind;
-                        workspace-id: row.workspace-id;
-                        tooltip: row.path != "" ? row.path : row.expanded ? I18n.ws_collapse_threads : I18n.ws_expand_threads;
-                        actions-width: 84px;
+                        data: row;
                         activate => { root.select-row(ri); }
                         move-by(travel) => { root.move-row(ri, travel); }
-                        // Selection indicator on the workspace row.
-                        Rectangle { x: 2px; y: (parent.height - 16px) / 2; width: 2px; height: 16px; border-radius: 1px; background: row.selected ? Theme.accent : transparent; }
-                        HorizontalLayout {
-                            padding-left: SidebarMetrics.row-padding;
-                            // 「+」常驻在动作条最右一列，计数与标题在这里让开它。
-                            padding-right: 32px;
-                            spacing: SidebarMetrics.icon-gap;
-                            Rectangle {
-                                y: (parent.height - SidebarMetrics.icon-tile) / 2;
-                                width: SidebarMetrics.icon-tile; height: SidebarMetrics.icon-tile;
-                                border-radius: Theme.radius-tag;
-                                // No separate chevron: the glyph itself is the fold
-                                // switch. Expanded = solid workspace colour, the
-                                // threads below are open; collapsed = hollow
-                                // (muted) glyph.
-                                background: row.expanded ? WorkspaceVisual.color(row.color).transparentize(0.87) : Theme.hover;
-                                Image {
-                                    x: (parent.width - SidebarMetrics.icon-glyph) / 2;
-                                    y: (parent.height - SidebarMetrics.icon-glyph) / 2;
-                                    width: SidebarMetrics.icon-glyph; height: SidebarMetrics.icon-glyph;
-                                    source: WorkspaceVisual.icon(row.icon);
-                                    colorize: row.expanded ? WorkspaceVisual.color(row.color) : Theme.muted;
-                                }
-                            }
-                            Text {
-                                height: parent.height; text: row.name;
-                                color: Theme.text; font-size: Theme.font-md;
-                                vertical-alignment: center; overflow: elide;
-                                horizontal-stretch: 1;
-                            }
-                            Text {
-                                // Thread count yields to the hover actions.
-                                visible: !ws-drag.hover && row.thread-count > 0;
-                                height: parent.height; text: "\{row.thread-count}";
-                                color: Theme.muted; font-size: Theme.font-xs; vertical-alignment: center;
-                            }
-                        }
-                        // Direct actions replace the old ellipsis menu: plus spawns
-                        // a thread in this workspace, pen opens the edit dialog
-                        // (icon, color, folder, reveal), trash deletes the
-                        // workspace after its own confirm step. Like the thread
-                        // row's band they ride over the row instead of joining its
-                        // layout, so revealing them moves nothing and they sit on
-                        // the name's own centre line.
-                        Rectangle {
-                            x: parent.width - 84px;
-                            y: 0px;
-                            width: 84px;
-                            height: parent.height;
-                            background: ws-drag.hover ? (row.selected ? Theme.selected : Theme.accent-soft) : transparent;
-                            Rectangle {
-                                x: 56px; y: (parent.height - 20px) / 2; width: 20px; height: 20px;
-                                Image {
-                                    x: (parent.width - SidebarMetrics.icon-glyph) / 2;
-                                    y: (parent.height - SidebarMetrics.icon-glyph) / 2;
-                                    width: SidebarMetrics.icon-glyph; height: SidebarMetrics.icon-glyph;
-                                    source: @image-url("../assets/icons/fa-plus.svg");
-                                    colorize: ws-thread-touch.has-hover ? Theme.accent-ink : Theme.muted;
-                                }
-                                ws-thread-touch := TouchArea {
-                                    mouse-cursor: pointer;
-                                    accessible-role: button; accessible-label: I18n.ws_menu_new_thread;
-                                    Tooltip { text: @markdown("\{I18n.ws_menu_new_thread}"); }
-                                    clicked => { root.workspace-menu(row.payload, 0); }
-                                }
-                            }
-                            if ws-drag.hover : Rectangle {
-                                x: 32px; y: (parent.height - 20px) / 2; width: 20px; height: 20px; border-radius: SidebarMetrics.row-radius;
-                                background: ws-edit-touch.has-hover ? Theme.selected : transparent;
-                                // fa-pen-to-square, the glyph the web uses for
-                                // rename/edit; the bare pen read as a different
-                                // action next to it.
-                                Image { x: (parent.width - SidebarMetrics.icon-glyph) / 2; y: (parent.height - SidebarMetrics.icon-glyph) / 2; width: SidebarMetrics.icon-glyph; height: SidebarMetrics.icon-glyph; source: @image-url("../assets/icons/fa-pen-to-square.svg"); colorize: Theme.muted; }
-                                ws-edit-touch := TouchArea {
-                                    mouse-cursor: pointer;
-                                    accessible-role: button; accessible-label: I18n.ws_menu_edit;
-                                    Tooltip { text: @markdown("\{I18n.ws_menu_edit}"); }
-                                    clicked => { root.workspace-menu(row.payload, 1); }
-                                }
-                            }
-                            if ws-drag.hover : Rectangle {
-                                x: 8px; y: (parent.height - 20px) / 2; width: 20px; height: 20px; border-radius: SidebarMetrics.row-radius;
-                                background: ws-delete-touch.has-hover ? Theme.selected : transparent;
-                                Image { x: (parent.width - SidebarMetrics.icon-glyph) / 2; y: (parent.height - SidebarMetrics.icon-glyph) / 2; width: SidebarMetrics.icon-glyph; height: SidebarMetrics.icon-glyph; source: @image-url("../assets/icons/trash.svg"); colorize: ws-delete-touch.has-hover ? Theme.danger : Theme.muted; }
-                                ws-delete-touch := TouchArea {
-                                    mouse-cursor: pointer;
-                                    accessible-role: button; accessible-label: I18n.ws_menu_delete;
-                                    Tooltip { text: @markdown("\{I18n.ws_menu_delete}"); }
-                                    clicked => { root.workspace-menu(row.payload, 3); }
-                                }
-                            }
-                        }
+                        menu(code) => { root.workspace-menu(row.payload, code); }
                     }
                     if row.kind == 1 : DragRow {
                         x: SidebarMetrics.gutter;
@@ -671,66 +718,17 @@ export component Sidebar inherits Rectangle {
                     // new-thread affordance as local workspace rows; the
                     // native projection expands its bounded cloud thread rows
                     // directly beneath it.
-                    if row.kind == 2 : DragRow {
+                    if row.kind == 2 : GroupHeaderRow {
                         x: SidebarMetrics.gutter;
                         y: SidebarMetrics.group-air;
                         width: parent.width - SidebarMetrics.gutter * 2;
                         height: parent.height - SidebarMetrics.group-air;
-                        border-radius: SidebarMetrics.row-radius;
                         enabled: !root.busy;
-                        selected: row.selected;
-                        selected-color: Theme.selected;
-                        label: row.name;
                         row-index: ri;
-                        row-kind: row.kind;
-                        workspace-id: "cloud";
-                        tooltip: row.expanded ? I18n.ws_collapse_threads : I18n.ws_expand_threads;
-                        actions-width: 40px;
+                        data: row;
                         activate => { root.select-row(ri); }
                         move-by(travel) => { root.move-row(ri, travel); }
-                        Rectangle { x: 2px; y: (parent.height - 16px) / 2; width: 2px; height: 16px; border-radius: 1px; background: row.selected ? Theme.accent : transparent; }
-                        HorizontalLayout {
-                            padding-left: SidebarMetrics.row-padding;
-                            padding-right: 32px;
-                            spacing: SidebarMetrics.icon-gap;
-                            Rectangle {
-                                y: (parent.height - SidebarMetrics.icon-tile) / 2;
-                                width: SidebarMetrics.icon-tile; height: SidebarMetrics.icon-tile;
-                                border-radius: Theme.radius-tag;
-                                background: row.expanded ? Theme.accent.transparentize(0.87) : Theme.hover;
-                                Image {
-                                    x: (parent.width - SidebarMetrics.icon-glyph) / 2;
-                                    y: (parent.height - SidebarMetrics.icon-glyph) / 2;
-                                    width: SidebarMetrics.icon-glyph; height: SidebarMetrics.icon-glyph;
-                                    source: WorkspaceVisual.icon("cloud"); image-fit: contain;
-                                    colorize: row.expanded ? Theme.accent-ink : Theme.muted;
-                                }
-                            }
-                            Text {
-                                height: parent.height; text: row.name;
-                                color: Theme.text; font-size: Theme.font-md;
-                                vertical-alignment: center; overflow: elide;
-                                horizontal-stretch: 1;
-                            }
-                        }
-                        Rectangle {
-                            x: parent.width - 28px; y: (parent.height - 20px) / 2;
-                            width: 20px; height: 20px;
-                            Image {
-                                x: (parent.width - SidebarMetrics.icon-glyph) / 2;
-                                y: (parent.height - SidebarMetrics.icon-glyph) / 2;
-                                width: SidebarMetrics.icon-glyph; height: SidebarMetrics.icon-glyph;
-                                source: @image-url("../assets/icons/fa-plus.svg");
-                                colorize: cloud-new-touch.has-hover ? Theme.accent-ink : Theme.muted;
-                            }
-                            cloud-new-touch := TouchArea {
-                                mouse-cursor: pointer;
-                                enabled: !root.busy;
-                                accessible-role: button; accessible-label: I18n.ws_menu_new_thread;
-                                Tooltip { text: @markdown("\{I18n.ws_menu_new_thread}"); }
-                                clicked => { root.new-cloud-thread(); }
-                            }
-                        }
+                        menu(code) => { if code == 0 { root.new-cloud-thread(); } }
                     }
                 }
             }
@@ -742,6 +740,48 @@ export component Sidebar inherits Rectangle {
                 height: parent.height - self.y;
                 Menu {
                     MenuItem { title: I18n.sb_thread_multi_select; enabled: root.rows.length > 0; activated => { root.begin-selection(); } }
+                }
+            }
+            // Sticky workspace header: while the expanded group's threads
+            // scroll, its header chip stays pinned to the tree's top edge —
+            // only the threads move, the entry the user expanded never rolls
+            // out of sight. The replica is the real header row component, so
+            // click, hover actions and drag-reorder keep working in place. It
+            // pins once the natural header scrolls past the top and is pushed
+            // out in lockstep with the next group's header arriving; the
+            // geometry rides on the group span the projection stamps onto the
+            // row, so the pitch here and in the row list cannot disagree.
+            for row[ri] in root.rows : Rectangle {
+                // for/if 实例在普通 Rectangle 里默认居中而不是 (0,0)，必须显式
+                // 钉在原点，否则吸顶层会悬在树的中央。
+                x: 0; y: 0;
+                width: 0px; height: 0px;
+                if (row.kind == 0 || row.kind == 2) && row.expanded : pin-frame := Rectangle {
+                    x: 0px;
+                    y: min(0px, row.group-end * 1px + tree.content-y
+                        - (SidebarMetrics.group-height - SidebarMetrics.group-air));
+                    // The wrapper is a 0×0 positioning cell; the frame sizes
+                    // against the tree itself, not against that cell.
+                    width: tree-frame.width;
+                    height: SidebarMetrics.group-height;
+                    visible: row.group-top * 1px + tree.content-y < 0px
+                        && row.group-end * 1px + tree.content-y > -SidebarMetrics.group-air;
+                    background: Theme.sidebar;
+                    GroupHeaderRow {
+                        x: SidebarMetrics.gutter;
+                        y: SidebarMetrics.group-air;
+                        width: parent.width - SidebarMetrics.gutter * 2;
+                        height: parent.height - SidebarMetrics.group-air;
+                        enabled: !root.busy;
+                        row-index: ri;
+                        data: row;
+                        activate => { root.select-row(ri); }
+                        move-by(travel) => { root.move-row(ri, travel); }
+                        menu(code) => {
+                            if row.kind == 0 { root.workspace-menu(row.payload, code); }
+                            else { root.new-cloud-thread(); }
+                        }
+                    }
                 }
             }
         }
@@ -913,6 +953,9 @@ export component Sidebar inherits Rectangle {
             local: root.file-local;
             active-path: root.file-active-path;
             active-index: root.file-active-index;
+            pinned-rows: root.file-pinned;
+            pinned-bottom: root.file-pinned-bottom;
+            sticky-scroll(scroll) => { root.file-sticky-scroll(scroll); }
             key-action(action) => { root.file-key(action); }
             toggle(index) => { root.file-toggle(index); }
             check(index) => { root.file-check(index); }

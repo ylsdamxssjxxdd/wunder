@@ -34,6 +34,19 @@ export global EffortOptions {
     }
 }
 
+// The slash commands the composer offers. One source for both flyout
+// variants, and the editor's Enter needs the same list to commit the
+// highlighted row without reaching into the flyout's own for loop.
+export global CommandOptions {
+    out property <[{ value: string, label: string }]> items: [
+        { value: "/help", label: I18n.cp_cmd_help },
+        { value: "/new", label: I18n.cp_cmd_new },
+        { value: "/stop", label: I18n.cp_cmd_stop },
+        { value: "/goal ", label: I18n.cp_cmd_goal },
+        { value: "/compact", label: I18n.cp_cmd_compact }
+    ];
+}
+
 // Six-dot spinner shared by the status dock and the model trigger; the
 // software renderer has no transform-rotate, so the dot ring is rotated
 // mathematically with the web's 1.48s period (same approach as RuntimeBadge).
@@ -1199,6 +1212,9 @@ export component QueueStrip inherits Rectangle {
 // pops out to the right of its menu row, and the height follows the body so
 // every submenu is exactly as tall as its rows.
 component CommandFlyout inherits Rectangle {
+    // Keyboard-selected row; -1 means the flyout is mouse-only (plus-menu
+    // cascade) and no row reads as pre-highlighted.
+    in property <int> active-index: -1;
     callback pick(string);
     width: 268px;
     height: body.preferred-height;
@@ -1207,15 +1223,9 @@ component CommandFlyout inherits Rectangle {
     drop-shadow-color: #00000024; drop-shadow-blur: 16px; drop-shadow-offset-y: 3px;
     body := VerticalLayout {
         padding: 8px; spacing: 4px;
-        for command in [
-            { value: "/help", label: I18n.cp_cmd_help },
-            { value: "/new", label: I18n.cp_cmd_new },
-            { value: "/stop", label: I18n.cp_cmd_stop },
-            { value: "/goal ", label: I18n.cp_cmd_goal },
-            { value: "/compact", label: I18n.cp_cmd_compact }
-        ] : Rectangle {
+        for command[command-index] in CommandOptions.items : Rectangle {
             height: 28px; border-radius: 5px;
-            background: cmd-touch.has-hover ? Theme.accent-soft : transparent;
+            background: (command-index == root.active-index || cmd-touch.has-hover) ? Theme.accent-soft : transparent;
             accessible-role: list-item; accessible-label: command.label;
             Text { x: 8px; width: parent.width - 16px; height: parent.height; text: command.label; color: Theme.text; font-size: Theme.font-2xs; vertical-alignment: center; overflow: elide; }
             cmd-touch := TouchArea { mouse-cursor: pointer; clicked => { root.pick(command.value); } }
@@ -1393,6 +1403,14 @@ export component Composer inherits Rectangle {
     private property <bool> command-open: false;
     private property <bool> screenshot-open: false;
     private property <bool> permission-open: false;
+    // Keyboard walk over the slash-command flyout (蜂巢同款): arrows move the
+    // highlight, Enter commits it instead of sending, Escape puts the flyout
+    // away until the next real edit. The pinned cascade inside the plus menu
+    // stays mouse-only, so this gate is the typed-"/" variant only.
+    private property <int> command-index: 0;
+    private property <bool> command-dismissed: false;
+    private property <bool> command-keys:
+        !root.plus-open && !root.command-dismissed && root.draft == "/";
     // 蜂巢同款发送门禁: allow attachment-only and answered-inquiry sends.
     private property <bool> send-enabled:
         ((root.draft != "" || root.attachments.length > 0 || root.inquiry-ready) && !root.send-blocked);
@@ -1514,7 +1532,39 @@ export component Composer inherits Rectangle {
                 selection-foreground-color: Theme.text;
                 font-size: 14px; font-family: "SimSun";
                 wrap: word-wrap;
+                edited => {
+                    // A real edit restarts the flyout walk from the first row
+                    // and revokes an Escape dismissal (蜂巢 resets both when
+                    // the input changes). Programmatic writes (pick, recall)
+                    // never land here, so they cannot reset the walk.
+                    root.command-dismissed = false;
+                    root.command-index = 0;
+                }
                 key-pressed(event) => {
+                // While the slash-command flyout is up its keys come first:
+                // arrows walk the rows, Enter commits the highlighted command
+                // instead of sending, Escape dismisses until the next edit.
+                // Consumed here so nothing reaches history recall or send.
+                if root.command-keys {
+                    if event.text == "\u{F700}" {
+                        root.command-index = root.command-index <= 0
+                            ? CommandOptions.items.length - 1 : root.command-index - 1;
+                        return accept;
+                    }
+                    if event.text == "\u{F701}" {
+                        root.command-index = root.command-index + 1 >= CommandOptions.items.length
+                            ? 0 : root.command-index + 1;
+                        return accept;
+                    }
+                    if event.text == Key.Escape {
+                        root.command-dismissed = true;
+                        return accept;
+                    }
+                    if event.text == "\n" && !event.modifiers.shift && !event.modifiers.control {
+                        root.draft = CommandOptions.items[root.command-index].value;
+                        return accept;
+                    }
+                }
                 // ArrowUp / ArrowDown recall the messages this thread already
                 // sent (Slint's key code points: U+F700 up, U+F701 down). The
                 // caret test needs byte offsets, so Rust owns the decision, the
@@ -1608,9 +1658,11 @@ export component Composer inherits Rectangle {
                     }
                 }
                 // Typed "/" still expands the command list in place whenever
-                // the menu itself is closed.
-                if !root.plus-open && root.draft == "/" : CommandFlyout {
+                // the menu itself is closed; Escape can dismiss it until the
+                // draft is edited again.
+                if !root.plus-open && !root.command-dismissed && root.draft == "/" : CommandFlyout {
                     x: 0px; y: -self.height - 8px; z: 30;
+                    active-index: root.command-index;
                     pick(value) => { root.draft = value; editor.focus(); }
                 }
                 plus_menu := Rectangle {
