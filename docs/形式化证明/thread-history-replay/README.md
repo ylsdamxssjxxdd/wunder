@@ -6,7 +6,7 @@
 
 投影只保留最新 `ACTIVE_WINDOW_ITEMS` 条完整行，更早的轮次必须从 canonical JSONL 按需回读，不能把索引重新膨胀回全量。旧实现以 `ordinal % 1024` 的稀疏锚点作为回读起点，并用「锚点间隔的两倍 + 页大小 + 余量」作为记录预算；真实长线程的锚点区间可跨 7168 个 ordinal / 约 13MB，远超预算，区间中间的轮次整段读不出来。修复后以 `thread_turns.start_rollout_byte_offset`（轮次自身首条记录的精确字节）作为回读起点，锚点只在更靠近页边界时作为优化，并把记录与字节预算变成硬上界。
 
-模型把多个物理片段、压缩源和并发写抽象为单轮、单块、单向请求：`TurnStart = 6`、`TurnEnd = 11`，轮次条目分布在非展示记录之间（`TurnItems = {8, 9, 11}`）；预修复起点 `AnchorStart = 1`，旧记录预算 4，间距 5 条记录即可超出；修复起点等于 `TurnStart`，预算 8 覆盖整轮。真实分页的多 chunk 合并、字节截断与压缩源由真实回归补强，不从小模型推出无限规模结论。
+模型把多个物理片段、压缩源和并发写抽象为单轮、单块、单向请求：`TurnStart = 6`、`TurnEnd = 11`，轮次条目分布在非展示记录之间（`TurnItems = {8, 9, 11}`）；预修复起点 `AnchorStart = 1`，旧记录预算 4，间距 5 条记录即可超出；修复起点等于 `TurnStart`，预算 8 覆盖整轮。真实分页的多 chunk 合并、字节截断、分叉血缘（多个物理片段）与压缩源由真实回归补强，不从小模型推出无限规模结论。
 
 ## 不变量与结果
 
@@ -40,14 +40,23 @@
 
 ## 真实回归
 
-`cargo test -p wunder-runtime --lib storage::canonical_thread_log_tests::trimmed_active_window_replays_earliest_chat_and_process_from_rollout -- --test-threads=1`
+`cargo test -p wunder-runtime --features sqlite-storage --lib storage::canonical_thread_log_tests::trimmed_active_window_replays_earliest_chat_and_process_from_rollout -- --test-threads=1`
 
 该测试用生产写入器生成 60 个用户轮次 × 40 个模型轮次，确认窗口确实裁剪到 2000 行后，逐页回读最早、中段与全部聊天轮次；末尾删除全部 `thread_item_anchors` 后再做一次全量分页，证明锚点只是优化、正确性依赖轮次起点。真实长线程副本（100 个用户轮次、约 130MB rollout、窗口外 90 轮）另行做端到端逐页验证：全部轮次可读，中段轮次工作过程回放 300 项，轮次起点最大间隔约 1.42MB，锚点最大间隔约 13.4MB。
+
+分叉血缘与压缩源由另外两条生产链路回归覆盖（同样先删光锚点）：
+
+```powershell
+cargo test -p wunder-runtime --features sqlite-storage --lib storage::canonical_thread_log_tests::forked_thread_replays_inherited_rounds_beyond_the_active_window -- --test-threads=1
+cargo test -p wunder-runtime --features sqlite-storage --lib storage::canonical_thread_log_tests::compressed_rollout_replays_turns_beyond_the_active_window -- --test-threads=1
+```
+
+前者在 60 轮父线程的第 30 轮分叉，再给子线程写入自有轮次：继承前缀在父 rollout、自身记录在子 rollout，两个物理片段的 ordinal 区间相邻且互斥；删除全部锚点后逐页读出 31 轮，并完整回放最早继承轮次的工作过程，验证 `segment_hint` 只把轮次起点绑定到其所属片段。后者把 60 轮线程的冷 rollout 压缩成 `.zst` 后再做同样的全量分页，验证字节偏移契约在解码快照上仍然成立。
 
 ## 已知失败与未覆盖
 
 - 没有未解决的规则违反；预修复反例是预期结果。
-- 未建模多 segment 轮换、压缩源、多 chunk 合并的字节位置、并发投影与真实磁盘延迟；这些由 `scan_lineage` 的回归与真实副本验证补强，不构成形式化证明。
+- 未建模多 segment 轮换、压缩源、多 chunk 合并的字节位置、并发投影与真实磁盘延迟。分叉血缘与压缩源已由上面两条真实回归覆盖，但仍不构成形式化证明；并发投影读取由快照先对齐投影再读取的既有竞态回归覆盖。
 - 未覆盖前端渲染、滚动位置、事件时序与性能时延；显示链路的实时投影证据见 `../聊天状态一致性验证/` 与 `../stream-follow-20261030/`。
 - 未证明任意长度、任意锚点分布或无限状态的定理；结论仅限本配置下 7 个状态、6 条迁移的穷举。
 

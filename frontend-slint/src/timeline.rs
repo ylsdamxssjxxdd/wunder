@@ -1035,12 +1035,11 @@ impl Timeline {
         Ok(())
     }
 
-    /// The raw text of the active block, for copy and durable replay.
-    pub fn body_text(&self) -> String {
-        self.body
-            .as_ref()
-            .map(|body| body.text.clone())
-            .unwrap_or_default()
+    /// Length of the active block, for the bounded stream-byte counter. The
+    /// text itself is already published on the row; cloning it per frame only
+    /// to read its length was pure copy traffic.
+    pub fn body_len(&self) -> usize {
+        self.body.as_ref().map_or(0, |body| body.text.len())
     }
 
     /// Append a reasoning delta, opening a thinking entry for this segment.

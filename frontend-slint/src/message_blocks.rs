@@ -1,17 +1,31 @@
 //! Bounded native Markdown projection.
 //!
-//! Streaming output remains plain text. Once a model response is terminal we
-//! parse its visible prefix once with pulldown-cmark. Text blocks carry a
-//! marker-free plain projection so the read-only text controls in the bubble
-//! stay selectable and copyable with the mouse; code blocks keep Slint's
-//! StyledText rendering for syntax colours.
+//! Streaming output remains plain text and is published as a frozen prefix of
+//! completed lines plus one active tail block, so a growing answer costs
+//! O(tail) per frame instead of re-shaping the whole message. Once a model
+//! response is terminal we parse its visible window once with pulldown-cmark.
+//! Text blocks carry a marker-free plain projection so the read-only text
+//! controls in the bubble stay selectable and copyable with the mouse; code
+//! blocks keep Slint's StyledText rendering for syntax colours.
 use crate::TextBlock;
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
-use slint::{ModelRc, StyledText, VecModel};
+use slint::{Model, ModelRc, StyledText, VecModel};
 use std::rc::Rc;
 
 const DISPLAY_BYTES: usize = 16 * 1024;
 const DISPLAY_LINES: usize = 160;
+/// Completed lines are frozen into their own block once the live tail passes
+/// this budget; only the tail is re-shaped on the following frame.
+const TAIL_BYTES: usize = 2 * 1024;
+/// Upper bound for one frozen block.
+const FROZEN_CHUNK_BYTES: usize = 4 * 1024;
+/// The display window is re-based in whole steps: past the budget its start
+/// moves a few bytes per frame, and rebuilding the prefix on every one of
+/// those would cost more than the tail it is meant to bound.
+const REBASE_SLACK: usize = 4 * 1024;
+/// Shown at the head once the display window drops older lines; streaming and
+/// the settled view use the same words so the settle step never reshapes it.
+const TRUNCATED_NOTICE: &str = "仅展示最近 16 KiB 或 160 行；点击气泡下方“复制”获取完整原文。";
 pub const MAX_TEXT_BYTES: usize = 8 * 1024 * 1024;
 const KIND_TEXT: i32 = 0;
 const KIND_CODE: i32 = 1;
@@ -24,6 +38,13 @@ pub struct Blocks {
     pub raw: String,
     pub model: Rc<VecModel<TextBlock>>,
     rendered: bool,
+    /// Byte offset in `raw` where the published window starts. It only moves
+    /// forward when the reply outgrows the display budget.
+    window: usize,
+    /// Byte offset in `raw` before which text is frozen into completed blocks.
+    frozen: usize,
+    /// Index of the live tail block, which is always the model's last row.
+    tail: Option<usize>,
 }
 
 impl Blocks {
@@ -32,6 +53,9 @@ impl Blocks {
             raw: String::new(),
             model: Rc::new(VecModel::default()),
             rendered: false,
+            window: 0,
+            frozen: 0,
+            tail: None,
         }
     }
 
@@ -56,16 +80,22 @@ impl Blocks {
         }
         self.raw = text.into();
         self.rendered = false;
+        self.reset_stream_view();
         Ok(())
     }
 
     /// Update the streaming view. No Markdown parsing takes place here.
+    ///
+    /// Completed lines are frozen once and never touched again; only the live
+    /// tail block is replaced, which keeps the per-frame text layout bounded
+    /// by the tail instead of the whole message.
     pub fn flush(&mut self) {
         if self.rendered {
             return;
         }
-        self.model
-            .set_vec(plain_blocks(visible_source(&self.raw).0));
+        self.sync_window();
+        self.freeze_completed();
+        self.publish_tail();
     }
 
     /// Parse exactly once after the model output reaches a terminal state.
@@ -73,16 +103,89 @@ impl Blocks {
         if self.rendered {
             return;
         }
-        let (source, capped) = visible_source(&self.raw);
+        let (source, head_capped) = visible_source(&self.raw);
         let mut blocks = markdown_blocks(source);
-        if capped {
-            blocks.push(text_block(
-                "仅展示前 16 KiB 或 160 行；点击气泡下方“复制”获取完整原文。",
-                KIND_H1,
-            ));
+        if head_capped {
+            blocks.insert(0, text_block(TRUNCATED_NOTICE, KIND_H1));
         }
         self.model.set_vec(blocks);
+        self.tail = None;
+        self.frozen = self.raw.len();
         self.rendered = true;
+    }
+
+    fn reset_stream_view(&mut self) {
+        self.window = 0;
+        self.frozen = 0;
+        self.tail = None;
+        self.model.set_vec(Vec::new());
+    }
+
+    /// Rebase the published window when the reply outgrows the display budget.
+    /// The head is dropped rather than the tail: a long answer must keep
+    /// showing what the model is writing right now.
+    fn sync_window(&mut self) {
+        let start = window_start(&self.raw);
+        if start == 0 {
+            return;
+        }
+        // Re-base only in whole steps; a per-frame slide would rebuild the
+        // frozen prefix every stream tick once the reply crosses the budget.
+        if self.window != 0 && start <= self.window.saturating_add(REBASE_SLACK) {
+            return;
+        }
+        self.window = start;
+        self.frozen = start;
+        self.tail = None;
+        self.model.set_vec(Vec::new());
+        if start > 0 {
+            self.model.push(plain_text_block(TRUNCATED_NOTICE));
+        }
+    }
+
+    fn freeze_completed(&mut self) {
+        let limit = self.raw.len().saturating_sub(TAIL_BYTES);
+        if limit <= self.frozen {
+            return;
+        }
+        let Some(cut) = line_boundary_before(&self.raw, limit) else {
+            return;
+        };
+        if cut <= self.frozen {
+            return;
+        }
+        let chunk = self.raw[self.frozen..cut].to_owned();
+        // The tail block, when present, is always the last row: completed
+        // blocks are inserted in front of it and it keeps its identity.
+        let at = self.tail.unwrap_or_else(|| self.model.row_count());
+        let mut inserted = 0usize;
+        for part in split_chunks(&chunk) {
+            // The block boundary stands in for the line terminator: a block
+            // starts on its own line, so keeping the newline would double-space.
+            let text = part.strip_suffix('\n').unwrap_or(part);
+            if text.is_empty() {
+                continue;
+            }
+            self.model.insert(at + inserted, plain_text_block(text));
+            inserted += 1;
+        }
+        if inserted > 0 {
+            self.tail = Some(at + inserted);
+        }
+        self.frozen = cut;
+    }
+
+    fn publish_tail(&mut self) {
+        let text = &self.raw[self.frozen..];
+        match self.tail {
+            Some(index) => self.model.set_row_data(index, plain_text_block(text)),
+            None if !text.is_empty() => {
+                let index = self.model.row_count();
+                self.model.push(plain_text_block(text));
+                self.tail = Some(index);
+            }
+            None => {}
+        }
     }
 }
 
@@ -145,20 +248,38 @@ fn workspace_document_source(source: &str) -> bool {
     )
 }
 
+/// The published window keeps the newest lines, so a long answer never freezes
+/// mid-stream: the head leaves the display budget and the live tail stays
+/// visible. Copy and the durable history always carry the complete text.
 fn visible_source(text: &str) -> (&str, bool) {
-    let byte_end = boundary(text, text.len().min(DISPLAY_BYTES));
-    let display_end = text[..byte_end]
-        .match_indices('\n')
-        .nth(DISPLAY_LINES - 1)
-        .map_or(byte_end, |(offset, _)| offset + 1);
-    (&text[..display_end], text.len() > display_end)
+    let start = window_start(text);
+    (&text[start..], start > 0)
 }
 
-fn boundary(text: &str, mut index: usize) -> usize {
-    while !text.is_char_boundary(index) {
-        index -= 1;
+fn window_start(text: &str) -> usize {
+    let mut start = char_boundary_down(text, text.len().saturating_sub(DISPLAY_BYTES));
+    // Open the window on a line boundary so it never begins mid-line; when the
+    // byte cap already landed right after one, keep that whole line. A single
+    // very long line has no usable boundary, so it keeps its newest bytes.
+    if start > 0 && text.as_bytes().get(start - 1) != Some(&b'\n') {
+        if let Some(offset) = text[start..].find('\n') {
+            let line_start = start + offset + 1;
+            if line_start < text.len() {
+                start = line_start;
+            }
+        }
     }
-    index
+    // Bound the visible line count as well; the scan stays inside the byte
+    // window because `start` already moved past everything older.
+    let mut newlines = text[start..].bytes().filter(|byte| *byte == b'\n').count();
+    while newlines > DISPLAY_LINES {
+        let Some(offset) = text[start..].find('\n') else {
+            break;
+        };
+        start += offset + 1;
+        newlines -= 1;
+    }
+    start
 }
 
 fn styled(text: &str) -> StyledText {
@@ -278,12 +399,46 @@ fn string_model(values: Vec<String>) -> slint::ModelRc<slint::SharedString> {
     slint::ModelRc::from(Rc::new(VecModel::from(values)))
 }
 
-fn plain_blocks(source: &str) -> Vec<TextBlock> {
-    if source.is_empty() {
-        Vec::new()
-    } else {
-        vec![plain_text_block(source)]
+/// Split a completed run of lines into bounded frozen blocks, preferring blank
+/// line boundaries and falling back to any line break.
+fn split_chunks(text: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut start = 0usize;
+    while start < text.len() {
+        if text.len() - start <= FROZEN_CHUNK_BYTES {
+            parts.push(&text[start..]);
+            break;
+        }
+        let limit = start + FROZEN_CHUNK_BYTES;
+        // Never cut mid-line: a block boundary already stands for one dropped
+        // line terminator, and a mid-line cut would invent a visible break.
+        let cut = blank_line_before(text, limit)
+            .or_else(|| line_boundary_before(text, limit))
+            .filter(|cut| *cut > start)
+            .unwrap_or(text.len());
+        parts.push(&text[start..cut]);
+        start = cut;
     }
+    parts
+}
+
+fn blank_line_before(text: &str, limit: usize) -> Option<usize> {
+    let end = char_boundary_down(text, limit);
+    text[..end].rfind("\n\n").map(|offset| offset + 2)
+}
+
+/// Index just after the last line terminator at or before `limit`.
+fn line_boundary_before(text: &str, limit: usize) -> Option<usize> {
+    let end = char_boundary_down(text, limit);
+    text[..end].rfind('\n').map(|offset| offset + 1)
+}
+
+fn char_boundary_down(text: &str, mut index: usize) -> usize {
+    index = index.min(text.len());
+    while index > 0 && !text.is_char_boundary(index) {
+        index -= 1;
+    }
+    index
 }
 
 fn flush_block(blocks: &mut Vec<TextBlock>, text: &mut String, kind: &mut i32) {
@@ -567,6 +722,118 @@ pub fn reasoning_preview(text: &str) -> slint::SharedString {
 mod tests {
     use super::*;
     use slint::Model;
+
+    fn block_texts(blocks: &Blocks) -> Vec<String> {
+        blocks
+            .model
+            .iter()
+            .map(|block| block.text.to_string())
+            .collect()
+    }
+
+    #[test]
+    fn streaming_freezes_completed_lines_and_reconstructs_the_reply() {
+        let mut blocks = Blocks::new();
+        let mut source = String::new();
+        let mut frozen: Vec<String> = Vec::new();
+        for index in 0..40 {
+            let line = format!("第 {index} 行，用于撑满尾块预算的示例文本{}\n", "·".repeat(60));
+            source.push_str(&line);
+            blocks.append(&line).unwrap();
+            blocks.flush();
+            let texts = block_texts(&blocks);
+            // A dropped line terminator is represented by the block boundary,
+            // so the published blocks always reconstruct the raw text.
+            assert_eq!(texts.join("\n"), source);
+            let prefix = &texts[..texts.len().saturating_sub(1)];
+            assert!(
+                prefix.starts_with(frozen.as_slice()),
+                "a frozen block changed after it was published: {:?} -> {:?}",
+                frozen,
+                prefix
+            );
+            frozen = prefix.to_vec();
+        }
+        assert!(blocks.model.row_count() > 1, "completed lines stay frozen");
+    }
+
+    #[test]
+    fn a_long_reply_keeps_its_newest_lines_visible() {
+        let mut blocks = Blocks::new();
+        let mut source = String::new();
+        for index in 0..300 {
+            source.push_str(&format!("第 {index} 行\n"));
+        }
+        blocks.append(&source).unwrap();
+        blocks.flush();
+        let texts = block_texts(&blocks);
+        assert_eq!(texts.first().map(String::as_str), Some(TRUNCATED_NOTICE));
+        let window = texts[1..].join("\n");
+        assert!(!window.contains("第 0 行"), "the head leaves the display budget");
+        assert!(window.contains("第 299 行"), "the newest line stays visible");
+        assert!(window.matches('\n').count() <= DISPLAY_LINES);
+        assert_eq!(blocks.raw, source, "copy keeps the complete text");
+    }
+
+    #[test]
+    fn the_display_window_rebases_in_coarse_steps() {
+        let mut blocks = Blocks::new();
+        let mut source = String::new();
+        while source.len() <= DISPLAY_BYTES {
+            let line = format!("{}\n", "x".repeat(199));
+            source.push_str(&line);
+            blocks.append(&line).unwrap();
+            blocks.flush();
+        }
+        assert!(blocks.window > 0, "the byte budget must have re-based once");
+        let window = blocks.window;
+        blocks.append("y\n").unwrap();
+        blocks.flush();
+        assert_eq!(
+            blocks.window, window,
+            "a tiny append must not tear down the published window"
+        );
+    }
+
+    #[test]
+    fn a_single_long_line_still_publishes_its_newest_bytes() {
+        let mut blocks = Blocks::new();
+        let source = "·".repeat(DISPLAY_BYTES / 2 + 100) + "\n";
+        blocks.append(&source).unwrap();
+        blocks.flush();
+        let texts = block_texts(&blocks);
+        assert_eq!(texts.first().map(String::as_str), Some(TRUNCATED_NOTICE));
+        assert!(
+            texts.iter().skip(1).any(|text| !text.is_empty()),
+            "a long single line must not publish an empty window"
+        );
+        assert_eq!(blocks.raw, source, "copy keeps the complete text");
+    }
+
+    #[test]
+    fn replacing_the_live_body_drops_the_frozen_prefix() {
+        let mut blocks = Blocks::new();
+        blocks.append("旧的第一行\n旧的第二行\n").unwrap();
+        blocks.flush();
+        blocks.replace("完全替换后的正文").unwrap();
+        blocks.flush();
+        assert_eq!(block_texts(&blocks), vec!["完全替换后的正文".to_string()]);
+    }
+
+    #[test]
+    fn finalize_after_streaming_parses_the_window_once() {
+        let source = "# 标题\n\n**粗体** 段落\n\n```rust\nlet value = 1;\n```\n";
+        let mut blocks = Blocks::new();
+        for line in source.split_inclusive('\n') {
+            blocks.append(line).unwrap();
+            blocks.flush();
+        }
+        blocks.finalize_markdown();
+        assert!(blocks.model.iter().any(|block| block.kind == KIND_H1));
+        assert!(blocks.model.iter().any(|block| block.kind == KIND_CODE));
+        assert_eq!(blocks.raw, source);
+    }
+
     #[test]
     fn final_render_supports_common_elements_and_stream_is_plain() {
         let source = "# 标题\n\n段落含 **粗体**、*斜体*、`代码` 和 [链接](https://example.invalid)。\n\n> 引用\n\n- 项目一\n1. 项目二\n\n```rust\nlet value = 1;\n```\n\n| 名称 | 数值 |\n| --- | ---: |\n| A | 1 |\n\n---\n\n![说明](image.png)";

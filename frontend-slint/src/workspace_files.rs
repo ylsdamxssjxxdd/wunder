@@ -7,7 +7,7 @@
 //! A locally bound workspace folder mirrors the same tree from the disk with
 //! the same menu (minus the cloud-only download/archive/clear trio) and
 //! executes its writes directly through the `workspace_local_*` façade.
-use crate::{MainWindow, PinnedFileRow, WorkspaceFileRow};
+use crate::{MainWindow, WorkspaceFileRow};
 use anyhow::Result;
 use slint::{ComponentHandle, Model, ModelRc, Timer, TimerMode, VecModel};
 use std::cell::{Cell, RefCell};
@@ -113,16 +113,6 @@ thread_local! {
     /// stale results only land when their serial still matches.
     static SEARCH_TIMER: RefCell<Timer> = RefCell::new(Timer::default());
     static SEARCH_SERIAL: Cell<u64> = const { Cell::new(0) };
-    /// Live scroll offset of the working-directory tree viewport, in px; fed
-    /// by the panel's `content-y` change and reread by the sticky projection.
-    static STICKY_SCROLL: Cell<f32> = const { Cell::new(0.0) };
-    /// First row after each row's own subtree, indexed by row position;
-    /// precomputed per projection so a scroll frame never rescans the tree.
-    static TREE_ENDS: RefCell<Vec<u32>> = const { RefCell::new(Vec::new()) };
-    /// Pinned ancestor-folder replicas. Updated in place per scroll frame so
-    /// only the changed slots re-render, never a full model reset.
-    static PINNED_ROWS: RefCell<Rc<VecModel<PinnedFileRow>>> =
-        RefCell::new(Rc::new(VecModel::default()));
 }
 
 /// Which workspace the file panel mirrors: the cloud account workspace
@@ -214,9 +204,7 @@ fn reflect_target(app: &MainWindow) {
         panel.in_flight = 0;
         panel.refresh_pending = false;
     });
-    // An empty listing pins nothing; drop the stale geometry with it.
-    TREE_ENDS.with(|slot| slot.borrow_mut().clear());
-    update_sticky(app);
+    // An empty listing pins nothing; the panel derives the chain from rows.
     app.set_ws_file_active_path("".into());
     app.set_ws_file_active_index(-1);
     app.set_ws_file_busy(false);
@@ -283,21 +271,9 @@ fn drop_dir_cache(path: &str) {
 pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
     let model = with_panel(|panel| panel.model.clone()).expect("panel model");
     app.set_ws_file_rows(ModelRc::from(model));
-    let pinned = PINNED_ROWS.with(|slot| slot.borrow().clone());
-    app.set_ws_file_pinned(ModelRc::from(pinned));
     let toolbar_api = api.clone();
     let search_api = api.clone();
     let select_api = api.clone();
-
-    // Sticky chain: the panel reports the live scroll offset and the
-    // controller projects the ancestor folders that should stay pinned.
-    let weak = app.as_weak();
-    app.on_ws_file_sticky_scroll(move |scroll| {
-        STICKY_SCROLL.with(|slot| slot.set(scroll));
-        if let Some(app) = weak.upgrade() {
-            update_sticky(&app);
-        }
-    });
 
     // Row click: a directory expands or collapses (lazy load on first open),
     // the load-more tail pages its directory, a file becomes selected.
@@ -1133,12 +1109,10 @@ fn run_search(weak: &slint::Weak<MainWindow>, api: Arc<NativeDesktop>, query: St
                 Ok(listing) if listing_status(&listing) == "succeeded" => {
                     app.set_ws_file_search_active(true);
                     app.set_ws_file_error("".into());
-                    // Flat results pin nothing, but the geometry must follow
-                    // the rows the panel now shows.
-                    let search = search_rows(listing.entries);
-                    store_subtree_ends(&search);
+                    // Flat results pin nothing; the panel derives that itself.
+                    let mut search = search_rows(listing.entries);
+                    stamp_subtree_ends(&mut search);
                     with_panel(|panel| panel.model.set_vec(search));
-                    update_sticky(&app);
                 }
                 outcome => {
                     let message = outcome
@@ -1148,8 +1122,6 @@ fn run_search(weak: &slint::Weak<MainWindow>, api: Arc<NativeDesktop>, query: St
                     app.set_ws_file_search_active(true);
                     app.set_ws_file_error(format!("搜索失败：{message}").into());
                     with_panel(|panel| panel.model.set_vec(Vec::new()));
-                    TREE_ENDS.with(|slot| slot.borrow_mut().clear());
-                    update_sticky(&app);
                 }
             }
         });
@@ -1185,6 +1157,7 @@ fn search_rows(entries: Vec<NativeInterlinkEntry>) -> Vec<WorkspaceFileRow> {
                 loading: false,
                 remaining: 0,
                 selected: selected.contains(&entry.path),
+                subtree_end: 0,
             }
         })
         .collect()
@@ -2190,108 +2163,28 @@ fn apply_listing_state(
 /// Rebuild the flat visible rows from the page cache: expanded directories
 /// inline their children (recursively), each paged directory ends with the
 /// load-more tail when entries remain.
-/// Row pitch of the working-directory tree; sticky slots stack with it and
-/// the panel lays its rows out with the same number.
-const STICKY_ROW_PX: f32 = 28.0;
-
-/// Precompute the first row after each folder's subtree, so the sticky chain
-/// reads a folder's end without rescanning the listing every frame. The
-/// load-more tail (kind 2) belongs to the folder above it and counts one
-/// level deeper, exactly as the sticky walk treats it.
-fn store_subtree_ends(rows: &[WorkspaceFileRow]) {
-    let count = rows.len() as u32;
+/// Stamp the first row after each row's own subtree onto the rows themselves,
+/// so the panel's sticky chain reads the geometry straight from the row it is
+/// already rendering — per scroll frame it evaluates one binding, not a
+/// controller walk. The load-more tail (kind 2) belongs to the folder above it
+/// and counts one level deeper, exactly as the sticky slot test treats it.
+fn stamp_subtree_ends(rows: &mut [WorkspaceFileRow]) {
+    let count = rows.len() as i32;
     let mut ends = vec![count; rows.len()];
     let mut open: Vec<(i32, usize)> = Vec::new();
     for (index, row) in rows.iter().enumerate() {
         let depth = row.depth + i32::from(row.kind == 2);
         while open.last().is_some_and(|(open_depth, _)| *open_depth >= depth) {
             let (_, started) = open.pop().expect("checked above");
-            ends[started] = index as u32;
+            ends[started] = index as i32;
         }
         if row.kind == 1 {
             open.push((row.depth, index));
         }
     }
-    TREE_ENDS.with(|slot| *slot.borrow_mut() = ends);
-}
-
-/// Sticky folder chain: the ancestor folders of the row the scroll offset
-/// lands on stay pinned at the tree's top edge, stacked outermost first, so
-/// a deep listing never loses its path context. Each folder keeps its slot
-/// only while its own subtree still fills it — once the folder's last row
-/// reaches the top, the slot is dropped and the next scroll frame reshapes
-/// the stack. Runs per scroll frame; bounded by the tree depth.
-fn update_sticky(app: &MainWindow) {
-    let rows = app.get_ws_file_rows();
-    let count = rows.row_count();
-    let mut pinned: Vec<PinnedFileRow> = Vec::new();
-    let mut bottom = 0.0f32;
-    if count > 0 {
-        let scroll = STICKY_SCROLL.with(Cell::get);
-        let top = usize::try_from((scroll / STICKY_ROW_PX).floor() as i64)
-            .unwrap_or(0)
-            .min(count - 1);
-        let Some(head) = rows.row_data(top) else {
-            return;
-        };
-        // Walk up through the folder headers: the nearest folder one level
-        // shallower is the parent, and its parent is found the same way from
-        // there. The walk length is the tree depth, not the row count.
-        let mut depth = head.depth + i32::from(head.kind == 2);
-        let mut chain: Vec<usize> = Vec::new();
-        let mut cursor = top;
-        while cursor > 0 {
-            cursor -= 1;
-            let Some(row) = rows.row_data(cursor) else {
-                break;
-            };
-            if row.kind == 1 && row.depth == depth - 1 {
-                chain.push(cursor);
-                depth = row.depth;
-            }
-        }
-        for (slot, index) in chain.iter().rev().enumerate() {
-            let Some(row) = rows.row_data(*index) else {
-                break;
-            };
-            let slot_y = slot as f32 * STICKY_ROW_PX;
-            let end_y = TREE_ENDS.with(|slot_| {
-                slot_
-                    .borrow()
-                    .get(*index)
-                    .copied()
-                    .unwrap_or((*index + 1) as u32)
-            }) as f32
-                * STICKY_ROW_PX
-                - scroll;
-            if end_y - STICKY_ROW_PX < slot_y {
-                break;
-            }
-            pinned.push(PinnedFileRow {
-                name: row.name.clone(),
-                depth: row.depth,
-                expanded: true,
-                loading: row.loading,
-                y: slot_y,
-            });
-            bottom = slot_y + STICKY_ROW_PX;
-        }
+    for (row, end) in rows.iter_mut().zip(ends) {
+        row.subtree_end = end;
     }
-    PINNED_ROWS.with(|model| {
-        let model = model.borrow().clone();
-        let len = pinned.len();
-        for (index, pin) in pinned.into_iter().enumerate() {
-            if index < model.row_count() {
-                model.set_row_data(index, pin);
-            } else {
-                model.push(pin);
-            }
-        }
-        while model.row_count() > len {
-            model.remove(model.row_count() - 1);
-        }
-    });
-    app.set_ws_file_pinned_bottom(bottom);
 }
 
 fn rebuild(app: &MainWindow) {
@@ -2303,7 +2196,7 @@ fn rebuild(app: &MainWindow) {
     with_panel(|panel| {
         let mut rows: Vec<WorkspaceFileRow> = Vec::new();
         walk(panel, &mut rows, "", 0, &selected);
-        store_subtree_ends(&rows);
+        stamp_subtree_ends(&mut rows);
         let count = panel.model.row_count();
         let new_count = rows.len();
         for (index, row) in rows.into_iter().enumerate() {
@@ -2340,7 +2233,6 @@ fn rebuild(app: &MainWindow) {
     if index.is_none() {
         app.set_ws_file_active_path("".into());
     }
-    update_sticky(app);
 }
 
 fn is_descendant(path: &str, parent: &str) -> bool {
@@ -2408,6 +2300,7 @@ fn walk(
                 loading: child.is_some_and(|child| child.loading),
                 remaining: 0,
                 selected: selected.contains(&entry.path),
+                subtree_end: 0,
             });
             if child.is_some_and(|child| child.expanded) {
                 walk(panel, rows, &entry.path, depth + 1, selected);
@@ -2424,6 +2317,7 @@ fn walk(
                 loading: false,
                 remaining: 0,
                 selected: selected.contains(&entry.path),
+                subtree_end: 0,
             });
         }
     }
@@ -2457,6 +2351,7 @@ fn walk(
                 (dir.total - loaded).min(i32::MAX as u64) as i32
             },
             selected: false,
+            subtree_end: 0,
         });
     }
 }
@@ -2743,5 +2638,45 @@ mod tests {
         assert_eq!(app.get_ws_file_active_index(), -1);
         PANEL.with(|slot| *slot.borrow_mut() = None);
         GENERATION.with(|slot| slot.set(0));
+    }
+
+    fn sticky_row(kind: i32, depth: i32) -> WorkspaceFileRow {
+        WorkspaceFileRow {
+            path: "".into(),
+            name: "".into(),
+            kind,
+            size_text: "".into(),
+            icon: slint::Image::default(),
+            depth,
+            expanded: true,
+            loading: false,
+            remaining: -1,
+            selected: false,
+            subtree_end: 0,
+        }
+    }
+
+    /// The sticky chain's static geometry: every row carries the index just
+    /// past its own subtree. Folders span their descendants and their paged
+    /// tail (the tail counts one level deeper, so it never closes its own
+    /// folder); files and tails carry the sentinel past-the-end index.
+    #[test]
+    fn subtree_ends_span_folders_tails_and_files() {
+        let mut rows = vec![
+            sticky_row(1, 0), // A
+            sticky_row(0, 1), // a1
+            sticky_row(1, 1), // B
+            sticky_row(0, 2), // b1
+            sticky_row(2, 1), // B 的加载更多尾巴
+            sticky_row(0, 1), // a2，收掉 B
+            sticky_row(1, 0), // D
+            sticky_row(0, 1), // d1
+        ];
+        stamp_subtree_ends(&mut rows);
+        assert_eq!(rows[0].subtree_end, 6, "A 覆盖到 D 出现前一行");
+        assert_eq!(rows[2].subtree_end, 5, "B 含尾巴，到 a2 之前");
+        for index in [1usize, 3, 4, 5, 6, 7] {
+            assert_eq!(rows[index].subtree_end, rows.len() as i32, "第 {index} 行");
+        }
     }
 }

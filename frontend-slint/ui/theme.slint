@@ -221,12 +221,10 @@ export struct FileCard { name: string, path: string, entry-type: string, size: s
 // 1 = directory, 2 = the synthetic "load more" tail of a paged directory.
 // Icons are resolved on the Rust side (vscode-icons rules) because Slint has
 // no extension→glyph mapping; `remaining` only carries a count for kind 2.
-export struct WorkspaceFileRow { path: string, name: string, kind: int, size-text: string, icon: image, depth: int, expanded: bool, loading: bool, remaining: int, selected: bool }
-// One folder header pinned above the working-directory tree while its children
-// scroll underneath. The native controller derives the chain from the row the
-// scroll offset lands on; `y` is the slot from the tree's top edge in px, and
-// the tree renders the replicas in order so ancestors stack above children.
-export struct PinnedFileRow { name: string, depth: int, expanded: bool, loading: bool, y: float }
+// `subtree-end` is the row index just past the row's own subtree (itself for
+// files, the paged tail included for directories); the sticky chain reads it
+// to decide, per scroll frame, which folders still fill their pinned slot.
+export struct WorkspaceFileRow { path: string, name: string, kind: int, size-text: string, icon: image, depth: int, expanded: bool, loading: bool, remaining: int, selected: bool, subtree-end: int }
 export struct CronCard { id: string, name: string, enabled: bool, workspace-name: string, message: string, schedule: string, next-run: string, last-status: string, last-error: string }
 export struct CronRunCard { run-id: string, status: string, trigger: string, summary: string, error: string, duration: string, created-at: string }
 export struct PromptPackCard { id: string, readonly: bool, locale: string, is-active: bool, is-lang-default: bool }

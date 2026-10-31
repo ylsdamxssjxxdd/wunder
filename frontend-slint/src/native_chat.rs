@@ -3566,7 +3566,7 @@ fn start_timer(app: &MainWindow, state: Rc<RefCell<State>>) {
                 live.flush();
                 live.set_turn_status(active.state(), active.user_round);
                 publish_timeline(&app, &live);
-                app.set_stream_bytes(live.body_text().len().min(i32::MAX as usize) as i32);
+                app.set_stream_bytes(live.body_len().min(i32::MAX as usize) as i32);
                 drop(live);
                 set_session_status(&app, &active.session, active.state(), active.phase);
                 // Status dock: capsule state plus plan progress and file

@@ -5,7 +5,7 @@
 // the workspace refactor spec (§5.2). The tree is one flat row model built by
 // the native projection, so the Slint thread only lays out rows; rows
 // drag-reorder through `move-row`.
-import { Theme, SidebarRow, WorkspaceFileRow, PinnedFileRow } from "theme.slint";
+import { Theme, SidebarRow, WorkspaceFileRow } from "theme.slint";
 import { I18n } from "i18n.slint";
 import { ListView } from "std-widgets.slint";
 import { DragRow, DragPreview, SidebarMetrics } from "drag_row.slint";
@@ -483,11 +483,6 @@ export component Sidebar inherits Rectangle {
     // apply a persisted ratio without feeding layout results back into its
     // preferred size; the clamp keeps both regions available.
     in property <[WorkspaceFileRow]> file-rows;
-    // Pinned ancestor folders of the working-directory tree, projected by the
-    // native controller from the live scroll offset.
-    in property <[PinnedFileRow]> file-pinned;
-    in property <float> file-pinned-bottom: 0;
-    callback file-sticky-scroll(float);
     in property <bool> file-loading;
     in property <string> file-error;
     in property <bool> file-offline;
@@ -953,9 +948,6 @@ export component Sidebar inherits Rectangle {
             local: root.file-local;
             active-path: root.file-active-path;
             active-index: root.file-active-index;
-            pinned-rows: root.file-pinned;
-            pinned-bottom: root.file-pinned-bottom;
-            sticky-scroll(scroll) => { root.file-sticky-scroll(scroll); }
             key-action(action) => { root.file-key(action); }
             toggle(index) => { root.file-toggle(index); }
             check(index) => { root.file-check(index); }

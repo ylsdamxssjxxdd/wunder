@@ -835,10 +835,19 @@ export component TimelineView inherits Rectangle {
     private property <length> transcript-height: rows-scroll.content-height;
     private property <int> follow-passes: 2;
     private property <bool> follow-pending: true;
+    // False until the rearmed follow has scrolled once; only then may the
+    // timer trust "already at the tail" and stop early.
+    private property <bool> follow-scrolled: false;
+    pure function tail-y() -> length {
+        min(0px, rows-scroll.visible-height - rows-scroll.content-height)
+    }
+    pure function at-tail() -> bool {
+        rows-scroll.content-y - root.tail-y() >= -1px && rows-scroll.content-y - root.tail-y() <= 1px
+    }
     // Push the viewport to the newest content on request; the projection calls
     // this when it follows the stream, and the "back to latest" action does too.
     public function scroll-to-end() {
-        rows-scroll.content-y = min(0px, rows-scroll.visible-height - rows-scroll.content-height);
+        rows-scroll.content-y = root.tail-y();
     }
     public function scroll-to-top() {
         root.follow-output = false;
@@ -859,15 +868,21 @@ export component TimelineView inherits Rectangle {
         interval: 30ms; running: root.spinning || root.live-footer;
         triggered => { TimelineSpin.angle = Math.mod(TimelineSpin.angle + 9.0, 360.0); }
     }
-    // A streamed line is laid out after the frame that triggered it. Follow on
-    // two subsequent frames only after content changed. A permanently running
-    // 33ms timer fought touchpad/wheel scrolling and repainted idle history.
+    // A streamed line is laid out after the frame that triggered it, so the
+    // first pass after a rearm is mandatory. Once a pass has landed on the
+    // tail there is nothing left to correct: the old timer kept rewriting
+    // content-y twice more, repainting the viewport for no visual change.
+    // A permanently running 33ms timer fought touchpad/wheel scrolling and
+    // repainted idle history.
     follow-timer := Timer {
         interval: 16ms; running: root.follow-output && root.follow-pending;
         triggered => {
-            root.scroll-to-end();
-            if root.follow-passes > 0 {
+            if (!root.follow-scrolled) {
+                root.follow-scrolled = true;
+                root.scroll-to-end();
+            } else if (root.follow-passes > 0 && !root.at-tail()) {
                 root.follow-passes -= 1;
+                root.scroll-to-end();
             } else {
                 root.follow-pending = false;
             }
@@ -877,6 +892,9 @@ export component TimelineView inherits Rectangle {
         if root.follow-output {
             root.follow-passes = 2;
             root.follow-pending = true;
+            // Content is already settled when follow is turned on; this scroll
+            // is the first pass.
+            root.follow-scrolled = true;
             root.scroll-to-end();
         }
     }
@@ -884,6 +902,7 @@ export component TimelineView inherits Rectangle {
         if root.follow-output {
             root.follow-passes = 2;
             root.follow-pending = true;
+            root.follow-scrolled = false;
         }
     }
     changed transcript-height => {
@@ -895,6 +914,7 @@ export component TimelineView inherits Rectangle {
         if root.follow-output {
             root.follow-passes = 2;
             root.follow-pending = true;
+            root.follow-scrolled = false;
         }
     }
     rows-scroll := ScrollView {
